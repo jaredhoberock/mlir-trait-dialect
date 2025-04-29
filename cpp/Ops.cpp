@@ -17,10 +17,10 @@ using namespace mlir::trait;
 
 LogicalResult TraitOp::verify() {
   for (Block &block : getBody()) {
-    // check that all operations in the body are trait.method
+    // check that all operations in the body are trait.method or func.func
     for (Operation &op : block) {
-      if (!isa<MethodOp>(op))
-        return emitOpError() << "body may only contain 'trait.method' operations";
+      if (!isa<MethodOp>(op) && !isa<func::FuncOp>(op))
+        return emitOpError() << "body may only contain 'trait.method' and `func.func` operations";
     }
   }
 
@@ -77,12 +77,12 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     return emitOpError() << "cannot find trait '" << traitAttr << "'";
   }
 
-  // Collect required method names from the trait
-  llvm::SmallSet<StringRef, 8> requiredMethods;
-  for (Operation &op : traitOp.getBody().front()) {
-    if (auto method = dyn_cast<MethodOp>(op)) {
-      requiredMethods.insert(method.getSymName());
-    }
+  // Collect method names from the trait
+  llvm::SmallSet<StringRef, 8> requiredMethodNames = traitOp.getRequiredMethodNames();
+  std::vector<func::FuncOp> optionalMethods = traitOp.getOptionalMethods();
+  llvm::SmallSet<StringRef, 8> optionalMethodNames;
+  for (auto f : optionalMethods) {
+    optionalMethodNames.insert(f.getSymName());
   }
 
   // Verify that the body contains only func.func ops
@@ -90,7 +90,7 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   for (Operation &op : getBody().front()) {
     if (auto implMethod = dyn_cast<func::FuncOp>(op)) {
       StringRef name = implMethod.getSymName();
-      if (!requiredMethods.contains(name)) {
+      if (!requiredMethodNames.contains(name) && !optionalMethodNames.contains(name)) {
         return emitOpError() << "implements unknown method '" << name
                              << "' (not found in trait '" << traitAttr << "')";
       }
@@ -103,7 +103,7 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   }
 
   // Verify that no required methods are missing
-  for (StringRef name : requiredMethods) {
+  for (StringRef name : requiredMethodNames) {
     if (!definedMethods.contains(name)) {
       return emitOpError() << "missing implementation for required method '" << name << "' of trait '" << traitAttr << "'";
     }
@@ -145,11 +145,21 @@ LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable)
     return emitOpError()
       << "cannot find trait '" << traitAttr << "'";
 
-  // look up the MethodOp
-  auto methodOp = symbolTable.lookupNearestSymbolFrom<MethodOp>(traitOp, methodAttr);
-  if (!methodOp)
-    return emitOpError()
-      << "cannot find method '" << methodAttr << "' in trait '" << traitAttr << "'";
+  // look up the function type of the method
+  FunctionType methodFnTy;
+
+  {
+    auto methodOp = symbolTable.lookupNearestSymbolFrom<MethodOp>(traitOp, methodAttr);
+    if (!methodOp) {
+      auto funcOp = symbolTable.lookupNearestSymbolFrom<func::FuncOp>(traitOp, methodAttr);
+      if (!funcOp)
+        return emitOpError()
+          << "cannot find method '" << methodAttr << "' in trait '" << traitAttr << "'";
+      methodFnTy = funcOp.getFunctionType();
+    } else {
+      methodFnTy = methodOp.getFunctionType();
+    }
+  }
 
   Type monoSelfTy = selfTyAttr.getValue();
 
@@ -162,7 +172,7 @@ LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable)
 
   // monomorphize the method's type using the concrete self type
   FunctionType monoFnTy = monomorphizeFunctionType(
-      methodOp.getFunctionType(), 
+      methodFnTy, 
       monoSelfTy);
 
   if (getOperands().getTypes() != monoFnTy.getInputs())
@@ -197,14 +207,14 @@ static LogicalResult resolvePolyType(Location loc,
                                      ModuleOp module,
                                      StringRef what,
                                      unsigned position) {
-  auto index = polyTy.getIndex();
+  auto id = polyTy.getUniqueId();
 
   // If we've already substituted this poly index, ensure consistency
-  if (auto it = substitutions.find(index);
+  if (auto it = substitutions.find(id);
       it != substitutions.end()) {
     if (it->second != monoTy) {
       return mlir::emitError(loc)
-             << "mismatched substitution for poly index " << index
+             << "mismatched substitution for poly index " << id
              << " in " << what << " " << position
              << ": expected " << it->second << ", got " << monoTy;
     }
@@ -217,11 +227,11 @@ static LogicalResult resolvePolyType(Location loc,
     if (!typeHasImpl(monoTy, traitRef, module)) {
       return mlir::emitError(loc)
              << "type " << monoTy << " does not implement required trait " << traitRef
-             << " for poly index " << index << " in " << what << " " << position;
+             << " for poly type " << id << " in " << what << " " << position;
     }
   }
 
-  substitutions[index] = monoTy;
+  substitutions[id] = monoTy;
   return success();
 }
 
@@ -269,15 +279,15 @@ static LogicalResult checkPolymorphicFunctionCall(
       continue;
 
     if (auto poly = dyn_cast<PolyType>(expected)) {
-      if (auto it = substitutions.find(poly.getIndex()); it != substitutions.end()) {
+      if (auto it = substitutions.find(poly.getUniqueId()); it != substitutions.end()) {
         if (it->second != actual) {
           return emitError(loc) << "result " << i << " expected " << it->second
-                                << " (substituted for poly index " << poly.getIndex()
+                                << " (substituted for poly type " << poly.getUniqueId()
                                 << "), but got " << actual;
         }
       } else {
-        return emitError(loc) << "result " << i << " refers to poly index "
-                              << poly.getIndex() << " with no substitution";
+        return emitError(loc) << "result " << i << " refers to poly type "
+                              << poly.getUniqueId() << " with no substitution";
       }
     } else {
       return emitError(loc) << "result " << i << " expected type " << expected

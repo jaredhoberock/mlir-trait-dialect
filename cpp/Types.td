@@ -23,8 +23,7 @@ def SelfType : TypeDef<TraitDialect, "Self"> {
   let assemblyFormat = "";
 }
 
-// Represents a universally quantified type parameter at a given index
-// constrained by a list of traits.
+// Represents a universally quantified type parameter constrained by a list of traits.
 def PolyType : TypeDef<TraitDialect, "Poly"> {
   let mnemonic = "poly";
   let summary = "A polymorphic type parameter constrained by one or more traits";
@@ -34,9 +33,9 @@ def PolyType : TypeDef<TraitDialect, "Poly"> {
     constrained by one or more traits. It is used to model generic functions with trait
     bounds, similar to Rust's generic type parameters like `T: Trait`.
 
-    The `index` specifies the position of this parameter in the function’s type parameter
-    list. The `traits` field lists the required trait interfaces the type must satisfy,
-    each given as a `SymbolRefAttr` referring to a `trait.trait` symbol.
+    The `unique_id` serves as unique identifier for this type within the module. The `traits`
+    field lists the required trait interfaces the type must satisfy, each given as a
+    `SymbolRefAttr` referring to a `trait.trait` symbol.
 
     For example:
       !trait.poly<0, [@Add, @Clone]>
@@ -45,11 +44,11 @@ def PolyType : TypeDef<TraitDialect, "Poly"> {
   }];
 
   let parameters = (ins
-    "unsigned":$index,
+    "unsigned":$unique_id,
     ArrayRefParameter<"::mlir::FlatSymbolRefAttr">:$traits
   );
 
-  let assemblyFormat = "`<` $index `,` `[` $traits `]` `>`";
+  let assemblyFormat = "`<` $unique_id `,` `[` $traits `]` `>`";
 }
 
 #endif // TRAIT_TYPES_TD

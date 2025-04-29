@@ -19,18 +19,49 @@ def TraitOp : TraitDialectOp<"trait", [
   let description = [{
     Declares a trait interface, similar to a Rust trait. A `trait.trait` operation
     defines a symbol that can be referenced by `trait.param` types and `trait.impl`.
-    It contains a region which holds `trait.method` declarations that define the
-    interface requirements for implementors.
+    It contains a region which holds `func.func` operations that define the
+    interface requirements for implementors. If any of these `func.func` operations have
+    a body, then this interface is optional for implementors.
 
     Example:
       trait.trait @Add {
-        trait.method @add(%self: !trait.self, %rhs: i32) -> i32
+        func.func @add(%self: !trait.self, %rhs: i32) -> i32
       }
   }];
 
   let arguments = (ins SymbolNameAttr:$sym_name);
   let results = (outs);  // No results
   let regions = (region AnyRegion:$body);
+
+  let extraClassDeclaration = [{
+    llvm::SmallSet<llvm::StringRef,8> getRequiredMethodNames() {
+      llvm::SmallSet<llvm::StringRef,8> result;
+      for (Operation& op : getBody().front()) {
+        if (auto method = dyn_cast<MethodOp>(op)) {
+          result.insert(method.getSymName());
+        }
+
+        if (auto func = dyn_cast<func::FuncOp>(op)) {
+          if (func.isExternal()) {
+            result.insert(func.getSymName());
+          }
+        }
+      }
+      return result;
+    }
+
+    std::vector<func::FuncOp> getOptionalMethods() {
+      std::vector<func::FuncOp> result;
+      for (Operation& op : getBody().front()) {
+        if (auto func = dyn_cast<func::FuncOp>(op)) {
+          if (!func.isExternal()) {
+            result.push_back(func);
+          }
+        }
+      }
+      return result;
+    }
+  }];
 
   let assemblyFormat = "$sym_name attr-dict-with-keyword $body";
 
@@ -82,7 +113,7 @@ def ImplOp : TraitDialectOp<"impl", [
 
     Example:
       trait.impl @PartialEq<i32> {
-        trait.impl.method @eq(%self: i32, %other: i32) -> i1 {
+        func.func @eq(%self: i32, %other: i32) -> i1 {
           %same = arith.cmpi eq, %self, %other : i32
           trait.return %same : i1
         }
@@ -91,6 +122,23 @@ def ImplOp : TraitDialectOp<"impl", [
 
   let arguments = (ins FlatSymbolRefAttr:$trait, TypeAttr:$concrete_type);
   let regions = (region AnyRegion:$body);
+
+  let extraClassDeclaration = [{
+    std::vector<func::FuncOp> getMethods() {
+      std::vector<func::FuncOp> result;
+      for (auto& op : getBody().front()) {
+        if (auto method = dyn_cast<func::FuncOp>(op)) {
+          result.push_back(method);
+        }
+      }
+      return result;
+    }
+
+    bool hasMethod(llvm::StringRef name) {
+      auto funcOp = lookupSymbol<func::FuncOp>(name);
+      return funcOp != nullptr;
+    }
+  }];
 
   let assemblyFormat = "$trait`<` $concrete_type `>` attr-dict-with-keyword $body";
 }
