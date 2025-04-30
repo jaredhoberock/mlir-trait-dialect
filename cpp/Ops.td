@@ -37,10 +37,6 @@ def TraitOp : TraitDialectOp<"trait", [
     llvm::SmallSet<llvm::StringRef,8> getRequiredMethodNames() {
       llvm::SmallSet<llvm::StringRef,8> result;
       for (Operation& op : getBody().front()) {
-        if (auto method = dyn_cast<MethodOp>(op)) {
-          result.insert(method.getSymName());
-        }
-
         if (auto func = dyn_cast<func::FuncOp>(op)) {
           if (func.isExternal()) {
             result.insert(func.getSymName());
@@ -68,33 +64,6 @@ def TraitOp : TraitDialectOp<"trait", [
   let hasVerifier = 1;
 }
 
-def MethodOp : TraitDialectOp<"method", [
-  Symbol, 
-  HasParent<"TraitOp">
-]> {
-  let summary = "Declares a required method signature within a trait";
-  let description = [{
-    Declares a required method inside a `trait.trait` declaration. This is similar to
-    a method signature in a Rust trait. It defines a symbol (`sym_name`) that must be
-    implemented in trait impls via `trait.impl.method`.
-
-    The method specifies input and result types, and may refer to `!trait.self` to
-    denote the implementing type.
-
-    Example:
-      trait.method @add(!trait.self, i32) -> i32
-  }];
-
-  let arguments = (ins
-    SymbolNameAttr:$sym_name,
-    TypeAttrOf<FunctionType>:$function_type
-  );
-
-  let results = (outs);
-
-  let hasCustomAssemblyFormat = 1;
-}
-
 def ImplOp : TraitDialectOp<"impl", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
   SymbolTable
@@ -108,7 +77,7 @@ def ImplOp : TraitDialectOp<"impl", [
     declaration (e.g., `@PartialEq`), and `concrete_type` is a TypeAttr representing
     the type that implements the trait (e.g., `i32` or a custom type).
 
-    This operation contains a region with `trait.impl.method` definitions, each
+    This operation contains a region with `func.func` operations, each
     implementing one of the trait's required methods.
 
     Example:

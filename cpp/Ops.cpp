@@ -17,52 +17,13 @@ using namespace mlir::trait;
 
 LogicalResult TraitOp::verify() {
   for (Block &block : getBody()) {
-    // check that all operations in the body are trait.method or func.func
+    // check that all operations in the body are func.func
     for (Operation &op : block) {
-      if (!isa<MethodOp>(op) && !isa<func::FuncOp>(op))
-        return emitOpError() << "body may only contain 'trait.method' and `func.func` operations";
+      if (!isa<func::FuncOp>(op))
+        return emitOpError() << "body may only contain 'func.func' operations";
     }
   }
-
   return success();
-}
-
-void MethodOp::print(OpAsmPrinter &p) {
-  p << " @" << getSymName();
-
-  FunctionType fnType = getFunctionType();
-
-  p << "(";
-  llvm::interleaveComma(fnType.getInputs(), p);
-  p << ") -> ";
-  if (fnType.getNumResults() == 1) {
-    p.printType(fnType.getResult(0));
-  } else {
-    p << "(";
-    llvm::interleaveComma(fnType.getResults(), p);
-    p << ")";
-  }
-
-  p.printOptionalAttrDict(getOperation()->getAttrs(), /*elided=*/{"sym_name", "function_type"});
-}
-
-ParseResult MethodOp::parse(OpAsmParser &parser, OperationState &state) {
-  StringAttr nameAttr;
-  if (parser.parseSymbolName(nameAttr, "sym_name", state.attributes))
-    return failure();
-
-  // Parse the function signature
-  SmallVector<Type> inputTypes, resultTypes;
-  if (parser.parseLParen() ||
-      parser.parseTypeList(inputTypes) ||
-      parser.parseRParen() ||
-      parser.parseArrowTypeList(resultTypes))
-    return failure();
-
-  FunctionType fnType = parser.getBuilder().getFunctionType(inputTypes, resultTypes);
-  state.addAttribute("function_type", TypeAttr::get(fnType));
-
-  return parser.parseOptionalAttrDict(state.attributes);
 }
 
 LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
@@ -93,6 +54,9 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
       if (!requiredMethodNames.contains(name) && !optionalMethodNames.contains(name)) {
         return emitOpError() << "implements unknown method '" << name
                              << "' (not found in trait '" << traitAttr << "')";
+      }
+      if (implMethod.isExternal()) {
+        return emitOpError() << "method '" << name << "' must have body";
       }
       if (!definedMethods.insert(name).second) {
         return emitOpError() << "implements method '" << name << "' multiple times";
@@ -145,20 +109,10 @@ LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable)
     return emitOpError()
       << "cannot find trait '" << traitAttr << "'";
 
-  // look up the function type of the method
-  FunctionType methodFnTy;
-
-  {
-    auto methodOp = symbolTable.lookupNearestSymbolFrom<MethodOp>(traitOp, methodAttr);
-    if (!methodOp) {
-      auto funcOp = symbolTable.lookupNearestSymbolFrom<func::FuncOp>(traitOp, methodAttr);
-      if (!funcOp)
-        return emitOpError()
-          << "cannot find method '" << methodAttr << "' in trait '" << traitAttr << "'";
-      methodFnTy = funcOp.getFunctionType();
-    } else {
-      methodFnTy = methodOp.getFunctionType();
-    }
+  // look up the method
+  auto method = symbolTable.lookupNearestSymbolFrom<func::FuncOp>(traitOp, methodAttr);
+  if (!method) {
+    return emitOpError() << "cannot find method '" << methodAttr << "' in trait '" << traitAttr << "'";
   }
 
   Type monoSelfTy = selfTyAttr.getValue();
@@ -172,7 +126,7 @@ LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable)
 
   // monomorphize the method's type using the concrete self type
   FunctionType monoFnTy = monomorphizeFunctionType(
-      methodFnTy, 
+      method.getFunctionType(), 
       monoSelfTy);
 
   if (getOperands().getTypes() != monoFnTy.getInputs())

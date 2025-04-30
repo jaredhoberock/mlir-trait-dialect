@@ -3,11 +3,11 @@
 // ---- Test 1: test everything
 
 // CHECK-LABEL: trait @PartialEq
-// CHECK-LABEL: method @eq
-// CHECK-LABEL: method @neq
+// CHECK-LABEL: func.func private @eq
+// CHECK-LABEL: func.func private @neq
 trait.trait @PartialEq {
-  trait.method @eq(!trait.self, !trait.self) -> i1
-  trait.method @neq(!trait.self, !trait.self) -> i1
+  func.func private @eq(!trait.self, !trait.self) -> i1
+  func.func private @neq(!trait.self, !trait.self) -> i1
 }
 
 // CHECK-LABEL impl @PartialEq<i32>
