@@ -63,7 +63,7 @@ module {
 </details>
 
 <details>
-<summary>Lowered LLVM dialect (excerpt)</summary>
+<summary>Lowered to LLVM dialect</summary>
 
 ```mlir
 module {
