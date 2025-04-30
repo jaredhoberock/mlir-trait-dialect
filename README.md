@@ -16,7 +16,7 @@ To make such libraries *portable across tool‑chains* and *optimisation passes*
 
 ---
 ## Tiny example
-The snippet below defines `PartialEq`, gives `i32` an implementation, and writes two generic functions `foo` and `baz`.  After running the *Monomorphisation + LLVM lowering* pipeline the IR no longer contains trait ops—only concrete `llvm.func`s remain.
+The snippet below defines `PartialEq`, gives `i32` an implementation, and defines a generic function `foo`.  After running the *Monomorphisation + LLVM lowering* pipeline the IR no longer contains trait ops—only concrete `llvm.func`s remain.
 
 <details>
 <summary>Click to expand MLIR</summary>
