@@ -1,0 +1,12 @@
+[package]
+name = "mlir-trait-dialect"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+melior = "0.24"
+mlir-sys = "0.5.0"
+
+[lib]
+name = "trait_dialect"
+path = "src/lib.rs"
