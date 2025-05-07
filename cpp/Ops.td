@@ -81,7 +81,7 @@ def ImplOp : TraitDialectOp<"impl", [
     implementing one of the trait's required methods.
 
     Example:
-      trait.impl @PartialEq<i32> {
+      trait.impl @PartialEq for i32 {
         func.func @eq(%self: i32, %other: i32) -> i1 {
           %same = arith.cmpi eq, %self, %other : i32
           trait.return %same : i1
@@ -109,7 +109,7 @@ def ImplOp : TraitDialectOp<"impl", [
     }
   }];
 
-  let assemblyFormat = "$trait`<` $concrete_type `>` attr-dict-with-keyword $body";
+  let assemblyFormat = "$trait `for` $concrete_type attr-dict-with-keyword $body";
 }
 
 def MethodCallOp : TraitDialectOp<"method.call", [

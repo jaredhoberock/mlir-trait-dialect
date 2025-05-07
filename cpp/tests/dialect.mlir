@@ -10,8 +10,8 @@ trait.trait @PartialEq {
   func.func private @neq(!trait.self, !trait.self) -> i1
 }
 
-// CHECK-LABEL impl @PartialEq<i32>
-trait.impl @PartialEq<i32> {
+// CHECK-LABEL impl @PartialEq for i32
+trait.impl @PartialEq for i32 {
   // CHECK-LABEL: func @eq
   func.func @eq(%self: i32, %other: i32) -> i1 {
     %equal = arith.cmpi eq, %self, %other : i32

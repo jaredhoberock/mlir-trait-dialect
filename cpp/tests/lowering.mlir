@@ -12,8 +12,8 @@ trait.trait @PartialEq {
   }
 }
 
-// CHECK-NOT: @PartialEq<i32>
-trait.impl @PartialEq<i32> {
+// CHECK-NOT: @PartialEq for i32
+trait.impl @PartialEq for i32 {
   func.func @eq(%self: i32, %other: i32) -> i1 {
     %result = arith.cmpi eq, %self, %other : i32
     return %result : i1
