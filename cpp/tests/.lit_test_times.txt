@@ -1,3 +1,0 @@
-4.684258e-02 trait.mlir
-5.722690e-02 dialect.mlir
-5.785871e-02 lowering.mlir

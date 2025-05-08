@@ -5,7 +5,7 @@ trait.trait @PartialEq {
   func.func private @eq(!trait.self, !trait.self) -> i1
 
   func.func @neq(%self: !trait.self, %other: !trait.self) -> i1 {
-    %equal = trait.method.call @PartialEq<!trait.self>::@eq(%self, %other) : (!trait.self, !trait.self) -> i1
+    %equal = trait.method.call @PartialEq::@eq<!trait.self>(%self, %other) : (!trait.self, !trait.self) -> i1
     %true = arith.constant 1 : i1
     %result = arith.xori %equal, %true : i1
     return %result : i1
@@ -26,7 +26,7 @@ trait.impl @PartialEq for i32 {
 // CHECK-NOT: builtin.unrealized_conversion_cast
 // CHECK: llvm.call @__trait_PartialEq_impl_i32_eq
 func.func @foo(%x: !T, %y: !T) -> i1 {
-  %result = trait.method.call @PartialEq<!T>::@eq(%x, %y) : (!T,!T) -> i1
+  %result = trait.method.call @PartialEq::@eq<!T>(%x, %y) : (!T,!T) -> i1
   return %result : i1
 }
 
@@ -43,8 +43,8 @@ func.func @bar(%x: i32, %y: i32) -> i1 {
 // CHECK: llvm.call @__trait_PartialEq_impl_i32_eq
 // CHECK: llvm.call @__trait_PartialEq_impl_i32_neq
 func.func @baz(%x: !T, %y: !T) -> i1 {
-  %eq = trait.method.call @PartialEq<!T>::@eq(%x, %y) : (!T,!T) -> i1
-  %neq = trait.method.call @PartialEq<!T>::@neq(%x, %y) : (!T,!T) -> i1
+  %eq = trait.method.call @PartialEq::@eq<!T>(%x, %y) : (!T,!T) -> i1
+  %neq = trait.method.call @PartialEq::@neq<!T>(%x, %y) : (!T,!T) -> i1
   %result = arith.ori %eq, %neq : i1
   return %result : i1
 }

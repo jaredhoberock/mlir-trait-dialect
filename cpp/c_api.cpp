@@ -57,9 +57,9 @@ MlirOperation traitMethodCallOpCreate(MlirLocation loc,
   auto op = builder.create<MethodCallOp>(
     unwrap(loc),
     results,
-    FlatSymbolRefAttr::get(ctx, StringRef(traitName.data, traitName.length)),
+    StringRef(traitName.data, traitName.length),
+    StringRef(methodName.data, methodName.length),
     TypeAttr::get(unwrap(selfType)),
-    FlatSymbolRefAttr::get(ctx, StringRef(methodName.data, methodName.length)),
     args
   );
 

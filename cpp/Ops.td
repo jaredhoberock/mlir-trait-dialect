@@ -118,25 +118,81 @@ def MethodCallOp : TraitDialectOp<"method.call", [
 ]> {
   let summary = "Call a trait method";
   let description = [{
-    Calls a method from a trait using fully-qualified syntax like `@Trait<type>::@method`.
+    Calls a method from a trait using fully-qualified syntax like `@Trait::@method<type>`.
 
     This can appear in either polymorphic or monomorphic code.
     Resolution to an implementation is performed during lowering.
 
     Example:
-      %r = trait.method.call @PartialEq<i32>::@eq(%x, %y) : (i32, i32) -> i1
+      %r = trait.method.call @PartialEq::@eq<i32>(%x, %y) : (i32, i32) -> i1
   }];
 
   let arguments = (ins 
-      FlatSymbolRefAttr:$trait,
+      SymbolRefAttr:$method_ref,
       TypeAttr:$self_type,
-      FlatSymbolRefAttr:$method,
       Variadic<AnyType>:$operands
   );
 
   let results = (outs Variadic<AnyType>);
 
+  // custom builders
+  let builders = [
+    // builder that takes trait and method as FlatSymbolRefAttrs
+    OpBuilder<(ins
+      "TypeRange":$results,
+      "FlatSymbolRefAttr":$traitRef,
+      "FlatSymbolRefAttr":$methodRef,
+      "TypeAttr":$selfType,
+      "ValueRange":$operands), [{
+        MLIRContext *ctx = $_builder.getContext();
+
+        // create the nested SymbolRefAttr
+        SymbolRefAttr qualifiedRef = SymbolRefAttr::get(
+          ctx,
+          traitRef.getValue(),
+          methodRef
+        );
+
+        // build the operation with the created nested reference
+        return build($_builder, $_state, results, qualifiedRef, selfType, operands);
+    }]>,
+
+    // builder that takes trait and method names separately
+    OpBuilder<(ins
+      "TypeRange":$results,
+      "StringRef":$traitName,
+      "StringRef":$methodName,
+      "TypeAttr":$selfType,
+      "ValueRange":$operands), [{
+        // convert strings to FlatSymbolRefAttrs and call the other builder
+        MLIRContext *ctx = $_builder.getContext();
+        FlatSymbolRefAttr traitRef = FlatSymbolRefAttr::get(ctx, traitName);
+        FlatSymbolRefAttr methodRef = FlatSymbolRefAttr::get(ctx, methodName);
+
+        // call the other builder
+        return build($_builder, $_state, results, traitRef, methodRef, selfType, operands);
+    }]>,
+  ];
+
   let extraClassDeclaration = [{
+    StringRef getTrait() {
+      return getMethodRef().getRootReference().getValue();
+    }
+
+    FlatSymbolRefAttr getTraitAttr() {
+      return FlatSymbolRefAttr::get(
+        getContext(),
+        getMethodRef().getRootReference().getValue()
+      );
+    }
+
+    StringRef getMethod() {
+      assert(!getMethodRef().getNestedReferences().empty() && 
+             "Expected nested method reference");
+      return cast<FlatSymbolRefAttr>(getMethodRef().getNestedReferences().front()).getValue();
+    }
+
+    // CallOpInterface methods
     operand_range getArgOperands() {
       return getOperands();
     }
@@ -155,7 +211,7 @@ def MethodCallOp : TraitDialectOp<"method.call", [
   }];
 
   let assemblyFormat = [{
-    $trait `<` $self_type `>` `:` `:` $method `(` $operands `)` attr-dict `:` functional-type($operands, results)
+    $method_ref `<` $self_type `>` `(` $operands `)` attr-dict `:` functional-type($operands, results)
   }];
 }
 

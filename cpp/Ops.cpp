@@ -99,8 +99,13 @@ LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable)
   if (!moduleOp)
     return emitOpError() << "not contained in a module";
 
+  // extract trait and method from the nested symbol reference
+  auto methodRef = getMethodRef();
+  if (methodRef.getNestedReferences().empty())
+    return emitOpError() << "expected nested symbol reference with trait::method format";
+
   auto traitAttr = getTraitAttr();
-  auto methodAttr = getMethodAttr();
+  auto methodAttr = cast<FlatSymbolRefAttr>(methodRef.getNestedReferences().front());
   auto selfTyAttr = getSelfTypeAttr();
 
   // look up the TraitOp
@@ -109,7 +114,7 @@ LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable)
     return emitOpError()
       << "cannot find trait '" << traitAttr << "'";
 
-  // look up the method
+  // look up the method in the trait
   auto method = symbolTable.lookupNearestSymbolFrom<func::FuncOp>(traitOp, methodAttr);
   if (!method) {
     return emitOpError() << "cannot find method '" << methodAttr << "' in trait '" << traitAttr << "'";
