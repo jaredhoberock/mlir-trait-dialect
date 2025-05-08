@@ -89,15 +89,10 @@ fn test_jit() {
 
         let partial_eq = trait_::trait_(location, "PartialEq");
 
-        let block = Block::new(&[]);
+        let block = partial_eq.region(0).unwrap().first_block().unwrap();
         block.append_operation(eq);
         block.append_operation(neq);
 
-        partial_eq
-            .regions()
-            .next()
-            .unwrap()
-            .append_block(block);
         partial_eq
     };
 
@@ -135,14 +130,9 @@ fn test_jit() {
 
         let partial_eq_impl_i32 = trait_::impl_(location, "PartialEq", i32_ty);
 
-        let block = Block::new(&[]);
+        let block = partial_eq_impl_i32.region(0).unwrap().first_block().unwrap();
         block.append_operation(eq);
 
-        partial_eq_impl_i32
-            .regions()
-            .next()
-            .unwrap()
-            .append_block(block);
         partial_eq_impl_i32
     };
 

@@ -31,7 +31,7 @@ def TraitOp : TraitDialectOp<"trait", [
 
   let arguments = (ins SymbolNameAttr:$sym_name);
   let results = (outs);  // No results
-  let regions = (region AnyRegion:$body);
+  let regions = (region SizedRegion<1>:$body);
 
   let extraClassDeclaration = [{
     llvm::SmallSet<llvm::StringRef,8> getRequiredMethodNames() {
@@ -58,6 +58,15 @@ def TraitOp : TraitDialectOp<"trait", [
       return result;
     }
   }];
+
+  // builder creates one empty block in the body region
+  let builders = [
+    OpBuilder<(ins "::mlir::StringAttr":$sym_name), [{
+      $_state.addAttribute("sym_name", sym_name);
+      ::mlir::Region *region = $_state.addRegion();
+      region->emplaceBlock();
+    }]>
+  ];
 
   let assemblyFormat = "$sym_name attr-dict-with-keyword $body";
 
@@ -90,7 +99,7 @@ def ImplOp : TraitDialectOp<"impl", [
   }];
 
   let arguments = (ins FlatSymbolRefAttr:$trait, TypeAttr:$concrete_type);
-  let regions = (region AnyRegion:$body);
+  let regions = (region SizedRegion<1>:$body);
 
   let extraClassDeclaration = [{
     std::vector<func::FuncOp> getMethods() {
@@ -108,6 +117,17 @@ def ImplOp : TraitDialectOp<"impl", [
       return funcOp != nullptr;
     }
   }];
+
+  // builder creates one empty block in the body region
+  let builders = [
+    OpBuilder<(ins "::mlir::FlatSymbolRefAttr":$trait,
+                   "::mlir::TypeAttr":$concrete_type), [{
+      $_state.addAttribute("trait", trait);
+      $_state.addAttribute("concrete_type", concrete_type);
+      ::mlir::Region *region = $_state.addRegion();
+      region->emplaceBlock();
+    }]>
+  ];
 
   let assemblyFormat = "$trait `for` $concrete_type attr-dict-with-keyword $body";
 }
