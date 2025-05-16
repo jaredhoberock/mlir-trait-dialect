@@ -5,15 +5,15 @@
 
 namespace mlir::trait {
 
-template<class MLIRType> bool containsType(TypeRange types) {
-  auto hasType = [](Type t) { return isa<MLIRType>(t); };
-  return llvm::any_of(types, hasType);
+static bool containsSymbolicType(TypeRange types) {
+  auto isSymbolic = [](Type t) { return isa<SymbolicTypeInterface>(t); };
+  return llvm::any_of(types, isSymbolic);
 }
 
-template<class MLIRType> bool containsType(ArrayRef<NamedAttribute> attrs) {
+static bool containsSymbolicType(ArrayRef<NamedAttribute> attrs) {
   for (const auto &attr : attrs) {
     if (auto typeAttr = dyn_cast<TypeAttr>(attr.getValue())) {
-      if (isa<MLIRType>(typeAttr.getValue())) {
+      if (isa<SymbolicTypeInterface>(typeAttr.getValue())) {
         return true;
       }
     }
@@ -21,24 +21,15 @@ template<class MLIRType> bool containsType(ArrayRef<NamedAttribute> attrs) {
   return false;
 }
 
-template<class MLIRType> bool functionTypeContains(FunctionType ty) {
-  return containsType<MLIRType>(ty.getInputs()) || containsType<MLIRType>(ty.getResults());
-}
-
-template<class MLIRType> bool mentionsType(Operation* op) {
-  // check the operations's
+static bool mentionsSymbolicType(Operation* op) {
+  // check the operation's
   // * operand types,
   // * result types,
   // * and attribute types
-  // for any mention of the mlir Type T of interest
-  return containsType<MLIRType>(op->getOperandTypes()) ||
-         containsType<MLIRType>(op->getResultTypes()) ||
-         containsType<MLIRType>(op->getAttrs());
-}
-
-static bool containsSymbolicType(TypeRange types) {
-  auto isSymbolic = [](Type t) { return isa<SymbolicTypeInterface>(t); };
-  return llvm::any_of(types, isSymbolic);
+  // for any mention of a SymbolicTypeInterface type
+  return containsSymbolicType(op->getOperandTypes()) ||
+         containsSymbolicType(op->getResultTypes()) ||
+         containsSymbolicType(op->getAttrs());
 }
 
 static bool functionTypeContainsSymbolicType(FunctionType ty) {
@@ -64,14 +55,13 @@ std::string manglePolymorphicFunctionName(func::FuncOp polymorph,
   return result;
 }
 
-template<class MLIRType>
-struct ConvertAnyOpWithType : ConversionPattern {
-  ConvertAnyOpWithType(TypeConverter &tc, MLIRContext *ctx)
+struct ConvertAnyOpWithSymbolicType : ConversionPattern {
+  ConvertAnyOpWithSymbolicType(TypeConverter &tc, MLIRContext *ctx)
     : ConversionPattern(tc, MatchAnyOpTypeTag(), 1, ctx) {}
 
   LogicalResult matchAndRewrite(Operation *op, ArrayRef<Value> operands,
                                 ConversionPatternRewriter &rewriter) const override {
-    if (!mentionsType<MLIRType>(op)) {
+    if (!mentionsSymbolicType(op)) {
       return failure();
     }
 
@@ -92,9 +82,10 @@ struct ConvertAnyOpWithType : ConversionPattern {
     for (auto &attr : op->getAttrs()) {
       Attribute convertedAttr = attr.getValue();
 
-      // check if the attribute is a TypeAttr with the MLIRType of interest
+      // check if the attribute is a TypeAttr with a SymbolicTypeInterface
       if (auto typeAttr = dyn_cast<TypeAttr>(convertedAttr)) {
-        if (MLIRType oldTy = dyn_cast<MLIRType>(typeAttr.getValue())) {
+        Type oldTy = typeAttr.getValue();
+        if (isa<SymbolicTypeInterface>(oldTy)) {
           Type newTy = tc->convertType(oldTy);
           if (!newTy) {
             return failure();
@@ -123,9 +114,6 @@ struct ConvertAnyOpWithType : ConversionPattern {
   }
 };
 
-using ConvertAnyOpWithPolyType = ConvertAnyOpWithType<PolyType>;
-using ConvertAnyOpWithSelfType = ConvertAnyOpWithType<SelfType>;
-
 LogicalResult applySubstitution(func::FuncOp polymorph,
                                 const std::map<unsigned int, Type> &substitution) {
   // this type converter will convert each PolyType to its substituted concrete type
@@ -150,13 +138,13 @@ LogicalResult applySubstitution(func::FuncOp polymorph,
     return !isPolymorph(fn);
   });
   target.markUnknownOpDynamicallyLegal([](Operation *op) {
-    // any random operation is legal if it does not mention PolyType
-    return !mentionsType<PolyType>(op);
+    // any random operation is legal if it does not mention a SymbolicTypeInterface
+    return !mentionsSymbolicType(op);
   });
 
   // build a set of rewrite patterns that simply apply the type converter to operand result types
   RewritePatternSet patterns(ctx);
-  patterns.add<ConvertAnyOpWithPolyType>(typeConverter, ctx);
+  patterns.add<ConvertAnyOpWithSymbolicType>(typeConverter, ctx);
   populateFunctionOpInterfaceTypeConversionPattern("func.func", patterns, typeConverter);
 
   // now do a partial conversion
@@ -223,17 +211,17 @@ func::FuncOp cloneAndMonomorphizeSelfType(func::FuncOp method,
   // ConvertAnyOpWithSelfTypes will monomorphize these operations
   ConversionTarget target(*ctx);
   target.addDynamicallyLegalOp<func::FuncOp>([](func::FuncOp fn) {
-    // a FuncOp is legal if its type does not contain SelfType
-    return !functionTypeContains<SelfType>(fn.getFunctionType());
+    // a FuncOp is legal if its type does not contain a symbolic type
+    return !functionTypeContainsSymbolicType(fn.getFunctionType());
   });
   target.markUnknownOpDynamicallyLegal([](Operation *op) {
-    // any random operation is legal if does not mention SelfType
-    return !mentionsType<SelfType>(op);
+    // any random operation is legal if does not mention a symbolic type
+    return !mentionsSymbolicType(op);
   });
 
   // build a set of rewrite patterns that simply apply the type converter to operand result types
   RewritePatternSet patterns(ctx);
-  patterns.add<ConvertAnyOpWithSelfType>(typeConverter, ctx);
+  patterns.add<ConvertAnyOpWithSymbolicType>(typeConverter, ctx);
   populateFunctionOpInterfaceTypeConversionPattern("func.func", patterns, typeConverter);
 
   if (failed(applyPartialConversion(monomorph, target, FrozenRewritePatternSet(std::move(patterns))))) {
