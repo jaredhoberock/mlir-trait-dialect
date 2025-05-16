@@ -25,18 +25,6 @@ template<class MLIRType> bool functionTypeContains(FunctionType ty) {
   return containsType<MLIRType>(ty.getInputs()) || containsType<MLIRType>(ty.getResults());
 }
 
-static bool containsPolyType(TypeRange types) {
-  return containsType<PolyType>(types);
-}
-
-static bool containsPolyType(ArrayRef<NamedAttribute> attrs) {
-  return containsType<PolyType>(attrs);
-}
-
-static bool functionTypeContainsPolyType(FunctionType ty) {
-  return functionTypeContains<PolyType>(ty);
-}
-
 template<class MLIRType> bool mentionsType(Operation* op) {
   // check the operations's
   // * operand types,
@@ -48,8 +36,17 @@ template<class MLIRType> bool mentionsType(Operation* op) {
          containsType<MLIRType>(op->getAttrs());
 }
 
+static bool containsSymbolicType(TypeRange types) {
+  auto isSymbolic = [](Type t) { return isa<SymbolicTypeInterface>(t); };
+  return llvm::any_of(types, isSymbolic);
+}
+
+static bool functionTypeContainsSymbolicType(FunctionType ty) {
+  return containsSymbolicType(ty.getInputs()) || containsSymbolicType(ty.getResults());
+}
+
 bool isPolymorph(func::FuncOp fn) {
-  return functionTypeContainsPolyType(fn.getFunctionType());
+  return functionTypeContainsSymbolicType(fn.getFunctionType());
 }
 
 std::map<unsigned int, Type> buildMonomorphicSubstitutionForCall(TypeRange polymorphicParameterTypes,
