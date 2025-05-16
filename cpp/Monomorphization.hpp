@@ -8,9 +8,6 @@ namespace mlir::trait {
 
 bool isPolymorph(func::FuncOp fn);
 
-std::map<unsigned int, Type> buildMonomorphicSubstitutionForCall(TypeRange polymorphicParameterTypes,
-                                                                 TypeRange argumentTypes);
-
 std::string manglePolymorphicFunctionName(func::FuncOp polymorph,
                                           const std::map<unsigned int, Type> &substitution);
 
@@ -20,5 +17,9 @@ func::FuncOp monomorphizeFunction(func::FuncOp polymorph,
 
 func::FuncOp cloneAndMonomorphizeSelfType(func::FuncOp method,
                                           Type concreteSelfType);
+
+
+LogicalResult applySubstitution(func::FuncOp polymorph,
+                                const std::map<unsigned int, Type> &substitution);
 
 }

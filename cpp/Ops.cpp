@@ -1,4 +1,5 @@
 #include "Dialect.hpp"
+#include "Monomorphization.hpp"
 #include "Ops.hpp"
 #include "Types.hpp"
 #include <llvm/ADT/SmallSet.h>
@@ -277,4 +278,78 @@ LogicalResult FuncCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
                                       getResultTypes(),
                                       getLoc(),
                                       moduleOp);
+}
+
+// XXX TODO instead of assuming that we're building a substitution for PolyTypes,
+//          the substitution should just be a map Type -> Type 
+std::map<unsigned int, Type> FuncCallOp::buildMonomorphicSubstitution() {
+  auto calleeAttr = getCalleeAttr();
+  auto callee = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(*this, calleeAttr);
+
+  TypeRange polymorphicParameterTypes = callee.getFunctionType().getInputs();
+  TypeRange argumentTypes = getOperandTypes();
+
+  if (polymorphicParameterTypes.size() != argumentTypes.size())
+    llvm_unreachable("polymorphicParameterTypes.size() != argumentTypes.size()");
+
+  std::map<unsigned int, Type> substitution;
+
+  // for each unique PolyType in the polymorphic parameter types,
+  // substitute the corresponding monomorphic argument type
+  for (auto [paramTy, argTy] : llvm::zip(polymorphicParameterTypes, argumentTypes)) {
+    if (auto polyTy = dyn_cast<PolyType>(paramTy)) {
+      unsigned int id = polyTy.getUniqueId();
+
+      // check if the substitution already exists
+      auto it = substitution.find(id);
+      if (it != substitution.end()) {
+        // if it exists, ensure consistency
+        if (it->second != argTy) {
+          llvm_unreachable("Inconsistent substitution for PolyType");
+        } 
+      } else {
+        // if no substitution exists, create a new one
+        substitution[id] = argTy;
+      }
+    }
+  }
+
+  return substitution;
+}
+
+func::FuncOp FuncCallOp::cloneAndMonomorphizeCalleeAtInsertionPoint(
+    OpBuilder &builder,
+    StringRef monomorphName) {
+  func::FuncOp polymorph = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(*this, getCalleeAttr());
+  std::map<unsigned int, Type> substitution = buildMonomorphicSubstitution();
+
+  if (polymorph.isExternal()) {
+    polymorph.emitError("cannot monomorphize external function");
+    return nullptr;
+  }
+
+  if (!isPolymorph(polymorph)) {
+    polymorph.emitError("cannot monomorphize function that is not polymorphic");
+    return nullptr;
+  }
+
+  MLIRContext *ctx = (*this)->getContext();
+
+  // clone the polymorph using a temporary builder
+  OpBuilder tempBuilder(ctx);
+  func::FuncOp tempMonomorph = cast<func::FuncOp>(tempBuilder.clone(*polymorph));
+  tempMonomorph.setSymName(monomorphName);
+
+  if (failed(applySubstitution(tempMonomorph, substitution))) {
+    tempMonomorph.erase();
+    return nullptr;
+  }
+
+  // clone the temporary monomorph using the caller's builder
+  func::FuncOp monomorph = cast<func::FuncOp>(builder.clone(*tempMonomorph));
+
+  // we no longer need the temporary monomorph
+  tempMonomorph.erase();
+
+  return monomorph;
 }

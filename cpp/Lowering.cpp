@@ -177,9 +177,7 @@ struct MonomorphizeModule : public OpConversionPattern<ModuleOp> {
       polymorphs.insert(callee);
 
       // build the monomorphic substitution
-      std::map<unsigned int, Type> substitution =
-        buildMonomorphicSubstitutionForCall(callee.getFunctionType().getInputs(),
-                                            call.getOperandTypes());
+      std::map<unsigned int, Type> substitution = call.buildMonomorphicSubstitution();
 
       // get the name of the monomorphic callee
       std::string monomorphName = manglePolymorphicFunctionName(callee, substitution);
@@ -189,17 +187,16 @@ struct MonomorphizeModule : public OpConversionPattern<ModuleOp> {
       if (auto it = monomorphs.find(monomorphName); it != monomorphs.end()) {
         monomorph = it->second;
       } else {
-        func::FuncOp orphanMonomorph = monomorphizeFunction(callee, substitution);
-        if (!orphanMonomorph)
+        // the monomorph doesn't exist yet; create it
+        PatternRewriter::InsertionGuard guard(rewriter);
+        rewriter.setInsertionPointAfter(callee);
+
+        func::FuncOp monomorph =
+          call.cloneAndMonomorphizeCalleeAtInsertionPoint(rewriter, monomorphName);
+        if (!monomorph)
           return call.emitOpError("monomorphization failed");
 
-        // clone the orphan monomorph using the rewriter to ensure it and its body
-        // operations become visible to the lowering process
-        rewriter.setInsertionPointAfter(callee);
-        monomorphs[monomorphName] = monomorph = cast<func::FuncOp>(rewriter.clone(*orphanMonomorph));
-
-        // we no longer need the orphanMonomorph
-        orphanMonomorph.erase();
+        monomorphs[monomorphName] = monomorph;
       }
 
       // replace trait.func.call with func.call to monomorph

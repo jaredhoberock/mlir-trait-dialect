@@ -48,36 +48,6 @@ static bool functionTypeContainsSymbolicType(FunctionType ty) {
 bool isPolymorph(func::FuncOp fn) {
   return functionTypeContainsSymbolicType(fn.getFunctionType());
 }
-
-std::map<unsigned int, Type> buildMonomorphicSubstitutionForCall(TypeRange polymorphicParameterTypes,
-                                                                 TypeRange argumentTypes) {
-  if (polymorphicParameterTypes.size() != argumentTypes.size())
-    llvm_unreachable("polymorphicParameterTypes.size() != argumentTypes.size()");
-
-  std::map<unsigned int, Type> substitution;
-
-  // for each unique PolyType in the polymorphic parameter types,
-  // substitute the corresponding monomorphic argument type 
-  for (auto [paramTy, argTy] : llvm::zip(polymorphicParameterTypes, argumentTypes)) {
-    if (auto polyTy = dyn_cast<PolyType>(paramTy)) {
-      unsigned int id = polyTy.getUniqueId();
-
-      // check if substitution already exists
-      auto it = substitution.find(id);
-      if (it != substitution.end()) {
-        // if it exists, ensure consistency
-        if (it->second != argTy) {
-          llvm_unreachable("Inconsistent substitution for PolyType");
-        }
-      } else {
-        // if no substitution exists, create a new one
-        substitution[id] = argTy;
-      }
-    }
-  }
-  
-  return substitution;
-}
                                                       
 std::string manglePolymorphicFunctionName(func::FuncOp polymorph,
                                           const std::map<unsigned int, Type> &substitution) {
@@ -156,6 +126,43 @@ struct ConvertAnyOpWithType : ConversionPattern {
 using ConvertAnyOpWithPolyType = ConvertAnyOpWithType<PolyType>;
 using ConvertAnyOpWithSelfType = ConvertAnyOpWithType<SelfType>;
 
+LogicalResult applySubstitution(func::FuncOp polymorph,
+                                const std::map<unsigned int, Type> &substitution) {
+  // this type converter will convert each PolyType to its substituted concrete type
+  TypeConverter typeConverter;
+  typeConverter.addConversion([=](Type t) -> std::optional<Type> {
+    if (PolyType polyTy = dyn_cast<PolyType>(t)) {
+      if (auto it = substitution.find(polyTy.getUniqueId()); 
+          it != substitution.end()) {
+        return it->second;
+      }
+    }
+    return t;
+  });
+
+  MLIRContext* ctx = polymorph->getContext();
+
+  // mark illegal any operation which involves !trait.poly
+  // ConvertAnyOpWithPolyType will monomorphize these operations
+  ConversionTarget target(*ctx);
+  target.addDynamicallyLegalOp<func::FuncOp>([](func::FuncOp fn) {
+    // a FuncOp is legal if it is not a polymorph
+    return !isPolymorph(fn);
+  });
+  target.markUnknownOpDynamicallyLegal([](Operation *op) {
+    // any random operation is legal if it does not mention PolyType
+    return !mentionsType<PolyType>(op);
+  });
+
+  // build a set of rewrite patterns that simply apply the type converter to operand result types
+  RewritePatternSet patterns(ctx);
+  patterns.add<ConvertAnyOpWithPolyType>(typeConverter, ctx);
+  populateFunctionOpInterfaceTypeConversionPattern("func.func", patterns, typeConverter);
+
+  // now do a partial conversion
+  return applyPartialConversion(polymorph, target, FrozenRewritePatternSet(std::move(patterns)));
+}
+
 func::FuncOp monomorphizeFunction(func::FuncOp polymorph,
                                   const std::map<unsigned int, Type> &substitution) {
   if (polymorph.isExternal()) {
@@ -182,35 +189,7 @@ func::FuncOp monomorphizeFunction(func::FuncOp polymorph,
   func::FuncOp monomorph = cast<func::FuncOp>(builder.clone(*polymorph));
   monomorph.setSymName(monomorphName);
 
-  // this type converter will convert each PolyType to its substituted concrete type
-  TypeConverter typeConverter;
-  typeConverter.addConversion([=](Type t) -> std::optional<Type> {
-    if (PolyType polyTy = dyn_cast<PolyType>(t)) {
-      if (auto it = substitution.find(polyTy.getUniqueId()); 
-          it != substitution.end()) {
-        return it->second;
-      }
-    }
-    return t;
-  });
-
-  // mark illegal any operation which involves !trait.poly
-  // ConvertAnyOpWithPolyType will monomorphize these operations
-  ConversionTarget target(*ctx);
-  target.addDynamicallyLegalOp<func::FuncOp>([](func::FuncOp fn) {
-    // a FuncOp is legal if it is not a polymorph
-    return !isPolymorph(fn);
-  });
-  target.markUnknownOpDynamicallyLegal([](Operation *op) {
-    // any random operation is legal if it does not mention PolyType
-    return !mentionsType<PolyType>(op);
-  });
-
-  // build a set of rewrite patterns that simply apply the type converter to operand result types
-  RewritePatternSet patterns(ctx);
-  patterns.add<ConvertAnyOpWithPolyType>(typeConverter, ctx);
-  populateFunctionOpInterfaceTypeConversionPattern("func.func", patterns, typeConverter);
-  if (failed(applyPartialConversion(monomorph, target, FrozenRewritePatternSet(std::move(patterns))))) {
+  if (failed(applySubstitution(monomorph, substitution))) {
     monomorph.erase();
     return nullptr;
   }

@@ -257,6 +257,13 @@ def FuncCallOp : TraitDialectOp<"func.call", [
   let results = (outs Variadic<AnyType>);
 
   let extraClassDeclaration = [{
+    // for each PolyType in the callee's parameter types,
+    // creates the mapping poly type id -> argument type
+    std::map<unsigned int, Type> buildMonomorphicSubstitution();
+
+    func::FuncOp cloneAndMonomorphizeCalleeAtInsertionPoint(OpBuilder &builder,
+                                                            StringRef monomorphName);
+
     operand_range getArgOperands() {
       return getOperands();
     }
