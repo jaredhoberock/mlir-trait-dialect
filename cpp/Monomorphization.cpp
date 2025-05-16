@@ -76,6 +76,9 @@ std::string manglePolymorphicFunctionName(func::FuncOp polymorph,
   return result;
 }
 
+// XXX we should pass the substitution to this conversion pattern
+//     and simply check if op needs it
+//     if it doesn't, we return failure
 struct ConvertAnyOpWithSymbolicType : ConversionPattern {
   ConvertAnyOpWithSymbolicType(TypeConverter &tc, MLIRContext *ctx)
     : ConversionPattern(tc, MatchAnyOpTypeTag(), 1, ctx) {}
@@ -207,39 +210,23 @@ func::FuncOp cloneAndMonomorphizeSelfType(func::FuncOp method,
     return nullptr;
   }
 
+  if (!isPolymorph(method)) {
+    method.emitError("cannot monomorphize method that is not polymorphic");
+    return nullptr;
+  }
+
   auto *ctx = method.getContext();
 
   // clone the method
   OpBuilder builder(ctx);
   func::FuncOp monomorph = cast<func::FuncOp>(builder.clone(*method));
 
-  // this type converter will convert each placeholder SelfType to its concrete type
-  TypeConverter typeConverter;
-  typeConverter.addConversion([=](Type t) -> std::optional<Type> {
-    if (isa<SelfType>(t)) {
-      return concreteSelfType;
-    }
-    return t;
-  });
+  // create a substitution mapping SelfType -> concreteSelfType
+  llvm::DenseMap<Type,Type> substitution;
+  substitution[SelfType::get(ctx)] = concreteSelfType;
 
-  // mark illegal any operation which involves !trait.self
-  // ConvertAnyOpWithSelfTypes will monomorphize these operations
-  ConversionTarget target(*ctx);
-  target.addDynamicallyLegalOp<func::FuncOp>([](func::FuncOp fn) {
-    // a FuncOp is legal if its type does not contain a symbolic type
-    return !functionTypeContainsSymbolicType(fn.getFunctionType());
-  });
-  target.markUnknownOpDynamicallyLegal([](Operation *op) {
-    // any random operation is legal if does not mention a symbolic type
-    return !mentionsSymbolicType(op);
-  });
-
-  // build a set of rewrite patterns that simply apply the type converter to operand result types
-  RewritePatternSet patterns(ctx);
-  patterns.add<ConvertAnyOpWithSymbolicType>(typeConverter, ctx);
-  populateFunctionOpInterfaceTypeConversionPattern("func.func", patterns, typeConverter);
-
-  if (failed(applyPartialConversion(monomorph, target, FrozenRewritePatternSet(std::move(patterns))))) {
+  // apply the substitution
+  if (failed(applySubstitution(monomorph, substitution))) {
     monomorph.erase();
     return nullptr;
   }
