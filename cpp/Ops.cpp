@@ -2,6 +2,7 @@
 #include "Monomorphization.hpp"
 #include "Ops.hpp"
 #include "Types.hpp"
+#include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/SmallSet.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/Interfaces/FunctionImplementation.h>
@@ -163,18 +164,16 @@ static bool typeHasImpl(Type type, FlatSymbolRefAttr traitRef, ModuleOp module) 
 static LogicalResult resolvePolyType(Location loc,
                                      PolyType polyTy,
                                      Type monoTy,
-                                     llvm::DenseMap<unsigned,Type> &substitutions,
+                                     llvm::DenseMap<Type,Type> &substitution,
                                      ModuleOp module,
                                      StringRef what,
                                      unsigned position) {
-  auto id = polyTy.getUniqueId();
-
   // If we've already substituted this poly index, ensure consistency
-  if (auto it = substitutions.find(id);
-      it != substitutions.end()) {
+  if (auto it = substitution.find(polyTy);
+      it != substitution.end()) {
     if (it->second != monoTy) {
       return mlir::emitError(loc)
-             << "mismatched substitution for poly index " << id
+             << "mismatched substitution for poly type " << polyTy.getUniqueId()
              << " in " << what << " " << position
              << ": expected " << it->second << ", got " << monoTy;
     }
@@ -187,11 +186,11 @@ static LogicalResult resolvePolyType(Location loc,
     if (!typeHasImpl(monoTy, traitRef, module)) {
       return mlir::emitError(loc)
              << "type " << monoTy << " does not implement required trait " << traitRef
-             << " for poly type " << id << " in " << what << " " << position;
+             << " for poly type " << polyTy.getUniqueId() << " in " << what << " " << position;
     }
   }
 
-  substitutions[id] = monoTy;
+  substitution[polyTy] = monoTy;
   return success();
 }
 
@@ -201,7 +200,7 @@ static LogicalResult checkPolymorphicFunctionCall(
     TypeRange resultTypes,
     Location loc,
     ModuleOp moduleOp) {
-  llvm::DenseMap<unsigned, Type> substitutions;
+  llvm::DenseMap<Type, Type> substitution;
 
   // check argument count
   auto paramTypes = polyFnTy.getInputs();
@@ -217,7 +216,7 @@ static LogicalResult checkPolymorphicFunctionCall(
       continue;
 
     if (auto poly = dyn_cast<PolyType>(param)) {
-      if (failed(resolvePolyType(loc, poly, arg, substitutions, moduleOp, "operand", i)))
+      if (failed(resolvePolyType(loc, poly, arg, substitution, moduleOp, "operand", i)))
         return failure();
     } else {
       return emitError(loc) << "operand " << i << " expected type " << param
@@ -239,7 +238,7 @@ static LogicalResult checkPolymorphicFunctionCall(
       continue;
 
     if (auto poly = dyn_cast<PolyType>(expected)) {
-      if (auto it = substitutions.find(poly.getUniqueId()); it != substitutions.end()) {
+      if (auto it = substitution.find(poly); it != substitution.end()) {
         if (it->second != actual) {
           return emitError(loc) << "result " << i << " expected " << it->second
                                 << " (substituted for poly type " << poly.getUniqueId()
@@ -280,9 +279,7 @@ LogicalResult FuncCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
                                       moduleOp);
 }
 
-// XXX TODO instead of assuming that we're building a substitution for PolyTypes,
-//          the substitution should just be a map Type -> Type 
-std::map<unsigned int, Type> FuncCallOp::buildMonomorphicSubstitution() {
+DenseMap<Type, Type> FuncCallOp::buildMonomorphicSubstitution() {
   auto calleeAttr = getCalleeAttr();
   auto callee = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(*this, calleeAttr);
 
@@ -292,16 +289,14 @@ std::map<unsigned int, Type> FuncCallOp::buildMonomorphicSubstitution() {
   if (polymorphicParameterTypes.size() != argumentTypes.size())
     llvm_unreachable("polymorphicParameterTypes.size() != argumentTypes.size()");
 
-  std::map<unsigned int, Type> substitution;
+  llvm::DenseMap<Type, Type> substitution;
 
   // for each unique PolyType in the polymorphic parameter types,
   // substitute the corresponding monomorphic argument type
   for (auto [paramTy, argTy] : llvm::zip(polymorphicParameterTypes, argumentTypes)) {
-    if (auto polyTy = dyn_cast<PolyType>(paramTy)) {
-      unsigned int id = polyTy.getUniqueId();
-
+    if (isa<PolyType>(paramTy)) {
       // check if the substitution already exists
-      auto it = substitution.find(id);
+      auto it = substitution.find(paramTy);
       if (it != substitution.end()) {
         // if it exists, ensure consistency
         if (it->second != argTy) {
@@ -309,7 +304,7 @@ std::map<unsigned int, Type> FuncCallOp::buildMonomorphicSubstitution() {
         } 
       } else {
         // if no substitution exists, create a new one
-        substitution[id] = argTy;
+        substitution[paramTy] = argTy;
       }
     }
   }
@@ -321,7 +316,7 @@ func::FuncOp FuncCallOp::cloneAndMonomorphizeCalleeAtInsertionPoint(
     OpBuilder &builder,
     StringRef monomorphName) {
   func::FuncOp polymorph = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(*this, getCalleeAttr());
-  std::map<unsigned int, Type> substitution = buildMonomorphicSubstitution();
+  llvm::DenseMap<Type, Type> substitution = buildMonomorphicSubstitution();
 
   if (polymorph.isExternal()) {
     polymorph.emitError("cannot monomorphize external function");

@@ -5,6 +5,21 @@
 
 namespace mlir::trait {
 
+static Type apply(Type ty, const DenseMap<Type, Type> &substitution) {
+  AttrTypeReplacer replacer;
+
+  replacer.addReplacement([&](Type type) -> std::optional<Type> {
+    auto it = substitution.find(type);
+    if (auto it = substitution.find(type);
+        it != substitution.end()) {
+      return it->second;
+    }
+    return std::nullopt;
+  });
+
+  return replacer.replace(ty);
+}
+
 static bool containsSymbolicType(TypeRange types) {
   auto isSymbolic = [](Type t) { return isa<SymbolicTypeInterface>(t); };
   return llvm::any_of(types, isSymbolic);
@@ -21,6 +36,12 @@ static bool containsSymbolicType(ArrayRef<NamedAttribute> attrs) {
   return false;
 }
 
+// XXX TODO instead of mentionsSymbolicType,
+//          it would probably be better simply to
+//          apply some substitution to the op's operand types, result types, and attribute types
+//          and check if there's any change
+//
+//          we could name this operationNeedsSubstitution(op, substitution)
 static bool mentionsSymbolicType(Operation* op) {
   // check the operation's
   // * operand types,
@@ -41,11 +62,11 @@ bool isPolymorph(func::FuncOp fn) {
 }
                                                       
 std::string manglePolymorphicFunctionName(func::FuncOp polymorph,
-                                          const std::map<unsigned int, Type> &substitution) {
+                                          const DenseMap<Type, Type> &substitution) {
   std::string result = polymorph.getSymName().str();
 
   // append substituted concrete types to the mangled name
-  for (auto [index, substitutedTy] : substitution) {
+  for (auto [_, substitutedTy] : substitution) {
     llvm::raw_string_ostream os(result);
     os << "_";
     substitutedTy.print(os);
@@ -115,17 +136,11 @@ struct ConvertAnyOpWithSymbolicType : ConversionPattern {
 };
 
 LogicalResult applySubstitution(func::FuncOp polymorph,
-                                const std::map<unsigned int, Type> &substitution) {
-  // this type converter will convert each PolyType to its substituted concrete type
+                                const DenseMap<Type, Type> &substitution) {
+  // this type converter applies the substitution to the given type
   TypeConverter typeConverter;
-  typeConverter.addConversion([=](Type t) -> std::optional<Type> {
-    if (PolyType polyTy = dyn_cast<PolyType>(t)) {
-      if (auto it = substitution.find(polyTy.getUniqueId()); 
-          it != substitution.end()) {
-        return it->second;
-      }
-    }
-    return t;
+  typeConverter.addConversion([&](Type t) -> std::optional<Type> {
+    return apply(t, substitution);
   });
 
   MLIRContext* ctx = polymorph->getContext();
@@ -152,7 +167,7 @@ LogicalResult applySubstitution(func::FuncOp polymorph,
 }
 
 func::FuncOp monomorphizeFunction(func::FuncOp polymorph,
-                                  const std::map<unsigned int, Type> &substitution) {
+                                  const DenseMap<Type, Type> &substitution) {
   if (polymorph.isExternal()) {
     polymorph.emitError("cannot monomorphize external function");
     return nullptr;

@@ -258,8 +258,8 @@ def FuncCallOp : TraitDialectOp<"func.call", [
 
   let extraClassDeclaration = [{
     // for each PolyType in the callee's parameter types,
-    // creates the mapping poly type id -> argument type
-    std::map<unsigned int, Type> buildMonomorphicSubstitution();
+    // creates the mapping poly type -> argument type
+    llvm::DenseMap<Type, Type> buildMonomorphicSubstitution();
 
     func::FuncOp cloneAndMonomorphizeCalleeAtInsertionPoint(OpBuilder &builder,
                                                             StringRef monomorphName);

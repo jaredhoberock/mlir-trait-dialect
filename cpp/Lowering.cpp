@@ -177,7 +177,7 @@ struct MonomorphizeModule : public OpConversionPattern<ModuleOp> {
       polymorphs.insert(callee);
 
       // build the monomorphic substitution
-      std::map<unsigned int, Type> substitution = call.buildMonomorphicSubstitution();
+      DenseMap<Type, Type> substitution = call.buildMonomorphicSubstitution();
 
       // get the name of the monomorphic callee
       std::string monomorphName = manglePolymorphicFunctionName(callee, substitution);
