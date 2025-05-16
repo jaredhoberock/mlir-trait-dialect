@@ -78,6 +78,7 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   return success();
 }
 
+// XXX TODO this should use apply(ty, substitution)
 FunctionType monomorphizeFunctionType(FunctionType polyFnTy,
                                       Type monoSelfTy) {
   auto monomorphize = [&](Type type) -> Type {

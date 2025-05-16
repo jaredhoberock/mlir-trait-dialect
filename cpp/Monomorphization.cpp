@@ -20,15 +20,20 @@ static Type apply(Type ty, const DenseMap<Type, Type> &substitution) {
   return replacer.replace(ty);
 }
 
+static bool containsSymbolicType(Type ty) {
+  // XXX TODO we actually need to traverse subelements of ty
+  //          for this check to be correct
+  return isa<SymbolicTypeInterface>(ty);
+}
+
 static bool containsSymbolicType(TypeRange types) {
-  auto isSymbolic = [](Type t) { return isa<SymbolicTypeInterface>(t); };
-  return llvm::any_of(types, isSymbolic);
+  return llvm::any_of(types, containsSymbolicType);
 }
 
 static bool containsSymbolicType(ArrayRef<NamedAttribute> attrs) {
   for (const auto &attr : attrs) {
     if (auto typeAttr = dyn_cast<TypeAttr>(attr.getValue())) {
-      if (isa<SymbolicTypeInterface>(typeAttr.getValue())) {
+      if (containsSymbolicType(typeAttr.getValue())) {
         return true;
       }
     }
@@ -36,21 +41,36 @@ static bool containsSymbolicType(ArrayRef<NamedAttribute> attrs) {
   return false;
 }
 
-// XXX TODO instead of mentionsSymbolicType,
-//          it would probably be better simply to
-//          apply some substitution to the op's operand types, result types, and attribute types
-//          and check if there's any change
-//
-//          we could name this operationNeedsSubstitution(op, substitution)
-static bool mentionsSymbolicType(Operation* op) {
+static bool operationNeedsSubstitution(Operation* op, const DenseMap<Type,Type> &substitution) {
   // check the operation's
   // * operand types,
   // * result types,
   // * and attribute types
-  // for any mention of a SymbolicTypeInterface type
-  return containsSymbolicType(op->getOperandTypes()) ||
-         containsSymbolicType(op->getResultTypes()) ||
-         containsSymbolicType(op->getAttrs());
+  // if any of them are transformed by the substitution,
+  // then the op contains types that are mentioned in the domain of substitution
+
+  // XXX TODO this search is probably inefficient since
+  // apply() creates a new AttrTypeReplacer each time it is called
+
+  for (auto ty : op->getOperandTypes()) {
+    if (apply(ty, substitution) != ty)
+      return true;
+  }
+
+  for (auto ty : op->getResultTypes()) {
+    if (apply(ty, substitution) != ty)
+      return true;
+  }
+
+  for (const auto &attr : op->getAttrs()) {
+    if (auto typeAttr = dyn_cast<TypeAttr>(attr.getValue())) {
+      Type ty = typeAttr.getValue();
+      if (apply(ty, substitution) != ty)
+        return true;
+    }
+  }
+
+  return false;
 }
 
 static bool functionTypeContainsSymbolicType(FunctionType ty) {
@@ -76,16 +96,17 @@ std::string manglePolymorphicFunctionName(func::FuncOp polymorph,
   return result;
 }
 
-// XXX we should pass the substitution to this conversion pattern
-//     and simply check if op needs it
-//     if it doesn't, we return failure
-struct ConvertAnyOpWithSymbolicType : ConversionPattern {
-  ConvertAnyOpWithSymbolicType(TypeConverter &tc, MLIRContext *ctx)
-    : ConversionPattern(tc, MatchAnyOpTypeTag(), 1, ctx) {}
+struct ConvertAnyOpThatNeedsSubstitution : ConversionPattern {
+  ConvertAnyOpThatNeedsSubstitution(
+      TypeConverter &tc,
+      MLIRContext *ctx,
+      const llvm::DenseMap<Type,Type>& substitution)
+    : ConversionPattern(tc, MatchAnyOpTypeTag(), 1, ctx),
+      substitution(substitution) {}
 
-  LogicalResult matchAndRewrite(Operation *op, ArrayRef<Value> operands,
+  LogicalResult matchAndRewrite(Operation* op, ArrayRef<Value> operands,
                                 ConversionPatternRewriter &rewriter) const override {
-    if (!mentionsSymbolicType(op)) {
+    if (!operationNeedsSubstitution(op, substitution)) {
       return failure();
     }
 
@@ -136,6 +157,9 @@ struct ConvertAnyOpWithSymbolicType : ConversionPattern {
     rewriter.replaceOp(op, newOp->getResults());
     return success();
   }
+
+  private:
+    const llvm::DenseMap<Type,Type>& substitution;
 };
 
 LogicalResult applySubstitution(func::FuncOp polymorph,
@@ -148,21 +172,17 @@ LogicalResult applySubstitution(func::FuncOp polymorph,
 
   MLIRContext* ctx = polymorph->getContext();
 
-  // mark illegal any operation which involves !trait.poly
-  // ConvertAnyOpWithPolyType will monomorphize these operations
+  // mark illegal any operation which mentions a type in the domain of the substitution
+  // ConvertAnyOpThatNeedsSubstitution will monomorphize these operations
   ConversionTarget target(*ctx);
-  target.addDynamicallyLegalOp<func::FuncOp>([](func::FuncOp fn) {
-    // a FuncOp is legal if it is not a polymorph
-    return !isPolymorph(fn);
-  });
-  target.markUnknownOpDynamicallyLegal([](Operation *op) {
-    // any random operation is legal if it does not mention a SymbolicTypeInterface
-    return !mentionsSymbolicType(op);
+  target.markUnknownOpDynamicallyLegal([&](Operation *op) {
+    // any random operation is legal if it does not need the substitution
+    return !operationNeedsSubstitution(op, substitution);
   });
 
-  // build a set of rewrite patterns that simply apply the type converter to operand result types
+  // build a set of rewrite patterns that converts ops that need the substitution
   RewritePatternSet patterns(ctx);
-  patterns.add<ConvertAnyOpWithSymbolicType>(typeConverter, ctx);
+  patterns.add<ConvertAnyOpThatNeedsSubstitution>(typeConverter, ctx, substitution);
   populateFunctionOpInterfaceTypeConversionPattern("func.func", patterns, typeConverter);
 
   // now do a partial conversion
@@ -203,6 +223,8 @@ func::FuncOp monomorphizeFunction(func::FuncOp polymorph,
   return monomorph;
 }
 
+// XXX TODO this function shouldn't even exist, methods should
+//          by monomorphized via monomorphizeFunction
 func::FuncOp cloneAndMonomorphizeSelfType(func::FuncOp method,
                                           Type concreteSelfType) {
   if (method.isExternal()) {
