@@ -18,7 +18,7 @@ DIALECT_SOURCES := c_api.cpp Dialect.cpp Lowering.cpp Monomorphization.cpp Ops.c
 DIALECT_OBJECTS := $(DIALECT_SOURCES:.cpp=.o)
 
 # Generated files
-GENERATED := Dialect.hpp.inc Dialect.cpp.inc Ops.hpp.inc Ops.cpp.inc Types.hpp.inc Types.cpp.inc
+GENERATED := Dialect.hpp.inc Dialect.cpp.inc Ops.hpp.inc Ops.cpp.inc Types.hpp.inc Types.cpp.inc TypeInterfaces.hpp.inc TypeInterfaces.cpp.inc
 
 .PHONY: all clean
 
@@ -42,6 +42,12 @@ Types.hpp.inc: Types.td
 
 Types.cpp.inc: Types.td
 	$(TBLGEN) --gen-typedef-defs $(INCLUDES) $< -o $@
+
+TypeInterfaces.hpp.inc: TypeInterfaces.td
+	$(TBLGEN) --gen-type-interface-decls $(INCLUDES) $< -o $@
+
+TypeInterfaces.cpp.inc: Types.td
+	$(TBLGEN) --gen-type-interface-defs $(INCLUDES) $< -o $@
 
 # Object file rules
 %.o: %.cpp $(GENERATED)

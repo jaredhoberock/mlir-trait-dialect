@@ -3,9 +3,10 @@
 
 include "mlir/IR/AttrTypeBase.td"
 include "Dialect.td"
+include "TypeInterfaces.td"
 
 // Represents the type of an impling type within a trait.method
-def SelfType : TypeDef<TraitDialect, "Self"> {
+def SelfType : TypeDef<TraitDialect, "Self", [SymbolicTypeInterface]> {
   let mnemonic = "self";
   let summary = "Placeholder for the implementing type within a trait or impl";
 
@@ -24,7 +25,7 @@ def SelfType : TypeDef<TraitDialect, "Self"> {
 }
 
 // Represents a universally quantified type parameter constrained by a list of traits.
-def PolyType : TypeDef<TraitDialect, "Poly"> {
+def PolyType : TypeDef<TraitDialect, "Poly", [SymbolicTypeInterface]> {
   let mnemonic = "poly";
   let summary = "A polymorphic type parameter constrained by one or more traits";
 
