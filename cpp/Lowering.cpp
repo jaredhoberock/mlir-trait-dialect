@@ -98,9 +98,6 @@ struct MonomorphizeModule : public OpConversionPattern<ModuleOp> {
       calls.push_back(call);
     });
 
-    // collect all needed monomorphs
-    std::map<std::string, func::FuncOp> monomorphs;
-
     // monomorphize each call
     for (FuncCallOp call : calls) {
       PatternRewriter::InsertionGuard guard(rewriter);
