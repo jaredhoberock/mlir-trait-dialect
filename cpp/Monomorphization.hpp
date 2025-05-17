@@ -9,14 +9,16 @@ namespace mlir::trait {
 
 bool isPolymorph(func::FuncOp fn);
 
+std::string mangleMethodName(StringRef traitName, Type receiverType, StringRef methodName);
+
 std::string manglePolymorphicFunctionName(func::FuncOp polymorph,
                                           const DenseMap<Type, Type> &substitution);
 
 func::FuncOp monomorphizeFunction(func::FuncOp polymorph,
                                   const DenseMap<Type, Type> &substitution);
 
-func::FuncOp cloneAndMonomorphizeSelfType(func::FuncOp method,
-                                          Type concreteSelfType);
+func::FuncOp cloneAndSubstituteReceiverType(func::FuncOp method,
+                                            Type receiverType);
 
 
 LogicalResult applySubstitution(func::FuncOp polymorph,

@@ -9,24 +9,6 @@
 
 namespace mlir::trait {
 
-static std::string mangleMethodName(
-    StringRef traitName,
-    Type receiverType,
-    StringRef methodName) 
-{
-  std::string result;
-  llvm::raw_string_ostream os(result);
-
-  os << "__trait_" << traitName;
-  os << "_impl_";
-
-  receiverType.print(os);
-
-  os << "_" << methodName; // e.g., "eq"
-
-  return os.str();
-}
-
 struct ImplOpLowering : public OpConversionPattern<ImplOp> {
   using OpConversionPattern::OpConversionPattern;
 
@@ -41,45 +23,14 @@ struct ImplOpLowering : public OpConversionPattern<ImplOp> {
       return rewriter.notifyMatchFailure(implOp, "receiver type is still symbolic");
     }
 
-    auto module = implOp->getParentOfType<ModuleOp>();
-    if (!module)
-      return rewriter.notifyMatchFailure(implOp, "not inside a module");
+    // clone any optional methods into the ImplOp that it needs
+    if (auto errMsg = implOp.cloneAndSubstituteMissingOptionalTraitMethodsIntoBody(rewriter))
+      return rewriter.notifyMatchFailure(implOp, *errMsg);
 
-    // search in the module for the trait
-    auto traitOp = SymbolTable::lookupNearestSymbolFrom<TraitOp>(module, implOp.getTraitAttr());
-    if (!traitOp)
-      return implOp.emitOpError("could not find trait");
+    // hoist all methods into the parent op with mangled names
+    implOp.moveMethodsIntoParentWithMangledNames(rewriter);
 
-    // for each optional method in the trait,
-    // if that impl does not provide this method,
-    // clone and monomorphize the default implementation into the trait
-    for (auto method : traitOp.getOptionalMethods()) {
-      if (!implOp.hasMethod(method.getSymName())) {
-        // XXX is there a way to do this without creating this extra clone?
-        auto orphanMonomorph = cloneAndMonomorphizeSelfType(method, receiverType);
-        if (!orphanMonomorph)
-          return implOp.emitOpError("monomorphization failed");
-
-        rewriter.setInsertionPointToEnd(&implOp.getBody().front());
-        rewriter.clone(*orphanMonomorph);
-        orphanMonomorph.erase();
-      }
-    }
-
-    // collect all methods in the ImplOp
-    std::vector<func::FuncOp> methods = implOp.getMethods();
-
-    // hoist methods into the parent op with mangled names
-    for (auto method : methods) {
-      rewriter.moveOpBefore(method, implOp);
-      method.setSymName(mangleMethodName(
-        implOp.getTrait(),
-        implOp.getReceiverType(),
-        method.getSymName()
-      ));
-    }
-
-    // after all methods are lowered, erase the ImplOp itself
+    // finally, erase the ImplOp itself
     rewriter.eraseOp(implOp);
 
     return success();

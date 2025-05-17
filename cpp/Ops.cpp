@@ -78,6 +78,61 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   return success();
 }
 
+
+std::optional<std::string> ImplOp::cloneAndSubstituteMissingOptionalTraitMethodsIntoBody(OpBuilder& builder) {
+  auto module = (*this)->getParentOfType<ModuleOp>();
+  if (!module)
+    return "not inside a module";
+
+  // search in the module for the trait
+  auto traitOp = mlir::SymbolTable::lookupNearestSymbolFrom<TraitOp>(module, getTraitAttr());
+  if (!traitOp)
+    return "could not find trait";
+
+  // for each optional method in the trait,
+  // if this ImplOp does not provide the method,
+  // clone and monomorphize the default implementation into the trait
+  for (auto method : traitOp.getOptionalMethods()) {
+    if (!hasMethod(method.getSymName())) {
+      // XXX is there a way to do this without creating this extra clone?
+      auto methodClone = cloneAndSubstituteReceiverType(method, getReceiverType());
+      if (!methodClone)
+        return "method cloning failed";
+
+      PatternRewriter::InsertionGuard guard(builder);
+      builder.setInsertionPointToEnd(&getBody().front());
+      builder.clone(*methodClone);
+
+      // we no longer need the temporary clone
+      methodClone.erase();
+    }
+  }
+
+  return std::nullopt;
+}
+
+
+void ImplOp::moveMethodsIntoParentWithMangledNames(RewriterBase& rewriter) {
+  PatternRewriter::InsertionGuard guard(rewriter);
+
+  // collect all methods
+  std::vector<func::FuncOp> methods = getMethods();
+
+  // hoist methods into the parent op with mangled names
+  for (auto method : methods) {
+    // mangle the method name before moving it
+    method.setSymName(mangleMethodName(
+      getTrait(),
+      getReceiverType(),
+      method.getSymName()
+    ));
+
+    // move the method into the ImplOp's parent
+    rewriter.moveOpBefore(method, *this);
+  }
+}
+
+
 // XXX TODO this should use apply(ty, substitution)
 FunctionType monomorphizeFunctionType(FunctionType polyFnTy,
                                       Type monoReceiverTy) {

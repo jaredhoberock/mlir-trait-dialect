@@ -98,6 +98,26 @@ std::string manglePolymorphicFunctionName(func::FuncOp polymorph,
   return result;
 }
 
+
+std::string mangleMethodName(
+    StringRef traitName,
+    Type receiverType,
+    StringRef methodName) 
+{
+  std::string result;
+  llvm::raw_string_ostream os(result);
+
+  os << "__trait_" << traitName;
+  os << "_impl_";
+
+  receiverType.print(os);
+
+  os << "_" << methodName; // e.g., "eq"
+
+  return os.str();
+}
+
+
 struct ConvertAnyOpThatNeedsSubstitution : ConversionPattern {
   ConvertAnyOpThatNeedsSubstitution(
       TypeConverter &tc,
@@ -227,8 +247,8 @@ func::FuncOp monomorphizeFunction(func::FuncOp polymorph,
 
 // XXX TODO this function shouldn't even exist, methods should
 //          by monomorphized via monomorphizeFunction
-func::FuncOp cloneAndMonomorphizeSelfType(func::FuncOp method,
-                                          Type receiverType) {
+func::FuncOp cloneAndSubstituteReceiverType(func::FuncOp method,
+                                            Type receiverType) {
   if (method.isExternal()) {
     method.emitError("cannot monomorphize external function");
     return nullptr;
