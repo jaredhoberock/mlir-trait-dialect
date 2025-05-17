@@ -404,3 +404,45 @@ func::FuncOp FuncCallOp::cloneAndMonomorphizeCalleeAtInsertionPoint(
 
   return monomorph;
 }
+
+// inserts a func.call op at builder's insertion point to this trait.func.call op's
+// monomorphized callee. If the callee's monomorph does not exist yet,
+// the polymorphic callee will be cloned and monomorphized into the module
+// if the intended edit fails, returns an error string
+func::CallOp FuncCallOp::monomorphizeAtInsertionPoint(OpBuilder &builder) {
+  // lookup the callee
+  auto callee = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(*this, getCalleeAttr());
+  if (!callee) {
+    emitOpError("could not find callee");
+    return nullptr;
+  }
+
+  // build the monomorphic substitution
+  DenseMap<Type, Type> substitution = buildMonomorphicSubstitution();
+
+  // get the name of the monomorphic callee
+  std::string monomorphName = manglePolymorphicFunctionName(callee, substitution);
+
+  // lookup the monomorphic callee
+  func::FuncOp monomorph =
+    SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(*this, builder.getStringAttr(monomorphName));
+
+  if (!monomorph) {
+    // the monomorph doesn't exist yet; create it
+    PatternRewriter::InsertionGuard guard(builder);
+    builder.setInsertionPointAfter(callee);
+    monomorph = cloneAndMonomorphizeCalleeAtInsertionPoint(builder, monomorphName);
+    if (!monomorph) {
+      emitOpError("monomorphization failed");
+      return nullptr;
+    }
+  }
+
+  // insert a normal func.call op to the monomorphic callee
+  return builder.create<func::CallOp>(
+    getLoc(),
+    monomorphName,
+    getResultTypes(),
+    getOperands()
+  );
+}

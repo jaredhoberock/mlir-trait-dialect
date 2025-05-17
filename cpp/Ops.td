@@ -269,6 +269,11 @@ def FuncCallOp : TraitDialectOp<"func.call", [
     func::FuncOp cloneAndMonomorphizeCalleeAtInsertionPoint(OpBuilder &builder,
                                                             StringRef monomorphName);
 
+    // inserts a func.call op at builder's insertion point to this trait.func.call op's
+    // monomorphized callee. If the callee's monomorph does not exist yet,
+    // the polymorphic callee will be cloned and monomorphized into the module
+    func::CallOp monomorphizeAtInsertionPoint(OpBuilder &builder);
+
     operand_range getArgOperands() {
       return getOperands();
     }

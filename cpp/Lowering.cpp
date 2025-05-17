@@ -89,14 +89,6 @@ struct MonomorphizeModule : public OpConversionPattern<ModuleOp> {
       ModuleOp module,
       OpAdaptor adaptor,
       ConversionPatternRewriter &rewriter) const override {
-    // collect all polymorphic func.func ops
-    std::set<func::FuncOp> polymorphs;
-    module.walk([&](func::FuncOp func) {
-      if (isPolymorph(func)) {
-        polymorphs.insert(func);
-      }
-    });
-
     // collect all trait.func.call ops
     // XXX consider whether traversing the users of each polymorph
     //     is a better way to collect these
@@ -109,67 +101,25 @@ struct MonomorphizeModule : public OpConversionPattern<ModuleOp> {
     // collect all needed monomorphs
     std::map<std::string, func::FuncOp> monomorphs;
 
-    // process each call
+    // monomorphize each call
     for (FuncCallOp call : calls) {
-      auto calleeAttr = call.getCalleeAttr();
-      auto callee = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(call, calleeAttr);
-
-      if (!callee)
-        return call.emitOpError("could not find callee");
-
-      // check if callee is polymorphic
-      if (!isPolymorph(callee)) {
-        // callee is not polymorphic, just replace trait.func.call with func.call
-        rewriter.setInsertionPoint(call);
-        rewriter.replaceOpWithNewOp<func::CallOp>(
-          call,
-          calleeAttr,
-          call.getResultTypes(),
-          call.getOperands()
-        );
-        continue;
-      }
-
-      // callee is polymorphic
-      polymorphs.insert(callee);
-
-      // build the monomorphic substitution
-      DenseMap<Type, Type> substitution = call.buildMonomorphicSubstitution();
-
-      // get the name of the monomorphic callee
-      std::string monomorphName = manglePolymorphicFunctionName(callee, substitution);
-      func::FuncOp monomorph;
-
-      // find the monomorph if it already exists; create it if it doesn't
-      if (auto it = monomorphs.find(monomorphName); it != monomorphs.end()) {
-        monomorph = it->second;
-      } else {
-        // the monomorph doesn't exist yet; create it
-        PatternRewriter::InsertionGuard guard(rewriter);
-        rewriter.setInsertionPointAfter(callee);
-
-        func::FuncOp monomorph =
-          call.cloneAndMonomorphizeCalleeAtInsertionPoint(rewriter, monomorphName);
-        if (!monomorph)
-          return call.emitOpError("monomorphization failed");
-
-        monomorphs[monomorphName] = monomorph;
-      }
-
-      // replace trait.func.call with func.call to monomorph
+      PatternRewriter::InsertionGuard guard(rewriter);
       rewriter.setInsertionPoint(call);
-      rewriter.replaceOpWithNewOp<func::CallOp>(
-          call,
-          monomorphName,
-          call.getResultTypes(),
-          call.getOperands()
-      );
+      auto monomorphicCall = call.monomorphizeAtInsertionPoint(rewriter);
+      if (!monomorphicCall)
+        return failure();
+      rewriter.replaceOp(call, monomorphicCall);
     }
 
-    // after all trait.func.call ops are replaced, it should be safe to erase polymorphs
-    // XXX TODO in general, there can be other users of the polymorphs
-    //          somehow we need to monomorphize other possible uses
-    for (func::FuncOp polymorph : polymorphs) {
+    // collect & erase all polymorphs
+    std::set<func::FuncOp> polymorphs;
+    module.walk([&](func::FuncOp func) {
+      if (isPolymorph(func)) {
+        polymorphs.insert(func);
+      }
+    });
+
+    for (auto polymorph : polymorphs) {
       rewriter.eraseOp(polymorph);
     }
 
