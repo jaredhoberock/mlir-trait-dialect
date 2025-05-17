@@ -405,11 +405,7 @@ func::FuncOp FuncCallOp::cloneAndMonomorphizeCalleeAtInsertionPoint(
   return monomorph;
 }
 
-// inserts a func.call op at builder's insertion point to this trait.func.call op's
-// monomorphized callee. If the callee's monomorph does not exist yet,
-// the polymorphic callee will be cloned and monomorphized into the module
-// if the intended edit fails, returns an error string
-func::CallOp FuncCallOp::monomorphizeAtInsertionPoint(OpBuilder &builder) {
+func::FuncOp FuncCallOp::getOrCreateMonomorphicCallee(OpBuilder& builder) {
   // lookup the callee
   auto callee = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(*this, getCalleeAttr());
   if (!callee) {
@@ -438,10 +434,24 @@ func::CallOp FuncCallOp::monomorphizeAtInsertionPoint(OpBuilder &builder) {
     }
   }
 
+  return monomorph;
+}
+
+// inserts a func.call op at builder's insertion point to this trait.func.call op's
+// monomorphized callee. If the callee's monomorph does not exist yet,
+// the polymorphic callee will be cloned and monomorphized into the module
+// if the intended edit fails, returns an error string
+func::CallOp FuncCallOp::monomorphizeAtInsertionPoint(OpBuilder &builder) {
+  func::FuncOp monomorph = getOrCreateMonomorphicCallee(builder);
+  if (!monomorph) {
+    emitOpError("monomorphization failed");
+    return nullptr;
+  }
+
   // insert a normal func.call op to the monomorphic callee
   return builder.create<func::CallOp>(
     getLoc(),
-    monomorphName,
+    monomorph.getSymName(),
     getResultTypes(),
     getOperands()
   );

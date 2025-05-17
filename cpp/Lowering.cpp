@@ -99,6 +99,8 @@ struct MonomorphizeModule : public OpConversionPattern<ModuleOp> {
     });
 
     // monomorphize each call
+    // XXX TODO i think it would be better if we simply monomorphized callees
+    //          and let FuncCallOps rewrite themselves in a pattern
     for (FuncCallOp call : calls) {
       PatternRewriter::InsertionGuard guard(rewriter);
       rewriter.setInsertionPoint(call);
