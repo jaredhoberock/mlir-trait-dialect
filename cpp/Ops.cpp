@@ -80,9 +80,9 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
 // XXX TODO this should use apply(ty, substitution)
 FunctionType monomorphizeFunctionType(FunctionType polyFnTy,
-                                      Type monoSelfTy) {
+                                      Type monoReceiverTy) {
   auto monomorphize = [&](Type type) -> Type {
-    if (isa<SelfType>(type)) return monoSelfTy;
+    if (isa<SelfType>(type)) return monoReceiverTy;
     return type;
   };
 
@@ -109,7 +109,7 @@ LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable)
 
   auto traitAttr = getTraitAttr();
   auto methodAttr = cast<FlatSymbolRefAttr>(methodRef.getNestedReferences().front());
-  auto selfTyAttr = getSelfTypeAttr();
+  auto receiverTyAttr = getReceiverTypeAttr();
 
   // look up the TraitOp
   auto traitOp = dyn_cast_or_null<TraitOp>(SymbolTable::lookupSymbolIn(moduleOp, traitAttr));
@@ -123,19 +123,19 @@ LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable)
     return emitOpError() << "cannot find method '" << methodAttr << "' in trait '" << traitAttr << "'";
   }
 
-  Type monoSelfTy = selfTyAttr.getValue();
+  Type monoReceiverTy = receiverTyAttr.getValue();
 
   // if monoSelfTy is !trait.poly, verify that the trait appears in its constraints
-  if (auto paramTy = dyn_cast<PolyType>(monoSelfTy)) {
+  if (auto paramTy = dyn_cast<PolyType>(monoReceiverTy)) {
     if (!llvm::is_contained(paramTy.getTraits(), traitAttr))
       return emitOpError()
         << paramTy << " is not constrained by trait '" << traitAttr << "'";
   }
 
-  // monomorphize the method's type using the concrete self type
+  // monomorphize the method's type using the concrete receiver type
   FunctionType monoFnTy = monomorphizeFunctionType(
       method.getFunctionType(), 
-      monoSelfTy);
+      monoReceiverTy);
 
   if (getOperands().getTypes() != monoFnTy.getInputs())
     return emitOpError() << "expected operand types " << monoFnTy.getInputs();
@@ -154,7 +154,7 @@ static bool typeHasImpl(Type type, FlatSymbolRefAttr traitRef, ModuleOp module) 
 
   for (ImplOp impl : module.getOps<ImplOp>()) {
     if (impl.getTraitAttr() == traitRef &&
-        impl.getConcreteTypeAttr().getValue() == type) {
+        impl.getReceiverTypeAttr().getValue() == type) {
       return true;
     }
   }

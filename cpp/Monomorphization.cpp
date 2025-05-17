@@ -27,7 +27,9 @@ static bool containsSymbolicType(Type ty) {
 }
 
 static bool containsSymbolicType(TypeRange types) {
-  return llvm::any_of(types, containsSymbolicType);
+  return llvm::any_of(types, [](Type t) {
+    return containsSymbolicType(t);
+  });
 }
 
 static bool containsSymbolicType(ArrayRef<NamedAttribute> attrs) {
@@ -226,7 +228,7 @@ func::FuncOp monomorphizeFunction(func::FuncOp polymorph,
 // XXX TODO this function shouldn't even exist, methods should
 //          by monomorphized via monomorphizeFunction
 func::FuncOp cloneAndMonomorphizeSelfType(func::FuncOp method,
-                                          Type concreteSelfType) {
+                                          Type receiverType) {
   if (method.isExternal()) {
     method.emitError("cannot monomorphize external function");
     return nullptr;
@@ -243,9 +245,9 @@ func::FuncOp cloneAndMonomorphizeSelfType(func::FuncOp method,
   OpBuilder builder(ctx);
   func::FuncOp monomorph = cast<func::FuncOp>(builder.clone(*method));
 
-  // create a substitution mapping SelfType -> concreteSelfType
+  // create a substitution mapping SelfType -> receiverType
   llvm::DenseMap<Type,Type> substitution;
-  substitution[SelfType::get(ctx)] = concreteSelfType;
+  substitution[SelfType::get(ctx)] = receiverType;
 
   // apply the substitution
   if (failed(applySubstitution(monomorph, substitution))) {

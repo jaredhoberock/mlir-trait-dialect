@@ -11,7 +11,7 @@ namespace mlir::trait {
 
 static std::string mangleMethodName(
     StringRef traitName,
-    Type concreteSelfType,
+    Type receiverType,
     StringRef methodName) 
 {
   std::string result;
@@ -20,7 +20,7 @@ static std::string mangleMethodName(
   os << "__trait_" << traitName;
   os << "_impl_";
 
-  concreteSelfType.print(os);
+  receiverType.print(os);
 
   os << "_" << methodName; // e.g., "eq"
 
@@ -34,6 +34,12 @@ struct ImplOpLowering : public OpConversionPattern<ImplOp> {
       ImplOp implOp, 
       OpAdaptor adaptor,
       ConversionPatternRewriter& rewriter) const override {
+    Type receiverType = implOp.getReceiverType();
+
+    // if receiver type is still symbolic, don't lower yet
+    if (isa<SymbolicTypeInterface>(receiverType)) {
+      return rewriter.notifyMatchFailure(implOp, "receiver type is still symbolic");
+    }
 
     auto module = implOp->getParentOfType<ModuleOp>();
     if (!module)
@@ -50,7 +56,7 @@ struct ImplOpLowering : public OpConversionPattern<ImplOp> {
     for (auto method : traitOp.getOptionalMethods()) {
       if (!implOp.hasMethod(method.getSymName())) {
         // XXX is there a way to do this without creating this extra clone?
-        auto orphanMonomorph = cloneAndMonomorphizeSelfType(method, implOp.getConcreteType());
+        auto orphanMonomorph = cloneAndMonomorphizeSelfType(method, receiverType);
         if (!orphanMonomorph)
           return implOp.emitOpError("monomorphization failed");
 
@@ -68,7 +74,7 @@ struct ImplOpLowering : public OpConversionPattern<ImplOp> {
       rewriter.moveOpBefore(method, implOp);
       method.setSymName(mangleMethodName(
         implOp.getTrait(),
-        implOp.getConcreteType(),
+        implOp.getReceiverType(),
         method.getSymName()
       ));
     }
@@ -87,17 +93,17 @@ struct MethodCallOpLowering : public OpConversionPattern<MethodCallOp> {
       MethodCallOp op,
       OpAdaptor adaptor,
       ConversionPatternRewriter &rewriter) const override {
-    Type selfType = op.getSelfType();
+    Type receiverType = op.getReceiverType();
 
-    // if self type is still polymorphic, don't lower yet
-    if (isa<PolyType>(selfType)) {
-      return rewriter.notifyMatchFailure(op, "self type is still polymorphic");
+    // if receiver type is still symbolic, don't lower yet
+    if (isa<SymbolicTypeInterface>(receiverType)) {
+      return rewriter.notifyMatchFailure(op, "receiver type is still symbolic");
     }
 
     // mangle the callee name
     auto calleeName = mangleMethodName(
       op.getTrait(),
-      selfType,
+      receiverType,
       op.getMethod()
     );
 

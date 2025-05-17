@@ -78,12 +78,12 @@ def ImplOp : TraitDialectOp<"impl", [
   SymbolTable
 ] # GraphRegionNoTerminator.traits
 > {
-  let summary = "Implements a trait for a concrete type";
+  let summary = "Implements a trait for a receiver type";
   let description = [{
-    Declares an implementation of a trait for a specific concrete type.
+    Declares an implementation of a trait for a specific receiver type.
 
     The `trait` attribute is a FlatSymbolRefAttr pointing to a `trait.trait`
-    declaration (e.g., `@PartialEq`), and `concrete_type` is a TypeAttr representing
+    declaration (e.g., `@PartialEq`), and `receiver_type` is a TypeAttr representing
     the type that implements the trait (e.g., `i32` or a custom type).
 
     This operation contains a region with `func.func` operations, each
@@ -98,7 +98,7 @@ def ImplOp : TraitDialectOp<"impl", [
       }
   }];
 
-  let arguments = (ins FlatSymbolRefAttr:$trait, TypeAttr:$concrete_type);
+  let arguments = (ins FlatSymbolRefAttr:$trait, TypeAttr:$receiver_type);
   let regions = (region SizedRegion<1>:$body);
 
   let extraClassDeclaration = [{
@@ -121,15 +121,15 @@ def ImplOp : TraitDialectOp<"impl", [
   // builder creates one empty block in the body region
   let builders = [
     OpBuilder<(ins "::mlir::FlatSymbolRefAttr":$trait,
-                   "::mlir::TypeAttr":$concrete_type), [{
+                   "::mlir::TypeAttr":$receiver_type), [{
       $_state.addAttribute("trait", trait);
-      $_state.addAttribute("concrete_type", concrete_type);
+      $_state.addAttribute("receiver_type", receiver_type);
       ::mlir::Region *region = $_state.addRegion();
       region->emplaceBlock();
     }]>
   ];
 
-  let assemblyFormat = "$trait `for` $concrete_type attr-dict-with-keyword $body";
+  let assemblyFormat = "$trait `for` $receiver_type attr-dict-with-keyword $body";
 }
 
 def MethodCallOp : TraitDialectOp<"method.call", [
@@ -149,7 +149,7 @@ def MethodCallOp : TraitDialectOp<"method.call", [
 
   let arguments = (ins 
       SymbolRefAttr:$method_ref,
-      TypeAttr:$self_type,
+      TypeAttr:$receiver_type,
       Variadic<AnyType>:$operands
   );
 
@@ -162,7 +162,7 @@ def MethodCallOp : TraitDialectOp<"method.call", [
       "TypeRange":$results,
       "FlatSymbolRefAttr":$traitRef,
       "FlatSymbolRefAttr":$methodRef,
-      "TypeAttr":$selfType,
+      "TypeAttr":$receiverType,
       "ValueRange":$operands), [{
         MLIRContext *ctx = $_builder.getContext();
 
@@ -174,7 +174,7 @@ def MethodCallOp : TraitDialectOp<"method.call", [
         );
 
         // build the operation with the created nested reference
-        return build($_builder, $_state, results, qualifiedRef, selfType, operands);
+        return build($_builder, $_state, results, qualifiedRef, receiverType, operands);
     }]>,
 
     // builder that takes trait and method names separately
@@ -182,7 +182,7 @@ def MethodCallOp : TraitDialectOp<"method.call", [
       "TypeRange":$results,
       "StringRef":$traitName,
       "StringRef":$methodName,
-      "TypeAttr":$selfType,
+      "TypeAttr":$receiverType,
       "ValueRange":$operands), [{
         // convert strings to FlatSymbolRefAttrs and call the other builder
         MLIRContext *ctx = $_builder.getContext();
@@ -190,7 +190,7 @@ def MethodCallOp : TraitDialectOp<"method.call", [
         FlatSymbolRefAttr methodRef = FlatSymbolRefAttr::get(ctx, methodName);
 
         // call the other builder
-        return build($_builder, $_state, results, traitRef, methodRef, selfType, operands);
+        return build($_builder, $_state, results, traitRef, methodRef, receiverType, operands);
     }]>,
   ];
 
@@ -231,7 +231,7 @@ def MethodCallOp : TraitDialectOp<"method.call", [
   }];
 
   let assemblyFormat = [{
-    $method_ref `<` $self_type `>` `(` $operands `)` attr-dict `:` functional-type($operands, results)
+    $method_ref `<` $receiver_type `>` `(` $operands `)` attr-dict `:` functional-type($operands, results)
   }];
 }
 
