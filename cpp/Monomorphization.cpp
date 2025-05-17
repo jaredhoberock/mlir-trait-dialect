@@ -82,12 +82,12 @@ static bool functionTypeContainsSymbolicType(FunctionType ty) {
 bool isPolymorph(func::FuncOp fn) {
   return functionTypeContainsSymbolicType(fn.getFunctionType());
 }
-                                                      
-std::string manglePolymorphicFunctionName(func::FuncOp polymorph,
-                                          const DenseMap<Type, Type> &substitution) {
-  std::string result = polymorph.getSymName().str();
 
-  // append substituted concrete types to the mangled name
+std::string mangleFunctionName(StringRef name,
+                               const DenseMap<Type, Type> &substitution) {
+  std::string result = name.str();
+
+  // append substituted types to the name
   for (auto [_, substitutedTy] : substitution) {
     llvm::raw_string_ostream os(result);
     os << "_";
@@ -97,7 +97,7 @@ std::string manglePolymorphicFunctionName(func::FuncOp polymorph,
 
   return result;
 }
-
+                                                      
 
 std::string mangleMethodName(
     StringRef traitName,
@@ -226,7 +226,7 @@ func::FuncOp monomorphizeFunction(func::FuncOp polymorph,
   ModuleOp module = polymorph->getParentOfType<ModuleOp>();
 
   // look for an existing monomorph
-  std::string monomorphName = manglePolymorphicFunctionName(polymorph, substitution);
+  std::string monomorphName = mangleFunctionName(polymorph.getSymName(), substitution);
   if (auto existing = module.lookupSymbol<func::FuncOp>(monomorphName))
     return existing;
 

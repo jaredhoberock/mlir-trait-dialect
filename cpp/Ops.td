@@ -256,6 +256,7 @@ def FuncCallOp : TraitDialectOp<"func.call", [
 
   let arguments = (ins 
       FlatSymbolRefAttr:$callee,
+      TypeAttrOf<FunctionType>:$callee_function_type,
       Variadic<AnyType>:$operands
   );
 
@@ -266,18 +267,18 @@ def FuncCallOp : TraitDialectOp<"func.call", [
     // creates the mapping poly type -> argument type
     llvm::DenseMap<Type, Type> buildMonomorphicSubstitution();
 
-    func::FuncOp cloneAndMonomorphizeCalleeAtInsertionPoint(OpBuilder &builder,
-                                                            StringRef monomorphName);
+    // returns the name of the callee after monomorphization
+    std::string getNameOfMonomorphicCallee();
+
+    // looks up the polymorphic callee, clones and monomorphizes it
+    // monomorph gets inserted at builder's insertion point
+    // returns the monomorph
+    func::FuncOp cloneAndMonomorphizeCalleeAtInsertionPoint(OpBuilder &builder);
 
     // checks whether the callee of this trait.func.call op exists
     // if it does not, clones and monomorphizes the callee into the module
     // returns the monomorph as a func::FuncOp
     func::FuncOp getOrCreateMonomorphicCallee(OpBuilder &builder);
-
-    // inserts a func.call op at builder's insertion point to this trait.func.call op's
-    // monomorphized callee. If the callee's monomorph does not exist yet,
-    // the polymorphic callee will be cloned and monomorphized into the module
-    func::CallOp monomorphizeAtInsertionPoint(OpBuilder &builder);
 
     operand_range getArgOperands() {
       return getOperands();
@@ -296,7 +297,7 @@ def FuncCallOp : TraitDialectOp<"func.call", [
     }
   }];
 
-  let assemblyFormat = "$callee `(` $operands `)` attr-dict `:` functional-type($operands, results)";
+  let assemblyFormat = "$callee `(` $operands `)` attr-dict `:` $callee_function_type `to` functional-type($operands, results)";
 }
 
 #endif // TRAIT_OPS_TD

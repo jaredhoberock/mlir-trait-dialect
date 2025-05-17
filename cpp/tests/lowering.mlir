@@ -34,7 +34,7 @@ func.func @foo(%x: !T, %y: !T) -> i1 {
 // CHECK-NOT: builtin.unrealized_conversion_cast
 // CHECK: llvm.call @foo_i32
 func.func @bar(%x: i32, %y: i32) -> i1 {
-  %result = trait.func.call @foo(%x, %y) : (i32,i32) -> i1
+  %result = trait.func.call @foo(%x, %y) : (!T,!T) -> i1 to (i32,i32) -> i1
   return %result : i1
 }
 
@@ -53,6 +53,6 @@ func.func @baz(%x: !T, %y: !T) -> i1 {
 // CHECK-NOTE: builtin.unrealized_conversion_cast
 // CHECK: llvm.call @baz_i32
 func.func @qux(%x: i32, %y: i32) -> i1 {
-  %result = trait.func.call @baz(%x, %y) : (i32,i32) -> i1
+  %result = trait.func.call @baz(%x, %y) : (!T,!T) -> i1 to (i32,i32) -> i1
   return %result : i1
 }

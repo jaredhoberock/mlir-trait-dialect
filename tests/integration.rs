@@ -141,15 +141,14 @@ fn test_jit() {
     //   %result = trait.method.call @PartialEq<!T>::@eq(%x, %y) : (!T,!T) -> i1
     //   return %result : i1
     // }
+    let poly_ty = trait_::poly_type(
+        &context,
+        0,
+        &["PartialEq"],
+    );
+    let foo_ty = FunctionType::new(&context, &[poly_ty, poly_ty], &[i1_ty]).into();
+
     let foo = {
-        let poly_ty = trait_::poly_type(
-            &context,
-            0,
-            &["PartialEq"],
-        );
-
-        let foo_ty = FunctionType::new(&context, &[poly_ty, poly_ty], &[i1_ty]).into();
-
         let foo = func::func(
             &context,
             StringAttribute::new(&context, "foo"),
@@ -182,7 +181,7 @@ fn test_jit() {
     };
 
     // @bar(%x: i32, %y: i32) -> i1 {
-    //   %result = trait.func.call @foo(%x, %y) : (i32,i32) -> i1
+    //   %result = trait.func.call @foo(%x, %y) : (!T,!T) -> i1 to (i32,i32) -> i1
     //   return %result : i1
     // }
     let mut bar = {
@@ -202,6 +201,7 @@ fn test_jit() {
         let result = block.append_operation(trait_::func_call(
             location,
             "foo",
+            foo_ty,
             &[
                 block.argument(0).unwrap().into(),
                 block.argument(1).unwrap().into(),
@@ -228,14 +228,8 @@ fn test_jit() {
     //   %result = arith.ori %eq, %neq : i1
     //   return %result : i1
     // }
+    let baz_ty = FunctionType::new(&context, &[poly_ty, poly_ty], &[i1_ty]).into();
     let baz = {
-        let poly_ty = trait_::poly_type(
-            &context,
-            0,
-            &["PartialEq"],
-        );
-        let baz_ty = FunctionType::new(&context, &[poly_ty, poly_ty], &[i1_ty]).into();
-
         let baz = func::func(
             &context,
             StringAttribute::new(&context, "baz"),
@@ -284,7 +278,7 @@ fn test_jit() {
     };
 
     // func.func @qux(%x: i32, %y: i32) -> i1 {
-    //   %result = trait.func.call @baz(%x, %y) : (i32,i32) -> i1
+    //   %result = trait.func.call @baz(%x, %y) : (!T,!T) -> i1 to (i32,i32) -> i1
     //   return %result : i1
     // }
     let mut qux = {
@@ -304,6 +298,7 @@ fn test_jit() {
         let result = block.append_operation(trait_::func_call(
             location,
             "baz",
+            baz_ty,
             &[
                 block.argument(0).unwrap().into(),
                 block.argument(1).unwrap().into(),

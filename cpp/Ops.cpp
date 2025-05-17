@@ -327,6 +327,12 @@ LogicalResult FuncCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     return emitOpError() << "'" << calleeAttr.getValue()
                          << "' does not refer to a valid func.func";
 
+  // check that funcOp's function type matches what we expect
+  if (funcOp.getFunctionType() != getCalleeFunctionType()) {
+    return emitOpError() << "'" << calleeAttr.getValue() << "''s type " << funcOp.getFunctionType()
+                         << " does not match expected type " << getCalleeFunctionType();
+  }
+
   // check the types involved in a possibly polymorphic call
   return checkPolymorphicFunctionCall(funcOp.getFunctionType(), 
                                       getOperands().getTypes(), 
@@ -368,9 +374,11 @@ DenseMap<Type, Type> FuncCallOp::buildMonomorphicSubstitution() {
   return substitution;
 }
 
-func::FuncOp FuncCallOp::cloneAndMonomorphizeCalleeAtInsertionPoint(
-    OpBuilder &builder,
-    StringRef monomorphName) {
+std::string FuncCallOp::getNameOfMonomorphicCallee() {
+  return mangleFunctionName(getCallee(), buildMonomorphicSubstitution());
+}
+
+func::FuncOp FuncCallOp::cloneAndMonomorphizeCalleeAtInsertionPoint(OpBuilder &builder) {
   func::FuncOp polymorph = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(*this, getCalleeAttr());
   llvm::DenseMap<Type, Type> substitution = buildMonomorphicSubstitution();
 
@@ -389,7 +397,7 @@ func::FuncOp FuncCallOp::cloneAndMonomorphizeCalleeAtInsertionPoint(
   // clone the polymorph using a temporary builder
   OpBuilder tempBuilder(ctx);
   func::FuncOp tempMonomorph = cast<func::FuncOp>(tempBuilder.clone(*polymorph));
-  tempMonomorph.setSymName(monomorphName);
+  tempMonomorph.setSymName(getNameOfMonomorphicCallee());
 
   if (failed(applySubstitution(tempMonomorph, substitution))) {
     tempMonomorph.erase();
@@ -406,28 +414,25 @@ func::FuncOp FuncCallOp::cloneAndMonomorphizeCalleeAtInsertionPoint(
 }
 
 func::FuncOp FuncCallOp::getOrCreateMonomorphicCallee(OpBuilder& builder) {
-  // lookup the callee
-  auto callee = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(*this, getCalleeAttr());
-  if (!callee) {
-    emitOpError("could not find callee");
-    return nullptr;
-  }
-
-  // build the monomorphic substitution
-  DenseMap<Type, Type> substitution = buildMonomorphicSubstitution();
-
   // get the name of the monomorphic callee
-  std::string monomorphName = manglePolymorphicFunctionName(callee, substitution);
+  std::string monomorphName = getNameOfMonomorphicCallee();
 
   // lookup the monomorphic callee
   func::FuncOp monomorph =
     SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(*this, builder.getStringAttr(monomorphName));
 
   if (!monomorph) {
+    // lookup the callee
+    auto callee = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(*this, getCalleeAttr());
+    if (!callee) {
+      emitOpError("could not find callee");
+      return nullptr;
+    }
+
     // the monomorph doesn't exist yet; create it
     PatternRewriter::InsertionGuard guard(builder);
     builder.setInsertionPointAfter(callee);
-    monomorph = cloneAndMonomorphizeCalleeAtInsertionPoint(builder, monomorphName);
+    monomorph = cloneAndMonomorphizeCalleeAtInsertionPoint(builder);
     if (!monomorph) {
       emitOpError("monomorphization failed");
       return nullptr;
@@ -435,24 +440,4 @@ func::FuncOp FuncCallOp::getOrCreateMonomorphicCallee(OpBuilder& builder) {
   }
 
   return monomorph;
-}
-
-// inserts a func.call op at builder's insertion point to this trait.func.call op's
-// monomorphized callee. If the callee's monomorph does not exist yet,
-// the polymorphic callee will be cloned and monomorphized into the module
-// if the intended edit fails, returns an error string
-func::CallOp FuncCallOp::monomorphizeAtInsertionPoint(OpBuilder &builder) {
-  func::FuncOp monomorph = getOrCreateMonomorphicCallee(builder);
-  if (!monomorph) {
-    emitOpError("monomorphization failed");
-    return nullptr;
-  }
-
-  // insert a normal func.call op to the monomorphic callee
-  return builder.create<func::CallOp>(
-    getLoc(),
-    monomorph.getSymName(),
-    getResultTypes(),
-    getOperands()
-  );
 }

@@ -39,6 +39,6 @@ func.func @foo(%x: !T, %y: !T) -> i1 {
 // CHECK-LABEL: func @bar
 func.func @bar(%x: i32, %y: i32) -> i1 {
   // CHECK: %[[EQUAL:.*]] = trait.func.call @foo
-  %equal = trait.func.call @foo(%x, %y) : (i32,i32) -> i1
+  %equal = trait.func.call @foo(%x, %y) : (!T,!T) -> i1 to (i32,i32) -> i1
   return %equal : i1
 }

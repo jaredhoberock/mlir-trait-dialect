@@ -9,6 +9,24 @@
 
 namespace mlir::trait {
 
+struct FuncCallOpLowering : public OpConversionPattern<FuncCallOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(
+      FuncCallOp callOp,
+      OpAdaptor adaptor,
+      ConversionPatternRewriter &rewriter) const override {
+    // replace with a func.call to the monomorphic callee
+    rewriter.replaceOpWithNewOp<func::CallOp>(
+      callOp,
+      callOp.getNameOfMonomorphicCallee(),
+      callOp.getResultTypes(),
+      callOp.getOperands()
+    );
+    return success();
+  }
+};
+
 struct ImplOpLowering : public OpConversionPattern<ImplOp> {
   using OpConversionPattern::OpConversionPattern;
 
@@ -98,16 +116,10 @@ struct MonomorphizeModule : public OpConversionPattern<ModuleOp> {
       calls.push_back(call);
     });
 
-    // monomorphize each call
-    // XXX TODO i think it would be better if we simply monomorphized callees
-    //          and let FuncCallOps rewrite themselves in a pattern
+    // for each call, ensure that a monomorphic callee exists
     for (FuncCallOp call : calls) {
-      PatternRewriter::InsertionGuard guard(rewriter);
-      rewriter.setInsertionPoint(call);
-      auto monomorphicCall = call.monomorphizeAtInsertionPoint(rewriter);
-      if (!monomorphicCall)
-        return failure();
-      rewriter.replaceOp(call, monomorphicCall);
+      if (!call.getOrCreateMonomorphicCallee(rewriter))
+        return call.emitOpError("monomorphization failed");
     }
 
     // collect & erase all polymorphs
@@ -128,6 +140,7 @@ struct MonomorphizeModule : public OpConversionPattern<ModuleOp> {
 
 void populateTraitToLLVMConversionPatterns(LLVMTypeConverter& typeConverter, RewritePatternSet& patterns) {
   patterns.add<
+    FuncCallOpLowering,
     ImplOpLowering,
     MethodCallOpLowering,
     MonomorphizeModule,
