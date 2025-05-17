@@ -28,7 +28,7 @@ struct ImplOpLowering : public OpConversionPattern<ImplOp> {
       return rewriter.notifyMatchFailure(implOp, *errMsg);
 
     // hoist all methods into the parent op with mangled names
-    implOp.moveMethodsIntoParentWithMangledNames(rewriter);
+    implOp.mangleMethodNamesAndMoveIntoParent(rewriter);
 
     // finally, erase the ImplOp itself
     rewriter.eraseOp(implOp);

@@ -120,7 +120,7 @@ def ImplOp : TraitDialectOp<"impl", [
     // returns an error message if the attempt failed for any reason
     std::optional<std::string> cloneAndSubstituteMissingOptionalTraitMethodsIntoBody(OpBuilder& builder);
 
-    void moveMethodsIntoParentWithMangledNames(RewriterBase& rewriter);
+    void mangleMethodNamesAndMoveIntoParent(RewriterBase& rewriter);
   }];
 
   // builder creates one empty block in the body region

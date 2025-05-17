@@ -112,7 +112,7 @@ std::optional<std::string> ImplOp::cloneAndSubstituteMissingOptionalTraitMethods
 }
 
 
-void ImplOp::moveMethodsIntoParentWithMangledNames(RewriterBase& rewriter) {
+void ImplOp::mangleMethodNamesAndMoveIntoParent(RewriterBase& rewriter) {
   PatternRewriter::InsertionGuard guard(rewriter);
 
   // collect all methods
