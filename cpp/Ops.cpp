@@ -131,17 +131,22 @@ func::FuncOp ImplOp::getOrInstantiateMethod(OpBuilder& builder, StringRef method
     // we need to instantiate the method from the default implementation in the trait
     auto traitMethod = getTrait().getOptionalMethod(methodName);
     if (traitMethod) {
+      auto instanceName = mangleMethodName(getTraitName(), getReceiverType(), methodName);
+      // substitute receiver type for !trait.self
+      DenseMap<Type,Type> substitution;
+      substitution[SelfType::get(getContext())] = getReceiverType();
+
       // XXX is there a way to do this without creating this extra clone?
-      auto temporaryMethodClone = cloneAndSubstituteReceiverType(traitMethod, getReceiverType());
-      if (!temporaryMethodClone)
+      auto tempMethod = instantiatePolymorph(traitMethod, instanceName, substitution);
+      if (!tempMethod)
         return nullptr;
 
       PatternRewriter::InsertionGuard guard(builder);
       builder.setInsertionPointToEnd(&getBody().front());
-      method = cast<func::FuncOp>(builder.clone(*temporaryMethodClone));
+      method = cast<func::FuncOp>(builder.clone(*tempMethod));
 
       // we no longer need the temporary clone
-      temporaryMethodClone.erase();
+      tempMethod.erase();
     }
   }
 
@@ -258,13 +263,40 @@ TraitOp MethodCallOp::getTrait() {
   return dyn_cast_or_null<TraitOp>(SymbolTable::lookupSymbolIn(moduleOp, getTraitAttr()));
 }
 
-//DenseMap<Type, Type> MethodCallOp::buildSubstitution() {
-//  return buildSubstitutionForPossiblyPolymorphicCall(
-//      getContext(),
-//      getCalleeFunctionType().getInputs(),
-//      getOperandTypes(),
-//      getReceiverType());
-//}
+static DenseMap<Type,Type> buildSubstitutionForPossiblyPolymorphicCall(
+    MLIRContext* ctx,
+    TypeRange polymorphicParameterTypes,
+    TypeRange argumentTypes,
+    std::optional<Type> receiverType) {
+  if (polymorphicParameterTypes.size() != argumentTypes.size())
+    llvm_unreachable("polymorphicParameterTypes.size() != argumentTypes.size()");
+
+  llvm::DenseMap<Type, Type> substitution;
+
+  // for each unique PolyType in the polymorphic parameter types,
+  // substitute the corresponding monomorphic argument type
+  for (auto [paramTy, argTy] : llvm::zip(polymorphicParameterTypes, argumentTypes)) {
+    if (isa<PolyType>(paramTy)) {
+      // check if the substitution already exists
+      auto it = substitution.find(paramTy);
+      if (it != substitution.end()) {
+        // if it exists, ensure consistency
+        if (it->second != argTy) {
+          llvm_unreachable("Inconsistent substitution for PolyType");
+        } 
+      } else {
+        // if no substitution exists, create a new one
+        substitution[paramTy] = argTy;
+      }
+    }
+  }
+
+  if (receiverType) {
+    substitution[SelfType::get(ctx)] = *receiverType;
+  }
+
+  return substitution;
+}
 
 std::string MethodCallOp::getNameOfCalleeInstance() {
   return mangleMethodName(getTraitName(), getReceiverType(), getMethodName());
@@ -405,41 +437,6 @@ LogicalResult FuncCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
                                       moduleOp);
 }
 
-static DenseMap<Type,Type> buildSubstitutionForPossiblyPolymorphicCall(
-    MLIRContext* ctx,
-    TypeRange polymorphicParameterTypes,
-    TypeRange argumentTypes,
-    std::optional<Type> receiverType) {
-  if (polymorphicParameterTypes.size() != argumentTypes.size())
-    llvm_unreachable("polymorphicParameterTypes.size() != argumentTypes.size()");
-
-  llvm::DenseMap<Type, Type> substitution;
-
-  // for each unique PolyType in the polymorphic parameter types,
-  // substitute the corresponding monomorphic argument type
-  for (auto [paramTy, argTy] : llvm::zip(polymorphicParameterTypes, argumentTypes)) {
-    if (isa<PolyType>(paramTy)) {
-      // check if the substitution already exists
-      auto it = substitution.find(paramTy);
-      if (it != substitution.end()) {
-        // if it exists, ensure consistency
-        if (it->second != argTy) {
-          llvm_unreachable("Inconsistent substitution for PolyType");
-        } 
-      } else {
-        // if no substitution exists, create a new one
-        substitution[paramTy] = argTy;
-      }
-    }
-  }
-
-  if (receiverType) {
-    substitution[SelfType::get(ctx)] = *receiverType;
-  }
-
-  return substitution;
-}
-
 DenseMap<Type, Type> FuncCallOp::buildSubstitution() {
   return buildSubstitutionForPossiblyPolymorphicCall(
       getContext(),
@@ -453,31 +450,20 @@ std::string FuncCallOp::getNameOfCalleeInstance() {
 }
 
 func::FuncOp FuncCallOp::instantiateCalleeAtInsertionPoint(OpBuilder &builder) {
+  // lookup the polymorphic callee
   func::FuncOp callee = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(*this, getCalleeAttr());
 
-  if (callee.isExternal()) {
-    callee.emitError("cannot instantiate external function");
-    return nullptr;
-  }
-
-  if (!isPolymorph(callee)) {
-    callee.emitError("cannot instantiate function that is not polymorphic");
-    return nullptr;
-  }
-
+  auto instanceName = getNameOfCalleeInstance();
   llvm::DenseMap<Type, Type> substitution = buildSubstitution();
 
-  // clone the callee using a temporary builder
-  OpBuilder tempBuilder(getContext());
-  func::FuncOp tempInstance = cast<func::FuncOp>(tempBuilder.clone(*callee));
-  tempInstance.setSymName(getNameOfCalleeInstance());
-
-  if (failed(applySubstitution(tempInstance, substitution))) {
-    tempInstance.erase();
+  // XXX TODO we need to find a way to do instantiation using the builder
+  //          so that we don't need to create this extra temporary instance
+  func::FuncOp tempInstance = instantiatePolymorph(callee, instanceName, substitution);
+  if (!tempInstance) {
     return nullptr;
   }
 
-  // clone the temporary instance using the caller's builder
+  // clone the temporary instance using the builder
   func::FuncOp instance = cast<func::FuncOp>(builder.clone(*tempInstance));
 
   // we no longer need the temporary instance

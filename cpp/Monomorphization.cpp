@@ -218,37 +218,30 @@ LogicalResult applySubstitution(func::FuncOp polymorph,
   return applyPartialConversion(polymorph, target, FrozenRewritePatternSet(std::move(patterns)));
 }
 
-// XXX TODO this function shouldn't even exist, methods should
-//          by monomorphized via monomorphizeFunction
-func::FuncOp cloneAndSubstituteReceiverType(func::FuncOp method,
-                                            Type receiverType) {
-  if (method.isExternal()) {
-    method.emitError("cannot monomorphize external function");
+func::FuncOp instantiatePolymorph(func::FuncOp polymorph,
+                                  StringRef instanceName,
+                                  const DenseMap<Type,Type> &substitution) {
+  if (polymorph.isExternal()) {
+    polymorph.emitError("cannot instantiate external function");
     return nullptr;
   }
 
-  if (!isPolymorph(method)) {
-    method.emitError("cannot monomorphize method that is not polymorphic");
+  if (!isPolymorph(polymorph)) {
+    polymorph.emitError("cannot instantiate function that is not polymorphic");
     return nullptr;
   }
 
-  auto *ctx = method.getContext();
+  // clone the polymorph
+  OpBuilder builder(polymorph.getContext());
+  func::FuncOp instance = cast<func::FuncOp>(builder.clone(*polymorph));
+  instance.setSymName(instanceName);
 
-  // clone the method
-  OpBuilder builder(ctx);
-  func::FuncOp monomorph = cast<func::FuncOp>(builder.clone(*method));
-
-  // create a substitution mapping SelfType -> receiverType
-  llvm::DenseMap<Type,Type> substitution;
-  substitution[SelfType::get(ctx)] = receiverType;
-
-  // apply the substitution
-  if (failed(applySubstitution(monomorph, substitution))) {
-    monomorph.erase();
+  if (failed(applySubstitution(instance, substitution))) {
+    instance.erase();
     return nullptr;
   }
 
-  return monomorph;
+  return instance;
 }
 
 } // end mlir::trait

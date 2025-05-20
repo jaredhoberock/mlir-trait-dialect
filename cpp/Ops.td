@@ -230,11 +230,6 @@ def MethodCallOp : TraitDialectOp<"method.call", [
   let extraClassDeclaration = [{
     func::FuncOp getOrInstantiateCallee(OpBuilder& builder);
 
-    // for each PolyType in the callee's parameter types,
-    // creates the mapping poly type -> argument type
-    // and also creates the mapping SelfType -> receiver type
-    llvm::DenseMap<Type, Type> buildSubstitution();
-
     TraitOp getTrait();
 
     StringRef getTraitName() {
