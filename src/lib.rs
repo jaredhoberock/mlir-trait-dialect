@@ -1,15 +1,17 @@
-use melior::{ir::{Location, Operation, Type, TypeLike, Value}, Context, StringRef};
-use mlir_sys::{MlirContext, MlirLocation, MlirOperation, MlirStringRef, MlirType, MlirValue};
+use melior::{ir::{Location, Operation, Type, TypeLike, Value}, Context, pass::Pass, StringRef};
+use mlir_sys::{MlirContext, MlirLocation, MlirOperation, MlirPass, MlirStringRef, MlirType, MlirValue};
 
 #[link(name = "trait_dialect")]
 unsafe extern "C" {
     fn traitRegisterDialect(ctx: MlirContext);
+    fn traitCreateMonomorphizePass() -> MlirPass;
     fn traitTraitOpCreate(loc: MlirLocation, name: MlirStringRef) -> MlirOperation;
     fn traitImplOpCreate(loc: MlirLocation, trait_name: MlirStringRef, concrete_type: MlirType) -> MlirOperation;
     fn traitMethodCallOpCreate(loc: MlirLocation,
                                trait_name: MlirStringRef,
-                               self_type: MlirType,
                                method_name: MlirStringRef,
+                               method_function_type: MlirType,
+                               receiver_type: MlirType,
                                arguments: *const MlirValue, num_arguments: isize,
                                result_types: *const MlirType, num_results: isize) -> MlirOperation;
     fn traitFuncCallOpCreate(loc: MlirLocation,
@@ -24,6 +26,12 @@ unsafe extern "C" {
 
 pub fn register(context: &Context) {
     unsafe { traitRegisterDialect(context.to_raw()) }
+}
+
+pub fn create_monomorphize_pass() -> Pass {
+    unsafe { Pass::from_raw(
+        traitCreateMonomorphizePass()
+    )}
 }
 
 pub fn trait_<'c>(loc: Location<'c>, name: &str) -> Operation<'c> {
@@ -43,16 +51,18 @@ pub fn impl_<'c>(loc: Location<'c>, trait_name: &str, concrete_type: Type) -> Op
 
 pub fn method_call<'c>(loc: Location<'c>,
                        trait_name: &str,
-                       self_type: &Type<'c>,
                        method_name: &str,
+                       method_function_type: Type<'c>,
+                       receiver_type: Type<'c>,
                        arguments: &[Value<'c,'_>],
                        result_types: &[Type<'c>],
 ) -> Operation<'c> {
     unsafe { Operation::from_raw(traitMethodCallOpCreate(
         loc.to_raw(),
         StringRef::new(trait_name).to_raw(),
-        self_type.to_raw(),
         StringRef::new(method_name).to_raw(),
+        method_function_type.to_raw(),
+        receiver_type.to_raw(),
         arguments.as_ptr() as *const _,
         arguments.len() as isize,
         result_types.as_ptr() as *const _,

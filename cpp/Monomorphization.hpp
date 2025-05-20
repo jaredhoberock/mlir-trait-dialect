@@ -14,9 +14,6 @@ std::string mangleMethodName(StringRef traitName, Type receiverType, StringRef m
 std::string mangleFunctionName(StringRef name,
                                const DenseMap<Type, Type> &substitution);
 
-func::FuncOp monomorphizeFunction(func::FuncOp polymorph,
-                                  const DenseMap<Type, Type> &substitution);
-
 func::FuncOp cloneAndSubstituteReceiverType(func::FuncOp method,
                                             Type receiverType);
 

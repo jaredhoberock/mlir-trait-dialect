@@ -149,16 +149,23 @@ struct ConvertAnyOpThatNeedsSubstitution : ConversionPattern {
     for (auto &attr : op->getAttrs()) {
       Attribute convertedAttr = attr.getValue();
 
-      // check if the attribute is a TypeAttr with a SymbolicTypeInterface
+      // check if the attribute is a TypeAttr
       if (auto typeAttr = dyn_cast<TypeAttr>(convertedAttr)) {
         Type oldTy = typeAttr.getValue();
-        if (isa<SymbolicTypeInterface>(oldTy)) {
-          Type newTy = tc->convertType(oldTy);
-          if (!newTy) {
-            return failure();
-          }
 
-          convertedAttr = TypeAttr::get(newTy);
+        // apply the substitution map
+        Type substitutedTy = apply(oldTy, substitution);
+        if (!substitutedTy)
+          return failure();
+
+        // if the substitution mapped oldTy to a different type,
+        // convert the old type
+        if (substitutedTy != oldTy) {
+          Type convertedTy = tc->convertType(oldTy);
+          if (!convertedTy)
+            return failure();
+
+          convertedAttr = TypeAttr::get(convertedTy);
         }
       }
 
@@ -209,40 +216,6 @@ LogicalResult applySubstitution(func::FuncOp polymorph,
 
   // now do a partial conversion
   return applyPartialConversion(polymorph, target, FrozenRewritePatternSet(std::move(patterns)));
-}
-
-func::FuncOp monomorphizeFunction(func::FuncOp polymorph,
-                                  const DenseMap<Type, Type> &substitution) {
-  if (polymorph.isExternal()) {
-    polymorph.emitError("cannot monomorphize external function");
-    return nullptr;
-  }
-
-  if (!isPolymorph(polymorph)) {
-    polymorph.emitError("cannot monomorphize function that is not polymorphic");
-    return nullptr;
-  }
-
-  ModuleOp module = polymorph->getParentOfType<ModuleOp>();
-
-  // look for an existing monomorph
-  std::string monomorphName = mangleFunctionName(polymorph.getSymName(), substitution);
-  if (auto existing = module.lookupSymbol<func::FuncOp>(monomorphName))
-    return existing;
-
-  auto *ctx = polymorph.getContext();
-
-  // clone the polymorph
-  OpBuilder builder(ctx);
-  func::FuncOp monomorph = cast<func::FuncOp>(builder.clone(*polymorph));
-  monomorph.setSymName(monomorphName);
-
-  if (failed(applySubstitution(monomorph, substitution))) {
-    monomorph.erase();
-    return nullptr;
-  }
-
-  return monomorph;
 }
 
 // XXX TODO this function shouldn't even exist, methods should

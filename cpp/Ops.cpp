@@ -28,16 +28,48 @@ LogicalResult TraitOp::verify() {
   return success();
 }
 
+ImplOp TraitOp::getImpl(Type receiverTy) {
+  ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
+  if (!module) {
+    return nullptr;
+  }
+
+  auto uses = mlir::SymbolTable::getSymbolUses(getOperation(), module);
+  if (!uses)
+    return nullptr;
+
+  for (const auto& use : *uses) {
+    auto impl = dyn_cast<ImplOp>(use.getUser());
+    if (!impl) continue;
+
+    if (impl.getReceiverType() == receiverTy)
+      return impl;
+  }
+
+  return nullptr;
+}
+
+ImplOp TraitOp::getOrInstantiateImpl(OpBuilder& builder, Type receiverTy) {
+  if (auto existingImpl = getImpl(receiverTy)) {
+    return existingImpl;
+  }
+
+  // XXX TODO if we weren't able to find an exact match for receiverTy,
+  //          we need to check for a single "template" impl that matches receiverTy,
+  //          and if found, instantiate it for receiverTy
+  return nullptr;
+}
+
 LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // Verify trait attribute exists
-  auto traitAttr = getTraitAttr();
-  if (!traitAttr)
+  auto traitNameAttr = getTraitNameAttr();
+  if (!traitNameAttr)
     return emitOpError() << "requires a 'trait.trait' symbol reference attribute";
 
-  // search in the enclosing operation's symbol table for the trait
-  auto traitOp = symbolTable.lookupNearestSymbolFrom<TraitOp>(getOperation()->getParentOp(), traitAttr);
+  // Get the trait
+  auto traitOp = getTrait();
   if (!traitOp) {
-    return emitOpError() << "cannot find trait '" << traitAttr << "'";
+    return emitOpError() << "cannot find trait '" << traitNameAttr << "'";
   }
 
   // Collect method names from the trait
@@ -55,7 +87,7 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
       StringRef name = implMethod.getSymName();
       if (!requiredMethodNames.contains(name) && !optionalMethodNames.contains(name)) {
         return emitOpError() << "implements unknown method '" << name
-                             << "' (not found in trait '" << traitAttr << "')";
+                             << "' (not found in trait '" << traitNameAttr << "')";
       }
       if (implMethod.isExternal()) {
         return emitOpError() << "method '" << name << "' must have body";
@@ -71,7 +103,7 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // Verify that no required methods are missing
   for (StringRef name : requiredMethodNames) {
     if (!definedMethods.contains(name)) {
-      return emitOpError() << "missing implementation for required method '" << name << "' of trait '" << traitAttr << "'";
+      return emitOpError() << "missing implementation for required method '" << name << "' of trait '" << traitNameAttr << "'";
     }
   }
 
@@ -79,57 +111,75 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 }
 
 
-std::optional<std::string> ImplOp::cloneAndSubstituteMissingOptionalTraitMethodsIntoBody(OpBuilder& builder) {
-  auto module = (*this)->getParentOfType<ModuleOp>();
-  if (!module)
-    return "not inside a module";
-
-  // search in the module for the trait
-  auto traitOp = mlir::SymbolTable::lookupNearestSymbolFrom<TraitOp>(module, getTraitAttr());
-  if (!traitOp)
-    return "could not find trait";
-
-  // for each optional method in the trait,
-  // if this ImplOp does not provide the method,
-  // clone and monomorphize the default implementation into the trait
-  for (auto method : traitOp.getOptionalMethods()) {
-    if (!hasMethod(method.getSymName())) {
-      // XXX is there a way to do this without creating this extra clone?
-      auto methodClone = cloneAndSubstituteReceiverType(method, getReceiverType());
-      if (!methodClone)
-        return "method cloning failed";
-
-      PatternRewriter::InsertionGuard guard(builder);
-      builder.setInsertionPointToEnd(&getBody().front());
-      builder.clone(*methodClone);
-
-      // we no longer need the temporary clone
-      methodClone.erase();
-    }
+TraitOp ImplOp::getTrait() {
+  ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
+  if (!module) {
+    emitOpError() << "impl is not inside of a module";
+    return nullptr;
   }
-
-  return std::nullopt;
+  return mlir::SymbolTable::lookupNearestSymbolFrom<TraitOp>(module, getTraitNameAttr());
 }
 
 
-void ImplOp::mangleMethodNamesAndMoveIntoParent(RewriterBase& rewriter) {
-  PatternRewriter::InsertionGuard guard(rewriter);
+func::FuncOp ImplOp::getOrInstantiateMethod(OpBuilder& builder, StringRef methodName) {
+  // check that we've named a valid trait method
+  if (!getTrait().hasMethod(methodName)) return nullptr;
 
-  // collect all methods
-  std::vector<func::FuncOp> methods = getMethods();
+  // check if the method already exists in the ImplOp
+  func::FuncOp method = getMethod(methodName);
+  if (!method) {
+    // we need to instantiate the method from the default implementation in the trait
+    auto traitMethod = getTrait().getOptionalMethod(methodName);
+    if (traitMethod) {
+      // XXX is there a way to do this without creating this extra clone?
+      auto temporaryMethodClone = cloneAndSubstituteReceiverType(traitMethod, getReceiverType());
+      if (!temporaryMethodClone)
+        return nullptr;
 
-  // hoist methods into the parent op with mangled names
-  for (auto method : methods) {
-    // mangle the method name before moving it
-    method.setSymName(mangleMethodName(
-      getTrait(),
-      getReceiverType(),
-      method.getSymName()
-    ));
+      PatternRewriter::InsertionGuard guard(builder);
+      builder.setInsertionPointToEnd(&getBody().front());
+      method = cast<func::FuncOp>(builder.clone(*temporaryMethodClone));
 
-    // move the method into the ImplOp's parent
-    rewriter.moveOpBefore(method, *this);
+      // we no longer need the temporary clone
+      temporaryMethodClone.erase();
+    }
   }
+
+  return method;
+}
+
+
+func::FuncOp ImplOp::getOrInstantiateFunctionFromMethod(OpBuilder& builder, StringRef methodName) {
+  // check that methodName names a valid trait method
+  if (!getTrait().hasMethod(methodName)) return nullptr;
+
+  // get the mangled name of the function instantiated from the method
+  auto functionName = mangleMethodName(getTraitName(), getReceiverType(), methodName);
+
+  MLIRContext* ctx = getContext();
+
+  // look for an existing function
+  auto funcOp = mlir::SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(
+      getOperation()->getParentOp(), FlatSymbolRefAttr::get(ctx, functionName));
+
+  if (!funcOp) {
+    // instantiate the method as a free function with a mangled name
+    
+    // get the method inside the ImplOp
+    auto method = getOrInstantiateMethod(builder, methodName);
+
+    // clone and hoist method into the parent with a mangled name
+    PatternRewriter::InsertionGuard guard(builder);
+
+    // clone the method into the ImplOp's parent
+    builder.setInsertionPointAfter(*this);
+    funcOp = cast<func::FuncOp>(builder.clone(*method));
+
+    // set the method's name
+    funcOp.setSymName(functionName);
+  }
+
+  return funcOp;
 }
 
 
@@ -153,35 +203,33 @@ FunctionType monomorphizeFunctionType(FunctionType polyFnTy,
 }
 
 LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  auto moduleOp = getOperation()->getParentOfType<mlir::ModuleOp>();
-  if (!moduleOp)
-    return emitOpError() << "not contained in a module";
-
-  // extract trait and method from the nested symbol reference
-  auto methodRef = getMethodRef();
-  if (methodRef.getNestedReferences().empty())
-    return emitOpError() << "expected nested symbol reference with trait::method format";
-
+  // get the various attributes
   auto traitAttr = getTraitAttr();
-  auto methodAttr = cast<FlatSymbolRefAttr>(methodRef.getNestedReferences().front());
+  auto methodAttr = getMethodAttr();
   auto receiverTyAttr = getReceiverTypeAttr();
 
   // look up the TraitOp
-  auto traitOp = dyn_cast_or_null<TraitOp>(SymbolTable::lookupSymbolIn(moduleOp, traitAttr));
-  if (!traitOp)
-    return emitOpError()
-      << "cannot find trait '" << traitAttr << "'";
+  auto traitOp = getTrait();
+  if (!traitOp) {
+    return emitOpError() << "cannot find trait '" << traitAttr << "'";
+  }
 
   // look up the method in the trait
-  auto method = symbolTable.lookupNearestSymbolFrom<func::FuncOp>(traitOp, methodAttr);
+  auto method = traitOp.getMethod(methodAttr.getValue());
   if (!method) {
     return emitOpError() << "cannot find method '" << methodAttr << "' in trait '" << traitAttr << "'";
   }
 
-  Type monoReceiverTy = receiverTyAttr.getValue();
+  // check that method's function type matches what we expect
+  if (method.getFunctionType() != getMethodFunctionType()) {
+    return emitOpError() << "'" << methodAttr.getValue() << "''s type " << method.getFunctionType()
+                         << " does not match expected type " << getMethodFunctionType();
+  }
 
-  // if monoSelfTy is !trait.poly, verify that the trait appears in its constraints
-  if (auto paramTy = dyn_cast<PolyType>(monoReceiverTy)) {
+  Type receiverTy = receiverTyAttr.getValue();
+
+  // if receiverTy is !trait.poly, verify that the trait appears in its constraints
+  if (auto paramTy = dyn_cast<PolyType>(receiverTy)) {
     if (!llvm::is_contained(paramTy.getTraits(), traitAttr))
       return emitOpError()
         << paramTy << " is not constrained by trait '" << traitAttr << "'";
@@ -190,7 +238,7 @@ LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable)
   // monomorphize the method's type using the concrete receiver type
   FunctionType monoFnTy = monomorphizeFunctionType(
       method.getFunctionType(), 
-      monoReceiverTy);
+      receiverTy);
 
   if (getOperands().getTypes() != monoFnTy.getInputs())
     return emitOpError() << "expected operand types " << monoFnTy.getInputs();
@@ -201,20 +249,31 @@ LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable)
   return success();
 }
 
-static bool typeHasImpl(Type type, FlatSymbolRefAttr traitRef, ModuleOp module) {
-  auto traitOp = dyn_cast_or_null<TraitOp>(
-      SymbolTable::lookupSymbolIn(module, traitRef));
-  if (!traitOp)
-    return false;
-
-  for (ImplOp impl : module.getOps<ImplOp>()) {
-    if (impl.getTraitAttr() == traitRef &&
-        impl.getReceiverTypeAttr().getValue() == type) {
-      return true;
-    }
+TraitOp MethodCallOp::getTrait() {
+  auto moduleOp = getOperation()->getParentOfType<mlir::ModuleOp>();
+  if (!moduleOp) {
+    emitOpError() << "not contained in a module";
+    return nullptr;
   }
+  return dyn_cast_or_null<TraitOp>(SymbolTable::lookupSymbolIn(moduleOp, getTraitAttr()));
+}
 
-  return false;
+//DenseMap<Type, Type> MethodCallOp::buildSubstitution() {
+//  return buildSubstitutionForPossiblyPolymorphicCall(
+//      getContext(),
+//      getCalleeFunctionType().getInputs(),
+//      getOperandTypes(),
+//      getReceiverType());
+//}
+
+std::string MethodCallOp::getNameOfCalleeInstance() {
+  return mangleMethodName(getTraitName(), getReceiverType(), getMethodName());
+}
+
+func::FuncOp MethodCallOp::getOrInstantiateCallee(OpBuilder& builder) {
+  return getTrait()
+    .getOrInstantiateImpl(builder, getReceiverType())
+    .getOrInstantiateFunctionFromMethod(builder, getMethodName());
 }
 
 static LogicalResult resolvePolyType(Location loc,
@@ -239,7 +298,12 @@ static LogicalResult resolvePolyType(Location loc,
   // Ensure actual satisfies all trait constraints
   for (auto traitAttr : polyTy.getTraits()) {
     auto traitRef = cast<FlatSymbolRefAttr>(traitAttr);
-    if (!typeHasImpl(monoTy, traitRef, module)) {
+    auto traitOp = dyn_cast_or_null<TraitOp>(SymbolTable::lookupSymbolIn(module, traitRef));
+    if (!traitOp) {
+      return mlir::emitError(loc)
+             << "couldn't find trait '" << traitRef << "'";
+    }
+    if (!traitOp.getImpl(monoTy)) {
       return mlir::emitError(loc)
              << "type " << monoTy << " does not implement required trait " << traitRef
              << " for poly type " << polyTy.getUniqueId() << " in " << what << " " << position;
@@ -341,13 +405,11 @@ LogicalResult FuncCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
                                       moduleOp);
 }
 
-DenseMap<Type, Type> FuncCallOp::buildMonomorphicSubstitution() {
-  auto calleeAttr = getCalleeAttr();
-  auto callee = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(*this, calleeAttr);
-
-  TypeRange polymorphicParameterTypes = callee.getFunctionType().getInputs();
-  TypeRange argumentTypes = getOperandTypes();
-
+static DenseMap<Type,Type> buildSubstitutionForPossiblyPolymorphicCall(
+    MLIRContext* ctx,
+    TypeRange polymorphicParameterTypes,
+    TypeRange argumentTypes,
+    std::optional<Type> receiverType) {
   if (polymorphicParameterTypes.size() != argumentTypes.size())
     llvm_unreachable("polymorphicParameterTypes.size() != argumentTypes.size()");
 
@@ -371,73 +433,91 @@ DenseMap<Type, Type> FuncCallOp::buildMonomorphicSubstitution() {
     }
   }
 
+  if (receiverType) {
+    substitution[SelfType::get(ctx)] = *receiverType;
+  }
+
   return substitution;
 }
 
-std::string FuncCallOp::getNameOfMonomorphicCallee() {
-  return mangleFunctionName(getCallee(), buildMonomorphicSubstitution());
+DenseMap<Type, Type> FuncCallOp::buildSubstitution() {
+  return buildSubstitutionForPossiblyPolymorphicCall(
+      getContext(),
+      getCalleeFunctionType().getInputs(),
+      getOperandTypes(),
+      std::nullopt);
 }
 
-func::FuncOp FuncCallOp::cloneAndMonomorphizeCalleeAtInsertionPoint(OpBuilder &builder) {
-  func::FuncOp polymorph = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(*this, getCalleeAttr());
-  llvm::DenseMap<Type, Type> substitution = buildMonomorphicSubstitution();
-
-  if (polymorph.isExternal()) {
-    polymorph.emitError("cannot monomorphize external function");
-    return nullptr;
-  }
-
-  if (!isPolymorph(polymorph)) {
-    polymorph.emitError("cannot monomorphize function that is not polymorphic");
-    return nullptr;
-  }
-
-  MLIRContext *ctx = (*this)->getContext();
-
-  // clone the polymorph using a temporary builder
-  OpBuilder tempBuilder(ctx);
-  func::FuncOp tempMonomorph = cast<func::FuncOp>(tempBuilder.clone(*polymorph));
-  tempMonomorph.setSymName(getNameOfMonomorphicCallee());
-
-  if (failed(applySubstitution(tempMonomorph, substitution))) {
-    tempMonomorph.erase();
-    return nullptr;
-  }
-
-  // clone the temporary monomorph using the caller's builder
-  func::FuncOp monomorph = cast<func::FuncOp>(builder.clone(*tempMonomorph));
-
-  // we no longer need the temporary monomorph
-  tempMonomorph.erase();
-
-  return monomorph;
+std::string FuncCallOp::getNameOfCalleeInstance() {
+  return mangleFunctionName(getCallee(), buildSubstitution());
 }
 
-func::FuncOp FuncCallOp::getOrCreateMonomorphicCallee(OpBuilder& builder) {
-  // get the name of the monomorphic callee
-  std::string monomorphName = getNameOfMonomorphicCallee();
+func::FuncOp FuncCallOp::instantiateCalleeAtInsertionPoint(OpBuilder &builder) {
+  func::FuncOp callee = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(*this, getCalleeAttr());
 
-  // lookup the monomorphic callee
-  func::FuncOp monomorph =
-    SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(*this, builder.getStringAttr(monomorphName));
+  if (callee.isExternal()) {
+    callee.emitError("cannot instantiate external function");
+    return nullptr;
+  }
 
-  if (!monomorph) {
-    // lookup the callee
-    auto callee = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(*this, getCalleeAttr());
+  if (!isPolymorph(callee)) {
+    callee.emitError("cannot instantiate function that is not polymorphic");
+    return nullptr;
+  }
+
+  llvm::DenseMap<Type, Type> substitution = buildSubstitution();
+
+  // clone the callee using a temporary builder
+  OpBuilder tempBuilder(getContext());
+  func::FuncOp tempInstance = cast<func::FuncOp>(tempBuilder.clone(*callee));
+  tempInstance.setSymName(getNameOfCalleeInstance());
+
+  if (failed(applySubstitution(tempInstance, substitution))) {
+    tempInstance.erase();
+    return nullptr;
+  }
+
+  // clone the temporary instance using the caller's builder
+  func::FuncOp instance = cast<func::FuncOp>(builder.clone(*tempInstance));
+
+  // we no longer need the temporary instance
+  tempInstance.erase();
+
+  return instance;
+}
+
+func::FuncOp FuncCallOp::getOrInstantiateCallee(OpBuilder& builder) {
+  ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
+  if (!module) {
+    emitOpError() << "not in a module";
+    return nullptr;
+  }
+
+  // get the name of the instantiated callee
+  std::string instanceName = getNameOfCalleeInstance();
+
+  // look up the instance
+  auto *symOp = SymbolTable::lookupSymbolIn(module, builder.getStringAttr(instanceName));
+  auto instance = dyn_cast_or_null<func::FuncOp>(symOp);
+
+  if (!instance) {
+    // there's no instance yet, look up the polymorphic callee
+    symOp = SymbolTable::lookupSymbolIn(module, getCalleeAttr());
+    auto callee = dyn_cast_or_null<func::FuncOp>(symOp);
     if (!callee) {
-      emitOpError("could not find callee");
+      emitOpError() << "could not find callee " << getCalleeAttr();
       return nullptr;
     }
 
-    // the monomorph doesn't exist yet; create it
+    // the instance doesn't exist yet; create it
     PatternRewriter::InsertionGuard guard(builder);
     builder.setInsertionPointAfter(callee);
-    monomorph = cloneAndMonomorphizeCalleeAtInsertionPoint(builder);
-    if (!monomorph) {
-      emitOpError("monomorphization failed");
+    instance = instantiateCalleeAtInsertionPoint(builder);
+    if (!instance) {
+      emitOpError("instantiation failed");
       return nullptr;
     }
   }
 
-  return monomorph;
+  return instance;
 }

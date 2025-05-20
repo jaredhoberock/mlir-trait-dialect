@@ -34,6 +34,15 @@ def TraitOp : TraitDialectOp<"trait", [
   let regions = (region SizedRegion<1>:$body);
 
   let extraClassDeclaration = [{
+    func::FuncOp getMethod(StringRef methodName) {
+      return dyn_cast_or_null<func::FuncOp>(
+        mlir::SymbolTable::lookupSymbolIn(*this, methodName));
+    }
+
+    bool hasMethod(StringRef methodName) {
+      return getMethod(methodName) != nullptr;
+    }
+
     llvm::SmallSet<llvm::StringRef,8> getRequiredMethodNames() {
       llvm::SmallSet<llvm::StringRef,8> result;
       for (Operation& op : getBody().front()) {
@@ -57,6 +66,18 @@ def TraitOp : TraitDialectOp<"trait", [
       }
       return result;
     }
+
+    func::FuncOp getOptionalMethod(StringRef methodName) {
+      for (auto method : getOptionalMethods()) {
+        if (method.getSymName() == methodName)
+          return method;
+      }
+      return nullptr;
+    }
+
+    ImplOp getImpl(Type receiverType);
+
+    ImplOp getOrInstantiateImpl(OpBuilder& builder, Type receiverType);
   }];
 
   // builder creates one empty block in the body region
@@ -98,10 +119,12 @@ def ImplOp : TraitDialectOp<"impl", [
       }
   }];
 
-  let arguments = (ins FlatSymbolRefAttr:$trait, TypeAttr:$receiver_type);
+  let arguments = (ins FlatSymbolRefAttr:$trait_name, TypeAttr:$receiver_type);
   let regions = (region SizedRegion<1>:$body);
 
   let extraClassDeclaration = [{
+    TraitOp getTrait();
+
     std::vector<func::FuncOp> getMethods() {
       std::vector<func::FuncOp> result;
       for (auto& op : getBody().front()) {
@@ -112,29 +135,31 @@ def ImplOp : TraitDialectOp<"impl", [
       return result;
     }
 
-    bool hasMethod(llvm::StringRef name) {
-      auto funcOp = lookupSymbol<func::FuncOp>(name);
-      return funcOp != nullptr;
+    func::FuncOp getMethod(StringRef name) {
+      return lookupSymbol<func::FuncOp>(name);
     }
 
-    // returns an error message if the attempt failed for any reason
-    std::optional<std::string> cloneAndSubstituteMissingOptionalTraitMethodsIntoBody(OpBuilder& builder);
+    bool hasMethod(StringRef name) {
+      return getMethod(name) != nullptr;
+    }
 
-    void mangleMethodNamesAndMoveIntoParent(RewriterBase& rewriter);
+    func::FuncOp getOrInstantiateMethod(OpBuilder& builder, StringRef methodName);
+
+    func::FuncOp getOrInstantiateFunctionFromMethod(OpBuilder& builder, StringRef methodName);
   }];
 
   // builder creates one empty block in the body region
   let builders = [
-    OpBuilder<(ins "::mlir::FlatSymbolRefAttr":$trait,
+    OpBuilder<(ins "::mlir::FlatSymbolRefAttr":$trait_name,
                    "::mlir::TypeAttr":$receiver_type), [{
-      $_state.addAttribute("trait", trait);
+      $_state.addAttribute("trait_name", trait_name);
       $_state.addAttribute("receiver_type", receiver_type);
       ::mlir::Region *region = $_state.addRegion();
       region->emplaceBlock();
     }]>
   ];
 
-  let assemblyFormat = "$trait `for` $receiver_type attr-dict-with-keyword $body";
+  let assemblyFormat = "$trait_name `for` $receiver_type attr-dict-with-keyword $body";
 }
 
 def MethodCallOp : TraitDialectOp<"method.call", [
@@ -149,11 +174,12 @@ def MethodCallOp : TraitDialectOp<"method.call", [
     Resolution to an implementation is performed during lowering.
 
     Example:
-      %r = trait.method.call @PartialEq::@eq<i32>(%x, %y) : (i32, i32) -> i1
+      %r = trait.method.call @PartialEq::@eq<i32>(%x, %y) : (!trait.self, !trait.self) to (i32, i32) -> i1
   }];
 
   let arguments = (ins 
       SymbolRefAttr:$method_ref,
+      TypeAttrOf<FunctionType>:$method_function_type,
       TypeAttr:$receiver_type,
       Variadic<AnyType>:$operands
   );
@@ -167,6 +193,7 @@ def MethodCallOp : TraitDialectOp<"method.call", [
       "TypeRange":$results,
       "FlatSymbolRefAttr":$traitRef,
       "FlatSymbolRefAttr":$methodRef,
+      "TypeAttr":$methodFunctionType,
       "TypeAttr":$receiverType,
       "ValueRange":$operands), [{
         MLIRContext *ctx = $_builder.getContext();
@@ -179,7 +206,7 @@ def MethodCallOp : TraitDialectOp<"method.call", [
         );
 
         // build the operation with the created nested reference
-        return build($_builder, $_state, results, qualifiedRef, receiverType, operands);
+        return build($_builder, $_state, results, qualifiedRef, methodFunctionType, receiverType, operands);
     }]>,
 
     // builder that takes trait and method names separately
@@ -187,6 +214,7 @@ def MethodCallOp : TraitDialectOp<"method.call", [
       "TypeRange":$results,
       "StringRef":$traitName,
       "StringRef":$methodName,
+      "TypeAttr":$methodFunctionType,
       "TypeAttr":$receiverType,
       "ValueRange":$operands), [{
         // convert strings to FlatSymbolRefAttrs and call the other builder
@@ -195,12 +223,21 @@ def MethodCallOp : TraitDialectOp<"method.call", [
         FlatSymbolRefAttr methodRef = FlatSymbolRefAttr::get(ctx, methodName);
 
         // call the other builder
-        return build($_builder, $_state, results, traitRef, methodRef, receiverType, operands);
+        return build($_builder, $_state, results, traitRef, methodRef, methodFunctionType, receiverType, operands);
     }]>,
   ];
 
   let extraClassDeclaration = [{
-    StringRef getTrait() {
+    func::FuncOp getOrInstantiateCallee(OpBuilder& builder);
+
+    // for each PolyType in the callee's parameter types,
+    // creates the mapping poly type -> argument type
+    // and also creates the mapping SelfType -> receiver type
+    llvm::DenseMap<Type, Type> buildSubstitution();
+
+    TraitOp getTrait();
+
+    StringRef getTraitName() {
       return getMethodRef().getRootReference().getValue();
     }
 
@@ -211,11 +248,22 @@ def MethodCallOp : TraitDialectOp<"method.call", [
       );
     }
 
-    StringRef getMethod() {
+    FlatSymbolRefAttr getMethodAttr() {
+      auto methodRef = getMethodRef();
+      if (methodRef.getNestedReferences().empty()) {
+        emitOpError() << "expected nested symbol reference with @trait::@method format";
+        return nullptr;
+      }
+      return cast<FlatSymbolRefAttr>(getMethodRef().getNestedReferences().front());
+    }
+
+    StringRef getMethodName() {
       assert(!getMethodRef().getNestedReferences().empty() && 
              "Expected nested method reference");
       return cast<FlatSymbolRefAttr>(getMethodRef().getNestedReferences().front()).getValue();
     }
+
+    std::string getNameOfCalleeInstance();
 
     // CallOpInterface methods
     operand_range getArgOperands() {
@@ -236,7 +284,7 @@ def MethodCallOp : TraitDialectOp<"method.call", [
   }];
 
   let assemblyFormat = [{
-    $method_ref `<` $receiver_type `>` `(` $operands `)` attr-dict `:` functional-type($operands, results)
+    $method_ref `<` $receiver_type `>` `(` $operands `)` attr-dict `:` $method_function_type `to` functional-type($operands, results)
   }];
 }
 
@@ -263,22 +311,16 @@ def FuncCallOp : TraitDialectOp<"func.call", [
   let results = (outs Variadic<AnyType>);
 
   let extraClassDeclaration = [{
+    func::FuncOp getOrInstantiateCallee(OpBuilder& builder);
+
+    func::FuncOp instantiateCalleeAtInsertionPoint(OpBuilder& builder);
+
     // for each PolyType in the callee's parameter types,
     // creates the mapping poly type -> argument type
-    llvm::DenseMap<Type, Type> buildMonomorphicSubstitution();
+    llvm::DenseMap<Type, Type> buildSubstitution();
 
-    // returns the name of the callee after monomorphization
-    std::string getNameOfMonomorphicCallee();
-
-    // looks up the polymorphic callee, clones and monomorphizes it
-    // monomorph gets inserted at builder's insertion point
-    // returns the monomorph
-    func::FuncOp cloneAndMonomorphizeCalleeAtInsertionPoint(OpBuilder &builder);
-
-    // checks whether the callee of this trait.func.call op exists
-    // if it does not, clones and monomorphizes the callee into the module
-    // returns the monomorph as a func::FuncOp
-    func::FuncOp getOrCreateMonomorphicCallee(OpBuilder &builder);
+    // returns the name of the callee after instantiation
+    std::string getNameOfCalleeInstance();
 
     operand_range getArgOperands() {
       return getOperands();

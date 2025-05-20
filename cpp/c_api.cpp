@@ -1,6 +1,7 @@
 #include "c_api.h"
 #include "Dialect.hpp"
 #include "Ops.hpp"
+#include "Passes.hpp"
 #include "Types.hpp"
 #include <mlir/CAPI/IR.h>
 #include <mlir/CAPI/Pass.h>
@@ -13,6 +14,10 @@ extern "C" {
 
 void traitRegisterDialect(MlirContext context) {
   unwrap(context)->loadDialect<TraitDialect>();
+}
+
+MlirPass traitCreateMonomorphizePass() {
+  return wrap(createMonomorphizePass().release());
 }
 
 MlirOperation traitTraitOpCreate(MlirLocation loc, MlirStringRef name) {
@@ -37,8 +42,10 @@ MlirOperation traitImplOpCreate(MlirLocation loc, MlirStringRef traitName, MlirT
 }
 
 MlirOperation traitMethodCallOpCreate(MlirLocation loc,
-                                      MlirStringRef traitName, MlirType selfType,
+                                      MlirStringRef traitName,
                                       MlirStringRef methodName,
+                                      MlirType methodFunctionType,
+                                      MlirType receiverType,
                                       MlirValue* arguments, intptr_t numArguments,
                                       MlirType* resultTypes, intptr_t numResults) {
   MLIRContext* ctx = unwrap(loc)->getContext();
@@ -59,7 +66,8 @@ MlirOperation traitMethodCallOpCreate(MlirLocation loc,
     results,
     StringRef(traitName.data, traitName.length),
     StringRef(methodName.data, methodName.length),
-    TypeAttr::get(unwrap(selfType)),
+    TypeAttr::get(unwrap(methodFunctionType)),
+    TypeAttr::get(unwrap(receiverType)),
     args
   );
 

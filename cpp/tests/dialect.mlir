@@ -20,7 +20,7 @@ trait.impl @PartialEq for i32 {
 
   // CHECK-LABEL: func @neq
   func.func @neq(%self: i32, %other: i32) -> i1 {
-    %equal = trait.method.call @PartialEq::@eq<i32>(%self, %other): (i32,i32) -> i1
+    %equal = trait.method.call @PartialEq::@eq<i32>(%self, %other): (!trait.self, !trait.self) -> i1 to (i32,i32) -> i1
     %true = arith.constant 1 : i1
     %not_equal = arith.xori %equal, %true : i1
     return %not_equal : i1
@@ -32,7 +32,7 @@ trait.impl @PartialEq for i32 {
 !T = !trait.poly<0,[@PartialEq]>
 func.func @foo(%x: !T, %y: !T) -> i1 {
   // CHECK: %[[EQUAL:.*]] = trait.method.call @PartialEq
-  %equal = trait.method.call @PartialEq::@eq<!T>(%x, %y) : (!T,!T) -> i1
+  %equal = trait.method.call @PartialEq::@eq<!T>(%x, %y) : (!trait.self, !trait.self) -> i1 to (!T,!T) -> i1
   return %equal : i1
 }
 

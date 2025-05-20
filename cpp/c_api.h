@@ -11,6 +11,9 @@ extern "C" {
 /// Manually register the trait dialect with a context.
 void traitRegisterDialect(MlirContext ctx);
 
+/// Create a monomorphize-trait pass
+MlirPass traitCreateMonomorphizePass();
+
 /// Create a trait.trait operation
 MlirOperation traitTraitOpCreate(MlirLocation loc, MlirStringRef name);
 
@@ -19,8 +22,10 @@ MlirOperation traitImplOpCreate(MlirLocation loc, MlirStringRef traitName, MlirT
 
 /// Create a trait.method.call operation
 MlirOperation traitMethodCallOpCreate(MlirLocation loc,
-                                      MlirStringRef traitName, MlirType selfType,
+                                      MlirStringRef traitName,
                                       MlirStringRef methodName,
+                                      MlirType methodFunctionType,
+                                      MlirType receiverType,
                                       MlirValue* arguments, intptr_t numArguments,
                                       MlirType* resultTypes, intptr_t numResults);
 

@@ -30,9 +30,9 @@ fn test_jit() {
 
     let i1_ty = IntegerType::new(&context, 1).into();
     let self_ty = trait_::self_type(&context);
+    // (!self, !self) -> i1
+    let method_ty = FunctionType::new(&context, &[self_ty, self_ty], &[i1_ty]).into();
     let partial_eq = {
-        // (!self, !self) -> i1
-        let method_ty = FunctionType::new(&context, &[self_ty, self_ty], &[i1_ty]).into();
         let vis_id = Identifier::new(&context, "sym_visibility");
         let private_attr = StringAttribute::new(&context, "private").into();
 
@@ -59,8 +59,9 @@ fn test_jit() {
             let equal = block.append_operation(trait_::method_call(
                 location,
                 "PartialEq",
-                &self_ty,
                 "eq",
+                method_ty,
+                self_ty,
                 &[
                     block.argument(0).unwrap().into(),
                     block.argument(1).unwrap().into(),
@@ -162,8 +163,9 @@ fn test_jit() {
         let result = block.append_operation(trait_::method_call(
             location,
             "PartialEq",
-            &poly_ty,
             "eq",
+            method_ty,
+            poly_ty,
             &[
                 block.argument(0).unwrap().into(),
                 block.argument(1).unwrap().into(),
@@ -243,8 +245,9 @@ fn test_jit() {
         let eq = block.append_operation(trait_::method_call(
             location,
             "PartialEq",
-            &poly_ty,
             "eq",
+            method_ty,
+            poly_ty,
             &[
                 block.argument(0).unwrap().into(),
                 block.argument(1).unwrap().into(),
@@ -254,8 +257,9 @@ fn test_jit() {
         let neq = block.append_operation(trait_::method_call(
             location,
             "PartialEq",
-            &poly_ty,
             "neq",
+            method_ty,
+            poly_ty,
             &[
                 block.argument(0).unwrap().into(),
                 block.argument(1).unwrap().into(),
@@ -328,6 +332,7 @@ fn test_jit() {
 
     // Lower to LLVM
     let pass_manager = PassManager::new(&context);
+    pass_manager.add_pass(trait_::create_monomorphize_pass());
     pass_manager.add_pass(pass::conversion::create_to_llvm());
     assert!(pass_manager.run(&mut module).is_ok());
 
