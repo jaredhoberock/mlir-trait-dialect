@@ -3,7 +3,6 @@
 
 include "mlir/IR/AttrTypeBase.td"
 include "Dialect.td"
-include "TypeInterfaces.td"
 
 // Marker interface for symbolic types that should not be lowered eagerly.
 // Used by types like !trait.self & !trait.poly to indicate that they do not
