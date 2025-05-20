@@ -1,5 +1,5 @@
 #include "Dialect.hpp"
-#include "Monomorphization.hpp"
+#include "Instantiation.hpp"
 #include "Ops.hpp"
 #include "Types.hpp"
 #include <llvm/ADT/DenseMap.h>
@@ -136,17 +136,9 @@ func::FuncOp ImplOp::getOrInstantiateMethod(OpBuilder& builder, StringRef method
       DenseMap<Type,Type> substitution;
       substitution[SelfType::get(getContext())] = getReceiverType();
 
-      // XXX is there a way to do this without creating this extra clone?
-      auto tempMethod = instantiatePolymorph(traitMethod, instanceName, substitution);
-      if (!tempMethod)
-        return nullptr;
-
       PatternRewriter::InsertionGuard guard(builder);
       builder.setInsertionPointToEnd(&getBody().front());
-      method = cast<func::FuncOp>(builder.clone(*tempMethod));
-
-      // we no longer need the temporary clone
-      tempMethod.erase();
+      method = instantiatePolymorph(builder, traitMethod, instanceName, substitution);
     }
   }
 
@@ -452,24 +444,10 @@ std::string FuncCallOp::getNameOfCalleeInstance() {
 func::FuncOp FuncCallOp::instantiateCalleeAtInsertionPoint(OpBuilder &builder) {
   // lookup the polymorphic callee
   func::FuncOp callee = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(*this, getCalleeAttr());
-
   auto instanceName = getNameOfCalleeInstance();
   llvm::DenseMap<Type, Type> substitution = buildSubstitution();
 
-  // XXX TODO we need to find a way to do instantiation using the builder
-  //          so that we don't need to create this extra temporary instance
-  func::FuncOp tempInstance = instantiatePolymorph(callee, instanceName, substitution);
-  if (!tempInstance) {
-    return nullptr;
-  }
-
-  // clone the temporary instance using the builder
-  func::FuncOp instance = cast<func::FuncOp>(builder.clone(*tempInstance));
-
-  // we no longer need the temporary instance
-  tempInstance.erase();
-
-  return instance;
+  return instantiatePolymorph(builder, callee, instanceName, substitution);
 }
 
 func::FuncOp FuncCallOp::getOrInstantiateCallee(OpBuilder& builder) {

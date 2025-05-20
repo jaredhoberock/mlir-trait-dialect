@@ -1,9 +1,8 @@
 #pragma once
 
-#include <map>
 #include <llvm/ADT/DenseMap.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
-#include <mlir/Transforms/DialectConversion.h>
+#include <mlir/IR/Builders.h>
 
 namespace mlir::trait {
 
@@ -14,11 +13,8 @@ std::string mangleMethodName(StringRef traitName, Type receiverType, StringRef m
 std::string mangleFunctionName(StringRef name,
                                const DenseMap<Type, Type> &substitution);
 
-
-LogicalResult applySubstitution(func::FuncOp polymorph,
-                                const DenseMap<Type, Type> &substitution);
-
-func::FuncOp instantiatePolymorph(func::FuncOp polymorph,
+func::FuncOp instantiatePolymorph(OpBuilder& builder,
+                                  func::FuncOp polymorph,
                                   StringRef instanceName,
                                   const DenseMap<Type,Type> &substitution);
 
