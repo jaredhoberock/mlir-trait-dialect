@@ -77,6 +77,14 @@ void MonomorphizePass::runOnOperation() {
     RewritePatternSet patterns(ctx);
     patterns.add<FuncCallOpLowering,MethodCallOpLowering>(ctx);
 
+    // collect patterns from other dialects
+    for (Dialect *dialect : ctx->getLoadedDialects()) {
+      if (auto *iface = dialect->getRegisteredInterface<ConvertToTraitInterface>()) {
+        iface->populateConvertToTraitConversionPatterns(patterns);
+      }
+    }
+
+    // apply patterns
     if (failed(applyPatternsGreedily(module, std::move(patterns)))) {
       signalPassFailure();
       return;
