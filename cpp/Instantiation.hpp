@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Ops.hpp"
 #include <llvm/ADT/DenseMap.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/IR/Builders.h>
@@ -17,5 +18,9 @@ func::FuncOp instantiatePolymorph(OpBuilder& builder,
                                   func::FuncOp polymorph,
                                   StringRef instanceName,
                                   const DenseMap<Type,Type> &substitution);
+
+ImplOp instantiatePolymorphicImpl(OpBuilder& builder,
+                                  ImplOp polymorph,
+                                  Type receiverType);
 
 }

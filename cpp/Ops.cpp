@@ -72,9 +72,10 @@ ImplOp TraitOp::getOrInstantiateImpl(OpBuilder& builder, Type receiverTy) {
       return existingImpl;
     }
 
-    // XXX TODO receiverTy was only a symbolic match for the impl's receiver type
-    //          that means we need to instantiate existingImpl to make a
-    //          concrete impl
+    // existingImpl must be polymorphic; instantiate
+    PatternRewriter::InsertionGuard guard(builder);
+    builder.setInsertionPointAfter(existingImpl);
+    return instantiatePolymorphicImpl(builder, existingImpl, receiverTy);
   }
 
   return nullptr;

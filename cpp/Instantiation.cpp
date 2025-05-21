@@ -2,6 +2,7 @@
 #include "Types.hpp"
 #include <mlir/IR/IRMapping.h>
 #include <mlir/IR/PatternMatch.h>
+#include <mlir/IR/Verifier.h>
 
 namespace mlir::trait {
 
@@ -97,15 +98,21 @@ static Operation *cloneOpWithTypeReplacement(
     state.addAttribute(attr.getName(), rewritten);
   }
 
-  // recursively clone regions
+  // create empty regions in the new op
   for (Region &oldRegion : oldOp.getRegions()) {
-    Region *newRegion = state.addRegion();
-    cloneRegionWithTypeReplacement(builder, oldRegion, *newRegion,
+    state.addRegion();
+  }
+
+  // create the operation *before* recursing into the old op's regions
+  Operation *newOp = builder.create(state);
+
+  // recursively clone regions
+  for (auto [oldRegion, newRegion] : llvm::zip(oldOp.getRegions(), newOp->getRegions())) {
+    cloneRegionWithTypeReplacement(builder, oldRegion, newRegion,
                                    mapping, typeReplacer);
   }
 
   // remap results
-  Operation *newOp = builder.create(state);
   for (auto [oldRes, newRes] : llvm::zip(oldOp.getResults(), newOp->getResults()))
     mapping.map(oldRes, newRes);
 
@@ -133,10 +140,11 @@ static void cloneRegionWithTypeReplacement(
   auto& newBlocks = newRegion.getBlocks();
   for (auto [oldBlock, newBlock] : llvm::zip(oldBlocks, newBlocks)) {
     PatternRewriter::InsertionGuard guard(builder);
-
     builder.setInsertionPointToEnd(&newBlock);
-    for (Operation &op : oldBlock)
+
+    for (Operation &op : oldBlock) {
       cloneOpWithTypeReplacement(builder, op, mapping, typeReplacer);
+    }
   }
 }
 
@@ -192,6 +200,27 @@ func::FuncOp instantiatePolymorph(OpBuilder& builder,
                                  replacer);
 
   return instance;
+}
+
+ImplOp instantiatePolymorphicImpl(OpBuilder& builder,
+                                  ImplOp polymorph,
+                                  Type receiverType) {
+  Type implReceiverType = polymorph.getReceiverType();
+
+  if (not isa<SymbolicTypeInterface>(implReceiverType)) {
+    polymorph.emitError("cannot instantiate impl without polymorphic receiver type");
+    return nullptr;
+  }
+  
+  // set up type replacer
+  AttrTypeReplacer replacer;
+  replacer.addReplacement([=](Type t) -> std::optional<Type> {
+    // replace any occurance of the impl's receiver type with the given receiver type
+    return t == implReceiverType ? std::optional<Type>(receiverType) : std::nullopt;
+  });
+
+  IRMapping mapping;
+  return cast<ImplOp>(cloneOpWithTypeReplacement(builder, *polymorph.getOperation(), mapping, replacer));
 }
 
 }
