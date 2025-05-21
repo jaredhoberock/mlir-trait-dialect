@@ -19,9 +19,9 @@ def SymbolicTypeInterface : TypeInterface<"SymbolicTypeInterface"> {
 def SymbolicMatcherInterface : TypeInterface<"SymbolicMatcherInterface", [SymbolicTypeInterface]> {
   let cppNamespace = "::mlir::trait";
   let description = [{
-    This interface extends SymbolicTypeInterface with a method `matches(Type ty)`
+    This interface extends SymbolicTypeInterface with a method `matches(Type ty, TraitOp& trait)`
     that returns `true` if the given type satisfies the predicate represented by
-    this symbolic type.
+    this symbolic type. The `TraitOp` doing the check is received as a parameter.
 
     It is intended to enable structural `trait.impl`s by allowing symbolic types
     to decide whether a concrete type matches their predicate.
@@ -31,7 +31,7 @@ def SymbolicMatcherInterface : TypeInterface<"SymbolicMatcherInterface", [Symbol
     InterfaceMethod<
       "Returns `true` if the given type satisfies the symbolic predicate",
       "bool", "matches",
-      (ins "Type":$ty, "ModuleOp":$module)
+      (ins "Type":$ty, "TraitOp&":$trait)
     >
   ];
 }
