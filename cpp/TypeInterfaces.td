@@ -31,7 +31,7 @@ def SymbolicMatcherInterface : TypeInterface<"SymbolicMatcherInterface", [Symbol
     InterfaceMethod<
       "Returns `true` if the given type satisfies the symbolic predicate",
       "bool", "matches",
-      (ins "Type":$ty)
+      (ins "Type":$ty, "ModuleOp":$module)
     >
   ];
 }
