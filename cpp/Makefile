@@ -46,7 +46,7 @@ Types.cpp.inc: Types.td
 TypeInterfaces.hpp.inc: TypeInterfaces.td
 	$(TBLGEN) --gen-type-interface-decls $(INCLUDES) $< -o $@
 
-TypeInterfaces.cpp.inc: Types.td
+TypeInterfaces.cpp.inc: TypeInterfaces.td
 	$(TBLGEN) --gen-type-interface-defs $(INCLUDES) $< -o $@
 
 # Object file rules

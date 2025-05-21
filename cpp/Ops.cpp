@@ -38,25 +38,45 @@ ImplOp TraitOp::getImpl(Type receiverTy) {
   if (!uses)
     return nullptr;
 
+  ImplOp symbolicImpl = nullptr;
+
   for (const auto& use : *uses) {
     auto impl = dyn_cast<ImplOp>(use.getUser());
     if (!impl) continue;
 
-    if (impl.getReceiverType() == receiverTy)
+    Type implReceiverTy = impl.getReceiverType();
+
+    // first check the impl's receiver type for a direct match
+    if (implReceiverTy == receiverTy) {
+      // as soon as we find a direct match for the receiver type, we're done
       return impl;
+    }
+
+    // otherwise, check if the impl's receiver type is a symbolic matcher
+    else if (auto matcher = dyn_cast<SymbolicMatcherInterface>(implReceiverTy)) {
+      if (matcher.matches(receiverTy)) {
+        // if there is more than one symbolic match, that's ambiguous, and an error
+        if (symbolicImpl) return nullptr;
+        symbolicImpl = impl;
+      }
+    }
   }
 
-  return nullptr;
+  return symbolicImpl;
 }
 
 ImplOp TraitOp::getOrInstantiateImpl(OpBuilder& builder, Type receiverTy) {
   if (auto existingImpl = getImpl(receiverTy)) {
-    return existingImpl;
+    // check if the impl's receiver type is identical to receiverTy
+    if (existingImpl.getReceiverType() == receiverTy) {
+      return existingImpl;
+    }
+
+    // XXX TODO receiverTy was only a symbolic match for the impl's receiver type
+    //          that means we need to instantiate existingImpl to make a
+    //          concrete impl
   }
 
-  // XXX TODO if we weren't able to find an exact match for receiverTy,
-  //          we need to check for a single "template" impl that matches receiverTy,
-  //          and if found, instantiate it for receiverTy
   return nullptr;
 }
 
@@ -180,7 +200,7 @@ func::FuncOp ImplOp::getOrInstantiateFunctionFromMethod(OpBuilder& builder, Stri
 }
 
 
-// XXX TODO this should use apply(ty, substitution)
+// XXX TODO this should use AttrTypeReplacer
 FunctionType monomorphizeFunctionType(FunctionType polyFnTy,
                                       Type monoReceiverTy) {
   auto monomorphize = [&](Type type) -> Type {
@@ -225,8 +245,16 @@ LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable)
 
   Type receiverTy = receiverTyAttr.getValue();
 
-  // if receiverTy is !trait.poly, verify that the trait appears in its constraints
-  if (auto paramTy = dyn_cast<PolyType>(receiverTy)) {
+  if (not isa<SymbolicTypeInterface>(receiverTy)) {
+    // for a concrete type, check for an impl
+    // XXX TODO if no concrete impl is found, check for a symbolic impl
+    if (!traitOp.getImpl(receiverTy)) {
+      return emitOpError()
+        << receiverTy << " does not have a trait.impl for trait '" << traitAttr << "'";
+    }
+  }
+  else if (auto paramTy = dyn_cast<PolyType>(receiverTy)) {
+    // when receiverTy is !trait.poly, verify that the trait appears in its constraints
     if (!llvm::is_contained(paramTy.getTraits(), traitAttr))
       return emitOpError()
         << paramTy << " is not constrained by trait '" << traitAttr << "'";

@@ -7,6 +7,8 @@
 using namespace mlir;
 using namespace mlir::trait;
 
+#include "TypeInterfaces.cpp.inc"
+
 #define GET_TYPEDEF_CLASSES
 #include "Types.cpp.inc"
 
@@ -15,6 +17,4 @@ void TraitDialect::registerTypes() {
 #define GET_TYPEDEF_LIST
 #include "Types.cpp.inc"
   >();
-
-#include "TypeInterfaces.cpp.inc"
 }
