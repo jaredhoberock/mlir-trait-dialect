@@ -8,15 +8,17 @@
 
 namespace mlir::trait {
 
-struct ConvertToTraitInterface : DialectInterface {
-  using DialectInterface::DialectInterface;
+struct ConvertToTraitPatternInterface : DialectInterface {
+  inline ConvertToTraitPatternInterface(Dialect *dialect)
+    : DialectInterface(dialect, TypeID::get<ConvertToTraitPatternInterface>())
+  {}
 
-  virtual void populateConvertToTraitConversionPatterns(RewritePatternSet& patterns) = 0;
+  virtual void populateConvertToTraitConversionPatterns(RewritePatternSet& patterns) const = 0;
 
-  static StringRef getInterfaceName() { return "ConvertToTraitInterface"; }
+  inline static StringRef getInterfaceName() { return "ConvertToTraitInterface"; }
 
-  static mlir::TypeID getInterfaceID() {
-    return mlir::TypeID::get<ConvertToTraitInterface>();
+  inline static ::mlir::TypeID getInterfaceID() {
+    return ::mlir::TypeID::get<ConvertToTraitPatternInterface>();
   }
 };
 

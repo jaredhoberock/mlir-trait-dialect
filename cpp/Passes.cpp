@@ -79,7 +79,7 @@ void MonomorphizePass::runOnOperation() {
 
     // collect patterns from other dialects
     for (Dialect *dialect : ctx->getLoadedDialects()) {
-      if (auto *iface = dialect->getRegisteredInterface<ConvertToTraitInterface>()) {
+      if (auto *iface = dialect->getRegisteredInterface<ConvertToTraitPatternInterface>()) {
         iface->populateConvertToTraitConversionPatterns(patterns);
       }
     }
