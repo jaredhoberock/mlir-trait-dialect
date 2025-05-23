@@ -76,6 +76,8 @@ static Operation *cloneOpWithTypeReplacement(
     Operation &oldOp,
     IRMapping &mapping,
     AttrTypeReplacer &typeReplacer) {
+  PatternRewriter::InsertionGuard guard(builder);
+
   OperationState state(oldOp.getLoc(), oldOp.getName());
 
   // remap operands
