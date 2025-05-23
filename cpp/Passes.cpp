@@ -51,7 +51,7 @@ struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
 
     func::FuncOp callee = methodCallOp.getOrInstantiateCallee(rewriter);
     if (!callee)
-      return methodCallOp.emitOpError("couldn't get or instantiate callee");
+      return methodCallOp.emitOpError() << "couldn't get or instantiate callee '" << methodCallOp.getNameOfCalleeInstance() << "'";
 
     // replace with a trait.func.call to the instantiated callee
     rewriter.replaceOpWithNewOp<FuncCallOp>(

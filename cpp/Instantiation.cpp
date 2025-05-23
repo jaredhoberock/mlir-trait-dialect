@@ -6,12 +6,6 @@
 
 namespace mlir::trait {
 
-static bool containsSymbolicType(Type ty) {
-  // XXX TODO we actually need to traverse subelements of ty
-  //          for this check to be correct
-  return isa<SymbolicTypeInterface>(ty);
-}
-
 static bool containsSymbolicType(TypeRange types) {
   return llvm::any_of(types, [](Type t) {
     return containsSymbolicType(t);
