@@ -1,4 +1,4 @@
-// RUN: opt -pass-pipeline='builtin.module(monomorphize-trait)' %s | FileCheck %s
+// RUN: mlir-opt -pass-pipeline='builtin.module(monomorphize-trait)' %s | FileCheck %s
 
 // CHECK-NOT: @PartialEq
 trait.trait @PartialEq {

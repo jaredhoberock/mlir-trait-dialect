@@ -1,4 +1,4 @@
-LLVM_BIN_PATH = /home/jhoberock/dev/git/llvm-project-20/build/bin
+LLVM_BIN_PATH = $(HOME)/dev/git/llvm-project-20/build/bin
 
 LLVM_CONFIG := $(LLVM_BIN_PATH)/llvm-config
 TBLGEN := $(LLVM_BIN_PATH)/mlir-tblgen
@@ -9,7 +9,7 @@ CXX := clang++
 CXXFLAGS := -g -fPIC `$(LLVM_CONFIG) --cxxflags`
 
 # LLVM/MLIR libraries
-MLIR_INCLUDE = /home/jhoberock/dev/git/llvm-project-20/install/include
+MLIR_INCLUDE = $(HOME)/dev/git/llvm-project-20/install/include
 
 INCLUDES := -I $(MLIR_INCLUDE)
 
@@ -59,12 +59,12 @@ libtrait_dialect.a: $(DIALECT_OBJECTS)
 PLUGIN_OBJECTS := $(DIALECT_OBJECTS) Plugin.o
 
 libtrait_dialect.so: $(PLUGIN_OBJECTS)
-	$(CXX) -shared $^ -o $@
+	$(CXX) -shared -undefined dynamic_lookup $^ -o $@
 
 .PHONY: test
 test: libtrait_dialect.so
 	@echo "Running trait dialect tests..."
-	./venv/bin/lit tests
+	lit tests
 
 clean:
 	rm -f *.o *.inc *.a *.so
