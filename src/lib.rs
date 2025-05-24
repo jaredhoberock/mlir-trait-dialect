@@ -1,7 +1,6 @@
 use melior::{ir::{Location, Operation, Type, TypeLike, Value}, Context, pass::Pass, StringRef};
 use mlir_sys::{MlirContext, MlirLocation, MlirOperation, MlirPass, MlirStringRef, MlirType, MlirValue};
 
-#[link(name = "trait_dialect")]
 unsafe extern "C" {
     fn traitRegisterDialect(ctx: MlirContext);
     fn traitCreateMonomorphizePass() -> MlirPass;
