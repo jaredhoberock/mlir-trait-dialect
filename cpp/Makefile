@@ -59,7 +59,7 @@ libtrait_dialect.a: $(DIALECT_OBJECTS)
 PLUGIN_OBJECTS := $(DIALECT_OBJECTS) Plugin.o
 
 libtrait_dialect.so: $(PLUGIN_OBJECTS)
-	$(CXX) -shared -undefined dynamic_lookup $^ -o $@
+	$(CXX) -shared $^ -o $@
 
 .PHONY: test
 test: libtrait_dialect.so
