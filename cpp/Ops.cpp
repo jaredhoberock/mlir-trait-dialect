@@ -329,73 +329,17 @@ func::FuncOp MethodCallOp::getOrInstantiateCallee(OpBuilder& builder) {
     .getOrInstantiateFunctionFromMethod(builder, getMethodName());
 }
 
-static LogicalResult resolvePolyType(Location loc,
-                                     PolyType polyTy,
-                                     Type monoTy,
-                                     llvm::DenseMap<Type,Type> &substitution,
-                                     ModuleOp module,
-                                     StringRef what,
-                                     unsigned position) {
-  // If we've already substituted this poly index, ensure consistency
-  if (auto it = substitution.find(polyTy);
-      it != substitution.end()) {
-    if (it->second != monoTy) {
-      return mlir::emitError(loc)
-             << "mismatched substitution for poly type " << polyTy.getUniqueId()
-             << " in " << what << " " << position
-             << ": expected " << it->second << ", got " << monoTy;
-    }
-    return success();
-  }
-
-  // Ensure actual satisfies all trait constraints
-  for (auto traitAttr : polyTy.getTraits()) {
-    auto traitRef = cast<FlatSymbolRefAttr>(traitAttr);
-    auto traitOp = dyn_cast_or_null<TraitOp>(SymbolTable::lookupSymbolIn(module, traitRef));
-    if (!traitOp) {
-      return mlir::emitError(loc)
-             << "couldn't find trait '" << traitRef << "'";
-    }
-    if (!traitOp.getImpl(monoTy)) {
-      return mlir::emitError(loc)
-             << "type " << monoTy << " does not implement required trait " << traitRef
-             << " for poly type " << polyTy.getUniqueId() << " in " << what << " " << position;
-    }
-  }
-
-  substitution[polyTy] = monoTy;
-  return success();
-}
-
 static LogicalResult checkPolymorphicFunctionCall(
     FunctionType polyFnTy,
     TypeRange operandTypes,
     TypeRange resultTypes,
     Location loc,
     ModuleOp moduleOp) {
-  llvm::DenseMap<Type, Type> substitution;
-
   // check argument count
   auto paramTypes = polyFnTy.getInputs();
   if (operandTypes.size() != paramTypes.size())
     return emitError(loc) << "expected " << paramTypes.size() << " operands, but got "
                           << operandTypes.size();
-
-  // check operand types
-  for (auto [i, pair] : llvm::enumerate(llvm::zip(paramTypes, operandTypes))) {
-    auto [param, arg] = pair;
-
-    if (param == arg)
-      continue;
-
-    if (auto poly = dyn_cast<PolyType>(param)) {
-      if (failed(resolvePolyType(loc, poly, arg, substitution, moduleOp, "operand", i)))
-        return failure();
-    } else {
-      return emitError(loc) << "operand " << i << " expected type " << param
-                            << ", but got " << arg;
-    }
-  }
 
   // check result count
   auto expectedResults = polyFnTy.getResults();
@@ -403,31 +347,11 @@ static LogicalResult checkPolymorphicFunctionCall(
     return emitError(loc) << "expected " << expectedResults.size()
                           << " results, but got " << resultTypes.size();
 
-  // check result types
-  for (auto [i, pair] : llvm::enumerate(llvm::zip(expectedResults, resultTypes))) {
-    auto [expected, actual] = pair;
+  // create a FunctionType representing the caller's parameters and result
+  FunctionType callerFnTy = FunctionType::get(moduleOp.getContext(), operandTypes, resultTypes);
+  llvm::DenseMap<Type, Type> substitution;
 
-    if (expected == actual)
-      continue;
-
-    if (auto poly = dyn_cast<PolyType>(expected)) {
-      if (auto it = substitution.find(poly); it != substitution.end()) {
-        if (it->second != actual) {
-          return emitError(loc) << "result " << i << " expected " << it->second
-                                << " (substituted for poly type " << poly.getUniqueId()
-                                << "), but got " << actual;
-        }
-      } else {
-        return emitError(loc) << "result " << i << " refers to poly type "
-                              << poly.getUniqueId() << " with no substitution";
-      }
-    } else {
-      return emitError(loc) << "result " << i << " expected type " << expected
-                            << ", but got " << actual;
-    }
-  }
-
-  return success();
+  return unifyTypes(loc, polyFnTy, callerFnTy, moduleOp, substitution);
 }
 
 LogicalResult FuncCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {

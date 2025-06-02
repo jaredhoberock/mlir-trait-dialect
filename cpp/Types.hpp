@@ -19,6 +19,20 @@ inline bool containsSymbolicType(Type ty) {
   return isa<SymbolicTypeInterface>(ty);
 }
 
+/// Attempt to unify `expectedTy` and `foundTy`.  If `expectedTy` or `foundTy` is
+/// a PolyType, record/verify a substitution via unifyPolyType().  Otherwise,
+/// if the type is composite (i.e. has immediate sub‐types), recurse into each
+/// child.  If neither side is a PolyType or composite, require exact equality.
+///
+/// `substitution` maps each PolyType → the concrete Type chosen.  `moduleOp` is
+/// used to look up TraitOps when resolving PolyType constraints.
+LogicalResult unifyTypes(
+    Location loc,
+    Type expectedTy,
+    Type foundTy,
+    ModuleOp moduleOp,
+    llvm::DenseMap<Type,Type> &substitution);
+
 }
 
 #define GET_TYPEDEF_CLASSES
