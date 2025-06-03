@@ -121,6 +121,8 @@ static void cloneRegionWithTypeReplacement(
     Region &newRegion,
     IRMapping &mapping,
     AttrTypeReplacer &typeReplacer) {
+  PatternRewriter::InsertionGuard guard(builder);
+
   // create blocks with replaced argument types
   for (Block &oldBlock : oldRegion.getBlocks()) {
     Block *newBlock = builder.createBlock(&newRegion);
@@ -217,6 +219,27 @@ ImplOp instantiatePolymorphicImpl(OpBuilder& builder,
 
   IRMapping mapping;
   return cast<ImplOp>(cloneOpWithTypeReplacement(builder, *polymorph.getOperation(), mapping, replacer));
+}
+
+void instantiatePolymorphicRegion(OpBuilder& builder,
+                                  Region& polymorph,
+                                  Region& monomorph,
+                                  const DenseMap<Type,Type> &substitution) {
+  assert(monomorph.empty() && "Region is not empty");
+
+  // set up type replacer
+  AttrTypeReplacer replacer;
+  replacer.addReplacement([&](Type t) -> std::optional<Type> {
+    auto it = substitution.find(t);
+    return (it != substitution.end()) ? std::optional<Type>(it->second) : std::nullopt;
+  });
+
+  IRMapping mapping;
+  cloneRegionWithTypeReplacement(builder,
+                                 polymorph,
+                                 monomorph,
+                                 mapping,
+                                 replacer);
 }
 
 }

@@ -23,4 +23,9 @@ ImplOp instantiatePolymorphicImpl(OpBuilder& builder,
                                   ImplOp polymorph,
                                   Type receiverType);
 
+void instantiatePolymorphicRegion(OpBuilder& builder,
+                                  Region& polymorph,
+                                  Region& monomorph,
+                                  const DenseMap<Type,Type> &substitution);
+
 }
