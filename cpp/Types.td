@@ -46,10 +46,10 @@ def PolyType : TypeDef<TraitDialect, "Poly", [SymbolicTypeInterface]> {
 
   let parameters = (ins
     "unsigned":$unique_id,
-    ArrayRefParameter<"::mlir::FlatSymbolRefAttr">:$traits
+    OptionalArrayRefParameter<"::mlir::FlatSymbolRefAttr">:$traits
   );
 
-  let assemblyFormat = "`<` $unique_id `,` `[` $traits `]` `>`";
+  let assemblyFormat = "`<` $unique_id (`,` `[` $traits^ `]`)? `>`";
 }
 
 #endif // TRAIT_TYPES_TD

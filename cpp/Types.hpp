@@ -19,6 +19,14 @@ inline bool containsSymbolicType(Type ty) {
   return isa<SymbolicTypeInterface>(ty);
 }
 
+inline Type applySubstitution(const llvm::DenseMap<Type,Type> &substitution,
+                              Type ty) {
+  if (auto it = substitution.find(ty); it != substitution.end()) {
+    return it->second;
+  }
+  return ty;
+}
+
 /// Attempt to unify `expectedTy` and `foundTy`.  If `expectedTy` or `foundTy` is
 /// a PolyType, record/verify a substitution via unifyPolyType().  Otherwise,
 /// if the type is composite (i.e. has immediate sub‐types), recurse into each

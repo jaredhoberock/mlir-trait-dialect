@@ -35,16 +35,6 @@ static SmallVector<Type, 4> getImmediateSubTypes(Type ty) {
 }
 
 
-static Type applySubstitution(
-    const llvm::DenseMap<Type,Type> &substitution,
-    Type ty) {
-  if (auto it = substitution.find(ty); it != substitution.end()) {
-    return it->second;
-  }
-  return ty;
-}
-
-
 /// Attempt to unify a PolyType `polyTy` against another type `otherTy`.
 /// If `polyTy` already has a mapping in `substitution`, verify it matches
 /// `otherTy`. Otherwise, ensure `otherTy` satisfies all trait requirements
