@@ -53,8 +53,8 @@ ImplOp TraitOp::getImpl(Type receiverTy) {
     }
 
     // otherwise, check if the impl's receiver type is a symbolic matcher
-    else if (auto matcher = dyn_cast<SymbolicMatcherInterface>(implReceiverTy)) {
-      if (matcher.matches(receiverTy, module)) {
+    else if (auto symbolicTy = dyn_cast<SymbolicTypeUnificationInterface>(implReceiverTy)) {
+      if (succeeded(symbolicTy.unifyWith(receiverTy, module, /*emitError=*/{}))) {
         // if there is more than one symbolic match, that's ambiguous, and an error
         if (symbolicImpl) return nullptr;
         symbolicImpl = impl;

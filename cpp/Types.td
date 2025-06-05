@@ -25,7 +25,7 @@ def SelfType : TypeDef<TraitDialect, "Self", [SymbolicTypeInterface]> {
 }
 
 // Represents a universally quantified type parameter constrained by a list of traits.
-def PolyType : TypeDef<TraitDialect, "Poly", [SymbolicTypeInterface]> {
+def PolyType : TypeDef<TraitDialect, "Poly", [SymbolicTypeUnificationInterface]> {
   let mnemonic = "poly";
   let summary = "A polymorphic type parameter constrained by one or more traits";
 
@@ -42,6 +42,11 @@ def PolyType : TypeDef<TraitDialect, "Poly", [SymbolicTypeInterface]> {
       !trait.poly<0, [@Add, @Clone]>
     refers to the first type parameter of a generic function, which must implement both
     the `Add` and `Clone` traits.
+  }];
+
+  let extraClassDeclaration = [{
+    // for SymbolicTypeUnificationInterface
+    LogicalResult unifyWith(Type ty, ModuleOp module, llvm::function_ref<InFlightDiagnostic()> emitError);
   }];
 
   let parameters = (ins

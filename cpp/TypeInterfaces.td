@@ -16,12 +16,13 @@ def SymbolicTypeInterface : TypeInterface<"SymbolicTypeInterface"> {
   }];
 }
 
-def SymbolicMatcherInterface : TypeInterface<"SymbolicMatcherInterface", [SymbolicTypeInterface]> {
+def SymbolicTypeUnificationInterface : TypeInterface<"SymbolicTypeUnificationInterface", [SymbolicTypeInterface]> {
   let cppNamespace = "::mlir::trait";
   let description = [{
-    This interface extends SymbolicTypeInterface with a method `matches(Type ty, TraitOp& trait)`
-    that returns `true` if the given type satisfies the predicate represented by
-    this symbolic type. A `ModuleOp` is received as a parameter to allow symbol lookup.
+    This interface extends SymbolicTypeInterface with a method
+    `unifyWith(Type ty, ModuleOp module, llvm::function_ref<InFlightDiagnostic()> emitError)`
+    that returns `success` if the given type can be unified with this symbolic type.
+    A `ModuleOp` is received as a parameter to allow symbol lookup.
 
     It is intended to enable structural `trait.impl`s by allowing symbolic types
     to decide whether a concrete type matches their predicate.
@@ -29,9 +30,9 @@ def SymbolicMatcherInterface : TypeInterface<"SymbolicMatcherInterface", [Symbol
 
   let methods = [
     InterfaceMethod<
-      "Returns `true` if the given type satisfies the symbolic predicate",
-      "bool", "matches",
-      (ins "Type":$ty, "ModuleOp":$module)
+      "Returns `success` if the given type can be unified with this symbolic type",
+      "llvm::LogicalResult", "unifyWith",
+      (ins "Type":$ty, "ModuleOp":$module, "llvm::function_ref<InFlightDiagnostic()>":$emitError)
     >
   ];
 }
