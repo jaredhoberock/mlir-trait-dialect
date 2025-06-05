@@ -35,6 +35,17 @@ def SymbolicTypeUnificationInterface : TypeInterface<"SymbolicTypeUnificationInt
       (ins "Type":$ty, "ModuleOp":$module, "llvm::function_ref<InFlightDiagnostic()>":$emitError)
     >
   ];
+
+  let extraClassDeclaration = [{
+    // silent unification, diagnostics are discarded
+    LogicalResult unifyWith(Type ty, ModuleOp module) const {
+      return unifyWith(ty, module, [&] {
+        auto diag = mlir::emitError(UnknownLoc::get(module.getContext()));
+        diag.abandon();
+        return diag;
+      });
+    }
+  }];
 }
 
 #endif // TRAIT_TYPE_INTERFACES_TD
