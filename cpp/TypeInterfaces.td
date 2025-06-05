@@ -21,7 +21,7 @@ def SymbolicMatcherInterface : TypeInterface<"SymbolicMatcherInterface", [Symbol
   let description = [{
     This interface extends SymbolicTypeInterface with a method `matches(Type ty, TraitOp& trait)`
     that returns `true` if the given type satisfies the predicate represented by
-    this symbolic type. The `TraitOp` doing the check is received as a parameter.
+    this symbolic type. A `ModuleOp` is received as a parameter to allow symbol lookup.
 
     It is intended to enable structural `trait.impl`s by allowing symbolic types
     to decide whether a concrete type matches their predicate.
@@ -31,7 +31,7 @@ def SymbolicMatcherInterface : TypeInterface<"SymbolicMatcherInterface", [Symbol
     InterfaceMethod<
       "Returns `true` if the given type satisfies the symbolic predicate",
       "bool", "matches",
-      (ins "Type":$ty, "TraitOp&":$trait)
+      (ins "Type":$ty, "ModuleOp":$module)
     >
   ];
 }

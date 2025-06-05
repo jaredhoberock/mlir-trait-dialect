@@ -39,7 +39,7 @@ static SmallVector<Type, 4> getImmediateSubTypes(Type ty) {
 /// If `polyTy` already has a mapping in `substitution`, verify it matches
 /// `otherTy`. Otherwise, ensure `otherTy` satisfies all trait requirements
 /// of `polyTy` and record the mapping. To look up trait definitions, this
-/// function walks up the IR from `loc` to find the enclosing ModuleOp.
+/// function uses the given ModuleOp.
 static LogicalResult unifyPolyType(Location loc,
                                    PolyType polyTy,
                                    Type otherTy,
