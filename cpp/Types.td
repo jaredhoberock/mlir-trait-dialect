@@ -38,6 +38,10 @@ def PolyType : TypeDef<TraitDialect, "Poly", [SymbolicTypeUnificationInterface]>
     field lists the required trait interfaces the type must satisfy, each given as a
     `SymbolRefAttr` referring to a `trait.trait` symbol.
 
+    Alternatively, `fresh` can be specified instead of `unique_id` to request a "fresh"
+    `!trait.poly` with a automatically-generated `unique_id`. Fresh IDs are allocated in
+    monotonically decreasing order beginning at `-1`.
+
     For example:
       !trait.poly<0, [@Add, @Clone]>
     refers to the first type parameter of a generic function, which must implement both
@@ -45,16 +49,19 @@ def PolyType : TypeDef<TraitDialect, "Poly", [SymbolicTypeUnificationInterface]>
   }];
 
   let extraClassDeclaration = [{
+    // create a "fresh" PolyType with an unused unique_id
+    static PolyType fresh(MLIRContext* ctx, ArrayRef<FlatSymbolRefAttr> traits);
+
     // for SymbolicTypeUnificationInterface
     LogicalResult unifyWith(Type ty, ModuleOp module, llvm::function_ref<InFlightDiagnostic()> emitError);
   }];
 
   let parameters = (ins
-    "unsigned":$unique_id,
+    "int":$unique_id,
     OptionalArrayRefParameter<"::mlir::FlatSymbolRefAttr">:$traits
   );
 
-  let assemblyFormat = "`<` $unique_id (`,` `[` $traits^ `]`)? `>`";
+  let hasCustomAssemblyFormat = 1;
 }
 
 #endif // TRAIT_TYPES_TD

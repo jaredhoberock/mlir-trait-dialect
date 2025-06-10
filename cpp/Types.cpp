@@ -1,6 +1,7 @@
 #include "Dialect.hpp"
 #include "Ops.hpp"
 #include "Types.hpp"
+#include <atomic>
 #include <llvm/ADT/TypeSwitch.h>
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/DialectImplementation.h>
@@ -19,6 +20,80 @@ void TraitDialect::registerTypes() {
   >();
 }
 
+int freshPolyTypeId() {
+  static std::atomic<int> counter{-1};
+  return counter.fetch_sub(1, std::memory_order_relaxed);
+}
+
+PolyType PolyType::fresh(MLIRContext* ctx, ArrayRef<FlatSymbolRefAttr> traits) {
+  return PolyType::get(ctx, freshPolyTypeId(), traits);
+}
+
+Type PolyType::parse(AsmParser &parser) {
+  MLIRContext *ctx = parser.getContext();
+  int uniqueId = 0;
+  SmallVector<FlatSymbolRefAttr> traits;
+
+  // parse this:
+  //
+  // <fresh, [@Trait1, @Trait2, ...]> or
+  // <int, [@Trait1, @Trait2, ...]>
+  //
+  // ", [@Trait1, @Trait2, ...]" is optional
+
+  if (parser.parseLess()) {
+    parser.emitError(parser.getNameLoc(), "expected '<'");
+    return Type();
+  }
+
+  if (succeeded(parser.parseOptionalKeyword("fresh"))) {
+    uniqueId = freshPolyTypeId();
+  } else {
+    if (parser.parseInteger(uniqueId)) {
+      parser.emitError(parser.getNameLoc(), "expected integer or 'fresh'");
+      return Type();
+    }
+  }
+
+  if (succeeded(parser.parseOptionalComma())) {
+    if (parser.parseLSquare()) {
+      parser.emitError(parser.getNameLoc(), "expected '['");
+      return Type();
+    }
+
+    FlatSymbolRefAttr traitAttr;
+    do {
+      if (parser.parseAttribute(traitAttr)) {
+        parser.emitError(parser.getNameLoc(), "expected attribute");
+        return Type();
+      }
+
+      traits.push_back(traitAttr);
+    } while (succeeded(parser.parseOptionalComma()));
+
+    if (parser.parseRSquare()) {
+      parser.emitError(parser.getNameLoc(), "expected ']'");
+      return Type();
+    }
+  }
+
+  if (parser.parseGreater()) {
+    parser.emitError(parser.getNameLoc(), "expected '>'");
+    return Type();
+  }
+
+  return PolyType::get(ctx, uniqueId, traits);
+}
+
+void PolyType::print(AsmPrinter &printer) const {
+  printer << "<" << getUniqueId();
+  if (!getTraits().empty()) {
+    printer << ", [";
+    llvm::interleaveComma(getTraits(), printer.getStream());
+    printer << "]";
+  }
+  printer << ">";
+}
 
 LogicalResult PolyType::unifyWith(
     Type ty,
