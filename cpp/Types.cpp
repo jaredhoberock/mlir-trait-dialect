@@ -206,11 +206,8 @@ LogicalResult unifyTypes(
     Type foundTy,
     ModuleOp moduleOp,
     llvm::DenseMap<Type,Type> &subst) {
-  return unifyTypes(expectedTy, foundTy, moduleOp, subst, [&] {
-    auto diag = mlir::emitError(UnknownLoc::get(moduleOp.getContext()));
-    diag.abandon();
-    return diag;
-  });
+  auto errFn = llvm::function_ref<InFlightDiagnostic()>{};
+  return unifyTypes(expectedTy, foundTy, moduleOp, subst, errFn);
 }
 
 

@@ -39,11 +39,8 @@ def SymbolicTypeUnificationInterface : TypeInterface<"SymbolicTypeUnificationInt
   let extraClassDeclaration = [{
     // silent unification, diagnostics are discarded
     LogicalResult unifyWith(Type ty, ModuleOp module) const {
-      return unifyWith(ty, module, [&] {
-        auto diag = mlir::emitError(UnknownLoc::get(module.getContext()));
-        diag.abandon();
-        return diag;
-      });
+      auto errFn = llvm::function_ref<InFlightDiagnostic()>{};
+      return unifyWith(ty, module, errFn);
     }
   }];
 }
