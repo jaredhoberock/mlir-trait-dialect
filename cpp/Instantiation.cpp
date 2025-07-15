@@ -48,18 +48,21 @@ std::string mangleFunctionName(StringRef name,
                                                       
 std::string mangleMethodName(
     StringRef traitName,
-    Type receiverType,
+    ArrayRef<Type> typeArgs,
     StringRef methodName) 
 {
   std::string result;
   llvm::raw_string_ostream os(result);
 
   os << "__trait_" << traitName;
-  os << "_impl_";
+  os << "_impl";
 
-  receiverType.print(os);
+  for (auto ty : typeArgs) {
+    os << "_";
+    ty.print(os);
+  }
 
-  os << "_" << methodName; // e.g., "eq"
+  os << "_" << methodName;
 
   return os.str();
 }
@@ -202,23 +205,8 @@ func::FuncOp instantiatePolymorph(OpBuilder& builder,
 
 ImplOp instantiatePolymorphicImpl(OpBuilder& builder,
                                   ImplOp polymorph,
-                                  Type receiverType) {
-  Type implReceiverType = polymorph.getReceiverType();
-
-  if (not isa<SymbolicTypeInterface>(implReceiverType)) {
-    polymorph.emitError("cannot instantiate impl without polymorphic receiver type");
-    return nullptr;
-  }
-  
-  // set up type replacer
-  AttrTypeReplacer replacer;
-  replacer.addReplacement([=](Type t) -> std::optional<Type> {
-    // replace any occurance of the impl's receiver type with the given receiver type
-    return t == implReceiverType ? std::optional<Type>(receiverType) : std::nullopt;
-  });
-
-  IRMapping mapping;
-  return cast<ImplOp>(cloneOpWithTypeReplacement(builder, *polymorph.getOperation(), mapping, replacer));
+                                  ArrayRef<Type> typeArgs) {
+  llvm_unreachable("instantiatePolymorphicImpl: TODO");
 }
 
 void instantiatePolymorphicRegion(OpBuilder& builder,

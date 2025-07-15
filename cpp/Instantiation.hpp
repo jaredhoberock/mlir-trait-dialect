@@ -9,7 +9,9 @@ namespace mlir::trait {
 
 bool isPolymorph(func::FuncOp fn);
 
-std::string mangleMethodName(StringRef traitName, Type receiverType, StringRef methodName);
+std::string mangleMethodName(StringRef traitName,
+                             ArrayRef<Type> typeArgs,
+                             StringRef methodName);
 
 std::string mangleFunctionName(StringRef name,
                                const DenseMap<Type, Type> &substitution);
@@ -21,7 +23,7 @@ func::FuncOp instantiatePolymorph(OpBuilder& builder,
 
 ImplOp instantiatePolymorphicImpl(OpBuilder& builder,
                                   ImplOp polymorph,
-                                  Type receiverType);
+                                  ArrayRef<Type> typeArgs);
 
 void instantiatePolymorphicRegion(OpBuilder& builder,
                                   Region& polymorph,

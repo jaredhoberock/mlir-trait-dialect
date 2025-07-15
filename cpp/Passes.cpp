@@ -4,8 +4,10 @@
 #include "Passes.hpp"
 #include "Types.hpp"
 #include <mlir/Dialect/Func/IR/FuncOps.h>
+#include <mlir/Dialect/Func/Transforms/FuncConversions.h>
 #include <mlir/IR/PatternMatch.h>
 #include <mlir/Pass/Pass.h>
+#include <mlir/Transforms/DialectConversion.h>
 #include <mlir/Transforms/GreedyPatternRewriteDriver.h>
 
 namespace mlir::trait {
@@ -18,7 +20,7 @@ struct FuncCallOpLowering : public OpRewritePattern<FuncCallOp> {
   LogicalResult matchAndRewrite(FuncCallOp callOp, PatternRewriter &rewriter) const override {
     // if any of the call's operand types are symbolic, this call can't be resolved yet
     for (auto op : callOp.getOperands()) {
-      if (isa<SymbolicTypeInterface>(op.getType()))
+      if (containsSymbolicType(op.getType()))
         return failure();
     }
 
@@ -40,12 +42,9 @@ struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
   using OpRewritePattern::OpRewritePattern;
 
   LogicalResult matchAndRewrite(MethodCallOp methodCallOp, PatternRewriter &rewriter) const override {
-    // if the receiver type or any of the call's operand types are symbolic, this call can't be resolved yet
-    if (isa<SymbolicTypeInterface>(methodCallOp.getReceiverType()))
-      return failure();
-
+    // if any operand is still symbolic, this call can't be resolved yet
     for (auto op : methodCallOp.getOperands()) {
-      if (isa<SymbolicTypeInterface>(op.getType()))
+      if (containsSymbolicType(op.getType()))
         return failure();
     }
 
@@ -59,12 +58,53 @@ struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
       methodCallOp.getResultTypes(),
       callee.getSymName(),
       callee.getFunctionType(),
-      methodCallOp.getOperands()
+      methodCallOp.getArguments()
     );
 
     return success();
   }
 };
+
+struct EraseWitnessOp : public OpRewritePattern<WitnessOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(WitnessOp op, PatternRewriter &rewriter) const override {
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
+static LogicalResult eraseWitnessOpsAndTypes(ModuleOp module) {
+  MLIRContext* ctx = module.getContext();
+  ConversionTarget target(*ctx);
+
+  // all trait.witness ops are illegal
+  target.addIllegalOp<WitnessOp>();
+
+  // otherwise, an op is legal if it does not mention !trait.witness
+  target.markUnknownOpDynamicallyLegal([&](Operation *op) {
+    return !opMentionsWitnessType(op);
+  });
+  
+  // create a TypeConverter to erase !trait.witness types
+  TypeConverter tc;
+  tc.addConversion([](Type ty) { return ty; });
+  tc.addConversion([](WitnessType ty, SmallVectorImpl<Type> &out) {
+    // leaving out unchanged means erase this type
+    return success();
+  });
+  
+  // erase all trait.witness ops
+  RewritePatternSet patterns(ctx);
+  patterns.add<EraseWitnessOp>(ctx);
+  
+  // populate conversion patterns for func dialect ops
+  populateFunctionOpInterfaceTypeConversionPattern<func::FuncOp>(patterns, tc);
+  populateCallOpTypeConversionPattern(patterns, tc);
+  populateReturnOpTypeConversionPattern(patterns, tc);
+  
+  return applyPartialConversion(module, target, std::move(patterns));
+}
 
 }
 
@@ -106,6 +146,12 @@ void MonomorphizePass::runOnOperation() {
   for (TraitOp trait : llvm::make_early_inc_range(module.getOps<TraitOp>())) {
     trait.erase();
   }
+
+  // erase witness ops and types last
+  // we do this last because all of the above (polymorphic functions, trait.impl, trait.trait)
+  // may use !trait.witness
+  if (failed(eraseWitnessOpsAndTypes(module)))
+    signalPassFailure();
 }
 
 std::unique_ptr<Pass> createMonomorphizePass() {

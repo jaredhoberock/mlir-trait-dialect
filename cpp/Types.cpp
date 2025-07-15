@@ -25,21 +25,17 @@ int freshPolyTypeId() {
   return counter.fetch_sub(1, std::memory_order_relaxed);
 }
 
-PolyType PolyType::fresh(MLIRContext* ctx, ArrayRef<FlatSymbolRefAttr> traits) {
-  return PolyType::get(ctx, freshPolyTypeId(), traits);
+PolyType PolyType::fresh(MLIRContext* ctx) {
+  return PolyType::get(ctx, freshPolyTypeId());
 }
 
 Type PolyType::parse(AsmParser &parser) {
   MLIRContext *ctx = parser.getContext();
   int uniqueId = 0;
-  SmallVector<FlatSymbolRefAttr> traits;
 
   // parse this:
-  //
-  // <fresh, [@Trait1, @Trait2, ...]> or
-  // <int, [@Trait1, @Trait2, ...]>
-  //
-  // ", [@Trait1, @Trait2, ...]" is optional
+  // <fresh> or
+  // <int>
 
   if (parser.parseLess()) {
     parser.emitError(parser.getNameLoc(), "expected '<'");
@@ -53,28 +49,7 @@ Type PolyType::parse(AsmParser &parser) {
       parser.emitError(parser.getNameLoc(), "expected integer or 'fresh'");
       return Type();
     }
-  }
-
-  if (succeeded(parser.parseOptionalComma())) {
-    if (parser.parseLSquare()) {
-      parser.emitError(parser.getNameLoc(), "expected '['");
-      return Type();
-    }
-
-    FlatSymbolRefAttr traitAttr;
-    do {
-      if (parser.parseAttribute(traitAttr)) {
-        parser.emitError(parser.getNameLoc(), "expected attribute");
-        return Type();
-      }
-
-      traits.push_back(traitAttr);
-    } while (succeeded(parser.parseOptionalComma()));
-
-    if (parser.parseRSquare()) {
-      parser.emitError(parser.getNameLoc(), "expected ']'");
-      return Type();
-    }
+    
   }
 
   if (parser.parseGreater()) {
@@ -82,39 +57,39 @@ Type PolyType::parse(AsmParser &parser) {
     return Type();
   }
 
-  return PolyType::get(ctx, uniqueId, traits);
+  return PolyType::get(ctx, uniqueId);
 }
 
 void PolyType::print(AsmPrinter &printer) const {
-  printer << "<" << getUniqueId();
-  if (!getTraits().empty()) {
-    printer << ", [";
-    llvm::interleaveComma(getTraits(), printer.getStream());
-    printer << "]";
-  }
-  printer << ">";
+  printer << "<" << getUniqueId() << ">";
 }
 
+
 LogicalResult PolyType::unifyWith(
-    Type ty,
-    ModuleOp module, 
-    llvm::function_ref<InFlightDiagnostic()> emitError) {
-  // check that ty implements every trait listed in our trait bounds
-  for (auto traitAttr : getTraits()) {
-    auto traitRef = mlir::cast<FlatSymbolRefAttr>(traitAttr);
-    // Use the symbol table to find the TraitOp definition.
-    auto traitOp = mlir::dyn_cast_or_null<TraitOp>(
-        SymbolTable::lookupSymbolIn(module, traitRef));
-    if (!traitOp) {
-      return emitError() << "couldn't find trait '" << traitRef << "'";
-    }
-    // If ty does not implement this trait, error out.
-    if (!traitOp.getImpl(ty)) {
-      return emitError()
-             << "type " << ty 
-             << " does not implement required trait " << traitRef 
-             << " for poly type " << getUniqueId();
-    }
+  Type ty,
+  ModuleOp module,
+  llvm::function_ref<InFlightDiagnostic()> emitError) {
+  // XXX if ty is a PolyType, should we unify with a different PolyType?
+  return success();
+}
+
+
+LogicalResult WitnessType::verify(function_ref<InFlightDiagnostic()> emitError,
+                                  FlatSymbolRefAttr /*traits*/,
+                                  ArrayRef<Type> typeArgs) {
+  auto fail = [&]() -> LogicalResult {
+    return emitError ? emitError() << "nested !trait.witness types are not allowed"
+                     : failure();
+  };
+
+  for (Type t : typeArgs) {
+    bool nested = false;
+    t.walk([&](Type sub) {
+      if (mlir::isa<WitnessType>(sub))
+        nested = true;
+    });
+    if (nested)
+      return fail();
   }
 
   return success();
@@ -139,25 +114,26 @@ static SmallVector<Type, 4> getImmediateSubTypes(Type ty) {
 /// Attempt to unify a SymbolicTypeUnificationInterface `symTy` against another type `otherTy`.
 /// If `symTy` already has a mapping in `substitution`, verify it matches `otherTy`. Otherwise,
 /// ensure `otherTy` can be unified with `symTy` and record the mapping.
-static LogicalResult unifySymbolicType(Location loc,
-                                       SymbolicTypeUnificationInterface symTy,
+static LogicalResult unifySymbolicType(SymbolicTypeUnificationInterface symTy,
                                        Type otherTy,
                                        ModuleOp moduleOp,
-                                       llvm::DenseMap<Type, Type> &substitution) {
+                                       llvm::DenseMap<Type, Type> &substitution,
+                                       llvm::function_ref<InFlightDiagnostic()> emitError) {
   // If we've already substituted a concrete type for symTy, check consistency.
   if (auto it = substitution.find(symTy); it != substitution.end()) {
     if (it->second != otherTy) {
-      return mlir::emitError(loc)
-             << "mismatched substitution for type " 
-             << symTy << ": expected " 
-             << it->second << ", found " << otherTy;
+      if (emitError)
+        return emitError() << "mismatched substitution for type "
+                           << symTy << ": expected "
+                           << it->second << ", but found " << otherTy;
+
+      return failure();
     }
     return success();
   }
 
   // no substitution already exists, check that we can unify
-  auto errFn = [loc] { return mlir::emitError(loc); };
-  if (failed(symTy.unifyWith(otherTy, moduleOp, errFn))) {
+  if (failed(symTy.unifyWith(otherTy, moduleOp, emitError))) {
     return failure();
   }
 
@@ -167,11 +143,11 @@ static LogicalResult unifySymbolicType(Location loc,
 }
 
 
-LogicalResult unifyTypes(Location loc,
-                         Type expectedTy,
+LogicalResult unifyTypes(Type expectedTy,
                          Type foundTy,
                          ModuleOp moduleOp,
-                         llvm::DenseMap<Type, Type> &substitution) {
+                         llvm::DenseMap<Type, Type> &substitution,
+                         llvm::function_ref<InFlightDiagnostic()> emitError) {
   // normalize both types by applying the current substitution
   expectedTy = applySubstitution(substitution, expectedTy);
   foundTy = applySubstitution(substitution, foundTy);
@@ -182,20 +158,20 @@ LogicalResult unifyTypes(Location loc,
 
   // expectedTy is a SymbolicTypeUnificationInterface
   if (auto symTy = dyn_cast<SymbolicTypeUnificationInterface>(expectedTy)) {
-    return unifySymbolicType(loc,
-                             symTy,
+    return unifySymbolicType(symTy,
                              foundTy,
                              moduleOp,
-                             substitution);
+                             substitution,
+                             emitError);
   }
 
   // foundTy is a SymbolicTypeUnificationInterface
   if (auto symTy = dyn_cast<SymbolicTypeUnificationInterface>(foundTy)) {
-    return unifySymbolicType(loc,
-                             symTy,
+    return unifySymbolicType(symTy,
                              expectedTy,
                              moduleOp,
-                             substitution);
+                             substitution,
+                             emitError);
   }
 
   // recurse into sub elements
@@ -205,22 +181,45 @@ LogicalResult unifyTypes(Location loc,
   // the number of subelements and TypeID of both types must match before recursing
   if (expectedKids.size() != foundKids.size() ||
       expectedTy.getTypeID() != foundTy.getTypeID()) {
-    return emitError(loc)
-           << "type mismatch: expected '" << expectedTy
-           << "' but found '" << foundTy << "'";
+    if (emitError)
+      emitError() << "type mismatch: expected " << expectedTy
+                  << " but found " << foundTy;
+    return failure();
   }
 
   // Recurse on each child pair
   for (unsigned i = 0, e = expectedKids.size(); i < e; ++i) {
-    if (failed(unifyTypes(loc,
-                          expectedKids[i],
+    if (failed(unifyTypes(expectedKids[i],
                           foundKids[i],
                           moduleOp,
-                          substitution)))
+                          substitution,
+                          emitError)))
       return failure();
   }
 
   return success();
+}
+
+
+LogicalResult unifyTypes(
+    Type expectedTy,
+    Type foundTy,
+    ModuleOp moduleOp,
+    llvm::DenseMap<Type,Type> &subst) {
+  return unifyTypes(expectedTy, foundTy, moduleOp, subst, [&] {
+    auto diag = mlir::emitError(UnknownLoc::get(moduleOp.getContext()));
+    diag.abandon();
+    return diag;
+  });
+}
+
+
+LogicalResult unifyTypes(
+    Type expectedTy,
+    Type foundTy,
+    ModuleOp moduleOp) {
+  DenseMap<Type,Type> discardedSubst;
+  return unifyTypes(expectedTy, foundTy, moduleOp, discardedSubst);
 }
 
 

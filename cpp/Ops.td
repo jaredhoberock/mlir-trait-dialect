@@ -9,28 +9,34 @@ include "mlir/IR/OpBase.td"
 include "mlir/IR/RegionKindInterface.td"
 include "mlir/IR/SymbolInterfaces.td"
 include "Dialect.td"
+include "Types.td"
+
 
 def TraitOp : TraitDialectOp<"trait", [
-  Symbol, 
+  Symbol,
   SymbolTable
 ] # GraphRegionNoTerminator.traits
 > {
   let summary = "Declares a trait interface";
   let description = [{
-    Declares a trait interface, similar to a Rust trait. A `trait.trait` operation
-    defines a symbol that can be referenced by `trait.param` types and `trait.impl`.
+    Declares a trait interface, similar to a Rust or Scala trait. A `trait.trait` operation
+    defines a symbol that can be referenced by `!trait.witness` types, `trait.impl`, and `trait.method.call`.
     It contains a region which holds `func.func` operations that define the
-    interface requirements for implementors. If any of these `func.func` operations have
-    a body, then this interface is optional for implementors.
+    method requirements for implementors. If any of these `func.func` operations have
+    a body, then this method is optional for implementors.
 
     Example:
-      trait.trait @Add {
-        func.func @add(%self: !trait.self, %rhs: i32) -> i32
+      !S = !trait.poly<0>
+      !O = !trait.poly<1>
+
+      trait.trait @PartialEq[!S,!O] {
+        // a required method
+        func.func @eq(%self: !S, %other: !O) -> i1
       }
   }];
 
-  let arguments = (ins SymbolNameAttr:$sym_name);
-  let results = (outs);  // No results
+  let arguments = (ins SymbolNameAttr:$sym_name, TypeArrayAttr:$type_params);
+  let results = (outs); // No results
   let regions = (region SizedRegion<1>:$body);
 
   let extraClassDeclaration = [{
@@ -75,51 +81,55 @@ def TraitOp : TraitDialectOp<"trait", [
       return nullptr;
     }
 
-    ImplOp getImpl(Type receiverType);
+    ImplOp getImpl(ArrayRef<Type> typeArgs);
+    ImplOp getOrInstantiateImpl(OpBuilder& builder, ArrayRef<Type> typeArgs);
 
-    ImplOp getOrInstantiateImpl(OpBuilder& builder, Type receiverType);
+    DenseMap<Type,Type> buildSubstitutionFor(TypeRange typeArgs);
   }];
 
   // builder creates one empty block in the body region
   let builders = [
-    OpBuilder<(ins "::mlir::StringAttr":$sym_name), [{
+    OpBuilder<(ins "::mlir::StringAttr":$sym_name,
+                   "::mlir::ArrayAttr":$type_params), [{
       $_state.addAttribute("sym_name", sym_name);
+      $_state.addAttribute("type_params", type_params);
       ::mlir::Region *region = $_state.addRegion();
       region->emplaceBlock();
     }]>
   ];
 
-  let assemblyFormat = "$sym_name attr-dict-with-keyword $body";
+  let assemblyFormat = "$sym_name $type_params attr-dict-with-keyword $body";
 
   let hasVerifier = 1;
 }
+
 
 def ImplOp : TraitDialectOp<"impl", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
   SymbolTable
 ] # GraphRegionNoTerminator.traits
 > {
-  let summary = "Implements a trait for a receiver type";
+  let summary = "Implements a trait for a list of types";
   let description = [{
-    Declares an implementation of a trait for a specific receiver type.
+    Declares an implementation of a trait for a specific list of types.
 
-    The `trait` attribute is a FlatSymbolRefAttr pointing to a `trait.trait`
-    declaration (e.g., `@PartialEq`), and `receiver_type` is a TypeAttr representing
-    the type that implements the trait (e.g., `i32` or a custom type).
+    The `trait_name` attribute is a FlatSymbolRefAttr pointing to a `trait.trait`
+    declaration (e.g., `@PartialEq`), and `type_args` is an ArrayRefParameter of Types
+    representing the list of types that implement the trait (e.g., [`i32`, `i32`]).
 
     This operation contains a region with `func.func` operations, each
-    implementing one of the trait's required methods.
+    implementing one of the trait's methods.
 
     Example:
-      trait.impl @PartialEq for i32 {
-        func.func @eq(%self: i32, %other: i32) -> i1 {
-          %same = arith.cmpi eq, %self, %other : i32
-          trait.return %same : i1
+        trait.impl @PartialEq for [i32,i32] {
+          func.func @eq(%self: i32, %other: i32) -> i1 {
+            %res = arith.cmpi eq, %self, %other : i32
+            return %res : i1
+          }
         }
-      }
   }];
 
-  let arguments = (ins FlatSymbolRefAttr:$trait_name, TypeAttr:$receiver_type);
+  let arguments = (ins FlatSymbolRefAttr:$trait_name, TypeArrayAttr:$type_args);
   let regions = (region SizedRegion<1>:$body);
 
   let extraClassDeclaration = [{
@@ -146,45 +156,94 @@ def ImplOp : TraitDialectOp<"impl", [
     func::FuncOp getOrInstantiateMethod(OpBuilder& builder, StringRef methodName);
 
     func::FuncOp getOrInstantiateFunctionFromMethod(OpBuilder& builder, StringRef methodName);
+
+    // Builds a substitution that maps the TraitOp's PolyType parameters to this ImplOp's type arguments
+    DenseMap<Type,Type> buildSubstitution();
   }];
 
-  // builder creates one empty block in the body region
+  // builders create one empty block in the body region
   let builders = [
+    // lower-level builder
     OpBuilder<(ins "::mlir::FlatSymbolRefAttr":$trait_name,
-                   "::mlir::TypeAttr":$receiver_type), [{
+                   "::mlir::ArrayAttr":$type_args), [{
       $_state.addAttribute("trait_name", trait_name);
-      $_state.addAttribute("receiver_type", receiver_type);
+      $_state.addAttribute("type_args", type_args);
       ::mlir::Region *region = $_state.addRegion();
       region->emplaceBlock();
+    }]>,
+
+    // higher-level builder takes an ArrayRef<Type>
+    OpBuilder<(ins "::mlir::FlatSymbolRefAttr":$trait_name,
+                   "::mlir::ArrayRef<::mlir::Type>":$type_args), [{
+      auto typeAttrs = ::llvm::map_to_vector(type_args, [](::mlir::Type t) {
+        return ::mlir::TypeAttr::get(t);
+      });
+
+      ::mlir::ArrayAttr typeArrayAttr = ::mlir::ArrayAttr::get($_builder.getContext(), 
+        ::llvm::ArrayRef<::mlir::Attribute>(typeAttrs.begin(), typeAttrs.end())
+      );
+
+      build($_builder, $_state, trait_name, typeArrayAttr);
     }]>
   ];
 
-  let assemblyFormat = "$trait_name `for` $receiver_type attr-dict-with-keyword $body";
+  let assemblyFormat = "$trait_name $type_args attr-dict-with-keyword $body";
+}
+
+
+def Witness : TypeConstraint<
+  CPred<"::mlir::isa<WitnessType>($_self)">,
+  "any '!trait.witness' type"
+>;
+
+
+def WitnessOp : TraitDialectOp<"witness", [
+  DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+  Pure
+]>{
+  let summary = "Materializes a witness value for a known trait implementation";
+  let description = [{
+    Creates a zero-sized SSA value of type `!trait.witness<@Trait, [types]>` that
+    acts as proof that the trait is satisfied. This operation has no operands.
+
+    The type arguments must be concrete; symbolic types are illegal. Symbol use
+    verification checks that a matching `trait.impl` exists for the named trait and type list.
+  }];
+
+  let results = (outs Witness:$result);
+
+  let extraClassDeclaration = [{
+    TraitOp getTrait();
+
+    FlatSymbolRefAttr getTraitAttr();
+    ArrayRef<Type> getTypeArgs();
+  }];
+
+  let assemblyFormat = "`:` type($result) attr-dict";
 }
 
 def MethodCallOp : TraitDialectOp<"method.call", [
   CallOpInterface,
   DeclareOpInterfaceMethods<SymbolUserOpInterface>
-]> {
+]>{
   let summary = "Call a trait method";
   let description = [{
-    Calls a method from a trait using fully-qualified syntax like `@Trait::@method<type>`.
-
-    This can appear in either polymorphic or monomorphic code.
-    Resolution to an implementation is performed during lowering.
+    Calls a method from a trait. This can appear in either polymorphic or monomorphic code.
+    Resolution to an implementation is performed during monomorphization.
 
     Example:
-      %r = trait.method.call @PartialEq::@eq<i32>(%x, %y) : (!trait.self, !trait.self) to (i32, i32) -> i1
+      %witness = trait.witness : !trait.witness<@PartialEq, [i32,i32]>
+      %x = ... : i32
+      %y = ... : i32
+      %res = trait.method.call @PartialEq::@eq<%witness>(%x, %y) : (!trait.poly<0>, !trait.poly<1>) to (i32, i32) -> i1
   }];
 
-  let arguments = (ins 
-      SymbolRefAttr:$method_ref,
-      TypeAttrOf<FunctionType>:$method_function_type,
-      TypeAttr:$receiver_type,
-      Variadic<AnyType>:$operands
+  let arguments = (ins
+    SymbolRefAttr:$method_ref,
+    TypeAttrOf<FunctionType>:$method_function_type,
+    WitnessType:$witness,
+    Variadic<AnyType>:$arguments
   );
-
-  let results = (outs Variadic<AnyType>);
 
   // custom builders
   let builders = [
@@ -194,8 +253,8 @@ def MethodCallOp : TraitDialectOp<"method.call", [
       "FlatSymbolRefAttr":$traitRef,
       "FlatSymbolRefAttr":$methodRef,
       "TypeAttr":$methodFunctionType,
-      "TypeAttr":$receiverType,
-      "ValueRange":$operands), [{
+      "Value":$witness,
+      "ValueRange":$arguments), [{
         MLIRContext *ctx = $_builder.getContext();
 
         // create the nested SymbolRefAttr
@@ -206,7 +265,7 @@ def MethodCallOp : TraitDialectOp<"method.call", [
         );
 
         // build the operation with the created nested reference
-        return build($_builder, $_state, results, qualifiedRef, methodFunctionType, receiverType, operands);
+        return build($_builder, $_state, results, qualifiedRef, methodFunctionType, witness, arguments);
     }]>,
 
     // builder that takes trait and method names separately
@@ -215,17 +274,19 @@ def MethodCallOp : TraitDialectOp<"method.call", [
       "StringRef":$traitName,
       "StringRef":$methodName,
       "TypeAttr":$methodFunctionType,
-      "TypeAttr":$receiverType,
-      "ValueRange":$operands), [{
+      "Value":$witness,
+      "ValueRange":$arguments), [{
         // convert strings to FlatSymbolRefAttrs and call the other builder
         MLIRContext *ctx = $_builder.getContext();
         FlatSymbolRefAttr traitRef = FlatSymbolRefAttr::get(ctx, traitName);
         FlatSymbolRefAttr methodRef = FlatSymbolRefAttr::get(ctx, methodName);
 
         // call the other builder
-        return build($_builder, $_state, results, traitRef, methodRef, methodFunctionType, receiverType, operands);
+        return build($_builder, $_state, results, traitRef, methodRef, methodFunctionType, witness, arguments);
     }]>,
   ];
+
+  let results = (outs Variadic<AnyType>);
 
   let extraClassDeclaration = [{
     func::FuncOp getOrInstantiateCallee(OpBuilder& builder);
@@ -262,11 +323,11 @@ def MethodCallOp : TraitDialectOp<"method.call", [
 
     // CallOpInterface methods
     operand_range getArgOperands() {
-      return getOperands();
+      return getArguments();
     }
 
     MutableOperandRange getArgOperandsMutable() {
-      return getOperandsMutable();
+      return getArgumentsMutable();
     }
 
     CallInterfaceCallable getCallableForCallee() {
@@ -279,8 +340,10 @@ def MethodCallOp : TraitDialectOp<"method.call", [
   }];
 
   let assemblyFormat = [{
-    $method_ref `<` $receiver_type `>` `(` $operands `)` attr-dict `:` $method_function_type `to` functional-type($operands, results)
+    $method_ref `<` $witness `>` `(` $arguments `)` attr-dict `:` $method_function_type `as` type($witness) functional-type($arguments, results)
   }];
+
+  let hasVerifier = 1;
 }
 
 def FuncCallOp : TraitDialectOp<"func.call", [
@@ -289,12 +352,17 @@ def FuncCallOp : TraitDialectOp<"func.call", [
 ]> {
   let summary = "Call a possibly polymorphic function defined with func.func and !trait.poly";
   let description = [{
-    Calls a function that may be polymorphic over one or more `!trait.poly` type parameters.
+    Calls a function that may be polymorphic over one of more `!trait.poly` type parameters.
     These functions are typically declared using `func.func` and their signatures may involve
     polymorphic type variables.
 
     Example:
-      %r = trait.func.call @foo(%x, %y) : (i32, i32) -> i1
+      %x = ... : i32
+      %y = ... : i32
+      %w = trait.witness : !trait.witness<@PartialEq[i32,i32]>
+      %r = trait.func.call @foo(%w, %x, %y)
+        : (!trait.witness<@PartialEq[!trait.poly<0>,!trait.poly<0>]>, !trait.poly<0>, !trait.poly<0>) -> i1
+        to (i32, i32) -> i1
   }];
 
   let arguments = (ins 
@@ -334,7 +402,7 @@ def FuncCallOp : TraitDialectOp<"func.call", [
     }
   }];
 
-  let assemblyFormat = "$callee `(` $operands `)` attr-dict `:` $callee_function_type `to` functional-type($operands, results)";
+  let assemblyFormat = "$callee `(` $operands `)` attr-dict `:` $callee_function_type `as` functional-type($operands, results)";
 }
 
 #endif // TRAIT_OPS_TD

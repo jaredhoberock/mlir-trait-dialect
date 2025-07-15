@@ -17,7 +17,53 @@
 using namespace mlir;
 using namespace mlir::trait;
 
+
+static LogicalResult checkPolymorphicFunctionCall(
+    FunctionType polyFnTy,
+    TypeRange argumentTypes,
+    TypeRange resultTypes,
+    Location loc,
+    ModuleOp moduleOp) {
+  // check argument count
+  auto paramTypes = polyFnTy.getInputs();
+  if (argumentTypes.size() != paramTypes.size())
+    return emitError(loc) << "expected " << paramTypes.size() << " arguments, but got "
+                          << argumentTypes.size();
+
+  // check result count
+  auto expectedResults = polyFnTy.getResults();
+  if (resultTypes.size() != expectedResults.size())
+    return emitError(loc) << "expected " << expectedResults.size()
+                          << " results, but got " << resultTypes.size();
+
+  // create a FunctionType representing the caller's parameters and result
+  FunctionType callerFnTy = FunctionType::get(moduleOp.getContext(), argumentTypes, resultTypes);
+  DenseMap<Type, Type> subst;
+
+  return unifyTypes(polyFnTy, callerFnTy, moduleOp, subst, [loc] {
+    return mlir::emitError(loc);
+  });
+}
+
+
+
 LogicalResult TraitOp::verify() {
+  auto typeParams = getTypeParams().getAsValueRange<TypeAttr>();
+
+  // types must be unique PolyTypes
+  DenseSet<PolyType> uniqueParams;
+  for (Type ty : typeParams) {
+    auto polyTy = dyn_cast<PolyType>(ty);
+    if (!polyTy)
+      return emitOpError() << "expected !trait.poly, found " << ty;
+    if (!uniqueParams.insert(polyTy).second)
+      return emitOpError() << "type parameters must be unique";
+  }
+
+  // there must be at least one type parameter
+  if (uniqueParams.size() < 1)
+    return emitOpError() << "requires at least one type parameter";
+
   for (Block &block : getBody()) {
     // check that all operations in the body are func.func
     for (Operation &op : block) {
@@ -28,11 +74,13 @@ LogicalResult TraitOp::verify() {
   return success();
 }
 
-ImplOp TraitOp::getImpl(Type receiverTy) {
+
+ImplOp TraitOp::getImpl(ArrayRef<Type> typeArgs) {
+  MLIRContext* ctx = getContext();
+
   ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
-  if (!module) {
+  if (!module)
     return nullptr;
-  }
 
   auto uses = mlir::SymbolTable::getSymbolUses(getOperation(), module);
   if (!uses)
@@ -44,54 +92,80 @@ ImplOp TraitOp::getImpl(Type receiverTy) {
     auto impl = dyn_cast<ImplOp>(use.getUser());
     if (!impl) continue;
 
-    Type implReceiverTy = impl.getReceiverType();
+    SmallVector<Type> implTypes(impl.getTypeArgs().getAsValueRange<TypeAttr>());
 
-    // first check the impl's receiver type for a direct match
-    if (implReceiverTy == receiverTy) {
-      // as soon as we find a direct match for the receiver type, we're done
+    // first check the impl's type arguments for an exact match
+    if (llvm::equal(implTypes, typeArgs)) {
+      // as soon as we find an exact match for the typeArgs, we're done
       return impl;
     }
 
-    // otherwise, check if the impl's receiver type is a symbolic matcher
-    else if (auto symbolicTy = dyn_cast<SymbolicTypeUnificationInterface>(implReceiverTy)) {
-      if (succeeded(symbolicTy.unifyWith(receiverTy, module))) {
-        // if there is more than one symbolic match, that's ambiguous, and an error
-        if (symbolicImpl) return nullptr;
-        symbolicImpl = impl;
-      }
+    // otherwise, check if the typeArgs can unify with the impl's type args,
+    // indicating a "symbolic" match
+
+    TupleType foundTy = TupleType::get(ctx, typeArgs);
+    TupleType expectedTy = TupleType::get(ctx, implTypes);
+
+    if (succeeded(unifyTypes(expectedTy, foundTy, module))) {
+      // if there is more than one symbolic match, that's ambiguous, and an error
+      if (symbolicImpl) return nullptr;
+      symbolicImpl = impl;
     }
   }
 
   return symbolicImpl;
 }
 
-ImplOp TraitOp::getOrInstantiateImpl(OpBuilder& builder, Type receiverTy) {
-  if (auto existingImpl = getImpl(receiverTy)) {
-    // check if the impl's receiver type is identical to receiverTy
-    if (existingImpl.getReceiverType() == receiverTy) {
-      return existingImpl;
+
+ImplOp TraitOp::getOrInstantiateImpl(OpBuilder& builder, ArrayRef<Type> typeArgs) {
+  if (auto impl = getImpl(typeArgs)) {
+    auto implTypeRange = impl.getTypeArgs().getAsValueRange<TypeAttr>();
+
+    // check if the impl's type arguments are identical to typeArgs
+    if (llvm::equal(implTypeRange, typeArgs)) {
+      return impl;
     }
 
-    // existingImpl must be polymorphic; instantiate
+    // impl must be polymorphic; instantiate
+    assert(llvm::any_of(implTypeRange, [](Type ty) {
+      return containsSymbolicType(ty);
+    }));
+    
     PatternRewriter::InsertionGuard guard(builder);
-    builder.setInsertionPointAfter(existingImpl);
-    return instantiatePolymorphicImpl(builder, existingImpl, receiverTy);
+    builder.setInsertionPointAfter(impl);
+    return instantiatePolymorphicImpl(builder, impl, typeArgs);
   }
 
   return nullptr;
 }
 
+
+DenseMap<Type,Type> TraitOp::buildSubstitutionFor(TypeRange typeArgs) {
+  DenseMap<Type,Type> subst;
+  auto params = getTypeParams().getAsValueRange<TypeAttr>();
+  for (auto [from, to] : llvm::zip(params, typeArgs)) {
+    subst[from] = to;
+  }
+  return subst;
+}
+
+
 LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  // Verify trait attribute exists
+  // Verify trait name attribute exists
   auto traitNameAttr = getTraitNameAttr();
   if (!traitNameAttr)
     return emitOpError() << "requires a 'trait.trait' symbol reference attribute";
 
   // Get the trait
   auto traitOp = getTrait();
-  if (!traitOp) {
-    return emitOpError() << "cannot find trait '" << traitNameAttr << "'";
-  }
+  if (!traitOp)
+    return emitOpError() << "cannot find trait'" << traitNameAttr << "'";
+
+  // Check the trait's expected arity against typeArgs
+  auto expectedArity = traitOp.getTypeParams().size();
+  if (getTypeArgs().size() != expectedArity)
+    return emitOpError() << "trait '" << traitNameAttr << "' expects " << expectedArity
+                         << " type arguments, found " << getTypeArgs().size();
 
   // Collect method names from the trait
   llvm::SmallSet<StringRef, 8> requiredMethodNames = traitOp.getRequiredMethodNames();
@@ -142,6 +216,12 @@ TraitOp ImplOp::getTrait() {
 }
 
 
+DenseMap<Type, Type> ImplOp::buildSubstitution() {
+  SmallVector<Type> typeArgs(getTypeArgs().getAsValueRange<TypeAttr>());
+  return getTrait().buildSubstitutionFor(typeArgs);
+}
+
+
 func::FuncOp ImplOp::getOrInstantiateMethod(OpBuilder& builder, StringRef methodName) {
   // check that we've named a valid trait method
   if (!getTrait().hasMethod(methodName)) return nullptr;
@@ -152,14 +232,13 @@ func::FuncOp ImplOp::getOrInstantiateMethod(OpBuilder& builder, StringRef method
     // we need to instantiate the method from the default implementation in the trait
     auto traitMethod = getTrait().getOptionalMethod(methodName);
     if (traitMethod) {
-      auto instanceName = mangleMethodName(getTraitName(), getReceiverType(), methodName);
-      // substitute receiver type for !trait.self
-      DenseMap<Type,Type> substitution;
-      substitution[SelfType::get(getContext())] = getReceiverType();
+      // get the mangled name of the instance
+      SmallVector<Type> typeArgs(getTypeArgs().getAsValueRange<TypeAttr>());
+      auto instanceName = mangleMethodName(getTraitName(), typeArgs, methodName);
 
       PatternRewriter::InsertionGuard guard(builder);
       builder.setInsertionPointToEnd(&getBody().front());
-      method = instantiatePolymorph(builder, traitMethod, instanceName, substitution);
+      method = instantiatePolymorph(builder, traitMethod, instanceName, buildSubstitution());
     }
   }
 
@@ -172,7 +251,8 @@ func::FuncOp ImplOp::getOrInstantiateFunctionFromMethod(OpBuilder& builder, Stri
   if (!getTrait().hasMethod(methodName)) return nullptr;
 
   // get the mangled name of the function instantiated from the method
-  auto functionName = mangleMethodName(getTraitName(), getReceiverType(), methodName);
+  SmallVector<Type> typeArgs(getTypeArgs().getAsValueRange<TypeAttr>());
+  auto functionName = mangleMethodName(getTraitName(), typeArgs, methodName);
 
   MLIRContext* ctx = getContext();
 
@@ -182,9 +262,9 @@ func::FuncOp ImplOp::getOrInstantiateFunctionFromMethod(OpBuilder& builder, Stri
 
   if (!funcOp) {
     // instantiate the method as a free function with a mangled name
-    
+
     // get the method inside the ImplOp
-    auto method = getOrInstantiateMethod(builder, methodName);
+    func::FuncOp method = getOrInstantiateMethod(builder, methodName);
 
     // clone and hoist method into the parent with a mangled name
     PatternRewriter::InsertionGuard guard(builder);
@@ -201,42 +281,79 @@ func::FuncOp ImplOp::getOrInstantiateFunctionFromMethod(OpBuilder& builder, Stri
 }
 
 
-// XXX TODO this should use AttrTypeReplacer
-FunctionType monomorphizeFunctionType(FunctionType polyFnTy,
-                                      Type monoReceiverTy) {
-  auto monomorphize = [&](Type type) -> Type {
-    if (isa<SelfType>(type)) return monoReceiverTy;
-    return type;
-  };
+LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  // look up the TraitOp
+  auto traitOp = getTrait();
+  if (!traitOp)
+    return failure();
 
-  SmallVector<Type> monoInputTypes;
-  for (Type ty : polyFnTy.getInputs())
-    monoInputTypes.push_back(monomorphize(ty));
+  // look up the ImplOp
+  auto implOp = traitOp.getImpl(getTypeArgs());
+  if (!implOp)
+    return emitOpError() << "no matching trait.impl "
+                         << getTraitAttr() << " for " << getTypeArgs();
 
-  SmallVector<Type> monoResultTypes;
-  for (Type ty : polyFnTy.getResults())
-    monoResultTypes.push_back(monomorphize(ty));
+  return success();
+}
 
-  return FunctionType::get(polyFnTy.getContext(), monoInputTypes, monoResultTypes);
+FlatSymbolRefAttr WitnessOp::getTraitAttr() {
+  return dyn_cast<WitnessType>(getResult().getType()).getTrait();
+}
+
+ArrayRef<Type> WitnessOp::getTypeArgs() {
+  return dyn_cast<WitnessType>(getResult().getType()).getTypeArgs();
+}
+
+TraitOp WitnessOp::getTrait() {
+  ModuleOp moduleOp = getOperation()->getParentOfType<ModuleOp>();
+  if (!moduleOp) {
+    emitOpError() << "witness is not inside of a module";
+    return nullptr;
+  }
+  return mlir::SymbolTable::lookupNearestSymbolFrom<TraitOp>(moduleOp, getTraitAttr());
+}
+
+LogicalResult MethodCallOp::verify() {
+  // the witness's type must be WitnessType
+  WitnessType witness = dyn_cast_or_null<WitnessType>(getWitness().getType());
+  if (!witness)
+    return emitOpError() << "expected '!trait.witness', found " << getWitness().getType();
+
+  // verify that the named trait matches the witness's trait
+  auto expectedTraitAttr = getTraitAttr();
+  auto foundTraitAttr = witness.getTrait();
+  if (expectedTraitAttr != foundTraitAttr)
+    return emitOpError() << "expected witness for " << expectedTraitAttr << ", found " << foundTraitAttr;
+
+  return success();
+}
+
+TraitOp MethodCallOp::getTrait() {
+  ModuleOp moduleOp = getOperation()->getParentOfType<ModuleOp>();
+  if (!moduleOp) {
+    emitOpError() << "method.call is not inside of a module";
+    return nullptr;
+  }
+  return mlir::SymbolTable::lookupNearestSymbolFrom<TraitOp>(moduleOp, getTraitAttr());
 }
 
 LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  // get the various attributes
+  auto moduleOp = getOperation()->getParentOfType<ModuleOp>();
+  if (!moduleOp)
+    return emitOpError() << "not contained in a module";
+
   auto traitAttr = getTraitAttr();
   auto methodAttr = getMethodAttr();
-  auto receiverTyAttr = getReceiverTypeAttr();
 
   // look up the TraitOp
   auto traitOp = getTrait();
-  if (!traitOp) {
+  if (!traitOp)
     return emitOpError() << "cannot find trait '" << traitAttr << "'";
-  }
 
   // look up the method in the trait
   auto method = traitOp.getMethod(methodAttr.getValue());
-  if (!method) {
+  if (!method)
     return emitOpError() << "cannot find method '" << methodAttr << "' in trait '" << traitAttr << "'";
-  }
 
   // check that method's function type matches what we expect
   if (method.getFunctionType() != getMethodFunctionType()) {
@@ -244,118 +361,27 @@ LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable)
                          << " does not match expected type " << getMethodFunctionType();
   }
 
-  Type receiverTy = receiverTyAttr.getValue();
+  // monomorphize the method's type using the witness's type arguments
+  DenseMap<Type,Type> subst = traitOp.buildSubstitutionFor(getWitness().getType().getTypeArgs());
+  FunctionType methodFnTy = dyn_cast_or_null<FunctionType>(applySubstitution(subst, method.getFunctionType()));
+  if (!methodFnTy)
+    return emitOpError() << "expected function type";
 
-  if (not isa<SymbolicTypeInterface>(receiverTy)) {
-    // for a concrete type, check for an impl
-    // XXX TODO if no concrete impl is found, check for a symbolic impl
-    if (!traitOp.getImpl(receiverTy)) {
-      return emitOpError()
-        << receiverTy << " does not have a trait.impl for trait '" << traitAttr << "'";
-    }
-  }
-  else if (auto paramTy = dyn_cast<PolyType>(receiverTy)) {
-    // when receiverTy is !trait.poly, verify that the trait appears in its constraints
-    if (!llvm::is_contained(paramTy.getTraits(), traitAttr))
-      return emitOpError()
-        << paramTy << " is not constrained by trait '" << traitAttr << "'";
-  }
-
-  // monomorphize the method's type using the concrete receiver type
-  FunctionType monoFnTy = monomorphizeFunctionType(
-      method.getFunctionType(), 
-      receiverTy);
-
-  if (getOperands().getTypes() != monoFnTy.getInputs())
-    return emitOpError() << "expected operand types " << monoFnTy.getInputs();
-
-  if (getResultTypes() != monoFnTy.getResults())
-    return emitOpError() << "expected result types" << monoFnTy.getResults();
-
-  return success();
-}
-
-TraitOp MethodCallOp::getTrait() {
-  auto moduleOp = getOperation()->getParentOfType<mlir::ModuleOp>();
-  if (!moduleOp) {
-    emitOpError() << "not contained in a module";
-    return nullptr;
-  }
-  return dyn_cast_or_null<TraitOp>(SymbolTable::lookupSymbolIn(moduleOp, getTraitAttr()));
-}
-
-static DenseMap<Type,Type> buildSubstitutionForPossiblyPolymorphicCall(
-    MLIRContext* ctx,
-    TypeRange polymorphicParameterTypes,
-    TypeRange argumentTypes,
-    std::optional<Type> receiverType) {
-  if (polymorphicParameterTypes.size() != argumentTypes.size())
-    llvm_unreachable("polymorphicParameterTypes.size() != argumentTypes.size()");
-
-  llvm::DenseMap<Type, Type> substitution;
-
-  // for each unique PolyType in the polymorphic parameter types,
-  // substitute the corresponding monomorphic argument type
-  for (auto [paramTy, argTy] : llvm::zip(polymorphicParameterTypes, argumentTypes)) {
-    if (isa<PolyType>(paramTy)) {
-      // check if the substitution already exists
-      auto it = substitution.find(paramTy);
-      if (it != substitution.end()) {
-        // if it exists, ensure consistency
-        if (it->second != argTy) {
-          llvm_unreachable("Inconsistent substitution for PolyType");
-        } 
-      } else {
-        // if no substitution exists, create a new one
-        substitution[paramTy] = argTy;
-      }
-    }
-  }
-
-  if (receiverType) {
-    substitution[SelfType::get(ctx)] = *receiverType;
-  }
-
-  return substitution;
-}
-
-std::string MethodCallOp::getNameOfCalleeInstance() {
-  return mangleMethodName(getTraitName(), getReceiverType(), getMethodName());
+  return checkPolymorphicFunctionCall(methodFnTy,
+                                      getArguments().getTypes(),
+                                      getResultTypes(),
+                                      getLoc(),
+                                      moduleOp);
 }
 
 func::FuncOp MethodCallOp::getOrInstantiateCallee(OpBuilder& builder) {
   return getTrait()
-    .getOrInstantiateImpl(builder, getReceiverType())
+    .getOrInstantiateImpl(builder, getWitness().getType().getTypeArgs())
     .getOrInstantiateFunctionFromMethod(builder, getMethodName());
 }
 
-static LogicalResult checkPolymorphicFunctionCall(
-    FunctionType polyFnTy,
-    TypeRange operandTypes,
-    TypeRange resultTypes,
-    Location loc,
-    ModuleOp moduleOp) {
-  // check argument count
-  auto paramTypes = polyFnTy.getInputs();
-  if (operandTypes.size() != paramTypes.size())
-    return emitError(loc) << "expected " << paramTypes.size() << " operands, but got "
-                          << operandTypes.size();
-
-  // check result count
-  auto expectedResults = polyFnTy.getResults();
-  if (resultTypes.size() != expectedResults.size())
-    return emitError(loc) << "expected " << expectedResults.size()
-                          << " results, but got " << resultTypes.size();
-
-  // create a FunctionType representing the caller's parameters and result
-  FunctionType callerFnTy = FunctionType::get(moduleOp.getContext(), operandTypes, resultTypes);
-  llvm::DenseMap<Type, Type> substitution;
-
-  return unifyTypes(loc, polyFnTy, callerFnTy, moduleOp, substitution);
-}
-
 LogicalResult FuncCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  auto moduleOp = getOperation()->getParentOfType<mlir::ModuleOp>();
+  auto moduleOp = getOperation()->getParentOfType<ModuleOp>();
   if (!moduleOp)
     return emitOpError() << "not contained in a module";
 
@@ -375,19 +401,24 @@ LogicalResult FuncCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   }
 
   // check the types involved in a possibly polymorphic call
-  return checkPolymorphicFunctionCall(funcOp.getFunctionType(), 
-                                      getOperands().getTypes(), 
+  return checkPolymorphicFunctionCall(funcOp.getFunctionType(),
+                                      getOperands().getTypes(),
                                       getResultTypes(),
                                       getLoc(),
                                       moduleOp);
 }
 
 DenseMap<Type, Type> FuncCallOp::buildSubstitution() {
-  return buildSubstitutionForPossiblyPolymorphicCall(
-      getContext(),
-      getCalleeFunctionType().getInputs(),
-      getOperandTypes(),
-      std::nullopt);
+  DenseMap<Type, Type> result;
+
+  FunctionType expectedTy = getCalleeFunctionType();
+  FunctionType foundTy = FunctionType::get(getContext(), getOperandTypes(), getResultTypes());
+
+  ModuleOp moduleOp = getOperation()->getParentOfType<ModuleOp>();
+  if (failed(unifyTypes(expectedTy, foundTy, moduleOp, result)))
+    llvm_unreachable("FuncCallOp::buildSubstitution: callee types and operand types did not unify");
+
+  return result;
 }
 
 std::string FuncCallOp::getNameOfCalleeInstance() {
@@ -398,12 +429,12 @@ func::FuncOp FuncCallOp::instantiateCalleeAtInsertionPoint(OpBuilder &builder) {
   // lookup the polymorphic callee
   func::FuncOp callee = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(*this, getCalleeAttr());
   auto instanceName = getNameOfCalleeInstance();
-  llvm::DenseMap<Type, Type> substitution = buildSubstitution();
+  DenseMap<Type, Type> substitution = buildSubstitution();
 
   return instantiatePolymorph(builder, callee, instanceName, substitution);
 }
 
-func::FuncOp FuncCallOp::getOrInstantiateCallee(OpBuilder& builder) {
+func::FuncOp FuncCallOp::getOrInstantiateCallee(OpBuilder &builder) {
   ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
   if (!module) {
     emitOpError() << "not in a module";
