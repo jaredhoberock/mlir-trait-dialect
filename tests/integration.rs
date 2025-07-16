@@ -25,13 +25,26 @@ fn test_jit() {
     context.load_all_available_dialects();
 
     // begin creating a module
-    let location = Location::unknown(&context);
-    let mut module = Module::new(location);
+    let loc = Location::unknown(&context);
+    let mut module = Module::new(loc);
 
     let i1_ty = IntegerType::new(&context, 1).into();
-    let self_ty = trait_::self_type(&context);
-    // (!self, !self) -> i1
-    let method_ty = FunctionType::new(&context, &[self_ty, self_ty], &[i1_ty]).into();
+    let self_ty = trait_::poly_type(&context, 0);
+    let other_ty = trait_::poly_type(&context, 1);
+
+    // (!S, !O) -> i1
+    let eq_ty = FunctionType::new(&context, &[self_ty, other_ty], &[i1_ty]).into();
+
+    // !W = !trait.witness<@PartialEq[!S,!O]>
+    let neq_witness_ty = trait_::witness_type(
+        &context,
+        "PartialEq",
+        &[self_ty, other_ty],
+    );
+
+    // (!W, !S, !O) -> i1
+    let neq_ty = FunctionType::new(&context, &[neq_witness_ty, self_ty, other_ty], &[i1_ty]).into();
+
     let partial_eq = {
         let vis_id = Identifier::new(&context, "sym_visibility");
         let private_attr = StringAttribute::new(&context, "private").into();
@@ -39,48 +52,48 @@ fn test_jit() {
         let eq = func::func(
             &context,
             StringAttribute::new(&context, "eq"),
-            TypeAttribute::new(method_ty),
+            TypeAttribute::new(eq_ty),
             Region::new(),
             &[(vis_id, private_attr)],
-            location,
+            loc,
         );
 
         let neq = {
             let neq = func::func(
                 &context,
                 StringAttribute::new(&context, "neq"),
-                TypeAttribute::new(method_ty),
+                TypeAttribute::new(neq_ty),
                 Region::new(),
                 &[],
-                location,
+                loc,
             );
 
-            let block = Block::new(&[(self_ty, location), (self_ty, location)]);
+            let block = Block::new(&[(neq_witness_ty, loc), (self_ty, loc), (other_ty, loc)]);
             let equal = block.append_operation(trait_::method_call(
-                location,
+                loc,
                 "PartialEq",
                 "eq",
-                method_ty,
-                self_ty,
+                eq_ty,
+                block.argument(0).unwrap().into(),     // witness
                 &[
-                    block.argument(0).unwrap().into(),
-                    block.argument(1).unwrap().into(),
+                    block.argument(1).unwrap().into(), // self
+                    block.argument(2).unwrap().into(), // other
                 ],
                 &[i1_ty],
             ));
             let true_ = block.append_operation(arith::constant(
                 &context,
                 IntegerAttribute::new(i1_ty, 1).into(),
-                location,
+                loc,
             ));
             let result = block.append_operation(arith::xori(
                 equal.result(0).unwrap().into(),
                 true_.result(0).unwrap().into(),
-                location,
+                loc,
             ));
             block.append_operation(func::r#return(
                 &[result.result(0).unwrap().into()],
-                location,
+                loc,
             ));
 
             neq.regions().next().unwrap()
@@ -88,7 +101,11 @@ fn test_jit() {
             neq
         };
 
-        let partial_eq = trait_::trait_(location, "PartialEq");
+        let partial_eq = trait_::trait_(
+            loc,
+            "PartialEq",
+            &[self_ty, other_ty],
+        );
 
         let block = partial_eq.region(0).unwrap().first_block().unwrap();
         block.append_operation(eq);
@@ -97,7 +114,9 @@ fn test_jit() {
         partial_eq
     };
 
-    let partial_eq_impl_i32 = {
+    module.body().append_operation(partial_eq);
+
+    let partial_eq_impl_i32_i32 = {
         let i32_ty = IntegerType::new(&context, 32).into();
         let eq = {
             // (i32, i32) -> i1
@@ -108,20 +127,20 @@ fn test_jit() {
                 TypeAttribute::new(method_ty),
                 Region::new(),
                 &[],
-                location,
+                loc,
             );
 
-            let block = Block::new(&[(i32_ty, location), (i32_ty, location)]);
+            let block = Block::new(&[(i32_ty, loc), (i32_ty, loc)]);
             let result = block.append_operation(arith::cmpi(
                 &context,
                 arith::CmpiPredicate::Eq,
                 block.argument(0).unwrap().into(),
                 block.argument(1).unwrap().into(),
-                location,
+                loc,
             ));
             block.append_operation(func::r#return(
                 &[result.result(0).unwrap().into()],
-                location,
+                loc,
             ));
 
             eq.regions().next().unwrap()
@@ -129,25 +148,39 @@ fn test_jit() {
             eq
         };
 
-        let partial_eq_impl_i32 = trait_::impl_(location, "PartialEq", i32_ty);
+        let partial_eq_impl_i32_i32 = trait_::impl_(
+            loc,
+            "PartialEq",
+            &[i32_ty, i32_ty],
+        );
 
-        let block = partial_eq_impl_i32.region(0).unwrap().first_block().unwrap();
+        let block = partial_eq_impl_i32_i32
+            .region(0)
+            .unwrap()
+            .first_block()
+            .unwrap();
         block.append_operation(eq);
 
-        partial_eq_impl_i32
+        partial_eq_impl_i32_i32
     };
 
-    // !T = trait.poly<0,[@PartialEq]>
-    // func.func @foo(%x: !T, %y: !T) -> i1 {
-    //   %result = trait.method.call @PartialEq<!T>::@eq(%x, %y) : (!T,!T) -> i1
-    //   return %result : i1
+    module.body().append_operation(partial_eq_impl_i32_i32);
+    assert!(module.as_operation().verify(), "MLIR module verification failed");
+
+    // !T = trait.poly<2>
+    // func.func @foo(%w: !trait.witness<@PartialEq[!T,!T]>, %x: !T, %y: !T) -> i1 {
+    //   %res = trait.method.call @PartialEq<%w>::@eq(%x, %y)
+    //     : (!S,!O) -> i1
+    //     as !trait.witness<@PartialEq[!T,!T]> (!T, !T) -> i1
+    //   return %res : i1
     // }
-    let poly_ty = trait_::poly_type(
+    let poly_ty = trait_::poly_type(&context, 2);
+    let witness_ty = trait_::witness_type(
         &context,
-        0,
-        &["PartialEq"],
+        "PartialEq",
+        &[poly_ty, poly_ty],
     );
-    let foo_ty = FunctionType::new(&context, &[poly_ty, poly_ty], &[i1_ty]).into();
+    let foo_ty = FunctionType::new(&context, &[witness_ty, poly_ty, poly_ty], &[i1_ty]).into();
 
     let foo = {
         let foo = func::func(
@@ -156,25 +189,25 @@ fn test_jit() {
             TypeAttribute::new(foo_ty),
             Region::new(),
             &[],
-            location,
+            loc,
         );
 
-        let block = Block::new(&[(poly_ty, location), (poly_ty, location)]);
+        let block = Block::new(&[(witness_ty, loc), (poly_ty, loc), (poly_ty, loc)]);
         let result = block.append_operation(trait_::method_call(
-            location,
+            loc,
             "PartialEq",
             "eq",
-            method_ty,
-            poly_ty,
+            eq_ty,
+            block.argument(0).unwrap().into(),     // %w
             &[
-                block.argument(0).unwrap().into(),
-                block.argument(1).unwrap().into(),
+                block.argument(1).unwrap().into(), // %x
+                block.argument(2).unwrap().into(), // %y
             ],
             &[i1_ty],
         ));
         block.append_operation(func::r#return(
             &[result.result(0).unwrap().into()],
-            location,
+            loc,
         ));
 
         foo.regions().next().unwrap()
@@ -182,8 +215,14 @@ fn test_jit() {
         foo
     };
 
+    module.body().append_operation(foo);
+    assert!(module.as_operation().verify(), "MLIR module verification failed");
+
     // @bar(%x: i32, %y: i32) -> i1 {
-    //   %result = trait.func.call @foo(%x, %y) : (!T,!T) -> i1 to (i32,i32) -> i1
+    //   %w = trait.witness : !trait.witness<@PartialEq[i32,i32]>
+    //   %result = trait.func.call @foo(%w, %x, %y)
+    //     : (!W,!T,!T) -> i1
+    //     as (!trait.witness<@PartialEq[i32,i32]>,i32,i32) -> i1
     //   return %result : i1
     // }
     let mut bar = {
@@ -196,15 +235,21 @@ fn test_jit() {
             TypeAttribute::new(bar_ty),
             Region::new(),
             &[],
-            location,
+            loc,
         );
 
-        let block = Block::new(&[(i32_ty, location), (i32_ty, location)]);
+        let block = Block::new(&[(i32_ty, loc), (i32_ty, loc)]);
+        let w = block.append_operation(trait_::witness(
+            loc,
+            "PartialEq",
+            &[i32_ty, i32_ty],
+        ));
         let result = block.append_operation(trait_::func_call(
-            location,
+            loc,
             "foo",
             foo_ty,
             &[
+                w.result(0).unwrap().into(),
                 block.argument(0).unwrap().into(),
                 block.argument(1).unwrap().into(),
             ],
@@ -212,7 +257,7 @@ fn test_jit() {
         ));
         block.append_operation(func::r#return(
             &[result.result(0).unwrap().into()],
-            location,
+            loc,
         ));
 
         bar.regions().next().unwrap()
@@ -223,14 +268,26 @@ fn test_jit() {
     // emit a wrapper function for @bar because we will call it below
     bar.set_attribute("llvm.emit_c_interface", Attribute::unit(&context));
 
-    // !T = trait.poly<0,[@PartialEq]>
-    // func.func @baz(%x: !T, %y: !T) -> i1 {
-    //   %eq = trait.method.call @PartialEq<!T>::@eq(%x, %y) : (!T,!T) -> i1
-    //   %neq = trait.method.call @PartialEq<!T>::@neq(%x, %y) : (!T,!T) -> i1
+    module.body().append_operation(bar);
+    assert!(module.as_operation().verify(), "MLIR module verification failed");
+
+    // !W = !trait.witness<@PartialEq[!T,!T]>
+    // func.func @baz(%w: !W, %x: !T, %y: !T) -> i1 {
+    //   %eq = trait.method.call @PartialEq<%w>::@eq(%x, %y)
+    //     : (!S,!O) -> i1
+    //     as (!T,!T) -> i1
+    //   %neq = trait.method.call @PartialEq<%w>::@neq(%w, %x, %y)
+    //     : (!NeqW,!S,!O) -> i1
+    //     as (!W,!T,!T) -> i1
     //   %result = arith.ori %eq, %neq : i1
     //   return %result : i1
     // }
-    let baz_ty = FunctionType::new(&context, &[poly_ty, poly_ty], &[i1_ty]).into();
+    let witness_ty = trait_::witness_type(
+        &context,
+        "PartialEq",
+        &[poly_ty, poly_ty],
+    );
+    let baz_ty = FunctionType::new(&context, &[witness_ty, poly_ty, poly_ty], &[i1_ty]).into();
     let baz = {
         let baz = func::func(
             &context,
@@ -238,42 +295,43 @@ fn test_jit() {
             TypeAttribute::new(baz_ty),
             Region::new(),
             &[],
-            location,
+            loc,
         );
 
-        let block = Block::new(&[(poly_ty, location), (poly_ty, location)]);
+        let block = Block::new(&[(witness_ty, loc), (poly_ty, loc), (poly_ty, loc)]);
         let eq = block.append_operation(trait_::method_call(
-            location,
+            loc,
             "PartialEq",
             "eq",
-            method_ty,
-            poly_ty,
+            eq_ty,
+            block.argument(0).unwrap().into(),     // w
             &[
-                block.argument(0).unwrap().into(),
-                block.argument(1).unwrap().into(),
+                block.argument(1).unwrap().into(), // x
+                block.argument(2).unwrap().into(), // y
             ],
             &[i1_ty],
         ));
         let neq = block.append_operation(trait_::method_call(
-            location,
+            loc,
             "PartialEq",
             "neq",
-            method_ty,
-            poly_ty,
+            neq_ty,
+            block.argument(0).unwrap().into(),     // w
             &[
-                block.argument(0).unwrap().into(),
-                block.argument(1).unwrap().into(),
+                block.argument(0).unwrap().into(), // w
+                block.argument(1).unwrap().into(), // x
+                block.argument(2).unwrap().into(), // y
             ],
             &[i1_ty],
         ));
         let result = block.append_operation(arith::ori(
             eq.result(0).unwrap().into(),
             neq.result(0).unwrap().into(),
-            location,
+            loc,
         ));
         block.append_operation(func::r#return(
             &[result.result(0).unwrap().into()],
-            location,
+            loc,
         ));
 
         baz.regions().next().unwrap()
@@ -281,9 +339,15 @@ fn test_jit() {
         baz
     };
 
+    module.body().append_operation(baz);
+    assert!(module.as_operation().verify(), "MLIR module verification failed");
+
     // func.func @qux(%x: i32, %y: i32) -> i1 {
-    //   %result = trait.func.call @baz(%x, %y) : (!T,!T) -> i1 to (i32,i32) -> i1
-    //   return %result : i1
+    //   %w = trait.witness : !trait<@PartialEq[i32,i32]>
+    //   %res = trait.func.call @baz(%w, %x, %y)
+    //     : (!W,!T,!T) -> i1
+    //     as (!trait.witness<@PartialEq[i32,i32]>, i32,i32) -> i1
+    //   return %res : i1
     // }
     let mut qux = {
         let i32_ty = IntegerType::new(&context, 32).into();
@@ -295,23 +359,29 @@ fn test_jit() {
             TypeAttribute::new(qux_ty),
             Region::new(),
             &[],
-            location,
+            loc,
         );
 
-        let block = Block::new(&[(i32_ty, location), (i32_ty, location)]);
+        let block = Block::new(&[(i32_ty, loc), (i32_ty, loc)]);
+        let w = block.append_operation(trait_::witness(
+            loc,
+            "PartialEq",
+            &[i32_ty,i32_ty],
+        ));
         let result = block.append_operation(trait_::func_call(
-            location,
+            loc,
             "baz",
             baz_ty,
             &[
-                block.argument(0).unwrap().into(),
-                block.argument(1).unwrap().into(),
+                w.result(0).unwrap().into(),       // w
+                block.argument(0).unwrap().into(), // x
+                block.argument(1).unwrap().into(), // y
             ],
             &[i1_ty],
         ));
         block.append_operation(func::r#return(
             &[result.result(0).unwrap().into()],
-            location,
+            loc,
         ));
 
         qux.regions().next().unwrap()
@@ -322,11 +392,6 @@ fn test_jit() {
     // emit a wrapper function for @qux because we will call it below
     qux.set_attribute("llvm.emit_c_interface", Attribute::unit(&context));
 
-    module.body().append_operation(partial_eq);
-    module.body().append_operation(partial_eq_impl_i32);
-    module.body().append_operation(foo);
-    module.body().append_operation(bar);
-    module.body().append_operation(baz);
     module.body().append_operation(qux);
     assert!(module.as_operation().verify(), "MLIR module verification failed");
 

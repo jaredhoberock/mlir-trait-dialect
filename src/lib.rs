@@ -1,16 +1,20 @@
-use melior::{ir::{Location, Operation, Type, TypeLike, Value}, Context, pass::Pass, StringRef};
+use melior::{ir::{Location, Operation, Type, TypeLike, Value, ValueLike}, Context, pass::Pass, StringRef};
 use mlir_sys::{MlirContext, MlirLocation, MlirOperation, MlirPass, MlirStringRef, MlirType, MlirValue};
 
 unsafe extern "C" {
     fn traitRegisterDialect(ctx: MlirContext);
     fn traitCreateMonomorphizePass() -> MlirPass;
-    fn traitTraitOpCreate(loc: MlirLocation, name: MlirStringRef) -> MlirOperation;
-    fn traitImplOpCreate(loc: MlirLocation, trait_name: MlirStringRef, concrete_type: MlirType) -> MlirOperation;
+    fn traitTraitOpCreate(loc: MlirLocation,
+                          name: MlirStringRef,
+                          type_params: *const MlirType, num_type_params: isize) -> MlirOperation;
+    fn traitImplOpCreate(loc: MlirLocation,
+                         trait_name: MlirStringRef,
+                         type_args: *const MlirType, num_type_args: isize) -> MlirOperation;
     fn traitMethodCallOpCreate(loc: MlirLocation,
                                trait_name: MlirStringRef,
                                method_name: MlirStringRef,
                                method_function_type: MlirType,
-                               receiver_type: MlirType,
+                               witness: MlirValue,
                                arguments: *const MlirValue, num_arguments: isize,
                                result_types: *const MlirType, num_results: isize) -> MlirOperation;
     fn traitFuncCallOpCreate(loc: MlirLocation,
@@ -18,9 +22,13 @@ unsafe extern "C" {
                              callee_function_type: MlirType,
                              arguments: *const MlirValue, num_arguments: isize,
                              result_types: *const MlirType, num_results: isize) -> MlirOperation;
-    fn traitSelfTypeGet(ctx: MlirContext) -> MlirType;
-    fn traitPolyTypeGet(ctx: MlirContext, unique_id: u32,
-                        trait_bounds: *const MlirStringRef, num_trait_bounds: isize) -> MlirType;
+    fn traitWitnessOpCreate(loc: MlirLocation,
+                            trait_name: MlirStringRef,
+                            type_args: *const MlirType, num_type_args: isize) -> MlirOperation;
+    fn traitPolyTypeGet(ctx: MlirContext, unique_id: u32) -> MlirType;
+    fn traitWitnessTypeGet(ctx: MlirContext,
+                           trait_name: MlirStringRef,
+                           type_args: *const MlirType, num_type_args: isize) -> MlirType;
 }
 
 pub fn register(context: &Context) {
@@ -33,18 +41,27 @@ pub fn create_monomorphize_pass() -> Pass {
     )}
 }
 
-pub fn trait_<'c>(loc: Location<'c>, name: &str) -> Operation<'c> {
+pub fn trait_<'c>(loc: Location<'c>,
+                  name: &str,
+                  type_params: &[Type<'c>],
+) -> Operation<'c> {
     unsafe { Operation::from_raw(traitTraitOpCreate(
         loc.to_raw(),
         StringRef::new(name).to_raw(),
+        type_params.as_ptr() as *const _,
+        type_params.len() as isize,
     ))}
 }
 
-pub fn impl_<'c>(loc: Location<'c>, trait_name: &str, concrete_type: Type) -> Operation<'c> {
+pub fn impl_<'c>(loc: Location<'c>,
+                 trait_name: &str,
+                 type_args: &[Type<'c>],
+) -> Operation<'c> {
     unsafe { Operation::from_raw(traitImplOpCreate(
         loc.to_raw(),
         StringRef::new(trait_name).to_raw(),
-        concrete_type.to_raw(),
+        type_args.as_ptr() as *const _,
+        type_args.len() as isize,
     ))}
 }
 
@@ -52,7 +69,7 @@ pub fn method_call<'c>(loc: Location<'c>,
                        trait_name: &str,
                        method_name: &str,
                        method_function_type: Type<'c>,
-                       receiver_type: Type<'c>,
+                       witness: Value<'c,'_>,
                        arguments: &[Value<'c,'_>],
                        result_types: &[Type<'c>],
 ) -> Operation<'c> {
@@ -61,7 +78,7 @@ pub fn method_call<'c>(loc: Location<'c>,
         StringRef::new(trait_name).to_raw(),
         StringRef::new(method_name).to_raw(),
         method_function_type.to_raw(),
-        receiver_type.to_raw(),
+        witness.to_raw(),
         arguments.as_ptr() as *const _,
         arguments.len() as isize,
         result_types.as_ptr() as *const _,
@@ -86,27 +103,37 @@ pub fn func_call<'c>(loc: Location<'c>,
     ))}
 }
 
-pub fn self_type(context: &Context) -> Type {
-    unsafe { Type::from_raw(traitSelfTypeGet(context.to_raw())) }
+pub fn witness<'c>(loc: Location<'c>,
+                   trait_name: &str,
+                   type_args: &[Type<'c>],
+) -> Operation<'c> {
+    unsafe { Operation::from_raw(traitWitnessOpCreate(
+        loc.to_raw(),
+        StringRef::new(trait_name).to_raw(),
+        type_args.as_ptr() as *const _,
+        type_args.len() as isize,
+    ))}
 }
 
 pub fn poly_type<'c>(
     context: &'c Context,
     unique_id: u32,
-    trait_bounds: &[&str]
 ) -> Type<'c> {
-    let c_refs: Vec<MlirStringRef> = trait_bounds
-        .iter()
-        .map(|&s| MlirStringRef {
-            data: s.as_ptr() as *const _,
-            length: s.len() as usize,
-        })
-        .collect();
-
     unsafe { Type::from_raw(traitPolyTypeGet(
         context.to_raw(),
         unique_id,
-        c_refs.as_ptr(),
-        c_refs.len() as isize,
+    ))}
+}
+
+pub fn witness_type<'c>(
+    context: &'c Context,
+    trait_name: &str,
+    type_args: &[Type<'c>],
+) -> Type<'c> {
+    unsafe { Type::from_raw(traitWitnessTypeGet(
+        context.to_raw(),
+        StringRef::new(trait_name).to_raw(),
+        type_args.as_ptr() as *const _,
+        type_args.len() as isize,
     ))}
 }

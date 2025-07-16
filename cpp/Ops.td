@@ -170,20 +170,6 @@ def ImplOp : TraitDialectOp<"impl", [
       $_state.addAttribute("type_args", type_args);
       ::mlir::Region *region = $_state.addRegion();
       region->emplaceBlock();
-    }]>,
-
-    // higher-level builder takes an ArrayRef<Type>
-    OpBuilder<(ins "::mlir::FlatSymbolRefAttr":$trait_name,
-                   "::mlir::ArrayRef<::mlir::Type>":$type_args), [{
-      auto typeAttrs = ::llvm::map_to_vector(type_args, [](::mlir::Type t) {
-        return ::mlir::TypeAttr::get(t);
-      });
-
-      ::mlir::ArrayAttr typeArrayAttr = ::mlir::ArrayAttr::get($_builder.getContext(), 
-        ::llvm::ArrayRef<::mlir::Attribute>(typeAttrs.begin(), typeAttrs.end())
-      );
-
-      build($_builder, $_state, trait_name, typeArrayAttr);
     }]>
   ];
 
@@ -318,8 +304,6 @@ def MethodCallOp : TraitDialectOp<"method.call", [
              "Expected nested method reference");
       return cast<FlatSymbolRefAttr>(getMethodRef().getNestedReferences().front()).getValue();
     }
-
-    std::string getNameOfCalleeInstance();
 
     // CallOpInterface methods
     operand_range getArgOperands() {

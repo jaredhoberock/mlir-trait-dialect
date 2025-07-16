@@ -15,17 +15,19 @@ void traitRegisterDialect(MlirContext ctx);
 MlirPass traitCreateMonomorphizePass();
 
 /// Create a trait.trait operation
-MlirOperation traitTraitOpCreate(MlirLocation loc, MlirStringRef name);
+MlirOperation traitTraitOpCreate(MlirLocation loc, MlirStringRef name,
+                                 MlirType* typeParams, intptr_t numTypeParams);
 
 /// Create a trait.impl operation
-MlirOperation traitImplOpCreate(MlirLocation loc, MlirStringRef traitName, MlirType concreteType);
+MlirOperation traitImplOpCreate(MlirLocation loc, MlirStringRef traitName,
+                                MlirType* typeArgs, intptr_t numTypeArgs);
 
 /// Create a trait.method.call operation
 MlirOperation traitMethodCallOpCreate(MlirLocation loc,
                                       MlirStringRef traitName,
                                       MlirStringRef methodName,
                                       MlirType methodFunctionType,
-                                      MlirType receiverType,
+                                      MlirValue witness,
                                       MlirValue* arguments, intptr_t numArguments,
                                       MlirType* resultTypes, intptr_t numResults);
 
@@ -36,13 +38,17 @@ MlirOperation traitFuncCallOpCreate(MlirLocation loc,
                                     MlirValue* arguments, intptr_t numArguments,
                                     MlirType* resultTypes, intptr_t numResults);
 
-/// Return the !trait.self type
-MlirType traitSelfTypeGet(MlirContext ctx);
+/// Create a trait.witness operation
+MlirOperation traitWitnessOpCreate(MlirLocation loc, MlirStringRef traitName,
+                                   MlirType* typeArgs, intptr_t numTypeArgs);
 
-/// Return the !trait.poly<uniqueId, [@Trait1, @Trait2, ...]> type
-MlirType traitPolyTypeGet(MlirContext ctx,
-                          unsigned int uniqueId,
-                          MlirStringRef* traitBounds, intptr_t numTraitBounds);
+/// Return the !trait.poly<uniqueId> type
+MlirType traitPolyTypeGet(MlirContext ctx, unsigned int uniqueId);
+
+// Return the !trait.witness<@Trait[Type1, Type2, ...]> type
+MlirType traitWitnessTypeGet(MlirContext ctx,
+                             MlirStringRef traitName,
+                             MlirType* typeArgs, intptr_t numTypeArgs);
 
 #ifdef __cplusplus
 }

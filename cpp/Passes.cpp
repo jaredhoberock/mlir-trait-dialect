@@ -50,7 +50,7 @@ struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
 
     func::FuncOp callee = methodCallOp.getOrInstantiateCallee(rewriter);
     if (!callee)
-      return methodCallOp.emitOpError() << "couldn't get or instantiate callee '" << methodCallOp.getNameOfCalleeInstance() << "'";
+      return methodCallOp.emitOpError() << "couldn't get or instantiate callee '" << methodCallOp.getMethodRef() << "'";
 
     // replace with a trait.func.call to the instantiated callee
     rewriter.replaceOpWithNewOp<FuncCallOp>(
@@ -112,7 +112,7 @@ void MonomorphizePass::runOnOperation() {
   ModuleOp module = getOperation();
   MLIRContext* ctx = module.getContext();
 
-  // phase 1: apply rewrite patterns
+  // apply rewrite patterns
   {
     RewritePatternSet patterns(ctx);
     patterns.add<FuncCallOpLowering,MethodCallOpLowering>(ctx);
@@ -149,7 +149,7 @@ void MonomorphizePass::runOnOperation() {
 
   // erase witness ops and types last
   // we do this last because all of the above (polymorphic functions, trait.impl, trait.trait)
-  // may use !trait.witness
+  // use !trait.witness
   if (failed(eraseWitnessOpsAndTypes(module)))
     signalPassFailure();
 }
