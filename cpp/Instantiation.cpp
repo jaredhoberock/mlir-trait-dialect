@@ -203,6 +203,55 @@ func::FuncOp instantiatePolymorph(OpBuilder& builder,
   return instance;
 }
 
+MethodOp instantiatePolymorphicMethod(OpBuilder& builder,
+                                      MethodOp polymorph,
+                                      StringRef instanceName,
+                                      const DenseMap<Type,Type> &substitution) {
+  if (!polymorph.hasBody()) {
+    polymorph.emitError("cannot instantiate method without body");
+    return nullptr;
+  }
+
+  Location loc = polymorph.getLoc();
+  MLIRContext *ctx = builder.getContext();
+
+  // set up type replacer
+  AttrTypeReplacer replacer;
+  replacer.addReplacement([&](Type t) -> std::optional<Type> {
+    auto it = substitution.find(t);
+    return (it != substitution.end()) ? std::optional<Type>(it->second) : std::nullopt;
+  });
+
+  // replace the polymorphic function type
+  auto oldFunctionType = polymorph.getFunctionType();
+  auto newFunctionType = llvm::cast<FunctionType>(replacer.replace(oldFunctionType));
+
+  // create the instance with the new type and instance name
+  MethodOp instance = builder.create<MethodOp>(loc, instanceName, newFunctionType);
+
+  // clone the polymorph's attributes with type replacement
+  for (NamedAttribute attr : polymorph->getAttrs()) {
+    StringRef n = attr.getName();
+
+    // don't copy the polymorph's name or function type
+    if (n == polymorph.getSymNameAttrName() ||
+        n == polymorph.getFunctionTypeAttrName()) {
+      continue;
+    }
+
+    instance->setAttr(attr.getName(), replacer.replace(attr.getValue()));
+  }
+
+  IRMapping mapping;
+  cloneRegionWithTypeReplacement(builder,
+                                 polymorph.getBody(),
+                                 instance.getBody(),
+                                 mapping,
+                                 replacer);
+
+  return instance;
+}
+
 ImplOp instantiatePolymorphicImpl(OpBuilder& builder,
                                   ImplOp polymorph,
                                   ArrayRef<Type> typeArgs) {

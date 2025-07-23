@@ -112,6 +112,11 @@ void MonomorphizePass::runOnOperation() {
   ModuleOp module = getOperation();
   MLIRContext* ctx = module.getContext();
 
+  for (auto traitOp : module.getOps<TraitOp>()) {
+    llvm::errs() << "trait " << traitOp.getName() << "\n";
+    traitOp.dump();
+  }
+
   // apply rewrite patterns
   {
     RewritePatternSet patterns(ctx);

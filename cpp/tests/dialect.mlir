@@ -3,25 +3,25 @@
 // ---- Test 1: test everything
 
 // CHECK-LABEL: trait @PartialEq [!trait.poly<0>, !trait.poly<1>]
-// CHECK-LABEL: func.func private @eq
-// CHECK-LABEL: func.func private @ne
+// CHECK-LABEL: trait.method @eq
+// CHECK-LABEL: trait.method @ne
 !S = !trait.poly<0>
 !O = !trait.poly<1>
 trait.trait @PartialEq[!S,!O] {
-  func.func private @eq(!S, !O) -> i1
-  func.func private @ne(!S, !O) -> i1
+  trait.method @eq(!S, !O) -> i1
+  trait.method @ne(!S, !O) -> i1
 }
 
 // CHECK-LABEL impl @PartialEq [i32,i32]
 trait.impl @PartialEq[i32,i32] {
-  // CHECK-LABEL: func @eq
-  func.func @eq(%self: i32, %other: i32) -> i1 {
+  // CHECK-LABEL: trait.method @eq
+  trait.method @eq(%self: i32, %other: i32) -> i1 {
     %equal = arith.cmpi eq, %self, %other : i32
     return %equal : i1
   }
 
-  // CHECK-LABEL: func @ne
-  func.func @ne(%self: i32, %other: i32) -> i1 {
+  // CHECK-LABEL: trait.method @ne
+  trait.method @ne(%self: i32, %other: i32) -> i1 {
     %w = trait.witness : !trait.witness<@PartialEq[i32,i32]>
     %equal = trait.method.call @PartialEq::@eq<%w>(%self, %other)
       : (!S, !O) -> i1
