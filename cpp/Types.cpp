@@ -74,18 +74,18 @@ LogicalResult PolyType::unifyWith(
 }
 
 
-LogicalResult WitnessType::verify(function_ref<InFlightDiagnostic()> emitError,
-                                  FlatSymbolRefAttr /*traits*/,
-                                  ArrayRef<Type> typeArgs) {
+LogicalResult ProofType::verify(function_ref<InFlightDiagnostic()> emitError,
+                                FlatSymbolRefAttr /*traits*/,
+                                ArrayRef<Type> typeArgs) {
   auto fail = [&]() -> LogicalResult {
-    return emitError ? emitError() << "nested !trait.witness types are not allowed"
+    return emitError ? emitError() << "nested !trait.proof types are not allowed"
                      : failure();
   };
 
   for (Type t : typeArgs) {
     bool nested = false;
     t.walk([&](Type sub) {
-      if (mlir::isa<WitnessType>(sub))
+      if (mlir::isa<ProofType>(sub))
         nested = true;
     });
     if (nested)

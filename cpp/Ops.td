@@ -20,7 +20,7 @@ def TraitOp : TraitDialectOp<"trait", [
   let summary = "Declares a trait interface";
   let description = [{
     Declares a trait interface, similar to a Rust or Scala trait. A `trait.trait` operation
-    defines a symbol that can be referenced by `!trait.witness` types, `trait.impl`, and `trait.method.call`.
+    defines a symbol that can be referenced by `!trait.proof` types, `trait.impl`, and `trait.method.call`.
     It contains a region which holds `func.func` operations that define the
     method requirements for implementors. If any of these `func.func` operations have
     a body, then this method is optional for implementors.
@@ -177,9 +177,9 @@ def ImplOp : TraitDialectOp<"impl", [
 }
 
 
-def Witness : TypeConstraint<
-  CPred<"::mlir::isa<WitnessType>($_self)">,
-  "any '!trait.witness' type"
+def Proof : TypeConstraint<
+  CPred<"::mlir::isa<ProofType>($_self)">,
+  "any '!trait.proof' type"
 >;
 
 
@@ -187,16 +187,16 @@ def WitnessOp : TraitDialectOp<"witness", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
   Pure
 ]>{
-  let summary = "Materializes a witness value for a known trait implementation";
+  let summary = "Materializes a proof value for a concrete trait implementation";
   let description = [{
-    Creates a zero-sized SSA value of type `!trait.witness<@Trait, [types]>` that
+    Creates a zero-sized SSA value of type `!trait.proof<@Trait[types]>` that
     acts as proof that the trait is satisfied. This operation has no operands.
 
     The type arguments must be concrete; symbolic types are illegal. Symbol use
     verification checks that a matching `trait.impl` exists for the named trait and type list.
   }];
 
-  let results = (outs Witness:$result);
+  let results = (outs Proof:$result);
 
   let extraClassDeclaration = [{
     TraitOp getTrait();
@@ -218,16 +218,16 @@ def MethodCallOp : TraitDialectOp<"method.call", [
     Resolution to an implementation is performed during monomorphization.
 
     Example:
-      %witness = trait.witness : !trait.witness<@PartialEq, [i32,i32]>
+      %p = trait.witness : !trait.proof<@PartialEq, [i32,i32]>
       %x = ... : i32
       %y = ... : i32
-      %res = trait.method.call @PartialEq::@eq<%witness>(%x, %y) : (!trait.poly<0>, !trait.poly<1>) to (i32, i32) -> i1
+      %res = trait.method.call @PartialEq::@eq<%p>(%x, %y) : (!trait.poly<0>, !trait.poly<1>) to (i32, i32) -> i1
   }];
 
   let arguments = (ins
     SymbolRefAttr:$method_ref,
     TypeAttrOf<FunctionType>:$method_function_type,
-    WitnessType:$witness,
+    ProofType:$proof,
     Variadic<AnyType>:$arguments
   );
 
@@ -239,7 +239,7 @@ def MethodCallOp : TraitDialectOp<"method.call", [
       "FlatSymbolRefAttr":$traitRef,
       "FlatSymbolRefAttr":$methodRef,
       "TypeAttr":$methodFunctionType,
-      "Value":$witness,
+      "Value":$proof,
       "ValueRange":$arguments), [{
         MLIRContext *ctx = $_builder.getContext();
 
@@ -251,7 +251,7 @@ def MethodCallOp : TraitDialectOp<"method.call", [
         );
 
         // build the operation with the created nested reference
-        return build($_builder, $_state, results, qualifiedRef, methodFunctionType, witness, arguments);
+        return build($_builder, $_state, results, qualifiedRef, methodFunctionType, proof, arguments);
     }]>,
 
     // builder that takes trait and method names separately
@@ -260,7 +260,7 @@ def MethodCallOp : TraitDialectOp<"method.call", [
       "StringRef":$traitName,
       "StringRef":$methodName,
       "TypeAttr":$methodFunctionType,
-      "Value":$witness,
+      "Value":$proof,
       "ValueRange":$arguments), [{
         // convert strings to FlatSymbolRefAttrs and call the other builder
         MLIRContext *ctx = $_builder.getContext();
@@ -268,7 +268,7 @@ def MethodCallOp : TraitDialectOp<"method.call", [
         FlatSymbolRefAttr methodRef = FlatSymbolRefAttr::get(ctx, methodName);
 
         // call the other builder
-        return build($_builder, $_state, results, traitRef, methodRef, methodFunctionType, witness, arguments);
+        return build($_builder, $_state, results, traitRef, methodRef, methodFunctionType, proof, arguments);
     }]>,
   ];
 
@@ -324,7 +324,7 @@ def MethodCallOp : TraitDialectOp<"method.call", [
   }];
 
   let assemblyFormat = [{
-    $method_ref `<` $witness `>` `(` $arguments `)` attr-dict `:` $method_function_type `as` type($witness) functional-type($arguments, results)
+    $method_ref `<` $proof `>` `(` $arguments `)` attr-dict `:` $method_function_type `as` type($proof) functional-type($arguments, results)
   }];
 
   let hasVerifier = 1;
@@ -343,9 +343,9 @@ def FuncCallOp : TraitDialectOp<"func.call", [
     Example:
       %x = ... : i32
       %y = ... : i32
-      %w = trait.witness : !trait.witness<@PartialEq[i32,i32]>
-      %r = trait.func.call @foo(%w, %x, %y)
-        : (!trait.witness<@PartialEq[!trait.poly<0>,!trait.poly<0>]>, !trait.poly<0>, !trait.poly<0>) -> i1
+      %p = trait.witness : !trait.proof<@PartialEq[i32,i32]>
+      %r = trait.func.call @foo(%p, %x, %y)
+        : (!trait.proof<@PartialEq[!trait.poly<0>,!trait.poly<0>]>, !trait.poly<0>, !trait.poly<0>) -> i1
         to (i32, i32) -> i1
   }];
 

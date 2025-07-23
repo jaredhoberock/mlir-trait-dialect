@@ -26,9 +26,9 @@ unsafe extern "C" {
                             trait_name: MlirStringRef,
                             type_args: *const MlirType, num_type_args: isize) -> MlirOperation;
     fn traitPolyTypeGet(ctx: MlirContext, unique_id: u32) -> MlirType;
-    fn traitWitnessTypeGet(ctx: MlirContext,
-                           trait_name: MlirStringRef,
-                           type_args: *const MlirType, num_type_args: isize) -> MlirType;
+    fn traitProofTypeGet(ctx: MlirContext,
+                         trait_name: MlirStringRef,
+                         type_args: *const MlirType, num_type_args: isize) -> MlirType;
 }
 
 pub fn register(context: &Context) {
@@ -125,12 +125,12 @@ pub fn poly_type<'c>(
     ))}
 }
 
-pub fn witness_type<'c>(
+pub fn proof_type<'c>(
     context: &'c Context,
     trait_name: &str,
     type_args: &[Type<'c>],
 ) -> Type<'c> {
-    unsafe { Type::from_raw(traitWitnessTypeGet(
+    unsafe { Type::from_raw(traitProofTypeGet(
         context.to_raw(),
         StringRef::new(trait_name).to_raw(),
         type_args.as_ptr() as *const _,

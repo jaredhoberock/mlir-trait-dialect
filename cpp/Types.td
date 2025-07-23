@@ -35,16 +35,16 @@ def PolyType : TypeDef<TraitDialect, "Poly", [SymbolicTypeUnificationInterface]>
 }
 
 // Represents a zero-sized proof that a trait application is satisfied
-def WitnessType : TypeDef<TraitDialect, "Witness"> {
-  let mnemonic = "witness";
+def ProofType : TypeDef<TraitDialect, "Proof"> {
+  let mnemonic = "proof";
   let summary = "Proof that a type list implements a trait";
 
   let description = [{
-    The `!trait.witness` type represents evidence that some list of types satisfies a trait.
+    The `!trait.proof` type represents evidence that some list of types satisfies a trait.
 
     For example,
 
-        !trait.witness<@PartialEq[i32, i32]>
+        !trait.proof<@PartialEq[i32, i32]>
 
     represents a proof that an implementation exists for `@PartialEq` with `i32` supplied for both type parameters.
   }];

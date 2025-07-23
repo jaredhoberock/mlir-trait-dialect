@@ -124,13 +124,13 @@ MlirOperation traitWitnessOpCreate(MlirLocation loc,
                                    MlirStringRef traitName,
                                    MlirType* typeArgs, intptr_t numTypeArgs) {
   MLIRContext* ctx = unwrap(loc)->getContext();
-  MlirType wrappedWitnessType = traitWitnessTypeGet(wrap(ctx), traitName, typeArgs, numTypeArgs);
+  MlirType wrappedProofType = traitProofTypeGet(wrap(ctx), traitName, typeArgs, numTypeArgs);
 
   OpBuilder builder(ctx);
 
   auto op = builder.create<WitnessOp>(
     unwrap(loc),
-    unwrap(wrappedWitnessType)
+    unwrap(wrappedProofType)
   );
 
   return wrap(op.getOperation());
@@ -141,9 +141,9 @@ MlirType traitPolyTypeGet(MlirContext wrappedCtx,
   return wrap(PolyType::get(unwrap(wrappedCtx), uniqueId));
 }
 
-MlirType traitWitnessTypeGet(MlirContext wrappedCtx,
-                             MlirStringRef traitName,
-                             MlirType* typeArgs, intptr_t numTypeArgs) {
+MlirType traitProofTypeGet(MlirContext wrappedCtx,
+                           MlirStringRef traitName,
+                           MlirType* typeArgs, intptr_t numTypeArgs) {
   MLIRContext* ctx = unwrap(wrappedCtx);
   FlatSymbolRefAttr traitRefAttr = FlatSymbolRefAttr::get(ctx, StringRef(traitName.data, traitName.length));
 
@@ -153,7 +153,7 @@ MlirType traitWitnessTypeGet(MlirContext wrappedCtx,
     typeArgsVec.push_back(unwrap(typeArgs[i]));
   }
 
-  return wrap(WitnessType::get(ctx, traitRefAttr, typeArgsVec));
+  return wrap(ProofType::get(ctx, traitRefAttr, typeArgsVec));
 }
 
 } // end extern "C"

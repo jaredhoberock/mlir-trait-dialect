@@ -74,7 +74,7 @@ struct EraseWitnessOp : public OpRewritePattern<WitnessOp> {
   }
 };
 
-static LogicalResult eraseWitnessOpsAndTypes(ModuleOp module) {
+static LogicalResult eraseWitnessOpsAndProofTypes(ModuleOp module) {
   MLIRContext* ctx = module.getContext();
   ConversionTarget target(*ctx);
 
@@ -83,13 +83,13 @@ static LogicalResult eraseWitnessOpsAndTypes(ModuleOp module) {
 
   // otherwise, an op is legal if it does not mention !trait.witness
   target.markUnknownOpDynamicallyLegal([&](Operation *op) {
-    return !opMentionsWitnessType(op);
+    return !opMentionsProofType(op);
   });
   
-  // create a TypeConverter to erase !trait.witness types
+  // create a TypeConverter to erase !trait.proof types
   TypeConverter tc;
   tc.addConversion([](Type ty) { return ty; });
-  tc.addConversion([](WitnessType ty, SmallVectorImpl<Type> &out) {
+  tc.addConversion([](ProofType ty, SmallVectorImpl<Type> &out) {
     // leaving out unchanged means erase this type
     return success();
   });
@@ -147,10 +147,10 @@ void MonomorphizePass::runOnOperation() {
     trait.erase();
   }
 
-  // erase witness ops and types last
+  // erase witness ops and proof types last
   // we do this last because all of the above (polymorphic functions, trait.impl, trait.trait)
-  // use !trait.witness
-  if (failed(eraseWitnessOpsAndTypes(module)))
+  // use !trait.proof
+  if (failed(eraseWitnessOpsAndProofTypes(module)))
     signalPassFailure();
 }
 

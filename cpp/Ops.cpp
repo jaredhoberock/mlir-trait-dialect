@@ -297,33 +297,33 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 }
 
 FlatSymbolRefAttr WitnessOp::getTraitAttr() {
-  return dyn_cast<WitnessType>(getResult().getType()).getTrait();
+  return dyn_cast<ProofType>(getResult().getType()).getTrait();
 }
 
 ArrayRef<Type> WitnessOp::getTypeArgs() {
-  return dyn_cast<WitnessType>(getResult().getType()).getTypeArgs();
+  return dyn_cast<ProofType>(getResult().getType()).getTypeArgs();
 }
 
 TraitOp WitnessOp::getTrait() {
   ModuleOp moduleOp = getOperation()->getParentOfType<ModuleOp>();
   if (!moduleOp) {
-    emitOpError() << "witness is not inside of a module";
+    emitOpError() << "not inside of a module";
     return nullptr;
   }
   return mlir::SymbolTable::lookupNearestSymbolFrom<TraitOp>(moduleOp, getTraitAttr());
 }
 
 LogicalResult MethodCallOp::verify() {
-  // the witness's type must be WitnessType
-  WitnessType witness = dyn_cast_or_null<WitnessType>(getWitness().getType());
-  if (!witness)
-    return emitOpError() << "expected '!trait.witness', found " << getWitness().getType();
+  // the proof's type must be ProofType
+  ProofType proof = dyn_cast_or_null<ProofType>(getProof().getType());
+  if (!proof)
+    return emitOpError() << "expected '!trait.proof', found " << getProof().getType();
 
-  // verify that the named trait matches the witness's trait
+  // verify that the named trait matches the proof's trait
   auto expectedTraitAttr = getTraitAttr();
-  auto foundTraitAttr = witness.getTrait();
+  auto foundTraitAttr = proof.getTrait();
   if (expectedTraitAttr != foundTraitAttr)
-    return emitOpError() << "expected witness for " << expectedTraitAttr << ", found " << foundTraitAttr;
+    return emitOpError() << "expected proof for " << expectedTraitAttr << ", found " << foundTraitAttr;
 
   return success();
 }
@@ -361,8 +361,8 @@ LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable)
                          << " does not match expected type " << getMethodFunctionType();
   }
 
-  // monomorphize the method's type using the witness's type arguments
-  DenseMap<Type,Type> subst = traitOp.buildSubstitutionFor(getWitness().getType().getTypeArgs());
+  // monomorphize the method's type using the proof's type arguments
+  DenseMap<Type,Type> subst = traitOp.buildSubstitutionFor(getProof().getType().getTypeArgs());
   FunctionType methodFnTy = dyn_cast_or_null<FunctionType>(applySubstitution(subst, method.getFunctionType()));
   if (!methodFnTy)
     return emitOpError() << "expected function type";
@@ -376,7 +376,7 @@ LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable)
 
 func::FuncOp MethodCallOp::getOrInstantiateCallee(OpBuilder& builder) {
   return getTrait()
-    .getOrInstantiateImpl(builder, getWitness().getType().getTypeArgs())
+    .getOrInstantiateImpl(builder, getProof().getType().getTypeArgs())
     .getOrInstantiateFunctionFromMethod(builder, getMethodName());
 }
 

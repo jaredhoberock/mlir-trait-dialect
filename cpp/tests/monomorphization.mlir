@@ -2,15 +2,15 @@
 
 !S = !trait.poly<0>
 !O = !trait.poly<1>
-!W = !trait.witness<@PartialEq[!S,!O]>
+!P = !trait.proof<@PartialEq[!S,!O]>
 // CHECK-NOT: @PartialEq
 trait.trait @PartialEq [!S,!O] {
   func.func private @eq(!S, !O) -> i1
 
-  func.func @neq(%w: !W, %self: !S, %other: !O) -> i1 {
-    %equal = trait.method.call @PartialEq::@eq<%w>(%self, %other)
+  func.func @neq(%p: !P, %self: !S, %other: !O) -> i1 {
+    %equal = trait.method.call @PartialEq::@eq<%p>(%self, %other)
       : (!S, !O) -> i1
-      as !W (!S, !O) -> i1
+      as !P (!S, !O) -> i1
     %true = arith.constant 1 : i1
     %res = arith.xori %equal, %true : i1
     return %res : i1
@@ -30,10 +30,10 @@ trait.impl @PartialEq[i32,i32] {
 // CHECK-LABEL: func.func @foo_i32
 // CHECK-NOT: builtin.unrealized_conversion_cast
 // CHECK: call @__trait_PartialEq_impl_i32_i32_eq
-func.func @foo(%w: !trait.witness<@PartialEq[!T,!T]>, %x: !T, %y: !T) -> i1 {
-  %res = trait.method.call @PartialEq::@eq<%w>(%x, %y)
+func.func @foo(%p: !trait.proof<@PartialEq[!T,!T]>, %x: !T, %y: !T) -> i1 {
+  %res = trait.method.call @PartialEq::@eq<%p>(%x, %y)
     : (!S,!O) -> i1
-    as !trait.witness<@PartialEq[!T,!T]> (!T,!T) -> i1
+    as !trait.proof<@PartialEq[!T,!T]> (!T,!T) -> i1
   return %res : i1
 }
 
@@ -41,10 +41,10 @@ func.func @foo(%w: !trait.witness<@PartialEq[!T,!T]>, %x: !T, %y: !T) -> i1 {
 // CHECK-NOT: builtin.unrealized_conversion_cast
 // CHECK: call @foo_i32
 func.func @bar(%x: i32, %y: i32) -> i1 {
-  %w = trait.witness : !trait.witness<@PartialEq[i32,i32]>
-  %res = trait.func.call @foo(%w, %x, %y)
-    : (!trait.witness<@PartialEq[!T,!T]>, !T, !T) -> i1
-    as (!trait.witness<@PartialEq[i32,i32]>, i32, i32) -> i1
+  %p = trait.witness : !trait.proof<@PartialEq[i32,i32]>
+  %res = trait.func.call @foo(%p, %x, %y)
+    : (!trait.proof<@PartialEq[!T,!T]>, !T, !T) -> i1
+    as (!trait.proof<@PartialEq[i32,i32]>, i32, i32) -> i1
   return %res : i1
 }
 
@@ -52,14 +52,14 @@ func.func @bar(%x: i32, %y: i32) -> i1 {
 // CHECK-NOT: builtin.unrealized_conversion_cast
 // CHECK: call @__trait_PartialEq_impl_i32_i32_eq
 // CHECK: call @__trait_PartialEq_impl_i32_i32_neq
-func.func @baz(%w: !trait.witness<@PartialEq[!T,!T]>, %x: !T, %y: !T) -> i1 {
-  %eq = trait.method.call @PartialEq::@eq<%w>(%x, %y)
+func.func @baz(%p: !trait.proof<@PartialEq[!T,!T]>, %x: !T, %y: !T) -> i1 {
+  %eq = trait.method.call @PartialEq::@eq<%p>(%x, %y)
     : (!S,!O) -> i1
-    as !trait.witness<@PartialEq[!T,!T]> (!T,!T) -> i1
+    as !trait.proof<@PartialEq[!T,!T]> (!T,!T) -> i1
 
-  %neq = trait.method.call @PartialEq::@neq<%w>(%w, %x, %y)
-    : (!W,!S,!O) -> i1
-    as !trait.witness<@PartialEq[!T,!T]> (!trait.witness<@PartialEq[!T,!T]>, !T,!T) -> i1
+  %neq = trait.method.call @PartialEq::@neq<%p>(%p, %x, %y)
+    : (!P,!S,!O) -> i1
+    as !trait.proof<@PartialEq[!T,!T]> (!trait.proof<@PartialEq[!T,!T]>, !T,!T) -> i1
 
   %res = arith.ori %eq, %neq : i1
   return %res : i1
@@ -69,9 +69,9 @@ func.func @baz(%w: !trait.witness<@PartialEq[!T,!T]>, %x: !T, %y: !T) -> i1 {
 // CHECK-NOTE: builtin.unrealized_conversion_cast
 // CHECK: call @baz_i32
 func.func @qux(%x: i32, %y: i32) -> i1 {
-  %w = trait.witness : !trait.witness<@PartialEq[i32,i32]>
-  %result = trait.func.call @baz(%w, %x, %y)
-    : (!trait.witness<@PartialEq[!T,!T]>, !T,!T) -> i1
-    as (!trait.witness<@PartialEq[i32,i32]>, i32,i32) -> i1
+  %p = trait.witness : !trait.proof<@PartialEq[i32,i32]>
+  %result = trait.func.call @baz(%p, %x, %y)
+    : (!trait.proof<@PartialEq[!T,!T]>, !T,!T) -> i1
+    as (!trait.proof<@PartialEq[i32,i32]>, i32,i32) -> i1
   return %result : i1
 }

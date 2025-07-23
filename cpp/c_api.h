@@ -45,10 +45,10 @@ MlirOperation traitWitnessOpCreate(MlirLocation loc, MlirStringRef traitName,
 /// Return the !trait.poly<uniqueId> type
 MlirType traitPolyTypeGet(MlirContext ctx, unsigned int uniqueId);
 
-// Return the !trait.witness<@Trait[Type1, Type2, ...]> type
-MlirType traitWitnessTypeGet(MlirContext ctx,
-                             MlirStringRef traitName,
-                             MlirType* typeArgs, intptr_t numTypeArgs);
+// Return the !trait.proof<@Trait[Type1, Type2, ...]> type
+MlirType traitProofTypeGet(MlirContext ctx,
+                           MlirStringRef traitName,
+                           MlirType* typeArgs, intptr_t numTypeArgs);
 
 #ifdef __cplusplus
 }
