@@ -5,9 +5,9 @@
 !W = !trait.witness<@PartialEq[!S,!O]>
 // CHECK-NOT: @PartialEq
 trait.trait @PartialEq [!S,!O] {
-  trait.method @eq(!S, !O) -> i1
+  func.func private @eq(!S, !O) -> i1
 
-  trait.method @neq(%w: !W, %self: !S, %other: !O) -> i1 {
+  func.func @neq(%w: !W, %self: !S, %other: !O) -> i1 {
     %equal = trait.method.call @PartialEq::@eq<%w>(%self, %other)
       : (!S, !O) -> i1
       as !W (!S, !O) -> i1
@@ -19,7 +19,7 @@ trait.trait @PartialEq [!S,!O] {
 
 // CHECK-NOT: @PartialEq
 trait.impl @PartialEq[i32,i32] {
-  trait.method @eq(%self: i32, %other: i32) -> i1 {
+  func.func @eq(%self: i32, %other: i32) -> i1 {
     %res = arith.cmpi eq, %self, %other : i32
     return %res : i1
   }

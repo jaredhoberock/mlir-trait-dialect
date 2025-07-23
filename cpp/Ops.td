@@ -13,7 +13,6 @@ include "Types.td"
 
 
 def TraitOp : TraitDialectOp<"trait", [
-  IsolatedFromAbove,
   Symbol,
   SymbolTable
 ] # GraphRegionNoTerminator.traits
@@ -41,8 +40,8 @@ def TraitOp : TraitDialectOp<"trait", [
   let regions = (region SizedRegion<1>:$body);
 
   let extraClassDeclaration = [{
-    MethodOp getMethod(StringRef methodName) {
-      return dyn_cast_or_null<MethodOp>(
+    func::FuncOp getMethod(StringRef methodName) {
+      return dyn_cast_or_null<func::FuncOp>(
         mlir::SymbolTable::lookupSymbolIn(*this, methodName));
     }
 
@@ -53,28 +52,28 @@ def TraitOp : TraitDialectOp<"trait", [
     llvm::SmallSet<llvm::StringRef,8> getRequiredMethodNames() {
       llvm::SmallSet<llvm::StringRef,8> result;
       for (Operation& op : getBody().front()) {
-        if (auto method = dyn_cast<MethodOp>(op)) {
-          if (method.isRequired()) {
-            result.insert(method.getSymName());
+        if (auto func = dyn_cast<func::FuncOp>(op)) {
+          if (func.isExternal()) {
+            result.insert(func.getSymName());
           }
         }
       }
       return result;
     }
 
-    std::vector<MethodOp> getOptionalMethods() {
-      std::vector<MethodOp> result;
+    std::vector<func::FuncOp> getOptionalMethods() {
+      std::vector<func::FuncOp> result;
       for (Operation& op : getBody().front()) {
-        if (auto method = dyn_cast<MethodOp>(op)) {
-          if (method.isOptional()) {
-            result.push_back(method);
+        if (auto func = dyn_cast<func::FuncOp>(op)) {
+          if (!func.isExternal()) {
+            result.push_back(func);
           }
         }
       }
       return result;
     }
 
-    MethodOp getOptionalMethod(StringRef methodName) {
+    func::FuncOp getOptionalMethod(StringRef methodName) {
       for (auto method : getOptionalMethods()) {
         if (method.getSymName() == methodName)
           return method;
@@ -105,95 +104,8 @@ def TraitOp : TraitDialectOp<"trait", [
 }
 
 
-def MethodOp : TraitDialectOp<"method", [
-  Symbol,
-  FunctionOpInterface,
-  HasParent<"TraitOp, ImplOp">,
-  IsolatedFromAbove,
-  AutomaticAllocationScope,
-  SingleBlockImplicitTerminator<"ReturnOp">,
-  OpAsmOpInterface
-]> {
-  let summary = "Declares a trait method";
-  let description = [{
-    Declares a method within a trait or implementation. 
-
-    In TraitOp context:
-    - Required methods have no body (declaration only)
-    - Optional methods have a body (default implementation)
-
-    In ImplOp context:
-    - Implementation methods must have a body
-
-    Example:
-      trait.trait @PartialEq (%witness: !trait.witness<@PartialEq[!S,!O]>) {
-        // required method
-        trait.method @eq(%self: !S, %other: !O) -> i1
-        
-        // optional method with default implementation
-        trait.method @neq(%self: !S, %other: !O) -> i1 {
-          %eq = trait.method.call @PartialEq::@eq<%witness>(%self, %other)
-            : (!S, !O) -> i1
-          %true = arith.constant 1 : i1
-          %result = arith.xori %eq, %true : i1
-          trait.return %result : i1
-        }
-      }
-  }];
-
-  let arguments = (ins
-    SymbolNameAttr:$sym_name,
-    TypeAttrOf<FunctionType>:$function_type,
-    OptionalAttr<DictArrayAttr>:$arg_attrs,
-    OptionalAttr<DictArrayAttr>:$res_attrs
-  );
-
-  let regions = (region AnyRegion:$body);
-
-  let builders = [OpBuilder<(ins
-    "mlir::StringRef":$name, "mlir::FunctionType":$type,
-    CArg<"mlir::ArrayRef<mlir::NamedAttribute>", "{}">:$attrs,
-    CArg<"mlir::ArrayRef<mlir::DictionaryAttr>", "{}">:$argAttrs)
-  >];
-
-  let extraClassDeclaration = [{
-    // FunctionOpInterface methods
-    Region *getCallableRegion() { return hasBody() ? &getBody() : nullptr; }
-    ArrayRef<Type> getArgumentTypes() { return getFunctionType().getInputs(); }
-    ArrayRef<Type> getResultTypes() { return getFunctionType().getResults(); }
-
-    // OpAsmOpInterface methods
-    static StringRef getDefaultDialect() { return "trait"; }
-
-    // Method-specific functionality
-    bool hasBody() { return !getBody().empty(); }
-    
-    // Context-aware semantics (TraitOp only)
-    bool isRequired() { 
-      assert(isa<TraitOp>((*this)->getParentOp()) && "isRequired() only valid in TraitOp context");
-      return !hasBody(); 
-    }
-
-    bool isOptional() { 
-      assert(isa<TraitOp>((*this)->getParentOp()) && "isOptional() only valid in TraitOp context");
-      return hasBody(); 
-    }
-    
-    StringRef getName() {
-      return getSymName();
-    }
-    
-    // Clone this method as a func::FuncOp and hoist it into the grandparent operation (module level)
-    func::FuncOp cloneAsFuncOpAndHoistIntoGrandparent(OpBuilder& builder, StringRef funcName);
-  }];
-
-  let hasCustomAssemblyFormat = 1;
-}
-
-
 def ImplOp : TraitDialectOp<"impl", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
-  IsolatedFromAbove,
   SymbolTable
 ] # GraphRegionNoTerminator.traits
 > {
@@ -223,13 +135,25 @@ def ImplOp : TraitDialectOp<"impl", [
   let extraClassDeclaration = [{
     TraitOp getTrait();
 
-    std::vector<MethodOp> getMethods();
+    std::vector<func::FuncOp> getMethods() {
+      std::vector<func::FuncOp> result;
+      for (auto& op : getBody().front()) {
+        if (auto method = dyn_cast<func::FuncOp>(op)) {
+          result.push_back(method);
+        }
+      }
+      return result;
+    }
 
-    MethodOp getMethod(StringRef name);
+    func::FuncOp getMethod(StringRef name) {
+      return lookupSymbol<func::FuncOp>(name);
+    }
 
-    bool hasMethod(StringRef name);
+    bool hasMethod(StringRef name) {
+      return getMethod(name) != nullptr;
+    }
 
-    MethodOp getOrInstantiateMethod(OpBuilder& builder, StringRef methodName);
+    func::FuncOp getOrInstantiateMethod(OpBuilder& builder, StringRef methodName);
 
     func::FuncOp getOrInstantiateFunctionFromMethod(OpBuilder& builder, StringRef methodName);
 
@@ -463,40 +387,6 @@ def FuncCallOp : TraitDialectOp<"func.call", [
   }];
 
   let assemblyFormat = "$callee `(` $operands `)` attr-dict `:` $callee_function_type `as` functional-type($operands, results)";
-}
-
-def ReturnOp : TraitDialectOp<"return", [
-  Pure,
-  HasParent<"MethodOp">,
-  MemRefsNormalizable,
-  ReturnLike,
-  Terminator
-]> {
-  let summary = "Trait method return operation";
-  let description = [{
-    The `trait.return` operation represents a return operation within a trait method.
-    The operation takes variable number of operands and produces no results.
-    The operand number and types must match the signature of the method
-    that contains the operation.
-
-    Example:
-
-    ```mlir
-    trait.method @eq(%self: !S, %other: !O) -> i1 {
-      %result = arith.cmpi eq, %self, %other : i32
-      trait.return %result : i1
-    }
-    ```
-  }];
-
-  let arguments = (ins Variadic<AnyType>:$operands);
-
-  let builders = [OpBuilder<(ins), [{
-    build($_builder, $_state, std::nullopt);
-  }]>];
-
-  let assemblyFormat = "attr-dict ($operands^ `:` type($operands))?";
-  let hasVerifier = 1;
 }
 
 #endif // TRAIT_OPS_TD

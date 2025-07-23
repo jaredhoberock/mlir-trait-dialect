@@ -21,11 +21,6 @@ func::FuncOp instantiatePolymorph(OpBuilder& builder,
                                   StringRef instanceName,
                                   const DenseMap<Type,Type> &substitution);
 
-MethodOp instantiatePolymorphicMethod(OpBuilder& builder,
-                                     MethodOp polymorph,
-                                     StringRef instanceName,
-                                     const DenseMap<Type,Type> &substitution);
-
 ImplOp instantiatePolymorphicImpl(OpBuilder& builder,
                                   ImplOp polymorph,
                                   ArrayRef<Type> typeArgs);

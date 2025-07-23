@@ -7,8 +7,6 @@
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/Interfaces/FunctionImplementation.h>
 #include <mlir/IR/Builders.h>
-#include <mlir/IR/IRMapping.h>
-#include <mlir/IR/Verifier.h>
 #include <iostream>
 #include <optional>
 #include <variant>
@@ -18,6 +16,7 @@
 
 using namespace mlir;
 using namespace mlir::trait;
+
 
 static LogicalResult checkPolymorphicFunctionCall(
     FunctionType polyFnTy,
@@ -46,9 +45,7 @@ static LogicalResult checkPolymorphicFunctionCall(
   });
 }
 
-//===----------------------------------------------------------------------===//
-// TraitOp
-//===----------------------------------------------------------------------===//
+
 
 LogicalResult TraitOp::verify() {
   auto typeParams = getTypeParams().getAsValueRange<TypeAttr>();
@@ -68,15 +65,15 @@ LogicalResult TraitOp::verify() {
     return emitOpError() << "requires at least one type parameter";
 
   for (Block &block : getBody()) {
-    // check that all operations in the body are trait.method
+    // check that all operations in the body are func.func
     for (Operation &op : block) {
-      if (!isa<MethodOp>(op))
-        return emitOpError() << "body may only contain 'trait.method' operations";
+      if (!isa<func::FuncOp>(op))
+        return emitOpError() << "body may only contain 'func.func' operations";
     }
   }
-  
   return success();
 }
+
 
 ImplOp TraitOp::getImpl(ArrayRef<Type> typeArgs) {
   MLIRContext* ctx = getContext();
@@ -119,6 +116,7 @@ ImplOp TraitOp::getImpl(ArrayRef<Type> typeArgs) {
   return symbolicImpl;
 }
 
+
 ImplOp TraitOp::getOrInstantiateImpl(OpBuilder& builder, ArrayRef<Type> typeArgs) {
   if (auto impl = getImpl(typeArgs)) {
     auto implTypeRange = impl.getTypeArgs().getAsValueRange<TypeAttr>();
@@ -141,6 +139,7 @@ ImplOp TraitOp::getOrInstantiateImpl(OpBuilder& builder, ArrayRef<Type> typeArgs
   return nullptr;
 }
 
+
 DenseMap<Type,Type> TraitOp::buildSubstitutionFor(TypeRange typeArgs) {
   DenseMap<Type,Type> subst;
   auto params = getTypeParams().getAsValueRange<TypeAttr>();
@@ -150,9 +149,6 @@ DenseMap<Type,Type> TraitOp::buildSubstitutionFor(TypeRange typeArgs) {
   return subst;
 }
 
-//===----------------------------------------------------------------------===//
-// ImplOp
-//===----------------------------------------------------------------------===//
 
 LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // Verify trait name attribute exists
@@ -171,33 +167,31 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     return emitOpError() << "trait '" << traitNameAttr << "' expects " << expectedArity
                          << " type arguments, found " << getTypeArgs().size();
 
-  // XXX we should unify the trait's type parameters and the impl's type arguments here
-
   // Collect method names from the trait
   llvm::SmallSet<StringRef, 8> requiredMethodNames = traitOp.getRequiredMethodNames();
-  std::vector<MethodOp> optionalMethods = traitOp.getOptionalMethods();
+  std::vector<func::FuncOp> optionalMethods = traitOp.getOptionalMethods();
   llvm::SmallSet<StringRef, 8> optionalMethodNames;
-  for (auto method : optionalMethods) {
-    optionalMethodNames.insert(method.getSymName());
+  for (auto f : optionalMethods) {
+    optionalMethodNames.insert(f.getSymName());
   }
 
-  // Verify that the body contains only trait.method ops
+  // Verify that the body contains only func.func ops
   llvm::SmallSet<StringRef, 8> definedMethods;
   for (Operation &op : getBody().front()) {
-    if (auto implMethod = dyn_cast<MethodOp>(op)) {
+    if (auto implMethod = dyn_cast<func::FuncOp>(op)) {
       StringRef name = implMethod.getSymName();
       if (!requiredMethodNames.contains(name) && !optionalMethodNames.contains(name)) {
         return emitOpError() << "implements unknown method '" << name
                              << "' (not found in trait '" << traitNameAttr << "')";
       }
-      if (!implMethod.hasBody()) {
+      if (implMethod.isExternal()) {
         return emitOpError() << "method '" << name << "' must have body";
       }
       if (!definedMethods.insert(name).second) {
         return emitOpError() << "implements method '" << name << "' multiple times";
       }
     } else {
-      return emitOpError() << "body may only contain 'trait.method' operations";
+      return emitOpError() << "body may only contain 'func.func' operations";
     }
   }
 
@@ -211,6 +205,7 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   return success();
 }
 
+
 TraitOp ImplOp::getTrait() {
   ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
   if (!module) {
@@ -220,35 +215,19 @@ TraitOp ImplOp::getTrait() {
   return mlir::SymbolTable::lookupNearestSymbolFrom<TraitOp>(module, getTraitNameAttr());
 }
 
+
 DenseMap<Type, Type> ImplOp::buildSubstitution() {
   SmallVector<Type> typeArgs(getTypeArgs().getAsValueRange<TypeAttr>());
   return getTrait().buildSubstitutionFor(typeArgs);
 }
 
-std::vector<MethodOp> ImplOp::getMethods() {
-  std::vector<MethodOp> result;
-  for (auto& op : getBody().front()) {
-    if (auto method = dyn_cast<MethodOp>(op)) {
-      result.push_back(method);
-    }
-  }
-  return result;
-}
 
-MethodOp ImplOp::getMethod(StringRef name) {
-  return lookupSymbol<MethodOp>(name);
-}
-
-bool ImplOp::hasMethod(StringRef name) {
-  return getMethod(name) != nullptr;
-}
-
-MethodOp ImplOp::getOrInstantiateMethod(OpBuilder& builder, StringRef methodName) {
+func::FuncOp ImplOp::getOrInstantiateMethod(OpBuilder& builder, StringRef methodName) {
   // check that we've named a valid trait method
   if (!getTrait().hasMethod(methodName)) return nullptr;
 
   // check if the method already exists in the ImplOp
-  MethodOp method = getMethod(methodName);
+  func::FuncOp method = getMethod(methodName);
   if (!method) {
     // we need to instantiate the method from the default implementation in the trait
     auto traitMethod = getTrait().getOptionalMethod(methodName);
@@ -259,12 +238,13 @@ MethodOp ImplOp::getOrInstantiateMethod(OpBuilder& builder, StringRef methodName
 
       PatternRewriter::InsertionGuard guard(builder);
       builder.setInsertionPointToEnd(&getBody().front());
-      method = instantiatePolymorphicMethod(builder, traitMethod, instanceName, buildSubstitution());
+      method = instantiatePolymorph(builder, traitMethod, instanceName, buildSubstitution());
     }
   }
 
   return method;
 }
+
 
 func::FuncOp ImplOp::getOrInstantiateFunctionFromMethod(OpBuilder& builder, StringRef methodName) {
   // check that methodName names a valid trait method
@@ -284,18 +264,22 @@ func::FuncOp ImplOp::getOrInstantiateFunctionFromMethod(OpBuilder& builder, Stri
     // instantiate the method as a free function with a mangled name
 
     // get the method inside the ImplOp
-    MethodOp method = getOrInstantiateMethod(builder, methodName);
+    func::FuncOp method = getOrInstantiateMethod(builder, methodName);
 
-    // clone the method as a func::FuncOp and hoist to module level
-    funcOp = method.cloneAsFuncOpAndHoistIntoGrandparent(builder, functionName);
+    // clone and hoist method into the parent with a mangled name
+    PatternRewriter::InsertionGuard guard(builder);
+
+    // clone the method into the ImplOp's parent
+    builder.setInsertionPointAfter(*this);
+    funcOp = cast<func::FuncOp>(builder.clone(*method));
+
+    // set the method's name
+    funcOp.setSymName(functionName);
   }
 
   return funcOp;
 }
 
-//===----------------------------------------------------------------------===//
-// WitnessOp
-//===----------------------------------------------------------------------===//
 
 LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // look up the TraitOp
@@ -328,10 +312,6 @@ TraitOp WitnessOp::getTrait() {
   }
   return mlir::SymbolTable::lookupNearestSymbolFrom<TraitOp>(moduleOp, getTraitAttr());
 }
-
-//===----------------------------------------------------------------------===//
-// MethodCallOp
-//===----------------------------------------------------------------------===//
 
 LogicalResult MethodCallOp::verify() {
   // the witness's type must be WitnessType
@@ -399,10 +379,6 @@ func::FuncOp MethodCallOp::getOrInstantiateCallee(OpBuilder& builder) {
     .getOrInstantiateImpl(builder, getWitness().getType().getTypeArgs())
     .getOrInstantiateFunctionFromMethod(builder, getMethodName());
 }
-
-//===----------------------------------------------------------------------===//
-// FuncCallOp
-//===----------------------------------------------------------------------===//
 
 LogicalResult FuncCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   auto moduleOp = getOperation()->getParentOfType<ModuleOp>();
@@ -492,115 +468,4 @@ func::FuncOp FuncCallOp::getOrInstantiateCallee(OpBuilder &builder) {
   }
 
   return instance;
-}
-
-//===----------------------------------------------------------------------===//
-// ReturnOp
-//===----------------------------------------------------------------------===//
-
-LogicalResult ReturnOp::verify() {
-  auto method = cast<MethodOp>((*this)->getParentOp());
-
-  // The operand number and types must match the method signature.
-  const auto &results = method.getFunctionType().getResults();
-  if (getNumOperands() != results.size())
-    return emitOpError("has ")
-           << getNumOperands() << " operands, but enclosing method (@"
-           << method.getName() << ") returns " << results.size();
-
-  for (unsigned i = 0, e = results.size(); i != e; ++i)
-    if (getOperand(i).getType() != results[i])
-      return emitError() << "type of return operand " << i << " ("
-                         << getOperand(i).getType()
-                         << ") doesn't match method result type ("
-                         << results[i] << ")"
-                         << " in method @" << method.getName();
-
-  return success();
-}
-
-//===----------------------------------------------------------------------===//
-// MethodOp
-//===----------------------------------------------------------------------===//
-
-ParseResult MethodOp::parse(OpAsmParser &parser, OperationState &result) {
-  auto buildFuncType =
-      [](Builder &builder, ArrayRef<Type> argTypes, ArrayRef<Type> results,
-         function_interface_impl::VariadicFlag,
-         std::string &) { return builder.getFunctionType(argTypes, results); };
-
-  return function_interface_impl::parseFunctionOp(
-      parser, result, /*allowVariadic=*/false,
-      getFunctionTypeAttrName(result.name), buildFuncType,
-      getArgAttrsAttrName(result.name), getResAttrsAttrName(result.name));
-}
-
-void MethodOp::print(OpAsmPrinter &printer) {
-  function_interface_impl::printFunctionOp(
-      printer, *this, /*isVariadic=*/false, getFunctionTypeAttrName(),
-      getArgAttrsAttrName(), getResAttrsAttrName());
-}
-
-void MethodOp::build(OpBuilder &builder, OperationState &state, StringRef name,
-                     FunctionType type, ArrayRef<NamedAttribute> attrs,
-                     ArrayRef<DictionaryAttr> argAttrs) {
-  state.addAttribute(SymbolTable::getSymbolAttrName(),
-                     builder.getStringAttr(name));
-  state.addAttribute(getFunctionTypeAttrName(state.name), TypeAttr::get(type));
-  state.attributes.append(attrs.begin(), attrs.end());
-  state.addRegion();
-
-  if (argAttrs.empty())
-    return;
-  assert(type.getNumInputs() == argAttrs.size());
-  function_interface_impl::addArgAndResultAttrs(
-      builder, state, argAttrs, /*resultAttrs=*/std::nullopt,
-      getArgAttrsAttrName(state.name), getResAttrsAttrName(state.name));
-}
-
-func::FuncOp MethodOp::cloneAsFuncOpAndHoistIntoGrandparent(OpBuilder& builder, StringRef funcName) {
-  // Create func::FuncOp in the grandparent (module level)
-  PatternRewriter::InsertionGuard guard(builder);
-  builder.setInsertionPointAfter((*this)->getParentOp());
-  
-  func::FuncOp funcOp = builder.create<func::FuncOp>(getLoc(), funcName, getFunctionType());
-  
-  // Copy attributes from the original method (except name and function type)
-  for (NamedAttribute attr : (*this)->getAttrs()) {
-    StringRef attrName = attr.getName();
-    if (attrName != getSymNameAttrName() && attrName != getFunctionTypeAttrName()) {
-      funcOp->setAttr(attrName, attr.getValue());
-    }
-  }
-  
-  // Clone the method body, converting trait.return to func.return
-  if (hasBody()) {
-    Block* methodBlock = &getBody().front();
-    Block* funcBlock = funcOp.addEntryBlock();
-    
-    IRMapping mapping;
-    // Map the arguments
-    for (auto [methodArg, funcArg] : llvm::zip(methodBlock->getArguments(), funcBlock->getArguments())) {
-      mapping.map(methodArg, funcArg);
-    }
-    
-    builder.setInsertionPointToEnd(funcBlock);
-    
-    // Clone all operations except the terminator
-    // XXX if any used value is owned by the method's parent,
-    //     we also need to clone its defining op
-    for (Operation& op : methodBlock->without_terminator()) {
-      builder.clone(op, mapping);
-    }
-    
-    // Get the original terminator and create corresponding func.return
-    auto traitReturn = cast<ReturnOp>(methodBlock->getTerminator());
-    SmallVector<Value> mappedOperands;
-    for (Value operand : traitReturn.getOperands()) {
-      mappedOperands.push_back(mapping.lookupOrDefault(operand));
-    }
-    builder.create<func::ReturnOp>(traitReturn.getLoc(), mappedOperands);
-  }
-  
-  return funcOp;
 }
