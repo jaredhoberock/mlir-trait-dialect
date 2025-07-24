@@ -2,6 +2,7 @@
 #define TRAIT_TYPES_TD
 
 include "mlir/IR/AttrTypeBase.td"
+include "Attributes.td"
 include "Dialect.td"
 include "TypeInterfaces.td"
 
@@ -50,13 +51,26 @@ def ProofType : TypeDef<TraitDialect, "Proof"> {
   }];
 
   let parameters = (ins
-    "::mlir::FlatSymbolRefAttr":$trait,  // referenced trait symbol
-    ArrayRefParameter<"Type">:$type_args // ordered list of type arguments
+    "::mlir::trait::TraitApplicationAttr":$application
   );
+
+  let extraClassDeclaration = [{
+    static ProofType get(MLIRContext *ctx, FlatSymbolRefAttr trait, ArrayRef<Type> type_args) {
+      return ProofType::get(ctx, TraitApplicationAttr::get(ctx, trait, type_args));
+    }
+
+    FlatSymbolRefAttr getTrait() const {
+      return getApplication().getTrait();
+    }
+
+    ArrayRef<Type> getTypeArgs() const {
+      return getApplication().getTypeArgs();
+    }
+  }];
 
   let genVerifyDecl = 1;
 
-  let assemblyFormat = "`<` $trait `[` $type_args `]` `>`";
+  let assemblyFormat = "`<` $application `>`";
 }
 
 

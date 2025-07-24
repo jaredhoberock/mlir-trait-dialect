@@ -246,6 +246,25 @@ func::FuncOp ImplOp::getOrInstantiateMethod(OpBuilder& builder, StringRef method
 }
 
 
+func::FuncOp cloneAndHoistMethodAsFreeFunctionInGrandparent(OpBuilder& builder, func::FuncOp method, StringRef functionName) {
+  // clone and hoist method into the grandparent with a mangled name
+  PatternRewriter::InsertionGuard guard(builder);
+
+  // clone the method into the method's grandparent
+  builder.setInsertionPointAfter(method->getParentOp());
+  func::FuncOp funcOp = cast<func::FuncOp>(builder.clone(*method));
+
+  // set the function's name
+  funcOp.setSymName(functionName);
+  
+  // XXX: Ideally, we would transform trait.assume -> trait.witness here during hoisting,
+  // since a trait.assume op inside of a free function is invalid. However, we only have
+  // access to OpBuilder, not PatternRewriter. The transformation is handled by
+  // RewriteConcreteAssumeOp pattern in the monomorphization pass instead.
+  
+  return funcOp;
+}
+
 func::FuncOp ImplOp::getOrInstantiateFunctionFromMethod(OpBuilder& builder, StringRef methodName) {
   // check that methodName names a valid trait method
   if (!getTrait().hasMethod(methodName)) return nullptr;
@@ -261,20 +280,11 @@ func::FuncOp ImplOp::getOrInstantiateFunctionFromMethod(OpBuilder& builder, Stri
       getOperation()->getParentOp(), FlatSymbolRefAttr::get(ctx, functionName));
 
   if (!funcOp) {
-    // instantiate the method as a free function with a mangled name
-
     // get the method inside the ImplOp
     func::FuncOp method = getOrInstantiateMethod(builder, methodName);
-
-    // clone and hoist method into the parent with a mangled name
-    PatternRewriter::InsertionGuard guard(builder);
-
-    // clone the method into the ImplOp's parent
-    builder.setInsertionPointAfter(*this);
-    funcOp = cast<func::FuncOp>(builder.clone(*method));
-
-    // set the method's name
-    funcOp.setSymName(functionName);
+    
+    // clone and hoist method into grandparent with mangled name
+    funcOp = cloneAndHoistMethodAsFreeFunctionInGrandparent(builder, method, functionName);
   }
 
   return funcOp;
@@ -305,6 +315,71 @@ ArrayRef<Type> WitnessOp::getTypeArgs() {
 }
 
 TraitOp WitnessOp::getTrait() {
+  ModuleOp moduleOp = getOperation()->getParentOfType<ModuleOp>();
+  if (!moduleOp) {
+    emitOpError() << "not inside of a module";
+    return nullptr;
+  }
+  return mlir::SymbolTable::lookupNearestSymbolFrom<TraitOp>(moduleOp, getTraitAttr());
+}
+
+LogicalResult AssumeOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  TraitOp enclosingTrait = getOperation()->getParentOfType<TraitOp>();
+  ImplOp enclosingImpl = getOperation()->getParentOfType<ImplOp>();
+  
+  if (!enclosingTrait && !enclosingImpl) {
+    return emitOpError("must be within a 'trait.trait' or 'trait.impl' region");
+  }
+  
+  FlatSymbolRefAttr assumedTraitAttr = getTraitAttr();
+  ArrayRef<Type> assumedTypeArgs = getTypeArgs();
+  
+  if (enclosingTrait) {
+    // In TraitOp: verify self-referential assumption
+    StringAttr enclosingTraitName = enclosingTrait.getSymNameAttr();
+    
+    if (assumedTraitAttr.getValue() != enclosingTraitName.getValue()) {
+      return emitOpError() << "assumed trait '" << assumedTraitAttr.getValue() 
+                           << "' does not match enclosing trait '" 
+                           << enclosingTraitName.getValue() << "'";
+    }
+    
+    // Verify that type arguments match the enclosing trait's type parameters
+    auto enclosingTypeParams = enclosingTrait.getTypeParams().getAsValueRange<TypeAttr>();
+    if (!llvm::equal(assumedTypeArgs, enclosingTypeParams)) {
+      return emitOpError() << "assumed proof type arguments must exactly match "
+                           << "enclosing trait's type parameters";
+    }
+  } else if (enclosingImpl) {
+    // In ImplOp: verify assumption matches the impl's trait and types
+    FlatSymbolRefAttr implTraitAttr = enclosingImpl.getTraitNameAttr();
+    
+    if (assumedTraitAttr.getValue() != implTraitAttr.getValue()) {
+      return emitOpError() << "assumed trait '" << assumedTraitAttr.getValue() 
+                           << "' does not match impl's trait '" 
+                           << implTraitAttr.getValue() << "'";
+    }
+    
+    // Verify that type arguments match the impl's type arguments
+    auto implTypeArgs = enclosingImpl.getTypeArgs().getAsValueRange<TypeAttr>();
+    if (!llvm::equal(assumedTypeArgs, implTypeArgs)) {
+      return emitOpError() << "assumed proof type arguments must exactly match "
+                           << "enclosing impl's type arguments";
+    }
+  }
+  
+  return success();
+}
+
+FlatSymbolRefAttr AssumeOp::getTraitAttr() {
+  return dyn_cast<ProofType>(getResult().getType()).getTrait();
+}
+
+ArrayRef<Type> AssumeOp::getTypeArgs() {
+  return dyn_cast<ProofType>(getResult().getType()).getTypeArgs();
+}
+
+TraitOp AssumeOp::getTrait() {
   ModuleOp moduleOp = getOperation()->getParentOfType<ModuleOp>();
   if (!moduleOp) {
     emitOpError() << "not inside of a module";

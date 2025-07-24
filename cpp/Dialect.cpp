@@ -1,3 +1,4 @@
+#include "Attributes.hpp"
 #include "Dialect.hpp"
 #include "Ops.hpp"
 #include "Types.hpp"
@@ -7,12 +8,14 @@
 namespace mlir::trait {
 
 void TraitDialect::initialize() {
+  registerAttributes();
+
+  registerTypes();
+
   addOperations<
 #define GET_OP_LIST
 #include "Ops.cpp.inc"
   >();
-
-  registerTypes();
 }
 
 }

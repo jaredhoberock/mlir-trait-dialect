@@ -208,6 +208,41 @@ def WitnessOp : TraitDialectOp<"witness", [
   let assemblyFormat = "`:` type($result) attr-dict";
 }
 
+def AssumeOp : TraitDialectOp<"assume", [
+  DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+  Pure
+]>{
+  let summary = "Assumes a proof value for a symbolic trait application";
+  let description = [{
+    Creates a zero-sized SSA value of type `!trait.proof<@Trait[types]>` that
+    acts as an assumed proof within trait or impl method bodies. This operation
+    has no operands.
+
+    At least one type argument must be symbolic (!trait.poly); concrete types
+    should use `trait.witness` instead. This operation must appear within a
+    `trait.trait` or `trait.impl` region.
+
+    Example:
+      trait.trait @PartialEq[!S,!O] {
+        func.func @neq(%self: !S, %other: !O) -> i1 {
+          %e = trait.assume : !trait.proof<@PartialEq[!S,!O]>
+          // ... use %e for method calls
+        }
+      }
+  }];
+
+  let results = (outs Proof:$result);
+
+  let extraClassDeclaration = [{
+    TraitOp getTrait();
+
+    FlatSymbolRefAttr getTraitAttr();
+    ArrayRef<Type> getTypeArgs();
+  }];
+
+  let assemblyFormat = "`:` type($result) attr-dict";
+}
+
 def MethodCallOp : TraitDialectOp<"method.call", [
   CallOpInterface,
   DeclareOpInterfaceMethods<SymbolUserOpInterface>

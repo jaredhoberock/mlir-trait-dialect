@@ -75,14 +75,13 @@ LogicalResult PolyType::unifyWith(
 
 
 LogicalResult ProofType::verify(function_ref<InFlightDiagnostic()> emitError,
-                                FlatSymbolRefAttr /*traits*/,
-                                ArrayRef<Type> typeArgs) {
+                                TraitApplicationAttr app) {
   auto fail = [&]() -> LogicalResult {
     return emitError ? emitError() << "nested !trait.proof types are not allowed"
                      : failure();
   };
 
-  for (Type t : typeArgs) {
+  for (Type t : app.getTypeArgs()) {
     bool nested = false;
     t.walk([&](Type sub) {
       if (mlir::isa<ProofType>(sub))

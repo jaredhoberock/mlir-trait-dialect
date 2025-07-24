@@ -35,15 +35,8 @@ fn test_jit() {
     // (!S, !O) -> i1
     let eq_ty = FunctionType::new(&context, &[self_ty, other_ty], &[i1_ty]).into();
 
-    // !P = !trait.proof<@PartialEq[!S,!O]>
-    let neq_proof_ty = trait_::proof_type(
-        &context,
-        "PartialEq",
-        &[self_ty, other_ty],
-    );
-
-    // (!P, !S, !O) -> i1
-    let neq_ty = FunctionType::new(&context, &[neq_proof_ty, self_ty, other_ty], &[i1_ty]).into();
+    // (!S, !O) -> i1
+    let neq_ty = FunctionType::new(&context, &[self_ty, other_ty], &[i1_ty]).into();
 
     let partial_eq = {
         let vis_id = Identifier::new(&context, "sym_visibility");
@@ -68,16 +61,22 @@ fn test_jit() {
                 loc,
             );
 
-            let block = Block::new(&[(neq_proof_ty, loc), (self_ty, loc), (other_ty, loc)]);
+            let block = Block::new(&[(self_ty, loc), (other_ty, loc)]);
+            let p = block.append_operation(trait_::assume(
+                loc,
+                "PartialEq",
+                &[self_ty, other_ty],
+            ));
+
             let equal = block.append_operation(trait_::method_call(
                 loc,
                 "PartialEq",
                 "eq",
                 eq_ty,
-                block.argument(0).unwrap().into(),     // proof
+                p.result(0).unwrap().into(),           // proof
                 &[
-                    block.argument(1).unwrap().into(), // self
-                    block.argument(2).unwrap().into(), // other
+                    block.argument(0).unwrap().into(), // self
+                    block.argument(1).unwrap().into(), // other
                 ],
                 &[i1_ty],
             ));
@@ -276,8 +275,8 @@ fn test_jit() {
     //   %eq = trait.method.call @PartialEq<%p>::@eq(%x, %y)
     //     : (!S,!O) -> i1
     //     as (!T,!T) -> i1
-    //   %neq = trait.method.call @PartialEq<%p>::@neq(%p, %x, %y)
-    //     : (!NeqP,!S,!O) -> i1
+    //   %neq = trait.method.call @PartialEq<%p>::@neq(%x, %y)
+    //     : (!S,!O) -> i1
     //     as (!W,!T,!T) -> i1
     //   %result = arith.ori %eq, %neq : i1
     //   return %result : i1
@@ -318,7 +317,6 @@ fn test_jit() {
             neq_ty,
             block.argument(0).unwrap().into(),     // p
             &[
-                block.argument(0).unwrap().into(), // w
                 block.argument(1).unwrap().into(), // x
                 block.argument(2).unwrap().into(), // y
             ],

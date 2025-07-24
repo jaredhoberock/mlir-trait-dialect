@@ -25,6 +25,9 @@ unsafe extern "C" {
     fn traitWitnessOpCreate(loc: MlirLocation,
                             trait_name: MlirStringRef,
                             type_args: *const MlirType, num_type_args: isize) -> MlirOperation;
+    fn traitAssumeOpCreate(loc: MlirLocation,
+                           trait_name: MlirStringRef,
+                           type_args: *const MlirType, num_type_args: isize) -> MlirOperation;
     fn traitPolyTypeGet(ctx: MlirContext, unique_id: u32) -> MlirType;
     fn traitProofTypeGet(ctx: MlirContext,
                          trait_name: MlirStringRef,
@@ -108,6 +111,18 @@ pub fn witness<'c>(loc: Location<'c>,
                    type_args: &[Type<'c>],
 ) -> Operation<'c> {
     unsafe { Operation::from_raw(traitWitnessOpCreate(
+        loc.to_raw(),
+        StringRef::new(trait_name).to_raw(),
+        type_args.as_ptr() as *const _,
+        type_args.len() as isize,
+    ))}
+}
+
+pub fn assume<'c>(loc: Location<'c>,
+                  trait_name: &str,
+                  type_args: &[Type<'c>],
+) -> Operation<'c> {
+    unsafe { Operation::from_raw(traitAssumeOpCreate(
         loc.to_raw(),
         StringRef::new(trait_name).to_raw(),
         type_args.as_ptr() as *const _,

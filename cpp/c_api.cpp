@@ -136,6 +136,22 @@ MlirOperation traitWitnessOpCreate(MlirLocation loc,
   return wrap(op.getOperation());
 }
 
+MlirOperation traitAssumeOpCreate(MlirLocation loc,
+                                  MlirStringRef traitName,
+                                  MlirType* typeArgs, intptr_t numTypeArgs) {
+  MLIRContext* ctx = unwrap(loc)->getContext();
+  MlirType wrappedProofType = traitProofTypeGet(wrap(ctx), traitName, typeArgs, numTypeArgs);
+
+  OpBuilder builder(ctx);
+
+  auto op = builder.create<AssumeOp>(
+    unwrap(loc),
+    unwrap(wrappedProofType)
+  );
+
+  return wrap(op.getOperation());
+}
+
 MlirType traitPolyTypeGet(MlirContext wrappedCtx,
                           unsigned int uniqueId) {
   return wrap(PolyType::get(unwrap(wrappedCtx), uniqueId));

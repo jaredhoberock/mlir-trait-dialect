@@ -14,11 +14,20 @@ trait.trait @Add[!AddSelf] {
 
 // CHECK-LABEL: trait @PartialEq
 // CHECK: func.func private @eq(!trait.poly<1>, !trait.poly<2>) -> i1
-// CHECK: func.func private @neq(!trait.poly<1>, !trait.poly<2>) -> i1
+// CHECK: func.func @neq(%{{.*}}: !trait.poly<1>, %{{.*}}: !trait.poly<2>) -> i1
 
 !PartialEqSelf = !trait.poly<1>
 !PartialEqOther = !trait.poly<2>
 trait.trait @PartialEq[!PartialEqSelf, !PartialEqOther] {
   func.func private @eq(!PartialEqSelf, !PartialEqOther) -> i1
-  func.func private @neq(!PartialEqSelf, !PartialEqOther) -> i1
+  
+  func.func @neq(%self: !PartialEqSelf, %other: !PartialEqOther) -> i1 {
+    %p = trait.assume : !trait.proof<@PartialEq[!PartialEqSelf, !PartialEqOther]>
+    %eq = trait.method.call @PartialEq::@eq<%p>(%self, %other)
+      : (!PartialEqSelf, !PartialEqOther) -> i1
+      as !trait.proof<@PartialEq[!PartialEqSelf, !PartialEqOther]> (!PartialEqSelf, !PartialEqOther) -> i1
+    %true = arith.constant true
+    %res = arith.xori %eq, %true : i1
+    return %res : i1
+  }
 }

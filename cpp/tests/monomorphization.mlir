@@ -7,10 +7,11 @@
 trait.trait @PartialEq [!S,!O] {
   func.func private @eq(!S, !O) -> i1
 
-  func.func @neq(%p: !P, %self: !S, %other: !O) -> i1 {
+  func.func @neq(%self: !S, %other: !O) -> i1 {
+    %p = trait.assume : !trait.proof<@PartialEq[!S,!O]>
     %equal = trait.method.call @PartialEq::@eq<%p>(%self, %other)
       : (!S, !O) -> i1
-      as !P (!S, !O) -> i1
+      as !trait.proof<@PartialEq[!S,!O]> (!S, !O) -> i1
     %true = arith.constant 1 : i1
     %res = arith.xori %equal, %true : i1
     return %res : i1
@@ -57,9 +58,9 @@ func.func @baz(%p: !trait.proof<@PartialEq[!T,!T]>, %x: !T, %y: !T) -> i1 {
     : (!S,!O) -> i1
     as !trait.proof<@PartialEq[!T,!T]> (!T,!T) -> i1
 
-  %neq = trait.method.call @PartialEq::@neq<%p>(%p, %x, %y)
-    : (!P,!S,!O) -> i1
-    as !trait.proof<@PartialEq[!T,!T]> (!trait.proof<@PartialEq[!T,!T]>, !T,!T) -> i1
+  %neq = trait.method.call @PartialEq::@neq<%p>(%x, %y)
+    : (!S,!O) -> i1
+    as !trait.proof<@PartialEq[!T,!T]> (!T,!T) -> i1
 
   %res = arith.ori %eq, %neq : i1
   return %res : i1

@@ -38,6 +38,32 @@ struct FuncCallOpLowering : public OpRewritePattern<FuncCallOp> {
   }
 };
 
+// XXX: Ideally, we would do this transformation during cloneAndHoistMethodAsFreeFunctionInGrandparent,
+// but that function only has access to OpBuilder, not PatternRewriter
+struct RewriteConcreteAssumeOp : public OpRewritePattern<AssumeOp> {
+  using OpRewritePattern::OpRewritePattern;
+  
+  LogicalResult matchAndRewrite(AssumeOp assumeOp, PatternRewriter &rewriter) const override {
+    // Only match AssumeOps with concrete (non-symbolic) types
+    auto typeArgs = assumeOp.getTypeArgs();
+    bool hasSymbolicType = false;
+    for (Type argType : typeArgs) {
+      if (isa<PolyType>(argType)) {
+        hasSymbolicType = true;
+        break;
+      }
+    }
+    
+    // Skip if still has symbolic types
+    if (hasSymbolicType) return failure();
+    
+    // Replace with WitnessOp
+    auto witnessOp = rewriter.create<WitnessOp>(assumeOp.getLoc(), assumeOp.getType());
+    rewriter.replaceOp(assumeOp, witnessOp.getResult());
+    return success();
+  }
+};
+
 struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
   using OpRewritePattern::OpRewritePattern;
 
@@ -115,7 +141,7 @@ void MonomorphizePass::runOnOperation() {
   // apply rewrite patterns
   {
     RewritePatternSet patterns(ctx);
-    patterns.add<FuncCallOpLowering,MethodCallOpLowering>(ctx);
+    patterns.add<FuncCallOpLowering,MethodCallOpLowering,RewriteConcreteAssumeOp>(ctx);
 
     // collect patterns from other dialects
     for (Dialect *dialect : ctx->getLoadedDialects()) {

@@ -4,12 +4,21 @@
 
 // CHECK-LABEL: trait @PartialEq [!trait.poly<0>, !trait.poly<1>]
 // CHECK-LABEL: func.func private @eq
-// CHECK-LABEL: func.func private @ne
+// CHECK-LABEL: func.func @ne
 !S = !trait.poly<0>
 !O = !trait.poly<1>
 trait.trait @PartialEq[!S,!O] {
   func.func private @eq(!S, !O) -> i1
-  func.func private @ne(!S, !O) -> i1
+  
+  func.func @ne(%self: !S, %other: !O) -> i1 {
+    %p = trait.assume : !trait.proof<@PartialEq[!S,!O]>
+    %equal = trait.method.call @PartialEq::@eq<%p>(%self, %other)
+      : (!S, !O) -> i1
+      as !trait.proof<@PartialEq[!S,!O]> (!S,!O) -> i1
+    %true = arith.constant 1 : i1
+    %not_equal = arith.xori %equal, %true : i1
+    return %not_equal : i1
+  }
 }
 
 // CHECK-LABEL impl @PartialEq [i32,i32]
@@ -18,17 +27,6 @@ trait.impl @PartialEq[i32,i32] {
   func.func @eq(%self: i32, %other: i32) -> i1 {
     %equal = arith.cmpi eq, %self, %other : i32
     return %equal : i1
-  }
-
-  // CHECK-LABEL: func @ne
-  func.func @ne(%self: i32, %other: i32) -> i1 {
-    %w = trait.witness : !trait.proof<@PartialEq[i32,i32]>
-    %equal = trait.method.call @PartialEq::@eq<%w>(%self, %other)
-      : (!S, !O) -> i1
-      as !trait.proof<@PartialEq[i32,i32]> (i32,i32) -> i1
-    %true = arith.constant 1 : i1
-    %not_equal = arith.xori %equal, %true : i1
-    return %not_equal : i1
   }
 }
 

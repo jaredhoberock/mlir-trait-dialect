@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Attributes.hpp"
 #include <mlir/IR/BuiltinTypes.h>
 
 namespace mlir::trait {

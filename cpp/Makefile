@@ -14,17 +14,23 @@ MLIR_INCLUDE = $(HOME)/dev/git/llvm-project-20/install/include
 INCLUDES := -I $(MLIR_INCLUDE)
 
 # Dialect library sources
-DIALECT_SOURCES := c_api.cpp Dialect.cpp Instantiation.cpp Ops.cpp Passes.cpp Types.cpp
+DIALECT_SOURCES := c_api.cpp Attributes.cpp Dialect.cpp Instantiation.cpp Ops.cpp Passes.cpp Types.cpp
 DIALECT_OBJECTS := $(DIALECT_SOURCES:.cpp=.o)
 
 # Generated files
-GENERATED := Dialect.hpp.inc Dialect.cpp.inc Ops.hpp.inc Ops.cpp.inc Types.hpp.inc Types.cpp.inc TypeInterfaces.hpp.inc TypeInterfaces.cpp.inc
+GENERATED := Attributes.hpp.inc Attributes.cpp.inc Dialect.hpp.inc Dialect.cpp.inc Ops.hpp.inc Ops.cpp.inc Types.hpp.inc Types.cpp.inc TypeInterfaces.hpp.inc TypeInterfaces.cpp.inc
 
 .PHONY: all clean
 
 all: libtrait_dialect.a libtrait_dialect.so
 
 # TableGen rules
+Attributes.hpp.inc: Attributes.td
+	$(TBLGEN) --gen-attrdef-decls $(INCLUDES) $< -o $@
+
+Attributes.cpp.inc: Attributes.td
+	$(TBLGEN) --gen-attrdef-defs $(INCLUDES) $< -o $@
+
 Dialect.hpp.inc: Dialect.td
 	$(TBLGEN) --gen-dialect-decls $(INCLUDES) $< -o $@
 

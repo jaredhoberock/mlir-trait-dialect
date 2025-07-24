@@ -8,9 +8,11 @@ def TraitDialect : Dialect {
   let summary = "A dialect for trait-constrained polymorphism";
   let cppNamespace = "::mlir::trait";
 
+  let useDefaultAttributePrinterParser = 1;
   let useDefaultTypePrinterParser = 1;
 
   let extraClassDeclaration = [{
+    void registerAttributes();
     void registerTypes();
   }];
 }
