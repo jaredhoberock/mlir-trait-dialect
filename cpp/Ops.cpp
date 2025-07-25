@@ -64,13 +64,6 @@ LogicalResult TraitOp::verify() {
   if (uniqueParams.size() < 1)
     return emitOpError() << "requires at least one type parameter";
 
-  for (Block &block : getBody()) {
-    // check that all operations in the body are func.func
-    for (Operation &op : block) {
-      if (!isa<func::FuncOp>(op))
-        return emitOpError() << "body may only contain 'func.func' operations";
-    }
-  }
   return success();
 }
 

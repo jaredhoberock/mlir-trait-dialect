@@ -8,5 +8,30 @@
 #include <mlir/IR/PatternMatch.h>
 #include "Types.hpp"
 
+namespace mlir::OpTrait {
+
+template<class ChildOp>
+struct HasOnlyChildOp {
+  template<class ConcreteOp>
+  class Impl : public mlir::OpTrait::TraitBase<ConcreteOp, Impl> {
+  public:
+    static LogicalResult verifyTrait(Operation* op) {
+      for (auto &region : op->getRegions()) {
+        for (auto &block : region) {
+          for (auto &child : block) {
+            if (!isa<ChildOp>(child))
+              return op->emitOpError()
+                     << "only " << ChildOp::getOperationName()
+                     << " is allowed inside this op";
+          }
+        }
+      }
+      return success();
+    }
+  };
+};
+
+} // end mlir::OpTrait
+
 #define GET_OP_CLASSES
 #include "Ops.hpp.inc"

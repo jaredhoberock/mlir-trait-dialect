@@ -12,7 +12,16 @@ include "Dialect.td"
 include "Types.td"
 
 
+// Op's regions have only this type of child operation.
+class HasChild<string op>
+    : ParamNativeOpTrait<"HasOnlyChildOp", op>, StructuralOpTrait;
+
+
 def TraitOp : TraitDialectOp<"trait", [
+  HasChild<"func::FuncOp">,
+  HasParent<"ModuleOp">,
+  IsolatedFromAbove,
+  SingleBlock,
   Symbol,
   SymbolTable
 ] # GraphRegionNoTerminator.traits
@@ -106,6 +115,10 @@ def TraitOp : TraitDialectOp<"trait", [
 
 def ImplOp : TraitDialectOp<"impl", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+  HasChild<"func::FuncOp">,
+  HasParent<"ModuleOp">,
+  IsolatedFromAbove,
+  SingleBlock,
   SymbolTable
 ] # GraphRegionNoTerminator.traits
 > {
@@ -134,16 +147,6 @@ def ImplOp : TraitDialectOp<"impl", [
 
   let extraClassDeclaration = [{
     TraitOp getTrait();
-
-    std::vector<func::FuncOp> getMethods() {
-      std::vector<func::FuncOp> result;
-      for (auto& op : getBody().front()) {
-        if (auto method = dyn_cast<func::FuncOp>(op)) {
-          result.push_back(method);
-        }
-      }
-      return result;
-    }
 
     func::FuncOp getMethod(StringRef name) {
       return lookupSymbol<func::FuncOp>(name);
