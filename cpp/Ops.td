@@ -18,6 +18,7 @@ class HasChild<string op>
 
 
 def TraitOp : TraitDialectOp<"trait", [
+  DeclareOpInterfaceMethods<SymbolUserOpInterface>,
   HasChild<"func::FuncOp">,
   HasParent<"ModuleOp">,
   IsolatedFromAbove,
@@ -44,7 +45,12 @@ def TraitOp : TraitDialectOp<"trait", [
       }
   }];
 
-  let arguments = (ins SymbolNameAttr:$sym_name, TypeArrayAttr:$type_params);
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    TypeArrayAttr:$type_params,
+    OptionalAttr<WhereAttr>:$where_clause
+  );
+
   let results = (outs); // No results
   let regions = (region SizedRegion<1>:$body);
 
@@ -107,7 +113,7 @@ def TraitOp : TraitDialectOp<"trait", [
     }]>
   ];
 
-  let assemblyFormat = "$sym_name $type_params attr-dict-with-keyword $body";
+  let assemblyFormat = "$sym_name $type_params (`where` $where_clause^)? attr-dict-with-keyword $body";
 
   let hasVerifier = 1;
 }
@@ -158,10 +164,14 @@ def ImplOp : TraitDialectOp<"impl", [
 
     func::FuncOp getOrInstantiateMethod(OpBuilder& builder, StringRef methodName);
 
-    func::FuncOp getOrInstantiateFunctionFromMethod(OpBuilder& builder, StringRef methodName);
+    func::FuncOp getOrInstantiateFunctionFromMethod(PatternRewriter& rewriter, StringRef methodName);
 
     // Builds a substitution that maps the TraitOp's PolyType parameters to this ImplOp's type arguments
     DenseMap<Type,Type> buildSubstitution();
+
+    ProofType getSelfProofType() {
+      return ProofType::get(getContext(), getTraitNameAttr(), getTypeArgs());
+    }
   }];
 
   // builders create one empty block in the body region
@@ -193,12 +203,22 @@ def WitnessOp : TraitDialectOp<"witness", [
   let summary = "Materializes a proof value for a concrete trait implementation";
   let description = [{
     Creates a zero-sized SSA value of type `!trait.proof<@Trait[types]>` that
-    acts as proof that the trait is satisfied. This operation has no operands.
+    acts as proof that the trait is satisfied.
+
+    If the target trait has a `where` clause, the caller must supply proofs for
+    those prerequisite trait applications as operands to this op. Only one-hop
+    prerequisites are required; compose `trait.witness` to handle transitive needs.
 
     The type arguments must be concrete; symbolic types are illegal. Symbol use
     verification checks that a matching `trait.impl` exists for the named trait and type list.
+
+    Symbol use verification checks;
+      * a matching `trait.impl` exists for the target application, and
+      * the provided prerequisite proofs cover the target trait's `where` clause
+        after substituting the target's actual type arguments for its parameters.
   }];
 
+  let arguments = (ins Variadic<ProofType>:$prereqs);
   let results = (outs Proof:$result);
 
   let extraClassDeclaration = [{
@@ -208,7 +228,7 @@ def WitnessOp : TraitDialectOp<"witness", [
     ArrayRef<Type> getTypeArgs();
   }];
 
-  let assemblyFormat = "`:` type($result) attr-dict";
+  let hasCustomAssemblyFormat = 1;
 }
 
 def AssumeOp : TraitDialectOp<"assume", [
@@ -228,7 +248,7 @@ def AssumeOp : TraitDialectOp<"assume", [
     Example:
       trait.trait @PartialEq[!S,!O] {
         func.func @neq(%self: !S, %other: !O) -> i1 {
-          %e = trait.assume : !trait.proof<@PartialEq[!S,!O]>
+          %e = trait.assume @PartialEq[!S,!O]
           // ... use %e for method calls
         }
       }
@@ -243,7 +263,7 @@ def AssumeOp : TraitDialectOp<"assume", [
     ArrayRef<Type> getTypeArgs();
   }];
 
-  let assemblyFormat = "`:` type($result) attr-dict";
+  let hasCustomAssemblyFormat = 1;
 }
 
 def MethodCallOp : TraitDialectOp<"method.call", [
@@ -313,7 +333,7 @@ def MethodCallOp : TraitDialectOp<"method.call", [
   let results = (outs Variadic<AnyType>);
 
   let extraClassDeclaration = [{
-    func::FuncOp getOrInstantiateCallee(OpBuilder& builder);
+    func::FuncOp getOrInstantiateCallee(PatternRewriter& rewriter);
 
     TraitOp getTrait();
 
@@ -425,6 +445,38 @@ def FuncCallOp : TraitDialectOp<"func.call", [
   }];
 
   let assemblyFormat = "$callee `(` $operands `)` attr-dict `:` $callee_function_type `as` functional-type($operands, results)";
+}
+
+def ProjectOp : TraitDialectOp<"project", [
+  DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+  Pure
+]> {
+  let summary = "Project a prerequisite proof from a proof";
+  let description = [{
+    Given a proof of `@Trait[Args...]`, produce a proof of one prerequisite
+    `@Prereq[Args...]` of `@Trait` as declared in the `where` clause of
+    `trait.trait @Trait`, after substituting `Args...` for `@Trait`'s type
+    parameters.
+
+    Notes:
+    * Only a **single hop** is performed; chain `trait.project` for transitive projections.
+    * If `@Trait` has no `where` clause, no projections from it are valid.
+
+    Example:
+      // @Ord[!S] where [ @Eq[!S], @PartialOrd[!S,!S] ]
+      %p = trait.assume @Ord[!T]
+      %eq = trait.project %p @Ord[!T] to @Eq[!T]
+  }];
+
+  let arguments = (ins Proof:$source);
+  let results   = (outs Proof:$result);
+
+  let extraClassDeclaration = [{
+    TraitOp getSourceTrait();
+    TraitOp getProjectedTrait();
+  }];
+
+  let hasCustomAssemblyFormat = 1;
 }
 
 #endif // TRAIT_OPS_TD

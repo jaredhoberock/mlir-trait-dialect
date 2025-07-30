@@ -62,7 +62,7 @@ MlirOperation traitMethodCallOpCreate(MlirLocation loc,
                                       MlirStringRef traitName,
                                       MlirStringRef methodName,
                                       MlirType methodFunctionType,
-                                      MlirValue witness,
+                                      MlirValue proof,
                                       MlirValue* arguments, intptr_t numArguments,
                                       MlirType* resultTypes, intptr_t numResults) {
   MLIRContext* ctx = unwrap(loc)->getContext();
@@ -84,7 +84,7 @@ MlirOperation traitMethodCallOpCreate(MlirLocation loc,
     StringRef(traitName.data, traitName.length),
     StringRef(methodName.data, methodName.length),
     TypeAttr::get(unwrap(methodFunctionType)),
-    unwrap(witness),
+    unwrap(proof),
     args
   );
 
@@ -122,15 +122,40 @@ MlirOperation traitFuncCallOpCreate(MlirLocation loc,
 
 MlirOperation traitWitnessOpCreate(MlirLocation loc,
                                    MlirStringRef traitName,
+                                   MlirType* typeArgs, intptr_t numTypeArgs,
+                                   MlirValue* wrappedPrereqs, intptr_t numPrereqs) {
+  MLIRContext* ctx = unwrap(loc)->getContext();
+  MlirType wrappedProofType = traitProofTypeGet(wrap(ctx), traitName, typeArgs, numTypeArgs);
+
+  OpBuilder builder(ctx);
+
+  SmallVector<Value> prereqs;
+  for (intptr_t i = 0; i < numPrereqs; ++i) {
+    prereqs.push_back(unwrap(wrappedPrereqs[i]));
+  }
+
+  auto op = builder.create<WitnessOp>(
+    unwrap(loc),
+    unwrap(wrappedProofType),
+    prereqs
+  );
+
+  return wrap(op.getOperation());
+}
+
+MlirOperation traitProjectOpCreate(MlirLocation loc,
+                                   MlirValue srcProof,
+                                   MlirStringRef traitName,
                                    MlirType* typeArgs, intptr_t numTypeArgs) {
   MLIRContext* ctx = unwrap(loc)->getContext();
   MlirType wrappedProofType = traitProofTypeGet(wrap(ctx), traitName, typeArgs, numTypeArgs);
 
   OpBuilder builder(ctx);
 
-  auto op = builder.create<WitnessOp>(
+  auto op = builder.create<ProjectOp>(
     unwrap(loc),
-    unwrap(wrappedProofType)
+    unwrap(wrappedProofType),
+    unwrap(srcProof)
   );
 
   return wrap(op.getOperation());

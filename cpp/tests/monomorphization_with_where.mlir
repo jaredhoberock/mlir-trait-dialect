@@ -1,15 +1,11 @@
-// RUN: mlir-opt %s | FileCheck %s
+// RUN: mlir-opt -pass-pipeline='builtin.module(monomorphize-trait)' %s | FileCheck %s
 
-// ---- Test 1: test everything
-
-// CHECK-LABEL: trait @PartialEq [!trait.poly<0>, !trait.poly<1>]
 !PartialEqS = !trait.poly<0>
 !PartialEqO = !trait.poly<1>
+// CHECK-NOT: @PartialEq
 trait.trait @PartialEq[!PartialEqS,!PartialEqO] {
-  // CHECK-LABEL: func.func private @eq
   func.func private @eq(!PartialEqS, !PartialEqO) -> i1
   
-  // CHECK-LABEL: func.func @ne
   func.func @ne(%self: !PartialEqS, %other: !PartialEqO) -> i1 {
     %p = trait.assume @PartialEq[!PartialEqS,!PartialEqO]
     %equal = trait.method.call @PartialEq::@eq<%p>(%self, %other)
@@ -21,47 +17,47 @@ trait.trait @PartialEq[!PartialEqS,!PartialEqO] {
   }
 }
 
-// CHECK-LABEL: trait.impl @PartialEq [i32, i32]
+// CHECK-NOT: @PartialEq
 trait.impl @PartialEq[i32,i32] {
-  // CHECK-LABEL: func @eq
   func.func @eq(%self: i32, %other: i32) -> i1 {
     %equal = arith.cmpi eq, %self, %other : i32
     return %equal : i1
   }
 }
 
-// CHECK-LABEL: func.func @foo
 !T = !trait.poly<0>
-!W = !trait.proof<@PartialEq[!T,!T]>
-func.func @foo(%w: !W, %x: !T, %y: !T) -> i1 {
-  // CHECK: %[[RES:.*]] = trait.method.call @PartialEq
+
+// CHECK-LABEL: func.func @foo_i32
+// CHECK-NOT: builtin.unrealized_conversion_cast
+// CHECK: call @__trait_PartialEq_impl_i32_i32_eq
+func.func @foo(%w: !trait.proof<@PartialEq[!T,!T]>, %x: !T, %y: !T) -> i1 {
   %res = trait.method.call @PartialEq::@eq<%w>(%x, %y)
     : (!PartialEqS, !PartialEqO) -> i1
-    as !W (!T,!T) -> i1
+    as !trait.proof<@PartialEq[!T,!T]> (!T,!T) -> i1
   return %res : i1
 }
 
 // CHECK-LABEL: func.func @bar
+// CHECK-NOT: builtin.unrealized_conversion_cast
+// CHECK: call @foo_i32
 func.func @bar(%x: i32, %y: i32) -> i1 {
   %w = trait.witness @PartialEq[i32,i32]
-
-  // CHECK: %[[RES:.*]] = trait.func.call @foo
   %res = trait.func.call @foo(%w, %x, %y)
-    : (!W,!T,!T) -> i1
+    : (!trait.proof<@PartialEq[!T,!T]>, !T, !T) -> i1
     as (!trait.proof<@PartialEq[i32,i32]>, i32, i32) -> i1
 
   return %res : i1
 }
 
-// CHECK-LABEL: trait @Eq [!trait.poly<2>]
 !EqS = !trait.poly<2>
+// CHECK-NOT: @Eq
 trait.trait @Eq[!EqS] where [
   @PartialEq[!EqS,!EqS]
 ]
 {
 }
 
-// CHECK-LABEL: impl @Eq [i32]
+// CHECK-NOT: @Eq
 trait.impl @Eq[i32] {}
 
 // model Option<Ordering>
@@ -71,17 +67,16 @@ trait.impl @Eq[i32] {}
 // 3: None
 !opt_ord = i2
 
-// CHECK-LABEL: trait @PartialOrd [!trait.poly<3>, !trait.poly<4>] where [@PartialEq
 !PartialOrdS = !trait.poly<3>
 !PartialOrdO = !trait.poly<4>
+
+// CHECK-NOT: @PartialOrd
 trait.trait @PartialOrd[!PartialOrdS,!PartialOrdO] where [
   @PartialEq[!PartialOrdS,!PartialOrdO]
 ]
 {
-  // CHECK-LABEL: func.func private @partial_cmp
   func.func private @partial_cmp(!PartialOrdS, !PartialOrdO) -> !opt_ord
 
-  // CHECK-LABEL: func.func @lt
   func.func @lt(%self: !PartialOrdS, %other: !PartialOrdO) -> i1 {
     %self_p = trait.assume @PartialOrd[!PartialOrdS,!PartialOrdO]
 
@@ -94,7 +89,6 @@ trait.trait @PartialOrd[!PartialOrdS,!PartialOrdO] where [
     return %res : i1
   }
 
-  // CHECK-LABEL: func.func @le
   func.func @le(%self: !PartialOrdS, %other: !PartialOrdO) -> i1 {
     %self_p = trait.assume @PartialOrd[!PartialOrdS,!PartialOrdO]
 
@@ -114,7 +108,6 @@ trait.trait @PartialOrd[!PartialOrdS,!PartialOrdO] where [
     return %res : i1
   }
 
-  // CHECK-LABEL: func.func @gt
   func.func @gt(%self: !PartialOrdS, %other: !PartialOrdO) -> i1 {
     %self_p = trait.assume @PartialOrd[!PartialOrdS,!PartialOrdO]
 
@@ -127,7 +120,6 @@ trait.trait @PartialOrd[!PartialOrdS,!PartialOrdO] where [
     return %res : i1
   }
 
-  // CHECK-LABEL: func.func @ge
   func.func @ge(%self: !PartialOrdS, %other: !PartialOrdO) -> i1 {
     %self_p = trait.assume @PartialOrd[!PartialOrdS,!PartialOrdO]
 
@@ -148,9 +140,8 @@ trait.trait @PartialOrd[!PartialOrdS,!PartialOrdO] where [
   }
 }
 
-// CHECK-LABEL: trait.impl @PartialOrd [i32, i32]
+// CHECK-NOT: @PartialOrd
 trait.impl @PartialOrd[i32,i32] {
-  // CHECK-LABEL: func.func @partial_cmp
   func.func @partial_cmp(%a: i32, %b: i32) -> !opt_ord {
     %c_lt = arith.constant 0 : !opt_ord
     %c_eq = arith.constant 1 : !opt_ord
@@ -170,17 +161,15 @@ trait.impl @PartialOrd[i32,i32] {
 // 2: Greater
 !ord = i2
 
-// CHECK-LABEL: trait @Ord [!trait.poly<5>] where [@Eq[!trait.poly<5>], @PartialOrd[!trait.poly<5>, !trait.poly<5>]
 !OrdS = !trait.poly<5>
+// CHECK-NOT: @Ord
 trait.trait @Ord[!OrdS] where [
   @Eq[!OrdS],
   @PartialOrd[!OrdS,!OrdS]
 ]
 {
-  // CHECK-LABEL: func.func private @cmp
   func.func private @cmp(!OrdS, !OrdS) -> !ord
 
-  // CHECK-LABEL: func.func @max
   func.func @max(%self: !OrdS, %other: !OrdS) -> !OrdS {
     %self_p = trait.assume @Ord[!OrdS]
     %partial_ord_p = trait.project %self_p
@@ -200,7 +189,6 @@ trait.trait @Ord[!OrdS] where [
     return %res : !OrdS
   }
 
-  // CHECK-LABEL: func.func @min
   func.func @min(%self: !OrdS, %other: !OrdS) -> !OrdS {
     %self_p = trait.assume @Ord[!OrdS]
     %partial_ord_p = trait.project %self_p
@@ -221,9 +209,8 @@ trait.trait @Ord[!OrdS] where [
   }
 }
 
-// CHECK-LABEL: trait.impl @Ord [i32]
+// CHECK-NOT: @Ord
 trait.impl @Ord[i32] {
-  // CHECK-LABEL: func.func @cmp
   func.func @cmp(%a: i32, %b: i32) -> !ord {
     %lt = arith.cmpi slt, %a, %b : i32
     %eq = arith.cmpi eq,  %a, %b : i32
@@ -239,6 +226,8 @@ trait.impl @Ord[i32] {
 }
 
 // CHECK-LABEL: func.func @max
+// CHECK-NOT: builtin.unrealized_conversion_cast
+// CHECK: call @__trait_Ord_impl_i32_max
 func.func @max(%a: i32, %b: i32) -> i32 {
   %partial_eq_p = trait.witness @PartialEq[i32,i32]
   %partial_ord_p = trait.witness @PartialOrd[i32,i32] where
@@ -256,6 +245,8 @@ func.func @max(%a: i32, %b: i32) -> i32 {
 }
 
 // CHECK-LABEL: func.func @min
+// CHECK-NOT: builtin.unrealized_conversion_cast
+// CHECK: call @__trait_Ord_impl_i32_min
 func.func @min(%a: i32, %b: i32) -> i32 {
   %partial_eq_p = trait.witness @PartialEq[i32,i32]
   %partial_ord_p = trait.witness @PartialOrd[i32,i32] where

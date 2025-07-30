@@ -22,12 +22,37 @@ trait.trait @PartialEq[!PartialEqSelf, !PartialEqOther] {
   func.func private @eq(!PartialEqSelf, !PartialEqOther) -> i1
   
   func.func @neq(%self: !PartialEqSelf, %other: !PartialEqOther) -> i1 {
-    %p = trait.assume : !trait.proof<@PartialEq[!PartialEqSelf, !PartialEqOther]>
+    %p = trait.assume @PartialEq[!PartialEqSelf, !PartialEqOther]
     %eq = trait.method.call @PartialEq::@eq<%p>(%self, %other)
       : (!PartialEqSelf, !PartialEqOther) -> i1
       as !trait.proof<@PartialEq[!PartialEqSelf, !PartialEqOther]> (!PartialEqSelf, !PartialEqOther) -> i1
     %true = arith.constant true
     %res = arith.xori %eq, %true : i1
+    return %res : i1
+  }
+}
+
+// ---- Test 2: PartialOrd
+
+// CHECK-LABEL: trait @PartialOrd
+// CHECK: func.func private @partial_cmp(!trait.poly<3>, !trait.poly<4>) -> !llvm.struct<"ordering", ()>
+// CHECK: func.func @lt(%{{.*}}: !trait.poly<3>, %{{.*}}: !trait.poly<4>) -> i1
+
+!ordering = !llvm.struct<"ordering", ()>
+!PartialOrdSelf = !trait.poly<3>
+!PartialOrdOther = !trait.poly<4>
+trait.trait @PartialOrd[!PartialOrdSelf, !PartialOrdOther] where [
+  @PartialEq[!PartialOrdSelf, !PartialOrdOther]
+]
+{
+  func.func private @partial_cmp(!PartialOrdSelf, !PartialOrdOther) -> !ordering
+
+  func.func @lt(%self: !PartialOrdSelf, %other: !PartialOrdOther) -> i1 {
+    %self_p = trait.assume @PartialOrd[!PartialOrdSelf,!PartialOrdOther]
+    %cmp = trait.method.call @PartialOrd::@partial_cmp<%self_p>(%self, %other)
+      : (!PartialOrdSelf, !PartialOrdOther) -> !ordering
+      as !trait.proof<@PartialOrd[!PartialOrdSelf,!PartialOrdOther]> (!PartialOrdSelf, !PartialOrdOther) -> !ordering
+    %res = arith.constant false
     return %res : i1
   }
 }

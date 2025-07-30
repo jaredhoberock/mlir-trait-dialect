@@ -14,7 +14,7 @@ unsafe extern "C" {
                                trait_name: MlirStringRef,
                                method_name: MlirStringRef,
                                method_function_type: MlirType,
-                               witness: MlirValue,
+                               proof: MlirValue,
                                arguments: *const MlirValue, num_arguments: isize,
                                result_types: *const MlirType, num_results: isize) -> MlirOperation;
     fn traitFuncCallOpCreate(loc: MlirLocation,
@@ -23,6 +23,11 @@ unsafe extern "C" {
                              arguments: *const MlirValue, num_arguments: isize,
                              result_types: *const MlirType, num_results: isize) -> MlirOperation;
     fn traitWitnessOpCreate(loc: MlirLocation,
+                            trait_name: MlirStringRef,
+                            type_args: *const MlirType, num_type_args: isize,
+                            prereqs: *const MlirValue, num_prereqs: isize) -> MlirOperation;
+    fn traitProjectOpCreate(loc: MlirLocation,
+                            src_proof: MlirValue,
                             trait_name: MlirStringRef,
                             type_args: *const MlirType, num_type_args: isize) -> MlirOperation;
     fn traitAssumeOpCreate(loc: MlirLocation,
@@ -72,7 +77,7 @@ pub fn method_call<'c>(loc: Location<'c>,
                        trait_name: &str,
                        method_name: &str,
                        method_function_type: Type<'c>,
-                       witness: Value<'c,'_>,
+                       proof: Value<'c,'_>,
                        arguments: &[Value<'c,'_>],
                        result_types: &[Type<'c>],
 ) -> Operation<'c> {
@@ -81,7 +86,7 @@ pub fn method_call<'c>(loc: Location<'c>,
         StringRef::new(trait_name).to_raw(),
         StringRef::new(method_name).to_raw(),
         method_function_type.to_raw(),
-        witness.to_raw(),
+        proof.to_raw(),
         arguments.as_ptr() as *const _,
         arguments.len() as isize,
         result_types.as_ptr() as *const _,
@@ -109,9 +114,26 @@ pub fn func_call<'c>(loc: Location<'c>,
 pub fn witness<'c>(loc: Location<'c>,
                    trait_name: &str,
                    type_args: &[Type<'c>],
+                   prereqs: &[Value<'c,'_>],
 ) -> Operation<'c> {
     unsafe { Operation::from_raw(traitWitnessOpCreate(
         loc.to_raw(),
+        StringRef::new(trait_name).to_raw(),
+        type_args.as_ptr() as *const _,
+        type_args.len() as isize,
+        prereqs.as_ptr() as *const _,
+        prereqs.len() as isize,
+    ))}
+}
+
+pub fn project<'c>(loc: Location<'c>,
+                   src_proof: Value<'c,'_>,
+                   trait_name: &str,
+                   type_args: &[Type<'c>],
+) -> Operation<'c> {
+    unsafe { Operation::from_raw(traitProjectOpCreate(
+        loc.to_raw(),
+        src_proof.to_raw(),
         StringRef::new(trait_name).to_raw(),
         type_args.as_ptr() as *const _,
         type_args.len() as isize,

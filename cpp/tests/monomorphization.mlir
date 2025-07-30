@@ -8,7 +8,7 @@ trait.trait @PartialEq [!S,!O] {
   func.func private @eq(!S, !O) -> i1
 
   func.func @neq(%self: !S, %other: !O) -> i1 {
-    %p = trait.assume : !trait.proof<@PartialEq[!S,!O]>
+    %p = trait.assume @PartialEq[!S,!O]
     %equal = trait.method.call @PartialEq::@eq<%p>(%self, %other)
       : (!S, !O) -> i1
       as !trait.proof<@PartialEq[!S,!O]> (!S, !O) -> i1
@@ -42,7 +42,7 @@ func.func @foo(%p: !trait.proof<@PartialEq[!T,!T]>, %x: !T, %y: !T) -> i1 {
 // CHECK-NOT: builtin.unrealized_conversion_cast
 // CHECK: call @foo_i32
 func.func @bar(%x: i32, %y: i32) -> i1 {
-  %p = trait.witness : !trait.proof<@PartialEq[i32,i32]>
+  %p = trait.witness @PartialEq[i32,i32]
   %res = trait.func.call @foo(%p, %x, %y)
     : (!trait.proof<@PartialEq[!T,!T]>, !T, !T) -> i1
     as (!trait.proof<@PartialEq[i32,i32]>, i32, i32) -> i1
@@ -67,10 +67,10 @@ func.func @baz(%p: !trait.proof<@PartialEq[!T,!T]>, %x: !T, %y: !T) -> i1 {
 }
 
 // CHECK-LABEL: func.func @qux
-// CHECK-NOTE: builtin.unrealized_conversion_cast
+// CHECK-NOT: builtin.unrealized_conversion_cast
 // CHECK: call @baz_i32
 func.func @qux(%x: i32, %y: i32) -> i1 {
-  %p = trait.witness : !trait.proof<@PartialEq[i32,i32]>
+  %p = trait.witness @PartialEq[i32,i32]
   %result = trait.func.call @baz(%p, %x, %y)
     : (!trait.proof<@PartialEq[!T,!T]>, !T,!T) -> i1
     as (!trait.proof<@PartialEq[i32,i32]>, i32,i32) -> i1

@@ -38,32 +38,6 @@ struct FuncCallOpLowering : public OpRewritePattern<FuncCallOp> {
   }
 };
 
-// XXX: Ideally, we would do this transformation during cloneAndHoistMethodAsFreeFunctionInGrandparent,
-// but that function only has access to OpBuilder, not PatternRewriter
-struct RewriteConcreteAssumeOp : public OpRewritePattern<AssumeOp> {
-  using OpRewritePattern::OpRewritePattern;
-  
-  LogicalResult matchAndRewrite(AssumeOp assumeOp, PatternRewriter &rewriter) const override {
-    // Only match AssumeOps with concrete (non-symbolic) types
-    auto typeArgs = assumeOp.getTypeArgs();
-    bool hasSymbolicType = false;
-    for (Type argType : typeArgs) {
-      if (isa<PolyType>(argType)) {
-        hasSymbolicType = true;
-        break;
-      }
-    }
-    
-    // Skip if still has symbolic types
-    if (hasSymbolicType) return failure();
-    
-    // Replace with WitnessOp
-    auto witnessOp = rewriter.create<WitnessOp>(assumeOp.getLoc(), assumeOp.getType());
-    rewriter.replaceOp(assumeOp, witnessOp.getResult());
-    return success();
-  }
-};
-
 struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
   using OpRewritePattern::OpRewritePattern;
 
@@ -78,13 +52,18 @@ struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
     if (!callee)
       return methodCallOp.emitOpError() << "couldn't get or instantiate callee '" << methodCallOp.getMethodRef() << "'";
 
+    // pass the proof as the first argument to the instantiated callee
+    SmallVector<Value> args;
+    args.push_back(methodCallOp.getProof());
+    llvm::append_range(args, methodCallOp.getArguments());
+
     // replace with a trait.func.call to the instantiated callee
     rewriter.replaceOpWithNewOp<FuncCallOp>(
       methodCallOp,
       methodCallOp.getResultTypes(),
       callee.getSymName(),
       callee.getFunctionType(),
-      methodCallOp.getArguments()
+      args
     );
 
     return success();
@@ -100,14 +79,23 @@ struct EraseWitnessOp : public OpRewritePattern<WitnessOp> {
   }
 };
 
-static LogicalResult eraseWitnessOpsAndProofTypes(ModuleOp module) {
+struct EraseProjectOp : public OpRewritePattern<ProjectOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(ProjectOp op, PatternRewriter &rewriter) const override {
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
+static LogicalResult eraseProofs(ModuleOp module) {
   MLIRContext* ctx = module.getContext();
   ConversionTarget target(*ctx);
 
-  // all trait.witness ops are illegal
-  target.addIllegalOp<WitnessOp>();
+  // all trait.project and trait.witness ops are illegal
+  target.addIllegalOp<ProjectOp, WitnessOp>();
 
-  // otherwise, an op is legal if it does not mention !trait.witness
+  // otherwise, an op is legal if it does not mention !trait.proof
   target.markUnknownOpDynamicallyLegal([&](Operation *op) {
     return !opMentionsProofType(op);
   });
@@ -120,9 +108,9 @@ static LogicalResult eraseWitnessOpsAndProofTypes(ModuleOp module) {
     return success();
   });
   
-  // erase all trait.witness ops
+  // erase all trait.project & trait.witness ops
   RewritePatternSet patterns(ctx);
-  patterns.add<EraseWitnessOp>(ctx);
+  patterns.add<EraseProjectOp, EraseWitnessOp>(ctx);
   
   // populate conversion patterns for func dialect ops
   populateFunctionOpInterfaceTypeConversionPattern<func::FuncOp>(patterns, tc);
@@ -141,7 +129,7 @@ void MonomorphizePass::runOnOperation() {
   // apply rewrite patterns
   {
     RewritePatternSet patterns(ctx);
-    patterns.add<FuncCallOpLowering,MethodCallOpLowering,RewriteConcreteAssumeOp>(ctx);
+    patterns.add<FuncCallOpLowering,MethodCallOpLowering>(ctx);
 
     // collect patterns from other dialects
     for (Dialect *dialect : ctx->getLoadedDialects()) {
@@ -173,10 +161,10 @@ void MonomorphizePass::runOnOperation() {
     trait.erase();
   }
 
-  // erase witness ops and proof types last
-  // we do this last because all of the above (polymorphic functions, trait.impl, trait.trait)
-  // use !trait.proof
-  if (failed(eraseWitnessOpsAndProofTypes(module)))
+  // erase proofs
+  // we do this last because all of the above may
+  // use !trait.proof, trait.witness, & trait.project
+  if (failed(eraseProofs(module)))
     signalPassFailure();
 }
 

@@ -27,7 +27,7 @@ MlirOperation traitMethodCallOpCreate(MlirLocation loc,
                                       MlirStringRef traitName,
                                       MlirStringRef methodName,
                                       MlirType methodFunctionType,
-                                      MlirValue witness,
+                                      MlirValue proof,
                                       MlirValue* arguments, intptr_t numArguments,
                                       MlirType* resultTypes, intptr_t numResults);
 
@@ -39,7 +39,15 @@ MlirOperation traitFuncCallOpCreate(MlirLocation loc,
                                     MlirType* resultTypes, intptr_t numResults);
 
 /// Create a trait.witness operation
-MlirOperation traitWitnessOpCreate(MlirLocation loc, MlirStringRef traitName,
+MlirOperation traitWitnessOpCreate(MlirLocation loc,
+                                   MlirStringRef traitName,
+                                   MlirType* typeArgs, intptr_t numTypeArgs,
+                                   MlirValue* prereqs, intptr_t numPrereqs);
+
+/// Create a trait.project operation
+MlirOperation traitProjectOpCreate(MlirLocation loc,
+                                   MlirValue srcProof,
+                                   MlirStringRef traitName,
                                    MlirType* typeArgs, intptr_t numTypeArgs);
 
 /// Create a trait.assume operation

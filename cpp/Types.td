@@ -55,8 +55,12 @@ def ProofType : TypeDef<TraitDialect, "Proof"> {
   );
 
   let extraClassDeclaration = [{
-    static ProofType get(MLIRContext *ctx, FlatSymbolRefAttr trait, ArrayRef<Type> type_args) {
-      return ProofType::get(ctx, TraitApplicationAttr::get(ctx, trait, type_args));
+    static ProofType get(MLIRContext *ctx, FlatSymbolRefAttr trait, ArrayRef<Type> typeArgs) {
+      return ProofType::get(ctx, TraitApplicationAttr::get(ctx, trait, typeArgs));
+    }
+
+    static ProofType get(MLIRContext *ctx, FlatSymbolRefAttr trait, ArrayAttr typesAttr) {
+      return ProofType::get(ctx, TraitApplicationAttr::get(ctx, trait, typesAttr));
     }
 
     FlatSymbolRefAttr getTrait() const {

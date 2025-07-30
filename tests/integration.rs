@@ -167,8 +167,8 @@ fn test_jit() {
     assert!(module.as_operation().verify(), "MLIR module verification failed");
 
     // !T = trait.poly<2>
-    // func.func @foo(%w: !trait.proof<@PartialEq[!T,!T]>, %x: !T, %y: !T) -> i1 {
-    //   %res = trait.method.call @PartialEq<%w>::@eq(%x, %y)
+    // func.func @foo(%p: !trait.proof<@PartialEq[!T,!T]>, %x: !T, %y: !T) -> i1 {
+    //   %res = trait.method.call @PartialEq<%p>::@eq(%x, %y)
     //     : (!S,!O) -> i1
     //     as !trait.proof<@PartialEq[!T,!T]> (!T, !T) -> i1
     //   return %res : i1
@@ -197,7 +197,7 @@ fn test_jit() {
             "PartialEq",
             "eq",
             eq_ty,
-            block.argument(0).unwrap().into(),     // %w
+            block.argument(0).unwrap().into(),     // %p
             &[
                 block.argument(1).unwrap().into(), // %x
                 block.argument(2).unwrap().into(), // %y
@@ -218,9 +218,9 @@ fn test_jit() {
     assert!(module.as_operation().verify(), "MLIR module verification failed");
 
     // @bar(%x: i32, %y: i32) -> i1 {
-    //   %w = trait.witness : !trait.proof<@PartialEq[i32,i32]>
-    //   %result = trait.func.call @foo(%w, %x, %y)
-    //     : (!W,!T,!T) -> i1
+    //   %p = trait.witness @PartialEq[i32,i32]
+    //   %result = trait.func.call @foo(%p, %x, %y)
+    //     : (!P,!T,!T) -> i1
     //     as (!trait.proof<@PartialEq[i32,i32]>,i32,i32) -> i1
     //   return %result : i1
     // }
@@ -238,17 +238,18 @@ fn test_jit() {
         );
 
         let block = Block::new(&[(i32_ty, loc), (i32_ty, loc)]);
-        let w = block.append_operation(trait_::witness(
+        let p = block.append_operation(trait_::witness(
             loc,
             "PartialEq",
             &[i32_ty, i32_ty],
+            &[], // no prereqs
         ));
         let result = block.append_operation(trait_::func_call(
             loc,
             "foo",
             foo_ty,
             &[
-                w.result(0).unwrap().into(),
+                p.result(0).unwrap().into(),
                 block.argument(0).unwrap().into(),
                 block.argument(1).unwrap().into(),
             ],
@@ -341,10 +342,10 @@ fn test_jit() {
     assert!(module.as_operation().verify(), "MLIR module verification failed");
 
     // func.func @qux(%x: i32, %y: i32) -> i1 {
-    //   %w = trait.witness : !trait.proof<@PartialEq[i32,i32]>
-    //   %res = trait.func.call @baz(%w, %x, %y)
-    //     : (!W,!T,!T) -> i1
-    //     as (!trait.witness<@PartialEq[i32,i32]>, i32,i32) -> i1
+    //   %p = trait.witness @PartialEq[i32,i32]
+    //   %res = trait.func.call @baz(%p, %x, %y)
+    //     : (!P,!T,!T) -> i1
+    //     as (!trait.proof<@PartialEq[i32,i32]>, i32,i32) -> i1
     //   return %res : i1
     // }
     let mut qux = {
@@ -361,17 +362,18 @@ fn test_jit() {
         );
 
         let block = Block::new(&[(i32_ty, loc), (i32_ty, loc)]);
-        let w = block.append_operation(trait_::witness(
+        let p = block.append_operation(trait_::witness(
             loc,
             "PartialEq",
             &[i32_ty,i32_ty],
+            &[], // no prereqs
         ));
         let result = block.append_operation(trait_::func_call(
             loc,
             "baz",
             baz_ty,
             &[
-                w.result(0).unwrap().into(),       // w
+                p.result(0).unwrap().into(),       // p
                 block.argument(0).unwrap().into(), // x
                 block.argument(1).unwrap().into(), // y
             ],

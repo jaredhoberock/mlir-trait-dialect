@@ -7,6 +7,7 @@
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/Interfaces/FunctionImplementation.h>
 #include <mlir/IR/Builders.h>
+#include <mlir/IR/IRMapping.h>
 #include <iostream>
 #include <optional>
 #include <variant>
@@ -63,6 +64,36 @@ LogicalResult TraitOp::verify() {
   // there must be at least one type parameter
   if (uniqueParams.size() < 1)
     return emitOpError() << "requires at least one type parameter";
+
+  // check optional where clause
+  if (auto whereAttr = getWhereClause()) {
+    for (auto& app : whereAttr->getApplications()) {
+      // each TraitApplicationAttr must use at least one of the trait's type parameters
+      bool mentionsAny = llvm::any_of(uniqueParams, [&](PolyType param) {
+        return app.mentionsType(param);
+      });
+
+      if (!mentionsAny)
+        return emitOpError() << "where clause prerequisite " << app
+                             << " must mention at least one type parameter";
+
+      // must not refer to the current trait
+      if (app.getTrait() == getSymNameAttr())
+        return emitOpError() << "where clause prerequisite " << app
+                             << " must not reference the current trait";
+    }
+  }
+
+  return success();
+}
+
+
+LogicalResult TraitOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  // check optional where clause
+  if (auto whereAttr = getWhereClause()) {
+    ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
+    return whereAttr->verifyTraitApplications(module, [&](){ return emitOpError(); });
+  }
 
   return success();
 }
@@ -152,7 +183,7 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // Get the trait
   auto traitOp = getTrait();
   if (!traitOp)
-    return emitOpError() << "cannot find trait'" << traitNameAttr << "'";
+    return emitOpError() << "cannot find trait '" << traitNameAttr << "'";
 
   // Check the trait's expected arity against typeArgs
   auto expectedArity = traitOp.getTypeParams().size();
@@ -239,26 +270,49 @@ func::FuncOp ImplOp::getOrInstantiateMethod(OpBuilder& builder, StringRef method
 }
 
 
-func::FuncOp cloneAndHoistMethodAsFreeFunctionInGrandparent(OpBuilder& builder, func::FuncOp method, StringRef functionName) {
+static func::FuncOp cloneMethodAsFreeFuncWithLeadingSelfProof(
+    PatternRewriter& rewriter,
+    func::FuncOp method,
+    StringRef functionName,
+    ProofType selfProofTy) {
   // clone and hoist method into the grandparent with a mangled name
-  PatternRewriter::InsertionGuard guard(builder);
+  PatternRewriter::InsertionGuard guard(rewriter);
 
   // clone the method into the method's grandparent
-  builder.setInsertionPointAfter(method->getParentOp());
-  func::FuncOp funcOp = cast<func::FuncOp>(builder.clone(*method));
+  rewriter.setInsertionPointAfter(method->getParentOp());
 
-  // set the function's name
-  funcOp.setSymName(functionName);
-  
-  // XXX: Ideally, we would transform trait.assume -> trait.witness here during hoisting,
-  // since a trait.assume op inside of a free function is invalid. However, we only have
-  // access to OpBuilder, not PatternRewriter. The transformation is handled by
-  // RewriteConcreteAssumeOp pattern in the monomorphization pass instead.
-  
+  // clone the function
+  auto funcOp = cast<func::FuncOp>(rewriter.clone(*method));
+
+  // mutate the cloned op
+  rewriter.modifyOpInPlace(funcOp, [&] {
+    // set the name
+    funcOp.setSymName(functionName);
+
+    // prepend the proof parameter
+    funcOp.insertArgument(/*idx=*/0, selfProofTy,
+                          /*argAttrs=*/mlir::DictionaryAttr(),
+                          method.getLoc());
+  });
+  BlockArgument proofArg = funcOp.getArgument(0);
+
+  // replace AssumeOps producing the proof type
+  SmallVector<AssumeOp> toErase;
+  funcOp.walk([&](AssumeOp a) {
+    if (a.getResult().getType() == selfProofTy) {
+      rewriter.replaceAllUsesWith(a.getResult(), proofArg);
+      toErase.push_back(a);
+    }
+  });
+
+  // erase the AssumeOps
+  for (auto a : toErase)
+    rewriter.eraseOp(a);
+
   return funcOp;
 }
 
-func::FuncOp ImplOp::getOrInstantiateFunctionFromMethod(OpBuilder& builder, StringRef methodName) {
+func::FuncOp ImplOp::getOrInstantiateFunctionFromMethod(PatternRewriter& rewriter, StringRef methodName) {
   // check that methodName names a valid trait method
   if (!getTrait().hasMethod(methodName)) return nullptr;
 
@@ -274,15 +328,84 @@ func::FuncOp ImplOp::getOrInstantiateFunctionFromMethod(OpBuilder& builder, Stri
 
   if (!funcOp) {
     // get the method inside the ImplOp
-    func::FuncOp method = getOrInstantiateMethod(builder, methodName);
+    func::FuncOp method = getOrInstantiateMethod(rewriter, methodName);
     
     // clone and hoist method into grandparent with mangled name
-    funcOp = cloneAndHoistMethodAsFreeFunctionInGrandparent(builder, method, functionName);
+    funcOp = cloneMethodAsFreeFuncWithLeadingSelfProof(
+      rewriter,
+      method,
+      functionName,
+      getSelfProofType()
+    );
   }
 
   return funcOp;
 }
 
+
+ParseResult WitnessOp::parse(OpAsmParser &p, OperationState &st) {
+  // parse `@Trait[Types...]`
+  TraitApplicationAttr app = dyn_cast_or_null<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
+  if (!app) return failure();
+
+  // result type is the proof of the trait application
+  auto proofTy = ProofType::get(p.getContext(), app);
+  st.addTypes(proofTy);
+
+  // parse optional operands:
+  // `where %p0: @Trait1[Types...], %p1: @Trait2[Types...], ...`
+  SmallVector<OpAsmParser::UnresolvedOperand> prereqs;
+  SmallVector<Type> prereqTypes;
+
+  if (succeeded(p.parseOptionalKeyword("where"))) {
+    if (p.parseCommaSeparatedList([&] {
+          OpAsmParser::UnresolvedOperand v;
+          if (p.parseOperand(v)) return failure();
+          if (p.parseColon()) return failure();
+
+          TraitApplicationAttr app = dyn_cast_or_null<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
+          if (!app) return failure();
+
+          prereqs.push_back(v);
+          prereqTypes.push_back(ProofType::get(p.getContext(), app));
+          return success();
+        })) return failure();
+  }
+
+  // resolve operands
+  if (p.resolveOperands(prereqs, prereqTypes, p.getNameLoc(), st.operands))
+    return failure();
+
+  return success();
+}
+
+void WitnessOp::print(OpAsmPrinter &p) {
+  p << " ";
+
+  // print the witnessed trait application
+  dyn_cast<ProofType>(getResult().getType()).getApplication().print(p);
+
+  // print prerequisites, if any
+  if (!getPrereqs().empty()) {
+    p << " where";
+    p.increaseIndent();
+
+    bool first = true;
+    for (auto prereq : getPrereqs()) {
+      if (!first) {
+        p << ",";
+      }
+      first = false;
+
+      p.printNewline();
+      p.printOperand(prereq);
+      p << ": ";
+      dyn_cast<ProofType>(prereq.getType()).getApplication().print(p);
+    }
+
+    p.decreaseIndent();
+  }
+}
 
 LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // look up the TraitOp
@@ -316,9 +439,42 @@ TraitOp WitnessOp::getTrait() {
   return mlir::SymbolTable::lookupNearestSymbolFrom<TraitOp>(moduleOp, getTraitAttr());
 }
 
+
+ParseResult AssumeOp::parse(OpAsmParser &p, OperationState &st) {
+  // parse `@Trait[Types...]`
+  TraitApplicationAttr app = dyn_cast_or_null<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
+  if (!app) return failure();
+
+  // result type is the proof of the trait application
+  auto proofTy = ProofType::get(p.getContext(), app);
+  st.addTypes(proofTy);
+
+  return success();
+}
+
+void AssumeOp::print(OpAsmPrinter &p) {
+  p << " ";
+
+  // print the witnessed trait application
+  dyn_cast<ProofType>(getResult().getType()).getApplication().print(p);
+}
+
 LogicalResult AssumeOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  TraitOp enclosingTrait = getOperation()->getParentOfType<TraitOp>();
-  ImplOp enclosingImpl = getOperation()->getParentOfType<ImplOp>();
+  // verify line-of-sight between trait.assume op its enclosing function-like op so 
+  // that we are able to replace uses of trait.assume with a function parameter
+  Operation* isolatedAncestor = getOperation()->getParentWithTrait<OpTrait::IsIsolatedFromAbove>();
+  if (!isolatedAncestor)
+    return emitOpError("must be within an IsolatedFromAbove region");
+
+  // the isolated ancestor must be a FuncOp
+  auto funcOp = dyn_cast<func::FuncOp>(isolatedAncestor);
+  if (!funcOp)
+    return emitOpError() << "must be within a 'func.func', found "
+                         << isolatedAncestor->getName();
+
+  // the function's immediate parent must be TraitOp or ImplOp
+  TraitOp enclosingTrait = funcOp->getParentOfType<TraitOp>();
+  ImplOp enclosingImpl = funcOp->getParentOfType<ImplOp>();
   
   if (!enclosingTrait && !enclosingImpl) {
     return emitOpError("must be within a 'trait.trait' or 'trait.impl' region");
@@ -442,10 +598,10 @@ LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable)
                                       moduleOp);
 }
 
-func::FuncOp MethodCallOp::getOrInstantiateCallee(OpBuilder& builder) {
+func::FuncOp MethodCallOp::getOrInstantiateCallee(PatternRewriter& rewriter) {
   return getTrait()
-    .getOrInstantiateImpl(builder, getProof().getType().getTypeArgs())
-    .getOrInstantiateFunctionFromMethod(builder, getMethodName());
+    .getOrInstantiateImpl(rewriter, getProof().getType().getTypeArgs())
+    .getOrInstantiateFunctionFromMethod(rewriter, getMethodName());
 }
 
 LogicalResult FuncCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
@@ -536,4 +692,121 @@ func::FuncOp FuncCallOp::getOrInstantiateCallee(OpBuilder &builder) {
   }
 
   return instance;
+}
+
+
+ParseResult ProjectOp::parse(OpAsmParser &p, OperationState &st) {
+  // parse `%op: @Trait1[Types...] to @Trait2[Types...]`
+  OpAsmParser::UnresolvedOperand src;
+  if (p.parseOperand(src)) return failure();
+  if (p.parseColon()) return failure();
+
+  TraitApplicationAttr srcApp = dyn_cast_or_null<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
+  if (!srcApp) return failure();
+
+  // operand type is the proof of the src trait application
+  ProofType srcTy = ProofType::get(p.getContext(), srcApp);
+
+  // resolve operand
+  if (p.resolveOperand(src, srcTy, st.operands))
+    return failure();
+
+  if (p.parseKeyword("to"))
+    return failure();
+
+  TraitApplicationAttr resultApp = dyn_cast_or_null<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
+  if (!resultApp) return failure();
+
+  // result type is the proof of the result application
+  ProofType resultTy = ProofType::get(p.getContext(), resultApp);
+  st.addTypes(resultTy);
+
+  return success();
+}
+
+void ProjectOp::print(OpAsmPrinter& p) {
+  // print `%op: %Trait1[Types...] to @Trait2[Types...]1
+
+  p << " ";
+
+  p.printOperand(getSource());
+  p << ": ";
+  dyn_cast<ProofType>(getSource().getType()).getApplication().print(p);
+
+  p << " to ";
+  dyn_cast<ProofType>(getResult().getType()).getApplication().print(p);
+}
+
+TraitOp ProjectOp::getSourceTrait() {
+  auto proofTy = cast<ProofType>(getSource().getType());
+  auto module = getOperation()->getParentOfType<ModuleOp>();
+  return SymbolTable::lookupNearestSymbolFrom<TraitOp>(module, proofTy.getTrait());
+}
+
+TraitOp ProjectOp::getProjectedTrait() {
+  auto proofTy = cast<ProofType>(getResult().getType());
+  auto module = getOperation()->getParentOfType<ModuleOp>();
+  return SymbolTable::lookupNearestSymbolFrom<TraitOp>(module, proofTy.getTrait());
+}
+
+LogicalResult ProjectOp::verifySymbolUses(SymbolTableCollection &/*symbolTable*/) {
+  ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
+  if (!module)
+    return emitOpError() << "not in a module";
+
+  auto errFn = [&]{ return emitOpError(); };
+
+  // verify source proof
+  auto srcProof = cast<ProofType>(getSource().getType());
+  TraitApplicationAttr srcApp = srcProof.getApplication();
+  if (failed(srcApp.verifyTraitApplication(module, errFn)))
+    return failure();
+
+  // verify destination proof
+  auto dstProof = cast<ProofType>(getResult().getType());
+  TraitApplicationAttr dstApp = dstProof.getApplication();
+  if (failed(dstApp.verifyTraitApplication(module, errFn)))
+    return failure();
+
+  // get the source trait and check for a where clause
+  TraitOp srcTrait = getSourceTrait();
+  if (!srcTrait)
+    return emitOpError() << "cannot resolve trait '"
+                         << srcApp.getTrait() << "'";
+
+  auto where = srcTrait.getWhereClause();
+  if (!where)
+    return emitOpError() << "trait '" << srcTrait.getSymName()
+                         << "' has no 'where' clause; no projections allowed";
+
+  // look up all candidate prerequisites that apply the dst trait
+  auto candidates = where->getApplicationsOf(dstApp.getTrait());
+  if (candidates.empty())
+    return emitOpError() << "trait '" << dstApp.getTrait()
+                         << "' is not a prerequisite of trait '"
+                         << srcApp.getTrait() << "'";
+
+  // build substitution from the operand's type args
+  auto subst = srcTrait.buildSubstitutionFor(srcApp.getTypeArgs());
+
+  auto* ctx = getContext();
+
+  // search for a candidate application, whose type args when applied
+  // to this substitution, equal this type
+  auto targetTuple = TupleType::get(ctx, dstApp.getTypeArgs());    // e.g. (i32, i32)
+
+  for (auto candidate : candidates) {
+    auto patternTuple = TupleType::get(ctx, candidate.getTypeArgs()); // e.g. (!S, !S)
+    auto substTy = applySubstitution(subst, patternTuple);
+
+    // note: if more than one candidate could be a match, that's fine, since
+    // all matches name an identical trait application
+    if (substTy == targetTuple)
+      return success();
+  }
+
+  return emitOpError()
+         << "projected trait application '" << dstApp
+         << "' does not match substituted where-clause entry of '"
+         << srcTrait.getSymName() << "'";
 }

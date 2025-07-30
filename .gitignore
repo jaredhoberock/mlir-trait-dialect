@@ -1,0 +1,8 @@
+*.o
+*.a
+*.so
+*.cpp.inc
+*.hpp.inc
+*.script
+.lit_test_times.txt
+target/*
