@@ -15,4 +15,26 @@ struct MonomorphizePass : PassWrapper<MonomorphizePass, OperationPass<ModuleOp>>
 
 std::unique_ptr<Pass> createMonomorphizePass();
 
+struct ProveClaimsPass : PassWrapper<ProveClaimsPass, OperationPass<ModuleOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ProveClaimsPass);
+
+  inline StringRef getArgument() const final { return "prove-claims-trait"; }
+  inline StringRef getDescription() const final { return "Elaborate claims into proofs of implementations."; }
+
+  void runOnOperation() override;
+};
+
+std::unique_ptr<Pass> createProveClaimsPass();
+
+struct VerifyAcyclicTraitsPass : PassWrapper<VerifyAcyclicTraitsPass, OperationPass<ModuleOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(VerifyAcyclicTraitsPass);
+
+  inline StringRef getArgument() const final { return "verify-acyclic-traits"; }
+  inline StringRef getDescription() const final { return "Verify that the trait dependency graph is acyclic."; }
+
+  void runOnOperation() override;
+};
+
+std::unique_ptr<Pass> createVerifyAcyclicTraitsPass();
+
 }

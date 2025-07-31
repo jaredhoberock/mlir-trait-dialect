@@ -26,6 +26,10 @@ inline bool containsSymbolicType(Type ty) {
   return found;
 }
 
+inline bool isConcrete(Type ty) {
+  return !containsSymbolicType(ty);
+}
+
 inline Type applySubstitution(const llvm::DenseMap<Type,Type> &substitution,
                               Type ty) {
   // set up type replacer

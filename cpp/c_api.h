@@ -14,6 +14,12 @@ void traitRegisterDialect(MlirContext ctx);
 /// Create a monomorphize-trait pass
 MlirPass traitCreateMonomorphizePass();
 
+/// Create a prove-claims-trait pass
+MlirPass traitCreateProveClaimsPass();
+
+/// Create a verify-acyclic-traits pass
+MlirPass traitCreateVerifyAcyclicTraitsPass();
+
 /// Create a trait.trait operation
 MlirOperation traitTraitOpCreate(MlirLocation loc, MlirStringRef name,
                                  MlirType* typeParams, intptr_t numTypeParams);

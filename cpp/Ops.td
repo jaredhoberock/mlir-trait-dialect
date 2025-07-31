@@ -100,6 +100,8 @@ def TraitOp : TraitDialectOp<"trait", [
     ImplOp getOrInstantiateImpl(OpBuilder& builder, ArrayRef<Type> typeArgs);
 
     DenseMap<Type,Type> buildSubstitutionFor(TypeRange typeArgs);
+
+    SmallVector<TraitOp,4> getPrereqTraits();
   }];
 
   // builder creates one empty block in the body region
@@ -258,7 +260,6 @@ def AssumeOp : TraitDialectOp<"assume", [
 
   let extraClassDeclaration = [{
     TraitOp getTrait();
-
     FlatSymbolRefAttr getTraitAttr();
     ArrayRef<Type> getTypeArgs();
   }];
@@ -477,6 +478,50 @@ def ProjectOp : TraitDialectOp<"project", [
   }];
 
   let hasCustomAssemblyFormat = 1;
+}
+
+def ClaimOp : TraitDialectOp<"claim", [
+  DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+  Pure
+]> {
+  let summary = "Unverified claim that a trait implementation exists";
+  let description = [{
+    Declares an unverified proof of a trait application (e.g., `@Trait[Types...]`)
+    by producing a value of type `!trait.proof<@Trait[Types...]>`.
+
+    The type arguments must be concrete; symbolic types are illegal.
+
+    This operation does not require a matching `trait.impl` or where-clause satisfaction.
+    It is intended to be elaborated into verified `trait.witness` operations prior to
+    monomorphization via a claim proving pass.
+
+    Example:
+      %p = trait.claim @Ord[i32]
+  }];
+
+  let results = (outs Proof:$result);
+
+  let builders = [
+    OpBuilder<(ins "::mlir::trait::TraitApplicationAttr":$app), [{
+      mlir::MLIRContext* ctx = $_builder.getContext();
+      auto proofTy = ProofType::get(ctx, app);
+      return build($_builder, $_state, proofTy);
+    }]>
+  ];
+
+  let extraClassDeclaration = [{
+    TraitOp getTrait();
+    ArrayRef<Type> getTypeArgs();
+    TraitApplicationAttr getTraitApplication() {
+      return cast<ProofType>(getResult().getType()).getApplication();
+    }
+    FlatSymbolRefAttr getTraitAttr();
+
+    SmallVector<TraitApplicationAttr> getPrereqTraitApplications();
+  }];
+
+  let hasCustomAssemblyFormat = 1;
+  let hasVerifier = 1;
 }
 
 #endif // TRAIT_OPS_TD

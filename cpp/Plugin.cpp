@@ -6,6 +6,8 @@
 
 static void registerPlugin(mlir::DialectRegistry* registry) {
   registry->insert<mlir::trait::TraitDialect>();
+  ::mlir::PassRegistration<::mlir::trait::VerifyAcyclicTraitsPass>();
+  ::mlir::PassRegistration<::mlir::trait::ProveClaimsPass>();
   ::mlir::PassRegistration<::mlir::trait::MonomorphizePass>();
 }
 

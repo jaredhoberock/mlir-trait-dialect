@@ -163,7 +163,6 @@ ImplOp TraitOp::getOrInstantiateImpl(OpBuilder& builder, ArrayRef<Type> typeArgs
   return nullptr;
 }
 
-
 DenseMap<Type,Type> TraitOp::buildSubstitutionFor(TypeRange typeArgs) {
   DenseMap<Type,Type> subst;
   auto params = getTypeParams().getAsValueRange<TypeAttr>();
@@ -171,6 +170,23 @@ DenseMap<Type,Type> TraitOp::buildSubstitutionFor(TypeRange typeArgs) {
     subst[from] = to;
   }
   return subst;
+}
+
+SmallVector<TraitOp,4> TraitOp::getPrereqTraits() {
+  ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
+  if (!module)
+    llvm_unreachable("TraitOp::getPrereqTraits: not in a module");
+
+  SmallVector<TraitOp,4> result;
+  if (auto where = getWhereClause()) {
+    for (auto &app : where->getApplications()) {
+      TraitOp trait = mlir::SymbolTable::lookupNearestSymbolFrom<TraitOp>(module, app.getTrait());
+      if (!trait)
+        llvm_unreachable("TraitOp::getPrereqTraits: couldn't find prerequisite trait");
+      result.push_back(trait);
+    }
+  }
+  return result;
 }
 
 
@@ -411,7 +427,7 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // look up the TraitOp
   auto traitOp = getTrait();
   if (!traitOp)
-    return failure();
+    return emitOpError() << "cannot find trait '" << getTraitAttr() << "'";
 
   // look up the ImplOp
   auto implOp = traitOp.getImpl(getTypeArgs());
@@ -809,4 +825,80 @@ LogicalResult ProjectOp::verifySymbolUses(SymbolTableCollection &/*symbolTable*/
          << "projected trait application '" << dstApp
          << "' does not match substituted where-clause entry of '"
          << srcTrait.getSymName() << "'";
+}
+
+
+ParseResult ClaimOp::parse(OpAsmParser &p, OperationState &st) {
+  // parse `@Trait[Types...]`
+  TraitApplicationAttr app = dyn_cast_or_null<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
+  if (!app) return failure();
+
+  // result type is the proof of the trait application
+  auto proofTy = ProofType::get(p.getContext(), app);
+  st.addTypes(proofTy);
+
+  return success();
+}
+
+void ClaimOp::print(OpAsmPrinter &p) {
+  p << " ";
+
+  // print the witnessed trait application
+  dyn_cast<ProofType>(getResult().getType()).getApplication().print(p);
+}
+
+LogicalResult ClaimOp::verify() {
+  // type args must be concrete
+  bool allConcrete = llvm::all_of(getTypeArgs(), [](Type ty) {
+    return isConcrete(ty);
+  });
+
+  if (!allConcrete)
+    return failure();
+
+  return success();
+}
+
+TraitOp ClaimOp::getTrait() {
+  ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
+  if (!module) {
+    emitOpError() << "not inside of a module";
+    return nullptr;
+  }
+  return mlir::SymbolTable::lookupNearestSymbolFrom<TraitOp>(module, getTraitAttr());
+}
+
+FlatSymbolRefAttr ClaimOp::getTraitAttr() {
+  return getTraitApplication().getTrait();
+}
+
+LogicalResult ClaimOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
+  if (!module)
+    return emitOpError() << "not in a module";
+  return getTraitApplication().verifyTraitApplication(module, [this] { return emitOpError(); });
+}
+
+ArrayRef<Type> ClaimOp::getTypeArgs() {
+  return dyn_cast<ProofType>(getResult().getType()).getTypeArgs();
+}
+
+SmallVector<TraitApplicationAttr> ClaimOp::getPrereqTraitApplications() {
+  TraitOp trait = getTrait();
+  if (!trait)
+    llvm_unreachable("ClaimOp::getPrereqTraitApplications: couldn't find TraitOp");
+
+  SmallVector<TraitApplicationAttr> result;
+
+  if (auto where = trait.getWhereClause()) {
+    auto subst = trait.buildSubstitutionFor(getTypeArgs());
+    for (auto prereqApp : where->getApplications()) {
+      auto substApp = dyn_cast_or_null<TraitApplicationAttr>(applySubstitution(subst, prereqApp));
+      if (!substApp)
+        llvm_unreachable("ClaimOp::getPrereqTraitApplications: expected substituted trait application to be a TraitApplicationAttr");
+      result.push_back(substApp);
+    }
+  }
+
+  return result;
 }

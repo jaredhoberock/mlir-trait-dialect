@@ -20,6 +20,14 @@ MlirPass traitCreateMonomorphizePass() {
   return wrap(createMonomorphizePass().release());
 }
 
+MlirPass traitCreateProveClaimsPass() {
+  return wrap(createProveClaimsPass().release());
+}
+
+MlirPass traitCreateVerifyAcyclicTraitsPass() {
+  return wrap(createVerifyAcyclicTraitsPass().release());
+}
+
 MlirOperation traitTraitOpCreate(MlirLocation loc, MlirStringRef name,
                                  MlirType* typeParams, intptr_t numTypeParams) {
   MLIRContext* ctx = unwrap(loc)->getContext();

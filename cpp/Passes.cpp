@@ -12,6 +12,105 @@
 
 namespace mlir::trait {
 
+LogicalResult verifyAcyclicTraits(ModuleOp module) {
+  enum class Status : uint8_t { NotSeen = 0, InPath, Done };
+  DenseMap<TraitOp, Status> status;
+  SmallVector<TraitOp, 16> stack;
+
+  std::function<LogicalResult(TraitOp)> dfs = [&](TraitOp u) -> LogicalResult {
+    Status &s = status[u];
+    if (s == Status::InPath) {
+      // back-edge: report the cycle u ... u
+      auto it = llvm::find(stack, u);
+      auto diag = u.emitError("cycle in trait `where` clause: ");
+      for (auto i = it; i != stack.end(); ++i)
+        diag << "@" << i->getSymName() << " -> ";
+      diag << "@" << u.getSymName();
+      return failure();
+    }
+
+    if (s == Status::Done) return success();
+
+    s = Status::InPath;
+    stack.push_back(u);
+
+    for (TraitOp v : u.getPrereqTraits()) {
+      if (failed(dfs(v))) return failure();
+    }
+
+    stack.pop_back();
+    s = Status::Done;
+    return success();
+  };
+
+  for (TraitOp t : module.getOps<TraitOp>()) {
+    if (status.lookup(t) == Status::Done) continue;
+    if (failed(dfs(t))) {
+      return failure();
+    }
+  }
+
+  return module.verify();
+}
+
+void VerifyAcyclicTraitsPass::runOnOperation() {
+  if (failed(verifyAcyclicTraits(getOperation())))
+    signalPassFailure();
+}
+
+std::unique_ptr<Pass> createVerifyAcyclicTraitsPass() {
+  return std::make_unique<VerifyAcyclicTraitsPass>();
+}
+
+namespace {
+
+struct ProveClaimPattern : OpRewritePattern<ClaimOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(ClaimOp claim, PatternRewriter& rewriter) const override {
+    // emit claims for each prerequisite
+    SmallVector<Value> prereqProofs;
+    for (auto prereqApp : claim.getPrereqTraitApplications()) {
+      auto newClaim = rewriter.create<ClaimOp>(claim.getLoc(), prereqApp);
+      prereqProofs.push_back(newClaim.getResult());
+    }
+
+    // replace the claim with a witness
+    rewriter.replaceOpWithNewOp<WitnessOp>(
+      claim,
+      claim.getResult().getType(),
+      prereqProofs
+    );
+
+    return success();
+  }
+};
+
+LogicalResult proveClaims(ModuleOp module) {
+  // verify traits are acyclic first
+  if (failed(verifyAcyclicTraits(module)))
+    return failure();
+
+  // apply rewrite patterns
+  RewritePatternSet patterns(module.getContext());
+  patterns.add<ProveClaimPattern>(module.getContext());
+  if (failed(applyPatternsGreedily(module, std::move(patterns))))
+    return failure();
+
+  return module.verify();
+}
+
+}
+
+void ProveClaimsPass::runOnOperation() {
+  if (failed(proveClaims(getOperation())))
+    signalPassFailure();
+}
+
+std::unique_ptr<Pass> createProveClaimsPass() {
+  return std::make_unique<ProveClaimsPass>();
+}
+
 namespace {
 
 struct FuncCallOpLowering : public OpRewritePattern<FuncCallOp> {
@@ -122,11 +221,14 @@ static LogicalResult eraseProofs(ModuleOp module) {
 
 }
 
-void MonomorphizePass::runOnOperation() {
-  ModuleOp module = getOperation();
+LogicalResult monomorphize(ModuleOp module) {
+  // prove claims first
+  if (failed(proveClaims(module)))
+    return failure();
+
   MLIRContext* ctx = module.getContext();
 
-  // apply rewrite patterns
+  // rewrite trait.func.call & trait.method.call
   {
     RewritePatternSet patterns(ctx);
     patterns.add<FuncCallOpLowering,MethodCallOpLowering>(ctx);
@@ -139,10 +241,8 @@ void MonomorphizePass::runOnOperation() {
     }
 
     // apply patterns
-    if (failed(applyPatternsGreedily(module, std::move(patterns)))) {
-      signalPassFailure();
-      return;
-    }
+    if (failed(applyPatternsGreedily(module, std::move(patterns))))
+      return failure();
   }
 
   // erase polymorphic functions
@@ -165,6 +265,13 @@ void MonomorphizePass::runOnOperation() {
   // we do this last because all of the above may
   // use !trait.proof, trait.witness, & trait.project
   if (failed(eraseProofs(module)))
+    return failure();
+
+  return module.verify();
+}
+
+void MonomorphizePass::runOnOperation() {
+  if (failed(monomorphize(getOperation())))
     signalPassFailure();
 }
 
