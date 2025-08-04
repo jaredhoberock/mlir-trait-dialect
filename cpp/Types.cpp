@@ -74,17 +74,17 @@ LogicalResult PolyType::unifyWith(
 }
 
 
-LogicalResult ProofType::verify(function_ref<InFlightDiagnostic()> emitError,
+LogicalResult ClaimType::verify(function_ref<InFlightDiagnostic()> emitError,
                                 TraitApplicationAttr app) {
   auto fail = [&]() -> LogicalResult {
-    return emitError ? emitError() << "nested !trait.proof types are not allowed"
+    return emitError ? emitError() << "nested !trait.claim types are not allowed"
                      : failure();
   };
 
   for (Type t : app.getTypeArgs()) {
     bool nested = false;
     t.walk([&](Type sub) {
-      if (mlir::isa<ProofType>(sub))
+      if (mlir::isa<ClaimType>(sub))
         nested = true;
     });
     if (nested)

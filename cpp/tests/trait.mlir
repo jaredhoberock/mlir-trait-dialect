@@ -25,7 +25,7 @@ trait.trait @PartialEq[!PartialEqSelf, !PartialEqOther] {
     %p = trait.assume @PartialEq[!PartialEqSelf, !PartialEqOther]
     %eq = trait.method.call @PartialEq::@eq<%p>(%self, %other)
       : (!PartialEqSelf, !PartialEqOther) -> i1
-      as !trait.proof<@PartialEq[!PartialEqSelf, !PartialEqOther]> (!PartialEqSelf, !PartialEqOther) -> i1
+      as !trait.claim<@PartialEq[!PartialEqSelf, !PartialEqOther]> (!PartialEqSelf, !PartialEqOther) -> i1
     %true = arith.constant true
     %res = arith.xori %eq, %true : i1
     return %res : i1
@@ -41,7 +41,7 @@ trait.trait @PartialEq[!PartialEqSelf, !PartialEqOther] {
 !ordering = !llvm.struct<"ordering", ()>
 !PartialOrdSelf = !trait.poly<3>
 !PartialOrdOther = !trait.poly<4>
-trait.trait @PartialOrd[!PartialOrdSelf, !PartialOrdOther] where [
+trait.trait @PartialOrd[!PartialOrdSelf, !PartialOrdOther] given [
   @PartialEq[!PartialOrdSelf, !PartialOrdOther]
 ]
 {
@@ -51,7 +51,7 @@ trait.trait @PartialOrd[!PartialOrdSelf, !PartialOrdOther] where [
     %self_p = trait.assume @PartialOrd[!PartialOrdSelf,!PartialOrdOther]
     %cmp = trait.method.call @PartialOrd::@partial_cmp<%self_p>(%self, %other)
       : (!PartialOrdSelf, !PartialOrdOther) -> !ordering
-      as !trait.proof<@PartialOrd[!PartialOrdSelf,!PartialOrdOther]> (!PartialOrdSelf, !PartialOrdOther) -> !ordering
+      as !trait.claim<@PartialOrd[!PartialOrdSelf,!PartialOrdOther]> (!PartialOrdSelf, !PartialOrdOther) -> !ordering
     %res = arith.constant false
     return %res : i1
   }

@@ -62,7 +62,7 @@ fn test_jit() {
             );
 
             let block = Block::new(&[(self_ty, loc), (other_ty, loc)]);
-            let p = block.append_operation(trait_::assume(
+            let c = block.append_operation(trait_::assume(
                 loc,
                 "PartialEq",
                 &[self_ty, other_ty],
@@ -73,7 +73,7 @@ fn test_jit() {
                 "PartialEq",
                 "eq",
                 eq_ty,
-                p.result(0).unwrap().into(),           // proof
+                c.result(0).unwrap().into(),           // claim
                 &[
                     block.argument(0).unwrap().into(), // self
                     block.argument(1).unwrap().into(), // other
@@ -167,19 +167,19 @@ fn test_jit() {
     assert!(module.as_operation().verify(), "MLIR module verification failed");
 
     // !T = trait.poly<2>
-    // func.func @foo(%p: !trait.proof<@PartialEq[!T,!T]>, %x: !T, %y: !T) -> i1 {
-    //   %res = trait.method.call @PartialEq<%p>::@eq(%x, %y)
+    // func.func @foo(%c: !trait.claim<@PartialEq[!T,!T]>, %x: !T, %y: !T) -> i1 {
+    //   %res = trait.method.call @PartialEq<%c>::@eq(%x, %y)
     //     : (!S,!O) -> i1
-    //     as !trait.proof<@PartialEq[!T,!T]> (!T, !T) -> i1
+    //     as !trait.claim<@PartialEq[!T,!T]> (!T, !T) -> i1
     //   return %res : i1
     // }
     let poly_ty = trait_::poly_type(&context, 2);
-    let proof_ty = trait_::proof_type(
+    let claim_ty = trait_::claim_type(
         &context,
         "PartialEq",
         &[poly_ty, poly_ty],
     );
-    let foo_ty = FunctionType::new(&context, &[proof_ty, poly_ty, poly_ty], &[i1_ty]).into();
+    let foo_ty = FunctionType::new(&context, &[claim_ty, poly_ty, poly_ty], &[i1_ty]).into();
 
     let foo = {
         let foo = func::func(
@@ -191,13 +191,13 @@ fn test_jit() {
             loc,
         );
 
-        let block = Block::new(&[(proof_ty, loc), (poly_ty, loc), (poly_ty, loc)]);
+        let block = Block::new(&[(claim_ty, loc), (poly_ty, loc), (poly_ty, loc)]);
         let result = block.append_operation(trait_::method_call(
             loc,
             "PartialEq",
             "eq",
             eq_ty,
-            block.argument(0).unwrap().into(),     // %p
+            block.argument(0).unwrap().into(),     // %c
             &[
                 block.argument(1).unwrap().into(), // %x
                 block.argument(2).unwrap().into(), // %y
@@ -218,10 +218,10 @@ fn test_jit() {
     assert!(module.as_operation().verify(), "MLIR module verification failed");
 
     // @bar(%x: i32, %y: i32) -> i1 {
-    //   %p = trait.witness @PartialEq[i32,i32]
-    //   %result = trait.func.call @foo(%p, %x, %y)
+    //   %c = trait.witness @PartialEq[i32,i32]
+    //   %result = trait.func.call @foo(%c, %x, %y)
     //     : (!P,!T,!T) -> i1
-    //     as (!trait.proof<@PartialEq[i32,i32]>,i32,i32) -> i1
+    //     as (!trait.claim<@PartialEq[i32,i32]>,i32,i32) -> i1
     //   return %result : i1
     // }
     let mut bar = {
@@ -271,23 +271,23 @@ fn test_jit() {
     module.body().append_operation(bar);
     assert!(module.as_operation().verify(), "MLIR module verification failed");
 
-    // !P = !trait.proof<@PartialEq[!T,!T]>
-    // func.func @baz(%p: !P, %x: !T, %y: !T) -> i1 {
-    //   %eq = trait.method.call @PartialEq<%p>::@eq(%x, %y)
+    // !C = !trait.claim<@PartialEq[!T,!T]>
+    // func.func @baz(%c: !C, %x: !T, %y: !T) -> i1 {
+    //   %eq = trait.method.call @PartialEq<%c>::@eq(%x, %y)
     //     : (!S,!O) -> i1
     //     as (!T,!T) -> i1
-    //   %neq = trait.method.call @PartialEq<%p>::@neq(%x, %y)
+    //   %neq = trait.method.call @PartialEq<%c>::@neq(%x, %y)
     //     : (!S,!O) -> i1
     //     as (!W,!T,!T) -> i1
     //   %result = arith.ori %eq, %neq : i1
     //   return %result : i1
     // }
-    let proof_ty = trait_::proof_type(
+    let claim_ty = trait_::claim_type(
         &context,
         "PartialEq",
         &[poly_ty, poly_ty],
     );
-    let baz_ty = FunctionType::new(&context, &[proof_ty, poly_ty, poly_ty], &[i1_ty]).into();
+    let baz_ty = FunctionType::new(&context, &[claim_ty, poly_ty, poly_ty], &[i1_ty]).into();
     let baz = {
         let baz = func::func(
             &context,
@@ -298,13 +298,13 @@ fn test_jit() {
             loc,
         );
 
-        let block = Block::new(&[(proof_ty, loc), (poly_ty, loc), (poly_ty, loc)]);
+        let block = Block::new(&[(claim_ty, loc), (poly_ty, loc), (poly_ty, loc)]);
         let eq = block.append_operation(trait_::method_call(
             loc,
             "PartialEq",
             "eq",
             eq_ty,
-            block.argument(0).unwrap().into(),     // p
+            block.argument(0).unwrap().into(),     // c
             &[
                 block.argument(1).unwrap().into(), // x
                 block.argument(2).unwrap().into(), // y
@@ -316,7 +316,7 @@ fn test_jit() {
             "PartialEq",
             "neq",
             neq_ty,
-            block.argument(0).unwrap().into(),     // p
+            block.argument(0).unwrap().into(),     // c
             &[
                 block.argument(1).unwrap().into(), // x
                 block.argument(2).unwrap().into(), // y
@@ -342,10 +342,10 @@ fn test_jit() {
     assert!(module.as_operation().verify(), "MLIR module verification failed");
 
     // func.func @qux(%x: i32, %y: i32) -> i1 {
-    //   %p = trait.witness @PartialEq[i32,i32]
-    //   %res = trait.func.call @baz(%p, %x, %y)
-    //     : (!P,!T,!T) -> i1
-    //     as (!trait.proof<@PartialEq[i32,i32]>, i32,i32) -> i1
+    //   %c = trait.witness @PartialEq[i32,i32]
+    //   %res = trait.func.call @baz(%c, %x, %y)
+    //     : (!C,!T,!T) -> i1
+    //     as (!trait.claim<@PartialEq[i32,i32]>, i32,i32) -> i1
     //   return %res : i1
     // }
     let mut qux = {
@@ -373,7 +373,7 @@ fn test_jit() {
             "baz",
             baz_ty,
             &[
-                p.result(0).unwrap().into(),       // p
+                p.result(0).unwrap().into(),       // c
                 block.argument(0).unwrap().into(), // x
                 block.argument(1).unwrap().into(), // y
             ],

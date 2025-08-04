@@ -60,7 +60,8 @@ MlirOperation traitImplOpCreate(MlirLocation loc, MlirStringRef traitName,
   auto op = builder.create<ImplOp>(
     unwrap(loc),
     FlatSymbolRefAttr::get(ctx, StringRef(traitName.data, traitName.length)),
-    builder.getArrayAttr(typeAttrs)
+    builder.getArrayAttr(typeAttrs),
+    std::nullopt  // XXX TODO: add where clause support to C API
   );
 
   return wrap(op.getOperation());
@@ -70,7 +71,7 @@ MlirOperation traitMethodCallOpCreate(MlirLocation loc,
                                       MlirStringRef traitName,
                                       MlirStringRef methodName,
                                       MlirType methodFunctionType,
-                                      MlirValue proof,
+                                      MlirValue claim,
                                       MlirValue* arguments, intptr_t numArguments,
                                       MlirType* resultTypes, intptr_t numResults) {
   MLIRContext* ctx = unwrap(loc)->getContext();
@@ -92,7 +93,7 @@ MlirOperation traitMethodCallOpCreate(MlirLocation loc,
     StringRef(traitName.data, traitName.length),
     StringRef(methodName.data, methodName.length),
     TypeAttr::get(unwrap(methodFunctionType)),
-    unwrap(proof),
+    unwrap(claim),
     args
   );
 
@@ -133,7 +134,7 @@ MlirOperation traitWitnessOpCreate(MlirLocation loc,
                                    MlirType* typeArgs, intptr_t numTypeArgs,
                                    MlirValue* wrappedPrereqs, intptr_t numPrereqs) {
   MLIRContext* ctx = unwrap(loc)->getContext();
-  MlirType wrappedProofType = traitProofTypeGet(wrap(ctx), traitName, typeArgs, numTypeArgs);
+  MlirType wrappedClaimType = traitClaimTypeGet(wrap(ctx), traitName, typeArgs, numTypeArgs);
 
   OpBuilder builder(ctx);
 
@@ -144,7 +145,7 @@ MlirOperation traitWitnessOpCreate(MlirLocation loc,
 
   auto op = builder.create<WitnessOp>(
     unwrap(loc),
-    unwrap(wrappedProofType),
+    unwrap(wrappedClaimType),
     prereqs
   );
 
@@ -152,18 +153,18 @@ MlirOperation traitWitnessOpCreate(MlirLocation loc,
 }
 
 MlirOperation traitProjectOpCreate(MlirLocation loc,
-                                   MlirValue srcProof,
+                                   MlirValue srcClaim,
                                    MlirStringRef traitName,
                                    MlirType* typeArgs, intptr_t numTypeArgs) {
   MLIRContext* ctx = unwrap(loc)->getContext();
-  MlirType wrappedProofType = traitProofTypeGet(wrap(ctx), traitName, typeArgs, numTypeArgs);
+  MlirType wrappedClaimType = traitClaimTypeGet(wrap(ctx), traitName, typeArgs, numTypeArgs);
 
   OpBuilder builder(ctx);
 
   auto op = builder.create<ProjectOp>(
     unwrap(loc),
-    unwrap(wrappedProofType),
-    unwrap(srcProof)
+    unwrap(wrappedClaimType),
+    unwrap(srcClaim)
   );
 
   return wrap(op.getOperation());
@@ -173,13 +174,13 @@ MlirOperation traitAssumeOpCreate(MlirLocation loc,
                                   MlirStringRef traitName,
                                   MlirType* typeArgs, intptr_t numTypeArgs) {
   MLIRContext* ctx = unwrap(loc)->getContext();
-  MlirType wrappedProofType = traitProofTypeGet(wrap(ctx), traitName, typeArgs, numTypeArgs);
+  MlirType wrappedClaimType = traitClaimTypeGet(wrap(ctx), traitName, typeArgs, numTypeArgs);
 
   OpBuilder builder(ctx);
 
   auto op = builder.create<AssumeOp>(
     unwrap(loc),
-    unwrap(wrappedProofType)
+    unwrap(wrappedClaimType)
   );
 
   return wrap(op.getOperation());
@@ -190,7 +191,7 @@ MlirType traitPolyTypeGet(MlirContext wrappedCtx,
   return wrap(PolyType::get(unwrap(wrappedCtx), uniqueId));
 }
 
-MlirType traitProofTypeGet(MlirContext wrappedCtx,
+MlirType traitClaimTypeGet(MlirContext wrappedCtx,
                            MlirStringRef traitName,
                            MlirType* typeArgs, intptr_t numTypeArgs) {
   MLIRContext* ctx = unwrap(wrappedCtx);
@@ -202,7 +203,7 @@ MlirType traitProofTypeGet(MlirContext wrappedCtx,
     typeArgsVec.push_back(unwrap(typeArgs[i]));
   }
 
-  return wrap(ProofType::get(ctx, traitRefAttr, typeArgsVec));
+  return wrap(ClaimType::get(ctx, traitRefAttr, typeArgsVec));
 }
 
 } // end extern "C"

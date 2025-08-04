@@ -43,21 +43,21 @@ def TraitApplicationAttr : AttrDef<TraitDialect, "TraitApplication"> {
   let hasCustomAssemblyFormat = 1;
 }
 
-def WhereAttr : AttrDef<TraitDialect, "Where"> {
-  let mnemonic = "where";
+def ObligationsAttr : AttrDef<TraitDialect, "Obligations"> {
+  let mnemonic = "obligations";
   let summary = "A list of prerequisite trait applications required for trait implementation";
   let description = [{
     Represents trait applications that are required to hold when implementing
     the enclosing trait. These assumptions are available as subproofs via
     `trait.proof.project` on the self-proof obtained from `trait.assume`.
 
-    This models a `where` clause on a trait definition — it describes what
-    must be assumed about type parameters in order for the trait’s methods
+    This models a Rust-style `where` clause on a `trait` definition or implementation.
+    It describes what must be assumed about type parameters in order for the trait’s methods
     to be implementable.
 
     Example:
       !S = trait.poly<0>
-      trait.trait @Ord[!S] where [
+      trait.trait @Ord[!S] given [
         @Eq[!S],
         @PartialOrd[!S,!S]
       ]

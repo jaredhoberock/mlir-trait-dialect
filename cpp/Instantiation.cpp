@@ -45,27 +45,6 @@ std::string mangleFunctionName(StringRef name,
 
   return result;
 }
-                                                      
-std::string mangleMethodName(
-    StringRef traitName,
-    ArrayRef<Type> typeArgs,
-    StringRef methodName) 
-{
-  std::string result;
-  llvm::raw_string_ostream os(result);
-
-  os << "__trait_" << traitName;
-  os << "_impl";
-
-  for (auto ty : typeArgs) {
-    os << "_";
-    ty.print(os);
-  }
-
-  os << "_" << methodName;
-
-  return os.str();
-}
 
 static void cloneRegionWithTypeReplacement(
     OpBuilder& builder,

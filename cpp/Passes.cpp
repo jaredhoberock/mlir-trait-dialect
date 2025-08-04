@@ -22,7 +22,7 @@ LogicalResult verifyAcyclicTraits(ModuleOp module) {
     if (s == Status::InPath) {
       // back-edge: report the cycle u ... u
       auto it = llvm::find(stack, u);
-      auto diag = u.emitError("cycle in trait `where` clause: ");
+      auto diag = u.emitError("cycle in trait `given` clause: ");
       for (auto i = it; i != stack.end(); ++i)
         diag << "@" << i->getSymName() << " -> ";
       diag << "@" << u.getSymName();
@@ -69,17 +69,17 @@ struct ProveClaimPattern : OpRewritePattern<ClaimOp> {
 
   LogicalResult matchAndRewrite(ClaimOp claim, PatternRewriter& rewriter) const override {
     // emit claims for each prerequisite
-    SmallVector<Value> prereqProofs;
+    SmallVector<Value> prereqClaims;
     for (auto prereqApp : claim.getPrereqTraitApplications()) {
       auto newClaim = rewriter.create<ClaimOp>(claim.getLoc(), prereqApp);
-      prereqProofs.push_back(newClaim.getResult());
+      prereqClaims.push_back(newClaim.getResult());
     }
 
     // replace the claim with a witness
     rewriter.replaceOpWithNewOp<WitnessOp>(
       claim,
       claim.getResult().getType(),
-      prereqProofs
+      prereqClaims
     );
 
     return success();
@@ -151,9 +151,9 @@ struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
     if (!callee)
       return methodCallOp.emitOpError() << "couldn't get or instantiate callee '" << methodCallOp.getMethodRef() << "'";
 
-    // pass the proof as the first argument to the instantiated callee
+    // pass the claim as the first argument to the instantiated callee
     SmallVector<Value> args;
-    args.push_back(methodCallOp.getProof());
+    args.push_back(methodCallOp.getClaim());
     llvm::append_range(args, methodCallOp.getArguments());
 
     // replace with a trait.func.call to the instantiated callee
@@ -187,22 +187,22 @@ struct EraseProjectOp : public OpRewritePattern<ProjectOp> {
   }
 };
 
-static LogicalResult eraseProofs(ModuleOp module) {
+static LogicalResult eraseClaims(ModuleOp module) {
   MLIRContext* ctx = module.getContext();
   ConversionTarget target(*ctx);
 
   // all trait.project and trait.witness ops are illegal
   target.addIllegalOp<ProjectOp, WitnessOp>();
 
-  // otherwise, an op is legal if it does not mention !trait.proof
+  // otherwise, an op is legal if it does not mention !trait.claim
   target.markUnknownOpDynamicallyLegal([&](Operation *op) {
-    return !opMentionsProofType(op);
+    return !opMentionsClaimType(op);
   });
   
-  // create a TypeConverter to erase !trait.proof types
+  // create a TypeConverter to erase !trait.claim types
   TypeConverter tc;
   tc.addConversion([](Type ty) { return ty; });
-  tc.addConversion([](ProofType ty, SmallVectorImpl<Type> &out) {
+  tc.addConversion([](ClaimType ty, SmallVectorImpl<Type> &out) {
     // leaving out unchanged means erase this type
     return success();
   });
@@ -261,10 +261,10 @@ LogicalResult monomorphize(ModuleOp module) {
     trait.erase();
   }
 
-  // erase proofs
+  // erase claims
   // we do this last because all of the above may
-  // use !trait.proof, trait.witness, & trait.project
-  if (failed(eraseProofs(module)))
+  // use !trait.claim, trait.witness, & trait.project
+  if (failed(eraseClaims(module)))
     return failure();
 
   return module.verify();

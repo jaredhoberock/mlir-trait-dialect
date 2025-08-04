@@ -69,45 +69,45 @@ LogicalResult unifyTypes(
     Type foundTy,
     ModuleOp moduleOp);
 
-inline bool containsProofType(Type ty) {
+inline bool containsClaimType(Type ty) {
   bool found = false;
   ty.walk([&](Type sub) {
-    if (isa<ProofType>(sub))
+    if (isa<ClaimType>(sub))
       found = true;
   });
   return found;
 }
 
-inline bool containsProofType(Attribute attr) {
+inline bool containsClaimType(Attribute attr) {
   bool found = false;
   attr.walk([&](Attribute sub) {
     if (auto ta = dyn_cast<TypeAttr>(sub)) {
-      if (containsProofType(ta.getValue()))
+      if (containsClaimType(ta.getValue()))
         found = true;
     }
   });
   return found;
 }
 
-inline bool opMentionsProofType(Operation *op) {
+inline bool opMentionsClaimType(Operation *op) {
   // inspect operands
   for (Type t : op->getOperandTypes())
-    if (containsProofType(t)) return true;
+    if (containsClaimType(t)) return true;
 
   // inspect result types
   for (Type t : op->getResultTypes())
-    if (containsProofType(t)) return true;
+    if (containsClaimType(t)) return true;
 
   // inspect block arguments
   for (Region& r : op->getRegions())
     for (Block& b : r)
       for (Value arg : b.getArguments())
-        if (containsProofType(arg.getType()))
+        if (containsClaimType(arg.getType()))
           return true;
 
   // inspect attributes
   for (NamedAttribute attr : op->getAttrs())
-    if (containsProofType(attr.getValue()))
+    if (containsClaimType(attr.getValue()))
       return true;
 
   return false;

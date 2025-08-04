@@ -9,9 +9,6 @@ namespace mlir::trait {
 
 bool isPolymorph(func::FuncOp fn);
 
-std::string mangleMethodName(StringRef traitName,
-                             ArrayRef<Type> typeArgs,
-                             StringRef methodName);
 
 std::string mangleFunctionName(StringRef name,
                                const DenseMap<Type, Type> &substitution);

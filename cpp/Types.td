@@ -35,19 +35,19 @@ def PolyType : TypeDef<TraitDialect, "Poly", [SymbolicTypeUnificationInterface]>
   let hasCustomAssemblyFormat = 1;
 }
 
-// Represents a zero-sized proof that a trait application is satisfied
-def ProofType : TypeDef<TraitDialect, "Proof"> {
-  let mnemonic = "proof";
-  let summary = "Proof that a type list implements a trait";
+// Represents a claim, without direct proof, that a trait application is satisfied by some implementation
+def ClaimType : TypeDef<TraitDialect, "Claim"> {
+  let mnemonic = "claim";
+  let summary = "Claim that a type list implements a trait";
 
   let description = [{
-    The `!trait.proof` type represents evidence that some list of types satisfies a trait.
+    The `!trait.claim` type represents unproven evidence that some list of types satisfies a trait.
 
     For example,
 
-        !trait.proof<@PartialEq[i32, i32]>
+        !trait.claim<@PartialEq[i32, i32]>
 
-    represents a proof that an implementation exists for `@PartialEq` with `i32` supplied for both type parameters.
+    represents a claim that an implementation exists for `@PartialEq` with `i32` supplied for both type parameters.
   }];
 
   let parameters = (ins
@@ -55,12 +55,12 @@ def ProofType : TypeDef<TraitDialect, "Proof"> {
   );
 
   let extraClassDeclaration = [{
-    static ProofType get(MLIRContext *ctx, FlatSymbolRefAttr trait, ArrayRef<Type> typeArgs) {
-      return ProofType::get(ctx, TraitApplicationAttr::get(ctx, trait, typeArgs));
+    static ClaimType get(MLIRContext *ctx, FlatSymbolRefAttr trait, ArrayRef<Type> typeArgs) {
+      return ClaimType::get(ctx, TraitApplicationAttr::get(ctx, trait, typeArgs));
     }
 
-    static ProofType get(MLIRContext *ctx, FlatSymbolRefAttr trait, ArrayAttr typesAttr) {
-      return ProofType::get(ctx, TraitApplicationAttr::get(ctx, trait, typesAttr));
+    static ClaimType get(MLIRContext *ctx, FlatSymbolRefAttr trait, ArrayAttr typesAttr) {
+      return ClaimType::get(ctx, TraitApplicationAttr::get(ctx, trait, typesAttr));
     }
 
     FlatSymbolRefAttr getTrait() const {

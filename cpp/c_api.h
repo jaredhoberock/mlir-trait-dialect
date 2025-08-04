@@ -52,7 +52,7 @@ MlirOperation traitWitnessOpCreate(MlirLocation loc,
 
 /// Create a trait.project operation
 MlirOperation traitProjectOpCreate(MlirLocation loc,
-                                   MlirValue srcProof,
+                                   MlirValue srcClaim,
                                    MlirStringRef traitName,
                                    MlirType* typeArgs, intptr_t numTypeArgs);
 
@@ -63,8 +63,8 @@ MlirOperation traitAssumeOpCreate(MlirLocation loc, MlirStringRef traitName,
 /// Return the !trait.poly<uniqueId> type
 MlirType traitPolyTypeGet(MlirContext ctx, unsigned int uniqueId);
 
-// Return the !trait.proof<@Trait[Type1, Type2, ...]> type
-MlirType traitProofTypeGet(MlirContext ctx,
+// Return the !trait.claim<@Trait[Type1, Type2, ...]> type
+MlirType traitClaimTypeGet(MlirContext ctx,
                            MlirStringRef traitName,
                            MlirType* typeArgs, intptr_t numTypeArgs);
 

@@ -30,7 +30,7 @@ def TraitOp : TraitDialectOp<"trait", [
   let summary = "Declares a trait interface";
   let description = [{
     Declares a trait interface, similar to a Rust or Scala trait. A `trait.trait` operation
-    defines a symbol that can be referenced by `!trait.proof` types, `trait.impl`, and `trait.method.call`.
+    defines a symbol that can be referenced by `!trait.claim` types, `trait.impl`, and `trait.method.call`.
     It contains a region which holds `func.func` operations that define the
     method requirements for implementors. If any of these `func.func` operations have
     a body, then this method is optional for implementors.
@@ -48,7 +48,7 @@ def TraitOp : TraitDialectOp<"trait", [
   let arguments = (ins
     SymbolNameAttr:$sym_name,
     TypeArrayAttr:$type_params,
-    OptionalAttr<WhereAttr>:$where_clause
+    OptionalAttr<ObligationsAttr>:$given_clause
   );
 
   let results = (outs); // No results
@@ -115,7 +115,7 @@ def TraitOp : TraitDialectOp<"trait", [
     }]>
   ];
 
-  let assemblyFormat = "$sym_name $type_params (`where` $where_clause^)? attr-dict-with-keyword $body";
+  let assemblyFormat = "$sym_name $type_params (`given` $given_clause^)? attr-dict-with-keyword $body";
 
   let hasVerifier = 1;
 }
@@ -127,12 +127,17 @@ def ImplOp : TraitDialectOp<"impl", [
   HasParent<"ModuleOp">,
   IsolatedFromAbove,
   SingleBlock,
+  Symbol,
   SymbolTable
 ] # GraphRegionNoTerminator.traits
 > {
   let summary = "Implements a trait for a list of types";
   let description = [{
     Declares an implementation of a trait for a specific list of types.
+
+    The `sym_name` attribute is a SymbolNameAttr allows `trait.witness` operations
+    to refer to this implementation by name. If omitted from the textual IR, a unique
+    `sym_name` will be automatically synthesized based the other arguments.
 
     The `trait_name` attribute is a FlatSymbolRefAttr pointing to a `trait.trait`
     declaration (e.g., `@PartialEq`), and `type_args` is an ArrayRefParameter of Types
@@ -142,7 +147,7 @@ def ImplOp : TraitDialectOp<"impl", [
     implementing one of the trait's methods.
 
     Example:
-        trait.impl @PartialEq for [i32,i32] {
+        trait.impl @PartialEq_impl_i32 @PartialEq for [i32,i32] {
           func.func @eq(%self: i32, %other: i32) -> i1 {
             %res = arith.cmpi eq, %self, %other : i32
             return %res : i1
@@ -150,7 +155,12 @@ def ImplOp : TraitDialectOp<"impl", [
         }
   }];
 
-  let arguments = (ins FlatSymbolRefAttr:$trait_name, TypeArrayAttr:$type_args);
+  let arguments = (ins 
+    SymbolNameAttr:$sym_name,
+    FlatSymbolRefAttr:$trait_name, 
+    TypeArrayAttr:$type_args,
+    OptionalAttr<ObligationsAttr>:$where_clause
+  );
   let regions = (region SizedRegion<1>:$body);
 
   let extraClassDeclaration = [{
@@ -171,30 +181,46 @@ def ImplOp : TraitDialectOp<"impl", [
     // Builds a substitution that maps the TraitOp's PolyType parameters to this ImplOp's type arguments
     DenseMap<Type,Type> buildSubstitution();
 
-    ProofType getSelfProofType() {
-      return ProofType::get(getContext(), getTraitNameAttr(), getTypeArgs());
+    ClaimType getSelfClaimType() {
+      return ClaimType::get(getContext(), getTraitNameAttr(), getTypeArgs());
     }
+
+    // Helper to generate unique symbol name
+    static std::string generateSymName(FlatSymbolRefAttr traitName, ArrayAttr typeArgs, std::optional<ObligationsAttr> whereClause = {});
   }];
 
   // builders create one empty block in the body region
   let builders = [
     // lower-level builder
-    OpBuilder<(ins "::mlir::FlatSymbolRefAttr":$trait_name,
-                   "::mlir::ArrayAttr":$type_args), [{
+    OpBuilder<(ins "::mlir::StringRef":$sym_name,
+                   "::mlir::FlatSymbolRefAttr":$trait_name,
+                   "::mlir::ArrayAttr":$type_args,
+                   "std::optional<ObligationsAttr>":$where_clause), [{
+      $_state.addAttribute("sym_name", $_builder.getStringAttr(sym_name));
       $_state.addAttribute("trait_name", trait_name);
       $_state.addAttribute("type_args", type_args);
+      if (where_clause)
+        $_state.addAttribute("where_clause", *where_clause);
       ::mlir::Region *region = $_state.addRegion();
       region->emplaceBlock();
+    }]>,
+
+    OpBuilder<(ins "::mlir::FlatSymbolRefAttr":$trait_name,
+                   "::mlir::ArrayAttr":$type_args,
+                   "std::optional<ObligationsAttr>":$where_clause), [{
+      // Auto-generate unique symbol name
+      std::string symName = generateSymName(trait_name, type_args, where_clause);
+      build($_builder, $_state, symName, trait_name, type_args, where_clause);
     }]>
   ];
 
-  let assemblyFormat = "$trait_name $type_args attr-dict-with-keyword $body";
+  let hasCustomAssemblyFormat = 1;
 }
 
 
-def Proof : TypeConstraint<
-  CPred<"::mlir::isa<ProofType>($_self)">,
-  "any '!trait.proof' type"
+def Claim : TypeConstraint<
+  CPred<"::mlir::isa<ClaimType>($_self)">,
+  "any '!trait.claim' type"
 >;
 
 
@@ -204,10 +230,10 @@ def WitnessOp : TraitDialectOp<"witness", [
 ]>{
   let summary = "Materializes a proof value for a concrete trait implementation";
   let description = [{
-    Creates a zero-sized SSA value of type `!trait.proof<@Trait[types]>` that
-    acts as proof that the trait is satisfied.
+    Creates a zero-sized SSA value of type `!trait.claim<@Trait[types]>` that
+    acts a concrete proof that the trait is satisfied.
 
-    If the target trait has a `where` clause, the caller must supply proofs for
+    If the target trait has a `given` clause, the caller must supply claims for
     those prerequisite trait applications as operands to this op. Only one-hop
     prerequisites are required; compose `trait.witness` to handle transitive needs.
 
@@ -216,12 +242,12 @@ def WitnessOp : TraitDialectOp<"witness", [
 
     Symbol use verification checks;
       * a matching `trait.impl` exists for the target application, and
-      * the provided prerequisite proofs cover the target trait's `where` clause
+      * the provided prerequisite claims cover the target trait's `given` clause
         after substituting the target's actual type arguments for its parameters.
   }];
 
-  let arguments = (ins Variadic<ProofType>:$prereqs);
-  let results = (outs Proof:$result);
+  let arguments = (ins Variadic<ClaimType>:$prereqs);
+  let results = (outs Claim:$result);
 
   let extraClassDeclaration = [{
     TraitOp getTrait();
@@ -237,10 +263,10 @@ def AssumeOp : TraitDialectOp<"assume", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
   Pure
 ]>{
-  let summary = "Assumes a proof value for a symbolic trait application";
+  let summary = "Materializes an evidence value for a symbolic trait application";
   let description = [{
-    Creates a zero-sized SSA value of type `!trait.proof<@Trait[types]>` that
-    acts as an assumed proof within trait or impl method bodies. This operation
+    Creates a zero-sized SSA value of type `!trait.claim<@Trait[types]>` that
+    acts as assumed evidence within trait or impl method bodies. This operation
     has no operands.
 
     At least one type argument must be symbolic (!trait.poly); concrete types
@@ -256,7 +282,7 @@ def AssumeOp : TraitDialectOp<"assume", [
       }
   }];
 
-  let results = (outs Proof:$result);
+  let results = (outs Claim:$result);
 
   let extraClassDeclaration = [{
     TraitOp getTrait();
@@ -277,7 +303,7 @@ def MethodCallOp : TraitDialectOp<"method.call", [
     Resolution to an implementation is performed during monomorphization.
 
     Example:
-      %p = trait.witness : !trait.proof<@PartialEq, [i32,i32]>
+      %p = trait.witness : @PartialEq[i32,i32]
       %x = ... : i32
       %y = ... : i32
       %res = trait.method.call @PartialEq::@eq<%p>(%x, %y) : (!trait.poly<0>, !trait.poly<1>) to (i32, i32) -> i1
@@ -286,7 +312,7 @@ def MethodCallOp : TraitDialectOp<"method.call", [
   let arguments = (ins
     SymbolRefAttr:$method_ref,
     TypeAttrOf<FunctionType>:$method_function_type,
-    ProofType:$proof,
+    ClaimType:$claim,
     Variadic<AnyType>:$arguments
   );
 
@@ -298,7 +324,7 @@ def MethodCallOp : TraitDialectOp<"method.call", [
       "FlatSymbolRefAttr":$traitRef,
       "FlatSymbolRefAttr":$methodRef,
       "TypeAttr":$methodFunctionType,
-      "Value":$proof,
+      "Value":$claim,
       "ValueRange":$arguments), [{
         MLIRContext *ctx = $_builder.getContext();
 
@@ -310,7 +336,7 @@ def MethodCallOp : TraitDialectOp<"method.call", [
         );
 
         // build the operation with the created nested reference
-        return build($_builder, $_state, results, qualifiedRef, methodFunctionType, proof, arguments);
+        return build($_builder, $_state, results, qualifiedRef, methodFunctionType, claim, arguments);
     }]>,
 
     // builder that takes trait and method names separately
@@ -319,7 +345,7 @@ def MethodCallOp : TraitDialectOp<"method.call", [
       "StringRef":$traitName,
       "StringRef":$methodName,
       "TypeAttr":$methodFunctionType,
-      "Value":$proof,
+      "Value":$claim,
       "ValueRange":$arguments), [{
         // convert strings to FlatSymbolRefAttrs and call the other builder
         MLIRContext *ctx = $_builder.getContext();
@@ -327,7 +353,7 @@ def MethodCallOp : TraitDialectOp<"method.call", [
         FlatSymbolRefAttr methodRef = FlatSymbolRefAttr::get(ctx, methodName);
 
         // call the other builder
-        return build($_builder, $_state, results, traitRef, methodRef, methodFunctionType, proof, arguments);
+        return build($_builder, $_state, results, traitRef, methodRef, methodFunctionType, claim, arguments);
     }]>,
   ];
 
@@ -383,7 +409,7 @@ def MethodCallOp : TraitDialectOp<"method.call", [
   }];
 
   let assemblyFormat = [{
-    $method_ref `<` $proof `>` `(` $arguments `)` attr-dict `:` $method_function_type `as` type($proof) functional-type($arguments, results)
+    $method_ref `<` $claim `>` `(` $arguments `)` attr-dict `:` $method_function_type `as` type($claim) functional-type($arguments, results)
   }];
 
   let hasVerifier = 1;
@@ -402,9 +428,9 @@ def FuncCallOp : TraitDialectOp<"func.call", [
     Example:
       %x = ... : i32
       %y = ... : i32
-      %p = trait.witness : !trait.proof<@PartialEq[i32,i32]>
+      %p = trait.witness @PartialEq[i32,i32]
       %r = trait.func.call @foo(%p, %x, %y)
-        : (!trait.proof<@PartialEq[!trait.poly<0>,!trait.poly<0>]>, !trait.poly<0>, !trait.poly<0>) -> i1
+        : (!trait.claim<@PartialEq[!trait.poly<0>,!trait.poly<0>]>, !trait.poly<0>, !trait.poly<0>) -> i1
         to (i32, i32) -> i1
   }];
 
@@ -452,25 +478,25 @@ def ProjectOp : TraitDialectOp<"project", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
   Pure
 ]> {
-  let summary = "Project a prerequisite proof from a proof";
+  let summary = "Project a prerequisite claim from a claim";
   let description = [{
-    Given a proof of `@Trait[Args...]`, produce a proof of one prerequisite
-    `@Prereq[Args...]` of `@Trait` as declared in the `where` clause of
+    Given a claim of `@Trait[Args...]`, produce a claim of one prerequisite
+    `@Prereq[Args...]` of `@Trait` as declared in the `given` clause of
     `trait.trait @Trait`, after substituting `Args...` for `@Trait`'s type
     parameters.
 
     Notes:
     * Only a **single hop** is performed; chain `trait.project` for transitive projections.
-    * If `@Trait` has no `where` clause, no projections from it are valid.
+    * If `@Trait` has no `given` clause, no projections from it are valid.
 
     Example:
-      // @Ord[!S] where [ @Eq[!S], @PartialOrd[!S,!S] ]
+      // @Ord[!S] given [ @Eq[!S], @PartialOrd[!S,!S] ]
       %p = trait.assume @Ord[!T]
       %eq = trait.project %p @Ord[!T] to @Eq[!T]
   }];
 
-  let arguments = (ins Proof:$source);
-  let results   = (outs Proof:$result);
+  let arguments = (ins Claim:$source);
+  let results   = (outs Claim:$result);
 
   let extraClassDeclaration = [{
     TraitOp getSourceTrait();
@@ -486,12 +512,12 @@ def ClaimOp : TraitDialectOp<"claim", [
 ]> {
   let summary = "Unverified claim that a trait implementation exists";
   let description = [{
-    Declares an unverified proof of a trait application (e.g., `@Trait[Types...]`)
-    by producing a value of type `!trait.proof<@Trait[Types...]>`.
+    Declares unverified evidence of a trait application (e.g., `@Trait[Types...]`)
+    by producing a value of type `!trait.claim<@Trait[Types...]>`.
 
     The type arguments must be concrete; symbolic types are illegal.
 
-    This operation does not require a matching `trait.impl` or where-clause satisfaction.
+    This operation does not require a matching `trait.impl` satisfaction.
     It is intended to be elaborated into verified `trait.witness` operations prior to
     monomorphization via a claim proving pass.
 
@@ -499,13 +525,13 @@ def ClaimOp : TraitDialectOp<"claim", [
       %p = trait.claim @Ord[i32]
   }];
 
-  let results = (outs Proof:$result);
+  let results = (outs Claim:$result);
 
   let builders = [
     OpBuilder<(ins "::mlir::trait::TraitApplicationAttr":$app), [{
       mlir::MLIRContext* ctx = $_builder.getContext();
-      auto proofTy = ProofType::get(ctx, app);
-      return build($_builder, $_state, proofTy);
+      auto claimTy = ClaimType::get(ctx, app);
+      return build($_builder, $_state, claimTy);
     }]>
   ];
 
@@ -513,7 +539,7 @@ def ClaimOp : TraitDialectOp<"claim", [
     TraitOp getTrait();
     ArrayRef<Type> getTypeArgs();
     TraitApplicationAttr getTraitApplication() {
-      return cast<ProofType>(getResult().getType()).getApplication();
+      return cast<ClaimType>(getResult().getType()).getApplication();
     }
     FlatSymbolRefAttr getTraitAttr();
 
