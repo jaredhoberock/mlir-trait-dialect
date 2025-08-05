@@ -64,21 +64,21 @@ std::unique_ptr<Pass> createVerifyAcyclicTraitsPass() {
 
 namespace {
 
-struct ProveClaimPattern : OpRewritePattern<ClaimOp> {
+struct ProveClaimPattern : OpRewritePattern<AllegeOp> {
   using OpRewritePattern::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(ClaimOp claim, PatternRewriter& rewriter) const override {
-    // emit claims for each prerequisite
+  LogicalResult matchAndRewrite(AllegeOp op, PatternRewriter& rewriter) const override {
+    // emit allegations for each prerequisite
     SmallVector<Value> prereqClaims;
-    for (auto prereqApp : claim.getPrereqTraitApplications()) {
-      auto newClaim = rewriter.create<ClaimOp>(claim.getLoc(), prereqApp);
+    for (auto prereqApp : op.getPrereqTraitApplications()) {
+      auto newClaim = rewriter.create<AllegeOp>(op.getLoc(), prereqApp);
       prereqClaims.push_back(newClaim.getResult());
     }
 
-    // replace the claim with a witness
+    // replace the op with a witness
     rewriter.replaceOpWithNewOp<WitnessOp>(
-      claim,
-      claim.getResult().getType(),
+      op,
+      op.getResult().getType(),
       prereqClaims
     );
 

@@ -486,13 +486,13 @@ def ProjectOp : TraitDialectOp<"project", [
   let hasCustomAssemblyFormat = 1;
 }
 
-def ClaimOp : TraitDialectOp<"claim", [
+def AllegeOp : TraitDialectOp<"allege", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
   Pure
 ]> {
   let summary = "Unverified claim that a trait implementation exists";
   let description = [{
-    Declares an unproven claim of a trait application (e.g., `@Trait[Types...]`)
+    Alleges an unproven claim of a trait application (e.g., `@Trait[Types...]`)
     by producing a value of type `!trait.claim<@Trait[Types...]>`.
 
     The type arguments must be concrete; symbolic types are illegal.
@@ -502,7 +502,7 @@ def ClaimOp : TraitDialectOp<"claim", [
     monomorphization via a claim proving pass.
 
     Example:
-      %p = trait.claim @Ord[i32]
+      %p = trait.allege @Ord[i32]
   }];
 
   let results = (outs Claim:$result);

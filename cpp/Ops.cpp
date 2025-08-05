@@ -1006,10 +1006,10 @@ LogicalResult ProjectOp::verifySymbolUses(SymbolTableCollection &/*symbolTable*/
 
 
 //===----------------------------------------------------------------------===//
-// ClaimOp
+// AllegeOp
 //===----------------------------------------------------------------------===//
 
-ParseResult ClaimOp::parse(OpAsmParser &p, OperationState &st) {
+ParseResult AllegeOp::parse(OpAsmParser &p, OperationState &st) {
   // parse `@Trait[Types...]`
   TraitApplicationAttr app = dyn_cast_or_null<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
   if (!app) return failure();
@@ -1021,14 +1021,14 @@ ParseResult ClaimOp::parse(OpAsmParser &p, OperationState &st) {
   return success();
 }
 
-void ClaimOp::print(OpAsmPrinter &p) {
+void AllegeOp::print(OpAsmPrinter &p) {
   p << " ";
 
   // print the claimed trait application
   dyn_cast<ClaimType>(getResult().getType()).getTraitApplication().print(p);
 }
 
-LogicalResult ClaimOp::verify() {
+LogicalResult AllegeOp::verify() {
   // type args must be concrete
   bool allConcrete = llvm::all_of(getTypeArgs(), [](Type ty) {
     return isConcrete(ty);
@@ -1040,7 +1040,7 @@ LogicalResult ClaimOp::verify() {
   return success();
 }
 
-TraitOp ClaimOp::getTrait() {
+TraitOp AllegeOp::getTrait() {
   ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
   if (!module) {
     emitOpError() << "not inside of a module";
@@ -1049,25 +1049,25 @@ TraitOp ClaimOp::getTrait() {
   return mlir::SymbolTable::lookupNearestSymbolFrom<TraitOp>(module, getTraitAttr());
 }
 
-FlatSymbolRefAttr ClaimOp::getTraitAttr() {
+FlatSymbolRefAttr AllegeOp::getTraitAttr() {
   return getTraitApplication().getTrait();
 }
 
-LogicalResult ClaimOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+LogicalResult AllegeOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
   if (!module)
     return emitOpError() << "not in a module";
   return getTraitApplication().verifyTraitApplication(module, [this] { return emitOpError(); });
 }
 
-ArrayRef<Type> ClaimOp::getTypeArgs() {
+ArrayRef<Type> AllegeOp::getTypeArgs() {
   return dyn_cast<ClaimType>(getResult().getType()).getTypeArgs();
 }
 
-SmallVector<TraitApplicationAttr> ClaimOp::getPrereqTraitApplications() {
+SmallVector<TraitApplicationAttr> AllegeOp::getPrereqTraitApplications() {
   TraitOp trait = getTrait();
   if (!trait)
-    llvm_unreachable("ClaimOp::getPrereqTraitApplications: couldn't find TraitOp");
+    llvm_unreachable("AllegeOp::getPrereqTraitApplications: couldn't find TraitOp");
 
   SmallVector<TraitApplicationAttr> result;
 
@@ -1076,7 +1076,7 @@ SmallVector<TraitApplicationAttr> ClaimOp::getPrereqTraitApplications() {
     for (auto prereqApp : obligations->getApplications()) {
       auto substApp = dyn_cast_or_null<TraitApplicationAttr>(applySubstitution(subst, prereqApp));
       if (!substApp)
-        llvm_unreachable("ClaimOp::getPrereqTraitApplications: expected substituted trait application to be a TraitApplicationAttr");
+        llvm_unreachable("AllegeOp::getPrereqTraitApplications: expected substituted trait application to be a TraitApplicationAttr");
       result.push_back(substApp);
     }
   }

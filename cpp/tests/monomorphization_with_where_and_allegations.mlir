@@ -230,7 +230,7 @@ trait.impl for @Ord[i32] {
 // CHECK-NOT: builtin.unrealized_conversion_cast
 // CHECK: call @Ord_impl_i32_max
 func.func @max(%a: i32, %b: i32) -> i32 {
-  %p = trait.claim @Ord[i32]
+  %p = trait.allege @Ord[i32]
   %res = trait.method.call @Ord::@max<%p>(%a, %b)
     : (!OrdS, !OrdS) -> !OrdS
     as !trait.claim<@Ord[i32]> (i32, i32) -> i32
@@ -243,7 +243,7 @@ func.func @max(%a: i32, %b: i32) -> i32 {
 // CHECK-NOT: builtin.unrealized_conversion_cast
 // CHECK: call @Ord_impl_i32_min
 func.func @min(%a: i32, %b: i32) -> i32 {
-  %p = trait.claim @Ord[i32]
+  %p = trait.allege @Ord[i32]
   %res = trait.method.call @Ord::@min<%p>(%a, %b)
     : (!OrdS, !OrdS) -> !OrdS
     as !trait.claim<@Ord[i32]> (i32, i32) -> i32
