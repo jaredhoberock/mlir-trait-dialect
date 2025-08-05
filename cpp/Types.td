@@ -7,7 +7,7 @@ include "Dialect.td"
 include "TypeInterfaces.td"
 
 // Represents a universally quantified type parameter
-def PolyType : TypeDef<TraitDialect, "Poly", [SymbolicTypeUnificationInterface]> {
+def PolyType : TypeDef<TraitDialect, "Poly", [SymbolicTypeInterface]> {
   let mnemonic = "poly";
   let summary = "A polymorphic type parameter";
 
@@ -26,8 +26,8 @@ def PolyType : TypeDef<TraitDialect, "Poly", [SymbolicTypeUnificationInterface]>
     // create a "fresh" PolyType with an unused unique_id
     static PolyType fresh(MLIRContext* ctx);
 
-    // for SymbolicTypeUnificationInterface
-    LogicalResult unifyWith(Type ty, ModuleOp module, llvm::function_ref<InFlightDiagnostic()> emitError);
+    // for SymbolicTypeInterface
+    LogicalResult isSubstitutableBy(Type ty, ModuleOp module, llvm::function_ref<InFlightDiagnostic()> emitError);
   }];
 
   let parameters = (ins "int":$unique_id);
@@ -51,7 +51,7 @@ def ClaimType : TypeDef<TraitDialect, "Claim"> {
   }];
 
   let parameters = (ins
-    "::mlir::trait::TraitApplicationAttr":$application
+    "::mlir::trait::TraitApplicationAttr":$trait_application
   );
 
   let extraClassDeclaration = [{
@@ -63,19 +63,26 @@ def ClaimType : TypeDef<TraitDialect, "Claim"> {
       return ClaimType::get(ctx, TraitApplicationAttr::get(ctx, trait, typesAttr));
     }
 
-    FlatSymbolRefAttr getTrait() const {
-      return getApplication().getTrait();
+    FlatSymbolRefAttr getTraitName() const {
+      return getTraitApplication().getTrait();
     }
 
     ArrayRef<Type> getTypeArgs() const {
-      return getApplication().getTypeArgs();
+      return getTraitApplication().getTypeArgs();
     }
+
+    // for EvidenceTypeInterface
+    TraitApplicationAttr getTraitApplication(ModuleOp) {
+      return getTraitApplication();
+    }
+
+    // for SymbolicTypeInterface
+    LogicalResult isSubstitutableBy(Type ty, ModuleOp module, llvm::function_ref<InFlightDiagnostic()> emitError);
   }];
 
   let genVerifyDecl = 1;
 
-  let assemblyFormat = "`<` $application `>`";
+  let assemblyFormat = "`<` $trait_application `>`";
 }
-
 
 #endif // TRAIT_TYPES_TD

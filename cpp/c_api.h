@@ -33,7 +33,7 @@ MlirOperation traitMethodCallOpCreate(MlirLocation loc,
                                       MlirStringRef traitName,
                                       MlirStringRef methodName,
                                       MlirType methodFunctionType,
-                                      MlirValue proof,
+                                      MlirValue claim,
                                       MlirValue* arguments, intptr_t numArguments,
                                       MlirType* resultTypes, intptr_t numResults);
 

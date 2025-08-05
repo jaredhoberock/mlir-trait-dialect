@@ -126,6 +126,9 @@ struct FuncCallOpLowering : public OpRewritePattern<FuncCallOp> {
     // instantiate the callee
     auto callee = callOp.getOrInstantiateCallee(rewriter);
 
+    // XXX TODO getOrInstantiateCallee is mangling the name of the callee, even though it's monomorphic
+    //          because !trait.claim is symbolic now
+
     // replace with a func.call to the instanced callee
     rewriter.replaceOpWithNewOp<func::CallOp>(
       callOp,
@@ -133,6 +136,7 @@ struct FuncCallOpLowering : public OpRewritePattern<FuncCallOp> {
       callOp.getResultTypes(),
       callOp.getOperands()
     );
+
     return success();
   }
 };
@@ -194,9 +198,9 @@ static LogicalResult eraseClaims(ModuleOp module) {
   // all trait.project and trait.witness ops are illegal
   target.addIllegalOp<ProjectOp, WitnessOp>();
 
-  // otherwise, an op is legal if it does not mention !trait.claim
+  // otherwise, an op is legal if it does not mention a !trait.claim type
   target.markUnknownOpDynamicallyLegal([&](Operation *op) {
-    return !opMentionsClaimType(op);
+    return !opMentionsType<ClaimType>(op);
   });
   
   // create a TypeConverter to erase !trait.claim types
@@ -263,7 +267,7 @@ LogicalResult monomorphize(ModuleOp module) {
 
   // erase claims
   // we do this last because all of the above may
-  // use !trait.claim, trait.witness, & trait.project
+  // use !trait.claim, trait.witness, or trait.project
   if (failed(eraseClaims(module)))
     return failure();
 

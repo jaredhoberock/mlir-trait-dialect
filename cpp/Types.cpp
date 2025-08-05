@@ -65,11 +65,11 @@ void PolyType::print(AsmPrinter &printer) const {
 }
 
 
-LogicalResult PolyType::unifyWith(
+LogicalResult PolyType::isSubstitutableBy(
   Type ty,
   ModuleOp module,
   llvm::function_ref<InFlightDiagnostic()> emitError) {
-  // XXX if ty is a PolyType, should we unify with a different PolyType?
+  // XXX if ty is also PolyType, should we check IDs?
   return success();
 }
 
@@ -110,10 +110,10 @@ static SmallVector<Type, 4> getImmediateSubTypes(Type ty) {
 }
 
 
-/// Attempt to unify a SymbolicTypeUnificationInterface `symTy` against another type `otherTy`.
+/// Attempt to unify a SymbolicTypeInterface `symTy` against another type `otherTy`.
 /// If `symTy` already has a mapping in `substitution`, verify it matches `otherTy`. Otherwise,
 /// ensure `otherTy` can be unified with `symTy` and record the mapping.
-static LogicalResult unifySymbolicType(SymbolicTypeUnificationInterface symTy,
+static LogicalResult unifySymbolicType(SymbolicTypeInterface symTy,
                                        Type otherTy,
                                        ModuleOp moduleOp,
                                        llvm::DenseMap<Type, Type> &substitution,
@@ -131,8 +131,8 @@ static LogicalResult unifySymbolicType(SymbolicTypeUnificationInterface symTy,
     return success();
   }
 
-  // no substitution already exists, check that we can unify
-  if (failed(symTy.unifyWith(otherTy, moduleOp, emitError))) {
+  // no substitution already exists, check that substitution is possible
+  if (failed(symTy.isSubstitutableBy(otherTy, moduleOp, emitError))) {
     return failure();
   }
 
@@ -155,22 +155,24 @@ LogicalResult unifyTypes(Type expectedTy,
   if (expectedTy == foundTy)
     return success();
 
-  // expectedTy is a SymbolicTypeUnificationInterface
-  if (auto symTy = dyn_cast<SymbolicTypeUnificationInterface>(expectedTy)) {
-    return unifySymbolicType(symTy,
-                             foundTy,
-                             moduleOp,
-                             substitution,
-                             emitError);
+  // expectedTy is a SymbolicTypeInterface
+  if (auto symTy = dyn_cast<SymbolicTypeInterface>(expectedTy)) {
+    if (succeeded(unifySymbolicType(symTy,
+                                    foundTy,
+                                    moduleOp,
+                                    substitution,
+                                    emitError)))
+      return success();
   }
 
-  // foundTy is a SymbolicTypeUnificationInterface
-  if (auto symTy = dyn_cast<SymbolicTypeUnificationInterface>(foundTy)) {
-    return unifySymbolicType(symTy,
-                             expectedTy,
-                             moduleOp,
-                             substitution,
-                             emitError);
+  // foundTy is a SymbolicTypeInterface
+  if (auto symTy = dyn_cast<SymbolicTypeInterface>(foundTy)) {
+    if (succeeded(unifySymbolicType(symTy,
+                                    expectedTy,
+                                    moduleOp,
+                                    substitution,
+                                    emitError)))
+      return success();
   }
 
   // recurse into sub elements

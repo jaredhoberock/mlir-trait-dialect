@@ -2,7 +2,7 @@
 
 !PartialEqS = !trait.poly<0>
 !PartialEqO = !trait.poly<1>
-// CHECK-NOT: @PartialEq
+// CHECK-NOT: trait.trait @PartialEq
 trait.trait @PartialEq[!PartialEqS,!PartialEqO] {
   func.func private @eq(!PartialEqS, !PartialEqO) -> i1
   
@@ -17,7 +17,7 @@ trait.trait @PartialEq[!PartialEqS,!PartialEqO] {
   }
 }
 
-// CHECK-NOT: @PartialEq
+// CHECK-NOT: trait.trait @PartialEq
 trait.impl for @PartialEq[i32,i32] {
   func.func @eq(%self: i32, %other: i32) -> i1 {
     %equal = arith.cmpi eq, %self, %other : i32
@@ -29,7 +29,7 @@ trait.impl for @PartialEq[i32,i32] {
 
 // CHECK-LABEL: func.func @foo_i32
 // CHECK-NOT: builtin.unrealized_conversion_cast
-// CHECK: call @__trait_PartialEq_impl_i32_i32_eq
+// CHECK: call @PartialEq_impl_i32_i32_eq
 func.func @foo(%w: !trait.claim<@PartialEq[!T,!T]>, %x: !T, %y: !T) -> i1 {
   %res = trait.method.call @PartialEq::@eq<%w>(%x, %y)
     : (!PartialEqS, !PartialEqO) -> i1
@@ -70,7 +70,7 @@ trait.impl for @Eq[i32] {}
 !PartialOrdS = !trait.poly<3>
 !PartialOrdO = !trait.poly<4>
 
-// CHECK-NOT: @PartialOrd
+// CHECK-NOT: trait.trait @PartialOrd
 trait.trait @PartialOrd[!PartialOrdS,!PartialOrdO] given [
   @PartialEq[!PartialOrdS,!PartialOrdO]
 ]
@@ -140,7 +140,7 @@ trait.trait @PartialOrd[!PartialOrdS,!PartialOrdO] given [
   }
 }
 
-// CHECK-NOT: @PartialOrd
+// CHECK-NOT: trait.impl @PartialOrd
 trait.impl for @PartialOrd[i32,i32] {
   func.func @partial_cmp(%a: i32, %b: i32) -> !opt_ord {
     %c_lt = arith.constant 0 : !opt_ord
@@ -162,7 +162,7 @@ trait.impl for @PartialOrd[i32,i32] {
 !ord = i2
 
 !OrdS = !trait.poly<5>
-// CHECK-NOT: @Ord
+// CHECK-NOT: trait.trait @Ord
 trait.trait @Ord[!OrdS] given [
   @Eq[!OrdS],
   @PartialOrd[!OrdS,!OrdS]
@@ -209,7 +209,7 @@ trait.trait @Ord[!OrdS] given [
   }
 }
 
-// CHECK-NOT: @Ord
+// CHECK-NOT: trait.impl @Ord
 trait.impl for @Ord[i32] {
   func.func @cmp(%a: i32, %b: i32) -> !ord {
     %lt = arith.cmpi slt, %a, %b : i32
@@ -228,7 +228,7 @@ trait.impl for @Ord[i32] {
 // CHECK-LABEL: func.func @max
 // CHECK-NOT: trait.claim
 // CHECK-NOT: builtin.unrealized_conversion_cast
-// CHECK: call @__trait_Ord_impl_i32_max
+// CHECK: call @Ord_impl_i32_max
 func.func @max(%a: i32, %b: i32) -> i32 {
   %p = trait.claim @Ord[i32]
   %res = trait.method.call @Ord::@max<%p>(%a, %b)
@@ -241,7 +241,7 @@ func.func @max(%a: i32, %b: i32) -> i32 {
 // CHECK-LABEL: func.func @min
 // CHECK-NOT: trait.claim
 // CHECK-NOT: builtin.unrealized_conversion_cast
-// CHECK: call @__trait_Ord_impl_i32_min
+// CHECK: call @Ord_impl_i32_min
 func.func @min(%a: i32, %b: i32) -> i32 {
   %p = trait.claim @Ord[i32]
   %res = trait.method.call @Ord::@min<%p>(%a, %b)

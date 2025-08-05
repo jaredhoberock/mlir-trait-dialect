@@ -102,6 +102,8 @@ def TraitOp : TraitDialectOp<"trait", [
     DenseMap<Type,Type> buildSubstitutionFor(TypeRange typeArgs);
 
     SmallVector<TraitOp,4> getPrereqTraits();
+
+    LogicalResult verifyWitnessedImpl(ImplOp impl, ArrayRef<ImplOp> prereqs, llvm::function_ref<InFlightDiagnostic()> errFn);
   }];
 
   // builder creates one empty block in the body region
@@ -135,9 +137,9 @@ def ImplOp : TraitDialectOp<"impl", [
   let description = [{
     Declares an implementation of a trait for a specific list of types.
 
-    The `sym_name` attribute is a SymbolNameAttr allows `trait.witness` operations
+    The `sym_name` attribute is a SymbolNameAttr allowing `trait.witness` operations
     to refer to this implementation by name. If omitted from the textual IR, a unique
-    `sym_name` will be automatically synthesized based the other arguments.
+    `sym_name` will be automatically synthesized from the other arguments.
 
     The `trait_name` attribute is a FlatSymbolRefAttr pointing to a `trait.trait`
     declaration (e.g., `@PartialEq`), and `type_args` is an ArrayRefParameter of Types
@@ -157,14 +159,25 @@ def ImplOp : TraitDialectOp<"impl", [
 
   let arguments = (ins 
     SymbolNameAttr:$sym_name,
-    FlatSymbolRefAttr:$trait_name, 
-    TypeArrayAttr:$type_args,
+    TraitApplicationAttr:$trait_application,
     OptionalAttr<ObligationsAttr>:$where_clause
   );
   let regions = (region SizedRegion<1>:$body);
 
   let extraClassDeclaration = [{
+    TraitApplicationAttr getTraitApplication() const {
+      return const_cast<ImplOp*>(this)->getTraitApplication();
+    }
+
+    FlatSymbolRefAttr getTraitNameAttr() const {
+      return getTraitApplication().getTrait();
+    }
+
     TraitOp getTrait();
+
+    ArrayRef<Type> getTypeArgs() {
+      return getTraitApplication().getTypeArgs();
+    }
 
     func::FuncOp getMethod(StringRef name) {
       return lookupSymbol<func::FuncOp>(name);
@@ -182,35 +195,32 @@ def ImplOp : TraitDialectOp<"impl", [
     DenseMap<Type,Type> buildSubstitution();
 
     ClaimType getSelfClaimType() {
-      return ClaimType::get(getContext(), getTraitNameAttr(), getTypeArgs());
+      return ClaimType::get(getContext(), getTraitApplication());
     }
 
     // Helper to generate unique symbol name
-    static std::string generateSymName(FlatSymbolRefAttr traitName, ArrayAttr typeArgs, std::optional<ObligationsAttr> whereClause = {});
+    static std::string generateSymName(TraitApplicationAttr traitApp, std::optional<ObligationsAttr> whereClause = {});
   }];
 
   // builders create one empty block in the body region
   let builders = [
     // lower-level builder
     OpBuilder<(ins "::mlir::StringRef":$sym_name,
-                   "::mlir::FlatSymbolRefAttr":$trait_name,
-                   "::mlir::ArrayAttr":$type_args,
+                   "::mlir::trait::TraitApplicationAttr":$trait_application,
                    "std::optional<ObligationsAttr>":$where_clause), [{
       $_state.addAttribute("sym_name", $_builder.getStringAttr(sym_name));
-      $_state.addAttribute("trait_name", trait_name);
-      $_state.addAttribute("type_args", type_args);
+      $_state.addAttribute("trait_application", trait_application);
       if (where_clause)
         $_state.addAttribute("where_clause", *where_clause);
       ::mlir::Region *region = $_state.addRegion();
       region->emplaceBlock();
     }]>,
 
-    OpBuilder<(ins "::mlir::FlatSymbolRefAttr":$trait_name,
-                   "::mlir::ArrayAttr":$type_args,
+    OpBuilder<(ins "::mlir::trait::TraitApplicationAttr":$trait_application,
                    "std::optional<ObligationsAttr>":$where_clause), [{
       // Auto-generate unique symbol name
-      std::string symName = generateSymName(trait_name, type_args, where_clause);
-      build($_builder, $_state, symName, trait_name, type_args, where_clause);
+      std::string symName = generateSymName(trait_application, where_clause);
+      build($_builder, $_state, symName, trait_application, where_clause);
     }]>
   ];
 
@@ -224,49 +234,14 @@ def Claim : TypeConstraint<
 >;
 
 
-def WitnessOp : TraitDialectOp<"witness", [
-  DeclareOpInterfaceMethods<SymbolUserOpInterface>,
-  Pure
-]>{
-  let summary = "Materializes a proof value for a concrete trait implementation";
-  let description = [{
-    Creates a zero-sized SSA value of type `!trait.claim<@Trait[types]>` that
-    acts a concrete proof that the trait is satisfied.
-
-    If the target trait has a `given` clause, the caller must supply claims for
-    those prerequisite trait applications as operands to this op. Only one-hop
-    prerequisites are required; compose `trait.witness` to handle transitive needs.
-
-    The type arguments must be concrete; symbolic types are illegal. Symbol use
-    verification checks that a matching `trait.impl` exists for the named trait and type list.
-
-    Symbol use verification checks;
-      * a matching `trait.impl` exists for the target application, and
-      * the provided prerequisite claims cover the target trait's `given` clause
-        after substituting the target's actual type arguments for its parameters.
-  }];
-
-  let arguments = (ins Variadic<ClaimType>:$prereqs);
-  let results = (outs Claim:$result);
-
-  let extraClassDeclaration = [{
-    TraitOp getTrait();
-
-    FlatSymbolRefAttr getTraitAttr();
-    ArrayRef<Type> getTypeArgs();
-  }];
-
-  let hasCustomAssemblyFormat = 1;
-}
-
 def AssumeOp : TraitDialectOp<"assume", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
   Pure
 ]>{
-  let summary = "Materializes an evidence value for a symbolic trait application";
+  let summary = "Materializes a claim value for a symbolic trait application";
   let description = [{
     Creates a zero-sized SSA value of type `!trait.claim<@Trait[types]>` that
-    acts as assumed evidence within trait or impl method bodies. This operation
+    acts as an assumed claim within trait or impl method bodies. This operation
     has no operands.
 
     At least one type argument must be symbolic (!trait.poly); concrete types
@@ -293,6 +268,7 @@ def AssumeOp : TraitDialectOp<"assume", [
   let hasCustomAssemblyFormat = 1;
 }
 
+
 def MethodCallOp : TraitDialectOp<"method.call", [
   CallOpInterface,
   DeclareOpInterfaceMethods<SymbolUserOpInterface>
@@ -312,7 +288,7 @@ def MethodCallOp : TraitDialectOp<"method.call", [
   let arguments = (ins
     SymbolRefAttr:$method_ref,
     TypeAttrOf<FunctionType>:$method_function_type,
-    ClaimType:$claim,
+    Claim:$claim,
     Variadic<AnyType>:$arguments
   );
 
@@ -361,6 +337,10 @@ def MethodCallOp : TraitDialectOp<"method.call", [
 
   let extraClassDeclaration = [{
     func::FuncOp getOrInstantiateCallee(PatternRewriter& rewriter);
+
+    TraitApplicationAttr getTraitApplication() {
+      return cast<ClaimType>(getClaim().getType()).getTraitApplication();
+    }
 
     TraitOp getTrait();
 
@@ -512,7 +492,7 @@ def ClaimOp : TraitDialectOp<"claim", [
 ]> {
   let summary = "Unverified claim that a trait implementation exists";
   let description = [{
-    Declares unverified evidence of a trait application (e.g., `@Trait[Types...]`)
+    Declares an unproven claim of a trait application (e.g., `@Trait[Types...]`)
     by producing a value of type `!trait.claim<@Trait[Types...]>`.
 
     The type arguments must be concrete; symbolic types are illegal.
@@ -539,7 +519,7 @@ def ClaimOp : TraitDialectOp<"claim", [
     TraitOp getTrait();
     ArrayRef<Type> getTypeArgs();
     TraitApplicationAttr getTraitApplication() {
-      return cast<ClaimType>(getResult().getType()).getApplication();
+      return cast<ClaimType>(getResult().getType()).getTraitApplication();
     }
     FlatSymbolRefAttr getTraitAttr();
 
@@ -549,5 +529,41 @@ def ClaimOp : TraitDialectOp<"claim", [
   let hasCustomAssemblyFormat = 1;
   let hasVerifier = 1;
 }
+
+
+def WitnessOp : TraitDialectOp<"witness", [
+  DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+  Pure
+]>{
+  let summary = "Materializes a proven claim value for a concrete trait implementation";
+  let description = [{
+    Creates a zero-sized SSA value of type `!trait.claim<@Trait[Types...]>` that
+    acts a concrete proof that the trait is satisfied.
+
+    If the target trait has a `given` clause, the caller must supply references
+    to trait.impl ops that satisfy the prerequisites of the clause as operands
+    to this op.
+
+    Symbol use verification checks:
+      * the target `trait.impl` exists, and
+      * the provided prerequisites cover the target trait's `given` clause
+        after substituting the target's actual type arguments for its parameters.
+
+    Example:
+      %w = trait.witness @PartialEq[i32,i32]
+  }];
+
+  let arguments = (ins Variadic<ClaimType>:$trait_obligations);
+  let results = (outs Claim:$result);
+
+  let extraClassDeclaration = [{
+    TraitApplicationAttr getTraitApplication() {
+      return cast<ClaimType>(getResult().getType()).getTraitApplication();
+    }
+  }];
+
+  let hasCustomAssemblyFormat = 1;
+}
+
 
 #endif // TRAIT_OPS_TD

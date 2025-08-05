@@ -1,4 +1,5 @@
 #include "c_api.h"
+#include "Attributes.hpp"
 #include "Dialect.hpp"
 #include "Ops.hpp"
 #include "Passes.hpp"
@@ -57,10 +58,15 @@ MlirOperation traitImplOpCreate(MlirLocation loc, MlirStringRef traitName,
   }
 
   OpBuilder builder(ctx);
+
+  // build a TraitApplicationAttr
+  auto traitNameAttr = FlatSymbolRefAttr::get(ctx, StringRef(traitName.data, traitName.length));
+  auto typeArgsAttr = builder.getArrayAttr(typeAttrs);
+  auto traitAppAttr = TraitApplicationAttr::get(ctx, traitNameAttr, typeArgsAttr);
+
   auto op = builder.create<ImplOp>(
     unwrap(loc),
-    FlatSymbolRefAttr::get(ctx, StringRef(traitName.data, traitName.length)),
-    builder.getArrayAttr(typeAttrs),
+    traitAppAttr,
     std::nullopt  // XXX TODO: add where clause support to C API
   );
 

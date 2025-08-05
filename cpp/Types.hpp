@@ -17,13 +17,18 @@ class TraitOp;
 
 namespace mlir::trait {
 
-inline bool containsSymbolicType(Type ty) {
+// this walks a Type and looks for any occurrence of the given NeedleType
+template<class NeedleType> bool containsType(Type ty) {
   bool found = false;
   ty.walk([&](Type sub) {
-    if (isa<SymbolicTypeInterface>(sub))
+    if (isa<NeedleType>(sub))
       found = true;
   });
   return found;
+}
+
+inline bool containsSymbolicType(Type ty) {
+  return containsType<SymbolicTypeInterface>(ty);
 }
 
 inline bool isConcrete(Type ty) {
@@ -69,45 +74,39 @@ LogicalResult unifyTypes(
     Type foundTy,
     ModuleOp moduleOp);
 
-inline bool containsClaimType(Type ty) {
-  bool found = false;
-  ty.walk([&](Type sub) {
-    if (isa<ClaimType>(sub))
-      found = true;
-  });
-  return found;
-}
-
-inline bool containsClaimType(Attribute attr) {
+// this walks an Attribute and looks for any occurrence of the given NeedleType
+template<class NeedleType> bool containsType(Attribute attr) {
   bool found = false;
   attr.walk([&](Attribute sub) {
     if (auto ta = dyn_cast<TypeAttr>(sub)) {
-      if (containsClaimType(ta.getValue()))
+      if (containsType<NeedleType>(ta.getValue()))
         found = true;
     }
   });
   return found;
 }
 
-inline bool opMentionsClaimType(Operation *op) {
+// this walks an Operation and looks for any occurrence of the given NeedleType
+// note that this search does not recurse into child operations
+template<class NeedleType> bool opMentionsType(Operation *op) {
   // inspect operands
   for (Type t : op->getOperandTypes())
-    if (containsClaimType(t)) return true;
+    if (containsType<NeedleType>(t)) return true;
 
   // inspect result types
   for (Type t : op->getResultTypes())
-    if (containsClaimType(t)) return true;
+    if (containsType<NeedleType>(t)) return true;
 
   // inspect block arguments
   for (Region& r : op->getRegions())
     for (Block& b : r)
       for (Value arg : b.getArguments())
-        if (containsClaimType(arg.getType()))
+        if (containsType<NeedleType>(arg.getType()))
           return true;
 
   // inspect attributes
   for (NamedAttribute attr : op->getAttrs())
-    if (containsClaimType(attr.getValue()))
+    if (containsType<NeedleType>(attr.getValue()))
       return true;
 
   return false;

@@ -2,7 +2,7 @@
 
 !S = !trait.poly<0>
 !O = !trait.poly<1>
-// CHECK-NOT: @PartialEq
+// CHECK-NOT: trait.trait @PartialEq
 trait.trait @PartialEq [!S,!O] {
   func.func private @eq(!S, !O) -> i1
 
@@ -17,7 +17,7 @@ trait.trait @PartialEq [!S,!O] {
   }
 }
 
-// CHECK-NOT: @PartialEq
+// CHECK-NOT: trait.impl @PartialEq
 trait.impl for @PartialEq[i32,i32] {
   func.func @eq(%self: i32, %other: i32) -> i1 {
     %res = arith.cmpi eq, %self, %other : i32
@@ -29,7 +29,7 @@ trait.impl for @PartialEq[i32,i32] {
 
 // CHECK-LABEL: func.func @foo_i32
 // CHECK-NOT: builtin.unrealized_conversion_cast
-// CHECK: call @__trait_PartialEq_impl_i32_i32_eq
+// CHECK: call @PartialEq_impl_i32_i32_eq
 func.func @foo(%p: !trait.claim<@PartialEq[!T,!T]>, %x: !T, %y: !T) -> i1 {
   %res = trait.method.call @PartialEq::@eq<%p>(%x, %y)
     : (!S,!O) -> i1
@@ -50,8 +50,8 @@ func.func @bar(%x: i32, %y: i32) -> i1 {
 
 // CHECK-LABEL: func.func @baz_i32
 // CHECK-NOT: builtin.unrealized_conversion_cast
-// CHECK: call @__trait_PartialEq_impl_i32_i32_eq
-// CHECK: call @__trait_PartialEq_impl_i32_i32_neq
+// CHECK: call @PartialEq_impl_i32_i32_eq
+// CHECK: call @PartialEq_impl_i32_i32_neq
 func.func @baz(%p: !trait.claim<@PartialEq[!T,!T]>, %x: !T, %y: !T) -> i1 {
   %eq = trait.method.call @PartialEq::@eq<%p>(%x, %y)
     : (!S,!O) -> i1
