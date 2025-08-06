@@ -35,32 +35,39 @@ def PolyType : TypeDef<TraitDialect, "Poly", [SymbolicTypeInterface]> {
   let hasCustomAssemblyFormat = 1;
 }
 
-// Represents a claim, without direct proof, that a trait application is satisfied by some implementation
+// Represents a claim, possibly with direct proof, that a trait application is satisfied by some implementation
 def ClaimType : TypeDef<TraitDialect, "Claim"> {
   let mnemonic = "claim";
   let summary = "Claim that a type list implements a trait";
 
   let description = [{
-    The `!trait.claim` type represents unproven evidence that some list of types satisfies a trait.
+    The `!trait.claim` type represents evidence that some list of types satisfies a trait.
 
     For example,
 
-        !trait.claim<@PartialEq[i32, i32]>
+        !trait.claim<@PartialEq[i32,i32]>
 
-    represents a claim that an implementation exists for `@PartialEq` with `i32` supplied for both type parameters.
+    represents an unproven claim that an implementation exists for `@PartialEq` with `i32` supplied for both type parameters.
+
+    And
+   
+        !trait.claim<@PartialEq[i32,i32], @PartialEq_impl_i32_i32>
+
+    represents a proven claim that an implementation (i.e, `@PartialEq_impl_i32_i32`) exists for `@PartialEq[i32,i32]`.
   }];
 
   let parameters = (ins
-    "::mlir::trait::TraitApplicationAttr":$trait_application
+    "::mlir::trait::TraitApplicationAttr":$trait_application,
+    "::mlir::FlatSymbolRefAttr":$proof
   );
 
   let extraClassDeclaration = [{
-    static ClaimType get(MLIRContext *ctx, FlatSymbolRefAttr trait, ArrayRef<Type> typeArgs) {
-      return ClaimType::get(ctx, TraitApplicationAttr::get(ctx, trait, typeArgs));
+    static ClaimType get(MLIRContext* ctx, TraitApplicationAttr attr) {
+      return ClaimType::get(ctx, attr, /*proof=*/nullptr);
     }
 
-    static ClaimType get(MLIRContext *ctx, FlatSymbolRefAttr trait, ArrayAttr typesAttr) {
-      return ClaimType::get(ctx, TraitApplicationAttr::get(ctx, trait, typesAttr));
+    static ClaimType get(MLIRContext *ctx, FlatSymbolRefAttr trait, ArrayRef<Type> typeArgs) {
+      return ClaimType::get(ctx, TraitApplicationAttr::get(ctx, trait, typeArgs));
     }
 
     FlatSymbolRefAttr getTraitName() const {
@@ -71,18 +78,14 @@ def ClaimType : TypeDef<TraitDialect, "Claim"> {
       return getTraitApplication().getTypeArgs();
     }
 
-    // for EvidenceTypeInterface
-    TraitApplicationAttr getTraitApplication(ModuleOp) {
-      return getTraitApplication();
+    bool isProven() const {
+      return static_cast<bool>(getProof());
     }
-
-    // for SymbolicTypeInterface
-    LogicalResult isSubstitutableBy(Type ty, ModuleOp module, llvm::function_ref<InFlightDiagnostic()> emitError);
   }];
 
   let genVerifyDecl = 1;
 
-  let assemblyFormat = "`<` $trait_application `>`";
+  let hasCustomAssemblyFormat = 1;
 }
 
 #endif // TRAIT_TYPES_TD

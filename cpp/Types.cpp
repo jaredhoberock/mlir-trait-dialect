@@ -75,7 +75,8 @@ LogicalResult PolyType::isSubstitutableBy(
 
 
 LogicalResult ClaimType::verify(function_ref<InFlightDiagnostic()> emitError,
-                                TraitApplicationAttr app) {
+                                TraitApplicationAttr app,
+                                FlatSymbolRefAttr proof) {
   auto fail = [&]() -> LogicalResult {
     return emitError ? emitError() << "nested !trait.claim types are not allowed"
                      : failure();
@@ -92,6 +93,37 @@ LogicalResult ClaimType::verify(function_ref<InFlightDiagnostic()> emitError,
   }
 
   return success();
+}
+
+Type ClaimType::parse(AsmParser& p) {
+  MLIRContext *ctx = p.getContext();
+
+  if (p.parseLess())
+    return {};
+
+  TraitApplicationAttr app = mlir::dyn_cast<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
+  if (!app)
+    return {};
+
+  FlatSymbolRefAttr proof;
+  if (succeeded(p.parseOptionalKeyword("by"))) {
+    if (p.parseAttribute(proof))
+      return {};
+  }
+
+  if (p.parseGreater())
+    return {};
+
+  return ClaimType::get(ctx, app, proof);
+}
+
+void ClaimType::print(AsmPrinter& p) const {
+  p << "<";
+  getTraitApplication().print(p);
+  if (isProven()) {
+    p << " by " << getProof();
+  }
+  p << ">";
 }
 
 

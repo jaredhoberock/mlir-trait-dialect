@@ -48,7 +48,7 @@ def TraitOp : TraitDialectOp<"trait", [
   let arguments = (ins
     SymbolNameAttr:$sym_name,
     TypeArrayAttr:$type_params,
-    OptionalAttr<ObligationsAttr>:$given_clause
+    ObligationsAttr:$obligations
   );
 
   let results = (outs); // No results
@@ -103,21 +103,24 @@ def TraitOp : TraitDialectOp<"trait", [
 
     SmallVector<TraitOp,4> getPrereqTraits();
 
-    LogicalResult verifyWitnessedImpl(ImplOp impl, ArrayRef<ImplOp> prereqs, llvm::function_ref<InFlightDiagnostic()> errFn);
+    LogicalResult verifyObligations(ImplOp impl, ArrayRef<ImplOp> prereqs, llvm::function_ref<InFlightDiagnostic()> errFn);
   }];
 
   // builder creates one empty block in the body region
+  let skipDefaultBuilders = 1;
   let builders = [
     OpBuilder<(ins "::mlir::StringAttr":$sym_name,
-                   "::mlir::ArrayAttr":$type_params), [{
+                   "::mlir::ArrayAttr":$type_params,
+                   "ObligationsAttr":$obligations), [{
       $_state.addAttribute("sym_name", sym_name);
       $_state.addAttribute("type_params", type_params);
+      $_state.addAttribute("obligations", obligations);
       ::mlir::Region *region = $_state.addRegion();
       region->emplaceBlock();
     }]>
   ];
 
-  let assemblyFormat = "$sym_name $type_params (`given` $given_clause^)? attr-dict-with-keyword $body";
+  let assemblyFormat = "$sym_name $type_params $obligations attr-dict-with-keyword $body";
 
   let hasVerifier = 1;
 }
@@ -160,7 +163,7 @@ def ImplOp : TraitDialectOp<"impl", [
   let arguments = (ins 
     SymbolNameAttr:$sym_name,
     TraitApplicationAttr:$trait_application,
-    OptionalAttr<ObligationsAttr>:$where_clause
+    ObligationsAttr:$obligations
   );
   let regions = (region SizedRegion<1>:$body);
 
@@ -199,28 +202,31 @@ def ImplOp : TraitDialectOp<"impl", [
     }
 
     // Helper to generate unique symbol name
-    static std::string generateSymName(TraitApplicationAttr traitApp, std::optional<ObligationsAttr> whereClause = {});
+    static std::string generateSymName(TraitApplicationAttr traitApp, ObligationsAttr obligations);
+
+    LogicalResult verifyObligations(ArrayRef<ImplOp> prereqs, llvm::function_ref<InFlightDiagnostic()> errFn);
   }];
 
   // builders create one empty block in the body region
+  let skipDefaultBuilders = 1;
   let builders = [
-    // lower-level builder
+    // override the default low-level builder to ensure that a block always exists
     OpBuilder<(ins "::mlir::StringRef":$sym_name,
                    "::mlir::trait::TraitApplicationAttr":$trait_application,
-                   "std::optional<ObligationsAttr>":$where_clause), [{
+                   "ObligationsAttr":$obligations), [{
       $_state.addAttribute("sym_name", $_builder.getStringAttr(sym_name));
       $_state.addAttribute("trait_application", trait_application);
-      if (where_clause)
-        $_state.addAttribute("where_clause", *where_clause);
+      $_state.addAttribute("obligations", obligations);
       ::mlir::Region *region = $_state.addRegion();
       region->emplaceBlock();
     }]>,
 
+    // this builder automatically generates $sym_name if it is not given
     OpBuilder<(ins "::mlir::trait::TraitApplicationAttr":$trait_application,
-                   "std::optional<ObligationsAttr>":$where_clause), [{
+                   "ObligationsAttr":$obligations), [{
       // Auto-generate unique symbol name
-      std::string symName = generateSymName(trait_application, where_clause);
-      build($_builder, $_state, symName, trait_application, where_clause);
+      std::string symName = generateSymName(trait_application, obligations);
+      build($_builder, $_state, symName, trait_application, obligations);
     }]>
   ];
 

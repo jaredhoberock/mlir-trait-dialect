@@ -70,19 +70,22 @@ void TraitApplicationAttr::print(mlir::AsmPrinter &printer) const {
 }
 
 Attribute ObligationsAttr::parse(AsmParser &p, Type type) {
-  if (p.parseLSquare())
-    return {};
-
   SmallVector<TraitApplicationAttr> applications;
-  do {
-    TraitApplicationAttr app = mlir::dyn_cast<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
-    if (!app)
-      return {};
-    applications.push_back(app);
-  } while (succeeded(p.parseOptionalComma()));
 
-  if (p.parseRSquare())
-    return {};
+  if (succeeded(p.parseOptionalKeyword("where"))) {
+    if (p.parseLSquare())
+      return {};
+
+    do {
+      TraitApplicationAttr app = mlir::dyn_cast<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
+      if (!app)
+        return {};
+      applications.push_back(app);
+    } while (succeeded(p.parseOptionalComma()));
+
+    if (p.parseRSquare())
+      return {};
+  }
 
   return ObligationsAttr::getChecked(
       [&]() { return p.emitError(p.getNameLoc()); },
@@ -90,7 +93,7 @@ Attribute ObligationsAttr::parse(AsmParser &p, Type type) {
 }
 
 void ObligationsAttr::print(mlir::AsmPrinter &printer) const {
-  printer << '[';
+  printer << "where [";
   llvm::interleaveComma(getApplications(), printer,
                         [&](TraitApplicationAttr a) {
                           a.print(printer);

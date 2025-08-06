@@ -51,7 +51,7 @@ func.func @bar(%x: i32, %y: i32) -> i1 {
 
 !EqS = !trait.poly<2>
 // CHECK-NOT: @Eq
-trait.trait @Eq[!EqS] given [
+trait.trait @Eq[!EqS] where [
   @PartialEq[!EqS,!EqS]
 ]
 {
@@ -71,7 +71,7 @@ trait.impl for @Eq[i32] {}
 !PartialOrdO = !trait.poly<4>
 
 // CHECK-NOT: trait.trait @PartialOrd
-trait.trait @PartialOrd[!PartialOrdS,!PartialOrdO] given [
+trait.trait @PartialOrd[!PartialOrdS,!PartialOrdO] where [
   @PartialEq[!PartialOrdS,!PartialOrdO]
 ]
 {
@@ -163,7 +163,7 @@ trait.impl for @PartialOrd[i32,i32] {
 
 !OrdS = !trait.poly<5>
 // CHECK-NOT: trait.trait @Ord
-trait.trait @Ord[!OrdS] given [
+trait.trait @Ord[!OrdS] where [
   @Eq[!OrdS],
   @PartialOrd[!OrdS,!OrdS]
 ]

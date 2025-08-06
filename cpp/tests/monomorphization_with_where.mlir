@@ -51,7 +51,7 @@ func.func @bar(%x: i32, %y: i32) -> i1 {
 
 !EqS = !trait.poly<2>
 // CHECK-NOT: @Eq
-trait.trait @Eq[!EqS] given [
+trait.trait @Eq[!EqS] where [
   @PartialEq[!EqS,!EqS]
 ]
 {
@@ -71,7 +71,7 @@ trait.impl for @Eq[i32] {}
 !PartialOrdO = !trait.poly<4>
 
 // CHECK-NOT: trait.trait @PartialOrd
-trait.trait @PartialOrd[!PartialOrdS,!PartialOrdO] given [
+trait.trait @PartialOrd[!PartialOrdS,!PartialOrdO] where [
   @PartialEq[!PartialOrdS,!PartialOrdO]
 ]
 {
@@ -163,7 +163,7 @@ trait.impl for @PartialOrd[i32,i32] {
 
 !OrdS = !trait.poly<5>
 // CHECK-NOT: trait.trait @Ord
-trait.trait @Ord[!OrdS] given [
+trait.trait @Ord[!OrdS] where [
   @Eq[!OrdS],
   @PartialOrd[!OrdS,!OrdS]
 ]
@@ -230,15 +230,15 @@ trait.impl for @Ord[i32] {
 // CHECK: call @Ord_impl_i32_max
 func.func @max(%a: i32, %b: i32) -> i32 {
   %partial_eq_p = trait.witness @PartialEq[i32,i32]
-  %partial_ord_p = trait.witness @PartialOrd[i32,i32] given [
+  %partial_ord_p = trait.witness @PartialOrd[i32,i32] where [
     %partial_eq_p : @PartialEq[i32,i32]
   ]
 
-  %eq_p = trait.witness @Eq[i32] given [
+  %eq_p = trait.witness @Eq[i32] where [
     %partial_eq_p : @PartialEq[i32,i32]
   ]
 
-  %ord_p = trait.witness @Ord[i32] given [
+  %ord_p = trait.witness @Ord[i32] where [
     %eq_p: @Eq[i32],
     %partial_ord_p: @PartialOrd[i32,i32]
   ]
@@ -255,15 +255,15 @@ func.func @max(%a: i32, %b: i32) -> i32 {
 // CHECK: call @Ord_impl_i32_min
 func.func @min(%a: i32, %b: i32) -> i32 {
   %partial_eq_p = trait.witness @PartialEq[i32,i32]
-  %partial_ord_p = trait.witness @PartialOrd[i32,i32] given [
+  %partial_ord_p = trait.witness @PartialOrd[i32,i32] where [
     %partial_eq_p : @PartialEq[i32,i32]
   ]
 
-  %eq_p = trait.witness @Eq[i32] given [
+  %eq_p = trait.witness @Eq[i32] where [
     %partial_eq_p : @PartialEq[i32,i32]
   ]
 
-  %ord_p = trait.witness @Ord[i32] given [
+  %ord_p = trait.witness @Ord[i32] where [
     %eq_p: @Eq[i32],
     %partial_ord_p: @PartialOrd[i32,i32]
   ]

@@ -41,7 +41,7 @@ trait.trait @PartialEq[!PartialEqSelf, !PartialEqOther] {
 !ordering = !llvm.struct<"ordering", ()>
 !PartialOrdSelf = !trait.poly<3>
 !PartialOrdOther = !trait.poly<4>
-trait.trait @PartialOrd[!PartialOrdSelf, !PartialOrdOther] given [
+trait.trait @PartialOrd[!PartialOrdSelf, !PartialOrdOther] where [
   @PartialEq[!PartialOrdSelf, !PartialOrdOther]
 ]
 {

@@ -42,7 +42,8 @@ MlirOperation traitTraitOpCreate(MlirLocation loc, MlirStringRef name,
   auto op = builder.create<TraitOp>(
     unwrap(loc),
     builder.getStringAttr(StringRef(name.data, name.length)),
-    builder.getArrayAttr(typeAttrs)
+    builder.getArrayAttr(typeAttrs),
+    ObligationsAttr::get(ctx, {})  // XXX TODO: add where clause support to C API
   );
 
   return wrap(op.getOperation());
@@ -67,7 +68,7 @@ MlirOperation traitImplOpCreate(MlirLocation loc, MlirStringRef traitName,
   auto op = builder.create<ImplOp>(
     unwrap(loc),
     traitAppAttr,
-    std::nullopt  // XXX TODO: add where clause support to C API
+    ObligationsAttr::get(ctx, {})  // XXX TODO: add where clause support to C API
   );
 
   return wrap(op.getOperation());

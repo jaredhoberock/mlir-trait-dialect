@@ -68,23 +68,21 @@ LogicalResult TraitOp::verify() {
   if (uniqueParams.size() < 1)
     return emitOpError() << "requires at least one type parameter";
 
-  // check optional obligations
-  if (auto obligations = getGivenClause()) {
-    for (auto& app : obligations->getApplications()) {
-      // each TraitApplicationAttr must use at least one of the trait's type parameters
-      bool mentionsAny = llvm::any_of(uniqueParams, [&](PolyType param) {
-        return app.mentionsType(param);
-      });
+  // check obligations
+  for (auto& app : getObligations().getApplications()) {
+    // each TraitApplicationAttr must use at least one of the trait's type parameters
+    bool mentionsAny = llvm::any_of(uniqueParams, [&](PolyType param) {
+      return app.mentionsType(param);
+    });
 
-      if (!mentionsAny)
-        return emitOpError() << "'given' clause prerequisite " << app
-                             << " must mention at least one type parameter";
+    if (!mentionsAny)
+      return emitOpError() << "'where' clause prerequisite " << app
+                           << " must mention at least one type parameter";
 
-      // must not refer to the current trait
-      if (app.getTrait() == getSymNameAttr())
-        return emitOpError() << "'given' clause prerequisite " << app
-                             << " must not reference the current trait";
-    }
+    // must not refer to the current trait
+    if (app.getTrait() == getSymNameAttr())
+      return emitOpError() << "'where' clause prerequisite " << app
+                           << " must not reference the current trait";
   }
 
   return success();
@@ -92,13 +90,9 @@ LogicalResult TraitOp::verify() {
 
 
 LogicalResult TraitOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  // check optional obligations
-  if (auto obligations = getGivenClause()) {
-    ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
-    return obligations->verifyTraitApplications(module, [&](){ return emitOpError(); });
-  }
-
-  return success();
+  // verify obligations
+  auto module = getOperation()->getParentOfType<ModuleOp>();
+  return getObligations().verifyTraitApplications(module, [&](){ return emitOpError(); });
 }
 
 
@@ -182,49 +176,42 @@ SmallVector<TraitOp,4> TraitOp::getPrereqTraits() {
     llvm_unreachable("TraitOp::getPrereqTraits: not in a module");
 
   SmallVector<TraitOp,4> result;
-  if (auto obligations = getGivenClause()) {
-    for (auto &app : obligations->getApplications()) {
-      TraitOp trait = mlir::SymbolTable::lookupNearestSymbolFrom<TraitOp>(module, app.getTrait());
-      if (!trait)
-        llvm_unreachable("TraitOp::getPrereqTraits: couldn't find prerequisite trait");
-      result.push_back(trait);
-    }
+  for (auto &app : getObligations().getApplications()) {
+    TraitOp trait = mlir::SymbolTable::lookupNearestSymbolFrom<TraitOp>(module, app.getTrait());
+    if (!trait)
+      llvm_unreachable("TraitOp::getPrereqTraits: couldn't find prerequisite trait");
+    result.push_back(trait);
   }
   return result;
 }
 
-LogicalResult TraitOp::verifyWitnessedImpl(ImplOp impl, ArrayRef<ImplOp> obligations,
-                                           llvm::function_ref<InFlightDiagnostic()> errFn) {
+LogicalResult TraitOp::verifyObligations(ImplOp impl, ArrayRef<ImplOp> obligations,
+                                         llvm::function_ref<InFlightDiagnostic()> errFn) {
   // verify that impl's trait refers to this trait
   StringRef implTrait = impl.getTraitApplication().getTrait().getValue();
   if (implTrait != getSymName())
     return errFn() << "expected impl for @" << getSymName()
                    << ", but found impl for trait @" << implTrait;
 
-  // verify that the impl supplied the expected number of obligations for our given clause
-  size_t expectedNumObligations = 0;
-  if (auto given = getGivenClause()) {
-    expectedNumObligations = given->getApplications().size();
-  }
+  // verify that the received number of obligations matches our expectations
+  size_t expectedNumTraitObligations = getObligations().getApplications().size();
 
-  if (obligations.size() != expectedNumObligations)
-    return errFn() << "expected " << expectedNumObligations << " for @"
-                   << getSymName() << "'s 'given' clause, but found "
+  if (obligations.size() < expectedNumTraitObligations)
+    return errFn() << "expected " << expectedNumTraitObligations << " for @"
+                   << getSymName() << "'s 'where' clause, but found "
                    << obligations.size();
 
   // verify that each obligation implements the expected trait
-  if (auto given = getGivenClause()) {
-    for (auto [ob, app] : llvm::zip(obligations, given->getApplications())) {
-      StringRef obTrait = ob.getTraitApplication().getTrait().getValue();
-      StringRef expectedTrait = app.getTrait().getValue();
+  for (auto [app, ob] : llvm::zip(getObligations().getApplications(), obligations)) {
+    StringRef expectedTrait = app.getTrait().getValue();
+    StringRef obTrait = ob.getTraitApplication().getTrait().getValue();
 
-      if (obTrait != expectedTrait)
-        return errFn() << "expected impl for @" << expectedTrait
-                       << ", but found impl for trait @" << obTrait;
-    }
+    if (obTrait != expectedTrait)
+      return errFn() << "expected impl for @" << expectedTrait
+                     << ", but found impl for trait @" << obTrait;
   }
 
-  return success();
+  return impl.verifyObligations(obligations.drop_front(expectedNumTraitObligations), errFn);
 }
 
 
@@ -283,6 +270,29 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
       return emitOpError() << "missing implementation for required method '" << name
                            << "' of trait '" << getTraitNameAttr() << "'";
     }
+  }
+
+  return success();
+}
+
+LogicalResult ImplOp::verifyObligations(ArrayRef<ImplOp> obligations,
+                                        llvm::function_ref<InFlightDiagnostic()> errFn) {
+  // verify that the received number of obligations matches our expectations
+  size_t expectedNumObligations = getObligations().getApplications().size();
+
+  if (obligations.size() != expectedNumObligations)
+    return errFn() << "expected " << expectedNumObligations << "for @"
+                   << getSymName() << "'s 'where' clause, but found "
+                   << obligations.size();
+
+  // verify that each obligation implements the expected trait
+  for (auto [app, ob] : llvm::zip(getObligations().getApplications(), obligations)) {
+    StringRef expectedTrait = app.getTrait().getValue();
+    StringRef obTrait = ob.getTraitApplication().getTrait().getValue();
+
+    if (obTrait != expectedTrait)
+      return errFn() << "expected impl for @" << expectedTrait
+                     << ", but found impl for trait @" << obTrait;
   }
 
   return success();
@@ -396,7 +406,7 @@ func::FuncOp ImplOp::getOrInstantiateFunctionFromMethod(PatternRewriter& rewrite
 }
 
 std::string ImplOp::generateSymName(TraitApplicationAttr traitApp,
-                                    std::optional<ObligationsAttr> whereClause) {
+                                    ObligationsAttr obligations) {
   std::string result;
   llvm::raw_string_ostream os(result);
   
@@ -406,10 +416,10 @@ std::string ImplOp::generateSymName(TraitApplicationAttr traitApp,
     os << "_" << ty;
   }
   
-  // Include where clause in symbol name if present
-  if (whereClause) {
+  // Include where clause in symbol name if there are obligations
+  if (!obligations.getApplications().empty()) {
     os << "_where";
-    for (auto app : whereClause->getApplications()) {
+    for (auto app : obligations.getApplications()) {
       os << "_" << app.getTrait().getValue();
       for (auto typeArg : app.getTypeArgs()) {
         os << "_" << typeArg;
@@ -420,47 +430,39 @@ std::string ImplOp::generateSymName(TraitApplicationAttr traitApp,
   return result;
 }
 
-ParseResult ImplOp::parse(OpAsmParser &parser, OperationState &result) {
+ParseResult ImplOp::parse(OpAsmParser &p, OperationState &result) {
   // parse optional symbolic name: trait.impl @Sym
   StringAttr parsedSymName;
-  (void)parser.parseOptionalSymbolName(parsedSymName);
+  (void)p.parseOptionalSymbolName(parsedSymName);
 
   // parse mandatory for
-  if (parser.parseKeyword("for"))
+  if (p.parseKeyword("for"))
     return failure();
   
   // parse @TraitName[Types...]
-  TraitApplicationAttr traitApp = dyn_cast<TraitApplicationAttr>(TraitApplicationAttr::parse(parser, {}));
+  TraitApplicationAttr traitApp = dyn_cast<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
   if (!traitApp)
     return failure();
+  result.addAttribute("trait_application", traitApp);  
   
-  // parse optional where clause
-  std::optional<ObligationsAttr> whereClause;
-  if (succeeded(parser.parseOptionalKeyword("where"))) {
-    auto parsedAttr = ObligationsAttr::parse(parser, {});
-    if (!parsedAttr)
-      return failure();
-    whereClause = dyn_cast<ObligationsAttr>(parsedAttr);
-    if (!whereClause)
-      return parser.emitError(parser.getCurrentLocation(), "expected ObligationsAttr");
-  }
+  // parse obligations
+  ObligationsAttr obligations = dyn_cast<ObligationsAttr>(ObligationsAttr::parse(p, {}));
+  if (!obligations)
+    return failure();
+  result.addAttribute("obligations", obligations);
 
   // sym_name: use parsed or synthesize from parameters
   StringAttr symNameAttr = parsedSymName
     ? parsedSymName
-    : parser.getBuilder().getStringAttr(generateSymName(traitApp, whereClause));
+    : p.getBuilder().getStringAttr(generateSymName(traitApp, obligations));
   result.addAttribute("sym_name", symNameAttr);
   
-  result.addAttribute("trait_application", traitApp);  
-  if (whereClause)
-    result.addAttribute("where_clause", *whereClause);
-  
   // Parse attributes and body region
-  if (parser.parseOptionalAttrDictWithKeyword(result.attributes))
+  if (p.parseOptionalAttrDictWithKeyword(result.attributes))
     return failure();
     
   Region* bodyRegion = result.addRegion();
-  if (parser.parseRegion(*bodyRegion, /*arguments=*/{}, /*argTypes=*/{}))
+  if (p.parseRegion(*bodyRegion, /*arguments=*/{}, /*argTypes=*/{}))
     return failure();
   
   // Ensure the region has exactly one block (matching builder logic)
@@ -473,10 +475,10 @@ ParseResult ImplOp::parse(OpAsmParser &parser, OperationState &result) {
 void ImplOp::print(OpAsmPrinter &printer) {
   // decide whether to print the symbolic name
   StringAttr symNameAttr = getSymNameAttr();
-  std::string synthesized = generateSymName(getTraitApplication(), getWhereClause());
+  std::string synthesized = generateSymName(getTraitApplication(), getObligations());
   bool printExplicitSymName = symNameAttr && symNameAttr.getValue() != synthesized;
 
-  // Print: trait.impl [@SymName] for  @TraitName [types...] (where [...])? { ... }
+  // Print: trait.impl [@SymName] for @TraitName [types...] obligations { ... }
   printer << " ";
   if (printExplicitSymName) {
     printer.printSymbolName(symNameAttr);
@@ -486,14 +488,11 @@ void ImplOp::print(OpAsmPrinter &printer) {
   printer << "for ";
   getTraitApplication().print(printer);
 
-  if (auto where = getWhereClause()) {
-    printer << " where ";
-    where->print(printer);
-  }
+  getObligations().print(printer);
   
   printer.printOptionalAttrDictWithKeyword(
     (*this)->getAttrs(), 
-    /*elidedAttrs=*/{"sym_name", "trait_application", "where_clause"}
+    /*elidedAttrs=*/{"sym_name", "trait_application", "obligations"}
   );
   printer << " ";
   printer.printRegion(getBody());
@@ -514,11 +513,11 @@ ParseResult WitnessOp::parse(OpAsmParser &p, OperationState& st) {
   st.addTypes(ClaimType::get(p.getContext(), traitApp));
 
   // parse optional trait obligations:
-  // `given [ %o0: @A[Types...], %o1: @B[Types...], ... ]`
+  // `where [ %o0: @A[Types...], %o1: @B[Types...], ... ]`
   SmallVector<OpAsmParser::UnresolvedOperand> obligations;
   SmallVector<Type> obligationTypes;
 
-  if (succeeded(p.parseOptionalKeyword("given"))) {
+  if (succeeded(p.parseOptionalKeyword("where"))) {
     if (p.parseCommaSeparatedList(OpAsmParser::Delimiter::Square, [&] {
           OpAsmParser::UnresolvedOperand use;
           if (p.parseOperand(use) || p.parseColon())
@@ -550,7 +549,7 @@ void WitnessOp::print(OpAsmPrinter &p) {
 
   // print trait obligations, if any
   if (!getTraitObligations().empty()) {
-    p << " given [";
+    p << " where [";
     p.increaseIndent();
 
     bool first = true;
@@ -609,9 +608,9 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     obligations.push_back(implOp);
   }
 
-  // ask the trait to verify the impl with its prereqs
+  // ask the trait to verify the impl's obligations
   auto errFn = [&] { return emitOpError(); };
-  return traitOp.verifyWitnessedImpl(implOp, obligations, errFn);
+  return traitOp.verifyObligations(implOp, obligations, errFn);
 }
 
 
@@ -967,13 +966,12 @@ LogicalResult ProjectOp::verifySymbolUses(SymbolTableCollection &/*symbolTable*/
     return emitOpError() << "cannot resolve trait '"
                          << srcApp.getTrait() << "'";
 
-  auto given = srcTrait.getGivenClause();
-  if (!given)
+  if (srcTrait.getObligations().getApplications().empty())
     return emitOpError() << "trait '" << srcTrait.getSymName()
-                         << "' has no 'given' clause; no projections allowed";
+                         << "' has no obligations; no projections allowed";
 
   // look up all candidate prerequisites that apply the dst trait
-  auto candidates = given->getApplicationsOf(dstApp.getTrait());
+  auto candidates = srcTrait.getObligations().getApplicationsOf(dstApp.getTrait());
   if (candidates.empty())
     return emitOpError() << "trait '" << dstApp.getTrait()
                          << "' is not a prerequisite of trait '"
@@ -1000,7 +998,7 @@ LogicalResult ProjectOp::verifySymbolUses(SymbolTableCollection &/*symbolTable*/
 
   return emitOpError()
          << "projected trait application '" << dstApp
-         << "' does not match substituted 'given' clause entry of '"
+         << "' does not match substituted 'where' clause entry of '"
          << srcTrait.getSymName() << "'";
 }
 
@@ -1070,15 +1068,13 @@ SmallVector<TraitApplicationAttr> AllegeOp::getPrereqTraitApplications() {
     llvm_unreachable("AllegeOp::getPrereqTraitApplications: couldn't find TraitOp");
 
   SmallVector<TraitApplicationAttr> result;
+  auto subst = trait.buildSubstitutionFor(getTypeArgs());
 
-  if (auto obligations = trait.getGivenClause()) {
-    auto subst = trait.buildSubstitutionFor(getTypeArgs());
-    for (auto prereqApp : obligations->getApplications()) {
-      auto substApp = dyn_cast_or_null<TraitApplicationAttr>(applySubstitution(subst, prereqApp));
-      if (!substApp)
-        llvm_unreachable("AllegeOp::getPrereqTraitApplications: expected substituted trait application to be a TraitApplicationAttr");
-      result.push_back(substApp);
-    }
+  for (auto prereqApp : trait.getObligations().getApplications()) {
+    auto substApp = dyn_cast_or_null<TraitApplicationAttr>(applySubstitution(subst, prereqApp));
+    if (!substApp)
+      llvm_unreachable("AllegeOp::getPrereqTraitApplications: expected substituted trait application to be a TraitApplicationAttr");
+    result.push_back(substApp);
   }
 
   return result;

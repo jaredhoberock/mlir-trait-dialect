@@ -45,11 +45,11 @@ def TraitApplicationAttr : AttrDef<TraitDialect, "TraitApplication"> {
 
 def ObligationsAttr : AttrDef<TraitDialect, "Obligations"> {
   let mnemonic = "obligations";
-  let summary = "A list of prerequisite trait applications required for trait implementation";
+  let summary = "A list of prerequisite trait applications required for by traits and implementation";
   let description = [{
     Represents trait applications that are required to hold when implementing
     the enclosing trait. These assumptions are available as subproofs via
-    `trait.proof.project` on the self-proof obtained from `trait.assume`.
+    `trait.project` on the self-proof obtained from `trait.assume`.
 
     This models a Rust-style `where` clause on a `trait` definition or implementation.
     It describes what must be assumed about type parameters in order for the trait’s methods
@@ -57,7 +57,7 @@ def ObligationsAttr : AttrDef<TraitDialect, "Obligations"> {
 
     Example:
       !S = trait.poly<0>
-      trait.trait @Ord[!S] given [
+      trait.trait @Ord[!S] where [
         @Eq[!S],
         @PartialOrd[!S,!S]
       ]

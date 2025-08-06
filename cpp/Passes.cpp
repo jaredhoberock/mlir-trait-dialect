@@ -22,7 +22,7 @@ LogicalResult verifyAcyclicTraits(ModuleOp module) {
     if (s == Status::InPath) {
       // back-edge: report the cycle u ... u
       auto it = llvm::find(stack, u);
-      auto diag = u.emitError("cycle in trait `given` clause: ");
+      auto diag = u.emitError("cycle in trait `where` clause: ");
       for (auto i = it; i != stack.end(); ++i)
         diag << "@" << i->getSymName() << " -> ";
       diag << "@" << u.getSymName();
