@@ -69,48 +69,24 @@ void TraitApplicationAttr::print(mlir::AsmPrinter &printer) const {
   printer << ']';
 }
 
-Attribute ObligationsAttr::parse(AsmParser &parser, Type type) {
-  SmallVector<TraitApplicationAttr> applications;
-
-  if (parser.parseLSquare())
+Attribute ObligationsAttr::parse(AsmParser &p, Type type) {
+  if (p.parseLSquare())
     return {};
 
+  SmallVector<TraitApplicationAttr> applications;
   do {
-    // Parse @TraitName
-    FlatSymbolRefAttr trait;
-    if (parser.parseAttribute(trait))
+    TraitApplicationAttr app = mlir::dyn_cast<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
+    if (!app)
       return {};
+    applications.push_back(app);
+  } while (succeeded(p.parseOptionalComma()));
 
-    // Expect [type1, type2, ...]
-    if (parser.parseLSquare())
-      return {};
-
-    SmallVector<Type> typeArgs;
-    do {
-      Type ty;
-      if (parser.parseType(ty))
-        return {};
-      typeArgs.push_back(ty);
-    } while (succeeded(parser.parseOptionalComma()));
-
-    if (parser.parseRSquare())
-      return {};
-
-    applications.push_back(
-      TraitApplicationAttr::getChecked(
-        [&]() { return parser.emitError(parser.getNameLoc()); },
-        parser.getContext(), trait, typeArgs
-      )
-    );
-
-  } while (succeeded(parser.parseOptionalComma()));
-
-  if (parser.parseRSquare())
+  if (p.parseRSquare())
     return {};
 
   return ObligationsAttr::getChecked(
-      [&]() { return parser.emitError(parser.getNameLoc()); },
-      parser.getContext(), applications);
+      [&]() { return p.emitError(p.getNameLoc()); },
+      p.getContext(), applications);
 }
 
 void ObligationsAttr::print(mlir::AsmPrinter &printer) const {
