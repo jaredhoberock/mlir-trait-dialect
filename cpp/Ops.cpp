@@ -462,6 +462,7 @@ void ImplOp::print(OpAsmPrinter &printer) {
   printer << "for ";
   getSelfApplication().print(printer);
 
+  printer << " ";
   getAssumptions().print(printer);
   
   printer.printOptionalAttrDictWithKeyword(
@@ -706,25 +707,29 @@ LogicalResult AssumeOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     return emitOpError("must be within a 'trait.trait' or 'trait.impl' region");
   }
   
-  auto assumedTraitApp = getTraitApplication();
+  auto assumedApp = getTraitApplication();
   
   if (enclosingTrait) {
     // In TraitOp: verify self-referential application
-    auto enclosingSelfApp = enclosingTrait.getSelfApplication();
-
-    if (assumedTraitApp != enclosingSelfApp)
-      return emitOpError() << "assumed trait application " << assumedTraitApp
+    if (assumedApp != enclosingTrait.getSelfApplication())
+      return emitOpError() << "assumed trait application " << assumedApp
                            << " does not match enclosing trait's self application "
-                           << enclosingSelfApp;
+                           << enclosingTrait.getSelfApplication();
   } else if (enclosingImpl) {
-    // In ImplOp: verify assumption matches the impl's trait application
-    auto implTraitApp = enclosingImpl.getSelfApplication();
-    
-    if (assumedTraitApp != implTraitApp) {
-      return emitOpError() << "assumed trait application " << assumedTraitApp
-                           << " does not match impl's trait application" 
-                           << implTraitApp;
+    // In ImplOp: allow assuming either the self application *or* any assumption
+    if (assumedApp == enclosingImpl.getSelfApplication())
+      return success();
+
+    // is it one of the impl's assumptions?
+    for (auto a : enclosingImpl.getAssumptions().getApplications()) {
+      if (assumedApp == a)
+        return success();
     }
+    
+    return emitOpError() << "assumed trait application " << assumedApp
+                         << " is neither the impl's self application "
+                         << enclosingImpl.getSelfApplication()
+                         << " nor one of its declared assumptions";
   }
   
   return success();

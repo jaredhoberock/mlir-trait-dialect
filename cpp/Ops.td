@@ -268,6 +268,10 @@ def AssumeOp : TraitDialectOp<"assume", [
     should use `trait.witness` instead. This operation must appear within a
     `trait.trait` or `trait.impl` region.
 
+    The assumed trait application must exactly match one of:
+      1. The `trait.trait` or `trait.impl`'s self application, or
+      2. When used inside a `trait.impl`, an assumed trait application
+
     Example:
       trait.trait @PartialEq[!S,!O] {
         func.func @neq(%self: !S, %other: !O) -> i1 {
