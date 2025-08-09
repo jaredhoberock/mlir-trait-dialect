@@ -9,10 +9,6 @@ namespace mlir::trait {
 
 bool isPolymorph(func::FuncOp fn);
 
-
-std::string mangleFunctionName(StringRef name,
-                               const DenseMap<Type, Type> &substitution);
-
 func::FuncOp instantiatePolymorph(OpBuilder& builder,
                                   func::FuncOp polymorph,
                                   StringRef instanceName,

@@ -27,12 +27,33 @@ template<class NeedleType> bool containsType(Type ty) {
   return found;
 }
 
-inline bool containsSymbolicType(Type ty) {
-  return containsType<SymbolicTypeInterface>(ty);
+inline bool isPolymorphicType(Type root) {
+  // fast path: if the root itself participates in monomorphization,
+  // call its predicate
+  if (auto m = dyn_cast<MonomorphizableTypeInterface>(root)) {
+    return m.isPolymorphic();
+  }
+
+  // otherwise, just walk the type
+  bool found = false;
+  root.walk([&](Type sub) -> WalkResult {
+    // skip the root to avoid infinite recursion
+    if (sub == root) return WalkResult::advance(); 
+
+    if (auto m = dyn_cast<MonomorphizableTypeInterface>(sub)) {
+      if (m.isPolymorphic()) {
+        found = true;
+        return WalkResult::interrupt();
+      }
+    }
+
+    return WalkResult::advance();
+  });
+  return found;
 }
 
-inline bool isConcrete(Type ty) {
-  return !containsSymbolicType(ty);
+inline bool isMonomorphicType(Type ty) {
+  return !isPolymorphicType(ty);
 }
 
 inline Type applySubstitution(const llvm::DenseMap<Type,Type> &substitution,
@@ -45,6 +66,12 @@ inline Type applySubstitution(const llvm::DenseMap<Type,Type> &substitution,
   });
 
   return replacer.replace(ty);
+}
+
+inline void dumpSubstitution(const llvm::DenseMap<Type,Type> &substitution) {
+  for (auto [k,v] : substitution) {
+    llvm::errs() << k << " -> " << v << "\n";
+  }
 }
 
 /// Attempt to unify `expectedTy` and `foundTy`.  If `expectedTy` or `foundTy` is

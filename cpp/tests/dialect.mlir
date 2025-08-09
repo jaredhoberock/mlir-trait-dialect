@@ -43,12 +43,12 @@ func.func @foo(%w: !W, %x: !T, %y: !T) -> i1 {
 
 // CHECK-LABEL: func.func @bar
 func.func @bar(%x: i32, %y: i32) -> i1 {
-  %w = trait.witness @PartialEq[i32,i32]
+  %w = trait.witness @PartialEq_impl_i32_i32 for @PartialEq[i32,i32]
 
   // CHECK: %[[RES:.*]] = trait.func.call @foo
   %res = trait.func.call @foo(%w, %x, %y)
     : (!W,!T,!T) -> i1
-    as (!trait.claim<@PartialEq[i32,i32]>, i32, i32) -> i1
+    as (!trait.claim<@PartialEq[i32,i32] by @PartialEq_impl_i32_i32>, i32, i32) -> i1
 
   return %res : i1
 }
@@ -238,50 +238,40 @@ trait.impl for @Ord[i32] {
   }
 }
 
+// CHECK-LABEL: trait.proof @PartialOrd_impl_i32_i32_p
+trait.proof @PartialOrd_impl_i32_i32_p proves @PartialOrd_impl_i32_i32 for @PartialOrd[i32,i32] given [
+  @PartialEq_impl_i32_i32
+]
+
+// CHECK-LABEL: trait.proof @Eq_impl_i32_p
+trait.proof @Eq_impl_i32_p proves @Eq_impl_i32 for @Eq[i32] given [
+  @PartialEq_impl_i32_i32
+]
+
+// CHECK-LABEL: trait.proof @Ord_impl_i32_p
+trait.proof @Ord_impl_i32_p proves @Ord_impl_i32 for @Ord[i32] given [
+  @Eq_impl_i32_p,
+  @PartialOrd_impl_i32_i32_p
+]
+
 // CHECK-LABEL: func.func @max
 func.func @max(%a: i32, %b: i32) -> i32 {
-  %partial_eq_p = trait.witness @PartialEq[i32,i32]
-
-  %partial_ord_p = trait.witness @PartialOrd[i32,i32] where [
-    %partial_eq_p : @PartialEq[i32,i32]
-  ]
-
-  %eq_p = trait.witness @Eq[i32] where [
-    %partial_eq_p: @PartialEq[i32,i32]
-  ]
-
-  %ord_p = trait.witness @Ord[i32] where [
-    %eq_p: @Eq[i32],
-    %partial_ord_p: @PartialOrd[i32,i32]
-  ]
+  %ord_p = trait.witness @Ord_impl_i32_p for @Ord[i32]
 
   %res = trait.method.call @Ord::@max<%ord_p>(%a, %b)
     : (!OrdS, !OrdS) -> !OrdS
-    as !trait.claim<@Ord[i32]> (i32, i32) -> i32
+    as !trait.claim<@Ord[i32] by @Ord_impl_i32_p> (i32, i32) -> i32
 
   return %res : i32
 }
 
 // CHECK-LABEL: func.func @min
 func.func @min(%a: i32, %b: i32) -> i32 {
-  %partial_eq_p = trait.witness @PartialEq[i32,i32]
-
-  %partial_ord_p = trait.witness @PartialOrd[i32,i32] where [
-    %partial_eq_p : @PartialEq[i32,i32]
-  ]
-
-  %eq_p = trait.witness @Eq[i32] where [
-    %partial_eq_p: @PartialEq[i32,i32]
-  ]
-
-  %ord_p = trait.witness @Ord[i32] where [
-    %eq_p: @Eq[i32],
-    %partial_ord_p: @PartialOrd[i32,i32]
-  ]
+  %ord_p = trait.witness @Ord_impl_i32_p for @Ord[i32]
 
   %res = trait.method.call @Ord::@min<%ord_p>(%a, %b)
     : (!OrdS, !OrdS) -> !OrdS
-    as !trait.claim<@Ord[i32]> (i32, i32) -> i32
+    as !trait.claim<@Ord[i32] by @Ord_impl_i32_p> (i32, i32) -> i32
 
   return %res : i32
 }

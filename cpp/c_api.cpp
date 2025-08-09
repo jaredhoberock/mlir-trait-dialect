@@ -43,7 +43,7 @@ MlirOperation traitTraitOpCreate(MlirLocation loc, MlirStringRef name,
     unwrap(loc),
     builder.getStringAttr(StringRef(name.data, name.length)),
     builder.getArrayAttr(typeAttrs),
-    ObligationsAttr::get(ctx, {})  // XXX TODO: add where clause support to C API
+    ConstraintsAttr::get(ctx, {})  // XXX TODO: add where clause support to C API
   );
 
   return wrap(op.getOperation());
@@ -68,7 +68,7 @@ MlirOperation traitImplOpCreate(MlirLocation loc, MlirStringRef traitName,
   auto op = builder.create<ImplOp>(
     unwrap(loc),
     traitAppAttr,
-    ObligationsAttr::get(ctx, {})  // XXX TODO: add where clause support to C API
+    ConstraintsAttr::get(ctx, {})  // XXX TODO: add where clause support to C API
   );
 
   return wrap(op.getOperation());
@@ -136,24 +136,42 @@ MlirOperation traitFuncCallOpCreate(MlirLocation loc,
   return wrap(op.getOperation());
 }
 
-MlirOperation traitWitnessOpCreate(MlirLocation loc,
-                                   MlirStringRef traitName,
-                                   MlirType* typeArgs, intptr_t numTypeArgs,
-                                   MlirValue* wrappedPrereqs, intptr_t numPrereqs) {
+MlirOperation traitAllegeOpCreate(MlirLocation loc,
+                                  MlirStringRef traitName,
+                                  MlirType* typeArgs, intptr_t numTypeArgs) {
   MLIRContext* ctx = unwrap(loc)->getContext();
-  MlirType wrappedClaimType = traitClaimTypeGet(wrap(ctx), traitName, typeArgs, numTypeArgs);
+
+  MlirType wrappedClaimTy = traitClaimTypeGet(wrap(ctx), traitName, typeArgs, numTypeArgs);
+
+  OpBuilder builder(ctx);
+  auto op = builder.create<AllegeOp>(
+    unwrap(loc),
+    unwrap(wrappedClaimTy)
+  );
+
+  return wrap(op.getOperation());
+}
+
+MlirOperation traitWitnessOpCreate(MlirLocation loc,
+                                   MlirStringRef proofName,
+                                   MlirStringRef traitName,
+                                   MlirType* typeArgs, intptr_t numTypeArgs) {
+  MLIRContext* ctx = unwrap(loc)->getContext();
+
+  MlirType wrappedClaimTy = traitClaimTypeGet(wrap(ctx), traitName, typeArgs, numTypeArgs);
+  ClaimType claimTy = dyn_cast_or_null<ClaimType>(unwrap(wrappedClaimTy));
+  if (!claimTy)
+    return {};
 
   OpBuilder builder(ctx);
 
-  SmallVector<Value> prereqs;
-  for (intptr_t i = 0; i < numPrereqs; ++i) {
-    prereqs.push_back(unwrap(wrappedPrereqs[i]));
-  }
+  TraitApplicationAttr traitApp = claimTy.getTraitApplication();
+  FlatSymbolRefAttr proofRef = FlatSymbolRefAttr::get(ctx, StringRef(proofName.data, proofName.length));
 
   auto op = builder.create<WitnessOp>(
     unwrap(loc),
-    unwrap(wrappedClaimType),
-    prereqs
+    proofRef,
+    traitApp
   );
 
   return wrap(op.getOperation());

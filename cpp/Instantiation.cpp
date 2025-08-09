@@ -6,29 +6,18 @@
 
 namespace mlir::trait {
 
-static bool containsSymbolicType(TypeRange types) {
+static bool containsPolymorphicType(TypeRange types) {
   return llvm::any_of(types, [](Type t) {
-    return containsSymbolicType(t);
+    return isPolymorphicType(t);
   });
 }
 
-static bool containsSymbolicType(ArrayRef<NamedAttribute> attrs) {
-  for (const auto &attr : attrs) {
-    if (auto typeAttr = dyn_cast<TypeAttr>(attr.getValue())) {
-      if (containsSymbolicType(typeAttr.getValue())) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
-static bool functionTypeContainsSymbolicType(FunctionType ty) {
-  return containsSymbolicType(ty.getInputs()) || containsSymbolicType(ty.getResults());
+static bool functionTypeContainsPolymorphicType(FunctionType ty) {
+  return containsPolymorphicType(ty.getInputs()) || containsPolymorphicType(ty.getResults());
 }
 
 bool isPolymorph(func::FuncOp fn) {
-  return functionTypeContainsSymbolicType(fn.getFunctionType());
+  return functionTypeContainsPolymorphicType(fn.getFunctionType());
 }
 
 std::string mangleFunctionName(StringRef name,
@@ -77,7 +66,7 @@ static Operation *cloneOpWithTypeReplacement(
   }
 
   // create empty regions in the new op
-  for (Region &oldRegion : oldOp.getRegions()) {
+  for ([[maybe_unused]] Region &oldRegion : oldOp.getRegions()) {
     state.addRegion();
   }
 
@@ -143,7 +132,6 @@ func::FuncOp instantiatePolymorph(OpBuilder& builder,
   }
 
   Location loc = polymorph.getLoc();
-  MLIRContext *ctx = builder.getContext();
 
   // set up type replacer
   AttrTypeReplacer replacer;
@@ -209,4 +197,4 @@ void instantiatePolymorphicRegion(OpBuilder& builder,
                                  replacer);
 }
 
-}
+} // end mlir::trait

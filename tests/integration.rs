@@ -218,7 +218,7 @@ fn test_jit() {
     assert!(module.as_operation().verify(), "MLIR module verification failed");
 
     // @bar(%x: i32, %y: i32) -> i1 {
-    //   %c = trait.witness @PartialEq[i32,i32]
+    //   %c = trait.allege @PartialEq[i32,i32]
     //   %result = trait.func.call @foo(%c, %x, %y)
     //     : (!P,!T,!T) -> i1
     //     as (!trait.claim<@PartialEq[i32,i32]>,i32,i32) -> i1
@@ -238,11 +238,10 @@ fn test_jit() {
         );
 
         let block = Block::new(&[(i32_ty, loc), (i32_ty, loc)]);
-        let p = block.append_operation(trait_::witness(
+        let p = block.append_operation(trait_::allege(
             loc,
             "PartialEq",
             &[i32_ty, i32_ty],
-            &[], // no prereqs
         ));
         let result = block.append_operation(trait_::func_call(
             loc,
@@ -342,7 +341,7 @@ fn test_jit() {
     assert!(module.as_operation().verify(), "MLIR module verification failed");
 
     // func.func @qux(%x: i32, %y: i32) -> i1 {
-    //   %c = trait.witness @PartialEq[i32,i32]
+    //   %c = trait.allege @PartialEq[i32,i32]
     //   %res = trait.func.call @baz(%c, %x, %y)
     //     : (!C,!T,!T) -> i1
     //     as (!trait.claim<@PartialEq[i32,i32]>, i32,i32) -> i1
@@ -362,11 +361,10 @@ fn test_jit() {
         );
 
         let block = Block::new(&[(i32_ty, loc), (i32_ty, loc)]);
-        let p = block.append_operation(trait_::witness(
+        let p = block.append_operation(trait_::allege(
             loc,
             "PartialEq",
             &[i32_ty,i32_ty],
-            &[], // no prereqs
         ));
         let result = block.append_operation(trait_::func_call(
             loc,

@@ -22,10 +22,13 @@ unsafe extern "C" {
                              callee_function_type: MlirType,
                              arguments: *const MlirValue, num_arguments: isize,
                              result_types: *const MlirType, num_results: isize) -> MlirOperation;
+    fn traitAllegeOpCreate(loc: MlirLocation,
+                           trait_name: MlirStringRef,
+                           type_args: *const MlirType, num_type_args: isize) -> MlirOperation;
     fn traitWitnessOpCreate(loc: MlirLocation,
+                            proof_name: MlirStringRef,
                             trait_name: MlirStringRef,
-                            type_args: *const MlirType, num_type_args: isize,
-                            prereqs: *const MlirValue, num_prereqs: isize) -> MlirOperation;
+                            type_args: *const MlirType, num_type_args: isize) -> MlirOperation;
     fn traitProjectOpCreate(loc: MlirLocation,
                             src_claim: MlirValue,
                             trait_name: MlirStringRef,
@@ -111,18 +114,29 @@ pub fn func_call<'c>(loc: Location<'c>,
     ))}
 }
 
-pub fn witness<'c>(loc: Location<'c>,
-                   trait_name: &str,
-                   type_args: &[Type<'c>],
-                   prereqs: &[Value<'c,'_>],
+pub fn allege<'c>(loc: Location<'c>,
+                  trait_name: &str,
+                  type_args: &[Type<'c>],
 ) -> Operation<'c> {
-    unsafe { Operation::from_raw(traitWitnessOpCreate(
+    unsafe { Operation::from_raw(traitAllegeOpCreate(
         loc.to_raw(),
         StringRef::new(trait_name).to_raw(),
         type_args.as_ptr() as *const _,
         type_args.len() as isize,
-        prereqs.as_ptr() as *const _,
-        prereqs.len() as isize,
+    ))}
+}
+
+pub fn witness<'c>(loc: Location<'c>,
+                   proof_name: &str,
+                   trait_name: &str,
+                   type_args: &[Type<'c>],
+) -> Operation<'c> {
+    unsafe { Operation::from_raw(traitWitnessOpCreate(
+        loc.to_raw(),
+        StringRef::new(proof_name).to_raw(),
+        StringRef::new(trait_name).to_raw(),
+        type_args.as_ptr() as *const _,
+        type_args.len() as isize,
     ))}
 }
 

@@ -48,13 +48,22 @@ def TraitOp : TraitDialectOp<"trait", [
   let arguments = (ins
     SymbolNameAttr:$sym_name,
     TypeArrayAttr:$type_params,
-    ObligationsAttr:$obligations
+    ConstraintsAttr:$requirements
   );
 
-  let results = (outs); // No results
   let regions = (region SizedRegion<1>:$body);
 
   let extraClassDeclaration = [{
+    TraitApplicationAttr getSelfApplication() {
+      MLIRContext* ctx = getContext();
+      FlatSymbolRefAttr selfRef = FlatSymbolRefAttr::get(ctx, getSymName());
+      return TraitApplicationAttr::get(ctx, selfRef, getTypeParams());
+    }
+
+    ClaimType getSelfClaim() {
+      return ClaimType::get(getContext(), getSelfApplication());
+    }
+
     func::FuncOp getMethod(StringRef methodName) {
       return dyn_cast_or_null<func::FuncOp>(
         mlir::SymbolTable::lookupSymbolIn(*this, methodName));
@@ -96,14 +105,13 @@ def TraitOp : TraitDialectOp<"trait", [
       return nullptr;
     }
 
-    ImplOp getImpl(ArrayRef<Type> typeArgs);
-    ImplOp getOrInstantiateImpl(OpBuilder& builder, ArrayRef<Type> typeArgs);
+    DenseMap<Type,Type> buildSubstitutionFor(ClaimType claimTy);
 
-    DenseMap<Type,Type> buildSubstitutionFor(TypeRange typeArgs);
+    SmallVector<TraitOp,4> getRequiredTraits();
 
-    SmallVector<TraitOp,4> getPrereqTraits();
+    LogicalResult verifyRequirements(ImplOp impl, ArrayRef<ImplOp> subproofs, llvm::function_ref<InFlightDiagnostic()> errFn);
 
-    LogicalResult verifyObligations(ImplOp impl, ArrayRef<ImplOp> prereqs, llvm::function_ref<InFlightDiagnostic()> errFn);
+    SmallVector<ClaimType> getRequirementsAsClaims();
   }];
 
   // builder creates one empty block in the body region
@@ -111,16 +119,16 @@ def TraitOp : TraitDialectOp<"trait", [
   let builders = [
     OpBuilder<(ins "::mlir::StringAttr":$sym_name,
                    "::mlir::ArrayAttr":$type_params,
-                   "ObligationsAttr":$obligations), [{
+                   "ConstraintsAttr":$requirements), [{
       $_state.addAttribute("sym_name", sym_name);
       $_state.addAttribute("type_params", type_params);
-      $_state.addAttribute("obligations", obligations);
+      $_state.addAttribute("requirements", requirements);
       ::mlir::Region *region = $_state.addRegion();
       region->emplaceBlock();
     }]>
   ];
 
-  let assemblyFormat = "$sym_name $type_params $obligations attr-dict-with-keyword $body";
+  let assemblyFormat = "$sym_name $type_params $requirements attr-dict-with-keyword $body";
 
   let hasVerifier = 1;
 }
@@ -163,13 +171,17 @@ def ImplOp : TraitDialectOp<"impl", [
   let arguments = (ins 
     SymbolNameAttr:$sym_name,
     TraitApplicationAttr:$trait_application,
-    ObligationsAttr:$obligations
+    ConstraintsAttr:$assumptions
   );
   let regions = (region SizedRegion<1>:$body);
 
   let extraClassDeclaration = [{
     TraitApplicationAttr getTraitApplication() const {
       return const_cast<ImplOp*>(this)->getTraitApplication();
+    }
+
+    ClaimType getSelfClaim() {
+      return ClaimType::get(getContext(), getTraitApplication());
     }
 
     FlatSymbolRefAttr getTraitNameAttr() const {
@@ -190,21 +202,23 @@ def ImplOp : TraitDialectOp<"impl", [
       return getMethod(name) != nullptr;
     }
 
-    func::FuncOp getOrInstantiateMethod(OpBuilder& builder, StringRef methodName);
+    func::FuncOp getOrInstantiateMethod(OpBuilder& builder, ClaimType proof, StringRef methodName);
 
-    func::FuncOp getOrInstantiateFunctionFromMethod(PatternRewriter& rewriter, StringRef methodName);
+    func::FuncOp getOrInstantiateFunctionFromMethod(PatternRewriter& rewriter, ClaimType proof, StringRef methodName);
 
     // Builds a substitution that maps the TraitOp's PolyType parameters to this ImplOp's type arguments
-    DenseMap<Type,Type> buildSubstitution();
-
-    ClaimType getSelfClaimType() {
-      return ClaimType::get(getContext(), getTraitApplication());
-    }
+    DenseMap<Type,Type> buildSubstitution(ClaimType selfClaim);
 
     // Helper to generate unique symbol name
-    static std::string generateSymName(TraitApplicationAttr traitApp, ObligationsAttr obligations);
+    static std::string generateSymName(TraitApplicationAttr traitApp, ConstraintsAttr assumptions);
 
-    LogicalResult verifyObligations(ArrayRef<ImplOp> prereqs, llvm::function_ref<InFlightDiagnostic()> errFn);
+    LogicalResult verifyAssumptions(ArrayRef<ImplOp> subproofs, llvm::function_ref<InFlightDiagnostic()> errFn);
+
+    bool isSelfProof();
+
+    LogicalResult verifyIsSelfProof(llvm::function_ref<InFlightDiagnostic()> errFn);
+
+    SmallVector<ClaimType> getRequirementsAsClaims();
   }];
 
   // builders create one empty block in the body region
@@ -213,20 +227,20 @@ def ImplOp : TraitDialectOp<"impl", [
     // override the default low-level builder to ensure that a block always exists
     OpBuilder<(ins "::mlir::StringRef":$sym_name,
                    "::mlir::trait::TraitApplicationAttr":$trait_application,
-                   "ObligationsAttr":$obligations), [{
+                   "ConstraintsAttr":$assumptions), [{
       $_state.addAttribute("sym_name", $_builder.getStringAttr(sym_name));
       $_state.addAttribute("trait_application", trait_application);
-      $_state.addAttribute("obligations", obligations);
+      $_state.addAttribute("assumptions", assumptions);
       ::mlir::Region *region = $_state.addRegion();
       region->emplaceBlock();
     }]>,
 
     // this builder automatically generates $sym_name if it is not given
     OpBuilder<(ins "::mlir::trait::TraitApplicationAttr":$trait_application,
-                   "ObligationsAttr":$obligations), [{
+                   "ConstraintsAttr":$assumptions), [{
       // Auto-generate unique symbol name
-      std::string symName = generateSymName(trait_application, obligations);
-      build($_builder, $_state, symName, trait_application, obligations);
+      std::string symName = generateSymName(trait_application, assumptions);
+      build($_builder, $_state, symName, trait_application, assumptions);
     }]>
   ];
 
@@ -266,9 +280,11 @@ def AssumeOp : TraitDialectOp<"assume", [
   let results = (outs Claim:$result);
 
   let extraClassDeclaration = [{
+    TraitApplicationAttr getTraitApplication() {
+      return cast<ClaimType>(getResult().getType()).getTraitApplication();
+    }
+
     TraitOp getTrait();
-    FlatSymbolRefAttr getTraitAttr();
-    ArrayRef<Type> getTypeArgs();
   }];
 
   let hasCustomAssemblyFormat = 1;
@@ -376,6 +392,8 @@ def MethodCallOp : TraitDialectOp<"method.call", [
       return cast<FlatSymbolRefAttr>(getMethodRef().getNestedReferences().front()).getValue();
     }
 
+    ImplOp getProvenImpl();
+
     // CallOpInterface methods
     operand_range getArgOperands() {
       return getArguments();
@@ -437,7 +455,7 @@ def FuncCallOp : TraitDialectOp<"func.call", [
     // creates the mapping poly type -> argument type
     llvm::DenseMap<Type, Type> buildSubstitution();
 
-    // returns the name of the callee after instantiation
+    // returns the name of the (possibly instantiated) callee after instantiation
     std::string getNameOfCalleeInstance();
 
     operand_range getArgOperands() {
@@ -529,10 +547,51 @@ def AllegeOp : TraitDialectOp<"allege", [
     }
     FlatSymbolRefAttr getTraitAttr();
 
-    SmallVector<TraitApplicationAttr> getPrereqTraitApplications();
+    SmallVector<TraitApplicationAttr> getRequiredTraitApplications();
   }];
 
   let hasCustomAssemblyFormat = 1;
+  let hasVerifier = 1;
+}
+
+
+def ProofOp : TraitDialectOp<"proof", [
+  DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+  HasParent<"ModuleOp">,
+  IsolatedFromAbove,
+  Symbol,
+  Pure
+]>{
+  let summary = "Canonical proof tree node";
+  let description = [{
+    Declares a named, canonical proof that a `trait.impl` satisfies a concrete trait application,
+    and that all one-hop trait requirements required by the trait under that application and 
+    assumptions of the target impl are already proven by other symbols (either other `trait.proof`s or `trait.impl`s).
+
+    Leaf `trait.impl`s have nothing to discharge and may not be wrapped in a `trait.proof`; they are self-proofs.
+  }];
+
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,                // the name of this proof
+    FlatSymbolRefAttr:$impl_name,            // the name of the impl being proven
+    TraitApplicationAttr:$trait_application, // must match the impl's trait application
+    ArrayAttr:$subproof_names                // the names of prerequisite proofs
+  );
+
+  let extraClassDeclaration = [{
+    ImplOp getImpl() {
+      ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
+      if (!module)
+        return nullptr;
+      return mlir::SymbolTable::lookupNearestSymbolFrom<ImplOp>(module, getImplNameAttr());
+    }
+
+    TraitOp getTrait();
+
+    SmallVector<ClaimType> getSubproofClaims();
+  }];
+
+  let assemblyFormat = "$sym_name `proves` $impl_name `for` $trait_application `given` $subproof_names attr-dict";
   let hasVerifier = 1;
 }
 
@@ -543,30 +602,39 @@ def WitnessOp : TraitDialectOp<"witness", [
 ]>{
   let summary = "Materializes a proven claim value for a concrete trait implementation";
   let description = [{
-    Creates a zero-sized SSA value of type `!trait.claim<@Trait[Types...]>` that
-    acts a concrete proof that the trait is satisfied.
+    Introduces a value of type `!trait.claim<@Trait[Types...], @Symbol>` that
+    represents a proof that the trait application is satisfied.
 
-    If the target trait has a `given` clause, the caller must supply references
-    to trait.impl ops that satisfy the prerequisites of the clause as operands
-    to this op.
+    The symbol may refer to either
+      * a `trait.proof` that transitively discharges the trait's requirements and the impl's assumptions
+      * a `trait.impl` that is self-proving
 
-    Symbol use verification checks:
-      * the target `trait.impl` exists, and
-      * the provided prerequisites cover the target trait's `given` clause
-        after substituting the target's actual type arguments for its parameters.
+    Verification ensures that the symbol proves the trait application as claimed.
 
     Example:
-      %w = trait.witness @PartialEq[i32,i32]
+      // @PartialEq has no obligations, so we refer directly to a trait.impl
+      %partial_eq_w = trait.witness @PartialEq_impl_i32_i32 for @PartialEq[i32,i32]
+
+      // @Ord has obligations, so we refer to a trait.proof
+      %ord_w = trait.witness @Ord_i32_p for @Ord[i32]
   }];
 
-  let arguments = (ins Variadic<ClaimType>:$trait_obligations);
+  let arguments = (ins
+    FlatSymbolRefAttr:$proof, // refers to trait.proof or trait.impl
+    TraitApplicationAttr:$trait_application
+  );
+
+  let builders = [
+    // builder infers the result type
+    OpBuilder<(ins "::mlir::FlatSymbolRefAttr":$proof,
+                   "::mlir::trait::TraitApplicationAttr":$trait_application), [{
+      MLIRContext* ctx = $_builder.getContext();
+      ClaimType claimTy = ClaimType::get(ctx, trait_application, proof);
+      build($_builder, $_state, claimTy, proof, trait_application);
+    }]>
+  ];
+
   let results = (outs Claim:$result);
-
-  let extraClassDeclaration = [{
-    TraitApplicationAttr getTraitApplication() {
-      return cast<ClaimType>(getResult().getType()).getTraitApplication();
-    }
-  }];
 
   let hasCustomAssemblyFormat = 1;
 }

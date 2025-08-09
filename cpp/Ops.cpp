@@ -68,20 +68,20 @@ LogicalResult TraitOp::verify() {
   if (uniqueParams.size() < 1)
     return emitOpError() << "requires at least one type parameter";
 
-  // check obligations
-  for (auto& app : getObligations().getApplications()) {
+  // check requirements
+  for (auto& app : getRequirements().getApplications()) {
     // each TraitApplicationAttr must use at least one of the trait's type parameters
     bool mentionsAny = llvm::any_of(uniqueParams, [&](PolyType param) {
       return app.mentionsType(param);
     });
 
     if (!mentionsAny)
-      return emitOpError() << "'where' clause prerequisite " << app
+      return emitOpError() << "'where' clause requirement " << app
                            << " must mention at least one type parameter";
 
     // must not refer to the current trait
     if (app.getTrait() == getSymNameAttr())
-      return emitOpError() << "'where' clause prerequisite " << app
+      return emitOpError() << "'where' clause requirement " << app
                            << " must not reference the current trait";
   }
 
@@ -92,126 +92,70 @@ LogicalResult TraitOp::verify() {
 LogicalResult TraitOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // verify obligations
   auto module = getOperation()->getParentOfType<ModuleOp>();
-  return getObligations().verifyTraitApplications(module, [&](){ return emitOpError(); });
+  return getRequirements().verifyTraitApplications(module, [&](){ return emitOpError(); });
 }
 
+DenseMap<Type,Type> TraitOp::buildSubstitutionFor(ClaimType claimTy) {
+  auto module = getOperation()->getParentOfType<ModuleOp>();
 
-ImplOp TraitOp::getImpl(ArrayRef<Type> typeArgs) {
-  MLIRContext* ctx = getContext();
-
-  ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
-  if (!module)
-    return nullptr;
-
-  auto uses = mlir::SymbolTable::getSymbolUses(getOperation(), module);
-  if (!uses)
-    return nullptr;
-
-  ImplOp symbolicImpl = nullptr;
-
-  // search through all ImplOps which use this TraitOp
-  for (const auto& use : *uses) {
-    auto impl = dyn_cast<ImplOp>(use.getUser());
-    if (!impl) continue;
-
-    SmallVector<Type> implTypes(impl.getTraitApplication().getTypeArgs());
-
-    // first check the impl's type arguments for an exact match
-    if (llvm::equal(implTypes, typeArgs)) {
-      // as soon as we find an exact match for the typeArgs, we're done
-      return impl;
-    }
-
-    // otherwise, check if the typeArgs can unify with the impl's type args,
-    // indicating a "symbolic" match
-
-    TupleType foundTy = TupleType::get(ctx, typeArgs);
-    TupleType expectedTy = TupleType::get(ctx, implTypes);
-
-    if (succeeded(unifyTypes(expectedTy, foundTy, module))) {
-      // if there is more than one symbolic match, that's ambiguous, and an error
-      if (symbolicImpl) return nullptr;
-      symbolicImpl = impl;
-    }
-  }
-
-  return symbolicImpl;
-}
-
-
-ImplOp TraitOp::getOrInstantiateImpl(OpBuilder& builder, ArrayRef<Type> typeArgs) {
-  if (auto impl = getImpl(typeArgs)) {
-    auto implTypeRange = impl.getTraitApplication().getTypeArgs();
-
-    // check if the impl's type arguments are identical to typeArgs
-    if (llvm::equal(implTypeRange, typeArgs)) {
-      return impl;
-    }
-
-    // impl must be polymorphic; instantiate
-    assert(llvm::any_of(implTypeRange, [](Type ty) {
-      return containsSymbolicType(ty);
-    }));
-    
-    PatternRewriter::InsertionGuard guard(builder);
-    builder.setInsertionPointAfter(impl);
-    return instantiatePolymorphicImpl(builder, impl, typeArgs);
-  }
-
-  return nullptr;
-}
-
-DenseMap<Type,Type> TraitOp::buildSubstitutionFor(TypeRange typeArgs) {
+  // unify our self claim with the given claim
   DenseMap<Type,Type> subst;
-  auto params = getTypeParams().getAsValueRange<TypeAttr>();
-  for (auto [from, to] : llvm::zip(params, typeArgs)) {
-    subst[from] = to;
-  }
+  if (failed(unifyTypes(getSelfClaim(), claimTy, module, subst)))
+    llvm_unreachable("TraitOp::buildSubstitutionFor: unifyTypes failed");
+
   return subst;
 }
 
-SmallVector<TraitOp,4> TraitOp::getPrereqTraits() {
+SmallVector<TraitOp,4> TraitOp::getRequiredTraits() {
   ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
   if (!module)
     llvm_unreachable("TraitOp::getPrereqTraits: not in a module");
 
   SmallVector<TraitOp,4> result;
-  for (auto &app : getObligations().getApplications()) {
+  for (auto &app : getRequirements().getApplications()) {
     TraitOp trait = mlir::SymbolTable::lookupNearestSymbolFrom<TraitOp>(module, app.getTrait());
     if (!trait)
-      llvm_unreachable("TraitOp::getPrereqTraits: couldn't find prerequisite trait");
+      llvm_unreachable("TraitOp::getPrereqTraits: couldn't find required trait");
     result.push_back(trait);
   }
   return result;
 }
 
-LogicalResult TraitOp::verifyObligations(ImplOp impl, ArrayRef<ImplOp> obligations,
-                                         llvm::function_ref<InFlightDiagnostic()> errFn) {
+LogicalResult TraitOp::verifyRequirements(ImplOp impl, ArrayRef<ImplOp> subproofs,
+                                          llvm::function_ref<InFlightDiagnostic()> errFn) {
   // verify that impl's trait refers to this trait
   StringRef implTrait = impl.getTraitApplication().getTrait().getValue();
   if (implTrait != getSymName())
     return errFn() << "expected impl for @" << getSymName()
                    << ", but found impl for trait @" << implTrait;
 
-  // verify that the received number of obligations matches our expectations
-  size_t expectedNumTraitObligations = getObligations().getApplications().size();
+  // verify that the received number of subproofs matches our expectations
+  size_t numTraitReqs = getRequirements().getApplications().size();
 
-  if (obligations.size() < expectedNumTraitObligations)
-    return errFn() << "expected " << expectedNumTraitObligations << " for @"
+  if (subproofs.size() < numTraitReqs)
+    return errFn() << "expected " << numTraitReqs << " for @"
                    << getSymName() << "'s 'where' clause, but found "
-                   << obligations.size();
+                   << subproofs.size();
 
-  // verify that each obligation implements the expected trait
-  for (auto [app, ob] : llvm::zip(getObligations().getApplications(), obligations)) {
+  // verify that each subproof implements the expected trait
+  for (auto [app, proof] : llvm::zip(getRequirements().getApplications(), subproofs)) {
     StringRef expectedTrait = app.getTrait().getValue();
-    StringRef obTrait = ob.getTraitApplication().getTrait().getValue();
+    StringRef proofTrait = proof.getTraitApplication().getTrait().getValue();
 
-    if (obTrait != expectedTrait)
+    if (proofTrait != expectedTrait)
       return errFn() << "expected impl for @" << expectedTrait
-                     << ", but found impl for trait @" << obTrait;
+                     << ", but found impl for trait @" << proofTrait;
   }
 
-  return impl.verifyObligations(obligations.drop_front(expectedNumTraitObligations), errFn);
+  return impl.verifyAssumptions(subproofs.drop_front(numTraitReqs), errFn);
+}
+
+SmallVector<ClaimType> TraitOp::getRequirementsAsClaims() {
+  SmallVector<ClaimType> result;
+  for (TraitApplicationAttr app : getRequirements().getApplications()) {
+    result.push_back(ClaimType::get(getContext(), app));
+  }
+  return result;
 }
 
 
@@ -275,29 +219,40 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   return success();
 }
 
-LogicalResult ImplOp::verifyObligations(ArrayRef<ImplOp> obligations,
+LogicalResult ImplOp::verifyAssumptions(ArrayRef<ImplOp> subproofs,
                                         llvm::function_ref<InFlightDiagnostic()> errFn) {
-  // verify that the received number of obligations matches our expectations
-  size_t expectedNumObligations = getObligations().getApplications().size();
+  // verify that the received number of subproofs matches our expectations
+  size_t expectedNumProofs = getAssumptions().getApplications().size();
 
-  if (obligations.size() != expectedNumObligations)
-    return errFn() << "expected " << expectedNumObligations << "for @"
+  if (subproofs.size() != expectedNumProofs)
+    return errFn() << "expected " << expectedNumProofs << "for @"
                    << getSymName() << "'s 'where' clause, but found "
-                   << obligations.size();
+                   << subproofs.size();
 
-  // verify that each obligation implements the expected trait
-  for (auto [app, ob] : llvm::zip(getObligations().getApplications(), obligations)) {
+  // verify that each subproof implements the expected trait
+  for (auto [app, proof] : llvm::zip(getAssumptions().getApplications(), subproofs)) {
     StringRef expectedTrait = app.getTrait().getValue();
-    StringRef obTrait = ob.getTraitApplication().getTrait().getValue();
+    StringRef proofTrait = proof.getTraitApplication().getTrait().getValue();
 
-    if (obTrait != expectedTrait)
+    if (proofTrait != expectedTrait)
       return errFn() << "expected impl for @" << expectedTrait
-                     << ", but found impl for trait @" << obTrait;
+                     << ", but found impl for trait @" << proofTrait;
   }
 
   return success();
 }
 
+bool ImplOp::isSelfProof() {
+  // an ImplOp is self-proven if its TraitOp has no requirements and the ImplOp has no assumptions
+  return getAssumptions().getApplications().empty() && getTrait().getRequirements().getApplications().empty();
+}
+
+LogicalResult ImplOp::verifyIsSelfProof(llvm::function_ref<InFlightDiagnostic()> err) {
+  if (!isSelfProof())
+    return err() << "impl " << getSymName()
+                 << " has trait requirements or impl assumptions and must be proven with a trait.proof";
+  return success();
+}
 
 TraitOp ImplOp::getTrait() {
   ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
@@ -309,12 +264,12 @@ TraitOp ImplOp::getTrait() {
 }
 
 
-DenseMap<Type, Type> ImplOp::buildSubstitution() {
-  return getTrait().buildSubstitutionFor(getTypeArgs());
+DenseMap<Type, Type> ImplOp::buildSubstitution(ClaimType selfClaim) {
+  return getTrait().buildSubstitutionFor(selfClaim);
 }
 
 
-func::FuncOp ImplOp::getOrInstantiateMethod(OpBuilder& builder, StringRef methodName) {
+func::FuncOp ImplOp::getOrInstantiateMethod(OpBuilder& builder, ClaimType selfProof, StringRef methodName) {
   // check that we've named a valid trait method
   if (!getTrait().hasMethod(methodName)) return nullptr;
 
@@ -326,7 +281,8 @@ func::FuncOp ImplOp::getOrInstantiateMethod(OpBuilder& builder, StringRef method
     if (traitMethod) {
       PatternRewriter::InsertionGuard guard(builder);
       builder.setInsertionPointToEnd(&getBody().front());
-      method = instantiatePolymorph(builder, traitMethod, methodName, buildSubstitution());
+
+      method = instantiatePolymorph(builder, traitMethod, methodName, buildSubstitution(selfProof));
     }
   }
 
@@ -334,11 +290,11 @@ func::FuncOp ImplOp::getOrInstantiateMethod(OpBuilder& builder, StringRef method
 }
 
 
-static func::FuncOp cloneMethodAsFreeFuncWithLeadingSelfClaim(
+static func::FuncOp cloneMethodAsFreeFuncWithLeadingSelfProof(
     PatternRewriter& rewriter,
     func::FuncOp method,
     StringRef functionName,
-    ClaimType selfClaimTy) {
+    ClaimType selfProofTy) {
   // clone and hoist method into the grandparent with a mangled name
   PatternRewriter::InsertionGuard guard(rewriter);
 
@@ -354,7 +310,7 @@ static func::FuncOp cloneMethodAsFreeFuncWithLeadingSelfClaim(
     funcOp.setSymName(functionName);
 
     // prepend the claim parameter
-    funcOp.insertArgument(/*idx=*/0, selfClaimTy,
+    funcOp.insertArgument(/*idx=*/0, selfProofTy,
                           /*argAttrs=*/mlir::DictionaryAttr(),
                           method.getLoc());
   });
@@ -363,7 +319,7 @@ static func::FuncOp cloneMethodAsFreeFuncWithLeadingSelfClaim(
   // replace AssumeOps producing the claim type
   SmallVector<AssumeOp> toErase;
   funcOp.walk([&](AssumeOp a) {
-    if (a.getResult().getType() == selfClaimTy) {
+    if (a.getResult().getType() == selfProofTy) {
       rewriter.replaceAllUsesWith(a.getResult(), claimArg);
       toErase.push_back(a);
     }
@@ -376,7 +332,10 @@ static func::FuncOp cloneMethodAsFreeFuncWithLeadingSelfClaim(
   return funcOp;
 }
 
-func::FuncOp ImplOp::getOrInstantiateFunctionFromMethod(PatternRewriter& rewriter, StringRef methodName) {
+func::FuncOp ImplOp::getOrInstantiateFunctionFromMethod(
+    PatternRewriter& rewriter,
+    ClaimType proof,
+    StringRef methodName) {
   // check that methodName names a valid trait method
   if (!getTrait().hasMethod(methodName)) return nullptr;
 
@@ -391,14 +350,14 @@ func::FuncOp ImplOp::getOrInstantiateFunctionFromMethod(PatternRewriter& rewrite
 
   if (!funcOp) {
     // get the method inside the ImplOp
-    func::FuncOp method = getOrInstantiateMethod(rewriter, methodName);
+    func::FuncOp method = getOrInstantiateMethod(rewriter, proof, methodName);
     
     // clone and hoist method into grandparent with mangled name
-    funcOp = cloneMethodAsFreeFuncWithLeadingSelfClaim(
+    funcOp = cloneMethodAsFreeFuncWithLeadingSelfProof(
       rewriter,
       method,
       functionName,
-      getSelfClaimType()
+      proof
     );
   }
 
@@ -406,7 +365,7 @@ func::FuncOp ImplOp::getOrInstantiateFunctionFromMethod(PatternRewriter& rewrite
 }
 
 std::string ImplOp::generateSymName(TraitApplicationAttr traitApp,
-                                    ObligationsAttr obligations) {
+                                    ConstraintsAttr assumptions) {
   std::string result;
   llvm::raw_string_ostream os(result);
   
@@ -416,10 +375,10 @@ std::string ImplOp::generateSymName(TraitApplicationAttr traitApp,
     os << "_" << ty;
   }
   
-  // Include where clause in symbol name if there are obligations
-  if (!obligations.getApplications().empty()) {
+  // Include where clause in symbol name if there are assumptions
+  if (!assumptions.getApplications().empty()) {
     os << "_where";
-    for (auto app : obligations.getApplications()) {
+    for (auto app : assumptions.getApplications()) {
       os << "_" << app.getTrait().getValue();
       for (auto typeArg : app.getTypeArgs()) {
         os << "_" << typeArg;
@@ -427,6 +386,21 @@ std::string ImplOp::generateSymName(TraitApplicationAttr traitApp,
     }
   }
   
+  return result;
+}
+
+SmallVector<ClaimType> ImplOp::getRequirementsAsClaims() {
+  // build substitution
+  DenseMap<Type,Type> subst = buildSubstitution(getSelfClaim());
+
+  // specialize each requirement: @Req[params...] to @Req[args...]
+  SmallVector<ClaimType> result;
+  for (ClaimType polyReq : getTrait().getRequirementsAsClaims()) {
+    ClaimType req = dyn_cast<ClaimType>(applySubstitution(subst, polyReq));
+    if (!req)
+      llvm_unreachable("ImplOp::getRequirementApplications: expected ClaimType");
+    result.push_back(req);
+  }
   return result;
 }
 
@@ -445,16 +419,16 @@ ParseResult ImplOp::parse(OpAsmParser &p, OperationState &result) {
     return failure();
   result.addAttribute("trait_application", traitApp);  
   
-  // parse obligations
-  ObligationsAttr obligations = dyn_cast<ObligationsAttr>(ObligationsAttr::parse(p, {}));
-  if (!obligations)
+  // parse assumptions
+  ConstraintsAttr assumptions = dyn_cast<ConstraintsAttr>(ConstraintsAttr::parse(p, {}));
+  if (!assumptions)
     return failure();
-  result.addAttribute("obligations", obligations);
+  result.addAttribute("assumptions", assumptions);
 
   // sym_name: use parsed or synthesize from parameters
   StringAttr symNameAttr = parsedSymName
     ? parsedSymName
-    : p.getBuilder().getStringAttr(generateSymName(traitApp, obligations));
+    : p.getBuilder().getStringAttr(generateSymName(traitApp, assumptions));
   result.addAttribute("sym_name", symNameAttr);
   
   // Parse attributes and body region
@@ -475,10 +449,10 @@ ParseResult ImplOp::parse(OpAsmParser &p, OperationState &result) {
 void ImplOp::print(OpAsmPrinter &printer) {
   // decide whether to print the symbolic name
   StringAttr symNameAttr = getSymNameAttr();
-  std::string synthesized = generateSymName(getTraitApplication(), getObligations());
+  std::string synthesized = generateSymName(getTraitApplication(), getAssumptions());
   bool printExplicitSymName = symNameAttr && symNameAttr.getValue() != synthesized;
 
-  // Print: trait.impl [@SymName] for @TraitName [types...] obligations { ... }
+  // Print: trait.impl [@SymName] for @TraitName [types...] assumptions { ... }
   printer << " ";
   if (printExplicitSymName) {
     printer.printSymbolName(symNameAttr);
@@ -488,11 +462,11 @@ void ImplOp::print(OpAsmPrinter &printer) {
   printer << "for ";
   getTraitApplication().print(printer);
 
-  getObligations().print(printer);
+  getAssumptions().print(printer);
   
   printer.printOptionalAttrDictWithKeyword(
     (*this)->getAttrs(), 
-    /*elidedAttrs=*/{"sym_name", "trait_application", "obligations"}
+    /*elidedAttrs=*/{"sym_name", "trait_application", "assumptions"}
   );
   printer << " ";
   printer.printRegion(getBody());
@@ -500,117 +474,191 @@ void ImplOp::print(OpAsmPrinter &printer) {
 
 
 //===----------------------------------------------------------------------===//
+// ProofOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult ProofOp::verify() {
+  // check that subproofs is a non-empty array
+  if (getSubproofNames().empty())
+    return emitOpError() << "'subproof_names' must be a non-empty array";
+
+  // check that every name is a FlatSymbolRefAttr
+  for (Attribute name : getSubproofNames()) {
+    if (!isa<FlatSymbolRefAttr>(name)) {
+      return emitOpError() << "'subproof_names' must contain only FlatSymbolRefAttr elements";
+    }
+  }
+
+  return success();
+}
+
+LogicalResult ProofOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  auto *op = getOperation();
+  auto errFn = [&] { return emitOpError(); };
+
+  // check that the named impl exists
+  auto implOp = getImpl();
+  if (!implOp)
+    return emitOpError() << "cannot find impl '" << getImplNameAttr() << "'";
+
+  // check that our trait application matches the impl's trait application
+  if (implOp.getTraitApplication() != getTraitApplication())
+    return emitOpError() << "trait application does not match impl's declared trait application";
+
+  // check that the named trait exists
+  auto traitOp = getTrait();
+  if (!traitOp)
+    return emitOpError() << "cannot find trait '" << getTraitApplication().getTrait() << "'";
+
+  // validate and collect each prereq ImplOp
+  SmallVector<ImplOp> subproofImpls;
+  for (Attribute name : getSubproofNames()) {
+    auto subproofRef = dyn_cast<FlatSymbolRefAttr>(name);
+    if (!subproofRef)
+      return emitOpError() << "expected FlatSymbolRefAttr in 'subproof_names'";
+
+    auto subproof = symbolTable.lookupNearestSymbolFrom(op, subproofRef);
+    if (!subproof)
+      return emitOpError() << "cannot find subproof '" << subproofRef << "'";
+
+    // prereq needs to refer to either a ProofOp or an ImplOp with no obligations
+    if (auto proofOp = dyn_cast<ProofOp>(subproof)) {
+      // a ProofOp is fine
+      subproofImpls.push_back(proofOp.getImpl());
+    } else if (auto implOp = dyn_cast<ImplOp>(subproof)) {
+      // an ImplOp can be its own proof
+      if (failed(implOp.verifyIsSelfProof(errFn)))
+        return failure();
+      subproofImpls.push_back(implOp);
+    } else {
+      // the symbol refers to something that isn't a proof
+      return emitOpError()
+             << "symbol " << subproofRef.getValue()
+             << " must refer to either a trait.proof or a trait.impl with no requirements or assumptions (i.e., no 'where' clauses)";
+    }
+  }
+
+  // ask the traitOp to verify that its requirements (and the implOp's assumptions)
+  // are fulfilled by prereqImpls
+  return traitOp.verifyRequirements(implOp, subproofImpls, errFn);
+}
+
+TraitOp ProofOp::getTrait() {
+  ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
+  if (!module)
+    return nullptr;
+  return mlir::SymbolTable::lookupNearestSymbolFrom<TraitOp>(module, getTraitApplication().getTrait());
+}
+
+SmallVector<ClaimType> ProofOp::getSubproofClaims() {
+  SmallVector<ClaimType> result;
+
+  ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
+  if (!module)
+    return result;
+
+  for (Attribute name : getSubproofNames()) {
+    auto subproofRef = dyn_cast<FlatSymbolRefAttr>(name);
+    if (!subproofRef)
+      llvm::report_fatal_error("ProofOp::getSubproofTypes: expected FlatSymbolRefAttr");
+
+    auto subproof = SymbolTable::lookupNearestSymbolFrom(module, subproofRef);
+    if (!subproof)
+      llvm::report_fatal_error("ProofOp::getSubproofTypes: couldn't find referenced proof");
+
+    // get the trait application of the subproof
+    TraitApplicationAttr subproofTraitApp;
+    if (auto proofOp = dyn_cast<ProofOp>(subproof)) {
+      subproofTraitApp = proofOp.getTraitApplication();
+    } else if (auto implOp = dyn_cast<ImplOp>(subproof)) {
+      subproofTraitApp = implOp.getTraitApplication();
+    } else {
+      llvm::report_fatal_error("ProofOp::getSubproofTypes: expected ProofOp or ImplOp");
+    }
+
+    ClaimType subproofTy = ClaimType::get(getContext(), subproofTraitApp, subproofRef);
+    result.push_back(subproofTy);
+  }
+
+  return result;
+}
+
+//===----------------------------------------------------------------------===//
 // WitnessOp
 //===----------------------------------------------------------------------===//
 
-ParseResult WitnessOp::parse(OpAsmParser &p, OperationState& st) {
-  // parse a TraitApplicationAttr: @Trait[Types...]
+ParseResult WitnessOp::parse(OpAsmParser &p, OperationState& result) {
+  // parse @Symbol
+  FlatSymbolRefAttr proof;
+  if (p.parseAttribute(proof, "proof", result.attributes))
+    return failure();
+
+  // parse `for`
+  if (p.parseKeyword("for"))
+    return failure();
+
+  // parse @Trait[Types...]
   TraitApplicationAttr traitApp = dyn_cast<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
   if (!traitApp)
+    return p.emitError(p.getCurrentLocation(), "expected a TraitApplicationAttr");
+  result.addAttribute("trait_application", traitApp);
+
+  // construct the result type
+  ClaimType claimTy = ClaimType::get(p.getContext(), traitApp, proof);
+  result.addTypes(claimTy);
+
+  // parse additional attributes
+  if (p.parseOptionalAttrDictWithKeyword(result.attributes))
     return failure();
-
-  // Result type inferred from TraitApplicationAttr
-  st.addTypes(ClaimType::get(p.getContext(), traitApp));
-
-  // parse optional trait obligations:
-  // `where [ %o0: @A[Types...], %o1: @B[Types...], ... ]`
-  SmallVector<OpAsmParser::UnresolvedOperand> obligations;
-  SmallVector<Type> obligationTypes;
-
-  if (succeeded(p.parseOptionalKeyword("where"))) {
-    if (p.parseCommaSeparatedList(OpAsmParser::Delimiter::Square, [&] {
-          OpAsmParser::UnresolvedOperand use;
-          if (p.parseOperand(use) || p.parseColon())
-            return failure();
-
-          TraitApplicationAttr traitApp = dyn_cast<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
-          if (!traitApp)
-            return failure();
-
-          obligations.push_back(use);
-          obligationTypes.push_back(ClaimType::get(p.getContext(), traitApp));
-          return success();
-        }))
-    return failure();
-  }
-
-  // resolve operands
-  if (p.resolveOperands(obligations, obligationTypes, p.getNameLoc(), st.operands))
-    return failure();
-
-  if (p.parseOptionalAttrDict(st.attributes)) return failure();
 
   return success();
 }
 
 void WitnessOp::print(OpAsmPrinter &p) {
-  p << " ";
+  p << " " << getProof() << " for ";
   getTraitApplication().print(p);
 
-  // print trait obligations, if any
-  if (!getTraitObligations().empty()) {
-    p << " where [";
-    p.increaseIndent();
-
-    bool first = true;
-    for (auto obligation : getTraitObligations()) {
-      if (!first) {
-        p << ",";
-      }
-      first = false;
-
-      p.printNewline();
-      p.printOperand(obligation);
-      p << ": ";
-      auto app = dyn_cast<ClaimType>(obligation.getType()).getTraitApplication();
-      app.print(p);
-    }
-
-    p.decreaseIndent();
-    p << "]";
-  }
-  p.printOptionalAttrDict(getOperation()->getAttrs());
+  p.printOptionalAttrDictWithKeyword(
+    (*this)->getAttrs(),
+    /*elidedAttrs=*/{"proof", "trait_application"}
+  );
 }
 
 LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  auto module = getOperation()->getParentOfType<ModuleOp>();
-  if (!module)
-    return emitOpError() << "not in a module";
+  Operation *op = getOperation();
+  auto errFn = [&] { return emitOpError(); };
 
-  auto app = getTraitApplication();
-  if (!app)
-    return emitOpError() << "expected a TraitApplicationAttr";
+  auto proofRef = getProofAttr();
+  auto proof = symbolTable.lookupNearestSymbolFrom(op, proofRef);
+  if (!proof)
+    return emitOpError() << "cannot find proof '" << proofRef << "'";
 
-  // look up the TraitOp
-  auto traitOp = mlir::SymbolTable::lookupNearestSymbolFrom<TraitOp>(module, app.getTrait());
-  if (!traitOp)
-    return emitOpError() << "cannot find trait '" << app.getTrait() << "'";
+  // XXX much of the logic below is duplicated with ProofOp::verifySymbolUses
 
-  // find a matching ImplOp
-  auto implOp = traitOp.getImpl(app.getTypeArgs());
-  if (!implOp)
-    return emitOpError() << "no matching trait.impl "
-                         << app.getTrait() << " for " << app.getTypeArgs();
+  ImplOp implOp;
 
-  // find a matching ImplOp for each trait obligation
-  SmallVector<ImplOp> obligations;
-  for (auto ob : getTraitObligations()) {
-    auto app = cast<ClaimType>(ob.getType()).getTraitApplication();
-    auto traitOp = mlir::SymbolTable::lookupNearestSymbolFrom<TraitOp>(module, app.getTrait());
-    if (!traitOp)
-      return emitOpError() << "cannot find trait '" << app.getTrait() << "'";
-
-    auto implOp = traitOp.getImpl(app.getTypeArgs());
+  // proof needs to refer to either a ProofOp or an ImplOp with no obligations
+  if (auto proofOp = dyn_cast<ProofOp>(proof)) {
+    implOp = proofOp.getImpl();
     if (!implOp)
-      return emitOpError() << "no matching trait.impl "
-                           << app.getTrait() << " for " << app.getTypeArgs();
-
-    obligations.push_back(implOp);
+      return emitOpError() << "proof " << proofRef << " refers to missing impl";
+  } else if (auto leafImplOp = dyn_cast<ImplOp>(proof)) {
+    // an ImplOp can be a self-proof
+    if (failed(leafImplOp.verifyIsSelfProof(errFn)))
+      return failure();
+    implOp = leafImplOp;
+  } else {
+    // the symbol refers to something that isn't a proof
+    return emitOpError()
+           << "symbol " << proofRef.getValue()
+           << " must refer to either a trait.proof or a trait.impl with no obligations";
   }
 
-  // ask the trait to verify the impl's obligations
-  auto errFn = [&] { return emitOpError(); };
-  return traitOp.verifyObligations(implOp, obligations, errFn);
+  // ensure the impl matches the claimed trait application
+  if (implOp.getTraitApplication() != getTraitApplication())
+    return emitOpError() << "trait application does not match impl's declared trait application";
+
+  return success();
 }
 
 
@@ -658,52 +706,28 @@ LogicalResult AssumeOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     return emitOpError("must be within a 'trait.trait' or 'trait.impl' region");
   }
   
-  FlatSymbolRefAttr assumedTraitAttr = getTraitAttr();
-  ArrayRef<Type> assumedTypeArgs = getTypeArgs();
+  auto assumedTraitApp = getTraitApplication();
   
   if (enclosingTrait) {
-    // In TraitOp: verify self-referential assumption
-    StringAttr enclosingTraitName = enclosingTrait.getSymNameAttr();
-    
-    if (assumedTraitAttr.getValue() != enclosingTraitName.getValue()) {
-      return emitOpError() << "assumed trait '" << assumedTraitAttr.getValue() 
-                           << "' does not match enclosing trait '" 
-                           << enclosingTraitName.getValue() << "'";
-    }
-    
-    // Verify that type arguments match the enclosing trait's type parameters
-    auto enclosingTypeParams = enclosingTrait.getTypeParams().getAsValueRange<TypeAttr>();
-    if (!llvm::equal(assumedTypeArgs, enclosingTypeParams)) {
-      return emitOpError() << "assumed claim type arguments must exactly match "
-                           << "enclosing trait's type parameters";
-    }
+    // In TraitOp: verify self-referential application
+    auto enclosingSelfApp = enclosingTrait.getSelfApplication();
+
+    if (assumedTraitApp != enclosingSelfApp)
+      return emitOpError() << "assumed trait application " << assumedTraitApp
+                           << " does not match enclosing trait's self application "
+                           << enclosingSelfApp;
   } else if (enclosingImpl) {
-    // In ImplOp: verify assumption matches the impl's trait and types
-    FlatSymbolRefAttr implTraitAttr = enclosingImpl.getTraitNameAttr();
+    // In ImplOp: verify assumption matches the impl's trait application
+    auto implTraitApp = enclosingImpl.getTraitApplication();
     
-    if (assumedTraitAttr.getValue() != implTraitAttr.getValue()) {
-      return emitOpError() << "assumed trait '" << assumedTraitAttr.getValue() 
-                           << "' does not match impl's trait '" 
-                           << implTraitAttr.getValue() << "'";
-    }
-    
-    // Verify that type arguments match the impl's type arguments
-    auto implTypeArgs = enclosingImpl.getTypeArgs();
-    if (!llvm::equal(assumedTypeArgs, implTypeArgs)) {
-      return emitOpError() << "assumed claim type arguments must exactly match "
-                           << "enclosing impl's type arguments";
+    if (assumedTraitApp != implTraitApp) {
+      return emitOpError() << "assumed trait application " << assumedTraitApp
+                           << " does not match impl's trait application" 
+                           << implTraitApp;
     }
   }
   
   return success();
-}
-
-FlatSymbolRefAttr AssumeOp::getTraitAttr() {
-  return dyn_cast<ClaimType>(getResult().getType()).getTraitName();
-}
-
-ArrayRef<Type> AssumeOp::getTypeArgs() {
-  return dyn_cast<ClaimType>(getResult().getType()).getTypeArgs();
 }
 
 TraitOp AssumeOp::getTrait() {
@@ -712,7 +736,7 @@ TraitOp AssumeOp::getTrait() {
     emitOpError() << "not inside of a module";
     return nullptr;
   }
-  return mlir::SymbolTable::lookupNearestSymbolFrom<TraitOp>(moduleOp, getTraitAttr());
+  return mlir::SymbolTable::lookupNearestSymbolFrom<TraitOp>(moduleOp, getTraitApplication().getTrait());
 }
 
 
@@ -769,7 +793,7 @@ LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable)
   }
 
   // monomorphize the method's type using the claim's type arguments
-  DenseMap<Type,Type> subst = traitOp.buildSubstitutionFor(getTraitApplication().getTypeArgs());
+  DenseMap<Type,Type> subst = traitOp.buildSubstitutionFor(cast<ClaimType>(getClaim().getType()));
   FunctionType methodFnTy = dyn_cast_or_null<FunctionType>(applySubstitution(subst, method.getFunctionType()));
   if (!methodFnTy)
     return emitOpError() << "expected function type";
@@ -781,10 +805,28 @@ LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable)
                                       moduleOp);
 }
 
+ImplOp MethodCallOp::getProvenImpl() {
+  ClaimType claimTy = cast<ClaimType>(getClaim().getType());
+  assert(claimTy.isProven());
+
+  auto proofRef = claimTy.getProof();
+  ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
+
+  ImplOp result;
+  auto proofOp = SymbolTable::lookupNearestSymbolFrom<ProofOp>(module, proofRef);
+  if (proofOp) {
+    result = proofOp.getImpl();
+  } else {
+    result = SymbolTable::lookupNearestSymbolFrom<ImplOp>(module, proofRef);
+  }
+
+  return result;
+}
+
 func::FuncOp MethodCallOp::getOrInstantiateCallee(PatternRewriter& rewriter) {
-  return getTrait()
-    .getOrInstantiateImpl(rewriter, getTraitApplication().getTypeArgs())
-    .getOrInstantiateFunctionFromMethod(rewriter, getMethodName());
+  ClaimType claimTy = cast<ClaimType>(getClaim().getType());
+  return getProvenImpl()
+    .getOrInstantiateFunctionFromMethod(rewriter, claimTy, getMethodName());
 }
 
 
@@ -834,7 +876,23 @@ DenseMap<Type, Type> FuncCallOp::buildSubstitution() {
 }
 
 std::string FuncCallOp::getNameOfCalleeInstance() {
-  return mangleFunctionName(getCallee(), buildSubstitution());
+  std::string result = getCallee().str();
+
+  auto subst = buildSubstitution();
+
+  // append substituted types to the callee's name
+  // except for ClaimTypes, which are not necessary
+  // for distinguishing instances because
+  // they are erased after monomorphization
+  llvm::raw_string_ostream os(result);
+  for (auto [_, substitutedTy] : subst) {
+    if (!isa<ClaimType>(substitutedTy)) {
+      os << "_" << substitutedTy;
+    }
+  }
+  os.flush();
+
+  return result;
 }
 
 func::FuncOp FuncCallOp::instantiateCalleeAtInsertionPoint(OpBuilder &builder) {
@@ -966,19 +1024,19 @@ LogicalResult ProjectOp::verifySymbolUses(SymbolTableCollection &/*symbolTable*/
     return emitOpError() << "cannot resolve trait '"
                          << srcApp.getTrait() << "'";
 
-  if (srcTrait.getObligations().getApplications().empty())
+  if (srcTrait.getRequirements().getApplications().empty())
     return emitOpError() << "trait '" << srcTrait.getSymName()
-                         << "' has no obligations; no projections allowed";
+                         << "' has no requirements (i.e., no 'where' clause); no projections allowed";
 
-  // look up all candidate prerequisites that apply the dst trait
-  auto candidates = srcTrait.getObligations().getApplicationsOf(dstApp.getTrait());
+  // look up all candidate requirements that apply the dst trait
+  auto candidates = srcTrait.getRequirements().getApplicationsOf(dstApp.getTrait());
   if (candidates.empty())
     return emitOpError() << "trait '" << dstApp.getTrait()
-                         << "' is not a prerequisite of trait '"
+                         << "' is not a requirement of trait '"
                          << srcApp.getTrait() << "'";
 
-  // build substitution from the operand's type args
-  auto subst = srcTrait.buildSubstitutionFor(srcApp.getTypeArgs());
+  // build substitution from the source claim
+  auto subst = srcTrait.buildSubstitutionFor(srcClaim);
 
   auto* ctx = getContext();
 
@@ -1027,12 +1085,12 @@ void AllegeOp::print(OpAsmPrinter &p) {
 }
 
 LogicalResult AllegeOp::verify() {
-  // type args must be concrete
-  bool allConcrete = llvm::all_of(getTypeArgs(), [](Type ty) {
-    return isConcrete(ty);
+  // type args must be monomorphic
+  bool allMonomorphic = llvm::all_of(getTypeArgs(), [](Type ty) {
+    return isMonomorphicType(ty);
   });
 
-  if (!allConcrete)
+  if (!allMonomorphic)
     return failure();
 
   return success();
@@ -1062,18 +1120,22 @@ ArrayRef<Type> AllegeOp::getTypeArgs() {
   return dyn_cast<ClaimType>(getResult().getType()).getTypeArgs();
 }
 
-SmallVector<TraitApplicationAttr> AllegeOp::getPrereqTraitApplications() {
+SmallVector<TraitApplicationAttr> AllegeOp::getRequiredTraitApplications() {
   TraitOp trait = getTrait();
   if (!trait)
-    llvm_unreachable("AllegeOp::getPrereqTraitApplications: couldn't find TraitOp");
+    llvm_unreachable("AllegeOp::getRequiredTraitApplications: couldn't find TraitOp");
+
+  ClaimType claimTy = dyn_cast<ClaimType>(getResult().getType());
+  if (!claimTy)
+    llvm_unreachable("AllegeOp::getRequiredTraitApplications: expected !trait.claim type");
 
   SmallVector<TraitApplicationAttr> result;
-  auto subst = trait.buildSubstitutionFor(getTypeArgs());
+  auto subst = trait.buildSubstitutionFor(claimTy);
 
-  for (auto prereqApp : trait.getObligations().getApplications()) {
-    auto substApp = dyn_cast_or_null<TraitApplicationAttr>(applySubstitution(subst, prereqApp));
+  for (auto reqApp : trait.getRequirements().getApplications()) {
+    auto substApp = dyn_cast_or_null<TraitApplicationAttr>(applySubstitution(subst, reqApp));
     if (!substApp)
-      llvm_unreachable("AllegeOp::getPrereqTraitApplications: expected substituted trait application to be a TraitApplicationAttr");
+      llvm_unreachable("AllegeOp::getRequiredTraitApplications: expected substituted trait application to be a TraitApplicationAttr");
     result.push_back(substApp);
   }
 

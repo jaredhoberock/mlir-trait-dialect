@@ -41,10 +41,10 @@ func.func @foo(%w: !trait.claim<@PartialEq[!T,!T]>, %x: !T, %y: !T) -> i1 {
 // CHECK-NOT: builtin.unrealized_conversion_cast
 // CHECK: call @foo_i32
 func.func @bar(%x: i32, %y: i32) -> i1 {
-  %w = trait.witness @PartialEq[i32,i32]
+  %w = trait.witness @PartialEq_impl_i32_i32 for @PartialEq[i32,i32]
   %res = trait.func.call @foo(%w, %x, %y)
     : (!trait.claim<@PartialEq[!T,!T]>, !T, !T) -> i1
-    as (!trait.claim<@PartialEq[i32,i32]>, i32, i32) -> i1
+    as (!trait.claim<@PartialEq[i32,i32] by @PartialEq_impl_i32_i32>, i32, i32) -> i1
 
   return %res : i1
 }

@@ -1,5 +1,6 @@
 #include "Dialect.hpp"
 #include "Instantiation.hpp"
+#include "ImplResolution.hpp"
 #include "Ops.hpp"
 #include "Passes.hpp"
 #include "Types.hpp"
@@ -34,7 +35,7 @@ LogicalResult verifyAcyclicTraits(ModuleOp module) {
     s = Status::InPath;
     stack.push_back(u);
 
-    for (TraitOp v : u.getPrereqTraits()) {
+    for (TraitOp v : u.getRequiredTraits()) {
       if (failed(dfs(v))) return failure();
     }
 
@@ -67,19 +68,29 @@ namespace {
 struct ProveClaimPattern : OpRewritePattern<AllegeOp> {
   using OpRewritePattern::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(AllegeOp op, PatternRewriter& rewriter) const override {
-    // emit allegations for each prerequisite
-    SmallVector<Value> prereqClaims;
-    for (auto prereqApp : op.getPrereqTraitApplications()) {
-      auto newClaim = rewriter.create<AllegeOp>(op.getLoc(), prereqApp);
-      prereqClaims.push_back(newClaim.getResult());
-    }
+  // one memo per module; owned by the pass, passed by ref into the pattern
+  DenseMap<TraitApplicationAttr, FlatSymbolRefAttr>& memo;
 
-    // replace the op with a witness
+  ProveClaimPattern(MLIRContext* ctx,
+                    DenseMap<TraitApplicationAttr, FlatSymbolRefAttr>& memo)
+    : OpRewritePattern<AllegeOp>(ctx), memo(memo) {}
+
+  LogicalResult matchAndRewrite(AllegeOp op, PatternRewriter& rewriter) const override {
+    ModuleOp module = op->getParentOfType<ModuleOp>();
+    if (!module) return failure();
+
+    TraitApplicationAttr app = op.getTraitApplication();
+
+    // build or reuse canonical evidence for this application
+    auto sym = resolveAndEnsureProofFor(app, module, memo, rewriter);
+    if (failed(sym))
+      return failure();
+
+    // replace the allegation with a witness
     rewriter.replaceOpWithNewOp<WitnessOp>(
       op,
-      op.getResult().getType(),
-      prereqClaims
+      *sym,
+      app
     );
 
     return success();
@@ -91,9 +102,11 @@ LogicalResult proveClaims(ModuleOp module) {
   if (failed(verifyAcyclicTraits(module)))
     return failure();
 
+  DenseMap<TraitApplicationAttr, FlatSymbolRefAttr> proofMemo;
+
   // apply rewrite patterns
   RewritePatternSet patterns(module.getContext());
-  patterns.add<ProveClaimPattern>(module.getContext());
+  patterns.add<ProveClaimPattern>(module.getContext(), proofMemo);
   if (failed(applyPatternsGreedily(module, std::move(patterns))))
     return failure();
 
@@ -117,17 +130,14 @@ struct FuncCallOpLowering : public OpRewritePattern<FuncCallOp> {
   using OpRewritePattern::OpRewritePattern;
 
   LogicalResult matchAndRewrite(FuncCallOp callOp, PatternRewriter &rewriter) const override {
-    // if any of the call's operand types are symbolic, this call can't be resolved yet
+    // if any of the call's operand types are polymorphic, this call can't be resolved yet
     for (auto op : callOp.getOperands()) {
-      if (containsSymbolicType(op.getType()))
+      if (isPolymorphicType(op.getType()))
         return failure();
     }
 
     // instantiate the callee
     auto callee = callOp.getOrInstantiateCallee(rewriter);
-
-    // XXX TODO getOrInstantiateCallee is mangling the name of the callee, even though it's monomorphic
-    //          because !trait.claim is symbolic now
 
     // replace with a func.call to the instanced callee
     rewriter.replaceOpWithNewOp<func::CallOp>(
@@ -145,10 +155,18 @@ struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
   using OpRewritePattern::OpRewritePattern;
 
   LogicalResult matchAndRewrite(MethodCallOp methodCallOp, PatternRewriter &rewriter) const override {
-    // if any operand is still symbolic, this call can't be resolved yet
+    // if any operand is still polymorphic, this call can't be resolved yet
     for (auto op : methodCallOp.getOperands()) {
-      if (containsSymbolicType(op.getType()))
+      if (isPolymorphicType(op.getType()))
         return failure();
+    }
+
+    // the claim should be proven at this point
+    if (!cast<ClaimType>(methodCallOp.getClaim().getType()).isProven()) {
+      llvm::errs() << "MethodCallOpLowering::matchAndRewrite: unproven but concrete claim:\n";
+      llvm::errs() << methodCallOp.getClaim().getType() << "\n";
+      methodCallOp.dump();
+      assert(false);
     }
 
     func::FuncOp callee = methodCallOp.getOrInstantiateCallee(rewriter);
@@ -253,6 +271,11 @@ LogicalResult monomorphize(ModuleOp module) {
   for (func::FuncOp f : llvm::make_early_inc_range(module.getOps<func::FuncOp>())) {
     if (isPolymorph(f))
       f.erase();
+  }
+
+  // erase trait.proof ops
+  for (ProofOp proof : llvm::make_early_inc_range(module.getOps<ProofOp>())) {
+    proof.erase();
   }
 
   // erase trait.impl ops

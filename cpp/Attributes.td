@@ -43,9 +43,9 @@ def TraitApplicationAttr : AttrDef<TraitDialect, "TraitApplication"> {
   let hasCustomAssemblyFormat = 1;
 }
 
-def ObligationsAttr : AttrDef<TraitDialect, "Obligations"> {
-  let mnemonic = "obligations";
-  let summary = "A list of prerequisite trait applications required for by traits and implementation";
+def ConstraintsAttr : AttrDef<TraitDialect, "Constraints"> {
+  let mnemonic = "requirements";
+  let summary = "A list of prerequisite trait applications required by traits or assumed by implementation";
   let description = [{
     Represents trait applications that are required to hold when implementing
     the enclosing trait. These assumptions are available as subproofs via

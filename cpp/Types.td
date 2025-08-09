@@ -7,7 +7,7 @@ include "Dialect.td"
 include "TypeInterfaces.td"
 
 // Represents a universally quantified type parameter
-def PolyType : TypeDef<TraitDialect, "Poly", [SymbolicTypeInterface]> {
+def PolyType : TypeDef<TraitDialect, "Poly", [MonomorphizableTypeInterface]> {
   let mnemonic = "poly";
   let summary = "A polymorphic type parameter";
 
@@ -26,8 +26,15 @@ def PolyType : TypeDef<TraitDialect, "Poly", [SymbolicTypeInterface]> {
     // create a "fresh" PolyType with an unused unique_id
     static PolyType fresh(MLIRContext* ctx);
 
-    // for SymbolicTypeInterface
-    LogicalResult isSubstitutableBy(Type ty, ModuleOp module, llvm::function_ref<InFlightDiagnostic()> emitError);
+    // for MonomorphizableTypeInterface
+    bool isMonomorphic() const {
+      return false;
+    }
+
+    LogicalResult unifyWith(Type ty,
+                            ModuleOp module,
+                            DenseMap<Type,Type> &substitution,
+                            llvm::function_ref<InFlightDiagnostic()> emitError);
   }];
 
   let parameters = (ins "int":$unique_id);
@@ -36,7 +43,7 @@ def PolyType : TypeDef<TraitDialect, "Poly", [SymbolicTypeInterface]> {
 }
 
 // Represents a claim, possibly with direct proof, that a trait application is satisfied by some implementation
-def ClaimType : TypeDef<TraitDialect, "Claim"> {
+def ClaimType : TypeDef<TraitDialect, "Claim", [MonomorphizableTypeInterface]> {
   let mnemonic = "claim";
   let summary = "Claim that a type list implements a trait";
 
@@ -62,8 +69,8 @@ def ClaimType : TypeDef<TraitDialect, "Claim"> {
   );
 
   let extraClassDeclaration = [{
-    static ClaimType get(MLIRContext* ctx, TraitApplicationAttr attr) {
-      return ClaimType::get(ctx, attr, /*proof=*/nullptr);
+    static ClaimType get(MLIRContext* ctx, TraitApplicationAttr app) {
+      return ClaimType::get(ctx, app, /*proof=*/nullptr);
     }
 
     static ClaimType get(MLIRContext *ctx, FlatSymbolRefAttr trait, ArrayRef<Type> typeArgs) {
@@ -79,8 +86,15 @@ def ClaimType : TypeDef<TraitDialect, "Claim"> {
     }
 
     bool isProven() const {
-      return static_cast<bool>(getProof());
+      return isMonomorphic() && static_cast<bool>(getProof());
     }
+
+    // for MonomorphizableTypeInterface
+    bool isMonomorphic() const;
+    LogicalResult unifyWith(Type ty,
+                            ModuleOp module,
+                            DenseMap<Type,Type> &substitution,
+                            llvm::function_ref<InFlightDiagnostic()> emitError);
   }];
 
   let genVerifyDecl = 1;

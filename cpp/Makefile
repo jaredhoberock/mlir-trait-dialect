@@ -6,7 +6,7 @@ OPT := $(LLVM_BIN_PATH)/mlir-opt
 
 # Compiler flags
 CXX := clang++
-CXXFLAGS := -g -fPIC `$(LLVM_CONFIG) --cxxflags`
+CXXFLAGS := -Wall -Werror -g -fPIC `$(LLVM_CONFIG) --cxxflags`
 
 # LLVM/MLIR libraries
 MLIR_INCLUDE = $(HOME)/dev/git/llvm-project-20/install/include
@@ -14,7 +14,7 @@ MLIR_INCLUDE = $(HOME)/dev/git/llvm-project-20/install/include
 INCLUDES := -I $(MLIR_INCLUDE)
 
 # Dialect library sources
-DIALECT_SOURCES := c_api.cpp Attributes.cpp Dialect.cpp Instantiation.cpp Ops.cpp Passes.cpp Types.cpp
+DIALECT_SOURCES := c_api.cpp Attributes.cpp Dialect.cpp ImplResolution.cpp Instantiation.cpp Ops.cpp Passes.cpp Types.cpp
 DIALECT_OBJECTS := $(DIALECT_SOURCES:.cpp=.o)
 
 # Generated files

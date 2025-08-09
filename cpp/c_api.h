@@ -44,11 +44,16 @@ MlirOperation traitFuncCallOpCreate(MlirLocation loc,
                                     MlirValue* arguments, intptr_t numArguments,
                                     MlirType* resultTypes, intptr_t numResults);
 
+/// Create a trait.allege operation
+MlirOperation traitAllegeOpCreate(MlirLocation loc,
+                                  MlirStringRef traitName,
+                                  MlirType* typeArgs, intptr_t numTypeArgs);
+
 /// Create a trait.witness operation
 MlirOperation traitWitnessOpCreate(MlirLocation loc,
+                                   MlirStringRef proofName,
                                    MlirStringRef traitName,
-                                   MlirType* typeArgs, intptr_t numTypeArgs,
-                                   MlirValue* prereqs, intptr_t numPrereqs);
+                                   MlirType* typeArgs, intptr_t numTypeArgs);
 
 /// Create a trait.project operation
 MlirOperation traitProjectOpCreate(MlirLocation loc,
