@@ -202,12 +202,11 @@ def ImplOp : TraitDialectOp<"impl", [
       return getMethod(name) != nullptr;
     }
 
-    func::FuncOp getOrInstantiateMethod(OpBuilder& builder, ClaimType proof, StringRef methodName);
+    func::FuncOp getOrInstantiateMethod(OpBuilder& builder, StringRef methodName);
 
-    func::FuncOp getOrInstantiateFunctionFromMethod(PatternRewriter& rewriter, ClaimType proof, StringRef methodName);
+    func::FuncOp getOrInstantiateFreeFunctionFromMethod(PatternRewriter& rewriter, ClaimType proof, StringRef methodName);
 
-    // Builds a substitution that maps the TraitOp's PolyType parameters to this ImplOp's type arguments
-    DenseMap<Type,Type> buildSubstitution(ClaimType selfClaim);
+    DenseMap<Type,Type> buildSubstitutionFor(ClaimType claim);
 
     // Helper to generate unique symbol name
     static std::string generateSymName(TraitApplicationAttr selfApp, ConstraintsAttr assumptions);
@@ -284,8 +283,12 @@ def AssumeOp : TraitDialectOp<"assume", [
   let results = (outs Claim:$result);
 
   let extraClassDeclaration = [{
+    ClaimType getClaim() {
+      return cast<ClaimType>(getResult().getType());
+    }
+
     TraitApplicationAttr getTraitApplication() {
-      return cast<ClaimType>(getResult().getType()).getTraitApplication();
+      return getClaim().getTraitApplication();
     }
 
     TraitOp getTrait();

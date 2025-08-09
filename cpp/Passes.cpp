@@ -161,12 +161,9 @@ struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
         return failure();
     }
 
-    // the claim should be proven at this point
+    // if the claim isn't yet proven, this call can't be resolved yet
     if (!cast<ClaimType>(methodCallOp.getClaim().getType()).isProven()) {
-      llvm::errs() << "MethodCallOpLowering::matchAndRewrite: unproven but concrete claim:\n";
-      llvm::errs() << methodCallOp.getClaim().getType() << "\n";
-      methodCallOp.dump();
-      assert(false);
+      return failure();
     }
 
     func::FuncOp callee = methodCallOp.getOrInstantiateCallee(rewriter);

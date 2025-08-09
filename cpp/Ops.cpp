@@ -263,13 +263,23 @@ TraitOp ImplOp::getTrait() {
   return mlir::SymbolTable::lookupNearestSymbolFrom<TraitOp>(module, getTraitNameAttr());
 }
 
+DenseMap<Type, Type> ImplOp::buildSubstitutionFor(ClaimType claim) {
+  // unify three types:
+  // 1. Trait's self claim
+  // 2. Impl's self claim
+  // 3. The target claim
 
-DenseMap<Type, Type> ImplOp::buildSubstitution(ClaimType selfClaim) {
-  return getTrait().buildSubstitutionFor(selfClaim);
+  // unify the impl's self claim with the trait's self claim
+  DenseMap<Type,Type> subst = getTrait().buildSubstitutionFor(getSelfClaim());
+
+  // now unify the impl's self claim with the target claim
+  if (failed(unifyTypes(getSelfClaim(), claim, getParentOp<ModuleOp>(), subst)))
+    llvm_unreachable("ImplOp::buildSubstitutionFor: failed to unify claim");
+
+  return subst;
 }
 
-
-func::FuncOp ImplOp::getOrInstantiateMethod(OpBuilder& builder, ClaimType selfProof, StringRef methodName) {
+func::FuncOp ImplOp::getOrInstantiateMethod(OpBuilder& builder, StringRef methodName) {
   // check that we've named a valid trait method
   if (!getTrait().hasMethod(methodName)) return nullptr;
 
@@ -282,33 +292,32 @@ func::FuncOp ImplOp::getOrInstantiateMethod(OpBuilder& builder, ClaimType selfPr
       PatternRewriter::InsertionGuard guard(builder);
       builder.setInsertionPointToEnd(&getBody().front());
 
-      method = instantiatePolymorph(builder, traitMethod, methodName, buildSubstitution(selfProof));
+      auto subst = getTrait().buildSubstitutionFor(getSelfClaim());
+      method = instantiatePolymorph(builder, traitMethod, methodName, subst);
     }
   }
 
   return method;
 }
 
-
-static func::FuncOp cloneMethodAsFreeFuncWithLeadingSelfProof(
+static func::FuncOp instantiateMethodAsFreeFuncWithLeadingSelfProof(
     PatternRewriter& rewriter,
+    ModuleOp module,
     func::FuncOp method,
     StringRef functionName,
-    ClaimType selfProofTy) {
-  // clone and hoist method into the grandparent with a mangled name
+    ClaimType selfProofTy,
+    const DenseMap<Type,Type>& subst) {
+  // instantiate the method into the grandparent with a mangled name
   PatternRewriter::InsertionGuard guard(rewriter);
 
   // clone the method into the method's grandparent
   rewriter.setInsertionPointAfter(method->getParentOp());
 
-  // clone the function
-  auto funcOp = cast<func::FuncOp>(rewriter.clone(*method));
+  // instantiate the function
+  auto funcOp = instantiatePolymorph(rewriter, method, functionName, subst);
 
   // mutate the cloned op
   rewriter.modifyOpInPlace(funcOp, [&] {
-    // set the name
-    funcOp.setSymName(functionName);
-
     // prepend the claim parameter
     funcOp.insertArgument(/*idx=*/0, selfProofTy,
                           /*argAttrs=*/mlir::DictionaryAttr(),
@@ -316,10 +325,10 @@ static func::FuncOp cloneMethodAsFreeFuncWithLeadingSelfProof(
   });
   BlockArgument claimArg = funcOp.getArgument(0);
 
-  // replace AssumeOps producing the claim type
+  // replace AssumeOps proven by selfProofTy
   SmallVector<AssumeOp> toErase;
   funcOp.walk([&](AssumeOp a) {
-    if (a.getResult().getType() == selfProofTy) {
+    if (a.getClaim() == selfProofTy) {
       rewriter.replaceAllUsesWith(a.getResult(), claimArg);
       toErase.push_back(a);
     }
@@ -332,7 +341,7 @@ static func::FuncOp cloneMethodAsFreeFuncWithLeadingSelfProof(
   return funcOp;
 }
 
-func::FuncOp ImplOp::getOrInstantiateFunctionFromMethod(
+func::FuncOp ImplOp::getOrInstantiateFreeFunctionFromMethod(
     PatternRewriter& rewriter,
     ClaimType proof,
     StringRef methodName) {
@@ -350,14 +359,17 @@ func::FuncOp ImplOp::getOrInstantiateFunctionFromMethod(
 
   if (!funcOp) {
     // get the method inside the ImplOp
-    func::FuncOp method = getOrInstantiateMethod(rewriter, proof, methodName);
+    func::FuncOp method = getOrInstantiateMethod(rewriter, methodName);
     
-    // clone and hoist method into grandparent with mangled name
-    funcOp = cloneMethodAsFreeFuncWithLeadingSelfProof(
+    // instantiate into grandparent with mangled name
+    auto subst = buildSubstitutionFor(proof);
+    funcOp = instantiateMethodAsFreeFuncWithLeadingSelfProof(
       rewriter,
+      getParentOp(),
       method,
       functionName,
-      proof
+      proof,
+      subst
     );
   }
 
@@ -391,7 +403,7 @@ std::string ImplOp::generateSymName(TraitApplicationAttr selfApp,
 
 SmallVector<ClaimType> ImplOp::getRequirementsAsClaims() {
   // build substitution
-  DenseMap<Type,Type> subst = buildSubstitution(getSelfClaim());
+  DenseMap<Type,Type> subst = buildSubstitutionFor(getSelfClaim());
 
   // specialize each requirement: @Req[params...] to @Req[args...]
   SmallVector<ClaimType> result;
@@ -831,7 +843,7 @@ ImplOp MethodCallOp::getProvenImpl() {
 func::FuncOp MethodCallOp::getOrInstantiateCallee(PatternRewriter& rewriter) {
   ClaimType claimTy = cast<ClaimType>(getClaim().getType());
   return getProvenImpl()
-    .getOrInstantiateFunctionFromMethod(rewriter, claimTy, getMethodName());
+    .getOrInstantiateFreeFunctionFromMethod(rewriter, claimTy, getMethodName());
 }
 
 
