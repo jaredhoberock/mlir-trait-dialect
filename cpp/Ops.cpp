@@ -124,7 +124,7 @@ SmallVector<TraitOp,4> TraitOp::getRequiredTraits() {
 LogicalResult TraitOp::verifyRequirements(ImplOp impl, ArrayRef<ImplOp> subproofs,
                                           llvm::function_ref<InFlightDiagnostic()> errFn) {
   // verify that impl's trait refers to this trait
-  StringRef implTrait = impl.getTraitApplication().getTrait().getValue();
+  StringRef implTrait = impl.getSelfApplication().getTrait().getValue();
   if (implTrait != getSymName())
     return errFn() << "expected impl for @" << getSymName()
                    << ", but found impl for trait @" << implTrait;
@@ -137,10 +137,10 @@ LogicalResult TraitOp::verifyRequirements(ImplOp impl, ArrayRef<ImplOp> subproof
                    << getSymName() << "'s 'where' clause, but found "
                    << subproofs.size();
 
-  // verify that each subproof implements the expected trait
+  // verify that each subproof impl implements the expected trait
   for (auto [app, proof] : llvm::zip(getRequirements().getApplications(), subproofs)) {
     StringRef expectedTrait = app.getTrait().getValue();
-    StringRef proofTrait = proof.getTraitApplication().getTrait().getValue();
+    StringRef proofTrait = proof.getSelfApplication().getTrait().getValue();
 
     if (proofTrait != expectedTrait)
       return errFn() << "expected impl for @" << expectedTrait
@@ -164,21 +164,21 @@ SmallVector<ClaimType> TraitOp::getRequirementsAsClaims() {
 //===----------------------------------------------------------------------===//
 
 LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  // Verify trait application attribute exists
-  auto traitApp = getTraitApplication();
-  if (!traitApp)
-    return emitOpError() << "requires a trait application attribute";
+  // Verify self application attribute exists
+  auto selfApp = getSelfApplication();
+  if (!selfApp)
+    return emitOpError() << "requires a self application TraitApplicationAttr";
 
   // Get the trait
   auto traitOp = getTrait();
   if (!traitOp)
-    return emitOpError() << "cannot find trait '" << traitApp.getTrait() << "'";
+    return emitOpError() << "cannot find trait '" << selfApp.getTrait() << "'";
 
   // Check the trait's expected arity against typeArgs
   auto expectedArity = traitOp.getTypeParams().size();
-  if (traitApp.getTypeArgs().size() != expectedArity)
+  if (selfApp.getTypeArgs().size() != expectedArity)
     return emitOpError() << "trait '" << getTraitNameAttr() << "' expects " << expectedArity
-                         << " type arguments, found " << traitApp.getTypeArgs().size();
+                         << " type arguments, found " << selfApp.getTypeArgs().size();
 
   // Collect method names from the trait
   llvm::SmallSet<StringRef, 8> requiredMethodNames = traitOp.getRequiredMethodNames();
@@ -232,7 +232,7 @@ LogicalResult ImplOp::verifyAssumptions(ArrayRef<ImplOp> subproofs,
   // verify that each subproof implements the expected trait
   for (auto [app, proof] : llvm::zip(getAssumptions().getApplications(), subproofs)) {
     StringRef expectedTrait = app.getTrait().getValue();
-    StringRef proofTrait = proof.getTraitApplication().getTrait().getValue();
+    StringRef proofTrait = proof.getSelfApplication().getTrait().getValue();
 
     if (proofTrait != expectedTrait)
       return errFn() << "expected impl for @" << expectedTrait
@@ -364,14 +364,14 @@ func::FuncOp ImplOp::getOrInstantiateFunctionFromMethod(
   return funcOp;
 }
 
-std::string ImplOp::generateSymName(TraitApplicationAttr traitApp,
+std::string ImplOp::generateSymName(TraitApplicationAttr selfApp,
                                     ConstraintsAttr assumptions) {
   std::string result;
   llvm::raw_string_ostream os(result);
   
-  os << traitApp.getTrait().getValue() << "_impl";
+  os << selfApp.getTrait().getValue() << "_impl";
   
-  for (auto ty : traitApp.getTypeArgs()) {
+  for (auto ty : selfApp.getTypeArgs()) {
     os << "_" << ty;
   }
   
@@ -414,10 +414,10 @@ ParseResult ImplOp::parse(OpAsmParser &p, OperationState &result) {
     return failure();
   
   // parse @TraitName[Types...]
-  TraitApplicationAttr traitApp = dyn_cast<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
-  if (!traitApp)
+  TraitApplicationAttr selfApp = dyn_cast<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
+  if (!selfApp)
     return failure();
-  result.addAttribute("trait_application", traitApp);  
+  result.addAttribute("self_application", selfApp);  
   
   // parse assumptions
   ConstraintsAttr assumptions = dyn_cast<ConstraintsAttr>(ConstraintsAttr::parse(p, {}));
@@ -428,7 +428,7 @@ ParseResult ImplOp::parse(OpAsmParser &p, OperationState &result) {
   // sym_name: use parsed or synthesize from parameters
   StringAttr symNameAttr = parsedSymName
     ? parsedSymName
-    : p.getBuilder().getStringAttr(generateSymName(traitApp, assumptions));
+    : p.getBuilder().getStringAttr(generateSymName(selfApp, assumptions));
   result.addAttribute("sym_name", symNameAttr);
   
   // Parse attributes and body region
@@ -449,7 +449,7 @@ ParseResult ImplOp::parse(OpAsmParser &p, OperationState &result) {
 void ImplOp::print(OpAsmPrinter &printer) {
   // decide whether to print the symbolic name
   StringAttr symNameAttr = getSymNameAttr();
-  std::string synthesized = generateSymName(getTraitApplication(), getAssumptions());
+  std::string synthesized = generateSymName(getSelfApplication(), getAssumptions());
   bool printExplicitSymName = symNameAttr && symNameAttr.getValue() != synthesized;
 
   // Print: trait.impl [@SymName] for @TraitName [types...] assumptions { ... }
@@ -460,13 +460,13 @@ void ImplOp::print(OpAsmPrinter &printer) {
   }
 
   printer << "for ";
-  getTraitApplication().print(printer);
+  getSelfApplication().print(printer);
 
   getAssumptions().print(printer);
   
   printer.printOptionalAttrDictWithKeyword(
     (*this)->getAttrs(), 
-    /*elidedAttrs=*/{"sym_name", "trait_application", "assumptions"}
+    /*elidedAttrs=*/{"sym_name", "self_application", "assumptions"}
   );
   printer << " ";
   printer.printRegion(getBody());
@@ -502,7 +502,7 @@ LogicalResult ProofOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     return emitOpError() << "cannot find impl '" << getImplNameAttr() << "'";
 
   // check that our trait application matches the impl's trait application
-  if (implOp.getTraitApplication() != getTraitApplication())
+  if (implOp.getSelfApplication() != getTraitApplication())
     return emitOpError() << "trait application does not match impl's declared trait application";
 
   // check that the named trait exists
@@ -571,7 +571,7 @@ SmallVector<ClaimType> ProofOp::getSubproofClaims() {
     if (auto proofOp = dyn_cast<ProofOp>(subproof)) {
       subproofTraitApp = proofOp.getTraitApplication();
     } else if (auto implOp = dyn_cast<ImplOp>(subproof)) {
-      subproofTraitApp = implOp.getTraitApplication();
+      subproofTraitApp = implOp.getSelfApplication();
     } else {
       llvm::report_fatal_error("ProofOp::getSubproofTypes: expected ProofOp or ImplOp");
     }
@@ -655,7 +655,7 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   }
 
   // ensure the impl matches the claimed trait application
-  if (implOp.getTraitApplication() != getTraitApplication())
+  if (implOp.getSelfApplication() != getTraitApplication())
     return emitOpError() << "trait application does not match impl's declared trait application";
 
   return success();
@@ -718,7 +718,7 @@ LogicalResult AssumeOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
                            << enclosingSelfApp;
   } else if (enclosingImpl) {
     // In ImplOp: verify assumption matches the impl's trait application
-    auto implTraitApp = enclosingImpl.getTraitApplication();
+    auto implTraitApp = enclosingImpl.getSelfApplication();
     
     if (assumedTraitApp != implTraitApp) {
       return emitOpError() << "assumed trait application " << assumedTraitApp

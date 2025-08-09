@@ -24,8 +24,10 @@ static FailureOr<ImplOp> resolveImplFor(TraitApplicationAttr app, ModuleOp modul
     if (!impl) continue;
 
     // first check for an exact match on the impl's application
-    if (impl.getTraitApplication() == app)
+    if (impl.getSelfApplication() == app)
       return impl;
+
+    // XXX TODO What do we do if ImplOp has assumptions?
 
     // otherwise, check if our wanted claim can unify with the
     // impl's claim, indicating a "symbolic" match

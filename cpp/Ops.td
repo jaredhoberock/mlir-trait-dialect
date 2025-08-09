@@ -170,28 +170,28 @@ def ImplOp : TraitDialectOp<"impl", [
 
   let arguments = (ins 
     SymbolNameAttr:$sym_name,
-    TraitApplicationAttr:$trait_application,
+    TraitApplicationAttr:$self_application,
     ConstraintsAttr:$assumptions
   );
   let regions = (region SizedRegion<1>:$body);
 
   let extraClassDeclaration = [{
-    TraitApplicationAttr getTraitApplication() const {
-      return const_cast<ImplOp*>(this)->getTraitApplication();
+    TraitApplicationAttr getSelfApplication() const {
+      return const_cast<ImplOp*>(this)->getSelfApplication();
     }
 
     ClaimType getSelfClaim() {
-      return ClaimType::get(getContext(), getTraitApplication());
+      return ClaimType::get(getContext(), getSelfApplication());
     }
 
     FlatSymbolRefAttr getTraitNameAttr() const {
-      return getTraitApplication().getTrait();
+      return getSelfApplication().getTrait();
     }
 
     TraitOp getTrait();
 
     ArrayRef<Type> getTypeArgs() {
-      return getTraitApplication().getTypeArgs();
+      return getSelfApplication().getTypeArgs();
     }
 
     func::FuncOp getMethod(StringRef name) {
@@ -210,7 +210,7 @@ def ImplOp : TraitDialectOp<"impl", [
     DenseMap<Type,Type> buildSubstitution(ClaimType selfClaim);
 
     // Helper to generate unique symbol name
-    static std::string generateSymName(TraitApplicationAttr traitApp, ConstraintsAttr assumptions);
+    static std::string generateSymName(TraitApplicationAttr selfApp, ConstraintsAttr assumptions);
 
     LogicalResult verifyAssumptions(ArrayRef<ImplOp> subproofs, llvm::function_ref<InFlightDiagnostic()> errFn);
 
@@ -226,21 +226,21 @@ def ImplOp : TraitDialectOp<"impl", [
   let builders = [
     // override the default low-level builder to ensure that a block always exists
     OpBuilder<(ins "::mlir::StringRef":$sym_name,
-                   "::mlir::trait::TraitApplicationAttr":$trait_application,
+                   "::mlir::trait::TraitApplicationAttr":$self_application,
                    "ConstraintsAttr":$assumptions), [{
       $_state.addAttribute("sym_name", $_builder.getStringAttr(sym_name));
-      $_state.addAttribute("trait_application", trait_application);
+      $_state.addAttribute("self_application", self_application);
       $_state.addAttribute("assumptions", assumptions);
       ::mlir::Region *region = $_state.addRegion();
       region->emplaceBlock();
     }]>,
 
     // this builder automatically generates $sym_name if it is not given
-    OpBuilder<(ins "::mlir::trait::TraitApplicationAttr":$trait_application,
+    OpBuilder<(ins "::mlir::trait::TraitApplicationAttr":$self_application,
                    "ConstraintsAttr":$assumptions), [{
       // Auto-generate unique symbol name
-      std::string symName = generateSymName(trait_application, assumptions);
-      build($_builder, $_state, symName, trait_application, assumptions);
+      std::string symName = generateSymName(self_application, assumptions);
+      build($_builder, $_state, symName, self_application, assumptions);
     }]>
   ];
 
