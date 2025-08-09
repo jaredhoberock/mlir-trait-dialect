@@ -126,11 +126,6 @@ func::FuncOp instantiatePolymorph(OpBuilder& builder,
     return nullptr;
   }
 
-  if (!isPolymorph(polymorph)) {
-    polymorph.emitError("cannot instantiate function that is not polymorphic");
-    return nullptr;
-  }
-
   Location loc = polymorph.getLoc();
 
   // set up type replacer
