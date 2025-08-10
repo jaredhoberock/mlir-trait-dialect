@@ -112,6 +112,8 @@ def TraitOp : TraitDialectOp<"trait", [
     LogicalResult verifyRequirements(ImplOp impl, ArrayRef<ImplOp> subproofs, llvm::function_ref<InFlightDiagnostic()> errFn);
 
     SmallVector<ClaimType> getRequirementsAsClaims();
+
+    SmallVector<ImplOp> getImpls();
   }];
 
   // builder creates one empty block in the body region

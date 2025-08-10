@@ -155,6 +155,26 @@ SmallVector<ClaimType> TraitOp::getRequirementsAsClaims() {
   return result;
 }
 
+SmallVector<ImplOp> TraitOp::getImpls() {
+  ModuleOp module = getParentOp<ModuleOp>();
+  if (!module)
+    return {};
+
+  // traverse users of this trait
+  auto uses = mlir::SymbolTable::getSymbolUses(*this, module);
+  if (!uses)
+    return {};
+
+  SmallVector<ImplOp> result;
+  for (const auto& use : *uses) {
+    if (auto impl = dyn_cast<ImplOp>(use.getUser())) {
+      result.push_back(impl);
+    }
+  }
+
+  return result;
+}
+
 
 //===----------------------------------------------------------------------===//
 // ImplOp

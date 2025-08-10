@@ -10,19 +10,10 @@ static FailureOr<ImplOp> resolveImplFor(TraitApplicationAttr app, ModuleOp modul
     return module.emitError() << "unknown trait symbol '" << app.getTrait()
                               << "'";
 
-  // collect users of the trait
-  auto uses = mlir::SymbolTable::getSymbolUses(trait, module);
-  if (!uses)
-    return trait.emitError()
-           << "no impls found for trait '" << trait.getSymName() << "'";
-
   ImplOp symbolicImpl = nullptr;
 
-  // search through all ImplOps with use this trait
-  for (const auto& use : *uses) {
-    auto impl = dyn_cast<ImplOp>(use.getUser());
-    if (!impl) continue;
-
+  // search through all ImplOps which use this trait
+  for (auto impl : trait.getImpls()) {
     // first check for an exact match on the impl's application
     if (impl.getSelfApplication() == app)
       return impl;
