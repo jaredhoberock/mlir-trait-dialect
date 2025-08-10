@@ -91,23 +91,20 @@ LogicalResult TraitOp::verify() {
 
 LogicalResult TraitOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // verify obligations
-  auto module = getOperation()->getParentOfType<ModuleOp>();
-  return getRequirements().verifyTraitApplications(module, [&](){ return emitOpError(); });
+  return getRequirements().verifyTraitApplications(getParentOp<ModuleOp>(), [&](){ return emitOpError(); });
 }
 
 DenseMap<Type,Type> TraitOp::buildSubstitutionFor(ClaimType claimTy) {
-  auto module = getOperation()->getParentOfType<ModuleOp>();
-
   // unify our self claim with the given claim
   DenseMap<Type,Type> subst;
-  if (failed(unifyTypes(getSelfClaim(), claimTy, module, subst)))
+  if (failed(unifyTypes(getSelfClaim(), claimTy, getParentOp<ModuleOp>(), subst)))
     llvm_unreachable("TraitOp::buildSubstitutionFor: unifyTypes failed");
 
   return subst;
 }
 
 SmallVector<TraitOp,4> TraitOp::getRequiredTraits() {
-  ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
+  ModuleOp module = getParentOp<ModuleOp>();
   if (!module)
     llvm_unreachable("TraitOp::getPrereqTraits: not in a module");
 
@@ -255,7 +252,7 @@ LogicalResult ImplOp::verifyIsSelfProof(llvm::function_ref<InFlightDiagnostic()>
 }
 
 TraitOp ImplOp::getTrait() {
-  ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
+  ModuleOp module = getParentOp<ModuleOp>();
   if (!module) {
     emitOpError() << "impl is not inside of a module";
     return nullptr;
@@ -557,16 +554,13 @@ LogicalResult ProofOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 }
 
 TraitOp ProofOp::getTrait() {
-  ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
-  if (!module)
-    return nullptr;
-  return mlir::SymbolTable::lookupNearestSymbolFrom<TraitOp>(module, getTraitApplication().getTrait());
+  return mlir::SymbolTable::lookupNearestSymbolFrom<TraitOp>(getParentOp<ModuleOp>(), getTraitApplication().getTrait());
 }
 
 SmallVector<ClaimType> ProofOp::getSubproofClaims() {
   SmallVector<ClaimType> result;
 
-  ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
+  ModuleOp module = getParentOp<ModuleOp>();
   if (!module)
     return result;
 
