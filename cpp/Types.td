@@ -31,10 +31,10 @@ def PolyType : TypeDef<TraitDialect, "Poly", [MonomorphizableTypeInterface]> {
       return false;
     }
 
-    LogicalResult unifyWith(Type ty,
-                            ModuleOp module,
-                            DenseMap<Type,Type> &substitution,
-                            llvm::function_ref<InFlightDiagnostic()> emitError);
+    LogicalResult substituteWith(Type other,
+                                 ModuleOp module,
+                                 DenseMap<Type,Type> &substitution,
+                                 llvm::function_ref<InFlightDiagnostic()> emitError);
   }];
 
   let parameters = (ins "int":$unique_id);
@@ -77,24 +77,30 @@ def ClaimType : TypeDef<TraitDialect, "Claim", [MonomorphizableTypeInterface]> {
       return ClaimType::get(ctx, TraitApplicationAttr::get(ctx, trait, typeArgs));
     }
 
-    FlatSymbolRefAttr getTraitName() const {
-      return getTraitApplication().getTrait();
-    }
-
-    ArrayRef<Type> getTypeArgs() const {
-      return getTraitApplication().getTypeArgs();
-    }
+    LogicalResult verifySymbolUses(ModuleOp module, llvm::function_ref<InFlightDiagnostic()> err);
 
     bool isProven() const {
       return isMonomorphic() && static_cast<bool>(getProof());
     }
 
+    // bitmask flags for which projections to return from getProjections
+    enum ProjectionKind {
+      Identity              = 1 << 0,
+      TraitRequirements     = 1 << 1,
+      ProvenImplAssumptions = 1 << 2,
+      AllProjections        = Identity | TraitRequirements | ProvenImplAssumptions,
+    };
+
+    void getProjections(ModuleOp module,
+                        SmallVectorImpl<ClaimType>& result,
+                        ProjectionKind kinds = AllProjections);
+
     // for MonomorphizableTypeInterface
     bool isMonomorphic() const;
-    LogicalResult unifyWith(Type ty,
-                            ModuleOp module,
-                            DenseMap<Type,Type> &substitution,
-                            llvm::function_ref<InFlightDiagnostic()> emitError);
+    LogicalResult substituteWith(Type other,
+                                 ModuleOp module,
+                                 DenseMap<Type,Type> &substitution,
+                                 llvm::function_ref<InFlightDiagnostic()> emitError);
   }];
 
   let genVerifyDecl = 1;

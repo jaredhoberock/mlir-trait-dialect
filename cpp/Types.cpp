@@ -20,6 +20,11 @@ void TraitDialect::registerTypes() {
   >();
 }
 
+
+//===----------------------------------------------------------------------===//
+// PolyType
+//===----------------------------------------------------------------------===//
+
 int freshPolyTypeId() {
   static std::atomic<int> counter{-1};
   return counter.fetch_sub(1, std::memory_order_relaxed);
@@ -64,34 +69,56 @@ void PolyType::print(AsmPrinter &printer) const {
   printer << "<" << getUniqueId() << ">";
 }
 
-
-LogicalResult PolyType::unifyWith(
+LogicalResult PolyType::substituteWith(
   Type other,
-  ModuleOp module,
-  DenseMap<Type,Type> &substitution,
+  ModuleOp /*module*/,
+  DenseMap<Type,Type> &subst,
   llvm::function_ref<InFlightDiagnostic()> err) {
   Type self = *this;
+  
+  // normalize
+  other = applySubstitution(subst, other);
 
-  // If we've already substituted a concrete for self, check consistency.
-  if (auto it = substitution.find(self); it != substitution.end()) {
+  // first check for equality
+  if (self == other)
+    return success();
+
+  // If we've already recorded a substitution for self, check consistency.
+  if (auto it = subst.find(self); it != subst.end()) {
     if (it->second != other) {
       if (err)
         return err() << "mismatched substitution for type "
                      << self << ": expected "
                      << it->second << ", but found " << other;
-
       return failure();
     }
     return success();
   }
 
-  // XXX TODO do an occurs check
+  // check for recursive substitution
+  auto occursIn = [](Type needle, Type haystack) {
+    bool hit = false;
+    haystack.walk([&](Type t) {
+      if (!hit && t == needle) hit = true;
+    });
+    return hit;
+  };
+
+  if (occursIn(self, other)) {
+    if (err) err() << "recursive substitution: " << self
+                   << " occurs in " << other;
+    return failure();
+  }
 
   // bind the variable
-  substitution[self] = other;
+  subst[self] = other;
   return success();
 }
 
+
+//===----------------------------------------------------------------------===//
+// ClaimType
+//===----------------------------------------------------------------------===//
 
 LogicalResult ClaimType::verify(function_ref<InFlightDiagnostic()> emitError,
                                 TraitApplicationAttr app,
@@ -118,6 +145,20 @@ LogicalResult ClaimType::verify(function_ref<InFlightDiagnostic()> emitError,
   if (polymorphic && proof) {
     if (emitError) emitError() << "A polymorphic !trait.claim cannot have a proof";
     return failure();
+  }
+
+  return success();
+}
+
+LogicalResult ClaimType::verifySymbolUses(ModuleOp module, llvm::function_ref<InFlightDiagnostic()> err) {
+  // verify trait application
+  if (failed(getTraitApplication().verifyTraitApplication(module, err)))
+    return failure();
+
+  // if there's a proof, verify that it points to a valid symbol
+  if (auto proof = getProof()) {
+    if (failed(ProofOp::getProofOpOrSelfProofImplOp(module, proof, err)))
+      return failure();
   }
 
   return success();
@@ -157,150 +198,188 @@ void ClaimType::print(AsmPrinter& p) const {
 
 bool ClaimType::isMonomorphic() const {
   // a !trait.claim<@Trait[Types...]> is monomorphic is all of its type arguments are monomorphic
-  return llvm::all_of(getTypeArgs(), [](Type ty) {
+  return llvm::all_of(getTraitApplication().getTypeArgs(), [](Type ty) {
     return mlir::trait::isMonomorphicType(ty);
   });
 }
 
-static SmallVector<ClaimType> getRequirements(ClaimType claimTy, ModuleOp module) {
-  // lookup the TraitOp
-  auto traitOp = SymbolTable::lookupNearestSymbolFrom<TraitOp>(module, claimTy.getTraitApplication().getTrait());
-  if (!traitOp)
-    llvm::report_fatal_error("getRequirements: unable to resolve TraitOp");
-
-  auto subst = traitOp.buildSubstitutionFor(claimTy);
-
-  // apply substitution to each polymorphic trait requirement
-  SmallVector<ClaimType> result;
-  for (ClaimType polyClaim : traitOp.getRequirementsAsClaims()) {
-    ClaimType substClaim = dyn_cast<ClaimType>(applySubstitution(subst, polyClaim));
-    if (!substClaim)
-      llvm::report_fatal_error("getRequirements: expected ClaimType");
-
-    result.push_back(substClaim);
-  }
-
-  return result;
-}
-
-static SmallVector<ClaimType> getSubproofs(ClaimType claimTy, ModuleOp module) {
-  assert(claimTy.isProven() && "getSubproofs() only valid on proven ClaimTypes");
-
-  auto op = SymbolTable::lookupNearestSymbolFrom(module, claimTy.getProof());
-  if (!op)
-    llvm::report_fatal_error("getSubproofs: couldn't find referenced proof");
-
-  // a leaf ImplOp has no subproofs
-  if (isa<ImplOp>(op))
-    return {};
-
-  ProofOp proofOp = dyn_cast<ProofOp>(op);
-  if (!proofOp)
-    llvm::report_fatal_error("getSubproofs: expected proof to refer to a ProofOp");
-  return proofOp.getSubproofClaims();
-}
-
-static LogicalResult recordProvenClaimAndSubproofs(
-    ClaimType unprovenClaim,
-    ClaimType provenClaim,
+static LogicalResult verifyAndRecordProvenClaim(
+    ClaimType unproven,
+    ClaimType proven,
     ModuleOp module,
     DenseMap<Type,Type> &subst,
     llvm::function_ref<InFlightDiagnostic()> err) {
-  // unprovenClaim must be unproven
-  if (unprovenClaim.isProven()) {
-    if (err) err() << "expected unproven claim";
-    return failure();
-  }
-
-  // provenClaim must be proven
-  if (!provenClaim.isProven()) {
-    if (err) err() << "expected proven claim";
-    return failure();
-  }
-  
-  // early exit if we've already recorded this claim
-  if (subst.count(unprovenClaim))
+  // early exit if we've already recorded this proof
+  if (auto it = subst.find(unproven); it != subst.end()) {
+    if (it->second != proven) {
+      if (err) err() << "inconsistent proof mapping: " << unproven
+                     << " is already bound to " << it->second
+                     << ", but attempted to bind " << proven;
+      return failure();
+    }
     return success();
+  }
 
-  subst[unprovenClaim] = provenClaim;
+  // verify preconditions
+  if (unproven.isProven()) { if (err) err() << "expected unproven claim"; return failure(); }
+  if (!proven.isProven()) { if (err) err() << "expected proven claim"; return failure(); }
 
-  // get prerequisite claims from both sides
-  auto requirements = getRequirements(unprovenClaim, module);
-  auto subproofs = getSubproofs(provenClaim, module);
+  // look up the trait and its requirements using the unproven claim
+  auto trait = unproven.getTraitApplication().getTrait(module, err);
+  if (failed(trait)) return failure();
 
-  if (requirements.size() != subproofs.size()) {
-    if (err) err() << "arity mismatch: proof for " << unprovenClaim
-                   << " has wrong number of subproofs";
+  // get trait requirements
+  SmallVector<ClaimType> requirements = trait->getRequirementsAsClaimsWith(subst);
+
+  // inspect the proof symbol on the proven side
+  auto symOp = ProofOp::getProofOpOrSelfProofImplOp(module, proven.getProof(), err);
+  if (failed(symOp))
+    return failure();
+
+  // if it's an impl op, check that we have no requirements
+  if (auto impl = dyn_cast<ImplOp>(*symOp)) {
+    if (!requirements.empty()) {
+      if (err) err() << "self-proving impl provides no subproof for trait requirements";
+      return failure();
+    }
+
+    // success: bind the whole claim so that later normalization keeps the proof
+    subst[unproven] = proven;
+    return success();
+  }
+
+  // otherwise it must be a ProofOp
+  auto proof = dyn_cast<ProofOp>(*symOp);
+
+  // check that the proof's claim can substitute with proven
+  if (failed(proof.getProvenClaim().substituteWith(proven, module, subst, err))) 
+    return failure();
+
+  // get impl assumptions from the proven side
+  SmallVector<ClaimType> assumptions = proof.getImpl().getAssumptionsAsClaimsWith(subst);
+
+  // concatenate requirements + assumptions into obligations
+  SmallVector<ClaimType> obligations = std::move(requirements);
+  obligations.append(assumptions);
+
+  // get the subproof claims
+  SmallVector<ClaimType> subproofs = proof.getSubproofClaims();
+
+  // the number of subproofs must match the number of obligations 
+  if (subproofs.size() != obligations.size()) {
+    if (err) err() << "arity mismatch: expected " << obligations.size()
+                   << ", but found " << subproofs.size();
     return failure();
   }
 
-  // recursively record substitutions for subproofs
-  for (auto [req, subproof] : llvm::zip(requirements, subproofs)) {
-    if (failed(recordProvenClaimAndSubproofs(req, subproof, module, subst, err)))
+  // recurse over obligations
+  for (auto [ob, sub] : llvm::zip(obligations, subproofs)) {
+    if (failed(verifyAndRecordProvenClaim(ob, sub, module, subst, err)))
       return failure();
   }
 
+  // success: bind the whole claim so that later normalization keeps the proof
+  subst[unproven] = proven;
   return success();
 }
 
-LogicalResult ClaimType::unifyWith(
-    Type ty,
+void ClaimType::getProjections(
+    ModuleOp module,
+    SmallVectorImpl<ClaimType>& result,
+    ClaimType::ProjectionKind kinds) {
+  // identity?
+  if (kinds & Identity) {
+    result.push_back(*this);
+  }
+
+  // trait requirements?
+  if (kinds & TraitRequirements) {
+    auto trait = getTraitApplication().getTraitOrAbort(module, "ClaimType::getProjections: couldn't find trait");
+    auto subst = trait.buildSubstitutionFor(*this);
+    result.append(trait.getRequirementsAsClaimsWith(subst));
+  }
+
+  // proven impl assumptions?
+  if (kinds & ProvenImplAssumptions and isProven()) {
+    // proven impl assumptions exist only if the proof is a reference to a ProofOp
+    // self-proving ImplOps have no assumptions
+    if (auto proof = SymbolTable::lookupNearestSymbolFrom<ProofOp>(module, getProof())) {
+      result.append(proof.getImplAssumptionClaims());
+    }
+  }
+}
+
+LogicalResult ClaimType::substituteWith(
+    Type other,
     ModuleOp module,
     DenseMap<Type,Type>& subst,
     llvm::function_ref<InFlightDiagnostic()> err) {
-  // the driver normalizes both sides before calling us
-  ClaimType other = mlir::dyn_cast<ClaimType>(ty);
-  if (!other) {
+  // normalize formal first
+  Type formalNormTy = applySubstitution(subst, *this);
+  ClaimType formal = mlir::dyn_cast<ClaimType>(formalNormTy);
+
+  // if formal is no longer a ClaimType, delegate to generic path
+  if (!formal)
+    return trait::substituteWith(formalNormTy, other, module, subst, err);
+
+  // normalize actual second
+  Type normActualTy = applySubstitution(subst, other);
+  ClaimType actual = mlir::dyn_cast<ClaimType>(normActualTy);
+
+  // if actual isn't a claim, it's an immediate mismatch
+  if (!actual) {
     if (err) {
-      err() << "expected !trait.claim, but found " << ty;
+      err() << "expected !trait.claim, but found " << normActualTy;
     }
     return failure();
   }
 
-  auto selfApp = getTraitApplication();
-  auto otherApp = other.getTraitApplication();
+  // do claim-specific checks below
+
+  auto formalApp = formal.getTraitApplication();
+  auto actualApp = actual.getTraitApplication();
 
   // same trait?
-  if (selfApp.getTrait() != otherApp.getTrait()) {
-    if (err) err() << "trait mismatch: expected " << selfApp.getTrait()
-                   << ", but found " << otherApp.getTrait();
+  if (formalApp.getTraitName() != actualApp.getTraitName()) {
+    if (err) err() << "trait mismatch: expected " << formalApp.getTraitName()
+                   << ", but found " << actualApp.getTraitName();
     return failure();
   }
 
   // same arity?
-  auto selfArgs = getTypeArgs();
-  auto otherArgs = other.getTypeArgs();
-  if (selfArgs.size() != otherArgs.size()) {
-    if (err) err() << "arity mismatch: expected " << selfArgs.size()
-                   << " type arguments, but found " << otherArgs.size();
+  auto formalArgs = formalApp.getTypeArgs();
+  auto actualArgs = actualApp.getTypeArgs();
+  if (formalArgs.size() != actualArgs.size()) {
+    if (err) err() << "arity mismatch: expected " << formalArgs.size()
+                   << " type arguments, but found " << actualArgs.size();
     return failure();
   }
 
   // check proofs
-  auto selfProof = getProof();
-  auto otherProof = other.getProof();
-  if (selfProof && otherProof && selfProof != otherProof) {
-    if (err) err() << "proof mismatch: expected " << selfProof
-                   << ", but found " << otherProof;
+  auto formalProof = formal.getProof();
+  auto actualProof = actual.getProof();
+  if (formalProof && actualProof && formalProof != actualProof) {
+    if (err) err() << "proof mismatch: expected " << formalProof
+                   << ", but found " << actualProof;
     return failure();
   }
-  if (selfProof && !otherProof) {
+  if (formalProof && !actualProof) {
     if (err) err() << "cannot substitute proven claim with unproven claim";
     return failure();
   }
 
   // recurse on each argument pair
-  for (auto [selfArg, otherArg] : llvm::zip(selfArgs, otherArgs)) {
-    if (failed(unifyTypes(selfArg, otherArg, module, subst, err)))
+  for (auto [f, a] : llvm::zip(formalArgs, actualArgs)) {
+    if (failed(trait::substituteWith(f, a, module, subst, err)))
       return failure();
   }
 
   // recursively record whole-claim substitutions when:
-  // 1. self is unproven, and
-  // 2. other is proven
+  // 1. formal is unproven, and
+  // 2. actual is proven
   // this ensures that all proven claims resulting from substitution application are always associated with proofs
-  if (!isProven() && other.isProven()) {
-    if (failed(recordProvenClaimAndSubproofs(*this, other, module, subst, err)))
+  if (!formal.isProven() && actual.isProven()) {
+    if (failed(verifyAndRecordProvenClaim(formal, actual, module, subst, err)))
       return failure();
   }
 
@@ -308,80 +387,113 @@ LogicalResult ClaimType::unifyWith(
 }
 
 
-/// Collect exactly the immediate child Types of `ty`. If `ty` has no sub‐elements,
-/// returns an empty vector.
-static SmallVector<Type, 4> getImmediateSubTypes(Type ty) {
-  SmallVector<Type, 4> children;
+//===----------------------------------------------------------------------===//
+// substituteWith
+//===----------------------------------------------------------------------===//
+
+/// Collect exactly the immediate child Types and Attributes of `ty`. If `ty` has no sub‐elements,
+/// returns empty vectors.
+static std::pair<SmallVector<Type, 4>, SmallVector<Attribute, 4>> getImmediateSubElements(Type ty) {
+  SmallVector<Type, 4> childTypes;
+  SmallVector<Attribute, 4> childAttrs;
   ty.walkImmediateSubElements(
-      /*walkAttrsFn=*/[](Attribute) {
-        // We don't need to collect Attributes here, so do nothing.
+      /*walkAttrsFn=*/[&](Attribute subAttr) {
+        childAttrs.push_back(subAttr);
       },
       /*walkTypesFn=*/[&](Type subTy) {
-        children.push_back(subTy);
+        childTypes.push_back(subTy);
       });
-  return children;
+  return std::pair(childTypes, childAttrs);
 }
 
-
-LogicalResult unifyTypes(Type expected,
-                         Type found,
-                         ModuleOp moduleOp,
-                         llvm::DenseMap<Type, Type> &subst,
-                         llvm::function_ref<InFlightDiagnostic()> err) {
+LogicalResult substituteWith(Type formal,
+                             Type actual,
+                             ModuleOp module,
+                             llvm::DenseMap<Type, Type> &subst,
+                             llvm::function_ref<InFlightDiagnostic()> err) {
   // normalize both types by applying the current substitution
-  expected = applySubstitution(subst, expected);
-  found = applySubstitution(subst, found);
+  formal = applySubstitution(subst, formal);
+  actual = applySubstitution(subst, actual);
+
+  // give the formal type first right of refusal
+  if (auto mti = dyn_cast<MonomorphizableTypeInterface>(formal))
+    return mti.substituteWith(actual, module, subst, err);
 
   // if the normalized types are equal, unification succeeds
-  if (expected == found)
+  if (formal == actual)
     return success();
 
-  // if either side can own its unification, let it
-  if (auto lhs = dyn_cast<MonomorphizableTypeInterface>(expected))
-    return lhs.unifyWith(found, moduleOp, subst, err);
+  // structural fallback: check for same
+  // 1. type constructor
+  // 2. subelement arity
+  // 3. attribute equality
+  // and then recurse on children, if there are any
+  auto [formalSubTys, formalSubAttrs] = getImmediateSubElements(formal);
+  auto [actualSubTys, actualSubAttrs] = getImmediateSubElements(actual);
 
-  if (auto rhs = dyn_cast<MonomorphizableTypeInterface>(found))
-    return rhs.unifyWith(expected, moduleOp, subst, err);
+  bool formalHasSubs = !formalSubTys.empty() || !formalSubAttrs.empty();
+  bool actualHasSubs = !actualSubTys.empty() || !actualSubTys.empty();
 
-  // structural fallback: same constructor & arity, then recurse on children
-  SmallVector<Type, 4> expectedKids = getImmediateSubTypes(expected);
-  SmallVector<Type, 4> foundKids    = getImmediateSubTypes(found);
-
-  // the constructor and arity of subelements both types must match before recursing
-  if (expectedKids.size() != foundKids.size() ||
-      expected.getTypeID() != found.getTypeID()) {
-    if (err)
-      err() << "type mismatch: expected " << expected
-            << " but found " << found;
+  // if neither side is decomposable, they're unequal leaves -> mismatch
+  // if only one side is decomposable, constructors differ in structure -> mismatch
+  if (!formalHasSubs || !actualHasSubs) {
+    if (err) err() << "type mismatch: expected " << formal
+                   << " but found " << actual;
     return failure();
   }
 
-  // Recurse on each child pair
-  for (auto [l, r] : llvm::zip(expectedKids, foundKids)) {
-    if (failed(unifyTypes(l, r, moduleOp, subst, err)))
+  // the constructor and arity of subelements of both types must match before recursing
+  if (formal.getTypeID() != actual.getTypeID() ||
+      formalSubTys.size() != actualSubTys.size() ||
+      formalSubAttrs.size() != actualSubAttrs.size()) {
+    if (err) err() << "type mismatch: expected " << formal
+                   << " but found " << actual;
+    return failure();
+  }
+
+  // the attributes of both types must match exactly before recursing on child types
+  for (auto [f, a] : llvm::zip(formalSubAttrs, actualSubAttrs)) {
+    llvm::errs() << "comparing " << f << " and " << a << "\n";
+    if (f != a) {
+      if (err) err() << "attribute mismatch: expected " << f
+                     << " but found " << a;
+      return failure();
+    }
+  }
+
+  // Recurse on each sub type pair
+  for (auto [f, a] : llvm::zip(formalSubTys, actualSubTys)) {
+    if (failed(substituteWith(f, a, module, subst, err)))
       return failure();
   }
 
   return success();
 }
 
-
-LogicalResult unifyTypes(
-    Type expectedTy,
-    Type foundTy,
-    ModuleOp moduleOp,
+LogicalResult substituteWith(
+    Type formal,
+    Type actual,
+    ModuleOp module,
     llvm::DenseMap<Type,Type> &subst) {
   auto errFn = llvm::function_ref<InFlightDiagnostic()>{};
-  return unifyTypes(expectedTy, foundTy, moduleOp, subst, errFn);
+  return substituteWith(formal, actual, module, subst, errFn);
 }
 
-
-LogicalResult unifyTypes(
-    Type expectedTy,
-    Type foundTy,
-    ModuleOp moduleOp) {
+LogicalResult substituteWith(
+    Type formal,
+    Type actual,
+    ModuleOp module,
+    llvm::function_ref<InFlightDiagnostic()> err) {
   DenseMap<Type,Type> discardedSubst;
-  return unifyTypes(expectedTy, foundTy, moduleOp, discardedSubst);
+  return substituteWith(formal, actual, module, discardedSubst, err);
+}
+
+LogicalResult substituteWith(
+    Type formal,
+    Type actual,
+    ModuleOp module) {
+  DenseMap<Type,Type> discardedSubst;
+  return substituteWith(formal, actual, module, discardedSubst);
 }
 
 

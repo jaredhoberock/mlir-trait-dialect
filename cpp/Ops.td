@@ -29,20 +29,55 @@ def TraitOp : TraitDialectOp<"trait", [
 > {
   let summary = "Declares a trait interface";
   let description = [{
-    Declares a trait interface, similar to a Rust or Scala trait. A `trait.trait` operation
-    defines a symbol that can be referenced by `!trait.claim` types, `trait.impl`, and `trait.method.call`.
-    It contains a region which holds `func.func` operations that define the
-    method requirements for implementors. If any of these `func.func` operations have
-    a body, then this method is optional for implementors.
+    Declares a trait interface, similar to a Rust or Scala trait, or a Haskell typeclass.
+    A `trait.trait` operation defines a symbol that can be referenced by `!trait.claim`
+    types, `trait.impl`, and `trait.method.call`. It contains a region which holds
+    `func.func` operations that define the method requirements for implementors. If any of
+    these `func.func` operations have a body, then the method is optional for implementors.
 
     Example:
-      !S = !trait.poly<0>
-      !O = !trait.poly<1>
 
-      trait.trait @PartialEq[!S,!O] {
-        // a required method
-        func.func @eq(%self: !S, %other: !O) -> i1
+    ```mlir
+    !S = !trait.poly<0>
+    !O = !trait.poly<1>
+
+    trait.trait @PartialEq[!S,!O] {
+      // a required method
+      func.func @eq(!S, !O) -> i1
+
+      // an optional method
+      func.func @ne(%self: !S, %other: !O) -> i1 {
+        %a = trait.assume @PartialEq[!S,!O]
+        %eq = trait.method.call @PartialEq::@eq<%a>(%self, %other)
+          : (!S, !O) -> i1
+          as !trait.claim<@PartialEq[!S,!O]> (!S,!O) -> i1
+        %true = arith.constant 1 : i1
+        %res = arith.xori %eq, %true : i1
+        return %res : i1
       }
+    }
+    ```
+
+    The `where` clause lists the one-hop prerequisite trait applications that must hold
+    whenever the trait holds. Each requirement is written using the trait's type
+    parameters and is stored in the `requirements` (`ConstraintsAttr`) argument.
+
+    Concretely, if you declare:
+
+    ```mlir
+    !S = !trait.poly<0>
+    !O = !trait.poly<1>
+
+    trait.trait @PartialOrd[!S,!O] where [@PartialOrd[!S,!O]] {
+      func.func @partial_cmp(!S, !O) -> !opt_ord
+
+      func.func @lt(%self: !S, %other: !O) -> !opt_ord {
+        ...
+      }
+    }
+    ```
+
+    Then any proof of `@PartialOrd[T,U]` must also discharge `@PartialEq[T,U]`.
   }];
 
   let arguments = (ins
@@ -109,9 +144,7 @@ def TraitOp : TraitDialectOp<"trait", [
 
     SmallVector<TraitOp,4> getRequiredTraits();
 
-    LogicalResult verifyRequirements(ImplOp impl, ArrayRef<ImplOp> subproofs, llvm::function_ref<InFlightDiagnostic()> errFn);
-
-    SmallVector<ClaimType> getRequirementsAsClaims();
+    SmallVector<ClaimType> getRequirementsAsClaimsWith(const DenseMap<Type,Type>& subst);
 
     SmallVector<ImplOp> getImpls();
   }];
@@ -162,13 +195,62 @@ def ImplOp : TraitDialectOp<"impl", [
     implementing one of the trait's methods.
 
     Example:
-        trait.impl @PartialEq_impl_i32 @PartialEq for [i32,i32] {
-          func.func @eq(%self: i32, %other: i32) -> i1 {
-            %res = arith.cmpi eq, %self, %other : i32
-            return %res : i1
-          }
-        }
-  }];
+
+    ```mlir
+    trait.impl @PartialEq_impl_i32 @PartialEq for [i32,i32] {
+      func.func @eq(%self: i32, %other: i32) -> i1 {
+        %res = arith.cmpi eq, %self, %other : i32
+        return %res : i1
+      }
+    }
+    ```
+
+    Implementations may also declare **assumptions** that must hold for the impl
+    to be valid under its self application. These are listed in the `where [...]`
+    clause (stored in the `assumptions` `ConstraintsAttr` argument). Assumptions
+    are one-hop claims, analogous to trait-level `where` requirements, and are
+    materializable inside method bodies via `trait.assume`.
+
+    Concretely, given a couple of traits:
+
+    ```mlir
+    !T0 = !trait.poly<0>
+    trait.trait @A[!T0] {
+      func.func @method_a(!T0) -> i32
+    }
+
+    !T1 = !trait.poly<1>
+    trait.trait @B[!T1] {
+      func.func @method_B(!T1) -> i32
+    }
+    ```
+
+    you can write a polymorphic impl that depends on other claims:
+
+    ```mlir
+    // a concrete impl: @B[i32]
+    trait.impl for @B[i32] {
+      func.func @method_b(%self: i32) -> i32 {
+        %res = arith.constant 42 : i32
+        return %res : i32
+      }
+    }
+
+    // this polymorphic impl matches any type T2 with an impl for @B[T2]
+    !T2 = !trait.poly<2>
+    trait.impl for @A[!T2] where [
+      @B[!T2]
+    ] {
+      func.func @method_a(%self: !T2) -> i32 {
+        %a = trait.assume @B[!T2]
+        %res = trait.method.call @B::@method_b<%a>(%self)
+          : !(T1) -> i32
+          as !trait.claim<@B[!T2]> (!T2) -> i32
+        return %res : i32
+      }
+    }
+    ```
+  }]; 
 
   let arguments = (ins 
     SymbolNameAttr:$sym_name,
@@ -187,13 +269,21 @@ def ImplOp : TraitDialectOp<"impl", [
     }
 
     FlatSymbolRefAttr getTraitNameAttr() const {
-      return getSelfApplication().getTrait();
+      return getSelfApplication().getTraitName();
     }
 
     TraitOp getTrait();
 
     ArrayRef<Type> getTypeArgs() {
       return getSelfApplication().getTypeArgs();
+    }
+
+    // returns those Types from getTypeArgs which are MonomorphizableTypeInterface
+    // these are the generic type parameters of this ImplOp
+    auto getTypeParams() {
+      return llvm::make_filter_range(getTypeArgs(), [](Type ty) {
+        return isa<MonomorphizableTypeInterface>(ty);
+      });
     }
 
     func::FuncOp getMethod(StringRef name) {
@@ -210,16 +300,18 @@ def ImplOp : TraitDialectOp<"impl", [
 
     DenseMap<Type,Type> buildSubstitutionFor(ClaimType claim);
 
-    // Helper to generate unique symbol name
+    // Helper to generate unique symbol name for an ImplOp
     static std::string generateSymName(TraitApplicationAttr selfApp, ConstraintsAttr assumptions);
 
-    LogicalResult verifyAssumptions(ArrayRef<ImplOp> subproofs, llvm::function_ref<InFlightDiagnostic()> errFn);
+    // Helper to generate a unique symbol prefix for polymophic ImplOps
+    // getSelfClaim() will be substituted with claim
+    std::string generateMangledName(ClaimType claim);
 
     bool isSelfProof();
 
     LogicalResult verifyIsSelfProof(llvm::function_ref<InFlightDiagnostic()> errFn);
 
-    SmallVector<ClaimType> getRequirementsAsClaims();
+    SmallVector<ClaimType> getAssumptionsAsClaimsWith(const DenseMap<Type,Type>& subst);
   }];
 
   // builders create one empty block in the body region
@@ -275,11 +367,23 @@ def AssumeOp : TraitDialectOp<"assume", [
 
     Example:
       trait.trait @PartialEq[!S,!O] {
-        func.func @neq(%self: !S, %other: !O) -> i1 {
-          %e = trait.assume @PartialEq[!S,!O]
-          // ... use %e for method calls
+        func.func @eq(!S, !O) -> i1
+
+        func.func @ne(%self: !S, %other: !O) -> i1 {
+          // trait.assume materializes a claim value
+          // to use inside a method body
+          %a = trait.assume @PartialEq[!S,!O]
+
+          %eq = trait.method.call @PartialEq::@eq<%a>(%self, %other)
+            : (!S, !O) -> i1
+            as !trait.claim<@PartialEq[!S,!O]> (!S,!O) -> i1
+          %true = arith.constant 1 : i1
+          %res = arith.xori %eq, %true : i1
+          return %res : i1
         }
       }
+
+    Note that `trait.assume` is the *only* context-sensitive operation in this dialect.
   }];
 
   let results = (outs Claim:$result);
@@ -310,10 +414,12 @@ def MethodCallOp : TraitDialectOp<"method.call", [
     Resolution to an implementation is performed during monomorphization.
 
     Example:
-      %p = trait.witness : @PartialEq[i32,i32]
+      %a = trait.allege : @PartialEq[i32,i32]
       %x = ... : i32
       %y = ... : i32
-      %res = trait.method.call @PartialEq::@eq<%p>(%x, %y) : (!trait.poly<0>, !trait.poly<1>) to (i32, i32) -> i1
+      %res = trait.method.call @PartialEq::@eq<%a>(%x, %y)
+        : (!trait.poly<0>, !trait.poly<1>)
+        as !trait.claim<@PartialEq[i32,i32]> (i32, i32) -> i1
   }];
 
   let arguments = (ins
@@ -373,12 +479,6 @@ def MethodCallOp : TraitDialectOp<"method.call", [
       return cast<ClaimType>(getClaim().getType()).getTraitApplication();
     }
 
-    TraitOp getTrait();
-
-    StringRef getTraitName() {
-      return getMethodRef().getRootReference().getValue();
-    }
-
     FlatSymbolRefAttr getTraitAttr() {
       return FlatSymbolRefAttr::get(
         getContext(),
@@ -428,6 +528,7 @@ def MethodCallOp : TraitDialectOp<"method.call", [
   let hasVerifier = 1;
 }
 
+
 def FuncCallOp : TraitDialectOp<"func.call", [
   CallOpInterface,
   DeclareOpInterfaceMethods<SymbolUserOpInterface>
@@ -439,12 +540,24 @@ def FuncCallOp : TraitDialectOp<"func.call", [
     polymorphic type variables.
 
     Example:
+      // a polymorphic function @foo
+      !T = !trait.poly<2>
+      func.func @foo(
+        %c: !trait.claim<@PartialEq[!T,!T]>,
+        %x: !T,
+        %y: !T
+      ) -> i1 {
+        ...
+      }
+
+      ...
+
       %x = ... : i32
       %y = ... : i32
-      %p = trait.witness @PartialEq[i32,i32]
-      %r = trait.func.call @foo(%p, %x, %y)
-        : (!trait.claim<@PartialEq[!trait.poly<0>,!trait.poly<0>]>, !trait.poly<0>, !trait.poly<0>) -> i1
-        to (i32, i32) -> i1
+      %a = trait.allege @PartialEq[i32,i32]
+      %r = trait.func.call @foo(%a, %x, %y)
+        : (!trait.claim<@PartialEq[!S,!O]>, !trait.poly<0>, !trait.poly<0>) -> i1
+        to (!trait.claim<@PartialEq[i32,i32]>, i32, i32) -> i1
   }];
 
   let arguments = (ins 
@@ -487,37 +600,74 @@ def FuncCallOp : TraitDialectOp<"func.call", [
   let assemblyFormat = "$callee `(` $operands `)` attr-dict `:` $callee_function_type `as` functional-type($operands, results)";
 }
 
+
 def ProjectOp : TraitDialectOp<"project", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
   Pure
 ]> {
-  let summary = "Project a prerequisite claim from a claim";
+  let summary = "Project a subclaim from a claim";
   let description = [{
-    Given a claim of `@Trait[Args...]`, produce a claim of one prerequisite
-    `@Prereq[Args...]` of `@Trait` as declared in the `given` clause of
-    `trait.trait @Trait`, after substituting `Args...` for `@Trait`'s type
-    parameters.
+    Given a claim of `@Trait[Args...]`, produce a claim of either:
+      1. the **identity** projection `@Trait[Args...]` itself, or
+      2. a one-hop **trait requirement** `@Req[Args...]` declared in the
+         `where` clause of `trait.trait @Trait`, or
+      3. (if the input claim is **proven**) an **impl assumption** declared in the
+         `where` clause of the referenced `trait.impl` (or discharged via
+         its `trait.proof`).
+
+    Substitution of `Args...` for `@Trait`'s type parameters is performed prior
+    to matching the requested projection target.
 
     Notes:
     * Only a **single hop** is performed; chain `trait.project` for transitive projections.
-    * If `@Trait` has no `given` clause, no projections from it are valid.
+    * Identity projection is always valid.
+    * If `@Trait` has no `where` requirements and any proven impl has no assumptions,
+      only the identity projection is possible.
 
-    Example:
-      // @Ord[!S] given [ @Eq[!S], @PartialOrd[!S,!S] ]
-      %p = trait.assume @Ord[!T]
-      %eq = trait.project %p @Ord[!T] to @Eq[!T]
+    Examples:
+
+    ```mlir
+    // identity projection
+    %id = trait.project %p : @A[i32] to @A[i32] // same claim as %p
+
+    // trait-level requirement (works for unproven or proven source claims)
+    // @Ord[!S] where [ @Eq[!S], @PartialOrd[!S,!S] ]
+    %p = trait.assume @Ord[!T]
+    %eq = trait.project %p : @Ord[!T] to @Eq[!T]
+
+    // impl assumption (requires a proven source claim)
+    %wA = trait.witness @A_impl_i32 for @A[i32]
+    %wB = trait.project %wA : @A[i32] by @A_impl_i32 to @B[i32] by @B_impl_i32
+    ```
+
+    Verification:
+    * For an **unproven** source claim (e.g., from `trait.assume` or `trait.allege`),
+      the target must match one of `@Trait`'s `where` requirements after substitution,
+      or be the identity. The target of an unproven source claim must also be unproven.
+    * For a **proven** source claim (e.g., from `trait.witness`), the target may match
+      the identity, a trait-level requirement, or an assumption of the referenced proof,
+      after substitution. The target of a proven source claim must also be proven.
   }];
 
   let arguments = (ins Claim:$source);
   let results   = (outs Claim:$result);
 
   let extraClassDeclaration = [{
+    ClaimType getSourceClaim() {
+      return cast<ClaimType>(getSource().getType());
+    }
+
+    ClaimType getResultClaim() {
+      return cast<ClaimType>(getResult().getType());
+    }
+
     TraitOp getSourceTrait();
     TraitOp getProjectedTrait();
   }];
 
   let hasCustomAssemblyFormat = 1;
 }
+
 
 def AllegeOp : TraitDialectOp<"allege", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
@@ -549,14 +699,9 @@ def AllegeOp : TraitDialectOp<"allege", [
   ];
 
   let extraClassDeclaration = [{
-    TraitOp getTrait();
-    ArrayRef<Type> getTypeArgs();
-    TraitApplicationAttr getTraitApplication() {
-      return cast<ClaimType>(getResult().getType()).getTraitApplication();
+    ClaimType getClaim() {
+      return cast<ClaimType>(getResult().getType());
     }
-    FlatSymbolRefAttr getTraitAttr();
-
-    SmallVector<TraitApplicationAttr> getRequiredTraitApplications();
   }];
 
   let hasCustomAssemblyFormat = 1;
@@ -588,6 +733,12 @@ def ProofOp : TraitDialectOp<"proof", [
   );
 
   let extraClassDeclaration = [{
+    ClaimType getProvenClaim() {
+      MLIRContext* ctx = getContext();
+      FlatSymbolRefAttr symRef = FlatSymbolRefAttr::get(ctx, getSymNameAttr());
+      return ClaimType::get(ctx, getTraitApplication(), symRef); 
+    }
+
     ImplOp getImpl() {
       ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
       if (!module)
@@ -598,6 +749,13 @@ def ProofOp : TraitDialectOp<"proof", [
     TraitOp getTrait();
 
     SmallVector<ClaimType> getSubproofClaims();
+    SmallVector<ClaimType> getImplAssumptionClaims();
+
+    // look up a proof by name. It must be either a ProofOp or a self-proving impl
+    static FailureOr<Operation*> getProofOpOrSelfProofImplOp(
+      ModuleOp module,
+      FlatSymbolRefAttr name,
+      llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
   }];
 
   let assemblyFormat = "$sym_name `proves` $impl_name `for` $trait_application `given` $subproof_names attr-dict";
@@ -625,7 +783,7 @@ def WitnessOp : TraitDialectOp<"witness", [
       %partial_eq_w = trait.witness @PartialEq_impl_i32_i32 for @PartialEq[i32,i32]
 
       // @Ord has obligations, so we refer to a trait.proof
-      %ord_w = trait.witness @Ord_i32_p for @Ord[i32]
+      %ord_w = trait.witness @Ord_impl_i32_p for @Ord[i32]
   }];
 
   let arguments = (ins
@@ -644,6 +802,12 @@ def WitnessOp : TraitDialectOp<"witness", [
   ];
 
   let results = (outs Claim:$result);
+
+  let extraClassDeclaration = [{
+    ClaimType getProvenClaim() {
+      return ClaimType::get(getContext(), getTraitApplication(), getProofAttr());
+    }
+  }];
 
   let hasCustomAssemblyFormat = 1;
 }

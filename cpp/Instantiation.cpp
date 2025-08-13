@@ -117,6 +117,17 @@ static void cloneRegionWithTypeReplacement(
   }
 }
 
+static AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &subst) {
+  AttrTypeReplacer replacer;
+  replacer.addReplacement([=](Type t) -> std::optional<Type> {
+    Type result = applySubstitutionToFixedPoint(subst, t);
+
+    // check that the result changed
+    return (result != t) ? std::optional<Type>(result) : std::nullopt;
+  });
+  return replacer;
+}
+
 func::FuncOp instantiatePolymorph(OpBuilder& builder,
                                   func::FuncOp polymorph,
                                   StringRef instanceName,
@@ -128,12 +139,8 @@ func::FuncOp instantiatePolymorph(OpBuilder& builder,
 
   Location loc = polymorph.getLoc();
 
-  // set up type replacer
-  AttrTypeReplacer replacer;
-  replacer.addReplacement([&](Type t) -> std::optional<Type> {
-    auto it = substitution.find(t);
-    return (it != substitution.end()) ? std::optional<Type>(it->second) : std::nullopt;
-  });
+  // make a type replacer
+  AttrTypeReplacer replacer = makeTypeReplacerFromSubstitution(substitution);
 
   // replace the polymorphic function type
   auto oldFunctionType = polymorph.getFunctionType();
@@ -174,15 +181,11 @@ ImplOp instantiatePolymorphicImpl(OpBuilder& builder,
 void instantiatePolymorphicRegion(OpBuilder& builder,
                                   Region& polymorph,
                                   Region& monomorph,
-                                  const DenseMap<Type,Type> &substitution) {
+                                  const DenseMap<Type,Type> &subst) {
   assert(monomorph.empty() && "Region is not empty");
 
-  // set up type replacer
-  AttrTypeReplacer replacer;
-  replacer.addReplacement([&](Type t) -> std::optional<Type> {
-    auto it = substitution.find(t);
-    return (it != substitution.end()) ? std::optional<Type>(it->second) : std::nullopt;
-  });
+  // make a type replacer
+  AttrTypeReplacer replacer = makeTypeReplacerFromSubstitution(subst);
 
   IRMapping mapping;
   cloneRegionWithTypeReplacement(builder,

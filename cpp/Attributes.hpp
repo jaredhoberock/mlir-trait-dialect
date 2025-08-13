@@ -4,6 +4,11 @@
 #include <mlir/IR/BuiltinAttributes.h>
 #include <mlir/IR/BuiltinOps.h>
 
+namespace mlir::trait {
+  // forward declaration of TraitOp for Attributes.td/Attributes.hpp.inc
+  class TraitOp;
+}
+
 #define GET_ATTRDEF_CLASSES
 #include "Attributes.hpp.inc"
 

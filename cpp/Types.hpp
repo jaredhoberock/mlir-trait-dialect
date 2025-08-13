@@ -68,38 +68,66 @@ inline Type applySubstitution(const llvm::DenseMap<Type,Type> &substitution,
   return replacer.replace(ty);
 }
 
+inline Type applySubstitutionToFixedPoint(const llvm::DenseMap<Type,Type> &subst,
+                                          Type ty) {
+  Type cur = ty;
+  while (true) {
+    Type next = applySubstitution(subst, cur);
+    if (!next || next == cur) break;
+    cur = next;
+  }
+  return cur;
+}
+     
+
 inline void dumpSubstitution(const llvm::DenseMap<Type,Type> &substitution) {
   for (auto [k,v] : substitution) {
     llvm::errs() << k << " -> " << v << "\n";
   }
 }
 
-/// Attempt to unify `expectedTy` and `foundTy`.  If `expectedTy` or `foundTy` is
-/// a PolyType, record/verify a substitution via unifyPolyType().  Otherwise,
-/// if the type is composite (i.e. has immediate sub‐types), recurse into each
-/// child.  If neither side is a PolyType or composite, require exact equality.
+/// Attempts to update `subst` so that the parameter type `formal`
+/// is satisfied by the argument type `actual`.
 ///
-/// `substitution` maps each PolyType → the concrete Type chosen.  `moduleOp` is
-/// used to look up TraitOps when resolving PolyType constraints.
-LogicalResult unifyTypes(
-    Type expectedTy,
-    Type foundTy,
-    ModuleOp moduleOp,
-    llvm::DenseMap<Type,Type> &substitution,
+/// This function applies the current substitution mapping to both `formal`
+/// and `actual` before comparison. If the normalized types are identical,
+/// the substitution is unchanged and the call succeeds.
+///
+/// Otherwise, `formal` is examined to determine how `actual` can serve as
+/// its substitute:
+///   - If `formal` implements `MonomorphizableTypeInterface`, its
+///     `substituteWith` logic is invoked to extend `subst`.
+///   - If `formal` and `actual` have the same type constructor and arity,
+///     substitution recurses on their immediate subtypes.
+///   - Otherwise, the types are considered incompatible and an error is
+///     reported via `emitError`, if provided.
+LogicalResult substituteWith(
+    Type formal,
+    Type actual,
+    ModuleOp module,
+    llvm::DenseMap<Type,Type> &subst,
     llvm::function_ref<InFlightDiagnostic()> emitError);
 
 /// As above, but discards diagnostics
-LogicalResult unifyTypes(
-    Type expectedTy,
-    Type foundTy,
-    ModuleOp moduleOp,
+LogicalResult substituteWith(
+    Type formal,
+    Type actual,
+    ModuleOp module,
     llvm::DenseMap<Type,Type> &subst);
 
-// As above, but discards diagnostics *and* the resulting substitution
-LogicalResult unifyTypes(
-    Type expectedTy,
-    Type foundTy,
-    ModuleOp moduleOp);
+/// As above, but discards the resulting substitution
+LogicalResult substituteWith(
+    Type formal,
+    Type actual,
+    ModuleOp module,
+    llvm::function_ref<InFlightDiagnostic()> emitError);
+
+/// As above, but discards diagnostics *and* the resulting substitution
+LogicalResult substituteWith(
+    Type formal,
+    Type actual,
+    ModuleOp module);
+
 
 // this walks an Attribute and looks for any occurrence of the given NeedleType
 template<class NeedleType> bool containsType(Attribute attr) {

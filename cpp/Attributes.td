@@ -16,19 +16,23 @@ def TraitApplicationAttr : AttrDef<TraitDialect, "TraitApplication"> {
   }];
 
   let parameters = (ins
-    "::mlir::FlatSymbolRefAttr":$trait,  // referenced trait symbol
-    ArrayRefParameter<"Type">:$type_args // ordered list of type arguments
+    "::mlir::FlatSymbolRefAttr":$trait_name, // name of referenced trait symbol
+    ArrayRefParameter<"Type">:$type_args     // ordered list of type arguments
   );
 
   let extraClassDeclaration = [{
-    static TraitApplicationAttr get(MLIRContext *ctx, FlatSymbolRefAttr trait, ArrayAttr typesAttr) {
+    static TraitApplicationAttr get(MLIRContext *ctx, FlatSymbolRefAttr trait_name, ArrayAttr typesAttr) {
       SmallVector<Type, 4> types;
       types.reserve(typesAttr.size());
       for (TypeAttr ta : typesAttr.getAsRange<TypeAttr>()) {
         types.push_back(ta.getValue());
       }
-      return TraitApplicationAttr::get(ctx, trait, types);
+      return TraitApplicationAttr::get(ctx, trait_name, types);
     }
+
+    FailureOr<TraitOp> getTrait(ModuleOp module, llvm::function_ref<InFlightDiagnostic()> errFn = nullptr) const;
+
+    TraitOp getTraitOrAbort(ModuleOp module, const char* message) const;
 
     bool mentionsType(Type ty) const {
       return llvm::any_of(getTypeArgs(), [&](Type arg) { return arg == ty; });
@@ -84,13 +88,30 @@ def ConstraintsAttr : AttrDef<TraitDialect, "Constraints"> {
       return success();
     }
 
-    auto getApplicationsOf(FlatSymbolRefAttr trait) const {
+    auto getApplicationsOf(FlatSymbolRefAttr traitName) const {
       return llvm::make_filter_range(
         getApplications(),
-        [trait](TraitApplicationAttr app) {
-          return app.getTrait() == trait;
+        [traitName](TraitApplicationAttr app) {
+          return app.getTraitName() == traitName;
         }
       );
+    }
+
+    // make ConstraintsAttr behave like a range of TraitApplicationAttr
+    auto begin() const {
+      return getApplications().begin();
+    }
+
+    auto end() const {
+      return getApplications().end();
+    }
+
+    bool empty() const {
+      return getApplications().empty();
+    }
+
+    size_t size() const {
+      return getApplications().size();
     }
   }];
 

@@ -17,19 +17,46 @@ void TraitDialect::registerAttributes() {
   >();
 }
 
+template<class T>
+static T cantFail(FailureOr<T> f, const char* message) {
+  if (failed(f))
+    llvm_unreachable(message);
+  return *f;
+}
+
+FailureOr<TraitOp> TraitApplicationAttr::getTrait(
+    ModuleOp module,
+    llvm::function_ref<InFlightDiagnostic()> emitError
+) const {
+  TraitOp traitOp = mlir::SymbolTable::lookupNearestSymbolFrom<TraitOp>(module, getTraitName());
+  if (!traitOp) {
+    if (emitError) emitError() << "cannot find trait '" << getTraitName() << "'";
+    return failure();
+  }
+  return traitOp;
+}
+
+TraitOp TraitApplicationAttr::getTraitOrAbort(
+    ModuleOp module,
+    const char* msg
+) const {
+  return cantFail(getTrait(module), msg);
+}
+
 LogicalResult TraitApplicationAttr::verifyTraitApplication(
     ModuleOp module,
     llvm::function_ref<InFlightDiagnostic()> emitError
 ) const {
   // Get the trait
-  TraitOp traitOp = mlir::SymbolTable::lookupNearestSymbolFrom<TraitOp>(module, getTrait());
-  if (!traitOp)
-    return emitError() << "cannot find trait '" << getTrait() << "'";
+  auto maybeTrait = getTrait(module, emitError);
+  if (failed(maybeTrait))
+    return failure();
+  TraitOp trait = *maybeTrait;
 
   // Check the trait's expected arity against typeArgs
-  auto expectedArity = traitOp.getTypeParams().size();
+  auto expectedArity = trait.getTypeParams().size();
   if (getTypeArgs().size() != expectedArity)
-    return emitError() << "trait '" << getTrait() << "' expects " << expectedArity
+    return emitError() << "trait '" << getTraitName() << "' expects " << expectedArity
                        << " type arguments, found " << getTypeArgs().size();
 
   return success();
@@ -37,8 +64,8 @@ LogicalResult TraitApplicationAttr::verifyTraitApplication(
 
 Attribute TraitApplicationAttr::parse(AsmParser &parser, Type type) {
   // Expect: @TraitName[!T1, !T2, ...]
-  FlatSymbolRefAttr traitRef;
-  if (parser.parseAttribute(traitRef))
+  FlatSymbolRefAttr traitName;
+  if (parser.parseAttribute(traitName))
     return {};
 
   // Parse required type arguments in brackets
@@ -58,11 +85,11 @@ Attribute TraitApplicationAttr::parse(AsmParser &parser, Type type) {
 
   return TraitApplicationAttr::getChecked(
       [&]() { return parser.emitError(parser.getNameLoc()); },
-      parser.getContext(), traitRef, typeArgs);
+      parser.getContext(), traitName, typeArgs);
 }
 
 void TraitApplicationAttr::print(mlir::AsmPrinter &printer) const {
-  printer << '@' << getTrait().getValue(); // print the trait symbol name
+  printer << getTraitName(); // print the trait symbol name
 
   printer << '[';
   llvm::interleaveComma(getTypeArgs(), printer);

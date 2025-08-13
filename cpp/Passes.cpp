@@ -13,6 +13,11 @@
 
 namespace mlir::trait {
 
+
+//===----------------------------------------------------------------------===//
+// VerifyAcyclicTraitsPass
+//===----------------------------------------------------------------------===//
+
 LogicalResult verifyAcyclicTraits(ModuleOp module) {
   enum class Status : uint8_t { NotSeen = 0, InPath, Done };
   DenseMap<TraitOp, Status> status;
@@ -63,26 +68,29 @@ std::unique_ptr<Pass> createVerifyAcyclicTraitsPass() {
   return std::make_unique<VerifyAcyclicTraitsPass>();
 }
 
+
+//===----------------------------------------------------------------------===//
+// ProveClaimsPass
+//===----------------------------------------------------------------------===//
+
 namespace {
 
 struct ProveClaimPattern : OpRewritePattern<AllegeOp> {
   using OpRewritePattern::OpRewritePattern;
 
   // one memo per module; owned by the pass, passed by ref into the pattern
-  DenseMap<TraitApplicationAttr, FlatSymbolRefAttr>& memo;
+  ProofResolutionMemo& memo;
 
   ProveClaimPattern(MLIRContext* ctx,
-                    DenseMap<TraitApplicationAttr, FlatSymbolRefAttr>& memo)
+                    ProofResolutionMemo& memo)
     : OpRewritePattern<AllegeOp>(ctx), memo(memo) {}
 
   LogicalResult matchAndRewrite(AllegeOp op, PatternRewriter& rewriter) const override {
     ModuleOp module = op->getParentOfType<ModuleOp>();
     if (!module) return failure();
 
-    TraitApplicationAttr app = op.getTraitApplication();
-
-    // build or reuse canonical evidence for this application
-    auto sym = resolveAndEnsureProofFor(app, module, memo, rewriter);
+    // build or reuse canonical evidence for this claim
+    auto sym = resolveAndEnsureProofFor(op.getClaim(), module, memo, rewriter);
     if (failed(sym))
       return failure();
 
@@ -90,7 +98,7 @@ struct ProveClaimPattern : OpRewritePattern<AllegeOp> {
     rewriter.replaceOpWithNewOp<WitnessOp>(
       op,
       *sym,
-      app
+      op.getClaim().getTraitApplication()
     );
 
     return success();
@@ -102,11 +110,11 @@ LogicalResult proveClaims(ModuleOp module) {
   if (failed(verifyAcyclicTraits(module)))
     return failure();
 
-  DenseMap<TraitApplicationAttr, FlatSymbolRefAttr> proofMemo;
+  ProofResolutionMemo memo;
 
   // apply rewrite patterns
   RewritePatternSet patterns(module.getContext());
-  patterns.add<ProveClaimPattern>(module.getContext(), proofMemo);
+  patterns.add<ProveClaimPattern>(module.getContext(), memo);
   if (failed(applyPatternsGreedily(module, std::move(patterns))))
     return failure();
 
@@ -123,6 +131,11 @@ void ProveClaimsPass::runOnOperation() {
 std::unique_ptr<Pass> createProveClaimsPass() {
   return std::make_unique<ProveClaimsPass>();
 }
+
+
+//===----------------------------------------------------------------------===//
+// InstantiateMonomorphsPass
+//===----------------------------------------------------------------------===//
 
 namespace {
 
@@ -188,6 +201,51 @@ struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
   }
 };
 
+}
+
+LogicalResult instantiateMonomorphs(ModuleOp module) {
+  // prove claims first
+  if (failed(proveClaims(module)))
+    return failure();
+
+  MLIRContext* ctx = module.getContext();
+
+  // rewrite trait.func.call & trait.method.call
+  {
+    RewritePatternSet patterns(ctx);
+    patterns.add<FuncCallOpLowering,MethodCallOpLowering>(ctx);
+
+    // collect patterns from other dialects
+    for (Dialect *dialect : ctx->getLoadedDialects()) {
+      if (auto *iface = dialect->getRegisteredInterface<ConvertToTraitPatternInterface>()) {
+        iface->populateConvertToTraitConversionPatterns(patterns);
+      }
+    }
+
+    // apply patterns
+    if (failed(applyPatternsGreedily(module, std::move(patterns))))
+      return failure();
+  }
+
+  return success();
+}
+
+void InstantiateMonomorphsPass::runOnOperation() {
+  if (failed(instantiateMonomorphs(getOperation())))
+    signalPassFailure();
+}
+
+std::unique_ptr<Pass> createInstantiateMonomorphsPass() {
+  return std::make_unique<InstantiateMonomorphsPass>();
+}
+
+
+//===----------------------------------------------------------------------===//
+// MonomorphizePass
+//===----------------------------------------------------------------------===//
+
+namespace {
+
 struct EraseWitnessOp : public OpRewritePattern<WitnessOp> {
   using OpRewritePattern::OpRewritePattern;
 
@@ -241,28 +299,9 @@ static LogicalResult eraseClaims(ModuleOp module) {
 }
 
 LogicalResult monomorphize(ModuleOp module) {
-  // prove claims first
-  if (failed(proveClaims(module)))
+  // instantiate monomorphs first
+  if (failed(instantiateMonomorphs(module)))
     return failure();
-
-  MLIRContext* ctx = module.getContext();
-
-  // rewrite trait.func.call & trait.method.call
-  {
-    RewritePatternSet patterns(ctx);
-    patterns.add<FuncCallOpLowering,MethodCallOpLowering>(ctx);
-
-    // collect patterns from other dialects
-    for (Dialect *dialect : ctx->getLoadedDialects()) {
-      if (auto *iface = dialect->getRegisteredInterface<ConvertToTraitPatternInterface>()) {
-        iface->populateConvertToTraitConversionPatterns(patterns);
-      }
-    }
-
-    // apply patterns
-    if (failed(applyPatternsGreedily(module, std::move(patterns))))
-      return failure();
-  }
 
   // erase polymorphic functions
   for (func::FuncOp f : llvm::make_early_inc_range(module.getOps<func::FuncOp>())) {
