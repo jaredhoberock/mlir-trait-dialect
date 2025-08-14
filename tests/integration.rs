@@ -168,9 +168,9 @@ fn test_jit() {
 
     // !T = trait.poly<2>
     // func.func @foo(%c: !trait.claim<@PartialEq[!T,!T]>, %x: !T, %y: !T) -> i1 {
-    //   %res = trait.method.call @PartialEq<%c>::@eq(%x, %y)
-    //     : (!S,!O) -> i1
-    //     as !trait.claim<@PartialEq[!T,!T]> (!T, !T) -> i1
+    //   %res = trait.method.call %c @PartialEq[!T,!T]::@eq(%x, %y)
+    //     :  (!S,!O) -> i1
+    //     as (!T, !T) -> i1
     //   return %res : i1
     // }
     let poly_ty = trait_::poly_type(&context, 2);
@@ -272,12 +272,12 @@ fn test_jit() {
 
     // !C = !trait.claim<@PartialEq[!T,!T]>
     // func.func @baz(%c: !C, %x: !T, %y: !T) -> i1 {
-    //   %eq = trait.method.call @PartialEq<%c>::@eq(%x, %y)
-    //     : (!S,!O) -> i1
+    //   %eq = trait.method.call %c @PartialEq[!T,!T]::@eq(%x, %y)
+    //     :  (!S,!O) -> i1
     //     as (!T,!T) -> i1
-    //   %neq = trait.method.call @PartialEq<%c>::@neq(%x, %y)
-    //     : (!S,!O) -> i1
-    //     as (!W,!T,!T) -> i1
+    //   %neq = trait.method.call %c @PartialEq[!T,!T]::@neq(%x, %y)
+    //     :  (!S,!O) -> i1
+    //     as (!T,!T) -> i1
     //   %result = arith.ori %eq, %neq : i1
     //   return %result : i1
     // }
