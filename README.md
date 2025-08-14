@@ -22,42 +22,60 @@ The snippet below defines `PartialEq`, gives `i32` an implementation, and define
 <summary>Click to expand MLIR</summary>
 
 ```mlir
-// ----- Generic IR using trait dialect -----
-module {
-  // 1. Declare a trait
-  trait.trait @PartialEq {
-    // a required method
-    func.func private @eq(!trait.self, !trait.self) -> i1
+// 1. Declare a trait
+!S = !trait.poly<0>
+!O = !trait.poly<1>
+trait.trait @PartialEq[!S,!O] {
+  // a required method
+  func.func private @eq(!S, !O) -> i1
 
-    // an optional method
-    func.func @neq(%self: !trait.self, %other: !trait.self) -> i1 {
-      %equal = trait.method.call @PartialEq<!trait.self>::@eq(%self, %other) : (!trait.self, !trait.self) -> i1
-      %true = arith.constant 1 : i1
-      %result = arith.xori %equal, %true : i1
-      return %result : i1
-    }
+  // an optional method with default implementation
+  func.func @ne(%self: !S, %other: !O) -> i1 {
+    // get a claim value for this trait
+    %partial_eq = trait.assume @PartialEq[!S,!O]
+
+    // call a method using the claim
+    %equal = trait.method.call %partial_eq @PartialEq[!S,!O]::@eq(%self, %other)
+      :  (!S, !O) -> i1
+      as (!S, !O) -> i1
+
+    %true = arith.constant 1 : i1
+    %res = arith.xori %equal, %true : i1
+    return %res : i1
   }
+}
 
-  // 2. Implementation for i32
-  trait.impl @PartialEq<i32> {
-    func.func @eq(%self: i32, %other: i32) -> i1 {
-      %result = arith.cmpi eq, %self, %other : i32
-      return %result : i1
-    }
-  }
-
-  // 3. Generic functions: rely on the trait, not a concrete type
-  !T = !trait.poly<0,[@PartialEq]>
-  func.func @foo(%a : !T, %b : !T) -> i1 {
-    %0 = trait.method.call @PartialEq<!T>::@eq(%a, %b) : (!T, !T) -> i1
-    return %0 : i1
-  }
-
-  // 4. Concrete functions: call a trait-bounded polymorphic function with a concrete type
-  func.func @baz(%a : i32, %b : i32) -> i1 {
-    %result = trait.func.call @foo(%a, %b) : (i32,i32) -> i1
+// 2. Implementation for i32
+trait.impl for @PartialEq[i32,i32] {
+  func.func @eq(%self: i32, %other: i32) -> i1 {
+    %result = arith.cmpi eq, %self, %other : i32
     return %result : i1
   }
+}
+
+// 3. Generic functions: rely on the trait, not a concrete type
+!T = !trait.poly<2>
+!C = !trait.claim<@PartialEq[!T,!T]>
+func.func @foo(%a : !T, %b : !T, %c: !C) -> i1 {
+  // use our polymorphic claim value to call @eq
+  %res = trait.method.call %c @PartialEq[!T,!T]::@eq(%a, %b)
+    :  (!S, !O) -> i1
+    as (!T, !T) -> i1
+
+  return %res : i1
+}
+
+// 4. Concrete functions: call a trait-bounded polymorphic function with a concrete type
+func.func @baz(%a : i32, %b : i32) -> i1 {
+  // get a monomorphic claim for @PartialEq[i32,i32]
+  %c = trait.allege @PartialEq[i32,i32]
+
+  // call polymorphic @foo using our claim
+  %res = trait.func.call @foo(%a, %b, %c)
+    :  (!T,!T,!C) -> i1
+    as (i32,i32, !trait.claim<@PartialEq[i32,i32]>) -> i1
+
+  return %res : i1
 }
 ```
 </details>
@@ -66,25 +84,17 @@ module {
 <summary>Lowered to LLVM dialect</summary>
 
 ```mlir
-module {
-  llvm.func @__trait_PartialEq_impl_i32_eq(%arg0: i32, %arg1: i32) -> i1 {
-    %0 = llvm.icmp "eq" %arg0, %arg1 : i32
-    llvm.return %0 : i1
-  }
-  llvm.func @__trait_PartialEq_impl_i32_neq(%arg0: i32, %arg1: i32) -> i1 {
-    %0 = llvm.call @__trait_PartialEq_impl_i32_eq(%arg0, %arg1) : (i32, i32) -> i1
-    %1 = llvm.mlir.constant(true) : i1
-    %2 = llvm.xor %0, %1 : i1
-    llvm.return %2 : i1
-  }
-  llvm.func @foo_i32(%arg0: i32, %arg1: i32) -> i1 {
-    %0 = llvm.call @__trait_PartialEq_impl_i32_eq(%arg0, %arg1) : (i32, i32) -> i1
-    llvm.return %0 : i1
-  }
-  llvm.func @baz(%arg0: i32, %arg1: i32) -> i1 {
-    %0 = llvm.call @foo_i32(%arg0, %arg1) : (i32, i32) -> i1
-    llvm.return %0 : i1
-  }
+llvm.func @PartialEq_impl_i32_i32_eq(%arg0: i32, %arg1: i32) -> i1 {
+  %0 = llvm.icmp "eq" %arg0, %arg1 : i32
+  llvm.return %0 : i1
+}
+llvm.func @foo_i32(%arg0: i32, %arg1: i32) -> i1 {
+  %0 = llvm.call @PartialEq_impl_i32_i32_eq(%arg0, %arg1) : (i32, i32) -> i1
+  llvm.return %0 : i1
+}
+llvm.func @baz(%arg0: i32, %arg1: i32) -> i1 {
+  %0 = llvm.call @foo_i32(%arg0, %arg1) : (i32, i32) -> i1
+  llvm.return %0 : i1
 }
 ```
 </details>
