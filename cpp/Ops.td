@@ -414,12 +414,25 @@ def MethodCallOp : TraitDialectOp<"method.call", [
     Resolution to an implementation is performed during monomorphization.
 
     Example:
-      %a = trait.allege : @PartialEq[i32,i32]
       %x = ... : i32
       %y = ... : i32
-      %res = trait.method.call @PartialEq::@eq<%a>(%x, %y)
-        : (!trait.poly<0>, !trait.poly<1>)
-        as !trait.claim<@PartialEq[i32,i32]> (i32, i32) -> i1
+
+      // get an unproven claim value for @PartialEq[i32,i32]
+      %partial_eq = trait.allege : @PartialEq[i32,i32]
+
+      // call @eq using that unproven claim
+      %res0 = trait.method.call %partial_eq @PartialEq[i32,i32]::@eq(%x, %y)
+        :  (!trait.poly<0>, !trait.poly<1>)
+        as (i32, i32) -> i1
+
+      // get a proven claim value for @PartialEq[i32,i32]
+      %partial_eq_p = trait.witness @PartialEq_impl_i32_i32 for @PartialEq[i32,i32]
+
+      // call @eq using that proven claim
+      %res1 = trait.method.call %partial_eq_p @PartialEq[i32,i32]::@eq(%x, %y)
+        :  (!trait.poly<0>, !trait.poly<1>)
+        as (i32, i32) -> i1
+        by @PartialEq_impl_i32_i32
   }];
 
   let arguments = (ins
@@ -475,8 +488,12 @@ def MethodCallOp : TraitDialectOp<"method.call", [
   let extraClassDeclaration = [{
     func::FuncOp getOrInstantiateCallee(PatternRewriter& rewriter);
 
+    ClaimType getClaimType() {
+      return cast<ClaimType>(getClaim().getType());
+    }
+
     TraitApplicationAttr getTraitApplication() {
-      return cast<ClaimType>(getClaim().getType()).getTraitApplication();
+      return getClaimType().getTraitApplication();
     }
 
     FlatSymbolRefAttr getTraitAttr() {
@@ -521,11 +538,13 @@ def MethodCallOp : TraitDialectOp<"method.call", [
     }
   }];
 
-  let assemblyFormat = [{
-    $method_ref `<` $claim `>` `(` $arguments `)` attr-dict `:` $method_function_type `as` type($claim) functional-type($arguments, results)
-  }];
+//  let assemblyFormat = [{
+//    $method_ref `<` $claim `>` `(` $arguments `)` attr-dict `:` $method_function_type `as` type($claim) functional-type($arguments, results)
+//  }];
 
   let hasVerifier = 1;
+
+  let hasCustomAssemblyFormat = 1;
 }
 
 

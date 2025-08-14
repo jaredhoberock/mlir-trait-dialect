@@ -22,10 +22,12 @@ trait.trait @PartialEq[!PartialEqSelf, !PartialEqOther] {
   func.func private @eq(!PartialEqSelf, !PartialEqOther) -> i1
   
   func.func @neq(%self: !PartialEqSelf, %other: !PartialEqOther) -> i1 {
-    %p = trait.assume @PartialEq[!PartialEqSelf, !PartialEqOther]
-    %eq = trait.method.call @PartialEq::@eq<%p>(%self, %other)
-      : (!PartialEqSelf, !PartialEqOther) -> i1
-      as !trait.claim<@PartialEq[!PartialEqSelf, !PartialEqOther]> (!PartialEqSelf, !PartialEqOther) -> i1
+    %partial_eq = trait.assume @PartialEq[!PartialEqSelf, !PartialEqOther]
+
+    %eq = trait.method.call %partial_eq @PartialEq[!PartialEqSelf,!PartialEqOther]::@eq(%self, %other)
+      :  (!PartialEqSelf, !PartialEqOther) -> i1
+      as (!PartialEqSelf, !PartialEqOther) -> i1
+
     %true = arith.constant true
     %res = arith.xori %eq, %true : i1
     return %res : i1
@@ -48,10 +50,12 @@ trait.trait @PartialOrd[!PartialOrdSelf, !PartialOrdOther] where [
   func.func private @partial_cmp(!PartialOrdSelf, !PartialOrdOther) -> !ordering
 
   func.func @lt(%self: !PartialOrdSelf, %other: !PartialOrdOther) -> i1 {
-    %self_p = trait.assume @PartialOrd[!PartialOrdSelf,!PartialOrdOther]
-    %cmp = trait.method.call @PartialOrd::@partial_cmp<%self_p>(%self, %other)
-      : (!PartialOrdSelf, !PartialOrdOther) -> !ordering
-      as !trait.claim<@PartialOrd[!PartialOrdSelf,!PartialOrdOther]> (!PartialOrdSelf, !PartialOrdOther) -> !ordering
+    %partial_ord = trait.assume @PartialOrd[!PartialOrdSelf,!PartialOrdOther]
+
+    %cmp = trait.method.call %partial_ord @PartialOrd[!PartialOrdSelf,!PartialOrdOther]::@partial_cmp(%self, %other)
+      :  (!PartialOrdSelf, !PartialOrdOther) -> !ordering
+      as (!PartialOrdSelf, !PartialOrdOther) -> !ordering
+
     %res = arith.constant false
     return %res : i1
   }

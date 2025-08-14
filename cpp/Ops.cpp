@@ -838,6 +838,137 @@ func::FuncOp MethodCallOp::getOrInstantiateCallee(PatternRewriter& rewriter) {
     .getOrInstantiateFreeFunctionFromMethod(rewriter, claimTy, getMethodName());
 }
 
+ParseResult MethodCallOp::parse(OpAsmParser& p, OperationState &st) {
+  MLIRContext* ctx = p.getContext();
+
+  // grammar:
+  //
+  // trait.method.call %claim @Trait[Types...]::@method(%arguments...)
+  //   :  (Types...) -> Type
+  //   as (Types...) -> Type
+  //   (by @Proof)?
+  //   attr-dict?
+
+  // parse %claim
+  OpAsmParser::UnresolvedOperand claim;
+  if (p.parseOperand(claim)) return failure();
+
+  // parse '@Trait[Types...]' as TraitApplicationAttr
+  TraitApplicationAttr traitApp = dyn_cast_or_null<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
+  if (!traitApp) return failure();
+
+  // parse '::'
+  if (p.parseColon() || p.parseColon()) return failure();
+
+  // parse '@method' as FlatSymbolRefAttr
+  FlatSymbolRefAttr methodName;
+  if (p.parseAttribute(methodName)) return failure();
+
+  // add methodRef attribute
+  auto traitName = traitApp.getTraitName().getValue();
+  auto methodRef = SymbolRefAttr::get(ctx, traitName, methodName);
+  st.addAttribute("method_ref", methodRef);
+
+  // parse '(' %arguments... ')'
+  SmallVector<OpAsmParser::UnresolvedOperand> arguments;
+  if (p.parseOperandList(arguments, OpAsmParser::Delimiter::Paren)) return failure();
+
+  // parse ':' methodFunctionType
+  FunctionType methodFunctionType;
+  if (p.parseColonType(methodFunctionType)) return failure();
+
+  // add methodFunctionType attribute
+  st.addAttribute("method_function_type", TypeAttr::get(methodFunctionType));
+
+  // parse 'as'
+  if (p.parseKeyword("as")) return failure();
+
+  // parse operand types and result type as a FunctionType
+  FunctionType argumentTypesAndResultType;
+  if (p.parseType(argumentTypesAndResultType)) return failure();
+
+  // add the result types
+  st.addTypes(argumentTypesAndResultType.getResults());
+
+  // parse optional 'by' @ProofSym
+  FlatSymbolRefAttr proofSym;
+  if (succeeded(p.parseOptionalKeyword("by"))) {
+    if (p.parseAttribute(proofSym)) return failure();
+  }
+
+  // build the type of %claim
+  auto loc = p.getCurrentLocation();
+  auto errFn = [&] { return p.emitError(loc); };
+  ClaimType claimTy = ClaimType::getChecked(errFn, ctx, traitApp, proofSym);
+  if (!claimTy) return failure();
+
+  // resolve %claim
+  if (p.resolveOperand(claim, claimTy, st.operands))
+    return failure();
+
+  // resolve arguments
+  auto argumentTypes = argumentTypesAndResultType.getInputs();
+  if (argumentTypes.size() != arguments.size())
+    return p.emitError(loc, "argument count mismatch");
+
+  if (p.resolveOperands(arguments, argumentTypes, loc, st.operands))
+    return failure();
+
+  // parse attributes
+  if (p.parseOptionalAttrDictWithKeyword(st.attributes)) return failure();
+  
+  return success();
+}
+
+void MethodCallOp::print(OpAsmPrinter& p) {
+  // grammar:
+  //
+  // trait.method.call %claim @Trait[Types...]::@method(%arguments...)
+  //   :  (Types...) -> Type
+  //   as (Types...) -> Type
+  //   (by @Proof)?
+  //   attr-dict?
+
+  // print %claim
+  p << " " << getClaim() << " ";
+
+  // print '@Trait[Types...]'
+  getTraitApplication().print(p);
+
+  // '::@method(%arguments...)'
+  p << "::" << getMethodAttr() << "(" << getArguments() << ")";
+
+  // on a newline:
+  // ': ' methodFunctionType
+  p.printNewline();
+  p.getStream().indent(2);
+  p << ": " << getMethodFunctionType();
+
+  // on a newline:
+  // 'as' (argumentTypes) -> (resultTypes)`
+  p.printNewline();
+  p.getStream().indent(2);
+  FunctionType actualFunctionType = FunctionType::get(
+    getContext(),
+    ValueRange(getArguments()).getTypes(),
+    getResultTypes()
+  );
+  p << "as " << actualFunctionType;
+
+  // on a newline:
+  // (by @Proof)?
+  if (getClaimType().isProven()) {
+    p.printNewline();
+    p.getStream().indent(2);
+    p << "by " << getClaimType().getProof();
+  }
+
+  p.printOptionalAttrDictWithKeyword(
+    (*this)->getAttrs(),
+    /*elidedAttrs=*/{"method_ref", "method_function_type"}
+  );
+}
+
 
 //===----------------------------------------------------------------------===//
 // FuncCallOp

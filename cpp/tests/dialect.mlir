@@ -11,10 +11,10 @@ trait.trait @PartialEq[!PartialEqS,!PartialEqO] {
   
   // CHECK-LABEL: func.func @ne
   func.func @ne(%self: !PartialEqS, %other: !PartialEqO) -> i1 {
-    %p = trait.assume @PartialEq[!PartialEqS,!PartialEqO]
-    %equal = trait.method.call @PartialEq::@eq<%p>(%self, %other)
-      : (!PartialEqS, !PartialEqO) -> i1
-      as !trait.claim<@PartialEq[!PartialEqS,!PartialEqO]> (!PartialEqS,!PartialEqO) -> i1
+    %a = trait.assume @PartialEq[!PartialEqS,!PartialEqO]
+    %equal = trait.method.call %a @PartialEq[!PartialEqS,!PartialEqO]::@eq(%self, %other)
+      :  (!PartialEqS,!PartialEqO) -> i1
+      as (!PartialEqS,!PartialEqO) -> i1
     %true = arith.constant 1 : i1
     %not_equal = arith.xori %equal, %true : i1
     return %not_equal : i1
@@ -34,10 +34,10 @@ trait.impl for @PartialEq[i32,i32] {
 !T = !trait.poly<0>
 !W = !trait.claim<@PartialEq[!T,!T]>
 func.func @foo(%w: !W, %x: !T, %y: !T) -> i1 {
-  // CHECK: %[[RES:.*]] = trait.method.call @PartialEq
-  %res = trait.method.call @PartialEq::@eq<%w>(%x, %y)
+  // CHECK: %[[RES:.*]] = trait.method.call %{{.*}} @PartialEq
+  %res = trait.method.call %w @PartialEq[!T,!T]::@eq(%x, %y)
     : (!PartialEqS, !PartialEqO) -> i1
-    as !W (!T,!T) -> i1
+    as (!T,!T) -> i1
   return %res : i1
 }
 
@@ -83,11 +83,11 @@ trait.trait @PartialOrd[!PartialOrdS,!PartialOrdO] where [
 
   // CHECK-LABEL: func.func @lt
   func.func @lt(%self: !PartialOrdS, %other: !PartialOrdO) -> i1 {
-    %self_p = trait.assume @PartialOrd[!PartialOrdS,!PartialOrdO]
+    %a = trait.assume @PartialOrd[!PartialOrdS,!PartialOrdO]
 
-    %cmp = trait.method.call @PartialOrd::@partial_cmp<%self_p>(%self, %other)
-      : (!PartialOrdS,!PartialOrdO) -> !opt_ord
-      as !trait.claim<@PartialOrd[!PartialOrdS,!PartialOrdO]> (!PartialOrdS,!PartialOrdO) -> !opt_ord
+    %cmp = trait.method.call %a @PartialOrd[!PartialOrdS,!PartialOrdO]::@partial_cmp(%self, %other)
+      :  (!PartialOrdS,!PartialOrdO) -> !opt_ord
+      as (!PartialOrdS,!PartialOrdO) -> !opt_ord
 
     %ord_lt = arith.constant 0 : !opt_ord
     %res = arith.cmpi eq, %cmp, %ord_lt : !opt_ord
@@ -96,19 +96,19 @@ trait.trait @PartialOrd[!PartialOrdS,!PartialOrdO] where [
 
   // CHECK-LABEL: func.func @le
   func.func @le(%self: !PartialOrdS, %other: !PartialOrdO) -> i1 {
-    %self_p = trait.assume @PartialOrd[!PartialOrdS,!PartialOrdO]
+    %a = trait.assume @PartialOrd[!PartialOrdS,!PartialOrdO]
 
-    %partial_eq_p = trait.project %self_p
+    %partial_eq_p = trait.project %a
       : @PartialOrd[!PartialOrdS,!PartialOrdO]
       to @PartialEq[!PartialOrdS,!PartialOrdO]
 
-    %lt = trait.method.call @PartialOrd::@lt<%self_p>(%self, %other)
-      : (!PartialOrdS,!PartialOrdO) -> i1
-      as !trait.claim<@PartialOrd[!PartialOrdS,!PartialOrdO]> (!PartialOrdS, !PartialOrdO) -> i1
+    %lt = trait.method.call %a @PartialOrd[!PartialOrdS,!PartialOrdO]::@lt(%self, %other)
+      :  (!PartialOrdS,!PartialOrdO) -> i1
+      as (!PartialOrdS, !PartialOrdO) -> i1
 
-    %eq = trait.method.call @PartialEq::@eq<%partial_eq_p>(%self, %other)
-      : (!PartialEqS,!PartialEqO) -> i1
-      as !trait.claim<@PartialEq[!PartialOrdS,!PartialOrdO]> (!PartialOrdS, !PartialOrdO) -> i1
+    %eq = trait.method.call %partial_eq_p @PartialEq[!PartialOrdS,!PartialOrdO]::@eq(%self, %other)
+      :  (!PartialEqS,!PartialEqO) -> i1
+      as (!PartialOrdS, !PartialOrdO) -> i1
 
     %res = arith.ori %lt, %eq : i1
     return %res : i1
@@ -116,11 +116,11 @@ trait.trait @PartialOrd[!PartialOrdS,!PartialOrdO] where [
 
   // CHECK-LABEL: func.func @gt
   func.func @gt(%self: !PartialOrdS, %other: !PartialOrdO) -> i1 {
-    %self_p = trait.assume @PartialOrd[!PartialOrdS,!PartialOrdO]
+    %a = trait.assume @PartialOrd[!PartialOrdS,!PartialOrdO]
 
-    %cmp = trait.method.call @PartialOrd::@partial_cmp<%self_p>(%self, %other)
-      : (!PartialOrdS,!PartialOrdO) -> !opt_ord
-      as !trait.claim<@PartialOrd[!PartialOrdS,!PartialOrdO]> (!PartialOrdS,!PartialOrdO) -> !opt_ord
+    %cmp = trait.method.call %a @PartialOrd[!PartialOrdS,!PartialOrdO]::@partial_cmp(%self, %other)
+      :  (!PartialOrdS,!PartialOrdO) -> !opt_ord
+      as (!PartialOrdS,!PartialOrdO) -> !opt_ord
 
     %ord_gt = arith.constant 2 : !opt_ord
     %res = arith.cmpi eq, %cmp, %ord_gt : !opt_ord
@@ -129,19 +129,19 @@ trait.trait @PartialOrd[!PartialOrdS,!PartialOrdO] where [
 
   // CHECK-LABEL: func.func @ge
   func.func @ge(%self: !PartialOrdS, %other: !PartialOrdO) -> i1 {
-    %self_p = trait.assume @PartialOrd[!PartialOrdS,!PartialOrdO]
+    %partial_ord = trait.assume @PartialOrd[!PartialOrdS,!PartialOrdO]
 
-    %partial_eq_p = trait.project %self_p
+    %partial_eq = trait.project %partial_ord
       : @PartialOrd[!PartialOrdS,!PartialOrdO]
       to @PartialEq[!PartialOrdS,!PartialOrdO]
 
-    %gt = trait.method.call @PartialOrd::@gt<%self_p>(%self, %other)
-      : (!PartialOrdS,!PartialOrdO) -> i1
-      as !trait.claim<@PartialOrd[!PartialOrdS,!PartialOrdO]> (!PartialOrdS, !PartialOrdO) -> i1
+    %gt = trait.method.call %partial_ord @PartialOrd[!PartialOrdS,!PartialOrdO]::@gt(%self, %other)
+      :  (!PartialOrdS,!PartialOrdO) -> i1
+      as (!PartialOrdS, !PartialOrdO) -> i1
 
-    %eq = trait.method.call @PartialEq::@eq<%partial_eq_p>(%self, %other)
-      : (!PartialEqS,!PartialEqO) -> i1
-      as !trait.claim<@PartialEq[!PartialOrdS,!PartialOrdO]> (!PartialOrdS, !PartialOrdO) -> i1
+    %eq = trait.method.call %partial_eq @PartialEq[!PartialOrdS,!PartialOrdO]::@eq(%self, %other)
+      :  (!PartialEqS,!PartialEqO) -> i1
+      as (!PartialOrdS, !PartialOrdO) -> i1
 
     %res = arith.ori %gt, %eq : i1
     return %res : i1
@@ -182,14 +182,14 @@ trait.trait @Ord[!OrdS] where [
 
   // CHECK-LABEL: func.func @max
   func.func @max(%self: !OrdS, %other: !OrdS) -> !OrdS {
-    %self_p = trait.assume @Ord[!OrdS]
-    %partial_ord_p = trait.project %self_p
+    %ord = trait.assume @Ord[!OrdS]
+    %partial_ord_p = trait.project %ord
       : @Ord[!OrdS]
       to @PartialOrd[!OrdS,!OrdS]
 
-    %cond = trait.method.call @PartialOrd::@gt<%partial_ord_p>(%self, %other)
-      : (!PartialOrdS,!PartialOrdO) -> i1
-      as !trait.claim<@PartialOrd[!OrdS,!OrdS]> (!OrdS,!OrdS) -> i1
+    %cond = trait.method.call %partial_ord_p @PartialOrd[!OrdS,!OrdS]::@gt(%self, %other)
+      :  (!PartialOrdS,!PartialOrdO) -> i1
+      as (!OrdS,!OrdS) -> i1
 
     %res = scf.if %cond -> !OrdS {
       scf.yield %self : !OrdS
@@ -202,14 +202,14 @@ trait.trait @Ord[!OrdS] where [
 
   // CHECK-LABEL: func.func @min
   func.func @min(%self: !OrdS, %other: !OrdS) -> !OrdS {
-    %self_p = trait.assume @Ord[!OrdS]
-    %partial_ord_p = trait.project %self_p
+    %ord = trait.assume @Ord[!OrdS]
+    %partial_ord = trait.project %ord
       : @Ord[!OrdS]
       to @PartialOrd[!OrdS,!OrdS]
 
-    %cond = trait.method.call @PartialOrd::@le<%partial_ord_p>(%self, %other)
+    %cond = trait.method.call %partial_ord @PartialOrd[!OrdS,!OrdS]::@le(%self, %other)
       : (!PartialOrdS,!PartialOrdO) -> i1
-      as !trait.claim<@PartialOrd[!OrdS,!OrdS]> (!OrdS,!OrdS) -> i1
+      as (!OrdS,!OrdS) -> i1
 
     %res = scf.if %cond -> !OrdS {
       scf.yield %self: !OrdS
@@ -258,9 +258,10 @@ trait.proof @Ord_impl_i32_p proves @Ord_impl_i32 for @Ord[i32] given [
 func.func @max(%a: i32, %b: i32) -> i32 {
   %ord_p = trait.witness @Ord_impl_i32_p for @Ord[i32]
 
-  %res = trait.method.call @Ord::@max<%ord_p>(%a, %b)
-    : (!OrdS, !OrdS) -> !OrdS
-    as !trait.claim<@Ord[i32] by @Ord_impl_i32_p> (i32, i32) -> i32
+  %res = trait.method.call %ord_p @Ord[i32]::@max(%a, %b)
+    :  (!OrdS, !OrdS) -> !OrdS
+    as (i32, i32) -> i32
+    by @Ord_impl_i32_p
 
   return %res : i32
 }
@@ -269,9 +270,10 @@ func.func @max(%a: i32, %b: i32) -> i32 {
 func.func @min(%a: i32, %b: i32) -> i32 {
   %ord_p = trait.witness @Ord_impl_i32_p for @Ord[i32]
 
-  %res = trait.method.call @Ord::@min<%ord_p>(%a, %b)
+  %res = trait.method.call %ord_p @Ord[i32]::@min(%a, %b)
     : (!OrdS, !OrdS) -> !OrdS
-    as !trait.claim<@Ord[i32] by @Ord_impl_i32_p> (i32, i32) -> i32
+    as (i32, i32) -> i32
+    by @Ord_impl_i32_p
 
   return %res : i32
 }
