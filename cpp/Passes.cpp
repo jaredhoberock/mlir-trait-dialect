@@ -86,8 +86,10 @@ struct ProveClaimPattern : OpRewritePattern<AllegeOp> {
     : OpRewritePattern<AllegeOp>(ctx), resolver(resolver) {}
 
   LogicalResult matchAndRewrite(AllegeOp op, PatternRewriter& rewriter) const override {
+    auto errFn = [&] { return op.emitOpError(); };
+
     // build or reuse canonical evidence for this claim
-    auto sym = resolver.resolveAndEnsureProofFor(op.getClaim(), rewriter);
+    auto sym = resolver.resolveAndEnsureProofFor(op.getClaim(), rewriter, errFn);
     if (failed(sym))
       return failure();
 

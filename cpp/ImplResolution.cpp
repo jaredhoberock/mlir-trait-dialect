@@ -1,4 +1,5 @@
 #include "ImplResolution.hpp"
+#include <llvm/ADT/ScopeExit.h>
 
 namespace mlir::trait {
 
@@ -7,7 +8,8 @@ static FailureOr<ImplOp> resolveImplFor(ClaimType wanted,
                                         ModuleOp module,
                                         ResolutionMemo &memo,
                                         const ImplGenerator &gen,
-                                        PatternRewriter& rewriter);
+                                        PatternRewriter& rewriter,
+                                        llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
 static LogicalResult
 assumptionsSatisfiableFor(ImplOp impl,
@@ -18,14 +20,17 @@ assumptionsSatisfiableFor(ImplOp impl,
                           PatternRewriter &rewriter) {
   TraitApplicationAttr app = concreteSelf.getTraitApplication();
 
-  // check the memo
-  if (memo.knownSatisfiable.contains(app))
+  // consult the per-(impl,claim) satisfiability memo
+  auto key = std::make_pair(impl, app);
+  if (memo.assumptionsKnownSatisfiable.contains(key))
     return success();
 
   // cycle guard: A(app) -> ... -> A(app) means unsatisfiable
   if (!memo.visiting.insert(app).second)
     return failure();
+  auto guard = llvm::make_scope_exit([&]{ memo.visiting.erase(app); });
 
+  // bind generics for this impl to the concrete claim
   auto subst = impl.buildSubstitutionFor(concreteSelf);
 
   // specialize the impl's assumptions to our concrete claim
@@ -44,13 +49,47 @@ assumptionsSatisfiableFor(ImplOp impl,
     }
   }
 
-  memo.visiting.erase(app);
-
   // record a positive result
-  memo.knownSatisfiable.insert(app);
+  memo.assumptionsKnownSatisfiable.insert(key);
 
   return success();
 }
+
+static LogicalResult diagnoseImplResolutionFailure(
+    TraitOp trait,
+    ClaimType wanted,
+    ArrayRef<ImplOp> candidates,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  if (!err) return failure();
+
+  if (candidates.empty()) {
+    err() << "no impl with satisfiable assumptions for " << wanted;
+    return failure();
+  }
+
+  InFlightDiagnostic diag = err() << "incoherent impls (multiple satisfiable) for "
+                                  << wanted;
+
+  unsigned maxNotes = 16;
+  unsigned emitted = 0;
+  for (ImplOp impl : candidates) {
+    if (emitted++ == maxNotes) {
+      unsigned remaining = candidates.size() - maxNotes;
+      diag.attachNote(trait.getLoc())
+        << remaining << " more candidate(s) elided";
+      break;
+    }
+
+    std::string header;
+    llvm::raw_string_ostream os(header);
+    os << "candidate";
+
+    diag.attachNote(impl.getLoc()) << os.str();
+  }
+
+  return diag;
+}
+
 
 // pick the unique ImplOp for the wanted claim. Coherence assumed; error on 0 or >1.
 static FailureOr<ImplOp> resolveImplFor(
@@ -58,7 +97,8 @@ static FailureOr<ImplOp> resolveImplFor(
     ModuleOp module,
     ResolutionMemo &memo,
     const ImplGenerator &gen,
-    PatternRewriter &rewriter) {
+    PatternRewriter &rewriter,
+    llvm::function_ref<InFlightDiagnostic()> err) {
   TraitApplicationAttr app = wanted.getTraitApplication();
 
   // first check the memo
@@ -84,9 +124,10 @@ static FailureOr<ImplOp> resolveImplFor(
       candidates.push_back(impl);
   }
 
-  if (candidates.empty())
-    return memo.chosen[app] =
-      trait.emitError() << "no coherent impl found for " << wanted;
+  if (candidates.empty()) {
+    if (err) err() << "no coherent impl found for " << wanted;
+    return memo.chosen[app] = failure();
+  }
 
   // keep only candidates whose assumptions are satisfiable
   SmallVector<ImplOp> ok;
@@ -97,12 +138,7 @@ static FailureOr<ImplOp> resolveImplFor(
   if (ok.size() == 1)
     return memo.chosen[app] = ok.front();
 
-  if (ok.empty())
-    return memo.chosen[app] =
-      trait.emitError() << "no impl with satisfiable assumptions for " << wanted;
-
-  return memo.chosen[app] =
-    trait.emitError() << "incoherent impls (multiple satisfiable) for " << wanted;
+  return memo.chosen[app] = diagnoseImplResolutionFailure(trait, wanted, ok, err);
 }
 
 // find an existing trait.proof that *explicitly* proves impl by name
@@ -126,7 +162,7 @@ static ProofOp findExistingProofFor(ModuleOp module, ImplOp impl, TraitApplicati
 }
 
 ImplResolver::ImplResolver(ModuleOp m) : module(m) {
-  // collect ImplGeneators from each dialect with the appropriate interface
+  // collect ImplGenerators from each dialect with the appropriate interface
   for (Dialect *dialect : module.getContext()->getLoadedDialects()) {
     if (auto *iface = dialect->getRegisteredInterface<GenerateImplsInterface>()) {
       iface->populateImplGenerators(generators);
@@ -136,9 +172,12 @@ ImplResolver::ImplResolver(ModuleOp m) : module(m) {
 
 FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
     ClaimType wanted,
-    PatternRewriter &rewriter) {
-  if (!wanted.isMonomorphic())
-    llvm::report_fatal_error("resolveAndEnsureProofFor called on polymorphic ClaimType");
+    PatternRewriter &rewriter,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  if (!wanted.isMonomorphic()) {
+    if (err) err() << "resolveAndEnsureProofFor requires a monomorphic claim";
+    return failure();
+  }
 
   TraitApplicationAttr app = wanted.getTraitApplication();
 
@@ -149,7 +188,7 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
   MLIRContext* ctx = module.getContext();
 
   // resolve the unique impl for this concrete application
-  auto implOr = resolveImplFor(wanted, module, memo.resolutionMemo, generators, rewriter);
+  auto implOr = resolveImplFor(wanted, module, memo.resolutionMemo, generators, rewriter, err);
   if (failed(implOr))
     return failure();
   ImplOp impl = *implOr;

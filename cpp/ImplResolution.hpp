@@ -51,8 +51,10 @@ struct ResolutionMemo {
   // Tracks applications currently being resolved to detect resolution cycles.
   DenseSet<TraitApplicationAttr> visiting;
 
-  // Applications already determined to have at least one satisfiable impl.
-  DenseSet<TraitApplicationAttr> knownSatisfiable;
+  // A memo for assumptionsSatisfiableFor
+  // For every (ImplOp, TraitApplicationAttr) in this set, the ImplOp's assumptions
+  // are known to be satisfiable for the given TraitApplicationAttr
+  DenseSet<std::pair<ImplOp,TraitApplicationAttr>> assumptionsKnownSatisfiable;
 };
 
 // Aggregates memoization for both impl resolution and proof creation.
@@ -103,7 +105,8 @@ class ImplResolver {
     /// Returns the symbol (ImplOp or ProofOp) that proves `claim`, or failure if
     /// no unique and satisfiable impl can be found.
     FailureOr<FlatSymbolRefAttr> resolveAndEnsureProofFor(ClaimType claim,
-                                                          PatternRewriter &rewriter);
+                                                          PatternRewriter &rewriter,
+                                                          llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
   private:
     ModuleOp module;
