@@ -1,9 +1,9 @@
-#include "Dialect.hpp"
 #include "Instantiation.hpp"
 #include "ImplResolution.hpp"
-#include "Ops.hpp"
 #include "Passes.hpp"
-#include "Types.hpp"
+#include "TraitOps.hpp"
+#include "Trait.hpp"
+#include "TraitTypes.hpp"
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/Dialect/Func/Transforms/FuncConversions.h>
 #include <mlir/IR/PatternMatch.h>
@@ -78,19 +78,21 @@ namespace {
 struct ProveClaimPattern : OpRewritePattern<AllegeOp> {
   using OpRewritePattern::OpRewritePattern;
 
-  // one memo per module; owned by the pass, passed by ref into the pattern
+  // one of each of these objects per module; owned by the pass, passed by ref into the pattern
   ProofResolutionMemo& memo;
+  const ImplGenerator& gen;
 
   ProveClaimPattern(MLIRContext* ctx,
-                    ProofResolutionMemo& memo)
-    : OpRewritePattern<AllegeOp>(ctx), memo(memo) {}
+                    ProofResolutionMemo& memo,
+                    const ImplGenerator &gen)
+    : OpRewritePattern<AllegeOp>(ctx), memo(memo), gen(gen) {}
 
   LogicalResult matchAndRewrite(AllegeOp op, PatternRewriter& rewriter) const override {
     ModuleOp module = op->getParentOfType<ModuleOp>();
     if (!module) return failure();
 
     // build or reuse canonical evidence for this claim
-    auto sym = resolveAndEnsureProofFor(op.getClaim(), module, memo, rewriter);
+    auto sym = resolveAndEnsureProofFor(op.getClaim(), module, memo, gen, rewriter);
     if (failed(sym))
       return failure();
 
@@ -112,9 +114,17 @@ LogicalResult proveClaims(ModuleOp module) {
 
   ProofResolutionMemo memo;
 
+  // collect ImplGenerators from each dialect with the appropriate interface
+  ImplGeneratorSet generators;
+  for (Dialect *dialect : module.getContext()->getLoadedDialects()) {
+    if (auto *iface = dialect->getRegisteredInterface<GenerateImplsInterface>()) {
+      iface->populateImplGenerators(generators);
+    }
+  }
+
   // apply rewrite patterns
   RewritePatternSet patterns(module.getContext());
-  patterns.add<ProveClaimPattern>(module.getContext(), memo);
+  patterns.add<ProveClaimPattern>(module.getContext(), memo, generators);
   if (failed(applyPatternsGreedily(module, std::move(patterns))))
     return failure();
 

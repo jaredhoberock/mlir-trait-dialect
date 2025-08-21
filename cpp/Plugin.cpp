@@ -1,5 +1,5 @@
-#include "Dialect.hpp"
 #include "Passes.hpp"
+#include "Trait.hpp"
 #include <mlir/Pass/PassManager.h>
 #include <mlir/Tools/Plugins/DialectPlugin.h>
 #include <mlir/Tools/Plugins/PassPlugin.h>

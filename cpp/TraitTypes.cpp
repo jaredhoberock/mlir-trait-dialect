@@ -1,22 +1,22 @@
-#include "Dialect.hpp"
-#include "Ops.hpp"
-#include "Types.hpp"
+#include "Trait.hpp"
+#include "TraitOps.hpp"
+#include "TraitTypes.hpp"
 #include <atomic>
 #include <llvm/ADT/TypeSwitch.h>
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/DialectImplementation.h>
 
-#include "TypeInterfaces.cpp.inc"
+#include "TraitTypeInterfaces.cpp.inc"
 
 #define GET_TYPEDEF_CLASSES
-#include "Types.cpp.inc"
+#include "TraitTypes.cpp.inc"
 
 namespace mlir::trait {
 
 void TraitDialect::registerTypes() {
   addTypes<
 #define GET_TYPEDEF_LIST
-#include "Types.cpp.inc"
+#include "TraitTypes.cpp.inc"
   >();
 }
 
@@ -263,17 +263,18 @@ static LogicalResult verifyAndRecordProvenClaim(
   obligations.append(assumptions);
 
   // get the subproof claims
-  SmallVector<ClaimType> subproofs = proof.getSubproofClaims();
+  auto subproofs = proof.verifyAndGetSubproofClaims(err);
+  if (failed(subproofs)) return failure();
 
   // the number of subproofs must match the number of obligations 
-  if (subproofs.size() != obligations.size()) {
+  if (subproofs->size() != obligations.size()) {
     if (err) err() << "arity mismatch: expected " << obligations.size()
-                   << ", but found " << subproofs.size();
+                   << ", but found " << subproofs->size();
     return failure();
   }
 
   // recurse over obligations
-  for (auto [ob, sub] : llvm::zip(obligations, subproofs)) {
+  for (auto [ob, sub] : llvm::zip(obligations, *subproofs)) {
     if (failed(verifyAndRecordProvenClaim(ob, sub, module, subst, err)))
       return failure();
   }

@@ -14,45 +14,45 @@ MLIR_INCLUDE = $(HOME)/dev/git/llvm-project-20/install/include
 INCLUDES := -I $(MLIR_INCLUDE)
 
 # Dialect library sources
-DIALECT_SOURCES := c_api.cpp Attributes.cpp Dialect.cpp ImplResolution.cpp Instantiation.cpp Ops.cpp Passes.cpp Types.cpp
+DIALECT_SOURCES := c_api.cpp ImplResolution.cpp Instantiation.cpp Passes.cpp Trait.cpp TraitAttributes.cpp TraitOps.cpp TraitTypes.cpp
 DIALECT_OBJECTS := $(DIALECT_SOURCES:.cpp=.o)
 
 # Generated files
-GENERATED := Attributes.hpp.inc Attributes.cpp.inc Dialect.hpp.inc Dialect.cpp.inc Ops.hpp.inc Ops.cpp.inc Types.hpp.inc Types.cpp.inc TypeInterfaces.hpp.inc TypeInterfaces.cpp.inc
+GENERATED := Trait.hpp.inc Trait.cpp.inc TraitAttributes.hpp.inc TraitAttributes.cpp.inc TraitOps.hpp.inc TraitOps.cpp.inc TraitTypes.hpp.inc TraitTypes.cpp.inc TraitTypeInterfaces.hpp.inc TraitTypeInterfaces.cpp.inc
 
 .PHONY: all clean
 
 all: libtrait_dialect.a libtrait_dialect.so
 
 # TableGen rules
-Attributes.hpp.inc: Attributes.td
-	$(TBLGEN) --gen-attrdef-decls $(INCLUDES) $< -o $@
-
-Attributes.cpp.inc: Attributes.td
-	$(TBLGEN) --gen-attrdef-defs $(INCLUDES) $< -o $@
-
-Dialect.hpp.inc: Dialect.td
+Trait.hpp.inc: Trait.td
 	$(TBLGEN) --gen-dialect-decls $(INCLUDES) $< -o $@
 
-Dialect.cpp.inc: Dialect.td
+Trait.cpp.inc: Trait.td
 	$(TBLGEN) --gen-dialect-defs $(INCLUDES) $< -o $@
 
-Ops.hpp.inc: Ops.td
+TraitAttributes.hpp.inc: TraitAttributes.td
+	$(TBLGEN) --gen-attrdef-decls $(INCLUDES) $< -o $@
+
+TraitAttributes.cpp.inc: TraitAttributes.td
+	$(TBLGEN) --gen-attrdef-defs $(INCLUDES) $< -o $@
+
+TraitOps.hpp.inc: TraitOps.td
 	$(TBLGEN) --gen-op-decls $(INCLUDES) $< -o $@
 
-Ops.cpp.inc: Ops.td
+TraitOps.cpp.inc: TraitOps.td
 	$(TBLGEN) --gen-op-defs $(INCLUDES) $< -o $@
 
-Types.hpp.inc: Types.td
+TraitTypes.hpp.inc: TraitTypes.td
 	$(TBLGEN) --gen-typedef-decls $(INCLUDES) $< -o $@
 
-Types.cpp.inc: Types.td
+TraitTypes.cpp.inc: TraitTypes.td
 	$(TBLGEN) --gen-typedef-defs $(INCLUDES) $< -o $@
 
-TypeInterfaces.hpp.inc: TypeInterfaces.td
+TraitTypeInterfaces.hpp.inc: TraitTypeInterfaces.td
 	$(TBLGEN) --gen-type-interface-decls $(INCLUDES) $< -o $@
 
-TypeInterfaces.cpp.inc: TypeInterfaces.td
+TraitTypeInterfaces.cpp.inc: TraitTypeInterfaces.td
 	$(TBLGEN) --gen-type-interface-defs $(INCLUDES) $< -o $@
 
 # Object file rules

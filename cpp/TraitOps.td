@@ -8,8 +8,8 @@ include "mlir/IR/OpAsmInterface.td"
 include "mlir/IR/OpBase.td"
 include "mlir/IR/RegionKindInterface.td"
 include "mlir/IR/SymbolInterfaces.td"
-include "Dialect.td"
-include "Types.td"
+include "Trait.td"
+include "TraitTypes.td"
 
 
 // Op's regions have only this type of child operation.
@@ -312,6 +312,9 @@ def ImplOp : TraitDialectOp<"impl", [
     LogicalResult verifyIsSelfProof(llvm::function_ref<InFlightDiagnostic()> errFn);
 
     SmallVector<ClaimType> getAssumptionsAsClaimsWith(const DenseMap<Type,Type>& subst);
+
+    // impl obligations = trait requirements concatentated with impl assumptions
+    SmallVector<ClaimType> getObligationsAsClaimsWith(const DenseMap<Type,Type>& subst);
   }];
 
   // builders create one empty block in the body region
@@ -767,7 +770,15 @@ def ProofOp : TraitDialectOp<"proof", [
 
     TraitOp getTrait();
 
-    SmallVector<ClaimType> getSubproofClaims();
+    FailureOr<SmallVector<ClaimType>> verifyAndGetSubproofClaims(llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+
+    SmallVector<ClaimType> getSubproofClaims() {
+      auto maybeResult = verifyAndGetSubproofClaims();
+      if (failed(maybeResult))
+        llvm_unreachable("ProofOp::getSubproofClaims: verifyAndGetSubproofClaims failed");
+      return *maybeResult;
+    }
+
     SmallVector<ClaimType> getImplAssumptionClaims();
 
     // look up a proof by name. It must be either a ProofOp or a self-proving impl

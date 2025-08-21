@@ -1,9 +1,45 @@
 #pragma once
 
-#include "Attributes.hpp"
-#include "Ops.hpp"
+#include "TraitAttributes.hpp"
+#include "TraitOps.hpp"
+#include <memory>
 
 namespace mlir::trait {
+
+// Interface to generate a new ImplOp for the wanted claim
+// success() -> at least one ImplOp was inserted (IR edited)
+// failure() -> not applicable / no edit
+struct ImplGenerator {
+  virtual ~ImplGenerator() = default;
+
+  virtual LogicalResult
+  generate(TraitOp trait,
+           ClaimType wanted,
+           PatternRewriter &rewriter) const = 0;
+};
+
+// Composite that itself behaves like an ImplGenerator
+class ImplGeneratorSet : public ImplGenerator {
+  public:
+    inline LogicalResult
+    generate(TraitOp trait,
+             ClaimType wanted,
+             PatternRewriter &rewriter) const override {
+      for (const auto &g : generators) {
+        if (succeeded(g->generate(trait, wanted, rewriter)))
+          return success();
+      }
+      return failure();
+    }
+
+    inline ImplGeneratorSet &add(std::unique_ptr<ImplGenerator> g) {
+      generators.emplace_back(std::move(g));
+      return *this;
+    }
+
+  private:
+    SmallVector<std::unique_ptr<ImplGenerator>,4> generators;
+};
 
 // Memoization state for pure impl resolution (no IR mutations).
 struct ResolutionMemo {
@@ -45,6 +81,7 @@ FailureOr<FlatSymbolRefAttr>
 resolveAndEnsureProofFor(ClaimType claim,
                          ModuleOp module,
                          ProofResolutionMemo &memo,
+                         const ImplGenerator &gen,
                          PatternRewriter &rewriter);
 
 } // end mlir::trait

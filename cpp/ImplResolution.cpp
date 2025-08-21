@@ -3,13 +3,19 @@
 namespace mlir::trait {
 
 // forward declaration
-static FailureOr<ImplOp> resolveImplFor(ClaimType wanted, ModuleOp module, ResolutionMemo& memo);
+static FailureOr<ImplOp> resolveImplFor(ClaimType wanted,
+                                        ModuleOp module,
+                                        ResolutionMemo &memo,
+                                        const ImplGenerator &gen,
+                                        PatternRewriter& rewriter);
 
 static LogicalResult
 assumptionsSatisfiableFor(ImplOp impl,
                           ClaimType concreteSelf, // concrete self claim, proven or not
                           ModuleOp module,
-                          ResolutionMemo& memo) {
+                          ResolutionMemo& memo,
+                          const ImplGenerator& gen,
+                          PatternRewriter &rewriter) {
   TraitApplicationAttr app = concreteSelf.getTraitApplication();
 
   // check the memo
@@ -25,14 +31,14 @@ assumptionsSatisfiableFor(ImplOp impl,
   // specialize the impl's assumptions to our concrete claim
   for (ClaimType assume : impl.getAssumptionsAsClaimsWith(subst)) {
     // find an impl for the assumption
-    auto subImpl = resolveImplFor(assume, module, memo);
+    auto subImpl = resolveImplFor(assume, module, memo, gen, rewriter);
     if (failed(subImpl)) {
       memo.visiting.erase(app);
       return failure();
     }
 
     // that impl's own assumptions must be satisfiable too
-    if (failed(assumptionsSatisfiableFor(*subImpl, assume, module, memo))) {
+    if (failed(assumptionsSatisfiableFor(*subImpl, assume, module, memo, gen, rewriter))) {
       memo.visiting.erase(app);
       return failure();
     }
@@ -50,7 +56,9 @@ assumptionsSatisfiableFor(ImplOp impl,
 static FailureOr<ImplOp> resolveImplFor(
     ClaimType wanted,
     ModuleOp module,
-    ResolutionMemo& memo) {
+    ResolutionMemo &memo,
+    const ImplGenerator &gen,
+    PatternRewriter &rewriter) {
   TraitApplicationAttr app = wanted.getTraitApplication();
 
   // first check the memo
@@ -59,6 +67,15 @@ static FailureOr<ImplOp> resolveImplFor(
 
   // get the trait
   TraitOp trait = app.getTraitOrAbort(module, "resolveImplFor: cannot find trait");
+
+  // allow the generator to generate the wanted impl
+  {
+    OpBuilder::InsertionGuard guard(rewriter);
+    rewriter.setInsertionPointToEnd(module.getBody());
+
+    // we don't care if it is successful or not
+    (void)gen.generate(trait, wanted, rewriter);
+  }
 
   // collect candidate impls whose self claim can be substituted with our wanted claim
   SmallVector<ImplOp> candidates;
@@ -74,7 +91,7 @@ static FailureOr<ImplOp> resolveImplFor(
   // keep only candidates whose assumptions are satisfiable
   SmallVector<ImplOp> ok;
   for (ImplOp impl : candidates)
-    if (succeeded(assumptionsSatisfiableFor(impl, wanted, module, memo)))
+    if (succeeded(assumptionsSatisfiableFor(impl, wanted, module, memo, gen, rewriter)))
       ok.push_back(impl);
 
   if (ok.size() == 1)
@@ -94,7 +111,7 @@ static ProofOp findExistingProofFor(ModuleOp module, ImplOp impl, TraitApplicati
   auto uses = mlir::SymbolTable::getSymbolUses(impl, module);
   if (!uses) return nullptr;
 
-  // traverse all ProofOps that use of impl 
+  // traverse all ProofOps that use impl 
   for (const SymbolTable::SymbolUse& use : *uses) {
     if (auto proof = dyn_cast<ProofOp>(use.getUser())) {
       // ensure both:
@@ -111,8 +128,12 @@ static ProofOp findExistingProofFor(ModuleOp module, ImplOp impl, TraitApplicati
 FailureOr<FlatSymbolRefAttr>
 resolveAndEnsureProofFor(ClaimType wanted,
                          ModuleOp module,
-                         ProofResolutionMemo& memo,
+                         ProofResolutionMemo &memo,
+                         const ImplGenerator &gen,
                          PatternRewriter &rewriter) {
+  if (!wanted.isMonomorphic())
+    llvm::report_fatal_error("resolveAndEnsureProofFor called on polymorphic ClaimType");
+
   TraitApplicationAttr app = wanted.getTraitApplication();
 
   // first check the proof memo
@@ -122,7 +143,7 @@ resolveAndEnsureProofFor(ClaimType wanted,
   MLIRContext* ctx = module.getContext();
 
   // resolve the unique impl for this concrete application
-  auto implOr = resolveImplFor(wanted, module, memo.resolutionMemo);
+  auto implOr = resolveImplFor(wanted, module, memo.resolutionMemo, gen, rewriter);
   if (failed(implOr))
     return failure();
   ImplOp impl = *implOr;
@@ -147,16 +168,9 @@ resolveAndEnsureProofFor(ClaimType wanted,
   // ask the impl to build a substitution for the wanted claim 
   auto subst = impl.buildSubstitutionFor(wanted);
 
-  // collect applications for trait requirements
-  for (ClaimType req : impl.getTrait().getRequirementsAsClaimsWith(subst)) {
-    auto sym = resolveAndEnsureProofFor(req, module, memo, rewriter);
-    if (failed(sym)) return failure();
-    subproofSymbols.push_back(*sym);
-  }
-
-  // collect applications for impl assumptions
-  for (ClaimType assume : impl.getAssumptionsAsClaimsWith(subst)) {
-    auto sym = resolveAndEnsureProofFor(assume, module, memo, rewriter);
+  // collect proofs for impl obligations
+  for (ClaimType ob : impl.getObligationsAsClaimsWith(subst)) {
+    auto sym = resolveAndEnsureProofFor(ob, module, memo, gen, rewriter);
     if (failed(sym)) return failure();
     subproofSymbols.push_back(*sym);
   }

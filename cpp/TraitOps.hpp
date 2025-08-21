@@ -6,7 +6,7 @@
 #include <mlir/IR/Dialect.h>
 #include <mlir/IR/OpDefinition.h>
 #include <mlir/IR/PatternMatch.h>
-#include "Types.hpp"
+#include "TraitTypes.hpp"
 
 namespace mlir::OpTrait {
 
@@ -34,4 +34,4 @@ struct HasOnlyChildOp {
 } // end mlir::OpTrait
 
 #define GET_OP_CLASSES
-#include "Ops.hpp.inc"
+#include "TraitOps.hpp.inc"

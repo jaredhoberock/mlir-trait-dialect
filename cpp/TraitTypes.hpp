@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Attributes.hpp"
+#include "TraitAttributes.hpp"
 #include <mlir/IR/BuiltinTypes.h>
 
 namespace mlir::trait {
@@ -10,10 +10,10 @@ class TraitOp;
 
 }
 
-#include "TypeInterfaces.hpp.inc"
+#include "TraitTypeInterfaces.hpp.inc"
 
 #define GET_TYPEDEF_CLASSES
-#include "Types.hpp.inc"
+#include "TraitTypes.hpp.inc"
 
 namespace mlir::trait {
 
@@ -54,6 +54,49 @@ inline bool isPolymorphicType(Type root) {
 
 inline bool isMonomorphicType(Type ty) {
   return !isPolymorphicType(ty);
+}
+
+inline void normalizeSubstitutionInPlace(llvm::DenseMap<Type,Type> &subst) {
+  // Snapshot keys so we can mutate the map safely.
+  llvm::SmallVector<Type, 8> keys;
+  keys.reserve(subst.size());
+  for (auto &kv : subst) keys.push_back(kv.first);
+
+  // Path-compressed chase with simple cycle guard + memo.
+  llvm::DenseMap<Type, Type> memo;
+  llvm::SmallPtrSet<Type, 8> inStack;
+
+  auto chase = [&](Type t, auto &chase_ref) -> Type {
+    // If t doesn’t map anywhere, it’s a fixed point.
+    auto it = subst.find(t);
+    if (it == subst.end()) return t;
+
+    // Already memoized?
+    if (auto mit = memo.find(t); mit != memo.end()) return mit->second;
+
+    // Cycle guard: if we re-enter t, bail by treating t as fixed.
+    if (!inStack.insert(t).second) return t;
+
+    Type to = chase_ref(it->second, chase_ref);  // recurse
+    memo[t] = to;                                // path compression
+    inStack.erase(t);
+    return to;
+  };
+
+  for (Type k : keys) {
+    Type v = chase(k, chase);
+    if (v == k) {
+      // Drop trivial self-map.
+      subst.erase(k);
+    } else {
+      subst[k] = v; // Collapse k directly to its fixed point.
+    }
+  }
+}
+
+inline llvm::DenseMap<Type,Type> normalizeSubstitution(llvm::DenseMap<Type,Type> subst) {
+  normalizeSubstitutionInPlace(subst);
+  return subst;
 }
 
 inline Type applySubstitution(const llvm::DenseMap<Type,Type> &substitution,

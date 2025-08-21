@@ -4,7 +4,8 @@
 #include "mlir/IR/DialectInterface.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/OpDefinition.h"
-#include "Dialect.hpp.inc"
+#include "ImplResolution.hpp"
+#include "Trait.hpp.inc"
 
 namespace mlir::trait {
 
@@ -19,6 +20,20 @@ struct ConvertToTraitPatternInterface : DialectInterface {
 
   inline static ::mlir::TypeID getInterfaceID() {
     return ::mlir::TypeID::get<ConvertToTraitPatternInterface>();
+  }
+};
+
+struct GenerateImplsInterface : DialectInterface {
+  inline GenerateImplsInterface(Dialect *dialect)
+    : DialectInterface(dialect, TypeID::get<GenerateImplsInterface>())
+  {}
+
+  virtual void populateImplGenerators(ImplGeneratorSet& generators) const = 0;
+
+  inline static StringRef getInterfaceName() { return "ImplGeneratorInterface"; }
+
+  inline static TypeID getInterfaceID() {
+    return TypeID::get<GenerateImplsInterface>();
   }
 };
 

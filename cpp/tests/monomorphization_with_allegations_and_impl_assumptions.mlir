@@ -28,7 +28,6 @@ trait.impl for @B[i8] {
   }
 }
 
-
 !T2 = !trait.poly<2>
 // CHECK-NOT: trait.impl @A_impl_poly
 trait.impl @A_impl_poly for @A[!T2] where [@B[!T2]] {

@@ -2,8 +2,8 @@
 #define TRAIT_TYPE_INTERFACES_TD
 
 include "mlir/IR/AttrTypeBase.td"
-include "Attributes.td"
-include "Dialect.td"
+include "Trait.td"
+include "TraitAttributes.td"
 
 // Interface for types that may require monomorphization before lowering
 def MonomorphizableTypeInterface : TypeInterface<"MonomorphizableTypeInterface"> {

@@ -1,9 +1,9 @@
 #include "c_api.h"
-#include "Attributes.hpp"
-#include "Dialect.hpp"
-#include "Ops.hpp"
 #include "Passes.hpp"
-#include "Types.hpp"
+#include "Trait.hpp"
+#include "TraitAttributes.hpp"
+#include "TraitOps.hpp"
+#include "TraitTypes.hpp"
 #include <mlir/CAPI/IR.h>
 #include <mlir/CAPI/Pass.h>
 #include <mlir/IR/Builders.h>

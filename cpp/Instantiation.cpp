@@ -1,5 +1,5 @@
 #include "Instantiation.hpp"
-#include "Types.hpp"
+#include "TraitTypes.hpp"
 #include <mlir/IR/IRMapping.h>
 #include <mlir/IR/PatternMatch.h>
 #include <mlir/IR/Verifier.h>

@@ -2,7 +2,7 @@
 #define TRAIT_ATTRIBUTES_TD
 
 include "mlir/IR/AttrTypeBase.td"
-include "Dialect.td"
+include "Trait.td"
 
 def TraitApplicationAttr : AttrDef<TraitDialect, "TraitApplication"> {
   let mnemonic = "application";

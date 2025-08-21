@@ -1,7 +1,7 @@
-#include "Dialect.hpp"
 #include "Instantiation.hpp"
-#include "Ops.hpp"
-#include "Types.hpp"
+#include "Trait.hpp"
+#include "TraitOps.hpp"
+#include "TraitTypes.hpp"
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/SmallSet.h>
 #include <llvm/Support/Error.h>
@@ -14,7 +14,7 @@
 #include <variant>
 
 #define GET_OP_CLASSES
-#include "Ops.cpp.inc"
+#include "TraitOps.cpp.inc"
 
 using namespace mlir;
 using namespace mlir::trait;
@@ -100,8 +100,7 @@ DenseMap<Type,Type> TraitOp::buildSubstitutionFor(ClaimType claimTy) {
   DenseMap<Type,Type> subst;
   if (failed(substituteWith(getSelfClaim(), claimTy, getParentOp<ModuleOp>(), subst)))
     llvm_unreachable("TraitOp::buildSubstitutionFor: substituteWith failed");
-
-  return subst;
+  return normalizeSubstitution(subst);
 }
 
 SmallVector<TraitOp,4> TraitOp::getRequiredTraits() {
@@ -214,14 +213,21 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 }
 
 bool ImplOp::isSelfProof() {
-  // an ImplOp is self-proven if its TraitOp has no requirements and the ImplOp has no assumptions
-  return getAssumptions().empty() && getTrait().getRequirements().empty();
+  // an ImplOp is self-proven if:
+  // 1. it is monomorphic (no type parameters),
+  // 2. its TraitOp has no requirements, and
+  // 3. it has no assumptions
+  return getTypeParams().empty() &&
+         getAssumptions().empty() &&
+         getTrait().getRequirements().empty();
 }
 
 LogicalResult ImplOp::verifyIsSelfProof(llvm::function_ref<InFlightDiagnostic()> err) {
-  if (!isSelfProof())
-    return err() << "impl " << getSymName()
-                 << " has trait requirements or impl assumptions and must be proven with a trait.proof";
+  if (!isSelfProof()) {
+    if (err) err() << "impl '@" << getSymName()
+                   << "' is polymorphic (has type parameters) or has obligations (trait requirements or impl assumptions) and must be proven with a trait.proof";
+    return failure();
+  }
   return success();
 }
 
@@ -245,7 +251,7 @@ DenseMap<Type, Type> ImplOp::buildSubstitutionFor(ClaimType claim) {
   if (failed(substituteWith(getSelfClaim(), claim, getParentOp<ModuleOp>(), subst)))
     llvm_unreachable("ImplOp::buildSubstitutionFor: substituteWith failed");
 
-  return subst;
+  return normalizeSubstitution(subst);
 }
 
 func::FuncOp ImplOp::getOrInstantiateMethod(OpBuilder& builder, StringRef methodName) {
@@ -407,6 +413,12 @@ SmallVector<ClaimType> ImplOp::getAssumptionsAsClaimsWith(const DenseMap<Type,Ty
   return result;
 }
 
+SmallVector<ClaimType> ImplOp::getObligationsAsClaimsWith(const DenseMap<Type,Type> &subst) {
+  SmallVector<ClaimType> result = getTrait().getRequirementsAsClaimsWith(subst);
+  result.append(getAssumptionsAsClaimsWith(subst));
+  return result;
+}
+
 ParseResult ImplOp::parse(OpAsmParser &p, OperationState &result) {
   // parse optional symbolic name: trait.impl @Sym
   StringAttr parsedSymName;
@@ -482,9 +494,12 @@ void ImplOp::print(OpAsmPrinter &printer) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult ProofOp::verify() {
-  // check that subproofs is a non-empty array
-  if (getSubproofNames().empty())
-    return emitOpError() << "'subproof_names' must be a non-empty array";
+  // check that the trait application is concrete
+  auto app = getTraitApplication();
+  for (auto ty : app.getTypeArgs()) {
+    if (isPolymorphicType(ty))
+      return emitOpError() << "'trait_application' must contain only concrete type arguments; found polymorphic type " << ty;
+  }
 
   // check that every name is a FlatSymbolRefAttr
   for (Attribute name : getSubproofNames()) {
@@ -492,7 +507,6 @@ LogicalResult ProofOp::verify() {
       return emitOpError() << "'subproof_names' must contain only FlatSymbolRefAttr elements";
     }
   }
-
   return success();
 }
 
@@ -524,21 +538,28 @@ TraitOp ProofOp::getTrait() {
   return getTraitApplication().getTraitOrAbort(module, "ProofOp::getTrait: couldn't find trait");
 }
 
-SmallVector<ClaimType> ProofOp::getSubproofClaims() {
+FailureOr<SmallVector<ClaimType>> ProofOp::verifyAndGetSubproofClaims(llvm::function_ref<InFlightDiagnostic()> err) {
   SmallVector<ClaimType> result;
 
   ModuleOp module = getParentOp<ModuleOp>();
-  if (!module)
-    return result;
+  if (!module) {
+    if (err) err() << "not in a module";
+    return failure();
+  }
 
   for (Attribute name : getSubproofNames()) {
     auto subproofRef = dyn_cast<FlatSymbolRefAttr>(name);
-    if (!subproofRef)
-      llvm::report_fatal_error("ProofOp::getSubproofClaims: expected FlatSymbolRefAttr");
+    if (!subproofRef) {
+      if (err) err() << "expected FlatSymbolRefAttr";
+      return failure();
+    }
 
-    auto subproof = getProofOpOrSelfProofImplOp(module, subproofRef);
-    if (failed(subproof)) llvm::report_fatal_error("ProofOp::getSubproofClaims: couldn't find referenced proof");
+    auto subproof = getProofOpOrSelfProofImplOp(module, subproofRef, err);
+    if (failed(subproof)) {
+      return failure();
+    }
 
+    // the subproof is guaranteed to be either ProofOp or ImplOp
     // get the trait application of the subproof
     TraitApplicationAttr subproofTraitApp;
     if (auto proofOp = dyn_cast<ProofOp>(*subproof)) {
@@ -1012,7 +1033,7 @@ DenseMap<Type, Type> FuncCallOp::buildSubstitution() {
   if (failed(substituteWith(formal, actual, moduleOp, result)))
     llvm_unreachable("FuncCallOp::buildSubstitution: callee types and operand types did not unify");
 
-  return result;
+  return normalizeSubstitution(result);
 }
 
 std::string FuncCallOp::getNameOfCalleeInstance() {

@@ -2,9 +2,9 @@
 #define TRAIT_TYPES_TD
 
 include "mlir/IR/AttrTypeBase.td"
-include "Attributes.td"
-include "Dialect.td"
-include "TypeInterfaces.td"
+include "Trait.td"
+include "TraitAttributes.td"
+include "TraitTypeInterfaces.td"
 
 // Represents a universally quantified type parameter
 def PolyType : TypeDef<TraitDialect, "Poly", [MonomorphizableTypeInterface]> {

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Ops.hpp"
+#include "TraitOps.hpp"
 #include <llvm/ADT/DenseMap.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/IR/Builders.h>
