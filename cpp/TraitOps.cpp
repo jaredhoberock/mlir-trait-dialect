@@ -254,6 +254,27 @@ DenseMap<Type, Type> ImplOp::buildSubstitutionFor(ClaimType claim) {
   return normalizeSubstitution(subst);
 }
 
+SmallVector<PolyType, 4> ImplOp::getTypeParams() {
+  SmallVector<PolyType, 4> result;
+  DenseSet<Type> seen;
+
+  auto collect = [&](Type ty) {
+    if (auto polyTy = dyn_cast<PolyType>(ty)) {
+      if (seen.insert(polyTy).second) // first time we see it
+        result.push_back(polyTy);
+    }
+  };
+
+  // collect PolyTypes from our self claim
+  getSelfClaim().walk(collect);
+
+  // collect PolyTypes from our assumptions
+  for (TraitApplicationAttr a : getAssumptions())
+    a.walk(collect);
+
+  return result;
+}
+
 func::FuncOp ImplOp::getOrInstantiateMethod(OpBuilder& builder, StringRef methodName) {
   // check that we've named a valid trait method
   if (!getTrait().hasMethod(methodName)) return nullptr;

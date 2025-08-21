@@ -278,14 +278,6 @@ def ImplOp : TraitDialectOp<"impl", [
       return getSelfApplication().getTypeArgs();
     }
 
-    // returns those Types from getTypeArgs which are MonomorphizableTypeInterface
-    // these are the generic type parameters of this ImplOp
-    auto getTypeParams() {
-      return llvm::make_filter_range(getTypeArgs(), [](Type ty) {
-        return isa<MonomorphizableTypeInterface>(ty);
-      });
-    }
-
     func::FuncOp getMethod(StringRef name) {
       return lookupSymbol<func::FuncOp>(name);
     }
@@ -293,6 +285,9 @@ def ImplOp : TraitDialectOp<"impl", [
     bool hasMethod(StringRef name) {
       return getMethod(name) != nullptr;
     }
+
+    // returns all distinct PolyTypes that occur in this ImplOp's self application and assumptions
+    SmallVector<PolyType, 4> getTypeParams();
 
     func::FuncOp getOrInstantiateMethod(OpBuilder& builder, StringRef methodName);
 
