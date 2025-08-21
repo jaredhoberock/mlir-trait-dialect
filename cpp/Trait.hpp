@@ -16,7 +16,7 @@ struct ConvertToTraitPatternInterface : DialectInterface {
 
   virtual void populateConvertToTraitConversionPatterns(RewritePatternSet& patterns) const = 0;
 
-  inline static StringRef getInterfaceName() { return "ConvertToTraitInterface"; }
+  inline static StringRef getInterfaceName() { return "ConvertToTraitPatternInterface"; }
 
   inline static ::mlir::TypeID getInterfaceID() {
     return ::mlir::TypeID::get<ConvertToTraitPatternInterface>();
@@ -32,7 +32,7 @@ struct GenerateImplsInterface : DialectInterface {
 
   virtual void populateImplGenerators(ImplGeneratorSet& generators) const = 0;
 
-  inline static StringRef getInterfaceName() { return "ImplGeneratorInterface"; }
+  inline static StringRef getInterfaceName() { return "GenerateImplsInterface"; }
 
   inline static TypeID getInterfaceID() {
     return TypeID::get<GenerateImplsInterface>();

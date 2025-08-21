@@ -98,9 +98,6 @@ class ImplResolver {
     ///   2. Otherwise, recursively resolve and ensure proofs for all requirements
     ///      and assumptions, then create (or reuse) a `trait.proof` op and return
     ///      its symbol.
-    /// Uses `memo` to:
-    ///   - Avoid redundant impl resolution.
-    ///   - Avoid regenerating existing proofs.
     /// This function may mutate the IR via `rewriter`.
     ///
     /// Returns the symbol (ImplOp or ProofOp) that proves `claim`, or failure if
