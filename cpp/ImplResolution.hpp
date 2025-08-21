@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Trait.hpp"
 #include "TraitAttributes.hpp"
 #include "TraitOps.hpp"
 #include <memory>
@@ -64,24 +65,53 @@ struct ProofResolutionMemo {
   ResolutionMemo resolutionMemo;
 };
 
-/// Ensures canonical proof for a fully-concrete trait application `claim`.
-/// Resolution proceeds as follows:
-///   1. If a self-proving ImplOp exists, return its symbol directly.
-///   2. Otherwise, recursively resolve and ensure proofs for all requirements
-///      and assumptions, then create (or reuse) a `trait.proof` op and return
-///      its symbol.
-/// Uses `memo` to:
-///   - Avoid redundant impl resolution.
-///   - Avoid regenerating existing proofs.
-/// This function may mutate the IR via `rewriter`.
+/// ImplResolver coordinates trait impl resolution and proof construction
+/// within a given ModuleOp.
 ///
-/// Returns the symbol (ImplOp or ProofOp) that proves `claim`, or failure if
-/// no unique and satisfiable impl can be found.
-FailureOr<FlatSymbolRefAttr>
-resolveAndEnsureProofFor(ClaimType claim,
-                         ModuleOp module,
-                         ProofResolutionMemo &memo,
-                         const ImplGenerator &gen,
-                         PatternRewriter &rewriter);
+/// On construction, it discovers all loaded dialects that provide the
+/// `GenerateImplsInterface` and asks them to populate its internal
+/// `ImplGeneratorSet`. These generators are used to synthesize or
+/// discover implementations when resolving trait claims.
+///
+/// The main entry point is `resolveAndEnsureProofFor`, which guarantees
+/// that a canonical proof exists for a fully-concrete trait application.
+/// Resolution proceeds by:
+///   1. Returning the symbol of a self-proving `trait.impl` if one exists.
+///   2. Otherwise, recursively resolving and ensuring proofs for all
+///      requirements and assumptions, then creating or reusing a
+///      `trait.proof` operation.
+/// Memoization is used to avoid redundant resolution work and to ensure
+/// canonicalization of proofs across calls.
+///
+/// This class may mutate the IR (e.g. by inserting `trait.proof` or `trait.impl` ops)
+/// through the provided `PatternRewriter`.
+class ImplResolver {
+  public:
+    /// Creates a new `ImplResolver` for the given `module`.
+    /// Finds all loaded dialects that provide the `GenerateImplsInterface` and
+    /// populates this `ImplResolver`'s `ImplGeneratorsSet`.
+    ImplResolver(ModuleOp module);
+
+    /// Ensures canonical proof for a fully-concrete trait application `claim`.
+    /// Resolution proceeds as follows:
+    ///   1. If a self-proving ImplOp exists, return its symbol directly.
+    ///   2. Otherwise, recursively resolve and ensure proofs for all requirements
+    ///      and assumptions, then create (or reuse) a `trait.proof` op and return
+    ///      its symbol.
+    /// Uses `memo` to:
+    ///   - Avoid redundant impl resolution.
+    ///   - Avoid regenerating existing proofs.
+    /// This function may mutate the IR via `rewriter`.
+    ///
+    /// Returns the symbol (ImplOp or ProofOp) that proves `claim`, or failure if
+    /// no unique and satisfiable impl can be found.
+    FailureOr<FlatSymbolRefAttr> resolveAndEnsureProofFor(ClaimType claim,
+                                                          PatternRewriter &rewriter);
+
+  private:
+    ModuleOp module;
+    ProofResolutionMemo memo;
+    ImplGeneratorSet generators;
+};
 
 } // end mlir::trait

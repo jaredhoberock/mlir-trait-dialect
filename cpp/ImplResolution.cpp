@@ -125,12 +125,18 @@ static ProofOp findExistingProofFor(ModuleOp module, ImplOp impl, TraitApplicati
   return nullptr;
 }
 
-FailureOr<FlatSymbolRefAttr>
-resolveAndEnsureProofFor(ClaimType wanted,
-                         ModuleOp module,
-                         ProofResolutionMemo &memo,
-                         const ImplGenerator &gen,
-                         PatternRewriter &rewriter) {
+ImplResolver::ImplResolver(ModuleOp m) : module(m) {
+  // collect ImplGeneators from each dialect with the appropriate interface
+  for (Dialect *dialect : module.getContext()->getLoadedDialects()) {
+    if (auto *iface = dialect->getRegisteredInterface<GenerateImplsInterface>()) {
+      iface->populateImplGenerators(generators);
+    }
+  }
+}
+
+FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
+    ClaimType wanted,
+    PatternRewriter &rewriter) {
   if (!wanted.isMonomorphic())
     llvm::report_fatal_error("resolveAndEnsureProofFor called on polymorphic ClaimType");
 
@@ -143,7 +149,7 @@ resolveAndEnsureProofFor(ClaimType wanted,
   MLIRContext* ctx = module.getContext();
 
   // resolve the unique impl for this concrete application
-  auto implOr = resolveImplFor(wanted, module, memo.resolutionMemo, gen, rewriter);
+  auto implOr = resolveImplFor(wanted, module, memo.resolutionMemo, generators, rewriter);
   if (failed(implOr))
     return failure();
   ImplOp impl = *implOr;
@@ -168,9 +174,9 @@ resolveAndEnsureProofFor(ClaimType wanted,
   // ask the impl to build a substitution for the wanted claim 
   auto subst = impl.buildSubstitutionFor(wanted);
 
-  // collect proofs for impl obligations
+  // recursively collect proofs for impl obligations
   for (ClaimType ob : impl.getObligationsAsClaimsWith(subst)) {
-    auto sym = resolveAndEnsureProofFor(ob, module, memo, gen, rewriter);
+    auto sym = resolveAndEnsureProofFor(ob, rewriter);
     if (failed(sym)) return failure();
     subproofSymbols.push_back(*sym);
   }

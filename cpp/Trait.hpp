@@ -23,6 +23,8 @@ struct ConvertToTraitPatternInterface : DialectInterface {
   }
 };
 
+class ImplGeneratorSet;
+
 struct GenerateImplsInterface : DialectInterface {
   inline GenerateImplsInterface(Dialect *dialect)
     : DialectInterface(dialect, TypeID::get<GenerateImplsInterface>())

@@ -78,21 +78,16 @@ namespace {
 struct ProveClaimPattern : OpRewritePattern<AllegeOp> {
   using OpRewritePattern::OpRewritePattern;
 
-  // one of each of these objects per module; owned by the pass, passed by ref into the pattern
-  ProofResolutionMemo& memo;
-  const ImplGenerator& gen;
+  // one ImplResolver per module; owned by the pass, passed by ref into this pattern
+  ImplResolver& resolver;
 
   ProveClaimPattern(MLIRContext* ctx,
-                    ProofResolutionMemo& memo,
-                    const ImplGenerator &gen)
-    : OpRewritePattern<AllegeOp>(ctx), memo(memo), gen(gen) {}
+                    ImplResolver &resolver)
+    : OpRewritePattern<AllegeOp>(ctx), resolver(resolver) {}
 
   LogicalResult matchAndRewrite(AllegeOp op, PatternRewriter& rewriter) const override {
-    ModuleOp module = op->getParentOfType<ModuleOp>();
-    if (!module) return failure();
-
     // build or reuse canonical evidence for this claim
-    auto sym = resolveAndEnsureProofFor(op.getClaim(), module, memo, gen, rewriter);
+    auto sym = resolver.resolveAndEnsureProofFor(op.getClaim(), rewriter);
     if (failed(sym))
       return failure();
 
@@ -112,19 +107,12 @@ LogicalResult proveClaims(ModuleOp module) {
   if (failed(verifyAcyclicTraits(module)))
     return failure();
 
-  ProofResolutionMemo memo;
-
-  // collect ImplGenerators from each dialect with the appropriate interface
-  ImplGeneratorSet generators;
-  for (Dialect *dialect : module.getContext()->getLoadedDialects()) {
-    if (auto *iface = dialect->getRegisteredInterface<GenerateImplsInterface>()) {
-      iface->populateImplGenerators(generators);
-    }
-  }
+  // an ImplResolver for this module
+  ImplResolver resolver(module);
 
   // apply rewrite patterns
   RewritePatternSet patterns(module.getContext());
-  patterns.add<ProveClaimPattern>(module.getContext(), memo, generators);
+  patterns.add<ProveClaimPattern>(module.getContext(), resolver);
   if (failed(applyPatternsGreedily(module, std::move(patterns))))
     return failure();
 
