@@ -21,13 +21,19 @@ def TraitApplicationAttr : AttrDef<TraitDialect, "TraitApplication"> {
   );
 
   let extraClassDeclaration = [{
-    static TraitApplicationAttr get(MLIRContext *ctx, FlatSymbolRefAttr trait_name, ArrayAttr typesAttr) {
+    static TraitApplicationAttr get(MLIRContext *ctx, FlatSymbolRefAttr traitName, ArrayAttr typesAttr) {
       SmallVector<Type, 4> types;
       types.reserve(typesAttr.size());
       for (TypeAttr ta : typesAttr.getAsRange<TypeAttr>()) {
         types.push_back(ta.getValue());
       }
-      return TraitApplicationAttr::get(ctx, trait_name, types);
+      return TraitApplicationAttr::get(ctx, traitName, types);
+    }
+
+    // convenience converts from a StringRef for the trait name
+    static TraitApplicationAttr get(MLIRContext *ctx, StringRef trait_name, ArrayRef<Type> types) {
+      auto traitRef = FlatSymbolRefAttr::get(ctx, trait_name);
+      return TraitApplicationAttr::get(ctx, traitRef, types);
     }
 
     FailureOr<TraitOp> getTrait(ModuleOp module, llvm::function_ref<InFlightDiagnostic()> errFn = nullptr) const;
