@@ -79,23 +79,21 @@ LogicalResult PolyType::substituteWith(
   // normalize
   other = applySubstitution(subst, other);
 
-  // first check for equality
-  if (self == other)
-    return success();
+  // first check for trivial equality
+  if (self == other) return success();
 
-  // If we've already recorded a substitution for self, check consistency.
+  // if self is already bound, check consistency
   if (auto it = subst.find(self); it != subst.end()) {
     if (it->second != other) {
-      if (err)
-        return err() << "mismatched substitution for type "
-                     << self << ": expected "
-                     << it->second << ", but found " << other;
+      if (err) return err() << "mismatched substitution for type "
+                            << self << ": expected "
+                            << it->second << ", but found " << other;
       return failure();
     }
     return success();
   }
 
-  // check for recursive substitution
+  // occurs check: forbid T := f(..., T, ...) to avoid cycles
   auto occursIn = [](Type needle, Type haystack) {
     bool hit = false;
     haystack.walk([&](Type t) {
