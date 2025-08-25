@@ -37,16 +37,12 @@ assumptionsSatisfiableFor(ImplOp impl,
   for (ClaimType assume : impl.getAssumptionsAsClaimsWith(subst)) {
     // find an impl for the assumption
     auto subImpl = resolveImplFor(assume, module, memo, gen, rewriter);
-    if (failed(subImpl)) {
-      memo.visiting.erase(app);
+    if (failed(subImpl))
       return failure();
-    }
 
     // that impl's own assumptions must be satisfiable too
-    if (failed(assumptionsSatisfiableFor(*subImpl, assume, module, memo, gen, rewriter))) {
-      memo.visiting.erase(app);
+    if (failed(assumptionsSatisfiableFor(*subImpl, assume, module, memo, gen, rewriter)))
       return failure();
-    }
   }
 
   // record a positive result
@@ -113,7 +109,7 @@ static FailureOr<ImplOp> resolveImplFor(
     OpBuilder::InsertionGuard guard(rewriter);
     rewriter.setInsertionPointToEnd(module.getBody());
 
-    // we don't care if it is successful or not
+    // discard the result. if it successfully generated an impl, it will be collected below
     (void)gen.generate(trait, wanted, rewriter);
   }
 
@@ -125,19 +121,22 @@ static FailureOr<ImplOp> resolveImplFor(
   }
 
   if (candidates.empty()) {
-    if (err) err() << "no coherent impl found for " << wanted;
+    if (err) err() << "no impl candidates found for " << wanted;
     return memo.chosen[app] = failure();
   }
 
   // keep only candidates whose assumptions are satisfiable
   SmallVector<ImplOp> ok;
-  for (ImplOp impl : candidates)
+  for (ImplOp impl : candidates) {
     if (succeeded(assumptionsSatisfiableFor(impl, wanted, module, memo, gen, rewriter)))
       ok.push_back(impl);
+  }
 
+  // there must be exactly one candidate whose assumptions are satisfiable
   if (ok.size() == 1)
     return memo.chosen[app] = ok.front();
 
+  // otherwise, diagnose resolution failure
   return memo.chosen[app] = diagnoseImplResolutionFailure(trait, wanted, ok, err);
 }
 

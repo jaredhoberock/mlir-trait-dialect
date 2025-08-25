@@ -52,8 +52,10 @@ struct ResolutionMemo {
   DenseSet<TraitApplicationAttr> visiting;
 
   // A memo for assumptionsSatisfiableFor
-  // For every (ImplOp, TraitApplicationAttr) in this set, the ImplOp's assumptions
-  // are known to be satisfiable for the given TraitApplicationAttr
+  // For every (ImplOp, TraitApplicationAttr) in this set, the ImplOp's
+  // assumptions are known to be satisfiable for the given TraitApplicationAttr
+  // We only memoize satisfiable results because new proofs appear in the IR
+  // as resolution unfolds
   DenseSet<std::pair<ImplOp,TraitApplicationAttr>> assumptionsKnownSatisfiable;
 };
 

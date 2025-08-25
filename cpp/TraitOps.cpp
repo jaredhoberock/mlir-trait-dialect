@@ -149,6 +149,27 @@ SmallVector<ImplOp> TraitOp::getImpls() {
   return result;
 }
 
+SmallVector<ImplOp> TraitOp::getImplsFor(ClaimType claim) {
+  SmallVector<ImplOp> result;
+
+  ModuleOp module = getParentOp<ModuleOp>();
+  if (!module)
+    return result;
+
+  for (auto impl : getImpls()) {
+    auto implClaim = impl.getSelfClaim();
+
+    // impl's claim is equivalent to the claim of interest
+    // if each can substitute with the other
+    bool eq = succeeded(substituteWith(implClaim, claim, module)) &&
+              succeeded(substituteWith(claim, implClaim, module));
+    if (eq) {
+      result.push_back(impl);
+    }
+  }
+  return result;
+}
+
 
 //===----------------------------------------------------------------------===//
 // ImplOp

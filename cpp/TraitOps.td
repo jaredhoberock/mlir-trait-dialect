@@ -147,6 +147,8 @@ def TraitOp : TraitDialectOp<"trait", [
     SmallVector<ClaimType> getRequirementsAsClaimsWith(const DenseMap<Type,Type>& subst);
 
     SmallVector<ImplOp> getImpls();
+
+    SmallVector<ImplOp> getImplsFor(ClaimType claimTy);
   }];
 
   // builder creates one empty block in the body region

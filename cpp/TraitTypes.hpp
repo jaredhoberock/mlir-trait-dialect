@@ -17,6 +17,8 @@ class TraitOp;
 
 namespace mlir::trait {
 
+int freshPolyTypeId();
+
 // this walks a Type and looks for any occurrence of the given NeedleType
 template<class NeedleType> bool containsType(Type ty) {
   bool found = false;
