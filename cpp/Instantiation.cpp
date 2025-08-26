@@ -20,21 +20,6 @@ bool isPolymorph(func::FuncOp fn) {
   return functionTypeContainsPolymorphicType(fn.getFunctionType());
 }
 
-std::string mangleFunctionName(StringRef name,
-                               const DenseMap<Type, Type> &substitution) {
-  std::string result = name.str();
-
-  // append substituted types to the name
-  for (auto [_, substitutedTy] : substitution) {
-    llvm::raw_string_ostream os(result);
-    os << "_";
-    substitutedTy.print(os);
-    os.flush();
-  }
-
-  return result;
-}
-
 static void cloneRegionWithTypeReplacement(
     OpBuilder& builder,
     Region &oldRegion,
