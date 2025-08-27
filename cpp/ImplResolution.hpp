@@ -38,6 +38,12 @@ class ImplGeneratorSet : public ImplGenerator {
       return *this;
     }
 
+    template<typename... Ts>
+    ImplGeneratorSet &add() {
+      (add(std::make_unique<Ts>()), ...);
+      return *this;
+    }
+
   private:
     SmallVector<std::unique_ptr<ImplGenerator>,4> generators;
 };
@@ -110,8 +116,21 @@ class ImplResolver {
                                                           PatternRewriter &rewriter,
                                                           llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
+    /// Builds a substitution mapping concrete, unproven ClaimTypes to
+    /// proven ClaimTypes given the current state of the proof memo
+    inline DenseMap<Type,Type> buildClaimSubstitutionFromMemo() const {
+      MLIRContext* ctx = module.getContext();
+      DenseMap<Type,Type> subst;
+      for (auto [app, proof] : memo.proofMemo) {
+        ClaimType unproven = ClaimType::get(ctx, app, nullptr);
+        ClaimType proven = ClaimType::get(ctx, app, proof);
+        subst[unproven] = proven;
+      }
+      return subst;
+    }
+
   private:
-    ModuleOp module;
+    mutable ModuleOp module;
     ProofResolutionMemo memo;
     ImplGeneratorSet generators;
 };

@@ -212,4 +212,20 @@ template<class NeedleType> bool opMentionsType(Operation *op) {
   return false;
 }
 
+
+inline SmallVector<PolyType,4> getPolyTypesIn(Type ty) {
+  SmallVector<PolyType, 4> result;
+  DenseSet<Type> seen;
+
+  auto collect = [&](Type ty) {
+    if (auto polyTy = dyn_cast<PolyType>(ty)) {
+      if (seen.insert(polyTy).second) // first time we see it
+        result.push_back(polyTy);
+    }
+  };
+
+  ty.walk(collect);
+  return result;
+}
+
 } // end mlir::trait

@@ -151,9 +151,10 @@ def TraitOp : TraitDialectOp<"trait", [
     SmallVector<ImplOp> getImplsFor(ClaimType claimTy);
   }];
 
-  // builder creates one empty block in the body region
+  // builders create one empty block in the body region
   let skipDefaultBuilders = 1;
   let builders = [
+    // low-level builder
     OpBuilder<(ins "::mlir::StringAttr":$sym_name,
                    "::mlir::ArrayAttr":$type_params,
                    "ConstraintsAttr":$requirements), [{
@@ -162,6 +163,20 @@ def TraitOp : TraitDialectOp<"trait", [
       $_state.addAttribute("requirements", requirements);
       ::mlir::Region *region = $_state.addRegion();
       region->emplaceBlock();
+    }]>,
+
+    // convenience accepts type_params as ArrayRef<Type>
+    OpBuilder<(ins "::mlir::StringAttr":$sym_name,
+                   "::mlir::ArrayRef<Type>":$type_params,
+                   "ConstraintsAttr":$requirements), [{
+      MLIRContext* ctx = $_builder.getContext();
+      SmallVector<Attribute,8> typeAttrs;
+      typeAttrs.reserve(type_params.size());
+      for (Type ty : type_params) {
+        typeAttrs.push_back(TypeAttr::get(ty));
+      }
+      ArrayAttr typeParamsAttr = ArrayAttr::get(ctx, typeAttrs);
+      build($_builder, $_state, sym_name, typeParamsAttr, requirements);
     }]>
   ];
 
@@ -538,10 +553,6 @@ def MethodCallOp : TraitDialectOp<"method.call", [
     }
   }];
 
-//  let assemblyFormat = [{
-//    $method_ref `<` $claim `>` `(` $arguments `)` attr-dict `:` $method_function_type `as` type($claim) functional-type($arguments, results)
-//  }];
-
   let hasVerifier = 1;
 
   let hasCustomAssemblyFormat = 1;
@@ -595,6 +606,11 @@ def FuncCallOp : TraitDialectOp<"func.call", [
     // for each PolyType in the callee's parameter types,
     // creates the mapping poly type -> argument type
     llvm::DenseMap<Type, Type> buildSubstitution();
+
+    // returns all distinct PolyTypes that occur in the FunctionType of this FuncOp's callee
+    SmallVector<PolyType, 4> getCalleeTypeParams() {
+      return getPolyTypesIn(getCalleeFunctionType());
+    }
 
     // returns the name of the (possibly instantiated) callee after instantiation
     std::string getNameOfCalleeInstance();

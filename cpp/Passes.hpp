@@ -36,6 +36,17 @@ struct ProveClaimsPass : PassWrapper<ProveClaimsPass, OperationPass<ModuleOp>> {
 
 std::unique_ptr<Pass> createProveClaimsPass();
 
+struct VerifyMonomorphsPass : PassWrapper<VerifyMonomorphsPass, OperationPass<ModuleOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(VerifyMonomorphsPass);
+
+  inline StringRef getArgument() const final { return "verify-monomorphs-trait"; }
+  inline StringRef getDescription() const final { return "Check that monomorphic free functions do not leak polymorphic trait types."; }
+
+  void runOnOperation() override;
+};
+
+std::unique_ptr<Pass> createVerifyMonomorphsPass();
+
 struct VerifyAcyclicTraitsPass : PassWrapper<VerifyAcyclicTraitsPass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(VerifyAcyclicTraitsPass);
 

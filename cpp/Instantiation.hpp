@@ -7,7 +7,7 @@
 
 namespace mlir::trait {
 
-bool isPolymorph(func::FuncOp fn);
+AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &subst);
 
 func::FuncOp instantiatePolymorph(OpBuilder& builder,
                                   func::FuncOp polymorph,

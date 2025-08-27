@@ -6,20 +6,6 @@
 
 namespace mlir::trait {
 
-static bool containsPolymorphicType(TypeRange types) {
-  return llvm::any_of(types, [](Type t) {
-    return isPolymorphicType(t);
-  });
-}
-
-static bool functionTypeContainsPolymorphicType(FunctionType ty) {
-  return containsPolymorphicType(ty.getInputs()) || containsPolymorphicType(ty.getResults());
-}
-
-bool isPolymorph(func::FuncOp fn) {
-  return functionTypeContainsPolymorphicType(fn.getFunctionType());
-}
-
 static void cloneRegionWithTypeReplacement(
     OpBuilder& builder,
     Region &oldRegion,
@@ -102,7 +88,7 @@ static void cloneRegionWithTypeReplacement(
   }
 }
 
-static AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &subst) {
+AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &subst) {
   AttrTypeReplacer replacer;
   replacer.addReplacement([=](Type t) -> std::optional<Type> {
     Type result = applySubstitutionToFixedPoint(subst, t);

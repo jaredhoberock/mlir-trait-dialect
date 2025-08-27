@@ -4,10 +4,13 @@
 #include "mlir/IR/DialectInterface.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/OpDefinition.h"
+#include "mlir/Transforms/DialectConversion.h"
 #include "ImplResolution.hpp"
 #include "Trait.hpp.inc"
 
 namespace mlir::trait {
+
+class ImplResolver;
 
 struct ConvertToTraitPatternInterface : DialectInterface {
   inline ConvertToTraitPatternInterface(Dialect *dialect)
@@ -15,6 +18,8 @@ struct ConvertToTraitPatternInterface : DialectInterface {
   {}
 
   virtual void populateConvertToTraitConversionPatterns(RewritePatternSet& patterns) const = 0;
+
+  virtual void populateEraseClaimsPatterns(TypeConverter &typeConverter, RewritePatternSet& patterns) const = 0;
 
   inline static StringRef getInterfaceName() { return "ConvertToTraitPatternInterface"; }
 

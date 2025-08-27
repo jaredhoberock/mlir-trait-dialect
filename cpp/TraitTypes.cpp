@@ -121,21 +121,6 @@ LogicalResult PolyType::substituteWith(
 LogicalResult ClaimType::verify(function_ref<InFlightDiagnostic()> emitError,
                                 TraitApplicationAttr app,
                                 FlatSymbolRefAttr proof) {
-  auto fail = [&]() -> LogicalResult {
-    return emitError ? emitError() << "nested !trait.claim types are not allowed"
-                     : failure();
-  };
-
-  for (Type t : app.getTypeArgs()) {
-    bool nested = false;
-    t.walk([&](Type sub) {
-      if (mlir::isa<ClaimType>(sub))
-        nested = true;
-    });
-    if (nested)
-      return fail();
-  }
-
   bool polymorphic = llvm::any_of(app.getTypeArgs(), [](Type ty) {
     return isPolymorphicType(ty);
   });

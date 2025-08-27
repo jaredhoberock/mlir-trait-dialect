@@ -47,6 +47,18 @@ static LogicalResult checkPolymorphicFunctionCall(
   });
 }
 
+// this function generates a mangled name suffix (e.g. "_i32_i1_f64", etc.)
+// based on the substitution of some polymorphic entity (e.g., ImplOp, FuncOp, etc.)
+static std::string generateMangledNameSuffixFor(const DenseMap<Type,Type> &subst, ArrayRef<PolyType> typeParams) {
+  std::string result;
+  llvm::raw_string_ostream os(result);
+  for (auto ty : typeParams) {
+    os << "_" << applySubstitutionToFixedPoint(subst, ty);
+  }
+  os.flush();
+  return result;
+}
+
 
 //===----------------------------------------------------------------------===//
 // TraitOp
@@ -276,24 +288,21 @@ DenseMap<Type, Type> ImplOp::buildSubstitutionFor(ClaimType claim) {
 }
 
 SmallVector<PolyType, 4> ImplOp::getTypeParams() {
-  SmallVector<PolyType, 4> result;
-  DenseSet<Type> seen;
+  auto selfClaim = getSelfClaim();
+  auto subst = buildSubstitutionFor(selfClaim);
 
-  auto collect = [&](Type ty) {
-    if (auto polyTy = dyn_cast<PolyType>(ty)) {
-      if (seen.insert(polyTy).second) // first time we see it
-        result.push_back(polyTy);
-    }
-  };
+  // collect all the types where a PolyType could hide
+  SmallVector<Type> allOurTypes;
+  allOurTypes.push_back(selfClaim);
+  for (ClaimType a : getAssumptionsAsClaimsWith(subst)) {
+    allOurTypes.push_back(a);
+  }
 
-  // collect PolyTypes from our self claim
-  getSelfClaim().walk(collect);
+  // tuple the types
+  TupleType tupled = TupleType::get(getContext(), allOurTypes);
 
-  // collect PolyTypes from our assumptions
-  for (TraitApplicationAttr a : getAssumptions())
-    a.walk(collect);
-
-  return result;
+  // get all the PolyTypes in the tuple
+  return getPolyTypesIn(tupled);
 }
 
 func::FuncOp ImplOp::getOrInstantiateMethod(OpBuilder& builder, StringRef methodName) {
@@ -335,11 +344,13 @@ static func::FuncOp instantiateMethodAsFreeFuncWithLeadingSelfProof(
   // we'll fix the function by replacing AssumeOps below
   auto funcOp = instantiatePolymorph(rewriter, method, functionName, subst);
 
-  // prepend the self proof as the first parameter of the function
+  // prepend the self proof as the first parameter of the function and
+  // set visibility to private
   rewriter.modifyOpInPlace(funcOp, [&] {
     funcOp.insertArgument(/*idx=*/0, selfProofTy,
                           /*argAttrs=*/mlir::DictionaryAttr(),
                           method.getLoc());
+    funcOp.setVisibility(SymbolTable::Visibility::Private);
   });
   BlockArgument selfProofArg = funcOp.getArgument(0);
 
@@ -428,17 +439,9 @@ std::string ImplOp::generateSymName(TraitApplicationAttr selfApp,
 }
 
 std::string ImplOp::generateMangledName(ClaimType claim) {
-  DenseMap<Type,Type> subst;
-  if (failed(substituteWith(getSelfClaim(), claim, getParentOp<ModuleOp>(), subst)))
-    llvm_unreachable("ImplOp::generateMangledName: substituteWith failed");
-
-  std::string result;
-  llvm::raw_string_ostream os(result);
-  os << getSymName().str();
-  for (auto ty : getTypeParams()) {
-    os << "_" << applySubstitution(subst, ty);
-  }
-  os.flush();
+  DenseMap<Type,Type> subst = buildSubstitutionFor(claim);
+  std::string result = getSymName().str();
+  result += generateMangledNameSuffixFor(subst, getTypeParams());
   return result;
 }
 
@@ -1073,29 +1076,14 @@ DenseMap<Type, Type> FuncCallOp::buildSubstitution() {
 
   ModuleOp moduleOp = getOperation()->getParentOfType<ModuleOp>();
   if (failed(substituteWith(formal, actual, moduleOp, result)))
-    llvm_unreachable("FuncCallOp::buildSubstitution: callee types and operand types did not unify");
+    llvm_unreachable("FuncCallOp::buildSubstitution: substituteWith failed");
 
   return normalizeSubstitution(result);
 }
 
 std::string FuncCallOp::getNameOfCalleeInstance() {
-  std::string result = getCallee().str();
-
-  auto subst = buildSubstitution();
-
-  // append substituted types to the callee's name
-  // except for ClaimTypes, which are not necessary
-  // for distinguishing instances because
-  // they are erased after monomorphization
-  llvm::raw_string_ostream os(result);
-  for (auto [_, substitutedTy] : subst) {
-    if (!isa<ClaimType>(substitutedTy)) {
-      os << "_" << substitutedTy;
-    }
-  }
-  os.flush();
-
-  return result;
+  return getCallee().str() +
+         generateMangledNameSuffixFor(buildSubstitution(), getCalleeTypeParams());
 }
 
 func::FuncOp FuncCallOp::instantiateCalleeAtInsertionPoint(OpBuilder &builder) {
