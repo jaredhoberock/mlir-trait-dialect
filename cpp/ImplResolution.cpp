@@ -33,8 +33,14 @@ assumptionsSatisfiableFor(ImplOp impl,
   // bind generics for this impl to the concrete claim
   auto subst = impl.buildSubstitutionFor(concreteSelf);
 
+  llvm::errs() << "assumptionsSatisfiableFor: concreteSelf: " << concreteSelf << "\n";
+  llvm::errs() << "subst:\n";
+  dumpSubstitution(subst);
+
   // specialize the impl's assumptions to our concrete claim
   for (ClaimType assume : impl.getAssumptionsAsClaimsWith(subst)) {
+    // XXX TODO: what happens if assume is still polymorphic here?
+
     // find an impl for the assumption
     auto subImpl = resolveImplFor(assume, module, memo, gen, rewriter);
     if (failed(subImpl))
@@ -54,23 +60,45 @@ assumptionsSatisfiableFor(ImplOp impl,
 static LogicalResult diagnoseImplResolutionFailure(
     TraitOp trait,
     ClaimType wanted,
-    ArrayRef<ImplOp> candidates,
+    ArrayRef<ImplOp> goodCandidates,
+    ArrayRef<ImplOp> badCandidates,
     llvm::function_ref<InFlightDiagnostic()> err) {
   if (!err) return failure();
 
-  if (candidates.empty()) {
-    err() << "no impl with satisfiable assumptions for " << wanted;
+  // if there were no good candidates, note the bad candidates that didn't match
+  if (goodCandidates.empty()) {
+    InFlightDiagnostic diag = err() << "no impl with satisfiable assumptions for "
+                                    << wanted;
+
+    unsigned maxNotes = 16;
+    unsigned emitted = 0;
+    for (ImplOp impl : badCandidates) {
+      if (emitted++ == maxNotes) {
+        unsigned remaining = badCandidates.size() - maxNotes;
+        diag.attachNote(trait.getLoc())
+          << remaining << " more unsatisfiable candidate(s) elided";
+        break;
+      }
+
+      std::string header;
+      llvm::raw_string_ostream os(header);
+      os << "unsatisfiable candidate";
+
+      diag.attachNote(impl.getLoc()) << os.str();
+    }
+
     return failure();
   }
 
+  // there were multiple good candidates, note the good candidates that did match
   InFlightDiagnostic diag = err() << "incoherent impls (multiple satisfiable) for "
                                   << wanted;
 
   unsigned maxNotes = 16;
   unsigned emitted = 0;
-  for (ImplOp impl : candidates) {
+  for (ImplOp impl : goodCandidates) {
     if (emitted++ == maxNotes) {
-      unsigned remaining = candidates.size() - maxNotes;
+      unsigned remaining = goodCandidates.size() - maxNotes;
       diag.attachNote(trait.getLoc())
         << remaining << " more candidate(s) elided";
       break;
@@ -95,6 +123,10 @@ static FailureOr<ImplOp> resolveImplFor(
     const ImplGenerator &gen,
     PatternRewriter &rewriter,
     llvm::function_ref<InFlightDiagnostic()> err) {
+  llvm::errs() << "resolveImplFor: wanted: " << wanted << "\n";
+  if (isPolymorphicType(wanted))
+    llvm_unreachable("resolveImplFor: unexpected polymorphic claim");
+
   TraitApplicationAttr app = wanted.getTraitApplication();
 
   // first check the memo
@@ -121,23 +153,25 @@ static FailureOr<ImplOp> resolveImplFor(
   }
 
   if (candidates.empty()) {
-    if (err) err() << "no impl candidates found for " << wanted;
     return memo.chosen[app] = failure();
   }
 
   // keep only candidates whose assumptions are satisfiable
-  SmallVector<ImplOp> ok;
+  SmallVector<ImplOp> good, bad;
   for (ImplOp impl : candidates) {
-    if (succeeded(assumptionsSatisfiableFor(impl, wanted, module, memo, gen, rewriter)))
-      ok.push_back(impl);
+    if (succeeded(assumptionsSatisfiableFor(impl, wanted, module, memo, gen, rewriter))) {
+      good.push_back(impl);
+    } else {
+      bad.push_back(impl);
+    }
   }
 
   // there must be exactly one candidate whose assumptions are satisfiable
-  if (ok.size() == 1)
-    return memo.chosen[app] = ok.front();
+  if (good.size() == 1)
+    return memo.chosen[app] = good.front();
 
   // otherwise, diagnose resolution failure
-  return memo.chosen[app] = diagnoseImplResolutionFailure(trait, wanted, ok, err);
+  return memo.chosen[app] = diagnoseImplResolutionFailure(trait, wanted, good, bad, err);
 }
 
 // find an existing trait.proof that *explicitly* proves impl by name
