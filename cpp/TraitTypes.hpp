@@ -58,6 +58,42 @@ inline bool isMonomorphicType(Type ty) {
   return !isPolymorphicType(ty);
 }
 
+// returns true iff every MonomorphizableTypeInterface inside `root` is polymorphic,
+// and at least one such participant exists
+inline bool isPurelyPolymorphicType(Type root) {
+  bool sawPoly = false;
+
+  // fast path: if the root itself participates in monomorphization,
+  // call its predicate
+  if (auto m = dyn_cast<MonomorphizableTypeInterface>(root)) {
+    if (m.isMonomorphic())
+      return false; // root participates and is monomorphic -> not purely polymorphic
+    sawPoly = true; // root participates and is polymorphic
+  }
+
+  // otherwise, walk the type and check every participating subtype
+  bool allParticipatingArePoly = true;
+  root.walk([&](Type sub) -> WalkResult {
+    // skip the root to avoid infinite recursion
+    if (sub == root) return WalkResult::advance();
+
+    if (auto m = dyn_cast<MonomorphizableTypeInterface>(sub)) {
+      if (m.isPolymorphic()) {
+        sawPoly = true;
+        return WalkResult::advance();
+      }
+      // found a participant, monomorphic subtype -> fail
+      allParticipatingArePoly = false;
+      return WalkResult::interrupt();
+    }
+
+    return WalkResult::advance(); // non-participating types are ignored by design
+  });
+
+  // must have seen at least one one polymorphic participant, and none that are monomorphic
+  return allParticipatingArePoly && sawPoly;
+}
+
 inline void normalizeSubstitutionInPlace(llvm::DenseMap<Type,Type> &subst) {
   // Snapshot keys so we can mutate the map safely.
   llvm::SmallVector<Type, 8> keys;
