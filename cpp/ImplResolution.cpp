@@ -33,14 +33,8 @@ assumptionsSatisfiableFor(ImplOp impl,
   // bind generics for this impl to the concrete claim
   auto subst = impl.buildSubstitutionFor(concreteSelf);
 
-  llvm::errs() << "assumptionsSatisfiableFor: concreteSelf: " << concreteSelf << "\n";
-  llvm::errs() << "subst:\n";
-  dumpSubstitution(subst);
-
   // specialize the impl's assumptions to our concrete claim
   for (ClaimType assume : impl.getAssumptionsAsClaimsWith(subst)) {
-    // XXX TODO: what happens if assume is still polymorphic here?
-
     // find an impl for the assumption
     auto subImpl = resolveImplFor(assume, module, memo, gen, rewriter);
     if (failed(subImpl))
@@ -123,10 +117,6 @@ static FailureOr<ImplOp> resolveImplFor(
     const ImplGenerator &gen,
     PatternRewriter &rewriter,
     llvm::function_ref<InFlightDiagnostic()> err) {
-  llvm::errs() << "resolveImplFor: wanted: " << wanted << "\n";
-  if (isPolymorphicType(wanted))
-    llvm_unreachable("resolveImplFor: unexpected polymorphic claim");
-
   TraitApplicationAttr app = wanted.getTraitApplication();
 
   // first check the memo
