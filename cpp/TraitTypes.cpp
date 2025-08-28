@@ -416,7 +416,7 @@ LogicalResult substituteWith(Type formal,
   auto [actualSubTys, actualSubAttrs] = getImmediateSubElements(actual);
 
   bool formalHasSubs = !formalSubTys.empty() || !formalSubAttrs.empty();
-  bool actualHasSubs = !actualSubTys.empty() || !actualSubTys.empty();
+  bool actualHasSubs = !actualSubTys.empty() || !actualSubAttrs.empty();
 
   // if neither side is decomposable, they're unequal leaves -> mismatch
   // if only one side is decomposable, constructors differ in structure -> mismatch
