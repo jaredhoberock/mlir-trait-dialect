@@ -20,31 +20,40 @@ using namespace mlir;
 using namespace mlir::trait;
 
 
-static LogicalResult checkPolymorphicFunctionCall(
-    FunctionType polyFnTy,
-    TypeRange argumentTypes,
-    TypeRange resultTypes,
-    Location loc,
-    ModuleOp moduleOp) {
+static FailureOr<DenseMap<Type,Type>>
+buildSubstitutionForPolymorphicFunctionCall(
+    FunctionType formalFnTy,
+    TypeRange actualArgumentTypes,
+    TypeRange actualResultTypes,
+    ModuleOp module,
+    llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
   // check argument count
-  auto paramTypes = polyFnTy.getInputs();
-  if (argumentTypes.size() != paramTypes.size())
-    return emitError(loc) << "expected " << paramTypes.size() << " arguments, but got "
-                          << argumentTypes.size();
+  auto formalParamTypes = formalFnTy.getInputs();
+  if (actualArgumentTypes.size() != formalParamTypes.size()) {
+    if (err) err() << "expected " << formalParamTypes.size() << " arguments, but got "
+                   << actualArgumentTypes.size();
+    return failure();
+  }
 
   // check result count
-  auto expectedResults = polyFnTy.getResults();
-  if (resultTypes.size() != expectedResults.size())
-    return emitError(loc) << "expected " << expectedResults.size()
-                          << " results, but got " << resultTypes.size();
+  auto formalResultTypes = formalFnTy.getResults();
+  if (actualResultTypes.size() != formalResultTypes.size()) {
+    if (err) err() << "expected " << formalResultTypes.size()
+                   << " results, but got " << actualResultTypes.size();
+  }
 
-  // create a FunctionType representing the caller's parameters and result
-  FunctionType callerFnTy = FunctionType::get(moduleOp.getContext(), argumentTypes, resultTypes);
-  DenseMap<Type, Type> subst;
+  // create a FunctionType representing the actual arguments and results
+  FunctionType actualFnTy = FunctionType::get(
+    module.getContext(),
+    actualArgumentTypes,
+    actualResultTypes
+  );
 
-  return substituteWith(polyFnTy, callerFnTy, moduleOp, subst, [loc] {
-    return mlir::emitError(loc);
-  });
+  DenseMap<Type,Type> subst;
+  if (failed(substituteWith(formalFnTy, actualFnTy, module, subst, err)))
+    return failure();
+
+  return normalizeSubstitution(subst);
 }
 
 // this function generates a mangled name suffix (e.g. "_i32_i1_f64", etc.)
@@ -867,17 +876,37 @@ LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable)
                          << " does not match expected type " << getMethodFunctionType();
   }
 
-  // monomorphize the method's type using the claim's type arguments
-  DenseMap<Type,Type> subst = traitOp.buildSubstitutionFor(cast<ClaimType>(getClaim().getType()));
-  FunctionType methodFnTy = dyn_cast_or_null<FunctionType>(applySubstitution(subst, method.getFunctionType()));
-  if (!methodFnTy)
-    return emitOpError() << "expected function type";
+  // check that we can build a consistent substitution for this method call
+  return buildSubstitution(errFn);
+}
 
-  return checkPolymorphicFunctionCall(methodFnTy,
-                                      getArguments().getTypes(),
-                                      getResultTypes(),
-                                      getLoc(),
-                                      module);
+FailureOr<DenseMap<Type,Type>> MethodCallOp::buildSubstitution(llvm::function_ref<InFlightDiagnostic()> err) {
+  ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
+  if (!module) {
+    if (err) err() << "not contained in a module";
+    return failure();
+  }
+
+  ClaimType claimTy = getClaimType();
+  auto trait = claimTy.getTraitApplication().getTraitOrAbort(module, "MethodCallOp::buildSubstitution: cannot find trait");
+
+  // specialize the method type by the claim's type args (trait-level substitution)
+  DenseMap<Type,Type> traitSubst = trait.buildSubstitutionFor(claimTy);
+  Type afterTrait = applySubstitutionToFixedPoint(traitSubst, getMethodFunctionType());
+  auto methodTy = dyn_cast_or_null<FunctionType>(afterTrait);
+  if (!methodTy) {
+    if (err) err() << "expected function type";
+    return failure();
+  }
+
+  // unify (trait-specialized method type) <- (actual call signature)
+  return buildSubstitutionForPolymorphicFunctionCall(
+    methodTy,
+    ValueRange(getArguments()).getTypes(),
+    getResultTypes(),
+    module,
+    err
+  );
 }
 
 ImplOp MethodCallOp::getProvenImpl() {
@@ -1061,11 +1090,14 @@ LogicalResult FuncCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   }
 
   // check the types involved in a possibly polymorphic call
-  return checkPolymorphicFunctionCall(funcOp.getFunctionType(),
-                                      getOperands().getTypes(),
-                                      getResultTypes(),
-                                      getLoc(),
-                                      moduleOp);
+  auto errFn = [&] { return emitOpError(); };
+  return buildSubstitutionForPolymorphicFunctionCall(
+    funcOp.getFunctionType(),
+    getOperands().getTypes(),
+    getResultTypes(),
+    moduleOp,
+    errFn
+  );
 }
 
 DenseMap<Type, Type> FuncCallOp::buildSubstitution() {

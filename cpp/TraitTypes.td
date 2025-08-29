@@ -6,20 +6,46 @@ include "Trait.td"
 include "TraitAttributes.td"
 include "TraitTypeInterfaces.td"
 
-// Represents a universally quantified type parameter
+// Represents a polymorphic type variable
 def PolyType : TypeDef<TraitDialect, "Poly", [MonomorphizableTypeInterface]> {
   let mnemonic = "poly";
-  let summary = "A polymorphic type parameter";
+  let summary = "A polymorphic type variable";
 
   let description = [{
-    The `!trait.poly` type represents a universally quantified type parameter.
-    It is used to model the parameters of generic functions.
+    The `!trait.poly` type represents a *polymorphic type variable*.
 
-    The `unique_id` serves as a unique identifier for this type within the module.
+    Semantics depend on its *position* in a substitution/unification.
 
-    Alternatively, `fresh` can be specified instead of `unique_id` to request a "fresh"
-    `!trait.poly` with an automatically-generated `unique_id`. Fresh IDs are allocated in
-    monotonically decreasing order beginning at `-1`.
+    * Universal (formal-side): When `!trait.poly` appears on the *formal* side of
+      `substituteWith` (e.g., in trait headers, impl/self applications, polymorphic
+      function signatures, or method types defined by a trait), it is a *universally
+      quantified* parameter. During unification, the callee binds the universal
+      variable to the caller's actual type (subject to an occurs check).
+
+    * Existential (actual-side): When `!trait.poly` appears on the *actual* side of
+      `substituteWith` (e.g., a variable that occurs only in a `where` clause, or a
+      caller-supplied placeholder for an associated type), it acts as an *existential
+      witness*. The unifier may instantiate this actual-side variable to *whatever
+      formal type* is required to satisfy the match (again with an occurs check).
+      Practically, this is how "associated types" are named without introducing a new
+      type former: the caller writes `!trait.poly` and the callee determines (and
+      records) the concrete type via the substitution.
+
+    * Normalization and consistency: All substitutions are applied eagerly via
+      `applySubstitution`. If a variable is already bound, subsequent unifications
+      must agree. Cycles are rejected (via an occurs check).
+
+    * Polymorphic IR and monomorphization: `!trait.poly` is considered
+      "purely polymorphic" and is allowed in polymorphic IR. After monomorphization,
+      any remaining `!trait.poly` in SSA positions that require concrete shapes is a
+      verifier error; callers that produce results using actual-side variables must
+      have those variables resolved by the time the call is instantiated.
+
+    Freshness and identity:
+      The `unique_id` serves as the variable's identity within a module. Alternatively,
+      `fresh` can be used to request a new `!trait.poly` with an automatically
+      generated `unique_id` (allocated in monotonically decreasing order starting at
+      `-1`).
   }];
 
   let extraClassDeclaration = [{

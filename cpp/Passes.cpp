@@ -273,31 +273,44 @@ struct FuncCallOpLowering : public OpRewritePattern<FuncCallOp> {
 struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
   using OpRewritePattern::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(MethodCallOp methodCallOp, PatternRewriter &rewriter) const override {
-    // if any operand is still polymorphic, this call can't be resolved yet
-    for (auto op : methodCallOp.getOperands()) {
-      if (isPolymorphicType(op.getType()))
-        return failure();
+  LogicalResult matchAndRewrite(MethodCallOp op, PatternRewriter &rewriter) const override {
+    // all operands must be monomorphic and the claim must be proven
+    for (auto o : op.getOperands()) {
+      if (isPolymorphicType(o.getType()))
+        return rewriter.notifyMatchFailure(op, "operands are still polymorphic");
+    }
+    if (!op.getClaimType().isProven()) {
+      return rewriter.notifyMatchFailure(op, "claim is still unproven");
     }
 
-    // if the claim isn't yet proven, this call can't be resolved yet
-    if (!cast<ClaimType>(methodCallOp.getClaim().getType()).isProven()) {
-      return failure();
+    // build the call's substitution
+    auto subst = op.buildSubstitution();
+    if (failed(subst))
+      return rewriter.notifyMatchFailure(op, "couldn't build substitution for call");
+    
+    // apply subst to result types; all results must be monomorphic
+    SmallVector<Type> concreteResults;
+    for (Type r : op.getResultTypes()) {
+      Type newR = applySubstitutionToFixedPoint(*subst, r);
+      if (isPolymorphicType(newR))
+        return rewriter.notifyMatchFailure(op, "result type is still polymorphic");
+      concreteResults.push_back(newR);
     }
 
-    func::FuncOp callee = methodCallOp.getOrInstantiateCallee(rewriter);
-    if (!callee)
-      return methodCallOp.emitOpError() << "couldn't get or instantiate callee '" << methodCallOp.getMethodRef() << "'";
+    // get the callee
+    func::FuncOp callee = op.getOrInstantiateCallee(rewriter);
+    if (!callee) 
+      return rewriter.notifyMatchFailure(op, "couldn't get or instantiate callee");
 
     // pass the claim as the first argument to the instantiated callee
     SmallVector<Value> args;
-    args.push_back(methodCallOp.getClaim());
-    llvm::append_range(args, methodCallOp.getArguments());
+    args.push_back(op.getClaim());
+    llvm::append_range(args, op.getArguments());
 
     // replace with a trait.func.call to the instantiated callee
     rewriter.replaceOpWithNewOp<FuncCallOp>(
-      methodCallOp,
-      methodCallOp.getResultTypes(),
+      op,
+      concreteResults,
       callee.getSymName(),
       callee.getFunctionType(),
       args

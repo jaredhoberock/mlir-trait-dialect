@@ -501,6 +501,10 @@ def MethodCallOp : TraitDialectOp<"method.call", [
   let results = (outs Variadic<AnyType>);
 
   let extraClassDeclaration = [{
+    // builds a substitution unifying the callee's function type
+    // with the types of actual call arguments
+    FailureOr<DenseMap<Type,Type>> buildSubstitution(llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+
     func::FuncOp getOrInstantiateCallee(PatternRewriter& rewriter);
 
     ClaimType getClaimType() {

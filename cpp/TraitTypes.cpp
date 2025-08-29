@@ -399,9 +399,14 @@ LogicalResult substituteWith(Type formal,
   formal = applySubstitution(subst, formal);
   actual = applySubstitution(subst, actual);
 
-  // give the formal type first right of refusal
+  // give the formal type first right of refusal (universal variables, ClaimType, etc.)
   if (auto mti = dyn_cast<MonomorphizableTypeInterface>(formal))
     return mti.substituteWith(actual, module, subst, err);
+
+  // if actual is a PolyType, treat it as an existential type variable
+  // swap the positions of actual & formal and recurse
+  if (isa<PolyType>(actual))
+    return substituteWith(actual, formal, module, subst, err);
 
   // if the normalized types are equal, unification succeeds
   if (formal == actual)
