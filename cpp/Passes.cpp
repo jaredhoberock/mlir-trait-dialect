@@ -210,13 +210,6 @@ FailureOr<ImplResolver> proveClaims(ModuleOp module) {
     RewritePatternSet patterns(ctx);
     patterns.add<ProveClaimPattern>(ctx, resolver);
 
-    // collect patterns from other dialects
-    for (Dialect *dialect : ctx->getLoadedDialects()) {
-      if (auto *iface = dialect->getRegisteredInterface<ConvertToTraitPatternInterface>()) {
-        iface->populateConvertToTraitConversionPatterns(patterns);
-      }
-    }
-
     // rewrite trait.allege -> trait.witness
     if (failed(applyPatternsGreedily(module, std::move(patterns))))
       return failure();
@@ -340,6 +333,12 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
   // rewrite trait.func.call & trait.method.call
   RewritePatternSet patterns(ctx);
   patterns.add<FuncCallOpLowering,MethodCallOpLowering>(ctx);
+
+  // collect convert-to-trait patterns from other dialects
+  for (Dialect *d : ctx->getLoadedDialects()) {
+    if (auto *iface = d->getRegisteredInterface<ConvertToTraitPatternInterface>())
+      iface->populateConvertToTraitConversionPatterns(patterns);
+  }
 
   // apply patterns
   if (failed(applyPatternsGreedily(module, std::move(patterns))))
