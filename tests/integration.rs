@@ -32,16 +32,12 @@ fn test_jit() {
     let self_ty = trait_::poly_type(&context, 0);
     let other_ty = trait_::poly_type(&context, 1);
 
-    // (!S, !O) -> i1
-    let eq_ty = FunctionType::new(&context, &[self_ty, other_ty], &[i1_ty]).into();
-
-    // (!S, !O) -> i1
-    let neq_ty = FunctionType::new(&context, &[self_ty, other_ty], &[i1_ty]).into();
-
     let partial_eq = {
         let vis_id = Identifier::new(&context, "sym_visibility");
         let private_attr = StringAttribute::new(&context, "private").into();
 
+        // (!S, !O) -> i1
+        let eq_ty = FunctionType::new(&context, &[self_ty, other_ty], &[i1_ty]).into();
         let eq = func::func(
             &context,
             StringAttribute::new(&context, "eq"),
@@ -52,6 +48,8 @@ fn test_jit() {
         );
 
         let neq = {
+            // (!S, !O) -> i1
+            let neq_ty = FunctionType::new(&context, &[self_ty, other_ty], &[i1_ty]).into();
             let neq = func::func(
                 &context,
                 StringAttribute::new(&context, "neq"),
@@ -72,7 +70,6 @@ fn test_jit() {
                 loc,
                 "PartialEq",
                 "eq",
-                eq_ty,
                 c.result(0).unwrap().into(),           // claim
                 &[
                     block.argument(0).unwrap().into(), // self
@@ -179,9 +176,9 @@ fn test_jit() {
         "PartialEq",
         &[poly_ty, poly_ty],
     );
-    let foo_ty = FunctionType::new(&context, &[claim_ty, poly_ty, poly_ty], &[i1_ty]).into();
 
     let foo = {
+        let foo_ty = FunctionType::new(&context, &[claim_ty, poly_ty, poly_ty], &[i1_ty]).into();
         let foo = func::func(
             &context,
             StringAttribute::new(&context, "foo"),
@@ -196,7 +193,6 @@ fn test_jit() {
             loc,
             "PartialEq",
             "eq",
-            eq_ty,
             block.argument(0).unwrap().into(),     // %c
             &[
                 block.argument(1).unwrap().into(), // %x
@@ -246,7 +242,6 @@ fn test_jit() {
         let result = block.append_operation(trait_::func_call(
             loc,
             "foo",
-            foo_ty,
             &[
                 p.result(0).unwrap().into(),
                 block.argument(0).unwrap().into(),
@@ -286,8 +281,8 @@ fn test_jit() {
         "PartialEq",
         &[poly_ty, poly_ty],
     );
-    let baz_ty = FunctionType::new(&context, &[claim_ty, poly_ty, poly_ty], &[i1_ty]).into();
     let baz = {
+        let baz_ty = FunctionType::new(&context, &[claim_ty, poly_ty, poly_ty], &[i1_ty]).into();
         let baz = func::func(
             &context,
             StringAttribute::new(&context, "baz"),
@@ -302,7 +297,6 @@ fn test_jit() {
             loc,
             "PartialEq",
             "eq",
-            eq_ty,
             block.argument(0).unwrap().into(),     // c
             &[
                 block.argument(1).unwrap().into(), // x
@@ -314,7 +308,6 @@ fn test_jit() {
             loc,
             "PartialEq",
             "neq",
-            neq_ty,
             block.argument(0).unwrap().into(),     // c
             &[
                 block.argument(1).unwrap().into(), // x
@@ -369,7 +362,6 @@ fn test_jit() {
         let result = block.append_operation(trait_::func_call(
             loc,
             "baz",
-            baz_ty,
             &[
                 p.result(0).unwrap().into(),       // c
                 block.argument(0).unwrap().into(), // x

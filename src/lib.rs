@@ -1,4 +1,4 @@
-use melior::{ir::{Location, Operation, Type, TypeLike, Value, ValueLike}, Context, pass::Pass, StringRef};
+use melior::{ir::{Location, Operation, Type, Value, ValueLike}, Context, pass::Pass, StringRef};
 use mlir_sys::{MlirContext, MlirLocation, MlirOperation, MlirPass, MlirStringRef, MlirType, MlirValue};
 
 unsafe extern "C" {
@@ -13,13 +13,11 @@ unsafe extern "C" {
     fn traitMethodCallOpCreate(loc: MlirLocation,
                                trait_name: MlirStringRef,
                                method_name: MlirStringRef,
-                               method_function_type: MlirType,
                                claim: MlirValue,
                                arguments: *const MlirValue, num_arguments: isize,
                                result_types: *const MlirType, num_results: isize) -> MlirOperation;
     fn traitFuncCallOpCreate(loc: MlirLocation,
                              callee: MlirStringRef,
-                             callee_function_type: MlirType,
                              arguments: *const MlirValue, num_arguments: isize,
                              result_types: *const MlirType, num_results: isize) -> MlirOperation;
     fn traitAllegeOpCreate(loc: MlirLocation,
@@ -79,7 +77,6 @@ pub fn impl_<'c>(loc: Location<'c>,
 pub fn method_call<'c>(loc: Location<'c>,
                        trait_name: &str,
                        method_name: &str,
-                       method_function_type: Type<'c>,
                        claim: Value<'c,'_>,
                        arguments: &[Value<'c,'_>],
                        result_types: &[Type<'c>],
@@ -88,7 +85,6 @@ pub fn method_call<'c>(loc: Location<'c>,
         loc.to_raw(),
         StringRef::new(trait_name).to_raw(),
         StringRef::new(method_name).to_raw(),
-        method_function_type.to_raw(),
         claim.to_raw(),
         arguments.as_ptr() as *const _,
         arguments.len() as isize,
@@ -99,14 +95,12 @@ pub fn method_call<'c>(loc: Location<'c>,
 
 pub fn func_call<'c>(loc: Location<'c>,
                      callee: &str,
-                     callee_function_type: Type<'c>,
                      arguments: &[Value<'c,'_>],
                      result_types: &[Type<'c>],
 ) -> Operation<'c> {
     unsafe { Operation::from_raw(traitFuncCallOpCreate(
         loc.to_raw(),
         StringRef::new(callee).to_raw(),
-        callee_function_type.to_raw(),
         arguments.as_ptr() as *const _,
         arguments.len() as isize,
         result_types.as_ptr() as *const _,

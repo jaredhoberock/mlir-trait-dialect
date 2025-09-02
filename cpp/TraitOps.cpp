@@ -832,6 +832,28 @@ TraitOp AssumeOp::getTrait() {
 // MethodCallOp
 //===----------------------------------------------------------------------===//
 
+FailureOr<TraitOp> MethodCallOp::getTrait(llvm::function_ref<InFlightDiagnostic()> err) {
+  auto module = getOperation()->getParentOfType<ModuleOp>();
+  if (!module) {
+    if (err) err() << "not in a module";
+    return failure();
+  }
+  return getClaimType()
+    .getTraitApplication()
+    .getTrait(module, err);
+}
+
+FailureOr<func::FuncOp> MethodCallOp::getMethod(llvm::function_ref<InFlightDiagnostic()> err) {
+  auto maybeTrait = getTrait(err);
+  if (failed(maybeTrait)) return failure();
+  auto func = maybeTrait->getMethod(getMethodName());
+  if (!func) {
+    if (err) err() << "cannot find method '" << getMethodAttr()
+                   << "' in trait '" << getTraitAttr() << "'";
+  }
+  return func;
+}
+
 LogicalResult MethodCallOp::verify() {
   // the claim's type must be an ClaimType
   ClaimType claim = dyn_cast_or_null<ClaimType>(getClaim().getType());
@@ -855,26 +877,13 @@ LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable)
   auto errFn = [&]{ return emitOpError(); };
 
   // verify the claim
-  ClaimType claim = cast<ClaimType>(getClaim().getType());
+  ClaimType claim = getClaimType();
   if (failed(claim.verifySymbolUses(module, errFn)))
     return failure();
 
-  auto traitAttr = getTraitAttr();
-  auto methodAttr = getMethodAttr();
-
-  // look up the TraitOp
-  auto traitOp = claim.getTraitApplication().getTraitOrAbort(module, "MethodCallOp::verifySymbolUses: cannot find trait");
-
-  // look up the method in the trait
-  auto method = traitOp.getMethod(methodAttr.getValue());
-  if (!method)
-    return emitOpError() << "cannot find method '" << methodAttr << "' in trait '" << traitAttr << "'";
-
-  // check that method's function type matches what we expect
-  if (method.getFunctionType() != getMethodFunctionType()) {
-    return emitOpError() << "'" << methodAttr.getValue() << "''s type " << method.getFunctionType()
-                         << " does not match expected type " << getMethodFunctionType();
-  }
+  // verify the method exists
+  if (failed(getMethodFunctionType(errFn)))
+    return failure();
 
   // check that we can build a consistent substitution for this method call
   return buildSubstitution(errFn);
@@ -892,7 +901,7 @@ FailureOr<DenseMap<Type,Type>> MethodCallOp::buildSubstitution(llvm::function_re
 
   // specialize the method type by the claim's type args (trait-level substitution)
   DenseMap<Type,Type> traitSubst = trait.buildSubstitutionFor(claimTy);
-  Type afterTrait = applySubstitutionToFixedPoint(traitSubst, getMethodFunctionType());
+  Type afterTrait = applySubstitutionToFixedPoint(traitSubst, *getMethodFunctionType());
   auto methodTy = dyn_cast_or_null<FunctionType>(afterTrait);
   if (!methodTy) {
     if (err) err() << "expected function type";
@@ -939,8 +948,7 @@ ParseResult MethodCallOp::parse(OpAsmParser& p, OperationState &st) {
   // grammar:
   //
   // trait.method.call %claim @Trait[Types...]::@method(%arguments...)
-  //   :  (Types...) -> Type
-  //   as (Types...) -> Type
+  //   : (Types...) -> Type
   //   (by @Proof)?
   //   attr-dict?
 
@@ -969,18 +977,8 @@ ParseResult MethodCallOp::parse(OpAsmParser& p, OperationState &st) {
   if (p.parseOperandList(arguments, OpAsmParser::Delimiter::Paren)) return failure();
 
   // parse ':' methodFunctionType
-  FunctionType methodFunctionType;
-  if (p.parseColonType(methodFunctionType)) return failure();
-
-  // add methodFunctionType attribute
-  st.addAttribute("method_function_type", TypeAttr::get(methodFunctionType));
-
-  // parse 'as'
-  if (p.parseKeyword("as")) return failure();
-
-  // parse operand types and result type as a FunctionType
   FunctionType argumentTypesAndResultType;
-  if (p.parseType(argumentTypesAndResultType)) return failure();
+  if (p.parseColonType(argumentTypesAndResultType)) return failure();
 
   // add the result types
   st.addTypes(argumentTypesAndResultType.getResults());
@@ -1019,8 +1017,7 @@ void MethodCallOp::print(OpAsmPrinter& p) {
   // grammar:
   //
   // trait.method.call %claim @Trait[Types...]::@method(%arguments...)
-  //   :  (Types...) -> Type
-  //   as (Types...) -> Type
+  //   : (Types...) -> Type
   //   (by @Proof)?
   //   attr-dict?
 
@@ -1034,13 +1031,7 @@ void MethodCallOp::print(OpAsmPrinter& p) {
   p << "::" << getMethodAttr() << "(" << getArguments() << ")";
 
   // on a newline:
-  // ': ' methodFunctionType
-  p.printNewline();
-  p.getStream().indent(2);
-  p << ": " << getMethodFunctionType();
-
-  // on a newline:
-  // 'as' (argumentTypes) -> (resultTypes)`
+  // ': ' (argumentTypes) -> (resultTypes)`
   p.printNewline();
   p.getStream().indent(2);
   FunctionType actualFunctionType = FunctionType::get(
@@ -1048,7 +1039,7 @@ void MethodCallOp::print(OpAsmPrinter& p) {
     ValueRange(getArguments()).getTypes(),
     getResultTypes()
   );
-  p << "as " << actualFunctionType;
+  p << ": " << actualFunctionType;
 
   // on a newline:
   // (by @Proof)?
@@ -1060,7 +1051,7 @@ void MethodCallOp::print(OpAsmPrinter& p) {
 
   p.printOptionalAttrDictWithKeyword(
     (*this)->getAttrs(),
-    /*elidedAttrs=*/{"method_ref", "method_function_type"}
+    /*elidedAttrs=*/{"method_ref"}
   );
 }
 
@@ -1070,32 +1061,26 @@ void MethodCallOp::print(OpAsmPrinter& p) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult FuncCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  auto moduleOp = getOperation()->getParentOfType<ModuleOp>();
-  if (!moduleOp)
-    return emitOpError() << "not contained in a module";
+  auto errFn = [&] { return emitOpError(); };
 
-  auto calleeAttr = getCalleeAttr();
-  if (!calleeAttr)
-    return emitOpError() << "requires a 'callee' symbol reference attribute";
+  auto module = getModule(errFn);
+  if (failed(module))
+    return failure();
 
-  auto funcOp = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(*this, calleeAttr);
-  if (!funcOp)
-    return emitOpError() << "'" << calleeAttr.getValue()
-                         << "' does not refer to a valid func.func";
+  auto calleeName = getCalleeNameAttr();
+  if (!calleeName)
+    return emitOpError() << "requires a 'callee_name' symbol reference attribute";
 
-  // check that funcOp's function type matches what we expect
-  if (funcOp.getFunctionType() != getCalleeFunctionType()) {
-    return emitOpError() << "'" << calleeAttr.getValue() << "''s type " << funcOp.getFunctionType()
-                         << " does not match expected type " << getCalleeFunctionType();
-  }
+  auto callee = getCallee(errFn);
+  if (failed(callee))
+    return failure();
 
   // check the types involved in a possibly polymorphic call
-  auto errFn = [&] { return emitOpError(); };
   return buildSubstitutionForPolymorphicFunctionCall(
-    funcOp.getFunctionType(),
+    callee->getFunctionType(),
     getOperands().getTypes(),
     getResultTypes(),
-    moduleOp,
+    *module,
     errFn
   );
 }
@@ -1103,24 +1088,24 @@ LogicalResult FuncCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 DenseMap<Type, Type> FuncCallOp::buildSubstitution() {
   DenseMap<Type, Type> result;
 
-  FunctionType formal = getCalleeFunctionType();
+  FunctionType formal = *getCalleeFunctionType();
   FunctionType actual = FunctionType::get(getContext(), getOperandTypes(), getResultTypes());
 
-  ModuleOp moduleOp = getOperation()->getParentOfType<ModuleOp>();
-  if (failed(substituteWith(formal, actual, moduleOp, result)))
+  auto module = *getModule();
+  if (failed(substituteWith(formal, actual, module, result)))
     llvm_unreachable("FuncCallOp::buildSubstitution: substituteWith failed");
 
   return normalizeSubstitution(result);
 }
 
 std::string FuncCallOp::getNameOfCalleeInstance() {
-  return getCallee().str() +
+  return getCalleeName().str() +
          generateMangledNameSuffixFor(buildSubstitution(), getCalleeTypeParams());
 }
 
 func::FuncOp FuncCallOp::instantiateCalleeAtInsertionPoint(OpBuilder &builder) {
   // lookup the polymorphic callee
-  func::FuncOp callee = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(*this, getCalleeAttr());
+  func::FuncOp callee = *getCallee();
   auto instanceName = getNameOfCalleeInstance();
   DenseMap<Type, Type> substitution = buildSubstitution();
 
@@ -1128,31 +1113,26 @@ func::FuncOp FuncCallOp::instantiateCalleeAtInsertionPoint(OpBuilder &builder) {
 }
 
 func::FuncOp FuncCallOp::getOrInstantiateCallee(OpBuilder &builder) {
-  ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
-  if (!module) {
-    emitOpError() << "not in a module";
-    return nullptr;
-  }
+  auto err = [&]{ return emitOpError(); };
+
+  auto module = getModule(err);
+  if (failed(module)) return {};
 
   // get the name of the instantiated callee
   std::string instanceName = getNameOfCalleeInstance();
 
   // look up the instance
-  auto *symOp = SymbolTable::lookupSymbolIn(module, builder.getStringAttr(instanceName));
+  auto *symOp = SymbolTable::lookupSymbolIn(*module, builder.getStringAttr(instanceName));
   auto instance = dyn_cast_or_null<func::FuncOp>(symOp);
 
   if (!instance) {
     // there's no instance yet, look up the polymorphic callee
-    symOp = SymbolTable::lookupSymbolIn(module, getCalleeAttr());
-    auto callee = dyn_cast_or_null<func::FuncOp>(symOp);
-    if (!callee) {
-      emitOpError() << "could not find callee " << getCalleeAttr();
-      return nullptr;
-    }
+    auto callee = getCallee(err);
+    if (failed(callee)) return {};
 
     // the instance doesn't exist yet; create it
     PatternRewriter::InsertionGuard guard(builder);
-    builder.setInsertionPointAfter(callee);
+    builder.setInsertionPointAfter(*callee);
     instance = instantiateCalleeAtInsertionPoint(builder);
     if (!instance) {
       emitOpError("instantiation failed");

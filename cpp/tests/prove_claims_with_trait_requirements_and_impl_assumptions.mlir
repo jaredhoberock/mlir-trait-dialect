@@ -37,8 +37,7 @@ func.func @foo(%x: i8) -> i1 {
   // CHECK: trait.witness @C_impl_i8_p for @C[i8]
   %c = trait.allege @C[i8]
   %res = trait.method.call %c @C[i8]::@method(%x)
-    :  (!C) -> i1
-    as (i8) -> i1
+    : (i8) -> i1
   return %res : i1
 }
 

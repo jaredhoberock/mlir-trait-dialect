@@ -28,8 +28,7 @@ trait.impl for @Get[!trait.claim<@Assumption[i32]>] where [
 // CHECK-NOT: builtin.unrealized_conversion_cast
 func.func @call_get(%c: !trait.claim<@Get[!R]>) -> !R {
   %res = trait.method.call %c @Get[!R]::@get()
-    :  () -> !R
-    as () -> !R
+    : () -> !R
   return %res : !R
 }
 
@@ -42,8 +41,7 @@ func.func @test() {
 
   // call a polymorphic function that returns the !trait.claim
   trait.func.call @call_get(%a)
-    :  (!trait.claim<@Get[!R]>) -> !R
-    as (!trait.claim<@Get[!trait.claim<@Assumption[i32]>]>) -> !trait.claim<@Assumption[i32]>
+    : (!trait.claim<@Get[!trait.claim<@Assumption[i32]>]>) -> !trait.claim<@Assumption[i32]>
 
   return
 }

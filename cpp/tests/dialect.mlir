@@ -13,8 +13,7 @@ trait.trait @PartialEq[!PartialEqS,!PartialEqO] {
   func.func @ne(%self: !PartialEqS, %other: !PartialEqO) -> i1 {
     %a = trait.assume @PartialEq[!PartialEqS,!PartialEqO]
     %equal = trait.method.call %a @PartialEq[!PartialEqS,!PartialEqO]::@eq(%self, %other)
-      :  (!PartialEqS,!PartialEqO) -> i1
-      as (!PartialEqS,!PartialEqO) -> i1
+      : (!PartialEqS,!PartialEqO) -> i1
     %true = arith.constant 1 : i1
     %not_equal = arith.xori %equal, %true : i1
     return %not_equal : i1
@@ -36,8 +35,7 @@ trait.impl for @PartialEq[i32,i32] {
 func.func @foo(%w: !W, %x: !T, %y: !T) -> i1 {
   // CHECK: %[[RES:.*]] = trait.method.call %{{.*}} @PartialEq
   %res = trait.method.call %w @PartialEq[!T,!T]::@eq(%x, %y)
-    : (!PartialEqS, !PartialEqO) -> i1
-    as (!T,!T) -> i1
+    : (!T,!T) -> i1
   return %res : i1
 }
 
@@ -47,8 +45,7 @@ func.func @bar(%x: i32, %y: i32) -> i1 {
 
   // CHECK: %[[RES:.*]] = trait.func.call @foo
   %res = trait.func.call @foo(%w, %x, %y)
-    : (!W,!T,!T) -> i1
-    as (!trait.claim<@PartialEq[i32,i32] by @PartialEq_impl_i32_i32>, i32, i32) -> i1
+    : (!trait.claim<@PartialEq[i32,i32] by @PartialEq_impl_i32_i32>, i32, i32) -> i1
 
   return %res : i1
 }
@@ -86,8 +83,7 @@ trait.trait @PartialOrd[!PartialOrdS,!PartialOrdO] where [
     %a = trait.assume @PartialOrd[!PartialOrdS,!PartialOrdO]
 
     %cmp = trait.method.call %a @PartialOrd[!PartialOrdS,!PartialOrdO]::@partial_cmp(%self, %other)
-      :  (!PartialOrdS,!PartialOrdO) -> !opt_ord
-      as (!PartialOrdS,!PartialOrdO) -> !opt_ord
+      : (!PartialOrdS,!PartialOrdO) -> !opt_ord
 
     %ord_lt = arith.constant 0 : !opt_ord
     %res = arith.cmpi eq, %cmp, %ord_lt : !opt_ord
@@ -103,12 +99,10 @@ trait.trait @PartialOrd[!PartialOrdS,!PartialOrdO] where [
       to @PartialEq[!PartialOrdS,!PartialOrdO]
 
     %lt = trait.method.call %a @PartialOrd[!PartialOrdS,!PartialOrdO]::@lt(%self, %other)
-      :  (!PartialOrdS,!PartialOrdO) -> i1
-      as (!PartialOrdS, !PartialOrdO) -> i1
+      : (!PartialOrdS, !PartialOrdO) -> i1
 
     %eq = trait.method.call %partial_eq_p @PartialEq[!PartialOrdS,!PartialOrdO]::@eq(%self, %other)
-      :  (!PartialEqS,!PartialEqO) -> i1
-      as (!PartialOrdS, !PartialOrdO) -> i1
+      : (!PartialOrdS, !PartialOrdO) -> i1
 
     %res = arith.ori %lt, %eq : i1
     return %res : i1
@@ -119,8 +113,7 @@ trait.trait @PartialOrd[!PartialOrdS,!PartialOrdO] where [
     %a = trait.assume @PartialOrd[!PartialOrdS,!PartialOrdO]
 
     %cmp = trait.method.call %a @PartialOrd[!PartialOrdS,!PartialOrdO]::@partial_cmp(%self, %other)
-      :  (!PartialOrdS,!PartialOrdO) -> !opt_ord
-      as (!PartialOrdS,!PartialOrdO) -> !opt_ord
+      : (!PartialOrdS,!PartialOrdO) -> !opt_ord
 
     %ord_gt = arith.constant 2 : !opt_ord
     %res = arith.cmpi eq, %cmp, %ord_gt : !opt_ord
@@ -136,12 +129,10 @@ trait.trait @PartialOrd[!PartialOrdS,!PartialOrdO] where [
       to @PartialEq[!PartialOrdS,!PartialOrdO]
 
     %gt = trait.method.call %partial_ord @PartialOrd[!PartialOrdS,!PartialOrdO]::@gt(%self, %other)
-      :  (!PartialOrdS,!PartialOrdO) -> i1
-      as (!PartialOrdS, !PartialOrdO) -> i1
+      : (!PartialOrdS, !PartialOrdO) -> i1
 
     %eq = trait.method.call %partial_eq @PartialEq[!PartialOrdS,!PartialOrdO]::@eq(%self, %other)
-      :  (!PartialEqS,!PartialEqO) -> i1
-      as (!PartialOrdS, !PartialOrdO) -> i1
+      : (!PartialOrdS, !PartialOrdO) -> i1
 
     %res = arith.ori %gt, %eq : i1
     return %res : i1
@@ -188,8 +179,7 @@ trait.trait @Ord[!OrdS] where [
       to @PartialOrd[!OrdS,!OrdS]
 
     %cond = trait.method.call %partial_ord_p @PartialOrd[!OrdS,!OrdS]::@gt(%self, %other)
-      :  (!PartialOrdS,!PartialOrdO) -> i1
-      as (!OrdS,!OrdS) -> i1
+      : (!OrdS,!OrdS) -> i1
 
     %res = scf.if %cond -> !OrdS {
       scf.yield %self : !OrdS
@@ -208,8 +198,7 @@ trait.trait @Ord[!OrdS] where [
       to @PartialOrd[!OrdS,!OrdS]
 
     %cond = trait.method.call %partial_ord @PartialOrd[!OrdS,!OrdS]::@le(%self, %other)
-      : (!PartialOrdS,!PartialOrdO) -> i1
-      as (!OrdS,!OrdS) -> i1
+      : (!OrdS,!OrdS) -> i1
 
     %res = scf.if %cond -> !OrdS {
       scf.yield %self: !OrdS
@@ -259,8 +248,7 @@ func.func @max(%a: i32, %b: i32) -> i32 {
   %ord_p = trait.witness @Ord_impl_i32_p for @Ord[i32]
 
   %res = trait.method.call %ord_p @Ord[i32]::@max(%a, %b)
-    :  (!OrdS, !OrdS) -> !OrdS
-    as (i32, i32) -> i32
+    : (i32, i32) -> i32
     by @Ord_impl_i32_p
 
   return %res : i32
@@ -271,8 +259,7 @@ func.func @min(%a: i32, %b: i32) -> i32 {
   %ord_p = trait.witness @Ord_impl_i32_p for @Ord[i32]
 
   %res = trait.method.call %ord_p @Ord[i32]::@min(%a, %b)
-    : (!OrdS, !OrdS) -> !OrdS
-    as (i32, i32) -> i32
+    : (i32, i32) -> i32
     by @Ord_impl_i32_p
 
   return %res : i32

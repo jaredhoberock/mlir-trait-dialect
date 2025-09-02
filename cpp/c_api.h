@@ -32,7 +32,6 @@ MlirOperation traitImplOpCreate(MlirLocation loc, MlirStringRef traitName,
 MlirOperation traitMethodCallOpCreate(MlirLocation loc,
                                       MlirStringRef traitName,
                                       MlirStringRef methodName,
-                                      MlirType methodFunctionType,
                                       MlirValue claim,
                                       MlirValue* arguments, intptr_t numArguments,
                                       MlirType* resultTypes, intptr_t numResults);
@@ -40,7 +39,6 @@ MlirOperation traitMethodCallOpCreate(MlirLocation loc,
 /// Create a trait.func.call operation
 MlirOperation traitFuncCallOpCreate(MlirLocation loc,
                                     MlirStringRef callee,
-                                    MlirType calleeFunctionType,
                                     MlirValue* arguments, intptr_t numArguments,
                                     MlirType* resultTypes, intptr_t numResults);
 

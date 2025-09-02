@@ -19,16 +19,14 @@ trait.impl for @Get[i32] {
 !R = !trait.poly<2>
 func.func @return_existential_type(%claim: !trait.claim<@Get[!A]>) -> !R {
   %res = trait.method.call %claim @Get[!A]::@get()
-    :  () -> !T
-    as () -> !R
+    : () -> !R
   return %res : !R
 }
 
 func.func @bar() -> i32 {
   %a = trait.allege @Get[i32]
   %res = trait.func.call @return_existential_type(%a)
-    :  (!trait.claim<@Get[!A]>) -> !R
-    as (!trait.claim<@Get[i32]>) -> i32
+    : (!trait.claim<@Get[i32]>) -> i32
   return %res : i32
 }
 

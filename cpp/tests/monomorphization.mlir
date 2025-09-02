@@ -9,8 +9,7 @@ trait.trait @PartialEq [!S,!O] {
   func.func @neq(%self: !S, %other: !O) -> i1 {
     %partial_eq = trait.assume @PartialEq[!S,!O]
     %equal = trait.method.call %partial_eq @PartialEq[!S,!O]::@eq(%self, %other)
-      :  (!S, !O) -> i1
-      as (!S, !O) -> i1
+      : (!S, !O) -> i1
     %true = arith.constant 1 : i1
     %res = arith.xori %equal, %true : i1
     return %res : i1
@@ -32,8 +31,7 @@ trait.impl for @PartialEq[i32,i32] {
 // CHECK: call @PartialEq_impl_i32_i32_eq
 func.func @foo(%c: !trait.claim<@PartialEq[!T,!T]>, %x: !T, %y: !T) -> i1 {
   %res = trait.method.call %c @PartialEq[!T,!T]::@eq(%x, %y)
-    :  (!S,!O) -> i1
-    as (!T,!T) -> i1
+    : (!T,!T) -> i1
   return %res : i1
 }
 
@@ -44,8 +42,7 @@ func.func @foo(%c: !trait.claim<@PartialEq[!T,!T]>, %x: !T, %y: !T) -> i1 {
 func.func @bar(%x: i32, %y: i32) -> i1 {
   %p = trait.witness @PartialEq_impl_i32_i32 for @PartialEq[i32,i32]
   %res = trait.func.call @foo(%p, %x, %y)
-    : (!trait.claim<@PartialEq[!T,!T]>, !T, !T) -> i1
-    as (!trait.claim<@PartialEq[i32,i32] by @PartialEq_impl_i32_i32>, i32, i32) -> i1
+    : (!trait.claim<@PartialEq[i32,i32] by @PartialEq_impl_i32_i32>, i32, i32) -> i1
   return %res : i1
 }
 
@@ -55,12 +52,10 @@ func.func @bar(%x: i32, %y: i32) -> i1 {
 // CHECK: call @PartialEq_impl_i32_i32_neq
 func.func @baz(%c: !trait.claim<@PartialEq[!T,!T]>, %x: !T, %y: !T) -> i1 {
   %eq = trait.method.call %c @PartialEq[!T,!T]::@eq(%x, %y)
-    :  (!S,!O) -> i1
-    as (!T,!T) -> i1
+    : (!T,!T) -> i1
 
   %neq = trait.method.call %c @PartialEq[!T,!T]::@neq(%x, %y)
-    :  (!S,!O) -> i1
-    as (!T,!T) -> i1
+    : (!T,!T) -> i1
 
   %res = arith.ori %eq, %neq : i1
   return %res : i1
@@ -72,7 +67,6 @@ func.func @baz(%c: !trait.claim<@PartialEq[!T,!T]>, %x: !T, %y: !T) -> i1 {
 func.func @qux(%x: i32, %y: i32) -> i1 {
   %p = trait.witness @PartialEq_impl_i32_i32 for @PartialEq[i32,i32]
   %result = trait.func.call @baz(%p, %x, %y)
-    : (!trait.claim<@PartialEq[!T,!T]>, !T,!T) -> i1
-    as (!trait.claim<@PartialEq[i32,i32] by @PartialEq_impl_i32_i32>, i32,i32) -> i1
+    : (!trait.claim<@PartialEq[i32,i32] by @PartialEq_impl_i32_i32>, i32,i32) -> i1
   return %result : i1
 }

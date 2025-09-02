@@ -437,22 +437,19 @@ def MethodCallOp : TraitDialectOp<"method.call", [
 
       // call @eq using that unproven claim
       %res0 = trait.method.call %partial_eq @PartialEq[i32,i32]::@eq(%x, %y)
-        :  (!trait.poly<0>, !trait.poly<1>)
-        as (i32, i32) -> i1
+        : (i32, i32) -> i1
 
       // get a proven claim value for @PartialEq[i32,i32]
       %partial_eq_p = trait.witness @PartialEq_impl_i32_i32 for @PartialEq[i32,i32]
 
       // call @eq using that proven claim
       %res1 = trait.method.call %partial_eq_p @PartialEq[i32,i32]::@eq(%x, %y)
-        :  (!trait.poly<0>, !trait.poly<1>)
-        as (i32, i32) -> i1
+        : (i32, i32) -> i1
         by @PartialEq_impl_i32_i32
   }];
 
   let arguments = (ins
     SymbolRefAttr:$method_ref,
-    TypeAttrOf<FunctionType>:$method_function_type,
     Claim:$claim,
     Variadic<AnyType>:$arguments
   );
@@ -464,7 +461,6 @@ def MethodCallOp : TraitDialectOp<"method.call", [
       "TypeRange":$results,
       "FlatSymbolRefAttr":$traitRef,
       "FlatSymbolRefAttr":$methodRef,
-      "TypeAttr":$methodFunctionType,
       "Value":$claim,
       "ValueRange":$arguments), [{
         MLIRContext *ctx = $_builder.getContext();
@@ -477,7 +473,7 @@ def MethodCallOp : TraitDialectOp<"method.call", [
         );
 
         // build the operation with the created nested reference
-        return build($_builder, $_state, results, qualifiedRef, methodFunctionType, claim, arguments);
+        return build($_builder, $_state, results, qualifiedRef, claim, arguments);
     }]>,
 
     // builder that takes trait and method names separately
@@ -485,7 +481,6 @@ def MethodCallOp : TraitDialectOp<"method.call", [
       "TypeRange":$results,
       "StringRef":$traitName,
       "StringRef":$methodName,
-      "TypeAttr":$methodFunctionType,
       "Value":$claim,
       "ValueRange":$arguments), [{
         // convert strings to FlatSymbolRefAttrs and call the other builder
@@ -494,13 +489,23 @@ def MethodCallOp : TraitDialectOp<"method.call", [
         FlatSymbolRefAttr methodRef = FlatSymbolRefAttr::get(ctx, methodName);
 
         // call the other builder
-        return build($_builder, $_state, results, traitRef, methodRef, methodFunctionType, claim, arguments);
+        return build($_builder, $_state, results, traitRef, methodRef, claim, arguments);
     }]>,
   ];
 
   let results = (outs Variadic<AnyType>);
 
   let extraClassDeclaration = [{
+    FailureOr<TraitOp> getTrait(llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+
+    FailureOr<func::FuncOp> getMethod(llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+
+    FailureOr<FunctionType> getMethodFunctionType(llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
+      auto maybeMethod = getMethod(err);
+      if (failed(maybeMethod)) return failure();
+      return maybeMethod->getFunctionType();
+    }
+
     // builds a substitution unifying the callee's function type
     // with the types of actual call arguments
     FailureOr<DenseMap<Type,Type>> buildSubstitution(llvm::function_ref<InFlightDiagnostic()> err = nullptr);
@@ -590,19 +595,43 @@ def FuncCallOp : TraitDialectOp<"func.call", [
       %y = ... : i32
       %a = trait.allege @PartialEq[i32,i32]
       %r = trait.func.call @foo(%a, %x, %y)
-        : (!trait.claim<@PartialEq[!S,!O]>, !trait.poly<0>, !trait.poly<0>) -> i1
-        to (!trait.claim<@PartialEq[i32,i32]>, i32, i32) -> i1
+        : (!trait.claim<@PartialEq[i32,i32]>, i32, i32) -> i1
   }];
 
   let arguments = (ins 
-      FlatSymbolRefAttr:$callee,
-      TypeAttrOf<FunctionType>:$callee_function_type,
+      FlatSymbolRefAttr:$callee_name,
       Variadic<AnyType>:$operands
   );
 
   let results = (outs Variadic<AnyType>);
 
   let extraClassDeclaration = [{
+    FailureOr<ModuleOp> getModule(llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
+      auto module = getOperation()->getParentOfType<ModuleOp>();
+      if (!module) {
+        if (err) err() << "not in a module";
+        return failure();
+      }
+      return module;
+    }
+
+    FailureOr<func::FuncOp> getCallee(llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
+      auto name = getCalleeNameAttr();
+      auto callee = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(*this, name);
+      if (!callee) {
+        if (err) err() << "'" << name.getValue()
+                       << "' does not refer to a valid func.func";
+        return failure();
+      }
+      return callee;
+    }
+
+    FailureOr<FunctionType> getCalleeFunctionType(llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
+      auto callee = getCallee(err);
+      if (failed(callee)) return failure();
+      return callee->getFunctionType();
+    }
+
     func::FuncOp getOrInstantiateCallee(OpBuilder& builder);
 
     func::FuncOp instantiateCalleeAtInsertionPoint(OpBuilder& builder);
@@ -613,10 +642,10 @@ def FuncCallOp : TraitDialectOp<"func.call", [
 
     // returns all distinct PolyTypes that occur in the FunctionType of this FuncOp's callee
     SmallVector<PolyType, 4> getCalleeTypeParams() {
-      return getPolyTypesIn(getCalleeFunctionType());
+      return getPolyTypesIn(*getCalleeFunctionType());
     }
 
-    // returns the name of the (possibly instantiated) callee after instantiation
+    // returns the name of the (possibly instantiated) callee after monomorphization
     std::string getNameOfCalleeInstance();
 
     operand_range getArgOperands() {
@@ -628,15 +657,15 @@ def FuncCallOp : TraitDialectOp<"func.call", [
     }
 
     CallInterfaceCallable getCallableForCallee() {
-      return (*this)->getAttrOfType<SymbolRefAttr>("callee");
+      return (*this)->getAttrOfType<SymbolRefAttr>("callee_name");
     }
 
     void setCalleeFromCallable(CallInterfaceCallable callee) {
-      (*this)->setAttr("callee", cast<SymbolRefAttr>(callee));
+      (*this)->setAttr("callee_name", cast<SymbolRefAttr>(callee));
     }
   }];
 
-  let assemblyFormat = "$callee `(` $operands `)` attr-dict `:` $callee_function_type `as` functional-type($operands, results)";
+  let assemblyFormat = "$callee_name `(` $operands `)` attr-dict `:` functional-type($operands, results)";
 }
 
 

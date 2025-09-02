@@ -77,7 +77,6 @@ MlirOperation traitImplOpCreate(MlirLocation loc, MlirStringRef traitName,
 MlirOperation traitMethodCallOpCreate(MlirLocation loc,
                                       MlirStringRef traitName,
                                       MlirStringRef methodName,
-                                      MlirType methodFunctionType,
                                       MlirValue claim,
                                       MlirValue* arguments, intptr_t numArguments,
                                       MlirType* resultTypes, intptr_t numResults) {
@@ -99,7 +98,6 @@ MlirOperation traitMethodCallOpCreate(MlirLocation loc,
     results,
     StringRef(traitName.data, traitName.length),
     StringRef(methodName.data, methodName.length),
-    TypeAttr::get(unwrap(methodFunctionType)),
     unwrap(claim),
     args
   );
@@ -109,7 +107,6 @@ MlirOperation traitMethodCallOpCreate(MlirLocation loc,
 
 MlirOperation traitFuncCallOpCreate(MlirLocation loc,
                                     MlirStringRef callee,
-                                    MlirType calleeFunctionType,
                                     MlirValue* arguments, intptr_t numArguments,
                                     MlirType* resultTypes, intptr_t numResults) {
   MLIRContext* ctx = unwrap(loc)->getContext();
@@ -129,7 +126,6 @@ MlirOperation traitFuncCallOpCreate(MlirLocation loc,
     unwrap(loc),
     results,
     FlatSymbolRefAttr::get(ctx, StringRef(callee.data, callee.length)),
-    TypeAttr::get(unwrap(calleeFunctionType)),
     args
   );
 

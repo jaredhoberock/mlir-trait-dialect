@@ -320,7 +320,6 @@ struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
       op,
       concreteResults,
       callee.getSymName(),
-      callee.getFunctionType(),
       args
     );
 

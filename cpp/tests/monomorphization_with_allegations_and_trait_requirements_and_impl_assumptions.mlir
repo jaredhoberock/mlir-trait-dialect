@@ -39,8 +39,7 @@ func.func @foo(%x: i8) -> i1 {
   %c = trait.allege @C[i8]
   // CHECK: call @C_impl_i8_method
   %res = trait.method.call %c @C[i8]::@method(%x)
-    :  (!C) -> i1
-    as (i8) -> i1
+    : (i8) -> i1
   return %res : i1
 }
 

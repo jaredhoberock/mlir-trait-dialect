@@ -25,8 +25,7 @@ trait.trait @PartialEq[!PartialEqSelf, !PartialEqOther] {
     %partial_eq = trait.assume @PartialEq[!PartialEqSelf, !PartialEqOther]
 
     %eq = trait.method.call %partial_eq @PartialEq[!PartialEqSelf,!PartialEqOther]::@eq(%self, %other)
-      :  (!PartialEqSelf, !PartialEqOther) -> i1
-      as (!PartialEqSelf, !PartialEqOther) -> i1
+      : (!PartialEqSelf, !PartialEqOther) -> i1
 
     %true = arith.constant true
     %res = arith.xori %eq, %true : i1
@@ -53,8 +52,7 @@ trait.trait @PartialOrd[!PartialOrdSelf, !PartialOrdOther] where [
     %partial_ord = trait.assume @PartialOrd[!PartialOrdSelf,!PartialOrdOther]
 
     %cmp = trait.method.call %partial_ord @PartialOrd[!PartialOrdSelf,!PartialOrdOther]::@partial_cmp(%self, %other)
-      :  (!PartialOrdSelf, !PartialOrdOther) -> !ordering
-      as (!PartialOrdSelf, !PartialOrdOther) -> !ordering
+      : (!PartialOrdSelf, !PartialOrdOther) -> !ordering
 
     %res = arith.constant false
     return %res : i1
