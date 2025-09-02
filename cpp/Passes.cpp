@@ -176,7 +176,7 @@ struct ProveClaimPattern : OpRewritePattern<AllegeOp> {
     // build or reuse canonical evidence for this claim
     auto sym = resolver.resolveAndEnsureProofFor(op.getClaim(), rewriter, errFn);
     if (failed(sym))
-      return failure();
+      return rewriter.notifyMatchFailure(op, "couldn't find proof of this claim");
 
     // replace the allegation with a witness
     rewriter.replaceOpWithNewOp<WitnessOp>(
@@ -221,6 +221,14 @@ FailureOr<ImplResolver> proveClaims(ModuleOp module) {
     if (failed(applyPatternsGreedily(module, std::move(patterns))))
       return failure();
   }
+
+  // assert that no trait.allege remain
+  bool hasLeftovers = false;
+  module.walk([&](AllegeOp op) {
+    hasLeftovers = true;
+    op.emitError() << "unresolved trait.allege after ProveClaimPattern";
+  });
+  if (hasLeftovers) return failure();
 
   // rewrite all proven !trait.claim types to ensure they carry proofs
   if (failed(applySubstitutionInPlace(resolver.buildClaimSubstitutionFromMemo(), module)))

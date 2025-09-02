@@ -142,9 +142,8 @@ static FailureOr<ImplOp> resolveImplFor(
       candidates.push_back(impl);
   }
 
-  if (candidates.empty()) {
-    return memo.chosen[app] = failure();
-  }
+  if (candidates.empty())
+    return memo.chosen[app] = diagnoseImplResolutionFailure(trait, wanted, candidates, candidates, err);
 
   // keep only candidates whose assumptions are satisfiable
   SmallVector<ImplOp> good, bad;
@@ -197,24 +196,28 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
     ClaimType wanted,
     PatternRewriter &rewriter,
     llvm::function_ref<InFlightDiagnostic()> err) {
-  if (!wanted.isMonomorphic()) {
-    if (err) err() << "resolveAndEnsureProofFor requires a monomorphic claim";
+  // resolve the impl first so that we can monomorphize wanted
+  auto implOr = resolveImplFor(wanted, module, memo.resolutionMemo, generators, rewriter, err);
+  if (failed(implOr)) return failure();
+  ImplOp impl = *implOr;
+
+  // build the substitution for (impl, wanted)
+  DenseMap<Type,Type> subst = impl.buildSubstitutionFor(wanted);
+
+  // monomorphize the wanted claim with that substitution
+  ClaimType monomorphicWanted = dyn_cast_or_null<ClaimType>(applySubstitutionToFixedPoint(subst, wanted));
+  if (!monomorphicWanted || !monomorphicWanted.isMonomorphic()) {
+    if (err) err() << "could not monomorphize claim: " << wanted;
     return failure();
   }
 
-  TraitApplicationAttr app = wanted.getTraitApplication();
+  TraitApplicationAttr app = monomorphicWanted.getTraitApplication();
 
-  // first check the proof memo
+  // check the proof memo for this monomorphic app
   if (auto it = memo.proofMemo.find(app); it != memo.proofMemo.end())
     return it->second;
 
   MLIRContext* ctx = module.getContext();
-
-  // resolve the unique impl for this concrete application
-  auto implOr = resolveImplFor(wanted, module, memo.resolutionMemo, generators, rewriter, err);
-  if (failed(implOr))
-    return failure();
-  ImplOp impl = *implOr;
 
   // check for a self-proof
   if (impl.isSelfProof()) {
@@ -230,25 +233,20 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
     return sym;
   }
 
-  // first compute all subproof symbols (requirements & assumptions)
+  // recursively prove monomorphic obligations
   SmallVector<Attribute> subproofSymbols;
-
-  // ask the impl to build a substitution for the wanted claim 
-  auto subst = impl.buildSubstitutionFor(wanted);
-
-  // recursively collect proofs for impl obligations
   for (ClaimType ob : impl.getObligationsAsClaimsWith(subst)) {
-    auto sym = resolveAndEnsureProofFor(ob, rewriter);
+    auto sym = resolveAndEnsureProofFor(ob, rewriter, err);
     if (failed(sym)) return failure();
     subproofSymbols.push_back(*sym);
   }
 
-  // create a new proof op
+  // create the proof and memoize by the monomorphic app 
   OpBuilder::InsertionGuard guard(rewriter);
   rewriter.setInsertionPointToEnd(module.getBody());
 
-  // generate a mangled name for the proof based on the wanted claim
-  std::string proofName = impl.generateMangledName(wanted) + "_p";
+  // generate a mangled name for the proof based on the monomorphic wanted claim
+  std::string proofName = impl.generateMangledName(monomorphicWanted) + "_p";
 
   ProofOp proof = rewriter.create<ProofOp>(
     rewriter.getUnknownLoc(),

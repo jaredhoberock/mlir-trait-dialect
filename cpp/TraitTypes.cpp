@@ -403,9 +403,9 @@ LogicalResult substituteWith(Type formal,
   if (auto mti = dyn_cast<MonomorphizableTypeInterface>(formal))
     return mti.substituteWith(actual, module, subst, err);
 
-  // if actual is a PolyType, treat it as an existential type variable
+  // if actual is a TypeVariableInterface, treat it as an existential type variable
   // swap the positions of actual & formal and recurse
-  if (isa<PolyType>(actual))
+  if (isa<TypeVariableInterface>(actual))
     return substituteWith(actual, formal, module, subst, err);
 
   // if the normalized types are equal, unification succeeds

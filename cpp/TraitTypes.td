@@ -7,7 +7,7 @@ include "TraitAttributes.td"
 include "TraitTypeInterfaces.td"
 
 // Represents a polymorphic type variable
-def PolyType : TypeDef<TraitDialect, "Poly", [MonomorphizableTypeInterface]> {
+def PolyType : TypeDef<TraitDialect, "Poly", [MonomorphizableTypeInterface, TypeVariableInterface]> {
   let mnemonic = "poly";
   let summary = "A polymorphic type variable";
 
