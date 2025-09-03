@@ -14,20 +14,20 @@ struct ImplGenerator {
   virtual ~ImplGenerator() = default;
 
   virtual LogicalResult
-  generate(TraitOp trait,
-           ClaimType wanted,
-           PatternRewriter &rewriter) const = 0;
+  generateImpl(TraitOp trait,
+               ClaimType wanted,
+               PatternRewriter &rewriter) const = 0;
 };
 
 // Composite that itself behaves like an ImplGenerator
 class ImplGeneratorSet : public ImplGenerator {
   public:
     inline LogicalResult
-    generate(TraitOp trait,
-             ClaimType wanted,
-             PatternRewriter &rewriter) const override {
+    generateImpl(TraitOp trait,
+                 ClaimType wanted,
+                 PatternRewriter &rewriter) const override {
       for (const auto &g : generators) {
-        if (succeeded(g->generate(trait, wanted, rewriter)))
+        if (succeeded(g->generateImpl(trait, wanted, rewriter)))
           return success();
       }
       return failure();

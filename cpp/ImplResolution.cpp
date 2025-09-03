@@ -132,7 +132,7 @@ static FailureOr<ImplOp> resolveImplFor(
     rewriter.setInsertionPointToEnd(module.getBody());
 
     // discard the result. if it successfully generated an impl, it will be collected below
-    (void)gen.generate(trait, wanted, rewriter);
+    (void)gen.generateImpl(trait, wanted, rewriter);
   }
 
   // collect candidate impls whose self claim can be substituted with our wanted claim
