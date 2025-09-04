@@ -1,4 +1,4 @@
-// RUN: mlir-opt -pass-pipeline='builtin.module(prove-claims-trait)' %s | FileCheck %s
+// RUN: mlir-opt -pass-pipeline='builtin.module(resolve-impls-trait)' %s | FileCheck %s
 
 !A = !trait.poly<0>
 // CHECK: trait.trait @

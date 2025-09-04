@@ -7,13 +7,14 @@
 
 namespace mlir::trait {
 
-// Interface to generate a new ImplOp for the wanted claim
-// success() -> at least one ImplOp was inserted (IR edited)
-// failure() -> not applicable / no edit
+// Interface to generate a new ImplOp for the wanted claim, or fail
 struct ImplGenerator {
   virtual ~ImplGenerator() = default;
 
-  virtual LogicalResult
+  // Creates exactly one new ImplOp for the wanted claim, or fails.
+  // Upon success, returns the newly created ImplOp whose self claim
+  // must unify with wanted.
+  virtual FailureOr<ImplOp>
   generateImpl(TraitOp trait,
                ClaimType wanted,
                PatternRewriter &rewriter) const = 0;
@@ -22,13 +23,15 @@ struct ImplGenerator {
 // Composite that itself behaves like an ImplGenerator
 class ImplGeneratorSet : public ImplGenerator {
   public:
-    inline LogicalResult
+    inline FailureOr<ImplOp>
     generateImpl(TraitOp trait,
                  ClaimType wanted,
                  PatternRewriter &rewriter) const override {
+      // return the first successful result of all generators
       for (const auto &g : generators) {
-        if (succeeded(g->generateImpl(trait, wanted, rewriter)))
-          return success();
+        auto maybeImpl = g->generateImpl(trait, wanted, rewriter);
+        if (succeeded(maybeImpl))
+          return maybeImpl;
       }
       return failure();
     }

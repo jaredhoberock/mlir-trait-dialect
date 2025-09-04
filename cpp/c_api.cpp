@@ -21,8 +21,8 @@ MlirPass traitCreateMonomorphizePass() {
   return wrap(createMonomorphizePass().release());
 }
 
-MlirPass traitCreateProveClaimsPass() {
-  return wrap(createProveClaimsPass().release());
+MlirPass traitCreateResolveImplsPass() {
+  return wrap(createResolveImplsPass().release());
 }
 
 MlirPass traitCreateVerifyAcyclicTraitsPass() {

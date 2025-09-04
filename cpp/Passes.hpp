@@ -25,16 +25,16 @@ struct InstantiateMonomorphsPass : PassWrapper<InstantiateMonomorphsPass, Operat
   void runOnOperation() override;
 };
 
-struct ProveClaimsPass : PassWrapper<ProveClaimsPass, OperationPass<ModuleOp>> {
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ProveClaimsPass);
+struct ResolveImplsPass : PassWrapper<ResolveImplsPass, OperationPass<ModuleOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ResolveImplsPass);
 
-  inline StringRef getArgument() const final { return "prove-claims-trait"; }
-  inline StringRef getDescription() const final { return "Elaborate claims into proofs of implementations."; }
+  inline StringRef getArgument() const final { return "resolve-impls-trait"; }
+  inline StringRef getDescription() const final { return "Elaborate claims into proofs of implementations by resolving impls."; }
 
   void runOnOperation() override;
 };
 
-std::unique_ptr<Pass> createProveClaimsPass();
+std::unique_ptr<Pass> createResolveImplsPass();
 
 struct VerifyMonomorphsPass : PassWrapper<VerifyMonomorphsPass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(VerifyMonomorphsPass);
@@ -57,5 +57,14 @@ struct VerifyAcyclicTraitsPass : PassWrapper<VerifyAcyclicTraitsPass, OperationP
 };
 
 std::unique_ptr<Pass> createVerifyAcyclicTraitsPass();
+
+struct EmitPolymorphsPass : PassWrapper<EmitPolymorphsPass, OperationPass<ModuleOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(EmitPolymorphsPass);
+
+  inline StringRef getArgument() const final { return "emit-polymorphs-trait"; }
+  inline StringRef getDescription() const final { return "Lower operations of participating dialects into polymorphic trait operations."; }
+
+  void runOnOperation() override;
+};
 
 }

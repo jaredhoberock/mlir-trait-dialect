@@ -126,36 +126,35 @@ static FailureOr<ImplOp> resolveImplFor(
   // get the trait
   TraitOp trait = app.getTraitOrAbort(module, "resolveImplFor: cannot find trait");
 
-  // allow the generator to generate the wanted impl
-  {
-    OpBuilder::InsertionGuard guard(rewriter);
-    rewriter.setInsertionPointToEnd(module.getBody());
-
-    // discard the result. if it successfully generated an impl, it will be collected below
-    (void)gen.generateImpl(trait, wanted, rewriter);
-  }
-
-  // collect candidate impls whose self claim can be substituted with our wanted claim
+  // gather existing candidate that unify on the self-claim
   SmallVector<ImplOp> candidates;
   for (ImplOp impl : trait.getImpls()) {
     if (succeeded(substituteWith(impl.getSelfClaim(), wanted, module)))
       candidates.push_back(impl);
   }
 
-  if (candidates.empty())
-    return memo.chosen[app] = diagnoseImplResolutionFailure(trait, wanted, candidates, candidates, err);
-
-  // keep only candidates whose assumptions are satisfiable
+  // partition into good/bad by satisfiable assumptions
   SmallVector<ImplOp> good, bad;
   for (ImplOp impl : candidates) {
-    if (succeeded(assumptionsSatisfiableFor(impl, wanted, module, memo, gen, rewriter))) {
+    if (succeeded(assumptionsSatisfiableFor(impl, wanted, module, memo, gen, rewriter)))
       good.push_back(impl);
-    } else {
+    else
       bad.push_back(impl);
+  }
+
+  // if there aren't any good candidates, try to generate one
+  if (good.empty()) {
+    PatternRewriter::InsertionGuard guard(rewriter);
+    rewriter.setInsertionPointToEnd(module.getBody());
+    if (auto impl = gen.generateImpl(trait, wanted, rewriter); succeeded(impl)) {
+      if (succeeded(assumptionsSatisfiableFor(*impl, wanted, module, memo, gen, rewriter)))
+        good.push_back(*impl);
+      else
+        bad.push_back(*impl);
     }
   }
 
-  // there must be exactly one candidate whose assumptions are satisfiable
+  // if exactly one good candidate exists, return it
   if (good.size() == 1)
     return memo.chosen[app] = good.front();
 
