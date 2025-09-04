@@ -1305,7 +1305,8 @@ void AllegeOp::print(OpAsmPrinter &p) {
 LogicalResult AllegeOp::verify() {
   // claim must be monomorphic
   if (!getClaim().isMonomorphic())
-    return failure();
+    return emitOpError() << "expected monomorphic claim, got "
+                         << getClaim();
 
   return success();
 }
