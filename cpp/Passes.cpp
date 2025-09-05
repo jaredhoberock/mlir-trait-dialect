@@ -134,61 +134,13 @@ std::unique_ptr<Pass> createVerifyAcyclicTraitsPass() {
 
 namespace {
 
-struct RewriteTypesInPlace : RewritePattern {
-  AttrTypeReplacer &replacer;
-
-  RewriteTypesInPlace(MLIRContext* ctx, AttrTypeReplacer& replacer)
-    : RewritePattern(MatchAnyOpTypeTag{}, /*benefit=*/1, ctx), replacer(replacer) {}
-
-  bool needsRewrite(Operation *op) const {
-    // op needs to be rewritten if replacer would modify any element in op
-
-    // check results
-    for (Type t : op->getResultTypes()) {
-      if (t != replacer.replace(t)) return true;
-    }
-    // check attributes
-    for (NamedAttribute na : op->getAttrs()) {
-      if (na.getValue() != replacer.replace(na.getValue())) return true;
-    }
-    // region block args
-    for (Region &r : op->getRegions()) {
-      for (Block &b : r) {
-        for (BlockArgument a : b.getArguments()) {
-          if (a.getType() != replacer.replace(a.getType())) return true;
-        }
-      }
-    }
-    return false;
-  }
-
-  LogicalResult matchAndRewrite(Operation *op, PatternRewriter &rewriter) const override {
-    if (!needsRewrite(op)) return rewriter.notifyMatchFailure(op, "no type changes");
-
-    rewriter.modifyOpInPlace(op, [&] {
-      // replace attributes, results, & nested block-arg types
-      replacer.replaceElementsIn(op,
-                                 /*replaceAttrs=*/true,
-                                 /*replaceLocs=*/false,
-                                 /*replaceTypes=*/true);
-    });
-
-    return success();
-  }
-};
-
 static LogicalResult applySubstitutionInPlace(const DenseMap<Type,Type>& subst, Operation* root) {
   if (subst.empty()) return success();
-
   AttrTypeReplacer replacer = makeTypeReplacerFromSubstitution(subst);
-
-  MLIRContext *ctx = root->getContext();
-  RewritePatternSet patterns(ctx);
-  patterns.add<RewriteTypesInPlace>(ctx, replacer);
-
-  if (failed(applyPatternsGreedily(root, std::move(patterns))))
-    return failure();
-
+  replacer.recursivelyReplaceElementsIn(root,
+                                        /*replaceAttrs=*/true,
+                                        /*replaceLocs=*/false,
+                                        /*replaceTypes=*/true);
   return mlir::verify(root);
 }
 
@@ -260,6 +212,8 @@ FailureOr<ImplResolver> resolveImpls(ModuleOp module) {
   if (hasLeftovers) return failure();
 
   // rewrite all proven !trait.claim types to ensure they carry proofs
+  // XXX TODO it would be cheaper to get an AttrTypeReplacer directly from the resolver
+  //          instead of using the intermediate substitution
   if (failed(applySubstitutionInPlace(resolver.buildClaimSubstitutionFromMemo(), module)))
     return failure();
 
