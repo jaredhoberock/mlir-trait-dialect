@@ -129,7 +129,7 @@ std::unique_ptr<Pass> createVerifyAcyclicTraitsPass() {
 
 
 //===----------------------------------------------------------------------===//
-// ProveClaimsPass
+// ResolveImplsPass
 //===----------------------------------------------------------------------===//
 
 namespace {

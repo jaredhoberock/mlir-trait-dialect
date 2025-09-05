@@ -42,7 +42,7 @@ struct ConvertToTraitPatternInterface : DialectInterface {
   ///   - May assume proven claims / witnesses exist.
   virtual void populateInstantiateMonomorphsPatterns(RewritePatternSet& patterns) const = 0;
 
-  /// Called during monomorphize
+  /// Called during eraseClaims
   /// Provide a TypeConverter + rewrite patterns that erase all residual
   /// !trait.claim in your dialect’s types/regions and legalize ops after
   /// claims are dropped.
