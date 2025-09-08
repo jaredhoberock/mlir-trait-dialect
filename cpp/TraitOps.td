@@ -99,13 +99,18 @@ def TraitOp : TraitDialectOp<"trait", [
       return ClaimType::get(getContext(), getSelfApplication());
     }
 
-    func::FuncOp getMethod(StringRef methodName) {
-      return dyn_cast_or_null<func::FuncOp>(
-        mlir::SymbolTable::lookupSymbolIn(*this, methodName));
+    FailureOr<func::FuncOp> getMethod(StringRef methodName, llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
+      auto func = dyn_cast_or_null<func::FuncOp>(mlir::SymbolTable::lookupSymbolIn(*this, methodName));
+      if (!func) {
+        if (err) err() << "cannot find method '@" << methodName
+                       << "' in trait '" << getSymNameAttr() << "'";
+        return failure();
+      }
+      return func;
     }
 
     bool hasMethod(StringRef methodName) {
-      return getMethod(methodName) != nullptr;
+      return succeeded(getMethod(methodName));
     }
 
     llvm::SmallSet<llvm::StringRef,8> getRequiredMethodNames() {

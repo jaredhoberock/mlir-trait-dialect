@@ -846,10 +846,9 @@ FailureOr<TraitOp> MethodCallOp::getTrait(llvm::function_ref<InFlightDiagnostic(
 FailureOr<func::FuncOp> MethodCallOp::getMethod(llvm::function_ref<InFlightDiagnostic()> err) {
   auto maybeTrait = getTrait(err);
   if (failed(maybeTrait)) return failure();
-  auto func = maybeTrait->getMethod(getMethodName());
-  if (!func) {
-    if (err) err() << "cannot find method '" << getMethodAttr()
-                   << "' in trait '" << getTraitAttr() << "'";
+  auto func = maybeTrait->getMethod(getMethodName(), err);
+  if (failed(func)) {
+    return failure();
   }
   return func;
 }
