@@ -308,8 +308,8 @@ def ImplOp : TraitDialectOp<"impl", [
       return getMethod(name) != nullptr;
     }
 
-    // returns all distinct PolyTypes that occur in this ImplOp's self application and assumptions
-    SmallVector<PolyType, 4> getTypeParams();
+    // returns all distinct type variables that occur in this ImplOp's self application and assumptions
+    SmallVector<TypeVariableInterface, 4> getTypeParams();
 
     func::FuncOp getOrInstantiateMethod(OpBuilder& builder, StringRef methodName);
 
@@ -419,6 +419,14 @@ def AssumeOp : TraitDialectOp<"assume", [
 
     TraitOp getTrait();
   }];
+
+  let builders = [
+    // convenience builds from a TraitApplicationAttr instead of a ClaimType
+    OpBuilder<(ins "::mlir::trait::TraitApplicationAttr":$assumption), [{
+      auto ctx = $_builder.getContext();
+      build($_builder, $_state, ClaimType::get(ctx, assumption));
+    }]>
+  ];
 
   let hasCustomAssemblyFormat = 1;
 }
@@ -645,9 +653,9 @@ def FuncCallOp : TraitDialectOp<"func.call", [
     // creates the mapping poly type -> argument type
     llvm::DenseMap<Type, Type> buildSubstitution();
 
-    // returns all distinct PolyTypes that occur in the FunctionType of this FuncOp's callee
-    SmallVector<PolyType, 4> getCalleeTypeParams() {
-      return getPolyTypesIn(*getCalleeFunctionType());
+    // returns all distinct type variables that occur in the FunctionType of this FuncOp's callee
+    SmallVector<TypeVariableInterface, 4> getCalleeTypeParams() {
+      return getTypeVariablesIn(*getCalleeFunctionType());
     }
 
     // returns the name of the (possibly instantiated) callee after monomorphization

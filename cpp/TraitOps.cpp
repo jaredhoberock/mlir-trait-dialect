@@ -58,7 +58,10 @@ buildSubstitutionForPolymorphicFunctionCall(
 
 // this function generates a mangled name suffix (e.g. "_i32_i1_f64", etc.)
 // based on the substitution of some polymorphic entity (e.g., ImplOp, FuncOp, etc.)
-static std::string generateMangledNameSuffixFor(const DenseMap<Type,Type> &subst, ArrayRef<PolyType> typeParams) {
+static std::string generateMangledNameSuffixFor(
+  const DenseMap<Type,Type> &subst,
+  ArrayRef<TypeVariableInterface> typeParams) {
+
   std::string result;
   llvm::raw_string_ostream os(result);
   for (auto ty : typeParams) {
@@ -296,11 +299,11 @@ DenseMap<Type, Type> ImplOp::buildSubstitutionFor(ClaimType claim) {
   return normalizeSubstitution(subst);
 }
 
-SmallVector<PolyType, 4> ImplOp::getTypeParams() {
+SmallVector<TypeVariableInterface, 4> ImplOp::getTypeParams() {
   auto selfClaim = getSelfClaim();
   auto subst = buildSubstitutionFor(selfClaim);
 
-  // collect all the types where a PolyType could hide
+  // collect all the types where a type variable could hide
   SmallVector<Type> allOurTypes;
   allOurTypes.push_back(selfClaim);
   for (ClaimType a : getAssumptionsAsClaimsWith(subst)) {
@@ -310,8 +313,8 @@ SmallVector<PolyType, 4> ImplOp::getTypeParams() {
   // tuple the types
   TupleType tupled = TupleType::get(getContext(), allOurTypes);
 
-  // get all the PolyTypes in the tuple
-  return getPolyTypesIn(tupled);
+  // get all the type variables in the tuple
+  return getTypeVariablesIn(tupled);
 }
 
 func::FuncOp ImplOp::getOrInstantiateMethod(OpBuilder& builder, StringRef methodName) {
