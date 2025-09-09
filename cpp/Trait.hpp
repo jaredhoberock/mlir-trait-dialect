@@ -12,19 +12,19 @@ namespace mlir::trait {
 
 class ImplResolver;
 
-struct ConvertToTraitPatternInterface : DialectInterface {
-  inline ConvertToTraitPatternInterface(Dialect *dialect)
-    : DialectInterface(dialect, TypeID::get<ConvertToTraitPatternInterface>())
+struct MonomorphizationInterface : DialectInterface {
+  inline MonomorphizationInterface(Dialect *dialect)
+    : DialectInterface(dialect, TypeID::get<MonomorphizationInterface>())
   {}
 
-  // Called during emit-polymorphs
+  // Called during convert-to-traits
   // Register patterns that lower a dialect's operations into polymorphic trait IR
   //
   // If a dialect has rewrite patterns that can be run while operands are polymorphic,
   // then they should be registered by this method.
   //
   // Can emit any trait dialect operation.
-  virtual void populateEmitPolymorphsPatterns(RewritePatternSet& patterns) const {}
+  virtual void populateConvertToTraitPatterns(RewritePatternSet& patterns) const {}
 
   /// Called during instantiate-monomorphs
   /// Register patterns that *prepare and specialize* your dialect’s IR
@@ -48,10 +48,10 @@ struct ConvertToTraitPatternInterface : DialectInterface {
   /// claims are dropped.
   virtual void populateEraseClaimsPatterns(TypeConverter &typeConverter, RewritePatternSet& patterns) const {}
 
-  inline static StringRef getInterfaceName() { return "ConvertToTraitPatternInterface"; }
+  inline static StringRef getInterfaceName() { return "MonomorphizationInterface"; }
 
   inline static ::mlir::TypeID getInterfaceID() {
-    return ::mlir::TypeID::get<ConvertToTraitPatternInterface>();
+    return ::mlir::TypeID::get<MonomorphizationInterface>();
   }
 };
 

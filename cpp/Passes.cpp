@@ -16,18 +16,18 @@
 namespace mlir::trait {
 
 //===----------------------------------------------------------------------===//
-// EmitPolymorphsPass
+// ConvertToTraitPass
 //===----------------------------------------------------------------------===//
 
-LogicalResult emitPolymorphs(ModuleOp module) {
+LogicalResult convertToTrait(ModuleOp module) {
   MLIRContext* ctx = module.getContext();
 
   RewritePatternSet patterns(ctx);
 
   // collect patterns from participating dialects
   for (Dialect *d : ctx->getLoadedDialects()) {
-    if (auto *iface = d->getRegisteredInterface<ConvertToTraitPatternInterface>())
-      iface->populateEmitPolymorphsPatterns(patterns);
+    if (auto *iface = d->getRegisteredInterface<MonomorphizationInterface>())
+      iface->populateConvertToTraitPatterns(patterns);
   }
 
   // apply patterns
@@ -37,13 +37,13 @@ LogicalResult emitPolymorphs(ModuleOp module) {
   return success();
 }
 
-void EmitPolymorphsPass::runOnOperation() {
-  if (failed(emitPolymorphs(getOperation())))
+void ConvertToTraitPass::runOnOperation() {
+  if (failed(convertToTrait(getOperation())))
     signalPassFailure();
 }
 
-std::unique_ptr<Pass> createEmitPolymorphsPass() {
-  return std::make_unique<EmitPolymorphsPass>();
+std::unique_ptr<Pass> createConvertToTraitPass() {
+  return std::make_unique<ConvertToTraitPass>();
 }
 
 
@@ -176,8 +176,8 @@ struct ProveClaimPattern : OpRewritePattern<AllegeOp> {
 } // end namespace
 
 FailureOr<ImplResolver> resolveImpls(ModuleOp module) {
-  // emit polymorphs
-  if (failed(emitPolymorphs(module)))
+  // run convert-to-trait patterns
+  if (failed(convertToTrait(module)))
     return failure();
 
   // verify that monomorphs are legal
@@ -324,9 +324,9 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
   RewritePatternSet patterns(ctx);
   patterns.add<FuncCallOpLowering,MethodCallOpLowering>(ctx);
 
-  // collect convert-to-trait patterns from other dialects
+  // collect instantiate-monomorphs patterns from other dialects
   for (Dialect *d : ctx->getLoadedDialects()) {
-    if (auto *iface = d->getRegisteredInterface<ConvertToTraitPatternInterface>())
+    if (auto *iface = d->getRegisteredInterface<MonomorphizationInterface>())
       iface->populateInstantiateMonomorphsPatterns(patterns);
   }
 
@@ -397,7 +397,7 @@ static LogicalResult eraseClaims(ModuleOp module) {
 
   // collect erase claims patterns from other dialects
   for (Dialect *dialect : ctx->getLoadedDialects()) {
-    if (auto *iface = dialect->getRegisteredInterface<ConvertToTraitPatternInterface>()) {
+    if (auto *iface = dialect->getRegisteredInterface<MonomorphizationInterface>()) {
       iface->populateEraseClaimsPatterns(tc, patterns);
     }
   }

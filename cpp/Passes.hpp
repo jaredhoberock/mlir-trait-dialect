@@ -58,11 +58,11 @@ struct VerifyAcyclicTraitsPass : PassWrapper<VerifyAcyclicTraitsPass, OperationP
 
 std::unique_ptr<Pass> createVerifyAcyclicTraitsPass();
 
-struct EmitPolymorphsPass : PassWrapper<EmitPolymorphsPass, OperationPass<ModuleOp>> {
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(EmitPolymorphsPass);
+struct ConvertToTraitPass : PassWrapper<ConvertToTraitPass, OperationPass<ModuleOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ConvertToTraitPass);
 
-  inline StringRef getArgument() const final { return "emit-polymorphs-trait"; }
-  inline StringRef getDescription() const final { return "Lower operations of participating dialects into polymorphic trait operations."; }
+  inline StringRef getArgument() const final { return "convert-to-trait"; }
+  inline StringRef getDescription() const final { return "Convert operations of participating dialects into trait operations."; }
 
   void runOnOperation() override;
 };
