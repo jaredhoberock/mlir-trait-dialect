@@ -101,6 +101,7 @@ fn test_jit() {
             loc,
             "PartialEq",
             &[self_ty, other_ty],
+            &[], // no requirements
         );
 
         let block = partial_eq.region(0).unwrap().first_block().unwrap();

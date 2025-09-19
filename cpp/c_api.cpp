@@ -29,21 +29,50 @@ MlirPass traitCreateVerifyAcyclicTraitsPass() {
   return wrap(createVerifyAcyclicTraitsPass().release());
 }
 
-MlirOperation traitTraitOpCreate(MlirLocation loc, MlirStringRef name,
-                                 MlirType* typeParams, intptr_t numTypeParams) {
-  MLIRContext* ctx = unwrap(loc)->getContext();
+MlirAttribute traitTraitApplicationAttrGet(MlirContext wrappedCtx,
+                                           MlirStringRef traitName,
+                                           MlirType* typeArgs, intptr_t numTypeArgs) {
+  MLIRContext *ctx = unwrap(wrappedCtx);
+  OpBuilder builder(ctx);
 
   SmallVector<Attribute> typeAttrs;
+  typeAttrs.reserve(numTypeArgs);
+  for (intptr_t i = 0; i < numTypeArgs; ++i)
+    typeAttrs.push_back(TypeAttr::get(unwrap(typeArgs[i])));
+
+  auto traitRef = FlatSymbolRefAttr::get(
+    ctx, StringRef(traitName.data, traitName.length)
+  );
+  auto typeArgsAttr = builder.getArrayAttr(typeAttrs);
+
+  return wrap(TraitApplicationAttr::get(ctx, traitRef, typeArgsAttr));
+}
+
+MlirOperation traitTraitOpCreate(MlirLocation loc, MlirStringRef name,
+                                 MlirType* wrappedTypeParams, intptr_t numTypeParams,
+                                 MlirAttribute* requirements, intptr_t numRequirements) {
+  MLIRContext* ctx = unwrap(loc)->getContext();
+  OpBuilder builder(ctx);
+
+  SmallVector<Type> typeParams;
+  typeParams.reserve(numTypeParams);
   for (intptr_t i = 0; i < numTypeParams; ++i) {
-    typeAttrs.push_back(TypeAttr::get(unwrap(typeParams[i])));
+    typeParams.push_back(unwrap(wrappedTypeParams[i]));
   }
 
-  OpBuilder builder(ctx);
+  SmallVector<TraitApplicationAttr> appAttrs;
+  appAttrs.reserve(numRequirements);
+  for (intptr_t i = 0; i < numRequirements; ++i) {
+    auto app = dyn_cast<TraitApplicationAttr>(unwrap(requirements[i]));
+    if (!app) return {}; // invalid type of attribute
+    appAttrs.push_back(app);
+  }
+
   auto op = builder.create<TraitOp>(
     unwrap(loc),
     builder.getStringAttr(StringRef(name.data, name.length)),
-    builder.getArrayAttr(typeAttrs),
-    ConstraintsAttr::get(ctx, {})  // XXX TODO: add where clause support to C API
+    typeParams,
+    appAttrs
   );
 
   return wrap(op.getOperation());

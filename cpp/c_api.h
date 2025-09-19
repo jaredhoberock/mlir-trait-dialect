@@ -20,9 +20,15 @@ MlirPass traitCreateResolveImplsPass();
 /// Create a verify-acyclic-traits pass
 MlirPass traitCreateVerifyAcyclicTraitsPass();
 
+/// Create a TraitApplicationAttr: @Trait[Type...]
+MlirAttribute traitTraitApplicationAttrGet(MlirContext ctx,
+                                           MlirStringRef traitName,
+                                           MlirType *typeArgs, intptr_t numTypeArgs);
+
 /// Create a trait.trait operation
 MlirOperation traitTraitOpCreate(MlirLocation loc, MlirStringRef name,
-                                 MlirType* typeParams, intptr_t numTypeParams);
+                                 MlirType* typeParams, intptr_t numTypeParams,
+                                 MlirAttribute* requirements, intptr_t numRequirements);
 
 /// Create a trait.impl operation
 MlirOperation traitImplOpCreate(MlirLocation loc, MlirStringRef traitName,

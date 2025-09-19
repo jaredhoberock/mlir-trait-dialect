@@ -182,6 +182,15 @@ def TraitOp : TraitDialectOp<"trait", [
       }
       ArrayAttr typeParamsAttr = ArrayAttr::get(ctx, typeAttrs);
       build($_builder, $_state, sym_name, typeParamsAttr, requirements);
+    }]>,
+
+    // convenience accepts requirements as an array of TraitApplicationAttr
+    OpBuilder<(ins "::mlir::StringAttr":$sym_name,
+                   "::mlir::ArrayRef<Type>":$type_params,
+                   "::mlir::ArrayRef<TraitApplicationAttr>":$requirements), [{
+      MLIRContext* ctx = $_builder.getContext();
+      ConstraintsAttr reqsAttr = ConstraintsAttr::get(ctx, requirements);
+      build($_builder, $_state, sym_name, type_params, reqsAttr);
     }]>
   ];
 

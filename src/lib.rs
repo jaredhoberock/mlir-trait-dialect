@@ -1,12 +1,24 @@
-use melior::{ir::{Location, Operation, Type, Value, ValueLike}, Context, pass::Pass, StringRef};
-use mlir_sys::{MlirContext, MlirLocation, MlirOperation, MlirPass, MlirStringRef, MlirType, MlirValue};
+use melior::{
+    Context, pass::Pass, StringRef,
+    ir::{Location, Operation, Type, Value, ValueLike},
+    ir::attribute::Attribute,
+};
+use mlir_sys::{
+    MlirAttribute, MlirContext, MlirLocation,
+    MlirOperation, MlirPass, MlirStringRef,
+    MlirType, MlirValue,
+};
 
 unsafe extern "C" {
     fn traitRegisterDialect(ctx: MlirContext);
     fn traitCreateMonomorphizePass() -> MlirPass;
+    fn traitTraitApplicationAttrGet(ctx: MlirContext,
+                                    trait_name: MlirStringRef,
+                                    type_args: *const MlirType, num_type_args: isize) -> MlirAttribute;
     fn traitTraitOpCreate(loc: MlirLocation,
                           name: MlirStringRef,
-                          type_params: *const MlirType, num_type_params: isize) -> MlirOperation;
+                          type_params: *const MlirType, num_type_params: isize,
+                          requirements: *const MlirAttribute, num_requirements: isize) -> MlirOperation;
     fn traitImplOpCreate(loc: MlirLocation,
                          trait_name: MlirStringRef,
                          type_args: *const MlirType, num_type_args: isize) -> MlirOperation;
@@ -50,15 +62,33 @@ pub fn create_monomorphize_pass() -> Pass {
     )}
 }
 
+pub fn trait_application_attr<'c>(
+    context: &'c Context,
+    trait_name: &str,
+    type_args: &[Type<'c>],
+) -> Attribute<'c> {
+    unsafe {
+        Attribute::from_raw(traitTraitApplicationAttrGet(
+            context.to_raw(),
+            StringRef::new(trait_name).to_raw(),
+            type_args.as_ptr() as *const _,
+            type_args.len() as isize,
+        ))
+    }
+}
+
 pub fn trait_<'c>(loc: Location<'c>,
                   name: &str,
                   type_params: &[Type<'c>],
+                  requirements: &[Attribute<'c>],
 ) -> Operation<'c> {
     unsafe { Operation::from_raw(traitTraitOpCreate(
         loc.to_raw(),
         StringRef::new(name).to_raw(),
         type_params.as_ptr() as *const _,
         type_params.len() as isize,
+        requirements.as_ptr() as *const _,
+        requirements.len() as isize,
     ))}
 }
 
