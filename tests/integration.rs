@@ -149,6 +149,7 @@ fn test_jit() {
             loc,
             "PartialEq",
             &[i32_ty, i32_ty],
+            &[], // no assumptions
         );
 
         let block = partial_eq_impl_i32_i32

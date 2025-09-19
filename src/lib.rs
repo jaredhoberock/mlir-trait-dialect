@@ -21,7 +21,8 @@ unsafe extern "C" {
                           requirements: *const MlirAttribute, num_requirements: isize) -> MlirOperation;
     fn traitImplOpCreate(loc: MlirLocation,
                          trait_name: MlirStringRef,
-                         type_args: *const MlirType, num_type_args: isize) -> MlirOperation;
+                         type_args: *const MlirType, num_type_args: isize,
+                         assumptions: *const MlirAttribute, num_assumptions: isize) -> MlirOperation;
     fn traitMethodCallOpCreate(loc: MlirLocation,
                                trait_name: MlirStringRef,
                                method_name: MlirStringRef,
@@ -95,12 +96,15 @@ pub fn trait_<'c>(loc: Location<'c>,
 pub fn impl_<'c>(loc: Location<'c>,
                  trait_name: &str,
                  type_args: &[Type<'c>],
+                 assumptions: &[Attribute<'c>],
 ) -> Operation<'c> {
     unsafe { Operation::from_raw(traitImplOpCreate(
         loc.to_raw(),
         StringRef::new(trait_name).to_raw(),
         type_args.as_ptr() as *const _,
         type_args.len() as isize,
+        assumptions.as_ptr() as *const _,
+        assumptions.len() as isize,
     ))}
 }
 

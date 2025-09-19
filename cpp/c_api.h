@@ -32,7 +32,8 @@ MlirOperation traitTraitOpCreate(MlirLocation loc, MlirStringRef name,
 
 /// Create a trait.impl operation
 MlirOperation traitImplOpCreate(MlirLocation loc, MlirStringRef traitName,
-                                MlirType* typeArgs, intptr_t numTypeArgs);
+                                MlirType* typeArgs, intptr_t numTypeArgs,
+                                MlirAttribute* assumptions, intptr_t numAssumptions);
 
 /// Create a trait.method.call operation
 MlirOperation traitMethodCallOpCreate(MlirLocation loc,

@@ -79,7 +79,8 @@ MlirOperation traitTraitOpCreate(MlirLocation loc, MlirStringRef name,
 }
 
 MlirOperation traitImplOpCreate(MlirLocation loc, MlirStringRef traitName,
-                                MlirType* typeArgs, intptr_t numTypeArgs) {
+                                MlirType* typeArgs, intptr_t numTypeArgs,
+                                MlirAttribute* assumptions, intptr_t numAssumptions) {
   MLIRContext* ctx = unwrap(loc)->getContext();
 
   SmallVector<Attribute> typeAttrs;
@@ -89,6 +90,13 @@ MlirOperation traitImplOpCreate(MlirLocation loc, MlirStringRef traitName,
 
   OpBuilder builder(ctx);
 
+  SmallVector<TraitApplicationAttr> appAttrs;
+  for (intptr_t i = 0; i < numAssumptions; ++i) {
+    auto app = dyn_cast<TraitApplicationAttr>(unwrap(assumptions[i]));
+    if (!app) return {}; // invalid type of attribute
+    appAttrs.push_back(app);
+  }
+
   // build a TraitApplicationAttr
   auto traitNameAttr = FlatSymbolRefAttr::get(ctx, StringRef(traitName.data, traitName.length));
   auto typeArgsAttr = builder.getArrayAttr(typeAttrs);
@@ -97,7 +105,7 @@ MlirOperation traitImplOpCreate(MlirLocation loc, MlirStringRef traitName,
   auto op = builder.create<ImplOp>(
     unwrap(loc),
     traitAppAttr,
-    ConstraintsAttr::get(ctx, {})  // XXX TODO: add where clause support to C API
+    appAttrs
   );
 
   return wrap(op.getOperation());

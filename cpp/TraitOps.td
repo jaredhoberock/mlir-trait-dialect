@@ -363,6 +363,14 @@ def ImplOp : TraitDialectOp<"impl", [
       // Auto-generate unique symbol name
       std::string symName = generateSymName(self_application, assumptions);
       build($_builder, $_state, symName, self_application, assumptions);
+    }]>,
+
+    // convenience wraps the assumptions in a ConstraintsAttr add defers to the lower-level builder
+    OpBuilder<(ins "::mlir::trait::TraitApplicationAttr":$self_application,
+                   "::mlir::ArrayRef<TraitApplicationAttr>":$assumptions), [{
+      MLIRContext *ctx = $_builder.getContext();
+      auto constraintsAttr = ConstraintsAttr::get(ctx, assumptions);
+      build($_builder, $_state, self_application, constraintsAttr);
     }]>
   ];
 
