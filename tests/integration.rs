@@ -62,8 +62,11 @@ fn test_jit() {
             let block = Block::new(&[(self_ty, loc), (other_ty, loc)]);
             let c = block.append_operation(trait_::assume(
                 loc,
-                "PartialEq",
-                &[self_ty, other_ty],
+                trait_::trait_application_attr(
+                  &context,
+                  "PartialEq",
+                  &[self_ty, other_ty],
+                ),
             ));
 
             let equal = block.append_operation(trait_::method_call(

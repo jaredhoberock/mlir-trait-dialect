@@ -1,6 +1,6 @@
 use melior::{
     Context, pass::Pass, StringRef,
-    ir::{Location, Operation, Type, Value, ValueLike},
+    ir::{AttributeLike, Location, Operation, Type, Value, ValueLike},
     ir::attribute::Attribute,
 };
 use mlir_sys::{
@@ -45,16 +45,15 @@ unsafe extern "C" {
                             trait_name: MlirStringRef,
                             type_args: *const MlirType, num_type_args: isize) -> MlirOperation;
     fn traitAssumeOpCreate(loc: MlirLocation,
-                           trait_name: MlirStringRef,
-                           type_args: *const MlirType, num_type_args: isize) -> MlirOperation;
+                           trait_app: MlirAttribute) -> MlirOperation;
     fn traitPolyTypeGet(ctx: MlirContext, unique_id: u32) -> MlirType;
     fn traitClaimTypeGet(ctx: MlirContext,
                          trait_name: MlirStringRef,
                          type_args: *const MlirType, num_type_args: isize) -> MlirType;
 }
 
-pub fn register(context: &Context) {
-    unsafe { traitRegisterDialect(context.to_raw()) }
+pub fn register(ctx: &Context) {
+    unsafe { traitRegisterDialect(ctx.to_raw()) }
 }
 
 pub fn create_monomorphize_pass() -> Pass {
@@ -63,48 +62,82 @@ pub fn create_monomorphize_pass() -> Pass {
     )}
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct TraitApplicationAttribute<'c> {
+    attribute: Attribute<'c>,
+}
+
+impl<'c> TraitApplicationAttribute<'c> {
+    pub fn new(
+        ctx: &'c Context,
+        trait_name: &str,
+        type_args: &[Type<'c>],
+    ) -> Self {
+        let attribute = unsafe {
+            Attribute::from_raw(traitTraitApplicationAttrGet(
+                ctx.to_raw(),
+                StringRef::new(trait_name).to_raw(),
+                type_args.as_ptr() as *const _,
+                type_args.len() as isize,
+            ))
+        };
+        Self { attribute }
+    }
+}
+
+impl<'c> From<TraitApplicationAttribute<'c>> for Attribute<'c> {
+    fn from(a: TraitApplicationAttribute<'c>) -> Self { a.attribute }
+}
+
+impl<'c> std::hash::Hash for TraitApplicationAttribute<'c> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.attribute.to_raw().ptr.hash(state);
+    }
+}
+
 pub fn trait_application_attr<'c>(
-    context: &'c Context,
+    ctx: &'c Context,
     trait_name: &str,
     type_args: &[Type<'c>],
-) -> Attribute<'c> {
-    unsafe {
-        Attribute::from_raw(traitTraitApplicationAttrGet(
-            context.to_raw(),
-            StringRef::new(trait_name).to_raw(),
-            type_args.as_ptr() as *const _,
-            type_args.len() as isize,
-        ))
-    }
+) -> TraitApplicationAttribute<'c> {
+    TraitApplicationAttribute::new(
+        ctx,
+        trait_name,
+        type_args,
+    )
 }
 
 pub fn trait_<'c>(loc: Location<'c>,
                   name: &str,
                   type_params: &[Type<'c>],
-                  requirements: &[Attribute<'c>],
+                  requirements: &[TraitApplicationAttribute<'c>],
 ) -> Operation<'c> {
+    let req_attrs: Vec<Attribute<'c>> =
+        requirements.iter().copied().map(Into::into).collect();
     unsafe { Operation::from_raw(traitTraitOpCreate(
         loc.to_raw(),
         StringRef::new(name).to_raw(),
         type_params.as_ptr() as *const _,
         type_params.len() as isize,
-        requirements.as_ptr() as *const _,
-        requirements.len() as isize,
+        req_attrs.as_ptr() as *const _,
+        req_attrs.len() as isize,
     ))}
 }
 
 pub fn impl_<'c>(loc: Location<'c>,
                  trait_name: &str,
                  type_args: &[Type<'c>],
-                 assumptions: &[Attribute<'c>],
+                 assumptions: &[TraitApplicationAttribute<'c>],
 ) -> Operation<'c> {
+    let asm_attrs: Vec<Attribute<'c>> =
+        assumptions.iter().copied().map(Into::into).collect();
     unsafe { Operation::from_raw(traitImplOpCreate(
         loc.to_raw(),
         StringRef::new(trait_name).to_raw(),
         type_args.as_ptr() as *const _,
         type_args.len() as isize,
-        assumptions.as_ptr() as *const _,
-        assumptions.len() as isize,
+        asm_attrs.as_ptr() as *const _,
+        asm_attrs.len() as isize,
     ))}
 }
 
@@ -183,34 +216,32 @@ pub fn project<'c>(loc: Location<'c>,
 }
 
 pub fn assume<'c>(loc: Location<'c>,
-                  trait_name: &str,
-                  type_args: &[Type<'c>],
+                  trait_app: TraitApplicationAttribute<'c>,
 ) -> Operation<'c> {
+    let app_attr: Attribute<'c> = trait_app.into();
     unsafe { Operation::from_raw(traitAssumeOpCreate(
         loc.to_raw(),
-        StringRef::new(trait_name).to_raw(),
-        type_args.as_ptr() as *const _,
-        type_args.len() as isize,
+        app_attr.to_raw(),
     ))}
 }
 
 pub fn poly_type<'c>(
-    context: &'c Context,
+    ctx: &'c Context,
     unique_id: u32,
 ) -> Type<'c> {
     unsafe { Type::from_raw(traitPolyTypeGet(
-        context.to_raw(),
+        ctx.to_raw(),
         unique_id,
     ))}
 }
 
 pub fn claim_type<'c>(
-    context: &'c Context,
+    ctx: &'c Context,
     trait_name: &str,
     type_args: &[Type<'c>],
 ) -> Type<'c> {
     unsafe { Type::from_raw(traitClaimTypeGet(
-        context.to_raw(),
+        ctx.to_raw(),
         StringRef::new(trait_name).to_raw(),
         type_args.as_ptr() as *const _,
         type_args.len() as isize,

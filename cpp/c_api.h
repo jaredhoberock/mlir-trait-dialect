@@ -67,8 +67,7 @@ MlirOperation traitProjectOpCreate(MlirLocation loc,
                                    MlirType* typeArgs, intptr_t numTypeArgs);
 
 /// Create a trait.assume operation
-MlirOperation traitAssumeOpCreate(MlirLocation loc, MlirStringRef traitName,
-                                  MlirType* typeArgs, intptr_t numTypeArgs);
+MlirOperation traitAssumeOpCreate(MlirLocation loc, MlirAttribute traitApp);
 
 /// Return the !trait.poly<uniqueId> type
 MlirType traitPolyTypeGet(MlirContext ctx, unsigned int uniqueId);

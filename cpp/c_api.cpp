@@ -229,17 +229,15 @@ MlirOperation traitProjectOpCreate(MlirLocation loc,
 }
 
 MlirOperation traitAssumeOpCreate(MlirLocation loc,
-                                  MlirStringRef traitName,
-                                  MlirType* typeArgs, intptr_t numTypeArgs) {
+                                  MlirAttribute wrappedTraitApp) {
   MLIRContext* ctx = unwrap(loc)->getContext();
-  MlirType wrappedClaimType = traitClaimTypeGet(wrap(ctx), traitName, typeArgs, numTypeArgs);
 
   OpBuilder builder(ctx);
 
-  auto op = builder.create<AssumeOp>(
-    unwrap(loc),
-    unwrap(wrappedClaimType)
-  );
+  TraitApplicationAttr traitApp = dyn_cast<TraitApplicationAttr>(unwrap(wrappedTraitApp));
+  if (!traitApp) return {}; // invalid attribute type
+
+  auto op = builder.create<AssumeOp>(unwrap(loc), traitApp);
 
   return wrap(op.getOperation());
 }
