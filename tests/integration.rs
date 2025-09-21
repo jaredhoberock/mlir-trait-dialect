@@ -178,9 +178,12 @@ fn test_jit() {
     let poly_ty = trait_::poly_type(&context, 2);
     let claim_ty = trait_::claim_type(
         &context,
-        "PartialEq",
-        &[poly_ty, poly_ty],
-    );
+        trait_::trait_application_attr(
+          &context,
+          "PartialEq",
+          &[poly_ty, poly_ty],
+        ),
+    ).into();
 
     let foo = {
         let foo_ty = FunctionType::new(&context, &[claim_ty, poly_ty, poly_ty], &[i1_ty]).into();
@@ -241,8 +244,11 @@ fn test_jit() {
         let block = Block::new(&[(i32_ty, loc), (i32_ty, loc)]);
         let p = block.append_operation(trait_::allege(
             loc,
-            "PartialEq",
-            &[i32_ty, i32_ty],
+            trait_::trait_application_attr(
+                &context,
+                "PartialEq",
+                &[i32_ty, i32_ty],
+            ),
         ));
         let result = block.append_operation(trait_::func_call(
             loc,
@@ -283,9 +289,13 @@ fn test_jit() {
     // }
     let claim_ty = trait_::claim_type(
         &context,
-        "PartialEq",
-        &[poly_ty, poly_ty],
-    );
+        trait_::trait_application_attr(
+            &context,
+            "PartialEq",
+            &[poly_ty, poly_ty],
+        ),
+    ).into();
+
     let baz = {
         let baz_ty = FunctionType::new(&context, &[claim_ty, poly_ty, poly_ty], &[i1_ty]).into();
         let baz = func::func(
@@ -361,8 +371,11 @@ fn test_jit() {
         let block = Block::new(&[(i32_ty, loc), (i32_ty, loc)]);
         let p = block.append_operation(trait_::allege(
             loc,
-            "PartialEq",
-            &[i32_ty,i32_ty],
+            trait_::trait_application_attr(
+                &context,
+                "PartialEq",
+                &[i32_ty,i32_ty],
+            ),
         ));
         let result = block.append_operation(trait_::func_call(
             loc,

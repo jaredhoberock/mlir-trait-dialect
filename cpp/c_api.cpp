@@ -48,6 +48,10 @@ MlirAttribute traitTraitApplicationAttrGet(MlirContext wrappedCtx,
   return wrap(TraitApplicationAttr::get(ctx, traitRef, typeArgsAttr));
 }
 
+bool traitAttributeIsATraitApplication(MlirAttribute attribute) {
+  return isa<TraitApplicationAttr>(unwrap(attribute));
+}
+
 MlirOperation traitTraitOpCreate(MlirLocation loc, MlirStringRef name,
                                  MlirType* wrappedTypeParams, intptr_t numTypeParams,
                                  MlirAttribute* requirements, intptr_t numRequirements) {
@@ -170,16 +174,16 @@ MlirOperation traitFuncCallOpCreate(MlirLocation loc,
 }
 
 MlirOperation traitAllegeOpCreate(MlirLocation loc,
-                                  MlirStringRef traitName,
-                                  MlirType* typeArgs, intptr_t numTypeArgs) {
+                                  MlirAttribute wrappedTraitApp) {
   MLIRContext* ctx = unwrap(loc)->getContext();
 
-  MlirType wrappedClaimTy = traitClaimTypeGet(wrap(ctx), traitName, typeArgs, numTypeArgs);
+  TraitApplicationAttr traitApp = dyn_cast<TraitApplicationAttr>(unwrap(wrappedTraitApp));
+  if (!traitApp) return {}; // invalid attribute type
 
   OpBuilder builder(ctx);
   auto op = builder.create<AllegeOp>(
     unwrap(loc),
-    unwrap(wrappedClaimTy)
+    traitApp
   );
 
   return wrap(op.getOperation());
@@ -191,14 +195,12 @@ MlirOperation traitWitnessOpCreate(MlirLocation loc,
                                    MlirType* typeArgs, intptr_t numTypeArgs) {
   MLIRContext* ctx = unwrap(loc)->getContext();
 
-  MlirType wrappedClaimTy = traitClaimTypeGet(wrap(ctx), traitName, typeArgs, numTypeArgs);
-  ClaimType claimTy = dyn_cast_or_null<ClaimType>(unwrap(wrappedClaimTy));
-  if (!claimTy)
-    return {};
+  MlirAttribute wrappedTraitApp = traitTraitApplicationAttrGet(wrap(ctx), traitName, typeArgs, numTypeArgs);
+  TraitApplicationAttr traitApp = dyn_cast<TraitApplicationAttr>(unwrap(wrappedTraitApp));
+  if (!traitApp) return {}; // invalid attribute type
 
   OpBuilder builder(ctx);
 
-  TraitApplicationAttr traitApp = claimTy.getTraitApplication();
   FlatSymbolRefAttr proofRef = FlatSymbolRefAttr::get(ctx, StringRef(proofName.data, proofName.length));
 
   auto op = builder.create<WitnessOp>(
@@ -215,13 +217,16 @@ MlirOperation traitProjectOpCreate(MlirLocation loc,
                                    MlirStringRef traitName,
                                    MlirType* typeArgs, intptr_t numTypeArgs) {
   MLIRContext* ctx = unwrap(loc)->getContext();
-  MlirType wrappedClaimType = traitClaimTypeGet(wrap(ctx), traitName, typeArgs, numTypeArgs);
+  MlirAttribute wrappedDestTraitApp = traitTraitApplicationAttrGet(wrap(ctx), traitName, typeArgs, numTypeArgs);
+  MlirType wrappedResultType = traitClaimTypeGet(wrap(ctx), wrappedDestTraitApp);
+  ClaimType resultType = dyn_cast<ClaimType>(unwrap(wrappedResultType));
+  if (!resultType) return {}; // invalid result type
 
   OpBuilder builder(ctx);
 
   auto op = builder.create<ProjectOp>(
     unwrap(loc),
-    unwrap(wrappedClaimType),
+    resultType,
     unwrap(srcClaim)
   );
 
@@ -248,18 +253,21 @@ MlirType traitPolyTypeGet(MlirContext wrappedCtx,
 }
 
 MlirType traitClaimTypeGet(MlirContext wrappedCtx,
-                           MlirStringRef traitName,
-                           MlirType* typeArgs, intptr_t numTypeArgs) {
+                           MlirAttribute wrappedTraitApp) {
   MLIRContext* ctx = unwrap(wrappedCtx);
-  FlatSymbolRefAttr traitRefAttr = FlatSymbolRefAttr::get(ctx, StringRef(traitName.data, traitName.length));
+  TraitApplicationAttr traitApp = dyn_cast<TraitApplicationAttr>(unwrap(wrappedTraitApp));
+  if (!traitApp) return {}; // invalid attribute type
+  return wrap(ClaimType::get(ctx, traitApp));
+}
 
-  SmallVector<Type> typeArgsVec;
-  typeArgsVec.reserve(numTypeArgs);
-  for (intptr_t i = 0; i < numTypeArgs; ++i) {
-    typeArgsVec.push_back(unwrap(typeArgs[i]));
-  }
+MlirAttribute traitClaimTypeGetTraitApplication(MlirType wrappedClaimType) {
+  ClaimType claimType = dyn_cast<ClaimType>(unwrap(wrappedClaimType));
+  if (!claimType) return {}; // invalid type
+  return wrap(claimType.getTraitApplication());
+}
 
-  return wrap(ClaimType::get(ctx, traitRefAttr, typeArgsVec));
+bool traitTypeIsAClaim(MlirType type) {
+  return isa<ClaimType>(unwrap(type));
 }
 
 } // end extern "C"

@@ -25,6 +25,9 @@ MlirAttribute traitTraitApplicationAttrGet(MlirContext ctx,
                                            MlirStringRef traitName,
                                            MlirType *typeArgs, intptr_t numTypeArgs);
 
+/// Checks whether the given attribute is a trait application.
+bool traitAttributeIsATraitApplication(MlirAttribute attr);
+
 /// Create a trait.trait operation
 MlirOperation traitTraitOpCreate(MlirLocation loc, MlirStringRef name,
                                  MlirType* typeParams, intptr_t numTypeParams,
@@ -51,8 +54,7 @@ MlirOperation traitFuncCallOpCreate(MlirLocation loc,
 
 /// Create a trait.allege operation
 MlirOperation traitAllegeOpCreate(MlirLocation loc,
-                                  MlirStringRef traitName,
-                                  MlirType* typeArgs, intptr_t numTypeArgs);
+                                  MlirAttribute traitApp);
 
 /// Create a trait.witness operation
 MlirOperation traitWitnessOpCreate(MlirLocation loc,
@@ -72,10 +74,15 @@ MlirOperation traitAssumeOpCreate(MlirLocation loc, MlirAttribute traitApp);
 /// Return the !trait.poly<uniqueId> type
 MlirType traitPolyTypeGet(MlirContext ctx, unsigned int uniqueId);
 
-// Return the !trait.claim<@Trait[Type1, Type2, ...]> type
+/// Return the !trait.claim<@Trait[Type1, Type2, ...]> type
 MlirType traitClaimTypeGet(MlirContext ctx,
-                           MlirStringRef traitName,
-                           MlirType* typeArgs, intptr_t numTypeArgs);
+                           MlirAttribute traitApp);
+
+/// Return a !trait.claim's TraitApplicationAttr
+MlirAttribute traitClaimTypeGetTraitApplicationGet(MlirType claimType);
+
+/// Checks whether the given type is a claim type.
+bool traitTypeIsAClaim(MlirType type);
 
 #ifdef __cplusplus
 }
