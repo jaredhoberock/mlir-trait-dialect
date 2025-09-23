@@ -65,8 +65,7 @@ MlirOperation traitWitnessOpCreate(MlirLocation loc,
 /// Create a trait.project operation
 MlirOperation traitProjectOpCreate(MlirLocation loc,
                                    MlirValue srcClaim,
-                                   MlirStringRef traitName,
-                                   MlirType* typeArgs, intptr_t numTypeArgs);
+                                   MlirAttribute destTraitApp);
 
 /// Create a trait.assume operation
 MlirOperation traitAssumeOpCreate(MlirLocation loc, MlirAttribute traitApp);

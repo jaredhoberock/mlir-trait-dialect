@@ -214,11 +214,9 @@ MlirOperation traitWitnessOpCreate(MlirLocation loc,
 
 MlirOperation traitProjectOpCreate(MlirLocation loc,
                                    MlirValue srcClaim,
-                                   MlirStringRef traitName,
-                                   MlirType* typeArgs, intptr_t numTypeArgs) {
+                                   MlirAttribute destTraitApp) {
   MLIRContext* ctx = unwrap(loc)->getContext();
-  MlirAttribute wrappedDestTraitApp = traitTraitApplicationAttrGet(wrap(ctx), traitName, typeArgs, numTypeArgs);
-  MlirType wrappedResultType = traitClaimTypeGet(wrap(ctx), wrappedDestTraitApp);
+  MlirType wrappedResultType = traitClaimTypeGet(wrap(ctx), destTraitApp);
   ClaimType resultType = dyn_cast<ClaimType>(unwrap(wrappedResultType));
   if (!resultType) return {}; // invalid result type
 

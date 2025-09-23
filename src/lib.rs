@@ -44,8 +44,7 @@ unsafe extern "C" {
                             type_args: *const MlirType, num_type_args: isize) -> MlirOperation;
     fn traitProjectOpCreate(loc: MlirLocation,
                             src_claim: MlirValue,
-                            trait_name: MlirStringRef,
-                            type_args: *const MlirType, num_type_args: isize) -> MlirOperation;
+                            dest_trait_app: MlirAttribute) -> MlirOperation;
     fn traitAssumeOpCreate(loc: MlirLocation,
                            trait_app: MlirAttribute) -> MlirOperation;
 
@@ -228,15 +227,13 @@ pub fn witness<'c>(loc: Location<'c>,
 
 pub fn project<'c>(loc: Location<'c>,
                    src_claim: Value<'c,'_>,
-                   trait_name: &str,
-                   type_args: &[Type<'c>],
+                   dest_trait_app: TraitApplicationAttribute<'c>,
 ) -> Operation<'c> {
+    let app_attr: Attribute<'c> = dest_trait_app.into();
     unsafe { Operation::from_raw(traitProjectOpCreate(
         loc.to_raw(),
         src_claim.to_raw(),
-        StringRef::new(trait_name).to_raw(),
-        type_args.as_ptr() as *const _,
-        type_args.len() as isize,
+        app_attr.to_raw(),
     ))}
 }
 
