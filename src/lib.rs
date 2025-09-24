@@ -23,8 +23,7 @@ unsafe extern "C" {
                           type_params: *const MlirType, num_type_params: isize,
                           requirements: *const MlirAttribute, num_requirements: isize) -> MlirOperation;
     fn traitImplOpCreate(loc: MlirLocation,
-                         trait_name: MlirStringRef,
-                         type_args: *const MlirType, num_type_args: isize,
+                         self_trait_app: MlirAttribute,
                          assumptions: *const MlirAttribute, num_assumptions: isize) -> MlirOperation;
     fn traitMethodCallOpCreate(loc: MlirLocation,
                                trait_name: MlirStringRef,
@@ -152,17 +151,15 @@ pub fn trait_<'c>(loc: Location<'c>,
 }
 
 pub fn impl_<'c>(loc: Location<'c>,
-                 trait_name: &str,
-                 type_args: &[Type<'c>],
+                 self_trait_app: TraitApplicationAttribute<'c>,
                  assumptions: &[TraitApplicationAttribute<'c>],
 ) -> Operation<'c> {
+    let app_attr: Attribute<'c> = self_trait_app.into();
     let asm_attrs: Vec<Attribute<'c>> =
         assumptions.iter().copied().map(Into::into).collect();
     unsafe { Operation::from_raw(traitImplOpCreate(
         loc.to_raw(),
-        StringRef::new(trait_name).to_raw(),
-        type_args.as_ptr() as *const _,
-        type_args.len() as isize,
+        app_attr.to_raw(),
         asm_attrs.as_ptr() as *const _,
         asm_attrs.len() as isize,
     ))}

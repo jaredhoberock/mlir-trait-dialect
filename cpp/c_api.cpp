@@ -82,17 +82,11 @@ MlirOperation traitTraitOpCreate(MlirLocation loc, MlirStringRef name,
   return wrap(op.getOperation());
 }
 
-MlirOperation traitImplOpCreate(MlirLocation loc, MlirStringRef traitName,
-                                MlirType* typeArgs, intptr_t numTypeArgs,
+MlirOperation traitImplOpCreate(MlirLocation loc,
+                                MlirAttribute wrappedSelfTraitApp,
                                 MlirAttribute* assumptions, intptr_t numAssumptions) {
-  MLIRContext* ctx = unwrap(loc)->getContext();
-
-  SmallVector<Attribute> typeAttrs;
-  for (intptr_t i = 0; i < numTypeArgs; ++i) {
-    typeAttrs.push_back(TypeAttr::get(unwrap(typeArgs[i])));
-  }
-
-  OpBuilder builder(ctx);
+  TraitApplicationAttr selfApp = dyn_cast<TraitApplicationAttr>(unwrap(wrappedSelfTraitApp));
+  if (!selfApp) return {}; // invalid type of attribute
 
   SmallVector<TraitApplicationAttr> appAttrs;
   for (intptr_t i = 0; i < numAssumptions; ++i) {
@@ -101,14 +95,12 @@ MlirOperation traitImplOpCreate(MlirLocation loc, MlirStringRef traitName,
     appAttrs.push_back(app);
   }
 
-  // build a TraitApplicationAttr
-  auto traitNameAttr = FlatSymbolRefAttr::get(ctx, StringRef(traitName.data, traitName.length));
-  auto typeArgsAttr = builder.getArrayAttr(typeAttrs);
-  auto traitAppAttr = TraitApplicationAttr::get(ctx, traitNameAttr, typeArgsAttr);
+  MLIRContext* ctx = unwrap(loc)->getContext();
+  OpBuilder builder(ctx);
 
   auto op = builder.create<ImplOp>(
     unwrap(loc),
-    traitAppAttr,
+    selfApp,
     appAttrs
   );
 

@@ -150,8 +150,11 @@ fn test_jit() {
 
         let partial_eq_impl_i32_i32 = trait_::impl_(
             loc,
-            "PartialEq",
-            &[i32_ty, i32_ty],
+            trait_::trait_application_attr(
+                &context,
+                "PartialEq",
+                &[i32_ty, i32_ty],
+            ),
             &[], // no assumptions
         );
 
