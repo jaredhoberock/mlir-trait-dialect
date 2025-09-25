@@ -647,7 +647,10 @@ def FuncCallOp : TraitDialectOp<"func.call", [
 
     FailureOr<func::FuncOp> getCallee(llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
       auto name = getCalleeNameAttr();
-      auto callee = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(*this, name);
+      auto module = getModule(err);
+      if (failed(module)) return failure();
+
+      auto callee = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(*module, name);
       if (!callee) {
         if (err) err() << "'" << name.getValue()
                        << "' does not refer to a valid func.func";

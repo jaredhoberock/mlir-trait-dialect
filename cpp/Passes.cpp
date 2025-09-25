@@ -243,11 +243,20 @@ struct FuncCallOpLowering : public OpRewritePattern<FuncCallOp> {
     // if any of the call's operand types are polymorphic, this call can't be resolved yet
     for (auto op : callOp.getOperands()) {
       if (isPolymorphicType(op.getType()))
-        return failure();
+        return rewriter.notifyMatchFailure(callOp, "operands are still polymorphic");
     }
+
+    // func.call requires the call and callee to be in the same scope
+    // we will instantiate the callee at module scope,
+    // so only lower if the callOp's nearest symbol table is the module
+    Operation *nearestTable = SymbolTable::getNearestSymbolTable(callOp);
+    if (!nearestTable || !isa<ModuleOp>(nearestTable))
+      return rewriter.notifyMatchFailure(callOp, "call is still nested in a method");
 
     // instantiate the callee
     auto callee = callOp.getOrInstantiateCallee(rewriter);
+    if (!callee)
+      return rewriter.notifyMatchFailure(callOp, "couldn't get or instantiate callee");
 
     // replace with a func.call to the instanced callee
     rewriter.replaceOpWithNewOp<func::CallOp>(
