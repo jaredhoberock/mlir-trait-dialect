@@ -486,15 +486,15 @@ ParseResult ImplOp::parse(OpAsmParser &p, OperationState &result) {
     return failure();
   
   // parse @TraitName[Types...]
-  TraitApplicationAttr selfApp = dyn_cast<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
+  TraitApplicationAttr selfApp = dyn_cast_or_null<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
   if (!selfApp)
-    return failure();
+    return p.emitError(p.getCurrentLocation(), "expected a TraitApplicationAttr");
   result.addAttribute("self_application", selfApp);  
   
   // parse assumptions
-  ConstraintsAttr assumptions = dyn_cast<ConstraintsAttr>(ConstraintsAttr::parse(p, {}));
+  ConstraintsAttr assumptions = dyn_cast_or_null<ConstraintsAttr>(ConstraintsAttr::parse(p, {}));
   if (!assumptions)
-    return failure();
+    return p.emitError(p.getCurrentLocation(), "expected a ConstraintsAttr");
   result.addAttribute("assumptions", assumptions);
 
   // sym_name: use parsed or synthesize from parameters
@@ -758,7 +758,7 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 ParseResult AssumeOp::parse(OpAsmParser &p, OperationState &st) {
   // parse `@Trait[Types...]`
   TraitApplicationAttr app = dyn_cast_or_null<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
-  if (!app) return failure();
+  if (!app) return p.emitError(p.getCurrentLocation(), "expected a TraitApplicationAttr");
 
   // result type is the claim of the trait application
   auto claimTy = ClaimType::get(p.getContext(), app);
@@ -960,7 +960,7 @@ ParseResult MethodCallOp::parse(OpAsmParser& p, OperationState &st) {
 
   // parse '@Trait[Types...]' as TraitApplicationAttr
   TraitApplicationAttr traitApp = dyn_cast_or_null<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
-  if (!traitApp) return failure();
+  if (!traitApp) return p.emitError(p.getCurrentLocation(), "expected a TraitApplicationAttr");
 
   // parse '::'
   if (p.parseColon() || p.parseColon()) return failure();
@@ -1160,7 +1160,7 @@ ParseResult ProjectOp::parse(OpAsmParser &p, OperationState &st) {
 
   // @SrcTrait[...]
   TraitApplicationAttr srcApp = dyn_cast_or_null<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
-  if (!srcApp) return failure();
+  if (!srcApp) return p.emitError(p.getCurrentLocation(), "expected a TraitApplicationAttr");
 
   // (by @SrcProof)?
   FlatSymbolRefAttr srcProof;
@@ -1183,7 +1183,7 @@ ParseResult ProjectOp::parse(OpAsmParser &p, OperationState &st) {
 
   // @DstTrait[...]
   TraitApplicationAttr dstApp = dyn_cast_or_null<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
-  if (!dstApp) return failure();
+  if (!dstApp) return p.emitError(p.getCurrentLocation(), "expected a TraitApplicationAttr");
 
   // (by @DstProof)?
   FlatSymbolRefAttr dstProof;
@@ -1288,7 +1288,7 @@ LogicalResult ProjectOp::verifySymbolUses(SymbolTableCollection &/*symbolTable*/
 ParseResult AllegeOp::parse(OpAsmParser &p, OperationState &st) {
   // parse `@Trait[Types...]`
   TraitApplicationAttr app = dyn_cast_or_null<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
-  if (!app) return failure();
+  if (!app) return p.emitError(p.getCurrentLocation(), "expected a TraitApplicationAttr");
 
   // result type is the claim of the trait application
   auto claimTy = ClaimType::get(p.getContext(), app);
