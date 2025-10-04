@@ -6,7 +6,7 @@
 // CHECK-NOT: !trait.poly<1>
 // CHECK-NOT: !trait.poly<-2>
 !T = !trait.poly<0>
-!U = !trait.poly<fresh>
+!U = !trait.poly<unique>
 func.func @foo(%a: !T, %b: !U) -> !U {
   return %b : !U
 }

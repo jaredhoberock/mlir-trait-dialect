@@ -4,6 +4,7 @@
 #include "TraitTypes.hpp"
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/SmallSet.h>
+#include <llvm/ADT/STLForwardCompat.h>
 #include <llvm/Support/Error.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/Interfaces/FunctionImplementation.h>
@@ -20,47 +21,11 @@ using namespace mlir;
 using namespace mlir::trait;
 
 
-static FailureOr<DenseMap<Type,Type>>
-buildSubstitutionForPolymorphicFunctionCall(
-    FunctionType formalFnTy,
-    TypeRange actualArgumentTypes,
-    TypeRange actualResultTypes,
-    ModuleOp module,
-    llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
-  // check argument count
-  auto formalParamTypes = formalFnTy.getInputs();
-  if (actualArgumentTypes.size() != formalParamTypes.size()) {
-    if (err) err() << "expected " << formalParamTypes.size() << " arguments, but got "
-                   << actualArgumentTypes.size();
-    return failure();
-  }
-
-  // check result count
-  auto formalResultTypes = formalFnTy.getResults();
-  if (actualResultTypes.size() != formalResultTypes.size()) {
-    if (err) err() << "expected " << formalResultTypes.size()
-                   << " results, but got " << actualResultTypes.size();
-  }
-
-  // create a FunctionType representing the actual arguments and results
-  FunctionType actualFnTy = FunctionType::get(
-    module.getContext(),
-    actualArgumentTypes,
-    actualResultTypes
-  );
-
-  DenseMap<Type,Type> subst;
-  if (failed(substituteWith(formalFnTy, actualFnTy, module, subst, err)))
-    return failure();
-
-  return normalizeSubstitution(subst);
-}
-
 // this function generates a mangled name suffix (e.g. "_i32_i1_f64", etc.)
 // based on the substitution of some polymorphic entity (e.g., ImplOp, FuncOp, etc.)
 static std::string generateMangledNameSuffixFor(
   const DenseMap<Type,Type> &subst,
-  ArrayRef<TypeVariableInterface> typeParams) {
+  ArrayRef<GenericTypeInterface> typeParams) {
 
   std::string result;
   llvm::raw_string_ostream os(result);
@@ -113,54 +78,64 @@ LogicalResult TraitOp::verify() {
   return success();
 }
 
-
 LogicalResult TraitOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // verify obligations
   return getRequirements().verifyTraitApplications(getParentOp<ModuleOp>(), [&](){ return emitOpError(); });
 }
 
-DenseMap<Type,Type> TraitOp::buildSubstitutionFor(ClaimType claimTy) {
-  // substitute our self claim with the given claim
-  DenseMap<Type,Type> subst;
-  if (failed(substituteWith(getSelfClaim(), claimTy, getParentOp<ModuleOp>(), subst)))
-    llvm_unreachable("TraitOp::buildSubstitutionFor: substituteWith failed");
-  return normalizeSubstitution(subst);
+FailureOr<DenseMap<Type,Type>> TraitOp::buildSubstitutionForSelfClaim(ClaimType actualSelfClaim,
+                                                                      llvm::function_ref<InFlightDiagnostic()> errFn) {
+  auto module = getModule(errFn);
+  if (failed(module)) return failure();
+  return buildSpecializationSubstitution(getSelfClaim(), actualSelfClaim, *module, errFn);
 }
 
 SmallVector<TraitOp,4> TraitOp::getRequiredTraits() {
-  ModuleOp module = getParentOp<ModuleOp>();
-  if (!module)
+  auto module = getModule();
+  if (failed(module))
     llvm_unreachable("TraitOp::getPrereqTraits: not in a module");
 
   SmallVector<TraitOp,4> result;
   for (auto &app : getRequirements()) {
-    auto trait = app.getTraitOrAbort(module, "TraitOp::getPrereqTraits: couldn't find required trait");
+    auto trait = app.getTraitOrAbort(*module, "TraitOp::getPrereqTraits: couldn't find required trait");
     result.push_back(trait);
   }
   return result;
 }
 
-SmallVector<ClaimType> TraitOp::getRequirementsAsClaimsWith(const DenseMap<Type,Type>& subst) {
-  SmallVector<ClaimType> result;
-  for (TraitApplicationAttr app : getRequirements()) {
-    ClaimType in = ClaimType::get(getContext(), app);
-    ClaimType out = dyn_cast_or_null<ClaimType>(applySubstitution(subst, in));
-    if (!out)
-      llvm_unreachable("TraitOp::getRequirementsAsClaimsWith: expected ClaimType");
-    result.push_back(out);
-  }
-  return result;
+SmallVector<ClaimType> TraitOp::getRequirementsAsClaims() {
+  MLIRContext *ctx = getContext();
+  return llvm::map_to_vector(getRequirements(), [ctx](TraitApplicationAttr app) {
+    return ClaimType::get(ctx, app);
+  });
+}
+
+FailureOr<SmallVector<ClaimType>> TraitOp::specializeRequirementsAsClaimsFor(
+    ClaimType actualSelfClaim,
+    llvm::function_ref<InFlightDiagnostic()> errFn) {
+  auto module = getModule(errFn);
+  if (failed(module)) return failure();
+
+  // build a specialized substitution for actualSelfClaim
+  auto subst = buildSpecializationSubstitution(getSelfClaim(), actualSelfClaim, *module, errFn);
+  if (failed(subst)) return failure();
+
+  // apply the substitution to each requirement
+  return llvm::map_to_vector(getRequirementsAsClaims(), [&](ClaimType req) {
+    ClaimType specializedReq = dyn_cast_or_null<ClaimType>(applySubstitutionToFixedPoint(*subst, req));
+    if (!specializedReq)
+      llvm_unreachable("TraitOp::specializeRequirementsAsClaimsFor: expected ClaimType");
+    return specializedReq;
+  });
 }
 
 SmallVector<ImplOp> TraitOp::getImpls() {
-  ModuleOp module = getParentOp<ModuleOp>();
-  if (!module)
-    return {};
+  auto module = getModule();
+  if (failed(module)) return {};
 
   // traverse users of this trait
-  auto uses = mlir::SymbolTable::getSymbolUses(*this, module);
-  if (!uses)
-    return {};
+  auto uses = mlir::SymbolTable::getSymbolUses(*this, *module);
+  if (!uses) return {};
 
   SmallVector<ImplOp> result;
   for (const auto& use : *uses) {
@@ -173,23 +148,11 @@ SmallVector<ImplOp> TraitOp::getImpls() {
   return result;
 }
 
-SmallVector<ImplOp> TraitOp::getImplsFor(ClaimType claim) {
+SmallVector<ImplOp> TraitOp::getCandidateImplsFor(ClaimType wanted) {
   SmallVector<ImplOp> result;
-
-  ModuleOp module = getParentOp<ModuleOp>();
-  if (!module)
-    return result;
-
   for (auto impl : getImpls()) {
-    auto implClaim = impl.getSelfClaim();
-
-    // impl's claim is equivalent to the claim of interest
-    // if each can substitute with the other
-    bool eq = succeeded(substituteWith(implClaim, claim, module)) &&
-              succeeded(substituteWith(claim, implClaim, module));
-    if (eq) {
+    if (succeeded(impl.buildSubstitutionForSelfClaim(wanted)))
       result.push_back(impl);
-    }
   }
   return result;
 }
@@ -200,19 +163,18 @@ SmallVector<ImplOp> TraitOp::getImplsFor(ClaimType claim) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  auto module = getParentOp<ModuleOp>();
-  if (!module)
-    return emitOpError() << "not in a module";
+  auto errFn = [&]{ return emitOpError(); };
+
+  auto module = getModule(errFn);
+  if (failed(module)) return failure();
 
   // Verify self application attribute exists
   auto selfApp = getSelfApplication();
   if (!selfApp)
     return emitOpError() << "requires a self application TraitApplicationAttr";
 
-  auto errFn = [&]{ return emitOpError(); };
-
   // Verify the self application
-  if (failed(selfApp.verifyTraitApplication(module, errFn)))
+  if (failed(selfApp.verifyTraitApplication(*module, errFn)))
     return failure();
 
   // Get the trait
@@ -283,59 +245,85 @@ TraitOp ImplOp::getTrait() {
   return getSelfApplication().getTraitOrAbort(module, "ImplOp::getTrait: couldn't find trait");
 }
 
-DenseMap<Type, Type> ImplOp::buildSubstitutionFor(ClaimType claim) {
-  // unify three types:
-  // 1. Trait's self claim
-  // 2. Impl's self claim
-  // 3. The target claim
+FailureOr<DenseMap<Type,Type>> ImplOp::buildSubstitutionForSelfClaim(ClaimType actualSelfClaim,
+                                                                     llvm::function_ref<InFlightDiagnostic()> errFn) {
+  auto module = getModule(errFn);
+  if (failed(module)) return failure();
+  return buildSpecializationSubstitution(getSelfClaim(), actualSelfClaim, *module, errFn);
+}
 
-  // unify the impl's self claim with the trait's self claim
-  DenseMap<Type,Type> subst = getTrait().buildSubstitutionFor(getSelfClaim());
+FailureOr<DenseMap<Type,Type>> ImplOp::buildMonomorphizationSubstitutionFor(
+    ClaimType provenSelfClaim,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  if (!provenSelfClaim.isProven()) {
+    if (err) err() << "expected proven self claim for " << getSymName();
+    return failure();
+  }
 
-  // now substitute the impl's self claim with the target claim
-  if (failed(substituteWith(getSelfClaim(), claim, getParentOp<ModuleOp>(), subst)))
-    llvm_unreachable("ImplOp::buildSubstitutionFor: substituteWith failed");
+  auto module = getModule(err);
+  if (failed(module)) return failure();
+
+  DenseMap<Type,Type> subst;
+
+  // bind the *same* self claim without a proof to the proven self claim
+  // this (recursively) records claim -> proven-claim into subst
+  ClaimType unprovenSelfClaim = provenSelfClaim.asUnproven();
+  if (failed(verifyAndRecordProof(unprovenSelfClaim, provenSelfClaim, *module, subst, err)))
+    return failure();
+
+  // add PolyType -> concrete Type bindings for monomorphization
+  auto polyToType = buildSubstitutionForSelfClaim(provenSelfClaim, err);
+  if (failed(polyToType)) return failure();
+
+  // merge polyToType into subst; flag conflicts
+  for (const auto &[k,v] : *polyToType) {
+    auto [it, inserted] = subst.try_emplace(k,v);
+    if (!inserted && it->second != v) {
+      if (err) err() << "conflicting substitution for " << k
+                     << ": " << it->second << " vs " << v;
+      return failure();
+    }
+  }
 
   return normalizeSubstitution(subst);
 }
 
-SmallVector<TypeVariableInterface, 4> ImplOp::getTypeParams() {
-  auto selfClaim = getSelfClaim();
-  auto subst = buildSubstitutionFor(selfClaim);
-
+SmallVector<GenericTypeInterface, 4> ImplOp::getTypeParams() {
   // collect all the types where a type variable could hide
   SmallVector<Type> allOurTypes;
-  allOurTypes.push_back(selfClaim);
-  for (ClaimType a : getAssumptionsAsClaimsWith(subst)) {
+  allOurTypes.push_back(getSelfClaim());
+  for (ClaimType a : getAssumptionsAsClaims()) {
     allOurTypes.push_back(a);
   }
 
   // tuple the types
   TupleType tupled = TupleType::get(getContext(), allOurTypes);
 
-  // get all the type variables in the tuple
-  return getTypeVariablesIn(tupled);
+  // get all the generic types in the tuple
+  return getGenericTypesIn(tupled);
 }
 
-func::FuncOp ImplOp::getOrInstantiateMethod(OpBuilder& builder, StringRef methodName) {
+FailureOr<func::FuncOp> ImplOp::getOrInstantiateMethod(OpBuilder& builder, StringRef methodName) {
+  auto trait = getTrait();
+
   // check that we've named a valid trait method
-  if (!getTrait().hasMethod(methodName)) return nullptr;
+  if (!trait.hasMethod(methodName)) return failure();
 
   // check if the method already exists in the ImplOp
-  func::FuncOp method = getMethod(methodName);
-  if (!method) {
-    // we need to instantiate the method from the default implementation in the trait
-    auto traitMethod = getTrait().getOptionalMethod(methodName);
-    if (traitMethod) {
-      PatternRewriter::InsertionGuard guard(builder);
-      builder.setInsertionPointToEnd(&getBody().front());
+  auto method = getMethod(methodName);
+  if (succeeded(method)) return method;
 
-      auto subst = getTrait().buildSubstitutionFor(getSelfClaim());
-      method = instantiatePolymorph(builder, traitMethod, methodName, subst);
-    }
-  }
+  // otherwise, we need to instantiate the method from the default implementation in the trait
+  auto traitMethod = trait.getOptionalMethod(methodName);
+  if (failed(traitMethod)) return failure();
 
-  return method;
+  // build a substitution that maps trait PolyType parameters to impl type arguments
+  auto subst = trait.buildSubstitutionForSelfClaim(getSelfClaim());
+  if (failed(subst)) return failure();
+
+  PatternRewriter::InsertionGuard guard(builder);
+  builder.setInsertionPointToEnd(&getBody().front());
+  return instantiatePolymorph(builder, *traitMethod, methodName, *subst);
 }
 
 static func::FuncOp instantiateMethodAsFreeFuncWithLeadingSelfProof(
@@ -345,6 +333,7 @@ static func::FuncOp instantiateMethodAsFreeFuncWithLeadingSelfProof(
     StringRef functionName,
     ClaimType selfProofTy,
     const DenseMap<Type,Type>& subst) {
+
   // instantiate the method into the grandparent with a mangled name
   PatternRewriter::InsertionGuard guard(rewriter);
 
@@ -388,15 +377,15 @@ static func::FuncOp instantiateMethodAsFreeFuncWithLeadingSelfProof(
   return funcOp;
 }
 
-func::FuncOp ImplOp::getOrInstantiateFreeFunctionFromMethod(
+FailureOr<func::FuncOp> ImplOp::getOrInstantiateFreeFunctionFromMethod(
     PatternRewriter& rewriter,
-    ClaimType proof,
+    ClaimType provenSelfClaim,
     StringRef methodName) {
   // check that methodName names a valid trait method
-  if (!getTrait().hasMethod(methodName)) return nullptr;
+  if (!getTrait().hasMethod(methodName)) return failure();
 
   // generate a free function name based on the ImplOp's mangled name for our proof
-  auto functionName = generateMangledName(proof) + "_" + methodName.str();
+  auto functionName = generateMangledName(provenSelfClaim) + "_" + methodName.str();
 
   MLIRContext* ctx = getContext();
 
@@ -408,17 +397,21 @@ func::FuncOp ImplOp::getOrInstantiateFreeFunctionFromMethod(
 
   if (!funcOp) {
     // get the method inside the ImplOp
-    func::FuncOp method = getOrInstantiateMethod(rewriter, methodName);
-    
+    auto method = getOrInstantiateMethod(rewriter, methodName);
+    if (failed(method)) return failure();
+
+    // build a Type -> Type substitution to use for monomorphization
+    auto subst = buildMonomorphizationSubstitutionFor(provenSelfClaim);
+    if (failed(subst)) return failure();
+
     // instantiate into grandparent with mangled name
-    auto subst = buildSubstitutionFor(proof);
     funcOp = instantiateMethodAsFreeFuncWithLeadingSelfProof(
       rewriter,
       getParentOp(),
-      method,
+      *method,
       functionName,
-      proof,
-      subst
+      provenSelfClaim,
+      *subst
     );
   }
 
@@ -451,29 +444,57 @@ std::string ImplOp::generateSymName(TraitApplicationAttr selfApp,
 }
 
 std::string ImplOp::generateMangledName(ClaimType claim) {
-  DenseMap<Type,Type> subst = buildSubstitutionFor(claim);
+  auto subst = buildSubstitutionForSelfClaim(claim);
+  if (failed(subst))
+    llvm_unreachable("ImplOp::generateMangledName: specializedSelfClaimAgainst failed");
+
   std::string result = getSymName().str();
-  result += generateMangledNameSuffixFor(subst, getTypeParams());
+  result += generateMangledNameSuffixFor(*subst, getTypeParams());
   return result;
 }
 
-SmallVector<ClaimType> ImplOp::getAssumptionsAsClaimsWith(const DenseMap<Type,Type>& subst) {
-  // specialize each assumption: @A[params...] to @A[Args...]
-  SmallVector<ClaimType> result;
-  for (auto polyApp : getAssumptions()) {
-    ClaimType polyAssumption = ClaimType::get(getContext(), polyApp);
-    ClaimType substAssumption = dyn_cast<ClaimType>(applySubstitution(subst, polyAssumption));
-    if (!substAssumption)
-      llvm_unreachable("ImplOp::getAssumptionsAsClaimsFor: expected ClaimType");
-    result.push_back(substAssumption);
-  }
-  return result;
+SmallVector<ClaimType> ImplOp::getAssumptionsAsClaims() {
+  MLIRContext *ctx = getContext();
+  return llvm::map_to_vector(getAssumptions(), [ctx](TraitApplicationAttr app) {
+    return ClaimType::get(ctx, app);
+  });
 }
 
-SmallVector<ClaimType> ImplOp::getObligationsAsClaimsWith(const DenseMap<Type,Type> &subst) {
-  SmallVector<ClaimType> result = getTrait().getRequirementsAsClaimsWith(subst);
-  result.append(getAssumptionsAsClaimsWith(subst));
-  return result;
+FailureOr<SmallVector<ClaimType>> ImplOp::specializeAssumptionsAsClaimsFor(
+    ClaimType actualSelfClaim,
+    llvm::function_ref<InFlightDiagnostic()> errFn) {
+  auto module = getModule(errFn);
+  if (failed(module)) return failure();
+
+  // build a specialized substitution for actualSelfClaim
+  auto subst = buildSpecializationSubstitution(getSelfClaim(), actualSelfClaim, *module, errFn);
+  if (failed(subst)) return failure();
+
+  // apply the substitution to each assumption
+  return llvm::map_to_vector(getAssumptionsAsClaims(), [&](ClaimType assumption) {
+    ClaimType specializedAssumption = dyn_cast_or_null<ClaimType>(applySubstitutionToFixedPoint(*subst, assumption));
+    if (!specializedAssumption)
+      llvm_unreachable("ImplOp::specializeAssumptionsAsClaimsFor: expected ClaimType");
+    return specializedAssumption;
+  });
+}
+
+FailureOr<SmallVector<ClaimType>> ImplOp::specializeObligationsAsClaimsFor(
+    ClaimType actualSelfClaim,
+    llvm::function_ref<InFlightDiagnostic()> errFn) {
+  // specialize requirements of the trait
+  auto requirements = getTrait().specializeRequirementsAsClaimsFor(actualSelfClaim, errFn);
+  if (failed(requirements)) return failure();
+
+  // specialize assumptions of the impl
+  auto assumptions = specializeAssumptionsAsClaimsFor(actualSelfClaim, errFn);
+  if (failed(assumptions)) return failure();
+
+  // obligations = requirements + assumptions
+  SmallVector<ClaimType> obligations = std::move(*requirements);
+  obligations.append(std::move(*assumptions));
+
+  return obligations;
 }
 
 ParseResult ImplOp::parse(OpAsmParser &p, OperationState &result) {
@@ -571,18 +592,22 @@ LogicalResult ProofOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   auto module = getParentOp<ModuleOp>();
   auto errFn = [&] { return emitOpError(); };
 
-  // verify the claim
+  // verify basic symbol uses of the claim
   if (failed(getProvenClaim().verifySymbolUses(module, errFn)))
-    return success();
+    return failure();
 
   // check that the named impl exists
   auto implOp = getImpl();
   if (!implOp)
     return emitOpError() << "cannot find impl '" << getImplNameAttr() << "'";
 
-  // check that the impl's claim can be substitute with our proof
-  // substituteWith will verify the details of the proof for us
-  if (failed(substituteWith(implOp.getSelfClaim(), getProvenClaim(), module, errFn)))
+  // check that we are able to substitute the impl's self claim against our proven claim
+  if (failed(implOp.buildSubstitutionForSelfClaim(getProvenClaim(), errFn)))
+    return failure();
+
+  // recursively verify proof structure and that proof bindinds can be recorded
+  DenseMap<Type,Type> subst;
+  if (failed(verifyAndRecordProof(getProvenClaim().asUnproven(), getProvenClaim(), module, subst, errFn)))
     return failure();
 
   return success();
@@ -629,17 +654,6 @@ FailureOr<SmallVector<ClaimType>> ProofOp::verifyAndGetSubproofClaims(llvm::func
     result.push_back(subproofTy);
   }
 
-  return result;
-}
-
-SmallVector<ClaimType> ProofOp::getImplAssumptionClaims() {
-  SmallVector<ClaimType> result = getSubproofClaims();
-
-  // drop the trait requirements from the subproofs
-  size_t numTraitRequirements = getTrait().getRequirements().size();
-  assert(numTraitRequirements <= result.size());
-
-  result.erase(result.begin(), result.begin() + numTraitRequirements);
   return result;
 }
 
@@ -728,26 +742,21 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (!proof)
     return emitOpError() << "cannot find proof '" << proofRef << "'";
 
-  // get the proof symbol's claim
-  ClaimType proofSymClaim;
-
   // proof needs to refer to either a ProofOp or an ImplOp with no obligations
   if (auto proofOp = dyn_cast<ProofOp>(proof)) {
-    proofSymClaim = proofOp.getProvenClaim();
+    // exact proof must match
+    return unify(proofOp.getProvenClaim(), getProvenClaim(), module, errFn);
   } else if (auto implOp = dyn_cast<ImplOp>(proof)) {
-    proofSymClaim = implOp.getSelfClaim();
-  } else {
-    // the symbol refers to something that isn't a proof
-    return emitOpError()
-           << "symbol " << proofRef.getValue()
-           << " must refer to either a trait.proof or a trait.impl with no obligations";
+    if (!implOp.isSelfProof())
+      return emitOpError() << "impl '" << proofRef
+                           << "' is not self-proving (has obligations)";
+
+    // check that the impl is able to build a substitution for our proven claim
+    return implOp.buildSubstitutionForSelfClaim(getProvenClaim(), errFn);
   }
 
-  // we must be able to substitute the symbol's claim with our claim
-  if (failed(substituteWith(proofSymClaim, getProvenClaim(), module, errFn)))
-    return failure();
-
-  return success();
+  return emitOpError() << "symbol " << proofRef.getValue()
+                       << " must refer to either a trait.proof or a trait.impl with no obligations";
 }
 
 
@@ -836,14 +845,11 @@ TraitOp AssumeOp::getTrait() {
 //===----------------------------------------------------------------------===//
 
 FailureOr<TraitOp> MethodCallOp::getTrait(llvm::function_ref<InFlightDiagnostic()> err) {
-  auto module = getOperation()->getParentOfType<ModuleOp>();
-  if (!module) {
-    if (err) err() << "not in a module";
-    return failure();
-  }
+  auto module = getModule(err);
+  if (failed(module)) return failure();
   return getClaimType()
     .getTraitApplication()
-    .getTrait(module, err);
+    .getTrait(*module, err);
 }
 
 FailureOr<func::FuncOp> MethodCallOp::getMethod(llvm::function_ref<InFlightDiagnostic()> err) {
@@ -872,19 +878,14 @@ LogicalResult MethodCallOp::verify() {
 }
 
 LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  auto module = getOperation()->getParentOfType<ModuleOp>();
-  if (!module)
-    return emitOpError() << "not contained in a module";
-
   auto errFn = [&]{ return emitOpError(); };
 
-  // verify the claim
-  ClaimType claim = getClaimType();
-  if (failed(claim.verifySymbolUses(module, errFn)))
-    return failure();
+  auto module = getModule(errFn);
+  if (failed(module)) return failure();
 
-  // verify the method exists
-  if (failed(getMethodFunctionType(errFn)))
+  // verify basics about the claim
+  ClaimType claim = getClaimType();
+  if (failed(claim.verifySymbolUses(*module, errFn)))
     return failure();
 
   // check that we can build a consistent substitution for this method call
@@ -892,32 +893,26 @@ LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable)
 }
 
 FailureOr<DenseMap<Type,Type>> MethodCallOp::buildSubstitution(llvm::function_ref<InFlightDiagnostic()> err) {
-  ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
-  if (!module) {
-    if (err) err() << "not contained in a module";
-    return failure();
-  }
+  auto module = getModule(err);
+  if (failed(module)) return failure();
 
-  ClaimType claimTy = getClaimType();
-  auto trait = claimTy.getTraitApplication().getTraitOrAbort(module, "MethodCallOp::buildSubstitution: cannot find trait");
+  auto trait = getTrait(err);
+  if (failed(trait)) return failure();
 
-  // specialize the method type by the claim's type args (trait-level substitution)
-  DenseMap<Type,Type> traitSubst = trait.buildSubstitutionFor(claimTy);
-  Type afterTrait = applySubstitutionToFixedPoint(traitSubst, *getMethodFunctionType());
-  auto methodTy = dyn_cast_or_null<FunctionType>(afterTrait);
-  if (!methodTy) {
-    if (err) err() << "expected function type";
-    return failure();
-  }
+  auto methodFormalTy = getMethodFunctionType(err);
+  if (failed(methodFormalTy)) return failure();
 
-  // unify (trait-specialized method type) <- (actual call signature)
-  return buildSubstitutionForPolymorphicFunctionCall(
-    methodTy,
-    ValueRange(getArguments()).getTypes(),
-    getResultTypes(),
-    module,
-    err
-  );
+  // specialize the method's formal function type by the call's claim
+  // this yields the callee's *trait-level* substitution (poly -> type) and
+  // applies it to the method signature so that any trait-level generics match our claim
+  auto traitSubst = trait->buildSubstitutionForSelfClaim(getClaimType(), err);
+  if (failed(traitSubst)) return failure();
+  Type formal = applySubstitutionToFixedPoint(*traitSubst, *methodFormalTy);
+
+  // solve the *call-site* specialization: unify the specialized formal type with the
+  // actual call type to get any remaining bindings (including generics in args/results)
+  Type actual = getActualFunctionType();
+  return buildSpecializationSubstitution(formal, actual, *module, err);
 }
 
 ImplOp MethodCallOp::getProvenImpl() {
@@ -925,20 +920,22 @@ ImplOp MethodCallOp::getProvenImpl() {
   assert(claimTy.isProven());
 
   auto proofRef = claimTy.getProof();
-  ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
+  auto module = getModule();
+  if (failed(module))
+    llvm_unreachable("MethodCallOp::getProvenImpl: not in a module");
 
   ImplOp result;
-  auto proofOp = SymbolTable::lookupNearestSymbolFrom<ProofOp>(module, proofRef);
+  auto proofOp = SymbolTable::lookupNearestSymbolFrom<ProofOp>(*module, proofRef);
   if (proofOp) {
     result = proofOp.getImpl();
   } else {
-    result = SymbolTable::lookupNearestSymbolFrom<ImplOp>(module, proofRef);
+    result = SymbolTable::lookupNearestSymbolFrom<ImplOp>(*module, proofRef);
   }
 
   return result;
 }
 
-func::FuncOp MethodCallOp::getOrInstantiateCallee(PatternRewriter& rewriter) {
+FailureOr<func::FuncOp> MethodCallOp::getOrInstantiateCallee(PatternRewriter& rewriter) {
   ClaimType claimTy = cast<ClaimType>(getClaim().getType());
   return getProvenImpl()
     .getOrInstantiateFreeFunctionFromMethod(rewriter, claimTy, getMethodName());
@@ -1063,86 +1060,87 @@ void MethodCallOp::print(OpAsmPrinter& p) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult FuncCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  auto errFn = [&] { return emitOpError(); };
-
-  auto module = getModule(errFn);
-  if (failed(module))
-    return failure();
-
   auto calleeName = getCalleeNameAttr();
   if (!calleeName)
     return emitOpError() << "requires a 'callee_name' symbol reference attribute";
 
-  auto callee = getCallee(errFn);
-  if (failed(callee))
-    return failure();
+  auto errFn = [&] { return emitOpError(); };
 
-  // check the types involved in a possibly polymorphic call
-  return buildSubstitutionForPolymorphicFunctionCall(
-    callee->getFunctionType(),
-    getOperands().getTypes(),
-    getResultTypes(),
-    *module,
-    errFn
-  );
+  auto callee = getCallee(errFn);
+  if (failed(callee)) return failure();
+
+  // check that we can build a substitution
+  return buildSubstitution(errFn);
 }
 
-DenseMap<Type, Type> FuncCallOp::buildSubstitution() {
-  DenseMap<Type, Type> result;
+FailureOr<DenseMap<Type, Type>> FuncCallOp::buildSubstitution(llvm::function_ref<InFlightDiagnostic()> err) {
+  auto module = getModule(err);
+  if (failed(module)) return failure();
 
-  FunctionType formal = *getCalleeFunctionType();
-  FunctionType actual = FunctionType::get(getContext(), getOperandTypes(), getResultTypes());
+  // get formal and actual function types
+  auto maybeFormal = getCalleeFunctionType(err);
+  if (failed(maybeFormal)) return failure();
 
-  auto module = *getModule();
-  if (failed(substituteWith(formal, actual, module, result)))
-    llvm_unreachable("FuncCallOp::buildSubstitution: substituteWith failed");
+  FunctionType formal = *maybeFormal;
+  FunctionType actual = getActualFunctionType();
 
-  return normalizeSubstitution(result);
+  // build a substitution unifying formal & actual
+  auto subst = buildSpecializationSubstitution(formal, actual, *module, err);
+  if (failed(subst)) return failure();
+
+  // record any proof bindings found in the actual signature
+  if (failed(recordProofBindingsIn(actual, *module, *subst, err)))
+    return failure();
+
+  return normalizeSubstitution(*subst);
 }
 
 std::string FuncCallOp::getNameOfCalleeInstance() {
+  auto subst = buildSubstitution();
+  if (failed(subst))
+    llvm_unreachable("FuncCallOp::getNameOfCalleeInstance: buildSubstitution failed");
+
   return getCalleeName().str() +
-         generateMangledNameSuffixFor(buildSubstitution(), getCalleeTypeParams());
+         generateMangledNameSuffixFor(*subst, getCalleeTypeParams());
 }
 
-func::FuncOp FuncCallOp::instantiateCalleeAtInsertionPoint(OpBuilder &builder) {
+FailureOr<func::FuncOp> FuncCallOp::instantiateCalleeAtInsertionPoint(OpBuilder &builder) {
   // lookup the polymorphic callee
-  func::FuncOp callee = *getCallee();
-  auto instanceName = getNameOfCalleeInstance();
-  DenseMap<Type, Type> substitution = buildSubstitution();
+  auto callee = getCallee();
+  if (failed(callee)) return failure();
 
-  return instantiatePolymorph(builder, callee, instanceName, substitution);
+  // get a name for the instantiation
+  auto instanceName = getNameOfCalleeInstance();
+
+  // build a substitution
+  auto subst = buildSubstitution();
+  if (failed(subst)) return failure();
+
+  // instantiate the callee
+  return instantiatePolymorph(builder, *callee, instanceName, *subst);
 }
 
-func::FuncOp FuncCallOp::getOrInstantiateCallee(OpBuilder &builder) {
-  auto err = [&]{ return emitOpError(); };
-
-  auto module = getModule(err);
-  if (failed(module)) return {};
+FailureOr<func::FuncOp> FuncCallOp::getOrInstantiateCallee(OpBuilder &builder) {
+  auto module = getModule();
+  if (failed(module)) return failure();
 
   // get the name of the instantiated callee
   std::string instanceName = getNameOfCalleeInstance();
 
-  // look up the instance
+  // look for an existing instance
   auto *symOp = SymbolTable::lookupSymbolIn(*module, builder.getStringAttr(instanceName));
-  auto instance = dyn_cast_or_null<func::FuncOp>(symOp);
+  func::FuncOp existing = dyn_cast_or_null<func::FuncOp>(symOp);
+  if (existing) return existing;
 
-  if (!instance) {
-    // there's no instance yet, look up the polymorphic callee
-    auto callee = getCallee(err);
-    if (failed(callee)) return {};
+  // otherwise, we need to instantiate an instance
+  // look up the polymorphic callee
+  auto callee = getCallee();
+  if (failed(callee)) return failure();
 
-    // the instance doesn't exist yet; create it
-    PatternRewriter::InsertionGuard guard(builder);
-    builder.setInsertionPointAfter(*callee);
-    instance = instantiateCalleeAtInsertionPoint(builder);
-    if (!instance) {
-      emitOpError("instantiation failed");
-      return nullptr;
-    }
-  }
-
-  return instance;
+  // insert the instance afer the polymorph
+  PatternRewriter::InsertionGuard guard(builder);
+  builder.setInsertionPointAfter(*callee);
+  return instantiateCalleeAtInsertionPoint(builder);
 }
 
 
@@ -1270,14 +1268,14 @@ LogicalResult ProjectOp::verifySymbolUses(SymbolTableCollection &/*symbolTable*/
 
   // any matching candidate will do
   for (auto cand : candidates) {
-    if (succeeded(substituteWith(cand, dst, module)))
+    if (cand == dst)
       return success();
   }
 
   // no matching candidate found
   return emitOpError()
          << "projected claim " << dst
-         << "does not unify with any candidate projection of " << src;
+         << "is not a candidate projection of " << src;
 }
 
 
@@ -1309,7 +1307,6 @@ LogicalResult AllegeOp::verify() {
   if (!getClaim().isMonomorphic())
     return emitOpError() << "expected monomorphic claim, got "
                          << getClaim();
-
   return success();
 }
 

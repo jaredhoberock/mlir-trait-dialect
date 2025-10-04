@@ -30,11 +30,12 @@ assumptionsSatisfiableFor(ImplOp impl,
     return failure();
   auto guard = llvm::make_scope_exit([&]{ memo.visiting.erase(app); });
 
-  // bind generics for this impl to the concrete claim
-  auto subst = impl.buildSubstitutionFor(concreteSelf);
-
   // specialize the impl's assumptions to our concrete claim
-  for (ClaimType assume : impl.getAssumptionsAsClaimsWith(subst)) {
+  auto assumptions = impl.specializeAssumptionsAsClaimsFor(concreteSelf);
+  if (failed(assumptions))
+    return failure();
+
+  for (ClaimType assume : *assumptions) {
     // find an impl for the assumption
     auto subImpl = resolveImplFor(assume, module, memo, gen, rewriter);
     if (failed(subImpl))
@@ -126,16 +127,10 @@ static FailureOr<ImplOp> resolveImplFor(
   // get the trait
   TraitOp trait = app.getTraitOrAbort(module, "resolveImplFor: cannot find trait");
 
-  // gather existing candidate that unify on the self-claim
-  SmallVector<ImplOp> candidates;
-  for (ImplOp impl : trait.getImpls()) {
-    if (succeeded(substituteWith(impl.getSelfClaim(), wanted, module)))
-      candidates.push_back(impl);
-  }
-
-  // partition into good/bad by satisfiable assumptions
+  // collect candidates for wanted from the trait and
+  // partition them into good/bad by satisfiable assumptions
   SmallVector<ImplOp> good, bad;
-  for (ImplOp impl : candidates) {
+  for (ImplOp impl : trait.getCandidateImplsFor(wanted)) {
     if (succeeded(assumptionsSatisfiableFor(impl, wanted, module, memo, gen, rewriter)))
       good.push_back(impl);
     else
@@ -195,16 +190,17 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
     ClaimType wanted,
     PatternRewriter &rewriter,
     llvm::function_ref<InFlightDiagnostic()> err) {
-  // resolve the impl first so that we can monomorphize wanted
+  // resolve an impl for wanted first
   auto implOr = resolveImplFor(wanted, module, memo.resolutionMemo, generators, rewriter, err);
   if (failed(implOr)) return failure();
   ImplOp impl = *implOr;
 
-  // build the substitution for (impl, wanted)
-  DenseMap<Type,Type> subst = impl.buildSubstitutionFor(wanted);
+  // build a PolyType -> Type map for this impl's self claim against wanted
+  auto subst = impl.buildSubstitutionForSelfClaim(wanted, err);
+  if (failed(subst)) return failure();
 
   // monomorphize the wanted claim with that substitution
-  ClaimType monomorphicWanted = dyn_cast_or_null<ClaimType>(applySubstitutionToFixedPoint(subst, wanted));
+  ClaimType monomorphicWanted = dyn_cast_or_null<ClaimType>(applySubstitutionToFixedPoint(*subst, wanted));
   if (!monomorphicWanted || !monomorphicWanted.isMonomorphic()) {
     if (err) err() << "could not monomorphize claim: " << wanted;
     return failure();
@@ -216,7 +212,7 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
   if (auto it = memo.proofMemo.find(app); it != memo.proofMemo.end())
     return it->second;
 
-  MLIRContext* ctx = module.getContext();
+  MLIRContext *ctx = module.getContext();
 
   // check for a self-proof
   if (impl.isSelfProof()) {
@@ -232,9 +228,13 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
     return sym;
   }
 
+  // specialize all obligations against wanted
+  auto obligations = impl.specializeObligationsAsClaimsFor(wanted, err);
+  if (failed(obligations)) return failure();
+
   // recursively prove monomorphic obligations
   SmallVector<Attribute> subproofSymbols;
-  for (ClaimType ob : impl.getObligationsAsClaimsWith(subst)) {
+  for (ClaimType ob : *obligations) {
     auto sym = resolveAndEnsureProofFor(ob, rewriter, err);
     if (failed(sym)) return failure();
     subproofSymbols.push_back(*sym);

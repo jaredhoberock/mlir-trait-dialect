@@ -89,6 +89,15 @@ def TraitOp : TraitDialectOp<"trait", [
   let regions = (region SizedRegion<1>:$body);
 
   let extraClassDeclaration = [{
+    FailureOr<ModuleOp> getModule(llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
+      auto module = getOperation()->getParentOfType<ModuleOp>();
+      if (!module) {
+        if (err) err() << "not in a module";
+        return failure();
+      }
+      return module;
+    }
+
     TraitApplicationAttr getSelfApplication() {
       MLIRContext* ctx = getContext();
       FlatSymbolRefAttr selfRef = FlatSymbolRefAttr::get(ctx, getSymName());
@@ -137,23 +146,36 @@ def TraitOp : TraitDialectOp<"trait", [
       return result;
     }
 
-    func::FuncOp getOptionalMethod(StringRef methodName) {
+    FailureOr<func::FuncOp> getOptionalMethod(StringRef methodName) {
       for (auto method : getOptionalMethods()) {
         if (method.getSymName() == methodName)
           return method;
       }
-      return nullptr;
+      return failure();
     }
 
-    DenseMap<Type,Type> buildSubstitutionFor(ClaimType claimTy);
+    /// Builds a substitution mapping type parameters in this TraitOp to types found in the given claim
+    FailureOr<DenseMap<Type,Type>> buildSubstitutionForSelfClaim(ClaimType actualSelfClaim,
+                                                                 llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
+
+    bool hasRequirements() {
+      return !getRequirements().empty();
+    }
 
     SmallVector<TraitOp,4> getRequiredTraits();
 
-    SmallVector<ClaimType> getRequirementsAsClaimsWith(const DenseMap<Type,Type>& subst);
+    SmallVector<ClaimType> getRequirementsAsClaims();
 
+    FailureOr<SmallVector<ClaimType>> specializeRequirementsAsClaimsFor(
+        ClaimType actualSelfClaim,
+        llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
+
+    /// Return all the ImplOps for this TraitOp
     SmallVector<ImplOp> getImpls();
 
-    SmallVector<ImplOp> getImplsFor(ClaimType claimTy);
+    /// Return a list of ImplOps of this TraitOp whose self claim types
+    /// can be specialized against wanted
+    SmallVector<ImplOp> getCandidateImplsFor(ClaimType wanted);
   }];
 
   // builders create one empty block in the body region
@@ -291,6 +313,15 @@ def ImplOp : TraitDialectOp<"impl", [
   let regions = (region SizedRegion<1>:$body);
 
   let extraClassDeclaration = [{
+    FailureOr<ModuleOp> getModule(llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
+      auto module = getOperation()->getParentOfType<ModuleOp>();
+      if (!module) {
+        if (err) err() << "not in a module";
+        return failure();
+      }
+      return module;
+    }
+
     TraitApplicationAttr getSelfApplication() const {
       return const_cast<ImplOp*>(this)->getSelfApplication();
     }
@@ -309,22 +340,41 @@ def ImplOp : TraitDialectOp<"impl", [
       return getSelfApplication().getTypeArgs();
     }
 
-    func::FuncOp getMethod(StringRef name) {
-      return lookupSymbol<func::FuncOp>(name);
+    FailureOr<func::FuncOp> getMethod(StringRef methodName, llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
+      auto func = dyn_cast_or_null<func::FuncOp>(mlir::SymbolTable::lookupSymbolIn(*this, methodName));
+      if (!func) {
+        if (err) err() << "cannot find method '@" << methodName
+                       << "' in impl '" << getSymNameAttr() << "'";
+        return failure();
+      }
+      return func;
     }
 
     bool hasMethod(StringRef name) {
       return getMethod(name) != nullptr;
     }
 
-    // returns all distinct type variables that occur in this ImplOp's self application and assumptions
-    SmallVector<TypeVariableInterface, 4> getTypeParams();
+    // returns all distinct generic types that occur in this ImplOp's self application and assumptions
+    SmallVector<GenericTypeInterface, 4> getTypeParams();
 
-    func::FuncOp getOrInstantiateMethod(OpBuilder& builder, StringRef methodName);
+    FailureOr<func::FuncOp> getOrInstantiateMethod(OpBuilder& builder, StringRef methodName);
 
-    func::FuncOp getOrInstantiateFreeFunctionFromMethod(PatternRewriter& rewriter, ClaimType proof, StringRef methodName);
+    FailureOr<func::FuncOp> getOrInstantiateFreeFunctionFromMethod(PatternRewriter& rewriter, ClaimType provenSelfClaim, StringRef methodName);
 
-    DenseMap<Type,Type> buildSubstitutionFor(ClaimType claim);
+    /// Builds a substitution that maps generic types appearing in the ImplOp's type parameters
+    /// to Types in the given actualSelfClaim
+    FailureOr<DenseMap<Type,Type>> buildSubstitutionForSelfClaim(ClaimType actualSelfClaim,
+                                                                 llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
+
+    /// Build the substitution needed to monomorphize this impl for a **given proven self claim**.
+    ///
+    /// Returns a `DenseMap<Type,Type>` that:
+    /// - Replaces each generic type in the impl’s self claim with the concrete type from `proof`.
+    /// - Adds **Claim → proven Claim** bindings for the impl’s self claim and all specialized
+    ///   obligations so downstream rewriting preserves proof annotations.
+    /// The result has no inference variables and is safe to pass to instantiation utilities.
+    FailureOr<DenseMap<Type,Type>> buildMonomorphizationSubstitutionFor(ClaimType provenSelfClaim,
+                                                                        llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     // Helper to generate unique symbol name for an ImplOp
     static std::string generateSymName(TraitApplicationAttr selfApp, ConstraintsAttr assumptions);
@@ -337,10 +387,15 @@ def ImplOp : TraitDialectOp<"impl", [
 
     LogicalResult verifyIsSelfProof(llvm::function_ref<InFlightDiagnostic()> errFn);
 
-    SmallVector<ClaimType> getAssumptionsAsClaimsWith(const DenseMap<Type,Type>& subst);
+    SmallVector<ClaimType> getAssumptionsAsClaims();
 
-    // impl obligations = trait requirements concatentated with impl assumptions
-    SmallVector<ClaimType> getObligationsAsClaimsWith(const DenseMap<Type,Type>& subst);
+    FailureOr<SmallVector<ClaimType>> specializeAssumptionsAsClaimsFor(
+        ClaimType actualSelfClaim,
+        llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
+
+    FailureOr<SmallVector<ClaimType>> specializeObligationsAsClaimsFor(
+        ClaimType actualSelfClaim,
+        llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
   }];
 
   // builders create one empty block in the body region
@@ -526,6 +581,15 @@ def MethodCallOp : TraitDialectOp<"method.call", [
   let results = (outs Variadic<AnyType>);
 
   let extraClassDeclaration = [{
+    FailureOr<ModuleOp> getModule(llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
+      ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
+      if (!module) {
+        if (err) err() << "not in a module";
+        return failure();
+      }
+      return module;
+    }
+
     FailureOr<TraitOp> getTrait(llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     FailureOr<func::FuncOp> getMethod(llvm::function_ref<InFlightDiagnostic()> err = nullptr);
@@ -536,11 +600,17 @@ def MethodCallOp : TraitDialectOp<"method.call", [
       return maybeMethod->getFunctionType();
     }
 
+    /// Get a FunctionType corresponding to the actual argument and result types of this MethodCallOp
+    /// Note that the claim type is not part of the function type
+    FunctionType getActualFunctionType() {
+      return FunctionType::get(getContext(), getArguments().getTypes(), getResultTypes());
+    }
+
     // builds a substitution unifying the callee's function type
     // with the types of actual call arguments
     FailureOr<DenseMap<Type,Type>> buildSubstitution(llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
-    func::FuncOp getOrInstantiateCallee(PatternRewriter& rewriter);
+    FailureOr<func::FuncOp> getOrInstantiateCallee(PatternRewriter& rewriter);
 
     ClaimType getClaimType() {
       return cast<ClaimType>(getClaim().getType());
@@ -665,17 +735,22 @@ def FuncCallOp : TraitDialectOp<"func.call", [
       return callee->getFunctionType();
     }
 
-    func::FuncOp getOrInstantiateCallee(OpBuilder& builder);
+    /// Get a FunctionType corresponding to the actual operand and result types of this FuncCallOp
+    FunctionType getActualFunctionType() {
+      return FunctionType::get(getContext(), getOperands().getTypes(), getResultTypes());
+    }
 
-    func::FuncOp instantiateCalleeAtInsertionPoint(OpBuilder& builder);
+    FailureOr<func::FuncOp> getOrInstantiateCallee(OpBuilder& builder);
 
-    // for each PolyType in the callee's parameter types,
-    // creates the mapping poly type -> argument type
-    llvm::DenseMap<Type, Type> buildSubstitution();
+    FailureOr<func::FuncOp> instantiateCalleeAtInsertionPoint(OpBuilder& builder);
 
-    // returns all distinct type variables that occur in the FunctionType of this FuncOp's callee
-    SmallVector<TypeVariableInterface, 4> getCalleeTypeParams() {
-      return getTypeVariablesIn(*getCalleeFunctionType());
+    // creates the mapping from callee poly types -> actual arguent types
+    // as well as concrete claims -> proofs
+    FailureOr<DenseMap<Type, Type>> buildSubstitution(llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+
+    // returns all distinct generic types that occur in the FunctionType of this FuncOp's callee
+    SmallVector<GenericTypeInterface, 4> getCalleeTypeParams() {
+      return getGenericTypesIn(*getCalleeFunctionType());
     }
 
     // returns the name of the (possibly instantiated) callee after monomorphization
@@ -857,8 +932,6 @@ def ProofOp : TraitDialectOp<"proof", [
         llvm_unreachable("ProofOp::getSubproofClaims: verifyAndGetSubproofClaims failed");
       return *maybeResult;
     }
-
-    SmallVector<ClaimType> getImplAssumptionClaims();
 
     // look up a proof by name. It must be either a ProofOp or a self-proving impl
     static FailureOr<Operation*> getProofOpOrSelfProofImplOp(

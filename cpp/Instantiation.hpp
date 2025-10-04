@@ -14,10 +14,6 @@ func::FuncOp instantiatePolymorph(OpBuilder& builder,
                                   StringRef instanceName,
                                   const DenseMap<Type,Type> &substitution);
 
-ImplOp instantiatePolymorphicImpl(OpBuilder& builder,
-                                  ImplOp polymorph,
-                                  ArrayRef<Type> typeArgs);
-
 void instantiatePolymorphicRegion(OpBuilder& builder,
                                   Region& polymorph,
                                   Region& monomorph,

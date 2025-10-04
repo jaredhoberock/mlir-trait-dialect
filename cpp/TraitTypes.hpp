@@ -30,10 +30,10 @@ template<class NeedleType> bool containsType(Type ty) {
 }
 
 inline bool isPolymorphicType(Type root) {
-  // fast path: if the root itself participates in monomorphization,
+  // fast path: if the root itself is a PolymorphicTypeInterface,
   // call its predicate
-  if (auto m = dyn_cast<MonomorphizableTypeInterface>(root)) {
-    return m.isPolymorphic();
+  if (auto p = dyn_cast<PolymorphicTypeInterface>(root)) {
+    return p.isPolymorphic();
   }
 
   // otherwise, just walk the type
@@ -42,8 +42,8 @@ inline bool isPolymorphicType(Type root) {
     // skip the root to avoid infinite recursion
     if (sub == root) return WalkResult::advance(); 
 
-    if (auto m = dyn_cast<MonomorphizableTypeInterface>(sub)) {
-      if (m.isPolymorphic()) {
+    if (auto p = dyn_cast<PolymorphicTypeInterface>(sub)) {
+      if (p.isPolymorphic()) {
         found = true;
         return WalkResult::interrupt();
       }
@@ -58,15 +58,15 @@ inline bool isMonomorphicType(Type ty) {
   return !isPolymorphicType(ty);
 }
 
-// returns true iff every MonomorphizableTypeInterface inside `root` is polymorphic,
+// returns true iff every PolymorphicTypeInterface inside `root` is polymorphic,
 // and at least one such participant exists
 inline bool isPurelyPolymorphicType(Type root) {
   bool sawPoly = false;
 
-  // fast path: if the root itself participates in monomorphization,
+  // fast path: if the root itself is a PolymorphicTypeInterface
   // call its predicate
-  if (auto m = dyn_cast<MonomorphizableTypeInterface>(root)) {
-    if (m.isMonomorphic())
+  if (auto p = dyn_cast<PolymorphicTypeInterface>(root)) {
+    if (p.isMonomorphic())
       return false; // root participates and is monomorphic -> not purely polymorphic
     sawPoly = true; // root participates and is polymorphic
   }
@@ -77,8 +77,8 @@ inline bool isPurelyPolymorphicType(Type root) {
     // skip the root to avoid infinite recursion
     if (sub == root) return WalkResult::advance();
 
-    if (auto m = dyn_cast<MonomorphizableTypeInterface>(sub)) {
-      if (m.isPolymorphic()) {
+    if (auto p = dyn_cast<PolymorphicTypeInterface>(sub)) {
+      if (p.isPolymorphic()) {
         sawPoly = true;
         return WalkResult::advance();
       }
@@ -92,6 +92,27 @@ inline bool isPurelyPolymorphicType(Type root) {
 
   // must have seen at least one one polymorphic participant, and none that are monomorphic
   return allParticipatingArePoly && sawPoly;
+}
+
+/// Instantiate a type with fresh inference variables.
+///
+/// For each GenericTypeInterface encountered in `t`, creates a fresh instance and
+/// records the mapping in `inst`. The `idCounter` is used to generate unique IDs
+/// for inference variables (should start at 0 for each instantiation context).
+///
+/// For structural types (e.g., FunctionType, TupleType), recursively instantiates
+/// sub-elements and rebuilds the type.
+///
+/// For atomic types (e.g., i32, f64), returns the type unchanged.
+///
+/// This function is memoized via `inst` - if a GenericTypeInterface is encountered multiple
+/// times within the same type structure, it maps to the same InferenceType.
+Type instantiate(Type t, llvm::DenseMap<Type,Type>& inst, uint64_t& idCounter);
+
+inline void dumpSubstitution(const llvm::DenseMap<Type,Type> &subst) {
+  for (auto [k,v] : subst) {
+    llvm::errs() << k << " -> " << v << "\n";
+  }
 }
 
 inline void normalizeSubstitutionInPlace(llvm::DenseMap<Type,Type> &subst) {
@@ -137,16 +158,14 @@ inline llvm::DenseMap<Type,Type> normalizeSubstitution(llvm::DenseMap<Type,Type>
   return subst;
 }
 
-inline Type applySubstitution(const llvm::DenseMap<Type,Type> &substitution,
-                              Type ty) {
-  // set up type replacer
+inline Type applySubstitution(const llvm::DenseMap<Type,Type> &subst,
+                              Type root) {
   AttrTypeReplacer replacer;
   replacer.addReplacement([&](Type t) -> std::optional<Type> {
-    auto it = substitution.find(t);
-    return (it != substitution.end()) ? std::optional<Type>(it->second) : std::nullopt;
+    auto it = subst.find(t);
+    return (it != subst.end()) ? std::optional<Type>(it->second) : std::nullopt;
   });
-
-  return replacer.replace(ty);
+  return replacer.replace(root);
 }
 
 inline Type applySubstitutionToFixedPoint(const llvm::DenseMap<Type,Type> &subst,
@@ -159,16 +178,28 @@ inline Type applySubstitutionToFixedPoint(const llvm::DenseMap<Type,Type> &subst
   }
   return cur;
 }
-     
 
-inline void dumpSubstitution(const llvm::DenseMap<Type,Type> &substitution) {
-  for (auto [k,v] : substitution) {
-    llvm::errs() << k << " -> " << v << "\n";
+inline FailureOr<DenseMap<Type,Type>> composeSubstitutions(const DenseMap<Type,Type> &f,
+                                                           const DenseMap<Type,Type> &g,
+                                                           llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
+  DenseMap<Type,Type> fog;
+
+  for (const auto &[k, v] : f) {
+    // rewrite v by g to a fixed point
+    auto rewritten = applySubstitutionToFixedPoint(g, v);
+
+    auto [it, inserted] = fog.try_emplace(k, rewritten);
+    if (!inserted && it->second != rewritten) {
+      if (err) err() << "conflicting substitution for " << k
+                     << ": " << it->second << " vs " << rewritten;
+      return failure();
+    }
   }
+  return fog;
 }
 
 /// Attempts to update `subst` so that the parameter type `formal`
-/// is satisfied by the argument type `actual`.
+/// is unified with the argument type `actual`.
 ///
 /// This function applies the current substitution mapping to both `formal`
 /// and `actual` before comparison. If the normalized types are identical,
@@ -176,13 +207,13 @@ inline void dumpSubstitution(const llvm::DenseMap<Type,Type> &substitution) {
 ///
 /// Otherwise, `formal` is examined to determine how `actual` can serve as
 /// its substitute:
-///   - If `formal` implements `MonomorphizableTypeInterface`, its
-///     `substituteWith` logic is invoked to extend `subst`.
+///   - If `formal` implements `UnficationTypeInterface`, its
+///     `unify` logic is invoked to extend `subst`.
 ///   - If `formal` and `actual` have the same type constructor and arity,
 ///     substitution recurses on their immediate subtypes.
 ///   - Otherwise, the types are considered incompatible and an error is
 ///     reported via `emitError`, if provided.
-LogicalResult substituteWith(
+LogicalResult unify(
     Type formal,
     Type actual,
     ModuleOp module,
@@ -190,25 +221,100 @@ LogicalResult substituteWith(
     llvm::function_ref<InFlightDiagnostic()> emitError);
 
 /// As above, but discards diagnostics
-LogicalResult substituteWith(
+LogicalResult unify(
     Type formal,
     Type actual,
     ModuleOp module,
     llvm::DenseMap<Type,Type> &subst);
 
 /// As above, but discards the resulting substitution
-LogicalResult substituteWith(
+LogicalResult unify(
     Type formal,
     Type actual,
     ModuleOp module,
     llvm::function_ref<InFlightDiagnostic()> emitError);
 
 /// As above, but discards diagnostics *and* the resulting substitution
-LogicalResult substituteWith(
+LogicalResult unify(
     Type formal,
     Type actual,
     ModuleOp module);
 
+/// Attempts to build a substitution which is the inverse of subst by mapping values in subst to keys
+inline FailureOr<DenseMap<Type,Type>> invertSubstitution(
+    const DenseMap<Type,Type> &subst,
+    llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
+  DenseMap<Type,Type> inverted;
+  for (const auto &[k, v] : subst) {
+    auto [it, inserted] = inverted.try_emplace(v, k);
+    if (!inserted && it->second != k) {
+      if (err) err() << "substitution is not injective: conflicting inverse for "
+                     << v << ": " << it->second << " vs " << k;
+      return failure();
+    }
+  }
+  return inverted;
+}
+
+/// Compute the substitution that specializes a possibly polymorphic `formal`
+/// type so it unifies with an `actual` type.
+///
+/// This is the main helper for checking uses of polymorphic functions or values
+/// against a concrete call site or expected signature:
+///
+///  * **Instantiation.** Replace every generic parameter found in both `formal`
+///    and `actual` with fresh inference variables, so unification works even if
+///    `actual` itself contains generics.
+///  * **Unification.** Solve constraints so the instantiated `formal` and
+///    instantiated `actual` become equal, producing a mapping from inference
+///    variables to concrete types.
+///  * **Back-projection.** Compose the inference solution back through the
+///    instantiation map to yield a map from the original generics in `formal`
+///    to fully resolved types. Any generics that came from `actual` remain as
+///    generics; no inference variables remain.
+///  * **Normalization.** Chase and collapse substitution chains so the map is
+///    stable (no trivial self-maps, no stale inference variables).
+///
+/// The returned map always has keys that are the generic placeholders occurring
+/// in `formal`. Values are “ground” relative to inference (no `!trait.infer`
+/// left), though they may still mention generics if the `actual` side was also
+/// generic.
+///
+/// Returns `failure()` if the two types cannot be unified. If `err` is supplied,
+/// a diagnostic is emitted on failure.
+inline FailureOr<DenseMap<Type,Type>> buildSpecializationSubstitution(
+    Type formal,
+    Type actual,
+    ModuleOp module,
+    llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
+  // instantiate generics on both sides with the same instantiation map
+  DenseMap<Type,Type> genToInfer;
+  uint64_t idCounter = 0;
+  Type iformal = instantiate(formal, genToInfer, idCounter);
+  Type iactual = instantiate(actual, genToInfer, idCounter);
+
+  // get the inverse instantiation map as well
+  auto inferToGen = invertSubstitution(genToInfer, err);
+  if (failed(inferToGen)) return failure();
+
+  // unify
+  DenseMap<Type,Type> inferToType;
+  if (failed(unify(iformal, iactual, module, inferToType, err)))
+    return failure();
+
+  // compose (gen -> infer) o (infer -> type)
+  auto composed = composeSubstitutions(genToInfer, inferToType, err);
+  if (failed(composed)) return failure();
+
+  // compose again with inferToGen to map any remaining unsolved
+  // inference variables originating from actual back to their
+  // original generics
+  auto result = composeSubstitutions(*composed, *inferToGen, err);
+  if (failed(result)) return failure();
+  
+  normalizeSubstitutionInPlace(*result);
+  return *result;
+}
 
 // this walks an Attribute and looks for any occurrence of the given NeedleType
 template<class NeedleType> bool containsType(Attribute attr) {
@@ -248,13 +354,13 @@ template<class NeedleType> bool opMentionsType(Operation *op) {
   return false;
 }
 
-// Collect distinct type variables inside `ty`
-inline SmallVector<TypeVariableInterface,4> getTypeVariablesIn(Type ty) {
-  SmallVector<TypeVariableInterface, 4> result;
+// Collect distinct generic types `ty`
+inline SmallVector<GenericTypeInterface,4> getGenericTypesIn(Type ty) {
+  SmallVector<GenericTypeInterface, 4> result;
   DenseSet<Type> seen;
 
   auto collect = [&](Type ty) {
-    if (auto varTy = dyn_cast<TypeVariableInterface>(ty)) {
+    if (auto varTy = dyn_cast<GenericTypeInterface>(ty)) {
       if (seen.insert(varTy).second) // first time we see it
         result.push_back(varTy);
     }
@@ -263,5 +369,35 @@ inline SmallVector<TypeVariableInterface,4> getTypeVariablesIn(Type ty) {
   ty.walk(collect);
   return result;
 }
+
+/// Verify that a `proven` claim soundly proves the (possibly still polymorphic)
+/// `unproven` claim and extend `subst` with a mapping when appropriate.
+/// 
+/// Notes:
+/// - `unproven` may already have been normalized by earlier substitutions and
+///   thus arrive already proven; if it matches `proven` we succeed immediately.
+/// - Only records a mapping when converting an unproven form to its proven form;
+///   no-op if `unproven == proven`.
+/// - Recursively checks trait requirements and impl assumptions, ensuring all
+///   subproofs are consistent and present.
+LogicalResult verifyAndRecordProof(ClaimType unproven,
+                                   ClaimType proven,
+                                   ModuleOp module,
+                                   DenseMap<Type,Type> &subst,
+                                   llvm::function_ref<InFlightDiagnostic()> err);
+
+/// Walks the given type and records proven claim substitutions.
+///
+/// For every `ClaimType` node inside `t` that carries a proof (i.e. `isProven()`),
+/// this adds a mapping from its unproven form (`claim.asUnproven()`) to the
+/// proven claim itself into `subst`. If a conflicting mapping for the same
+/// unproven key already exists, returns failure and emits an error through `err`.
+///
+/// This is the primitive for collecting all claim→proof bindings found anywhere
+/// inside a type’s structure (recursing through nested type components).
+LogicalResult recordProofBindingsIn(Type ty,
+                                    ModuleOp module,
+                                    DenseMap<Type,Type> &subst,
+                                    llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
 } // end mlir::trait

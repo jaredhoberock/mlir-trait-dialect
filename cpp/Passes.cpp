@@ -255,13 +255,13 @@ struct FuncCallOpLowering : public OpRewritePattern<FuncCallOp> {
 
     // instantiate the callee
     auto callee = callOp.getOrInstantiateCallee(rewriter);
-    if (!callee)
+    if (failed(callee))
       return rewriter.notifyMatchFailure(callOp, "couldn't get or instantiate callee");
 
     // replace with a func.call to the instanced callee
     rewriter.replaceOpWithNewOp<func::CallOp>(
       callOp,
-      callee.getSymName(),
+      callee->getSymName(),
       callOp.getResultTypes(),
       callOp.getOperands()
     );
@@ -298,8 +298,8 @@ struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
     }
 
     // get the callee
-    func::FuncOp callee = op.getOrInstantiateCallee(rewriter);
-    if (!callee) 
+    auto callee = op.getOrInstantiateCallee(rewriter);
+    if (failed(callee)) 
       return rewriter.notifyMatchFailure(op, "couldn't get or instantiate callee");
 
     // pass the claim as the first argument to the instantiated callee
@@ -311,7 +311,7 @@ struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
     rewriter.replaceOpWithNewOp<FuncCallOp>(
       op,
       concreteResults,
-      callee.getSymName(),
+      callee->getSymName(),
       args
     );
 
@@ -464,5 +464,6 @@ void MonomorphizePass::runOnOperation() {
 std::unique_ptr<Pass> createMonomorphizePass() {
   return std::make_unique<MonomorphizePass>();
 }
+
 
 } // end mlir::trait

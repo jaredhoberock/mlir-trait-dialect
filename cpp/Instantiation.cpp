@@ -143,12 +143,6 @@ func::FuncOp instantiatePolymorph(OpBuilder& builder,
   return instance;
 }
 
-ImplOp instantiatePolymorphicImpl(OpBuilder& builder,
-                                  ImplOp polymorph,
-                                  ArrayRef<Type> typeArgs) {
-  llvm_unreachable("instantiatePolymorphicImpl: TODO");
-}
-
 void instantiatePolymorphicRegion(OpBuilder& builder,
                                   Region& polymorph,
                                   Region& monomorph,

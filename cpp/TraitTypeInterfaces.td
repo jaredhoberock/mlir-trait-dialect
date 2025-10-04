@@ -5,60 +5,104 @@ include "mlir/IR/AttrTypeBase.td"
 include "Trait.td"
 include "TraitAttributes.td"
 
-// Interface for types that may require monomorphization before lowering
-def MonomorphizableTypeInterface : TypeInterface<"MonomorphizableTypeInterface"> {
+// Interface for types that act as type parameters of generic declarations like
+// polymorphic functions and traits
+def GenericTypeInterface : TypeInterface<"GenericTypeInterface"> {
   let cppNamespace = "::mlir::trait";
   let description = [{
-    Types implementing this interface participate in the monomorphization
-    pipeline. An instance is *monomorphic* when it has no remaining symbolic
-    parts and is ready to lower. Implementations may also own their substitution
-    with another type (recording substitutions as needed). Instances of this
-    interface decide how they are substituted when they appear on the *formal*
-    side of `substituteWith`.
+    Types implementing this interface represent universally-quantified generics
+    (e.g., `!trait.poly`) and participate in instantiation. They know how to
+    instantiate themselves into a fresh type variable and memoize that choice
+    into an instantiation map.
   }];
 
   let methods = [
     InterfaceMethod<
-      "Returns true iff this instance is monomorphic (ready to lower).",
-      "bool", "isMonomorphic"
-    >,
+      "Instantiate `*this` to a fresh type variable (memoized in `inst`).",
+      "mlir::Type", "instantiate",
+      (ins "mlir::DenseMap<mlir::Type,mlir::Type>&":$inst,
+           "uint64_t&":$idCounter)
+    >
+  ];
+}
 
+// Interface for types that may contain polymorphic parts
+def PolymorphicTypeInterface : TypeInterface<"PolymorphicTypeInterface"> {
+  let cppNamespace = "::mlir::trait";
+  let description = [{
+    Types implementing this interface report whether it is polymorphic itself,
+    of (recursively) contains any subtype that is polymorphic. An instance is
+    *monomorphic* iff it has no polymorphic parts. Monomorphic types can be
+    lowered.
+  }];
+
+  let methods = [
     InterfaceMethod<
-      "Attempt to substitute `*this` with `actual`, updating `substitution` as needed.",
-      "llvm::LogicalResult", "substituteWith",
+      "Returns true if this instance contains any polymorphic part.",
+      "bool", "isPolymorphic"
+    >
+  ];
+
+  let extraClassDeclaration = [{
+    // convenience negates the result of isPolymorphic
+    bool isMonomorphic() const {
+      return !isPolymorphic();
+    }
+  }];
+}
+
+// Interface for types that actively participate in type unification
+def UnificationTypeInterface : TypeInterface<"UnificationTypeInterface"> {
+  let cppNamespace = "::mlir::trait";
+  let description = [{
+    Types implementing this interface participate in type unification.
+    An implementation defines how `*this` (the *formal* type on the left)
+    unifies with an arbitrary right-hand side type, updating a caller-provided
+    `DenseMap<Type,Type>` with *type-only* bindings.
+
+    Guidelines:
+    * Respect existing substitutions: implementations should assume the caller
+      has normalized both sides via the current `subst` and may normalize again
+      internally as needed.
+    * Variable-like types (those modeling TypeVariableInterface) should perform
+      an occurs check before binding to prevent infinite types.
+  }];
+
+  let methods = [
+    InterfaceMethod<
+      "Attempt to unify `*this` with `actual`, extending `subst`.",
+      "llvm::LogicalResult", "unify",
       (ins "Type":$actual,
            "mlir::ModuleOp":$module,
-           "mlir::DenseMap<mlir::Type,mlir::Type>&":$substitution,
+           "mlir::DenseMap<mlir::Type,mlir::Type>&":$subst,
            "llvm::function_ref<mlir::InFlightDiagnostic()>":$emitError)
     >
   ];
 
   let extraClassDeclaration = [{
-    // silent substitution, diagnostics are discarded
-    LogicalResult substituteWith(
+    // Convenience overload that discards diagnostics
+    llvm::LogicalResult unify(
         Type actual,
         ModuleOp module,
-        DenseMap<Type,Type> &substitution) const {
+        DenseMap<Type,Type> &subst) const {
       auto errFn = llvm::function_ref<InFlightDiagnostic()>{};
-      return this->substituteWith(actual, module, substitution, errFn);
-    }
-
-    // convenience negates the result of isMonomorphic
-    bool isPolymorphic() const {
-      return !isMonomorphic();
+      return this->unify(actual, module, subst, errFn);
     }
   }];
 }
 
 // Interface for types that behave like a type variable
+// XXX TODO need to add generalize() method to map back to the original generic type
 def TypeVariableInterface : TypeInterface<"TypeVariableInterface"> {
   let cppNamespace = "::mlir::trait";
   let description = [{
     Marker interface for *leaf, variable-like* types (e.g., `!trait.poly`,
     `!tuple.poly`). When such a type appears on the *actual* side of
-    `substituteWith(formal, actual, ...)`, it may bind *existentially* to the
+    `unify(formal, actual, ...)`, it may bind *existentially* to the
     *formal* (with an occurs check), recording a subsitution `actual := formal`.
     Implementations need no methods; this is a pure marker.
+
+    Types that implement `TypeVariableInterface` *must also implement* `UnificationTypeInterface`.
   }];
 }
 
