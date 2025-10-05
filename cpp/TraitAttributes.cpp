@@ -96,31 +96,41 @@ void TraitApplicationAttr::print(mlir::AsmPrinter &printer) const {
   printer << ']';
 }
 
-Attribute ConstraintsAttr::parse(AsmParser &p, Type type) {
-  SmallVector<TraitApplicationAttr> applications;
+Attribute TraitApplicationArrayAttr::parse(AsmParser &p, Type type) {
+  MLIRContext *ctx = p.getContext();
+  auto errFn = [&]{ return p.emitError(p.getCurrentLocation()); };
 
-  if (succeeded(p.parseOptionalKeyword("where"))) {
-    if (p.parseLSquare())
+  SmallVector<TraitApplicationAttr> apps;
+
+  // expect `[ ... ]`
+  if (p.parseLSquare())
+    return {};
+
+  // handle empty list early
+  if (succeeded(p.parseOptionalRSquare()))
+    return TraitApplicationArrayAttr::getChecked(errFn, ctx, apps);
+
+  // parse at least one TraitApplicationAttr, then optional `,`-separated rest
+  do {
+    Attribute raw = TraitApplicationAttr::parse(p, {});
+    if (!raw) return {}; // parse already emitted a diagnostic
+
+    auto app = mlir::dyn_cast<TraitApplicationAttr>(raw);
+    if (!app) {
+      errFn() << "expected trait application like @Trait[Types...]";
       return {};
+    }
+    apps.push_back(app);
+  } while(succeeded(p.parseOptionalComma()));
 
-    do {
-      TraitApplicationAttr app = mlir::dyn_cast<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
-      if (!app)
-        return {};
-      applications.push_back(app);
-    } while (succeeded(p.parseOptionalComma()));
+  if (p.parseRSquare())
+    return {};
 
-    if (p.parseRSquare())
-      return {};
-  }
-
-  return ConstraintsAttr::getChecked(
-      [&]() { return p.emitError(p.getNameLoc()); },
-      p.getContext(), applications);
+  return TraitApplicationArrayAttr::getChecked(errFn, ctx, apps);
 }
 
-void ConstraintsAttr::print(mlir::AsmPrinter &printer) const {
-  printer << "where [";
+void TraitApplicationArrayAttr::print(mlir::AsmPrinter &printer) const {
+  printer << "[";
   llvm::interleaveComma(getApplications(), printer,
                         [&](TraitApplicationAttr a) {
                           a.print(printer);

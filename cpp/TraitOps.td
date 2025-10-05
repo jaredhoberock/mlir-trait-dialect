@@ -60,7 +60,7 @@ def TraitOp : TraitDialectOp<"trait", [
 
     The `where` clause lists the one-hop prerequisite trait applications that must hold
     whenever the trait holds. Each requirement is written using the trait's type
-    parameters and is stored in the `requirements` (`ConstraintsAttr`) argument.
+    parameters and is stored in the `requirements` argument.
 
     Concretely, if you declare:
 
@@ -83,7 +83,7 @@ def TraitOp : TraitDialectOp<"trait", [
   let arguments = (ins
     SymbolNameAttr:$sym_name,
     TypeArrayAttr:$type_params,
-    ConstraintsAttr:$requirements
+    TraitApplicationArrayAttr:$requirements
   );
 
   let regions = (region SizedRegion<1>:$body);
@@ -184,7 +184,7 @@ def TraitOp : TraitDialectOp<"trait", [
     // low-level builder
     OpBuilder<(ins "::mlir::StringAttr":$sym_name,
                    "::mlir::ArrayAttr":$type_params,
-                   "ConstraintsAttr":$requirements), [{
+                   "TraitApplicationArrayAttr":$requirements), [{
       $_state.addAttribute("sym_name", sym_name);
       $_state.addAttribute("type_params", type_params);
       $_state.addAttribute("requirements", requirements);
@@ -195,7 +195,7 @@ def TraitOp : TraitDialectOp<"trait", [
     // convenience accepts type_params as ArrayRef<Type>
     OpBuilder<(ins "::mlir::StringAttr":$sym_name,
                    "::mlir::ArrayRef<Type>":$type_params,
-                   "ConstraintsAttr":$requirements), [{
+                   "TraitApplicationArrayAttr":$requirements), [{
       MLIRContext* ctx = $_builder.getContext();
       SmallVector<Attribute,8> typeAttrs;
       typeAttrs.reserve(type_params.size());
@@ -211,13 +211,12 @@ def TraitOp : TraitDialectOp<"trait", [
                    "::mlir::ArrayRef<Type>":$type_params,
                    "::mlir::ArrayRef<TraitApplicationAttr>":$requirements), [{
       MLIRContext* ctx = $_builder.getContext();
-      ConstraintsAttr reqsAttr = ConstraintsAttr::get(ctx, requirements);
+      auto reqsAttr = TraitApplicationArrayAttr::get(ctx, requirements);
       build($_builder, $_state, sym_name, type_params, reqsAttr);
     }]>
   ];
 
-  let assemblyFormat = "$sym_name $type_params $requirements attr-dict-with-keyword $body";
-
+  let hasCustomAssemblyFormat = 1;
   let hasVerifier = 1;
 }
 
@@ -260,9 +259,9 @@ def ImplOp : TraitDialectOp<"impl", [
 
     Implementations may also declare **assumptions** that must hold for the impl
     to be valid under its self application. These are listed in the `where [...]`
-    clause (stored in the `assumptions` `ConstraintsAttr` argument). Assumptions
-    are one-hop claims, analogous to trait-level `where` requirements, and are
-    materializable inside method bodies via `trait.assume`.
+    clause (stored in the `assumptions` argument). Assumptions are one-hop claims,
+    analogous to trait-level `where` requirements, and are materializable inside
+    method bodies via `trait.assume`.
 
     Concretely, given a couple of traits:
 
@@ -308,7 +307,7 @@ def ImplOp : TraitDialectOp<"impl", [
   let arguments = (ins 
     SymbolNameAttr:$sym_name,
     TraitApplicationAttr:$self_application,
-    ConstraintsAttr:$assumptions
+    TraitApplicationArrayAttr:$assumptions
   );
   let regions = (region SizedRegion<1>:$body);
 
@@ -377,7 +376,7 @@ def ImplOp : TraitDialectOp<"impl", [
                                                                         llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     // Helper to generate unique symbol name for an ImplOp
-    static std::string generateSymName(TraitApplicationAttr selfApp, ConstraintsAttr assumptions);
+    static std::string generateSymName(TraitApplicationAttr selfApp, TraitApplicationArrayAttr assumptions);
 
     // Helper to generate a unique symbol prefix for polymophic ImplOps
     // getSelfClaim() will be substituted with claim
@@ -404,7 +403,7 @@ def ImplOp : TraitDialectOp<"impl", [
     // override the default low-level builder to ensure that a block always exists
     OpBuilder<(ins "::mlir::StringRef":$sym_name,
                    "::mlir::trait::TraitApplicationAttr":$self_application,
-                   "ConstraintsAttr":$assumptions), [{
+                   "TraitApplicationArrayAttr":$assumptions), [{
       $_state.addAttribute("sym_name", $_builder.getStringAttr(sym_name));
       $_state.addAttribute("self_application", self_application);
       $_state.addAttribute("assumptions", assumptions);
@@ -414,18 +413,18 @@ def ImplOp : TraitDialectOp<"impl", [
 
     // this builder automatically generates $sym_name if it is not given
     OpBuilder<(ins "::mlir::trait::TraitApplicationAttr":$self_application,
-                   "ConstraintsAttr":$assumptions), [{
+                   "TraitApplicationArrayAttr":$assumptions), [{
       // Auto-generate unique symbol name
       std::string symName = generateSymName(self_application, assumptions);
       build($_builder, $_state, symName, self_application, assumptions);
     }]>,
 
-    // convenience wraps the assumptions in a ConstraintsAttr add defers to the lower-level builder
+    // convenience wraps the assumptions in a TraitApplicationArrayAttr and defers to the lower-level builder
     OpBuilder<(ins "::mlir::trait::TraitApplicationAttr":$self_application,
                    "::mlir::ArrayRef<TraitApplicationAttr>":$assumptions), [{
       MLIRContext *ctx = $_builder.getContext();
-      auto constraintsAttr = ConstraintsAttr::get(ctx, assumptions);
-      build($_builder, $_state, self_application, constraintsAttr);
+      auto appArrayAttr = TraitApplicationArrayAttr::get(ctx, assumptions);
+      build($_builder, $_state, self_application, appArrayAttr);
     }]>
   ];
 
@@ -663,7 +662,6 @@ def MethodCallOp : TraitDialectOp<"method.call", [
   }];
 
   let hasVerifier = 1;
-
   let hasCustomAssemblyFormat = 1;
 }
 

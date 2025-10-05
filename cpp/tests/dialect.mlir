@@ -2,7 +2,7 @@
 
 // ---- Test 1: test everything
 
-// CHECK-LABEL: trait @PartialEq [!trait.poly<0>, !trait.poly<1>]
+// CHECK-LABEL: trait @PartialEq[!trait.poly<0>, !trait.poly<1>]
 !PartialEqS = !trait.poly<0>
 !PartialEqO = !trait.poly<1>
 trait.trait @PartialEq[!PartialEqS,!PartialEqO] {
@@ -50,7 +50,7 @@ func.func @bar(%x: i32, %y: i32) -> i1 {
   return %res : i1
 }
 
-// CHECK-LABEL: trait @Eq [!trait.poly<2>]
+// CHECK-LABEL: trait @Eq[!trait.poly<2>]
 !EqS = !trait.poly<2>
 trait.trait @Eq[!EqS] where [
   @PartialEq[!EqS,!EqS]
@@ -68,7 +68,7 @@ trait.impl for @Eq[i32] {}
 // 3: None
 !opt_ord = i2
 
-// CHECK-LABEL: trait @PartialOrd [!trait.poly<3>, !trait.poly<4>] where [@PartialEq
+// CHECK-LABEL: trait @PartialOrd[!trait.poly<3>, !trait.poly<4>] where [@PartialEq
 !PartialOrdS = !trait.poly<3>
 !PartialOrdO = !trait.poly<4>
 trait.trait @PartialOrd[!PartialOrdS,!PartialOrdO] where [
@@ -161,7 +161,7 @@ trait.impl for @PartialOrd[i32,i32] {
 // 2: Greater
 !ord = i2
 
-// CHECK-LABEL: trait @Ord [!trait.poly<5>] where [@Eq[!trait.poly<5>], @PartialOrd[!trait.poly<5>, !trait.poly<5>]
+// CHECK-LABEL: trait @Ord[!trait.poly<5>] where [@Eq[!trait.poly<5>], @PartialOrd[!trait.poly<5>, !trait.poly<5>]
 !OrdS = !trait.poly<5>
 trait.trait @Ord[!OrdS] where [
   @Eq[!OrdS],

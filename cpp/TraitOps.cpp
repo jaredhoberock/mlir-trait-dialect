@@ -157,6 +157,80 @@ SmallVector<ImplOp> TraitOp::getCandidateImplsFor(ClaimType wanted) {
   return result;
 }
 
+ParseResult TraitOp::parse(OpAsmParser &p, OperationState &s) {
+  MLIRContext *ctx = p.getContext();
+
+  // sym_name 
+  StringAttr symName;
+  if (p.parseSymbolName(symName, "sym_name", s.attributes))
+    return failure();
+
+  // [ type_params ]
+  SmallVector<Type> typeParams;
+  if (failed(p.parseCommaSeparatedList(OpAsmParser::Delimiter::Square, [&] {
+        Type ty;
+        if (p.parseType(ty)) return failure();
+        typeParams.push_back(ty);
+        return success();
+      })))
+    return failure();
+
+  // build TypeArrayAttr
+  SmallVector<Attribute,4> typeAttrs;
+  typeAttrs.reserve(typeParams.size());
+  for (auto ty : typeParams) {
+    typeAttrs.push_back(TypeAttr::get(ty));
+  }
+  s.addAttribute("type_params", ArrayAttr::get(ctx, typeAttrs));
+
+  // requirements
+  auto requirements = TraitApplicationArrayAttr::get(ctx, {});
+  if (succeeded(p.parseOptionalKeyword("where"))) {
+    requirements = dyn_cast_or_null<TraitApplicationArrayAttr>(TraitApplicationArrayAttr::parse(p,{}));
+    if (!requirements)
+      return p.emitError(p.getCurrentLocation(), "expected a TraitApplicationArrayAttr");
+  }
+  s.addAttribute("requirements", requirements);
+
+  // attr-dict-with-keyword
+  if (p.parseOptionalAttrDictWithKeyword(s.attributes))
+    return failure();
+
+  // region body
+  Region *body = s.addRegion();
+  if (p.parseRegion(*body, /*args=*/{}, /*types=*/{})) return failure();
+  if (body->empty()) body->emplaceBlock();
+
+  return success();
+}
+
+void TraitOp::print(OpAsmPrinter &p) {
+  // `@sym_name`
+  p << ' ';
+  p.printSymbolName(getSymNameAttr());
+
+  // `[ type_params ]`
+  p << "[";
+  llvm::interleaveComma(getTypeParams(), p, [&](Attribute tyAttr) {
+    p.printType(cast<TypeAttr>(tyAttr).getValue());
+  });
+  p << ']';
+
+  // print requirements if not empty
+  if (hasRequirements()) {
+    p << " where ";
+    getRequirements().print(p);
+  }
+
+  // print any trailing attributes
+  p.printOptionalAttrDictWithKeyword((*this)->getAttrs(),
+                                     /*elided=*/{"sym_name","type_params","requirements"});
+
+  // region body
+  p << ' ';
+  p.printRegion(getBody(), /*printEntryBlockArgs=*/false);
+}
+
 
 //===----------------------------------------------------------------------===//
 // ImplOp
@@ -419,7 +493,7 @@ FailureOr<func::FuncOp> ImplOp::getOrInstantiateFreeFunctionFromMethod(
 }
 
 std::string ImplOp::generateSymName(TraitApplicationAttr selfApp,
-                                    ConstraintsAttr assumptions) {
+                                    TraitApplicationArrayAttr assumptions) {
   std::string result;
   llvm::raw_string_ostream os(result);
   
@@ -512,10 +586,13 @@ ParseResult ImplOp::parse(OpAsmParser &p, OperationState &result) {
     return p.emitError(p.getCurrentLocation(), "expected a TraitApplicationAttr");
   result.addAttribute("self_application", selfApp);  
   
-  // parse assumptions
-  ConstraintsAttr assumptions = dyn_cast_or_null<ConstraintsAttr>(ConstraintsAttr::parse(p, {}));
-  if (!assumptions)
-    return p.emitError(p.getCurrentLocation(), "expected a ConstraintsAttr");
+  // assumptions
+  auto assumptions = TraitApplicationArrayAttr::get(p.getContext(), {});
+  if (succeeded(p.parseOptionalKeyword("where"))) {
+    assumptions = dyn_cast_or_null<TraitApplicationArrayAttr>(TraitApplicationArrayAttr::parse(p, {}));
+    if (!assumptions)
+      return p.emitError(p.getCurrentLocation(), "expected a TraitApplicationArrayAttr");
+  }
   result.addAttribute("assumptions", assumptions);
 
   // sym_name: use parsed or synthesize from parameters
@@ -555,8 +632,11 @@ void ImplOp::print(OpAsmPrinter &printer) {
   printer << "for ";
   getSelfApplication().print(printer);
 
-  printer << " ";
-  getAssumptions().print(printer);
+  // print assumptions if not empty
+  if (!getAssumptions().empty()) {
+    printer << "where ";
+    getAssumptions().print(printer);
+  }
   
   printer.printOptionalAttrDictWithKeyword(
     (*this)->getAttrs(), 

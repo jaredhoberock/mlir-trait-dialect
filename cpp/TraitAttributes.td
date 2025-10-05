@@ -53,9 +53,9 @@ def TraitApplicationAttr : AttrDef<TraitDialect, "TraitApplication"> {
   let hasCustomAssemblyFormat = 1;
 }
 
-def ConstraintsAttr : AttrDef<TraitDialect, "Constraints"> {
-  let mnemonic = "requirements";
-  let summary = "A list of prerequisite trait applications required by traits or assumed by implementation";
+def TraitApplicationArrayAttr : AttrDef<TraitDialect, "TraitApplicationArray"> {
+  let mnemonic = "application_array";
+  let summary = "An array of prerequisite trait applications required by traits or assumed by implementation";
   let description = [{
     Represents trait applications that are required to hold when implementing
     the enclosing trait. These assumptions are available as subproofs via
@@ -103,7 +103,7 @@ def ConstraintsAttr : AttrDef<TraitDialect, "Constraints"> {
       );
     }
 
-    // make ConstraintsAttr behave like a range of TraitApplicationAttr
+    // behave like a range of TraitApplicationAttr
     auto begin() const {
       return getApplications().begin();
     }
