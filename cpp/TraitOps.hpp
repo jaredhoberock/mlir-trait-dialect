@@ -33,5 +33,7 @@ struct HasOnlyChildOp {
 
 } // end mlir::OpTrait
 
+#include "TraitOpInterfaces.hpp.inc"
+
 #define GET_OP_CLASSES
 #include "TraitOps.hpp.inc"

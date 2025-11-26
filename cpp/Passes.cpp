@@ -319,6 +319,49 @@ struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
   }
 };
 
+/// Monomorphizes result types for any op implementing
+/// ResultTypeSpecializationOpInterface once all operands are monomorphic.
+///
+/// When all operands have concrete (non-polymorphic) types, the op’s
+/// `specializeTypeFromOperands` method computes the concrete result types.
+/// If they differ from the op’s current result types, the pattern updates
+/// them in-place under the rewriter.
+struct MonomorphizeResultTypesPattern
+    : public OpInterfaceRewritePattern<ResultTypeSpecializationOpInterface> {
+  using OpInterfaceRewritePattern<
+      ResultTypeSpecializationOpInterface>::OpInterfaceRewritePattern;
+
+  LogicalResult matchAndRewrite(ResultTypeSpecializationOpInterface iface,
+                                PatternRewriter &rewriter) const override {
+    // only run when all operands are monomorphic
+    for (Type ty : iface->getOperandTypes()) {
+      if (isPolymorphicType(ty))
+        return rewriter.notifyMatchFailure(iface, "operands are still polymorphic");
+    }
+
+    // try to compute specialized monomorphic result types
+    auto specializedTypes = iface.specializeResultTypes();
+    if (failed(specializedTypes))
+      return rewriter.notifyMatchFailure(iface, "cannot specialize result types from operands");
+
+    // the arity of results must match
+    if (specializedTypes->size() != iface->getNumResults())
+      return rewriter.notifyMatchFailure(iface, "specialized result type count mismatch");
+
+    // check if anything actually changes
+    if (llvm::equal(iface->getResultTypes(), *specializedTypes))
+      return rewriter.notifyMatchFailure(iface, "result types unchanged");
+
+    // mutate result types in-place
+    rewriter.modifyOpInPlace(iface, [&] {
+      for (auto [result, newType] : llvm::zip(iface->getResults(), *specializedTypes))
+        result.setType(newType);
+    });
+
+    return success();
+  }
+};
+
 }
 
 LogicalResult instantiateMonomorphs(ModuleOp module) {
@@ -329,9 +372,14 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
 
   MLIRContext* ctx = module.getContext();
 
-  // rewrite trait.func.call & trait.method.call
+  // rewrite trait.func.call, trait.method.call,
+  // and any generic op whose results become monomorphic
   RewritePatternSet patterns(ctx);
-  patterns.add<FuncCallOpLowering,MethodCallOpLowering>(ctx);
+  patterns.add<
+    FuncCallOpLowering,
+    MethodCallOpLowering,
+    MonomorphizeResultTypesPattern
+  >(ctx);
 
   // collect instantiate-monomorphs patterns from other dialects
   for (Dialect *d : ctx->getLoadedDialects()) {

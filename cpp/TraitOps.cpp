@@ -14,6 +14,8 @@
 #include <optional>
 #include <variant>
 
+#include "TraitOpInterfaces.cpp.inc"
+
 #define GET_OP_CLASSES
 #include "TraitOps.cpp.inc"
 
