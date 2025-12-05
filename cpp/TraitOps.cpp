@@ -279,6 +279,26 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
       if (!definedMethods.insert(name).second) {
         return emitOpError() << "implements method '" << name << "' multiple times";
       }
+
+      // Verify that the impl method's signature matches the trait method's signature
+      auto traitMethod = traitOp.getMethod(name, errFn);
+      if (failed(traitMethod)) return failure();
+
+      // Build substitution from trait type params to impl type args
+      auto traitSubst = traitOp.buildSubstitutionForSelfClaim(getSelfClaim(), errFn);
+      if (failed(traitSubst)) return failure();
+
+      // Specialize the trait method's signature
+      FunctionType traitMethodTy = traitMethod->getFunctionType();
+      Type specializedTraitMethodTy = applySubstitutionToFixedPoint(*traitSubst, traitMethodTy);
+
+      // Check that the impl method's signature can specialize to the expected signature
+      FunctionType implMethodTy = implMethod.getFunctionType();
+      if (failed(buildSpecializationSubstitution(specializedTraitMethodTy, implMethodTy, *module, errFn))) {
+        return emitOpError() << "method '" << name << "' has incompatible signature: "
+                             << "expected " << specializedTraitMethodTy
+                             << " but found " << implMethodTy;
+      }
     } else {
       return emitOpError() << "body may only contain 'func.func' operations";
     }
