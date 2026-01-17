@@ -22,6 +22,19 @@ def GenericTypeInterface : TypeInterface<"GenericTypeInterface"> {
       "mlir::Type", "instantiate",
       (ins "mlir::DenseMap<mlir::Type,mlir::Type>&":$inst,
            "uint64_t&":$idCounter)
+    >,
+    InterfaceMethod<
+      "Specialize this type using the given substitution map. Returns the "
+      "specialized type, or this type unchanged if no substitution applies. "
+      "Wrapper types (e.g., `!coord.poly<N>`) should specialize "
+      "their inner type and unwrap if the result is monomorphic.",
+      "mlir::Type", "specializeWith",
+      (ins "const mlir::DenseMap<mlir::Type,mlir::Type>&":$subst),
+      /*methodBody=*/"",
+      /*defaultImplementation=*/[{
+        auto it = subst.find($_type);
+        return it != subst.end() ? it->second : $_type;
+      }]
     >
   ];
 }

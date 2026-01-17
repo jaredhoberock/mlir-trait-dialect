@@ -46,13 +46,12 @@ static std::string generateMangledNameSuffixFor(
 LogicalResult TraitOp::verify() {
   auto typeParams = getTypeParams().getAsValueRange<TypeAttr>();
 
-  // types must be unique PolyTypes
-  DenseSet<PolyType> uniqueParams;
+  // types must be unique GenericTypeParameters
+  DenseSet<Type> uniqueParams;
   for (Type ty : typeParams) {
-    auto polyTy = dyn_cast<PolyType>(ty);
-    if (!polyTy)
-      return emitOpError() << "expected !trait.poly, found " << ty;
-    if (!uniqueParams.insert(polyTy).second)
+    if (!isa<GenericTypeInterface>(ty))
+      return emitOpError() << "expected GenericTypeInterface (e.g., !trait.poly), found " << ty;
+    if (!uniqueParams.insert(ty).second)
       return emitOpError() << "type parameters must be unique";
   }
 
@@ -63,7 +62,7 @@ LogicalResult TraitOp::verify() {
   // check requirements
   for (auto& app : getRequirements()) {
     // each TraitApplicationAttr must use at least one of the trait's type parameters
-    bool mentionsAny = llvm::any_of(uniqueParams, [&](PolyType param) {
+    bool mentionsAny = llvm::any_of(uniqueParams, [&](Type param) {
       return app.mentionsType(param);
     });
 

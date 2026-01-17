@@ -158,12 +158,29 @@ inline llvm::DenseMap<Type,Type> normalizeSubstitution(llvm::DenseMap<Type,Type>
   return subst;
 }
 
+// XXX TODO we really need to be able to distinguish between these kinds of mappings:
+//
+// * Instantiation : Rigid/Generic type -> Inference variable
+// * Unification : Inference variable -> Type
+// * Specialization : Rigid/Generic type -> Type
+//
+// Representing all of these as DenseMap<Type,Type> is not precise enough and makes everything confusing
 inline Type applySubstitution(const llvm::DenseMap<Type,Type> &subst,
                               Type root) {
   AttrTypeReplacer replacer;
-  replacer.addReplacement([&](Type t) -> std::optional<Type> {
-    auto it = subst.find(t);
-    return (it != subst.end()) ? std::optional<Type>(it->second) : std::nullopt;
+  replacer.addReplacement([&](Type t) -> std::optional<std::pair<Type, WalkResult>> {
+    if (auto generic = dyn_cast<GenericTypeInterface>(t)) {
+      // GenericTypeInterface types own specialization/substitution entirely
+      // don't recurse into their result
+      return std::make_pair(generic.specializeWith(subst), WalkResult::skip());
+    }
+
+    // otherwise, check the map
+    if (auto it = subst.find(t); it != subst.end()) {
+      return std::make_pair(it->second, WalkResult::advance());
+    }
+
+    return std::nullopt;
   });
   return replacer.replace(root);
 }
