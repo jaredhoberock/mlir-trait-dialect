@@ -40,14 +40,14 @@ trait.impl @A_polymorphic_impl for @A[!F] where [
 }
 
 func.func @main() {
-  // CHECK: trait.witness @"A_polymorphic_impl_tuple<tuple<>, tuple<i1>>_p"
+  // CHECK: trait.witness @A_polymorphic_impl_{{.*}}_p
   %0 = trait.allege @A[tuple<tuple<>, tuple<i1>>]
   trait.method.call %0 @A[tuple<tuple<>, tuple<i1>>]::@a() : () -> ()
   return
 }
 
-// CHECK: trait.proof @"A_polymorphic_impl_tuple<>_p"
-// CHECK: trait.proof @B_tuple_impl_arity_1_i1_p
-// CHECK: trait.proof @"A_polymorphic_impl_tuple<i1>_p"
-// CHECK: trait.proof @"B_tuple_impl_arity_2_tuple<>_tuple<i1>_p"
-// CHECK: trait.proof @"A_polymorphic_impl_tuple<tuple<>, tuple<i1>>_p"
+// CHECK: trait.proof @A_polymorphic_impl_{{.*}}_p
+// CHECK: trait.proof @B_tuple_impl_arity_1_{{.*}}_p
+// CHECK: trait.proof @A_polymorphic_impl_{{.*}}_p
+// CHECK: trait.proof @B_tuple_impl_arity_2_{{.*}}_p
+// CHECK: trait.proof @A_polymorphic_impl_{{.*}}_p

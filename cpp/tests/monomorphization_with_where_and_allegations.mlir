@@ -18,8 +18,8 @@ trait.trait @PartialEq[!PartialEqS,!PartialEqO] {
   }
 }
 
-// CHECK-NOT: trait.trait @PartialEq
-trait.impl for @PartialEq[i32,i32] {
+// CHECK-NOT: trait.impl @PartialEq
+trait.impl @PartialEq_impl_i32_i32 for @PartialEq[i32,i32] {
   func.func @eq(%self: i32, %other: i32) -> i1 {
     %equal = arith.cmpi eq, %self, %other : i32
     return %equal : i1
@@ -28,7 +28,7 @@ trait.impl for @PartialEq[i32,i32] {
 
 !T = !trait.poly<0>
 
-// CHECK-LABEL: func.func @foo_i32
+// CHECK-LABEL: func.func @foo_{{.*}}
 // CHECK-NOT: builtin.unrealized_conversion_cast
 // CHECK: call @PartialEq_impl_i32_i32_eq
 func.func @foo(%c: !trait.claim<@PartialEq[!T,!T]>, %x: !T, %y: !T) -> i1 {
@@ -39,7 +39,7 @@ func.func @foo(%c: !trait.claim<@PartialEq[!T,!T]>, %x: !T, %y: !T) -> i1 {
 
 // CHECK-LABEL: func.func @bar
 // CHECK-NOT: builtin.unrealized_conversion_cast
-// CHECK: call @foo_i32
+// CHECK: call @foo_{{.*}}
 func.func @bar(%x: i32, %y: i32) -> i1 {
   %w = trait.witness @PartialEq_impl_i32_i32 for @PartialEq[i32,i32]
   %res = trait.func.call @foo(%w, %x, %y)
@@ -56,8 +56,8 @@ trait.trait @Eq[!EqS] where [
 {
 }
 
-// CHECK-NOT: @Eq
-trait.impl for @Eq[i32] {}
+// CHECK-NOT: trait.impl @Eq
+trait.impl @Eq_impl_i32 for @Eq[i32] {}
 
 // model Option<Ordering>
 // 0: Less
@@ -134,7 +134,7 @@ trait.trait @PartialOrd[!PartialOrdS,!PartialOrdO] where [
 }
 
 // CHECK-NOT: trait.impl @PartialOrd
-trait.impl for @PartialOrd[i32,i32] {
+trait.impl @PartialOrd_impl_i32_i32 for @PartialOrd[i32,i32] {
   func.func @partial_cmp(%a: i32, %b: i32) -> !opt_ord {
     %c_lt = arith.constant 0 : !opt_ord
     %c_eq = arith.constant 1 : !opt_ord
@@ -201,7 +201,7 @@ trait.trait @Ord[!OrdS] where [
 }
 
 // CHECK-NOT: trait.impl @Ord
-trait.impl for @Ord[i32] {
+trait.impl @Ord_impl_i32 for @Ord[i32] {
   func.func @cmp(%a: i32, %b: i32) -> !ord {
     %lt = arith.cmpi slt, %a, %b : i32
     %eq = arith.cmpi eq,  %a, %b : i32

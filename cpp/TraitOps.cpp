@@ -5,6 +5,7 @@
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/SmallSet.h>
 #include <llvm/ADT/STLForwardCompat.h>
+#include <llvm/Support/xxhash.h>
 #include <llvm/Support/Error.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/Interfaces/FunctionImplementation.h>
@@ -23,19 +24,36 @@ using namespace mlir;
 using namespace mlir::trait;
 
 
-// this function generates a mangled name suffix (e.g. "_i32_i1_f64", etc.)
+/// Hash a string into a short '_h{16 hex digits}' suffix.
+static std::string hashToSuffix(StringRef input) {
+  uint64_t hash = llvm::xxHash64(input);
+  std::string result;
+  llvm::raw_string_ostream out(result);
+  out << llvm::format("_h%016" PRIx64, hash);
+  out.flush();
+  return result;
+}
+
+// Generates a mangled name suffix
 // based on the substitution of some polymorphic entity (e.g., ImplOp, FuncOp, etc.)
 static std::string generateMangledNameSuffixFor(
   const DenseMap<Type,Type> &subst,
   ArrayRef<GenericTypeInterface> typeParams) {
 
-  std::string result;
-  llvm::raw_string_ostream os(result);
+  // Monomorphic entities have no type parameters to disambiguate,
+  // so no suffix is needed. The base name is already unique
+  if (typeParams.empty()) return "";
+
+  // Build a full type string for hashing (preserves uniqueness),
+  // but only emit a short hash in the actual suffix.
+  std::string full;
+  llvm::raw_string_ostream os(full);
   for (auto ty : typeParams) {
     os << "_" << applySubstitutionToFixedPoint(subst, ty);
   }
   os.flush();
-  return result;
+
+  return hashToSuffix(full);
 }
 
 
@@ -513,18 +531,19 @@ FailureOr<func::FuncOp> ImplOp::getOrInstantiateFreeFunctionFromMethod(
   return funcOp;
 }
 
+/// Generate a deterministic symbol name for an ImplOp.
+/// 
+/// The name has the form {TraitName}_impl_h{hash} where the hash is a
+/// 64-bit xxHash of the full type argument and assumption signature. This
+/// keeps symbols short and bounded in length.
 std::string ImplOp::generateSymName(TraitApplicationAttr selfApp,
                                     TraitApplicationArrayAttr assumptions) {
-  std::string result;
-  llvm::raw_string_ostream os(result);
-  
-  os << selfApp.getTraitName().getValue() << "_impl";
-  
+  // Build the full type argument and assumption signature for hashing
+  std::string signature;
+  llvm::raw_string_ostream os(signature);
   for (auto ty : selfApp.getTypeArgs()) {
     os << "_" << ty;
   }
-  
-  // Include where clause in symbol name if there are assumptions
   if (!assumptions.empty()) {
     os << "_where";
     for (auto app : assumptions) {
@@ -534,8 +553,9 @@ std::string ImplOp::generateSymName(TraitApplicationAttr selfApp,
       }
     }
   }
-  
-  return result;
+  os.flush();
+
+  return selfApp.getTraitName().getValue().str() + "_impl" + hashToSuffix(signature);
 }
 
 std::string ImplOp::generateMangledName(ClaimType claim) {

@@ -13,7 +13,7 @@ trait.trait @B [!T1] {
 }
 
 // CHECK-NOT: trait.impl for @B[i32]
-trait.impl for @B[i32] {
+trait.impl @B_impl_i32 for @B[i32] {
   func.func @method_b(%arg0: i32) -> i32 {
     %res = arith.constant 1 : i32
     return %res : i32
@@ -21,7 +21,7 @@ trait.impl for @B[i32] {
 }
 
 // CHECK-NOT: trait.impl for @B[i8]
-trait.impl for @B[i8] {
+trait.impl @B_impl_i8 for @B[i8] {
   func.func @method_b(%arg: i8) -> i32 {
     %res = arith.constant 1 : i32
     return %res : i32
@@ -46,12 +46,12 @@ func.func @test() -> i32 {
   %c7_i8 = arith.constant 7 : i8
 
   %a_i32 = trait.allege @A[i32]
-  // CHECK: call @A_impl_poly_i32_method_a
+  // CHECK: call @A_impl_poly_{{.*}}_method_a
   %res0 = trait.method.call %a_i32 @A[i32]::@method_a(%c42_i32)
     : (i32) -> i32
 
   %a_i8 = trait.allege @A[i8]
-  // CHECK: call @A_impl_poly_i8_method_a
+  // CHECK: call @A_impl_poly_{{.*}}_method_a
   %res1 = trait.method.call %a_i8 @A[i8]::@method_a(%c7_i8)
     : (i8) -> i32
 

@@ -34,13 +34,13 @@ trait.impl @C_impl for @C[!Ci] where [
 ] {}
 
 func.func @foo(%x: i8) -> i1 {
-  // CHECK: trait.witness @C_impl_i8_p for @C[i8]
+  // CHECK: trait.witness @C_impl_{{.*}}_p for @C[i8]
   %c = trait.allege @C[i8]
   %res = trait.method.call %c @C[i8]::@method(%x)
     : (i8) -> i1
   return %res : i1
 }
 
-// CHECK: trait.proof @A_impl_i8_p proves @A_impl for @A[i8] given []
-// CHECK: trait.proof @B_impl_i8_p proves @B_impl for @B[i8] given []
-// CHECK: trait.proof @C_impl_i8_p proves @C_impl for @C[i8] given [@A_impl_i8_p, @B_impl_i8_p]
+// CHECK: trait.proof @A_impl_{{.*}}_p proves @A_impl for @A[i8] given []
+// CHECK: trait.proof @B_impl_{{.*}}_p proves @B_impl for @B[i8] given []
+// CHECK: trait.proof @C_impl_{{.*}}_p proves @C_impl for @C[i8] given [@A_impl_{{.*}}_p, @B_impl_{{.*}}_p]

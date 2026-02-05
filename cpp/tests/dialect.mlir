@@ -20,8 +20,8 @@ trait.trait @PartialEq[!PartialEqS,!PartialEqO] {
   }
 }
 
-// CHECK-LABEL: trait.impl for @PartialEq[i32, i32]
-trait.impl for @PartialEq[i32,i32] {
+// CHECK-LABEL: trait.impl @PartialEq_impl_i32_i32 for @PartialEq[i32, i32]
+trait.impl @PartialEq_impl_i32_i32 for @PartialEq[i32,i32] {
   // CHECK-LABEL: func @eq
   func.func @eq(%self: i32, %other: i32) -> i1 {
     %equal = arith.cmpi eq, %self, %other : i32
@@ -58,8 +58,8 @@ trait.trait @Eq[!EqS] where [
 {
 }
 
-// CHECK-LABEL: impl for @Eq[i32]
-trait.impl for @Eq[i32] {}
+// CHECK-LABEL: impl @Eq_impl_i32 for @Eq[i32]
+trait.impl @Eq_impl_i32 for @Eq[i32] {}
 
 // model Option<Ordering>
 // 0: Less
@@ -139,8 +139,8 @@ trait.trait @PartialOrd[!PartialOrdS,!PartialOrdO] where [
   }
 }
 
-// CHECK-LABEL: trait.impl for @PartialOrd[i32, i32]
-trait.impl for @PartialOrd[i32,i32] {
+// CHECK-LABEL: trait.impl @PartialOrd_impl_i32_i32 for @PartialOrd[i32, i32]
+trait.impl @PartialOrd_impl_i32_i32 for @PartialOrd[i32,i32] {
   // CHECK-LABEL: func.func @partial_cmp
   func.func @partial_cmp(%a: i32, %b: i32) -> !opt_ord {
     %c_lt = arith.constant 0 : !opt_ord
@@ -210,8 +210,8 @@ trait.trait @Ord[!OrdS] where [
   }
 }
 
-// CHECK-LABEL: trait.impl for @Ord[i32]
-trait.impl for @Ord[i32] {
+// CHECK-LABEL: trait.impl @Ord_impl_i32 for @Ord[i32]
+trait.impl @Ord_impl_i32 for @Ord[i32] {
   // CHECK-LABEL: func.func @cmp
   func.func @cmp(%a: i32, %b: i32) -> !ord {
     %lt = arith.cmpi slt, %a, %b : i32

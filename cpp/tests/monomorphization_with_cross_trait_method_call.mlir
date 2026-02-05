@@ -3,7 +3,7 @@
 trait.trait @A[!trait.poly<0>] {
   func.func nested @a(!trait.poly<0>) -> i1
 }
-trait.impl for @A[i1] {
+trait.impl @A_impl_i1 for @A[i1] {
   func.func nested @a(%arg0: i1) -> i1 {
     return %arg0 : i1
   }
@@ -11,7 +11,7 @@ trait.impl for @A[i1] {
 trait.trait @B[!trait.poly<1>] {
   func.func nested @b(%arg0: !trait.poly<1>) -> i1
 }
-trait.impl for @B[i1] {
+trait.impl @B_impl_i1 for @B[i1] {
   func.func nested @b(%arg0: i1) -> i1 {
     %a = trait.allege @A[i1]
 

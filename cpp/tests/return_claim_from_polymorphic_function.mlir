@@ -11,10 +11,10 @@ trait.trait @Get[!R] {
 trait.trait @Assumption[!A] {}
 
 // a blanket impl for @Assumption for all types
-trait.impl for @Assumption[!A] {}
+trait.impl @Assumption_impl for @Assumption[!A] {}
 
 // this impl returns an assumption claim from @get
-trait.impl for @Get[!trait.claim<@Assumption[i32]>] where [
+trait.impl @Get_impl_claim for @Get[!trait.claim<@Assumption[i32]>] where [
   @Assumption[i32]
 ] {
   func.func @get() -> !trait.claim<@Assumption[i32]> {
@@ -24,7 +24,7 @@ trait.impl for @Get[!trait.claim<@Assumption[i32]>] where [
 }
 
 // this polymorphic function calls get and returns its result
-// CHECK-LABEL: func.func @"call_get_
+// CHECK-LABEL: func.func @call_get_{{.*}}
 // CHECK-NOT: builtin.unrealized_conversion_cast
 func.func @call_get(%c: !trait.claim<@Get[!R]>) -> !R {
   %res = trait.method.call %c @Get[!R]::@get()

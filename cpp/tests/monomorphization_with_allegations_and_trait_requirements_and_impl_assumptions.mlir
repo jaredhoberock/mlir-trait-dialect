@@ -37,7 +37,7 @@ trait.impl @C_impl for @C[!Ci] where [
 // CHECK-NOT: builtin.unrealized_conversion_cast
 func.func @foo(%x: i8) -> i1 {
   %c = trait.allege @C[i8]
-  // CHECK: call @C_impl_i8_method
+  // CHECK: call @C_impl_{{.*}}_method
   %res = trait.method.call %c @C[i8]::@method(%x)
     : (i8) -> i1
   return %res : i1
