@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+// SPDX-License-Identifier: Apache-2.0
+
 // RUN: mlir-opt %s | FileCheck %s
 
 // ---- Test 1: test everything
