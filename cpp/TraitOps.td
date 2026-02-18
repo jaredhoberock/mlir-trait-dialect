@@ -849,16 +849,25 @@ def AllegeOp : TraitDialectOp<"allege", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
   Pure
 ]> {
-  let summary = "Unverified claim that a trait implementation exists";
+  let summary = "Unverified, monomorphic claim that a trait implementation exists";
   let description = [{
-    Alleges an unproven claim of a trait application (e.g., `@Trait[Types...]`)
-    by producing a value of type `!trait.claim<@Trait[Types...]>`.
+    Produces a `!trait.claim<@Trait[Types...]>` value asserting that a trait
+    application is satisfied. The type arguments must be concrete (monomorphic);
+    polymorphic types are illegal.
 
-    The type arguments must be concrete; symbolic types are illegal.
+    This restriction enforces a key invariant of the trait system: polymorphic
+    code never fabricates claims. Claims originate at monomorphic call sites
+    via `trait.allege` and flow into polymorphic code through `!trait.claim`
+    parameters. A polymorphic function that needs a trait satisfaction must
+    declare it as a bound and receive a claim value from its caller. This
+    ensures that polymorphic code is correct by construction because it cannot
+    assume a trait is implemented without the caller proving it.
 
-    This operation does not require a matching `trait.impl` satisfaction.
-    It is intended to be elaborated into verified `trait.witness` operations prior to
-    monomorphization via a claim proving pass.
+    `trait.allege` does not verify that a matching `trait.impl` exists at the
+    point of emission. It is intended to be elaborated into verified
+    `trait.witness` operations by a claim-proving pass prior to
+    monomorphization. Unresolved monomorphic alleges after that pass are
+    errors.
 
     Example:
       %p = trait.allege @Ord[i32]
