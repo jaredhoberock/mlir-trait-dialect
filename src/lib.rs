@@ -27,6 +27,10 @@ unsafe extern "C" {
     fn traitImplOpCreate(loc: MlirLocation,
                          self_trait_app: MlirAttribute,
                          assumptions: *const MlirAttribute, num_assumptions: isize) -> MlirOperation;
+    fn traitImplOpCreateNamed(loc: MlirLocation,
+                              sym_name: MlirStringRef,
+                              self_trait_app: MlirAttribute,
+                              assumptions: *const MlirAttribute, num_assumptions: isize) -> MlirOperation;
     fn traitMethodCallOpCreate(loc: MlirLocation,
                                trait_name: MlirStringRef,
                                method_name: MlirStringRef,
@@ -43,6 +47,11 @@ unsafe extern "C" {
                             proof_name: MlirStringRef,
                             trait_name: MlirStringRef,
                             type_args: *const MlirType, num_type_args: isize) -> MlirOperation;
+    fn traitProofOpCreate(loc: MlirLocation,
+                          sym_name: MlirStringRef,
+                          impl_name: MlirStringRef,
+                          trait_app: MlirAttribute,
+                          subproof_names: *const MlirStringRef, num_subproofs: isize) -> MlirOperation;
     fn traitProjectOpCreate(loc: MlirLocation,
                             src_claim: MlirValue,
                             dest_trait_app: MlirAttribute) -> MlirOperation;
@@ -167,6 +176,23 @@ pub fn impl_<'c>(loc: Location<'c>,
     ))}
 }
 
+pub fn impl_named<'c>(loc: Location<'c>,
+                      sym_name: &str,
+                      self_trait_app: TraitApplicationAttribute<'c>,
+                      assumptions: &[TraitApplicationAttribute<'c>],
+) -> Operation<'c> {
+    let app_attr: Attribute<'c> = self_trait_app.into();
+    let asm_attrs: Vec<Attribute<'c>> =
+        assumptions.iter().copied().map(Into::into).collect();
+    unsafe { Operation::from_raw(traitImplOpCreateNamed(
+        loc.to_raw(),
+        StringRef::new(sym_name).to_raw(),
+        app_attr.to_raw(),
+        asm_attrs.as_ptr() as *const _,
+        asm_attrs.len() as isize,
+    ))}
+}
+
 pub fn method_call<'c>(loc: Location<'c>,
                        trait_name: &str,
                        method_name: &str,
@@ -221,6 +247,26 @@ pub fn witness<'c>(loc: Location<'c>,
         StringRef::new(trait_name).to_raw(),
         type_args.as_ptr() as *const _,
         type_args.len() as isize,
+    ))}
+}
+
+pub fn proof<'c>(loc: Location<'c>,
+                 sym_name: &str,
+                 impl_name: &str,
+                 trait_app: TraitApplicationAttribute<'c>,
+                 subproof_names: &[&str],
+) -> Operation<'c> {
+    let raw_names: Vec<MlirStringRef> = subproof_names
+        .iter()
+        .map(|s| StringRef::new(s).to_raw())
+        .collect();
+    unsafe { Operation::from_raw(traitProofOpCreate(
+        loc.to_raw(),
+        StringRef::new(sym_name).to_raw(),
+        StringRef::new(impl_name).to_raw(),
+        trait_app.to_raw(),
+        raw_names.as_ptr(),
+        raw_names.len() as isize,
     ))}
 }
 

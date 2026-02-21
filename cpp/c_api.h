@@ -40,6 +40,12 @@ MlirOperation traitImplOpCreate(MlirLocation loc,
                                 MlirAttribute selfTraitApp,
                                 MlirAttribute* assumptions, intptr_t numAssumptions);
 
+/// Create a named trait.impl operation
+MlirOperation traitImplOpCreateNamed(MlirLocation loc,
+                                     MlirStringRef symName,
+                                     MlirAttribute selfTraitApp,
+                                     MlirAttribute* assumptions, intptr_t numAssumptions);
+
 /// Create a trait.method.call operation
 MlirOperation traitMethodCallOpCreate(MlirLocation loc,
                                       MlirStringRef traitName,
@@ -63,6 +69,13 @@ MlirOperation traitWitnessOpCreate(MlirLocation loc,
                                    MlirStringRef proofName,
                                    MlirStringRef traitName,
                                    MlirType* typeArgs, intptr_t numTypeArgs);
+
+/// Create a trait.proof operation
+MlirOperation traitProofOpCreate(MlirLocation loc,
+                                 MlirStringRef symName,
+                                 MlirStringRef implName,
+                                 MlirAttribute traitApp,
+                                 MlirStringRef* subproofNames, intptr_t numSubproofs);
 
 /// Create a trait.project operation
 MlirOperation traitProjectOpCreate(MlirLocation loc,

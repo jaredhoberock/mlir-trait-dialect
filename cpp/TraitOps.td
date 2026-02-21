@@ -427,6 +427,15 @@ def ImplOp : TraitDialectOp<"impl", [
       MLIRContext *ctx = $_builder.getContext();
       auto appArrayAttr = TraitApplicationArrayAttr::get(ctx, assumptions);
       build($_builder, $_state, self_application, appArrayAttr);
+    }]>,
+
+    // convenience accepts sym_name as StringRef and assumptions as ArrayRef
+    OpBuilder<(ins "::mlir::StringRef":$sym_name,
+                   "::mlir::trait::TraitApplicationAttr":$self_application,
+                   "::mlir::ArrayRef<TraitApplicationAttr>":$assumptions), [{
+      MLIRContext *ctx = $_builder.getContext();
+      auto appArrayAttr = TraitApplicationArrayAttr::get(ctx, assumptions);
+      build($_builder, $_state, sym_name, self_application, appArrayAttr);
     }]>
   ];
 
@@ -948,6 +957,21 @@ def ProofOp : TraitDialectOp<"proof", [
       FlatSymbolRefAttr name,
       llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
   }];
+
+  let builders = [
+    // convenience: StringRef + ArrayRef<FlatSymbolRefAttr>
+    OpBuilder<(ins "::mlir::StringRef":$sym_name,
+                   "::mlir::FlatSymbolRefAttr":$impl_name,
+                   "::mlir::trait::TraitApplicationAttr":$trait_application,
+                   "::mlir::ArrayRef<FlatSymbolRefAttr>":$subproof_names), [{
+      SmallVector<Attribute> attrs(subproof_names.begin(), subproof_names.end());
+      build($_builder, $_state,
+            $_builder.getStringAttr(sym_name),
+            impl_name,
+            trait_application,
+            $_builder.getArrayAttr(attrs));
+    }]>
+  ];
 
   let assemblyFormat = "$sym_name `proves` $impl_name `for` $trait_application `given` $subproof_names attr-dict";
   let hasVerifier = 1;

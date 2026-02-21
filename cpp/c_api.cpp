@@ -109,6 +109,33 @@ MlirOperation traitImplOpCreate(MlirLocation loc,
   return wrap(op.getOperation());
 }
 
+MlirOperation traitImplOpCreateNamed(MlirLocation loc,
+                                     MlirStringRef symName,
+                                     MlirAttribute wrappedSelfTraitApp,
+                                     MlirAttribute* assumptions, intptr_t numAssumptions) {
+  TraitApplicationAttr selfApp = dyn_cast<TraitApplicationAttr>(unwrap(wrappedSelfTraitApp));
+  if (!selfApp) return {}; // invalid type of attribute
+
+  SmallVector<TraitApplicationAttr> appAttrs;
+  for (intptr_t i = 0; i < numAssumptions; ++i) {
+    auto app = dyn_cast<TraitApplicationAttr>(unwrap(assumptions[i]));
+    if (!app) return {}; // invalid type of attribute
+    appAttrs.push_back(app);
+  }
+
+  MLIRContext* ctx = unwrap(loc)->getContext();
+  OpBuilder builder(ctx);
+
+  auto op = builder.create<ImplOp>(
+    unwrap(loc),
+    StringRef(symName.data, symName.length),
+    selfApp,
+    appAttrs
+  );
+
+  return wrap(op.getOperation());
+}
+
 MlirOperation traitMethodCallOpCreate(MlirLocation loc,
                                       MlirStringRef traitName,
                                       MlirStringRef methodName,
@@ -201,6 +228,35 @@ MlirOperation traitWitnessOpCreate(MlirLocation loc,
     unwrap(loc),
     proofRef,
     traitApp
+  );
+
+  return wrap(op.getOperation());
+}
+
+MlirOperation traitProofOpCreate(MlirLocation loc,
+                                 MlirStringRef symName,
+                                 MlirStringRef implName,
+                                 MlirAttribute wrappedTraitApp,
+                                 MlirStringRef* subproofNames, intptr_t numSubproofs) {
+  MLIRContext* ctx = unwrap(loc)->getContext();
+  TraitApplicationAttr traitApp = dyn_cast<TraitApplicationAttr>(unwrap(wrappedTraitApp));
+  if (!traitApp) return {}; // invalid attribute type
+
+  SmallVector<FlatSymbolRefAttr> subproofRefs;
+  subproofRefs.reserve(numSubproofs);
+  for (intptr_t i = 0; i < numSubproofs; ++i) {
+    subproofRefs.push_back(
+      FlatSymbolRefAttr::get(ctx, StringRef(subproofNames[i].data, subproofNames[i].length))
+    );
+  }
+
+  OpBuilder builder(ctx);
+  auto op = builder.create<ProofOp>(
+    unwrap(loc),
+    StringRef(symName.data, symName.length),
+    FlatSymbolRefAttr::get(ctx, StringRef(implName.data, implName.length)),
+    traitApp,
+    subproofRefs
   );
 
   return wrap(op.getOperation());
