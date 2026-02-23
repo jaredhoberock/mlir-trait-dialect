@@ -67,8 +67,7 @@ MlirOperation traitAllegeOpCreate(MlirLocation loc,
 /// Create a trait.witness operation
 MlirOperation traitWitnessOpCreate(MlirLocation loc,
                                    MlirStringRef proofName,
-                                   MlirStringRef traitName,
-                                   MlirType* typeArgs, intptr_t numTypeArgs);
+                                   MlirAttribute traitApp);
 
 /// Create a trait.proof operation
 MlirOperation traitProofOpCreate(MlirLocation loc,
@@ -97,6 +96,17 @@ MlirAttribute traitClaimTypeGetTraitApplicationGet(MlirType claimType);
 
 /// Checks whether the given type is a claim type.
 bool traitTypeIsAClaim(MlirType type);
+
+/// Collect all unique types implementing GenericTypeInterface found in `type`.
+///
+/// This walks `type` recursively and returns every distinct generic type
+/// (e.g., !trait.poly, !coord.poly) encountered. These are the types that
+/// would be substituted during monomorphization.
+///
+/// Call with `results = NULL` to query the count, then call again with a
+/// buffer of sufficient size. Returs the total number of unique generic
+/// types found.
+intptr_t traitGetGenericTypesIn(MlirType type, MlirType *results, intptr_t maxResults);
 
 #ifdef __cplusplus
 }

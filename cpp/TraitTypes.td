@@ -107,7 +107,7 @@ def ClaimType : TypeDef<TraitDialect, "Claim", [
 
     bool isMonomorphic() const { return !isPolymorphic(); }
 
-    bool isProven() const { return isMonomorphic() && static_cast<bool>(getProof()); }
+    bool isProven() const { return static_cast<bool>(getProof()); }
 
     ClaimType asUnproven() const {
       return ClaimType::get(getContext(), getTraitApplication());

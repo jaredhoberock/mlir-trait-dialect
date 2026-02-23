@@ -212,14 +212,11 @@ MlirOperation traitAllegeOpCreate(MlirLocation loc,
 
 MlirOperation traitWitnessOpCreate(MlirLocation loc,
                                    MlirStringRef proofName,
-                                   MlirStringRef traitName,
-                                   MlirType* typeArgs, intptr_t numTypeArgs) {
-  MLIRContext* ctx = unwrap(loc)->getContext();
-
-  MlirAttribute wrappedTraitApp = traitTraitApplicationAttrGet(wrap(ctx), traitName, typeArgs, numTypeArgs);
+                                   MlirAttribute wrappedTraitApp) {
   TraitApplicationAttr traitApp = dyn_cast<TraitApplicationAttr>(unwrap(wrappedTraitApp));
   if (!traitApp) return {}; // invalid attribute type
 
+  MLIRContext* ctx = unwrap(loc)->getContext();
   OpBuilder builder(ctx);
 
   FlatSymbolRefAttr proofRef = FlatSymbolRefAttr::get(ctx, StringRef(proofName.data, proofName.length));
@@ -316,6 +313,17 @@ MlirAttribute traitClaimTypeGetTraitApplication(MlirType wrappedClaimType) {
 
 bool traitTypeIsAClaim(MlirType type) {
   return isa<ClaimType>(unwrap(type));
+}
+
+intptr_t traitGetGenericTypesIn(MlirType type, MlirType *results, intptr_t maxResults) {
+  auto generics = getGenericTypesIn(unwrap(type));
+  intptr_t count = static_cast<intptr_t>(generics.size());
+  if (results) {
+    intptr_t n = std::min(count, maxResults);
+    for (intptr_t i = 0; i < n; ++i)
+      results[i] = wrap(generics[i]);
+  }
+  return count;
 }
 
 } // end extern "C"

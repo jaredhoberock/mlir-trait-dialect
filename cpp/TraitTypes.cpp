@@ -139,14 +139,14 @@ LogicalResult InferenceType::unify(
 LogicalResult ClaimType::verify(function_ref<InFlightDiagnostic()> emitError,
                                 TraitApplicationAttr app,
                                 FlatSymbolRefAttr proof) {
-  bool polymorphic = llvm::any_of(app.getTypeArgs(), [](Type ty) {
-    return isPolymorphicType(ty);
-  });
-
-  if (polymorphic && proof) {
-    if (emitError) emitError() << "A polymorphic !trait.claim cannot have a proof";
-    return failure();
-  }
+//  bool polymorphic = llvm::any_of(app.getTypeArgs(), [](Type ty) {
+//    return isPolymorphicType(ty);
+//  });
+//
+//  if (polymorphic && proof) {
+//    if (emitError) emitError() << "A polymorphic !trait.claim cannot have a proof";
+//    return failure();
+//  }
 
   return success();
 }
@@ -158,7 +158,7 @@ LogicalResult ClaimType::verifySymbolUses(ModuleOp module, llvm::function_ref<In
 
   // if there's a proof, verify that it points to a valid symbol
   if (auto proof = getProof()) {
-    if (failed(ProofOp::getProofOpOrSelfProofImplOp(module, proof, err)))
+    if (failed(ProofOp::getProofOpOrUnconditionalImplOp(module, proof, err)))
       return failure();
   }
 
@@ -255,7 +255,7 @@ LogicalResult verifyAndRecordProof(
   if (failed(trait)) return failure();
 
   // inspect the proof symbol on the proven side
-  auto symOp = ProofOp::getProofOpOrSelfProofImplOp(module, proven.getProof(), err);
+  auto symOp = ProofOp::getProofOpOrUnconditionalImplOp(module, proven.getProof(), err);
   if (failed(symOp)) return failure();
 
   // if it's an impl op, check that the trait has no requirements
@@ -273,8 +273,8 @@ LogicalResult verifyAndRecordProof(
   // otherwise the symbol must be a ProofOp
   auto proof = dyn_cast<ProofOp>(*symOp);
 
-  // check that the proof's claim can unify with proven
-  if (failed(proof.getProvenClaim().unify(proven, module, subst, err))) 
+  // check that the proof's claim can specialize to match proven
+  if (failed(buildSpecializationSubstitution(proof.getProvenClaim(), proven, module, err)))
     return failure();
 
   // specialize obligations for the unproven claim

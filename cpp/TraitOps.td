@@ -384,9 +384,9 @@ def ImplOp : TraitDialectOp<"impl", [
     // getSelfClaim() will be substituted with claim
     std::string generateMangledName(ClaimType claim);
 
-    bool isSelfProof();
+    bool isUnconditional();
 
-    LogicalResult verifyIsSelfProof(llvm::function_ref<InFlightDiagnostic()> errFn);
+    LogicalResult verifyIsUnconditional(llvm::function_ref<InFlightDiagnostic()> errFn);
 
     SmallVector<ClaimType> getAssumptionsAsClaims();
 
@@ -916,7 +916,7 @@ def ProofOp : TraitDialectOp<"proof", [
     and that all one-hop trait requirements required by the trait under that application and 
     assumptions of the target impl are already proven by other symbols (either other `trait.proof`s or `trait.impl`s).
 
-    Leaf `trait.impl`s have nothing to discharge and may not be wrapped in a `trait.proof`; they are self-proofs.
+    Leaf `trait.impl`s have nothing to discharge and may not be wrapped in a `trait.proof`; they are unconditional self-proofs.
   }];
 
   let arguments = (ins
@@ -951,8 +951,8 @@ def ProofOp : TraitDialectOp<"proof", [
       return *maybeResult;
     }
 
-    // look up a proof by name. It must be either a ProofOp or a self-proving impl
-    static FailureOr<Operation*> getProofOpOrSelfProofImplOp(
+    // look up a proof by name. It must be either a ProofOp or an unconditional impl
+    static FailureOr<Operation*> getProofOpOrUnconditionalImplOp(
       ModuleOp module,
       FlatSymbolRefAttr name,
       llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
@@ -989,7 +989,7 @@ def WitnessOp : TraitDialectOp<"witness", [
 
     The symbol may refer to either
       * a `trait.proof` that transitively discharges the trait's requirements and the impl's assumptions
-      * a `trait.impl` that is self-proving
+      * a `trait.impl` that is unconditional
 
     Verification ensures that the symbol proves the trait application as claimed.
 

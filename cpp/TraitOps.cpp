@@ -334,8 +334,8 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   return success();
 }
 
-bool ImplOp::isSelfProof() {
-  // an ImplOp is self-proven if:
+bool ImplOp::isUnconditional() {
+  // an ImplOp is unconditional if:
   // 1. it is monomorphic (no type parameters),
   // 2. its TraitOp has no requirements, and
   // 3. it has no assumptions
@@ -344,8 +344,8 @@ bool ImplOp::isSelfProof() {
          getTrait().getRequirements().empty();
 }
 
-LogicalResult ImplOp::verifyIsSelfProof(llvm::function_ref<InFlightDiagnostic()> err) {
-  if (!isSelfProof()) {
+LogicalResult ImplOp::verifyIsUnconditional(llvm::function_ref<InFlightDiagnostic()> err) {
+  if (!isUnconditional()) {
     if (err) err() << "impl '@" << getSymName()
                    << "' is polymorphic (has type parameters) or has obligations (trait requirements or impl assumptions) and must be proven with a trait.proof";
     return failure();
@@ -695,12 +695,12 @@ void ImplOp::print(OpAsmPrinter &printer) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult ProofOp::verify() {
-  // check that the trait application is concrete
-  auto app = getTraitApplication();
-  for (auto ty : app.getTypeArgs()) {
-    if (isPolymorphicType(ty))
-      return emitOpError() << "'trait_application' must contain only concrete type arguments; found polymorphic type " << ty;
-  }
+//  // check that the trait application is concrete
+//  auto app = getTraitApplication();
+//  for (auto ty : app.getTypeArgs()) {
+//    if (isPolymorphicType(ty))
+//      return emitOpError() << "'trait_application' must contain only concrete type arguments; found polymorphic type " << ty;
+//  }
 
   // check that every name is a FlatSymbolRefAttr
   for (Attribute name : getSubproofNames()) {
@@ -759,7 +759,7 @@ FailureOr<SmallVector<ClaimType>> ProofOp::verifyAndGetSubproofClaims(llvm::func
       return failure();
     }
 
-    auto subproof = getProofOpOrSelfProofImplOp(module, subproofRef, err);
+    auto subproof = getProofOpOrUnconditionalImplOp(module, subproofRef, err);
     if (failed(subproof)) {
       return failure();
     }
@@ -780,7 +780,7 @@ FailureOr<SmallVector<ClaimType>> ProofOp::verifyAndGetSubproofClaims(llvm::func
   return result;
 }
 
-FailureOr<Operation*> ProofOp::getProofOpOrSelfProofImplOp(
+FailureOr<Operation*> ProofOp::getProofOpOrUnconditionalImplOp(
     ModuleOp module,
     FlatSymbolRefAttr name,
     llvm::function_ref<InFlightDiagnostic()> errFn) {
@@ -790,9 +790,9 @@ FailureOr<Operation*> ProofOp::getProofOpOrSelfProofImplOp(
     return failure();
   }
 
-  // if it's an ImplOp, it must be self-proving
+  // if it's an ImplOp, it must be unconditional
   if (auto impl = dyn_cast<ImplOp>(symOp)) {
-    if (failed(impl.verifyIsSelfProof(errFn))) return failure();
+    if (failed(impl.verifyIsUnconditional(errFn))) return failure();
     return symOp;
   }
 
@@ -867,12 +867,11 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
   // proof needs to refer to either a ProofOp or an ImplOp with no obligations
   if (auto proofOp = dyn_cast<ProofOp>(proof)) {
-    // exact proof must match
-    return unify(proofOp.getProvenClaim(), getProvenClaim(), module, errFn);
+    return proofOp.getImpl().buildSubstitutionForSelfClaim(getProvenClaim(), errFn);
   } else if (auto implOp = dyn_cast<ImplOp>(proof)) {
-    if (!implOp.isSelfProof())
+    if (!implOp.isUnconditional())
       return emitOpError() << "impl '" << proofRef
-                           << "' is not self-proving (has obligations)";
+                           << "' is not unconditional (has obligations)";
 
     // check that the impl is able to build a substitution for our proven claim
     return implOp.buildSubstitutionForSelfClaim(getProvenClaim(), errFn);

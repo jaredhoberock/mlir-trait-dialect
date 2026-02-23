@@ -216,8 +216,8 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
 
   MLIRContext *ctx = module.getContext();
 
-  // check for a self-proof
-  if (impl.isSelfProof()) {
+  // check for an unconditional impl
+  if (impl.isUnconditional()) {
     auto sym = FlatSymbolRefAttr::get(ctx, impl.getSymName());
     memo.proofMemo[app] = sym;
     return sym;

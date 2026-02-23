@@ -45,8 +45,7 @@ unsafe extern "C" {
                            trait_app: MlirAttribute) -> MlirOperation;
     fn traitWitnessOpCreate(loc: MlirLocation,
                             proof_name: MlirStringRef,
-                            trait_name: MlirStringRef,
-                            type_args: *const MlirType, num_type_args: isize) -> MlirOperation;
+                            trait_app: MlirAttribute) -> MlirOperation;
     fn traitProofOpCreate(loc: MlirLocation,
                           sym_name: MlirStringRef,
                           impl_name: MlirStringRef,
@@ -64,6 +63,7 @@ unsafe extern "C" {
                          trait_app: MlirAttribute) -> MlirType;
     fn traitClaimTypeGetTraitApplication(claim_ty: MlirType) -> MlirAttribute;
     fn traitTypeIsAClaim(ty: MlirType) -> bool;
+    fn traitGetGenericTypesIn(ty: MlirType, results: *mut MlirType, max_results: isize) -> isize;
 }
 
 pub fn register(ctx: &Context) {
@@ -238,15 +238,12 @@ pub fn allege<'c>(loc: Location<'c>,
 
 pub fn witness<'c>(loc: Location<'c>,
                    proof_name: &str,
-                   trait_name: &str,
-                   type_args: &[Type<'c>],
+                   trait_app: TraitApplicationAttribute<'c>,
 ) -> Operation<'c> {
     unsafe { Operation::from_raw(traitWitnessOpCreate(
         loc.to_raw(),
         StringRef::new(proof_name).to_raw(),
-        StringRef::new(trait_name).to_raw(),
-        type_args.as_ptr() as *const _,
-        type_args.len() as isize,
+        trait_app.to_raw(),
     ))}
 }
 
@@ -363,4 +360,15 @@ pub fn claim_type<'c>(
     trait_app: TraitApplicationAttribute<'c>,
 ) -> ClaimType<'c> {
     ClaimType::new(ctx, trait_app)
+}
+
+/// Collect all unique generic types (e.g., !trait.poly, !coord.poly) found
+/// recursively in the given type.
+pub fn generic_types_in<'c>(ty: Type<'c>) -> Vec<Type<'c>> {
+    unsafe {
+        let count = traitGetGenericTypesIn(ty.to_raw(), std::ptr::null_mut(), 0);
+        let mut results = vec![MlirType { ptr: std::ptr::null_mut() }; count as usize];
+        traitGetGenericTypesIn(ty.to_raw(), results.as_mut_ptr(), count);
+        results.into_iter().map(|t| Type::from_raw(t)).collect()
+    }
 }
