@@ -321,12 +321,37 @@ struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
   }
 };
 
+/// Rewrites a monomorphic `trait.derive` into a `trait.witness` backed by a
+/// resolved proof.  Fires only when the derived claim's types are fully
+/// concrete, then delegates to ImplResolver to find (or mint) the canonical
+/// proof and replaces the derive with a witness referencing that proof.
+struct DeriveToWitnessPattern : public OpRewritePattern<DeriveOp> {
+  ImplResolver &resolver;
+
+  DeriveToWitnessPattern(MLIRContext *ctx, ImplResolver &resolver)
+    : OpRewritePattern(ctx), resolver(resolver) {}
+
+  LogicalResult matchAndRewrite(DeriveOp op, PatternRewriter &rewriter) const override {
+    // only fire when result type is monomorphic
+    if (!op.getDerivedClaim().isMonomorphic())
+      return rewriter.notifyMatchFailure(op, "claim still polymorphic");
+
+    auto errFn = [&] { return op.emitOpError(); };
+    auto sym = resolver.resolveAndEnsureProofFor(op.getDerivedClaim(), rewriter, errFn);
+    if (failed(sym))
+      return failure();
+
+    rewriter.replaceOpWithNewOp<WitnessOp>(op, *sym, op.getTraitApplication());
+    return success();
+  }
+};
+
 /// Monomorphizes result types for any op implementing
 /// ResultTypeSpecializationOpInterface once all operands are monomorphic.
 ///
-/// When all operands have concrete (non-polymorphic) types, the op’s
+/// When all operands have concrete (non-polymorphic) types, the op's
 /// `specializeTypeFromOperands` method computes the concrete result types.
-/// If they differ from the op’s current result types, the pattern updates
+/// If they differ from the op's current result types, the pattern updates
 /// them in-place under the rewriter.
 struct MonomorphizeResultTypesPattern
     : public OpInterfaceRewritePattern<ResultTypeSpecializationOpInterface> {
@@ -374,7 +399,7 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
 
   MLIRContext* ctx = module.getContext();
 
-  // rewrite trait.func.call, trait.method.call,
+  // rewrite trait.func.call, trait.method.call, trait.derive,
   // and any generic op whose results become monomorphic
   RewritePatternSet patterns(ctx);
   patterns.add<
@@ -382,6 +407,7 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
     MethodCallOpLowering,
     MonomorphizeResultTypesPattern
   >(ctx);
+  patterns.add<DeriveToWitnessPattern>(ctx, *resolver);
 
   // collect instantiate-monomorphs patterns from other dialects
   for (Dialect *d : ctx->getLoadedDialects()) {
@@ -430,12 +456,29 @@ struct EraseProjectOp : public OpRewritePattern<ProjectOp> {
   }
 };
 
+/// Removes all `!trait.claim` types and claim-producing ops from the module.
+///
+/// By this point monomorphization is complete: every polymorphic function has
+/// been specialized, every `trait.allege` replaced by `trait.witness`, and
+/// every `trait.derive` rewritten to `trait.witness`.  The claim values that
+/// threaded proof evidence through the IR are no longer needed.
+///
+/// This function uses MLIR's dialect conversion to:
+/// All claim-producing ops are marked illegal:
+///   - `trait.witness` and `trait.project` are expected at this stage and
+///     are erased by dedicated patterns.
+///   - `trait.allege` and `trait.derive` should have been rewritten to
+///     `trait.witness` by earlier passes; their presence is a bug and will
+///     cause the conversion to fail.
+///
+/// A TypeConverter maps `!trait.claim` to nothing, which drops claim
+/// parameters from function signatures, call operands, and return values.
 static LogicalResult eraseClaims(ModuleOp module) {
   MLIRContext* ctx = module.getContext();
   ConversionTarget target(*ctx);
 
-  // all trait.project and trait.witness ops are illegal
-  target.addIllegalOp<ProjectOp, WitnessOp>();
+  // all claim-producing ops are illegal
+  target.addIllegalOp<AllegeOp, DeriveOp, ProjectOp, WitnessOp>();
 
   // otherwise, an op is legal if it does not mention a !trait.claim type
   target.markUnknownOpDynamicallyLegal([&](Operation *op) {
@@ -499,7 +542,7 @@ LogicalResult monomorphize(ModuleOp module) {
 
   // erase claims
   // we do this last because all of the above may
-  // use !trait.claim, trait.witness, or trait.project
+  // mention !trait.claim
   if (failed(eraseClaims(module)))
     return failure();
 

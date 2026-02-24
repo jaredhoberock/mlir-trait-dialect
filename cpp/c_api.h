@@ -81,6 +81,12 @@ MlirOperation traitProjectOpCreate(MlirLocation loc,
                                    MlirValue srcClaim,
                                    MlirAttribute destTraitApp);
 
+/// Create a trait.derive operation
+MlirOperation traitDeriveOpCreate(MlirLocation loc,
+                                  MlirAttribute traitApp,
+                                  MlirStringRef implName,
+                                  MlirValue* assumptions, intptr_t numAssumptions);
+
 /// Create a trait.assume operation
 MlirOperation traitAssumeOpCreate(MlirLocation loc, MlirAttribute traitApp);
 

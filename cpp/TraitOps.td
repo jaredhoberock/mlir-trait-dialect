@@ -443,10 +443,85 @@ def ImplOp : TraitDialectOp<"impl", [
 }
 
 
-def Claim : TypeConstraint<
+def Claim : Type<
   CPred<"::mlir::isa<ClaimType>($_self)">,
-  "any '!trait.claim' type"
+  "any '!trait.claim' type",
+  "ClaimType"
 >;
+
+
+//===----------------------------------------------------------------------===//
+// Claim-producing ops
+//===----------------------------------------------------------------------===//
+//
+// Five operations produce `!trait.claim` values. Together they cover every way
+// a claim can originate or be transformed:
+//
+//   Op              Role                                         Analogy
+//   ----------      ------------------------------------------   -----------
+//   trait.allege    Fabricate a monomorphic claim at a call       Assertion
+//                   site, to be proven later by impl resolution
+//   trait.assume    Materialize the enclosing trait/impl's        Hypothesis
+//                   self claim or a declared assumption
+//   trait.derive    Construct a new claim from a conditional      Introduction
+//                   impl plus existing claim operands
+//   trait.project   Extract a sub-claim from an existing claim    Elimination
+//                   via a trait requirement or impl assumption
+//   trait.witness   Materialize a proven claim backed by a        Evidence
+//                   trait.proof or unconditional trait.impl
+//
+// Claims also flow through function parameters as `!trait.claim` SSA values,
+// but that is plain SSA plumbing rather than a dedicated op.
+//===----------------------------------------------------------------------===//
+
+
+def AllegeOp : TraitDialectOp<"allege", [
+  DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+  Pure
+]> {
+  let summary = "Unverified, monomorphic claim that a trait implementation exists";
+  let description = [{
+    Produces a `!trait.claim<@Trait[Types...]>` value asserting that a trait
+    application is satisfied. The type arguments must be concrete (monomorphic);
+    polymorphic types are illegal.
+
+    This restriction enforces a key invariant of the trait system: polymorphic
+    code never fabricates claims. Claims originate at monomorphic call sites
+    via `trait.allege` and flow into polymorphic code through `!trait.claim`
+    parameters. A polymorphic function that needs a trait satisfaction must
+    declare it as a bound and receive a claim value from its caller. This
+    ensures that polymorphic code is correct by construction because it cannot
+    assume a trait is implemented without the caller proving it.
+
+    `trait.allege` does not verify that a matching `trait.impl` exists at the
+    point of emission. It is intended to be elaborated into verified
+    `trait.witness` operations by a claim-proving pass prior to
+    monomorphization. Unresolved monomorphic alleges after that pass are
+    errors.
+
+    Example:
+      %p = trait.allege @Ord[i32]
+  }];
+
+  let results = (outs Claim:$result);
+
+  let builders = [
+    OpBuilder<(ins "::mlir::trait::TraitApplicationAttr":$app), [{
+      mlir::MLIRContext* ctx = $_builder.getContext();
+      auto claimTy = ClaimType::get(ctx, app);
+      return build($_builder, $_state, claimTy);
+    }]>
+  ];
+
+  let extraClassDeclaration = [{
+    ClaimType getClaim() {
+      return cast<ClaimType>(getResult().getType());
+    }
+  }];
+
+  let hasCustomAssemblyFormat = 1;
+  let hasVerifier = 1;
+}
 
 
 def AssumeOp : TraitDialectOp<"assume", [
@@ -512,6 +587,191 @@ def AssumeOp : TraitDialectOp<"assume", [
 
   let hasCustomAssemblyFormat = 1;
 }
+
+
+def DeriveOp : TraitDialectOp<"derive", [
+  DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+  Pure
+]>{
+  let summary = "Derive a claim from a conditional impl and assumption claims";
+  let description = [{
+    Produces a new claim by combining a conditional `trait.impl` with claim
+    operands that satisfy its assumptions. None of the other claim-producing
+    ops can construct a claim from a conditional impl; consider
+    `impl<U: Trait> Trait for Struct<U> where [@Trait[U]]`: given an
+    in-scope claim for `Trait[!T]`, there is no way to produce
+    `Trait[Struct<!T>]` without `trait.derive`.
+
+    It names the conditional impl and takes claim operands satisfying its
+    assumptions, producing the impl's derived claim. During
+    `instantiateMonomorphs`, once types are concrete, it is rewritten into
+    a `trait.witness` backed by a minted `trait.proof`.
+
+    Example:
+
+    ```mlir
+    // Given: impl<U: Trait> Trait for Struct<U> where [@Trait[U]]
+    // and an in-scope claim %t for Trait[!T]:
+    %d = trait.derive @Trait[Struct<!T>] from @the_impl given(%t)
+    ```
+
+    Verification ensures:
+    * The `@impl` symbol refers to a `trait.impl`.
+    * The impl can be specialized for the derived claim.
+    * The number of assumption operands matches the impl's assumption count.
+    * Each operand's claim type matches the corresponding specialized assumption.
+  }];
+
+  let arguments = (ins
+    TraitApplicationAttr:$trait_application,
+    FlatSymbolRefAttr:$impl,
+    Variadic<Claim>:$assumptions
+  );
+
+  let results = (outs Claim:$result);
+
+  let builders = [
+    OpBuilder<(ins "TraitApplicationAttr":$traitApp,
+                   "FlatSymbolRefAttr":$impl,
+                   "ValueRange":$assumptions), [{
+      ClaimType claimTy = ClaimType::get($_builder.getContext(), traitApp);
+      build($_builder, $_state, claimTy, traitApp, impl, assumptions);
+    }]>
+  ];
+
+  let extraClassDeclaration = [{
+    ClaimType getDerivedClaim() {
+      return cast<ClaimType>(getResult().getType());
+    }
+
+    ImplOp getImplOp();
+  }];
+
+  let hasCustomAssemblyFormat = 1;
+}
+
+
+def ProjectOp : TraitDialectOp<"project", [
+  DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+  Pure
+]> {
+  let summary = "Project a subclaim from a claim";
+  let description = [{
+    Given a claim of `@Trait[Args...]`, produce a claim of either:
+      1. the **identity** projection `@Trait[Args...]` itself, or
+      2. a one-hop **trait requirement** `@Req[Args...]` declared in the
+         `where` clause of `trait.trait @Trait`, or
+      3. (if the input claim is **proven**) an **impl assumption** declared in the
+         `where` clause of the referenced `trait.impl` (or discharged via
+         its `trait.proof`).
+
+    Substitution of `Args...` for `@Trait`'s type parameters is performed prior
+    to matching the requested projection target.
+
+    Notes:
+    * Only a **single hop** is performed; chain `trait.project` for transitive projections.
+    * Identity projection is always valid.
+    * If `@Trait` has no `where` requirements and any proven impl has no assumptions,
+      only the identity projection is possible.
+
+    Examples:
+
+    ```mlir
+    // identity projection
+    %id = trait.project %p : @A[i32] to @A[i32] // same claim as %p
+
+    // trait-level requirement (works for unproven or proven source claims)
+    // @Ord[!S] where [ @Eq[!S], @PartialOrd[!S,!S] ]
+    %p = trait.assume @Ord[!T]
+    %eq = trait.project %p : @Ord[!T] to @Eq[!T]
+
+    // impl assumption (requires a proven source claim)
+    %wA = trait.witness @A_impl_i32 for @A[i32]
+    %wB = trait.project %wA : @A[i32] by @A_impl_i32 to @B[i32] by @B_impl_i32
+    ```
+
+    Verification:
+    * For an **unproven** source claim (e.g., from `trait.assume` or `trait.allege`),
+      the target must match one of `@Trait`'s `where` requirements after substitution,
+      or be the identity. The target of an unproven source claim must also be unproven.
+    * For a **proven** source claim (e.g., from `trait.witness`), the target may match
+      the identity, a trait-level requirement, or an assumption of the referenced proof,
+      after substitution. The target of a proven source claim must also be proven.
+  }];
+
+  let arguments = (ins Claim:$source);
+  let results   = (outs Claim:$result);
+
+  let extraClassDeclaration = [{
+    ClaimType getSourceClaim() {
+      return cast<ClaimType>(getSource().getType());
+    }
+
+    ClaimType getResultClaim() {
+      return cast<ClaimType>(getResult().getType());
+    }
+
+    TraitOp getSourceTrait();
+    TraitOp getProjectedTrait();
+  }];
+
+  let hasCustomAssemblyFormat = 1;
+}
+
+
+def WitnessOp : TraitDialectOp<"witness", [
+  DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+  Pure
+]>{
+  let summary = "Materializes a proven claim value for a concrete trait implementation";
+  let description = [{
+    Introduces a value of type `!trait.claim<@Trait[Types...], @Symbol>` that
+    represents a proof that the trait application is satisfied.
+
+    The symbol may refer to either
+      * a `trait.proof` that transitively discharges the trait's requirements and the impl's assumptions
+      * a `trait.impl` that is unconditional
+
+    Verification ensures that the symbol proves the trait application as claimed.
+
+    Example:
+      // @PartialEq has no obligations, so we refer directly to a trait.impl
+      %partial_eq_w = trait.witness @PartialEq_impl_i32_i32 for @PartialEq[i32,i32]
+
+      // @Ord has obligations, so we refer to a trait.proof
+      %ord_w = trait.witness @Ord_impl_i32_p for @Ord[i32]
+  }];
+
+  let arguments = (ins
+    FlatSymbolRefAttr:$proof, // refers to trait.proof or trait.impl
+    TraitApplicationAttr:$trait_application
+  );
+
+  let builders = [
+    // builder infers the result type
+    OpBuilder<(ins "::mlir::FlatSymbolRefAttr":$proof,
+                   "::mlir::trait::TraitApplicationAttr":$trait_application), [{
+      MLIRContext* ctx = $_builder.getContext();
+      ClaimType claimTy = ClaimType::get(ctx, trait_application, proof);
+      build($_builder, $_state, claimTy, proof, trait_application);
+    }]>
+  ];
+
+  let results = (outs Claim:$result);
+
+  let extraClassDeclaration = [{
+    ClaimType getProvenClaim() {
+      return ClaimType::get(getContext(), getTraitApplication(), getProofAttr());
+    }
+  }];
+
+  let hasCustomAssemblyFormat = 1;
+}
+
+
+//===----------------------------------------------------------------------===//
+// Call ops
+//===----------------------------------------------------------------------===//
 
 
 def MethodCallOp : TraitDialectOp<"method.call", [
@@ -647,7 +907,7 @@ def MethodCallOp : TraitDialectOp<"method.call", [
     }
 
     StringRef getMethodName() {
-      assert(!getMethodRef().getNestedReferences().empty() && 
+      assert(!getMethodRef().getNestedReferences().empty() &&
              "Expected nested method reference");
       return cast<FlatSymbolRefAttr>(getMethodRef().getNestedReferences().front()).getValue();
     }
@@ -707,7 +967,7 @@ def FuncCallOp : TraitDialectOp<"func.call", [
         : (!trait.claim<@PartialEq[i32,i32]>, i32, i32) -> i1
   }];
 
-  let arguments = (ins 
+  let arguments = (ins
       FlatSymbolRefAttr:$callee_name,
       Variadic<AnyType>:$operands
   );
@@ -786,121 +1046,9 @@ def FuncCallOp : TraitDialectOp<"func.call", [
 }
 
 
-def ProjectOp : TraitDialectOp<"project", [
-  DeclareOpInterfaceMethods<SymbolUserOpInterface>,
-  Pure
-]> {
-  let summary = "Project a subclaim from a claim";
-  let description = [{
-    Given a claim of `@Trait[Args...]`, produce a claim of either:
-      1. the **identity** projection `@Trait[Args...]` itself, or
-      2. a one-hop **trait requirement** `@Req[Args...]` declared in the
-         `where` clause of `trait.trait @Trait`, or
-      3. (if the input claim is **proven**) an **impl assumption** declared in the
-         `where` clause of the referenced `trait.impl` (or discharged via
-         its `trait.proof`).
-
-    Substitution of `Args...` for `@Trait`'s type parameters is performed prior
-    to matching the requested projection target.
-
-    Notes:
-    * Only a **single hop** is performed; chain `trait.project` for transitive projections.
-    * Identity projection is always valid.
-    * If `@Trait` has no `where` requirements and any proven impl has no assumptions,
-      only the identity projection is possible.
-
-    Examples:
-
-    ```mlir
-    // identity projection
-    %id = trait.project %p : @A[i32] to @A[i32] // same claim as %p
-
-    // trait-level requirement (works for unproven or proven source claims)
-    // @Ord[!S] where [ @Eq[!S], @PartialOrd[!S,!S] ]
-    %p = trait.assume @Ord[!T]
-    %eq = trait.project %p : @Ord[!T] to @Eq[!T]
-
-    // impl assumption (requires a proven source claim)
-    %wA = trait.witness @A_impl_i32 for @A[i32]
-    %wB = trait.project %wA : @A[i32] by @A_impl_i32 to @B[i32] by @B_impl_i32
-    ```
-
-    Verification:
-    * For an **unproven** source claim (e.g., from `trait.assume` or `trait.allege`),
-      the target must match one of `@Trait`'s `where` requirements after substitution,
-      or be the identity. The target of an unproven source claim must also be unproven.
-    * For a **proven** source claim (e.g., from `trait.witness`), the target may match
-      the identity, a trait-level requirement, or an assumption of the referenced proof,
-      after substitution. The target of a proven source claim must also be proven.
-  }];
-
-  let arguments = (ins Claim:$source);
-  let results   = (outs Claim:$result);
-
-  let extraClassDeclaration = [{
-    ClaimType getSourceClaim() {
-      return cast<ClaimType>(getSource().getType());
-    }
-
-    ClaimType getResultClaim() {
-      return cast<ClaimType>(getResult().getType());
-    }
-
-    TraitOp getSourceTrait();
-    TraitOp getProjectedTrait();
-  }];
-
-  let hasCustomAssemblyFormat = 1;
-}
-
-
-def AllegeOp : TraitDialectOp<"allege", [
-  DeclareOpInterfaceMethods<SymbolUserOpInterface>,
-  Pure
-]> {
-  let summary = "Unverified, monomorphic claim that a trait implementation exists";
-  let description = [{
-    Produces a `!trait.claim<@Trait[Types...]>` value asserting that a trait
-    application is satisfied. The type arguments must be concrete (monomorphic);
-    polymorphic types are illegal.
-
-    This restriction enforces a key invariant of the trait system: polymorphic
-    code never fabricates claims. Claims originate at monomorphic call sites
-    via `trait.allege` and flow into polymorphic code through `!trait.claim`
-    parameters. A polymorphic function that needs a trait satisfaction must
-    declare it as a bound and receive a claim value from its caller. This
-    ensures that polymorphic code is correct by construction because it cannot
-    assume a trait is implemented without the caller proving it.
-
-    `trait.allege` does not verify that a matching `trait.impl` exists at the
-    point of emission. It is intended to be elaborated into verified
-    `trait.witness` operations by a claim-proving pass prior to
-    monomorphization. Unresolved monomorphic alleges after that pass are
-    errors.
-
-    Example:
-      %p = trait.allege @Ord[i32]
-  }];
-
-  let results = (outs Claim:$result);
-
-  let builders = [
-    OpBuilder<(ins "::mlir::trait::TraitApplicationAttr":$app), [{
-      mlir::MLIRContext* ctx = $_builder.getContext();
-      auto claimTy = ClaimType::get(ctx, app);
-      return build($_builder, $_state, claimTy);
-    }]>
-  ];
-
-  let extraClassDeclaration = [{
-    ClaimType getClaim() {
-      return cast<ClaimType>(getResult().getType());
-    }
-  }];
-
-  let hasCustomAssemblyFormat = 1;
-  let hasVerifier = 1;
-}
+//===----------------------------------------------------------------------===//
+// Proof infrastructure
+//===----------------------------------------------------------------------===//
 
 
 def ProofOp : TraitDialectOp<"proof", [
@@ -913,7 +1061,7 @@ def ProofOp : TraitDialectOp<"proof", [
   let summary = "Canonical proof tree node";
   let description = [{
     Declares a named, canonical proof that a `trait.impl` satisfies a concrete trait application,
-    and that all one-hop trait requirements required by the trait under that application and 
+    and that all one-hop trait requirements required by the trait under that application and
     assumptions of the target impl are already proven by other symbols (either other `trait.proof`s or `trait.impl`s).
 
     Leaf `trait.impl`s have nothing to discharge and may not be wrapped in a `trait.proof`; they are unconditional self-proofs.
@@ -930,7 +1078,7 @@ def ProofOp : TraitDialectOp<"proof", [
     ClaimType getProvenClaim() {
       MLIRContext* ctx = getContext();
       FlatSymbolRefAttr symRef = FlatSymbolRefAttr::get(ctx, getSymNameAttr());
-      return ClaimType::get(ctx, getTraitApplication(), symRef); 
+      return ClaimType::get(ctx, getTraitApplication(), symRef);
     }
 
     ImplOp getImpl() {
@@ -975,56 +1123,6 @@ def ProofOp : TraitDialectOp<"proof", [
 
   let assemblyFormat = "$sym_name `proves` $impl_name `for` $trait_application `given` $subproof_names attr-dict";
   let hasVerifier = 1;
-}
-
-
-def WitnessOp : TraitDialectOp<"witness", [
-  DeclareOpInterfaceMethods<SymbolUserOpInterface>,
-  Pure
-]>{
-  let summary = "Materializes a proven claim value for a concrete trait implementation";
-  let description = [{
-    Introduces a value of type `!trait.claim<@Trait[Types...], @Symbol>` that
-    represents a proof that the trait application is satisfied.
-
-    The symbol may refer to either
-      * a `trait.proof` that transitively discharges the trait's requirements and the impl's assumptions
-      * a `trait.impl` that is unconditional
-
-    Verification ensures that the symbol proves the trait application as claimed.
-
-    Example:
-      // @PartialEq has no obligations, so we refer directly to a trait.impl
-      %partial_eq_w = trait.witness @PartialEq_impl_i32_i32 for @PartialEq[i32,i32]
-
-      // @Ord has obligations, so we refer to a trait.proof
-      %ord_w = trait.witness @Ord_impl_i32_p for @Ord[i32]
-  }];
-
-  let arguments = (ins
-    FlatSymbolRefAttr:$proof, // refers to trait.proof or trait.impl
-    TraitApplicationAttr:$trait_application
-  );
-
-  let builders = [
-    // builder infers the result type
-    OpBuilder<(ins "::mlir::FlatSymbolRefAttr":$proof,
-                   "::mlir::trait::TraitApplicationAttr":$trait_application), [{
-      MLIRContext* ctx = $_builder.getContext();
-      ClaimType claimTy = ClaimType::get(ctx, trait_application, proof);
-      build($_builder, $_state, claimTy, proof, trait_application);
-    }]>
-  ];
-
-  let results = (outs Claim:$result);
-
-  let extraClassDeclaration = [{
-    ClaimType getProvenClaim() {
-      return ClaimType::get(getContext(), getTraitApplication(), getProofAttr());
-    }
-  }];
-
-  let hasCustomAssemblyFormat = 1;
 }
 
 

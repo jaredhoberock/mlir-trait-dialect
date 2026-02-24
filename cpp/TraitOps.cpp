@@ -883,6 +883,150 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
 
 //===----------------------------------------------------------------------===//
+// DeriveOp
+//===----------------------------------------------------------------------===//
+
+ParseResult DeriveOp::parse(OpAsmParser &p, OperationState &result) {
+  // trait.derive @Trait[Types...] from @Impl given(%claims...)
+
+  // parse @Trait[Types...]
+  TraitApplicationAttr traitApp = dyn_cast_or_null<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
+  if (!traitApp)
+    return p.emitError(p.getCurrentLocation(), "expected a TraitApplicationAttr");
+  result.addAttribute("trait_application", traitApp);
+
+  // parse `from`
+  if (p.parseKeyword("from"))
+    return failure();
+
+  // parse @Impl
+  FlatSymbolRefAttr implRef;
+  if (p.parseAttribute(implRef, "impl", result.attributes))
+    return failure();
+
+  // parse `given`
+  if (p.parseKeyword("given"))
+    return failure();
+
+  // parse ( %claims... )
+  SmallVector<OpAsmParser::UnresolvedOperand> assumptions;
+  if (p.parseOperandList(assumptions, OpAsmParser::Delimiter::Paren))
+    return failure();
+
+  // parse `: (` type_list `)`
+  SmallVector<Type> assumptionTypes;
+  if (!assumptions.empty()) {
+    if (p.parseColon())
+      return failure();
+    if (failed(p.parseCommaSeparatedList(OpAsmParser::Delimiter::Paren, [&] {
+          Type ty;
+          if (p.parseType(ty)) return failure();
+          assumptionTypes.push_back(ty);
+          return success();
+        })))
+      return failure();
+
+    if (assumptionTypes.size() != assumptions.size())
+      return p.emitError(p.getCurrentLocation(), "assumption type count mismatch");
+
+    auto loc = p.getCurrentLocation();
+    if (p.resolveOperands(assumptions, assumptionTypes, loc, result.operands))
+      return failure();
+  }
+
+  // construct the unproven result type
+  ClaimType claimTy = ClaimType::get(p.getContext(), traitApp);
+  result.addTypes(claimTy);
+
+  // parse optional attributes
+  if (p.parseOptionalAttrDictWithKeyword(result.attributes))
+    return failure();
+
+  return success();
+}
+
+void DeriveOp::print(OpAsmPrinter &p) {
+  // trait.derive @Trait[Types...] from @Impl given(%claims...)
+
+  p << " ";
+  getTraitApplication().print(p);
+  p << " from " << getImplAttr() << " given(";
+  llvm::interleaveComma(getAssumptions(), p, [&](Value v) {
+    p.printOperand(v);
+  });
+  p << ")";
+
+  // print types if there are assumptions
+  if (!getAssumptions().empty()) {
+    p << " : (";
+    llvm::interleaveComma(getAssumptions().getTypes(), p, [&](Type ty) {
+      p.printType(ty);
+    });
+    p << ")";
+  }
+
+  p.printOptionalAttrDictWithKeyword(
+    (*this)->getAttrs(),
+    /*elidedAttrs=*/{"trait_application", "impl"}
+  );
+}
+
+ImplOp DeriveOp::getImplOp() {
+  ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
+  if (!module)
+    return nullptr;
+  return mlir::SymbolTable::lookupNearestSymbolFrom<ImplOp>(module, getImplAttr());
+}
+
+/// Verifies that a trait.derive op is well-formed with respect to its symbols:
+///
+///  1. The @impl symbol resolves to a trait.impl op.
+///  2. The impl's self application can be specialized against the derived claim
+///     (i.e., the impl's header structurally matches the claim we want to derive).
+///  3. The number of assumption operands equals the impl's assumption count
+///     after specialization.
+///  4. Each operand's claim type matches the corresponding specialized
+///     assumption (so the caller is providing exactly the evidence the impl
+///     requires under this specialization).
+LogicalResult DeriveOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  auto errFn = [&] { return emitOpError(); };
+
+  // look up impl by symbol
+  auto implOp = getImplOp();
+  if (!implOp)
+    return emitOpError() << "cannot find trait.impl '" << getImplAttr() << "'";
+
+  // build substitution: impl's self claim -> derived claim
+  ClaimType derivedClaim = getDerivedClaim();
+  auto subst = implOp.buildSubstitutionForSelfClaim(derivedClaim, errFn);
+  if (failed(subst))
+    return failure();
+
+  // specialize impl's assumptions for the derived claim
+  auto specializedAssumptions = implOp.specializeAssumptionsAsClaimsFor(derivedClaim, errFn);
+  if (failed(specializedAssumptions))
+    return failure();
+
+  // check operand count matches assumption count
+  if (getAssumptions().size() != specializedAssumptions->size())
+    return emitOpError() << "expected " << specializedAssumptions->size()
+                         << " assumption operands, got " << getAssumptions().size();
+
+  // check each operand's claim type matches the corresponding specialized assumption
+  for (auto [i, pair] : llvm::enumerate(llvm::zip(getAssumptions(), *specializedAssumptions))) {
+    auto [operand, expected] = pair;
+    ClaimType operandClaim = cast<ClaimType>(operand.getType());
+    if (operandClaim.getTraitApplication() != expected.getTraitApplication())
+      return emitOpError() << "assumption operand #" << i
+                           << " has claim " << operandClaim
+                           << " but expected " << expected;
+  }
+
+  return success();
+}
+
+
+//===----------------------------------------------------------------------===//
 // AssumeOp
 //===----------------------------------------------------------------------===//
 

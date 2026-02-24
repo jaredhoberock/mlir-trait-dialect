@@ -54,6 +54,10 @@ unsafe extern "C" {
     fn traitProjectOpCreate(loc: MlirLocation,
                             src_claim: MlirValue,
                             dest_trait_app: MlirAttribute) -> MlirOperation;
+    fn traitDeriveOpCreate(loc: MlirLocation,
+                           trait_app: MlirAttribute,
+                           impl_name: MlirStringRef,
+                           assumptions: *const MlirValue, num_assumptions: isize) -> MlirOperation;
     fn traitAssumeOpCreate(loc: MlirLocation,
                            trait_app: MlirAttribute) -> MlirOperation;
 
@@ -276,6 +280,20 @@ pub fn project<'c>(loc: Location<'c>,
         loc.to_raw(),
         src_claim.to_raw(),
         app_attr.to_raw(),
+    ))}
+}
+
+pub fn derive<'c>(loc: Location<'c>,
+                  trait_app: TraitApplicationAttribute<'c>,
+                  impl_name: &str,
+                  assumptions: &[Value<'c,'_>],
+) -> Operation<'c> {
+    unsafe { Operation::from_raw(traitDeriveOpCreate(
+        loc.to_raw(),
+        trait_app.to_raw(),
+        StringRef::new(impl_name).to_raw(),
+        assumptions.as_ptr() as *const _,
+        assumptions.len() as isize,
     ))}
 }
 

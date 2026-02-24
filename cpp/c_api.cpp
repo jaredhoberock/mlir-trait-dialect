@@ -278,6 +278,33 @@ MlirOperation traitProjectOpCreate(MlirLocation loc,
   return wrap(op.getOperation());
 }
 
+MlirOperation traitDeriveOpCreate(MlirLocation loc,
+                                  MlirAttribute wrappedTraitApp,
+                                  MlirStringRef implName,
+                                  MlirValue* assumptions, intptr_t numAssumptions) {
+  MLIRContext* ctx = unwrap(loc)->getContext();
+
+  TraitApplicationAttr traitApp = dyn_cast<TraitApplicationAttr>(unwrap(wrappedTraitApp));
+  if (!traitApp) return {}; // invalid attribute type
+
+  FlatSymbolRefAttr implRef = FlatSymbolRefAttr::get(ctx, StringRef(implName.data, implName.length));
+
+  SmallVector<Value> args;
+  args.reserve(numAssumptions);
+  for (intptr_t i = 0; i < numAssumptions; ++i)
+    args.push_back(unwrap(assumptions[i]));
+
+  OpBuilder builder(ctx);
+  auto op = builder.create<DeriveOp>(
+    unwrap(loc),
+    traitApp,
+    implRef,
+    args
+  );
+
+  return wrap(op.getOperation());
+}
+
 MlirOperation traitAssumeOpCreate(MlirLocation loc,
                                   MlirAttribute wrappedTraitApp) {
   MLIRContext* ctx = unwrap(loc)->getContext();
