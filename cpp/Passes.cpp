@@ -10,7 +10,6 @@
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/Dialect/Func/Transforms/FuncConversions.h>
 #include <mlir/IR/PatternMatch.h>
-#include <mlir/IR/Verifier.h>
 #include <mlir/Pass/Pass.h>
 #include <mlir/Transforms/DialectConversion.h>
 #include <mlir/Transforms/GreedyPatternRewriteDriver.h>
@@ -136,14 +135,13 @@ std::unique_ptr<Pass> createVerifyAcyclicTraitsPass() {
 
 namespace {
 
-static LogicalResult applySubstitutionInPlace(const DenseMap<Type,Type>& subst, Operation* root) {
-  if (subst.empty()) return success();
+static void applySubstitutionInPlace(const DenseMap<Type,Type>& subst, Operation* root) {
+  if (subst.empty()) return;
   AttrTypeReplacer replacer = makeTypeReplacerFromSubstitution(subst);
   replacer.recursivelyReplaceElementsIn(root,
                                         /*replaceAttrs=*/true,
                                         /*replaceLocs=*/false,
                                         /*replaceTypes=*/true);
-  return mlir::verify(root);
 }
 
 struct ProveClaimPattern : OpRewritePattern<AllegeOp> {
@@ -213,11 +211,11 @@ FailureOr<ImplResolver> resolveImpls(ModuleOp module) {
   });
   if (hasLeftovers) return failure();
 
-  // rewrite all proven !trait.claim types to ensure they carry proofs
-  // XXX TODO it would be cheaper to get an AttrTypeReplacer directly from the resolver
-  //          instead of using the intermediate substitution
-  if (failed(applySubstitutionInPlace(resolver.buildClaimSubstitutionFromMemo(), module)))
-    return failure();
+  // Normalize claim types: after allege→witness, a proof's type parameter
+  // may itself contain a claim that was just proven.  Substitute all
+  // unproven claims with their proven forms so that downstream instantiation
+  // sees consistent types.
+  applySubstitutionInPlace(resolver.buildClaimSubstitutionFromMemo(), module);
 
   return resolver;
 }
@@ -389,7 +387,73 @@ struct MonomorphizeResultTypesPattern
   }
 };
 
+/// Returns true if `replacer.replaceElementsIn(op, ...)` with the given
+/// options would modify anything on `op` (not recursing into children).
+static bool wouldReplace(AttrTypeReplacer &replacer, Operation *op,
+                         bool replaceAttrs, bool replaceLocs, bool replaceTypes) {
+  if (replaceTypes) {
+    for (Type t : op->getResultTypes())
+      if (replacer.replace(t) != t) return true;
+    for (Region &r : op->getRegions())
+      for (Block &b : r)
+        for (Value arg : b.getArguments())
+          if (replacer.replace(arg.getType()) != arg.getType()) return true;
+  }
+  if (replaceAttrs)
+    for (NamedAttribute attr : op->getAttrs())
+      if (replacer.replace(attr.getValue()) != attr.getValue()) return true;
+  if (replaceLocs)
+    if (replacer.replace(op->getLoc()) != op->getLoc()) return true;
+  return false;
 }
+
+/// Propagates proofs from the resolver's memo into claim types of any op
+/// that carries unproven claims the resolver can now prove.
+///
+/// When DeriveToWitnessPattern proves a claim during the greedy rewrite and
+/// FuncCallOpLowering subsequently instantiates a callee that expects that
+/// claim, the newly created ops carry unproven claim types.  This pattern
+/// substitutes those with their proven counterparts, unblocking
+/// MethodCallOpLowering within the same rewrite pass.
+///
+/// Only replaces types owned by the matched op itself (result types, block
+/// argument types, and attributes).  Operand types are SSA-determined and
+/// update automatically once the defining value carries the proven type.
+/// Child ops are visited independently by the greedy driver.
+struct PropagateProofsPattern : public RewritePattern {
+  ImplResolver &resolver;
+
+  PropagateProofsPattern(MLIRContext *ctx, ImplResolver &resolver)
+    : RewritePattern(MatchAnyOpTypeTag(), /*benefit=*/1, ctx),
+      resolver(resolver) {}
+
+  LogicalResult matchAndRewrite(Operation *op,
+                                PatternRewriter &rewriter) const override {
+    auto subst = resolver.buildClaimSubstitutionFromMemo();
+    if (subst.empty())
+      return failure();
+
+    if (!opMentionsType<ClaimType>(op))
+      return failure();
+
+    AttrTypeReplacer replacer = makeTypeReplacerFromSubstitution(subst);
+    if (!wouldReplace(replacer, op,
+                      /*replaceAttrs=*/true,
+                      /*replaceLocs=*/false,
+                      /*replaceTypes=*/true))
+      return failure();
+
+    rewriter.modifyOpInPlace(op, [&] {
+      replacer.replaceElementsIn(op,
+                                 /*replaceAttrs=*/true,
+                                 /*replaceLocs=*/false,
+                                 /*replaceTypes=*/true);
+    });
+    return success();
+  }
+};
+
+} // end namespace
 
 LogicalResult instantiateMonomorphs(ModuleOp module) {
   // resolve impls first
@@ -408,6 +472,7 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
     MonomorphizeResultTypesPattern
   >(ctx);
   patterns.add<DeriveToWitnessPattern>(ctx, *resolver);
+  patterns.add<PropagateProofsPattern>(ctx, *resolver);
 
   // collect instantiate-monomorphs patterns from other dialects
   for (Dialect *d : ctx->getLoadedDialects()) {
@@ -419,7 +484,7 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
   if (failed(applyPatternsGreedily(module, std::move(patterns))))
     return failure();
 
-  return success();
+  return module.verify();
 }
 
 void InstantiateMonomorphsPass::runOnOperation() {
