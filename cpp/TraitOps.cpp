@@ -470,18 +470,35 @@ static func::FuncOp instantiateMethodAsFreeFuncWithLeadingSelfProof(
   });
   BlockArgument selfProofArg = funcOp.getArgument(0);
 
-  // replace all AssumeOps with projections of selfProofArg
+  // build claim map from function's claim-typed parameters
+  DenseMap<TraitApplicationAttr, Value> claimMap;
+  for (auto arg : funcOp.getArguments()) {
+    if (auto claimTy = dyn_cast<ClaimType>(arg.getType()))
+      claimMap[claimTy.getTraitApplication()] = arg;
+  }
+
+  // replace all AssumeOps: match against function parameters first,
+  // fall back to projection from selfProofArg
   SmallVector<AssumeOp> toErase;
   funcOp.walk([&](AssumeOp a) {
     PatternRewriter::InsertionGuard guard(rewriter);
     rewriter.setInsertionPoint(a);
 
-    auto p = rewriter.create<ProjectOp>(
-      a.getLoc(),
-      a.getClaim(),
-      selfProofArg
-    );
-    rewriter.replaceAllUsesWith(a.getResult(), p);
+    Value replacement;
+    auto it = claimMap.find(a.getTraitApplication());
+    if (it != claimMap.end()) {
+      // matched a function parameter — use it directly
+      replacement = it->second;
+    } else {
+      // fall back to projection from self-proof
+      replacement = rewriter.create<ProjectOp>(
+        a.getLoc(),
+        a.getClaim(),
+        selfProofArg
+      );
+    }
+
+    rewriter.replaceAllUsesWith(a.getResult(), replacement);
     toErase.push_back(a);
   });
 
@@ -1050,7 +1067,7 @@ void AssumeOp::print(OpAsmPrinter &p) {
 }
 
 LogicalResult AssumeOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  // verify line-of-sight between trait.assume op its enclosing function-like op so 
+  // verify line-of-sight between trait.assume op its enclosing function-like op so
   // that we are able to replace uses of trait.assume with a function parameter
   Operation* isolatedAncestor = getOperation()->getParentWithTrait<OpTrait::IsIsolatedFromAbove>();
   if (!isolatedAncestor)
@@ -1062,39 +1079,34 @@ LogicalResult AssumeOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     return emitOpError() << "must be within a 'func.func', found "
                          << isolatedAncestor->getName();
 
-  // the function's immediate parent must be TraitOp or ImplOp
+  // collect all assumable trait applications
+  DenseSet<TraitApplicationAttr> assumable;
+
+  // primary: function claim-typed parameters
+  for (auto argType : funcOp.getArgumentTypes()) {
+    if (auto claimTy = dyn_cast<ClaimType>(argType))
+      assumable.insert(claimTy.getTraitApplication());
+  }
+
+  // fallback: enclosing trait/impl
   TraitOp enclosingTrait = funcOp->getParentOfType<TraitOp>();
   ImplOp enclosingImpl = funcOp->getParentOfType<ImplOp>();
-  
-  if (!enclosingTrait && !enclosingImpl) {
-    return emitOpError("must be within a 'trait.trait' or 'trait.impl' region");
-  }
-  
-  auto assumedApp = getTraitApplication();
-  
-  if (enclosingTrait) {
-    // In TraitOp: verify self-referential application
-    if (assumedApp != enclosingTrait.getSelfApplication())
-      return emitOpError() << "assumed trait application " << assumedApp
-                           << " does not match enclosing trait's self application "
-                           << enclosingTrait.getSelfApplication();
-  } else if (enclosingImpl) {
-    // In ImplOp: allow assuming either the self application *or* any assumption
-    if (assumedApp == enclosingImpl.getSelfApplication())
-      return success();
 
-    // is it one of the impl's assumptions?
-    for (auto a : enclosingImpl.getAssumptions()) {
-      if (assumedApp == a)
-        return success();
-    }
-    
-    return emitOpError() << "assumed trait application " << assumedApp
-                         << " is neither the impl's self application "
-                         << enclosingImpl.getSelfApplication()
-                         << " nor one of its declared assumptions";
+  if (enclosingTrait)
+    assumable.insert(enclosingTrait.getSelfApplication());
+
+  if (enclosingImpl) {
+    assumable.insert(enclosingImpl.getSelfApplication());
+    for (auto a : enclosingImpl.getAssumptions())
+      assumable.insert(a);
   }
-  
+
+  auto assumedApp = getTraitApplication();
+
+  if (!assumable.contains(assumedApp))
+    return emitOpError() << "assumed trait application " << assumedApp
+                         << " is not assumable in this context";
+
   return success();
 }
 

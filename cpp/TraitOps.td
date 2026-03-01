@@ -531,24 +531,19 @@ def AssumeOp : TraitDialectOp<"assume", [
   let summary = "Materializes a claim value for a symbolic trait application";
   let description = [{
     Creates a zero-sized SSA value of type `!trait.claim<@Trait[types]>` that
-    acts as an assumed claim within trait or impl method bodies. This operation
-    has no operands.
+    acts as an assumed claim within polymorphic code. This operation has no
+    operands.
 
-    At least one type argument must be symbolic (!trait.poly); concrete types
-    should use `trait.witness` instead. This operation must appear within a
-    `trait.trait` or `trait.impl` region.
+    The assumed trait application must match one of (checked in order):
+      1. A `!trait.claim`-typed parameter of the enclosing function
+      2. The enclosing `trait.trait`'s self application
+      3. The enclosing `trait.impl`'s self application or a declared assumption
 
-    The assumed trait application must exactly match one of:
-      1. The `trait.trait` or `trait.impl`'s self application, or
-      2. When used inside a `trait.impl`, an assumed trait application
-
-    Example:
+    Example inside a trait method body:
       trait.trait @PartialEq[!S,!O] {
         func.func @eq(!S, !O) -> i1
 
         func.func @ne(%self: !S, %other: !O) -> i1 {
-          // trait.assume materializes a claim value
-          // to use inside a method body
           %a = trait.assume @PartialEq[!S,!O]
 
           %eq = trait.method.call @PartialEq::@eq<%a>(%self, %other)
@@ -558,6 +553,12 @@ def AssumeOp : TraitDialectOp<"assume", [
           %res = arith.xori %eq, %true : i1
           return %res : i1
         }
+      }
+
+    Example inside a standalone polymorphic function:
+      func.func @call_foo(%c: !trait.claim<@Foo[!T]>, %x: !T) -> !T {
+        %a = trait.assume @Foo[!T]
+        ...
       }
 
     Note that `trait.assume` is the *only* context-sensitive operation in this dialect.
