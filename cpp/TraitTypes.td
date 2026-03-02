@@ -155,10 +155,11 @@ def ProjectionType : TypeDef<TraitDialect, "Projection"> {
 
   let parameters = (ins
     "::mlir::trait::TraitApplicationAttr":$trait_application,
-    "::mlir::StringAttr":$assoc_name
+    "::mlir::StringAttr":$assoc_name,
+    ArrayRefParameter<"Type">:$assoc_type_args
   );
 
-  let assemblyFormat = "`<` $trait_application `,` $assoc_name `>`";
+  let hasCustomAssemblyFormat = 1;
 }
 
 

@@ -71,11 +71,13 @@ unsafe extern "C" {
 
     fn traitProjectionTypeGet(ctx: MlirContext,
                               trait_app: MlirAttribute,
-                              assoc_name: MlirStringRef) -> MlirType;
+                              assoc_name: MlirStringRef,
+                              assoc_type_args: *const MlirType, num_assoc_type_args: isize) -> MlirType;
     fn traitTypeIsAProjection(ty: MlirType) -> bool;
     fn traitAssocTypeOpCreate(loc: MlirLocation,
                               name: MlirStringRef,
-                              bound_type: MlirType) -> MlirOperation;
+                              bound_type: MlirType,
+                              type_params: *const MlirType, num_type_params: isize) -> MlirOperation;
 }
 
 pub fn register(ctx: &Context) {
@@ -399,16 +401,19 @@ pub fn generic_types_in<'c>(ty: Type<'c>) -> Vec<Type<'c>> {
     }
 }
 
-/// Create a `!trait.proj<@Trait[types], "AssocName">` type.
+/// Create a `!trait.proj<@Trait[types], "AssocName", [assoc_type_args]>` type.
 pub fn projection_type<'c>(
     ctx: &'c Context,
     trait_app: TraitApplicationAttribute<'c>,
     assoc_name: &str,
+    assoc_type_args: &[Type<'c>],
 ) -> Type<'c> {
     unsafe { Type::from_raw(traitProjectionTypeGet(
         ctx.to_raw(),
         trait_app.to_raw(),
         StringRef::new(assoc_name).to_raw(),
+        assoc_type_args.as_ptr() as *const _,
+        assoc_type_args.len() as isize,
     ))}
 }
 
@@ -419,7 +424,8 @@ pub fn is_projection_type(ty: Type) -> bool {
 
 /// Create a `trait.assoc_type` op. Pass `None` for a bare declaration (inside a
 /// trait body) or `Some(type)` for a binding (inside an impl body).
-pub fn assoc_type<'c>(loc: Location<'c>, name: &str, bound_type: Option<Type<'c>>) -> Operation<'c> {
+/// Pass `type_params` for GAT type parameters (empty slice for non-GAT).
+pub fn assoc_type<'c>(loc: Location<'c>, name: &str, bound_type: Option<Type<'c>>, type_params: &[Type<'c>]) -> Operation<'c> {
     let raw_type = match bound_type {
         Some(ty) => ty.to_raw(),
         None => MlirType { ptr: std::ptr::null_mut() },
@@ -428,5 +434,7 @@ pub fn assoc_type<'c>(loc: Location<'c>, name: &str, bound_type: Option<Type<'c>
         loc.to_raw(),
         StringRef::new(name).to_raw(),
         raw_type,
+        type_params.as_ptr() as *const _,
+        type_params.len() as isize,
     ))}
 }

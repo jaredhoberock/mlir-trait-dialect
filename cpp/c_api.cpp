@@ -344,12 +344,17 @@ bool traitTypeIsAClaim(MlirType type) {
 
 MlirType traitProjectionTypeGet(MlirContext wrappedCtx,
                                 MlirAttribute wrappedTraitApp,
-                                MlirStringRef assocName) {
+                                MlirStringRef assocName,
+                                MlirType *assocTypeArgs, intptr_t numAssocTypeArgs) {
   MLIRContext *ctx = unwrap(wrappedCtx);
   TraitApplicationAttr traitApp = dyn_cast<TraitApplicationAttr>(unwrap(wrappedTraitApp));
   if (!traitApp) return {};
   StringAttr nameAttr = StringAttr::get(ctx, StringRef(assocName.data, assocName.length));
-  return wrap(ProjectionType::get(ctx, traitApp, nameAttr));
+  SmallVector<Type> args;
+  args.reserve(numAssocTypeArgs);
+  for (intptr_t i = 0; i < numAssocTypeArgs; ++i)
+    args.push_back(unwrap(assocTypeArgs[i]));
+  return wrap(ProjectionType::get(ctx, traitApp, nameAttr, args));
 }
 
 bool traitTypeIsAProjection(MlirType type) {
@@ -358,15 +363,25 @@ bool traitTypeIsAProjection(MlirType type) {
 
 MlirOperation traitAssocTypeOpCreate(MlirLocation loc,
                                      MlirStringRef name,
-                                     MlirType boundType) {
+                                     MlirType boundType,
+                                     MlirType *typeParams, intptr_t numTypeParams) {
   MLIRContext *ctx = unwrap(loc)->getContext();
   OpBuilder builder(ctx);
   TypeAttr typeAttr = boundType.ptr ? TypeAttr::get(unwrap(boundType))
                                     : TypeAttr();
+  ArrayAttr typeParamsAttr;
+  if (numTypeParams > 0) {
+    SmallVector<Attribute, 4> attrs;
+    attrs.reserve(numTypeParams);
+    for (intptr_t i = 0; i < numTypeParams; ++i)
+      attrs.push_back(TypeAttr::get(unwrap(typeParams[i])));
+    typeParamsAttr = ArrayAttr::get(ctx, attrs);
+  }
   auto op = builder.create<AssocTypeOp>(
     unwrap(loc),
     builder.getStringAttr(StringRef(name.data, name.length)),
-    typeAttr
+    typeAttr,
+    typeParamsAttr
   );
   return wrap(op.getOperation());
 }

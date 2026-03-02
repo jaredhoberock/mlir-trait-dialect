@@ -499,10 +499,11 @@ def AssocTypeOp : TraitDialectOp<"assoc_type", [
 
   let arguments = (ins
     SymbolNameAttr:$sym_name,
-    OptionalAttr<TypeAttr>:$bound_type
+    OptionalAttr<TypeAttr>:$bound_type,
+    OptionalAttr<TypeArrayAttr>:$type_params
   );
 
-  let assemblyFormat = "$sym_name (`=` $bound_type^)? attr-dict";
+  let hasCustomAssemblyFormat = 1;
 }
 
 

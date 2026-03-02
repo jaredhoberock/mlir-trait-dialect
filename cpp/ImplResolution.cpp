@@ -210,7 +210,25 @@ FailureOr<Type> ImplResolver::resolveProjectionType(
   auto subst = impl.buildSubstitutionForSelfClaim(claim, err);
   if (failed(subst)) return failure();
 
-  return applySubstitutionToFixedPoint(*subst, *boundType);
+  // apply trait-level substitution
+  Type result = applySubstitutionToFixedPoint(*subst, *boundType);
+
+  // apply GAT substitution if the associated type has type_params
+  auto traitOp = impl.getTrait();
+  auto traitAssoc = traitOp.getAssociatedType(assocName);
+  if (succeeded(traitAssoc) && traitAssoc->getTypeParams()) {
+    auto typeParams = *traitAssoc->getTypeParams();
+    auto assocTypeArgs = proj.getAssocTypeArgs();
+    if (typeParams.size() != assocTypeArgs.size()) {
+      if (err) err() << "GAT arity mismatch for '" << assocName
+                     << "': expected " << typeParams.size()
+                     << " type args but got " << assocTypeArgs.size();
+      return failure();
+    }
+    result = applyGATSubstitution(typeParams, assocTypeArgs, result);
+  }
+
+  return result;
 }
 
 FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
@@ -262,6 +280,26 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
   // recursively prove monomorphic obligations
   SmallVector<Attribute> subproofSymbols;
   for (ClaimType ob : *obligations) {
+    // resolve any concrete projections in the obligation's type args
+    // before trying to prove it (e.g., @Printable[!trait.proj<@Iter[i32], "Item">]
+    // must become @Printable[i64] before we can find an impl)
+    if (containsType<ProjectionType>(ob)) {
+      AttrTypeReplacer replacer;
+      replacer.addReplacement([this, &rewriter](Type t) -> std::optional<Type> {
+        auto proj = dyn_cast<ProjectionType>(t);
+        if (!proj || isPolymorphicType(proj)) return std::nullopt;
+        auto resolved = resolveProjectionType(proj, rewriter);
+        if (failed(resolved)) return std::nullopt;
+        return *resolved;
+      });
+      Type resolved = replacer.replace(ob);
+      ob = dyn_cast<ClaimType>(resolved);
+      if (!ob) {
+        if (err) err() << "obligation lost ClaimType after projection resolution";
+        return failure();
+      }
+    }
+
     auto sym = resolveAndEnsureProofFor(ob, rewriter, err);
     if (failed(sym)) return failure();
     subproofSymbols.push_back(*sym);

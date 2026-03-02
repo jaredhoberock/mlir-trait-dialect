@@ -103,10 +103,11 @@ MlirAttribute traitClaimTypeGetTraitApplicationGet(MlirType claimType);
 /// Checks whether the given type is a claim type.
 bool traitTypeIsAClaim(MlirType type);
 
-/// Return the !trait.proj<@Trait[Types...], "AssocName"> type
+/// Return the !trait.proj<@Trait[Types...], "AssocName", [AssocTypeArgs...]> type
 MlirType traitProjectionTypeGet(MlirContext ctx,
                                 MlirAttribute traitApp,
-                                MlirStringRef assocName);
+                                MlirStringRef assocName,
+                                MlirType *assocTypeArgs, intptr_t numAssocTypeArgs);
 
 /// Checks whether the given type is a projection type.
 bool traitTypeIsAProjection(MlirType type);
@@ -114,9 +115,11 @@ bool traitTypeIsAProjection(MlirType type);
 /// Create a trait.assoc_type op. If boundType.ptr is non-null, the op gets a
 /// bound_type attribute (for use inside trait.impl); otherwise it is a bare
 /// declaration (for use inside trait.trait).
+/// If numTypeParams > 0, typeParams are the GAT type parameters.
 MlirOperation traitAssocTypeOpCreate(MlirLocation loc,
                                      MlirStringRef name,
-                                     MlirType boundType);
+                                     MlirType boundType,
+                                     MlirType *typeParams, intptr_t numTypeParams);
 
 /// Collect all unique types implementing GenericTypeInterface found in `type`.
 ///

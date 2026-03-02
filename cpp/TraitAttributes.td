@@ -43,7 +43,14 @@ def TraitApplicationAttr : AttrDef<TraitDialect, "TraitApplication"> {
     TraitOp getTraitOrAbort(ModuleOp module, const char* message) const;
 
     bool mentionsType(Type ty) const {
-      return llvm::any_of(getTypeArgs(), [&](Type arg) { return arg == ty; });
+      bool found = false;
+      for (Type arg : getTypeArgs()) {
+        arg.walk([&](Type sub) {
+          if (!found && sub == ty) found = true;
+        });
+        if (found) break;
+      }
+      return found;
     }
 
     LogicalResult verifyTraitApplication(

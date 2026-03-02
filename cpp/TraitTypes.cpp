@@ -410,6 +410,62 @@ LogicalResult ClaimType::unify(
 
 
 //===----------------------------------------------------------------------===//
+// ProjectionType
+//===----------------------------------------------------------------------===//
+
+Type ProjectionType::parse(AsmParser &p) {
+  MLIRContext *ctx = p.getContext();
+
+  if (p.parseLess())
+    return {};
+
+  // parse @Trait[Types...]
+  TraitApplicationAttr app = mlir::dyn_cast_or_null<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
+  if (!app)
+    return {};
+
+  if (p.parseComma())
+    return {};
+
+  // parse "AssocName"
+  StringAttr assocName;
+  if (p.parseAttribute(assocName))
+    return {};
+
+  // parse optional , [gat_args...]
+  SmallVector<Type> assocTypeArgs;
+  if (succeeded(p.parseOptionalComma())) {
+    if (failed(p.parseCommaSeparatedList(AsmParser::Delimiter::Square, [&] {
+          Type ty;
+          if (p.parseType(ty)) return failure();
+          assocTypeArgs.push_back(ty);
+          return success();
+        })))
+      return {};
+  }
+
+  if (p.parseGreater())
+    return {};
+
+  return ProjectionType::get(ctx, app, assocName, assocTypeArgs);
+}
+
+void ProjectionType::print(AsmPrinter &p) const {
+  p << "<";
+  getTraitApplication().print(p);
+  p << ", " << getAssocName();
+  if (!getAssocTypeArgs().empty()) {
+    p << ", [";
+    llvm::interleaveComma(getAssocTypeArgs(), p, [&](Type ty) {
+      p.printType(ty);
+    });
+    p << "]";
+  }
+  p << ">";
+}
+
+
+//===----------------------------------------------------------------------===//
 // unify
 //===----------------------------------------------------------------------===//
 

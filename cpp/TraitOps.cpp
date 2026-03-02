@@ -79,14 +79,29 @@ LogicalResult TraitOp::verify() {
   if (uniqueParams.size() < 1)
     return emitOpError() << "requires at least one type parameter";
 
+  // collect GAT poly vars from AssocTypeOp type_params
+  DenseSet<Type> gatParams;
+  for (Operation &op : getBody().front()) {
+    if (auto assoc = dyn_cast<AssocTypeOp>(op)) {
+      if (auto tp = assoc.getTypeParams()) {
+        for (Attribute tyAttr : *tp)
+          gatParams.insert(cast<TypeAttr>(tyAttr).getValue());
+      }
+    }
+  }
+
   // check requirements
   for (auto& app : getRequirements()) {
     // each TraitApplicationAttr must use at least one of the trait's type parameters
-    bool mentionsAny = llvm::any_of(uniqueParams, [&](Type param) {
+    // OR at least one GAT type parameter
+    bool mentionsTraitParam = llvm::any_of(uniqueParams, [&](Type param) {
+      return app.mentionsType(param);
+    });
+    bool mentionsGatParam = llvm::any_of(gatParams, [&](Type param) {
       return app.mentionsType(param);
     });
 
-    if (!mentionsAny)
+    if (!mentionsTraitParam && !mentionsGatParam)
       return emitOpError() << "'where' clause requirement " << app
                            << " must mention at least one type parameter";
 
@@ -316,12 +331,27 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
       {
         auto &subst = *traitSubst;
         AttrTypeReplacer projReplacer;
-        projReplacer.addReplacement([this, &subst](Type t) -> std::optional<Type> {
+        projReplacer.addReplacement([this, &subst, &traitOp](Type t) -> std::optional<Type> {
           auto proj = dyn_cast<ProjectionType>(t);
-          if (!proj || isPolymorphicType(proj)) return std::nullopt;
+          if (!proj) return std::nullopt;
+          // skip if the trait application itself is still polymorphic
+          // (we can't identify the impl). GAT args may be polymorphic - that's fine.
+          if (llvm::any_of(proj.getTraitApplication().getTypeArgs(),
+                           [](Type ty) { return isPolymorphicType(ty); }))
+            return std::nullopt;
           auto resolved = getAssociatedTypeBinding(proj.getAssocName().getValue());
           if (failed(resolved)) return std::nullopt;
-          return applySubstitutionToFixedPoint(subst, *resolved);
+          // apply trait-level substitution first
+          Type result = applySubstitutionToFixedPoint(subst, *resolved);
+          // apply GAT substitution if the assoc type has type_params
+          auto traitAssoc = traitOp.getAssociatedType(proj.getAssocName().getValue());
+          if (succeeded(traitAssoc) && traitAssoc->getTypeParams()) {
+            auto typeParams = *traitAssoc->getTypeParams();
+            auto assocTypeArgs = proj.getAssocTypeArgs();
+            if (typeParams.size() == assocTypeArgs.size())
+              result = applyGATSubstitution(typeParams, assocTypeArgs, result);
+          }
+          return result;
         });
         specializedTraitMethodTy = projReplacer.replace(specializedTraitMethodTy);
       }
@@ -343,9 +373,20 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
         return emitOpError() << "associated type '" << name << "' in impl must have a bound type";
 
       // Verify that the trait declares this associated type
-      if (failed(traitOp.getAssociatedType(name)))
+      auto traitAssoc = traitOp.getAssociatedType(name);
+      if (failed(traitAssoc))
         return emitOpError() << "associated type '" << name
                              << "' not found in trait '" << getTraitNameAttr() << "'";
+
+      // Verify GAT type_params arity matches
+      {
+        unsigned traitArity = traitAssoc->getTypeParams() ? traitAssoc->getTypeParams()->size() : 0;
+        unsigned implArity = assocType.getTypeParams() ? assocType.getTypeParams()->size() : 0;
+        if (traitArity != implArity)
+          return emitOpError() << "associated type '" << name
+                               << "' has " << implArity << " type parameter(s) but trait declares "
+                               << traitArity;
+      }
     } else {
       return emitOpError() << "body may only contain 'func.func' or 'trait.assoc_type' operations";
     }
@@ -748,13 +789,6 @@ void ImplOp::print(OpAsmPrinter &printer) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult ProofOp::verify() {
-//  // check that the trait application is concrete
-//  auto app = getTraitApplication();
-//  for (auto ty : app.getTypeArgs()) {
-//    if (isPolymorphicType(ty))
-//      return emitOpError() << "'trait_application' must contain only concrete type arguments; found polymorphic type " << ty;
-//  }
-
   // check that every name is a FlatSymbolRefAttr
   for (Attribute name : getSubproofNames()) {
     if (!isa<FlatSymbolRefAttr>(name)) {
@@ -1588,6 +1622,77 @@ LogicalResult ProjectOp::verifySymbolUses(SymbolTableCollection &/*symbolTable*/
   return emitOpError()
          << "projected claim " << dst
          << "is not a candidate projection of " << src;
+}
+
+
+//===----------------------------------------------------------------------===//
+// AssocTypeOp
+//===----------------------------------------------------------------------===//
+
+ParseResult AssocTypeOp::parse(OpAsmParser &p, OperationState &st) {
+  MLIRContext *ctx = p.getContext();
+
+  // parse @Name
+  StringAttr symName;
+  if (p.parseSymbolName(symName, "sym_name", st.attributes))
+    return failure();
+
+  // parse optional <[type_params...]>
+  if (succeeded(p.parseOptionalLess())) {
+    SmallVector<Type> typeParams;
+    if (failed(p.parseCommaSeparatedList(OpAsmParser::Delimiter::Square, [&] {
+          Type ty;
+          if (p.parseType(ty)) return failure();
+          typeParams.push_back(ty);
+          return success();
+        })))
+      return failure();
+
+    if (p.parseGreater())
+      return failure();
+
+    SmallVector<Attribute, 4> typeAttrs;
+    typeAttrs.reserve(typeParams.size());
+    for (Type ty : typeParams)
+      typeAttrs.push_back(TypeAttr::get(ty));
+    st.addAttribute("type_params", ArrayAttr::get(ctx, typeAttrs));
+  }
+
+  // parse optional = bound_type
+  if (succeeded(p.parseOptionalEqual())) {
+    TypeAttr boundType;
+    if (p.parseAttribute(boundType, "bound_type", st.attributes))
+      return failure();
+  }
+
+  // parse optional attr-dict
+  if (p.parseOptionalAttrDict(st.attributes))
+    return failure();
+
+  return success();
+}
+
+void AssocTypeOp::print(OpAsmPrinter &p) {
+  p << ' ';
+  p.printSymbolName(getSymNameAttr());
+
+  // print <[type_params...]> if present
+  if (auto tp = getTypeParams(); tp && !tp->empty()) {
+    p << "<[";
+    llvm::interleaveComma(*tp, p, [&](Attribute tyAttr) {
+      p.printType(cast<TypeAttr>(tyAttr).getValue());
+    });
+    p << "]>";
+  }
+
+  // print = bound_type if present
+  if (auto bt = getBoundType()) {
+    p << " = " << *bt;
+  }
+
+  // print any trailing attributes
+  p.printOptionalAttrDict((*this)->getAttrs(),
+                           /*elided=*/{"sym_name", "bound_type", "type_params"});
 }
 
 

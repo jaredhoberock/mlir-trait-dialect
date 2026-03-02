@@ -198,6 +198,22 @@ inline Type applySubstitutionToFixedPoint(const llvm::DenseMap<Type,Type> &subst
   return cur;
 }
 
+/// Applies a GAT substitution: maps each type in `typeParams` to the
+/// corresponding type in `assocTypeArgs`, then substitutes into `boundType`.
+/// Returns the original `boundType` unchanged if `typeParams` is empty.
+inline Type applyGATSubstitution(ArrayAttr typeParams,
+                                 ArrayRef<Type> assocTypeArgs,
+                                 Type boundType) {
+  if (!typeParams || typeParams.empty())
+    return boundType;
+  assert(typeParams.size() == assocTypeArgs.size() &&
+         "GAT arity mismatch: typeParams and assocTypeArgs must have the same size");
+  DenseMap<Type,Type> gatSubst;
+  for (auto [param, arg] : llvm::zip(typeParams, assocTypeArgs))
+    gatSubst[cast<TypeAttr>(param).getValue()] = arg;
+  return applySubstitutionToFixedPoint(gatSubst, boundType);
+}
+
 inline FailureOr<DenseMap<Type,Type>> composeSubstitutions(const DenseMap<Type,Type> &f,
                                                            const DenseMap<Type,Type> &g,
                                                            llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
