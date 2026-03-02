@@ -14,14 +14,14 @@ include "Trait.td"
 include "TraitTypes.td"
 
 
-// Op's regions have only this type of child operation.
-class HasChild<string op>
-    : ParamNativeOpTrait<"HasOnlyChildOp", op>, StructuralOpTrait;
+// Op's regions have only these types of child operations.
+class HasChildren<list<string> ops>
+    : ParamNativeOpTrait<"HasOnlyChildOps", !interleave(ops, ", ")>, StructuralOpTrait;
 
 
 def TraitOp : TraitDialectOp<"trait", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
-  HasChild<"func::FuncOp">,
+  HasChildren<["func::FuncOp", "trait::AssocTypeOp"]>,
   HasParent<"ModuleOp">,
   IsolatedFromAbove,
   SingleBlock,
@@ -172,6 +172,23 @@ def TraitOp : TraitDialectOp<"trait", [
         ClaimType actualSelfClaim,
         llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
 
+    /// Return all AssocTypeOps declared in this trait
+    SmallVector<AssocTypeOp> getAssociatedTypes() {
+      SmallVector<AssocTypeOp> result;
+      for (Operation& op : getBody().front())
+        if (auto assoc = dyn_cast<AssocTypeOp>(op))
+          result.push_back(assoc);
+      return result;
+    }
+
+    /// Look up a specific associated type by name
+    FailureOr<AssocTypeOp> getAssociatedType(StringRef name) {
+      for (auto assoc : getAssociatedTypes())
+        if (assoc.getSymName() == name)
+          return assoc;
+      return failure();
+    }
+
     /// Return all the ImplOps for this TraitOp
     SmallVector<ImplOp> getImpls();
 
@@ -225,7 +242,7 @@ def TraitOp : TraitDialectOp<"trait", [
 
 def ImplOp : TraitDialectOp<"impl", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
-  HasChild<"func::FuncOp">,
+  HasChildren<["func::FuncOp", "trait::AssocTypeOp"]>,
   HasParent<"ModuleOp">,
   IsolatedFromAbove,
   SingleBlock,
@@ -397,6 +414,20 @@ def ImplOp : TraitDialectOp<"impl", [
     FailureOr<SmallVector<ClaimType>> specializeObligationsAsClaimsFor(
         ClaimType actualSelfClaim,
         llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
+
+    /// Look up an associated type binding by name and return its bound type
+    FailureOr<Type> getAssociatedTypeBinding(StringRef name) {
+      for (Operation& op : getBody().front()) {
+        if (auto assoc = dyn_cast<AssocTypeOp>(op)) {
+          if (assoc.getSymName() == name) {
+            if (auto boundType = assoc.getBoundType())
+              return *boundType;
+            return failure();
+          }
+        }
+      }
+      return failure();
+    }
   }];
 
   // builders create one empty block in the body region
@@ -440,6 +471,38 @@ def ImplOp : TraitDialectOp<"impl", [
   ];
 
   let hasCustomAssemblyFormat = 1;
+}
+
+
+def AssocTypeOp : TraitDialectOp<"assoc_type", [
+  ParentOneOf<["trait::TraitOp", "trait::ImplOp"]>,
+  Symbol
+]> {
+  let summary = "Declares or binds an associated type";
+  let description = [{
+    Inside a `trait.trait`, declares an associated type by name:
+    ```mlir
+    trait.trait @Iterator[!S] {
+      trait.assoc_type @Item
+      func.func private @next(!S) -> !trait.proj<@Iterator[!S], "Item">
+    }
+    ```
+
+    Inside a `trait.impl`, binds the associated type to a concrete type:
+    ```mlir
+    trait.impl for @Iterator[i32] {
+      trait.assoc_type @Item = i64
+      func.func @next(%self: i32) -> i64 { ... }
+    }
+    ```
+  }];
+
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    OptionalAttr<TypeAttr>:$bound_type
+  );
+
+  let assemblyFormat = "$sym_name (`=` $bound_type^)? attr-dict";
 }
 
 

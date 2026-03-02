@@ -83,6 +83,7 @@ void PolyType::print(AsmPrinter &printer) const {
   printer << "<" << getUniqueId() << ">";
 }
 
+
 //===----------------------------------------------------------------------===//
 // InferenceType
 //===----------------------------------------------------------------------===//
@@ -136,20 +137,6 @@ LogicalResult InferenceType::unify(
 // ClaimType
 //===----------------------------------------------------------------------===//
 
-LogicalResult ClaimType::verify(function_ref<InFlightDiagnostic()> emitError,
-                                TraitApplicationAttr app,
-                                FlatSymbolRefAttr proof) {
-//  bool polymorphic = llvm::any_of(app.getTypeArgs(), [](Type ty) {
-//    return isPolymorphicType(ty);
-//  });
-//
-//  if (polymorphic && proof) {
-//    if (emitError) emitError() << "A polymorphic !trait.claim cannot have a proof";
-//    return failure();
-//  }
-
-  return success();
-}
 
 LogicalResult ClaimType::verifySymbolUses(ModuleOp module, llvm::function_ref<InFlightDiagnostic()> err) {
   // verify trait application
@@ -184,8 +171,7 @@ Type ClaimType::parse(AsmParser& p) {
   if (p.parseGreater())
     return {};
 
-  auto emitError = [&] { return p.emitError(p.getCurrentLocation()); };
-  return ClaimType::getChecked(emitError, ctx, app, proof);
+  return ClaimType::get(ctx, app, proof);
 }
 
 void ClaimType::print(AsmPrinter& p) const {

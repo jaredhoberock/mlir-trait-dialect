@@ -283,8 +283,9 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     optionalMethodNames.insert(f.getSymName());
   }
 
-  // Verify that the body contains only func.func ops
+  // Verify methods and associated type bindings
   llvm::SmallSet<StringRef, 8> definedMethods;
+  llvm::SmallSet<StringRef, 8> definedAssocTypes;
   for (Operation &op : getBody().front()) {
     if (auto implMethod = dyn_cast<func::FuncOp>(op)) {
       StringRef name = implMethod.getSymName();
@@ -311,6 +312,20 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
       FunctionType traitMethodTy = traitMethod->getFunctionType();
       Type specializedTraitMethodTy = applySubstitutionToFixedPoint(*traitSubst, traitMethodTy);
 
+      // Resolve any ProjectionTypes in the specialized signature using this impl's bindings
+      {
+        auto &subst = *traitSubst;
+        AttrTypeReplacer projReplacer;
+        projReplacer.addReplacement([this, &subst](Type t) -> std::optional<Type> {
+          auto proj = dyn_cast<ProjectionType>(t);
+          if (!proj || isPolymorphicType(proj)) return std::nullopt;
+          auto resolved = getAssociatedTypeBinding(proj.getAssocName().getValue());
+          if (failed(resolved)) return std::nullopt;
+          return applySubstitutionToFixedPoint(subst, *resolved);
+        });
+        specializedTraitMethodTy = projReplacer.replace(specializedTraitMethodTy);
+      }
+
       // Check that the impl method's signature can specialize to the expected signature
       FunctionType implMethodTy = implMethod.getFunctionType();
       if (failed(buildSpecializationSubstitution(specializedTraitMethodTy, implMethodTy, *module, errFn))) {
@@ -318,9 +333,30 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
                              << "expected " << specializedTraitMethodTy
                              << " but found " << implMethodTy;
       }
+    } else if (auto assocType = dyn_cast<AssocTypeOp>(op)) {
+      StringRef name = assocType.getSymName();
+      if (!definedAssocTypes.insert(name).second)
+        return emitOpError() << "defines associated type '" << name << "' multiple times";
+
+      // In an impl, the associated type must have a bound_type
+      if (!assocType.getBoundType())
+        return emitOpError() << "associated type '" << name << "' in impl must have a bound type";
+
+      // Verify that the trait declares this associated type
+      if (failed(traitOp.getAssociatedType(name)))
+        return emitOpError() << "associated type '" << name
+                             << "' not found in trait '" << getTraitNameAttr() << "'";
     } else {
-      return emitOpError() << "body may only contain 'func.func' operations";
+      return emitOpError() << "body may only contain 'func.func' or 'trait.assoc_type' operations";
     }
+  }
+
+  // Verify that all associated types in the trait have bindings in the impl
+  for (auto traitAssoc : traitOp.getAssociatedTypes()) {
+    if (!definedAssocTypes.contains(traitAssoc.getSymName()))
+      return emitOpError() << "missing binding for associated type '"
+                           << traitAssoc.getSymName()
+                           << "' of trait '" << getTraitNameAttr() << "'";
   }
 
   // Verify that no required methods are missing
@@ -1268,9 +1304,7 @@ ParseResult MethodCallOp::parse(OpAsmParser& p, OperationState &st) {
 
   // build the type of %claim
   auto loc = p.getCurrentLocation();
-  auto errFn = [&] { return p.emitError(loc); };
-  ClaimType claimTy = ClaimType::getChecked(errFn, ctx, traitApp, proofSym);
-  if (!claimTy) return failure();
+  ClaimType claimTy = ClaimType::get(ctx, traitApp, proofSym);
 
   // resolve %claim
   if (p.resolveOperand(claim, claimTy, st.operands))

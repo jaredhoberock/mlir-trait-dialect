@@ -12,22 +12,18 @@
 
 namespace mlir::OpTrait {
 
-template<class ChildOp>
-struct HasOnlyChildOp {
+template<class... ChildOps>
+struct HasOnlyChildOps {
   template<class ConcreteOp>
   class Impl : public mlir::OpTrait::TraitBase<ConcreteOp, Impl> {
   public:
     static LogicalResult verifyTrait(Operation* op) {
-      for (auto &region : op->getRegions()) {
-        for (auto &block : region) {
-          for (auto &child : block) {
-            if (!isa<ChildOp>(child))
-              return op->emitOpError()
-                     << "only " << ChildOp::getOperationName()
-                     << " is allowed inside this op";
-          }
-        }
-      }
+      for (auto &region : op->getRegions())
+        for (auto &block : region)
+          for (auto &child : block)
+            if (!isa<ChildOps...>(child))
+              return op->emitOpError() << "unexpected child op '"
+                     << child.getName() << "'";
       return success();
     }
   };

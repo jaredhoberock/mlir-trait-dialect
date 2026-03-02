@@ -342,6 +342,35 @@ bool traitTypeIsAClaim(MlirType type) {
   return isa<ClaimType>(unwrap(type));
 }
 
+MlirType traitProjectionTypeGet(MlirContext wrappedCtx,
+                                MlirAttribute wrappedTraitApp,
+                                MlirStringRef assocName) {
+  MLIRContext *ctx = unwrap(wrappedCtx);
+  TraitApplicationAttr traitApp = dyn_cast<TraitApplicationAttr>(unwrap(wrappedTraitApp));
+  if (!traitApp) return {};
+  StringAttr nameAttr = StringAttr::get(ctx, StringRef(assocName.data, assocName.length));
+  return wrap(ProjectionType::get(ctx, traitApp, nameAttr));
+}
+
+bool traitTypeIsAProjection(MlirType type) {
+  return isa<ProjectionType>(unwrap(type));
+}
+
+MlirOperation traitAssocTypeOpCreate(MlirLocation loc,
+                                     MlirStringRef name,
+                                     MlirType boundType) {
+  MLIRContext *ctx = unwrap(loc)->getContext();
+  OpBuilder builder(ctx);
+  TypeAttr typeAttr = boundType.ptr ? TypeAttr::get(unwrap(boundType))
+                                    : TypeAttr();
+  auto op = builder.create<AssocTypeOp>(
+    unwrap(loc),
+    builder.getStringAttr(StringRef(name.data, name.length)),
+    typeAttr
+  );
+  return wrap(op.getOperation());
+}
+
 intptr_t traitGetGenericTypesIn(MlirType type, MlirType *results, intptr_t maxResults) {
   auto generics = getGenericTypesIn(unwrap(type));
   intptr_t count = static_cast<intptr_t>(generics.size());

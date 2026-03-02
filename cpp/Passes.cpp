@@ -236,6 +236,21 @@ std::unique_ptr<Pass> createResolveImplsPass() {
 
 namespace {
 
+/// Build an AttrTypeReplacer that resolves concrete `!trait.proj` types
+/// using the ImplResolver.
+static AttrTypeReplacer makeProjectionReplacer(ImplResolver &resolver,
+                                                PatternRewriter &rewriter) {
+  AttrTypeReplacer replacer;
+  replacer.addReplacement([&resolver, &rewriter](Type t) -> std::optional<Type> {
+    auto proj = dyn_cast<ProjectionType>(t);
+    if (!proj || isPolymorphicType(proj)) return std::nullopt;
+    auto resolved = resolver.resolveProjectionType(proj, rewriter);
+    if (failed(resolved)) return std::nullopt;
+    return *resolved;
+  });
+  return replacer;
+}
+
 struct FuncCallOpLowering : public OpRewritePattern<FuncCallOp> {
   using OpRewritePattern::OpRewritePattern;
 
@@ -271,7 +286,10 @@ struct FuncCallOpLowering : public OpRewritePattern<FuncCallOp> {
 };
 
 struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
-  using OpRewritePattern::OpRewritePattern;
+  ImplResolver &resolver;
+
+  MethodCallOpLowering(MLIRContext *ctx, ImplResolver &resolver)
+    : OpRewritePattern(ctx), resolver(resolver) {}
 
   LogicalResult matchAndRewrite(MethodCallOp op, PatternRewriter &rewriter) const override {
     // all operands must be monomorphic and the claim must be proven
@@ -287,11 +305,12 @@ struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
     auto subst = op.buildSubstitution();
     if (failed(subst))
       return rewriter.notifyMatchFailure(op, "couldn't build substitution for call");
-    
-    // apply subst to result types; all results must be monomorphic
+
+    // apply subst to result types, resolve projections; all results must be monomorphic
+    auto projReplacer = makeProjectionReplacer(resolver, rewriter);
     SmallVector<Type> concreteResults;
     for (Type r : op.getResultTypes()) {
-      Type newR = applySubstitutionToFixedPoint(*subst, r);
+      Type newR = projReplacer.replace(applySubstitutionToFixedPoint(*subst, r));
       if (isPolymorphicType(newR))
         return rewriter.notifyMatchFailure(op, "result type is still polymorphic");
       concreteResults.push_back(newR);
@@ -453,6 +472,44 @@ struct PropagateProofsPattern : public RewritePattern {
   }
 };
 
+/// Resolves concrete `!trait.proj` types to their bound types by looking up
+/// the matching `trait.impl`'s associated type binding.
+struct ResolveProjectionsPattern : public RewritePattern {
+  ImplResolver &resolver;
+
+  ResolveProjectionsPattern(MLIRContext *ctx, ImplResolver &resolver)
+    : RewritePattern(MatchAnyOpTypeTag(), /*benefit=*/1, ctx), resolver(resolver) {}
+
+  LogicalResult matchAndRewrite(Operation *op,
+                                PatternRewriter &rewriter) const override {
+    // Skip trait infrastructure ops and their children -
+    // they may legitimately contain projections
+    if (isa<TraitOp, ImplOp, ProofOp>(op))
+      return failure();
+    if (op->getParentOfType<TraitOp>() || op->getParentOfType<ImplOp>())
+      return failure();
+
+    // Check if any types on this op mention ProjectionType
+    if (!opMentionsType<ProjectionType>(op))
+      return failure();
+
+    auto replacer = makeProjectionReplacer(resolver, rewriter);
+    if (!wouldReplace(replacer, op,
+                      /*replaceAttrs=*/true,
+                      /*replaceLocs=*/false,
+                      /*replaceTypes=*/true))
+      return failure();
+
+    rewriter.modifyOpInPlace(op, [&] {
+      replacer.replaceElementsIn(op,
+                                 /*replaceAttrs=*/true,
+                                 /*replaceLocs=*/false,
+                                 /*replaceTypes=*/true);
+    });
+    return success();
+  }
+};
+
 } // end namespace
 
 LogicalResult instantiateMonomorphs(ModuleOp module) {
@@ -464,13 +521,11 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
   MLIRContext* ctx = module.getContext();
 
   // rewrite trait.func.call, trait.method.call, trait.derive,
-  // and any generic op whose results become monomorphic
+  // resolve projections, and any generic op whose results become monomorphic
   RewritePatternSet patterns(ctx);
-  patterns.add<
-    FuncCallOpLowering,
-    MethodCallOpLowering,
-    MonomorphizeResultTypesPattern
-  >(ctx);
+  patterns.add<FuncCallOpLowering, MonomorphizeResultTypesPattern>(ctx);
+  patterns.add<MethodCallOpLowering>(ctx, *resolver);
+  patterns.add<ResolveProjectionsPattern>(ctx, *resolver);
   patterns.add<DeriveToWitnessPattern>(ctx, *resolver);
   patterns.add<PropagateProofsPattern>(ctx, *resolver);
 
@@ -482,6 +537,17 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
 
   // apply patterns
   if (failed(applyPatternsGreedily(module, std::move(patterns))))
+    return failure();
+
+  // verify no projections survive outside trait infrastructure
+  ConversionTarget target(*ctx);
+  target.addLegalOp<TraitOp, ImplOp, ProofOp>();
+  target.markOpRecursivelyLegal<TraitOp, ImplOp, ProofOp>();
+  target.markUnknownOpDynamicallyLegal([](Operation *op) {
+    return !opMentionsType<ProjectionType>(op);
+  });
+  if (failed(applyPartialConversion(module, target,
+                                    RewritePatternSet(ctx))))
     return failure();
 
   return module.verify();

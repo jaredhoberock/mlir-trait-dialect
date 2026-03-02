@@ -188,6 +188,31 @@ ImplResolver::ImplResolver(ModuleOp m) : module(m) {
   }
 }
 
+FailureOr<Type> ImplResolver::resolveProjectionType(
+    ProjectionType proj,
+    PatternRewriter &rewriter,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  auto traitApp = proj.getTraitApplication();
+  StringRef assocName = proj.getAssocName().getValue();
+
+  ClaimType claim = ClaimType::get(proj.getContext(), traitApp);
+  auto implOr = resolveImplFor(claim, module, memo.resolutionMemo, generators, rewriter, err);
+  if (failed(implOr)) return failure();
+  ImplOp impl = *implOr;
+
+  auto boundType = impl.getAssociatedTypeBinding(assocName);
+  if (failed(boundType)) {
+    if (err) err() << "impl for " << traitApp
+                   << " has no binding for associated type '" << assocName << "'";
+    return failure();
+  }
+
+  auto subst = impl.buildSubstitutionForSelfClaim(claim, err);
+  if (failed(subst)) return failure();
+
+  return applySubstitutionToFixedPoint(*subst, *boundType);
+}
+
 FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
     ClaimType wanted,
     PatternRewriter &rewriter,

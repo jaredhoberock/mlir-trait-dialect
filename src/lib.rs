@@ -68,6 +68,14 @@ unsafe extern "C" {
     fn traitClaimTypeGetTraitApplication(claim_ty: MlirType) -> MlirAttribute;
     fn traitTypeIsAClaim(ty: MlirType) -> bool;
     fn traitGetGenericTypesIn(ty: MlirType, results: *mut MlirType, max_results: isize) -> isize;
+
+    fn traitProjectionTypeGet(ctx: MlirContext,
+                              trait_app: MlirAttribute,
+                              assoc_name: MlirStringRef) -> MlirType;
+    fn traitTypeIsAProjection(ty: MlirType) -> bool;
+    fn traitAssocTypeOpCreate(loc: MlirLocation,
+                              name: MlirStringRef,
+                              bound_type: MlirType) -> MlirOperation;
 }
 
 pub fn register(ctx: &Context) {
@@ -389,4 +397,36 @@ pub fn generic_types_in<'c>(ty: Type<'c>) -> Vec<Type<'c>> {
         traitGetGenericTypesIn(ty.to_raw(), results.as_mut_ptr(), count);
         results.into_iter().map(|t| Type::from_raw(t)).collect()
     }
+}
+
+/// Create a `!trait.proj<@Trait[types], "AssocName">` type.
+pub fn projection_type<'c>(
+    ctx: &'c Context,
+    trait_app: TraitApplicationAttribute<'c>,
+    assoc_name: &str,
+) -> Type<'c> {
+    unsafe { Type::from_raw(traitProjectionTypeGet(
+        ctx.to_raw(),
+        trait_app.to_raw(),
+        StringRef::new(assoc_name).to_raw(),
+    ))}
+}
+
+/// Check whether a type is a `!trait.proj` type.
+pub fn is_projection_type(ty: Type) -> bool {
+    unsafe { traitTypeIsAProjection(ty.to_raw()) }
+}
+
+/// Create a `trait.assoc_type` op. Pass `None` for a bare declaration (inside a
+/// trait body) or `Some(type)` for a binding (inside an impl body).
+pub fn assoc_type<'c>(loc: Location<'c>, name: &str, bound_type: Option<Type<'c>>) -> Operation<'c> {
+    let raw_type = match bound_type {
+        Some(ty) => ty.to_raw(),
+        None => MlirType { ptr: std::ptr::null_mut() },
+    };
+    unsafe { Operation::from_raw(traitAssocTypeOpCreate(
+        loc.to_raw(),
+        StringRef::new(name).to_raw(),
+        raw_type,
+    ))}
 }

@@ -136,10 +136,31 @@ def ClaimType : TypeDef<TraitDialect, "Claim", [
                         llvm::function_ref<InFlightDiagnostic()> emitError);
   }];
 
-  let genVerifyDecl = 1;
-
   let hasCustomAssemblyFormat = 1;
 }
+
+// Represents a projection of an associated type from a trait application
+def ProjectionType : TypeDef<TraitDialect, "Projection"> {
+  let mnemonic = "proj";
+  let summary = "A projected associated type from a trait application";
+
+  let description = [{
+    The `!trait.proj` type represents the projection of an associated type
+    from a trait application. For example, `!trait.proj<@Iterator[!S], "Item">`
+    represents `Iterator[!S]::Item`.
+
+    This type is structural and survives into MLIR until monomorphization
+    resolves it to a concrete type by consulting the matching `trait.impl`.
+  }];
+
+  let parameters = (ins
+    "::mlir::trait::TraitApplicationAttr":$trait_application,
+    "::mlir::StringAttr":$assoc_name
+  );
+
+  let assemblyFormat = "`<` $trait_application `,` $assoc_name `>`";
+}
+
 
 // Represents an inference variable used during type inference
 def InferenceType : TypeDef<TraitDialect, "Inference", [

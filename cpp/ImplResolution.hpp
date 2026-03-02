@@ -109,7 +109,7 @@ class ImplResolver {
 
     /// Ensures canonical proof for a fully-concrete trait application `claim`.
     /// Resolution proceeds as follows:
-    ///   1. If a self-proving ImplOp exists, return its symbol directly.
+    ///   1. If an unconditional ImplOp exists, return its symbol directly.
     ///   2. Otherwise, recursively resolve and ensure proofs for all requirements
     ///      and assumptions, then create (or reuse) a `trait.proof` op and return
     ///      its symbol.
@@ -120,6 +120,13 @@ class ImplResolver {
     FailureOr<FlatSymbolRefAttr> resolveAndEnsureProofFor(ClaimType claim,
                                                           PatternRewriter &rewriter,
                                                           llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+
+    /// Resolves a concrete ProjectionType to the type it projects to.
+    /// Uses the internal impl resolution pipeline to find the matching impl,
+    /// then looks up the associated type binding and applies substitution.
+    FailureOr<Type> resolveProjectionType(ProjectionType proj,
+                                           PatternRewriter &rewriter,
+                                           llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     /// Builds a substitution mapping concrete, unproven ClaimTypes to
     /// proven ClaimTypes given the current state of the proof memo
