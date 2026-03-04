@@ -77,11 +77,7 @@ static LogicalResult diagnoseImplResolutionFailure(
         break;
       }
 
-      std::string header;
-      llvm::raw_string_ostream os(header);
-      os << "unsatisfiable candidate";
-
-      diag.attachNote(impl.getLoc()) << os.str();
+      diag.attachNote(impl.getLoc()) << "unsatisfiable candidate";
     }
 
     return failure();
@@ -101,11 +97,7 @@ static LogicalResult diagnoseImplResolutionFailure(
       break;
     }
 
-    std::string header;
-    llvm::raw_string_ostream os(header);
-    os << "candidate";
-
-    diag.attachNote(impl.getLoc()) << os.str();
+    diag.attachNote(impl.getLoc()) << "candidate";
   }
 
   return diag;
@@ -200,35 +192,13 @@ FailureOr<Type> ImplResolver::resolveProjectionType(
   if (failed(implOr)) return failure();
   ImplOp impl = *implOr;
 
-  auto boundType = impl.getAssociatedTypeBinding(assocName);
-  if (failed(boundType)) {
-    if (err) err() << "impl for " << traitApp
-                   << " has no binding for associated type '" << assocName << "'";
-    return failure();
-  }
+  auto binding = impl.specializeAssociatedTypeBinding(assocName, proj.getAssocTypeArgs(), err);
+  if (failed(binding)) return failure();
 
   auto subst = impl.buildSubstitutionForSelfClaim(claim, err);
   if (failed(subst)) return failure();
 
-  // apply trait-level substitution
-  Type result = applySubstitutionToFixedPoint(*subst, *boundType);
-
-  // apply GAT substitution if the associated type has type_params
-  auto traitOp = impl.getTrait();
-  auto traitAssoc = traitOp.getAssociatedType(assocName);
-  if (succeeded(traitAssoc) && traitAssoc->getTypeParams()) {
-    auto typeParams = *traitAssoc->getTypeParams();
-    auto assocTypeArgs = proj.getAssocTypeArgs();
-    if (typeParams.size() != assocTypeArgs.size()) {
-      if (err) err() << "GAT arity mismatch for '" << assocName
-                     << "': expected " << typeParams.size()
-                     << " type args but got " << assocTypeArgs.size();
-      return failure();
-    }
-    result = applyGATSubstitution(typeParams, assocTypeArgs, result);
-  }
-
-  return result;
+  return applySubstitutionToFixedPoint(*subst, *binding);
 }
 
 FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(

@@ -13,7 +13,6 @@
 #include <mlir/Interfaces/FunctionImplementation.h>
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/IRMapping.h>
-#include <iostream>
 #include <optional>
 #include <variant>
 
@@ -331,27 +330,17 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
       {
         auto &subst = *traitSubst;
         AttrTypeReplacer projReplacer;
-        projReplacer.addReplacement([this, &subst, &traitOp](Type t) -> std::optional<Type> {
+        projReplacer.addReplacement([this, &subst](Type t) -> std::optional<Type> {
           auto proj = dyn_cast<ProjectionType>(t);
           if (!proj) return std::nullopt;
           // skip if the trait application itself is still polymorphic
-          // (we can't identify the impl). GAT args may be polymorphic - that's fine.
           if (llvm::any_of(proj.getTraitApplication().getTypeArgs(),
                            [](Type ty) { return isPolymorphicType(ty); }))
             return std::nullopt;
-          auto resolved = getAssociatedTypeBinding(proj.getAssocName().getValue());
+          auto resolved = specializeAssociatedTypeBinding(
+              proj.getAssocName().getValue(), proj.getAssocTypeArgs());
           if (failed(resolved)) return std::nullopt;
-          // apply trait-level substitution first
-          Type result = applySubstitutionToFixedPoint(subst, *resolved);
-          // apply GAT substitution if the assoc type has type_params
-          auto traitAssoc = traitOp.getAssociatedType(proj.getAssocName().getValue());
-          if (succeeded(traitAssoc) && traitAssoc->getTypeParams()) {
-            auto typeParams = *traitAssoc->getTypeParams();
-            auto assocTypeArgs = proj.getAssocTypeArgs();
-            if (typeParams.size() == assocTypeArgs.size())
-              result = applyGATSubstitution(typeParams, assocTypeArgs, result);
-          }
-          return result;
+          return applySubstitutionToFixedPoint(subst, *resolved);
         });
         specializedTraitMethodTy = projReplacer.replace(specializedTraitMethodTy);
       }
@@ -442,6 +431,28 @@ FailureOr<DenseMap<Type,Type>> ImplOp::buildSubstitutionForSelfClaim(ClaimType a
   auto module = getModule(errFn);
   if (failed(module)) return failure();
   return buildSpecializationSubstitution(getSelfClaim(), actualSelfClaim, *module, errFn);
+}
+
+FailureOr<Type> ImplOp::specializeAssociatedTypeBinding(
+    StringRef name,
+    ArrayRef<Type> assocTypeArgs,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  auto binding = getAssociatedTypeBinding(name, err);
+  if (failed(binding)) return failure();
+
+  auto assoc = getAssociatedType(name);
+  if (succeeded(assoc) && assoc->getTypeParams()) {
+    auto typeParams = *assoc->getTypeParams();
+    if (typeParams.size() != assocTypeArgs.size()) {
+      if (err) err() << "GAT arity mismatch for '" << name
+                     << "': expected " << typeParams.size()
+                     << " type args but got " << assocTypeArgs.size();
+      return failure();
+    }
+    *binding = applyGATSubstitution(typeParams, assocTypeArgs, *binding);
+  }
+
+  return *binding;
 }
 
 FailureOr<DenseMap<Type,Type>> ImplOp::buildMonomorphizationSubstitutionFor(
@@ -867,7 +878,10 @@ FailureOr<SmallVector<ClaimType>> ProofOp::verifyAndGetSubproofClaims(llvm::func
   return result;
 }
 
-FailureOr<Operation*> ProofOp::getProofOpOrUnconditionalImplOp(
+/// Look up a proof symbol and return the raw Operation* (ProofOp or ImplOp).
+/// This is the shared lookup used by both getImplFromProof and
+/// getProofOpOrUnconditionalImplOp.
+static FailureOr<Operation*> lookupProofSymbol(
     ModuleOp module,
     FlatSymbolRefAttr name,
     llvm::function_ref<InFlightDiagnostic()> errFn) {
@@ -877,20 +891,45 @@ FailureOr<Operation*> ProofOp::getProofOpOrUnconditionalImplOp(
     return failure();
   }
 
-  // if it's an ImplOp, it must be unconditional
-  if (auto impl = dyn_cast<ImplOp>(symOp)) {
-    if (failed(impl.verifyIsUnconditional(errFn))) return failure();
+  if (isa<ImplOp>(symOp) || isa<ProofOp>(symOp))
     return symOp;
-  }
 
-  // otherwise it must be a ProofOp
-  auto proof = dyn_cast<ProofOp>(symOp);
-  if (!proof) {
-    if (errFn) errFn() << "proof symbol must refer to trait.proof or self-proving trait.impl";
+  if (errFn) errFn() << "proof symbol '" << name << "' must refer to trait.proof or trait.impl";
+  return failure();
+}
+
+FailureOr<ImplOp> ProofOp::getImplFromProof(
+    ModuleOp module,
+    FlatSymbolRefAttr name,
+    llvm::function_ref<InFlightDiagnostic()> errFn) {
+  auto symOp = lookupProofSymbol(module, name, errFn);
+  if (failed(symOp)) return failure();
+
+  if (auto implOp = dyn_cast<ImplOp>(*symOp))
+    return implOp;
+
+  auto proofOp = cast<ProofOp>(*symOp);
+  ImplOp impl = proofOp.getImpl();
+  if (!impl) {
+    if (errFn) errFn() << "proof '" << name << "' does not resolve to an impl";
     return failure();
   }
+  return impl;
+}
 
-  return symOp;
+FailureOr<Operation*> ProofOp::getProofOpOrUnconditionalImplOp(
+    ModuleOp module,
+    FlatSymbolRefAttr name,
+    llvm::function_ref<InFlightDiagnostic()> errFn) {
+  auto symOp = lookupProofSymbol(module, name, errFn);
+  if (failed(symOp)) return failure();
+
+  // if it's an ImplOp, it must be unconditional
+  if (auto impl = dyn_cast<ImplOp>(*symOp)) {
+    if (failed(impl.verifyIsUnconditional(errFn))) return failure();
+  }
+
+  return *symOp;
 }
 
 
@@ -942,30 +981,19 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
   auto errFn = [&] { return emitOpError(); };
 
-  // first verify the claim type
+  // verify the claim type
   if (failed(getProvenClaim().verifySymbolUses(module, errFn)))
     return failure();
 
-  // look up the proof symbol 
-  auto proofRef = getProofAttr();
-  auto proof = SymbolTable::lookupNearestSymbolFrom(module, proofRef);
-  if (!proof)
-    return emitOpError() << "cannot find proof '" << proofRef << "'";
+  // look up the proof symbol (must be ProofOp or unconditional ImplOp)
+  auto symOp = ProofOp::getProofOpOrUnconditionalImplOp(module, getProofAttr(), errFn);
+  if (failed(symOp)) return failure();
 
-  // proof needs to refer to either a ProofOp or an ImplOp with no obligations
-  if (auto proofOp = dyn_cast<ProofOp>(proof)) {
-    return proofOp.getImpl().buildSubstitutionForSelfClaim(getProvenClaim(), errFn);
-  } else if (auto implOp = dyn_cast<ImplOp>(proof)) {
-    if (!implOp.isUnconditional())
-      return emitOpError() << "impl '" << proofRef
-                           << "' is not unconditional (has obligations)";
+  // check that the underlying impl can build a substitution for our claim
+  auto impl = ProofOp::getImplFromProof(module, getProofAttr(), errFn);
+  if (failed(impl)) return failure();
 
-    // check that the impl is able to build a substitution for our proven claim
-    return implOp.buildSubstitutionForSelfClaim(getProvenClaim(), errFn);
-  }
-
-  return emitOpError() << "symbol " << proofRef.getValue()
-                       << " must refer to either a trait.proof or a trait.impl with no obligations";
+  return impl->buildSubstitutionForSelfClaim(getProvenClaim(), errFn);
 }
 
 
@@ -1189,6 +1217,47 @@ TraitOp AssumeOp::getTrait() {
 
 
 //===----------------------------------------------------------------------===//
+// ProjWitnessOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult ProjWitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
+  if (!module)
+    return emitError() << "not inside a module";
+
+  auto errFn = [&] { return emitOpError(); };
+
+  // result must be a proven ProjectionType
+  auto projTy = cast<ProjectionType>(getResult().getType());
+  if (!projTy.isProven())
+    return emitOpError() << "result projection must carry a proof";
+
+  // proof on result must match the op's proof attr
+  if (projTy.getProof() != getProofAttr())
+    return emitOpError() << "result projection proof " << projTy.getProof()
+                         << " does not match op proof " << getProofAttr();
+
+  // verify symbol uses (trait app + proof)
+  if (failed(projTy.verifySymbolUses(module, errFn)))
+    return failure();
+
+  // resolve the binding (applies GAT substitution)
+  auto implOr = ProofOp::getImplFromProof(module, projTy.getProof(), errFn);
+  if (failed(implOr)) return failure();
+
+  auto binding = implOr->specializeAssociatedTypeBinding(
+      projTy.getAssocName().getValue(), projTy.getAssocTypeArgs(), errFn);
+  if (failed(binding)) return failure();
+
+  if (*binding != getInput().getType())
+    return emitOpError() << "input type " << getInput().getType()
+                         << " does not match impl's associated type binding " << *binding;
+
+  return success();
+}
+
+
+//===----------------------------------------------------------------------===//
 // MethodCallOp
 //===----------------------------------------------------------------------===//
 
@@ -1237,10 +1306,10 @@ LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable)
     return failure();
 
   // check that we can build a consistent substitution for this method call
-  return buildSubstitution(errFn);
+  return buildParameterSpecialization(errFn);
 }
 
-FailureOr<DenseMap<Type,Type>> MethodCallOp::buildSubstitution(llvm::function_ref<InFlightDiagnostic()> err) {
+FailureOr<DenseMap<Type,Type>> MethodCallOp::buildParameterSpecialization(llvm::function_ref<InFlightDiagnostic()> err) {
   auto module = getModule(err);
   if (failed(module)) return failure();
 
@@ -1267,20 +1336,15 @@ ImplOp MethodCallOp::getProvenImpl() {
   ClaimType claimTy = cast<ClaimType>(getClaim().getType());
   assert(claimTy.isProven());
 
-  auto proofRef = claimTy.getProof();
   auto module = getModule();
   if (failed(module))
     llvm_unreachable("MethodCallOp::getProvenImpl: not in a module");
 
-  ImplOp result;
-  auto proofOp = SymbolTable::lookupNearestSymbolFrom<ProofOp>(*module, proofRef);
-  if (proofOp) {
-    result = proofOp.getImpl();
-  } else {
-    result = SymbolTable::lookupNearestSymbolFrom<ImplOp>(*module, proofRef);
-  }
+  auto impl = ProofOp::getImplFromProof(*module, claimTy.getProof());
+  if (failed(impl))
+    llvm_unreachable("MethodCallOp::getProvenImpl: getImplFromProof failed");
 
-  return result;
+  return *impl;
 }
 
 FailureOr<func::FuncOp> MethodCallOp::getOrInstantiateCallee(PatternRewriter& rewriter) {
@@ -1416,10 +1480,10 @@ LogicalResult FuncCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (failed(callee)) return failure();
 
   // check that we can build a substitution
-  return buildSubstitution(errFn);
+  return buildParameterSpecialization(errFn);
 }
 
-FailureOr<DenseMap<Type, Type>> FuncCallOp::buildSubstitution(llvm::function_ref<InFlightDiagnostic()> err) {
+FailureOr<DenseMap<Type, Type>> FuncCallOp::buildParameterSpecialization(llvm::function_ref<InFlightDiagnostic()> err) {
   auto module = getModule(err);
   if (failed(module)) return failure();
 
@@ -1442,9 +1506,9 @@ FailureOr<DenseMap<Type, Type>> FuncCallOp::buildSubstitution(llvm::function_ref
 }
 
 std::string FuncCallOp::getNameOfCalleeInstance() {
-  auto subst = buildSubstitution();
+  auto subst = buildParameterSpecialization();
   if (failed(subst))
-    llvm_unreachable("FuncCallOp::getNameOfCalleeInstance: buildSubstitution failed");
+    llvm_unreachable("FuncCallOp::getNameOfCalleeInstance: buildParameterSpecialization failed");
 
   return getCalleeName().str() +
          generateMangledNameSuffixFor(*subst, getCalleeTypeParams());
@@ -1458,8 +1522,7 @@ FailureOr<func::FuncOp> FuncCallOp::instantiateCalleeAtInsertionPoint(OpBuilder 
   // get a name for the instantiation
   auto instanceName = getNameOfCalleeInstance();
 
-  // build a substitution
-  auto subst = buildSubstitution();
+  auto subst = buildParameterSpecialization();
   if (failed(subst)) return failure();
 
   // instantiate the callee

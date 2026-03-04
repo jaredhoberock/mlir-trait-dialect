@@ -40,8 +40,6 @@ def PolyType : TypeDef<TraitDialect, "Poly", [
     - `PolymorphicTypeInterface` - always reports itself as polymorphic.
     - `GenericTypeInterface` - supports instantiation into a fresh `InferenceType`
       when building an instantiation map.
-    - `TypeVariableInterface` - can bind directly during unification when it appears on the *actual* side of unify.
-
     ### Identity
     
     Each `trait.poly` carries a unique integer `unique_id` to identify it within a module.
@@ -87,6 +85,14 @@ def ClaimType : TypeDef<TraitDialect, "Claim", [
         !trait.claim<@PartialEq[i32,i32], @PartialEq_impl_i32_i32>
 
     represents a proven claim that an implementation (i.e, `@PartialEq_impl_i32_i32`) exists for `@PartialEq[i32,i32]`.
+
+    ### Why proofs are attached to the type
+
+    Proof evidence is part of the type (rather than an attribute on
+    the producing operation) so that any consumer can inspect it locally
+    without dataflow or CFG analysis.  A claim value may flow through
+    block arguments, function parameters, or other SSA indirections
+    where the defining operation is not directly visible.
   }];
 
   let parameters = (ins
@@ -140,7 +146,9 @@ def ClaimType : TypeDef<TraitDialect, "Claim", [
 }
 
 // Represents a projection of an associated type from a trait application
-def ProjectionType : TypeDef<TraitDialect, "Projection"> {
+def ProjectionType : TypeDef<TraitDialect, "Projection", [
+  UnificationTypeInterface
+]> {
   let mnemonic = "proj";
   let summary = "A projected associated type from a trait application";
 
@@ -151,13 +159,59 @@ def ProjectionType : TypeDef<TraitDialect, "Projection"> {
 
     This type is structural and survives into MLIR until monomorphization
     resolves it to a concrete type by consulting the matching `trait.impl`.
+
+    A proven projection carries a `by @proof` suffix providing evidence that
+    the projection resolves to a concrete type:
+
+        !trait.proj<@Base[i64], "Assoc" by @Base_proof>
+
+    The proof must name a `trait.proof` or unconditional `trait.impl`.
   }];
 
   let parameters = (ins
     "::mlir::trait::TraitApplicationAttr":$trait_application,
     "::mlir::StringAttr":$assoc_name,
-    ArrayRefParameter<"Type">:$assoc_type_args
+    ArrayRefParameter<"Type">:$assoc_type_args,
+    "::mlir::FlatSymbolRefAttr":$proof
   );
+
+  let extraClassDeclaration = [{
+    // Convenience: construct without proof
+    static ProjectionType get(MLIRContext *ctx, TraitApplicationAttr app,
+                              StringAttr name, ArrayRef<Type> args) {
+      return get(ctx, app, name, args, /*proof=*/nullptr);
+    }
+
+    bool isProven() const { return static_cast<bool>(getProof()); }
+
+    ProjectionType asUnproven() const {
+      return ProjectionType::get(getContext(), getTraitApplication(),
+                                 getAssocName(), getAssocTypeArgs());
+    }
+
+    // Construct and delegate to a ClaimType on demand
+    ClaimType asClaim() const {
+      return ClaimType::get(getContext(), getTraitApplication(), getProof());
+    }
+
+    LogicalResult verifySymbolUses(ModuleOp module,
+                                   llvm::function_ref<InFlightDiagnostic()> err);
+
+    /// Look up this proven projection's proof symbol, find the impl's
+    /// associated type binding, and record `proj → bound_type` in `subst`
+    /// for both the unproven and proven forms of this projection.
+    /// Verifies the proof symbol and binding exist; fails with diagnostics
+    /// via `err` if not.
+    LogicalResult verifyAndRecordBinding(ModuleOp module,
+                                 DenseMap<Type,Type> &subst,
+                                 llvm::function_ref<InFlightDiagnostic()> err);
+
+    // for UnificationTypeInterface
+    LogicalResult unify(Type other,
+                        ModuleOp module,
+                        DenseMap<Type,Type> &subst,
+                        llvm::function_ref<InFlightDiagnostic()> emitError);
+  }];
 
   let hasCustomAssemblyFormat = 1;
 }
@@ -166,7 +220,6 @@ def ProjectionType : TypeDef<TraitDialect, "Projection"> {
 // Represents an inference variable used during type inference
 def InferenceType : TypeDef<TraitDialect, "Inference", [
   PolymorphicTypeInterface,
-  TypeVariableInterface,
   UnificationTypeInterface
 ]> {
   let mnemonic = "infer";

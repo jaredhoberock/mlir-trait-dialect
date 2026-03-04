@@ -153,6 +153,7 @@ inline void normalizeSubstitutionInPlace(llvm::DenseMap<Type,Type> &subst) {
       subst[k] = v; // Collapse k directly to its fixed point.
     }
   }
+
 }
 
 inline llvm::DenseMap<Type,Type> normalizeSubstitution(llvm::DenseMap<Type,Type> subst) {
@@ -332,7 +333,7 @@ inline FailureOr<DenseMap<Type,Type>> buildSpecializationSubstitution(
   auto inferToGen = invertSubstitution(genToInfer, err);
   if (failed(inferToGen)) return failure();
 
-  // unify
+  // unify the instantiated formal and actual types
   DenseMap<Type,Type> inferToType;
   if (failed(unify(iformal, iactual, module, inferToType, err)))
     return failure();
@@ -346,7 +347,7 @@ inline FailureOr<DenseMap<Type,Type>> buildSpecializationSubstitution(
   // original generics
   auto result = composeSubstitutions(*composed, *inferToGen, err);
   if (failed(result)) return failure();
-  
+
   normalizeSubstitutionInPlace(*result);
   return *result;
 }

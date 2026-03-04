@@ -79,7 +79,7 @@ def UnificationTypeInterface : TypeInterface<"UnificationTypeInterface"> {
     * Respect existing substitutions: implementations should assume the caller
       has normalized both sides via the current `subst` and may normalize again
       internally as needed.
-    * Variable-like types (those modeling TypeVariableInterface) should perform
+    * Variable-like types (e.g., inference variables) should perform
       an occurs check before binding to prevent infinite types.
   }];
 
@@ -103,21 +103,6 @@ def UnificationTypeInterface : TypeInterface<"UnificationTypeInterface"> {
       auto errFn = llvm::function_ref<InFlightDiagnostic()>{};
       return this->unify(actual, module, subst, errFn);
     }
-  }];
-}
-
-// Interface for types that behave like a type variable
-// XXX TODO need to add generalize() method to map back to the original generic type
-def TypeVariableInterface : TypeInterface<"TypeVariableInterface"> {
-  let cppNamespace = "::mlir::trait";
-  let description = [{
-    Marker interface for *leaf, variable-like* types (e.g., `!trait.poly`,
-    `!tuple.poly`). When such a type appears on the *actual* side of
-    `unify(formal, actual, ...)`, it may bind *existentially* to the
-    *formal* (with an occurs check), recording a subsitution `actual := formal`.
-    Implementations need no methods; this is a pure marker.
-
-    Types that implement `TypeVariableInterface` *must also implement* `UnificationTypeInterface`.
   }];
 }
 

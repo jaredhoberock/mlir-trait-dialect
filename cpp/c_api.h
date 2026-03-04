@@ -104,13 +104,21 @@ MlirAttribute traitClaimTypeGetTraitApplicationGet(MlirType claimType);
 bool traitTypeIsAClaim(MlirType type);
 
 /// Return the !trait.proj<@Trait[Types...], "AssocName", [AssocTypeArgs...]> type
+/// Pass an empty MlirStringRef (length 0) for proof to create an unproven projection.
 MlirType traitProjectionTypeGet(MlirContext ctx,
                                 MlirAttribute traitApp,
                                 MlirStringRef assocName,
-                                MlirType *assocTypeArgs, intptr_t numAssocTypeArgs);
+                                MlirType *assocTypeArgs, intptr_t numAssocTypeArgs,
+                                MlirStringRef proof);
 
 /// Checks whether the given type is a projection type.
 bool traitTypeIsAProjection(MlirType type);
+
+/// Create a trait.proj.witness operation
+MlirOperation traitProjWitnessOpCreate(MlirLocation loc,
+                                        MlirValue input,
+                                        MlirStringRef proofName,
+                                        MlirType resultType);
 
 /// Create a trait.assoc_type op. If boundType.ptr is non-null, the op gets a
 /// bound_type attribute (for use inside trait.impl); otherwise it is a bare

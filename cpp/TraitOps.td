@@ -14,6 +14,11 @@ include "Trait.td"
 include "TraitTypes.td"
 
 
+// Adds a `getModule()` convenience method to the op.
+def HasGetModule : NativeOpTrait<"HasGetModule"> {
+  let cppNamespace = "::mlir::trait";
+}
+
 // Op's regions have only these types of child operations.
 class HasChildren<list<string> ops>
     : ParamNativeOpTrait<"HasOnlyChildOps", !interleave(ops, ", ")>, StructuralOpTrait;
@@ -22,6 +27,7 @@ class HasChildren<list<string> ops>
 def TraitOp : TraitDialectOp<"trait", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
   HasChildren<["func::FuncOp", "trait::AssocTypeOp"]>,
+  HasGetModule,
   HasParent<"ModuleOp">,
   IsolatedFromAbove,
   SingleBlock,
@@ -91,15 +97,6 @@ def TraitOp : TraitDialectOp<"trait", [
   let regions = (region SizedRegion<1>:$body);
 
   let extraClassDeclaration = [{
-    FailureOr<ModuleOp> getModule(llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
-      auto module = getOperation()->getParentOfType<ModuleOp>();
-      if (!module) {
-        if (err) err() << "not in a module";
-        return failure();
-      }
-      return module;
-    }
-
     TraitApplicationAttr getSelfApplication() {
       MLIRContext* ctx = getContext();
       FlatSymbolRefAttr selfRef = FlatSymbolRefAttr::get(ctx, getSymName());
@@ -243,6 +240,7 @@ def TraitOp : TraitDialectOp<"trait", [
 def ImplOp : TraitDialectOp<"impl", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
   HasChildren<["func::FuncOp", "trait::AssocTypeOp"]>,
+  HasGetModule,
   HasParent<"ModuleOp">,
   IsolatedFromAbove,
   SingleBlock,
@@ -331,15 +329,6 @@ def ImplOp : TraitDialectOp<"impl", [
   let regions = (region SizedRegion<1>:$body);
 
   let extraClassDeclaration = [{
-    FailureOr<ModuleOp> getModule(llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
-      auto module = getOperation()->getParentOfType<ModuleOp>();
-      if (!module) {
-        if (err) err() << "not in a module";
-        return failure();
-      }
-      return module;
-    }
-
     TraitApplicationAttr getSelfApplication() const {
       return const_cast<ImplOp*>(this)->getSelfApplication();
     }
@@ -369,7 +358,7 @@ def ImplOp : TraitDialectOp<"impl", [
     }
 
     bool hasMethod(StringRef name) {
-      return getMethod(name) != nullptr;
+      return succeeded(getMethod(name));
     }
 
     // returns all distinct generic types that occur in this ImplOp's self application and assumptions
@@ -415,19 +404,60 @@ def ImplOp : TraitDialectOp<"impl", [
         ClaimType actualSelfClaim,
         llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
 
-    /// Look up an associated type binding by name and return its bound type
-    FailureOr<Type> getAssociatedTypeBinding(StringRef name) {
+    /// Look up an associated type op by name
+    FailureOr<AssocTypeOp> getAssociatedType(StringRef name) {
+      for (Operation& op : getBody().front())
+        if (auto assoc = dyn_cast<AssocTypeOp>(op))
+          if (assoc.getSymName() == name)
+            return assoc;
+      return failure();
+    }
+
+    /// Look up an associated type binding by name, without GAT substitution.
+    /// For GAT types, the result may reference the impl's own poly IDs
+    /// instead of concrete types. Use `specializeAssociatedTypeBinding`
+    /// to get a fully-substituted result.
+    FailureOr<Type> getAssociatedTypeBinding(
+        StringRef name,
+        llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
       for (Operation& op : getBody().front()) {
         if (auto assoc = dyn_cast<AssocTypeOp>(op)) {
           if (assoc.getSymName() == name) {
             if (auto boundType = assoc.getBoundType())
               return *boundType;
+            if (err) err() << "associated type '" << name
+                           << "' has no binding in impl '" << getSymName() << "'";
             return failure();
           }
         }
       }
+      if (err) err() << "no associated type '" << name
+                     << "' in impl '" << getSymName() << "'";
       return failure();
     }
+
+    /// Look up an associated type binding and apply GAT substitution.
+    ///
+    /// Given an associated type `name` (e.g., "Output") and concrete type
+    /// arguments `assocTypeArgs` for a GAT, returns the fully-resolved
+    /// concrete type that the impl binds to that associated type.
+    ///
+    /// For non-GAT associated types, `assocTypeArgs` should be empty and
+    /// the raw binding is returned directly.
+    ///
+    /// For GATs, the raw binding from the impl may reference the impl's own
+    /// poly IDs for the GAT's type parameters (which may differ from the
+    /// trait's). This method substitutes `assocTypeArgs` for those parameters
+    /// to produce the final resolved type.
+    ///
+    /// Returns failure if:
+    ///   - No associated type named `name` exists in this impl
+    ///   - The associated type has no bound type
+    ///   - GAT arity mismatch (`assocTypeArgs` size != type parameter count)
+    FailureOr<Type> specializeAssociatedTypeBinding(
+        StringRef name,
+        ArrayRef<Type> assocTypeArgs,
+        llvm::function_ref<InFlightDiagnostic()> err = nullptr);
   }];
 
   // builders create one empty block in the body region
@@ -511,6 +541,12 @@ def Claim : Type<
   CPred<"::mlir::isa<ClaimType>($_self)">,
   "any '!trait.claim' type",
   "ClaimType"
+>;
+
+def Projection : Type<
+  CPred<"::mlir::isa<ProjectionType>($_self)">,
+  "any '!trait.proj' type",
+  "ProjectionType"
 >;
 
 
@@ -834,6 +870,30 @@ def WitnessOp : TraitDialectOp<"witness", [
 }
 
 
+def ProjWitnessOp : TraitDialectOp<"proj.witness", [
+  DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+  Pure
+]> {
+  let summary = "Wrap a concrete value with projection evidence";
+  let description = [{
+    Wraps a concrete-typed value into a proven `!trait.proj` type, providing
+    evidence that the projection resolves to the concrete type.
+
+    Example:
+      %val_proj = trait.proj.witness %val by @Base_proof
+        : i1 -> !trait.proj<@Base[i64], "Assoc" by @Base_proof>
+  }];
+
+  let arguments = (ins
+    AnyType:$input,
+    FlatSymbolRefAttr:$proof
+  );
+  let results = (outs Projection:$result);
+
+  let assemblyFormat = "$input `by` $proof attr-dict `:` type($input) `->` type($result)";
+}
+
+
 //===----------------------------------------------------------------------===//
 // Call ops
 //===----------------------------------------------------------------------===//
@@ -841,7 +901,8 @@ def WitnessOp : TraitDialectOp<"witness", [
 
 def MethodCallOp : TraitDialectOp<"method.call", [
   CallOpInterface,
-  DeclareOpInterfaceMethods<SymbolUserOpInterface>
+  DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+  HasGetModule
 ]>{
   let summary = "Call a trait method";
   let description = [{
@@ -916,15 +977,6 @@ def MethodCallOp : TraitDialectOp<"method.call", [
   let results = (outs Variadic<AnyType>);
 
   let extraClassDeclaration = [{
-    FailureOr<ModuleOp> getModule(llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
-      ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
-      if (!module) {
-        if (err) err() << "not in a module";
-        return failure();
-      }
-      return module;
-    }
-
     FailureOr<TraitOp> getTrait(llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     FailureOr<func::FuncOp> getMethod(llvm::function_ref<InFlightDiagnostic()> err = nullptr);
@@ -941,9 +993,13 @@ def MethodCallOp : TraitDialectOp<"method.call", [
       return FunctionType::get(getContext(), getArguments().getTypes(), getResultTypes());
     }
 
-    // builds a substitution unifying the callee's function type
-    // with the types of actual call arguments
-    FailureOr<DenseMap<Type,Type>> buildSubstitution(llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+    /// Build a substitution by unifying the callee's formal parameter types
+    /// with the actual argument types at this call site.
+    ///
+    /// The resulting substitution maps generic types to concrete types and
+    /// claims to proven claims. It does NOT resolve projection types in the
+    /// callee's return type; use `addProjectionBindings` for that.
+    FailureOr<DenseMap<Type,Type>> buildParameterSpecialization(llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     FailureOr<func::FuncOp> getOrInstantiateCallee(PatternRewriter& rewriter);
 
@@ -1004,7 +1060,8 @@ def MethodCallOp : TraitDialectOp<"method.call", [
 
 def FuncCallOp : TraitDialectOp<"func.call", [
   CallOpInterface,
-  DeclareOpInterfaceMethods<SymbolUserOpInterface>
+  DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+  HasGetModule
 ]> {
   let summary = "Call a possibly polymorphic function defined with func.func and !trait.poly";
   let description = [{
@@ -1040,15 +1097,6 @@ def FuncCallOp : TraitDialectOp<"func.call", [
   let results = (outs Variadic<AnyType>);
 
   let extraClassDeclaration = [{
-    FailureOr<ModuleOp> getModule(llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
-      auto module = getOperation()->getParentOfType<ModuleOp>();
-      if (!module) {
-        if (err) err() << "not in a module";
-        return failure();
-      }
-      return module;
-    }
-
     FailureOr<func::FuncOp> getCallee(llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
       auto name = getCalleeNameAttr();
       auto module = getModule(err);
@@ -1078,9 +1126,13 @@ def FuncCallOp : TraitDialectOp<"func.call", [
 
     FailureOr<func::FuncOp> instantiateCalleeAtInsertionPoint(OpBuilder& builder);
 
-    // creates the mapping from callee poly types -> actual arguent types
-    // as well as concrete claims -> proofs
-    FailureOr<DenseMap<Type, Type>> buildSubstitution(llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+    /// Build a substitution by unifying the callee's formal parameter types
+    /// with the actual argument types at this call site.
+    ///
+    /// The resulting substitution maps generic types to concrete types and
+    /// claims to proven claims. It does NOT resolve projection types in the
+    /// callee's return type; use `addProjectionBindings` for that.
+    FailureOr<DenseMap<Type, Type>> buildParameterSpecialization(llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     // returns all distinct generic types that occur in the FunctionType of this FuncOp's callee
     SmallVector<GenericTypeInterface, 4> getCalleeTypeParams() {
@@ -1163,6 +1215,14 @@ def ProofOp : TraitDialectOp<"proof", [
         llvm_unreachable("ProofOp::getSubproofClaims: verifyAndGetSubproofClaims failed");
       return *maybeResult;
     }
+
+    /// Look up a proof symbol and return the underlying ImplOp.
+    /// The symbol may name a ProofOp (which forwards to its impl) or
+    /// an unconditional ImplOp directly.
+    static FailureOr<ImplOp> getImplFromProof(
+      ModuleOp module,
+      FlatSymbolRefAttr name,
+      llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
 
     // look up a proof by name. It must be either a ProofOp or an unconditional impl
     static FailureOr<Operation*> getProofOpOrUnconditionalImplOp(

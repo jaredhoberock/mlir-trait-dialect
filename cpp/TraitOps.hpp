@@ -10,6 +10,25 @@
 #include <mlir/IR/PatternMatch.h>
 #include "TraitTypes.hpp"
 
+namespace mlir::trait {
+
+/// Mixin that adds a `getModule()` convenience method to any op.
+template <typename ConcreteType>
+class HasGetModule : public ::mlir::OpTrait::TraitBase<ConcreteType, HasGetModule> {
+public:
+  FailureOr<ModuleOp> getModule(
+      llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
+    auto module = this->getOperation()->template getParentOfType<ModuleOp>();
+    if (!module) {
+      if (err) err() << "not in a module";
+      return failure();
+    }
+    return module;
+  }
+};
+
+} // end mlir::trait
+
 namespace mlir::OpTrait {
 
 template<class... ChildOps>

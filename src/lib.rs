@@ -72,8 +72,13 @@ unsafe extern "C" {
     fn traitProjectionTypeGet(ctx: MlirContext,
                               trait_app: MlirAttribute,
                               assoc_name: MlirStringRef,
-                              assoc_type_args: *const MlirType, num_assoc_type_args: isize) -> MlirType;
+                              assoc_type_args: *const MlirType, num_assoc_type_args: isize,
+                              proof: MlirStringRef) -> MlirType;
     fn traitTypeIsAProjection(ty: MlirType) -> bool;
+    fn traitProjWitnessOpCreate(loc: MlirLocation,
+                                 input: MlirValue,
+                                 proof_name: MlirStringRef,
+                                 result_type: MlirType) -> MlirOperation;
     fn traitAssocTypeOpCreate(loc: MlirLocation,
                               name: MlirStringRef,
                               bound_type: MlirType,
@@ -402,24 +407,47 @@ pub fn generic_types_in<'c>(ty: Type<'c>) -> Vec<Type<'c>> {
 }
 
 /// Create a `!trait.proj<@Trait[types], "AssocName", [assoc_type_args]>` type.
+/// Pass `None` for proof to create an unproven projection, or `Some("proof_name")`
+/// for a proven projection.
 pub fn projection_type<'c>(
     ctx: &'c Context,
     trait_app: TraitApplicationAttribute<'c>,
     assoc_name: &str,
     assoc_type_args: &[Type<'c>],
+    proof: Option<&str>,
 ) -> Type<'c> {
+    let proof_ref = match proof {
+        Some(name) => StringRef::new(name).to_raw(),
+        None => MlirStringRef { data: std::ptr::null(), length: 0 },
+    };
     unsafe { Type::from_raw(traitProjectionTypeGet(
         ctx.to_raw(),
         trait_app.to_raw(),
         StringRef::new(assoc_name).to_raw(),
         assoc_type_args.as_ptr() as *const _,
         assoc_type_args.len() as isize,
+        proof_ref,
     ))}
 }
 
 /// Check whether a type is a `!trait.proj` type.
 pub fn is_projection_type(ty: Type) -> bool {
     unsafe { traitTypeIsAProjection(ty.to_raw()) }
+}
+
+/// Create a `trait.proj.witness` op that wraps a concrete value with projection evidence.
+pub fn proj_witness<'c>(
+    loc: Location<'c>,
+    input: Value<'c, '_>,
+    proof_name: &str,
+    result_type: Type<'c>,
+) -> Operation<'c> {
+    unsafe { Operation::from_raw(traitProjWitnessOpCreate(
+        loc.to_raw(),
+        input.to_raw(),
+        StringRef::new(proof_name).to_raw(),
+        result_type.to_raw(),
+    ))}
 }
 
 /// Create a `trait.assoc_type` op. Pass `None` for a bare declaration (inside a

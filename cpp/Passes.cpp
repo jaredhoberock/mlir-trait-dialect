@@ -251,8 +251,34 @@ static AttrTypeReplacer makeProjectionReplacer(ImplResolver &resolver,
   return replacer;
 }
 
+/// Extend `subst` with bindings that resolve concrete `!trait.proj` types.
+///
+/// After buildParameterSpecialization maps generic types to concrete types, applying
+/// the substitution to the formal signature may produce concrete projection
+/// types like `!trait.proj<@Trait[i64], "Assoc">`. This function walks the
+/// given types after substitution, resolves each concrete projection via the
+/// ImplResolver, and records the binding in `subst` so that a subsequent
+/// `applySubstitutionToFixedPoint` resolves projections in one shot.
+static void addProjectionBindings(DenseMap<Type,Type> &subst,
+                                  TypeRange types,
+                                  ImplResolver &resolver,
+                                  PatternRewriter &rewriter) {
+  for (Type ty : types) {
+    applySubstitutionToFixedPoint(subst, ty).walk([&](Type t) {
+      auto proj = dyn_cast<ProjectionType>(t);
+      if (!proj || isPolymorphicType(proj) || subst.count(proj)) return;
+      if (auto resolved = resolver.resolveProjectionType(proj, rewriter);
+          succeeded(resolved))
+        subst[proj] = *resolved;
+    });
+  }
+}
+
 struct FuncCallOpLowering : public OpRewritePattern<FuncCallOp> {
-  using OpRewritePattern::OpRewritePattern;
+  ImplResolver &resolver;
+
+  FuncCallOpLowering(MLIRContext *ctx, ImplResolver &resolver)
+    : OpRewritePattern(ctx), resolver(resolver) {}
 
   LogicalResult matchAndRewrite(FuncCallOp callOp, PatternRewriter &rewriter) const override {
     // if any of the call's operand types are polymorphic, this call can't be resolved yet
@@ -268,17 +294,47 @@ struct FuncCallOpLowering : public OpRewritePattern<FuncCallOp> {
     if (!nearestTable || !isa<ModuleOp>(nearestTable))
       return rewriter.notifyMatchFailure(callOp, "call is still nested in a method");
 
+    // build a substitution that can fully concretize the result types
+    auto subst = callOp.buildParameterSpecialization();
+    if (failed(subst))
+      return rewriter.notifyMatchFailure(callOp, "couldn't build substitution");
+    addProjectionBindings(*subst, callOp.getResultTypes(), resolver, rewriter);
+
+    SmallVector<Type> concreteResults;
+    for (Type r : callOp.getResultTypes()) {
+      Type newR = applySubstitutionToFixedPoint(*subst, r);
+      if (isPolymorphicType(newR))
+        return rewriter.notifyMatchFailure(callOp, "result type is still polymorphic");
+      concreteResults.push_back(newR);
+    }
+
     // instantiate the callee
     auto callee = callOp.getOrInstantiateCallee(rewriter);
     if (failed(callee))
       return rewriter.notifyMatchFailure(callOp, "couldn't get or instantiate callee");
 
+    // Unwrap any trait.proj.witness operands to get the concrete values.
+    //
+    // We do this here rather than in a separate pattern because
+    // trait.proj.witness must survive until after buildParameterSpecialization reads the
+    // operand types: proven projection types on operands carry proof symbols
+    // that recordProofBindingsIn needs to resolve associated type bindings
+    // (including GAT type arguments). Erasing the wrappers earlier would lose
+    // that information.
+    SmallVector<Value> concreteOperands;
+    for (Value operand : callOp.getOperands()) {
+      if (auto pwOp = operand.getDefiningOp<ProjWitnessOp>())
+        concreteOperands.push_back(pwOp.getInput());
+      else
+        concreteOperands.push_back(operand);
+    }
+
     // replace with a func.call to the instanced callee
     rewriter.replaceOpWithNewOp<func::CallOp>(
       callOp,
       callee->getSymName(),
-      callOp.getResultTypes(),
-      callOp.getOperands()
+      concreteResults,
+      concreteOperands
     );
 
     return success();
@@ -301,16 +357,15 @@ struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
       return rewriter.notifyMatchFailure(op, "claim is still unproven");
     }
 
-    // build the call's substitution
-    auto subst = op.buildSubstitution();
+    // build a substitution that can fully concretize the result types
+    auto subst = op.buildParameterSpecialization();
     if (failed(subst))
       return rewriter.notifyMatchFailure(op, "couldn't build substitution for call");
+    addProjectionBindings(*subst, op.getResultTypes(), resolver, rewriter);
 
-    // apply subst to result types, resolve projections; all results must be monomorphic
-    auto projReplacer = makeProjectionReplacer(resolver, rewriter);
     SmallVector<Type> concreteResults;
     for (Type r : op.getResultTypes()) {
-      Type newR = projReplacer.replace(applySubstitutionToFixedPoint(*subst, r));
+      Type newR = applySubstitutionToFixedPoint(*subst, r);
       if (isPolymorphicType(newR))
         return rewriter.notifyMatchFailure(op, "result type is still polymorphic");
       concreteResults.push_back(newR);
@@ -318,7 +373,7 @@ struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
 
     // get the callee
     auto callee = op.getOrInstantiateCallee(rewriter);
-    if (failed(callee)) 
+    if (failed(callee))
       return rewriter.notifyMatchFailure(op, "couldn't get or instantiate callee");
 
     // pass the claim as the first argument to the instantiated callee
@@ -523,7 +578,8 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
   // rewrite trait.func.call, trait.method.call, trait.derive,
   // resolve projections, and any generic op whose results become monomorphic
   RewritePatternSet patterns(ctx);
-  patterns.add<FuncCallOpLowering, MonomorphizeResultTypesPattern>(ctx);
+  patterns.add<MonomorphizeResultTypesPattern>(ctx);
+  patterns.add<FuncCallOpLowering>(ctx, *resolver);
   patterns.add<MethodCallOpLowering>(ctx, *resolver);
   patterns.add<ResolveProjectionsPattern>(ctx, *resolver);
   patterns.add<DeriveToWitnessPattern>(ctx, *resolver);
@@ -537,17 +593,6 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
 
   // apply patterns
   if (failed(applyPatternsGreedily(module, std::move(patterns))))
-    return failure();
-
-  // verify no projections survive outside trait infrastructure
-  ConversionTarget target(*ctx);
-  target.addLegalOp<TraitOp, ImplOp, ProofOp>();
-  target.markOpRecursivelyLegal<TraitOp, ImplOp, ProofOp>();
-  target.markUnknownOpDynamicallyLegal([](Operation *op) {
-    return !opMentionsType<ProjectionType>(op);
-  });
-  if (failed(applyPartialConversion(module, target,
-                                    RewritePatternSet(ctx))))
     return failure();
 
   return module.verify();
@@ -587,33 +632,45 @@ struct EraseProjectOp : public OpRewritePattern<ProjectOp> {
   }
 };
 
-/// Removes all `!trait.claim` types and claim-producing ops from the module.
+struct EraseProjWitnessOp : public OpConversionPattern<ProjWitnessOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(ProjWitnessOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    // The input already has the concrete type; just forward it
+    rewriter.replaceOp(op, adaptor.getInput());
+    return success();
+  }
+};
+
+/// Removes all `!trait.claim` types, `!trait.proj` types, and their producing
+/// ops from the module.
 ///
 /// By this point monomorphization is complete: every polymorphic function has
-/// been specialized, every `trait.allege` replaced by `trait.witness`, and
-/// every `trait.derive` rewritten to `trait.witness`.  The claim values that
-/// threaded proof evidence through the IR are no longer needed.
+/// been specialized, every `trait.allege` replaced by `trait.witness`, every
+/// `trait.derive` rewritten to `trait.witness`, and every `!trait.proj`
+/// resolved to its concrete bound type.  The claim values that threaded proof
+/// evidence through the IR are no longer needed.
 ///
-/// This function uses MLIR's dialect conversion to:
-/// All claim-producing ops are marked illegal:
-///   - `trait.witness` and `trait.project` are expected at this stage and
-///     are erased by dedicated patterns.
-///   - `trait.allege` and `trait.derive` should have been rewritten to
-///     `trait.witness` by earlier passes; their presence is a bug and will
-///     cause the conversion to fail.
+/// Illegal ops:
+///   - `trait.witness`, `trait.project`, and `trait.proj.witness` are expected
+///     at this stage and are erased by dedicated patterns.
+///   - `trait.allege` and `trait.derive` should have been rewritten by earlier
+///     passes; their presence is a bug and will cause the conversion to fail.
 ///
-/// A TypeConverter maps `!trait.claim` to nothing, which drops claim
-/// parameters from function signatures, call operands, and return values.
+/// A TypeConverter maps `!trait.claim` to nothing (dropping claim parameters
+/// from signatures) and falls through on `!trait.proj` (which should already
+/// have been resolved; any survivors cause a legality failure).
 static LogicalResult eraseClaims(ModuleOp module) {
   MLIRContext* ctx = module.getContext();
   ConversionTarget target(*ctx);
 
-  // all claim-producing ops are illegal
-  target.addIllegalOp<AllegeOp, DeriveOp, ProjectOp, WitnessOp>();
+  // all claim-producing ops and ProjWitnessOp are illegal
+  target.addIllegalOp<AllegeOp, DeriveOp, ProjectOp, WitnessOp, ProjWitnessOp>();
 
-  // otherwise, an op is legal if it does not mention a !trait.claim type
+  // an op is legal if it mentions neither !trait.claim nor !trait.proj
   target.markUnknownOpDynamicallyLegal([&](Operation *op) {
-    return !opMentionsType<ClaimType>(op);
+    return !opMentionsType<ClaimType>(op) && !opMentionsType<ProjectionType>(op);
   });
 
   // create a TypeConverter to erase !trait.claim types
@@ -624,9 +681,10 @@ static LogicalResult eraseClaims(ModuleOp module) {
     return success();
   });
 
-  // erase all trait.project & trait.witness ops
+  // erase all trait.project, trait.witness, and trait.proj.witness ops
   RewritePatternSet patterns(ctx);
   patterns.add<EraseProjectOp, EraseWitnessOp>(ctx);
+  patterns.add<EraseProjWitnessOp>(tc, ctx);
 
   // collect erase claims patterns from other dialects
   for (Dialect *dialect : ctx->getLoadedDialects()) {

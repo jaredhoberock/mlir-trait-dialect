@@ -345,7 +345,8 @@ bool traitTypeIsAClaim(MlirType type) {
 MlirType traitProjectionTypeGet(MlirContext wrappedCtx,
                                 MlirAttribute wrappedTraitApp,
                                 MlirStringRef assocName,
-                                MlirType *assocTypeArgs, intptr_t numAssocTypeArgs) {
+                                MlirType *assocTypeArgs, intptr_t numAssocTypeArgs,
+                                MlirStringRef proof) {
   MLIRContext *ctx = unwrap(wrappedCtx);
   TraitApplicationAttr traitApp = dyn_cast<TraitApplicationAttr>(unwrap(wrappedTraitApp));
   if (!traitApp) return {};
@@ -354,11 +355,34 @@ MlirType traitProjectionTypeGet(MlirContext wrappedCtx,
   args.reserve(numAssocTypeArgs);
   for (intptr_t i = 0; i < numAssocTypeArgs; ++i)
     args.push_back(unwrap(assocTypeArgs[i]));
-  return wrap(ProjectionType::get(ctx, traitApp, nameAttr, args));
+  FlatSymbolRefAttr proofAttr;
+  if (proof.length > 0)
+    proofAttr = FlatSymbolRefAttr::get(ctx, StringRef(proof.data, proof.length));
+  return wrap(ProjectionType::get(ctx, traitApp, nameAttr, args, proofAttr));
 }
 
 bool traitTypeIsAProjection(MlirType type) {
   return isa<ProjectionType>(unwrap(type));
+}
+
+MlirOperation traitProjWitnessOpCreate(MlirLocation loc,
+                                        MlirValue input,
+                                        MlirStringRef proofName,
+                                        MlirType resultType) {
+  MLIRContext *ctx = unwrap(loc)->getContext();
+  OpBuilder builder(ctx);
+
+  FlatSymbolRefAttr proofRef = FlatSymbolRefAttr::get(
+    ctx, StringRef(proofName.data, proofName.length));
+
+  auto op = builder.create<ProjWitnessOp>(
+    unwrap(loc),
+    unwrap(resultType),
+    unwrap(input),
+    proofRef
+  );
+
+  return wrap(op.getOperation());
 }
 
 MlirOperation traitAssocTypeOpCreate(MlirLocation loc,

@@ -289,6 +289,13 @@ LogicalResult verifyAndRecordProof(
   return success();
 }
 
+/// Walk `root` and record substitution entries for every proven claim or
+/// proven projection found within it.  For claims, this maps the unproven
+/// claim to the proven claim.  For projections, this resolves the associated
+/// type binding from the proof's impl and maps both the unproven and proven
+/// projection to the bound type.  These entries are used during unification
+/// so that `applySubstitutionToFixedPoint` can normalize projections before
+/// per-type unification dispatch.
 LogicalResult recordProofBindingsIn(
     Type root,
     ModuleOp module,
@@ -296,17 +303,19 @@ LogicalResult recordProofBindingsIn(
     llvm::function_ref<InFlightDiagnostic()> err) {
   LogicalResult status = success();
 
-  // walk down to ClaimType nodes and call verifyAndRecordProof
   root.walk([&](Type node) {
     if (status.failed()) return;
 
     if (auto claim = dyn_cast<ClaimType>(node)) {
-      if (claim.isProven()) {
-        // found a proven claim, delegate to verifyAndRecordProof
-        if (failed(verifyAndRecordProof(claim.asUnproven(), claim, module, subst, err))) {
+      if (claim.isProven())
+        if (failed(verifyAndRecordProof(claim.asUnproven(), claim, module, subst, err)))
           status = failure();
-        }
-      }
+    }
+
+    if (auto proj = dyn_cast<ProjectionType>(node)) {
+      if (proj.isProven())
+        if (failed(proj.verifyAndRecordBinding(module, subst, err)))
+          status = failure();
     }
   });
 
@@ -432,6 +441,13 @@ Type ProjectionType::parse(AsmParser &p) {
   if (p.parseAttribute(assocName))
     return {};
 
+  // parse optional 'by @proof' (after assoc name, before optional GAT args)
+  FlatSymbolRefAttr proof;
+  if (succeeded(p.parseOptionalKeyword("by"))) {
+    if (p.parseAttribute(proof))
+      return {};
+  }
+
   // parse optional , [gat_args...]
   SmallVector<Type> assocTypeArgs;
   if (succeeded(p.parseOptionalComma())) {
@@ -447,13 +463,16 @@ Type ProjectionType::parse(AsmParser &p) {
   if (p.parseGreater())
     return {};
 
-  return ProjectionType::get(ctx, app, assocName, assocTypeArgs);
+  return ProjectionType::get(ctx, app, assocName, assocTypeArgs, proof);
 }
 
 void ProjectionType::print(AsmPrinter &p) const {
   p << "<";
   getTraitApplication().print(p);
   p << ", " << getAssocName();
+  if (isProven()) {
+    p << " by " << getProof();
+  }
   if (!getAssocTypeArgs().empty()) {
     p << ", [";
     llvm::interleaveComma(getAssocTypeArgs(), p, [&](Type ty) {
@@ -464,6 +483,36 @@ void ProjectionType::print(AsmPrinter &p) const {
   p << ">";
 }
 
+LogicalResult ProjectionType::verifySymbolUses(ModuleOp module,
+                                               llvm::function_ref<InFlightDiagnostic()> err) {
+  return asClaim().verifySymbolUses(module, err);
+}
+
+LogicalResult ProjectionType::verifyAndRecordBinding(
+    ModuleOp module,
+    DenseMap<Type,Type> &subst,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  assert(isProven() && "verifyAndRecordBinding requires a proven projection");
+
+  auto impl = ProofOp::getImplFromProof(module, getProof(), err);
+  if (failed(impl)) return failure();
+
+  auto binding = impl->specializeAssociatedTypeBinding(
+      getAssocName().getValue(), getAssocTypeArgs(), err);
+  if (failed(binding)) return failure();
+
+  // Record both unproven and proven projection → bound type
+  for (ProjectionType key : {asUnproven(), *this}) {
+    auto [it, inserted] = subst.try_emplace(key, *binding);
+    if (!inserted && it->second != *binding) {
+      if (err) err() << "conflicting projection binding for " << key
+                     << ": " << it->second << " vs " << *binding;
+      return failure();
+    }
+  }
+
+  return success();
+}
 
 //===----------------------------------------------------------------------===//
 // unify
@@ -537,6 +586,32 @@ static LogicalResult unifyStructurally(Type formal,
   return success();
 }
 
+/// Unify a projection type with another type.
+///
+/// Two cases:
+///  - Projection vs projection: strip proofs from both sides and delegate to
+///    structural unification. This allows proven and unproven projections of the
+///    same trait/name/args to unify (the proof is evidence, not identity).
+///  - Projection vs non-projection: succeed without recording a binding.
+///    Projections are opaque type functions resolved later via proof evidence
+///    (recordProofBindingsIn + addProjectionBindings), not via unification
+///    bindings. Succeeding here says "this projection is compatible" without
+///    committing to a specific resolution.
+LogicalResult ProjectionType::unify(
+    Type other,
+    ModuleOp module,
+    DenseMap<Type,Type> &subst,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  // projection vs projection: strip proofs and unify structurally
+  if (auto otherProj = mlir::dyn_cast<ProjectionType>(other)) {
+    return unifyStructurally(asUnproven(), otherProj.asUnproven(),
+                             module, subst, err);
+  }
+
+  // projection vs non-projection: succeed without recording a binding
+  return success();
+}
+
 /// Attempt to unify `formal` with `actual`, extending `subst` with any
 /// new bindings that make them equal under substitution.
 ///
@@ -545,21 +620,15 @@ static LogicalResult unifyStructurally(Type formal,
 /// unification:
 ///
 /// Priority of unifiers:
-///  1. **Type variables first** — If either side is a `TypeVariableInterface`
-///     (a leaf existential like `!trait.poly`), we let that side decide how
-///     to bind itself (recording `poly := other`). We prefer to drive with
-///     a type variable rather than try to break it down structurally.
-///     If both `formal` and `actual` are `TypeVariableInterface`, `formal` wins.
-///  2. **Formal unification types** — If the formal side implements
-///     `UnificationTypeInterface`, we let it attempt to match/record
-///     substitutions for its own structure.
+///  1. **Formal first** — If the formal side implements
+///     `UnificationTypeInterface`, we let it drive unification. This gives
+///     formal-side types (inference variables, projections, claims) first
+///     refusal to decide how to handle the match.
+///  2. **Actual second** — If the actual side implements
+///     `UnificationTypeInterface`, we let it drive. This handles the
+///     symmetric case (e.g., inference variable on the actual side).
 ///  3. **Structural fallback** — Otherwise we fall back to generic
-///     shape-by-shape unification for non-monomorphizable, non-variable types.
-///
-/// The order matters: giving TVI “first refusal” ensures existential type
-/// vars bind eagerly and prevents infinite ping-pong (e.g. `poly` vs `poly`)
-/// while still letting unification types manage their own internal
-/// unification when present.
+///     shape-by-shape unification for non-unifiable types.
 ///
 /// Returns success if the two types can be made equal under an extended `subst`.
 /// On failure, nothing is recorded and `err` (if provided) will be invoked to
@@ -578,31 +647,15 @@ LogicalResult unify(
   if (formal == actual)
     return success();
 
-  // prefer a substituteWith method call if possible, in this priority:
-  // 1. formal is TypeVariableInterface
-  // 2. actual is TypeVariableInterface
-  // 3. formal is UnificationTypeInterface
-
-  // case 1.
-  if (isa<TypeVariableInterface>(formal)) {
-    // we assume every TypeVariableInterface is also UnificationTypeInterface
-    auto formalUnifier = cast<UnificationTypeInterface>(formal);
+  // formal-side unifier takes priority
+  if (auto formalUnifier = dyn_cast<UnificationTypeInterface>(formal))
     return formalUnifier.unify(actual, module, subst, err);
-  }
 
-  // case 2.
-  if (isa<TypeVariableInterface>(actual)) {
-    // we assume every TypeVariableInterface is also UnificationTypeInterface
-    auto actualUnifier = cast<UnificationTypeInterface>(actual);
+  // actual-side unifier
+  if (auto actualUnifier = dyn_cast<UnificationTypeInterface>(actual))
     return actualUnifier.unify(formal, module, subst, err);
-  }
 
-  // case 3.
-  if (auto formalUnifier = dyn_cast<UnificationTypeInterface>(formal)) {
-    return formalUnifier.unify(actual, module, subst, err);
-  }
-
-  // otherwise, unify structurally
+  // structural fallback
   return unifyStructurally(formal, actual, module, subst, err);
 }
 
