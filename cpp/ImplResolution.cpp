@@ -276,7 +276,7 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
   }
 
   // create the proof and memoize by the monomorphic app 
-  OpBuilder::InsertionGuard guard(rewriter);
+  PatternRewriter::InsertionGuard guard(rewriter);
   rewriter.setInsertionPointToEnd(module.getBody());
 
   // generate a mangled name for the proof based on the monomorphic wanted claim

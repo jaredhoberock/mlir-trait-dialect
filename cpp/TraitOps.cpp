@@ -600,7 +600,8 @@ static func::FuncOp instantiateMethodAsFreeFuncWithLeadingSelfProof(
 FailureOr<func::FuncOp> ImplOp::getOrInstantiateFreeFunctionFromMethod(
     PatternRewriter& rewriter,
     ClaimType provenSelfClaim,
-    StringRef methodName) {
+    StringRef methodName,
+    const DenseMap<Type,Type> &extraSubst) {
   // check that methodName names a valid trait method
   if (!getTrait().hasMethod(methodName)) return failure();
 
@@ -620,9 +621,13 @@ FailureOr<func::FuncOp> ImplOp::getOrInstantiateFreeFunctionFromMethod(
     auto method = getOrInstantiateMethod(rewriter, methodName);
     if (failed(method)) return failure();
 
-    // build a Type -> Type substitution to use for monomorphization
+    // build a poly→concrete substitution from the impl's type parameters
     auto subst = buildMonomorphizationSubstitutionFor(provenSelfClaim);
     if (failed(subst)) return failure();
+
+    // merge caller-provided entries (e.g., projection→concrete bindings)
+    for (const auto &[k, v] : extraSubst)
+      subst->try_emplace(k, v);
 
     // instantiate into grandparent with mangled name
     funcOp = instantiateMethodAsFreeFuncWithLeadingSelfProof(
@@ -1347,10 +1352,12 @@ ImplOp MethodCallOp::getProvenImpl() {
   return *impl;
 }
 
-FailureOr<func::FuncOp> MethodCallOp::getOrInstantiateCallee(PatternRewriter& rewriter) {
+FailureOr<func::FuncOp> MethodCallOp::getOrInstantiateCallee(
+    PatternRewriter &rewriter,
+    const DenseMap<Type,Type> &subst) {
   ClaimType claimTy = cast<ClaimType>(getClaim().getType());
   return getProvenImpl()
-    .getOrInstantiateFreeFunctionFromMethod(rewriter, claimTy, getMethodName());
+    .getOrInstantiateFreeFunctionFromMethod(rewriter, claimTy, getMethodName(), subst);
 }
 
 ParseResult MethodCallOp::parse(OpAsmParser& p, OperationState &st) {
@@ -1514,42 +1521,23 @@ std::string FuncCallOp::getNameOfCalleeInstance() {
          generateMangledNameSuffixFor(*subst, getCalleeTypeParams());
 }
 
-FailureOr<func::FuncOp> FuncCallOp::instantiateCalleeAtInsertionPoint(OpBuilder &builder) {
-  // lookup the polymorphic callee
-  auto callee = getCallee();
-  if (failed(callee)) return failure();
-
-  // get a name for the instantiation
-  auto instanceName = getNameOfCalleeInstance();
-
-  auto subst = buildParameterSpecialization();
-  if (failed(subst)) return failure();
-
-  // instantiate the callee
-  return instantiatePolymorph(builder, *callee, instanceName, *subst);
-}
-
-FailureOr<func::FuncOp> FuncCallOp::getOrInstantiateCallee(OpBuilder &builder) {
+FailureOr<func::FuncOp> FuncCallOp::getOrInstantiateCallee(
+    OpBuilder &builder,
+    const DenseMap<Type,Type> &subst) {
   auto module = getModule();
   if (failed(module)) return failure();
 
-  // get the name of the instantiated callee
   std::string instanceName = getNameOfCalleeInstance();
-
-  // look for an existing instance
   auto *symOp = SymbolTable::lookupSymbolIn(*module, builder.getStringAttr(instanceName));
   func::FuncOp existing = dyn_cast_or_null<func::FuncOp>(symOp);
   if (existing) return existing;
 
-  // otherwise, we need to instantiate an instance
-  // look up the polymorphic callee
   auto callee = getCallee();
   if (failed(callee)) return failure();
 
-  // insert the instance afer the polymorph
-  PatternRewriter::InsertionGuard guard(builder);
+  OpBuilder::InsertionGuard guard(builder);
   builder.setInsertionPointAfter(*callee);
-  return instantiateCalleeAtInsertionPoint(builder);
+  return instantiatePolymorph(builder, *callee, instanceName, subst);
 }
 
 

@@ -308,8 +308,8 @@ struct FuncCallOpLowering : public OpRewritePattern<FuncCallOp> {
       concreteResults.push_back(newR);
     }
 
-    // instantiate the callee
-    auto callee = callOp.getOrInstantiateCallee(rewriter);
+    // instantiate the callee with the enriched substitution
+    auto callee = callOp.getOrInstantiateCallee(rewriter, *subst);
     if (failed(callee))
       return rewriter.notifyMatchFailure(callOp, "couldn't get or instantiate callee");
 
@@ -371,8 +371,8 @@ struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
       concreteResults.push_back(newR);
     }
 
-    // get the callee
-    auto callee = op.getOrInstantiateCallee(rewriter);
+    // instantiate the callee with the enriched substitution
+    auto callee = op.getOrInstantiateCallee(rewriter, *subst);
     if (failed(callee))
       return rewriter.notifyMatchFailure(op, "couldn't get or instantiate callee");
 

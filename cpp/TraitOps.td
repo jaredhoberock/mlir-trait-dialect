@@ -366,7 +366,13 @@ def ImplOp : TraitDialectOp<"impl", [
 
     FailureOr<func::FuncOp> getOrInstantiateMethod(OpBuilder& builder, StringRef methodName);
 
-    FailureOr<func::FuncOp> getOrInstantiateFreeFunctionFromMethod(PatternRewriter& rewriter, ClaimType provenSelfClaim, StringRef methodName);
+    /// Extracts a method from this impl as a free function with a leading self parameter.
+    ///
+    /// Builds a poly-to-concrete substitution from `provenSelfClaim`, then merges
+    /// `extraSubst` (e.g., projection-to-concrete bindings from `addProjectionBindings`)
+    /// before monomorphizing the clone.
+    FailureOr<func::FuncOp> getOrInstantiateFreeFunctionFromMethod(PatternRewriter& rewriter, ClaimType provenSelfClaim, StringRef methodName,
+                                                                    const DenseMap<Type,Type> &extraSubst);
 
     /// Builds a substitution that maps generic types appearing in the ImplOp's type parameters
     /// to Types in the given actualSelfClaim
@@ -1001,7 +1007,9 @@ def MethodCallOp : TraitDialectOp<"method.call", [
     /// callee's return type; use `addProjectionBindings` for that.
     FailureOr<DenseMap<Type,Type>> buildParameterSpecialization(llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
-    FailureOr<func::FuncOp> getOrInstantiateCallee(PatternRewriter& rewriter);
+    /// Instantiates the callee as a free function using a pre-built substitution.
+    FailureOr<func::FuncOp> getOrInstantiateCallee(PatternRewriter &rewriter,
+                                                   const DenseMap<Type,Type> &subst);
 
     ClaimType getClaimType() {
       return cast<ClaimType>(getClaim().getType());
@@ -1122,9 +1130,9 @@ def FuncCallOp : TraitDialectOp<"func.call", [
       return FunctionType::get(getContext(), getOperands().getTypes(), getResultTypes());
     }
 
-    FailureOr<func::FuncOp> getOrInstantiateCallee(OpBuilder& builder);
-
-    FailureOr<func::FuncOp> instantiateCalleeAtInsertionPoint(OpBuilder& builder);
+    /// Looks up or instantiates the monomorphized callee using a pre-built substitution.
+    FailureOr<func::FuncOp> getOrInstantiateCallee(OpBuilder &builder,
+                                                   const DenseMap<Type,Type> &subst);
 
     /// Build a substitution by unifying the callee's formal parameter types
     /// with the actual argument types at this call site.
