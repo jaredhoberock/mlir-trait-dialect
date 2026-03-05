@@ -147,6 +147,7 @@ def ClaimType : TypeDef<TraitDialect, "Claim", [
 
 // Represents a projection of an associated type from a trait application
 def ProjectionType : TypeDef<TraitDialect, "Projection", [
+  PolymorphicTypeInterface,
   UnificationTypeInterface
 ]> {
   let mnemonic = "proj";
@@ -205,6 +206,9 @@ def ProjectionType : TypeDef<TraitDialect, "Projection", [
     LogicalResult verifyAndRecordBinding(ModuleOp module,
                                  DenseMap<Type,Type> &subst,
                                  llvm::function_ref<InFlightDiagnostic()> err);
+
+    // for PolymorphicTypeInterface
+    bool isPolymorphic() const;
 
     // for UnificationTypeInterface
     LogicalResult unify(Type other,

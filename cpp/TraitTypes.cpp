@@ -422,6 +422,14 @@ LogicalResult ClaimType::unify(
 // ProjectionType
 //===----------------------------------------------------------------------===//
 
+bool ProjectionType::isPolymorphic() const {
+  return llvm::any_of(getTraitApplication().getTypeArgs(), [](Type ty) {
+    return mlir::trait::isPolymorphicType(ty);
+  }) || llvm::any_of(getAssocTypeArgs(), [](Type ty) {
+    return mlir::trait::isPolymorphicType(ty);
+  });
+}
+
 Type ProjectionType::parse(AsmParser &p) {
   MLIRContext *ctx = p.getContext();
 
