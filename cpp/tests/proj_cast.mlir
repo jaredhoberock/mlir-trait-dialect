@@ -23,8 +23,8 @@ func.func @cast_roundtrip() -> i1 {
   %v = arith.constant true
   %w = trait.witness @Base_i64 for @Base[i64]
   // cast concrete i1 up to projection type
-  %up = trait.proj.cast %v, %w : i1 to !trait.proj<@Base[i64], "Assoc" by @Base_i64>
+  %up = trait.proj.cast %v, %w : i1 to !trait.proj<@Base[i64], "Assoc"> claim !trait.claim<@Base[i64] by @Base_i64>
   // cast projection type back down to concrete i1
-  %down = trait.proj.cast %up, %w : !trait.proj<@Base[i64], "Assoc" by @Base_i64> to i1
+  %down = trait.proj.cast %up, %w : !trait.proj<@Base[i64], "Assoc"> to i1 claim !trait.claim<@Base[i64] by @Base_i64>
   return %down : i1
 }

@@ -289,12 +289,10 @@ LogicalResult verifyAndRecordProof(
   return success();
 }
 
-/// Walk `root` and record substitution entries for every proven claim or
-/// proven projection found within it.  For claims, this maps the unproven
-/// claim to the proven claim.  For projections, this resolves the associated
-/// type binding from the proof's impl and maps both the unproven and proven
-/// projection to the bound type.  These entries are used during unification
-/// so that `applySubstitutionToFixedPoint` can normalize projections before
+/// Walk `root` and record substitution entries for every proven claim
+/// found within it.  This maps the unproven claim to the proven claim.
+/// These entries are used during unification so that
+/// `applySubstitutionToFixedPoint` can normalize claims before
 /// per-type unification dispatch.
 LogicalResult recordProofBindingsIn(
     Type root,
@@ -309,12 +307,6 @@ LogicalResult recordProofBindingsIn(
     if (auto claim = dyn_cast<ClaimType>(node)) {
       if (claim.isProven())
         if (failed(verifyAndRecordProof(claim.asUnproven(), claim, module, subst, err)))
-          status = failure();
-    }
-
-    if (auto proj = dyn_cast<ProjectionType>(node)) {
-      if (proj.isProven())
-        if (failed(proj.verifyAndRecordBinding(module, subst, err)))
           status = failure();
     }
   });
@@ -449,13 +441,6 @@ Type ProjectionType::parse(AsmParser &p) {
   if (p.parseAttribute(assocName))
     return {};
 
-  // parse optional 'by @proof' (after assoc name, before optional GAT args)
-  FlatSymbolRefAttr proof;
-  if (succeeded(p.parseOptionalKeyword("by"))) {
-    if (p.parseAttribute(proof))
-      return {};
-  }
-
   // parse optional , [gat_args...]
   SmallVector<Type> assocTypeArgs;
   if (succeeded(p.parseOptionalComma())) {
@@ -471,16 +456,13 @@ Type ProjectionType::parse(AsmParser &p) {
   if (p.parseGreater())
     return {};
 
-  return ProjectionType::get(ctx, app, assocName, assocTypeArgs, proof);
+  return ProjectionType::get(ctx, app, assocName, assocTypeArgs);
 }
 
 void ProjectionType::print(AsmPrinter &p) const {
   p << "<";
   getTraitApplication().print(p);
   p << ", " << getAssocName();
-  if (isProven()) {
-    p << " by " << getProof();
-  }
   if (!getAssocTypeArgs().empty()) {
     p << ", [";
     llvm::interleaveComma(getAssocTypeArgs(), p, [&](Type ty) {
@@ -494,32 +476,6 @@ void ProjectionType::print(AsmPrinter &p) const {
 LogicalResult ProjectionType::verifySymbolUses(ModuleOp module,
                                                llvm::function_ref<InFlightDiagnostic()> err) {
   return asClaim().verifySymbolUses(module, err);
-}
-
-LogicalResult ProjectionType::verifyAndRecordBinding(
-    ModuleOp module,
-    DenseMap<Type,Type> &subst,
-    llvm::function_ref<InFlightDiagnostic()> err) {
-  assert(isProven() && "verifyAndRecordBinding requires a proven projection");
-
-  auto impl = ProofOp::getImplFromProof(module, getProof(), err);
-  if (failed(impl)) return failure();
-
-  auto binding = impl->specializeAssociatedTypeBinding(
-      getAssocName().getValue(), getAssocTypeArgs(), err);
-  if (failed(binding)) return failure();
-
-  // Record both unproven and proven projection → bound type
-  for (ProjectionType key : {asUnproven(), *this}) {
-    auto [it, inserted] = subst.try_emplace(key, *binding);
-    if (!inserted && it->second != *binding) {
-      if (err) err() << "conflicting projection binding for " << key
-                     << ": " << it->second << " vs " << *binding;
-      return failure();
-    }
-  }
-
-  return success();
 }
 
 //===----------------------------------------------------------------------===//
@@ -597,22 +553,21 @@ static LogicalResult unifyStructurally(Type formal,
 /// Unify a projection type with another type.
 ///
 /// Two cases:
-///  - Projection vs projection: strip proofs from both sides and delegate to
-///    structural unification. This allows proven and unproven projections of the
-///    same trait/name/args to unify (the proof is evidence, not identity).
+///  - Projection vs projection: delegate to structural unification so
+///    projections of the same trait/name/args unify.
 ///  - Projection vs non-projection: succeed without recording a binding.
-///    Projections are opaque type functions resolved later via proof evidence
-///    (recordProofBindingsIn + addProjectionBindings), not via unification
-///    bindings. Succeeding here says "this projection is compatible" without
-///    committing to a specific resolution.
+///    Projections are opaque type functions resolved later via claim evidence
+///    (addProjectionBindings), not via unification bindings. Succeeding here
+///    says "this projection is compatible" without committing to a specific
+///    resolution.
 LogicalResult ProjectionType::unify(
     Type other,
     ModuleOp module,
     DenseMap<Type,Type> &subst,
     llvm::function_ref<InFlightDiagnostic()> err) {
-  // projection vs projection: strip proofs and unify structurally
+  // projection vs projection: unify structurally
   if (auto otherProj = mlir::dyn_cast<ProjectionType>(other)) {
-    return unifyStructurally(asUnproven(), otherProj.asUnproven(),
+    return unifyStructurally(*this, otherProj,
                              module, subst, err);
   }
 

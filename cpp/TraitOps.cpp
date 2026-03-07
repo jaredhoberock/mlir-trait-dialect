@@ -1239,38 +1239,30 @@ ParseResult ProjCastOp::parse(OpAsmParser &p, OperationState &st) {
   if (p.parseKeyword("to") || p.parseType(resultType))
     return failure();
 
+  // parse 'claim !trait.claim<...>'
+  Type claimType;
+  if (p.parseKeyword("claim") || p.parseType(claimType))
+    return failure();
+
   st.addTypes(resultType);
 
   // resolve input
   if (p.resolveOperand(input, inputType, st.operands))
     return failure();
 
-  // The claim type is inferred: find the projection among input/result,
-  // extract its trait application, and build the ClaimType.
-  auto inputProj = dyn_cast<ProjectionType>(inputType);
-  auto resultProj = dyn_cast<ProjectionType>(resultType);
-  if (!inputProj && !resultProj)
-    return p.emitError(p.getCurrentLocation(),
-      "at least one of input/result must be a !trait.proj type");
-
-  // Pick the projection whose trait application identifies the claim.
-  // For proj->proj, the claim comes from the result (the "target" form).
-  ProjectionType projForClaim = resultProj ? resultProj : inputProj;
-  TraitApplicationAttr traitApp = projForClaim.getTraitApplication();
-  FlatSymbolRefAttr proof = projForClaim.getProof();
-  ClaimType claimTy = ClaimType::get(p.getContext(), traitApp, proof);
-
-  if (p.resolveOperand(claim, claimTy, st.operands))
+  // resolve claim
+  if (p.resolveOperand(claim, claimType, st.operands))
     return failure();
 
   return success();
 }
 
 void ProjCastOp::print(OpAsmPrinter &p) {
-  // trait.proj.cast %input, %claim : input_type to result_type
+  // trait.proj.cast %input, %claim : input_type to result_type claim !trait.claim<...>
   p << " " << getInput() << ", " << getClaim()
     << " : " << getInput().getType()
-    << " to " << getResult().getType();
+    << " to " << getResult().getType()
+    << " claim " << getClaim().getType();
 }
 
 LogicalResult ProjCastOp::verifySymbolUses(SymbolTableCollection &symbolTable) {

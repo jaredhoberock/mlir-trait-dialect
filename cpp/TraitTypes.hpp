@@ -424,13 +424,11 @@ LogicalResult verifyAndRecordProof(ClaimType unproven,
 
 /// Walks the given type and records proven claim substitutions.
 ///
-/// For every `ClaimType` node inside `t` that carries a proof (i.e. `isProven()`),
-/// this adds a mapping from its unproven form (`claim.asUnproven()`) to the
-/// proven claim itself into `subst`. If a conflicting mapping for the same
-/// unproven key already exists, returns failure and emits an error through `err`.
-///
-/// This is the primitive for collecting all claim→proof bindings found anywhere
-/// inside a type’s structure (recursing through nested type components).
+/// For every `ClaimType` node inside `ty` that carries a proof
+/// (i.e. `isProven()`), this adds a mapping from its unproven form
+/// (`claim.asUnproven()`) to the proven claim itself into `subst`.
+/// If a conflicting mapping for the same unproven key already exists,
+/// returns failure and emits an error through `err`.
 LogicalResult recordProofBindingsIn(Type ty,
                                     ModuleOp module,
                                     DenseMap<Type,Type> &subst,

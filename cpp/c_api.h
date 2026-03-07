@@ -104,12 +104,10 @@ MlirAttribute traitClaimTypeGetTraitApplicationGet(MlirType claimType);
 bool traitTypeIsAClaim(MlirType type);
 
 /// Return the !trait.proj<@Trait[Types...], "AssocName", [AssocTypeArgs...]> type
-/// Pass an empty MlirStringRef (length 0) for proof to create an unproven projection.
 MlirType traitProjectionTypeGet(MlirContext ctx,
                                 MlirAttribute traitApp,
                                 MlirStringRef assocName,
-                                MlirType *assocTypeArgs, intptr_t numAssocTypeArgs,
-                                MlirStringRef proof);
+                                MlirType *assocTypeArgs, intptr_t numAssocTypeArgs);
 
 /// Checks whether the given type is a projection type.
 bool traitTypeIsAProjection(MlirType type);

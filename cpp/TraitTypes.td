@@ -160,52 +160,24 @@ def ProjectionType : TypeDef<TraitDialect, "Projection", [
 
     This type is structural and survives into MLIR until monomorphization
     resolves it to a concrete type by consulting the matching `trait.impl`.
-
-    A proven projection carries a `by @proof` suffix providing evidence that
-    the projection resolves to a concrete type:
-
-        !trait.proj<@Base[i64], "Assoc" by @Base_proof>
-
-    The proof must name a `trait.proof` or unconditional `trait.impl`.
+    Evidence (proof) is carried separately on `!trait.claim` operands, not
+    on the projection type itself.
   }];
 
   let parameters = (ins
     "::mlir::trait::TraitApplicationAttr":$trait_application,
     "::mlir::StringAttr":$assoc_name,
-    ArrayRefParameter<"Type">:$assoc_type_args,
-    "::mlir::FlatSymbolRefAttr":$proof
+    ArrayRefParameter<"Type">:$assoc_type_args
   );
 
   let extraClassDeclaration = [{
-    // Convenience: construct without proof
-    static ProjectionType get(MLIRContext *ctx, TraitApplicationAttr app,
-                              StringAttr name, ArrayRef<Type> args) {
-      return get(ctx, app, name, args, /*proof=*/nullptr);
-    }
-
-    bool isProven() const { return static_cast<bool>(getProof()); }
-
-    ProjectionType asUnproven() const {
-      return ProjectionType::get(getContext(), getTraitApplication(),
-                                 getAssocName(), getAssocTypeArgs());
-    }
-
-    // Construct and delegate to a ClaimType on demand
+    // Construct an unproven ClaimType for this projection's trait application
     ClaimType asClaim() const {
-      return ClaimType::get(getContext(), getTraitApplication(), getProof());
+      return ClaimType::get(getContext(), getTraitApplication());
     }
 
     LogicalResult verifySymbolUses(ModuleOp module,
                                    llvm::function_ref<InFlightDiagnostic()> err);
-
-    /// Look up this proven projection's proof symbol, find the impl's
-    /// associated type binding, and record `proj → bound_type` in `subst`
-    /// for both the unproven and proven forms of this projection.
-    /// Verifies the proof symbol and binding exist; fails with diagnostics
-    /// via `err` if not.
-    LogicalResult verifyAndRecordBinding(ModuleOp module,
-                                 DenseMap<Type,Type> &subst,
-                                 llvm::function_ref<InFlightDiagnostic()> err);
 
     // for PolymorphicTypeInterface
     bool isPolymorphic() const;

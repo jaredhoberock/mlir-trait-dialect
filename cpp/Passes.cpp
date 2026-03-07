@@ -299,6 +299,7 @@ struct FuncCallOpLowering : public OpRewritePattern<FuncCallOp> {
     if (failed(subst))
       return rewriter.notifyMatchFailure(callOp, "couldn't build substitution");
     addProjectionBindings(*subst, callOp.getResultTypes(), resolver, rewriter);
+    addProjectionBindings(*subst, callOp.getOperandTypes(), resolver, rewriter);
 
     SmallVector<Type> concreteResults;
     for (Type r : callOp.getResultTypes()) {
@@ -355,6 +356,7 @@ struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
     if (failed(subst))
       return rewriter.notifyMatchFailure(op, "couldn't build substitution for call");
     addProjectionBindings(*subst, op.getResultTypes(), resolver, rewriter);
+    addProjectionBindings(*subst, op.getOperandTypes(), resolver, rewriter);
 
     SmallVector<Type> concreteResults;
     for (Type r : op.getResultTypes()) {

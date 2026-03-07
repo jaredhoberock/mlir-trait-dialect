@@ -45,16 +45,16 @@ func.func @proj_to_proj() -> i1 {
 
   // Concrete -> A projection
   %a_proj = trait.proj.cast %v, %a_claim
-    : i1 to !trait.proj<@A[i64], "Assoc" by @A_proof>
+    : i1 to !trait.proj<@A[i64], "Assoc"> claim !trait.claim<@A[i64] by @A_proof>
 
   // A projection -> B projection (proj -> proj, case 3)
   // The claim matches the result projection's trait application.
   %b_proj = trait.proj.cast %a_proj, %b_claim
-    : !trait.proj<@A[i64], "Assoc" by @A_proof> to !trait.proj<@B[i64], "Assoc" by @B_proof>
+    : !trait.proj<@A[i64], "Assoc"> to !trait.proj<@B[i64], "Assoc"> claim !trait.claim<@B[i64] by @B_proof>
 
   // B projection -> concrete
   %result = trait.proj.cast %b_proj, %b_claim
-    : !trait.proj<@B[i64], "Assoc" by @B_proof> to i1
+    : !trait.proj<@B[i64], "Assoc"> to i1 claim !trait.claim<@B[i64] by @B_proof>
 
   return %result : i1
 }

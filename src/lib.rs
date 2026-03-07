@@ -72,8 +72,7 @@ unsafe extern "C" {
     fn traitProjectionTypeGet(ctx: MlirContext,
                               trait_app: MlirAttribute,
                               assoc_name: MlirStringRef,
-                              assoc_type_args: *const MlirType, num_assoc_type_args: isize,
-                              proof: MlirStringRef) -> MlirType;
+                              assoc_type_args: *const MlirType, num_assoc_type_args: isize) -> MlirType;
     fn traitTypeIsAProjection(ty: MlirType) -> bool;
     fn traitProjCastOpCreate(loc: MlirLocation,
                               input: MlirValue,
@@ -407,26 +406,18 @@ pub fn generic_types_in<'c>(ty: Type<'c>) -> Vec<Type<'c>> {
 }
 
 /// Create a `!trait.proj<@Trait[types], "AssocName", [assoc_type_args]>` type.
-/// Pass `None` for proof to create an unproven projection, or `Some("proof_name")`
-/// for a proven projection.
 pub fn projection_type<'c>(
     ctx: &'c Context,
     trait_app: TraitApplicationAttribute<'c>,
     assoc_name: &str,
     assoc_type_args: &[Type<'c>],
-    proof: Option<&str>,
 ) -> Type<'c> {
-    let proof_ref = match proof {
-        Some(name) => StringRef::new(name).to_raw(),
-        None => MlirStringRef { data: std::ptr::null(), length: 0 },
-    };
     unsafe { Type::from_raw(traitProjectionTypeGet(
         ctx.to_raw(),
         trait_app.to_raw(),
         StringRef::new(assoc_name).to_raw(),
         assoc_type_args.as_ptr() as *const _,
         assoc_type_args.len() as isize,
-        proof_ref,
     ))}
 }
 

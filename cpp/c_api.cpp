@@ -345,8 +345,7 @@ bool traitTypeIsAClaim(MlirType type) {
 MlirType traitProjectionTypeGet(MlirContext wrappedCtx,
                                 MlirAttribute wrappedTraitApp,
                                 MlirStringRef assocName,
-                                MlirType *assocTypeArgs, intptr_t numAssocTypeArgs,
-                                MlirStringRef proof) {
+                                MlirType *assocTypeArgs, intptr_t numAssocTypeArgs) {
   MLIRContext *ctx = unwrap(wrappedCtx);
   TraitApplicationAttr traitApp = dyn_cast<TraitApplicationAttr>(unwrap(wrappedTraitApp));
   if (!traitApp) return {};
@@ -355,10 +354,7 @@ MlirType traitProjectionTypeGet(MlirContext wrappedCtx,
   args.reserve(numAssocTypeArgs);
   for (intptr_t i = 0; i < numAssocTypeArgs; ++i)
     args.push_back(unwrap(assocTypeArgs[i]));
-  FlatSymbolRefAttr proofAttr;
-  if (proof.length > 0)
-    proofAttr = FlatSymbolRefAttr::get(ctx, StringRef(proof.data, proof.length));
-  return wrap(ProjectionType::get(ctx, traitApp, nameAttr, args, proofAttr));
+  return wrap(ProjectionType::get(ctx, traitApp, nameAttr, args));
 }
 
 bool traitTypeIsAProjection(MlirType type) {
