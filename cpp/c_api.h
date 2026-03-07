@@ -114,11 +114,11 @@ MlirType traitProjectionTypeGet(MlirContext ctx,
 /// Checks whether the given type is a projection type.
 bool traitTypeIsAProjection(MlirType type);
 
-/// Create a trait.proj.witness operation
-MlirOperation traitProjWitnessOpCreate(MlirLocation loc,
-                                        MlirValue input,
-                                        MlirStringRef proofName,
-                                        MlirType resultType);
+/// Create a trait.proj.cast operation
+MlirOperation traitProjCastOpCreate(MlirLocation loc,
+                                     MlirValue input,
+                                     MlirValue claim,
+                                     MlirType resultType);
 
 /// Create a trait.assoc_type op. If boundType.ptr is non-null, the op gets a
 /// bound_type attribute (for use inside trait.impl); otherwise it is a bare

@@ -876,27 +876,28 @@ def WitnessOp : TraitDialectOp<"witness", [
 }
 
 
-def ProjWitnessOp : TraitDialectOp<"proj.witness", [
+def ProjCastOp : TraitDialectOp<"proj.cast", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
   Pure
 ]> {
-  let summary = "Wrap a concrete value with projection evidence";
+  let summary = "Convert between equivalent types via an associated type binding";
   let description = [{
-    Wraps a concrete-typed value into a proven `!trait.proj` type, providing
-    evidence that the projection resolves to the concrete type.
+    Converts a value between types that are equivalent under a trait's
+    associated type binding. The claim operand justifies the equivalence.
 
-    Example:
-      %val_proj = trait.proj.witness %val by @Base_proof
-        : i1 -> !trait.proj<@Base[i64], "Assoc" by @Base_proof>
+    At least one of input/result must be a ProjectionType. Cases:
+    1. Concrete -> projection (at call sites)
+    2. Projection -> concrete
+    3. Projection -> projection (impl method boundaries)
+
+    Verification: if the claim is proven, the verifier checks that the
+    associated type binding makes input and result equivalent. If the claim
+    is unproven (polymorphic), verification is deferred to monomorphization.
   }];
 
-  let arguments = (ins
-    AnyType:$input,
-    FlatSymbolRefAttr:$proof
-  );
-  let results = (outs Projection:$result);
-
-  let assemblyFormat = "$input `by` $proof attr-dict `:` type($input) `->` type($result)";
+  let arguments = (ins AnyType:$input, Claim:$claim);
+  let results = (outs AnyType:$result);
+  let hasCustomAssemblyFormat = 1;
 }
 
 

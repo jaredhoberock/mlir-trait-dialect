@@ -365,21 +365,18 @@ bool traitTypeIsAProjection(MlirType type) {
   return isa<ProjectionType>(unwrap(type));
 }
 
-MlirOperation traitProjWitnessOpCreate(MlirLocation loc,
-                                        MlirValue input,
-                                        MlirStringRef proofName,
-                                        MlirType resultType) {
+MlirOperation traitProjCastOpCreate(MlirLocation loc,
+                                     MlirValue input,
+                                     MlirValue claim,
+                                     MlirType resultType) {
   MLIRContext *ctx = unwrap(loc)->getContext();
   OpBuilder builder(ctx);
 
-  FlatSymbolRefAttr proofRef = FlatSymbolRefAttr::get(
-    ctx, StringRef(proofName.data, proofName.length));
-
-  auto op = builder.create<ProjWitnessOp>(
+  auto op = builder.create<ProjCastOp>(
     unwrap(loc),
     unwrap(resultType),
     unwrap(input),
-    proofRef
+    unwrap(claim)
   );
 
   return wrap(op.getOperation());

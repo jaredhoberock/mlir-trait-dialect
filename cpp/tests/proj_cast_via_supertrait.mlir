@@ -11,10 +11,9 @@
 //   fn foo<T: Child>(arg: T, value: T::Assoc) -> T::Assoc { value }
 //   assert foo(0, true);
 //
-// The call site must wrap the concrete `i1` argument into a proven
-// projection `!trait.proj<@Base[i64], "Assoc" by @Base_proof>` so
-// that the verifier can unify it with the polymorphic formal type
-// `!trait.proj<@Base[!T], "Assoc">` without impl resolution.
+// The call site uses `trait.proj.cast` to convert the concrete `i1` argument
+// into a projection type so that the verifier can unify it with the polymorphic
+// formal type `!trait.proj<@Base[!T], "Assoc">` without impl resolution.
 
 !T = !trait.poly<0>
 
@@ -56,10 +55,11 @@ func.func @main() -> i1 {
   %val = arith.constant true
 
   %child_claim = trait.witness @Child_proof for @Child[i64]
+  %base_claim = trait.witness @Base_proof for @Base[i64]
 
-  // Wrap the concrete i1 value with proof that @Base[i64]::Assoc = i1
-  %val_proj = trait.proj.witness %val by @Base_proof
-    : i1 -> !trait.proj<@Base[i64], "Assoc" by @Base_proof>
+  // Cast the concrete i1 value to the projection type via claim
+  %val_proj = trait.proj.cast %val, %base_claim
+    : i1 to !trait.proj<@Base[i64], "Assoc" by @Base_proof>
 
   %result = trait.func.call @foo(%arg, %val_proj, %child_claim)
     : (i64, !trait.proj<@Base[i64], "Assoc" by @Base_proof>,

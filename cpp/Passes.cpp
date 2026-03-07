@@ -313,18 +313,11 @@ struct FuncCallOpLowering : public OpRewritePattern<FuncCallOp> {
     if (failed(callee))
       return rewriter.notifyMatchFailure(callOp, "couldn't get or instantiate callee");
 
-    // Unwrap any trait.proj.witness operands to get the concrete values.
-    //
-    // We do this here rather than in a separate pattern because
-    // trait.proj.witness must survive until after buildParameterSpecialization reads the
-    // operand types: proven projection types on operands carry proof symbols
-    // that recordProofBindingsIn needs to resolve associated type bindings
-    // (including GAT type arguments). Erasing the wrappers earlier would lose
-    // that information.
+    // Unwrap any trait.proj.cast operands to get the concrete values.
     SmallVector<Value> concreteOperands;
     for (Value operand : callOp.getOperands()) {
-      if (auto pwOp = operand.getDefiningOp<ProjWitnessOp>())
-        concreteOperands.push_back(pwOp.getInput());
+      if (auto pcOp = operand.getDefiningOp<ProjCastOp>())
+        concreteOperands.push_back(pcOp.getInput());
       else
         concreteOperands.push_back(operand);
     }
@@ -632,12 +625,14 @@ struct EraseProjectOp : public OpRewritePattern<ProjectOp> {
   }
 };
 
-struct EraseProjWitnessOp : public OpConversionPattern<ProjWitnessOp> {
+struct EraseProjCastOp : public OpConversionPattern<ProjCastOp> {
   using OpConversionPattern::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(ProjWitnessOp op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(ProjCastOp op, OneToNOpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
-    // The input already has the concrete type; just forward it
+    // The claim operand is erased (mapped to nothing) by the TypeConverter.
+    // The input operand survives; after projection resolution, input and
+    // result have the same concrete type — just forward the input.
     rewriter.replaceOp(op, adaptor.getInput());
     return success();
   }
@@ -653,7 +648,7 @@ struct EraseProjWitnessOp : public OpConversionPattern<ProjWitnessOp> {
 /// evidence through the IR are no longer needed.
 ///
 /// Illegal ops:
-///   - `trait.witness`, `trait.project`, and `trait.proj.witness` are expected
+///   - `trait.witness`, `trait.project`, and `trait.proj.cast` are expected
 ///     at this stage and are erased by dedicated patterns.
 ///   - `trait.allege` and `trait.derive` should have been rewritten by earlier
 ///     passes; their presence is a bug and will cause the conversion to fail.
@@ -665,8 +660,8 @@ static LogicalResult eraseClaims(ModuleOp module) {
   MLIRContext* ctx = module.getContext();
   ConversionTarget target(*ctx);
 
-  // all claim-producing ops and ProjWitnessOp are illegal
-  target.addIllegalOp<AllegeOp, DeriveOp, ProjectOp, WitnessOp, ProjWitnessOp>();
+  // all claim-producing ops and ProjCastOp are illegal
+  target.addIllegalOp<AllegeOp, DeriveOp, ProjectOp, WitnessOp, ProjCastOp>();
 
   // an op is legal if it mentions neither !trait.claim nor !trait.proj
   target.markUnknownOpDynamicallyLegal([&](Operation *op) {
@@ -681,10 +676,10 @@ static LogicalResult eraseClaims(ModuleOp module) {
     return success();
   });
 
-  // erase all trait.project, trait.witness, and trait.proj.witness ops
+  // erase all trait.project, trait.witness, and trait.proj.cast ops
   RewritePatternSet patterns(ctx);
   patterns.add<EraseProjectOp, EraseWitnessOp>(ctx);
-  patterns.add<EraseProjWitnessOp>(tc, ctx);
+  patterns.add<EraseProjCastOp>(tc, ctx);
 
   // collect erase claims patterns from other dialects
   for (Dialect *dialect : ctx->getLoadedDialects()) {

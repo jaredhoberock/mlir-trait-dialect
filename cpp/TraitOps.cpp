@@ -333,10 +333,6 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
         projReplacer.addReplacement([this, &subst](Type t) -> std::optional<Type> {
           auto proj = dyn_cast<ProjectionType>(t);
           if (!proj) return std::nullopt;
-          // skip if the trait application itself is still polymorphic
-          if (llvm::any_of(proj.getTraitApplication().getTypeArgs(),
-                           [](Type ty) { return isPolymorphicType(ty); }))
-            return std::nullopt;
           auto resolved = specializeAssociatedTypeBinding(
               proj.getAssocName().getValue(), proj.getAssocTypeArgs());
           if (failed(resolved)) return std::nullopt;
@@ -1222,41 +1218,116 @@ TraitOp AssumeOp::getTrait() {
 
 
 //===----------------------------------------------------------------------===//
-// ProjWitnessOp
+// ProjCastOp
 //===----------------------------------------------------------------------===//
 
-LogicalResult ProjWitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+// Format: trait.proj.cast %input, %claim : input_type to result_type
+ParseResult ProjCastOp::parse(OpAsmParser &p, OperationState &st) {
+  OpAsmParser::UnresolvedOperand input, claim;
+
+  // parse '%input, %claim'
+  if (p.parseOperand(input) || p.parseComma() || p.parseOperand(claim))
+    return failure();
+
+  // parse ': input_type'
+  Type inputType;
+  if (p.parseColon() || p.parseType(inputType))
+    return failure();
+
+  // parse 'to result_type'
+  Type resultType;
+  if (p.parseKeyword("to") || p.parseType(resultType))
+    return failure();
+
+  st.addTypes(resultType);
+
+  // resolve input
+  if (p.resolveOperand(input, inputType, st.operands))
+    return failure();
+
+  // The claim type is inferred: find the projection among input/result,
+  // extract its trait application, and build the ClaimType.
+  auto inputProj = dyn_cast<ProjectionType>(inputType);
+  auto resultProj = dyn_cast<ProjectionType>(resultType);
+  if (!inputProj && !resultProj)
+    return p.emitError(p.getCurrentLocation(),
+      "at least one of input/result must be a !trait.proj type");
+
+  // Pick the projection whose trait application identifies the claim.
+  // For proj->proj, the claim comes from the result (the "target" form).
+  ProjectionType projForClaim = resultProj ? resultProj : inputProj;
+  TraitApplicationAttr traitApp = projForClaim.getTraitApplication();
+  FlatSymbolRefAttr proof = projForClaim.getProof();
+  ClaimType claimTy = ClaimType::get(p.getContext(), traitApp, proof);
+
+  if (p.resolveOperand(claim, claimTy, st.operands))
+    return failure();
+
+  return success();
+}
+
+void ProjCastOp::print(OpAsmPrinter &p) {
+  // trait.proj.cast %input, %claim : input_type to result_type
+  p << " " << getInput() << ", " << getClaim()
+    << " : " << getInput().getType()
+    << " to " << getResult().getType();
+}
+
+LogicalResult ProjCastOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
   if (!module)
     return emitError() << "not inside a module";
 
   auto errFn = [&] { return emitOpError(); };
 
-  // result must be a proven ProjectionType
-  auto projTy = cast<ProjectionType>(getResult().getType());
-  if (!projTy.isProven())
-    return emitOpError() << "result projection must carry a proof";
+  Type inputType = getInput().getType();
+  Type resultType = getResult().getType();
 
-  // proof on result must match the op's proof attr
-  if (projTy.getProof() != getProofAttr())
-    return emitOpError() << "result projection proof " << projTy.getProof()
-                         << " does not match op proof " << getProofAttr();
+  auto inputProj = dyn_cast<ProjectionType>(inputType);
+  auto resultProj = dyn_cast<ProjectionType>(resultType);
 
-  // verify symbol uses (trait app + proof)
-  if (failed(projTy.verifySymbolUses(module, errFn)))
+  // Structural check 1: at least one must be a ProjectionType
+  if (!inputProj && !resultProj)
+    return emitOpError() << "at least one of input/result must be a !trait.proj type";
+
+  ClaimType claimTy = cast<ClaimType>(getClaim().getType());
+  TraitApplicationAttr claimApp = claimTy.getTraitApplication();
+
+  // Structural check 2: the claim's trait application must match one of the projections
+  bool inputMatches = inputProj && inputProj.getTraitApplication() == claimApp;
+  bool resultMatches = resultProj && resultProj.getTraitApplication() == claimApp;
+  if (!inputMatches && !resultMatches)
+    return emitOpError() << "claim trait application " << claimApp
+                         << " does not match any projection's trait application";
+
+  // Structural check 3: the matching projection must name an assoc type in the trait
+  ProjectionType matchingProj = resultMatches ? resultProj : inputProj;
+  if (failed(matchingProj.verifySymbolUses(module, errFn)))
     return failure();
 
-  // resolve the binding (applies GAT substitution)
-  auto implOr = ProofOp::getImplFromProof(module, projTy.getProof(), errFn);
+  // If the claim is unproven, defer further checking to monomorphization
+  if (!claimTy.isProven())
+    return success();
+
+  // Proven claim: verify the binding
+  auto implOr = ProofOp::getImplFromProof(module, claimTy.getProof(), errFn);
   if (failed(implOr)) return failure();
 
   auto binding = implOr->specializeAssociatedTypeBinding(
-      projTy.getAssocName().getValue(), projTy.getAssocTypeArgs(), errFn);
+      matchingProj.getAssocName().getValue(), matchingProj.getAssocTypeArgs(), errFn);
   if (failed(binding)) return failure();
 
-  if (*binding != getInput().getType())
-    return emitOpError() << "input type " << getInput().getType()
-                         << " does not match impl's associated type binding " << *binding;
+  // The "other" side must equal the resolved binding
+  Type otherType = (matchingProj == resultProj) ? inputType : resultType;
+
+  // If the other side is also a projection, we can't structurally verify it
+  // against the binding in the general case (it may need its own resolution).
+  // Only verify when the other side is concrete.
+  if (!isa<ProjectionType>(otherType)) {
+    if (*binding != otherType)
+      return emitOpError() << "type " << otherType
+                           << " does not match impl's associated type binding " << *binding;
+  }
 
   return success();
 }

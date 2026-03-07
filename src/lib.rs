@@ -75,10 +75,10 @@ unsafe extern "C" {
                               assoc_type_args: *const MlirType, num_assoc_type_args: isize,
                               proof: MlirStringRef) -> MlirType;
     fn traitTypeIsAProjection(ty: MlirType) -> bool;
-    fn traitProjWitnessOpCreate(loc: MlirLocation,
-                                 input: MlirValue,
-                                 proof_name: MlirStringRef,
-                                 result_type: MlirType) -> MlirOperation;
+    fn traitProjCastOpCreate(loc: MlirLocation,
+                              input: MlirValue,
+                              claim: MlirValue,
+                              result_type: MlirType) -> MlirOperation;
     fn traitAssocTypeOpCreate(loc: MlirLocation,
                               name: MlirStringRef,
                               bound_type: MlirType,
@@ -435,17 +435,17 @@ pub fn is_projection_type(ty: Type) -> bool {
     unsafe { traitTypeIsAProjection(ty.to_raw()) }
 }
 
-/// Create a `trait.proj.witness` op that wraps a concrete value with projection evidence.
-pub fn proj_witness<'c>(
+/// Create a `trait.proj.cast` op that converts between equivalent types via a claim.
+pub fn proj_cast<'c>(
     loc: Location<'c>,
     input: Value<'c, '_>,
-    proof_name: &str,
+    claim: Value<'c, '_>,
     result_type: Type<'c>,
 ) -> Operation<'c> {
-    unsafe { Operation::from_raw(traitProjWitnessOpCreate(
+    unsafe { Operation::from_raw(traitProjCastOpCreate(
         loc.to_raw(),
         input.to_raw(),
-        StringRef::new(proof_name).to_raw(),
+        claim.to_raw(),
         result_type.to_raw(),
     ))}
 }
