@@ -43,7 +43,7 @@ func.func @caller() -> i1 {
   %v = arith.constant true
   %w = trait.witness @Trait_impl for @Trait[i64]
   // Cast i1 to Trait[i64]::Assoc<i1> via proj.cast
-  %pw = trait.proj.cast %v, %w : i1 to !trait.proj<@Trait[i64], "Assoc", [i1]> claim !trait.claim<@Trait[i64] by @Trait_impl>
+  %pw = trait.proj.cast %v, %w : i1 to !trait.proj<@Trait[i64], "Assoc", [i1]> by !trait.claim<@Trait[i64] by @Trait_impl>
   %r = trait.func.call @foo(%x, %pw, %w) : (i64, !trait.proj<@Trait[i64], "Assoc", [i1]>, !trait.claim<@Trait[i64] by @Trait_impl>) -> i1
   return %r : i1
 }

@@ -14,6 +14,43 @@ include "Trait.td"
 include "TraitTypes.td"
 
 
+//===----------------------------------------------------------------------===//
+// Design principles
+//===----------------------------------------------------------------------===//
+//
+// Goal: polymorphic IR is correct by construction.  A well-formed module
+// that passes verification cannot monomorphize into ill-typed code.  The
+// principles below exist to make that goal achievable and maintainable.
+//
+// 1. Claims are first-class SSA values.  A claim is an assertion that a
+//    trait is satisfied for specific types (e.g., @PartialEq[i32,i32]).
+//    Claims are represented as explicit !trait.claim SSA values flowing
+//    through SSA edges.  Every op that needs a trait guarantee takes a
+//    claim operand.  This makes proof obligations visible and trackable
+//    in the IR rather than implicit in the context.
+//
+// 2. Verification is always local.  Because claims are SSA values,
+//    verifiers inspect operands directly — no searching op-def chains,
+//    no impl resolution, no global analysis.  This keeps verifiers simple
+//    and free of surprising dependencies on distant IR.  The one exception
+//    is trait.assume, which is semi-local (inspects the enclosing scope).
+//    Impl resolution is a separate global pass that runs before
+//    monomorphization.
+//
+// 3. Polymorphic code never fabricates claims.  Claims originate at
+//    monomorphic call sites (trait.allege) and flow into polymorphic code
+//    through !trait.claim parameters.  This ensures that polymorphic code
+//    cannot assume a trait is implemented without the caller proving it —
+//    the core of "correct by construction."
+//
+// 4. The IR is the sole authority on claims.  All proof structure lives
+//    in the IR itself — no side tables, no external state.  Analysis
+//    passes read the IR; transformation passes update it.  This keeps
+//    the IR self-contained and makes correctness auditable by inspection.
+//
+//===----------------------------------------------------------------------===//
+
+
 // Adds a `getModule()` convenience method to the op.
 def HasGetModule : NativeOpTrait<"HasGetModule"> {
   let cppNamespace = "::mlir::trait";
@@ -636,13 +673,18 @@ def AssumeOp : TraitDialectOp<"assume", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
   Pure
 ]>{
-  let summary = "Materializes a claim value for a symbolic trait application";
+  let summary = "Introduce an axiomatic claim from the enclosing scope";
   let description = [{
     Creates a zero-sized SSA value of type `!trait.claim<@Trait[types]>` that
-    acts as an assumed claim within polymorphic code. This operation has no
-    operands.
+    introduces a **hypothesis** — a trait application that holds axiomatically
+    in the current scope.
 
-    The assumed trait application must match one of (checked in order):
+    Use `trait.project` to derive *consequences* of these axioms (e.g., trait
+    requirements or impl assumptions). Use `trait.witness` for claims backed
+    by concrete impl evidence.
+
+    The assumed trait application must be an axiom of the enclosing scope,
+    checked in order:
       1. A `!trait.claim`-typed parameter of the enclosing function
       2. The enclosing `trait.trait`'s self application
       3. The enclosing `trait.impl`'s self application or a declared assumption
@@ -764,8 +806,13 @@ def ProjectOp : TraitDialectOp<"project", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
   Pure
 ]> {
-  let summary = "Project a subclaim from a claim";
+  let summary = "Derive a consequence from an existing claim";
   let description = [{
+    Given a claim, derive a **consequence** — a trait application that follows
+    from the source claim's trait requirements or impl assumptions. While
+    `trait.assume` introduces axioms, `trait.project` extracts their logical
+    consequences.
+
     Given a claim of `@Trait[Args...]`, produce a claim of either:
       1. the **identity** projection `@Trait[Args...]` itself, or
       2. a one-hop **trait requirement** `@Req[Args...]` declared in the
@@ -887,14 +934,18 @@ def ProjCastOp : TraitDialectOp<"proj.cast", [
     Converts a value between types that are equivalent under a trait's
     associated type binding. The claim operand justifies the equivalence.
 
-    At least one of input/result must be a ProjectionType. Cases:
-    1. Concrete -> projection (at call sites)
-    2. Projection -> concrete
-    3. Projection -> projection (impl method boundaries)
+    The input and result types must differ only in projection types that
+    can be resolved via the claim's trait. Cases include:
+    1. Concrete <-> projection (at call sites)
+    2. Projection <-> projection (impl method boundaries)
+    3. Types containing projections, e.g., claim types like
+       `!trait.claim<@Trait[!trait.proj<...>]>` (resolving projections
+       inside derived claims)
 
-    Verification: if the claim is proven, the verifier checks that the
-    associated type binding makes input and result equivalent. If the claim
-    is unproven (polymorphic), verification is deferred to monomorphization.
+    Verification: if the claim is proven, the verifier resolves all
+    projections in the input type via the impl's bindings and checks
+    the result matches. If the claim is unproven (polymorphic),
+    verification is deferred to monomorphization.
   }];
 
   let arguments = (ins AnyType:$input, Claim:$claim);

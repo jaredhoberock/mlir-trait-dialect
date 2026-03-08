@@ -1252,9 +1252,9 @@ ParseResult ProjCastOp::parse(OpAsmParser &p, OperationState &st) {
   if (p.parseKeyword("to") || p.parseType(resultType))
     return failure();
 
-  // parse 'claim !trait.claim<...>'
+  // parse 'by !trait.claim<...>'
   Type claimType;
-  if (p.parseKeyword("claim") || p.parseType(claimType))
+  if (p.parseKeyword("by") || p.parseType(claimType))
     return failure();
 
   st.addTypes(resultType);
@@ -1271,11 +1271,11 @@ ParseResult ProjCastOp::parse(OpAsmParser &p, OperationState &st) {
 }
 
 void ProjCastOp::print(OpAsmPrinter &p) {
-  // trait.proj.cast %input, %claim : input_type to result_type claim !trait.claim<...>
+  // trait.proj.cast %input, %claim : input_type to result_type by !trait.claim<...>
   p << " " << getInput() << ", " << getClaim()
     << " : " << getInput().getType()
     << " to " << getResult().getType()
-    << " claim " << getClaim().getType();
+    << " by " << getClaim().getType();
 }
 
 LogicalResult ProjCastOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
@@ -1287,52 +1287,38 @@ LogicalResult ProjCastOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
   Type inputType = getInput().getType();
   Type resultType = getResult().getType();
-
-  auto inputProj = dyn_cast<ProjectionType>(inputType);
-  auto resultProj = dyn_cast<ProjectionType>(resultType);
-
-  // Structural check 1: at least one must be a ProjectionType
-  if (!inputProj && !resultProj)
-    return emitOpError() << "at least one of input/result must be a !trait.proj type";
-
   ClaimType claimTy = cast<ClaimType>(getClaim().getType());
-  TraitApplicationAttr claimApp = claimTy.getTraitApplication();
 
-  // Structural check 2: the claim's trait application must match one of the projections
-  bool inputMatches = inputProj && inputProj.getTraitApplication() == claimApp;
-  bool resultMatches = resultProj && resultProj.getTraitApplication() == claimApp;
-  if (!inputMatches && !resultMatches)
-    return emitOpError() << "claim trait application " << claimApp
-                         << " does not match any projection's trait application";
-
-  // Structural check 3: the matching projection must name an assoc type in the trait
-  ProjectionType matchingProj = resultMatches ? resultProj : inputProj;
-  if (failed(matchingProj.verifySymbolUses(module, errFn)))
-    return failure();
+  // Structural check: at least one type must contain a ProjectionType
+  if (!containsType<ProjectionType>(inputType) &&
+      !containsType<ProjectionType>(resultType))
+    return emitOpError() << "at least one of input/result must contain "
+                         << "a !trait.proj type";
 
   // If the claim is unproven, defer further checking to monomorphization
   if (!claimTy.isProven())
     return success();
 
-  // Proven claim: verify the binding
+  // Proven claim: resolve matching projections and verify equivalence
   auto implOr = ProofOp::getImplFromProof(module, claimTy.getProof(), errFn);
   if (failed(implOr)) return failure();
 
-  auto binding = implOr->specializeAssociatedTypeBinding(
-      matchingProj.getAssocName().getValue(), matchingProj.getAssocTypeArgs(), errFn);
-  if (failed(binding)) return failure();
+  auto subst = implOr->buildSubstitutionForSelfClaim(claimTy.asUnproven(), errFn);
+  if (failed(subst)) return failure();
 
-  // The "other" side must equal the resolved binding
-  Type otherType = (matchingProj == resultProj) ? inputType : resultType;
+  // Resolve matching projections on both sides
+  Type resolvedInput = implOr->resolveProjectionTypesViaBindings(inputType, *subst);
+  Type resolvedResult = implOr->resolveProjectionTypesViaBindings(resultType, *subst);
 
-  // If the other side is also a projection, we can't structurally verify it
-  // against the binding in the general case (it may need its own resolution).
-  // Only verify when the other side is concrete.
-  if (!isa<ProjectionType>(otherType)) {
-    if (*binding != otherType)
-      return emitOpError() << "type " << otherType
-                           << " does not match impl's associated type binding " << *binding;
-  }
+  // If either side still contains unresolved projections (from a different trait),
+  // we can't fully verify — defer to monomorphization
+  if (containsType<ProjectionType>(resolvedInput) ||
+      containsType<ProjectionType>(resolvedResult))
+    return success();
+
+  if (resolvedInput != resolvedResult)
+    return emitOpError() << "resolved input type " << resolvedInput
+                         << " does not match resolved result type " << resolvedResult;
 
   return success();
 }

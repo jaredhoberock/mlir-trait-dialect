@@ -59,7 +59,7 @@ func.func @main() -> i1 {
 
   // Cast the concrete i1 value to the projection type via claim
   %val_proj = trait.proj.cast %val, %base_claim
-    : i1 to !trait.proj<@Base[i64], "Assoc"> claim !trait.claim<@Base[i64] by @Base_proof>
+    : i1 to !trait.proj<@Base[i64], "Assoc"> by !trait.claim<@Base[i64] by @Base_proof>
 
   %result = trait.func.call @foo(%arg, %val_proj, %child_claim)
     : (i64, !trait.proj<@Base[i64], "Assoc">,
