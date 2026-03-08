@@ -104,10 +104,18 @@ LogicalResult TraitOp::verify() {
       return emitOpError() << "'where' clause requirement " << app
                            << " must mention at least one type parameter";
 
-    // must not refer to the current trait
-    if (app.getTraitName() == getSymNameAttr())
-      return emitOpError() << "'where' clause requirement " << app
-                           << " must not reference the current trait";
+    // A direct self-reference like @Trait[!S] would create a circular
+    // obligation that no impl can satisfy. However, a self-reference whose
+    // self argument goes through a projection (e.g. @Trait[!trait.proj<...>])
+    // is safe: the projection resolves to a concrete type during
+    // monomorphization, so the obligation is discharged against a different
+    // impl, not the one being defined.
+    if (app.getTraitName().getValue() == getSymName()) {
+      bool selfArgHasProjection = containsType<ProjectionType>(app.getTypeArgs().front());
+      if (!selfArgHasProjection)
+        return emitOpError() << "'where' clause requirement " << app
+                             << " must not reference the current trait";
+    }
   }
 
   return success();
@@ -125,18 +133,6 @@ FailureOr<DenseMap<Type,Type>> TraitOp::buildSubstitutionForSelfClaim(ClaimType 
   return buildSpecializationSubstitution(getSelfClaim(), actualSelfClaim, *module, errFn);
 }
 
-SmallVector<TraitOp,4> TraitOp::getRequiredTraits() {
-  auto module = getModule();
-  if (failed(module))
-    llvm_unreachable("TraitOp::getPrereqTraits: not in a module");
-
-  SmallVector<TraitOp,4> result;
-  for (auto &app : getRequirements()) {
-    auto trait = app.getTraitOrAbort(*module, "TraitOp::getPrereqTraits: couldn't find required trait");
-    result.push_back(trait);
-  }
-  return result;
-}
 
 SmallVector<ClaimType> TraitOp::getRequirementsAsClaims() {
   MLIRContext *ctx = getContext();
@@ -327,19 +323,7 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
       Type specializedTraitMethodTy = applySubstitutionToFixedPoint(*traitSubst, traitMethodTy);
 
       // Resolve any ProjectionTypes in the specialized signature using this impl's bindings
-      {
-        auto &subst = *traitSubst;
-        AttrTypeReplacer projReplacer;
-        projReplacer.addReplacement([this, &subst](Type t) -> std::optional<Type> {
-          auto proj = dyn_cast<ProjectionType>(t);
-          if (!proj) return std::nullopt;
-          auto resolved = specializeAssociatedTypeBinding(
-              proj.getAssocName().getValue(), proj.getAssocTypeArgs());
-          if (failed(resolved)) return std::nullopt;
-          return applySubstitutionToFixedPoint(subst, *resolved);
-        });
-        specializedTraitMethodTy = projReplacer.replace(specializedTraitMethodTy);
-      }
+      specializedTraitMethodTy = resolveProjectionTypesViaBindings(specializedTraitMethodTy, *traitSubst);
 
       // Check that the impl method's signature can specialize to the expected signature
       FunctionType implMethodTy = implMethod.getFunctionType();
@@ -449,6 +433,19 @@ FailureOr<Type> ImplOp::specializeAssociatedTypeBinding(
   }
 
   return *binding;
+}
+
+Type ImplOp::resolveProjectionTypesViaBindings(Type ty, const DenseMap<Type,Type> &subst) {
+  AttrTypeReplacer replacer;
+  replacer.addReplacement([&](Type t) -> std::optional<Type> {
+    auto proj = dyn_cast<ProjectionType>(t);
+    if (!proj) return std::nullopt;
+    auto resolved = specializeAssociatedTypeBinding(
+        proj.getAssocName().getValue(), proj.getAssocTypeArgs());
+    if (failed(resolved)) return std::nullopt;
+    return applySubstitutionToFixedPoint(subst, *resolved);
+  });
+  return replacer.replace(ty);
 }
 
 FailureOr<DenseMap<Type,Type>> ImplOp::buildMonomorphizationSubstitutionFor(
@@ -709,6 +706,15 @@ FailureOr<SmallVector<ClaimType>> ImplOp::specializeObligationsAsClaimsFor(
   auto requirements = getTrait().specializeRequirementsAsClaimsFor(actualSelfClaim, errFn);
   if (failed(requirements)) return failure();
 
+  // resolve projections in requirements using this impl's associated type
+  // bindings (e.g., `Coord[Tensor[Self]::Shape]` becomes `Coord[tuple<i64,i64>]`
+  // when the impl binds `Shape = S` and S is specialized to tuple<i64,i64>)
+  auto subst = buildSubstitutionForSelfClaim(actualSelfClaim, errFn);
+  if (failed(subst)) return failure();
+
+  for (ClaimType &req : *requirements)
+    req = cast<ClaimType>(resolveProjectionTypesViaBindings(req, *subst));
+
   // specialize assumptions of the impl
   auto assumptions = specializeAssumptionsAsClaimsFor(actualSelfClaim, errFn);
   if (failed(assumptions)) return failure();
@@ -855,6 +861,13 @@ FailureOr<SmallVector<ClaimType>> ProofOp::verifyAndGetSubproofClaims(llvm::func
     auto subproofRef = dyn_cast<FlatSymbolRefAttr>(name);
     if (!subproofRef) {
       if (err) err() << "expected FlatSymbolRefAttr";
+      return failure();
+    }
+
+    // reject self-referencing sub-proofs
+    if (subproofRef.getValue() == getSymName()) {
+      if (err) err() << "sub-proof '" << subproofRef
+                     << "' must not reference the proof itself";
       return failure();
     }
 

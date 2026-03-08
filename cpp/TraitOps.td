@@ -161,8 +161,6 @@ def TraitOp : TraitDialectOp<"trait", [
       return !getRequirements().empty();
     }
 
-    SmallVector<TraitOp,4> getRequiredTraits();
-
     SmallVector<ClaimType> getRequirementsAsClaims();
 
     FailureOr<SmallVector<ClaimType>> specializeRequirementsAsClaimsFor(
@@ -464,6 +462,10 @@ def ImplOp : TraitDialectOp<"impl", [
         StringRef name,
         ArrayRef<Type> assocTypeArgs,
         llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+
+    /// Replace concrete ProjectionTypes in `ty` using this impl's associated
+    /// type bindings, applying `subst` to specialize the result.
+    Type resolveProjectionTypesViaBindings(Type ty, const DenseMap<Type,Type> &subst);
   }];
 
   // builders create one empty block in the body region

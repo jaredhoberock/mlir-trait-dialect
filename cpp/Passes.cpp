@@ -100,7 +100,15 @@ LogicalResult verifyAcyclicTraits(ModuleOp module) {
     s = Status::InPath;
     stack.push_back(u);
 
-    for (TraitOp v : u.getRequiredTraits()) {
+    for (auto &app : u.getRequirements()) {
+      auto v = app.getTraitOrAbort(module, "verifyAcyclicTraits");
+      // A requirement like @Trait[!trait.proj<@Trait[!S], "Assoc">] is a
+      // syntactic self-reference, but not a real cycle: the projection resolves
+      // to a concrete type during monomorphization, breaking the edge. Skip it
+      // so that traits with bounded associated types (e.g. `type Assoc: Trait`)
+      // don't falsely trigger the acyclicity check.
+      if (v == u && containsType<ProjectionType>(app.getTypeArgs().front()))
+        continue;
       if (failed(dfs(v))) return failure();
     }
 
