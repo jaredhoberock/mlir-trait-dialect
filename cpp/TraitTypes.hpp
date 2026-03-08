@@ -60,6 +60,24 @@ inline bool isMonomorphicType(Type ty) {
   return !isPolymorphicType(ty);
 }
 
+// A type is "ground" when it contains no PolymorphicTypeInterface nodes at all —
+// no poly vars, no inference vars, no projections, no claims. Unlike
+// isMonomorphicType, which asks whether any participant *reports* as polymorphic,
+// isGroundType asks whether any participant *exists*. A monomorphic projection
+// like !trait.proj<@Foo[i64], "Bar"> is monomorphic (no poly vars) but not
+// ground (the projection still needs resolution).
+inline bool isGroundType(Type root) {
+  bool found = false;
+  root.walk([&](Type sub) -> WalkResult {
+    if (isa<PolymorphicTypeInterface>(sub)) {
+      found = true;
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+  return !found;
+}
+
 // returns true iff every PolymorphicTypeInterface inside `root` is polymorphic,
 // and at least one such participant exists
 inline bool isPurelyPolymorphicType(Type root) {
