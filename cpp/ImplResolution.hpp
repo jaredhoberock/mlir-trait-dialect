@@ -128,6 +128,11 @@ class ImplResolver {
                                            PatternRewriter &rewriter,
                                            llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
+    /// Walks `ty` and replaces every concrete (monomorphic) ProjectionType
+    /// with its resolved type via full impl lookup.  Polymorphic projections
+    /// are left untouched.  Returns the rewritten type.
+    Type resolveProjectionsIn(Type ty, PatternRewriter &rewriter);
+
     /// Builds a substitution mapping concrete, unproven ClaimTypes to
     /// proven ClaimTypes given the current state of the proof memo
     inline DenseMap<Type,Type> buildClaimSubstitutionFromMemo() const {

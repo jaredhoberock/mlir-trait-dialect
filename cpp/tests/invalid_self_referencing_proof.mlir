@@ -13,5 +13,5 @@ trait.impl @B_impl for @B[i32] {}
 
 trait.impl @A_impl for @A[i32] {}
 
-// expected-error @+1 {{sub-proof '@self_proof' must not reference the proof itself}}
+// expected-error @+1 {{sub-proof '@self_proof' must not reference the proof itself (proves @B but obligation requires @A)}}
 trait.proof @self_proof proves @B_impl for @B[i32] given [@self_proof]

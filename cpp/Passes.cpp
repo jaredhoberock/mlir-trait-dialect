@@ -244,21 +244,6 @@ std::unique_ptr<Pass> createResolveImplsPass() {
 
 namespace {
 
-/// Build an AttrTypeReplacer that resolves concrete `!trait.proj` types
-/// using the ImplResolver.
-static AttrTypeReplacer makeProjectionReplacer(ImplResolver &resolver,
-                                                PatternRewriter &rewriter) {
-  AttrTypeReplacer replacer;
-  replacer.addReplacement([&resolver, &rewriter](Type t) -> std::optional<Type> {
-    auto proj = dyn_cast<ProjectionType>(t);
-    if (!proj || isPolymorphicType(proj)) return std::nullopt;
-    auto resolved = resolver.resolveProjectionType(proj, rewriter);
-    if (failed(resolved)) return std::nullopt;
-    return *resolved;
-  });
-  return replacer;
-}
-
 /// Extend `subst` with bindings that resolve concrete `!trait.proj` types.
 ///
 /// After buildParameterSpecialization maps generic types to concrete types, applying
@@ -547,11 +532,17 @@ struct ResolveProjectionsPattern : public RewritePattern {
     if (op->getParentOfType<TraitOp>() || op->getParentOfType<ImplOp>())
       return failure();
 
-    // Check if any types on this op mention ProjectionType
     if (!opMentionsType<ProjectionType>(op))
       return failure();
 
-    auto replacer = makeProjectionReplacer(resolver, rewriter);
+    AttrTypeReplacer replacer;
+    replacer.addReplacement([&](Type t) -> std::optional<Type> {
+      auto proj = dyn_cast<ProjectionType>(t);
+      if (!proj || isPolymorphicType(proj)) return std::nullopt;
+      auto resolved = resolver.resolveProjectionType(proj, rewriter);
+      if (failed(resolved)) return std::nullopt;
+      return *resolved;
+    });
     if (!wouldReplace(replacer, op,
                       /*replaceAttrs=*/true,
                       /*replaceLocs=*/false,

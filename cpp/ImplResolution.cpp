@@ -201,6 +201,18 @@ FailureOr<Type> ImplResolver::resolveProjectionType(
   return applySubstitutionToFixedPoint(*subst, *binding);
 }
 
+Type ImplResolver::resolveProjectionsIn(Type ty, PatternRewriter &rewriter) {
+  AttrTypeReplacer replacer;
+  replacer.addReplacement([this, &rewriter](Type t) -> std::optional<Type> {
+    auto proj = dyn_cast<ProjectionType>(t);
+    if (!proj || isPolymorphicType(proj)) return std::nullopt;
+    auto resolved = resolveProjectionType(proj, rewriter);
+    if (failed(resolved)) return std::nullopt;
+    return *resolved;
+  });
+  return replacer.replace(ty);
+}
+
 FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
     ClaimType wanted,
     PatternRewriter &rewriter,
@@ -243,6 +255,17 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
     return sym;
   }
 
+  // Compute the proof name early so we can use it as the coinductive memo entry.
+  std::string proofName = impl.generateMangledName(monomorphicWanted) + "_p";
+  auto proofSym = FlatSymbolRefAttr::get(ctx, proofName);
+
+  // Coinductive cycle guard: optimistically populate the proof memo with the
+  // proof symbol before recursing into obligations.  If an obligation (after
+  // projection resolution) turns out to be the same claim we are currently
+  // proving, the recursive call will hit the memo instead of diverging.
+  memo.proofMemo[app] = proofSym;
+  auto rollback = llvm::make_scope_exit([&]{ memo.proofMemo.erase(app); });
+
   // specialize all obligations against wanted
   auto obligations = impl.specializeObligationsAsClaimsFor(wanted, err);
   if (failed(obligations)) return failure();
@@ -250,37 +273,18 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
   // recursively prove monomorphic obligations
   SmallVector<Attribute> subproofSymbols;
   for (ClaimType ob : *obligations) {
-    // resolve any concrete projections in the obligation's type args
-    // before trying to prove it (e.g., @Printable[!trait.proj<@Iter[i32], "Item">]
-    // must become @Printable[i64] before we can find an impl)
-    if (containsType<ProjectionType>(ob)) {
-      AttrTypeReplacer replacer;
-      replacer.addReplacement([this, &rewriter](Type t) -> std::optional<Type> {
-        auto proj = dyn_cast<ProjectionType>(t);
-        if (!proj || isPolymorphicType(proj)) return std::nullopt;
-        auto resolved = resolveProjectionType(proj, rewriter);
-        if (failed(resolved)) return std::nullopt;
-        return *resolved;
-      });
-      Type resolved = replacer.replace(ob);
-      ob = dyn_cast<ClaimType>(resolved);
-      if (!ob) {
-        if (err) err() << "obligation lost ClaimType after projection resolution";
-        return failure();
-      }
-    }
+    // XXX TODO consider pushing this resolveProjectionsIn down into resolveImplFor
+    ob = cast<ClaimType>(resolveProjectionsIn(ob, rewriter));
 
     auto sym = resolveAndEnsureProofFor(ob, rewriter, err);
     if (failed(sym)) return failure();
     subproofSymbols.push_back(*sym);
   }
 
-  // create the proof and memoize by the monomorphic app 
+  // create the proof and memoize by the monomorphic app
+  rollback.release();
   PatternRewriter::InsertionGuard guard(rewriter);
   rewriter.setInsertionPointToEnd(module.getBody());
-
-  // generate a mangled name for the proof based on the monomorphic wanted claim
-  std::string proofName = impl.generateMangledName(monomorphicWanted) + "_p";
 
   ProofOp proof = rewriter.create<ProofOp>(
     rewriter.getUnknownLoc(),

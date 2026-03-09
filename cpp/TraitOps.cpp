@@ -857,36 +857,59 @@ FailureOr<SmallVector<ClaimType>> ProofOp::verifyAndGetSubproofClaims(llvm::func
     return failure();
   }
 
-  for (Attribute name : getSubproofNames()) {
+  // Compute obligations so we can validate coinductive self-references
+  // and check arity.
+  auto implOp = getImpl();
+  if (!implOp) {
+    if (err) err() << "cannot find impl '" << getImplNameAttr() << "'";
+    return failure();
+  }
+
+  auto obligations = implOp.specializeObligationsAsClaimsFor(getProvenClaim(), err);
+  if (failed(obligations)) return failure();
+
+  ArrayAttr subproofNames = getSubproofNames();
+  if (subproofNames.size() != obligations->size()) {
+    if (err) err() << "arity mismatch: expected " << obligations->size()
+                   << " subproofs, but found " << subproofNames.size();
+    return failure();
+  }
+
+  for (auto [obligation, name] : llvm::zip(*obligations, subproofNames)) {
     auto subproofRef = dyn_cast<FlatSymbolRefAttr>(name);
     if (!subproofRef) {
       if (err) err() << "expected FlatSymbolRefAttr";
       return failure();
     }
 
-    // reject self-referencing sub-proofs
+    // Coinductive self-reference: valid only when the obligation is for
+    // the same trait as the proof itself.
     if (subproofRef.getValue() == getSymName()) {
-      if (err) err() << "sub-proof '" << subproofRef
-                     << "' must not reference the proof itself";
-      return failure();
+      if (obligation.getTraitApplication().getTraitName() !=
+              getTraitApplication().getTraitName()) {
+        if (err) err() << "sub-proof '@" << subproofRef.getValue()
+                       << "' must not reference the proof itself"
+                       << " (proves " << getTraitApplication().getTraitName()
+                       << " but obligation requires "
+                       << obligation.getTraitApplication().getTraitName() << ")";
+        return failure();
+      }
+
+      result.push_back(ClaimType::get(getContext(), getTraitApplication(), subproofRef));
+      continue;
     }
 
     auto subproof = getProofOpOrUnconditionalImplOp(module, subproofRef, err);
-    if (failed(subproof)) {
+    if (failed(subproof))
       return failure();
-    }
 
-    // the subproof is guaranteed to be either ProofOp or ImplOp
-    // get the trait application of the subproof
     TraitApplicationAttr subproofTraitApp;
-    if (auto proofOp = dyn_cast<ProofOp>(*subproof)) {
+    if (auto proofOp = dyn_cast<ProofOp>(*subproof))
       subproofTraitApp = proofOp.getTraitApplication();
-    } else {
+    else
       subproofTraitApp = dyn_cast<ImplOp>(*subproof).getSelfApplication();
-    }
 
-    ClaimType subproofTy = ClaimType::get(getContext(), subproofTraitApp, subproofRef);
-    result.push_back(subproofTy);
+    result.push_back(ClaimType::get(getContext(), subproofTraitApp, subproofRef));
   }
 
   return result;

@@ -190,6 +190,20 @@ bool ClaimType::isPolymorphic() const {
   });
 }
 
+/// Recursively walk a proof chain starting from an (unproven, proven) claim
+/// pair and build a substitution map (unproven → proven) for every obligation
+/// along the way.  Despite the name, this is not just verification — the
+/// substitution it produces is later used by applySubstitutionToFixedPoint to
+/// rewrite types during unification.
+///
+/// This function lives here (TraitTypes.cpp) because it operates on ClaimType
+/// and builds a type substitution, but it reaches into ProofOp and ImplOp to
+/// look up proofs and specialize obligations.  It arguably belongs on ProofOp
+/// or ClaimType rather than being a free function.
+///
+/// Related: ProofOp::verifyAndGetSubproofClaims (TraitOps.cpp) is a helper
+/// called from here that resolves subproof names to typed claims, validates
+/// coinductive self-references, and checks arity.
 LogicalResult verifyAndRecordProof(
     ClaimType unproven,
     ClaimType proven,
@@ -247,7 +261,7 @@ LogicalResult verifyAndRecordProof(
   // if it's an impl op, check that the trait has no requirements
   if (auto impl = dyn_cast<ImplOp>(*symOp)) {
     if (trait->hasRequirements()) {
-      if (err) err() << "self-proving impl provides no subproof for trait requirements";
+      if (err) err() << "impl provides no subproof for trait requirements";
       return failure();
     }
 
@@ -267,25 +281,23 @@ LogicalResult verifyAndRecordProof(
   auto obligations = proof.getImpl().specializeObligationsAsClaimsFor(unproven, err);
   if (failed(obligations)) return failure();
 
-  // get the subproof claims
+  // get the subproof claims (also checks arity against obligations)
   auto subproofs = proof.verifyAndGetSubproofClaims(err);
   if (failed(subproofs)) return failure();
 
-  // the number of subproofs must match the number of obligations 
-  if (subproofs->size() != obligations->size()) {
-    if (err) err() << "arity mismatch: expected " << obligations->size()
-                   << " subproofs, but found " << subproofs->size();
-    return failure();
-  }
+  // Bind optimistically before recursing so that coinductive self-references
+  // (where an obligation resolves back to the same claim) hit the early exit
+  // at the top of this function instead of diverging.
+  subst[unproven] = proven;
 
   // recurse over obligations
   for (auto [ob, sub] : llvm::zip(*obligations, *subproofs)) {
-    if (failed(verifyAndRecordProof(ob, sub, module, subst, err)))
+    if (failed(verifyAndRecordProof(ob, sub, module, subst, err))) {
+      subst.erase(unproven);
       return failure();
+    }
   }
 
-  // success: bind the whole claim so that later normalization keeps the proof
-  subst[unproven] = proven;
   return success();
 }
 
