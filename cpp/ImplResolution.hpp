@@ -125,8 +125,8 @@ class ImplResolver {
     /// Uses the internal impl resolution pipeline to find the matching impl,
     /// then looks up the associated type binding and applies substitution.
     FailureOr<Type> resolveProjectionType(ProjectionType proj,
-                                           PatternRewriter &rewriter,
-                                           llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+                                          PatternRewriter &rewriter,
+                                          llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     /// Walks `ty` and replaces every concrete (monomorphic) ProjectionType
     /// with its resolved type via full impl lookup.  Polymorphic projections
@@ -147,6 +147,17 @@ class ImplResolver {
     }
 
   private:
+    /// Finds the unique ImplOp for the wanted claim.
+    FailureOr<ImplOp> resolveImplFor(ClaimType wanted,
+                                     PatternRewriter &rewriter,
+                                     llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+
+    /// Checks whether all of `impl`'s where-clause assumptions are satisfiable
+    /// when specialized for `concreteSelf`.
+    LogicalResult assumptionsSatisfiableFor(ImplOp impl,
+                                            ClaimType concreteSelf,
+                                            PatternRewriter &rewriter);
+
     mutable ModuleOp module;
     ProofResolutionMemo memo;
     ImplGeneratorSet generators;

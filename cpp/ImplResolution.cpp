@@ -5,21 +5,11 @@
 
 namespace mlir::trait {
 
-// forward declaration
-static FailureOr<ImplOp> resolveImplFor(ClaimType wanted,
-                                        ModuleOp module,
-                                        ResolutionMemo &memo,
-                                        const ImplGenerator &gen,
-                                        PatternRewriter& rewriter,
-                                        llvm::function_ref<InFlightDiagnostic()> err = nullptr);
-
-static LogicalResult
-assumptionsSatisfiableFor(ImplOp impl,
-                          ClaimType concreteSelf, // concrete self claim, proven or not
-                          ModuleOp module,
-                          ResolutionMemo& memo,
-                          const ImplGenerator& gen,
-                          PatternRewriter &rewriter) {
+LogicalResult
+ImplResolver::assumptionsSatisfiableFor(ImplOp impl,
+                                        ClaimType concreteSelf,
+                                        PatternRewriter &rewriter) {
+  ResolutionMemo &memo = this->memo.resolutionMemo;
   TraitApplicationAttr app = concreteSelf.getTraitApplication();
 
   // consult the per-(impl,claim) satisfiability memo
@@ -39,12 +29,12 @@ assumptionsSatisfiableFor(ImplOp impl,
 
   for (ClaimType assume : *assumptions) {
     // find an impl for the assumption
-    auto subImpl = resolveImplFor(assume, module, memo, gen, rewriter);
+    auto subImpl = resolveImplFor(assume, rewriter);
     if (failed(subImpl))
       return failure();
 
     // that impl's own assumptions must be satisfiable too
-    if (failed(assumptionsSatisfiableFor(*subImpl, assume, module, memo, gen, rewriter)))
+    if (failed(assumptionsSatisfiableFor(*subImpl, assume, rewriter)))
       return failure();
   }
 
@@ -103,15 +93,14 @@ static LogicalResult diagnoseImplResolutionFailure(
   return diag;
 }
 
-
-// pick the unique ImplOp for the wanted claim. Coherence assumed; error on 0 or >1.
-static FailureOr<ImplOp> resolveImplFor(
+FailureOr<ImplOp> ImplResolver::resolveImplFor(
     ClaimType wanted,
-    ModuleOp module,
-    ResolutionMemo &memo,
-    const ImplGenerator &gen,
     PatternRewriter &rewriter,
     llvm::function_ref<InFlightDiagnostic()> err) {
+  // normalize projections in the wanted claim before resolution
+  wanted = cast<ClaimType>(resolveProjectionsIn(wanted, rewriter));
+
+  ResolutionMemo &memo = this->memo.resolutionMemo;
   TraitApplicationAttr app = wanted.getTraitApplication();
 
   // first check the memo
@@ -125,7 +114,7 @@ static FailureOr<ImplOp> resolveImplFor(
   // partition them into good/bad by satisfiable assumptions
   SmallVector<ImplOp> good, bad;
   for (ImplOp impl : trait.getCandidateImplsFor(wanted)) {
-    if (succeeded(assumptionsSatisfiableFor(impl, wanted, module, memo, gen, rewriter)))
+    if (succeeded(assumptionsSatisfiableFor(impl, wanted, rewriter)))
       good.push_back(impl);
     else
       bad.push_back(impl);
@@ -135,8 +124,8 @@ static FailureOr<ImplOp> resolveImplFor(
   if (good.empty()) {
     PatternRewriter::InsertionGuard guard(rewriter);
     rewriter.setInsertionPointToEnd(module.getBody());
-    if (auto impl = gen.generateImpl(trait, wanted, rewriter); succeeded(impl)) {
-      if (succeeded(assumptionsSatisfiableFor(*impl, wanted, module, memo, gen, rewriter)))
+    if (auto impl = generators.generateImpl(trait, wanted, rewriter); succeeded(impl)) {
+      if (succeeded(assumptionsSatisfiableFor(*impl, wanted, rewriter)))
         good.push_back(*impl);
       else
         bad.push_back(*impl);
@@ -157,7 +146,7 @@ static ProofOp findExistingProofFor(ModuleOp module, ImplOp impl, TraitApplicati
   auto uses = mlir::SymbolTable::getSymbolUses(impl, module);
   if (!uses) return nullptr;
 
-  // traverse all ProofOps that use impl 
+  // traverse all ProofOps that use impl
   for (const SymbolTable::SymbolUse& use : *uses) {
     if (auto proof = dyn_cast<ProofOp>(use.getUser())) {
       // ensure both:
@@ -188,7 +177,7 @@ FailureOr<Type> ImplResolver::resolveProjectionType(
   StringRef assocName = proj.getAssocName().getValue();
 
   ClaimType claim = ClaimType::get(proj.getContext(), traitApp);
-  auto implOr = resolveImplFor(claim, module, memo.resolutionMemo, generators, rewriter, err);
+  auto implOr = resolveImplFor(claim, rewriter, err);
   if (failed(implOr)) return failure();
   ImplOp impl = *implOr;
 
@@ -218,7 +207,7 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
     PatternRewriter &rewriter,
     llvm::function_ref<InFlightDiagnostic()> err) {
   // resolve an impl for wanted first
-  auto implOr = resolveImplFor(wanted, module, memo.resolutionMemo, generators, rewriter, err);
+  auto implOr = resolveImplFor(wanted, rewriter, err);
   if (failed(implOr)) return failure();
   ImplOp impl = *implOr;
 
@@ -273,9 +262,6 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
   // recursively prove monomorphic obligations
   SmallVector<Attribute> subproofSymbols;
   for (ClaimType ob : *obligations) {
-    // XXX TODO consider pushing this resolveProjectionsIn down into resolveImplFor
-    ob = cast<ClaimType>(resolveProjectionsIn(ob, rewriter));
-
     auto sym = resolveAndEnsureProofFor(ob, rewriter, err);
     if (failed(sym)) return failure();
     subproofSymbols.push_back(*sym);
