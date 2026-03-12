@@ -186,7 +186,7 @@ inline llvm::DenseMap<Type,Type> normalizeSubstitution(llvm::DenseMap<Type,Type>
 // * Specialization : Rigid/Generic type -> Type
 //
 // Representing all of these as DenseMap<Type,Type> is not precise enough and makes everything confusing
-inline Type applySubstitution(const llvm::DenseMap<Type,Type> &subst,
+inline Type applySubstitutionOnce(const llvm::DenseMap<Type,Type> &subst,
                               Type root) {
   AttrTypeReplacer replacer;
   replacer.addReplacement([&](Type t) -> std::optional<std::pair<Type, WalkResult>> {
@@ -210,7 +210,7 @@ inline Type applySubstitutionToFixedPoint(const llvm::DenseMap<Type,Type> &subst
                                           Type ty) {
   Type cur = ty;
   while (true) {
-    Type next = applySubstitution(subst, cur);
+    Type next = applySubstitutionOnce(subst, cur);
     if (!next || next == cur) break;
     cur = next;
   }
@@ -451,5 +451,11 @@ LogicalResult recordProofBindingsIn(Type ty,
                                     ModuleOp module,
                                     DenseMap<Type,Type> &subst,
                                     llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+
+std::string generateMangledNameSuffixFor(TypeRange typeArgs);
+
+std::string applySubstitutionAndGenerateMangledNameSuffix(
+    const DenseMap<Type,Type> &subst,
+    ArrayRef<GenericTypeInterface> typeParams);
 
 } // end mlir::trait

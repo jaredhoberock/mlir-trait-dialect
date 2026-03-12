@@ -16,7 +16,7 @@ namespace mlir::trait {
 
 namespace mlir::trait {
 
-inline Attribute applySubstitution(const llvm::DenseMap<Type,Type> &substitution,
+inline Attribute applySubstitutionOnce(const llvm::DenseMap<Type,Type> &substitution,
                                    Attribute attr) {
   // set up type replacer
   AttrTypeReplacer replacer;

@@ -5,6 +5,8 @@
 #include "TraitTypes.hpp"
 #include <atomic>
 #include <llvm/ADT/TypeSwitch.h>
+#include <llvm/Support/Format.h>
+#include <llvm/Support/xxhash.h>
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/DialectImplementation.h>
 
@@ -20,6 +22,36 @@ void TraitDialect::registerTypes() {
 #define GET_TYPEDEF_LIST
 #include "TraitTypes.cpp.inc"
   >();
+}
+
+std::string hashToSuffix(StringRef input) {
+  uint64_t hash = llvm::xxHash64(input);
+  std::string result;
+  llvm::raw_string_ostream out(result);
+  out << llvm::format("_h%016" PRIx64, hash);
+  out.flush();
+  return result;
+}
+
+std::string generateMangledNameSuffixFor(TypeRange typeArgs) {
+  if (typeArgs.empty()) return "";
+
+  std::string full;
+  llvm::raw_string_ostream os(full);
+  for (Type ty : typeArgs)
+    os << "_" << ty;
+  os.flush();
+
+  return hashToSuffix(full);
+}
+
+std::string applySubstitutionAndGenerateMangledNameSuffix(
+    const DenseMap<Type,Type> &subst,
+    ArrayRef<GenericTypeInterface> typeParams) {
+  SmallVector<Type> concreteTypes;
+  for (auto ty : typeParams)
+    concreteTypes.push_back(applySubstitutionToFixedPoint(subst, ty));
+  return generateMangledNameSuffixFor(concreteTypes);
 }
 
 
@@ -96,7 +128,7 @@ LogicalResult InferenceType::unify(
   Type self = *this;
 
   // normalize
-  other = applySubstitution(subst, other);
+  other = applySubstitutionOnce(subst, other);
 
   // first check for trivial equality
   if (self == other) return success();
@@ -359,7 +391,7 @@ LogicalResult ClaimType::unify(
     DenseMap<Type,Type>& subst,
     llvm::function_ref<InFlightDiagnostic()> err) {
   // normalize formal first
-  Type formalNormTy = applySubstitution(subst, *this);
+  Type formalNormTy = applySubstitutionOnce(subst, *this);
   ClaimType formal = mlir::dyn_cast<ClaimType>(formalNormTy);
 
   // if formal is no longer a ClaimType, delegate to generic path
@@ -367,7 +399,7 @@ LogicalResult ClaimType::unify(
     return trait::unify(formalNormTy, other, module, subst, err);
 
   // normalize actual second
-  Type normActualTy = applySubstitution(subst, other);
+  Type normActualTy = applySubstitutionOnce(subst, other);
   ClaimType actual = mlir::dyn_cast<ClaimType>(normActualTy);
 
   // if actual isn't a claim, it's an immediate mismatch

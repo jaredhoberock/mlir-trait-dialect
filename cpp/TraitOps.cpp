@@ -24,38 +24,7 @@
 using namespace mlir;
 using namespace mlir::trait;
 
-
-/// Hash a string into a short '_h{16 hex digits}' suffix.
-static std::string hashToSuffix(StringRef input) {
-  uint64_t hash = llvm::xxHash64(input);
-  std::string result;
-  llvm::raw_string_ostream out(result);
-  out << llvm::format("_h%016" PRIx64, hash);
-  out.flush();
-  return result;
-}
-
-// Generates a mangled name suffix
-// based on the substitution of some polymorphic entity (e.g., ImplOp, FuncOp, etc.)
-static std::string generateMangledNameSuffixFor(
-  const DenseMap<Type,Type> &subst,
-  ArrayRef<GenericTypeInterface> typeParams) {
-
-  // Monomorphic entities have no type parameters to disambiguate,
-  // so no suffix is needed. The base name is already unique
-  if (typeParams.empty()) return "";
-
-  // Build a full type string for hashing (preserves uniqueness),
-  // but only emit a short hash in the actual suffix.
-  std::string full;
-  llvm::raw_string_ostream os(full);
-  for (auto ty : typeParams) {
-    os << "_" << applySubstitutionToFixedPoint(subst, ty);
-  }
-  os.flush();
-
-  return hashToSuffix(full);
-}
+namespace mlir::trait { std::string hashToSuffix(StringRef input); }
 
 
 //===----------------------------------------------------------------------===//
@@ -668,9 +637,7 @@ std::string ImplOp::generateMangledName(ClaimType claim) {
   if (failed(subst))
     llvm_unreachable("ImplOp::generateMangledName: specializedSelfClaimAgainst failed");
 
-  std::string result = getSymName().str();
-  result += generateMangledNameSuffixFor(*subst, getTypeParams());
-  return result;
+  return getSymName().str() + applySubstitutionAndGenerateMangledNameSuffix(*subst, getTypeParams());
 }
 
 SmallVector<ClaimType> ImplOp::getAssumptionsAsClaims() {
@@ -1602,8 +1569,7 @@ std::string FuncCallOp::getNameOfCalleeInstance() {
   if (failed(subst))
     llvm_unreachable("FuncCallOp::getNameOfCalleeInstance: buildParameterSpecialization failed");
 
-  return getCalleeName().str() +
-         generateMangledNameSuffixFor(*subst, getCalleeTypeParams());
+  return getCalleeName().str() + applySubstitutionAndGenerateMangledNameSuffix(*subst, getCalleeTypeParams());
 }
 
 FailureOr<func::FuncOp> FuncCallOp::getOrInstantiateCallee(

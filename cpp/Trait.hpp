@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include "mlir/IR/AttrTypeSubElements.h"
 #include "mlir/IR/Dialect.h"
 #include "mlir/IR/DialectInterface.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -44,11 +45,22 @@ struct MonomorphizationInterface : DialectInterface {
   ///   - May assume proven claims / witnesses exist.
   virtual void populateInstantiateMonomorphsPatterns(RewritePatternSet& patterns) const = 0;
 
-  /// Called during eraseClaims
-  /// Provide a TypeConverter + rewrite patterns that erase all residual
-  /// !trait.claim in your dialect’s types/regions and legalize ops after
-  /// claims are dropped.
-  virtual void populateEraseClaimsPatterns(TypeConverter &typeConverter, RewritePatternSet& patterns) const {}
+  /// Called during erasePolymorphs.  Two phases run in sequence:
+  ///
+  /// Phase 1 — applyPartialConversion:
+  ///   opConverter handles op-level structural changes (e.g. dropping
+  ///   claim operands from tuple.make, adjusting tuple.get indices).
+  ///   Register OpConversionPatterns and 1:0 type erasures here.
+  ///
+  /// Phase 2 — greedy type sweep:
+  ///   typeSweep rewrites types everywhere (operands, results, and
+  ///   inside attributes like nominal.def body).  Register type-to-type
+  ///   replacements here (e.g. NominalType name mangling).
+  ///
+  /// patterns feeds Phase 1 (applyPartialConversion).
+  virtual void populateErasePolymorphsPatterns(
+      TypeConverter &opConverter, RewritePatternSet &patterns,
+      AttrTypeReplacer &typeSweep) const {}
 
   inline static StringRef getInterfaceName() { return "MonomorphizationInterface"; }
 

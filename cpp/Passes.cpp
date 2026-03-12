@@ -639,99 +639,104 @@ struct EraseProjCastOp : public OpConversionPattern<ProjCastOp> {
   }
 };
 
-/// Removes all `!trait.claim` types, `!trait.proj` types, and their producing
-/// ops from the module.
+
+/// Erases all residual polymorphism from the module.
 ///
-/// By this point monomorphization is complete: every polymorphic function has
-/// been specialized, every `trait.allege` replaced by `trait.witness`, every
-/// `trait.derive` rewritten to `trait.witness`, and every `!trait.proj`
-/// resolved to its concrete bound type.  The claim values that threaded proof
-/// evidence through the IR are no longer needed.
+/// This runs in two phases because no single MLIR mechanism can handle
+/// both kinds of work:
 ///
-/// Illegal ops:
-///   - `trait.witness`, `trait.project`, and `trait.proj.cast` are expected
-///     at this stage and are erased by dedicated patterns.
-///   - `trait.allege` and `trait.derive` should have been rewritten by earlier
-///     passes; their presence is a bug and will cause the conversion to fail.
+/// Phase 1 (applyPartialConversion): Structural op rewrites that erase
+///   SSA values.  Claim types map to zero results (1:0 erasure), so ops
+///   that carry claims need their operand lists, indices, and signatures
+///   rewritten.  Only applyPartialConversion can do this — it manages
+///   the value-level bookkeeping (dropping operands, remapping uses).
+///   The tuple dialect adjusts tuple.get indices and tuple.make operands;
+///   the func dialect rewrites function signatures and call sites.
 ///
-/// A TypeConverter maps `!trait.claim` to nothing (dropping claim parameters
-/// from signatures) and falls through on `!trait.proj` (which should already
-/// have been resolved; any survivors cause a legality failure).
-static LogicalResult eraseClaims(ModuleOp module) {
+/// Phase 2 (recursivelyReplaceElementsIn): Bulk type rewriting.
+///   applyPartialConversion only touches operand/result types on ops
+///   matched by patterns.  Types inside attributes (e.g. the body
+///   TypeAttr on nominal.def) are invisible to it.  This sweep rewrites
+///   all remaining types everywhere.  The nominal dialect registers its
+///   NominalType name mangling here.
+///
+/// Each dialect contributes to both phases via populateErasePolymorphsPatterns.
+static LogicalResult erasePolymorphs(ModuleOp module) {
   MLIRContext* ctx = module.getContext();
+
+  // Delete trait symbol infrastructure upfront — these are templates that
+  // have already been instantiated, and their regions contain polymorphic
+  // types that would trip the legality check if left for
+  // applyPartialConversion.
+  for (Operation &op : llvm::make_early_inc_range(*module.getBody())) {
+    if (isa<ProofOp, ImplOp, TraitOp>(op))
+      op.erase();
+    else if (auto f = dyn_cast<func::FuncOp>(op))
+      if (isPolymorphicType(f.getFunctionType()))
+        f.erase();
+  }
+
+  // Phase 1: structural op rewrites via applyPartialConversion.
+  // ClaimType maps to zero results (the SSA value disappears).
+  TypeConverter opConverter;
+  opConverter.addConversion([](Type ty) { return ty; });
+  opConverter.addConversion([](ClaimType ty, SmallVectorImpl<Type> &out) {
+    return success();
+  });
+
+  AttrTypeReplacer typeSweep;
+
+  // Collect from participating dialects
+  RewritePatternSet patterns(ctx);
+  for (Dialect *dialect : ctx->getLoadedDialects()) {
+    if (auto *iface = dialect->getRegisteredInterface<MonomorphizationInterface>())
+      iface->populateErasePolymorphsPatterns(opConverter, patterns, typeSweep);
+  }
+
+  // Add trait dialect's own patterns
+  patterns.add<EraseProjectOp, EraseWitnessOp>(ctx);
+  patterns.add<EraseProjCastOp>(opConverter, ctx);
+
+  populateFunctionOpInterfaceTypeConversionPattern<func::FuncOp>(patterns, opConverter);
+  populateCallOpTypeConversionPattern(patterns, opConverter);
+  populateReturnOpTypeConversionPattern(patterns, opConverter);
+
+  // Mark !trait.claim and !trait.proj as illegal
   ConversionTarget target(*ctx);
-
-  // all claim-producing ops and ProjCastOp are illegal
   target.addIllegalOp<AllegeOp, DeriveOp, ProjectOp, WitnessOp, ProjCastOp>();
-
-  // an op is legal if it mentions neither !trait.claim nor !trait.proj
   target.markUnknownOpDynamicallyLegal([&](Operation *op) {
     return !opMentionsType<ClaimType>(op) && !opMentionsType<ProjectionType>(op);
   });
 
-  // create a TypeConverter to erase !trait.claim types
-  TypeConverter tc;
-  tc.addConversion([](Type ty) { return ty; });
-  tc.addConversion([](ClaimType ty, SmallVectorImpl<Type> &out) {
-    // leaving out unchanged means erase this type
-    return success();
+  // Apply Phase 2
+  if (failed(applyPartialConversion(module, target, std::move(patterns))))
+    return failure();
+
+  // Phase 2: bulk type rewriting via recursivelyReplaceElementsIn.
+  // The typeSweep replacer was already populated by dialects above
+  // (e.g. nominal registered NominalType mangling).  Also forward
+  // the opConverter's conversions so ClaimType gets swept out of
+  // attributes too.
+  typeSweep.addReplacement([&](Type t) -> std::optional<Type> {
+    Type converted = opConverter.convertType(t);
+    if (!converted || converted == t)
+      return std::nullopt;
+    return converted;
   });
-
-  // erase all trait.project, trait.witness, and trait.proj.cast ops
-  RewritePatternSet patterns(ctx);
-  patterns.add<EraseProjectOp, EraseWitnessOp>(ctx);
-  patterns.add<EraseProjCastOp>(tc, ctx);
-
-  // collect erase claims patterns from other dialects
-  for (Dialect *dialect : ctx->getLoadedDialects()) {
-    if (auto *iface = dialect->getRegisteredInterface<MonomorphizationInterface>()) {
-      iface->populateEraseClaimsPatterns(tc, patterns);
-    }
-  }
-
-  // populate conversion patterns for func dialect ops
-  populateFunctionOpInterfaceTypeConversionPattern<func::FuncOp>(patterns, tc);
-  populateCallOpTypeConversionPattern(patterns, tc);
-  populateReturnOpTypeConversionPattern(patterns, tc);
-
-  return applyPartialConversion(module, target, std::move(patterns));
+  typeSweep.recursivelyReplaceElementsIn(module,
+                                         /*replaceAttrs=*/true,
+                                         /*replaceLocs=*/false,
+                                         /*replaceTypes=*/true);
+  return module.verify();
 }
 
 }
 
 LogicalResult monomorphize(ModuleOp module) {
-  // instantiate monomorphs first
   if (failed(instantiateMonomorphs(module)))
     return failure();
 
-  // erase polymorphic functions
-  for (func::FuncOp f : llvm::make_early_inc_range(module.getOps<func::FuncOp>())) {
-    if (isPolymorphicType(f.getFunctionType()))
-      f.erase();
-  }
-
-  // erase trait.proof ops
-  for (ProofOp proof : llvm::make_early_inc_range(module.getOps<ProofOp>())) {
-    proof.erase();
-  }
-
-  // erase trait.impl ops
-  for (ImplOp impl : llvm::make_early_inc_range(module.getOps<ImplOp>())) {
-    impl.erase();
-  }
-
-  // erase trait.trait ops
-  for (TraitOp trait : llvm::make_early_inc_range(module.getOps<TraitOp>())) {
-    trait.erase();
-  }
-
-  // erase claims
-  // we do this last because all of the above may
-  // mention !trait.claim
-  if (failed(eraseClaims(module)))
-    return failure();
-
-  return module.verify();
+  return erasePolymorphs(module);
 }
 
 void MonomorphizePass::runOnOperation() {
