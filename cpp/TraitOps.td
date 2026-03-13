@@ -946,6 +946,12 @@ def ProjCastOp : TraitDialectOp<"proj.cast", [
     projections in the input type via the impl's bindings and checks
     the result matches. If the claim is unproven (polymorphic),
     verification is deferred to monomorphization.
+
+    NOTE: proj.cast is currently an exception to the "correct by
+    construction" design principle — unproven claims only check that
+    the claim's trait is relevant (appears in some projection), not
+    that the cast is structurally plausible. It is not yet clear how
+    to guarantee correct-by-construction with projection types.
   }];
 
   let arguments = (ins AnyType:$input, Claim:$claim);

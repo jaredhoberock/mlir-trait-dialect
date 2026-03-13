@@ -1285,9 +1285,33 @@ LogicalResult ProjCastOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     return emitOpError() << "at least one of input/result must contain "
                          << "a !trait.proj type";
 
-  // If the claim is unproven, defer further checking to monomorphization
-  if (!claimTy.isProven())
+  if (!claimTy.isProven()) {
+    // Check that the claim's trait appears in at least one projection
+    // in the input or output types. This ensures the claim is relevant
+    // to the projections being cast.
+    //
+    // TODO: A stronger check would replace each claim-trait projection with
+    // a unification variable (same projection = same variable) and unify
+    // inputType against resultType. That would catch both structural
+    // mismatches in non-projection positions and inconsistent uses of the
+    // same projection, without requiring global analysis.
+    auto claimTraitName = claimTy.getTraitApplication().getTraitName();
+    bool found = false;
+    auto checkProjection = [&](Type sub) {
+      if (auto proj = dyn_cast<ProjectionType>(sub))
+        if (proj.getTraitApplication().getTraitName() == claimTraitName)
+          found = true;
+    };
+    inputType.walk(checkProjection);
+    resultType.walk(checkProjection);
+
+    if (!found)
+      return emitOpError()
+        << "claim trait '" << claimTraitName
+        << "' does not match any projection trait in input or result types";
+
     return success();
+  }
 
   // Proven claim: resolve matching projections and verify equivalence
   auto implOr = ProofOp::getImplFromProof(module, claimTy.getProof(), errFn);
