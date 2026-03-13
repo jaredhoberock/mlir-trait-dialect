@@ -491,6 +491,32 @@ FailureOr<func::FuncOp> ImplOp::getOrInstantiateMethod(OpBuilder& builder, Strin
   return instantiatePolymorph(builder, *traitMethod, methodName, *subst);
 }
 
+/// Instantiate a polymorphic function and replace any AssumeOps whose
+/// trait application matches a claim-typed function parameter.
+static func::FuncOp instantiatePolymorphAndReplaceAssumes(
+    PatternRewriter &rewriter, func::FuncOp callee,
+    StringRef name, const DenseMap<Type,Type> &subst) {
+  auto funcOp = instantiatePolymorph(rewriter, callee, name, subst);
+
+  DenseMap<TraitApplicationAttr, Value> claimMap;
+  for (auto arg : funcOp.getArguments())
+    if (auto claimTy = dyn_cast<ClaimType>(arg.getType()))
+      claimMap[claimTy.getTraitApplication()] = arg;
+
+  SmallVector<AssumeOp> toErase;
+  funcOp.walk([&](AssumeOp a) {
+    auto it = claimMap.find(a.getTraitApplication());
+    if (it != claimMap.end()) {
+      rewriter.replaceAllUsesWith(a.getResult(), it->second);
+      toErase.push_back(a);
+    }
+  });
+  for (auto a : toErase)
+    rewriter.eraseOp(a);
+
+  return funcOp;
+}
+
 static func::FuncOp instantiateMethodAsFreeFuncWithLeadingSelfProof(
     PatternRewriter& rewriter,
     ModuleOp module,
@@ -505,10 +531,8 @@ static func::FuncOp instantiateMethodAsFreeFuncWithLeadingSelfProof(
   // clone the method into the method's grandparent
   rewriter.setInsertionPointAfter(method->getParentOp());
 
-  // instantiate the function
-  // note that this will instantiate invalid AssumeOps because their claims will include proofs
-  // we'll fix the function by replacing AssumeOps below
-  auto funcOp = instantiatePolymorph(rewriter, method, functionName, subst);
+  // instantiate the function and replace assumes matching claim-typed parameters
+  auto funcOp = instantiatePolymorphAndReplaceAssumes(rewriter, method, functionName, subst);
 
   // prepend the self proof as the first parameter of the function and
   // set visibility to private
@@ -520,33 +544,17 @@ static func::FuncOp instantiateMethodAsFreeFuncWithLeadingSelfProof(
   });
   BlockArgument selfProofArg = funcOp.getArgument(0);
 
-  // build claim map from function's claim-typed parameters
-  DenseMap<TraitApplicationAttr, Value> claimMap;
-  for (auto arg : funcOp.getArguments()) {
-    if (auto claimTy = dyn_cast<ClaimType>(arg.getType()))
-      claimMap[claimTy.getTraitApplication()] = arg;
-  }
-
-  // replace all AssumeOps: match against function parameters first,
-  // fall back to projection from selfProofArg
+  // replace remaining AssumeOps with projections from selfProofArg
   SmallVector<AssumeOp> toErase;
   funcOp.walk([&](AssumeOp a) {
     PatternRewriter::InsertionGuard guard(rewriter);
     rewriter.setInsertionPoint(a);
 
-    Value replacement;
-    auto it = claimMap.find(a.getTraitApplication());
-    if (it != claimMap.end()) {
-      // matched a function parameter — use it directly
-      replacement = it->second;
-    } else {
-      // fall back to projection from self-proof
-      replacement = rewriter.create<ProjectOp>(
-        a.getLoc(),
-        a.getClaim(),
-        selfProofArg
-      );
-    }
+    Value replacement = rewriter.create<ProjectOp>(
+      a.getLoc(),
+      a.getClaim(),
+      selfProofArg
+    );
 
     rewriter.replaceAllUsesWith(a.getResult(), replacement);
     toErase.push_back(a);
@@ -1597,22 +1605,22 @@ std::string FuncCallOp::getNameOfCalleeInstance() {
 }
 
 FailureOr<func::FuncOp> FuncCallOp::getOrInstantiateCallee(
-    OpBuilder &builder,
+    PatternRewriter &rewriter,
     const DenseMap<Type,Type> &subst) {
   auto module = getModule();
   if (failed(module)) return failure();
 
   std::string instanceName = getNameOfCalleeInstance();
-  auto *symOp = SymbolTable::lookupSymbolIn(*module, builder.getStringAttr(instanceName));
+  auto *symOp = SymbolTable::lookupSymbolIn(*module, rewriter.getStringAttr(instanceName));
   func::FuncOp existing = dyn_cast_or_null<func::FuncOp>(symOp);
   if (existing) return existing;
 
   auto callee = getCallee();
   if (failed(callee)) return failure();
 
-  OpBuilder::InsertionGuard guard(builder);
-  builder.setInsertionPointAfter(*callee);
-  return instantiatePolymorph(builder, *callee, instanceName, subst);
+  PatternRewriter::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPointAfter(*callee);
+  return instantiatePolymorphAndReplaceAssumes(rewriter, *callee, instanceName, subst);
 }
 
 

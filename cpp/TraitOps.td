@@ -1191,7 +1191,7 @@ def FuncCallOp : TraitDialectOp<"func.call", [
     }
 
     /// Looks up or instantiates the monomorphized callee using a pre-built substitution.
-    FailureOr<func::FuncOp> getOrInstantiateCallee(OpBuilder &builder,
+    FailureOr<func::FuncOp> getOrInstantiateCallee(PatternRewriter &rewriter,
                                                    const DenseMap<Type,Type> &subst);
 
     /// Build a substitution by unifying the callee's formal parameter types
