@@ -615,7 +615,9 @@ LogicalResult ProjectionType::unify(
                              module, subst, err);
   }
 
-  // projection vs non-projection: succeed without recording a binding
+  // projection vs non-projection: succeed without recording a binding.
+  // The verifier cannot locally confirm that this projection resolves to
+  // `other`; that requires impl resolution, which lowering will perform.
   return success();
 }
 
@@ -711,5 +713,52 @@ Type instantiate(Type root, DenseMap<Type,Type> &inst, uint64_t &idCounter) {
   return r.replace(root);
 }
 
+
+FailureOr<DenseMap<Type,Type>> buildSpecializationSubstitution(
+    Type formal,
+    Type actual,
+    ModuleOp module,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  // instantiate generics on both sides with the same instantiation map
+  DenseMap<Type,Type> genToInfer;
+  uint64_t idCounter = 0;
+  Type iformal = instantiate(formal, genToInfer, idCounter);
+  Type iactual = instantiate(actual, genToInfer, idCounter);
+
+  // get the inverse instantiation map as well
+  auto inferToGen = invertSubstitution(genToInfer, err);
+  if (failed(inferToGen)) return failure();
+
+  // unify the instantiated formal and actual types
+  DenseMap<Type,Type> inferToType;
+  if (failed(unify(iformal, iactual, module, inferToType, err)))
+    return failure();
+
+  // compose (gen -> infer) o (infer -> type)
+  auto composed = composeSubstitutions(genToInfer, inferToType, err);
+  if (failed(composed)) return failure();
+
+  // compose again with inferToGen to map any remaining unsolved
+  // inference variables originating from actual back to their
+  // original generics
+  auto result = composeSubstitutions(*composed, *inferToGen, err);
+  if (failed(result)) return failure();
+
+  // Carry forward non-variable bindings discovered during unification
+  // (e.g., projection types unified with concrete types).
+  // composeSubstitutions only propagates variable-keyed bindings,
+  // so complex-keyed bindings would otherwise be lost.
+  for (const auto &[k, v] : inferToType) {
+    if (isa<InferenceType>(k)) continue;
+    Type groundKey = applySubstitutionToFixedPoint(*inferToGen, k);
+    Type groundVal = applySubstitutionToFixedPoint(*inferToGen, v);
+    if (groundKey != groundVal) {
+      result->try_emplace(groundKey, groundVal);
+    }
+  }
+
+  normalizeSubstitutionInPlace(*result);
+  return *result;
+}
 
 } // end mlir::trait

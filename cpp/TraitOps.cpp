@@ -1418,7 +1418,14 @@ FailureOr<DenseMap<Type,Type>> MethodCallOp::buildParameterSpecialization(llvm::
   // solve the *call-site* specialization: unify the specialized formal type with the
   // actual call type to get any remaining bindings (including generics in args/results)
   Type actual = getActualFunctionType();
-  return buildSpecializationSubstitution(formal, actual, *module, err);
+  auto subst = buildSpecializationSubstitution(formal, actual, *module, err);
+  if (failed(subst)) return failure();
+
+  // record any proof bindings found in the actual signature
+  if (failed(recordProofBindingsIn(actual, *module, *subst, err)))
+    return failure();
+
+  return normalizeSubstitution(*subst);
 }
 
 ImplOp MethodCallOp::getProvenImpl() {

@@ -294,6 +294,14 @@ struct FuncCallOpLowering : public OpRewritePattern<FuncCallOp> {
     addProjectionBindings(*subst, callOp.getResultTypes(), resolver, rewriter);
     addProjectionBindings(*subst, callOp.getOperandTypes(), resolver, rewriter);
 
+    // Also resolve projections in the callee's formal types — these contain
+    // projections (e.g., proj<@Prod[poly<2>], "Out">) that, after substitution,
+    // become concrete projections ImplResolver can resolve.
+    if (auto formalTy = callOp.getCalleeFunctionType(); succeeded(formalTy)) {
+      addProjectionBindings(*subst, formalTy->getInputs(), resolver, rewriter);
+      addProjectionBindings(*subst, formalTy->getResults(), resolver, rewriter);
+    }
+
     SmallVector<Type> concreteResults;
     for (Type r : callOp.getResultTypes()) {
       Type newR = applySubstitutionToFixedPoint(*subst, r);
@@ -350,6 +358,12 @@ struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
       return rewriter.notifyMatchFailure(op, "couldn't build substitution for call");
     addProjectionBindings(*subst, op.getResultTypes(), resolver, rewriter);
     addProjectionBindings(*subst, op.getOperandTypes(), resolver, rewriter);
+
+    // Also resolve projections in the method's formal types.
+    if (auto formalTy = op.getMethodFunctionType(); succeeded(formalTy)) {
+      addProjectionBindings(*subst, formalTy->getInputs(), resolver, rewriter);
+      addProjectionBindings(*subst, formalTy->getResults(), resolver, rewriter);
+    }
 
     SmallVector<Type> concreteResults;
     for (Type r : op.getResultTypes()) {
