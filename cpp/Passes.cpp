@@ -163,6 +163,10 @@ struct ProveClaimPattern : OpRewritePattern<AllegeOp> {
     : OpRewritePattern<AllegeOp>(ctx), resolver(resolver) {}
 
   LogicalResult matchAndRewrite(AllegeOp op, PatternRewriter& rewriter) const override {
+    // skip polymorphic alleges — they can't be resolved until after monomorphization
+    if (!op.getClaim().isMonomorphic())
+      return rewriter.notifyMatchFailure(op, "polymorphic allege deferred");
+
     auto errFn = [&] { return op.emitOpError(); };
 
     // build or reuse canonical evidence for this claim
@@ -211,11 +215,12 @@ FailureOr<ImplResolver> resolveImpls(ModuleOp module) {
       return failure();
   }
 
-  // assert that no trait.allege remain
+  // assert that no monomorphic trait.allege remain
   bool hasLeftovers = false;
   module.walk([&](AllegeOp op) {
+    if (!op.getClaim().isMonomorphic()) return;
     hasLeftovers = true;
-    op.emitError() << "unresolved trait.allege after ProveClaimPattern";
+    op.emitError() << "unresolved monomorphic trait.allege after ProveClaimPattern";
   });
   if (hasLeftovers) return failure();
 
@@ -584,8 +589,10 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
   MLIRContext* ctx = module.getContext();
 
   // rewrite trait.func.call, trait.method.call, trait.derive,
-  // resolve projections, and any generic op whose results become monomorphic
+  // resolve projections, resolve now-concrete unsafe alleges,
+  // and any generic op whose results become monomorphic
   RewritePatternSet patterns(ctx);
+  patterns.add<ProveClaimPattern>(ctx, *resolver);
   patterns.add<MonomorphizeResultTypesPattern>(ctx);
   patterns.add<FuncCallOpLowering>(ctx, *resolver);
   patterns.add<MethodCallOpLowering>(ctx, *resolver);
@@ -602,6 +609,15 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
   // apply patterns
   if (failed(applyPatternsGreedily(module, std::move(patterns))))
     return failure();
+
+  // assert that no monomorphic trait.allege remain after monomorphization
+  bool hasLeftovers = false;
+  module.walk([&](AllegeOp op) {
+    if (!op.getClaim().isMonomorphic()) return;
+    hasLeftovers = true;
+    op.emitError() << "unresolved monomorphic trait.allege after instantiate-monomorphs";
+  });
+  if (hasLeftovers) return failure();
 
   return module.verify();
 }

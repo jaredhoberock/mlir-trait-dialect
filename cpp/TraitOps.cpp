@@ -1846,6 +1846,13 @@ ParseResult AllegeOp::parse(OpAsmParser &p, OperationState &st) {
   TraitApplicationAttr app = dyn_cast_or_null<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
   if (!app) return p.emitError(p.getCurrentLocation(), "expected a TraitApplicationAttr");
 
+  // parse optional `unsafe` keyword
+  UnitAttr unsafeAttr;
+  if (succeeded(p.parseOptionalKeyword("unsafe")))
+    unsafeAttr = p.getBuilder().getUnitAttr();
+  if (unsafeAttr)
+    st.addAttribute("unsafe", unsafeAttr);
+
   // result type is the claim of the trait application
   auto claimTy = ClaimType::get(p.getContext(), app);
   st.addTypes(claimTy);
@@ -1858,11 +1865,15 @@ void AllegeOp::print(OpAsmPrinter &p) {
 
   // print the claimed trait application
   getClaim().getTraitApplication().print(p);
+
+  // print optional unsafe
+  if (getUnsafe())
+    p << " unsafe";
 }
 
 LogicalResult AllegeOp::verify() {
-  // claim must be monomorphic
-  if (!getClaim().isMonomorphic())
+  // claim must be monomorphic unless unsafe
+  if (!getUnsafe() && !getClaim().isMonomorphic())
     return emitOpError() << "expected monomorphic claim, got "
                          << getClaim();
   return success();

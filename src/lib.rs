@@ -43,6 +43,8 @@ unsafe extern "C" {
                              result_types: *const MlirType, num_results: isize) -> MlirOperation;
     fn traitAllegeOpCreate(loc: MlirLocation,
                            trait_app: MlirAttribute) -> MlirOperation;
+    fn traitAllegeUnsafeOpCreate(loc: MlirLocation,
+                                 trait_app: MlirAttribute) -> MlirOperation;
     fn traitWitnessOpCreate(loc: MlirLocation,
                             proof_name: MlirStringRef,
                             trait_app: MlirAttribute) -> MlirOperation;
@@ -249,6 +251,15 @@ pub fn allege<'c>(loc: Location<'c>,
                   trait_app: TraitApplicationAttribute<'c>,
 ) -> Operation<'c> {
     unsafe { Operation::from_raw(traitAllegeOpCreate(
+        loc.to_raw(),
+        trait_app.to_raw(),
+    ))}
+}
+
+pub fn allege_unsafe<'c>(loc: Location<'c>,
+                         trait_app: TraitApplicationAttribute<'c>,
+) -> Operation<'c> {
+    unsafe { Operation::from_raw(traitAllegeUnsafeOpCreate(
         loc.to_raw(),
         trait_app.to_raw(),
     ))}

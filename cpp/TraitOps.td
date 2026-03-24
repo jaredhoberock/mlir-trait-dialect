@@ -37,11 +37,19 @@ include "TraitTypes.td"
 //    Impl resolution is a separate global pass that runs before
 //    monomorphization.
 //
-// 3. Polymorphic code never fabricates claims.  Claims originate at
-//    monomorphic call sites (trait.allege) and flow into polymorphic code
-//    through !trait.claim parameters.  This ensures that polymorphic code
-//    cannot assume a trait is implemented without the caller proving it —
-//    the core of "correct by construction."
+// 3. Polymorphic code never fabricates claims — with one exception.
+//    Claims normally originate at monomorphic call sites (trait.allege)
+//    and flow into polymorphic code through !trait.claim parameters.
+//    This ensures that polymorphic code cannot assume a trait is
+//    implemented without the caller proving it — the core of "correct
+//    by construction."
+//
+//    The exception is `trait.allege ... unsafe`, which allows polymorphic
+//    code to fabricate a claim whose types are not yet concrete.  These
+//    claims are skipped by resolve-impls and resolved post-monomorphization
+//    once types are concrete.  This exists for ImplGenerator-provided
+//    evidence where the obligation can only be checked after type
+//    parameters are instantiated.
 //
 // 4. The IR is the sole authority on claims.  All proof structure lives
 //    in the IR itself — no side tables, no external state.  Analysis
@@ -624,29 +632,37 @@ def AllegeOp : TraitDialectOp<"allege", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
   Pure
 ]> {
-  let summary = "Unverified, monomorphic claim that a trait implementation exists";
+  let summary = "Unverified claim that a trait implementation exists";
   let description = [{
     Produces a `!trait.claim<@Trait[Types...]>` value asserting that a trait
-    application is satisfied. The type arguments must be concrete (monomorphic);
-    polymorphic types are illegal.
+    application is satisfied.
 
-    This restriction enforces a key invariant of the trait system: polymorphic
-    code never fabricates claims. Claims originate at monomorphic call sites
-    via `trait.allege` and flow into polymorphic code through `!trait.claim`
-    parameters. A polymorphic function that needs a trait satisfaction must
-    declare it as a bound and receive a claim value from its caller. This
-    ensures that polymorphic code is correct by construction because it cannot
-    assume a trait is implemented without the caller proving it.
+    By default, type arguments must be concrete (monomorphic). This enforces
+    a key invariant: polymorphic code never fabricates claims. Claims
+    originate at monomorphic call sites and flow into polymorphic code
+    through `!trait.claim` parameters.
 
-    `trait.allege` does not verify that a matching `trait.impl` exists at the
-    point of emission. It is intended to be elaborated into verified
-    `trait.witness` operations by a claim-proving pass prior to
-    monomorphization. Unresolved monomorphic alleges after that pass are
-    errors.
+    The optional `unsafe` keyword relaxes this restriction, allowing
+    polymorphic type arguments. This is used for ImplGenerator-provided
+    evidence where the obligation cannot be checked until types are
+    instantiated.
 
-    Example:
+    `trait.allege` does not verify that a matching `trait.impl` exists at
+    the point of emission. It is intended to be elaborated into verified
+    `trait.witness` operations by a claim-proving pass. The resolve-impls
+    pass resolves monomorphic alleges and skips polymorphic ones. The
+    instantiate-monomorphs pass resolves the remaining (now-concrete)
+    alleges. Unresolved monomorphic alleges after resolve-impls are errors.
+
+    Examples:
+      // monomorphic: resolved by resolve-impls
       %p = trait.allege @Ord[i32]
+
+      // polymorphic: deferred to instantiate-monomorphs
+      %q = trait.allege @Printable[!trait.poly<0>] unsafe
   }];
+
+  let arguments = (ins OptionalAttr<UnitAttr>:$unsafe);
 
   let results = (outs Claim:$result);
 
@@ -654,7 +670,16 @@ def AllegeOp : TraitDialectOp<"allege", [
     OpBuilder<(ins "::mlir::trait::TraitApplicationAttr":$app), [{
       mlir::MLIRContext* ctx = $_builder.getContext();
       auto claimTy = ClaimType::get(ctx, app);
-      return build($_builder, $_state, claimTy);
+      return build($_builder, $_state, claimTy, /*unsafe=*/nullptr);
+    }]>,
+    OpBuilder<(ins "::mlir::trait::TraitApplicationAttr":$app,
+                   "bool":$isUnsafe), [{
+      mlir::MLIRContext* ctx = $_builder.getContext();
+      auto claimTy = ClaimType::get(ctx, app);
+      auto unsafeAttr = isUnsafe
+        ? $_builder.getUnitAttr()
+        : mlir::UnitAttr();
+      return build($_builder, $_state, claimTy, unsafeAttr);
     }]>
   ];
 

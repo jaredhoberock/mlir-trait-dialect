@@ -210,6 +210,23 @@ MlirOperation traitAllegeOpCreate(MlirLocation loc,
   return wrap(op.getOperation());
 }
 
+MlirOperation traitAllegeUnsafeOpCreate(MlirLocation loc,
+                                        MlirAttribute wrappedTraitApp) {
+  MLIRContext* ctx = unwrap(loc)->getContext();
+
+  TraitApplicationAttr traitApp = dyn_cast<TraitApplicationAttr>(unwrap(wrappedTraitApp));
+  if (!traitApp) return {}; // invalid attribute type
+
+  OpBuilder builder(ctx);
+  auto op = builder.create<AllegeOp>(
+    unwrap(loc),
+    traitApp,
+    /*isUnsafe=*/true
+  );
+
+  return wrap(op.getOperation());
+}
+
 MlirOperation traitWitnessOpCreate(MlirLocation loc,
                                    MlirStringRef proofName,
                                    MlirAttribute wrappedTraitApp) {

@@ -64,6 +64,10 @@ MlirOperation traitFuncCallOpCreate(MlirLocation loc,
 MlirOperation traitAllegeOpCreate(MlirLocation loc,
                                   MlirAttribute traitApp);
 
+/// Create a trait.allege operation with the unsafe attribute
+MlirOperation traitAllegeUnsafeOpCreate(MlirLocation loc,
+                                        MlirAttribute traitApp);
+
 /// Create a trait.witness operation
 MlirOperation traitWitnessOpCreate(MlirLocation loc,
                                    MlirStringRef proofName,
