@@ -661,10 +661,17 @@ struct EraseProjCastOp : public OpConversionPattern<ProjCastOp> {
 
   LogicalResult matchAndRewrite(ProjCastOp op, OneToNOpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
-    // The claim operand is erased (mapped to nothing) by the TypeConverter.
-    // The input operand survives; after projection resolution, input and
-    // result have the same concrete type — just forward the input.
-    rewriter.replaceOp(op, adaptor.getInput());
+    // After projection resolution, input and result have the same
+    // concrete type. If the input survived conversion (regular value),
+    // forward it. If the input was erased (claim type mapped to 0
+    // values, or defining op erased by another pattern), erase the
+    // proj_cast too — there is nothing to forward.
+    auto input = adaptor.getInput();
+    if (input.empty()) {
+      rewriter.eraseOp(op);
+    } else {
+      rewriter.replaceOp(op, input);
+    }
     return success();
   }
 };
