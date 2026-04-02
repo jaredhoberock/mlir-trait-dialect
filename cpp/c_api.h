@@ -97,9 +97,20 @@ MlirOperation traitAssumeOpCreate(MlirLocation loc, MlirAttribute traitApp);
 /// Return the !trait.poly<uniqueId> type
 MlirType traitPolyTypeGet(MlirContext ctx, unsigned int uniqueId);
 
-/// Return the !trait.claim<@Trait[Type1, Type2, ...]> type
+/// Return the !trait.claim<@Trait[Type1, Type2, ...]> type (unproven)
 MlirType traitClaimTypeGet(MlirContext ctx,
                            MlirAttribute traitApp);
+
+/// Return a proven !trait.claim<@Trait[...] by @proof> type.
+/// `proofName` is the symbol name of the proof.
+MlirType traitClaimTypeGetProven(MlirContext ctx,
+                                 MlirAttribute traitApp,
+                                 MlirStringRef proofName);
+
+/// Return a claim type with the same proof as `claimType` but
+/// with a different trait application.
+MlirType traitClaimTypeWithApplication(MlirType claimType,
+                                       MlirAttribute traitApp);
 
 /// Return a !trait.claim's TraitApplicationAttr
 MlirAttribute traitClaimTypeGetTraitApplicationGet(MlirType claimType);

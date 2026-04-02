@@ -511,6 +511,10 @@ def ImplOp : TraitDialectOp<"impl", [
     /// Replace concrete ProjectionTypes in `ty` using this impl's associated
     /// type bindings, applying `subst` to specialize the result.
     Type resolveProjectionTypesViaBindings(Type ty, const DenseMap<Type,Type> &subst);
+
+    /// Like resolveProjectionTypesViaBindings, but only resolves projections
+    /// whose trait application equals `app`.
+    Type resolveProjectionTypesForApplication(Type ty, TraitApplicationAttr app, const DenseMap<Type,Type> &subst);
   }];
 
   // builders create one empty block in the body region

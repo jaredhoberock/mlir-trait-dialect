@@ -406,9 +406,7 @@ FailureOr<Type> ImplOp::specializeAssociatedTypeBinding(
 
 Type ImplOp::resolveProjectionTypesViaBindings(Type ty, const DenseMap<Type,Type> &subst) {
   AttrTypeReplacer replacer;
-  replacer.addReplacement([&](Type t) -> std::optional<Type> {
-    auto proj = dyn_cast<ProjectionType>(t);
-    if (!proj) return std::nullopt;
+  replacer.addReplacement([&](ProjectionType proj) -> std::optional<Type> {
     auto resolved = specializeAssociatedTypeBinding(
         proj.getAssocName().getValue(), proj.getAssocTypeArgs());
     if (failed(resolved)) return std::nullopt;
@@ -416,6 +414,24 @@ Type ImplOp::resolveProjectionTypesViaBindings(Type ty, const DenseMap<Type,Type
   });
   return replacer.replace(ty);
 }
+
+/// Replace projections in `ty` whose trait application equals `app`,
+/// using this impl's associated type bindings. Projections with a
+/// different trait application are left unresolved.
+Type ImplOp::resolveProjectionTypesForApplication(Type ty, TraitApplicationAttr app, const DenseMap<Type,Type> &subst) {
+  assert(app.getTraitName() == getSelfApplication().getTraitName());
+  AttrTypeReplacer replacer;
+  replacer.addReplacement([&](ProjectionType proj) -> std::optional<Type> {
+    if (proj.getTraitApplication() != app)
+      return std::nullopt;
+    auto resolved = specializeAssociatedTypeBinding(
+        proj.getAssocName().getValue(), proj.getAssocTypeArgs());
+    if (failed(resolved)) return std::nullopt;
+    return applySubstitutionToFixedPoint(subst, *resolved);
+  });
+  return replacer.replace(ty);
+}
+
 
 FailureOr<DenseMap<Type,Type>> ImplOp::buildMonomorphizationSubstitutionFor(
     ClaimType provenSelfClaim,
@@ -1328,9 +1344,11 @@ LogicalResult ProjCastOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   auto subst = implOr->buildSubstitutionForSelfClaim(claimTy.asUnproven(), errFn);
   if (failed(subst)) return failure();
 
-  // Resolve matching projections on both sides
-  Type resolvedInput = implOr->resolveProjectionTypesViaBindings(inputType, *subst);
-  Type resolvedResult = implOr->resolveProjectionTypesViaBindings(resultType, *subst);
+  // Resolve only projections matching the evidence's trait application.
+  // E.g., evidence for A[i32] resolves A[i32]::Out but not A[i64]::Out.
+  TraitApplicationAttr claimApp = claimTy.getTraitApplication();
+  Type resolvedInput = implOr->resolveProjectionTypesForApplication(inputType, claimApp, *subst);
+  Type resolvedResult = implOr->resolveProjectionTypesForApplication(resultType, claimApp, *subst);
 
   // If either side still contains unresolved projections (from a different trait),
   // we can't fully verify — defer to monomorphization

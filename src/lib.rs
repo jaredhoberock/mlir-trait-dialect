@@ -67,6 +67,8 @@ unsafe extern "C" {
 
     fn traitClaimTypeGet(ctx: MlirContext,
                          trait_app: MlirAttribute) -> MlirType;
+    fn traitClaimTypeWithApplication(claim_ty: MlirType,
+                                     trait_app: MlirAttribute) -> MlirType;
     fn traitClaimTypeGetTraitApplication(claim_ty: MlirType) -> MlirAttribute;
     fn traitTypeIsAClaim(ty: MlirType) -> bool;
     fn traitGetGenericTypesIn(ty: MlirType, results: *mut MlirType, max_results: isize) -> isize;
@@ -354,6 +356,18 @@ impl<'c> ClaimType<'c> {
         let type_ = unsafe {
             Type::from_raw(traitClaimTypeGet(
                 ctx.to_raw(),
+                trait_app.to_raw(),
+            ))
+        };
+        Self { type_ }
+    }
+
+    /// Return a claim type with the same proof but a different
+    /// trait application.
+    pub fn with_application(&self, trait_app: TraitApplicationAttribute<'c>) -> Self {
+        let type_ = unsafe {
+            Type::from_raw(traitClaimTypeWithApplication(
+                self.type_.to_raw(),
                 trait_app.to_raw(),
             ))
         };

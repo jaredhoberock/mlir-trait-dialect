@@ -349,6 +349,24 @@ MlirType traitClaimTypeGet(MlirContext wrappedCtx,
   return wrap(ClaimType::get(ctx, traitApp));
 }
 
+MlirType traitClaimTypeGetProven(MlirContext wrappedCtx,
+                                 MlirAttribute wrappedTraitApp,
+                                 MlirStringRef proofName) {
+  MLIRContext* ctx = unwrap(wrappedCtx);
+  TraitApplicationAttr traitApp = dyn_cast<TraitApplicationAttr>(unwrap(wrappedTraitApp));
+  if (!traitApp) return {};
+  auto proof = FlatSymbolRefAttr::get(ctx, StringRef(proofName.data, proofName.length));
+  return wrap(ClaimType::get(ctx, traitApp, proof));
+}
+
+MlirType traitClaimTypeWithApplication(MlirType wrappedClaimType,
+                                       MlirAttribute wrappedTraitApp) {
+  ClaimType claimType = dyn_cast<ClaimType>(unwrap(wrappedClaimType));
+  TraitApplicationAttr traitApp = dyn_cast<TraitApplicationAttr>(unwrap(wrappedTraitApp));
+  if (!claimType || !traitApp) return {};
+  return wrap(ClaimType::get(claimType.getContext(), traitApp, claimType.getProof()));
+}
+
 MlirAttribute traitClaimTypeGetTraitApplication(MlirType wrappedClaimType) {
   ClaimType claimType = dyn_cast<ClaimType>(unwrap(wrappedClaimType));
   if (!claimType) return {}; // invalid type
