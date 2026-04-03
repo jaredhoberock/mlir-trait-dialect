@@ -1364,6 +1364,13 @@ LogicalResult ProjCastOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 }
 
 
+OpFoldResult ProjCastOp::fold(FoldAdaptor) {
+  if (getInput().getType() == getResult().getType())
+    return getInput();
+  return {};
+}
+
+
 //===----------------------------------------------------------------------===//
 // MethodCallOp
 //===----------------------------------------------------------------------===//

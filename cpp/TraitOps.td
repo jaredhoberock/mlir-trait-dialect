@@ -986,6 +986,7 @@ def ProjCastOp : TraitDialectOp<"proj.cast", [
   let arguments = (ins AnyType:$input, Claim:$claim);
   let results = (outs AnyType:$result);
   let hasCustomAssemblyFormat = 1;
+  let hasFolder = 1;
 }
 
 
