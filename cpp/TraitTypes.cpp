@@ -309,8 +309,14 @@ LogicalResult verifyAndRecordProof(
   if (failed(buildSpecializationSubstitution(proof.getProvenClaim(), proven, module, err)))
     return failure();
 
-  // specialize obligations for the unproven claim
-  auto obligations = proof.getImpl().specializeObligationsAsClaimsFor(unproven, err);
+  // Use the proof's concrete claim (projections resolved) rather than the
+  // unproven claim (which may still contain projections). Example:
+  // unproven = @D[A[i32]::Out, A[f32]::Out], concrete = @D[i64, i64].
+  // An impl like @D[poly, poly] can unify with @D[i64, i64] but not with
+  // @D[A[i32]::Out, A[f32]::Out] (the two projections are structurally
+  // different even though both resolve to i64).
+  auto obligations = proof.getImpl().specializeObligationsAsClaimsFor(
+      proof.getProvenClaim().asUnproven(), err);
   if (failed(obligations)) return failure();
 
   // get the subproof claims (also checks arity against obligations)
