@@ -553,9 +553,9 @@ static func::FuncOp instantiateMethodAsFreeFuncWithLeadingSelfProof(
   // prepend the self proof as the first parameter of the function and
   // set visibility to private
   rewriter.modifyOpInPlace(funcOp, [&] {
-    funcOp.insertArgument(/*idx=*/0, selfProofTy,
-                          /*argAttrs=*/mlir::DictionaryAttr(),
-                          method.getLoc());
+    (void)funcOp.insertArgument(/*idx=*/0, selfProofTy,
+                               /*argAttrs=*/mlir::DictionaryAttr(),
+                               method.getLoc());
     funcOp.setVisibility(SymbolTable::Visibility::Private);
   });
   BlockArgument selfProofArg = funcOp.getArgument(0);
@@ -566,7 +566,8 @@ static func::FuncOp instantiateMethodAsFreeFuncWithLeadingSelfProof(
     PatternRewriter::InsertionGuard guard(rewriter);
     rewriter.setInsertionPoint(a);
 
-    Value replacement = rewriter.create<ProjectOp>(
+    Value replacement = ProjectOp::create(
+      rewriter,
       a.getLoc(),
       a.getClaim(),
       selfProofArg

@@ -595,9 +595,9 @@ def AssocTypeOp : TraitDialectOp<"assoc_type", [
 
 
 def Claim : Type<
-  CPred<"::mlir::isa<ClaimType>($_self)">,
+  CPred<"::mlir::isa<::mlir::trait::ClaimType>($_self)">,
   "any '!trait.claim' type",
-  "ClaimType"
+  "::mlir::trait::ClaimType"
 >;
 
 def Projection : Type<
@@ -996,7 +996,6 @@ def ProjCastOp : TraitDialectOp<"proj.cast", [
 
 
 def MethodCallOp : TraitDialectOp<"method.call", [
-  CallOpInterface,
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
   HasGetModule
 ]>{
@@ -1133,22 +1132,6 @@ def MethodCallOp : TraitDialectOp<"method.call", [
 
     ImplOp getProvenImpl();
 
-    // CallOpInterface methods
-    operand_range getArgOperands() {
-      return getArguments();
-    }
-
-    MutableOperandRange getArgOperandsMutable() {
-      return getArgumentsMutable();
-    }
-
-    CallInterfaceCallable getCallableForCallee() {
-      return (*this)->getAttrOfType<SymbolRefAttr>("method");
-    }
-
-    void setCalleeFromCallable(CallInterfaceCallable method) {
-      (*this)->setAttr("method", cast<SymbolRefAttr>(method));
-    }
   }];
 
   let hasVerifier = 1;
@@ -1157,7 +1140,6 @@ def MethodCallOp : TraitDialectOp<"method.call", [
 
 
 def FuncCallOp : TraitDialectOp<"func.call", [
-  CallOpInterface,
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
   HasGetModule
 ]> {
@@ -1240,21 +1222,6 @@ def FuncCallOp : TraitDialectOp<"func.call", [
     // returns the name of the (possibly instantiated) callee after monomorphization
     std::string getNameOfCalleeInstance();
 
-    operand_range getArgOperands() {
-      return getOperands();
-    }
-
-    MutableOperandRange getArgOperandsMutable() {
-      return getOperandsMutable();
-    }
-
-    CallInterfaceCallable getCallableForCallee() {
-      return (*this)->getAttrOfType<SymbolRefAttr>("callee_name");
-    }
-
-    void setCalleeFromCallable(CallInterfaceCallable callee) {
-      (*this)->setAttr("callee_name", cast<SymbolRefAttr>(callee));
-    }
   }];
 
   let assemblyFormat = "$callee_name `(` $operands `)` attr-dict `:` functional-type($operands, results)";

@@ -10,4 +10,6 @@ config.test_source_root = os.path.dirname(__file__)
 
 plugin_path = os.path.join(os.path.dirname(__file__), '..', 'libtrait_dialect.so')
 
-config.substitutions.append(('mlir-opt', f'mlir-opt --load-dialect-plugin={plugin_path}'))
+llvm_bin = os.path.join(os.path.expanduser('~'), 'dev/git/llvm-project-22/build/bin')
+mlir_opt = os.path.join(llvm_bin, 'mlir-opt')
+config.substitutions.append(('mlir-opt', f'{mlir_opt} --load-dialect-plugin={plugin_path}'))

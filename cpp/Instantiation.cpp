@@ -120,7 +120,7 @@ func::FuncOp instantiatePolymorph(OpBuilder& builder,
   auto newFunctionType = llvm::cast<FunctionType>(replacer.replace(oldFunctionType));
 
   // create the instance with the new type and instance name
-  func::FuncOp instance = builder.create<func::FuncOp>(loc, instanceName, newFunctionType);
+  func::FuncOp instance = func::FuncOp::create(builder, loc, instanceName, newFunctionType);
 
   // clone the polymorph's attributes with type replacement
   for (NamedAttribute attr : polymorph->getAttrs()) {

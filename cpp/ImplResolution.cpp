@@ -20,7 +20,7 @@ ImplResolver::assumptionsSatisfiableFor(ImplOp impl,
   // cycle guard: A(app) -> ... -> A(app) means unsatisfiable
   if (!memo.visiting.insert(app).second)
     return failure();
-  auto guard = llvm::make_scope_exit([&]{ memo.visiting.erase(app); });
+  auto guard = llvm::scope_exit([&]{ memo.visiting.erase(app); });
 
   // specialize the impl's assumptions to our concrete claim
   auto assumptions = impl.specializeAssumptionsAsClaimsFor(concreteSelf);
@@ -253,7 +253,7 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
   // projection resolution) turns out to be the same claim we are currently
   // proving, the recursive call will hit the memo instead of diverging.
   memo.proofMemo[app] = proofSym;
-  auto rollback = llvm::make_scope_exit([&]{ memo.proofMemo.erase(app); });
+  auto rollback = llvm::scope_exit([&]{ memo.proofMemo.erase(app); });
 
   // specialize all obligations against wanted
   auto obligations = impl.specializeObligationsAsClaimsFor(wanted, err);
@@ -272,7 +272,8 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
   PatternRewriter::InsertionGuard guard(rewriter);
   rewriter.setInsertionPointToEnd(module.getBody());
 
-  ProofOp proof = rewriter.create<ProofOp>(
+  ProofOp proof = ProofOp::create(
+    rewriter,
     rewriter.getUnknownLoc(),
     StringAttr::get(ctx, proofName),
     FlatSymbolRefAttr::get(ctx, impl.getSymName()),

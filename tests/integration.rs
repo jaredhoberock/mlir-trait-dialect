@@ -8,6 +8,7 @@ use melior::{
     ir::{
         attribute::{IntegerAttribute, StringAttribute, TypeAttribute},
         r#type::{FunctionType, IntegerType},
+        operation::{OperationLike, OperationMutLike},
         Attribute, Block, BlockLike, Identifier, Location, Module, Region, RegionLike,
     },
     pass::{self, PassManager},
@@ -415,7 +416,7 @@ fn test_jit() {
     assert!(pass_manager.run(&mut module).is_ok());
 
     // JIT compile the module
-    let engine = ExecutionEngine::new(&module, 0, &[], false);
+    let engine = ExecutionEngine::new(&module, 0, &[], false, false);
 
     // test that we can call bar & qux and they produce the expected results
 

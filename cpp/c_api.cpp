@@ -74,7 +74,7 @@ MlirOperation traitTraitOpCreate(MlirLocation loc, MlirStringRef name,
     appAttrs.push_back(app);
   }
 
-  auto op = builder.create<TraitOp>(
+  auto op = TraitOp::create(builder,
     unwrap(loc),
     builder.getStringAttr(StringRef(name.data, name.length)),
     typeParams,
@@ -100,7 +100,7 @@ MlirOperation traitImplOpCreate(MlirLocation loc,
   MLIRContext* ctx = unwrap(loc)->getContext();
   OpBuilder builder(ctx);
 
-  auto op = builder.create<ImplOp>(
+  auto op = ImplOp::create(builder,
     unwrap(loc),
     selfApp,
     appAttrs
@@ -126,7 +126,7 @@ MlirOperation traitImplOpCreateNamed(MlirLocation loc,
   MLIRContext* ctx = unwrap(loc)->getContext();
   OpBuilder builder(ctx);
 
-  auto op = builder.create<ImplOp>(
+  auto op = ImplOp::create(builder,
     unwrap(loc),
     StringRef(symName.data, symName.length),
     selfApp,
@@ -155,7 +155,7 @@ MlirOperation traitMethodCallOpCreate(MlirLocation loc,
     results.push_back(unwrap(resultTypes[i]));
   }
 
-  auto op = builder.create<MethodCallOp>(
+  auto op = MethodCallOp::create(builder,
     unwrap(loc),
     results,
     StringRef(traitName.data, traitName.length),
@@ -184,7 +184,7 @@ MlirOperation traitFuncCallOpCreate(MlirLocation loc,
     results.push_back(unwrap(resultTypes[i]));
   }
 
-  auto op = builder.create<FuncCallOp>(
+  auto op = FuncCallOp::create(builder,
     unwrap(loc),
     results,
     FlatSymbolRefAttr::get(ctx, StringRef(callee.data, callee.length)),
@@ -202,7 +202,7 @@ MlirOperation traitAllegeOpCreate(MlirLocation loc,
   if (!traitApp) return {}; // invalid attribute type
 
   OpBuilder builder(ctx);
-  auto op = builder.create<AllegeOp>(
+  auto op = AllegeOp::create(builder,
     unwrap(loc),
     traitApp
   );
@@ -218,7 +218,7 @@ MlirOperation traitAllegeUnsafeOpCreate(MlirLocation loc,
   if (!traitApp) return {}; // invalid attribute type
 
   OpBuilder builder(ctx);
-  auto op = builder.create<AllegeOp>(
+  auto op = AllegeOp::create(builder,
     unwrap(loc),
     traitApp,
     /*isUnsafe=*/true
@@ -238,7 +238,7 @@ MlirOperation traitWitnessOpCreate(MlirLocation loc,
 
   FlatSymbolRefAttr proofRef = FlatSymbolRefAttr::get(ctx, StringRef(proofName.data, proofName.length));
 
-  auto op = builder.create<WitnessOp>(
+  auto op = WitnessOp::create(builder,
     unwrap(loc),
     proofRef,
     traitApp
@@ -265,7 +265,7 @@ MlirOperation traitProofOpCreate(MlirLocation loc,
   }
 
   OpBuilder builder(ctx);
-  auto op = builder.create<ProofOp>(
+  auto op = ProofOp::create(builder,
     unwrap(loc),
     StringRef(symName.data, symName.length),
     FlatSymbolRefAttr::get(ctx, StringRef(implName.data, implName.length)),
@@ -286,7 +286,7 @@ MlirOperation traitProjectOpCreate(MlirLocation loc,
 
   OpBuilder builder(ctx);
 
-  auto op = builder.create<ProjectOp>(
+  auto op = ProjectOp::create(builder,
     unwrap(loc),
     resultType,
     unwrap(srcClaim)
@@ -312,7 +312,7 @@ MlirOperation traitDeriveOpCreate(MlirLocation loc,
     args.push_back(unwrap(assumptions[i]));
 
   OpBuilder builder(ctx);
-  auto op = builder.create<DeriveOp>(
+  auto op = DeriveOp::create(builder,
     unwrap(loc),
     traitApp,
     implRef,
@@ -331,7 +331,7 @@ MlirOperation traitAssumeOpCreate(MlirLocation loc,
   TraitApplicationAttr traitApp = dyn_cast<TraitApplicationAttr>(unwrap(wrappedTraitApp));
   if (!traitApp) return {}; // invalid attribute type
 
-  auto op = builder.create<AssumeOp>(unwrap(loc), traitApp);
+  auto op = AssumeOp::create(builder, unwrap(loc), traitApp);
 
   return wrap(op.getOperation());
 }
@@ -403,7 +403,7 @@ MlirOperation traitProjCastOpCreate(MlirLocation loc,
   MLIRContext *ctx = unwrap(loc)->getContext();
   OpBuilder builder(ctx);
 
-  auto op = builder.create<ProjCastOp>(
+  auto op = ProjCastOp::create(builder,
     unwrap(loc),
     unwrap(resultType),
     unwrap(input),
@@ -429,7 +429,7 @@ MlirOperation traitAssocTypeOpCreate(MlirLocation loc,
       attrs.push_back(TypeAttr::get(unwrap(typeParams[i])));
     typeParamsAttr = ArrayAttr::get(ctx, attrs);
   }
-  auto op = builder.create<AssocTypeOp>(
+  auto op = AssocTypeOp::create(builder,
     unwrap(loc),
     builder.getStringAttr(StringRef(name.data, name.length)),
     typeAttr,
