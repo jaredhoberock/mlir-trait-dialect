@@ -1,9 +1,0 @@
-[env]
-MLIR_SYS_220_PREFIX = "/home/jhoberock/dev/git/llvm-project-22/install"
-TABLEGEN_220_PREFIX = "/home/jhoberock/dev/git/llvm-project-22/install"
-
-[build]
-rustflags = [
-  # this allows cargo test to find our debug build of the MLIR shared library
-  "-C", "link-arg=-Wl,-rpath,/home/jhoberock/dev/git/llvm-project-22/install/lib",
-]
