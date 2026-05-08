@@ -236,6 +236,68 @@ bool ClaimType::isPolymorphic() const {
 /// Related: ProofOp::verifyAndGetSubproofClaims (TraitOps.cpp) is a helper
 /// called from here that resolves subproof names to typed claims, validates
 /// coinductive self-references, and checks arity.
+static LogicalResult verifyProofSpecializesTo(
+    Operation *proofSymbol,
+    ClaimType proven,
+    ModuleOp module,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  if (auto impl = dyn_cast<ImplOp>(proofSymbol)) {
+    if (failed(impl.buildSubstitutionForSelfClaim(proven.asUnproven(), err)))
+      return failure();
+    return success();
+  }
+
+  auto proof = cast<ProofOp>(proofSymbol);
+  return buildSpecializationSubstitution(proof.getProvenClaim(), proven, module, err);
+}
+
+/// Verifies that two recorded proofs for the same obligation are coherent.
+///
+/// Proof recording uses the unproven obligation as the substitution key, but
+/// the same obligation can be reached through different claim spellings. For
+/// example, one path may record the normalized claim while another path reaches
+/// the projected claim produced by `trait.proj.cast`.
+///
+/// Those spellings are equivalent only if they use the same proof symbol and
+/// that proof symbol independently specializes to both proven claims.
+static LogicalResult verifyEquivalentRecordedProof(
+    ClaimType unproven,
+    ClaimType recorded,
+    ClaimType candidate,
+    ModuleOp module,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  if (recorded == candidate)
+    return success();
+
+  if (recorded.getProof() != candidate.getProof()) {
+    if (err) err() << "inconsistent proof mapping: " << unproven
+                   << " is already bound to " << recorded
+                   << ", but attempted to bind " << candidate;
+    return failure();
+  }
+
+  auto symOp = ProofOp::getProofOpOrUnconditionalImplOp(module, candidate.getProof(), err);
+  if (failed(symOp)) return failure();
+
+  // The same proof symbol may appear through both a normalized obligation and
+  // a projected claim produced by trait.proj.cast. Those are coherent iff the
+  // proof symbol independently specializes to each spelling.
+  //
+  // For polymorphic proofs, the two specialization substitutions need not be
+  // identical. The coherence question here is narrower: can this one proof
+  // symbol witness both spellings of the same already-recorded obligation?
+  if (failed(verifyProofSpecializesTo(*symOp, recorded, module, err)) ||
+      failed(verifyProofSpecializesTo(*symOp, candidate, module, err))) {
+    if (err) err() << "proof " << candidate.getProof()
+                   << " does not specialize to both " << recorded
+                   << " and " << candidate
+                   << " for obligation " << unproven;
+    return failure();
+  }
+
+  return success();
+}
+
 LogicalResult verifyAndRecordProof(
     ClaimType unproven,
     ClaimType proven,
@@ -248,16 +310,12 @@ LogicalResult verifyAndRecordProof(
     return failure();
   }
 
-  // early exit if we've already recorded this proof
-  if (auto it = subst.find(unproven); it != subst.end()) {
-    if (it->second != proven) {
-      if (err) err() << "inconsistent proof mapping: " << unproven
-                     << " is already bound to " << it->second
-                     << ", but attempted to bind " << proven;
-      return failure();
-    }
-    return success();
-  }
+  // early exit if we've already recorded this obligation. The same proof may
+  // be observed through multiple equivalent claim spellings, so validate proof
+  // coherence instead of requiring syntactic claim equality.
+  if (auto it = subst.find(unproven); it != subst.end())
+    return verifyEquivalentRecordedProof(
+        unproven, cast<ClaimType>(it->second), proven, module, err);
 
   // the "unproven" parameter we're verifying might have already been
   // normalized once by previous calls: helpers like
@@ -269,17 +327,8 @@ LogicalResult verifyAndRecordProof(
   // We just accept it and stop: the claim is already proven and
   // agrees with what we're trying to record.
   if (unproven.isProven()) {
-    if (unproven != proven) {
-      // The claim came back proven but *with a different proof symbol*.
-      // That's an inconsistency: some other path claimed to prove the
-      // same trait with a different proof.
-      if (err) err() << "incoherent proofs for obligation "
-                     << unproven
-                     << ": " << unproven.getProof() << " vs " << proven.getProof();
-      return failure();
-    }
-    // already proven with the same proof -- nothing to do.
-    return success();
+    return verifyEquivalentRecordedProof(
+        unproven.asUnproven(), unproven, proven, module, err);
   }
 
   // look up the trait and its requirements using the unproven claim
