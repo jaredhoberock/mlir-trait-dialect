@@ -143,19 +143,10 @@ FailureOr<ImplOp> ImplResolver::resolveImplFor(
 // find an existing trait.proof that *explicitly* proves impl by name
 // and proves the same application app
 static ProofOp findExistingProofFor(ModuleOp module, ImplOp impl, TraitApplicationAttr app) {
-  auto uses = mlir::SymbolTable::getSymbolUses(impl, module);
-  if (!uses) return nullptr;
-
-  // traverse all ProofOps that use impl
-  for (const SymbolTable::SymbolUse& use : *uses) {
-    if (auto proof = dyn_cast<ProofOp>(use.getUser())) {
-      // ensure both:
-      // 1. proof refers to exactly this impl by name, and
-      // 2. the trait application matches
-      if (proof.getImplName() == impl.getSymName() &&
-          proof.getTraitApplication() == app)
-        return proof;
-    }
+  for (ProofOp proof : module.getOps<ProofOp>()) {
+    if (proof.getImplName() == impl.getSymName() &&
+        proof.getTraitApplication() == app)
+      return proof;
   }
   return nullptr;
 }
@@ -247,6 +238,22 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
   // Compute the proof name early so we can use it as the coinductive memo entry.
   std::string proofName = impl.generateMangledName(monomorphicWanted) + "_p";
   auto proofSym = FlatSymbolRefAttr::get(ctx, proofName);
+  for (ProofOp proof : module.getOps<ProofOp>()) {
+    if (proof.getSymName() != proofName)
+      continue;
+
+    ClaimType candidate = ClaimType::get(ctx, app, proofSym);
+    DenseMap<Type, Type> subst;
+    if (succeeded(verifyAndRecordProof(candidate.asUnproven(), candidate,
+                                       module, subst, err))) {
+      memo.proofMemo[app] = proofSym;
+      return proofSym;
+    }
+
+    if (err)
+      err() << "proof symbol collision for @" << proofName;
+    return failure();
+  }
 
   // Coinductive cycle guard: optimistically populate the proof memo with the
   // proof symbol before recursing into obligations.  If an obligation (after
