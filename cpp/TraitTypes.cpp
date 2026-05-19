@@ -440,6 +440,12 @@ void ClaimType::getProjections(
   }
 }
 
+static LogicalResult unifyTypeRange(ArrayRef<Type> formalTypes,
+                                    ArrayRef<Type> actualTypes,
+                                    ModuleOp module,
+                                    llvm::DenseMap<Type, Type> &subst,
+                                    llvm::function_ref<InFlightDiagnostic()> err);
+
 LogicalResult ClaimType::unify(
     Type other,
     ModuleOp module,
@@ -477,15 +483,6 @@ LogicalResult ClaimType::unify(
     return failure();
   }
 
-  // same arity?
-  auto formalArgs = formalApp.getTypeArgs();
-  auto actualArgs = actualApp.getTypeArgs();
-  if (formalArgs.size() != actualArgs.size()) {
-    if (err) err() << "arity mismatch: expected " << formalArgs.size()
-                   << " type arguments, but found " << actualArgs.size();
-    return failure();
-  }
-
   // check proofs
   auto formalProof = formal.getProof();
   auto actualProof = actual.getProof();
@@ -499,13 +496,8 @@ LogicalResult ClaimType::unify(
     return failure();
   }
 
-  // recurse on each argument pair
-  for (auto [f, a] : llvm::zip(formalArgs, actualArgs)) {
-    if (failed(trait::unify(f, a, module, subst, err)))
-      return failure();
-  }
-
-  return success();
+  return unifyTypeRange(formalApp.getTypeArgs(), actualApp.getTypeArgs(), module,
+                        subst, err);
 }
 
 
@@ -581,6 +573,26 @@ LogicalResult ProjectionType::verifySymbolUses(ModuleOp module,
 // unify
 //===----------------------------------------------------------------------===//
 
+static LogicalResult unifyTypeRange(ArrayRef<Type> formalTypes,
+                                    ArrayRef<Type> actualTypes,
+                                    ModuleOp module,
+                                    llvm::DenseMap<Type, Type> &subst,
+                                    llvm::function_ref<InFlightDiagnostic()> err) {
+  if (formalTypes.size() != actualTypes.size()) {
+    if (err)
+      err() << "type arity mismatch: expected " << formalTypes.size()
+            << " type arguments, but found " << actualTypes.size();
+    return failure();
+  }
+
+  for (auto [formal, actual] : llvm::zip(formalTypes, actualTypes)) {
+    if (failed(trait::unify(formal, actual, module, subst, err)))
+      return failure();
+  }
+
+  return success();
+}
+
 /// Collect exactly the immediate child Types and Attributes of `ty`. If `ty` has no sub‐elements,
 /// returns empty vectors.
 static std::pair<SmallVector<Type, 4>, SmallVector<Attribute, 4>> getImmediateSubElements(Type ty) {
@@ -631,7 +643,9 @@ static LogicalResult unifyStructurally(Type formal,
     return failure();
   }
 
-  // the attributes of both types must match exactly before recursing on child types
+  // The attributes of both types must match exactly before recursing on
+  // child types. XXX: this treats attributes as opaque, so it will not find
+  // and unify types stored inside type-bearing attributes.
   for (auto [f, a] : llvm::zip(formalSubAttrs, actualSubAttrs)) {
     if (f != a) {
       if (err) err() << "attribute mismatch: expected " << f
@@ -652,22 +666,37 @@ static LogicalResult unifyStructurally(Type formal,
 /// Unify a projection type with another type.
 ///
 /// Two cases:
-///  - Projection vs projection: delegate to structural unification so
-///    projections of the same trait/name/args unify.
+///  - Projection vs projection: require the same symbolic projection head, then
+///    recurse through trait application and associated-type arguments. This
+///    allows nested projections to justify equivalent spellings.
 ///  - Projection vs non-projection: succeed without recording a binding.
-///    Projections are opaque type functions resolved later via claim evidence
-///    (addProjectionBindings), not via unification bindings. Succeeding here
-///    says "this projection is compatible" without committing to a specific
-///    resolution.
+///    Projections are opaque type functions resolved later via claim evidence,
+///    not via unification bindings. Succeeding here says "this projection is
+///    compatible" without committing to a specific resolution.
 LogicalResult ProjectionType::unify(
     Type other,
     ModuleOp module,
     DenseMap<Type,Type> &subst,
     llvm::function_ref<InFlightDiagnostic()> err) {
-  // projection vs projection: unify structurally
+  // Projection trait applications carry type arguments inside an attribute,
+  // so structural attribute equality is too strict. Compare the symbolic
+  // projection head, then recurse through the type arguments.
   if (auto otherProj = mlir::dyn_cast<ProjectionType>(other)) {
-    return unifyStructurally(*this, otherProj,
-                             module, subst, err);
+    auto formalApp = getTraitApplication();
+    auto actualApp = otherProj.getTraitApplication();
+    if (formalApp.getTraitName() != actualApp.getTraitName() ||
+        getAssocName() != otherProj.getAssocName()) {
+      if (err)
+        err() << "projection mismatch: expected " << *this << " but found "
+              << otherProj;
+      return failure();
+    }
+
+    if (failed(unifyTypeRange(formalApp.getTypeArgs(), actualApp.getTypeArgs(),
+                              module, subst, err)))
+      return failure();
+    return unifyTypeRange(getAssocTypeArgs(), otherProj.getAssocTypeArgs(),
+                          module, subst, err);
   }
 
   // projection vs non-projection: succeed without recording a binding.
