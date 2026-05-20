@@ -54,6 +54,14 @@ std::string applySubstitutionAndGenerateMangledNameSuffix(
   return generateMangledNameSuffixFor(concreteTypes);
 }
 
+std::string applySubstitutionAndGenerateMangledNameSuffix(
+    const SpecializationMap &subst, ArrayRef<GenericTypeInterface> typeParams) {
+  SmallVector<Type> concreteTypes;
+  for (auto ty : typeParams)
+    concreteTypes.push_back(subst.apply(ty));
+  return generateMangledNameSuffixFor(concreteTypes);
+}
+
 
 //===----------------------------------------------------------------------===//
 // PolyType
@@ -68,16 +76,24 @@ PolyType PolyType::getUnique(MLIRContext* ctx) {
   return PolyType::get(ctx, nextPolyTypeId());
 }
 
-Type PolyType::instantiate(DenseMap<Type,Type> &inst, uint64_t &idCounter) {
+Type PolyType::instantiate(InstantiationMap &inst, uint64_t &idCounter) {
+  auto self = cast<GenericTypeInterface>(*this);
+
   // check memo first - if we've already instantiated this PolyType, return it
-  if (auto it = inst.find(*this); it != inst.end()) {
-    return it->second;
-  }
+  if (auto existing = inst.lookup(self))
+    return *existing;
 
   // create and remember a fresh inference var for this poly
   auto fresh = InferenceType::get(getContext(), idCounter++, getUniqueId());
-  inst[*this] = fresh;
+  inst.bind(self, cast<UnificationTypeInterface>(fresh));
   return fresh;
+}
+
+Type PolyType::specializeWith(const SpecializationMap &subst) const {
+  auto self = cast<GenericTypeInterface>(*this);
+  if (auto replacement = subst.lookup(self))
+    return *replacement;
+  return *this;
 }
 
 Type PolyType::parse(AsmParser &parser) {
@@ -123,21 +139,22 @@ void PolyType::print(AsmPrinter &printer) const {
 LogicalResult InferenceType::unify(
   Type other,
   ModuleOp /*module*/,
-  DenseMap<Type,Type> &subst,
+  UnificationMap &subst,
   llvm::function_ref<InFlightDiagnostic()> err) {
   Type self = *this;
+  auto selfKey = cast<UnificationTypeInterface>(self);
 
   // normalize
-  other = applySubstitutionOnce(subst, other);
+  other = applySubstitutionOnce(subst.toTypeMap(), other);
 
   // first check for trivial equality
   if (self == other) return success();
 
   // if self is already bound, check consistency
-  if (auto it = subst.find(self); it != subst.end()) {
-    if (it->second != other) {
+  if (auto existing = subst.lookup(selfKey)) {
+    if (*existing != other) {
       if (err) return err() << "inference variable " << self
-                            << " already bound to " << it->second
+                            << " already bound to " << *existing
                             << ", cannot bind to " << other;
       return failure();
     }
@@ -160,7 +177,7 @@ LogicalResult InferenceType::unify(
   }
 
   // bind the variable
-  subst[self] = other;
+  subst.bind(selfKey, other);
   return success();
 }
 
@@ -248,7 +265,7 @@ static LogicalResult verifyProofSpecializesTo(
   }
 
   auto proof = cast<ProofOp>(proofSymbol);
-  return buildSpecializationSubstitution(proof.getProvenClaim(), proven, module, err);
+  return buildSpecialization(proof.getProvenClaim(), proven, module, err);
 }
 
 /// Verifies that two recorded proofs for the same obligation are coherent.
@@ -302,7 +319,7 @@ LogicalResult verifyAndRecordProof(
     ClaimType unproven,
     ClaimType proven,
     ModuleOp module,
-    DenseMap<Type,Type> &subst,
+    EvidenceBindings &bindings,
     llvm::function_ref<InFlightDiagnostic()> err) {
   // the proven side must carry a proof
   if (!proven.isProven()) {
@@ -313,9 +330,9 @@ LogicalResult verifyAndRecordProof(
   // early exit if we've already recorded this obligation. The same proof may
   // be observed through multiple equivalent claim spellings, so validate proof
   // coherence instead of requiring syntactic claim equality.
-  if (auto it = subst.find(unproven); it != subst.end())
+  if (auto existing = bindings.lookup(unproven))
     return verifyEquivalentRecordedProof(
-        unproven, cast<ClaimType>(it->second), proven, module, err);
+        unproven, *existing, proven, module, err);
 
   // the "unproven" parameter we're verifying might have already been
   // normalized once by previous calls: helpers like
@@ -347,7 +364,7 @@ LogicalResult verifyAndRecordProof(
     }
 
     // success: bind the whole claim so that later normalization keeps the proof
-    subst[unproven] = proven;
+    bindings.bind(unproven, proven);
     return success();
   }
 
@@ -355,7 +372,7 @@ LogicalResult verifyAndRecordProof(
   auto proof = dyn_cast<ProofOp>(*symOp);
 
   // check that the proof's claim can specialize to match proven
-  if (failed(buildSpecializationSubstitution(proof.getProvenClaim(), proven, module, err)))
+  if (failed(buildSpecialization(proof.getProvenClaim(), proven, module, err)))
     return failure();
 
   // Use the proof's concrete claim (projections resolved) rather than the
@@ -375,12 +392,12 @@ LogicalResult verifyAndRecordProof(
   // Bind optimistically before recursing so that coinductive self-references
   // (where an obligation resolves back to the same claim) hit the early exit
   // at the top of this function instead of diverging.
-  subst[unproven] = proven;
+  bindings.bind(unproven, proven);
 
   // recurse over obligations
   for (auto [ob, sub] : llvm::zip(*obligations, *subproofs)) {
-    if (failed(verifyAndRecordProof(ob, sub, module, subst, err))) {
-      subst.erase(unproven);
+    if (failed(verifyAndRecordProof(ob, sub, module, bindings, err))) {
+      bindings.erase(unproven);
       return failure();
     }
   }
@@ -396,7 +413,7 @@ LogicalResult verifyAndRecordProof(
 LogicalResult recordProofBindingsIn(
     Type root,
     ModuleOp module,
-    DenseMap<Type,Type> &subst,
+    EvidenceBindings &bindings,
     llvm::function_ref<InFlightDiagnostic()> err) {
   LogicalResult status = success();
 
@@ -405,7 +422,7 @@ LogicalResult recordProofBindingsIn(
 
     if (auto claim = dyn_cast<ClaimType>(node)) {
       if (claim.isProven())
-        if (failed(verifyAndRecordProof(claim.asUnproven(), claim, module, subst, err)))
+        if (failed(verifyAndRecordProof(claim.asUnproven(), claim, module, bindings, err)))
           status = failure();
     }
   });
@@ -443,16 +460,16 @@ void ClaimType::getProjections(
 static LogicalResult unifyTypeRange(ArrayRef<Type> formalTypes,
                                     ArrayRef<Type> actualTypes,
                                     ModuleOp module,
-                                    llvm::DenseMap<Type, Type> &subst,
+                                    UnificationMap &subst,
                                     llvm::function_ref<InFlightDiagnostic()> err);
 
 LogicalResult ClaimType::unify(
     Type other,
     ModuleOp module,
-    DenseMap<Type,Type>& subst,
+    UnificationMap& subst,
     llvm::function_ref<InFlightDiagnostic()> err) {
   // normalize formal first
-  Type formalNormTy = applySubstitutionOnce(subst, *this);
+  Type formalNormTy = applySubstitutionOnce(subst.toTypeMap(), *this);
   ClaimType formal = mlir::dyn_cast<ClaimType>(formalNormTy);
 
   // if formal is no longer a ClaimType, delegate to generic path
@@ -460,7 +477,7 @@ LogicalResult ClaimType::unify(
     return trait::unify(formalNormTy, other, module, subst, err);
 
   // normalize actual second
-  Type normActualTy = applySubstitutionOnce(subst, other);
+  Type normActualTy = applySubstitutionOnce(subst.toTypeMap(), other);
   ClaimType actual = mlir::dyn_cast<ClaimType>(normActualTy);
 
   // if actual isn't a claim, it's an immediate mismatch
@@ -576,7 +593,7 @@ LogicalResult ProjectionType::verifySymbolUses(ModuleOp module,
 static LogicalResult unifyTypeRange(ArrayRef<Type> formalTypes,
                                     ArrayRef<Type> actualTypes,
                                     ModuleOp module,
-                                    llvm::DenseMap<Type, Type> &subst,
+                                    UnificationMap &subst,
                                     llvm::function_ref<InFlightDiagnostic()> err) {
   if (formalTypes.size() != actualTypes.size()) {
     if (err)
@@ -611,7 +628,7 @@ static std::pair<SmallVector<Type, 4>, SmallVector<Attribute, 4>> getImmediateSu
 static LogicalResult unifyStructurally(Type formal,
                                        Type actual,
                                        ModuleOp module,
-                                       llvm::DenseMap<Type,Type> &subst,
+                                       UnificationMap &subst,
                                        llvm::function_ref<InFlightDiagnostic()> err) {
   if (formal == actual) return success();
 
@@ -676,7 +693,7 @@ static LogicalResult unifyStructurally(Type formal,
 LogicalResult ProjectionType::unify(
     Type other,
     ModuleOp module,
-    DenseMap<Type,Type> &subst,
+    UnificationMap &subst,
     llvm::function_ref<InFlightDiagnostic()> err) {
   // Projection trait applications carry type arguments inside an attribute,
   // so structural attribute equality is too strict. Compare the symbolic
@@ -730,11 +747,11 @@ LogicalResult unify(
     Type formal,
     Type actual,
     ModuleOp module,
-    llvm::DenseMap<Type,Type> &subst,
+    UnificationMap &subst,
     llvm::function_ref<InFlightDiagnostic()> err) {
   // normalize both types by applying the current substitution
-  formal = applySubstitutionToFixedPoint(subst, formal);
-  actual = applySubstitutionToFixedPoint(subst, actual);
+  formal = applySubstitutionToFixedPoint(subst.toTypeMap(), formal);
+  actual = applySubstitutionToFixedPoint(subst.toTypeMap(), actual);
 
   // if the normalized types are equal, unification succeeds
   if (formal == actual)
@@ -756,7 +773,7 @@ LogicalResult unify(
     Type formal,
     Type actual,
     ModuleOp module,
-    llvm::DenseMap<Type,Type> &subst) {
+    UnificationMap &subst) {
   auto errFn = llvm::function_ref<InFlightDiagnostic()>{};
   return unify(formal, actual, module, subst, errFn);
 }
@@ -766,7 +783,7 @@ LogicalResult unify(
     Type actual,
     ModuleOp module,
     llvm::function_ref<InFlightDiagnostic()> err) {
-  DenseMap<Type,Type> discardedSubst;
+  UnificationMap discardedSubst;
   return unify(formal, actual, module, discardedSubst, err);
 }
 
@@ -774,7 +791,7 @@ LogicalResult unify(
     Type formal,
     Type actual,
     ModuleOp module) {
-  DenseMap<Type,Type> discardedSubst;
+  UnificationMap discardedSubst;
   return unify(formal, actual, module, discardedSubst);
 }
 
@@ -783,7 +800,7 @@ LogicalResult unify(
 // instantiate
 //===----------------------------------------------------------------------===//
 
-Type instantiate(Type root, DenseMap<Type,Type> &inst, uint64_t &idCounter) {
+Type instantiate(Type root, InstantiationMap &inst, uint64_t &idCounter) {
   AttrTypeReplacer r;
   r.addReplacement([&](Type t) -> std::optional<Type> {
     if (auto generic = dyn_cast<GenericTypeInterface>(t)) {
@@ -798,28 +815,28 @@ Type instantiate(Type root, DenseMap<Type,Type> &inst, uint64_t &idCounter) {
 }
 
 
-FailureOr<DenseMap<Type,Type>> buildSpecializationSubstitution(
+FailureOr<SpecializationMap> buildSpecialization(
     Type formal,
     Type actual,
     ModuleOp module,
     llvm::function_ref<InFlightDiagnostic()> err) {
   // instantiate generics on both sides with the same instantiation map
-  DenseMap<Type,Type> genToInfer;
+  InstantiationMap genToInfer;
   uint64_t idCounter = 0;
   Type iformal = instantiate(formal, genToInfer, idCounter);
   Type iactual = instantiate(actual, genToInfer, idCounter);
 
   // get the inverse instantiation map as well
-  auto inferToGen = invertSubstitution(genToInfer, err);
+  auto inferToGen = invertSubstitution(genToInfer.toTypeMap(), err);
   if (failed(inferToGen)) return failure();
 
   // unify the instantiated formal and actual types
-  DenseMap<Type,Type> inferToType;
+  UnificationMap inferToType;
   if (failed(unify(iformal, iactual, module, inferToType, err)))
     return failure();
 
   // compose (gen -> infer) o (infer -> type)
-  auto composed = composeSubstitutions(genToInfer, inferToType, err);
+  auto composed = composeSubstitutions(genToInfer.toTypeMap(), inferToType.toTypeMap(), err);
   if (failed(composed)) return failure();
 
   // compose again with inferToGen to map any remaining unsolved
@@ -828,21 +845,8 @@ FailureOr<DenseMap<Type,Type>> buildSpecializationSubstitution(
   auto result = composeSubstitutions(*composed, *inferToGen, err);
   if (failed(result)) return failure();
 
-  // Carry forward non-variable bindings discovered during unification
-  // (e.g., projection types unified with concrete types).
-  // composeSubstitutions only propagates variable-keyed bindings,
-  // so complex-keyed bindings would otherwise be lost.
-  for (const auto &[k, v] : inferToType) {
-    if (isa<InferenceType>(k)) continue;
-    Type groundKey = applySubstitutionToFixedPoint(*inferToGen, k);
-    Type groundVal = applySubstitutionToFixedPoint(*inferToGen, v);
-    if (groundKey != groundVal) {
-      result->try_emplace(groundKey, groundVal);
-    }
-  }
-
   normalizeSubstitutionInPlace(*result);
-  return *result;
+  return SpecializationMap::fromTypeMap(*result);
 }
 
 } // end mlir::trait

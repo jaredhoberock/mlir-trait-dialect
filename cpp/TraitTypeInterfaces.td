@@ -22,20 +22,19 @@ def GenericTypeInterface : TypeInterface<"GenericTypeInterface"> {
     InterfaceMethod<
       "Instantiate `*this` to a fresh type variable (memoized in `inst`).",
       "mlir::Type", "instantiate",
-      (ins "mlir::DenseMap<mlir::Type,mlir::Type>&":$inst,
+      (ins "::mlir::trait::InstantiationMap&":$inst,
            "uint64_t&":$idCounter)
     >,
     InterfaceMethod<
-      "Specialize this type using the given substitution map. Returns the "
-      "specialized type, or this type unchanged if no substitution applies. "
-      "Wrapper types (e.g., `!coord.poly<N>`) should specialize "
-      "their inner type and unwrap if the result is monomorphic.",
+      "Specialize this type using generic-type bindings. Returns the "
+      "specialized type, or this type unchanged if no specialization applies. "
+      "Wrapper types (e.g., `!coord.poly<N>`) should specialize their inner "
+      "type and unwrap if the result is monomorphic.",
       "mlir::Type", "specializeWith",
-      (ins "const mlir::DenseMap<mlir::Type,mlir::Type>&":$subst),
+      (ins "const ::mlir::trait::SpecializationMap&":$subst),
       /*methodBody=*/"",
       /*defaultImplementation=*/[{
-        auto it = subst.find($_type);
-        return it != subst.end() ? it->second : $_type;
+        return $_type;
       }]
     >
   ];
@@ -73,7 +72,7 @@ def UnificationTypeInterface : TypeInterface<"UnificationTypeInterface"> {
     Types implementing this interface participate in type unification.
     An implementation defines how `*this` (the *formal* type on the left)
     unifies with an arbitrary right-hand side type, updating a caller-provided
-    `DenseMap<Type,Type>` with *type-only* bindings.
+    `UnificationMap` with *type-only* bindings.
 
     Guidelines:
     * Respect existing substitutions: implementations should assume the caller
@@ -89,7 +88,7 @@ def UnificationTypeInterface : TypeInterface<"UnificationTypeInterface"> {
       "llvm::LogicalResult", "unify",
       (ins "Type":$actual,
            "mlir::ModuleOp":$module,
-           "mlir::DenseMap<mlir::Type,mlir::Type>&":$subst,
+           "::mlir::trait::UnificationMap&":$subst,
            "llvm::function_ref<mlir::InFlightDiagnostic()>":$emitError)
     >
   ];
@@ -99,7 +98,7 @@ def UnificationTypeInterface : TypeInterface<"UnificationTypeInterface"> {
     llvm::LogicalResult unify(
         Type actual,
         ModuleOp module,
-        DenseMap<Type,Type> &subst) const {
+        ::mlir::trait::UnificationMap &subst) const {
       auto errFn = llvm::function_ref<InFlightDiagnostic()>{};
       return this->unify(actual, module, subst, errFn);
     }

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
-#include "Instantiation.hpp"
+#include "Specialization.hpp"
 #include "TraitTypes.hpp"
 #include <mlir/IR/IRMapping.h>
 #include <mlir/IR/PatternMatch.h>
@@ -101,12 +101,12 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &sub
   return replacer;
 }
 
-func::FuncOp instantiatePolymorph(OpBuilder& builder,
+func::FuncOp specializePolymorph(OpBuilder& builder,
                                   func::FuncOp polymorph,
                                   StringRef instanceName,
                                   const DenseMap<Type,Type> &substitution) {
   if (polymorph.isExternal()) {
-    polymorph.emitError("cannot instantiate external function");
+    polymorph.emitError("cannot specialize external function");
     return nullptr;
   }
 
@@ -145,7 +145,7 @@ func::FuncOp instantiatePolymorph(OpBuilder& builder,
   return instance;
 }
 
-void instantiatePolymorphicRegion(OpBuilder& builder,
+void specializePolymorphicRegion(OpBuilder& builder,
                                   Region& polymorph,
                                   Region& monomorph,
                                   const DenseMap<Type,Type> &subst) {

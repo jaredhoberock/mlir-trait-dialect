@@ -52,7 +52,9 @@ def PolyType : TypeDef<TraitDialect, "Poly", [
     static PolyType getUnique(MLIRContext* ctx);
 
     // for GenericTypeInterface
-    Type instantiate(DenseMap<Type,Type> &inst, uint64_t &idCounter);
+    Type instantiate(::mlir::trait::InstantiationMap &inst, uint64_t &idCounter);
+
+    Type specializeWith(const ::mlir::trait::SpecializationMap &subst) const;
 
     // for PolymorphicTypeInterface
     bool isPolymorphic() const { return true; }
@@ -138,7 +140,7 @@ def ClaimType : TypeDef<TraitDialect, "Claim", [
     // for UnificationTypeInterface
     LogicalResult unify(Type other,
                         ModuleOp module,
-                        DenseMap<Type,Type> &subst,
+                        ::mlir::trait::UnificationMap &subst,
                         llvm::function_ref<InFlightDiagnostic()> emitError);
   }];
 
@@ -185,7 +187,7 @@ def ProjectionType : TypeDef<TraitDialect, "Projection", [
     // for UnificationTypeInterface
     LogicalResult unify(Type other,
                         ModuleOp module,
-                        DenseMap<Type,Type> &subst,
+                        ::mlir::trait::UnificationMap &subst,
                         llvm::function_ref<InFlightDiagnostic()> emitError);
   }];
 
@@ -219,7 +221,7 @@ def InferenceType : TypeDef<TraitDialect, "Inference", [
     // for UnificationTypeInterface
     LogicalResult unify(Type other,
                         ModuleOp module,
-                        DenseMap<Type,Type> &subst,
+                        ::mlir::trait::UnificationMap &subst,
                         llvm::function_ref<InFlightDiagnostic()> emitError);
   }];
 

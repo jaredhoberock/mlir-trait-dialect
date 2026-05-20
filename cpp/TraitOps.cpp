@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
-#include "Instantiation.hpp"
+#include "Specialization.hpp"
 #include "Trait.hpp"
 #include "TraitOps.hpp"
 #include "TraitTypes.hpp"
@@ -95,11 +95,11 @@ LogicalResult TraitOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   return getRequirements().verifyTraitApplications(getParentOp<ModuleOp>(), [&](){ return emitOpError(); });
 }
 
-FailureOr<DenseMap<Type,Type>> TraitOp::buildSubstitutionForSelfClaim(ClaimType actualSelfClaim,
+FailureOr<SpecializationMap> TraitOp::buildSubstitutionForSelfClaim(ClaimType actualSelfClaim,
                                                                       llvm::function_ref<InFlightDiagnostic()> errFn) {
   auto module = getModule(errFn);
   if (failed(module)) return failure();
-  return buildSpecializationSubstitution(getSelfClaim(), actualSelfClaim, *module, errFn);
+  return buildSpecialization(getSelfClaim(), actualSelfClaim, *module, errFn);
 }
 
 
@@ -117,12 +117,13 @@ FailureOr<SmallVector<ClaimType>> TraitOp::specializeRequirementsAsClaimsFor(
   if (failed(module)) return failure();
 
   // build a specialized substitution for actualSelfClaim
-  auto subst = buildSpecializationSubstitution(getSelfClaim(), actualSelfClaim, *module, errFn);
-  if (failed(subst)) return failure();
+  auto spec = buildSpecialization(getSelfClaim(), actualSelfClaim, *module, errFn);
+  if (failed(spec)) return failure();
+  auto subst = spec->toTypeMap();
 
   // apply the substitution to each requirement
   return llvm::map_to_vector(getRequirementsAsClaims(), [&](ClaimType req) {
-    ClaimType specializedReq = dyn_cast_or_null<ClaimType>(applySubstitutionToFixedPoint(*subst, req));
+    ClaimType specializedReq = dyn_cast_or_null<ClaimType>(applySubstitutionToFixedPoint(subst, req));
     if (!specializedReq)
       llvm_unreachable("TraitOp::specializeRequirementsAsClaimsFor: expected ClaimType");
     return specializedReq;
@@ -289,14 +290,14 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
       // Specialize the trait method's signature
       FunctionType traitMethodTy = traitMethod->getFunctionType();
-      Type specializedTraitMethodTy = applySubstitutionToFixedPoint(*traitSubst, traitMethodTy);
+      Type specializedTraitMethodTy = applySubstitutionToFixedPoint(traitSubst->toTypeMap(), traitMethodTy);
 
       // Resolve any ProjectionTypes in the specialized signature using this impl's bindings
       specializedTraitMethodTy = resolveProjectionTypesViaBindings(specializedTraitMethodTy, *traitSubst);
 
       // Check that the impl method's signature can specialize to the expected signature
       FunctionType implMethodTy = implMethod.getFunctionType();
-      if (failed(buildSpecializationSubstitution(specializedTraitMethodTy, implMethodTy, *module, errFn))) {
+      if (failed(buildSpecialization(specializedTraitMethodTy, implMethodTy, *module, errFn))) {
         return emitOpError() << "method '" << name << "' has incompatible signature: "
                              << "expected " << specializedTraitMethodTy
                              << " but found " << implMethodTy;
@@ -375,11 +376,11 @@ TraitOp ImplOp::getTrait() {
   return getSelfApplication().getTraitOrAbort(module, "ImplOp::getTrait: couldn't find trait");
 }
 
-FailureOr<DenseMap<Type,Type>> ImplOp::buildSubstitutionForSelfClaim(ClaimType actualSelfClaim,
+FailureOr<SpecializationMap> ImplOp::buildSubstitutionForSelfClaim(ClaimType actualSelfClaim,
                                                                      llvm::function_ref<InFlightDiagnostic()> errFn) {
   auto module = getModule(errFn);
   if (failed(module)) return failure();
-  return buildSpecializationSubstitution(getSelfClaim(), actualSelfClaim, *module, errFn);
+  return buildSpecialization(getSelfClaim(), actualSelfClaim, *module, errFn);
 }
 
 FailureOr<Type> ImplOp::specializeAssociatedTypeBinding(
@@ -404,13 +405,13 @@ FailureOr<Type> ImplOp::specializeAssociatedTypeBinding(
   return *binding;
 }
 
-Type ImplOp::resolveProjectionTypesViaBindings(Type ty, const DenseMap<Type,Type> &subst) {
+Type ImplOp::resolveProjectionTypesViaBindings(Type ty, const SpecializationMap &subst) {
   AttrTypeReplacer replacer;
   replacer.addReplacement([&](ProjectionType proj) -> std::optional<Type> {
     auto resolved = specializeAssociatedTypeBinding(
         proj.getAssocName().getValue(), proj.getAssocTypeArgs());
     if (failed(resolved)) return std::nullopt;
-    return applySubstitutionToFixedPoint(subst, *resolved);
+    return subst.apply(*resolved);
   });
   return replacer.replace(ty);
 }
@@ -418,7 +419,7 @@ Type ImplOp::resolveProjectionTypesViaBindings(Type ty, const DenseMap<Type,Type
 /// Replace projections in `ty` whose trait application equals `app`,
 /// using this impl's associated type bindings. Projections with a
 /// different trait application are left unresolved.
-Type ImplOp::resolveProjectionTypesForApplication(Type ty, TraitApplicationAttr app, const DenseMap<Type,Type> &subst) {
+Type ImplOp::resolveProjectionTypesForApplication(Type ty, TraitApplicationAttr app, const SpecializationMap &subst) {
   assert(app.getTraitName() == getSelfApplication().getTraitName());
   AttrTypeReplacer replacer;
   replacer.addReplacement([&](ProjectionType proj) -> std::optional<Type> {
@@ -427,13 +428,13 @@ Type ImplOp::resolveProjectionTypesForApplication(Type ty, TraitApplicationAttr 
     auto resolved = specializeAssociatedTypeBinding(
         proj.getAssocName().getValue(), proj.getAssocTypeArgs());
     if (failed(resolved)) return std::nullopt;
-    return applySubstitutionToFixedPoint(subst, *resolved);
+    return subst.apply(*resolved);
   });
   return replacer.replace(ty);
 }
 
 
-FailureOr<DenseMap<Type,Type>> ImplOp::buildMonomorphizationSubstitutionFor(
+FailureOr<ImplSpecialization> ImplOp::buildImplSpecialization(
     ClaimType provenSelfClaim,
     llvm::function_ref<InFlightDiagnostic()> err) {
   if (!provenSelfClaim.isProven()) {
@@ -444,29 +445,18 @@ FailureOr<DenseMap<Type,Type>> ImplOp::buildMonomorphizationSubstitutionFor(
   auto module = getModule(err);
   if (failed(module)) return failure();
 
-  DenseMap<Type,Type> subst;
+  EvidenceBindings evidence;
 
-  // bind the *same* self claim without a proof to the proven self claim
-  // this (recursively) records claim -> proven-claim into subst
+  // Bind the same self claim without a proof to the proven self claim. This
+  // recursively records claim -> proven-claim evidence bindings.
   ClaimType unprovenSelfClaim = provenSelfClaim.asUnproven();
-  if (failed(verifyAndRecordProof(unprovenSelfClaim, provenSelfClaim, *module, subst, err)))
+  if (failed(verifyAndRecordProof(unprovenSelfClaim, provenSelfClaim, *module, evidence, err)))
     return failure();
 
-  // add PolyType -> concrete Type bindings for monomorphization
-  auto polyToType = buildSubstitutionForSelfClaim(provenSelfClaim, err);
-  if (failed(polyToType)) return failure();
+  auto specialization = buildSubstitutionForSelfClaim(provenSelfClaim, err);
+  if (failed(specialization)) return failure();
 
-  // merge polyToType into subst; flag conflicts
-  for (const auto &[k,v] : *polyToType) {
-    auto [it, inserted] = subst.try_emplace(k,v);
-    if (!inserted && it->second != v) {
-      if (err) err() << "conflicting substitution for " << k
-                     << ": " << it->second << " vs " << v;
-      return failure();
-    }
-  }
-
-  return normalizeSubstitution(subst);
+  return ImplSpecialization(*specialization, evidence);
 }
 
 SmallVector<GenericTypeInterface, 4> ImplOp::getTypeParams() {
@@ -484,7 +474,7 @@ SmallVector<GenericTypeInterface, 4> ImplOp::getTypeParams() {
   return getGenericTypesIn(tupled);
 }
 
-FailureOr<func::FuncOp> ImplOp::getOrInstantiateMethod(OpBuilder& builder, StringRef methodName) {
+FailureOr<func::FuncOp> ImplOp::getOrSpecializeMethod(OpBuilder& builder, StringRef methodName) {
   auto trait = getTrait();
 
   // check that we've named a valid trait method
@@ -494,7 +484,7 @@ FailureOr<func::FuncOp> ImplOp::getOrInstantiateMethod(OpBuilder& builder, Strin
   auto method = getMethod(methodName);
   if (succeeded(method)) return method;
 
-  // otherwise, we need to instantiate the method from the default implementation in the trait
+  // otherwise, we need to specialize the method from the default implementation in the trait
   auto traitMethod = trait.getOptionalMethod(methodName);
   if (failed(traitMethod)) return failure();
 
@@ -504,15 +494,15 @@ FailureOr<func::FuncOp> ImplOp::getOrInstantiateMethod(OpBuilder& builder, Strin
 
   PatternRewriter::InsertionGuard guard(builder);
   builder.setInsertionPointToEnd(&getBody().front());
-  return instantiatePolymorph(builder, *traitMethod, methodName, *subst);
+  return specializePolymorph(builder, *traitMethod, methodName, subst->toTypeMap());
 }
 
-/// Instantiate a polymorphic function and replace any AssumeOps whose
+/// Specialize a polymorphic function and replace any AssumeOps whose
 /// trait application matches a claim-typed function parameter.
-static func::FuncOp instantiatePolymorphAndReplaceAssumes(
+static func::FuncOp specializeAndReplaceAssumes(
     PatternRewriter &rewriter, func::FuncOp callee,
     StringRef name, const DenseMap<Type,Type> &subst) {
-  auto funcOp = instantiatePolymorph(rewriter, callee, name, subst);
+  auto funcOp = specializePolymorph(rewriter, callee, name, subst);
 
   DenseMap<TraitApplicationAttr, Value> claimMap;
   for (auto arg : funcOp.getArguments())
@@ -533,7 +523,7 @@ static func::FuncOp instantiatePolymorphAndReplaceAssumes(
   return funcOp;
 }
 
-static func::FuncOp instantiateMethodAsFreeFuncWithLeadingSelfProof(
+static func::FuncOp specializeMethodAsFreeFuncWithLeadingSelfProof(
     PatternRewriter& rewriter,
     ModuleOp module,
     func::FuncOp method,
@@ -541,14 +531,14 @@ static func::FuncOp instantiateMethodAsFreeFuncWithLeadingSelfProof(
     ClaimType selfProofTy,
     const DenseMap<Type,Type>& subst) {
 
-  // instantiate the method into the grandparent with a mangled name
+  // specialize the method into the grandparent with a mangled name
   PatternRewriter::InsertionGuard guard(rewriter);
 
   // clone the method into the method's grandparent
   rewriter.setInsertionPointAfter(method->getParentOp());
 
-  // instantiate the function and replace assumes matching claim-typed parameters
-  auto funcOp = instantiatePolymorphAndReplaceAssumes(rewriter, method, functionName, subst);
+  // specialize the function and replace assumes matching claim-typed parameters
+  auto funcOp = specializeAndReplaceAssumes(rewriter, method, functionName, subst);
 
   // prepend the self proof as the first parameter of the function and
   // set visibility to private
@@ -584,11 +574,11 @@ static func::FuncOp instantiateMethodAsFreeFuncWithLeadingSelfProof(
   return funcOp;
 }
 
-FailureOr<func::FuncOp> ImplOp::getOrInstantiateFreeFunctionFromMethod(
+FailureOr<func::FuncOp> ImplOp::getOrSpecializeFreeFunctionFromMethod(
     PatternRewriter& rewriter,
     ClaimType provenSelfClaim,
     StringRef methodName,
-    const DenseMap<Type,Type> &extraSubst) {
+    const CallSubstitution &callSubst) {
   // check that methodName names a valid trait method
   if (!getTrait().hasMethod(methodName)) return failure();
 
@@ -605,25 +595,26 @@ FailureOr<func::FuncOp> ImplOp::getOrInstantiateFreeFunctionFromMethod(
 
   if (!funcOp) {
     // get the method inside the ImplOp
-    auto method = getOrInstantiateMethod(rewriter, methodName);
+    auto method = getOrSpecializeMethod(rewriter, methodName);
     if (failed(method)) return failure();
 
     // build a poly→concrete substitution from the impl's type parameters
-    auto subst = buildMonomorphizationSubstitutionFor(provenSelfClaim);
-    if (failed(subst)) return failure();
+    auto implSpec = buildImplSpecialization(provenSelfClaim);
+    if (failed(implSpec)) return failure();
 
-    // merge caller-provided entries (e.g., projection→concrete bindings)
-    for (const auto &[k, v] : extraSubst)
-      subst->try_emplace(k, v);
+    DenseMap<Type,Type> subst = implSpec->toTypeMap();
+    // Merge call-site rewrites discovered while matching the method signature.
+    for (const auto &[k, v] : callSubst.toTypeMap())
+      subst.try_emplace(k, v);
 
-    // instantiate into grandparent with mangled name
-    funcOp = instantiateMethodAsFreeFuncWithLeadingSelfProof(
+    // specialize into grandparent with mangled name
+    funcOp = specializeMethodAsFreeFuncWithLeadingSelfProof(
       rewriter,
       getParentOp(),
       *method,
       functionName,
       provenSelfClaim,
-      *subst
+      subst
     );
   }
 
@@ -679,12 +670,13 @@ FailureOr<SmallVector<ClaimType>> ImplOp::specializeAssumptionsAsClaimsFor(
   if (failed(module)) return failure();
 
   // build a specialized substitution for actualSelfClaim
-  auto subst = buildSpecializationSubstitution(getSelfClaim(), actualSelfClaim, *module, errFn);
-  if (failed(subst)) return failure();
+  auto spec = buildSpecialization(getSelfClaim(), actualSelfClaim, *module, errFn);
+  if (failed(spec)) return failure();
+  auto subst = spec->toTypeMap();
 
   // apply the substitution to each assumption
   return llvm::map_to_vector(getAssumptionsAsClaims(), [&](ClaimType assumption) {
-    ClaimType specializedAssumption = dyn_cast_or_null<ClaimType>(applySubstitutionToFixedPoint(*subst, assumption));
+    ClaimType specializedAssumption = dyn_cast_or_null<ClaimType>(applySubstitutionToFixedPoint(subst, assumption));
     if (!specializedAssumption)
       llvm_unreachable("ImplOp::specializeAssumptionsAsClaimsFor: expected ClaimType");
     return specializedAssumption;
@@ -825,9 +817,9 @@ LogicalResult ProofOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (failed(implOp.buildSubstitutionForSelfClaim(getProvenClaim(), errFn)))
     return failure();
 
-  // recursively verify proof structure and that proof bindinds can be recorded
-  DenseMap<Type,Type> subst;
-  if (failed(verifyAndRecordProof(getProvenClaim().asUnproven(), getProvenClaim(), module, subst, errFn)))
+  // recursively verify proof structure and that proof bindings can be recorded
+  EvidenceBindings evidence;
+  if (failed(verifyAndRecordProof(getProvenClaim().asUnproven(), getProvenClaim(), module, evidence, errFn)))
     return failure();
 
   return success();
@@ -1022,7 +1014,8 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   auto impl = ProofOp::getImplFromProof(module, getProofAttr(), errFn);
   if (failed(impl)) return failure();
 
-  return impl->buildSubstitutionForSelfClaim(getProvenClaim(), errFn);
+  auto subst = impl->buildSubstitutionForSelfClaim(getProvenClaim(), errFn);
+  return failed(subst) ? failure() : success();
 }
 
 
@@ -1424,7 +1417,7 @@ LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable)
   return buildParameterSpecialization(errFn);
 }
 
-FailureOr<DenseMap<Type,Type>> MethodCallOp::buildParameterSpecialization(llvm::function_ref<InFlightDiagnostic()> err) {
+FailureOr<CallSubstitution> MethodCallOp::buildParameterSpecialization(llvm::function_ref<InFlightDiagnostic()> err) {
   auto module = getModule(err);
   if (failed(module)) return failure();
 
@@ -1439,19 +1432,19 @@ FailureOr<DenseMap<Type,Type>> MethodCallOp::buildParameterSpecialization(llvm::
   // applies it to the method signature so that any trait-level generics match our claim
   auto traitSubst = trait->buildSubstitutionForSelfClaim(getClaimType(), err);
   if (failed(traitSubst)) return failure();
-  Type formal = applySubstitutionToFixedPoint(*traitSubst, *methodFormalTy);
+  Type formal = applySubstitutionToFixedPoint(traitSubst->toTypeMap(), *methodFormalTy);
 
   // solve the *call-site* specialization: unify the specialized formal type with the
   // actual call type to get any remaining bindings (including generics in args/results)
   Type actual = getActualFunctionType();
-  auto subst = buildSpecializationSubstitution(formal, actual, *module, err);
-  if (failed(subst)) return failure();
+  auto spec = buildSpecialization(formal, actual, *module, err);
+  if (failed(spec)) return failure();
 
-  // record any proof bindings found in the actual signature
-  if (failed(recordProofBindingsIn(actual, *module, *subst, err)))
+  CallSubstitution subst(*spec);
+  if (failed(recordProofBindingsIn(actual, *module, subst.getEvidenceBindings(), err)))
     return failure();
 
-  return normalizeSubstitution(*subst);
+  return subst;
 }
 
 ImplOp MethodCallOp::getProvenImpl() {
@@ -1469,12 +1462,12 @@ ImplOp MethodCallOp::getProvenImpl() {
   return *impl;
 }
 
-FailureOr<func::FuncOp> MethodCallOp::getOrInstantiateCallee(
+FailureOr<func::FuncOp> MethodCallOp::getOrSpecializeCallee(
     PatternRewriter &rewriter,
-    const DenseMap<Type,Type> &subst) {
+    const CallSubstitution &subst) {
   ClaimType claimTy = cast<ClaimType>(getClaim().getType());
   return getProvenImpl()
-    .getOrInstantiateFreeFunctionFromMethod(rewriter, claimTy, getMethodName(), subst);
+    .getOrSpecializeFreeFunctionFromMethod(rewriter, claimTy, getMethodName(), subst);
 }
 
 ParseResult MethodCallOp::parse(OpAsmParser& p, OperationState &st) {
@@ -1607,7 +1600,7 @@ LogicalResult FuncCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   return buildParameterSpecialization(errFn);
 }
 
-FailureOr<DenseMap<Type, Type>> FuncCallOp::buildParameterSpecialization(llvm::function_ref<InFlightDiagnostic()> err) {
+FailureOr<CallSubstitution> FuncCallOp::buildParameterSpecialization(llvm::function_ref<InFlightDiagnostic()> err) {
   auto module = getModule(err);
   if (failed(module)) return failure();
 
@@ -1619,14 +1612,14 @@ FailureOr<DenseMap<Type, Type>> FuncCallOp::buildParameterSpecialization(llvm::f
   FunctionType actual = getActualFunctionType();
 
   // build a substitution unifying formal & actual
-  auto subst = buildSpecializationSubstitution(formal, actual, *module, err);
-  if (failed(subst)) return failure();
+  auto spec = buildSpecialization(formal, actual, *module, err);
+  if (failed(spec)) return failure();
 
-  // record any proof bindings found in the actual signature
-  if (failed(recordProofBindingsIn(actual, *module, *subst, err)))
+  CallSubstitution subst(*spec);
+  if (failed(recordProofBindingsIn(actual, *module, subst.getEvidenceBindings(), err)))
     return failure();
 
-  return normalizeSubstitution(*subst);
+  return subst;
 }
 
 std::string FuncCallOp::getNameOfCalleeInstance() {
@@ -1634,12 +1627,12 @@ std::string FuncCallOp::getNameOfCalleeInstance() {
   if (failed(subst))
     llvm_unreachable("FuncCallOp::getNameOfCalleeInstance: buildParameterSpecialization failed");
 
-  return getCalleeName().str() + applySubstitutionAndGenerateMangledNameSuffix(*subst, getCalleeTypeParams());
+  return getCalleeName().str() + applySubstitutionAndGenerateMangledNameSuffix(subst->getSpecialization(), getCalleeTypeParams());
 }
 
-FailureOr<func::FuncOp> FuncCallOp::getOrInstantiateCallee(
+FailureOr<func::FuncOp> FuncCallOp::getOrSpecializeCallee(
     PatternRewriter &rewriter,
-    const DenseMap<Type,Type> &subst) {
+    const CallSubstitution &subst) {
   auto module = getModule();
   if (failed(module)) return failure();
 
@@ -1653,7 +1646,7 @@ FailureOr<func::FuncOp> FuncCallOp::getOrInstantiateCallee(
 
   PatternRewriter::InsertionGuard guard(rewriter);
   rewriter.setInsertionPointAfter(*callee);
-  return instantiatePolymorphAndReplaceAssumes(rewriter, *callee, instanceName, subst);
+  return specializeAndReplaceAssumes(rewriter, *callee, instanceName, subst.toTypeMap());
 }
 
 

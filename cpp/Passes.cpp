@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
-#include "Instantiation.hpp"
+#include "Specialization.hpp"
 #include "ImplResolution.hpp"
 #include "Passes.hpp"
 #include "TraitOps.hpp"
@@ -143,9 +143,9 @@ std::unique_ptr<Pass> createVerifyAcyclicTraitsPass() {
 
 namespace {
 
-static void applySubstitutionInPlace(const DenseMap<Type,Type>& subst, Operation* root) {
-  if (subst.empty()) return;
-  AttrTypeReplacer replacer = makeTypeReplacerFromSubstitution(subst);
+static void applySubstitutionInPlace(const EvidenceBindings& evidence, Operation* root) {
+  if (evidence.empty()) return;
+  AttrTypeReplacer replacer = makeTypeReplacerFromSubstitution(evidence.toTypeMap());
   replacer.recursivelyReplaceElementsIn(root,
                                         /*replaceAttrs=*/true,
                                         /*replaceLocs=*/false,
@@ -247,89 +247,140 @@ std::unique_ptr<Pass> createResolveImplsPass() {
 // InstantiateMonomorphsPass
 //===----------------------------------------------------------------------===//
 
-namespace {
-
-/// Extend `subst` with bindings that resolve concrete `!trait.proj` types.
-///
-/// After buildParameterSpecialization maps generic types to concrete types, applying
-/// the substitution to the formal signature may produce concrete projection
-/// types like `!trait.proj<@Trait[i64], "Assoc">`. This function walks the
-/// given types after substitution, resolves each concrete projection via the
-/// ImplResolver, and records the binding in `subst` so that a subsequent
-/// `applySubstitutionToFixedPoint` resolves projections in one shot.
-static void addProjectionBindings(DenseMap<Type,Type> &subst,
-                                  TypeRange types,
-                                  ImplResolver &resolver,
-                                  PatternRewriter &rewriter) {
+/// Extend this substitution with bindings that resolve concrete `!trait.proj`
+/// types visible after applying the current substitution.
+void CallSubstitution::discoverProjectionBindings(TypeRange types,
+                                                  ImplResolver &resolver,
+                                                  PatternRewriter &rewriter) {
   for (Type ty : types) {
-    applySubstitutionToFixedPoint(subst, ty).walk([&](Type t) {
+    apply(ty).walk([&](Type t) {
       auto proj = dyn_cast<ProjectionType>(t);
-      if (!proj || isPolymorphicType(proj) || subst.count(proj)) return;
+      if (!proj || isPolymorphicType(proj))
+        return;
+      if (projectionBindings.lookup(proj))
+        return;
       if (auto resolved = resolver.resolveProjectionType(proj, rewriter);
           succeeded(resolved))
-        subst[proj] = *resolved;
+        projectionBindings.bind(proj, *resolved);
     });
   }
 }
 
-/// Record proven-claim bindings after applying the current substitution.
-///
-/// Projection bindings can change the spelling of a proven claim. For example,
-/// a call argument may have type `Claim<Trait<T, Outer<S>::Item> by P>` while
-/// the projection binding resolves `Outer<S>::Item` to `i64`. `AttrTypeReplacer`
-/// rewrites type sub-elements before looking up the reconstructed parent type,
-/// so the instantiated callee asks for `Claim<Trait<T, i64>>`, not the original
-/// projected spelling. Record that normalized spelling as proven too so uses
-/// inside the instantiated body do not degrade to unproven claims.
-static LogicalResult recordProofBindingsAfterSubstitution(
-    DenseMap<Type,Type> &subst, TypeRange types, ModuleOp module,
+/// Record proven-claim bindings visible after applying the current
+/// substitution.
+LogicalResult CallSubstitution::discoverEvidenceBindings(
+    TypeRange types, ModuleOp module,
     llvm::function_ref<InFlightDiagnostic()> err) {
   for (Type ty : types) {
-    Type rewritten = applySubstitutionToFixedPoint(subst, ty);
-    if (failed(recordProofBindingsIn(rewritten, module, subst, err)))
+    Type rewritten = apply(ty);
+    if (failed(recordProofBindingsIn(rewritten, module, evidenceBindings, err)))
       return failure();
   }
-  normalizeSubstitutionInPlace(subst);
   return success();
 }
 
-/// Close a call specialization substitution under projection and proof
-/// bindings.
+/// Close this substitution under projection and proof bindings.
 ///
-/// `buildParameterSpecialization` seeds the substitution with direct
-/// polymorphic-type bindings and the proof spellings visible at the call site.
-/// Projection bindings can then rewrite those spellings, which can reveal new
-/// proof bindings; newly recorded proof bindings may in turn expose projections
-/// in their normalized type. Iterate until no new bindings are discovered so
-/// call lowering does not depend on a particular phase order.
-static LogicalResult enrichCallSubstitution(
-    DenseMap<Type,Type> &subst, TypeRange operandTypes, TypeRange resultTypes,
-    FunctionType formalTy, ModuleOp module, ImplResolver &resolver,
-    PatternRewriter &rewriter,
+/// The initial call substitution contains direct polymorphic-type bindings and
+/// proof spellings visible at the call site. Projection bindings can rewrite
+/// those spellings, which can reveal new proof bindings; newly recorded proof
+/// bindings may in turn expose projections in their normalized type. Iterate
+/// until no new component bindings are discovered so call lowering does not
+/// depend on a particular phase order.
+///
+/// The fixed-point loop relies on disjoint component key kinds and monotone
+/// binding growth. If closing fails, discard this substitution; partial
+/// evidence bindings may have been recorded before the failing obligation.
+LogicalResult CallSubstitution::close(
+    TypeRange operandTypes, TypeRange resultTypes, FunctionType formalTy,
+    ModuleOp module, ImplResolver &resolver, PatternRewriter &rewriter,
     llvm::function_ref<InFlightDiagnostic()> err) {
   bool changed;
   do {
-    // Termination relies on the participating helpers being monotone-additive:
-    // they may add bindings or verify an existing binding, but they must not
-    // replace an existing binding with a different meaning.
-    size_t before = subst.size();
+    // The component maps grow monotonically; `bindingCount()` is the raw component sum
+    // so it is not affected by fixed-point normalization of the merged map.
+    size_t before = bindingCount();
 
-    addProjectionBindings(subst, resultTypes, resolver, rewriter);
-    addProjectionBindings(subst, operandTypes, resolver, rewriter);
+    discoverProjectionBindings(resultTypes, resolver, rewriter);
+    discoverProjectionBindings(operandTypes, resolver, rewriter);
     if (formalTy) {
-      addProjectionBindings(subst, formalTy.getInputs(), resolver, rewriter);
-      addProjectionBindings(subst, formalTy.getResults(), resolver, rewriter);
+      discoverProjectionBindings(formalTy.getInputs(), resolver, rewriter);
+      discoverProjectionBindings(formalTy.getResults(), resolver, rewriter);
     }
 
-    if (failed(recordProofBindingsAfterSubstitution(subst, operandTypes, module, err)))
+    if (failed(discoverEvidenceBindings(operandTypes, module, err)))
       return failure();
-    if (failed(recordProofBindingsAfterSubstitution(subst, resultTypes, module, err)))
+    if (failed(discoverEvidenceBindings(resultTypes, module, err)))
       return failure();
 
-    changed = subst.size() != before;
+    changed = bindingCount() != before;
   } while (changed);
 
   return success();
+}
+
+namespace {
+
+/// The common product of lowering either kind of trait call site: the callee
+/// specialized for this call and the result types after applying the same
+/// closed substitution.
+struct SpecializedCallTarget {
+  func::FuncOp callee;
+  SmallVector<Type> resultTypes;
+};
+
+/// Checks the operand precondition shared by trait function and method calls.
+static LogicalResult requireMonomorphicOperands(Operation *op,
+                                                ValueRange operands,
+                                                PatternRewriter &rewriter) {
+  for (Value operand : operands)
+    if (isPolymorphicType(operand.getType()))
+      return rewriter.notifyMatchFailure(op, "operands are still polymorphic");
+  return success();
+}
+
+/// Builds and closes the call-site substitution, uses it to specialize the
+/// callee, and computes the concrete result types for the replacement call.
+template <typename CallOpT, typename GetFormalTy>
+static FailureOr<SpecializedCallTarget>
+specializeCallTarget(CallOpT op, PatternRewriter &rewriter,
+                     ImplResolver &resolver, GetFormalTy getFormalTy,
+                     StringRef formalTypeFailure) {
+  auto subst = op.buildParameterSpecialization();
+  if (failed(subst)) {
+    (void)rewriter.notifyMatchFailure(op, "couldn't build substitution");
+    return failure();
+  }
+
+  auto formalTy = getFormalTy(op);
+  if (failed(formalTy)) {
+    (void)rewriter.notifyMatchFailure(op, formalTypeFailure);
+    return failure();
+  }
+
+  ModuleOp module = op.getOperation()->template getParentOfType<ModuleOp>();
+  auto errFn = [&] { return op.emitOpError(); };
+  if (failed(subst->close(op.getOperandTypes(), op.getResultTypes(), *formalTy,
+                          module, resolver, rewriter, errFn)))
+    return failure();
+
+  SpecializedCallTarget target;
+  for (Type r : op.getResultTypes()) {
+    Type newR = subst->apply(r);
+    if (isPolymorphicType(newR)) {
+      (void)rewriter.notifyMatchFailure(op, "result type is still polymorphic");
+      return failure();
+    }
+    target.resultTypes.push_back(newR);
+  }
+
+  auto callee = op.getOrSpecializeCallee(rewriter, *subst);
+  if (failed(callee)) {
+    (void)rewriter.notifyMatchFailure(op, "couldn't get or specialize callee");
+    return failure();
+  }
+  target.callee = *callee;
+  return target;
 }
 
 struct FuncCallOpLowering : public OpRewritePattern<FuncCallOp> {
@@ -339,46 +390,22 @@ struct FuncCallOpLowering : public OpRewritePattern<FuncCallOp> {
     : OpRewritePattern(ctx), resolver(resolver) {}
 
   LogicalResult matchAndRewrite(FuncCallOp callOp, PatternRewriter &rewriter) const override {
-    // if any of the call's operand types are polymorphic, this call can't be resolved yet
-    for (auto op : callOp.getOperands()) {
-      if (isPolymorphicType(op.getType()))
-        return rewriter.notifyMatchFailure(callOp, "operands are still polymorphic");
-    }
+    if (failed(requireMonomorphicOperands(callOp, callOp.getOperands(), rewriter)))
+      return failure();
 
-    // func.call requires the call and callee to be in the same scope
-    // we will instantiate the callee at module scope,
-    // so only lower if the callOp's nearest symbol table is the module
+    // func.call requires the call and callee to be in the same scope;
+    // specialized callees are emitted at module scope, so only lower calls
+    // already in the module's symbol table.
     Operation *nearestTable = SymbolTable::getNearestSymbolTable(callOp);
     if (!nearestTable || !isa<ModuleOp>(nearestTable))
       return rewriter.notifyMatchFailure(callOp, "call is still nested in a method");
 
-    // build a substitution that can fully concretize the result types
-    auto subst = callOp.buildParameterSpecialization();
-    if (failed(subst))
-      return rewriter.notifyMatchFailure(callOp, "couldn't build substitution");
-    auto formalTy = callOp.getCalleeFunctionType();
-    if (failed(formalTy))
-      return rewriter.notifyMatchFailure(callOp, "couldn't get callee function type");
-
-    ModuleOp module = callOp.getOperation()->getParentOfType<ModuleOp>();
-    auto errFn = [&] { return callOp.emitOpError(); };
-    if (failed(enrichCallSubstitution(*subst, callOp.getOperandTypes(),
-                                      callOp.getResultTypes(), *formalTy,
-                                      module, resolver, rewriter, errFn)))
+    auto target = specializeCallTarget(
+        callOp, rewriter, resolver,
+        [](FuncCallOp op) { return op.getCalleeFunctionType(); },
+        "couldn't get callee function type");
+    if (failed(target))
       return failure();
-
-    SmallVector<Type> concreteResults;
-    for (Type r : callOp.getResultTypes()) {
-      Type newR = applySubstitutionToFixedPoint(*subst, r);
-      if (isPolymorphicType(newR))
-        return rewriter.notifyMatchFailure(callOp, "result type is still polymorphic");
-      concreteResults.push_back(newR);
-    }
-
-    // instantiate the callee with the enriched substitution
-    auto callee = callOp.getOrInstantiateCallee(rewriter, *subst);
-    if (failed(callee))
-      return rewriter.notifyMatchFailure(callOp, "couldn't get or instantiate callee");
 
     // Unwrap any trait.proj.cast operands to get the concrete values.
     SmallVector<Value> concreteOperands;
@@ -389,11 +416,11 @@ struct FuncCallOpLowering : public OpRewritePattern<FuncCallOp> {
         concreteOperands.push_back(operand);
     }
 
-    // replace with a func.call to the instanced callee
+    // replace with a func.call to the specialized callee
     rewriter.replaceOpWithNewOp<func::CallOp>(
       callOp,
-      callee->getSymName(),
-      concreteResults,
+      target->callee.getSymName(),
+      target->resultTypes,
       concreteOperands
     );
 
@@ -408,53 +435,28 @@ struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
     : OpRewritePattern(ctx), resolver(resolver) {}
 
   LogicalResult matchAndRewrite(MethodCallOp op, PatternRewriter &rewriter) const override {
-    // all operands must be monomorphic and the claim must be proven
-    for (auto o : op.getOperands()) {
-      if (isPolymorphicType(o.getType()))
-        return rewriter.notifyMatchFailure(op, "operands are still polymorphic");
-    }
-    if (!op.getClaimType().isProven()) {
+    if (failed(requireMonomorphicOperands(op, op.getOperands(), rewriter)))
+      return failure();
+    if (!op.getClaimType().isProven())
       return rewriter.notifyMatchFailure(op, "claim is still unproven");
-    }
 
-    // build a substitution that can fully concretize the result types
-    auto subst = op.buildParameterSpecialization();
-    if (failed(subst))
-      return rewriter.notifyMatchFailure(op, "couldn't build substitution for call");
-    auto formalTy = op.getMethodFunctionType();
-    if (failed(formalTy))
-      return rewriter.notifyMatchFailure(op, "couldn't get method function type");
-
-    ModuleOp module = op.getOperation()->getParentOfType<ModuleOp>();
-    auto errFn = [&] { return op.emitOpError(); };
-    if (failed(enrichCallSubstitution(*subst, op.getOperandTypes(),
-                                      op.getResultTypes(), *formalTy,
-                                      module, resolver, rewriter, errFn)))
+    auto target = specializeCallTarget(
+        op, rewriter, resolver,
+        [](MethodCallOp op) { return op.getMethodFunctionType(); },
+        "couldn't get method function type");
+    if (failed(target))
       return failure();
 
-    SmallVector<Type> concreteResults;
-    for (Type r : op.getResultTypes()) {
-      Type newR = applySubstitutionToFixedPoint(*subst, r);
-      if (isPolymorphicType(newR))
-        return rewriter.notifyMatchFailure(op, "result type is still polymorphic");
-      concreteResults.push_back(newR);
-    }
-
-    // instantiate the callee with the enriched substitution
-    auto callee = op.getOrInstantiateCallee(rewriter, *subst);
-    if (failed(callee))
-      return rewriter.notifyMatchFailure(op, "couldn't get or instantiate callee");
-
-    // pass the claim as the first argument to the instantiated callee
+    // pass the claim as the first argument to the specialized callee
     SmallVector<Value> args;
     args.push_back(op.getClaim());
     llvm::append_range(args, op.getArguments());
 
-    // replace with a trait.func.call to the instantiated callee
+    // replace with a trait.func.call to the specialized callee
     rewriter.replaceOpWithNewOp<FuncCallOp>(
       op,
-      concreteResults,
-      callee->getSymName(),
+      target->resultTypes,
+      target->callee.getSymName(),
       args
     );
 
@@ -572,14 +574,14 @@ struct PropagateProofsPattern : public RewritePattern {
 
   LogicalResult matchAndRewrite(Operation *op,
                                 PatternRewriter &rewriter) const override {
-    auto subst = resolver.buildClaimSubstitutionFromMemo();
-    if (subst.empty())
+    auto evidence = resolver.buildClaimSubstitutionFromMemo();
+    if (evidence.empty())
       return failure();
 
     if (!opMentionsType<ClaimType>(op))
       return failure();
 
-    AttrTypeReplacer replacer = makeTypeReplacerFromSubstitution(subst);
+    AttrTypeReplacer replacer = makeTypeReplacerFromSubstitution(evidence.toTypeMap());
     if (!wouldReplace(replacer, op,
                       /*replaceAttrs=*/true,
                       /*replaceLocs=*/false,

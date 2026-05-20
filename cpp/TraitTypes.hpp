@@ -3,12 +3,23 @@
 #pragma once
 
 #include "TraitAttributes.hpp"
+#include <llvm/ADT/DenseMap.h>
 #include <mlir/IR/BuiltinTypes.h>
+
+namespace mlir { class PatternRewriter; }
 
 namespace mlir::trait {
 
-// forward declaration for SymbolicMatcherInterface
+// Generated interface declarations below mention these types before the
+// concrete helper classes are defined in this header.
 class TraitOp;
+class InstantiationMap;
+class UnificationMap;
+class SpecializationMap;
+class ProjectionBindings;
+class EvidenceBindings;
+class CallSubstitution;
+class ImplResolver;
 
 }
 
@@ -20,6 +31,263 @@ class TraitOp;
 namespace mlir::trait {
 
 int freshPolyTypeId();
+
+inline Type applySubstitutionOnce(const llvm::DenseMap<Type,Type> &subst,
+                                  Type root);
+inline Type applySubstitutionToFixedPoint(const llvm::DenseMap<Type,Type> &subst,
+                                          Type ty);
+inline void normalizeSubstitutionInPlace(llvm::DenseMap<Type,Type> &subst);
+
+/// InstantiationMap: GenericTypeInterface -> UnificationTypeInterface.
+///
+/// Maps each generic type parameter encountered during instantiation to the
+/// fresh unification variable allocated for that parameter. Reusing the mapping
+/// preserves identity: repeated occurrences of the same generic instantiate to
+/// the same fresh variable.
+class InstantiationMap {
+public:
+  std::optional<UnificationTypeInterface> lookup(GenericTypeInterface key) const {
+    auto it = bindings.find(key);
+    if (it == bindings.end())
+      return std::nullopt;
+    return it->second;
+  }
+
+  void bind(GenericTypeInterface key, UnificationTypeInterface value) {
+    bindings[key] = value;
+  }
+
+  llvm::DenseMap<Type, Type> toTypeMap() const {
+    llvm::DenseMap<Type, Type> result;
+    for (auto [key, value] : bindings)
+      result[key] = value;
+    return result;
+  }
+
+private:
+  llvm::DenseMap<GenericTypeInterface, UnificationTypeInterface> bindings;
+};
+
+/// UnificationMap: UnificationTypeInterface -> Type.
+///
+/// Bindings accumulated while unifying two types. Keys are types that actively
+/// participate in unification, such as inference variables and projections; the
+/// values are the types they are known to equal.
+class UnificationMap {
+public:
+  std::optional<Type> lookup(UnificationTypeInterface key) const {
+    auto it = bindings.find(key);
+    if (it == bindings.end())
+      return std::nullopt;
+    return it->second;
+  }
+
+  void bind(UnificationTypeInterface key, Type value) { bindings[key] = value; }
+
+  llvm::DenseMap<Type, Type> toTypeMap() const {
+    llvm::DenseMap<Type, Type> result;
+    for (auto [key, value] : bindings)
+      result[key] = value;
+    return result;
+  }
+
+private:
+  llvm::DenseMap<UnificationTypeInterface, Type> bindings;
+};
+
+/// SpecializationMap: GenericTypeInterface -> Type.
+///
+/// Concrete type arguments chosen for generic type parameters.
+class SpecializationMap {
+public:
+  std::optional<Type> lookup(GenericTypeInterface key) const {
+    auto it = bindings.find(key);
+    if (it == bindings.end())
+      return std::nullopt;
+    return it->second;
+  }
+
+  void bind(GenericTypeInterface key, Type value) {
+    assert((!bindings.count(key) || bindings.lookup(key) == value) &&
+           "specialization bindings must not be replaced with a different type");
+    bindings[key] = value;
+  }
+
+  // A specialization is fully composed by construction, so one structural
+  // substitution pass is enough.
+  Type apply(Type ty) const { return applySubstitutionOnce(toTypeMap(), ty); }
+
+  llvm::DenseMap<Type, Type> toTypeMap() const {
+    llvm::DenseMap<Type, Type> result;
+    for (auto [key, value] : bindings)
+      result[key] = value;
+    return result;
+  }
+
+  static SpecializationMap fromTypeMap(const llvm::DenseMap<Type, Type> &subst) {
+    SpecializationMap result;
+    for (auto [key, value] : subst) {
+      auto generic = dyn_cast<GenericTypeInterface>(key);
+      assert(generic && "specialization keys must be generic types");
+      result.bind(generic, value);
+    }
+    return result;
+  }
+
+private:
+  friend class CallSubstitution;
+
+  size_t bindingCount() const { return bindings.size(); }
+
+  llvm::DenseMap<GenericTypeInterface, Type> bindings;
+};
+
+/// ProjectionBindings: ProjectionType -> Type.
+///
+/// Concrete associated type results for projection types.
+class ProjectionBindings {
+public:
+  std::optional<Type> lookup(ProjectionType key) const {
+    auto it = bindings.find(key);
+    if (it == bindings.end())
+      return std::nullopt;
+    return it->second;
+  }
+
+  void bind(ProjectionType key, Type value) {
+    assert((!bindings.count(key) || bindings.lookup(key) == value) &&
+           "projection bindings must not be replaced with a different type");
+    bindings[key] = value;
+  }
+
+  llvm::DenseMap<Type, Type> toTypeMap() const {
+    llvm::DenseMap<Type, Type> result;
+    for (auto [key, value] : bindings)
+      result[key] = value;
+    return result;
+  }
+
+private:
+  friend class CallSubstitution;
+
+  size_t bindingCount() const { return bindings.size(); }
+
+  llvm::DenseMap<ProjectionType, Type> bindings;
+};
+
+/// EvidenceBindings: ClaimType -> ClaimType.
+///
+/// Maps unproven claim spellings to equivalent proven claim spellings discovered
+/// while checking evidence.
+class EvidenceBindings {
+public:
+  std::optional<ClaimType> lookup(ClaimType key) const {
+    auto it = bindings.find(key);
+    if (it == bindings.end())
+      return std::nullopt;
+    return it->second;
+  }
+
+  void bind(ClaimType unproven, ClaimType proven) {
+    assert(!unproven.isProven() && "evidence keys must be unproven claims");
+    assert(proven.isProven() && "evidence values must be proven claims");
+    assert((!bindings.count(unproven) || bindings.lookup(unproven) == proven) &&
+           "evidence bindings must not be replaced with a different proof");
+    bindings[unproven] = proven;
+  }
+
+  // Used by recursive proof verification to roll back an optimistic binding
+  // when a nested obligation fails.
+  void erase(ClaimType key) { bindings.erase(key); }
+
+  bool empty() const { return bindings.empty(); }
+
+  llvm::DenseMap<Type, Type> toTypeMap() const {
+    llvm::DenseMap<Type, Type> result;
+    for (auto [key, value] : bindings)
+      result[key] = value;
+    return result;
+  }
+
+private:
+  friend class CallSubstitution;
+
+  size_t bindingCount() const { return bindings.size(); }
+
+  llvm::DenseMap<ClaimType, ClaimType> bindings;
+};
+
+/// ImplSpecialization: SpecializationMap + EvidenceBindings.
+///
+/// The complete set of type rewrites needed to specialize an impl method for a
+/// proven self claim. Unlike CallSubstitution, this does not carry projection
+/// bindings or require fixed-point closure.
+class ImplSpecialization {
+public:
+  ImplSpecialization(SpecializationMap specialization,
+                     EvidenceBindings evidenceBindings)
+      : specialization(std::move(specialization)),
+        evidenceBindings(std::move(evidenceBindings)) {}
+
+  llvm::DenseMap<Type, Type> toTypeMap() const {
+    llvm::DenseMap<Type, Type> result = specialization.toTypeMap();
+    for (auto [key, value] : evidenceBindings.toTypeMap())
+      result[key] = value;
+    return result;
+  }
+
+private:
+  SpecializationMap specialization;
+  EvidenceBindings evidenceBindings;
+};
+
+/// CallSubstitution: SpecializationMap + ProjectionBindings + EvidenceBindings.
+///
+/// The complete set of type rewrites needed to lower one call site.
+class CallSubstitution {
+public:
+  explicit CallSubstitution(SpecializationMap specialization)
+      : specialization(std::move(specialization)) {}
+
+  const SpecializationMap &getSpecialization() const { return specialization; }
+  EvidenceBindings &getEvidenceBindings() { return evidenceBindings; }
+
+  // The components can expose bindings for one another, so call substitutions
+  // must chase to a fixed point.
+  Type apply(Type ty) const {
+    return applySubstitutionToFixedPoint(toTypeMap(), ty);
+  }
+
+  llvm::DenseMap<Type, Type> toTypeMap() const {
+    llvm::DenseMap<Type, Type> result = specialization.toTypeMap();
+    for (auto [key, value] : projectionBindings.toTypeMap())
+      result[key] = value;
+    for (auto [key, value] : evidenceBindings.toTypeMap())
+      result[key] = value;
+    normalizeSubstitutionInPlace(result);
+    return result;
+  }
+  LogicalResult close(TypeRange operandTypes, TypeRange resultTypes,
+                      FunctionType formalTy, ModuleOp module,
+                      ImplResolver &resolver, ::mlir::PatternRewriter &rewriter,
+                      llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+
+private:
+  void discoverProjectionBindings(TypeRange types, ImplResolver &resolver,
+                                  ::mlir::PatternRewriter &rewriter);
+  LogicalResult discoverEvidenceBindings(
+      TypeRange types, ModuleOp module,
+      llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+
+  size_t bindingCount() const {
+    return specialization.bindingCount() + projectionBindings.bindingCount() +
+           evidenceBindings.bindingCount();
+  }
+
+  SpecializationMap specialization;
+  ProjectionBindings projectionBindings;
+  EvidenceBindings evidenceBindings;
+};
 
 // this walks a Type and looks for any occurrence of the given NeedleType
 template<class NeedleType> bool containsType(Type ty) {
@@ -127,7 +395,7 @@ inline bool isPurelyPolymorphicType(Type root) {
 ///
 /// This function is memoized via `inst` - if a GenericTypeInterface is encountered multiple
 /// times within the same type structure, it maps to the same InferenceType.
-Type instantiate(Type t, llvm::DenseMap<Type,Type>& inst, uint64_t& idCounter);
+Type instantiate(Type t, InstantiationMap& inst, uint64_t& idCounter);
 
 inline void dumpSubstitution(const llvm::DenseMap<Type,Type> &subst) {
   for (auto [k,v] : subst) {
@@ -179,25 +447,23 @@ inline llvm::DenseMap<Type,Type> normalizeSubstitution(llvm::DenseMap<Type,Type>
   return subst;
 }
 
-// XXX TODO we really need to be able to distinguish between these kinds of mappings:
-//
-// * Instantiation : Rigid/Generic type -> Inference variable
-// * Unification : Inference variable -> Type
-// * Specialization : Rigid/Generic type -> Type
-// * Something : unproven ClaimType -> proven ClaimType
-//
-// Representing all of these as DenseMap<Type,Type> is not precise enough and makes everything confusing
 inline Type applySubstitutionOnce(const llvm::DenseMap<Type,Type> &subst,
                               Type root) {
+  SpecializationMap specialization;
+  for (auto [key, value] : subst)
+    if (auto generic = dyn_cast<GenericTypeInterface>(key))
+      specialization.bind(generic, value);
+
   AttrTypeReplacer replacer;
   replacer.addReplacement([&](Type t) -> std::optional<std::pair<Type, WalkResult>> {
     if (auto generic = dyn_cast<GenericTypeInterface>(t)) {
-      // GenericTypeInterface types own specialization/substitution entirely
-      // don't recurse into their result
-      return std::make_pair(generic.specializeWith(subst), WalkResult::skip());
+      // GenericTypeInterface types own generic specialization entirely;
+      // don't recurse into their result.
+      return std::make_pair(generic.specializeWith(specialization), WalkResult::skip());
     }
 
-    // otherwise, check the map
+    // Otherwise, check the full mixed map for non-generic bindings such as
+    // projections and evidence claims.
     if (auto it = subst.find(t); it != subst.end()) {
       return std::make_pair(it->second, WalkResult::advance());
     }
@@ -272,7 +538,7 @@ LogicalResult unify(
     Type formal,
     Type actual,
     ModuleOp module,
-    llvm::DenseMap<Type,Type> &subst,
+    UnificationMap &subst,
     llvm::function_ref<InFlightDiagnostic()> emitError);
 
 /// As above, but discards diagnostics
@@ -280,7 +546,7 @@ LogicalResult unify(
     Type formal,
     Type actual,
     ModuleOp module,
-    llvm::DenseMap<Type,Type> &subst);
+    UnificationMap &subst);
 
 /// As above, but discards the resulting substitution
 LogicalResult unify(
@@ -337,7 +603,7 @@ inline FailureOr<DenseMap<Type,Type>> invertSubstitution(
 ///
 /// Returns `failure()` if the two types cannot be unified. If `err` is supplied,
 /// a diagnostic is emitted on failure.
-FailureOr<DenseMap<Type,Type>> buildSpecializationSubstitution(
+FailureOr<SpecializationMap> buildSpecialization(
     Type formal,
     Type actual,
     ModuleOp module,
@@ -410,7 +676,7 @@ inline SmallVector<GenericTypeInterface,4> getGenericTypesIn(Type ty) {
 LogicalResult verifyAndRecordProof(ClaimType unproven,
                                    ClaimType proven,
                                    ModuleOp module,
-                                   DenseMap<Type,Type> &subst,
+                                   EvidenceBindings &bindings,
                                    llvm::function_ref<InFlightDiagnostic()> err);
 
 /// Walks the given type and records proven claim substitutions.
@@ -422,7 +688,7 @@ LogicalResult verifyAndRecordProof(ClaimType unproven,
 /// returns failure and emits an error through `err`.
 LogicalResult recordProofBindingsIn(Type ty,
                                     ModuleOp module,
-                                    DenseMap<Type,Type> &subst,
+                                    EvidenceBindings &bindings,
                                     llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
 std::string generateMangledNameSuffixFor(TypeRange typeArgs);
@@ -430,5 +696,8 @@ std::string generateMangledNameSuffixFor(TypeRange typeArgs);
 std::string applySubstitutionAndGenerateMangledNameSuffix(
     const DenseMap<Type,Type> &subst,
     ArrayRef<GenericTypeInterface> typeParams);
+
+std::string applySubstitutionAndGenerateMangledNameSuffix(
+    const SpecializationMap &subst, ArrayRef<GenericTypeInterface> typeParams);
 
 } // end mlir::trait

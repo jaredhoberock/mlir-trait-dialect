@@ -198,9 +198,10 @@ def TraitOp : TraitDialectOp<"trait", [
       return failure();
     }
 
-    /// Builds a substitution mapping type parameters in this TraitOp to types found in the given claim
-    FailureOr<DenseMap<Type,Type>> buildSubstitutionForSelfClaim(ClaimType actualSelfClaim,
-                                                                 llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
+    /// Builds the specialization that maps this trait's generic parameters to
+    /// the corresponding types in `actualSelfClaim`.
+    FailureOr<SpecializationMap> buildSubstitutionForSelfClaim(ClaimType actualSelfClaim,
+                                                           llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
 
     bool hasRequirements() {
       return !getRequirements().empty();
@@ -407,30 +408,32 @@ def ImplOp : TraitDialectOp<"impl", [
     // returns all distinct generic types that occur in this ImplOp's self application and assumptions
     SmallVector<GenericTypeInterface, 4> getTypeParams();
 
-    FailureOr<func::FuncOp> getOrInstantiateMethod(OpBuilder& builder, StringRef methodName);
+    /// Returns the impl-local definition of `methodName`, synthesizing it from
+    /// the trait default method when the impl does not provide its own body.
+    ///
+    /// The synthesized method is specialized for this impl's self application
+    /// and inserted into the impl body so future lookups reuse the same symbol.
+    FailureOr<func::FuncOp> getOrSpecializeMethod(OpBuilder& builder, StringRef methodName);
 
     /// Extracts a method from this impl as a free function with a leading self parameter.
     ///
-    /// Builds a poly-to-concrete substitution from `provenSelfClaim`, then merges
-    /// `extraSubst` (e.g., projection-to-concrete bindings from `addProjectionBindings`)
-    /// before monomorphizing the clone.
-    FailureOr<func::FuncOp> getOrInstantiateFreeFunctionFromMethod(PatternRewriter& rewriter, ClaimType provenSelfClaim, StringRef methodName,
-                                                                    const DenseMap<Type,Type> &extraSubst);
+    /// Builds the impl specialization from the proven self claim, merges the
+    /// call-site substitution, and monomorphizes the cloned method.
+    FailureOr<func::FuncOp> getOrSpecializeFreeFunctionFromMethod(PatternRewriter& rewriter, ClaimType provenSelfClaim, StringRef methodName,
+                                                                   const CallSubstitution &callSubst);
 
-    /// Builds a substitution that maps generic types appearing in the ImplOp's type parameters
-    /// to Types in the given actualSelfClaim
-    FailureOr<DenseMap<Type,Type>> buildSubstitutionForSelfClaim(ClaimType actualSelfClaim,
-                                                                 llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
+    /// Builds the specialization that maps this impl's generic parameters to
+    /// the corresponding types in `actualSelfClaim`.
+    FailureOr<SpecializationMap> buildSubstitutionForSelfClaim(ClaimType actualSelfClaim,
+                                                            llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
 
-    /// Build the substitution needed to monomorphize this impl for a **given proven self claim**.
+    /// Builds the impl specialization needed for a proven self claim.
     ///
-    /// Returns a `DenseMap<Type,Type>` that:
-    /// - Replaces each generic type in the impl’s self claim with the concrete type from `proof`.
-    /// - Adds **Claim → proven Claim** bindings for the impl’s self claim and all specialized
-    ///   obligations so downstream rewriting preserves proof annotations.
-    /// The result has no inference variables and is safe to pass to instantiation utilities.
-    FailureOr<DenseMap<Type,Type>> buildMonomorphizationSubstitutionFor(ClaimType provenSelfClaim,
-                                                                        llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+    /// The result contains the impl's generic type specialization and the
+    /// evidence bindings that preserve proof annotations when specializing the
+    /// impl method body.
+    FailureOr<ImplSpecialization> buildImplSpecialization(ClaimType provenSelfClaim,
+                                                                  llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     // Helper to generate unique symbol name for an ImplOp
     static std::string generateSymName(TraitApplicationAttr selfApp, TraitApplicationArrayAttr assumptions);
@@ -510,11 +513,11 @@ def ImplOp : TraitDialectOp<"impl", [
 
     /// Replace concrete ProjectionTypes in `ty` using this impl's associated
     /// type bindings, applying `subst` to specialize the result.
-    Type resolveProjectionTypesViaBindings(Type ty, const DenseMap<Type,Type> &subst);
+    Type resolveProjectionTypesViaBindings(Type ty, const SpecializationMap &subst);
 
     /// Like resolveProjectionTypesViaBindings, but only resolves projections
     /// whose trait application equals `app`.
-    Type resolveProjectionTypesForApplication(Type ty, TraitApplicationAttr app, const DenseMap<Type,Type> &subst);
+    Type resolveProjectionTypesForApplication(Type ty, TraitApplicationAttr app, const SpecializationMap &subst);
   }];
 
   // builders create one empty block in the body region
@@ -1088,17 +1091,14 @@ def MethodCallOp : TraitDialectOp<"method.call", [
       return FunctionType::get(getContext(), getArguments().getTypes(), getResultTypes());
     }
 
-    /// Build a substitution by unifying the callee's formal parameter types
-    /// with the actual argument types at this call site.
-    ///
-    /// The resulting substitution maps generic types to concrete types and
-    /// claims to proven claims. It does NOT resolve projection types in the
-    /// callee's return type; use `addProjectionBindings` for that.
-    FailureOr<DenseMap<Type,Type>> buildParameterSpecialization(llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+    /// Builds the initial call substitution by unifying the callee's formal
+    /// function type with the actual argument and result types at this call
+    /// site. Projection bindings are added later during call lowering.
+    FailureOr<CallSubstitution> buildParameterSpecialization(llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
-    /// Instantiates the callee as a free function using a pre-built substitution.
-    FailureOr<func::FuncOp> getOrInstantiateCallee(PatternRewriter &rewriter,
-                                                   const DenseMap<Type,Type> &subst);
+    /// Specializes the callee as a free function using a pre-built substitution.
+    FailureOr<func::FuncOp> getOrSpecializeCallee(PatternRewriter &rewriter,
+                                                  const CallSubstitution &subst);
 
     ClaimType getClaimType() {
       return cast<ClaimType>(getClaim().getType());
@@ -1202,24 +1202,21 @@ def FuncCallOp : TraitDialectOp<"func.call", [
       return FunctionType::get(getContext(), getOperands().getTypes(), getResultTypes());
     }
 
-    /// Looks up or instantiates the monomorphized callee using a pre-built substitution.
-    FailureOr<func::FuncOp> getOrInstantiateCallee(PatternRewriter &rewriter,
-                                                   const DenseMap<Type,Type> &subst);
+    /// Looks up or specializes the monomorphized callee using a pre-built substitution.
+    FailureOr<func::FuncOp> getOrSpecializeCallee(PatternRewriter &rewriter,
+                                                  const CallSubstitution &subst);
 
-    /// Build a substitution by unifying the callee's formal parameter types
-    /// with the actual argument types at this call site.
-    ///
-    /// The resulting substitution maps generic types to concrete types and
-    /// claims to proven claims. It does NOT resolve projection types in the
-    /// callee's return type; use `addProjectionBindings` for that.
-    FailureOr<DenseMap<Type, Type>> buildParameterSpecialization(llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+    /// Builds the initial call substitution by unifying the callee's formal
+    /// function type with the actual argument and result types at this call
+    /// site. Projection bindings are added later during call lowering.
+    FailureOr<CallSubstitution> buildParameterSpecialization(llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     // returns all distinct generic types that occur in the FunctionType of this FuncOp's callee
     SmallVector<GenericTypeInterface, 4> getCalleeTypeParams() {
       return getGenericTypesIn(*getCalleeFunctionType());
     }
 
-    // returns the name of the (possibly instantiated) callee after monomorphization
+    // returns the name of the (possibly specialized) callee after monomorphization
     std::string getNameOfCalleeInstance();
 
   }];

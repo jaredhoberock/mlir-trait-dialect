@@ -135,13 +135,13 @@ class ImplResolver {
 
     /// Builds a substitution mapping concrete, unproven ClaimTypes to
     /// proven ClaimTypes given the current state of the proof memo
-    inline DenseMap<Type,Type> buildClaimSubstitutionFromMemo() const {
+    inline EvidenceBindings buildClaimSubstitutionFromMemo() const {
       MLIRContext* ctx = module.getContext();
-      DenseMap<Type,Type> subst;
+      EvidenceBindings subst;
       for (auto [app, proof] : memo.proofMemo) {
         ClaimType unproven = ClaimType::get(ctx, app, nullptr);
         ClaimType proven = ClaimType::get(ctx, app, proof);
-        subst[unproven] = proven;
+        subst.bind(unproven, proven);
       }
       return subst;
     }

@@ -21,7 +21,7 @@ MLIR_INCLUDE := $(MLIR_SYS_220_PREFIX)/include
 INCLUDES := -I $(MLIR_INCLUDE)
 
 # Dialect library sources
-DIALECT_SOURCES := c_api.cpp ImplResolution.cpp Instantiation.cpp Passes.cpp Trait.cpp TraitAttributes.cpp TraitOps.cpp TraitTypes.cpp
+DIALECT_SOURCES := c_api.cpp ImplResolution.cpp Specialization.cpp Passes.cpp Trait.cpp TraitAttributes.cpp TraitOps.cpp TraitTypes.cpp
 DIALECT_OBJECTS := $(DIALECT_SOURCES:.cpp=.o)
 
 # Generated files

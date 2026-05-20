@@ -178,7 +178,7 @@ FailureOr<Type> ImplResolver::resolveProjectionType(
   auto subst = impl.buildSubstitutionForSelfClaim(claim, err);
   if (failed(subst)) return failure();
 
-  return applySubstitutionToFixedPoint(*subst, *binding);
+  return applySubstitutionToFixedPoint(subst->toTypeMap(), *binding);
 }
 
 Type ImplResolver::resolveProjectionsIn(Type ty, PatternRewriter &rewriter) {
@@ -207,7 +207,7 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
   if (failed(subst)) return failure();
 
   // monomorphize the wanted claim with that substitution
-  ClaimType monomorphicWanted = dyn_cast_or_null<ClaimType>(applySubstitutionToFixedPoint(*subst, wanted));
+  ClaimType monomorphicWanted = dyn_cast_or_null<ClaimType>(applySubstitutionToFixedPoint(subst->toTypeMap(), wanted));
   if (!monomorphicWanted || !monomorphicWanted.isMonomorphic()) {
     if (err) err() << "could not monomorphize claim: " << wanted;
     return failure();
@@ -243,9 +243,9 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
       continue;
 
     ClaimType candidate = ClaimType::get(ctx, app, proofSym);
-    DenseMap<Type, Type> subst;
+    EvidenceBindings bindings;
     if (succeeded(verifyAndRecordProof(candidate.asUnproven(), candidate,
-                                       module, subst, err))) {
+                                       module, bindings, err))) {
       memo.proofMemo[app] = proofSym;
       return proofSym;
     }
