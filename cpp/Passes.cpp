@@ -272,6 +272,66 @@ static void addProjectionBindings(DenseMap<Type,Type> &subst,
   }
 }
 
+/// Record proven-claim bindings after applying the current substitution.
+///
+/// Projection bindings can change the spelling of a proven claim. For example,
+/// a call argument may have type `Claim<Trait<T, Outer<S>::Item> by P>` while
+/// the projection binding resolves `Outer<S>::Item` to `i64`. `AttrTypeReplacer`
+/// rewrites type sub-elements before looking up the reconstructed parent type,
+/// so the instantiated callee asks for `Claim<Trait<T, i64>>`, not the original
+/// projected spelling. Record that normalized spelling as proven too so uses
+/// inside the instantiated body do not degrade to unproven claims.
+static LogicalResult recordProofBindingsAfterSubstitution(
+    DenseMap<Type,Type> &subst, TypeRange types, ModuleOp module,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  for (Type ty : types) {
+    Type rewritten = applySubstitutionToFixedPoint(subst, ty);
+    if (failed(recordProofBindingsIn(rewritten, module, subst, err)))
+      return failure();
+  }
+  normalizeSubstitutionInPlace(subst);
+  return success();
+}
+
+/// Close a call specialization substitution under projection and proof
+/// bindings.
+///
+/// `buildParameterSpecialization` seeds the substitution with direct
+/// polymorphic-type bindings and the proof spellings visible at the call site.
+/// Projection bindings can then rewrite those spellings, which can reveal new
+/// proof bindings; newly recorded proof bindings may in turn expose projections
+/// in their normalized type. Iterate until no new bindings are discovered so
+/// call lowering does not depend on a particular phase order.
+static LogicalResult enrichCallSubstitution(
+    DenseMap<Type,Type> &subst, TypeRange operandTypes, TypeRange resultTypes,
+    FunctionType formalTy, ModuleOp module, ImplResolver &resolver,
+    PatternRewriter &rewriter,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  bool changed;
+  do {
+    // Termination relies on the participating helpers being monotone-additive:
+    // they may add bindings or verify an existing binding, but they must not
+    // replace an existing binding with a different meaning.
+    size_t before = subst.size();
+
+    addProjectionBindings(subst, resultTypes, resolver, rewriter);
+    addProjectionBindings(subst, operandTypes, resolver, rewriter);
+    if (formalTy) {
+      addProjectionBindings(subst, formalTy.getInputs(), resolver, rewriter);
+      addProjectionBindings(subst, formalTy.getResults(), resolver, rewriter);
+    }
+
+    if (failed(recordProofBindingsAfterSubstitution(subst, operandTypes, module, err)))
+      return failure();
+    if (failed(recordProofBindingsAfterSubstitution(subst, resultTypes, module, err)))
+      return failure();
+
+    changed = subst.size() != before;
+  } while (changed);
+
+  return success();
+}
+
 struct FuncCallOpLowering : public OpRewritePattern<FuncCallOp> {
   ImplResolver &resolver;
 
@@ -296,16 +356,16 @@ struct FuncCallOpLowering : public OpRewritePattern<FuncCallOp> {
     auto subst = callOp.buildParameterSpecialization();
     if (failed(subst))
       return rewriter.notifyMatchFailure(callOp, "couldn't build substitution");
-    addProjectionBindings(*subst, callOp.getResultTypes(), resolver, rewriter);
-    addProjectionBindings(*subst, callOp.getOperandTypes(), resolver, rewriter);
+    auto formalTy = callOp.getCalleeFunctionType();
+    if (failed(formalTy))
+      return rewriter.notifyMatchFailure(callOp, "couldn't get callee function type");
 
-    // Also resolve projections in the callee's formal types — these contain
-    // projections (e.g., proj<@Prod[poly<2>], "Out">) that, after substitution,
-    // become concrete projections ImplResolver can resolve.
-    if (auto formalTy = callOp.getCalleeFunctionType(); succeeded(formalTy)) {
-      addProjectionBindings(*subst, formalTy->getInputs(), resolver, rewriter);
-      addProjectionBindings(*subst, formalTy->getResults(), resolver, rewriter);
-    }
+    ModuleOp module = callOp.getOperation()->getParentOfType<ModuleOp>();
+    auto errFn = [&] { return callOp.emitOpError(); };
+    if (failed(enrichCallSubstitution(*subst, callOp.getOperandTypes(),
+                                      callOp.getResultTypes(), *formalTy,
+                                      module, resolver, rewriter, errFn)))
+      return failure();
 
     SmallVector<Type> concreteResults;
     for (Type r : callOp.getResultTypes()) {
@@ -361,14 +421,16 @@ struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
     auto subst = op.buildParameterSpecialization();
     if (failed(subst))
       return rewriter.notifyMatchFailure(op, "couldn't build substitution for call");
-    addProjectionBindings(*subst, op.getResultTypes(), resolver, rewriter);
-    addProjectionBindings(*subst, op.getOperandTypes(), resolver, rewriter);
+    auto formalTy = op.getMethodFunctionType();
+    if (failed(formalTy))
+      return rewriter.notifyMatchFailure(op, "couldn't get method function type");
 
-    // Also resolve projections in the method's formal types.
-    if (auto formalTy = op.getMethodFunctionType(); succeeded(formalTy)) {
-      addProjectionBindings(*subst, formalTy->getInputs(), resolver, rewriter);
-      addProjectionBindings(*subst, formalTy->getResults(), resolver, rewriter);
-    }
+    ModuleOp module = op.getOperation()->getParentOfType<ModuleOp>();
+    auto errFn = [&] { return op.emitOpError(); };
+    if (failed(enrichCallSubstitution(*subst, op.getOperandTypes(),
+                                      op.getResultTypes(), *formalTy,
+                                      module, resolver, rewriter, errFn)))
+      return failure();
 
     SmallVector<Type> concreteResults;
     for (Type r : op.getResultTypes()) {
