@@ -582,8 +582,23 @@ FailureOr<func::FuncOp> ImplOp::getOrSpecializeFreeFunctionFromMethod(
   // check that methodName names a valid trait method
   if (!getTrait().hasMethod(methodName)) return failure();
 
-  // generate a free function name based on the ImplOp's mangled name for our proof
-  auto functionName = generateMangledName(provenSelfClaim) + "_" + methodName.str();
+  auto method = getOrSpecializeMethod(rewriter, methodName);
+  if (failed(method)) return failure();
+
+  auto implSpec = buildImplSpecialization(provenSelfClaim);
+  if (failed(implSpec)) return failure();
+
+  // Build the same substitution that will be used to clone the method body:
+  // first the enclosing impl substitution, then method-generic bindings from
+  // this call site.
+  DenseMap<Type,Type> subst = implSpec->toTypeMap();
+  for (const auto &[k, v] : callSubst.toTypeMap())
+    subst.try_emplace(k, v);
+
+  // The extracted function name must include every substitution used to clone
+  // the method body; otherwise different method-generic calls share a symbol.
+  auto functionName = generateMangledName(provenSelfClaim) + "_" + methodName.str() +
+    applySubstitutionAndGenerateMangledNameSuffix(subst, getGenericTypesIn((*method).getFunctionType()));
 
   MLIRContext* ctx = getContext();
 
@@ -594,19 +609,6 @@ FailureOr<func::FuncOp> ImplOp::getOrSpecializeFreeFunctionFromMethod(
   );
 
   if (!funcOp) {
-    // get the method inside the ImplOp
-    auto method = getOrSpecializeMethod(rewriter, methodName);
-    if (failed(method)) return failure();
-
-    // build a poly→concrete substitution from the impl's type parameters
-    auto implSpec = buildImplSpecialization(provenSelfClaim);
-    if (failed(implSpec)) return failure();
-
-    DenseMap<Type,Type> subst = implSpec->toTypeMap();
-    // Merge call-site rewrites discovered while matching the method signature.
-    for (const auto &[k, v] : callSubst.toTypeMap())
-      subst.try_emplace(k, v);
-
     // specialize into grandparent with mangled name
     funcOp = specializeMethodAsFreeFuncWithLeadingSelfProof(
       rewriter,
