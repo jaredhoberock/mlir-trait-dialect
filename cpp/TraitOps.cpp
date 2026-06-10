@@ -295,9 +295,17 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
       // Resolve any ProjectionTypes in the specialized signature using this impl's bindings
       specializedTraitMethodTy = resolveProjectionTypesViaBindings(specializedTraitMethodTy, *traitSubst);
 
-      // Check that the impl method's signature can specialize to the expected signature
+      // Check that the impl method's signature can specialize to the expected
+      // signature. First resolve projections naming THIS impl's trait
+      // application through its own associated type bindings (symmetric to the
+      // trait-side resolution above), so impl methods spelled in source terms
+      // (Self::Assoc) verify without relying on lenient projection
+      // unification.
       FunctionType implMethodTy = implMethod.getFunctionType();
-      if (failed(buildSpecialization(specializedTraitMethodTy, implMethodTy, *module, errFn))) {
+      Type resolvedImplMethodTy = resolveProjectionTypesForApplication(
+          implMethodTy, getSelfApplication(), *traitSubst);
+      if (failed(buildSpecialization(specializedTraitMethodTy,
+                                     resolvedImplMethodTy, *module, errFn))) {
         return emitOpError() << "method '" << name << "' has incompatible signature: "
                              << "expected " << specializedTraitMethodTy
                              << " but found " << implMethodTy;

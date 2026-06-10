@@ -407,21 +407,16 @@ struct FuncCallOpLowering : public OpRewritePattern<FuncCallOp> {
     if (failed(target))
       return failure();
 
-    // Unwrap any trait.proj.cast operands to get the concrete values.
-    SmallVector<Value> concreteOperands;
-    for (Value operand : callOp.getOperands()) {
-      if (auto pcOp = operand.getDefiningOp<ProjCastOp>())
-        concreteOperands.push_back(pcOp.getInput());
-      else
-        concreteOperands.push_back(operand);
-    }
-
-    // replace with a func.call to the specialized callee
+    // Operands pass through untouched (as in MethodCallOpLowering).
+    // trait.proj.cast operands are not this lowering's concern: projection
+    // resolution turns them into identity casts that fold away, and
+    // claim-typed survivors are erased with the claims, all within the
+    // same rewrite fixpoint; verification runs after the fixpoint settles.
     rewriter.replaceOpWithNewOp<func::CallOp>(
       callOp,
       target->callee.getSymName(),
       target->resultTypes,
-      concreteOperands
+      callOp.getOperands()
     );
 
     return success();
