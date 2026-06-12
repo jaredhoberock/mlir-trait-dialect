@@ -152,33 +152,50 @@ static void applySubstitutionInPlace(const EvidenceBindings& evidence, Operation
                                         /*replaceTypes=*/true);
 }
 
-struct ProveClaimPattern : OpRewritePattern<AllegeOp> {
-  using OpRewritePattern::OpRewritePattern;
-
+/// Proves a claim-producing op and replaces it with a trait.witness.
+///
+/// The proving obligation is keyed on the result ClaimType, not the
+/// producing op: allege, derive, and project results all discharge through
+/// this one rule. `allegeOnly` restricts matching to trait.allege for the
+/// resolve-impls phase, which runs before instantiation and must not yet
+/// touch claims derived inside still-polymorphic bodies.
+struct ProveClaimResultPattern : public RewritePattern {
   // one ImplResolver per module; owned by the pass, passed by ref into this pattern
   ImplResolver& resolver;
+  bool allegeOnly;
 
-  ProveClaimPattern(MLIRContext* ctx,
-                    ImplResolver &resolver)
-    : OpRewritePattern<AllegeOp>(ctx), resolver(resolver) {}
+  ProveClaimResultPattern(MLIRContext* ctx,
+                          ImplResolver &resolver,
+                          bool allegeOnly)
+    : RewritePattern(MatchAnyOpTypeTag(), /*benefit=*/1, ctx),
+      resolver(resolver), allegeOnly(allegeOnly) {}
 
-  LogicalResult matchAndRewrite(AllegeOp op, PatternRewriter& rewriter) const override {
-    // skip polymorphic alleges — they can't be resolved until after monomorphization
-    if (!op.getClaim().isMonomorphic())
-      return rewriter.notifyMatchFailure(op, "polymorphic allege deferred");
+  LogicalResult matchAndRewrite(Operation *op, PatternRewriter& rewriter) const override {
+    if (allegeOnly ? !isa<AllegeOp>(op) : !isa<AllegeOp, DeriveOp, ProjectOp>(op))
+      return failure();
 
-    auto errFn = [&] { return op.emitOpError(); };
+    // an already-proven result needs no work (in-place retyping by proof
+    // propagation can prove a claim out from under its producing op)
+    auto claim = cast<ClaimType>(op->getResult(0).getType());
+    if (claim.isProven())
+      return failure();
+
+    // skip polymorphic claims -- they can't be resolved until after monomorphization
+    if (!claim.isMonomorphic())
+      return rewriter.notifyMatchFailure(op, "polymorphic claim deferred");
+
+    auto errFn = [&] { return op->emitOpError(); };
 
     // build or reuse canonical evidence for this claim
-    auto sym = resolver.resolveAndEnsureProofFor(op.getClaim(), rewriter, errFn);
+    auto sym = resolver.resolveAndEnsureProofFor(claim, rewriter, errFn);
     if (failed(sym))
       return rewriter.notifyMatchFailure(op, "couldn't find proof of this claim");
 
-    // replace the allegation with a witness
+    // replace the producer with a witness
     rewriter.replaceOpWithNewOp<WitnessOp>(
       op,
       *sym,
-      op.getClaim().getTraitApplication()
+      claim.getTraitApplication()
     );
 
     return success();
@@ -208,7 +225,7 @@ FailureOr<ImplResolver> resolveImpls(ModuleOp module) {
   // apply rewrite patterns
   {
     RewritePatternSet patterns(ctx);
-    patterns.add<ProveClaimPattern>(ctx, resolver);
+    patterns.add<ProveClaimResultPattern>(ctx, resolver, /*allegeOnly=*/true);
 
     // rewrite trait.allege -> trait.witness
     if (failed(applyPatternsGreedily(module, std::move(patterns))))
@@ -220,7 +237,7 @@ FailureOr<ImplResolver> resolveImpls(ModuleOp module) {
   module.walk([&](AllegeOp op) {
     if (!op.getClaim().isMonomorphic()) return;
     hasLeftovers = true;
-    op.emitError() << "unresolved monomorphic trait.allege after ProveClaimPattern";
+    op.emitError() << "unresolved monomorphic trait.allege after resolve-impls";
   });
   if (hasLeftovers) return failure();
 
@@ -463,27 +480,6 @@ struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
 /// resolved proof.  Fires only when the derived claim's types are fully
 /// concrete, then delegates to ImplResolver to find (or mint) the canonical
 /// proof and replaces the derive with a witness referencing that proof.
-struct DeriveToWitnessPattern : public OpRewritePattern<DeriveOp> {
-  ImplResolver &resolver;
-
-  DeriveToWitnessPattern(MLIRContext *ctx, ImplResolver &resolver)
-    : OpRewritePattern(ctx), resolver(resolver) {}
-
-  LogicalResult matchAndRewrite(DeriveOp op, PatternRewriter &rewriter) const override {
-    // only fire when result type is monomorphic
-    if (!op.getDerivedClaim().isMonomorphic())
-      return rewriter.notifyMatchFailure(op, "claim still polymorphic");
-
-    auto errFn = [&] { return op.emitOpError(); };
-    auto sym = resolver.resolveAndEnsureProofFor(op.getDerivedClaim(), rewriter, errFn);
-    if (failed(sym))
-      return failure();
-
-    rewriter.replaceOpWithNewOp<WitnessOp>(op, *sym, op.getTraitApplication());
-    return success();
-  }
-};
-
 /// Monomorphizes result types for any op implementing
 /// ResultTypeSpecializationOpInterface once all operands are monomorphic.
 ///
@@ -550,7 +546,7 @@ static bool wouldReplace(AttrTypeReplacer &replacer, Operation *op,
 /// Propagates proofs from the resolver's memo into claim types of any op
 /// that carries unproven claims the resolver can now prove.
 ///
-/// When DeriveToWitnessPattern proves a claim during the greedy rewrite and
+/// When ProveClaimResultPattern proves a claim during the greedy rewrite and
 /// FuncCallOpLowering subsequently instantiates a callee that expects that
 /// claim, the newly created ops carry unproven claim types.  This pattern
 /// substitutes those with their proven counterparts, unblocking
@@ -647,16 +643,15 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
 
   MLIRContext* ctx = module.getContext();
 
-  // rewrite trait.func.call, trait.method.call, trait.derive,
-  // resolve projections, resolve now-concrete unsafe alleges,
-  // and any generic op whose results become monomorphic
+  // rewrite trait.func.call and trait.method.call, prove claim producers
+  // (allege, derive, project), resolve projections, and monomorphize any
+  // generic op whose results become monomorphic
   RewritePatternSet patterns(ctx);
-  patterns.add<ProveClaimPattern>(ctx, *resolver);
+  patterns.add<ProveClaimResultPattern>(ctx, *resolver, /*allegeOnly=*/false);
   patterns.add<MonomorphizeResultTypesPattern>(ctx);
   patterns.add<FuncCallOpLowering>(ctx, *resolver);
   patterns.add<MethodCallOpLowering>(ctx, *resolver);
   patterns.add<ResolveProjectionsPattern>(ctx, *resolver);
-  patterns.add<DeriveToWitnessPattern>(ctx, *resolver);
   patterns.add<PropagateProofsPattern>(ctx, *resolver);
 
   // collect instantiate-monomorphs patterns from other dialects
@@ -669,12 +664,25 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
   if (failed(applyPatternsGreedily(module, std::move(patterns))))
     return failure();
 
-  // assert that no monomorphic trait.allege remain after monomorphization
+  // Assert that no op produced an unproven monomorphic claim that escaped
+  // proving. Keying this check on the result ClaimType rather than on the
+  // set of claim-producing ops makes it total over producers: an op whose
+  // claims the patterns above fail to discharge is an error here, never a
+  // silent gap. Trait infrastructure regions are templates and keep their
+  // unproven claims.
   bool hasLeftovers = false;
-  module.walk([&](AllegeOp op) {
-    if (!op.getClaim().isMonomorphic()) return;
-    hasLeftovers = true;
-    op.emitError() << "unresolved monomorphic trait.allege after instantiate-monomorphs";
+  module.walk<WalkOrder::PreOrder>([&](Operation *op) {
+    if (isa<TraitOp, ImplOp, ProofOp>(op))
+      return WalkResult::skip();
+    for (Value result : op->getResults()) {
+      auto claim = dyn_cast<ClaimType>(result.getType());
+      if (!claim || claim.isProven() || !claim.isMonomorphic())
+        continue;
+      hasLeftovers = true;
+      op->emitError() << "unproven monomorphic claim " << claim
+                      << " after instantiate-monomorphs";
+    }
+    return WalkResult::advance();
   });
   if (hasLeftovers) return failure();
 
