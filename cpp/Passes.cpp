@@ -489,8 +489,10 @@ struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
 /// them in-place under the rewriter.
 struct MonomorphizeResultTypesPattern
     : public OpInterfaceRewritePattern<ResultTypeSpecializationOpInterface> {
-  using OpInterfaceRewritePattern<
-      ResultTypeSpecializationOpInterface>::OpInterfaceRewritePattern;
+  ImplResolver &resolver;
+
+  MonomorphizeResultTypesPattern(MLIRContext *ctx, ImplResolver &resolver)
+    : OpInterfaceRewritePattern(ctx), resolver(resolver) {}
 
   LogicalResult matchAndRewrite(ResultTypeSpecializationOpInterface iface,
                                 PatternRewriter &rewriter) const override {
@@ -508,6 +510,25 @@ struct MonomorphizeResultTypesPattern
     // the arity of results must match
     if (specializedTypes->size() != iface->getNumResults())
       return rewriter.notifyMatchFailure(iface, "specialized result type count mismatch");
+
+    // The interface computes result types from the operands' CURRENT
+    // spellings and promises nothing about their normal form, while sibling
+    // patterns rewrite spellings in place (projection -> resolved,
+    // unproven -> proven claim). Writing an operand-echoed spelling over an
+    // already-normalized result would undo those patterns and livelock the
+    // greedy driver, so every computed type is normalized before the
+    // changed-check: this pattern may move result types toward normal form,
+    // never away from it. Trait infrastructure regions are templates whose
+    // projections legitimately stay symbolic, so they skip normalization.
+    // Note resolveProjectionsIn may mint impls/proofs through the rewriter
+    // even when the pattern then reports "result types unchanged"
+    // (precedented by ResolveProjectionsPattern's wouldReplace probe).
+    if (!iface->getParentOfType<TraitOp>() && !iface->getParentOfType<ImplOp>()) {
+      AttrTypeReplacer proofs = makeTypeReplacerFromSubstitution(
+          resolver.buildClaimSubstitutionFromMemo().toTypeMap());
+      for (Type &ty : *specializedTypes)
+        ty = proofs.replace(resolver.resolveProjectionsIn(ty, rewriter));
+    }
 
     // check if anything actually changes
     if (llvm::equal(iface->getResultTypes(), *specializedTypes))
@@ -648,7 +669,7 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
   // generic op whose results become monomorphic
   RewritePatternSet patterns(ctx);
   patterns.add<ProveClaimResultPattern>(ctx, *resolver, /*allegeOnly=*/false);
-  patterns.add<MonomorphizeResultTypesPattern>(ctx);
+  patterns.add<MonomorphizeResultTypesPattern>(ctx, *resolver);
   patterns.add<FuncCallOpLowering>(ctx, *resolver);
   patterns.add<MethodCallOpLowering>(ctx, *resolver);
   patterns.add<ResolveProjectionsPattern>(ctx, *resolver);
@@ -660,9 +681,24 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
       iface->populateInstantiateMonomorphsPatterns(patterns);
   }
 
+  // Bound the total rewrite count so that a non-confluent pattern pair
+  // fails loudly instead of livelocking. The driver's iteration limit
+  // cannot catch a livelock: two patterns that keep undoing each other's
+  // in-place type rewrites hold the worklist non-empty WITHIN one
+  // iteration. The bound scales with input size; legitimate runs rewrite
+  // each op a small bounded number of times as types refine, so any run
+  // that reaches the bound is cycling.
+  int64_t opCount = 0;
+  module.walk([&](Operation *) { ++opCount; });
+  GreedyRewriteConfig config;
+  config.setMaxNumRewrites(opCount * 1024 + 4096);
+
   // apply patterns
-  if (failed(applyPatternsGreedily(module, std::move(patterns))))
-    return failure();
+  if (failed(applyPatternsGreedily(module, std::move(patterns), config)))
+    return module.emitError(
+        "instantiate-monomorphs did not converge: rewrite budget exceeded, "
+        "which indicates a non-confluent pattern pair cycling on a type "
+        "spelling");
 
   // Assert that no op produced an unproven monomorphic claim that escaped
   // proving. Keying this check on the result ClaimType rather than on the

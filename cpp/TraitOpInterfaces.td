@@ -34,7 +34,13 @@ def ResultTypeSpecializationOpInterface : OpInterface<"ResultTypeSpecializationO
       "Attempt to refine/specialize the result types based on the "
       "current operand types. Return failure() if no refinement is "
       "possible, otherwise return a SmallVector<Type> of the new "
-      "result types. This must not mutate the operation.",
+      "result types. This must not mutate the operation. The returned "
+      "types echo the operands' current spellings and carry no "
+      "normalization promise: equivalent spellings (an unresolved "
+      "projection vs its resolved type, an unproven claim vs its proven "
+      "form) may be returned as-is. The consuming rewrite owns "
+      "normalizing them before comparing against or assigning to the "
+      "op's result types.",
       /*retType*/
       "mlir::FailureOr<llvm::SmallVector<mlir::Type>>",
       /*methodName*/
