@@ -515,9 +515,6 @@ def ImplOp : TraitDialectOp<"impl", [
     /// type bindings, applying `subst` to specialize the result.
     Type resolveProjectionTypesViaBindings(Type ty, const SpecializationMap &subst);
 
-    /// Like resolveProjectionTypesViaBindings, but only resolves projections
-    /// whose trait application equals `app`.
-    Type resolveProjectionTypesForApplication(Type ty, TraitApplicationAttr app, const SpecializationMap &subst);
   }];
 
   // builders create one empty block in the body region

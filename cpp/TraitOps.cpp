@@ -5,6 +5,7 @@
 #include "TraitOps.hpp"
 #include "TraitTypes.hpp"
 #include <llvm/ADT/DenseMap.h>
+#include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/ADT/SmallSet.h>
 #include <llvm/ADT/STLForwardCompat.h>
 #include <llvm/Support/xxhash.h>
@@ -24,6 +25,103 @@ using namespace mlir;
 using namespace mlir::trait;
 
 namespace mlir::trait { std::string hashToSuffix(StringRef input); }
+
+namespace {
+
+/// One local associated-type resolution rule available while normalizing a type.
+///
+/// The rule says that projections whose trait application is exactly `app` may
+/// be resolved through `impl` after applying `subst` to the impl's associated
+/// type binding. It represents evidence already present at the current IR
+/// boundary; it does not perform global impl lookup.
+struct LocalProjectionRule {
+  ImplOp impl;
+  TraitApplicationAttr app;
+  SpecializationMap subst;
+};
+
+/// Context controlling how far `normalize` may resolve projection types.
+///
+/// The small core of normalization is deliberately local: callers add explicit
+/// evidence-derived rules, and projection heads not justified by those rules are
+/// preserved. Global resolver-backed normalization remains a separate lowering
+/// concern.
+class NormalizationContext {
+public:
+  void addLocalProjectionRule(ImplOp impl, TraitApplicationAttr app,
+                              const SpecializationMap &subst) {
+    localProjectionRules.push_back({impl, app, subst});
+  }
+
+  /// Resolves projections in `ty` using this context's local rules.
+  ///
+  /// The walk runs to a fixed point so a resolved associated type can expose
+  /// another projection resolvable by the same local evidence.
+  FailureOr<Type> normalize(
+      Type ty,
+      llvm::function_ref<InFlightDiagnostic()> err);
+
+  /// Resolves projections in each input and result type of `functionType`.
+  FailureOr<FunctionType> normalize(
+      FunctionType functionType,
+      llvm::function_ref<InFlightDiagnostic()> err);
+
+private:
+  SmallVector<LocalProjectionRule, 4> localProjectionRules;
+};
+
+} // namespace
+
+
+//===----------------------------------------------------------------------===//
+// NormalizationContext
+//===----------------------------------------------------------------------===//
+
+FailureOr<Type> NormalizationContext::normalize(
+    Type ty,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  constexpr unsigned maxIterations = 64;
+
+  auto normalizeOnce = [&](Type root) {
+    AttrTypeReplacer replacer;
+    replacer.addReplacement([&](ProjectionType proj) -> std::optional<Type> {
+      for (LocalProjectionRule &rule : localProjectionRules) {
+        if (!rule.impl || proj.getTraitApplication() != rule.app)
+          continue;
+
+        auto resolved = rule.impl.specializeAssociatedTypeBinding(
+            proj.getAssocName().getValue(), proj.getAssocTypeArgs());
+        if (failed(resolved))
+          continue;
+        return rule.subst.apply(*resolved);
+      }
+      return std::nullopt;
+    });
+    return replacer.replace(root);
+  };
+
+  Type previous;
+  for (unsigned i = 0; i != maxIterations; ++i) {
+    previous = ty;
+    ty = normalizeOnce(ty);
+    if (ty == previous)
+      return ty;
+  }
+
+  if (err)
+    err() << "projection normalization did not converge; check for cyclic "
+             "associated type bindings";
+  return failure();
+}
+
+FailureOr<FunctionType> NormalizationContext::normalize(
+    FunctionType functionType,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  auto normalized = normalize(Type(functionType), err);
+  if (failed(normalized))
+    return failure();
+  return cast<FunctionType>(*normalized);
+}
 
 
 //===----------------------------------------------------------------------===//
@@ -291,22 +389,26 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
       FunctionType traitMethodTy = traitMethod->getFunctionType();
       Type specializedTraitMethodTy = applySubstitutionToFixedPoint(traitSubst->toTypeMap(), traitMethodTy);
 
-      // Resolve any ProjectionTypes in the specialized signature using this impl's bindings
-      specializedTraitMethodTy = resolveProjectionTypesViaBindings(specializedTraitMethodTy, *traitSubst);
+      NormalizationContext normalization;
+      normalization.addLocalProjectionRule(
+          *this, getSelfApplication(), *traitSubst);
 
       // Check that the impl method's signature can specialize to the expected
-      // signature. First resolve projections naming THIS impl's trait
-      // application through its own associated type bindings (symmetric to the
-      // trait-side resolution above), so impl methods spelled in source terms
-      // (Self::Assoc) verify without relying on lenient projection
-      // unification.
+      // signature. Only projections naming this impl's exact trait application
+      // may use its associated type bindings; unrelated projections with the
+      // same associated type name remain symbolic.
       FunctionType implMethodTy = implMethod.getFunctionType();
-      Type resolvedImplMethodTy = resolveProjectionTypesForApplication(
-          implMethodTy, getSelfApplication(), *traitSubst);
-      if (failed(buildSpecialization(specializedTraitMethodTy,
-                                     resolvedImplMethodTy, *module, errFn))) {
+      auto expectedMethodTy = normalization.normalize(
+          specializedTraitMethodTy, errFn);
+      if (failed(expectedMethodTy))
+        return failure();
+      auto actualMethodTy = normalization.normalize(implMethodTy, errFn);
+      if (failed(actualMethodTy))
+        return failure();
+      if (failed(buildSpecialization(*expectedMethodTy,
+                                     *actualMethodTy, *module, errFn))) {
         return emitOpError() << "method '" << name << "' has incompatible signature: "
-                             << "expected " << specializedTraitMethodTy
+                             << "expected " << *expectedMethodTy
                              << " but found " << implMethodTy;
       }
     } else if (auto assocType = dyn_cast<AssocTypeOp>(op)) {
@@ -422,24 +524,6 @@ Type ImplOp::resolveProjectionTypesViaBindings(Type ty, const SpecializationMap 
   });
   return replacer.replace(ty);
 }
-
-/// Replace projections in `ty` whose trait application equals `app`,
-/// using this impl's associated type bindings. Projections with a
-/// different trait application are left unresolved.
-Type ImplOp::resolveProjectionTypesForApplication(Type ty, TraitApplicationAttr app, const SpecializationMap &subst) {
-  assert(app.getTraitName() == getSelfApplication().getTraitName());
-  AttrTypeReplacer replacer;
-  replacer.addReplacement([&](ProjectionType proj) -> std::optional<Type> {
-    if (proj.getTraitApplication() != app)
-      return std::nullopt;
-    auto resolved = specializeAssociatedTypeBinding(
-        proj.getAssocName().getValue(), proj.getAssocTypeArgs());
-    if (failed(resolved)) return std::nullopt;
-    return subst.apply(*resolved);
-  });
-  return replacer.replace(ty);
-}
-
 
 FailureOr<ImplSpecialization> ImplOp::buildImplSpecialization(
     ClaimType provenSelfClaim,
@@ -1350,18 +1434,24 @@ LogicalResult ProjCastOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // Resolve only projections matching the evidence's trait application.
   // E.g., evidence for A[i32] resolves A[i32]::Out but not A[i64]::Out.
   TraitApplicationAttr claimApp = claimTy.getTraitApplication();
-  Type resolvedInput = implOr->resolveProjectionTypesForApplication(inputType, claimApp, *subst);
-  Type resolvedResult = implOr->resolveProjectionTypesForApplication(resultType, claimApp, *subst);
+  NormalizationContext normalization;
+  normalization.addLocalProjectionRule(*implOr, claimApp, *subst);
+  auto resolvedInput = normalization.normalize(inputType, errFn);
+  if (failed(resolvedInput))
+    return failure();
+  auto resolvedResult = normalization.normalize(resultType, errFn);
+  if (failed(resolvedResult))
+    return failure();
 
   // If either side still contains unresolved projections (from a different trait),
   // we can't fully verify — defer to monomorphization
-  if (containsType<ProjectionType>(resolvedInput) ||
-      containsType<ProjectionType>(resolvedResult))
+  if (containsType<ProjectionType>(*resolvedInput) ||
+      containsType<ProjectionType>(*resolvedResult))
     return success();
 
-  if (resolvedInput != resolvedResult)
-    return emitOpError() << "resolved input type " << resolvedInput
-                         << " does not match resolved result type " << resolvedResult;
+  if (*resolvedInput != *resolvedResult)
+    return emitOpError() << "resolved input type " << *resolvedInput
+                         << " does not match resolved result type " << *resolvedResult;
 
   return success();
 }
@@ -1411,6 +1501,86 @@ LogicalResult MethodCallOp::verify() {
   return success();
 }
 
+/// Adds projection normalization rules justified by one claim SSA value.
+///
+/// A rule records that projections for a specific trait application may use a
+/// specific impl's associated type bindings while checking this operation.
+static LogicalResult addLocalProjectionRulesFromClaim(
+    NormalizationContext &ctx, Value claimValue, ModuleOp module,
+    llvm::SmallPtrSetImpl<Operation *> &visitedDerives,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  // Only claim-typed operands can carry trait evidence relevant to projection
+  // normalization. Ordinary method arguments do not contribute rules.
+  auto claim = dyn_cast<ClaimType>(claimValue.getType());
+  if (!claim)
+    return success();
+
+  // A proven claim names a proof symbol. That proof identifies the impl whose
+  // associated type bindings justify reducing projections with this exact
+  // trait application.
+  if (claim.isProven()) {
+    auto implOr = ProofOp::getImplFromProof(module, claim.getProof(), err);
+    if (failed(implOr))
+      return failure();
+
+    // Store rules against the unproven application because projection heads do
+    // not include proof symbols; proof only explains why the application holds.
+    ClaimType unproven = claim.asUnproven();
+    auto subst = implOr->buildSubstitutionForSelfClaim(unproven, err);
+    if (failed(subst))
+      return failure();
+
+    ctx.addLocalProjectionRule(*implOr, unproven.getTraitApplication(), *subst);
+    return success();
+  }
+
+  // A derive op also commits to one impl, but the evidence may be nested in its
+  // assumptions. For example, a FnUni derive can carry the Fn claim that
+  // resolves a closure's Output projection.
+  if (auto derive = claimValue.getDefiningOp<DeriveOp>()) {
+    // Derived claims can refer to other derived claims through assumptions; the
+    // visited set keeps malformed or cyclic IR from recursing forever.
+    if (!visitedDerives.insert(derive.getOperation()).second)
+      return success();
+
+    ImplOp impl = derive.getImplOp();
+    if (!impl) {
+      if (err)
+        err() << "cannot find trait.impl '" << derive.getImplAttr() << "'";
+      return failure();
+    }
+
+    ClaimType derived = derive.getDerivedClaim();
+    auto subst = impl.buildSubstitutionForSelfClaim(derived, err);
+    if (failed(subst))
+      return failure();
+
+    ctx.addLocalProjectionRule(impl, derived.getTraitApplication(), *subst);
+
+    // Assumptions are part of the local evidence package used to derive this
+    // claim, so their associated type bindings are visible to the same method
+    // call comparison.
+    for (Value assumption : derive.getAssumptions())
+      if (failed(addLocalProjectionRulesFromClaim(
+              ctx, assumption, module, visitedDerives, err)))
+        return failure();
+  }
+
+  return success();
+}
+
+static FailureOr<NormalizationContext> buildLocalClaimNormalizationContext(
+    ValueRange values, ModuleOp module,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  NormalizationContext ctx;
+  llvm::SmallPtrSet<Operation *, 8> visitedDerives;
+  for (Value value : values)
+    if (failed(addLocalProjectionRulesFromClaim(
+            ctx, value, module, visitedDerives, err)))
+      return failure();
+  return ctx;
+}
+
 LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   auto errFn = [&]{ return emitOpError(); };
 
@@ -1445,12 +1615,61 @@ FailureOr<CallSubstitution> MethodCallOp::buildParameterSpecialization(llvm::fun
 
   // solve the *call-site* specialization: unify the specialized formal type with the
   // actual call type to get any remaining bindings (including generics in args/results)
-  Type actual = getActualFunctionType();
-  auto spec = buildSpecialization(formal, actual, *module, err);
-  if (failed(spec)) return failure();
+  FunctionType actual = getActualFunctionType();
+  FunctionType originalActual = actual;
+  SmallVector<Value> localClaims;
+  localClaims.push_back(getClaim());
+  for (Value argument : getArguments())
+    if (isa<ClaimType>(argument.getType()))
+      localClaims.push_back(argument);
 
-  CallSubstitution subst(*spec);
-  if (failed(recordProofBindingsIn(actual, *module, subst.getEvidenceBindings(), err)))
+  auto normalization = buildLocalClaimNormalizationContext(localClaims, *module, err);
+  if (failed(normalization))
+    return failure();
+
+  FunctionType formalFunction = cast<FunctionType>(formal);
+  auto inputSpec = buildSpecialization(
+      FunctionType::get(getContext(), formalFunction.getInputs(), TypeRange{}),
+      FunctionType::get(getContext(), actual.getInputs(), TypeRange{}),
+      *module, err);
+  if (failed(inputSpec)) return failure();
+
+  // Input arguments determine method generics such as the closure type `F`.
+  // Normalize only after those bindings are applied, so projections like
+  // `Fn[F, Args]::Output` can match local evidence for the actual closure.
+  auto inputMap = inputSpec->toTypeMap();
+  auto normalizedFormal = normalization->normalize(
+      cast<FunctionType>(applySubstitutionToFixedPoint(inputMap, formal)),
+      err);
+  if (failed(normalizedFormal))
+    return failure();
+  auto normalizedActual = normalization->normalize(
+      cast<FunctionType>(applySubstitutionToFixedPoint(inputMap, actual)),
+      err);
+  if (failed(normalizedActual))
+    return failure();
+  formal = *normalizedFormal;
+  actual = *normalizedActual;
+
+  auto resultSpec = buildSpecialization(formal, actual, *module, err);
+  if (failed(resultSpec)) return failure();
+
+  auto merged = inputMap;
+  for (auto [key, value] : resultSpec->toTypeMap()) {
+    auto existing = merged.find(key);
+    if (existing != merged.end() && existing->second != value) {
+      if (err)
+        err() << "inconsistent method-call specialization for " << key
+              << ": " << existing->second << " versus " << value;
+      return failure();
+    }
+    merged[key] = value;
+  }
+  normalizeSubstitutionInPlace(merged);
+
+  CallSubstitution subst(SpecializationMap::fromTypeMap(merged));
+  if (failed(recordProofBindingsIn(
+          originalActual, *module, subst.getEvidenceBindings(), err)))
     return failure();
 
   return subst;
