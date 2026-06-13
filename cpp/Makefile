@@ -28,7 +28,6 @@ DIALECT_OBJECTS := $(DIALECT_SOURCES:.cpp=.o)
 GENERATED := Trait.hpp.inc Trait.cpp.inc \
 	     TraitAttributes.hpp.inc TraitAttributes.cpp.inc \
 	     TraitOps.hpp.inc TraitOps.cpp.inc \
-	     TraitOpInterfaces.hpp.inc TraitOpInterfaces.cpp.inc \
 	     TraitTypes.hpp.inc TraitTypes.cpp.inc \
 	     TraitTypeInterfaces.hpp.inc TraitTypeInterfaces.cpp.inc
 
@@ -54,12 +53,6 @@ TraitOps.hpp.inc: TraitOps.td
 
 TraitOps.cpp.inc: TraitOps.td
 	$(TBLGEN) --gen-op-defs $(INCLUDES) $< -o $@
-
-TraitOpInterfaces.hpp.inc: TraitOpInterfaces.td
-	$(TBLGEN) --gen-op-interface-decls $(INCLUDES) $< -o $@
-
-TraitOpInterfaces.cpp.inc: TraitOpInterfaces.td
-	$(TBLGEN) --gen-op-interface-defs $(INCLUDES) $< -o $@
 
 TraitTypes.hpp.inc: TraitTypes.td
 	$(TBLGEN) --gen-typedef-decls $(INCLUDES) $< -o $@

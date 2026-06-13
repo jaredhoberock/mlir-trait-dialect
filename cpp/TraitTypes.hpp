@@ -5,6 +5,8 @@
 #include "TraitAttributes.hpp"
 #include <llvm/ADT/DenseMap.h>
 #include <mlir/IR/BuiltinTypes.h>
+#include <mlir/IR/Diagnostics.h>
+#include <mlir/IR/OperationSupport.h>
 
 namespace mlir { class PatternRewriter; }
 
@@ -344,6 +346,31 @@ inline bool isGroundType(Type root) {
     return WalkResult::advance();
   });
   return !found;
+}
+
+/// Refine implementation for ops whose `inferReturnTypes` refuses to mint
+/// fresh PolyTypes: when inference fails, there is nothing to refine and
+/// verification accepts the declared result types as-is (an opaque
+/// polymorphic input determines nothing about the result). When inference
+/// succeeds, the default compatibility check applies. Ops declare
+/// InferTypeOpInterface with ["refineReturnTypes"] and delegate here.
+template <typename ConcreteOp>
+LogicalResult refineUnlessUnmintable(MLIRContext *ctx,
+                                     std::optional<Location> location,
+                                     ValueRange operands, DictionaryAttr attrs,
+                                     OpaqueProperties properties,
+                                     RegionRange regions,
+                                     SmallVectorImpl<Type> &returnTypes) {
+  SmallVector<Type, 4> inferred;
+  if (failed(ConcreteOp::inferReturnTypes(ctx, location, operands, attrs,
+                                          properties, regions, inferred)))
+    return success();
+  if (!ConcreteOp::isCompatibleReturnTypes(inferred, returnTypes))
+    return emitOptionalError(
+        location, "'", ConcreteOp::getOperationName(), "' op inferred type(s) ",
+        inferred, " are incompatible with return type(s) of operation ",
+        returnTypes);
+  return success();
 }
 
 // returns true iff every PolymorphicTypeInterface inside `root` is polymorphic,

@@ -10,6 +10,7 @@
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/Dialect/Func/Transforms/FuncConversions.h>
 #include <mlir/IR/PatternMatch.h>
+#include <mlir/Interfaces/InferTypeOpInterface.h>
 #include <mlir/Pass/Pass.h>
 #include <mlir/Transforms/DialectConversion.h>
 #include <mlir/Transforms/GreedyPatternRewriteDriver.h>
@@ -476,36 +477,45 @@ struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
   }
 };
 
-/// Rewrites a monomorphic `trait.derive` into a `trait.witness` backed by a
-/// resolved proof.  Fires only when the derived claim's types are fully
-/// concrete, then delegates to ImplResolver to find (or mint) the canonical
-/// proof and replaces the derive with a witness referencing that proof.
 /// Monomorphizes result types for any op implementing
-/// ResultTypeSpecializationOpInterface once all operands are monomorphic.
+/// InferTypeOpInterface once all operands are monomorphic.
 ///
 /// When all operands have concrete (non-polymorphic) types, the op's
-/// `specializeTypeFromOperands` method computes the concrete result types.
-/// If they differ from the op's current result types, the pattern updates
-/// them in-place under the rewriter.
+/// `inferReturnTypes` computes the specialized result types. If they
+/// differ from the op's current result types after normalization, the
+/// pattern updates them in-place under the rewriter.
 struct MonomorphizeResultTypesPattern
-    : public OpInterfaceRewritePattern<ResultTypeSpecializationOpInterface> {
+    : public OpInterfaceRewritePattern<InferTypeOpInterface> {
   ImplResolver &resolver;
 
   MonomorphizeResultTypesPattern(MLIRContext *ctx, ImplResolver &resolver)
     : OpInterfaceRewritePattern(ctx), resolver(resolver) {}
 
-  LogicalResult matchAndRewrite(ResultTypeSpecializationOpInterface iface,
+  LogicalResult matchAndRewrite(InferTypeOpInterface iface,
                                 PatternRewriter &rewriter) const override {
+    // InferTypeOpInterface is implemented by ops well outside this
+    // dialect's orbit (arith and friends), so participation is gated on
+    // having something to refine: at least one current result type is
+    // non-ground (mentions a poly var, inference var, projection, or
+    // claim).
+    if (llvm::all_of(iface->getResultTypes(), isGroundType))
+      return rewriter.notifyMatchFailure(iface, "result types are already ground");
+
     // only run when all operands are monomorphic
     for (Type ty : iface->getOperandTypes()) {
       if (isPolymorphicType(ty))
         return rewriter.notifyMatchFailure(iface, "operands are still polymorphic");
     }
 
-    // try to compute specialized monomorphic result types
-    auto specializedTypes = iface.specializeResultTypes();
-    if (failed(specializedTypes))
-      return rewriter.notifyMatchFailure(iface, "cannot specialize result types from operands");
+    // try to compute specialized result types; inference failure defers this op
+    SmallVector<Type> inferred;
+    if (failed(iface.inferReturnTypes(iface->getContext(), iface->getLoc(),
+                                      iface->getOperands(),
+                                      iface->getAttrDictionary(),
+                                      iface->getPropertiesStorage(),
+                                      iface->getRegions(), inferred)))
+      return rewriter.notifyMatchFailure(iface, "cannot infer result types from operands");
+    FailureOr<SmallVector<Type>> specializedTypes = std::move(inferred);
 
     // the arity of results must match
     if (specializedTypes->size() != iface->getNumResults())
