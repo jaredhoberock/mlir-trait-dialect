@@ -19,7 +19,7 @@
 
 
 #define GET_OP_CLASSES
-#include "TraitOps.cpp.inc"
+#include <TraitOps.cpp.inc>
 
 using namespace mlir;
 using namespace mlir::trait;

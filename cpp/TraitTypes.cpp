@@ -10,17 +10,17 @@
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/DialectImplementation.h>
 
-#include "TraitTypeInterfaces.cpp.inc"
+#include <TraitTypeInterfaces.cpp.inc>
 
 #define GET_TYPEDEF_CLASSES
-#include "TraitTypes.cpp.inc"
+#include <TraitTypes.cpp.inc>
 
 namespace mlir::trait {
 
 void TraitDialect::registerTypes() {
   addTypes<
 #define GET_TYPEDEF_LIST
-#include "TraitTypes.cpp.inc"
+#include <TraitTypes.cpp.inc>
   >();
 }
 

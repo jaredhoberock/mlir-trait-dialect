@@ -12,7 +12,7 @@ namespace mlir::trait {
 }
 
 #define GET_ATTRDEF_CLASSES
-#include "TraitAttributes.hpp.inc"
+#include <TraitAttributes.hpp.inc>
 
 namespace mlir::trait {
 

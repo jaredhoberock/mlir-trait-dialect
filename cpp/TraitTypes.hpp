@@ -25,10 +25,10 @@ class ImplResolver;
 
 }
 
-#include "TraitTypeInterfaces.hpp.inc"
+#include <TraitTypeInterfaces.hpp.inc>
 
 #define GET_TYPEDEF_CLASSES
-#include "TraitTypes.hpp.inc"
+#include <TraitTypes.hpp.inc>
 
 namespace mlir::trait {
 

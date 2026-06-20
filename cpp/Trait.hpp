@@ -9,7 +9,7 @@
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "ImplResolution.hpp"
-#include "Trait.hpp.inc"
+#include <Trait.hpp.inc>
 
 namespace mlir::trait {
 

@@ -52,4 +52,4 @@ struct HasOnlyChildOps {
 
 
 #define GET_OP_CLASSES
-#include "TraitOps.hpp.inc"
+#include <TraitOps.hpp.inc>

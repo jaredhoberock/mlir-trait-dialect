@@ -5,7 +5,7 @@
 #include "TraitOps.hpp"
 #include "TraitTypes.hpp"
 
-#include "Trait.cpp.inc"
+#include <Trait.cpp.inc>
 
 namespace mlir::trait {
 
@@ -16,7 +16,7 @@ void TraitDialect::initialize() {
 
   addOperations<
 #define GET_OP_LIST
-#include "TraitOps.cpp.inc"
+#include <TraitOps.cpp.inc>
   >();
 }
 

@@ -5,83 +5,80 @@ ifndef MLIR_SYS_220_PREFIX
 $(error MLIR_SYS_220_PREFIX must be set; point it at your LLVM/MLIR 22 install)
 endif
 
+BUILD_DIR := build
 LLVM_BIN_PATH := $(MLIR_SYS_220_PREFIX)/bin
-
 LLVM_CONFIG := $(LLVM_BIN_PATH)/llvm-config
 TBLGEN := $(LLVM_BIN_PATH)/mlir-tblgen
-OPT := $(LLVM_BIN_PATH)/mlir-opt
 
-# Compiler flags
 CXX := clang++
-CXXFLAGS := -Wall -Werror -g -fPIC `$(LLVM_CONFIG) --cxxflags`
+CXXFLAGS := -Wall -Werror -fPIC $(shell $(LLVM_CONFIG) --cxxflags)
+INCLUDES := -I$(BUILD_DIR) -I. -I$(MLIR_SYS_220_PREFIX)/include
 
-# LLVM/MLIR libraries
-MLIR_INCLUDE := $(MLIR_SYS_220_PREFIX)/include
-
-INCLUDES := -I $(MLIR_INCLUDE)
-
-# Dialect library sources
 DIALECT_SOURCES := c_api.cpp ImplResolution.cpp Specialization.cpp Passes.cpp Trait.cpp TraitAttributes.cpp TraitOps.cpp TraitTypes.cpp
-DIALECT_OBJECTS := $(DIALECT_SOURCES:.cpp=.o)
+DIALECT_OBJECTS := $(addprefix $(BUILD_DIR)/,$(DIALECT_SOURCES:.cpp=.o))
+PLUGIN_OBJECTS := $(DIALECT_OBJECTS) $(BUILD_DIR)/Plugin.o
+TD_FILES := $(wildcard *.td)
 
-# Generated files
-GENERATED := Trait.hpp.inc Trait.cpp.inc \
-	     TraitAttributes.hpp.inc TraitAttributes.cpp.inc \
-	     TraitOps.hpp.inc TraitOps.cpp.inc \
-	     TraitTypes.hpp.inc TraitTypes.cpp.inc \
-	     TraitTypeInterfaces.hpp.inc TraitTypeInterfaces.cpp.inc
+GENERATED := \
+  $(BUILD_DIR)/Trait.hpp.inc \
+  $(BUILD_DIR)/Trait.cpp.inc \
+  $(BUILD_DIR)/TraitAttributes.hpp.inc \
+  $(BUILD_DIR)/TraitAttributes.cpp.inc \
+  $(BUILD_DIR)/TraitOps.hpp.inc \
+  $(BUILD_DIR)/TraitOps.cpp.inc \
+  $(BUILD_DIR)/TraitTypes.hpp.inc \
+  $(BUILD_DIR)/TraitTypes.cpp.inc \
+  $(BUILD_DIR)/TraitTypeInterfaces.hpp.inc \
+  $(BUILD_DIR)/TraitTypeInterfaces.cpp.inc
 
-.PHONY: all clean
+.PHONY: all clean test
 
-all: libtrait_dialect.a libtrait_dialect.so
+all: $(BUILD_DIR)/libtrait_dialect.a $(BUILD_DIR)/libtrait_dialect.so
 
-# TableGen rules
-Trait.hpp.inc: Trait.td
+$(BUILD_DIR):
+	mkdir -p $@
+
+$(BUILD_DIR)/Trait.hpp.inc: Trait.td $(TD_FILES) | $(BUILD_DIR)
 	$(TBLGEN) --gen-dialect-decls $(INCLUDES) $< -o $@
 
-Trait.cpp.inc: Trait.td
+$(BUILD_DIR)/Trait.cpp.inc: Trait.td $(TD_FILES) | $(BUILD_DIR)
 	$(TBLGEN) --gen-dialect-defs $(INCLUDES) $< -o $@
 
-TraitAttributes.hpp.inc: TraitAttributes.td
+$(BUILD_DIR)/TraitAttributes.hpp.inc: TraitAttributes.td $(TD_FILES) | $(BUILD_DIR)
 	$(TBLGEN) --gen-attrdef-decls $(INCLUDES) $< -o $@
 
-TraitAttributes.cpp.inc: TraitAttributes.td
+$(BUILD_DIR)/TraitAttributes.cpp.inc: TraitAttributes.td $(TD_FILES) | $(BUILD_DIR)
 	$(TBLGEN) --gen-attrdef-defs $(INCLUDES) $< -o $@
 
-TraitOps.hpp.inc: TraitOps.td
+$(BUILD_DIR)/TraitOps.hpp.inc: TraitOps.td $(TD_FILES) | $(BUILD_DIR)
 	$(TBLGEN) --gen-op-decls $(INCLUDES) $< -o $@
 
-TraitOps.cpp.inc: TraitOps.td
+$(BUILD_DIR)/TraitOps.cpp.inc: TraitOps.td $(TD_FILES) | $(BUILD_DIR)
 	$(TBLGEN) --gen-op-defs $(INCLUDES) $< -o $@
 
-TraitTypes.hpp.inc: TraitTypes.td
+$(BUILD_DIR)/TraitTypes.hpp.inc: TraitTypes.td $(TD_FILES) | $(BUILD_DIR)
 	$(TBLGEN) --gen-typedef-decls $(INCLUDES) $< -o $@
 
-TraitTypes.cpp.inc: TraitTypes.td
+$(BUILD_DIR)/TraitTypes.cpp.inc: TraitTypes.td $(TD_FILES) | $(BUILD_DIR)
 	$(TBLGEN) --gen-typedef-defs $(INCLUDES) $< -o $@
 
-TraitTypeInterfaces.hpp.inc: TraitTypeInterfaces.td
+$(BUILD_DIR)/TraitTypeInterfaces.hpp.inc: TraitTypeInterfaces.td $(TD_FILES) | $(BUILD_DIR)
 	$(TBLGEN) --gen-type-interface-decls $(INCLUDES) $< -o $@
 
-TraitTypeInterfaces.cpp.inc: TraitTypeInterfaces.td
+$(BUILD_DIR)/TraitTypeInterfaces.cpp.inc: TraitTypeInterfaces.td $(TD_FILES) | $(BUILD_DIR)
 	$(TBLGEN) --gen-type-interface-defs $(INCLUDES) $< -o $@
 
-# Object file rules
-%.o: %.cpp $(GENERATED)
+$(BUILD_DIR)/%.o: %.cpp $(GENERATED) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
-libtrait_dialect.a: $(DIALECT_OBJECTS)
+$(BUILD_DIR)/libtrait_dialect.a: $(DIALECT_OBJECTS)
 	ar rcs $@ $^
 
-PLUGIN_OBJECTS := $(DIALECT_OBJECTS) Plugin.o
-
-libtrait_dialect.so: $(PLUGIN_OBJECTS)
+$(BUILD_DIR)/libtrait_dialect.so: $(PLUGIN_OBJECTS)
 	$(CXX) -shared $^ -o $@
 
-.PHONY: test
-test: libtrait_dialect.so
-	@echo "Running trait dialect tests..."
-	lit tests
+test: $(BUILD_DIR)/libtrait_dialect.so
+	TRAIT_DIALECT_PLUGIN=$(CURDIR)/$(BUILD_DIR)/libtrait_dialect.so lit tests
 
 clean:
-	rm -f *.o *.inc *.a *.so
+	rm -rf $(BUILD_DIR)
