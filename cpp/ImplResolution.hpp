@@ -70,6 +70,17 @@ struct ResolutionMemo {
   DenseSet<std::pair<ImplOp,TraitApplicationAttr>> assumptionsKnownSatisfiable;
 };
 
+/// The impl selected for a claim, paired with the normalized claim used for
+/// selection.
+///
+/// Projection normalization is part of impl resolution. Callers that specialize
+/// the selected impl must use this claim, not the original source spelling, so
+/// selection and substitution agree on the same semantic type arguments.
+struct ResolvedImpl {
+  ImplOp impl;
+  ClaimType selectedClaim;
+};
+
 // Aggregates memoization for both impl resolution and proof creation.
 struct ProofResolutionMemo {
   // Maps a concrete trait application to the canonical proof symbol
@@ -147,10 +158,12 @@ class ImplResolver {
     }
 
   private:
-    /// Finds the unique ImplOp for the wanted claim.
-    FailureOr<ImplOp> resolveImplFor(ClaimType wanted,
-                                     PatternRewriter &rewriter,
-                                     llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+    /// Finds the unique impl for the wanted claim and returns the normalized
+    /// claim that was actually used for selection.
+    FailureOr<ResolvedImpl> resolveImplFor(
+        ClaimType wanted,
+        PatternRewriter &rewriter,
+        llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     /// Checks whether all of `impl`'s where-clause assumptions are satisfiable
     /// when specialized for `concreteSelf`.

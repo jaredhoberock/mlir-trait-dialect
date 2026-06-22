@@ -34,7 +34,8 @@ ImplResolver::assumptionsSatisfiableFor(ImplOp impl,
       return failure();
 
     // that impl's own assumptions must be satisfiable too
-    if (failed(assumptionsSatisfiableFor(*subImpl, assume, rewriter)))
+    if (failed(assumptionsSatisfiableFor(subImpl->impl, subImpl->selectedClaim,
+                                         rewriter)))
       return failure();
   }
 
@@ -93,19 +94,22 @@ static LogicalResult diagnoseImplResolutionFailure(
   return diag;
 }
 
-FailureOr<ImplOp> ImplResolver::resolveImplFor(
+FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
     ClaimType wanted,
     PatternRewriter &rewriter,
     llvm::function_ref<InFlightDiagnostic()> err) {
-  // normalize projections in the wanted claim before resolution
-  wanted = cast<ClaimType>(resolveProjectionsIn(wanted, rewriter));
+  ClaimType originalWanted = wanted;
+  ClaimType selected = cast<ClaimType>(resolveProjectionsIn(wanted, rewriter));
 
   ResolutionMemo &memo = this->memo.resolutionMemo;
-  TraitApplicationAttr app = wanted.getTraitApplication();
+  TraitApplicationAttr app = selected.getTraitApplication();
 
   // first check the memo
-  if (auto it = memo.chosen.find(app); it != memo.chosen.end())
-    return it->second;
+  if (auto it = memo.chosen.find(app); it != memo.chosen.end()) {
+    if (failed(it->second))
+      return failure();
+    return ResolvedImpl{*it->second, selected};
+  }
 
   // get the trait
   TraitOp trait = app.getTraitOrAbort(module, "resolveImplFor: cannot find trait");
@@ -113,8 +117,8 @@ FailureOr<ImplOp> ImplResolver::resolveImplFor(
   // collect candidates for wanted from the trait and
   // partition them into good/bad by satisfiable assumptions
   SmallVector<ImplOp> good, bad;
-  for (ImplOp impl : trait.getCandidateImplsFor(wanted)) {
-    if (succeeded(assumptionsSatisfiableFor(impl, wanted, rewriter)))
+  for (ImplOp impl : trait.getCandidateImplsFor(selected)) {
+    if (succeeded(assumptionsSatisfiableFor(impl, selected, rewriter)))
       good.push_back(impl);
     else
       bad.push_back(impl);
@@ -124,8 +128,8 @@ FailureOr<ImplOp> ImplResolver::resolveImplFor(
   if (good.empty()) {
     PatternRewriter::InsertionGuard guard(rewriter);
     rewriter.setInsertionPointToEnd(module.getBody());
-    if (auto impl = generators.generateImpl(trait, wanted, rewriter); succeeded(impl)) {
-      if (succeeded(assumptionsSatisfiableFor(*impl, wanted, rewriter)))
+    if (auto impl = generators.generateImpl(trait, selected, rewriter); succeeded(impl)) {
+      if (succeeded(assumptionsSatisfiableFor(*impl, selected, rewriter)))
         good.push_back(*impl);
       else
         bad.push_back(*impl);
@@ -133,11 +137,15 @@ FailureOr<ImplOp> ImplResolver::resolveImplFor(
   }
 
   // if exactly one good candidate exists, return it
-  if (good.size() == 1)
-    return memo.chosen[app] = good.front();
+  if (good.size() == 1) {
+    memo.chosen[app] = good.front();
+    return ResolvedImpl{good.front(), selected};
+  }
 
   // otherwise, diagnose resolution failure
-  return memo.chosen[app] = diagnoseImplResolutionFailure(trait, wanted, good, bad, err);
+  memo.chosen[app] =
+      diagnoseImplResolutionFailure(trait, originalWanted, good, bad, err);
+  return failure();
 }
 
 // find an existing trait.proof that *explicitly* proves impl by name
@@ -168,14 +176,19 @@ FailureOr<Type> ImplResolver::resolveProjectionType(
   StringRef assocName = proj.getAssocName().getValue();
 
   ClaimType claim = ClaimType::get(proj.getContext(), traitApp);
-  auto implOr = resolveImplFor(claim, rewriter, err);
-  if (failed(implOr)) return failure();
-  ImplOp impl = *implOr;
+  auto resolvedImpl = resolveImplFor(claim, rewriter, err);
+  if (failed(resolvedImpl)) return failure();
+  ImplOp impl = resolvedImpl->impl;
 
-  auto binding = impl.specializeAssociatedTypeBinding(assocName, proj.getAssocTypeArgs(), err);
+  SmallVector<Type> assocTypeArgs;
+  for (Type arg : proj.getAssocTypeArgs())
+    assocTypeArgs.push_back(resolveProjectionsIn(arg, rewriter));
+
+  auto binding = impl.specializeAssociatedTypeBinding(assocName, assocTypeArgs, err);
   if (failed(binding)) return failure();
 
-  auto subst = impl.buildSubstitutionForSelfClaim(claim, err);
+  auto subst =
+      impl.buildSubstitutionForSelfClaim(resolvedImpl->selectedClaim, err);
   if (failed(subst)) return failure();
 
   return applySubstitutionToFixedPoint(subst->toTypeMap(), *binding);
@@ -197,19 +210,22 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
     ClaimType wanted,
     PatternRewriter &rewriter,
     llvm::function_ref<InFlightDiagnostic()> err) {
-  // resolve an impl for wanted first
-  auto implOr = resolveImplFor(wanted, rewriter, err);
-  if (failed(implOr)) return failure();
-  ImplOp impl = *implOr;
+  ClaimType originalWanted = wanted;
 
-  // build a PolyType -> Type map for this impl's self claim against wanted
-  auto subst = impl.buildSubstitutionForSelfClaim(wanted, err);
+  // resolve an impl for wanted first
+  auto resolvedImpl = resolveImplFor(wanted, rewriter, err);
+  if (failed(resolvedImpl)) return failure();
+  ImplOp impl = resolvedImpl->impl;
+  ClaimType selected = resolvedImpl->selectedClaim;
+
+  // build a PolyType -> Type map for this impl's self claim against selected
+  auto subst = impl.buildSubstitutionForSelfClaim(selected, err);
   if (failed(subst)) return failure();
 
-  // monomorphize the wanted claim with that substitution
-  ClaimType monomorphicWanted = dyn_cast_or_null<ClaimType>(applySubstitutionToFixedPoint(subst->toTypeMap(), wanted));
+  // monomorphize the selected claim with that substitution
+  ClaimType monomorphicWanted = dyn_cast_or_null<ClaimType>(applySubstitutionToFixedPoint(subst->toTypeMap(), selected));
   if (!monomorphicWanted || !monomorphicWanted.isMonomorphic()) {
-    if (err) err() << "could not monomorphize claim: " << wanted;
+    if (err) err() << "could not monomorphize claim: " << originalWanted;
     return failure();
   }
 
@@ -262,8 +278,8 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
   memo.proofMemo[app] = proofSym;
   auto rollback = llvm::scope_exit([&]{ memo.proofMemo.erase(app); });
 
-  // specialize all obligations against wanted
-  auto obligations = impl.specializeObligationsAsClaimsFor(wanted, err);
+  // specialize all obligations against the claim selected during resolution
+  auto obligations = impl.specializeObligationsAsClaimsFor(selected, err);
   if (failed(obligations)) return failure();
 
   // recursively prove monomorphic obligations
