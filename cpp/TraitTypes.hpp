@@ -4,6 +4,7 @@
 
 #include "TraitAttributes.hpp"
 #include <llvm/ADT/DenseMap.h>
+#include <llvm/ADT/DenseSet.h>
 #include <mlir/IR/BuiltinTypes.h>
 #include <mlir/IR/Diagnostics.h>
 #include <mlir/IR/OperationSupport.h>
@@ -674,19 +675,39 @@ template<class NeedleType> bool opMentionsType(Operation *op) {
   return false;
 }
 
-// Collect distinct generic types `ty`
+/// Collects distinct generic types appearing anywhere in `ty`.
+///
+/// Claim and projection types store their trait application as an attribute, so
+/// this helper descends through those application arguments explicitly instead
+/// of relying only on MLIR's structural type walk.
 inline SmallVector<GenericTypeInterface,4> getGenericTypesIn(Type ty) {
   SmallVector<GenericTypeInterface, 4> result;
   DenseSet<Type> seen;
 
-  auto collect = [&](Type ty) {
-    if (auto varTy = dyn_cast<GenericTypeInterface>(ty)) {
-      if (seen.insert(varTy).second) // first time we see it
-        result.push_back(varTy);
+  auto collect = [&](Type ty, auto &collectRef) -> void {
+    if (auto generic = dyn_cast<GenericTypeInterface>(ty)) {
+      if (seen.insert(generic).second)
+        result.push_back(generic);
     }
+
+    if (auto claim = dyn_cast<ClaimType>(ty)) {
+      for (Type arg : claim.getTraitApplication().getTypeArgs())
+        collectRef(arg, collectRef);
+    } else if (auto projection = dyn_cast<ProjectionType>(ty)) {
+      for (Type arg : projection.getTraitApplication().getTypeArgs())
+        collectRef(arg, collectRef);
+      for (Type arg : projection.getAssocTypeArgs())
+        collectRef(arg, collectRef);
+    }
+
+    ty.walkImmediateSubElements(
+        /*walkAttrsFn=*/[](Attribute) {},
+        /*walkTypesFn=*/[&](Type subTy) {
+          collectRef(subTy, collectRef);
+        });
   };
 
-  ty.walk(collect);
+  collect(ty, collect);
   return result;
 }
 

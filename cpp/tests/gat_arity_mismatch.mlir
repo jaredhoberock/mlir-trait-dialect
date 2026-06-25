@@ -10,13 +10,13 @@
 
 trait.trait @HasGAT[!S] {
   trait.assoc_type @Item<[!T]>
-  func.func private @get(!S) -> !trait.proj<@HasGAT[!S], "Item", [!T]>
+  func.func private @get(!S, !T) -> !trait.proj<@HasGAT[!S], "Item", [!T]>
 }
 
 // expected-error @+1 {{'trait.impl' op associated type 'Item' has 0 type parameter(s) but trait declares 1}}
 trait.impl for @HasGAT[i32] {
   trait.assoc_type @Item = i64
-  func.func @get(%self: i32) -> i64 {
+  func.func @get(%self: i32, %value: i64) -> i64 {
     %c = arith.constant 42 : i64
     return %c : i64
   }
@@ -30,13 +30,13 @@ trait.impl for @HasGAT[i32] {
 
 trait.trait @OneParam[!S] {
   trait.assoc_type @Item<[!T]>
-  func.func private @get(!S) -> !trait.proj<@OneParam[!S], "Item", [!T]>
+  func.func private @get(!S, !T) -> !trait.proj<@OneParam[!S], "Item", [!T]>
 }
 
 // expected-error @+1 {{'trait.impl' op associated type 'Item' has 2 type parameter(s) but trait declares 1}}
 trait.impl for @OneParam[i32] {
   trait.assoc_type @Item<[!T, !U]> = !T
-  func.func @get(%self: i32) -> i64 {
+  func.func @get(%self: i32, %value: i64) -> i64 {
     %c = arith.extsi %self : i32 to i64
     return %c : i64
   }

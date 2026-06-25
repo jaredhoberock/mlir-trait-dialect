@@ -17,14 +17,14 @@
 // Trait uses poly<0> for Self, poly<1> for GAT param
 trait.trait @Trait[!trait.poly<0>] {
   trait.assoc_type @Assoc<[!trait.poly<1>]>
-  func.func private @method(!trait.poly<0>) -> !trait.proj<@Trait[!trait.poly<0>], "Assoc", [!trait.poly<1>]>
+  func.func private @method(!trait.poly<0>, !trait.poly<1>) -> !trait.proj<@Trait[!trait.poly<0>], "Assoc", [!trait.poly<1>]>
 }
 
 // Impl uses poly<99> for GAT param (different from trait's poly<1>)
 trait.impl @Trait_impl for @Trait[i64] {
   trait.assoc_type @Assoc<[!trait.poly<99>]> = !trait.poly<99>
-  func.func @method(%self: i64) -> i64 {
-    return %self : i64
+  func.func @method(%self: i64, %value: !trait.poly<99>) -> !trait.poly<99> {
+    return %value : !trait.poly<99>
   }
 }
 

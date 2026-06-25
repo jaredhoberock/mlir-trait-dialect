@@ -28,6 +28,48 @@ namespace mlir::trait { std::string hashToSuffix(StringRef input); }
 
 namespace {
 
+/// Verifies that a function's result generics are determined by its inputs.
+///
+/// Generics supplied by the caller, such as trait-level parameters on
+/// a trait method, are treated as already determined. Every other generic in a
+/// result must also appear in an input type, including claim inputs that encode
+/// ordinary where-clause evidence. Otherwise function monomorphization has no
+/// source of evidence for choosing that result type. This is intentionally a
+/// syntactic check: the verifier does not try to invert equality predicates or
+/// associated-type bindings to recover missing result generics.
+static LogicalResult verifyFunctionResultGenericsAreDetermined(
+    func::FuncOp function,
+    const DenseSet<Type> &providedGenerics) {
+  FunctionType functionType = function.getFunctionType();
+
+  DenseSet<Type> inputGenerics;
+  for (Type input : functionType.getInputs()) {
+    auto generics = getGenericTypesIn(input);
+    inputGenerics.insert(generics.begin(), generics.end());
+  }
+
+  DenseSet<Type> seenResultGenerics;
+  SmallVector<GenericTypeInterface, 4> resultGenerics;
+  for (Type result : functionType.getResults()) {
+    for (auto generic : getGenericTypesIn(result)) {
+      if (seenResultGenerics.insert(generic).second)
+        resultGenerics.push_back(generic);
+    }
+  }
+
+  for (Type resultGeneric : resultGenerics) {
+    if (providedGenerics.contains(resultGeneric) || inputGenerics.contains(resultGeneric))
+      continue;
+
+    return function.emitOpError()
+           << "function '" << function.getSymName()
+           << "' result type contains type parameter " << resultGeneric
+           << " that is not determined by any input type";
+  }
+
+  return success();
+}
+
 /// One local associated-type resolution rule available while normalizing a type.
 ///
 /// The rule says that projections whose trait application is exactly `app` may
@@ -181,6 +223,14 @@ LogicalResult TraitOp::verify() {
       if (!selfArgHasProjection)
         return emitOpError() << "'where' clause requirement " << app
                              << " must not reference the current trait";
+    }
+  }
+
+  // check trait method result generics
+  for (Operation &op : getBody().front()) {
+    if (auto method = dyn_cast<func::FuncOp>(op)) {
+      if (failed(verifyFunctionResultGenericsAreDetermined(method, uniqueParams)))
+        return failure();
     }
   }
 
