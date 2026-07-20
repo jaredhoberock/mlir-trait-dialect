@@ -357,6 +357,34 @@ static LogicalResult requireMonomorphicOperands(Operation *op,
   return success();
 }
 
+/// Defers call lowering while any operand is a monomorphic claim that is not
+/// yet proven.
+///
+/// Lowering a call specializes its callee against the call's argument claims,
+/// and the callee body may discharge those claims through their proofs. If the
+/// callee is specialized while an argument claim is still unproven, the clone
+/// bakes in an unprovable parameter and any method call the body makes through
+/// it cannot be resolved. An argument claim's proof can land after the call
+/// first becomes eligible -- for instance a forwarded claim whose proj.cast
+/// result inherits the input's proof and then folds -- so waiting for every
+/// monomorphic operand claim to be proven makes callee specialization
+/// independent of the order in which operand proofs settle. This mirrors the
+/// existing requirement that a method call's self claim be proven before it
+/// lowers. An operand claim that never becomes proven is caught downstream: the
+/// leftover check keys on op results, so an unprovable claim that is an op
+/// result is diagnosed there, while a claim that exists only as the block
+/// argument of a still-polymorphic template is pruned by full monomorphization
+/// instead.
+static LogicalResult requireProvenClaimOperands(Operation *op,
+                                                ValueRange operands,
+                                                PatternRewriter &rewriter) {
+  for (Value operand : operands)
+    if (auto claim = dyn_cast<ClaimType>(operand.getType()))
+      if (claim.isMonomorphic() && !claim.isProven())
+        return rewriter.notifyMatchFailure(op, "operand claim is still unproven");
+  return success();
+}
+
 /// Builds and closes the call-site substitution, uses it to specialize the
 /// callee, and computes the concrete result types for the replacement call.
 template <typename CallOpT, typename GetFormalTy>
@@ -410,6 +438,8 @@ struct FuncCallOpLowering : public OpRewritePattern<FuncCallOp> {
   LogicalResult matchAndRewrite(FuncCallOp callOp, PatternRewriter &rewriter) const override {
     if (failed(requireMonomorphicOperands(callOp, callOp.getOperands(), rewriter)))
       return failure();
+    if (failed(requireProvenClaimOperands(callOp, callOp.getOperands(), rewriter)))
+      return failure();
 
     // func.call requires the call and callee to be in the same scope;
     // specialized callees are emitted at module scope, so only lower calls
@@ -425,11 +455,12 @@ struct FuncCallOpLowering : public OpRewritePattern<FuncCallOp> {
     if (failed(target))
       return failure();
 
-    // Operands pass through untouched (as in MethodCallOpLowering).
-    // trait.proj.cast operands are not this lowering's concern: projection
-    // resolution turns them into identity casts that fold away, and
-    // claim-typed survivors are erased with the claims, all within the
-    // same rewrite fixpoint; verification runs after the fixpoint settles.
+    // Operands pass through untouched (as in MethodCallOpLowering). The
+    // requireProvenClaimOperands guard above has already established that every
+    // operand claim is proven, so specialization never bakes an unprovable
+    // claim parameter into the callee: a forwarded proj.cast claim reaches this
+    // point only after its projection resolved, its proof was inherited from the
+    // input, and the identity cast folded away.
     rewriter.replaceOpWithNewOp<func::CallOp>(
       callOp,
       target->callee.getSymName(),
@@ -452,6 +483,8 @@ struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
       return failure();
     if (!op.getClaimType().isProven())
       return rewriter.notifyMatchFailure(op, "claim is still unproven");
+    if (failed(requireProvenClaimOperands(op, op.getArguments(), rewriter)))
+      return failure();
 
     auto target = specializeCallTarget(
         op, rewriter, resolver,
@@ -664,6 +697,58 @@ struct ResolveProjectionsPattern : public RewritePattern {
   }
 };
 
+/// Inherits a proven proof onto a `trait.proj.cast` result whose input is a
+/// proven claim naming the same trait application.
+///
+/// Once the projections inside a forwarded claim are resolved, a proj.cast can
+/// be left with a proven input claim and an unproven result claim that name the
+/// same trait application, differing only in the proof annotation. This arises
+/// when the frontend forwards a generic callable into a projection-spelled
+/// bound: the cast's result claim is unproven by construction (see the
+/// ProjCastOp description in TraitOps.td), and the projection it carried later
+/// normalizes to the same concrete trait application the input already proves.
+///
+/// A proj.cast never changes which impl proves a claim -- its claim operand
+/// only witnesses the projection equality relating input and result. So when
+/// the input and result trait applications coincide, they are the same logical
+/// claim and must share the same proof. Retyping the result in place to the
+/// input's proven type lets the folder collapse the now-identity cast, after
+/// which every consumer sees the proven claim. The rewrite is monotone: it only
+/// ever turns an unproven result into a proven one.
+///
+/// A pure folder cannot do this because an MLIR folder may not change a result
+/// type; hence this pattern followed by the identity fold.
+///
+/// Inheriting from the input SSA type is deliberate and cannot be replaced by
+/// memo-based proof propagation: frontend-emitted trait.witness proofs are never
+/// entered into the resolver's proof memo, so the input value's own type is the
+/// only place that proof is recorded. The pattern trusts trait-application
+/// equality and does not re-derive the cast's claim-operand justification --
+/// soundness is anchored at the proof producers, and the cast op's own weak
+/// verification of unproven casts is the acknowledged debt documented on
+/// ProjCastOp in TraitOps.td.
+struct InheritProjCastProofPattern : public OpRewritePattern<ProjCastOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(ProjCastOp op,
+                                PatternRewriter &rewriter) const override {
+    auto inputClaim = dyn_cast<ClaimType>(op.getInput().getType());
+    auto resultClaim = dyn_cast<ClaimType>(op.getResult().getType());
+    if (!inputClaim || !resultClaim)
+      return failure();
+
+    // Guards, all required: input proven, result unproven, and both name the
+    // same trait application (hence the same logical claim).
+    if (!inputClaim.isProven() || resultClaim.isProven())
+      return failure();
+    if (inputClaim.getTraitApplication() != resultClaim.getTraitApplication())
+      return failure();
+
+    rewriter.modifyOpInPlace(op, [&] { op.getResult().setType(inputClaim); });
+    return success();
+  }
+};
+
 } // end namespace
 
 LogicalResult instantiateMonomorphs(ModuleOp module) {
@@ -684,6 +769,7 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
   patterns.add<MethodCallOpLowering>(ctx, *resolver);
   patterns.add<ResolveProjectionsPattern>(ctx, *resolver);
   patterns.add<PropagateProofsPattern>(ctx, *resolver);
+  patterns.add<InheritProjCastProofPattern>(ctx);
 
   // collect instantiate-monomorphs patterns from other dialects
   for (Dialect *d : ctx->getLoadedDialects()) {
