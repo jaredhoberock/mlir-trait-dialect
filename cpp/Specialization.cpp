@@ -90,6 +90,13 @@ static void cloneRegionWithTypeReplacement(
   }
 }
 
+// Every type this replacer stamps into a specialized clone is chased to the
+// substitution's fixed point, so a specialized monomorph never carries a type
+// that some remaining substitution entry would still rewrite. The fixed point
+// is over the substitution only: substituting concrete arguments into a
+// projection spelling can mint a ground redex this replacer does not resolve
+// (it has no module access), and the resolution patterns resolve such redexes
+// after stamp-out.
 AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &subst) {
   AttrTypeReplacer replacer;
   replacer.addReplacement([=](Type t) -> std::optional<Type> {

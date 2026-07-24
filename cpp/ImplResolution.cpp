@@ -99,6 +99,19 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
     PatternRewriter &rewriter,
     llvm::function_ref<InFlightDiagnostic()> err) {
   ClaimType originalWanted = wanted;
+
+  // Resolution resolves a demanded claim's monomorphic projections before it
+  // selects an impl and records a proof. Every downstream fact minted here --
+  // the resolution memo, the proof memo, the proof op, the witness -- is keyed
+  // and spelled by this resolved claim, so those facts read back spelled
+  // exactly as their post-resolution demand. Declaration-spelled demands
+  // (trait and impl headers still carry their source projections) join that
+  // resolved vocabulary here; no other component resolves a demanded claim's
+  // spelling before impl selection and proof creation. (The obligation
+  // recorder in verifyAndRecordProof still binds requirement obligations at
+  // their stamped declaration spellings and reconciles them against demands
+  // through recorded-proof equivalence; normalizing that recorder is what
+  // retires the equivalence check.)
   ClaimType selected = cast<ClaimType>(resolveProjectionsIn(wanted, rewriter));
 
   ResolutionMemo &memo = this->memo.resolutionMemo;

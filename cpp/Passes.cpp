@@ -192,11 +192,19 @@ struct ProveClaimResultPattern : public RewritePattern {
     if (failed(sym))
       return rewriter.notifyMatchFailure(op, "couldn't find proof of this claim");
 
-    // replace the producer with a witness
+    // Mint the witness at the same spelling the proof was recorded under.
+    // Impl selection resolves the claim's monomorphic projections before
+    // recording (resolveImplFor), so the recorded fact is spelled with those
+    // projections resolved. Spelling the witness at the producer's source claim
+    // instead would leave the witnessed application and its recorded proof
+    // disagreeing on the projections. Resolving here is deterministic recorded
+    // lookup (the impls are already in the module) and is idempotent with the
+    // resolution resolveAndEnsureProofFor just performed.
+    auto recorded = cast<ClaimType>(resolver.resolveProjectionsIn(claim, rewriter));
     rewriter.replaceOpWithNewOp<WitnessOp>(
       op,
       *sym,
-      claim.getTraitApplication()
+      recorded.getTraitApplication()
     );
 
     return success();

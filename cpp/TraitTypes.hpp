@@ -501,6 +501,11 @@ inline Type applySubstitutionOnce(const llvm::DenseMap<Type,Type> &subst,
   return replacer.replace(root);
 }
 
+/// Applies `subst` repeatedly until it reaches a fixed point, so the returned
+/// type carries no component that `subst` would still rewrite. The fixed
+/// point is over `subst` alone; a projection whose base grounds under the
+/// substitution stays a (now-resolvable) projection for the resolution
+/// patterns.
 inline Type applySubstitutionToFixedPoint(const llvm::DenseMap<Type,Type> &subst,
                                           Type ty) {
   Type cur = ty;
