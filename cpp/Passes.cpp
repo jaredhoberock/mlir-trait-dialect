@@ -65,6 +65,33 @@ LogicalResult verifyMonomorphs(ModuleOp module) {
   return success();
 }
 
+/// Verify that every proven claim spelled in a top-level function signature is
+/// proven by the proof it names. A `by @proof` in a declared type is otherwise
+/// checked nowhere until a call reaches it, so a signature can name a proof that
+/// does not specialize to its claim and go undiagnosed. Only module-level
+/// `func.func` signatures are walked; signatures nested inside trait/impl
+/// method bodies are not yet covered.
+LogicalResult verifyDeclaredClaimProofs(ModuleOp module) {
+  LogicalResult status = success();
+  for (auto f : module.getOps<func::FuncOp>()) {
+    auto errFn = [&] {
+      return f.emitOpError() << "declared claim in signature has an invalid proof: ";
+    };
+    Type(f.getFunctionType()).walk([&](Type t) {
+      if (status.failed())
+        return;
+      auto claim = dyn_cast<ClaimType>(t);
+      if (!claim || !claim.isProven())
+        return;
+      EvidenceBindings bindings;
+      if (failed(verifyAndRecordProof(claim.asUnproven(), claim, module, bindings,
+                                      errFn)))
+        status = failure();
+    });
+  }
+  return status;
+}
+
 void VerifyMonomorphsPass::runOnOperation() {
   if (failed(verifyMonomorphs(getOperation())))
     signalPassFailure();
@@ -224,6 +251,10 @@ FailureOr<ImplResolver> resolveImpls(ModuleOp module) {
 
   // verify traits are acyclic
   if (failed(verifyAcyclicTraits(module)))
+    return failure();
+
+  // verify that proofs named in declared signatures actually prove their claims
+  if (failed(verifyDeclaredClaimProofs(module)))
     return failure();
 
   // an ImplResolver for this module
@@ -825,6 +856,35 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
     return WalkResult::advance();
   });
   if (hasLeftovers) return failure();
+
+  // Warn about each concrete-base projection that survived resolution. Walking
+  // the result and block-argument types of every non-infrastructure op (operand
+  // types are SSA-determined by their producers, so they are covered where those
+  // producers are visited), this reports any projection whose base is not
+  // symbolic, attributing it to the carrying op ahead of the legalization
+  // failure that leftover projection then triggers, instead of leaving that
+  // failure the only clue. Projections over still-symbolic bases live only in
+  // templates and are left alone.
+  module.walk<WalkOrder::PreOrder>([&](Operation *op) {
+    if (isa<TraitOp, ImplOp, ProofOp>(op))
+      return WalkResult::skip();
+    auto report = [&](Type root) {
+      root.walk([&](Type sub) {
+        auto proj = dyn_cast<ProjectionType>(sub);
+        if (!proj || isPolymorphicType(proj))
+          return;
+        op->emitWarning() << "unresolved projection " << proj
+                          << " after instantiate-monomorphs";
+      });
+    };
+    for (Type t : op->getResultTypes())
+      report(t);
+    for (Region &r : op->getRegions())
+      for (Block &b : r)
+        for (Value arg : b.getArguments())
+          report(arg.getType());
+    return WalkResult::advance();
+  });
 
   return module.verify();
 }

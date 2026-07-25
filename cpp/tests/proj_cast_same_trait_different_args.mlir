@@ -1,14 +1,12 @@
-// RUN: mlir-opt -pass-pipeline='builtin.module(monomorphize-trait)' %s | FileCheck %s
+// RUN: mlir-opt %s -verify-diagnostics
 
-// Bug: proj_cast's proven-claim verifier resolves ALL projections
-// whose associated type name matches the impl, ignoring type
-// arguments. When a type contains A[i32]::Out and A[i64]::Out,
-// evidence for A[i32] incorrectly resolves both.
-//
-// The proj_cast below should pass verification: the verifier
-// resolves A[i32]::Out to f32, leaves A[i64]::Out unresolved
-// (different type args), and defers. Instead it resolves BOTH
-// to f32 and compares f32 != f64, producing a spurious error.
+// A proven proj.cast resolves only projections over its claim's exact trait
+// application, type arguments included: evidence for @A[i32] resolves
+// @A[i32]::Out but not @A[i64]::Out. Here the cast names an @A[i32] claim yet
+// spells both @A[i32]::Out and @A[i64]::Out in its input. @A[i32]::Out resolves
+// to f32, but @A[i64]::Out is a projection over a different application and
+// survives; it no longer matches the f64 the result carries there, so the cast
+// is rejected rather than resolving @A[i64]::Out with the wrong evidence.
 
 !S = !trait.poly<0>
 !T = !trait.poly<1>
@@ -30,8 +28,6 @@ trait.impl @A_i64 for @A[i64] {
 
 trait.proof @A_i32_proof proves @A_i32 for @A[i32] given []
 
-// CHECK-LABEL: func.func @main
-// CHECK: return
 func.func @main() -> i32 {
   %claim = trait.allege @Pair[
     !trait.proj<@A[i32], "Out">,
@@ -40,8 +36,7 @@ func.func @main() -> i32 {
 
   %a_i32 = trait.witness @A_i32_proof for @A[i32]
 
-  // This should pass: only A[i32]::Out should be resolved.
-  // A[i64]::Out should be left alone (different type args).
+  // expected-error @below {{does not match resolved result type}}
   %cast = trait.proj.cast %claim, %a_i32
     : !trait.claim<@Pair[!trait.proj<@A[i32], "Out">, !trait.proj<@A[i64], "Out">]>
     to !trait.claim<@Pair[f32, f64]>

@@ -108,10 +108,11 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
   // (trait and impl headers still carry their source projections) join that
   // resolved vocabulary here; no other component resolves a demanded claim's
   // spelling before impl selection and proof creation. (The obligation
-  // recorder in verifyAndRecordProof still binds requirement obligations at
-  // their stamped declaration spellings and reconciles them against demands
-  // through recorded-proof equivalence; normalizing that recorder is what
-  // retires the equivalence check.)
+  // recorder in verifyAndRecordProof normalizes the proven value's spelling
+  // before recording, while still binding under the raw demand key, so coherent
+  // spellings of one obligation record identically; recorded-proof equivalence
+  // then fires only to reject genuinely incoherent proofs, not to reconcile
+  // spellings.)
   ClaimType selected = cast<ClaimType>(resolveProjectionsIn(wanted, rewriter));
 
   ResolutionMemo &memo = this->memo.resolutionMemo;

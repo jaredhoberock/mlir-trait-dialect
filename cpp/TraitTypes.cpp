@@ -63,6 +63,57 @@ std::string applySubstitutionAndGenerateMangledNameSuffix(
 }
 
 
+Type resolveGroundProjectionsByLookup(Type ty, ModuleOp module) {
+  if (!module)
+    return ty;
+
+  AttrTypeReplacer replacer;
+  replacer.addReplacement([&](ProjectionType proj) -> std::optional<Type> {
+    // Only a projection whose arguments are all concrete has a determined
+    // resolution. A projection over a still-symbolic base stays spelled as
+    // written.
+    if (isPolymorphicType(proj))
+      return std::nullopt;
+
+    ClaimType claim = proj.asClaim();
+    auto trait = claim.getTraitApplication().getTrait(module, nullptr);
+    if (failed(trait))
+      return std::nullopt;
+
+    // Read-only selection: resolve only when exactly one existing impl binds
+    // this application. Ambiguity and impl generation are left to the resolver.
+    // Assumptions are not consulted: a conditional impl's binding holds only
+    // under its premise, which this lookup does not check, so conditional impls
+    // (a nonempty assumptions list) never serve it.
+    auto candidates = trait->getCandidateImplsFor(claim);
+    llvm::erase_if(candidates,
+                   [](ImplOp candidate) { return !candidate.getAssumptions().empty(); });
+    if (candidates.size() != 1)
+      return std::nullopt;
+    ImplOp impl = candidates.front();
+
+    SmallVector<Type> assocTypeArgs(proj.getAssocTypeArgs());
+    auto binding = impl.specializeAssociatedTypeBinding(
+        proj.getAssocName().getValue(), assocTypeArgs);
+    if (failed(binding))
+      return std::nullopt;
+    auto subst = impl.buildSubstitutionForSelfClaim(claim);
+    if (failed(subst))
+      return std::nullopt;
+    return applySubstitutionToFixedPoint(subst->toTypeMap(), *binding);
+  });
+
+  // A resolved binding may itself expose a ground projection, so run to a
+  // fixed point.
+  constexpr unsigned maxIterations = 64;
+  Type previous;
+  for (unsigned i = 0; i != maxIterations && ty != previous; ++i) {
+    previous = ty;
+    ty = replacer.replace(ty);
+  }
+  return ty;
+}
+
 //===----------------------------------------------------------------------===//
 // PolyType
 //===----------------------------------------------------------------------===//
@@ -283,7 +334,7 @@ static LogicalResult verifyEquivalentRecordedProof(
     ClaimType candidate,
     ModuleOp module,
     llvm::function_ref<InFlightDiagnostic()> err) {
-  if (recorded == candidate)
+  if (recorded == resolveGroundProjectionsByLookup(candidate, module))
     return success();
 
   if (recorded.getProof() != candidate.getProof()) {
@@ -326,6 +377,14 @@ LogicalResult verifyAndRecordProof(
     if (err) err() << "expected proven claim, but found " << proven;
     return failure();
   }
+
+  // Normalize the PROVEN value's spelling before recording (the unproven key is
+  // left as the demand spells it). Requirement obligations arrive proven at their
+  // stamped declaration projections; resolving those ground redexes means every
+  // path that reaches the same obligation records the same proven spelling, so a
+  // second observation matches the first literally instead of reconciling two
+  // equivalent spellings.
+  proven = cast<ClaimType>(resolveGroundProjectionsByLookup(proven, module));
 
   // early exit if we've already recorded this obligation. The same proof may
   // be observed through multiple equivalent claim spellings, so validate proof
@@ -682,14 +741,14 @@ static LogicalResult unifyStructurally(Type formal,
 
 /// Unify a projection type with another type.
 ///
-/// Two cases:
 ///  - Projection vs projection: require the same symbolic projection head, then
 ///    recurse through trait application and associated-type arguments. This
 ///    allows nested projections to justify equivalent spellings.
-///  - Projection vs non-projection: succeed without recording a binding.
-///    Projections are opaque type functions resolved later via claim evidence,
-///    not via unification bindings. Succeeding here says "this projection is
-///    compatible" without committing to a specific resolution.
+///  - Projection vs a free inference variable it does not occur in: bind the
+///    variable to the projection.
+///  - Projection vs any other type: resolve the projection if it is ground
+///    (normalization), and otherwise accept it without a binding (the temporary
+///    tolerance, see the XXX below).
 LogicalResult ProjectionType::unify(
     Type other,
     ModuleOp module,
@@ -716,9 +775,49 @@ LogicalResult ProjectionType::unify(
                           module, subst, err);
   }
 
-  // projection vs non-projection: succeed without recording a binding.
-  // The verifier cannot locally confirm that this projection resolves to
-  // `other`; that requires impl resolution, which lowering will perform.
+  // projection vs non-projection.
+  //
+  // A projection is an opaque type function whose value is fixed only by claim
+  // evidence, not by unification. Against a free inference variable that does
+  // not occur inside this projection there is a sound choice -- bind the
+  // variable to the projection -- so delegate to the variable's own unifier. A
+  // variable that DOES occur inside is left for the lenient tail: a projection
+  // is a resolvable function, so `V = proj<...V...>` is a forwarding equation
+  // (V is a fixpoint of the resolution), not an infinite type, and must not trip
+  // the variable unifier's occurs check.
+  if (auto otherVar = mlir::dyn_cast<InferenceType>(other)) {
+    bool occurs = false;
+    Type(*this).walk([&](Type t) {
+      if (t == other) occurs = true;
+    });
+    if (!occurs)
+      return otherVar.unify(*this, module, subst, err);
+  }
+
+  // A projection all of whose arguments are concrete and whose trait application
+  // a unique module-visible impl binds has one determined resolution. Resolve it
+  // and unify the resolved type against `other`, so a ground projection meets its
+  // own resolved concrete spelling and any real mismatch is still caught. This is
+  // normalization, not tolerance, and is permanent: unification itself mints
+  // ground redexes as it binds variables (binding V:=i64 turns proj<@Prod[V]> into
+  // the ground proj<@Prod[i64]> mid-solve), so ground projections reach this point
+  // no matter how the front end spells its records.
+  if (isMonomorphicType(*this)) {
+    Type resolved = resolveGroundProjectionsByLookup(*this, module);
+    if (resolved != Type(*this))
+      return trait::unify(resolved, other, module, subst, err);
+  }
+
+  // XXX TODO: an irreducible projection -- over a still-symbolic base, or over a
+  // concrete base whose impl a downstream generator has not yet synthesized (the
+  // prelude's Convergence machinery reaches here on every compile) -- against a
+  // rigid type. This verifier holds no evidence for the equality, so it accepts
+  // without recording a binding, as the pre-strictness tail did. Eliminating this
+  // tolerance takes front-end AND generator cast-mediation: every such crossing,
+  // at argument positions and trait-method boundaries alike, spelled as an
+  // explicit trait.proj.cast justified by the (possibly unproven) claim. Once no
+  // unmediated projection-vs-rigid crossing can reach here, this becomes a hard
+  // failure.
   return success();
 }
 

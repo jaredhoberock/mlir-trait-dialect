@@ -18,7 +18,7 @@ func.func @bogus_cast(
     %val: !trait.proj<@Foo[!A], "Out">,
     %claim: !trait.claim<@Bar[!B]>
 ) -> !trait.proj<@Foo[!B], "Out"> {
-  // expected-error @below {{claim trait '@Bar' does not match any projection trait in input or result types}}
+  // expected-error @below {{does not justify any projection in input or result types}}
   %cast = trait.proj.cast %val, %claim
     : !trait.proj<@Foo[!A], "Out">
     to !trait.proj<@Foo[!B], "Out">

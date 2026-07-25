@@ -92,20 +92,30 @@ static void cloneRegionWithTypeReplacement(
 
 // Every type this replacer stamps into a specialized clone is chased to the
 // substitution's fixed point, so a specialized monomorph never carries a type
-// that some remaining substitution entry would still rewrite. The fixed point
-// is over the substitution only: substituting concrete arguments into a
-// projection spelling can mint a ground redex this replacer does not resolve
-// (it has no module access), and the resolution patterns resolve such redexes
-// after stamp-out.
-AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &subst) {
+// that some remaining substitution entry would still rewrite. Substituting a
+// concrete argument into a projection spelling can mint a ground redex the
+// fixed point alone does not close; when `module` is supplied the replacer
+// resolves those redexes by module-visible impl lookup, so a specialized
+// monomorph carries no ground projection that a unique unconditional
+// module-visible impl resolves. Projections whose impl is generator-pending or
+// whose application matches several candidates survive stamp-out unchanged, to
+// be resolved once evidence exists.
+AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &subst,
+                                                  ModuleOp module) {
   AttrTypeReplacer replacer;
   replacer.addReplacement([=](Type t) -> std::optional<Type> {
     Type result = applySubstitutionToFixedPoint(subst, t);
+    if (module)
+      result = resolveGroundProjectionsByLookup(result, module);
 
     // check that the result changed
     return (result != t) ? std::optional<Type>(result) : std::nullopt;
   });
   return replacer;
+}
+
+AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &subst) {
+  return makeTypeReplacerFromSubstitution(subst, /*module=*/ModuleOp());
 }
 
 func::FuncOp specializePolymorph(OpBuilder& builder,
@@ -119,8 +129,10 @@ func::FuncOp specializePolymorph(OpBuilder& builder,
 
   Location loc = polymorph.getLoc();
 
-  // make a type replacer
-  AttrTypeReplacer replacer = makeTypeReplacerFromSubstitution(substitution);
+  // make a type replacer that also resolves the ground projection redexes this
+  // substitution mints, so the specialized instance is stamped in normal form
+  AttrTypeReplacer replacer = makeTypeReplacerFromSubstitution(
+      substitution, polymorph->getParentOfType<ModuleOp>());
 
   // replace the polymorphic function type
   auto oldFunctionType = polymorph.getFunctionType();
@@ -158,8 +170,12 @@ void specializePolymorphicRegion(OpBuilder& builder,
                                   const DenseMap<Type,Type> &subst) {
   assert(monomorph.empty() && "Region is not empty");
 
-  // make a type replacer
-  AttrTypeReplacer replacer = makeTypeReplacerFromSubstitution(subst);
+  // make a type replacer that also resolves the ground projection redexes this
+  // substitution mints, so the specialized region is stamped in normal form
+  ModuleOp module =
+      polymorph.getParentOp() ? polymorph.getParentOp()->getParentOfType<ModuleOp>()
+                              : ModuleOp();
+  AttrTypeReplacer replacer = makeTypeReplacerFromSubstitution(subst, module);
 
   IRMapping mapping;
   cloneRegionWithTypeReplacement(builder,

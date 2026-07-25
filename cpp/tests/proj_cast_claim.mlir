@@ -37,15 +37,17 @@ trait.impl @Outer_i32 for @Outer[i32] {
   }
 }
 
+// The call keeps @Outer::@get's declared @Outer::Assoc projection spelling for
+// its result; monomorphization resolves the projection to i64.
 // CHECK-LABEL: func.func @main
 // CHECK-NOT: trait.proj.cast
 // CHECK-NOT: !trait.proj
 // CHECK-NOT: !trait.claim
 // CHECK: call @
 // CHECK: return %{{.*}} : i64
-func.func @main() -> i64 {
+func.func @main() -> !trait.proj<@Outer[i32], "Assoc"> {
   %x = arith.constant 3 : i32
   %a = trait.allege @Outer[i32]
-  %r = trait.method.call %a @Outer[i32]::@get(%x) : (i32) -> i64
-  return %r : i64
+  %r = trait.method.call %a @Outer[i32]::@get(%x) : (i32) -> !trait.proj<@Outer[i32], "Assoc">
+  return %r : !trait.proj<@Outer[i32], "Assoc">
 }

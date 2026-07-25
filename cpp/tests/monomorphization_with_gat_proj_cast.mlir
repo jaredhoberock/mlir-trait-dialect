@@ -35,15 +35,17 @@ func.func @foo(%arg: !trait.poly<0>, %value: !trait.proj<@Trait[!trait.poly<0>],
   return %value : !trait.proj<@Trait[!trait.poly<0>], "Assoc", [!trait.poly<2>]>
 }
 
+// The call keeps @foo's declared @Trait::Assoc<i1> projection spelling for its
+// result; monomorphization resolves the projection to i1.
 // CHECK-LABEL: func.func @caller
 // CHECK-NOT: !trait.proj
 // CHECK: return %{{.*}} : i1
-func.func @caller() -> i1 {
+func.func @caller() -> !trait.proj<@Trait[i64], "Assoc", [i1]> {
   %x = arith.constant 7 : i64
   %v = arith.constant true
   %w = trait.witness @Trait_impl for @Trait[i64]
   // Cast i1 to Trait[i64]::Assoc<i1> via proj.cast
   %pw = trait.proj.cast %v, %w : i1 to !trait.proj<@Trait[i64], "Assoc", [i1]> by !trait.claim<@Trait[i64] by @Trait_impl>
-  %r = trait.func.call @foo(%x, %pw, %w) : (i64, !trait.proj<@Trait[i64], "Assoc", [i1]>, !trait.claim<@Trait[i64] by @Trait_impl>) -> i1
-  return %r : i1
+  %r = trait.func.call @foo(%x, %pw, %w) : (i64, !trait.proj<@Trait[i64], "Assoc", [i1]>, !trait.claim<@Trait[i64] by @Trait_impl>) -> !trait.proj<@Trait[i64], "Assoc", [i1]>
+  return %r : !trait.proj<@Trait[i64], "Assoc", [i1]>
 }

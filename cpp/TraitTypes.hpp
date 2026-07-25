@@ -744,6 +744,17 @@ LogicalResult recordProofBindingsIn(Type ty,
                                     EvidenceBindings &bindings,
                                     llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
+/// Resolve every ground projection redex in `ty` by module-visible impl
+/// lookup, leaving non-ground and unresolvable projections spelled as written.
+///
+/// This is a read-only lookup: it selects the unique existing UNCONDITIONAL impl
+/// (empty assumptions) whose self application matches a ground projection's
+/// trait application, reads that impl's associated-type binding, and
+/// substitutes. Conditional impls are skipped -- their bindings hold only under
+/// premises this lookup does not check. It never mints proofs, generates impls,
+/// or mutates IR, so it is safe to run inside a verifier.
+Type resolveGroundProjectionsByLookup(Type ty, ModuleOp module);
+
 std::string generateMangledNameSuffixFor(TypeRange typeArgs);
 
 std::string applySubstitutionAndGenerateMangledNameSuffix(

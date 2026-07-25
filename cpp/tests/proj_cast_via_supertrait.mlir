@@ -46,11 +46,14 @@ func.func @foo(
   return %value : !trait.proj<@Base[!T], "Assoc">
 }
 
+// The call keeps @foo's declared @Base::Assoc projection spelling for its
+// result; monomorphization resolves the projection to i1.
 // CHECK-LABEL: func.func @main
+// CHECK-SAME: -> i1
 // CHECK: call @foo_
 // CHECK-SAME: (i64, i1) -> i1
 // CHECK: return %{{.*}} : i1
-func.func @main() -> i1 {
+func.func @main() -> !trait.proj<@Base[i64], "Assoc"> {
   %arg = arith.constant 0 : i64
   %val = arith.constant true
 
@@ -63,7 +66,7 @@ func.func @main() -> i1 {
 
   %result = trait.func.call @foo(%arg, %val_proj, %child_claim)
     : (i64, !trait.proj<@Base[i64], "Assoc">,
-       !trait.claim<@Child[i64] by @Child_proof>) -> i1
+       !trait.claim<@Child[i64] by @Child_proof>) -> !trait.proj<@Base[i64], "Assoc">
 
-  return %result : i1
+  return %result : !trait.proj<@Base[i64], "Assoc">
 }

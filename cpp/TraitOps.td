@@ -971,16 +971,14 @@ def ProjCastOp : TraitDialectOp<"proj.cast", [
        `!trait.claim<@Trait[!trait.proj<...>]>` (resolving projections
        inside derived claims)
 
-    Verification: if the claim is proven, the verifier resolves all
-    projections in the input type via the impl's bindings and checks
-    the result matches. If the claim is unproven (polymorphic),
-    verification is deferred to monomorphization.
-
-    NOTE: proj.cast is currently an exception to the "correct by
-    construction" design principle — unproven claims only check that
-    the claim's trait is relevant (appears in some projection), not
-    that the cast is structurally plausible. It is not yet clear how
-    to guarantee correct-by-construction with projection types.
+    Verification: if the claim is proven, the verifier resolves the
+    projections over the claim's trait application via the impl's bindings and
+    requires the input and result to agree once resolved. If the claim is
+    unproven, the verifier replaces each projection over the claim's trait
+    application with a shared unification variable (the same projection maps to
+    the same variable) and unifies input against result, so non-projection
+    positions must match and one projection cannot stand for two different
+    types.
   }];
 
   let arguments = (ins AnyType:$input, Claim:$claim);

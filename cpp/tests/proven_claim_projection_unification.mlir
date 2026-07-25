@@ -1,13 +1,13 @@
-// RUN: mlir-opt -pass-pipeline='builtin.module(monomorphize-trait)' %s | FileCheck %s
+// RUN: mlir-opt %s -verify-diagnostics
 
-// Verify that trait.func.call accepts a proven claim whose type args
-// are projections from different type params. The call passes
-// D[A[i32]::Out, A[f32]::Out] (proven) to a callee expecting
-// D[A[poly<4>]::Out, A[poly<5>]::Out]. The verifier must unify
-// poly<4>=i32 and poly<5>=f32 independently.
+// A trait.proj.cast is justified only for projections over its claim's own trait
+// application. Here the cast unresolves @D[i64, i64] into
+// @D[@A[i32]::Out, @A[f32]::Out] but names only an @A[i32] claim. That claim
+// resolves @A[i32]::Out to i64, but it says nothing about @A[f32]::Out, which is
+// a projection over a different application. The @A[f32]::Out spelling survives
+// resolution and no longer matches the i64 the input carries there, so the cast
+// is rejected: one claim does not justify a projection over another application.
 
-// CHECK-LABEL: func.func @main
-// CHECK: return
 module {
   trait.trait @D[!trait.poly<0>, !trait.poly<1>] {}
   trait.trait @A[!trait.poly<2>] { trait.assoc_type @Out }
@@ -17,23 +17,14 @@ module {
   trait.proof @A_p proves @A_i32 for @A[i32] given []
   trait.proof @D_p proves @D_impl for @D[i64, i64] given []
 
-  func.func nested @f(%x: !trait.poly<4>, %y: !trait.poly<5>,
-    %d: !trait.claim<@D[!trait.proj<@A[!trait.poly<4>], "Out">, !trait.proj<@A[!trait.poly<5>], "Out">]>
-  ) -> i32 { %0 = arith.constant 0 : i32 return %0 : i32 }
-
   func.func @main() -> i32 {
-    %x = arith.constant 0 : i32
-    %y = arith.constant 0.0 : f32
-    %ev = trait.witness @A_p for @A[i32]
     %d = trait.witness @D_p for @D[i64, i64]
+    %ev = trait.witness @A_p for @A[i32]
+    // expected-error @below {{does not match resolved result type}}
     %d1 = trait.proj.cast %d, %ev
       : !trait.claim<@D[i64, i64] by @D_p>
       to !trait.claim<@D[!trait.proj<@A[i32], "Out">, !trait.proj<@A[f32], "Out">] by @D_p>
       by !trait.claim<@A[i32] by @A_p>
-    // This fails: proven claim with projections from different type args
-    %r = trait.func.call @f(%x, %y, %d1)
-      : (i32, f32, !trait.claim<@D[!trait.proj<@A[i32], "Out">, !trait.proj<@A[f32], "Out">] by @D_p>)
-      -> i32
     %c0 = arith.constant 0 : i32
     return %c0 : i32
   }

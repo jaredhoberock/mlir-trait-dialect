@@ -1446,44 +1446,92 @@ LogicalResult ProjCastOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     return emitOpError() << "at least one of input/result must contain "
                          << "a !trait.proj type";
 
-  if (!claimTy.isProven()) {
-    // Check that the claim's trait appears in at least one projection
-    // in the input or output types. This ensures the claim is relevant
-    // to the projections being cast.
-    //
-    // TODO: A stronger check would replace each claim-trait projection with
-    // a unification variable (same projection = same variable) and unify
-    // inputType against resultType. That would catch both structural
-    // mismatches in non-projection positions and inconsistent uses of the
-    // same projection, without requiring global analysis.
-    auto claimTraitName = claimTy.getTraitApplication().getTraitName();
+  // A claim is SSA evidence that monomorphization erases one-to-zero. Nested
+  // inside an aggregate it has no independent value to erase, so a claim may
+  // only appear as a whole type here, never as an element of one. This catches
+  // the aggregate-contained claim the result-root claim gates elsewhere miss.
+  auto claimNestedInAggregate = [](Type ty) {
     bool found = false;
-    auto checkProjection = [&](Type sub) {
-      if (auto proj = dyn_cast<ProjectionType>(sub))
-        if (proj.getTraitApplication().getTraitName() == claimTraitName)
-          found = true;
-    };
-    inputType.walk(checkProjection);
-    resultType.walk(checkProjection);
+    ty.walk([&](Type sub) {
+      if (sub != ty && isa<ClaimType>(sub))
+        found = true;
+    });
+    return found;
+  };
+  if (claimNestedInAggregate(inputType) || claimNestedInAggregate(resultType))
+    return emitOpError() << "!trait.claim may not be nested inside an aggregate "
+                         << "type";
 
-    if (!found)
-      return emitOpError()
-        << "claim trait '" << claimTraitName
-        << "' does not match any projection trait in input or result types";
+  TraitApplicationAttr claimApp = claimTy.getTraitApplication();
+
+  // Relevance: the claim's trait application must appear in some projection of
+  // the input or result. A claim that names no projection here justifies nothing
+  // about this cast.
+  bool relevant = false;
+  auto seesClaimApp = [&](Type sub) {
+    if (auto proj = dyn_cast<ProjectionType>(sub))
+      if (proj.getTraitApplication() == claimApp)
+        relevant = true;
+  };
+  inputType.walk(seesClaimApp);
+  resultType.walk(seesClaimApp);
+  if (!relevant)
+    return emitOpError() << "claim " << claimApp
+                         << " does not justify any projection in input or result "
+                         << "types";
+
+  if (!claimTy.isProven()) {
+    // The claim justifies resolving projections over its own trait application,
+    // and nothing else. Replace each such projection with a fresh unification
+    // variable -- the same projection maps to the same variable -- then unify
+    // the input against the result. Non-projection positions must match
+    // structurally, and a single projection standing for two different types
+    // across input and result is a conflict the shared variable exposes.
+    // Projections over other trait applications are left in place for the
+    // unifier, which today tolerates such an irreducible projection against a
+    // rigid type (accepting without a binding) rather than rejecting it. Proofs
+    // are stripped first: this check compares type structure, and proof
+    // coherence is a separate concern.
+    DenseMap<ProjectionType, Type> holes;
+    uint64_t idCounter = 0;
+    AttrTypeReplacer replacer;
+    replacer.addReplacement([&](ProjectionType proj) -> std::optional<Type> {
+      if (proj.getTraitApplication() != claimApp)
+        return std::nullopt;
+      auto it = holes.find(proj);
+      if (it != holes.end())
+        return it->second;
+      Type var = InferenceType::get(getContext(), idCounter++, /*origin_poly_id=*/0);
+      holes[proj] = var;
+      return var;
+    });
+    replacer.addReplacement([](ClaimType claim) -> std::optional<Type> {
+      if (claim.isProven())
+        return Type(claim.asUnproven());
+      return std::nullopt;
+    });
+    Type inputHoles = replacer.replace(inputType);
+    Type resultHoles = replacer.replace(resultType);
+
+    if (failed(unify(inputHoles, resultHoles, module)))
+      return emitOpError() << "input type " << inputType << " and result type "
+                           << resultType
+                           << " are not consistent under claim " << claimApp;
 
     return success();
   }
 
-  // Proven claim: resolve matching projections and verify equivalence
+  // Proven claim: resolve only the projections over the claim's own trait
+  // application through the impl's bindings, then require the input and result to
+  // agree. A projection over another trait application stays spelled as written
+  // and so must match literally on both sides -- the claim justifies nothing
+  // about it, so a cast that relies on resolving it is not justified here.
   auto implOr = ProofOp::getImplFromProof(module, claimTy.getProof(), errFn);
   if (failed(implOr)) return failure();
 
   auto subst = implOr->buildSubstitutionForSelfClaim(claimTy.asUnproven(), errFn);
   if (failed(subst)) return failure();
 
-  // Resolve only projections matching the evidence's trait application.
-  // E.g., evidence for A[i32] resolves A[i32]::Out but not A[i64]::Out.
-  TraitApplicationAttr claimApp = claimTy.getTraitApplication();
   NormalizationContext normalization;
   normalization.addLocalProjectionRule(*implOr, claimApp, *subst);
   auto resolvedInput = normalization.normalize(inputType, errFn);
@@ -1493,15 +1541,10 @@ LogicalResult ProjCastOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (failed(resolvedResult))
     return failure();
 
-  // If either side still contains unresolved projections (from a different trait),
-  // we can't fully verify — defer to monomorphization
-  if (containsType<ProjectionType>(*resolvedInput) ||
-      containsType<ProjectionType>(*resolvedResult))
-    return success();
-
   if (*resolvedInput != *resolvedResult)
     return emitOpError() << "resolved input type " << *resolvedInput
-                         << " does not match resolved result type " << *resolvedResult;
+                         << " does not match resolved result type "
+                         << *resolvedResult;
 
   return success();
 }

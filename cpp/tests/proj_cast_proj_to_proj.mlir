@@ -1,17 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 
-// RUN: mlir-opt -pass-pipeline='builtin.module(monomorphize-trait)' %s | FileCheck %s
+// RUN: mlir-opt %s -verify-diagnostics
 
-// Test trait.proj.cast case 3: projection -> projection.
-//
-// Two traits with the same associated type binding. A value typed as
-// one projection can be cast to the other.
-//
-// trait A { type Assoc; }
-// trait B { type Assoc; }
-// impl A for i64 { type Assoc = i1; }
-// impl B for i64 { type Assoc = i1; }
+// A proj.cast between projections of two different traits is justified only for
+// the projection over its claim's own application. @A[i64]::Assoc and
+// @B[i64]::Assoc both resolve to i1, but a single @B[i64] claim justifies only
+// the @B side; it says nothing about @A[i64]::Assoc. That input projection
+// survives resolution and no longer matches the i1 the result resolves to, so
+// the cast is rejected -- a coincidental cross-trait equality needs a claim for
+// each application, which one proj.cast cannot supply.
 
 !T = !trait.poly<0>
 
@@ -34,27 +32,12 @@ trait.impl @B_i64 for @B[i64] {
 trait.proof @A_proof proves @A_i64 for @A[i64] given []
 trait.proof @B_proof proves @B_i64 for @B[i64] given []
 
-// CHECK-LABEL: func.func @proj_to_proj
-// CHECK-NOT: trait.proj.cast
-// CHECK-NOT: !trait.proj
-// CHECK: return %{{.*}} : i1
-func.func @proj_to_proj() -> i1 {
-  %v = arith.constant true
-  %a_claim = trait.witness @A_proof for @A[i64]
+func.func @proj_to_proj(%a_proj: !trait.proj<@A[i64], "Assoc">) -> !trait.proj<@B[i64], "Assoc"> {
   %b_claim = trait.witness @B_proof for @B[i64]
 
-  // Concrete -> A projection
-  %a_proj = trait.proj.cast %v, %a_claim
-    : i1 to !trait.proj<@A[i64], "Assoc"> by !trait.claim<@A[i64] by @A_proof>
-
-  // A projection -> B projection (proj -> proj, case 3)
-  // The claim matches the result projection's trait application.
+  // expected-error @below {{does not match resolved result type}}
   %b_proj = trait.proj.cast %a_proj, %b_claim
     : !trait.proj<@A[i64], "Assoc"> to !trait.proj<@B[i64], "Assoc"> by !trait.claim<@B[i64] by @B_proof>
 
-  // B projection -> concrete
-  %result = trait.proj.cast %b_proj, %b_claim
-    : !trait.proj<@B[i64], "Assoc"> to i1 by !trait.claim<@B[i64] by @B_proof>
-
-  return %result : i1
+  return %b_proj : !trait.proj<@B[i64], "Assoc">
 }
