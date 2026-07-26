@@ -96,8 +96,8 @@ static void cloneRegionWithTypeReplacement(
 // concrete argument into a projection spelling can mint a ground redex the
 // fixed point alone does not close; when `module` is supplied the replacer
 // resolves those redexes by module-visible impl lookup, so a specialized
-// monomorph carries no ground projection that a unique unconditional
-// module-visible impl resolves. Projections whose impl is generator-pending or
+// monomorph carries no ground projection that a unique module-visible impl
+// resolves. Projections whose impl is generator-pending or
 // whose application matches several candidates survive stamp-out unchanged, to
 // be resolved once evidence exists.
 AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &subst,
@@ -105,8 +105,12 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &sub
   AttrTypeReplacer replacer;
   replacer.addReplacement([=](Type t) -> std::optional<Type> {
     Type result = applySubstitutionToFixedPoint(subst, t);
-    if (module)
-      result = resolveGroundProjectionsByLookup(result, module);
+    if (module) {
+      Type resolved = resolveGroundProjectionsByLookup(result, module);
+      censusGroundResolve(GroundResolveSite::Specialization, inVerifyingContext(),
+                          resolved != result);
+      result = resolved;
+    }
 
     // check that the result changed
     return (result != t) ? std::optional<Type>(result) : std::nullopt;

@@ -747,13 +747,62 @@ LogicalResult recordProofBindingsIn(Type ty,
 /// Resolve every ground projection redex in `ty` by module-visible impl
 /// lookup, leaving non-ground and unresolvable projections spelled as written.
 ///
-/// This is a read-only lookup: it selects the unique existing UNCONDITIONAL impl
-/// (empty assumptions) whose self application matches a ground projection's
-/// trait application, reads that impl's associated-type binding, and
-/// substitutes. Conditional impls are skipped -- their bindings hold only under
-/// premises this lookup does not check. It never mints proofs, generates impls,
-/// or mutates IR, so it is safe to run inside a verifier.
+/// This is a read-only lookup: it selects the unique existing impl whose self
+/// application matches a ground projection's trait application, reads that
+/// impl's associated-type binding, and substitutes. Exactly one matching impl
+/// is required; two or more decline. A conditional impl (nonempty assumptions)
+/// may be that one match -- selecting it is mechanical name resolution, and a
+/// legal program has already discharged the projection's head claim, which is
+/// what its premise witnesses. It never mints proofs, generates impls, or
+/// mutates IR, so it is safe to run inside a verifier.
 Type resolveGroundProjectionsByLookup(Type ty, ModuleOp module);
+
+//===----------------------------------------------------------------------===//
+// Verification context and unification census
+//===----------------------------------------------------------------------===//
+
+/// While a `VerificationScope` is live on this thread, unification treats
+/// itself as running inside an op verifier: `ProjectionType::unify` performs no
+/// module lookup, so it resolves no ground redexes. Monomorph stamp-out and the
+/// proof recorder normalize their own output, so unification reached from those
+/// two points meets already-resolved ground redexes. The impl declaration
+/// boundary and the call boundary do NOT normalize ground redexes; they rely on
+/// the impl's own associated-type bindings and on the install-grade spelling the
+/// front end emits, and a projection-vs-rigid crossing that survives is accepted
+/// by the tail. Passes construct no scope, so pass-time unification still
+/// resolves the ground redexes that binding a variable mints mid-solve.
+class VerificationScope {
+public:
+  explicit VerificationScope(Operation *op);
+  ~VerificationScope();
+  VerificationScope(const VerificationScope &) = delete;
+  VerificationScope &operator=(const VerificationScope &) = delete;
+};
+
+bool inVerifyingContext();
+
+/// The module-lookup sites that resolve ground projection redexes, named so the
+/// census can attribute each resolution. All counting below is compiled in but
+/// inert unless TRAIT_UNIFY_CENSUS is set in the environment, in which case
+/// per-process totals print to stderr at exit.
+enum class GroundResolveSite {
+  UnifyTail,
+  Specialization,
+  RecorderDemand,
+  RecorderProven,
+  RecorderReconcile,
+};
+
+/// Record one ground-resolve invocation: which site drove it, whether a
+/// `VerificationScope` was live, and whether the type actually changed.
+void censusGroundResolve(GroundResolveSite site, bool verifying, bool effective);
+
+/// Record one entry into `ProjectionType::unify`'s irreducible-accept tail.
+void censusToleranceTail(bool verifying);
+
+/// Record one entry into `verifyEquivalentRecordedProof`'s non-literal path
+/// (the recorded proof did not equal the normalized candidate literally).
+void censusRecorderNonLiteral();
 
 std::string generateMangledNameSuffixFor(TypeRange typeArgs);
 

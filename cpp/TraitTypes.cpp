@@ -4,6 +4,12 @@
 #include "TraitOps.hpp"
 #include "TraitTypes.hpp"
 #include <atomic>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <map>
+#include <mutex>
+#include <string>
 #include <llvm/ADT/TypeSwitch.h>
 #include <llvm/Support/Format.h>
 #include <llvm/Support/xxhash.h>
@@ -63,6 +69,120 @@ std::string applySubstitutionAndGenerateMangledNameSuffix(
 }
 
 
+//===----------------------------------------------------------------------===//
+// Verification context and unification census
+//===----------------------------------------------------------------------===//
+
+namespace {
+
+// Op verifiers push onto this stack for the duration of their check; the top is
+// the op whose verification is currently driving unification. Empty means
+// unification is running at pass time.
+thread_local llvm::SmallVector<Operation *, 8> verificationOpStack;
+
+bool censusEnabled() {
+  static const bool enabled = std::getenv("TRAIT_UNIFY_CENSUS") != nullptr;
+  return enabled;
+}
+
+const char *groundResolveSiteName(GroundResolveSite site) {
+  switch (site) {
+  case GroundResolveSite::UnifyTail: return "unify-tail";
+  case GroundResolveSite::Specialization: return "specialization";
+  case GroundResolveSite::RecorderDemand: return "recorder-demand";
+  case GroundResolveSite::RecorderProven: return "recorder-proven";
+  case GroundResolveSite::RecorderReconcile: return "recorder-reconcile";
+  }
+  return "<unknown>";
+}
+
+// Per-process counters. Printed to stderr from this object's destructor at
+// process exit when the census is enabled, so the counts survive across the many
+// single-file compilations that make up a corpus run without a separate
+// instrumented build. Each line is prefixed TUC for grepping.
+constexpr int kGroundResolveSiteCount = 5;
+struct CensusState {
+  std::mutex mutex;
+  // groundResolve[site][verifying][effective]
+  uint64_t groundResolve[kGroundResolveSiteCount][2][2] = {};
+  uint64_t toleranceTail[2] = {}; // indexed by verifying
+  std::map<std::string, uint64_t> toleranceTailByOp;
+  uint64_t recorderNonLiteral = 0;
+
+  ~CensusState() {
+    if (!censusEnabled())
+      return;
+    std::lock_guard<std::mutex> lock(mutex);
+    std::fprintf(stderr, "TUC recorder-non-literal %llu\n",
+                 (unsigned long long)recorderNonLiteral);
+    for (int site = 0; site < kGroundResolveSiteCount; ++site)
+      for (int v = 0; v < 2; ++v)
+        for (int e = 0; e < 2; ++e) {
+          uint64_t n = groundResolve[site][v][e];
+          if (!n)
+            continue;
+          std::fprintf(stderr, "TUC ground-resolve %s %s %s %llu\n",
+                       groundResolveSiteName(static_cast<GroundResolveSite>(site)),
+                       v ? "verifying" : "computing",
+                       e ? "effective" : "noop", (unsigned long long)n);
+        }
+    for (int v = 0; v < 2; ++v)
+      if (toleranceTail[v])
+        std::fprintf(stderr, "TUC tolerance-tail %s %llu\n",
+                     v ? "verifying" : "computing",
+                     (unsigned long long)toleranceTail[v]);
+    for (auto &[op, n] : toleranceTailByOp)
+      std::fprintf(stderr, "TUC tolerance-tail-op %s %llu\n", op.c_str(),
+                   (unsigned long long)n);
+  }
+};
+
+CensusState &censusState() {
+  static CensusState state;
+  return state;
+}
+
+} // namespace
+
+VerificationScope::VerificationScope(Operation *op) {
+  verificationOpStack.push_back(op);
+}
+
+VerificationScope::~VerificationScope() { verificationOpStack.pop_back(); }
+
+bool inVerifyingContext() { return !verificationOpStack.empty(); }
+
+void censusGroundResolve(GroundResolveSite site, bool verifying, bool effective) {
+  if (!censusEnabled())
+    return;
+  CensusState &s = censusState();
+  std::lock_guard<std::mutex> lock(s.mutex);
+  s.groundResolve[static_cast<int>(site)][verifying][effective]++;
+}
+
+void censusToleranceTail(bool verifying) {
+  if (!censusEnabled())
+    return;
+  CensusState &s = censusState();
+  std::lock_guard<std::mutex> lock(s.mutex);
+  s.toleranceTail[verifying ? 1 : 0]++;
+  if (verifying && !verificationOpStack.empty())
+    s.toleranceTailByOp[verificationOpStack.back()
+                            ->getName()
+                            .getStringRef()
+                            .str()]++;
+  else if (!verifying)
+    s.toleranceTailByOp["<pass>"]++;
+}
+
+void censusRecorderNonLiteral() {
+  if (!censusEnabled())
+    return;
+  CensusState &s = censusState();
+  std::lock_guard<std::mutex> lock(s.mutex);
+  s.recorderNonLiteral++;
+}
+
 Type resolveGroundProjectionsByLookup(Type ty, ModuleOp module) {
   if (!module)
     return ty;
@@ -81,13 +201,12 @@ Type resolveGroundProjectionsByLookup(Type ty, ModuleOp module) {
       return std::nullopt;
 
     // Read-only selection: resolve only when exactly one existing impl binds
-    // this application. Ambiguity and impl generation are left to the resolver.
-    // Assumptions are not consulted: a conditional impl's binding holds only
-    // under its premise, which this lookup does not check, so conditional impls
-    // (a nonempty assumptions list) never serve it.
+    // this application. Two or more matches, and impl generation, are left to
+    // the resolver. The single match may be conditional (a nonempty assumptions
+    // list): selecting it is mechanical name resolution, not premise evaluation,
+    // and a legal program has already discharged this ground projection's head
+    // claim -- the premise the conditional impl carries.
     auto candidates = trait->getCandidateImplsFor(claim);
-    llvm::erase_if(candidates,
-                   [](ImplOp candidate) { return !candidate.getAssumptions().empty(); });
     if (candidates.size() != 1)
       return std::nullopt;
     ImplOp impl = candidates.front();
@@ -334,8 +453,15 @@ static LogicalResult verifyEquivalentRecordedProof(
     ClaimType candidate,
     ModuleOp module,
     llvm::function_ref<InFlightDiagnostic()> err) {
-  if (recorded == resolveGroundProjectionsByLookup(candidate, module))
+  Type normalizedCandidate = resolveGroundProjectionsByLookup(candidate, module);
+  censusGroundResolve(GroundResolveSite::RecorderReconcile, inVerifyingContext(),
+                      normalizedCandidate != Type(candidate));
+  if (recorded == normalizedCandidate)
     return success();
+
+  // The recorded proof did not match the candidate literally after ground
+  // normalization; attribute the reconciliation that follows for the census.
+  censusRecorderNonLiteral();
 
   if (recorded.getProof() != candidate.getProof()) {
     if (err) err() << "inconsistent proof mapping: " << unproven
@@ -378,13 +504,23 @@ LogicalResult verifyAndRecordProof(
     return failure();
   }
 
-  // Normalize the PROVEN value's spelling before recording (the unproven key is
-  // left as the demand spells it). Requirement obligations arrive proven at their
-  // stamped declaration projections; resolving those ground redexes means every
-  // path that reaches the same obligation records the same proven spelling, so a
-  // second observation matches the first literally instead of reconciling two
-  // equivalent spellings.
-  proven = cast<ClaimType>(resolveGroundProjectionsByLookup(proven, module));
+  // Normalize both the demanded obligation (the recording key) and the proven
+  // value before recording. Requirement obligations arrive at their stamped
+  // declaration projections; resolving those ground redexes means every path
+  // that reaches the same obligation keys it identically and records the same
+  // proven spelling, so a second observation matches the first literally
+  // instead of reconciling two equivalent spellings.
+  {
+    Type normalizedProven = resolveGroundProjectionsByLookup(proven, module);
+    censusGroundResolve(GroundResolveSite::RecorderProven, inVerifyingContext(),
+                        normalizedProven != Type(proven));
+    proven = cast<ClaimType>(normalizedProven);
+
+    Type normalizedUnproven = resolveGroundProjectionsByLookup(unproven, module);
+    censusGroundResolve(GroundResolveSite::RecorderDemand, inVerifyingContext(),
+                        normalizedUnproven != Type(unproven));
+    unproven = cast<ClaimType>(normalizedUnproven);
+  }
 
   // early exit if we've already recorded this obligation. The same proof may
   // be observed through multiple equivalent claim spellings, so validate proof
@@ -795,15 +931,18 @@ LogicalResult ProjectionType::unify(
   }
 
   // A projection all of whose arguments are concrete and whose trait application
-  // a unique module-visible impl binds has one determined resolution. Resolve it
-  // and unify the resolved type against `other`, so a ground projection meets its
-  // own resolved concrete spelling and any real mismatch is still caught. This is
-  // normalization, not tolerance, and is permanent: unification itself mints
-  // ground redexes as it binds variables (binding V:=i64 turns proj<@Prod[V]> into
-  // the ground proj<@Prod[i64]> mid-solve), so ground projections reach this point
-  // no matter how the front end spells its records.
-  if (isMonomorphicType(*this)) {
+  // a unique module-visible impl binds has one determined resolution. Binding a
+  // variable mid-solve mints such ground redexes (binding V:=i64 turns
+  // proj<@Prod[V]> into the ground proj<@Prod[i64]>), so pass-time unification
+  // resolves them here and unifies the resolved type against `other`, catching a
+  // real mismatch against the resolved concrete spelling. Under a verification
+  // scope this module lookup does not run -- an equality check performs none. A
+  // concrete projection that reaches a verifier still unresolved (because the
+  // impl or call boundary did not normalize it) falls to the tail below.
+  if (isMonomorphicType(*this) && !inVerifyingContext()) {
     Type resolved = resolveGroundProjectionsByLookup(*this, module);
+    censusGroundResolve(GroundResolveSite::UnifyTail, /*verifying=*/false,
+                        resolved != Type(*this));
     if (resolved != Type(*this))
       return trait::unify(resolved, other, module, subst, err);
   }
@@ -812,12 +951,14 @@ LogicalResult ProjectionType::unify(
   // concrete base whose impl a downstream generator has not yet synthesized (the
   // prelude's Convergence machinery reaches here on every compile) -- against a
   // rigid type. This verifier holds no evidence for the equality, so it accepts
-  // without recording a binding, as the pre-strictness tail did. Eliminating this
-  // tolerance takes front-end AND generator cast-mediation: every such crossing,
+  // without recording a binding -- the lenient behavior this tail retains.
+  // Eliminating this tolerance takes front-end AND generator cast-mediation:
+  // every such crossing,
   // at argument positions and trait-method boundaries alike, spelled as an
   // explicit trait.proj.cast justified by the (possibly unproven) claim. Once no
   // unmediated projection-vs-rigid crossing can reach here, this becomes a hard
   // failure.
+  censusToleranceTail(inVerifyingContext());
   return success();
 }
 

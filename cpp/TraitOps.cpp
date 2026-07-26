@@ -171,6 +171,7 @@ FailureOr<FunctionType> NormalizationContext::normalize(
 //===----------------------------------------------------------------------===//
 
 LogicalResult TraitOp::verify() {
+  VerificationScope verificationScope(getOperation());
   auto typeParams = getTypeParams().getAsValueRange<TypeAttr>();
 
   // types must be unique GenericTypeParameters
@@ -238,6 +239,7 @@ LogicalResult TraitOp::verify() {
 }
 
 LogicalResult TraitOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  VerificationScope verificationScope(getOperation());
   // verify obligations
   return getRequirements().verifyTraitApplications(getParentOp<ModuleOp>(), [&](){ return emitOpError(); });
 }
@@ -385,6 +387,7 @@ void TraitOp::print(OpAsmPrinter &p) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  VerificationScope verificationScope(getOperation());
   auto errFn = [&]{ return emitOpError(); };
 
   auto module = getModule(errFn);
@@ -934,6 +937,7 @@ void ImplOp::print(OpAsmPrinter &printer) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult ProofOp::verify() {
+  VerificationScope verificationScope(getOperation());
   // check that every name is a FlatSymbolRefAttr
   for (Attribute name : getSubproofNames()) {
     if (!isa<FlatSymbolRefAttr>(name)) {
@@ -944,6 +948,7 @@ LogicalResult ProofOp::verify() {
 }
 
 LogicalResult ProofOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  VerificationScope verificationScope(getOperation());
   auto module = getParentOp<ModuleOp>();
   auto errFn = [&] { return emitOpError(); };
 
@@ -1139,6 +1144,7 @@ void WitnessOp::print(OpAsmPrinter &p) {
 }
 
 LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  VerificationScope verificationScope(getOperation());
   ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
   if (!module)
     return emitError() << "not inside a module";
@@ -1269,6 +1275,7 @@ ImplOp DeriveOp::getImplOp() {
 ///     assumption (so the caller is providing exactly the evidence the impl
 ///     requires under this specialization).
 LogicalResult DeriveOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  VerificationScope verificationScope(getOperation());
   auto errFn = [&] { return emitOpError(); };
 
   // look up impl by symbol
@@ -1330,6 +1337,7 @@ void AssumeOp::print(OpAsmPrinter &p) {
 }
 
 LogicalResult AssumeOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  VerificationScope verificationScope(getOperation());
   // verify line-of-sight between trait.assume op its enclosing function-like op so
   // that we are able to replace uses of trait.assume with a function parameter
   Operation* isolatedAncestor = getOperation()->getParentWithTrait<OpTrait::IsIsolatedFromAbove>();
@@ -1430,6 +1438,7 @@ void ProjCastOp::print(OpAsmPrinter &p) {
 }
 
 LogicalResult ProjCastOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  VerificationScope verificationScope(getOperation());
   ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
   if (!module)
     return emitError() << "not inside a module";
@@ -1580,6 +1589,7 @@ FailureOr<func::FuncOp> MethodCallOp::getMethod(llvm::function_ref<InFlightDiagn
 }
 
 LogicalResult MethodCallOp::verify() {
+  VerificationScope verificationScope(getOperation());
   // the claim's type must be an ClaimType
   ClaimType claim = dyn_cast_or_null<ClaimType>(getClaim().getType());
   if (!claim)
@@ -1675,6 +1685,7 @@ static FailureOr<NormalizationContext> buildLocalClaimNormalizationContext(
 }
 
 LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  VerificationScope verificationScope(getOperation());
   auto errFn = [&]{ return emitOpError(); };
 
   auto module = getModule(errFn);
@@ -1908,6 +1919,7 @@ void MethodCallOp::print(OpAsmPrinter& p) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult FuncCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  VerificationScope verificationScope(getOperation());
   auto calleeName = getCalleeNameAttr();
   if (!calleeName)
     return emitOpError() << "requires a 'callee_name' symbol reference attribute";
@@ -2064,6 +2076,7 @@ TraitOp ProjectOp::getProjectedTrait() {
 }
 
 LogicalResult ProjectOp::verifySymbolUses(SymbolTableCollection &/*symbolTable*/) {
+  VerificationScope verificationScope(getOperation());
   ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
   if (!module)
     return emitOpError() << "not in a module";
@@ -2212,6 +2225,7 @@ void AllegeOp::print(OpAsmPrinter &p) {
 }
 
 LogicalResult AllegeOp::verify() {
+  VerificationScope verificationScope(getOperation());
   // claim must be monomorphic unless unsafe
   if (!getUnsafe() && !getClaim().isMonomorphic())
     return emitOpError() << "expected monomorphic claim, got "
@@ -2220,6 +2234,7 @@ LogicalResult AllegeOp::verify() {
 }
 
 LogicalResult AllegeOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  VerificationScope verificationScope(getOperation());
   ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
   if (!module)
     return emitOpError() << "not in a module";

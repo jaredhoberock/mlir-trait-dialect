@@ -16,7 +16,7 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &sub
 /// As above, but also resolves the ground projection redexes the substitution
 /// mints (a concrete argument substituted into a projection spelling) by
 /// module-visible impl lookup, so a specialized monomorph carries no ground
-/// projection that a unique unconditional module-visible impl resolves.
+/// projection that a unique module-visible impl resolves.
 /// Generator-pending and multi-candidate ground projections survive unchanged.
 AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &subst,
                                                   ModuleOp module);
