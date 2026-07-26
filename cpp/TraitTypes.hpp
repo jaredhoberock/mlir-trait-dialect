@@ -785,6 +785,32 @@ public:
 
 bool inVerifyingContext();
 
+/// While a `ComputingScope` is live it suspends any enclosing
+/// `VerificationScope`, so `ProjectionType::unify` treats itself as running at
+/// pass time and resolves ground redexes minted mid-solve by module lookup.
+///
+/// This wraps building a self-claim substitution for ONE impl -- including the
+/// per-candidate match probes `getCandidateImplsFor` runs before any impl is
+/// chosen. That build is a computation over this one impl's own committed
+/// facts: resolving a ground projection the match mints (a blanket impl's
+/// `Trait[T]::A` once `T` binds, or a claim argument a caller cast to a
+/// projection spelling) to its determined value settles this candidate's own
+/// match verdict -- deterministic, claim-independent, premise-blind,
+/// peer-blind. It completes a per-candidate match; it never chooses among
+/// candidates (the unique-count rule stays at the lookup) nor decides a premise
+/// (that stays at the resolver). The rigid side is never resolved, so a
+/// non-projection mismatch still fails.
+class ComputingScope {
+public:
+  ComputingScope();
+  ~ComputingScope();
+  ComputingScope(const ComputingScope &) = delete;
+  ComputingScope &operator=(const ComputingScope &) = delete;
+
+private:
+  llvm::SmallVector<Operation *, 8> saved;
+};
+
 /// The module-lookup sites that resolve ground projection redexes, named so the
 /// census can attribute each resolution. All counting below is compiled in but
 /// inert unless TRAIT_UNIFY_CENSUS is set in the environment, in which case
@@ -831,7 +857,11 @@ enum class ToleranceTailKind {
 };
 
 /// Record one entry into `ProjectionType::unify`'s irreducible-accept tail.
-void censusToleranceTail(bool verifying, ToleranceTailKind kind);
+/// `projectionTrait` is the trait of the crossing projection; combined with the
+/// verified op's name and its claim evidence kind it forms the per-hit
+/// attribution the census prints.
+void censusToleranceTail(bool verifying, ToleranceTailKind kind,
+                         StringRef projectionTrait);
 
 /// Record one entry into `verifyEquivalentRecordedProof`'s non-literal path
 /// (the recorded proof did not equal the normalized candidate literally).

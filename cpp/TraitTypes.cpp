@@ -110,6 +110,42 @@ const char *toleranceTailKindName(ToleranceTailKind kind) {
   return "<unknown>";
 }
 
+// The evidence backing a claim SSA value, named for the census. A proven claim
+// (one carrying a proof symbol, e.g. from trait.witness) reads "proven"; an
+// unproven claim reads by the op that produced it -- trait.derive, trait.assume,
+// or trait.allege; "none" covers a claim with no such producer (a function
+// parameter claim) and the absence of a claim entirely (a call op that carries
+// none).
+const char *claimEvidenceKindName(Value claim) {
+  if (!claim)
+    return "none";
+  if (auto claimTy = dyn_cast<ClaimType>(claim.getType()))
+    if (claimTy.isProven())
+      return "proven";
+  Operation *def = claim.getDefiningOp();
+  if (def && isa<DeriveOp>(def))
+    return "derive";
+  if (def && isa<AssumeOp>(def))
+    return "assume";
+  if (def && isa<AllegeOp>(def))
+    return "allege";
+  return "none";
+}
+
+// The claim operand of the op currently driving verification, if it carries
+// one. method.call and proj.cast justify their crossings by a claim; other ops
+// that reach the tolerance tail (func.call, impl) carry none.
+Value currentVerifiedClaim() {
+  if (verificationOpStack.empty())
+    return {};
+  Operation *op = verificationOpStack.back();
+  if (auto call = dyn_cast<MethodCallOp>(op))
+    return call.getClaim();
+  if (auto cast = dyn_cast<ProjCastOp>(op))
+    return cast.getClaim();
+  return {};
+}
+
 // Per-process counters. Printed to stderr from this object's destructor at
 // process exit when the census is enabled, so the counts survive across the many
 // single-file compilations that make up a corpus run without a separate
@@ -127,6 +163,15 @@ struct CensusState {
   // the tail's op attribution (see ToleranceTailKind in the header).
   uint64_t toleranceTailVerifyingKind[4] = {};
   std::map<std::string, uint64_t> toleranceTailByOp;
+  // Per-hit attribution of every tolerance-tail crossing, keyed by the
+  // composite of the verified op's name, the crossing projection's trait, and
+  // the op's claim evidence kind. The op and evidence dimensions carry
+  // information only for a VERIFYING crossing; every crossing that survives
+  // today is computing (a pass-time substitution build, printed op=<pass>
+  // evidence=none), and it is resolution -- not cast mediation -- that cleared
+  // the verifying population to zero. This is the instrument that names which
+  // crossings survive and why.
+  std::map<std::string, uint64_t> toleranceTailAttribution;
   uint64_t recorderNonLiteral = 0;
 
   ~CensusState() {
@@ -159,6 +204,9 @@ struct CensusState {
     for (auto &[op, n] : toleranceTailByOp)
       std::fprintf(stderr, "TUC tolerance-tail-op %s %llu\n", op.c_str(),
                    (unsigned long long)n);
+    for (auto &[key, n] : toleranceTailAttribution)
+      std::fprintf(stderr, "TUC tolerance-tail-attrib %s %llu\n", key.c_str(),
+                   (unsigned long long)n);
   }
 };
 
@@ -175,6 +223,13 @@ VerificationScope::VerificationScope(Operation *op) {
 
 VerificationScope::~VerificationScope() { verificationOpStack.pop_back(); }
 
+ComputingScope::ComputingScope() {
+  saved = std::move(verificationOpStack);
+  verificationOpStack.clear();
+}
+
+ComputingScope::~ComputingScope() { verificationOpStack = std::move(saved); }
+
 bool inVerifyingContext() { return !verificationOpStack.empty(); }
 
 void censusGroundResolve(GroundResolveSite site, bool verifying, bool effective) {
@@ -185,7 +240,8 @@ void censusGroundResolve(GroundResolveSite site, bool verifying, bool effective)
   s.groundResolve[static_cast<int>(site)][verifying][effective]++;
 }
 
-void censusToleranceTail(bool verifying, ToleranceTailKind kind) {
+void censusToleranceTail(bool verifying, ToleranceTailKind kind,
+                         StringRef projectionTrait) {
   if (!censusEnabled())
     return;
   CensusState &s = censusState();
@@ -193,13 +249,20 @@ void censusToleranceTail(bool verifying, ToleranceTailKind kind) {
   s.toleranceTail[verifying ? 1 : 0]++;
   if (verifying)
     s.toleranceTailVerifyingKind[static_cast<int>(kind)]++;
+  std::string op = verificationOpStack.empty()
+                       ? std::string("<pass>")
+                       : verificationOpStack.back()
+                             ->getName()
+                             .getStringRef()
+                             .str();
   if (verifying && !verificationOpStack.empty())
-    s.toleranceTailByOp[verificationOpStack.back()
-                            ->getName()
-                            .getStringRef()
-                            .str()]++;
+    s.toleranceTailByOp[op]++;
   else if (!verifying)
     s.toleranceTailByOp["<pass>"]++;
+
+  std::string key = "op=" + op + " trait=" + projectionTrait.str() +
+                    " evidence=" + claimEvidenceKindName(currentVerifiedClaim());
+  s.toleranceTailAttribution[key]++;
 }
 
 void censusRecorderNonLiteral() {
@@ -257,6 +320,17 @@ Type resolveGroundProjectionsByLookup(Type ty, ModuleOp module) {
     previous = ty;
     ty = replacer.replace(ty);
   }
+
+  // Reaching the iteration cap while the type is still changing means the
+  // lookup rewrite has no fixed point (a cyclic or oscillating resolution).
+  // Surface it: the returned type is only a partial normal form, and a caller
+  // comparing spellings against it would reject a well-formed program with a
+  // spelling mismatch that names neither the cycle nor its cause.
+  if (ty != previous)
+    module.emitError() << "ground projection normalization did not converge "
+                          "within " << maxIterations << " iterations for type "
+                       << ty;
+
   return ty;
 }
 
@@ -455,6 +529,10 @@ static LogicalResult verifyProofSpecializesTo(
     ClaimType proven,
     ModuleOp module,
     llvm::function_ref<InFlightDiagnostic()> err) {
+  // `proofSymbol` is a committed proof; checking it specializes to `proven` is a
+  // computation over the proof's own facts, so ground redexes minted by the
+  // match reduce to their determined values rather than crossing the tail.
+  ComputingScope computing;
   if (auto impl = dyn_cast<ImplOp>(proofSymbol)) {
     if (failed(impl.buildSubstitutionForSelfClaim(proven.asUnproven(), err)))
       return failure();
@@ -593,9 +671,14 @@ LogicalResult verifyAndRecordProof(
   // otherwise the symbol must be a ProofOp
   auto proof = dyn_cast<ProofOp>(*symOp);
 
-  // check that the proof's claim can specialize to match proven
-  if (failed(buildSpecialization(proof.getProvenClaim(), proven, module, err)))
-    return failure();
+  // check that the proof's claim can specialize to match proven. Both name this
+  // one committed proof, so reducing ground redexes its spellings mint is a
+  // computation over the proof's own facts, not a spelling comparison.
+  {
+    ComputingScope computing;
+    if (failed(buildSpecialization(proof.getProvenClaim(), proven, module, err)))
+      return failure();
+  }
 
   // Use the proof's concrete claim (projections resolved) rather than the
   // unproven claim (which may still contain projections). Example:
@@ -1001,7 +1084,8 @@ LogicalResult ProjectionType::unify(
                               : ToleranceTailKind::GroundNoCandidate);
     }
   }
-  censusToleranceTail(inVerifyingContext(), kind);
+  censusToleranceTail(inVerifyingContext(), kind,
+                      getTraitApplication().getTraitName().getValue());
   return success();
 }
 

@@ -565,6 +565,16 @@ FailureOr<SpecializationMap> ImplOp::buildSubstitutionForSelfClaim(ClaimType act
                                                                      llvm::function_ref<InFlightDiagnostic()> errFn) {
   auto module = getModule(errFn);
   if (failed(module)) return failure();
+  // Building this candidate impl's self-claim substitution is a computation
+  // over its own committed facts, not the verifier's spelling comparison -- and
+  // getCandidateImplsFor runs it as a per-candidate match probe before any impl
+  // is chosen. Resolve the ground projection redexes the match mints -- the
+  // actual claim's arguments (a caller cast a witness to a projection spelling)
+  // and this impl's own self application (a blanket impl spells `Trait[T]::A`,
+  // ground once `T` binds) -- so the two meet at one spelling. That settles
+  // only this candidate's own match; the rigid side is never resolved, so a
+  // non-projection mismatch still fails.
+  ComputingScope computing;
   return buildSpecialization(getSelfClaim(), actualSelfClaim, *module, errFn);
 }
 
@@ -835,11 +845,11 @@ SmallVector<ClaimType> ImplOp::getAssumptionsAsClaims() {
 FailureOr<SmallVector<ClaimType>> ImplOp::specializeAssumptionsAsClaimsFor(
     ClaimType actualSelfClaim,
     llvm::function_ref<InFlightDiagnostic()> errFn) {
-  auto module = getModule(errFn);
-  if (failed(module)) return failure();
-
-  // build a specialized substitution for actualSelfClaim
-  auto spec = buildSpecialization(getSelfClaim(), actualSelfClaim, *module, errFn);
+  // build a specialized substitution for actualSelfClaim. This runs while
+  // partitioning candidates by their assumptions, before any impl is chosen, so
+  // it settles only this one candidate's own match -- the self-claim build
+  // reduces the ground redexes it mints rather than crossing the tail.
+  auto spec = buildSubstitutionForSelfClaim(actualSelfClaim, errFn);
   if (failed(spec)) return failure();
   auto subst = spec->toTypeMap();
 
