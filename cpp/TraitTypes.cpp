@@ -92,6 +92,20 @@ const char *groundResolveSiteName(GroundResolveSite site) {
   case GroundResolveSite::RecorderDemand: return "recorder-demand";
   case GroundResolveSite::RecorderProven: return "recorder-proven";
   case GroundResolveSite::RecorderReconcile: return "recorder-reconcile";
+  case GroundResolveSite::ImplBoundaryTrait: return "impl-boundary-trait";
+  case GroundResolveSite::ImplBoundaryImpl: return "impl-boundary-impl";
+  case GroundResolveSite::CallBoundaryFormal: return "call-boundary-formal";
+  case GroundResolveSite::CallBoundaryActual: return "call-boundary-actual";
+  }
+  return "<unknown>";
+}
+
+const char *toleranceTailKindName(ToleranceTailKind kind) {
+  switch (kind) {
+  case ToleranceTailKind::Polymorphic: return "polymorphic";
+  case ToleranceTailKind::GroundNoCandidate: return "ground-no-candidate";
+  case ToleranceTailKind::GroundUniqueCandidate: return "ground-unique-candidate";
+  case ToleranceTailKind::GroundMultiCandidate: return "ground-multi-candidate";
   }
   return "<unknown>";
 }
@@ -100,12 +114,18 @@ const char *groundResolveSiteName(GroundResolveSite site) {
 // process exit when the census is enabled, so the counts survive across the many
 // single-file compilations that make up a corpus run without a separate
 // instrumented build. Each line is prefixed TUC for grepping.
-constexpr int kGroundResolveSiteCount = 5;
+constexpr int kGroundResolveSiteCount = 9;
 struct CensusState {
   std::mutex mutex;
   // groundResolve[site][verifying][effective]
   uint64_t groundResolve[kGroundResolveSiteCount][2][2] = {};
   uint64_t toleranceTail[2] = {}; // indexed by verifying
+  // Verifying tolerance-tail hits classified by ToleranceTailKind. Kind 2
+  // (ground with a unique candidate impl) reads two ways by the crossing's
+  // boundary -- an ungated impl-boundary leak (a defect) versus the intended
+  // evidence-gated call residue awaiting cast mediation -- so triage it against
+  // the tail's op attribution (see ToleranceTailKind in the header).
+  uint64_t toleranceTailVerifyingKind[4] = {};
   std::map<std::string, uint64_t> toleranceTailByOp;
   uint64_t recorderNonLiteral = 0;
 
@@ -131,6 +151,11 @@ struct CensusState {
         std::fprintf(stderr, "TUC tolerance-tail %s %llu\n",
                      v ? "verifying" : "computing",
                      (unsigned long long)toleranceTail[v]);
+    for (int k = 0; k < 4; ++k)
+      if (toleranceTailVerifyingKind[k])
+        std::fprintf(stderr, "TUC tolerance-tail-verifying %s %llu\n",
+                     toleranceTailKindName(static_cast<ToleranceTailKind>(k)),
+                     (unsigned long long)toleranceTailVerifyingKind[k]);
     for (auto &[op, n] : toleranceTailByOp)
       std::fprintf(stderr, "TUC tolerance-tail-op %s %llu\n", op.c_str(),
                    (unsigned long long)n);
@@ -160,12 +185,14 @@ void censusGroundResolve(GroundResolveSite site, bool verifying, bool effective)
   s.groundResolve[static_cast<int>(site)][verifying][effective]++;
 }
 
-void censusToleranceTail(bool verifying) {
+void censusToleranceTail(bool verifying, ToleranceTailKind kind) {
   if (!censusEnabled())
     return;
   CensusState &s = censusState();
   std::lock_guard<std::mutex> lock(s.mutex);
   s.toleranceTail[verifying ? 1 : 0]++;
+  if (verifying)
+    s.toleranceTailVerifyingKind[static_cast<int>(kind)]++;
   if (verifying && !verificationOpStack.empty())
     s.toleranceTailByOp[verificationOpStack.back()
                             ->getName()
@@ -958,7 +985,23 @@ LogicalResult ProjectionType::unify(
   // explicit trait.proj.cast justified by the (possibly unproven) claim. Once no
   // unmediated projection-vs-rigid crossing can reach here, this becomes a hard
   // failure.
-  censusToleranceTail(inVerifyingContext());
+  // Classify the tail crossing for the census: polymorphic, or ground by how
+  // many impls could resolve it (none, one, or several). The candidate lookup
+  // runs only when the census is enabled, so it adds no cost to an ordinary
+  // verify.
+  ToleranceTailKind kind = ToleranceTailKind::Polymorphic;
+  if (censusEnabled() && isMonomorphicType(*this) && module) {
+    kind = ToleranceTailKind::GroundNoCandidate;
+    ClaimType claim = asClaim();
+    auto trait = claim.getTraitApplication().getTrait(module, nullptr);
+    if (succeeded(trait)) {
+      size_t n = trait->getCandidateImplsFor(claim).size();
+      kind = n >= 2 ? ToleranceTailKind::GroundMultiCandidate
+                    : (n == 1 ? ToleranceTailKind::GroundUniqueCandidate
+                              : ToleranceTailKind::GroundNoCandidate);
+    }
+  }
+  censusToleranceTail(inVerifyingContext(), kind);
   return success();
 }
 

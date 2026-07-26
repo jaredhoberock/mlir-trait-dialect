@@ -458,11 +458,34 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
       auto actualMethodTy = normalization.normalize(implMethodTy, errFn);
       if (failed(actualMethodTy))
         return failure();
-      if (failed(buildSpecialization(*expectedMethodTy,
-                                     *actualMethodTy, *module, errFn))) {
+
+      // Substituting this impl's self application into the trait method
+      // signature can mint a ground projection redex the impl's own bindings do
+      // not resolve -- a sibling impl's application, e.g. Group[coop.block]::
+      // Shape. Resolve those redexes on BOTH signatures by module-visible impl
+      // lookup so the strict comparison reads two spellings reduced to the same
+      // grade; comparing a normalized spelling against an un-normalized one is
+      // not a post-substitution comparison. The lookup is a read-only
+      // named-fact read (the engine monomorph stamp-out and the proof recorder
+      // already run), minting no proof and mutating no IR. The impl side is the
+      // front end's own emitted spelling, which already resolves every ground
+      // redex its consuming verifier reads locally, so an effective rewrite
+      // there marks an emission defect the census counts.
+      Type expectedResolved =
+          resolveGroundProjectionsByLookup(Type(*expectedMethodTy), *module);
+      censusGroundResolve(GroundResolveSite::ImplBoundaryTrait,
+                          inVerifyingContext(),
+                          expectedResolved != Type(*expectedMethodTy));
+      Type actualResolved =
+          resolveGroundProjectionsByLookup(Type(*actualMethodTy), *module);
+      censusGroundResolve(GroundResolveSite::ImplBoundaryImpl,
+                          inVerifyingContext(),
+                          actualResolved != Type(*actualMethodTy));
+      if (failed(buildSpecialization(expectedResolved, actualResolved,
+                                     *module, errFn))) {
         return emitOpError() << "method '" << name << "' has incompatible signature: "
-                             << "expected " << *expectedMethodTy
-                             << " but found " << implMethodTy;
+                             << "expected " << expectedResolved
+                             << " but found " << actualResolved;
       }
     } else if (auto assocType = dyn_cast<AssocTypeOp>(op)) {
       StringRef name = assocType.getSymName();
@@ -1721,6 +1744,44 @@ FailureOr<CallSubstitution> MethodCallOp::buildParameterSpecialization(llvm::fun
   // actual call type to get any remaining bindings (including generics in args/results)
   FunctionType actual = getActualFunctionType();
   FunctionType originalActual = actual;
+
+  // Specializing the method signature by the call claim can mint a ground
+  // projection redex -- an argument or result that becomes a ground projection
+  // meeting the caller's concrete spelling. Resolve every such redex on BOTH
+  // sides BEFORE the input specialization, so the strict comparison meets two
+  // spellings reduced to one grade rather than tolerating the crossing (the
+  // input unification below runs before the local-claim normalization, so a
+  // redex left here reaches the tail there).
+  //
+  // The call claim's evidence is a LOCALITY LICENSE, not a filter: it grants
+  // permission to consult module facts at this call. Once granted, resolution
+  // is claim-INDEPENDENT -- every ground redex whose application a unique module
+  // impl binds is read to its determined value, whether or not this claim
+  // covers it. So the gate does not itself prevent laundering; safety for a
+  // redex the evidence does not cover rests on the trusted-producer boundary:
+  // the front end discharges a ground projection's head claim where it spells
+  // the projection, before this op sees it. An ordinary unproven claim withholds
+  // the license entirely -- with no committing evidence at the site this op
+  // reads no module facts, so its ground redexes stay spelled and the strict
+  // comparison rejects a head mismatch (the
+  // invalid_method_call_unproven_projection_mismatch pin). Projections over the
+  // method's own generics stay spelled (still polymorphic) for the local-claim
+  // normalization; originalActual keeps the pre-resolution spelling for the
+  // proof-binding recording below.
+  ClaimType callClaim = getClaimType();
+  bool callClaimHasEvidence =
+      callClaim.isProven() || getClaim().getDefiningOp<DeriveOp>();
+  if (callClaimHasEvidence) {
+    Type formalResolved = resolveGroundProjectionsByLookup(formal, *module);
+    censusGroundResolve(GroundResolveSite::CallBoundaryFormal,
+                        inVerifyingContext(), formalResolved != formal);
+    Type actualResolved = resolveGroundProjectionsByLookup(actual, *module);
+    censusGroundResolve(GroundResolveSite::CallBoundaryActual,
+                        inVerifyingContext(), actualResolved != Type(actual));
+    formal = formalResolved;
+    actual = cast<FunctionType>(actualResolved);
+  }
+
   SmallVector<Value> localClaims;
   localClaims.push_back(getClaim());
   for (Value argument : getArguments())

@@ -763,14 +763,18 @@ Type resolveGroundProjectionsByLookup(Type ty, ModuleOp module);
 
 /// While a `VerificationScope` is live on this thread, unification treats
 /// itself as running inside an op verifier: `ProjectionType::unify` performs no
-/// module lookup, so it resolves no ground redexes. Monomorph stamp-out and the
-/// proof recorder normalize their own output, so unification reached from those
-/// two points meets already-resolved ground redexes. The impl declaration
-/// boundary and the call boundary do NOT normalize ground redexes; they rely on
-/// the impl's own associated-type bindings and on the install-grade spelling the
-/// front end emits, and a projection-vs-rigid crossing that survives is accepted
-/// by the tail. Passes construct no scope, so pass-time unification still
-/// resolves the ground redexes that binding a variable mints mid-solve.
+/// module lookup of its own, so it resolves no ground redexes mid-solve.
+/// Monomorph stamp-out and the proof recorder normalize their own output, so
+/// unification reached from those two points meets already-resolved ground
+/// redexes. The impl declaration boundary always normalizes BOTH signatures by
+/// module lookup after its own-binding normalization; the call boundary does so
+/// too, but only when the call claim carries local evidence. Both boundaries
+/// drive that lookup themselves before unifying -- the scope only stops `unify`
+/// from re-running the lookup mid-solve. A projection-vs-rigid crossing that
+/// still survives (a ground redex under an unproven claim, a generator-pending
+/// impl, or a redex minted mid-solve) is accepted by the tail. Passes construct
+/// no scope, so pass-time unification still resolves the ground redexes that
+/// binding a variable mints mid-solve.
 class VerificationScope {
 public:
   explicit VerificationScope(Operation *op);
@@ -791,14 +795,43 @@ enum class GroundResolveSite {
   RecorderDemand,
   RecorderProven,
   RecorderReconcile,
+  // The impl declaration boundary normalizes BOTH the specialized trait method
+  // signature and the impl method signature before the strict comparison. The
+  // impl side is the front end's own emitted spelling, which already resolves
+  // every ground redex its consuming verifier reads locally, so an effective
+  // rewrite there marks an emission defect (a ground redex the front end left
+  // unresolved at install) -- ImplBoundaryImpl's effective count measures it.
+  ImplBoundaryTrait,
+  ImplBoundaryImpl,
+  // The call boundary normalizes the specialized formal and the actual call
+  // type, but only when the call claim carries local evidence (a proven claim
+  // or an explicit derive); an unproven call leaves its ground redexes spelled.
+  CallBoundaryFormal,
+  CallBoundaryActual,
 };
 
 /// Record one ground-resolve invocation: which site drove it, whether a
 /// `VerificationScope` was live, and whether the type actually changed.
 void censusGroundResolve(GroundResolveSite site, bool verifying, bool effective);
 
+/// The shape of the projection at `ProjectionType::unify`'s irreducible-accept
+/// tail, classified for the census.
+///
+/// GroundUniqueCandidate reads two ways, by the boundary that emitted the
+/// crossing (read it against the tail's op attribution): at an UNGATED boundary
+/// -- the impl declaration boundary, which always normalizes both sides -- it is
+/// a real leak the normalization should have resolved; at the evidence-gated
+/// call boundary it is the intended residue the gate leaves spelled under an
+/// unproven claim, awaiting argument-position cast mediation, not a defect.
+enum class ToleranceTailKind {
+  Polymorphic,           // an irreducible template-body crossing
+  GroundNoCandidate,     // ground, no candidate impl -- generator-pending
+  GroundUniqueCandidate, // ground, one candidate impl -- see the note above
+  GroundMultiCandidate,  // ground, several candidate impls
+};
+
 /// Record one entry into `ProjectionType::unify`'s irreducible-accept tail.
-void censusToleranceTail(bool verifying);
+void censusToleranceTail(bool verifying, ToleranceTailKind kind);
 
 /// Record one entry into `verifyEquivalentRecordedProof`'s non-literal path
 /// (the recorded proof did not equal the normalized candidate literally).
