@@ -70,208 +70,8 @@ std::string applySubstitutionAndGenerateMangledNameSuffix(
 
 
 //===----------------------------------------------------------------------===//
-// Verification context and unification census
+// Ground projection resolution
 //===----------------------------------------------------------------------===//
-
-namespace {
-
-// Op verifiers push onto this stack for the duration of their check; the top is
-// the op whose verification is currently driving unification. Empty means
-// unification is running at pass time.
-thread_local llvm::SmallVector<Operation *, 8> verificationOpStack;
-
-bool censusEnabled() {
-  static const bool enabled = std::getenv("TRAIT_UNIFY_CENSUS") != nullptr;
-  return enabled;
-}
-
-const char *groundResolveSiteName(GroundResolveSite site) {
-  switch (site) {
-  case GroundResolveSite::UnifyTail: return "unify-tail";
-  case GroundResolveSite::Specialization: return "specialization";
-  case GroundResolveSite::RecorderDemand: return "recorder-demand";
-  case GroundResolveSite::RecorderProven: return "recorder-proven";
-  case GroundResolveSite::RecorderReconcile: return "recorder-reconcile";
-  case GroundResolveSite::ImplBoundaryTrait: return "impl-boundary-trait";
-  case GroundResolveSite::ImplBoundaryImpl: return "impl-boundary-impl";
-  case GroundResolveSite::CallBoundaryFormal: return "call-boundary-formal";
-  case GroundResolveSite::CallBoundaryActual: return "call-boundary-actual";
-  }
-  return "<unknown>";
-}
-
-const char *toleranceTailKindName(ToleranceTailKind kind) {
-  switch (kind) {
-  case ToleranceTailKind::Polymorphic: return "polymorphic";
-  case ToleranceTailKind::GroundNoCandidate: return "ground-no-candidate";
-  case ToleranceTailKind::GroundUniqueCandidate: return "ground-unique-candidate";
-  case ToleranceTailKind::GroundMultiCandidate: return "ground-multi-candidate";
-  }
-  return "<unknown>";
-}
-
-// The evidence backing a claim SSA value, named for the census. A proven claim
-// (one carrying a proof symbol, e.g. from trait.witness) reads "proven"; an
-// unproven claim reads by the op that produced it -- trait.derive, trait.assume,
-// or trait.allege; "none" covers a claim with no such producer (a function
-// parameter claim) and the absence of a claim entirely (a call op that carries
-// none).
-const char *claimEvidenceKindName(Value claim) {
-  if (!claim)
-    return "none";
-  if (auto claimTy = dyn_cast<ClaimType>(claim.getType()))
-    if (claimTy.isProven())
-      return "proven";
-  Operation *def = claim.getDefiningOp();
-  if (def && isa<DeriveOp>(def))
-    return "derive";
-  if (def && isa<AssumeOp>(def))
-    return "assume";
-  if (def && isa<AllegeOp>(def))
-    return "allege";
-  return "none";
-}
-
-// The claim operand of the op currently driving verification, if it carries
-// one. method.call and proj.cast justify their crossings by a claim; other ops
-// that reach the tolerance tail (func.call, impl) carry none.
-Value currentVerifiedClaim() {
-  if (verificationOpStack.empty())
-    return {};
-  Operation *op = verificationOpStack.back();
-  if (auto call = dyn_cast<MethodCallOp>(op))
-    return call.getClaim();
-  if (auto cast = dyn_cast<ProjCastOp>(op))
-    return cast.getClaim();
-  return {};
-}
-
-// Per-process counters. Printed to stderr from this object's destructor at
-// process exit when the census is enabled, so the counts survive across the many
-// single-file compilations that make up a corpus run without a separate
-// instrumented build. Each line is prefixed TUC for grepping.
-constexpr int kGroundResolveSiteCount = 9;
-struct CensusState {
-  std::mutex mutex;
-  // groundResolve[site][verifying][effective]
-  uint64_t groundResolve[kGroundResolveSiteCount][2][2] = {};
-  uint64_t toleranceTail[2] = {}; // indexed by verifying
-  // Verifying tolerance-tail hits classified by ToleranceTailKind. Kind 2
-  // (ground with a unique candidate impl) reads two ways by the crossing's
-  // boundary -- an ungated impl-boundary leak (a defect) versus the intended
-  // evidence-gated call residue awaiting cast mediation -- so triage it against
-  // the tail's op attribution (see ToleranceTailKind in the header).
-  uint64_t toleranceTailVerifyingKind[4] = {};
-  std::map<std::string, uint64_t> toleranceTailByOp;
-  // Per-hit attribution of every tolerance-tail crossing, keyed by the
-  // composite of the verified op's name, the crossing projection's trait, and
-  // the op's claim evidence kind. The op and evidence dimensions carry
-  // information only for a VERIFYING crossing; every crossing that survives
-  // today is computing (a pass-time substitution build, printed op=<pass>
-  // evidence=none), and it is resolution -- not cast mediation -- that cleared
-  // the verifying population to zero. This is the instrument that names which
-  // crossings survive and why.
-  std::map<std::string, uint64_t> toleranceTailAttribution;
-  uint64_t recorderNonLiteral = 0;
-
-  ~CensusState() {
-    if (!censusEnabled())
-      return;
-    std::lock_guard<std::mutex> lock(mutex);
-    std::fprintf(stderr, "TUC recorder-non-literal %llu\n",
-                 (unsigned long long)recorderNonLiteral);
-    for (int site = 0; site < kGroundResolveSiteCount; ++site)
-      for (int v = 0; v < 2; ++v)
-        for (int e = 0; e < 2; ++e) {
-          uint64_t n = groundResolve[site][v][e];
-          if (!n)
-            continue;
-          std::fprintf(stderr, "TUC ground-resolve %s %s %s %llu\n",
-                       groundResolveSiteName(static_cast<GroundResolveSite>(site)),
-                       v ? "verifying" : "computing",
-                       e ? "effective" : "noop", (unsigned long long)n);
-        }
-    for (int v = 0; v < 2; ++v)
-      if (toleranceTail[v])
-        std::fprintf(stderr, "TUC tolerance-tail %s %llu\n",
-                     v ? "verifying" : "computing",
-                     (unsigned long long)toleranceTail[v]);
-    for (int k = 0; k < 4; ++k)
-      if (toleranceTailVerifyingKind[k])
-        std::fprintf(stderr, "TUC tolerance-tail-verifying %s %llu\n",
-                     toleranceTailKindName(static_cast<ToleranceTailKind>(k)),
-                     (unsigned long long)toleranceTailVerifyingKind[k]);
-    for (auto &[op, n] : toleranceTailByOp)
-      std::fprintf(stderr, "TUC tolerance-tail-op %s %llu\n", op.c_str(),
-                   (unsigned long long)n);
-    for (auto &[key, n] : toleranceTailAttribution)
-      std::fprintf(stderr, "TUC tolerance-tail-attrib %s %llu\n", key.c_str(),
-                   (unsigned long long)n);
-  }
-};
-
-CensusState &censusState() {
-  static CensusState state;
-  return state;
-}
-
-} // namespace
-
-VerificationScope::VerificationScope(Operation *op) {
-  verificationOpStack.push_back(op);
-}
-
-VerificationScope::~VerificationScope() { verificationOpStack.pop_back(); }
-
-ComputingScope::ComputingScope() {
-  saved = std::move(verificationOpStack);
-  verificationOpStack.clear();
-}
-
-ComputingScope::~ComputingScope() { verificationOpStack = std::move(saved); }
-
-bool inVerifyingContext() { return !verificationOpStack.empty(); }
-
-void censusGroundResolve(GroundResolveSite site, bool verifying, bool effective) {
-  if (!censusEnabled())
-    return;
-  CensusState &s = censusState();
-  std::lock_guard<std::mutex> lock(s.mutex);
-  s.groundResolve[static_cast<int>(site)][verifying][effective]++;
-}
-
-void censusToleranceTail(bool verifying, ToleranceTailKind kind,
-                         StringRef projectionTrait) {
-  if (!censusEnabled())
-    return;
-  CensusState &s = censusState();
-  std::lock_guard<std::mutex> lock(s.mutex);
-  s.toleranceTail[verifying ? 1 : 0]++;
-  if (verifying)
-    s.toleranceTailVerifyingKind[static_cast<int>(kind)]++;
-  std::string op = verificationOpStack.empty()
-                       ? std::string("<pass>")
-                       : verificationOpStack.back()
-                             ->getName()
-                             .getStringRef()
-                             .str();
-  if (verifying && !verificationOpStack.empty())
-    s.toleranceTailByOp[op]++;
-  else if (!verifying)
-    s.toleranceTailByOp["<pass>"]++;
-
-  std::string key = "op=" + op + " trait=" + projectionTrait.str() +
-                    " evidence=" + claimEvidenceKindName(currentVerifiedClaim());
-  s.toleranceTailAttribution[key]++;
-}
-
-void censusRecorderNonLiteral() {
-  if (!censusEnabled())
-    return;
-  CensusState &s = censusState();
-  std::lock_guard<std::mutex> lock(s.mutex);
-  s.recorderNonLiteral++;
-}
 
 Type resolveGroundProjectionsByLookup(Type ty, ModuleOp module) {
   if (!module)
@@ -510,48 +310,14 @@ bool ClaimType::isPolymorphic() const {
   });
 }
 
-/// Recursively walk a proof chain starting from an (unproven, proven) claim
-/// pair and build a substitution map (unproven → proven) for every obligation
-/// along the way.  Despite the name, this is not just verification — the
-/// substitution it produces is later used by applySubstitutionToFixedPoint to
-/// rewrite types during unification.
-///
-/// This function lives here (TraitTypes.cpp) because it operates on ClaimType
-/// and builds a type substitution, but it reaches into ProofOp and ImplOp to
-/// look up proofs and specialize obligations.  It arguably belongs on ProofOp
-/// or ClaimType rather than being a free function.
-///
-/// Related: ProofOp::verifyAndGetSubproofClaims (TraitOps.cpp) is a helper
-/// called from here that resolves subproof names to typed claims, validates
-/// coinductive self-references, and checks arity.
-static LogicalResult verifyProofSpecializesTo(
-    Operation *proofSymbol,
-    ClaimType proven,
-    ModuleOp module,
-    llvm::function_ref<InFlightDiagnostic()> err) {
-  // `proofSymbol` is a committed proof; checking it specializes to `proven` is a
-  // computation over the proof's own facts, so ground redexes minted by the
-  // match reduce to their determined values rather than crossing the tail.
-  ComputingScope computing;
-  if (auto impl = dyn_cast<ImplOp>(proofSymbol)) {
-    if (failed(impl.buildSubstitutionForSelfClaim(proven.asUnproven(), err)))
-      return failure();
-    return success();
-  }
-
-  auto proof = cast<ProofOp>(proofSymbol);
-  return buildSpecialization(proof.getProvenClaim(), proven, module, err);
-}
-
 /// Verifies that two recorded proofs for the same obligation are coherent.
 ///
-/// Proof recording uses the unproven obligation as the substitution key, but
-/// the same obligation can be reached through different claim spellings. For
-/// example, one path may record the normalized claim while another path reaches
-/// the projected claim produced by `trait.proj.cast`.
-///
-/// Those spellings are equivalent only if they use the same proof symbol and
-/// that proof symbol independently specializes to both proven claims.
+/// Proof recording keys on the demanded obligation, normalized to its ground
+/// form before recording, so every path that reaches one obligation keys and
+/// records it identically. A second observation is coherent exactly when its
+/// candidate, normalized the same way, equals the recorded proof literally. Any
+/// residual disagreement -- a different proof symbol, or the same symbol at an
+/// unreconciled spelling -- is an incoherent proof mapping.
 static LogicalResult verifyEquivalentRecordedProof(
     ClaimType unproven,
     ClaimType recorded,
@@ -559,42 +325,15 @@ static LogicalResult verifyEquivalentRecordedProof(
     ModuleOp module,
     llvm::function_ref<InFlightDiagnostic()> err) {
   Type normalizedCandidate = resolveGroundProjectionsByLookup(candidate, module);
-  censusGroundResolve(GroundResolveSite::RecorderReconcile, inVerifyingContext(),
-                      normalizedCandidate != Type(candidate));
   if (recorded == normalizedCandidate)
     return success();
 
   // The recorded proof did not match the candidate literally after ground
-  // normalization; attribute the reconciliation that follows for the census.
-  censusRecorderNonLiteral();
-
-  if (recorded.getProof() != candidate.getProof()) {
-    if (err) err() << "inconsistent proof mapping: " << unproven
-                   << " is already bound to " << recorded
-                   << ", but attempted to bind " << candidate;
-    return failure();
-  }
-
-  auto symOp = ProofOp::getProofOpOrUnconditionalImplOp(module, candidate.getProof(), err);
-  if (failed(symOp)) return failure();
-
-  // The same proof symbol may appear through both a normalized obligation and
-  // a projected claim produced by trait.proj.cast. Those are coherent iff the
-  // proof symbol independently specializes to each spelling.
-  //
-  // For polymorphic proofs, the two specialization substitutions need not be
-  // identical. The coherence question here is narrower: can this one proof
-  // symbol witness both spellings of the same already-recorded obligation?
-  if (failed(verifyProofSpecializesTo(*symOp, recorded, module, err)) ||
-      failed(verifyProofSpecializesTo(*symOp, candidate, module, err))) {
-    if (err) err() << "proof " << candidate.getProof()
-                   << " does not specialize to both " << recorded
-                   << " and " << candidate
-                   << " for obligation " << unproven;
-    return failure();
-  }
-
-  return success();
+  // normalization; reject it.
+  if (err) err() << "inconsistent proof mapping: " << unproven
+                 << " is already bound to " << recorded
+                 << ", but attempted to bind " << candidate;
+  return failure();
 }
 
 LogicalResult verifyAndRecordProof(
@@ -617,13 +356,9 @@ LogicalResult verifyAndRecordProof(
   // instead of reconciling two equivalent spellings.
   {
     Type normalizedProven = resolveGroundProjectionsByLookup(proven, module);
-    censusGroundResolve(GroundResolveSite::RecorderProven, inVerifyingContext(),
-                        normalizedProven != Type(proven));
     proven = cast<ClaimType>(normalizedProven);
 
     Type normalizedUnproven = resolveGroundProjectionsByLookup(unproven, module);
-    censusGroundResolve(GroundResolveSite::RecorderDemand, inVerifyingContext(),
-                        normalizedUnproven != Type(unproven));
     unproven = cast<ClaimType>(normalizedUnproven);
   }
 
@@ -673,12 +408,11 @@ LogicalResult verifyAndRecordProof(
 
   // check that the proof's claim can specialize to match proven. Both name this
   // one committed proof, so reducing ground redexes its spellings mint is a
-  // computation over the proof's own facts, not a spelling comparison.
-  {
-    ComputingScope computing;
-    if (failed(buildSpecialization(proof.getProvenClaim(), proven, module, err)))
-      return failure();
-  }
+  // computation over the proof's own facts, not a spelling comparison -- the
+  // recorder is a ratified minting point that reads module facts (the real
+  // module drives the ground-redex resolution inside unification).
+  if (failed(buildSpecialization(proof.getProvenClaim(), proven, module, err)))
+    return failure();
 
   // Use the proof's concrete claim (projections resolved) rather than the
   // unproven claim (which may still contain projections). Example:
@@ -1043,49 +777,40 @@ LogicalResult ProjectionType::unify(
   // A projection all of whose arguments are concrete and whose trait application
   // a unique module-visible impl binds has one determined resolution. Binding a
   // variable mid-solve mints such ground redexes (binding V:=i64 turns
-  // proj<@Prod[V]> into the ground proj<@Prod[i64]>), so pass-time unification
-  // resolves them here and unifies the resolved type against `other`, catching a
-  // real mismatch against the resolved concrete spelling. Under a verification
-  // scope this module lookup does not run -- an equality check performs none. A
-  // concrete projection that reaches a verifier still unresolved (because the
-  // impl or call boundary did not normalize it) falls to the tail below.
-  if (isMonomorphicType(*this) && !inVerifyingContext()) {
+  // proj<@Prod[V]> into the ground proj<@Prod[i64]>), so a caller carrying a
+  // module -- a pass, or a committed-fact substitution build -- resolves them
+  // here and unifies the resolved type against `other`, catching a real mismatch
+  // against the resolved concrete spelling. A verifier compares spellings with
+  // no module (the module-free comparator); an equality check performs no module
+  // lookup, so this step is skipped and an unresolved crossing is a strict
+  // mismatch below.
+  if (isMonomorphicType(*this) && module) {
     Type resolved = resolveGroundProjectionsByLookup(*this, module);
-    censusGroundResolve(GroundResolveSite::UnifyTail, /*verifying=*/false,
-                        resolved != Type(*this));
     if (resolved != Type(*this))
       return trait::unify(resolved, other, module, subst, err);
   }
 
-  // XXX TODO: an irreducible projection -- over a still-symbolic base, or over a
-  // concrete base whose impl a downstream generator has not yet synthesized (the
-  // prelude's Convergence machinery reaches here on every compile) -- against a
-  // rigid type. This verifier holds no evidence for the equality, so it accepts
-  // without recording a binding -- the lenient behavior this tail retains.
-  // Eliminating this tolerance takes front-end AND generator cast-mediation:
-  // every such crossing,
-  // at argument positions and trait-method boundaries alike, spelled as an
-  // explicit trait.proj.cast justified by the (possibly unproven) claim. Once no
-  // unmediated projection-vs-rigid crossing can reach here, this becomes a hard
-  // failure.
-  // Classify the tail crossing for the census: polymorphic, or ground by how
-  // many impls could resolve it (none, one, or several). The candidate lookup
-  // runs only when the census is enabled, so it adds no cost to an ordinary
-  // verify.
-  ToleranceTailKind kind = ToleranceTailKind::Polymorphic;
-  if (censusEnabled() && isMonomorphicType(*this) && module) {
-    kind = ToleranceTailKind::GroundNoCandidate;
-    ClaimType claim = asClaim();
-    auto trait = claim.getTraitApplication().getTrait(module, nullptr);
-    if (succeeded(trait)) {
-      size_t n = trait->getCandidateImplsFor(claim).size();
-      kind = n >= 2 ? ToleranceTailKind::GroundMultiCandidate
-                    : (n == 1 ? ToleranceTailKind::GroundUniqueCandidate
-                              : ToleranceTailKind::GroundNoCandidate);
-    }
+  // The projection did not resolve and meets a rigid non-projection type. The
+  // module-free comparator (a verifier) holds no evidence for the equality:
+  // spellings must be identical after substitution, so reject the crossing.
+  if (!module) {
+    if (err)
+      err() << "projection mismatch: expected " << *this << " but found "
+            << other;
+    return failure();
   }
-  censusToleranceTail(inVerifyingContext(), kind,
-                      getTraitApplication().getTraitName().getValue());
+
+  // XXX TODO(strictness residual): a pass or committed-fact substitution build
+  // reached an irreducible crossing that no committed fact determines here -- a
+  // projection over a still-symbolic base resolvable only through a frame
+  // hypothesis (a where-clause equality), over a concrete base whose impl a
+  // downstream generator has not yet synthesized (the prelude's Convergence
+  // machinery), or over a ground base no unique module impl binds. Accept it
+  // without a binding, as the pre-flip tail did. This residual is deleted once
+  // generator-synthesized impls become committed facts before the substitution
+  // build (fixed-point lowering) and hypothesis crossings are witnessed at their
+  // cast sites; the crossing then reduces or is cast-mediated before reaching
+  // here, and this becomes a hard failure.
   return success();
 }
 

@@ -173,7 +173,8 @@ namespace {
 
 static void applySubstitutionInPlace(const EvidenceBindings& evidence, Operation* root) {
   if (evidence.empty()) return;
-  AttrTypeReplacer replacer = makeTypeReplacerFromSubstitution(evidence.toTypeMap());
+  AttrTypeReplacer replacer =
+      makeTypeReplacerFromSubstitution(evidence.toTypeMap(), /*module=*/ModuleOp());
   replacer.recursivelyReplaceElementsIn(root,
                                         /*replaceAttrs=*/true,
                                         /*replaceLocs=*/false,
@@ -431,7 +432,12 @@ static FailureOr<SpecializedCallTarget>
 specializeCallTarget(CallOpT op, PatternRewriter &rewriter,
                      ImplResolver &resolver, GetFormalTy getFormalTy,
                      StringRef formalTypeFailure) {
-  auto subst = op.buildParameterSpecialization();
+  ModuleOp module = op.getOperation()->template getParentOfType<ModuleOp>();
+
+  // Pass time: pass the module so binding a generic mid-solve resolves the
+  // ground redex it mints (the module-capable comparator, not the verifier's
+  // module-free one).
+  auto subst = op.buildParameterSpecialization(module);
   if (failed(subst)) {
     (void)rewriter.notifyMatchFailure(op, "couldn't build substitution");
     return failure();
@@ -443,7 +449,6 @@ specializeCallTarget(CallOpT op, PatternRewriter &rewriter,
     return failure();
   }
 
-  ModuleOp module = op.getOperation()->template getParentOfType<ModuleOp>();
   auto errFn = [&] { return op.emitOpError(); };
   if (failed(subst->close(op.getOperandTypes(), op.getResultTypes(), *formalTy,
                           module, resolver, rewriter, errFn)))
@@ -558,10 +563,7 @@ struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
 /// pattern updates them in-place under the rewriter.
 struct MonomorphizeResultTypesPattern
     : public OpInterfaceRewritePattern<InferTypeOpInterface> {
-  ImplResolver &resolver;
-
-  MonomorphizeResultTypesPattern(MLIRContext *ctx, ImplResolver &resolver)
-    : OpInterfaceRewritePattern(ctx), resolver(resolver) {}
+  using OpInterfaceRewritePattern::OpInterfaceRewritePattern;
 
   LogicalResult matchAndRewrite(InferTypeOpInterface iface,
                                 PatternRewriter &rewriter) const override {
@@ -593,24 +595,11 @@ struct MonomorphizeResultTypesPattern
     if (specializedTypes->size() != iface->getNumResults())
       return rewriter.notifyMatchFailure(iface, "specialized result type count mismatch");
 
-    // The interface computes result types from the operands' CURRENT
-    // spellings and promises nothing about their normal form, while sibling
-    // patterns rewrite spellings in place (projection -> resolved,
-    // unproven -> proven claim). Writing an operand-echoed spelling over an
-    // already-normalized result would undo those patterns and livelock the
-    // greedy driver, so every computed type is normalized before the
-    // changed-check: this pattern may move result types toward normal form,
-    // never away from it. Trait infrastructure regions are templates whose
-    // projections legitimately stay symbolic, so they skip normalization.
-    // Note resolveProjectionsIn may mint impls/proofs through the rewriter
-    // even when the pattern then reports "result types unchanged"
-    // (precedented by ResolveProjectionsPattern's wouldReplace probe).
-    if (!iface->getParentOfType<TraitOp>() && !iface->getParentOfType<ImplOp>()) {
-      AttrTypeReplacer proofs = makeTypeReplacerFromSubstitution(
-          resolver.buildClaimSubstitutionFromMemo().toTypeMap());
-      for (Type &ty : *specializedTypes)
-        ty = proofs.replace(resolver.resolveProjectionsIn(ty, rewriter));
-    }
+    // The inferred result types are already at the one legal spelling for this
+    // pipeline point -- operands carry canonical types, so inferReturnTypes
+    // echoes canonical types -- and the sibling ResolveProjectionsPattern and
+    // PropagateProofsPattern rewrite any residual projection or proof on the
+    // result. So no separate normalization is applied here.
 
     // check if anything actually changes
     if (llvm::equal(iface->getResultTypes(), *specializedTypes))
@@ -675,7 +664,8 @@ struct PropagateProofsPattern : public RewritePattern {
     if (!opMentionsType<ClaimType>(op))
       return failure();
 
-    AttrTypeReplacer replacer = makeTypeReplacerFromSubstitution(evidence.toTypeMap());
+    AttrTypeReplacer replacer =
+        makeTypeReplacerFromSubstitution(evidence.toTypeMap(), /*module=*/ModuleOp());
     if (!wouldReplace(replacer, op,
                       /*replaceAttrs=*/true,
                       /*replaceLocs=*/false,
@@ -803,7 +793,7 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
   // generic op whose results become monomorphic
   RewritePatternSet patterns(ctx);
   patterns.add<ProveClaimResultPattern>(ctx, *resolver, /*allegeOnly=*/false);
-  patterns.add<MonomorphizeResultTypesPattern>(ctx, *resolver);
+  patterns.add<MonomorphizeResultTypesPattern>(ctx);
   patterns.add<FuncCallOpLowering>(ctx, *resolver);
   patterns.add<MethodCallOpLowering>(ctx, *resolver);
   patterns.add<ResolveProjectionsPattern>(ctx, *resolver);
@@ -836,45 +826,56 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
         "spelling");
 
   // Assert that no op produced an unproven monomorphic claim that escaped
-  // proving. Keying this check on the result ClaimType rather than on the
-  // set of claim-producing ops makes it total over producers: an op whose
-  // claims the patterns above fail to discharge is an error here, never a
-  // silent gap. Trait infrastructure regions are templates and keep their
-  // unproven claims.
+  // proving. Keying this check on the result type rather than on the set of
+  // claim-producing ops makes it total over producers: an op whose claims the
+  // patterns above fail to discharge is an error here, never a silent gap. The
+  // whole result type is walked, so a claim nested inside an aggregate is caught
+  // too, not only a claim that is the root type. Trait infrastructure regions
+  // are templates and keep their unproven claims.
   bool hasLeftovers = false;
   module.walk<WalkOrder::PreOrder>([&](Operation *op) {
     if (isa<TraitOp, ImplOp, ProofOp>(op))
       return WalkResult::skip();
     for (Value result : op->getResults()) {
-      auto claim = dyn_cast<ClaimType>(result.getType());
-      if (!claim || claim.isProven() || !claim.isMonomorphic())
-        continue;
-      hasLeftovers = true;
-      op->emitError() << "unproven monomorphic claim " << claim
-                      << " after instantiate-monomorphs";
+      result.getType().walk([&](Type sub) {
+        auto claim = dyn_cast<ClaimType>(sub);
+        if (!claim || claim.isProven() || !claim.isMonomorphic())
+          return;
+        hasLeftovers = true;
+        op->emitError() << "unproven monomorphic claim " << claim
+                        << " after instantiate-monomorphs";
+      });
     }
     return WalkResult::advance();
   });
   if (hasLeftovers) return failure();
 
-  // Warn about each concrete-base projection that survived resolution. Walking
-  // the result and block-argument types of every non-infrastructure op (operand
+  // Reject each concrete-base projection that survived resolution. Walking the
+  // result and block-argument types of every non-infrastructure op (operand
   // types are SSA-determined by their producers, so they are covered where those
   // producers are visited), this reports any projection whose base is not
   // symbolic, attributing it to the carrying op ahead of the legalization
   // failure that leftover projection then triggers, instead of leaving that
   // failure the only clue. Projections over still-symbolic bases live only in
-  // templates and are left alone.
+  // templates and are left alone; a still-polymorphic template function is not
+  // yet instantiated, so its ground projections (over a concrete base nested in
+  // an otherwise generic body) resolve when it is cloned for a concrete instance
+  // and its whole subtree is skipped.
+  bool sawUnresolvedProjection = false;
   module.walk<WalkOrder::PreOrder>([&](Operation *op) {
     if (isa<TraitOp, ImplOp, ProofOp>(op))
       return WalkResult::skip();
+    if (auto func = dyn_cast<func::FuncOp>(op))
+      if (isPolymorphicType(Type(func.getFunctionType())))
+        return WalkResult::skip();
     auto report = [&](Type root) {
       root.walk([&](Type sub) {
         auto proj = dyn_cast<ProjectionType>(sub);
         if (!proj || isPolymorphicType(proj))
           return;
-        op->emitWarning() << "unresolved projection " << proj
-                          << " after instantiate-monomorphs";
+        op->emitError() << "unresolved projection " << proj
+                        << " after instantiate-monomorphs";
+        sawUnresolvedProjection = true;
       });
     };
     for (Type t : op->getResultTypes())
@@ -885,6 +886,8 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
           report(arg.getType());
     return WalkResult::advance();
   });
+  if (sawUnresolvedProjection)
+    return failure();
 
   return module.verify();
 }

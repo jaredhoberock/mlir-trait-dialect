@@ -105,21 +105,13 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &sub
   AttrTypeReplacer replacer;
   replacer.addReplacement([=](Type t) -> std::optional<Type> {
     Type result = applySubstitutionToFixedPoint(subst, t);
-    if (module) {
-      Type resolved = resolveGroundProjectionsByLookup(result, module);
-      censusGroundResolve(GroundResolveSite::Specialization, inVerifyingContext(),
-                          resolved != result);
-      result = resolved;
-    }
+    if (module)
+      result = resolveGroundProjectionsByLookup(result, module);
 
     // check that the result changed
     return (result != t) ? std::optional<Type>(result) : std::nullopt;
   });
   return replacer;
-}
-
-AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &subst) {
-  return makeTypeReplacerFromSubstitution(subst, /*module=*/ModuleOp());
 }
 
 func::FuncOp specializePolymorph(OpBuilder& builder,

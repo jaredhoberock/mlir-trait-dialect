@@ -1089,7 +1089,7 @@ def MethodCallOp : TraitDialectOp<"method.call", [
     /// Builds the initial call substitution by unifying the callee's formal
     /// function type with the actual argument and result types at this call
     /// site. Projection bindings are added later during call lowering.
-    FailureOr<CallSubstitution> buildParameterSpecialization(llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+    FailureOr<CallSubstitution> buildParameterSpecialization(ModuleOp unifyModule, llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     /// Specializes the callee as a free function using a pre-built substitution.
     FailureOr<func::FuncOp> getOrSpecializeCallee(PatternRewriter &rewriter,
@@ -1204,7 +1204,7 @@ def FuncCallOp : TraitDialectOp<"func.call", [
     /// Builds the initial call substitution by unifying the callee's formal
     /// function type with the actual argument and result types at this call
     /// site. Projection bindings are added later during call lowering.
-    FailureOr<CallSubstitution> buildParameterSpecialization(llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+    FailureOr<CallSubstitution> buildParameterSpecialization(ModuleOp unifyModule, llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     // returns all distinct generic types that occur in the FunctionType of this FuncOp's callee
     SmallVector<GenericTypeInterface, 4> getCalleeTypeParams() {

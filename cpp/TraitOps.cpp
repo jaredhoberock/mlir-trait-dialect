@@ -171,7 +171,6 @@ FailureOr<FunctionType> NormalizationContext::normalize(
 //===----------------------------------------------------------------------===//
 
 LogicalResult TraitOp::verify() {
-  VerificationScope verificationScope(getOperation());
   auto typeParams = getTypeParams().getAsValueRange<TypeAttr>();
 
   // types must be unique GenericTypeParameters
@@ -239,7 +238,6 @@ LogicalResult TraitOp::verify() {
 }
 
 LogicalResult TraitOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  VerificationScope verificationScope(getOperation());
   // verify obligations
   return getRequirements().verifyTraitApplications(getParentOp<ModuleOp>(), [&](){ return emitOpError(); });
 }
@@ -387,7 +385,6 @@ void TraitOp::print(OpAsmPrinter &p) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  VerificationScope verificationScope(getOperation());
   auto errFn = [&]{ return emitOpError(); };
 
   auto module = getModule(errFn);
@@ -469,20 +466,16 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
       // named-fact read (the engine monomorph stamp-out and the proof recorder
       // already run), minting no proof and mutating no IR. The impl side is the
       // front end's own emitted spelling, which already resolves every ground
-      // redex its consuming verifier reads locally, so an effective rewrite
-      // there marks an emission defect the census counts.
+      // redex its consuming verifier reads locally.
       Type expectedResolved =
           resolveGroundProjectionsByLookup(Type(*expectedMethodTy), *module);
-      censusGroundResolve(GroundResolveSite::ImplBoundaryTrait,
-                          inVerifyingContext(),
-                          expectedResolved != Type(*expectedMethodTy));
       Type actualResolved =
           resolveGroundProjectionsByLookup(Type(*actualMethodTy), *module);
-      censusGroundResolve(GroundResolveSite::ImplBoundaryImpl,
-                          inVerifyingContext(),
-                          actualResolved != Type(*actualMethodTy));
+      // Both signatures are reduced to the same grade; compare their spellings
+      // with the module-free comparator (no further ground-redex resolution).
+      // Any projection that survived the lookup above must match literally.
       if (failed(buildSpecialization(expectedResolved, actualResolved,
-                                     *module, errFn))) {
+                                     ModuleOp(), errFn))) {
         return emitOpError() << "method '" << name << "' has incompatible signature: "
                              << "expected " << expectedResolved
                              << " but found " << actualResolved;
@@ -568,13 +561,13 @@ FailureOr<SpecializationMap> ImplOp::buildSubstitutionForSelfClaim(ClaimType act
   // Building this candidate impl's self-claim substitution is a computation
   // over its own committed facts, not the verifier's spelling comparison -- and
   // getCandidateImplsFor runs it as a per-candidate match probe before any impl
-  // is chosen. Resolve the ground projection redexes the match mints -- the
-  // actual claim's arguments (a caller cast a witness to a projection spelling)
-  // and this impl's own self application (a blanket impl spells `Trait[T]::A`,
-  // ground once `T` binds) -- so the two meet at one spelling. That settles
-  // only this candidate's own match; the rigid side is never resolved, so a
-  // non-projection mismatch still fails.
-  ComputingScope computing;
+  // is chosen. Passing the module drives ground-redex resolution inside
+  // unification, so the ground projection redexes the match mints -- the actual
+  // claim's arguments (a caller cast a witness to a projection spelling) and this
+  // impl's own self application (a blanket impl spells `Trait[T]::A`, ground once
+  // `T` binds) -- reduce to their determined values and the two meet at one
+  // spelling. That settles only this candidate's own match; the rigid side is
+  // never resolved, so a non-projection mismatch still fails.
   return buildSpecialization(getSelfClaim(), actualSelfClaim, *module, errFn);
 }
 
@@ -970,7 +963,6 @@ void ImplOp::print(OpAsmPrinter &printer) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult ProofOp::verify() {
-  VerificationScope verificationScope(getOperation());
   // check that every name is a FlatSymbolRefAttr
   for (Attribute name : getSubproofNames()) {
     if (!isa<FlatSymbolRefAttr>(name)) {
@@ -981,7 +973,6 @@ LogicalResult ProofOp::verify() {
 }
 
 LogicalResult ProofOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  VerificationScope verificationScope(getOperation());
   auto module = getParentOp<ModuleOp>();
   auto errFn = [&] { return emitOpError(); };
 
@@ -1177,7 +1168,6 @@ void WitnessOp::print(OpAsmPrinter &p) {
 }
 
 LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  VerificationScope verificationScope(getOperation());
   ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
   if (!module)
     return emitError() << "not inside a module";
@@ -1308,7 +1298,6 @@ ImplOp DeriveOp::getImplOp() {
 ///     assumption (so the caller is providing exactly the evidence the impl
 ///     requires under this specialization).
 LogicalResult DeriveOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  VerificationScope verificationScope(getOperation());
   auto errFn = [&] { return emitOpError(); };
 
   // look up impl by symbol
@@ -1370,7 +1359,6 @@ void AssumeOp::print(OpAsmPrinter &p) {
 }
 
 LogicalResult AssumeOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  VerificationScope verificationScope(getOperation());
   // verify line-of-sight between trait.assume op its enclosing function-like op so
   // that we are able to replace uses of trait.assume with a function parameter
   Operation* isolatedAncestor = getOperation()->getParentWithTrait<OpTrait::IsIsolatedFromAbove>();
@@ -1471,7 +1459,6 @@ void ProjCastOp::print(OpAsmPrinter &p) {
 }
 
 LogicalResult ProjCastOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  VerificationScope verificationScope(getOperation());
   ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
   if (!module)
     return emitError() << "not inside a module";
@@ -1529,11 +1516,11 @@ LogicalResult ProjCastOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     // the input against the result. Non-projection positions must match
     // structurally, and a single projection standing for two different types
     // across input and result is a conflict the shared variable exposes.
-    // Projections over other trait applications are left in place for the
-    // unifier, which today tolerates such an irreducible projection against a
-    // rigid type (accepting without a binding) rather than rejecting it. Proofs
-    // are stripped first: this check compares type structure, and proof
-    // coherence is a separate concern.
+    // Projections over other trait applications are left in place and must match
+    // literally through the module-free comparator: an identical projection on
+    // both sides unifies structurally, and a projection meeting a different type
+    // is a strict mismatch. Proofs are stripped first: this check compares type
+    // structure, and proof coherence is a separate concern.
     DenseMap<ProjectionType, Type> holes;
     uint64_t idCounter = 0;
     AttrTypeReplacer replacer;
@@ -1555,10 +1542,29 @@ LogicalResult ProjCastOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     Type inputHoles = replacer.replace(inputType);
     Type resultHoles = replacer.replace(resultType);
 
-    if (failed(unify(inputHoles, resultHoles, module)))
+    UnificationMap holeSubst;
+    if (failed(unify(inputHoles, resultHoles, ModuleOp(), holeSubst)))
       return emitOpError() << "input type " << inputType << " and result type "
                            << resultType
                            << " are not consistent under claim " << claimApp;
+
+    // A claim-application projection standing for a fresh variable must resolve
+    // to a concrete position, not to a DIFFERENT such variable. Binding one hole
+    // to another equates two distinct projections the claim does not justify
+    // (e.g. crossing @C[X]::A with @C[X]::B), so reject a hole that resolves to
+    // another hole variable. A hole that stays unbound (the same projection on
+    // both sides) resolves to itself and is fine.
+    DenseSet<Type> holeVars;
+    for (auto &[proj, var] : holes)
+      holeVars.insert(var);
+    for (Type var : holeVars) {
+      Type resolved = applySubstitutionToFixedPoint(holeSubst.toTypeMap(), var);
+      if (resolved != var && holeVars.contains(resolved))
+        return emitOpError() << "input type " << inputType << " and result type "
+                             << resultType
+                             << " equate distinct projections under claim "
+                             << claimApp;
+    }
 
     return success();
   }
@@ -1622,7 +1628,6 @@ FailureOr<func::FuncOp> MethodCallOp::getMethod(llvm::function_ref<InFlightDiagn
 }
 
 LogicalResult MethodCallOp::verify() {
-  VerificationScope verificationScope(getOperation());
   // the claim's type must be an ClaimType
   ClaimType claim = dyn_cast_or_null<ClaimType>(getClaim().getType());
   if (!claim)
@@ -1718,7 +1723,6 @@ static FailureOr<NormalizationContext> buildLocalClaimNormalizationContext(
 }
 
 LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  VerificationScope verificationScope(getOperation());
   auto errFn = [&]{ return emitOpError(); };
 
   auto module = getModule(errFn);
@@ -1729,11 +1733,13 @@ LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable)
   if (failed(claim.verifySymbolUses(*module, errFn)))
     return failure();
 
-  // check that we can build a consistent substitution for this method call
-  return buildParameterSpecialization(errFn);
+  // check that we can build a consistent substitution for this method call.
+  // The verifier compares spellings with the module-free comparator: no
+  // ground-redex resolution, so an unresolved crossing is a strict mismatch.
+  return buildParameterSpecialization(/*unifyModule=*/ModuleOp(), errFn);
 }
 
-FailureOr<CallSubstitution> MethodCallOp::buildParameterSpecialization(llvm::function_ref<InFlightDiagnostic()> err) {
+FailureOr<CallSubstitution> MethodCallOp::buildParameterSpecialization(ModuleOp unifyModule, llvm::function_ref<InFlightDiagnostic()> err) {
   auto module = getModule(err);
   if (failed(module)) return failure();
 
@@ -1782,14 +1788,8 @@ FailureOr<CallSubstitution> MethodCallOp::buildParameterSpecialization(llvm::fun
   bool callClaimHasEvidence =
       callClaim.isProven() || getClaim().getDefiningOp<DeriveOp>();
   if (callClaimHasEvidence) {
-    Type formalResolved = resolveGroundProjectionsByLookup(formal, *module);
-    censusGroundResolve(GroundResolveSite::CallBoundaryFormal,
-                        inVerifyingContext(), formalResolved != formal);
-    Type actualResolved = resolveGroundProjectionsByLookup(actual, *module);
-    censusGroundResolve(GroundResolveSite::CallBoundaryActual,
-                        inVerifyingContext(), actualResolved != Type(actual));
-    formal = formalResolved;
-    actual = cast<FunctionType>(actualResolved);
+    formal = resolveGroundProjectionsByLookup(formal, *module);
+    actual = cast<FunctionType>(resolveGroundProjectionsByLookup(actual, *module));
   }
 
   SmallVector<Value> localClaims;
@@ -1802,11 +1802,16 @@ FailureOr<CallSubstitution> MethodCallOp::buildParameterSpecialization(llvm::fun
   if (failed(normalization))
     return failure();
 
+  // The input and result specializations compare spellings that the boundary
+  // resolution and the local-claim normalization above have already reduced.
+  // `unifyModule` selects the comparator: a verifier passes none (strict), a
+  // pass passes the module so binding a generic mid-solve resolves the ground
+  // redex it mints.
   FunctionType formalFunction = cast<FunctionType>(formal);
   auto inputSpec = buildSpecialization(
       FunctionType::get(getContext(), formalFunction.getInputs(), TypeRange{}),
       FunctionType::get(getContext(), actual.getInputs(), TypeRange{}),
-      *module, err);
+      unifyModule, err);
   if (failed(inputSpec)) return failure();
 
   // Input arguments determine method generics such as the closure type `F`.
@@ -1826,7 +1831,7 @@ FailureOr<CallSubstitution> MethodCallOp::buildParameterSpecialization(llvm::fun
   formal = *normalizedFormal;
   actual = *normalizedActual;
 
-  auto resultSpec = buildSpecialization(formal, actual, *module, err);
+  auto resultSpec = buildSpecialization(formal, actual, unifyModule, err);
   if (failed(resultSpec)) return failure();
 
   auto merged = inputMap;
@@ -1990,7 +1995,6 @@ void MethodCallOp::print(OpAsmPrinter& p) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult FuncCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  VerificationScope verificationScope(getOperation());
   auto calleeName = getCalleeNameAttr();
   if (!calleeName)
     return emitOpError() << "requires a 'callee_name' symbol reference attribute";
@@ -2000,11 +2004,12 @@ LogicalResult FuncCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   auto callee = getCallee(errFn);
   if (failed(callee)) return failure();
 
-  // check that we can build a substitution
-  return buildParameterSpecialization(errFn);
+  // check that we can build a substitution. The verifier compares spellings
+  // with the module-free comparator (no ground-redex resolution).
+  return buildParameterSpecialization(/*unifyModule=*/ModuleOp(), errFn);
 }
 
-FailureOr<CallSubstitution> FuncCallOp::buildParameterSpecialization(llvm::function_ref<InFlightDiagnostic()> err) {
+FailureOr<CallSubstitution> FuncCallOp::buildParameterSpecialization(ModuleOp unifyModule, llvm::function_ref<InFlightDiagnostic()> err) {
   auto module = getModule(err);
   if (failed(module)) return failure();
 
@@ -2015,8 +2020,10 @@ FailureOr<CallSubstitution> FuncCallOp::buildParameterSpecialization(llvm::funct
   FunctionType formal = *maybeFormal;
   FunctionType actual = getActualFunctionType();
 
-  // build a substitution unifying formal & actual
-  auto spec = buildSpecialization(formal, actual, *module, err);
+  // build a substitution unifying formal & actual. `unifyModule` selects the
+  // comparator: a verifier passes none (strict); a pass passes the module so a
+  // ground redex minted by binding a generic mid-solve resolves.
+  auto spec = buildSpecialization(formal, actual, unifyModule, err);
   if (failed(spec)) return failure();
 
   CallSubstitution subst(*spec);
@@ -2027,7 +2034,12 @@ FailureOr<CallSubstitution> FuncCallOp::buildParameterSpecialization(llvm::funct
 }
 
 std::string FuncCallOp::getNameOfCalleeInstance() {
-  auto subst = buildParameterSpecialization();
+  // Runs at pass time (callee mangling), so pass the module: binding a generic
+  // mid-solve can mint a ground redex that must resolve for the name to match.
+  auto module = getModule();
+  if (failed(module))
+    llvm_unreachable("FuncCallOp::getNameOfCalleeInstance: not inside a module");
+  auto subst = buildParameterSpecialization(*module);
   if (failed(subst))
     llvm_unreachable("FuncCallOp::getNameOfCalleeInstance: buildParameterSpecialization failed");
 
@@ -2147,7 +2159,6 @@ TraitOp ProjectOp::getProjectedTrait() {
 }
 
 LogicalResult ProjectOp::verifySymbolUses(SymbolTableCollection &/*symbolTable*/) {
-  VerificationScope verificationScope(getOperation());
   ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
   if (!module)
     return emitOpError() << "not in a module";
@@ -2296,7 +2307,6 @@ void AllegeOp::print(OpAsmPrinter &p) {
 }
 
 LogicalResult AllegeOp::verify() {
-  VerificationScope verificationScope(getOperation());
   // claim must be monomorphic unless unsafe
   if (!getUnsafe() && !getClaim().isMonomorphic())
     return emitOpError() << "expected monomorphic claim, got "
@@ -2305,7 +2315,6 @@ LogicalResult AllegeOp::verify() {
 }
 
 LogicalResult AllegeOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  VerificationScope verificationScope(getOperation());
   ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
   if (!module)
     return emitOpError() << "not in a module";
