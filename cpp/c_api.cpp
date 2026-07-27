@@ -27,10 +27,6 @@ MlirPass traitCreateResolveImplsPass() {
   return wrap(createResolveImplsPass().release());
 }
 
-MlirPass traitCreateVerifyAcyclicTraitsPass() {
-  return wrap(createVerifyAcyclicTraitsPass().release());
-}
-
 MlirAttribute traitTraitApplicationAttrGet(MlirContext wrappedCtx,
                                            MlirStringRef traitName,
                                            MlirType* typeArgs, intptr_t numTypeArgs) {
@@ -347,16 +343,6 @@ MlirType traitClaimTypeGet(MlirContext wrappedCtx,
   TraitApplicationAttr traitApp = dyn_cast<TraitApplicationAttr>(unwrap(wrappedTraitApp));
   if (!traitApp) return {}; // invalid attribute type
   return wrap(ClaimType::get(ctx, traitApp));
-}
-
-MlirType traitClaimTypeGetProven(MlirContext wrappedCtx,
-                                 MlirAttribute wrappedTraitApp,
-                                 MlirStringRef proofName) {
-  MLIRContext* ctx = unwrap(wrappedCtx);
-  TraitApplicationAttr traitApp = dyn_cast<TraitApplicationAttr>(unwrap(wrappedTraitApp));
-  if (!traitApp) return {};
-  auto proof = FlatSymbolRefAttr::get(ctx, StringRef(proofName.data, proofName.length));
-  return wrap(ClaimType::get(ctx, traitApp, proof));
 }
 
 MlirType traitClaimTypeWithApplication(MlirType wrappedClaimType,

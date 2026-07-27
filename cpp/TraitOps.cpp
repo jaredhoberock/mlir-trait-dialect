@@ -593,17 +593,6 @@ FailureOr<Type> ImplOp::specializeAssociatedTypeBinding(
   return *binding;
 }
 
-Type ImplOp::resolveProjectionTypesViaBindings(Type ty, const SpecializationMap &subst) {
-  AttrTypeReplacer replacer;
-  replacer.addReplacement([&](ProjectionType proj) -> std::optional<Type> {
-    auto resolved = specializeAssociatedTypeBinding(
-        proj.getAssocName().getValue(), proj.getAssocTypeArgs());
-    if (failed(resolved)) return std::nullopt;
-    return subst.apply(*resolved);
-  });
-  return replacer.replace(ty);
-}
-
 FailureOr<ImplSpecialization> ImplOp::buildImplSpecialization(
     ClaimType provenSelfClaim,
     llvm::function_ref<InFlightDiagnostic()> err) {
@@ -862,14 +851,23 @@ FailureOr<SmallVector<ClaimType>> ImplOp::specializeObligationsAsClaimsFor(
   auto requirements = getTrait().specializeRequirementsAsClaimsFor(actualSelfClaim, errFn);
   if (failed(requirements)) return failure();
 
-  // resolve projections in requirements using this impl's associated type
+  // Resolve projections in requirements using this impl's associated type
   // bindings (e.g., `Coord[Tensor[Self]::Shape]` becomes `Coord[tuple<i64,i64>]`
-  // when the impl binds `Shape = S` and S is specialized to tuple<i64,i64>)
+  // when the impl binds `Shape = S` and S is specialized to tuple<i64,i64>).
+  // Only projections over this impl's own (actual) trait application resolve
+  // through its bindings; a projection over a different trait application that
+  // merely shares an associated-type name stays symbolic.
   auto subst = buildSubstitutionForSelfClaim(actualSelfClaim, errFn);
   if (failed(subst)) return failure();
 
-  for (ClaimType &req : *requirements)
-    req = cast<ClaimType>(resolveProjectionTypesViaBindings(req, *subst));
+  NormalizationContext normalization;
+  normalization.addLocalProjectionRule(
+      *this, actualSelfClaim.getTraitApplication(), *subst);
+  for (ClaimType &req : *requirements) {
+    auto resolved = normalization.normalize(req, errFn);
+    if (failed(resolved)) return failure();
+    req = cast<ClaimType>(*resolved);
+  }
 
   // specialize assumptions of the impl
   auto assumptions = specializeAssumptionsAsClaimsFor(actualSelfClaim, errFn);
@@ -1530,7 +1528,7 @@ LogicalResult ProjCastOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
       auto it = holes.find(proj);
       if (it != holes.end())
         return it->second;
-      Type var = InferenceType::get(getContext(), idCounter++, /*origin_poly_id=*/0);
+      Type var = InferenceType::get(getContext(), idCounter++);
       holes[proj] = var;
       return var;
     });
@@ -2150,20 +2148,6 @@ void ProjectOp::print(OpAsmPrinter& p) {
 
   if (dstTy.isProven())
     p << " by " << dstTy.getProof();
-}
-
-TraitOp ProjectOp::getSourceTrait() {
-  auto module = getOperation()->getParentOfType<ModuleOp>();
-  if (!module)
-    llvm_unreachable("ProjectOp::getSourceTrait: not in a module");
-  return getSourceClaim().getTraitApplication().getTraitOrAbort(module, "ProjectOp::getSourceTrait: couldn't find trait");
-}
-
-TraitOp ProjectOp::getProjectedTrait() {
-  auto module = getOperation()->getParentOfType<ModuleOp>();
-  if (!module)
-    llvm_unreachable("ProjectOp::getProjectedTrait: not in a module");
-  return getResultClaim().getTraitApplication().getTraitOrAbort(module, "ProjectOp::getProjectedTrait: couldn't find trait");
 }
 
 LogicalResult ProjectOp::verifySymbolUses(SymbolTableCollection &/*symbolTable*/) {

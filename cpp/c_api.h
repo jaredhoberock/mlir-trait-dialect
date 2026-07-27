@@ -19,9 +19,6 @@ MlirPass traitCreateMonomorphizePass();
 /// Create a resolve-impls-trait pass
 MlirPass traitCreateResolveImplsPass();
 
-/// Create a verify-acyclic-traits pass
-MlirPass traitCreateVerifyAcyclicTraitsPass();
-
 /// Create a TraitApplicationAttr: @Trait[Type...]
 MlirAttribute traitTraitApplicationAttrGet(MlirContext ctx,
                                            MlirStringRef traitName,
@@ -100,12 +97,6 @@ MlirType traitPolyTypeGet(MlirContext ctx, unsigned int uniqueId);
 /// Return the !trait.claim<@Trait[Type1, Type2, ...]> type (unproven)
 MlirType traitClaimTypeGet(MlirContext ctx,
                            MlirAttribute traitApp);
-
-/// Return a proven !trait.claim<@Trait[...] by @proof> type.
-/// `proofName` is the symbol name of the proof.
-MlirType traitClaimTypeGetProven(MlirContext ctx,
-                                 MlirAttribute traitApp,
-                                 MlirStringRef proofName);
 
 /// Return a claim type with the same proof as `claimType` but
 /// with a different trait application.

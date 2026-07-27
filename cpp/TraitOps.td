@@ -511,10 +511,6 @@ def ImplOp : TraitDialectOp<"impl", [
         ArrayRef<Type> assocTypeArgs,
         llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
-    /// Replace concrete ProjectionTypes in `ty` using this impl's associated
-    /// type bindings, applying `subst` to specialize the result.
-    Type resolveProjectionTypesViaBindings(Type ty, const SpecializationMap &subst);
-
   }];
 
   // builders create one empty block in the body region
@@ -895,9 +891,6 @@ def ProjectOp : TraitDialectOp<"project", [
     ClaimType getResultClaim() {
       return cast<ClaimType>(getResult().getType());
     }
-
-    TraitOp getSourceTrait();
-    TraitOp getProjectedTrait();
   }];
 
   let hasCustomAssemblyFormat = 1;

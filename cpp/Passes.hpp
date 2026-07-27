@@ -38,33 +38,11 @@ struct ResolveImplsPass : PassWrapper<ResolveImplsPass, OperationPass<ModuleOp>>
 
 std::unique_ptr<Pass> createResolveImplsPass();
 
-struct VerifyMonomorphsPass : PassWrapper<VerifyMonomorphsPass, OperationPass<ModuleOp>> {
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(VerifyMonomorphsPass);
-
-  inline StringRef getArgument() const final { return "verify-monomorphs-trait"; }
-  inline StringRef getDescription() const final { return "Check that monomorphic free functions do not leak polymorphic trait types."; }
-
-  void runOnOperation() override;
-};
-
-std::unique_ptr<Pass> createVerifyMonomorphsPass();
-
 struct VerifyAcyclicTraitsPass : PassWrapper<VerifyAcyclicTraitsPass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(VerifyAcyclicTraitsPass);
 
   inline StringRef getArgument() const final { return "verify-acyclic-traits"; }
   inline StringRef getDescription() const final { return "Verify that the trait dependency graph is acyclic."; }
-
-  void runOnOperation() override;
-};
-
-std::unique_ptr<Pass> createVerifyAcyclicTraitsPass();
-
-struct ConvertToTraitPass : PassWrapper<ConvertToTraitPass, OperationPass<ModuleOp>> {
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ConvertToTraitPass);
-
-  inline StringRef getArgument() const final { return "convert-to-trait"; }
-  inline StringRef getDescription() const final { return "Convert operations of participating dialects into trait operations."; }
 
   void runOnOperation() override;
 };

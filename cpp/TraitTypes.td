@@ -121,18 +121,11 @@ def ClaimType : TypeDef<TraitDialect, "Claim", [
       return ClaimType::get(getContext(), getTraitApplication());
     }
 
-    // bitmask flags for which projections to return from getProjections
-    enum ProjectionKind {
-      Identity              = 1 << 0,
-      TraitRequirements     = 1 << 1,
-      ProvenImplAssumptions = 1 << 2,
-      AllProjections        = Identity | TraitRequirements | ProvenImplAssumptions,
-    };
-
-    /// Return the set of claims that can be legally projected from this claim.
+    /// Return the set of claims that can be legally projected from this
+    /// claim: the identity projection, the trait's requirements, and, when
+    /// the claim is proven, its impl's proven assumptions.
     void getProjections(ModuleOp module,
-                        SmallVectorImpl<ClaimType>& result,
-                        ProjectionKind kinds = AllProjections);
+                        SmallVectorImpl<ClaimType>& result);
 
     // for PolymorphicTypeInterface
     bool isPolymorphic() const;
@@ -225,9 +218,9 @@ def InferenceType : TypeDef<TraitDialect, "Inference", [
                         llvm::function_ref<InFlightDiagnostic()> emitError);
   }];
 
-  let parameters = (ins "uint64_t":$unique_id, "uint32_t":$origin_poly_id);
+  let parameters = (ins "uint64_t":$unique_id);
 
-  let assemblyFormat = "`<` $unique_id `,` $origin_poly_id `>`";
+  let assemblyFormat = "`<` $unique_id `>`";
 }
 
 #endif // TRAIT_TYPES_TD

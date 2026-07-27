@@ -33,8 +33,6 @@ class ImplResolver;
 
 namespace mlir::trait {
 
-int freshPolyTypeId();
-
 inline Type applySubstitutionOnce(const llvm::DenseMap<Type,Type> &subst,
                                   Type root);
 inline Type applySubstitutionToFixedPoint(const llvm::DenseMap<Type,Type> &subst,
@@ -425,12 +423,6 @@ inline bool isPurelyPolymorphicType(Type root) {
 /// times within the same type structure, it maps to the same InferenceType.
 Type instantiate(Type t, InstantiationMap& inst, uint64_t& idCounter);
 
-inline void dumpSubstitution(const llvm::DenseMap<Type,Type> &subst) {
-  for (auto [k,v] : subst) {
-    llvm::errs() << k << " -> " << v << "\n";
-  }
-}
-
 inline void normalizeSubstitutionInPlace(llvm::DenseMap<Type,Type> &subst) {
   // Snapshot keys so we can mutate the map safely.
   llvm::SmallVector<Type, 8> keys;
@@ -468,11 +460,6 @@ inline void normalizeSubstitutionInPlace(llvm::DenseMap<Type,Type> &subst) {
     }
   }
 
-}
-
-inline llvm::DenseMap<Type,Type> normalizeSubstitution(llvm::DenseMap<Type,Type> subst) {
-  normalizeSubstitutionInPlace(subst);
-  return subst;
 }
 
 inline Type applySubstitutionOnce(const llvm::DenseMap<Type,Type> &subst,
@@ -718,10 +705,10 @@ inline SmallVector<GenericTypeInterface,4> getGenericTypesIn(Type ty) {
 
 /// Verify that a `proven` claim soundly proves the (possibly still polymorphic)
 /// `unproven` claim and extend `subst` with a mapping when appropriate.
-/// 
+///
 /// Notes:
-/// - `unproven` may already have been normalized by earlier substitutions and
-///   thus arrive already proven; if it matches `proven` we succeed immediately.
+/// - `unproven` must be an unproven obligation; a proven `unproven` is a caller
+///   error and is rejected with a diagnostic.
 /// - Only records a mapping when converting an unproven form to its proven form;
 ///   no-op if `unproven == proven`.
 /// - Recursively checks trait requirements and impl assumptions, ensuring all

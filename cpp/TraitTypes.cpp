@@ -161,7 +161,7 @@ Type PolyType::instantiate(InstantiationMap &inst, uint64_t &idCounter) {
     return *existing;
 
   // create and remember a fresh inference var for this poly
-  auto fresh = InferenceType::get(getContext(), idCounter++, getUniqueId());
+  auto fresh = InferenceType::get(getContext(), idCounter++);
   inst.bind(self, cast<UnificationTypeInterface>(fresh));
   return fresh;
 }
@@ -320,22 +320,19 @@ bool ClaimType::isPolymorphic() const {
 ///
 /// Proof recording keys on the demanded obligation, normalized to its ground
 /// form before recording, so every path that reaches one obligation keys and
-/// records it identically. A second observation is coherent exactly when its
-/// candidate, normalized the same way, equals the recorded proof literally. Any
-/// residual disagreement -- a different proof symbol, or the same symbol at an
-/// unreconciled spelling -- is an incoherent proof mapping.
+/// records it identically, and the candidate arrives already normalized at its
+/// recording site. A second observation is coherent exactly when its candidate
+/// equals the recorded proof literally. Any residual disagreement -- a
+/// different proof symbol, or a spelling that does not match after
+/// normalization -- is an incoherent proof mapping.
 static LogicalResult verifyEquivalentRecordedProof(
     ClaimType unproven,
     ClaimType recorded,
     ClaimType candidate,
-    ModuleOp module,
     llvm::function_ref<InFlightDiagnostic()> err) {
-  Type normalizedCandidate = resolveGroundProjectionsByLookup(candidate, module);
-  if (recorded == normalizedCandidate)
+  if (recorded == candidate)
     return success();
 
-  // The recorded proof did not match the candidate literally after ground
-  // normalization; reject it.
   if (err) err() << "inconsistent proof mapping: " << unproven
                  << " is already bound to " << recorded
                  << ", but attempted to bind " << candidate;
@@ -351,6 +348,15 @@ LogicalResult verifyAndRecordProof(
   // the proven side must carry a proof
   if (!proven.isProven()) {
     if (err) err() << "expected proven claim, but found " << proven;
+    return failure();
+  }
+
+  // the unproven side must be an unproven obligation: it is the recording key,
+  // and a proven claim here would trip the bindings.bind precondition
+  // downstream. Reject it with a diagnostic instead of reaching that assert.
+  if (unproven.isProven()) {
+    if (err) err() << "expected unproven obligation, but found proven claim "
+                   << unproven;
     return failure();
   }
 
@@ -373,21 +379,7 @@ LogicalResult verifyAndRecordProof(
   // coherence instead of requiring syntactic claim equality.
   if (auto existing = bindings.lookup(unproven))
     return verifyEquivalentRecordedProof(
-        unproven, *existing, proven, module, err);
-
-  // the "unproven" parameter we're verifying might have already been
-  // normalized once by previous calls: helpers like
-  //   getRequirementsAsClaimsWith(subst)
-  // apply `subst` to obligations before giving them back.
-  // That means an obligation we thought was "unproven" when we first
-  // saw it can come back already carrying the same proof symbol
-  // as `proven`. In that case, there's nothing left to check.
-  // We just accept it and stop: the claim is already proven and
-  // agrees with what we're trying to record.
-  if (unproven.isProven()) {
-    return verifyEquivalentRecordedProof(
-        unproven.asUnproven(), unproven, proven, module, err);
-  }
+        unproven, *existing, proven, err);
 
   // look up the trait and its requirements using the unproven claim
   auto trait = unproven.getTraitApplication().getTrait(module, err);
@@ -477,23 +469,18 @@ LogicalResult recordProofBindingsIn(
 
 void ClaimType::getProjections(
     ModuleOp module,
-    SmallVectorImpl<ClaimType>& result,
-    ClaimType::ProjectionKind kinds) {
-  // identity?
-  if (kinds & Identity) {
-    result.push_back(*this);
-  }
+    SmallVectorImpl<ClaimType>& result) {
+  // identity
+  result.push_back(*this);
 
-  // trait requirements?
-  if (kinds & TraitRequirements) {
-    auto trait = getTraitApplication().getTraitOrAbort(module, "ClaimType::getProjections: couldn't find trait");
-    auto specRequirements = trait.specializeRequirementsAsClaimsFor(*this);
-    if (succeeded(specRequirements))
-      result.append(*specRequirements);
-  }
+  // trait requirements
+  auto trait = getTraitApplication().getTraitOrAbort(module, "ClaimType::getProjections: couldn't find trait");
+  auto specRequirements = trait.specializeRequirementsAsClaimsFor(*this);
+  if (succeeded(specRequirements))
+    result.append(*specRequirements);
 
-  // proven impl assumptions?
-  if (kinds & ProvenImplAssumptions and isProven()) {
+  // proven impl assumptions
+  if (isProven()) {
     if (auto proof = SymbolTable::lookupNearestSymbolFrom<ProofOp>(module, getProof())) {
       auto specAssumptions = proof.getImpl().specializeAssumptionsAsClaimsFor(*this);
       if (succeeded(specAssumptions))

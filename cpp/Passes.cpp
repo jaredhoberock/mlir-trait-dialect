@@ -18,7 +18,7 @@
 namespace mlir::trait {
 
 //===----------------------------------------------------------------------===//
-// ConvertToTraitPass
+// convertToTrait
 //===----------------------------------------------------------------------===//
 
 LogicalResult convertToTrait(ModuleOp module) {
@@ -39,18 +39,8 @@ LogicalResult convertToTrait(ModuleOp module) {
   return success();
 }
 
-void ConvertToTraitPass::runOnOperation() {
-  if (failed(convertToTrait(getOperation())))
-    signalPassFailure();
-}
-
-std::unique_ptr<Pass> createConvertToTraitPass() {
-  return std::make_unique<ConvertToTraitPass>();
-}
-
-
 //===----------------------------------------------------------------------===//
-// VerifyMonomorphsPass
+// verifyMonomorphs
 //===----------------------------------------------------------------------===//
 
 LogicalResult verifyMonomorphs(ModuleOp module) {
@@ -91,16 +81,6 @@ LogicalResult verifyDeclaredClaimProofs(ModuleOp module) {
   }
   return status;
 }
-
-void VerifyMonomorphsPass::runOnOperation() {
-  if (failed(verifyMonomorphs(getOperation())))
-    signalPassFailure();
-}
-
-std::unique_ptr<Pass> createVerifyMonomorphsPass() {
-  return std::make_unique<VerifyMonomorphsPass>();
-}
-
 
 //===----------------------------------------------------------------------===//
 // VerifyAcyclicTraitsPass
@@ -158,10 +138,6 @@ LogicalResult verifyAcyclicTraits(ModuleOp module) {
 void VerifyAcyclicTraitsPass::runOnOperation() {
   if (failed(verifyAcyclicTraits(getOperation())))
     signalPassFailure();
-}
-
-std::unique_ptr<Pass> createVerifyAcyclicTraitsPass() {
-  return std::make_unique<VerifyAcyclicTraitsPass>();
 }
 
 
