@@ -582,32 +582,32 @@ struct MonomorphizeResultTypesPattern
     }
 
     // try to compute specialized result types; inference failure defers this op
-    SmallVector<Type> inferred;
+    SmallVector<Type> specializedTypes;
     if (failed(iface.inferReturnTypes(iface->getContext(), iface->getLoc(),
                                       iface->getOperands(),
                                       iface->getAttrDictionary(),
                                       iface->getPropertiesStorage(),
-                                      iface->getRegions(), inferred)))
+                                      iface->getRegions(), specializedTypes)))
       return rewriter.notifyMatchFailure(iface, "cannot infer result types from operands");
-    FailureOr<SmallVector<Type>> specializedTypes = std::move(inferred);
 
     // the arity of results must match
-    if (specializedTypes->size() != iface->getNumResults())
+    if (specializedTypes.size() != iface->getNumResults())
       return rewriter.notifyMatchFailure(iface, "specialized result type count mismatch");
 
-    // The inferred result types are already at the one legal spelling for this
-    // pipeline point -- operands carry canonical types, so inferReturnTypes
-    // echoes canonical types -- and the sibling ResolveProjectionsPattern and
-    // PropagateProofsPattern rewrite any residual projection or proof on the
-    // result. So no separate normalization is applied here.
+    // The inferred types are written directly. The participation gate above runs
+    // this pattern only while some result is still non-ground, and it reports
+    // "result types unchanged" once inference reaches a fixed point, so it
+    // cannot spin on its own; a non-confluent interaction with a sibling pattern
+    // is caught by the instantiate-monomorphs rewrite budget, which fails loudly
+    // rather than livelocking.
 
     // check if anything actually changes
-    if (llvm::equal(iface->getResultTypes(), *specializedTypes))
+    if (llvm::equal(iface->getResultTypes(), specializedTypes))
       return rewriter.notifyMatchFailure(iface, "result types unchanged");
 
     // mutate result types in-place
     rewriter.modifyOpInPlace(iface, [&] {
-      for (auto [result, newType] : llvm::zip(iface->getResults(), *specializedTypes))
+      for (auto [result, newType] : llvm::zip(iface->getResults(), specializedTypes))
         result.setType(newType);
     });
 
@@ -752,10 +752,9 @@ struct ResolveProjectionsPattern : public RewritePattern {
 /// memo-based proof propagation: frontend-emitted trait.witness proofs are never
 /// entered into the resolver's proof memo, so the input value's own type is the
 /// only place that proof is recorded. The pattern trusts trait-application
-/// equality and does not re-derive the cast's claim-operand justification --
-/// soundness is anchored at the proof producers, and the cast op's own weak
-/// verification of unproven casts is the acknowledged debt documented on
-/// ProjCastOp in TraitOps.td.
+/// equality and does not re-derive the cast's claim-operand justification;
+/// soundness is anchored at the proof producers, and per-projection consistency
+/// of the cast is enforced separately by the ProjCastOp verifier.
 struct InheritProjCastProofPattern : public OpRewritePattern<ProjCastOp> {
   using OpRewritePattern::OpRewritePattern;
 

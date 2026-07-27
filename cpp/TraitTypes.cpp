@@ -5,11 +5,8 @@
 #include "TraitTypes.hpp"
 #include <atomic>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <map>
-#include <mutex>
 #include <string>
+#include <llvm/ADT/Statistic.h>
 #include <llvm/ADT/TypeSwitch.h>
 #include <llvm/Support/Format.h>
 #include <llvm/Support/xxhash.h>
@@ -20,6 +17,15 @@
 
 #define GET_TYPEDEF_CLASSES
 #include <TraitTypes.cpp.inc>
+
+#define DEBUG_TYPE "trait-residual-tolerance"
+
+// Counts each irreducible projection-vs-rigid crossing the module-capable
+// unify entry accepts without a binding (the residual tolerance). Licensed
+// behavior, so it is a statistic rather than an error; a nonzero value under
+// -stats makes regrowth of that population visible in-tree.
+STATISTIC(numResidualToleranceAccepts,
+          "irreducible projection crossings accepted by the residual tolerance");
 
 namespace mlir::trait {
 
@@ -719,16 +725,21 @@ static LogicalResult unifyStructurally(Type formal,
   return success();
 }
 
-/// Unify a projection type with another type.
+/// Unify a projection type with another type. Two entries reach here: a
+/// module-free comparison (a verifier passes no module) and a module-capable
+/// resolution (a pass or a committed-fact substitution build passes the
+/// module).
 ///
 ///  - Projection vs projection: require the same symbolic projection head, then
 ///    recurse through trait application and associated-type arguments. This
 ///    allows nested projections to justify equivalent spellings.
 ///  - Projection vs a free inference variable it does not occur in: bind the
 ///    variable to the projection.
-///  - Projection vs any other type: resolve the projection if it is ground
-///    (normalization), and otherwise accept it without a binding (the temporary
-///    tolerance, see the XXX below).
+///  - Projection vs any other type: under the module-capable entry, resolve the
+///    projection if a unique impl binds it and unify the result; under the
+///    module-free entry, an unresolved crossing is a strict mismatch and is
+///    rejected. Only the module-capable entry, on an irreducible crossing no
+///    committed fact determines, tolerates it (see the residual note below).
 LogicalResult ProjectionType::unify(
     Type other,
     ModuleOp module,
@@ -761,10 +772,11 @@ LogicalResult ProjectionType::unify(
   // evidence, not by unification. Against a free inference variable that does
   // not occur inside this projection there is a sound choice -- bind the
   // variable to the projection -- so delegate to the variable's own unifier. A
-  // variable that DOES occur inside is left for the lenient tail: a projection
-  // is a resolvable function, so `V = proj<...V...>` is a forwarding equation
-  // (V is a fixpoint of the resolution), not an infinite type, and must not trip
-  // the variable unifier's occurs check.
+  // variable that DOES occur inside is NOT bound here: a projection is a
+  // resolvable function, so `V = proj<...V...>` is a forwarding equation (V is a
+  // fixpoint of the resolution), not an infinite type, and must not trip the
+  // variable unifier's occurs check. It falls to the module-free rejection or
+  // the module-capable resolution below rather than binding.
   if (auto otherVar = mlir::dyn_cast<InferenceType>(other)) {
     bool occurs = false;
     Type(*this).walk([&](Type t) {
@@ -800,17 +812,26 @@ LogicalResult ProjectionType::unify(
     return failure();
   }
 
-  // XXX TODO(strictness residual): a pass or committed-fact substitution build
-  // reached an irreducible crossing that no committed fact determines here -- a
-  // projection over a still-symbolic base resolvable only through a frame
-  // hypothesis (a where-clause equality), over a concrete base whose impl a
-  // downstream generator has not yet synthesized (the prelude's Convergence
-  // machinery), or over a ground base no unique module impl binds. Accept it
-  // without a binding, as the pre-flip tail did. This residual is deleted once
-  // generator-synthesized impls become committed facts before the substitution
-  // build (fixed-point lowering) and hypothesis crossings are witnessed at their
-  // cast sites; the crossing then reduces or is cast-mediated before reaching
-  // here, and this becomes a hard failure.
+  // XXX TODO(residual tolerance): the module-capable entry reached an
+  // irreducible crossing that no committed fact determines here and accepts it
+  // without a binding. This entry runs both at pass time and inside verifiers on
+  // committed-fact matches (witness, proof, derive, and per-candidate
+  // enumeration), so the tolerance is not pass-exclusive. Three classes survive
+  // here, each with its own end condition:
+  //   - Generator-pending grounds: a concrete base whose impl a downstream
+  //     generator has not yet synthesized (the prelude's Convergence machinery).
+  //     Eliminated when generation runs before lowering, so committed builds no
+  //     longer receive an ungenerated impl.
+  //   - Hypothesis-resolvable projections: a still-symbolic base resolvable only
+  //     through a frame hypothesis (a where-clause equality). The witnessable
+  //     part ends when the crossing is witnessed at its cast site; the
+  //     un-witnessable subclass (a hypothesis with no recordable provider) is
+  //     PERMANENT, so acceptance ends here only if committed builds provably
+  //     never receive that subclass.
+  //   - Ground multi-candidate crossings: a ground base several impls bind.
+  //     Resolution is premise-partitioned and belongs to the resolver alone,
+  //     never to this comparison.
+  ++numResidualToleranceAccepts;
   return success();
 }
 

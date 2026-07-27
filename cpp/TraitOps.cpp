@@ -1551,15 +1551,23 @@ LogicalResult ProjCastOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     // A claim-application projection standing for a fresh variable must resolve
     // to a concrete position, not to a DIFFERENT such variable. Binding one hole
     // to another equates two distinct projections the claim does not justify
-    // (e.g. crossing @C[X]::A with @C[X]::B), so reject a hole that resolves to
-    // another hole variable. A hole that stays unbound (the same projection on
-    // both sides) resolves to itself and is fine.
+    // (e.g. crossing @C[X]::A with @C[X]::B). After the fixed-point substitution,
+    // walk the whole resolved binding and reject if it CONTAINS any distinct
+    // hole -- not only if it IS one -- so a hole bound to `tuple<other_hole>`
+    // does not escape. A hole that stays unbound (the same projection on both
+    // sides) resolves to itself and is fine; a hole bound to a concrete spelling
+    // carries no hole at all.
     DenseSet<Type> holeVars;
     for (auto &[proj, var] : holes)
       holeVars.insert(var);
     for (Type var : holeVars) {
       Type resolved = applySubstitutionToFixedPoint(holeSubst.toTypeMap(), var);
-      if (resolved != var && holeVars.contains(resolved))
+      bool carriesDistinctHole = false;
+      resolved.walk([&](Type sub) {
+        if (sub != var && holeVars.contains(sub))
+          carriesDistinctHole = true;
+      });
+      if (carriesDistinctHole)
         return emitOpError() << "input type " << inputType << " and result type "
                              << resultType
                              << " equate distinct projections under claim "
