@@ -264,32 +264,38 @@ LogicalResult InferenceType::unify(
 //===----------------------------------------------------------------------===//
 
 
-LogicalResult ClaimType::verifySymbolUses(ModuleOp module, llvm::function_ref<InFlightDiagnostic()> err) {
+// Recover the module that anchors symbol lookups: the operation verification
+// reached, or that operation itself when it is the anchoring symbol table.
+static ModuleOp getAnchorModule(Operation *anchor) {
+  if (!anchor)
+    return {};
+  if (auto module = dyn_cast<ModuleOp>(anchor))
+    return module;
+  return anchor->getParentOfType<ModuleOp>();
+}
+
+// Entry point for the upstream SymbolUserTypeInterface: symbol-table
+// verification invokes this for every claim reachable from an operation, and an
+// owning op may call it directly. The module is recovered from the anchoring
+// operation and diagnostics are anchored there.
+LogicalResult ClaimType::verifySymbolUses(Operation *op,
+                                          SymbolTableCollection &) const {
+  ModuleOp module = getAnchorModule(op);
+  if (!module)
+    return op->emitError() << "cannot verify " << *this
+                           << ": anchor operation is not nested in a module";
+  auto err = [&] { return op->emitError(); };
+
   // verify trait application
   if (failed(getTraitApplication().verifyTraitApplication(module, err)))
     return failure();
 
   // if there's a proof, verify that it points to a valid symbol
-  if (auto proof = getProof()) {
+  if (auto proof = getProof())
     if (failed(ProofOp::getProofOpOrUnconditionalImplOp(module, proof, err)))
       return failure();
-  }
 
   return success();
-}
-
-// Entry point for the upstream SymbolUserTypeInterface: symbol-table
-// verification invokes this for every claim reachable from an operation.
-// Recover the enclosing module from the anchoring operation and reuse the
-// module-based helper above, routing diagnostics through the anchor.
-LogicalResult ClaimType::verifySymbolUses(Operation *op,
-                                          SymbolTableCollection &) const {
-  auto module = op->getParentOfType<ModuleOp>();
-  if (!module)
-    return op->emitError() << "cannot verify " << *this
-                           << ": anchor operation is not nested in a module";
-  ClaimType self = *this;
-  return self.verifySymbolUses(module, [&] { return op->emitError(); });
 }
 
 Type ClaimType::parse(AsmParser& p) {
@@ -627,22 +633,11 @@ void ProjectionType::print(AsmPrinter &p) const {
   p << ">";
 }
 
-LogicalResult ProjectionType::verifySymbolUses(ModuleOp module,
-                                               llvm::function_ref<InFlightDiagnostic()> err) {
-  return asClaim().verifySymbolUses(module, err);
-}
-
-// Entry point for the upstream SymbolUserTypeInterface; mirrors ClaimType by
-// recovering the module from the anchoring operation and reusing the
-// module-based helper above.
+// Entry point for the upstream SymbolUserTypeInterface. A projection carries the
+// same trait application as its claim, so verification delegates to that claim.
 LogicalResult ProjectionType::verifySymbolUses(Operation *op,
-                                               SymbolTableCollection &) const {
-  auto module = op->getParentOfType<ModuleOp>();
-  if (!module)
-    return op->emitError() << "cannot verify " << *this
-                           << ": anchor operation is not nested in a module";
-  ProjectionType self = *this;
-  return self.verifySymbolUses(module, [&] { return op->emitError(); });
+                                               SymbolTableCollection &symbolTable) const {
+  return asClaim().verifySymbolUses(op, symbolTable);
 }
 
 //===----------------------------------------------------------------------===//

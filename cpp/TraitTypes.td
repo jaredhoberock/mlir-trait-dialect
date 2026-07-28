@@ -113,8 +113,6 @@ def ClaimType : TypeDef<TraitDialect, "Claim", [
       return ClaimType::get(ctx, TraitApplicationAttr::get(ctx, trait, typeArgs));
     }
 
-    LogicalResult verifySymbolUses(ModuleOp module, llvm::function_ref<InFlightDiagnostic()> err);
-
     bool isMonomorphic() const { return !isPolymorphic(); }
 
     bool isProven() const { return static_cast<bool>(getProof()); }
@@ -173,9 +171,6 @@ def ProjectionType : TypeDef<TraitDialect, "Projection", [
     ClaimType asClaim() const {
       return ClaimType::get(getContext(), getTraitApplication());
     }
-
-    LogicalResult verifySymbolUses(ModuleOp module,
-                                   llvm::function_ref<InFlightDiagnostic()> err);
 
     // for PolymorphicTypeInterface
     bool isPolymorphic() const;
