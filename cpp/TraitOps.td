@@ -947,7 +947,6 @@ def WitnessOp : TraitDialectOp<"witness", [
 
 
 def ProjCastOp : TraitDialectOp<"proj.cast", [
-  DeclareOpInterfaceMethods<SymbolUserOpInterface>,
   Pure
 ]> {
   let summary = "Convert between equivalent types via an associated type binding";
@@ -976,6 +975,7 @@ def ProjCastOp : TraitDialectOp<"proj.cast", [
   let arguments = (ins AnyType:$input, Claim:$claim);
   let results = (outs AnyType:$result);
   let hasCustomAssemblyFormat = 1;
+  let hasVerifier = 1;
   let hasFolder = 1;
 }
 

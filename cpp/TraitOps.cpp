@@ -1454,7 +1454,7 @@ void ProjCastOp::print(OpAsmPrinter &p) {
     << " by " << getClaim().getType();
 }
 
-LogicalResult ProjCastOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+LogicalResult ProjCastOp::verify() {
   ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
   if (!module)
     return emitError() << "not inside a module";
