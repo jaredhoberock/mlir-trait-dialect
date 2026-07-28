@@ -1354,7 +1354,7 @@ void AssumeOp::print(OpAsmPrinter &p) {
   getClaim().getTraitApplication().print(p);
 }
 
-LogicalResult AssumeOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+LogicalResult AssumeOp::verify() {
   // verify line-of-sight between trait.assume op its enclosing function-like op so
   // that we are able to replace uses of trait.assume with a function parameter
   Operation* isolatedAncestor = getOperation()->getParentWithTrait<OpTrait::IsIsolatedFromAbove>();

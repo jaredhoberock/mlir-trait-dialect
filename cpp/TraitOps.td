@@ -694,7 +694,6 @@ def AllegeOp : TraitDialectOp<"allege", [
 
 
 def AssumeOp : TraitDialectOp<"assume", [
-  DeclareOpInterfaceMethods<SymbolUserOpInterface>,
   Pure
 ]>{
   let summary = "Introduce an axiomatic claim from the enclosing scope";
@@ -761,6 +760,7 @@ def AssumeOp : TraitDialectOp<"assume", [
   ];
 
   let hasCustomAssemblyFormat = 1;
+  let hasVerifier = 1;
 }
 
 
