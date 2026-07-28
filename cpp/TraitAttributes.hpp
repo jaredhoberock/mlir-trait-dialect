@@ -5,6 +5,7 @@
 #include <mlir/IR/Attributes.h>
 #include <mlir/IR/BuiltinAttributes.h>
 #include <mlir/IR/BuiltinOps.h>
+#include <mlir/IR/SymbolTable.h>
 
 namespace mlir::trait {
   // forward declaration of TraitOp for Attributes.td/Attributes.hpp.inc

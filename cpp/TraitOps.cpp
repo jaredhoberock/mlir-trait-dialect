@@ -239,7 +239,7 @@ LogicalResult TraitOp::verify() {
 
 LogicalResult TraitOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // verify obligations
-  return getRequirements().verifyTraitApplications(getParentOp<ModuleOp>(), [&](){ return emitOpError(); });
+  return getRequirements().verifySymbolUses(getOperation(), symbolTable);
 }
 
 FailureOr<SpecializationMap> TraitOp::buildSubstitutionForSelfClaim(ClaimType actualSelfClaim,
@@ -396,7 +396,7 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     return emitOpError() << "requires a self application TraitApplicationAttr";
 
   // Verify the self application
-  if (failed(selfApp.verifyTraitApplication(*module, errFn)))
+  if (failed(selfApp.verifySymbolUses(getOperation(), symbolTable)))
     return failure();
 
   // Get the trait
@@ -977,7 +977,7 @@ LogicalResult ProofOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // The proven claim is synthesized from the inherent trait_application
   // attribute, so it is not a type on this op's surface and the module-wide
   // type walk never verifies it. Verify the trait application here.
-  if (failed(getTraitApplication().verifyTraitApplication(module, errFn)))
+  if (failed(getTraitApplication().verifySymbolUses(getOperation(), symbolTable)))
     return failure();
 
   // check that the named impl exists

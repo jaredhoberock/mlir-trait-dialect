@@ -45,22 +45,50 @@ TraitOp TraitApplicationAttr::getTraitOrAbort(
   return cantFail(getTrait(module), msg);
 }
 
-LogicalResult TraitApplicationAttr::verifyTraitApplication(
-    ModuleOp module,
-    llvm::function_ref<InFlightDiagnostic()> emitError
-) const {
-  // Get the trait
-  auto maybeTrait = getTrait(module, emitError);
-  if (failed(maybeTrait))
+// Recover the module that anchors symbol lookups: the operation verification
+// reached, or that operation itself when it is the anchoring symbol table.
+static ModuleOp getAnchorModule(Operation *anchor) {
+  if (!anchor)
+    return {};
+  if (auto module = dyn_cast<ModuleOp>(anchor))
+    return module;
+  return anchor->getParentOfType<ModuleOp>();
+}
+
+// A trait application references a trait symbol applied to a fixed number of
+// type arguments; verify the trait exists and its arity is respected. These
+// attributes appear as inherent operation arguments, which the automatic
+// symbol-user driver never walks -- it visits only discardable attributes -- so
+// their owning ops verify them by delegating to this entry point. The interface
+// is adopted for uniformity with symbol-using types; the same method would also
+// verify a trait application encountered in a discardable position.
+LogicalResult TraitApplicationAttr::verifySymbolUses(
+    Operation *op, SymbolTableCollection &) const {
+  ModuleOp module = getAnchorModule(op);
+  if (!module)
+    return op->emitError()
+           << "cannot verify trait application '" << getTraitName()
+           << "': anchor operation is not nested in a module";
+  auto err = [&] { return op->emitError(); };
+
+  auto trait = getTrait(module, err);
+  if (failed(trait))
     return failure();
-  TraitOp trait = *maybeTrait;
 
-  // Check the trait's expected arity against typeArgs
-  auto expectedArity = trait.getTypeParams().size();
+  auto expectedArity = trait->getTypeParams().size();
   if (getTypeArgs().size() != expectedArity)
-    return emitError() << "trait '" << getTraitName() << "' expects " << expectedArity
-                       << " type arguments, found " << getTypeArgs().size();
+    return err() << "trait '" << getTraitName() << "' expects " << expectedArity
+                 << " type arguments, found " << getTypeArgs().size();
 
+  return success();
+}
+
+// Verify each application in turn; see TraitApplicationAttr above.
+LogicalResult TraitApplicationArrayAttr::verifySymbolUses(
+    Operation *op, SymbolTableCollection &symbolTable) const {
+  for (TraitApplicationAttr app : getApplications())
+    if (failed(app.verifySymbolUses(op, symbolTable)))
+      return failure();
   return success();
 }
 

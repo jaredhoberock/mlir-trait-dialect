@@ -279,7 +279,7 @@ static ModuleOp getAnchorModule(Operation *anchor) {
 // owning op may call it directly. The module is recovered from the anchoring
 // operation and diagnostics are anchored there.
 LogicalResult ClaimType::verifySymbolUses(Operation *op,
-                                          SymbolTableCollection &) const {
+                                          SymbolTableCollection &symbolTable) const {
   ModuleOp module = getAnchorModule(op);
   if (!module)
     return op->emitError() << "cannot verify " << *this
@@ -287,7 +287,7 @@ LogicalResult ClaimType::verifySymbolUses(Operation *op,
   auto err = [&] { return op->emitError(); };
 
   // verify trait application
-  if (failed(getTraitApplication().verifyTraitApplication(module, err)))
+  if (failed(getTraitApplication().verifySymbolUses(op, symbolTable)))
     return failure();
 
   // if there's a proof, verify that it points to a valid symbol

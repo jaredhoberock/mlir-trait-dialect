@@ -4,9 +4,11 @@
 #define TRAIT_ATTRIBUTES_TD
 
 include "mlir/IR/AttrTypeBase.td"
+include "mlir/IR/SymbolInterfaces.td"
 include "Trait.td"
 
-def TraitApplicationAttr : AttrDef<TraitDialect, "TraitApplication"> {
+def TraitApplicationAttr : AttrDef<TraitDialect, "TraitApplication",
+    [DeclareAttrInterfaceMethods<SymbolUserAttrInterface>]> {
   let mnemonic = "application";
   let summary = "A trait symbol applied to an ordered list of type arguments.";
   let description = [{
@@ -52,17 +54,13 @@ def TraitApplicationAttr : AttrDef<TraitDialect, "TraitApplication"> {
       }
       return found;
     }
-
-    LogicalResult verifyTraitApplication(
-        ModuleOp module,
-        llvm::function_ref<InFlightDiagnostic()> emitError
-    ) const;
   }];
 
   let hasCustomAssemblyFormat = 1;
 }
 
-def TraitApplicationArrayAttr : AttrDef<TraitDialect, "TraitApplicationArray"> {
+def TraitApplicationArrayAttr : AttrDef<TraitDialect, "TraitApplicationArray",
+    [DeclareAttrInterfaceMethods<SymbolUserAttrInterface>]> {
   let mnemonic = "application_array";
   let summary = "An array of prerequisite trait applications required by traits or assumed by implementation";
   let description = [{
@@ -93,16 +91,6 @@ def TraitApplicationArrayAttr : AttrDef<TraitDialect, "TraitApplicationArray"> {
   );
 
   let extraClassDeclaration = [{
-    LogicalResult verifyTraitApplications(
-        ModuleOp module,
-        llvm::function_ref<InFlightDiagnostic()> emitError) const {
-      for (const auto& app : getApplications()) {
-        if (failed(app.verifyTraitApplication(module, emitError)))
-          return failure();
-      }
-      return success();
-    }
-
     auto getApplicationsOf(FlatSymbolRefAttr traitName) const {
       return llvm::make_filter_range(
         getApplications(),
