@@ -958,6 +958,16 @@ static LogicalResult erasePolymorphs(ModuleOp module) {
         f.erase();
   }
 
+  // Materialize the monomorphic symbol definitions the type sweep below will
+  // reference.  This runs while the generic templates and concrete type
+  // arguments are still present, because the sweep only mangles references to
+  // their monomorphic names -- names from which the arguments cannot be
+  // recovered -- so every minted monomorphic symbol must have its definition
+  // created here first.
+  for (Dialect *dialect : ctx->getLoadedDialects())
+    if (auto *iface = dialect->getRegisteredInterface<MonomorphizationInterface>())
+      iface->materializeMonomorphs(module);
+
   // Phase 1: structural op rewrites via applyPartialConversion.
   // ClaimType maps to zero results (the SSA value disappears).
   TypeConverter opConverter;
