@@ -974,10 +974,6 @@ LogicalResult ProofOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   auto module = getParentOp<ModuleOp>();
   auto errFn = [&] { return emitOpError(); };
 
-  // verify basic symbol uses of the claim
-  if (failed(getProvenClaim().verifySymbolUses(module, errFn)))
-    return failure();
-
   // check that the named impl exists
   auto implOp = getImpl();
   if (!implOp)
@@ -1171,10 +1167,6 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     return emitError() << "not inside a module";
 
   auto errFn = [&] { return emitOpError(); };
-
-  // verify the claim type
-  if (failed(getProvenClaim().verifySymbolUses(module, errFn)))
-    return failure();
 
   // look up the proof symbol (must be ProofOp or unconditional ImplOp)
   auto symOp = ProofOp::getProofOpOrUnconditionalImplOp(module, getProofAttr(), errFn);
@@ -1734,11 +1726,6 @@ LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable)
   auto module = getModule(errFn);
   if (failed(module)) return failure();
 
-  // verify basics about the claim
-  ClaimType claim = getClaimType();
-  if (failed(claim.verifySymbolUses(*module, errFn)))
-    return failure();
-
   // check that we can build a consistent substitution for this method call.
   // The verifier compares spellings with the module-free comparator: no
   // ground-redex resolution, so an unresolved crossing is a strict mismatch.
@@ -2155,17 +2142,8 @@ LogicalResult ProjectOp::verifySymbolUses(SymbolTableCollection &/*symbolTable*/
   if (!module)
     return emitOpError() << "not in a module";
 
-  auto errFn = [&]{ return emitOpError(); };
-
-  // verify source claim
   ClaimType src = getSourceClaim();
-  if (failed(src.verifySymbolUses(module, errFn)))
-    return failure();
-
-  // verify destination claim
   ClaimType dst = getResultClaim();
-  if (failed(dst.verifySymbolUses(module, errFn)))
-    return failure();
 
   // verify proofness parity
   bool srcProven = src.isProven();
@@ -2304,11 +2282,4 @@ LogicalResult AllegeOp::verify() {
     return emitOpError() << "expected monomorphic claim, got "
                          << getClaim();
   return success();
-}
-
-LogicalResult AllegeOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
-  if (!module)
-    return emitOpError() << "not in a module";
-  return getClaim().verifySymbolUses(module, [this] { return emitOpError(); });
 }

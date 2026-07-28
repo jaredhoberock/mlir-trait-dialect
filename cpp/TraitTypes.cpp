@@ -278,6 +278,20 @@ LogicalResult ClaimType::verifySymbolUses(ModuleOp module, llvm::function_ref<In
   return success();
 }
 
+// Entry point for the upstream SymbolUserTypeInterface: symbol-table
+// verification invokes this for every claim reachable from an operation.
+// Recover the enclosing module from the anchoring operation and reuse the
+// module-based helper above, routing diagnostics through the anchor.
+LogicalResult ClaimType::verifySymbolUses(Operation *op,
+                                          SymbolTableCollection &) const {
+  auto module = op->getParentOfType<ModuleOp>();
+  if (!module)
+    return op->emitError() << "cannot verify " << *this
+                           << ": anchor operation is not nested in a module";
+  ClaimType self = *this;
+  return self.verifySymbolUses(module, [&] { return op->emitError(); });
+}
+
 Type ClaimType::parse(AsmParser& p) {
   MLIRContext *ctx = p.getContext();
 
@@ -616,6 +630,19 @@ void ProjectionType::print(AsmPrinter &p) const {
 LogicalResult ProjectionType::verifySymbolUses(ModuleOp module,
                                                llvm::function_ref<InFlightDiagnostic()> err) {
   return asClaim().verifySymbolUses(module, err);
+}
+
+// Entry point for the upstream SymbolUserTypeInterface; mirrors ClaimType by
+// recovering the module from the anchoring operation and reusing the
+// module-based helper above.
+LogicalResult ProjectionType::verifySymbolUses(Operation *op,
+                                               SymbolTableCollection &) const {
+  auto module = op->getParentOfType<ModuleOp>();
+  if (!module)
+    return op->emitError() << "cannot verify " << *this
+                           << ": anchor operation is not nested in a module";
+  ProjectionType self = *this;
+  return self.verifySymbolUses(module, [&] { return op->emitError(); });
 }
 
 //===----------------------------------------------------------------------===//

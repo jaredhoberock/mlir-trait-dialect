@@ -4,6 +4,7 @@
 #define TRAIT_TYPES_TD
 
 include "mlir/IR/AttrTypeBase.td"
+include "mlir/IR/SymbolInterfaces.td"
 include "Trait.td"
 include "TraitAttributes.td"
 include "TraitTypeInterfaces.td"
@@ -68,7 +69,8 @@ def PolyType : TypeDef<TraitDialect, "Poly", [
 // Represents a claim, possibly with direct proof, that a trait application is satisfied by some implementation
 def ClaimType : TypeDef<TraitDialect, "Claim", [
   PolymorphicTypeInterface,
-  UnificationTypeInterface
+  UnificationTypeInterface,
+  DeclareTypeInterfaceMethods<SymbolUserTypeInterface>
 ]> {
   let mnemonic = "claim";
   let summary = "Claim that a type list implements a trait";
@@ -143,7 +145,8 @@ def ClaimType : TypeDef<TraitDialect, "Claim", [
 // Represents a projection of an associated type from a trait application
 def ProjectionType : TypeDef<TraitDialect, "Projection", [
   PolymorphicTypeInterface,
-  UnificationTypeInterface
+  UnificationTypeInterface,
+  DeclareTypeInterfaceMethods<SymbolUserTypeInterface>
 ]> {
   let mnemonic = "proj";
   let summary = "A projected associated type from a trait application";

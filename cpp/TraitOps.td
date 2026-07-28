@@ -629,7 +629,6 @@ def Projection : Type<
 
 
 def AllegeOp : TraitDialectOp<"allege", [
-  DeclareOpInterfaceMethods<SymbolUserOpInterface>,
   Pure
 ]> {
   let summary = "Unverified claim that a trait implementation exists";

@@ -8,6 +8,7 @@
 #include <mlir/IR/BuiltinTypes.h>
 #include <mlir/IR/Diagnostics.h>
 #include <mlir/IR/OperationSupport.h>
+#include <mlir/IR/SymbolTable.h>
 
 namespace mlir { class PatternRewriter; }
 
