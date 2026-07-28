@@ -62,13 +62,12 @@ struct MonomorphizationInterface : DialectInterface {
       TypeConverter &opConverter, RewritePatternSet &patterns,
       AttrTypeReplacer &typeSweep) const {}
 
-  /// Called during erasePolymorphs, before the type sweep mangles polymorphic
-  /// type references to their monomorphic names.  A dialect whose type sweep
-  /// mints a fresh monomorphic symbol for a polymorphic type must materialize
-  /// that symbol's definition here, so no swept reference names a definition
-  /// that does not exist.  The generic templates and the concrete type
-  /// arguments are still present at this point; the mangled name alone cannot
-  /// recover them.
+  /// Called during erasePolymorphs, before the type sweep mangles a monomorphic
+  /// argument-carrying type reference to a fresh symbol name.  A dialect whose
+  /// sweep mints such names must materialize the referenced definitions here,
+  /// so no swept reference names a definition that does not exist.  The generic
+  /// templates and the concrete type arguments are still present at this point;
+  /// the mangled name alone cannot recover them.
   virtual void materializeMonomorphs(ModuleOp module) const {}
 
   inline static StringRef getInterfaceName() { return "MonomorphizationInterface"; }

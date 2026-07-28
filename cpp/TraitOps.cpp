@@ -974,6 +974,12 @@ LogicalResult ProofOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   auto module = getParentOp<ModuleOp>();
   auto errFn = [&] { return emitOpError(); };
 
+  // The proven claim is synthesized from the inherent trait_application
+  // attribute, so it is not a type on this op's surface and the module-wide
+  // type walk never verifies it. Verify the trait application here.
+  if (failed(getTraitApplication().verifyTraitApplication(module, errFn)))
+    return failure();
+
   // check that the named impl exists
   auto implOp = getImpl();
   if (!implOp)
