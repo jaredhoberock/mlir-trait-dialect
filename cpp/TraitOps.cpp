@@ -1094,12 +1094,17 @@ static FailureOr<Operation*> lookupProofSymbol(
 FailureOr<ImplOp> ProofOp::getImplFromProof(
     ModuleOp module,
     FlatSymbolRefAttr name,
-    llvm::function_ref<InFlightDiagnostic()> errFn) {
+    llvm::function_ref<InFlightDiagnostic()> errFn,
+    bool requireUnconditionalDirectImpl) {
   auto symOp = lookupProofSymbol(module, name, errFn);
   if (failed(symOp)) return failure();
 
-  if (auto implOp = dyn_cast<ImplOp>(*symOp))
+  if (auto implOp = dyn_cast<ImplOp>(*symOp)) {
+    if (requireUnconditionalDirectImpl &&
+        failed(implOp.verifyIsUnconditional(errFn)))
+      return failure();
     return implOp;
+  }
 
   auto proofOp = cast<ProofOp>(*symOp);
   ImplOp impl = proofOp.getImpl();
@@ -1174,12 +1179,10 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
   auto errFn = [&] { return emitOpError(); };
 
-  // look up the proof symbol (must be ProofOp or unconditional ImplOp)
-  auto symOp = ProofOp::getProofOpOrUnconditionalImplOp(module, getProofAttr(), errFn);
-  if (failed(symOp)) return failure();
-
-  // check that the underlying impl can build a substitution for our claim
-  auto impl = ProofOp::getImplFromProof(module, getProofAttr(), errFn);
+  // Resolve the proof symbol to its impl in one lookup; a directly-named impl
+  // must be unconditional. The impl must then build a substitution for our claim.
+  auto impl = ProofOp::getImplFromProof(module, getProofAttr(), errFn,
+                                        /*requireUnconditionalDirectImpl=*/true);
   if (failed(impl)) return failure();
 
   auto subst = impl->buildSubstitutionForSelfClaim(getProvenClaim(), errFn);
