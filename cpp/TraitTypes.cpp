@@ -83,6 +83,12 @@ Type resolveGroundProjectionsByLookup(Type ty, ModuleOp module) {
   if (!module)
     return ty;
 
+  // Candidate impls per trait application, memoized for this resolution. The
+  // lookup mutates no impls, so the memo stays valid across the fixed-point
+  // iterations below, and it is scoped to this call so nothing outside observes
+  // it -- repeated projections over the same application skip the module scan.
+  DenseMap<TraitApplicationAttr, SmallVector<ImplOp>> candidateCache;
+
   AttrTypeReplacer replacer;
   replacer.addReplacement([&](ProjectionType proj) -> std::optional<Type> {
     // Only a projection whose arguments are all concrete has a determined
@@ -92,9 +98,7 @@ Type resolveGroundProjectionsByLookup(Type ty, ModuleOp module) {
       return std::nullopt;
 
     ClaimType claim = proj.asClaim();
-    auto trait = claim.getTraitApplication().getTrait(module, nullptr);
-    if (failed(trait))
-      return std::nullopt;
+    TraitApplicationAttr app = claim.getTraitApplication();
 
     // Read-only selection: resolve only when exactly one existing impl binds
     // this application. Two or more matches, and impl generation, are left to
@@ -102,7 +106,14 @@ Type resolveGroundProjectionsByLookup(Type ty, ModuleOp module) {
     // list): selecting it is mechanical name resolution, not premise evaluation,
     // and a legal program has already discharged this ground projection's head
     // claim -- the premise the conditional impl carries.
-    auto candidates = trait->getCandidateImplsFor(claim);
+    auto it = candidateCache.find(app);
+    if (it == candidateCache.end()) {
+      auto trait = app.getTrait(module, nullptr);
+      if (failed(trait))
+        return std::nullopt;
+      it = candidateCache.insert({app, trait->getCandidateImplsFor(claim)}).first;
+    }
+    const SmallVector<ImplOp> &candidates = it->second;
     if (candidates.size() != 1)
       return std::nullopt;
     ImplOp impl = candidates.front();

@@ -281,16 +281,18 @@ SmallVector<ImplOp> TraitOp::getImpls() {
   auto module = getModule();
   if (failed(module)) return {};
 
-  // traverse users of this trait
-  auto uses = mlir::SymbolTable::getSymbolUses(*this, *module);
-  if (!uses) return {};
-
+  // Impls are top-level module children (ImplOp is HasParent<ModuleOp>), so scan
+  // them directly and match this trait's symbol name. This avoids a full-module
+  // symbol-use walk, which materializes every operation's attribute dictionary.
+  StringRef traitName = getSymName();
   SmallVector<ImplOp> result;
-  for (const auto& use : *uses) {
-    if (auto impl = dyn_cast<ImplOp>(use.getUser())) {
-      if (impl.getTrait() == *this)
-        result.push_back(impl);
-    }
+  for (Operation &op : *module->getBody()) {
+    auto impl = dyn_cast<ImplOp>(op);
+    if (!impl)
+      continue;
+    TraitApplicationAttr selfApp = impl.getSelfApplication();
+    if (selfApp && selfApp.getTraitName().getValue() == traitName)
+      result.push_back(impl);
   }
 
   return result;
