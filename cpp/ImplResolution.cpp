@@ -310,6 +310,12 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
   }
 
   // create the proof and memoize by the monomorphic app
+  //
+  // A created proof reaches an enclosing greedy driver's worklist only through
+  // the builder's listener, for the same reason a generated impl does.
+  assert(builder.getListener() &&
+         "proof creation requires a builder that notifies its caller of "
+         "inserted ops");
   rollback.release();
   OpBuilder::InsertionGuard guard(builder);
   builder.setInsertionPointToEnd(module.getBody());

@@ -496,3 +496,32 @@ fn test_jit() {
         }
     }
 }
+
+
+/// The two node-level predicates name a type's family without parsing its
+/// printed form: a generic answers both, a claim carries polymorphism without
+/// being a generic, and a ground type from outside the trait type system
+/// answers neither.
+#[test]
+fn the_type_family_predicates_separate_generics_claims_and_ground_types() {
+    let registry = DialectRegistry::new();
+    register_all_dialects(&registry);
+    let context = Context::new();
+    context.append_dialect_registry(&registry);
+    trait_::register(&context);
+    context.load_all_available_dialects();
+
+    let poly = trait_::poly_type(&context, 0);
+    let application = trait_::trait_application_attr(&context, "Foo", &[poly]);
+    let claim: melior::ir::Type = trait_::claim_type(&context, application).into();
+    let ground: melior::ir::Type = IntegerType::new(&context, 32).into();
+
+    assert!(trait_::is_generic_type(poly));
+    assert!(trait_::carries_polymorphism(poly));
+
+    assert!(!trait_::is_generic_type(claim));
+    assert!(trait_::carries_polymorphism(claim));
+
+    assert!(!trait_::is_generic_type(ground));
+    assert!(!trait_::carries_polymorphism(ground));
+}

@@ -118,6 +118,25 @@ MlirType traitProjectionTypeGet(MlirContext ctx,
 /// Checks whether the given type is a projection type.
 bool traitTypeIsAProjection(MlirType type);
 
+/// Checks whether the given type is a universally-quantified generic, i.e.
+/// implements GenericTypeInterface. `!trait.poly`, `!tuple.poly` and
+/// `!coord.poly` all answer true; the interface is what monomorphization
+/// substitutes.
+///
+/// XXX TODO: this predicate exists because mlir-c offers no way to ask whether
+/// a type implements an interface. It is deleted when a generic
+/// interface-implementation query reaches mlir-c upstream.
+bool traitTypeIsGeneric(MlirType type);
+
+/// Checks whether the given type participates in the trait type system's
+/// polymorphism, i.e. implements PolymorphicTypeInterface. Claim, projection,
+/// generic and inference types answer true; a ground type from a dialect
+/// outside the trait type system answers false.
+///
+/// XXX TODO: this predicate exists for the same reason traitTypeIsGeneric
+/// does, and is deleted by the same upstream query.
+bool traitTypeCarriesPolymorphism(MlirType type);
+
 /// Create a trait.proj.cast operation
 MlirOperation traitProjCastOpCreate(MlirLocation loc,
                                      MlirValue input,

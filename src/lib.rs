@@ -78,6 +78,8 @@ unsafe extern "C" {
                               assoc_name: MlirStringRef,
                               assoc_type_args: *const MlirType, num_assoc_type_args: isize) -> MlirType;
     fn traitTypeIsAProjection(ty: MlirType) -> bool;
+    fn traitTypeIsGeneric(ty: MlirType) -> bool;
+    fn traitTypeCarriesPolymorphism(ty: MlirType) -> bool;
     fn traitProjCastOpCreate(loc: MlirLocation,
                               input: MlirValue,
                               claim: MlirValue,
@@ -446,9 +448,28 @@ pub fn projection_type<'c>(
     ))}
 }
 
+/// Check whether a type is a `!trait.claim` type.
+pub fn is_claim_type(ty: Type) -> bool {
+    unsafe { traitTypeIsAClaim(ty.to_raw()) }
+}
+
 /// Check whether a type is a `!trait.proj` type.
 pub fn is_projection_type(ty: Type) -> bool {
     unsafe { traitTypeIsAProjection(ty.to_raw()) }
+}
+
+/// Check whether a type is a universally-quantified generic — the vocabulary
+/// monomorphization substitutes. `!trait.poly`, `!tuple.poly` and
+/// `!coord.poly` all answer true.
+pub fn is_generic_type(ty: Type) -> bool {
+    unsafe { traitTypeIsGeneric(ty.to_raw()) }
+}
+
+/// Check whether a type participates in the trait type system's polymorphism.
+/// Claim, projection, generic and inference types answer true; a ground type
+/// from a dialect outside the trait type system answers false.
+pub fn carries_polymorphism(ty: Type) -> bool {
+    unsafe { traitTypeCarriesPolymorphism(ty.to_raw()) }
 }
 
 /// Create a `trait.proj.cast` op that converts between equivalent types via a claim.

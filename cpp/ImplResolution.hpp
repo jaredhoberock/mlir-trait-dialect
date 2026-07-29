@@ -17,9 +17,12 @@ struct ImplGenerator {
   // Upon success, returns the newly created ImplOp whose self claim
   // must unify with wanted.
   //
-  // A generator only builds IR, so an OpBuilder suffices; it may leave the
-  // insertion point parked inside the IR it just generated, and restoring the
-  // caller's insertion point is the caller's responsibility.
+  // A generator only builds IR, so an OpBuilder suffices. The caller places
+  // the builder where a generated impl belongs before calling: a generator
+  // that creates its impl at the ambient insertion point puts it wherever the
+  // caller left the builder. On the way out a generator may leave the
+  // insertion point parked inside the IR it just generated, and restoring it
+  // is again the caller's responsibility.
   //
   // When generation runs underneath a greedy pattern driver, the caller must
   // pass that driver's active PatternRewriter itself rather than a builder of

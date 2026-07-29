@@ -382,6 +382,14 @@ bool traitTypeIsAProjection(MlirType type) {
   return isa<ProjectionType>(unwrap(type));
 }
 
+bool traitTypeIsGeneric(MlirType type) {
+  return isa<GenericTypeInterface>(unwrap(type));
+}
+
+bool traitTypeCarriesPolymorphism(MlirType type) {
+  return isa<PolymorphicTypeInterface>(unwrap(type));
+}
+
 MlirOperation traitProjCastOpCreate(MlirLocation loc,
                                      MlirValue input,
                                      MlirValue claim,
