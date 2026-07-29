@@ -90,6 +90,43 @@ unsafe extern "C" {
                               type_params: *const MlirType, num_type_params: isize) -> MlirOperation;
 }
 
+/// Setting this in the environment makes the monomorphization stage record the
+/// demands it declines to serve and write a census of them to standard error
+/// when it finishes.
+pub const DEMAND_CENSUS_ENVIRONMENT_VARIABLE: &str = "TRAIT_DEMAND_CENSUS";
+
+/// Setting this in the environment arms the ground-projection lookup's per-call
+/// check that every monomorphic projection it leaves standing was observed by a
+/// recording site, and the stage-exit check that every drainable key still has
+/// something left to serve.
+pub const DEMAND_CENSUS_CHECK_ENVIRONMENT_VARIABLE: &str = "TRAIT_DEMAND_CENSUS_CHECK";
+
+/// The marker every census line carries.
+pub const DEMAND_CENSUS_LINE_PREFIX: &str = "trait-demand-census";
+
+/// The marker a monomorphic projection carries when it survives the lookup with
+/// no recording site having observed it. It reports a gap in the ledger's
+/// wiring, not a fault in the program being compiled.
+pub const DEMAND_CENSUS_UNHOOKED_MARKER: &str = "trait-demand-census unhooked";
+
+/// The marker a drainable key carries when the stage went on to serve it. Like
+/// the unhooked marker it reports a gap in the ledger's rules.
+pub const DEMAND_CENSUS_SERVED_MARKER: &str = "trait-demand-census served";
+
+/// The marker a deduplicated demanded type carries. These lines name types, and
+/// a monomorphic type's name embeds a mangled hash, so they are read where a
+/// module is small rather than recorded across a corpus.
+pub const DEMAND_CENSUS_DEMAND_MARKER: &str = "trait-demand-census demand";
+
+/// The marker the resolver's scan sizes carry. They move with how much work the
+/// resolver does rather than with what the stage demanded.
+pub const DEMAND_CENSUS_SCAN_MARKER: &str = "trait-demand-census scan";
+
+/// The marker the population's totals carry. A census that reports nothing
+/// still reports this line, so it is what tells a row that raised no demand
+/// apart from a row whose census never ran.
+pub const DEMAND_CENSUS_SUMMARY_MARKER: &str = "trait-demand-census summary";
+
 pub fn register(ctx: &Context) {
     unsafe { traitRegisterDialect(ctx.to_raw()) }
 }

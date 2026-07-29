@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include "DemandLedger.hpp"
 #include "TraitAttributes.hpp"
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/DenseSet.h>
@@ -117,6 +118,12 @@ public:
 
   // A specialization is fully composed by construction, so one structural
   // substitution pass is enough.
+  //
+  // Applying a substitution resolves nothing. Stamping a concrete argument into
+  // a projection spelling can turn a symbolic projection into a ground redex,
+  // and the result carries that redex still spelled as written: it reaches an
+  // engine that could resolve it only if this caller goes on to unify with a
+  // module or to stamp through the module-capable replacer.
   Type apply(Type ty) const { return applySubstitutionOnce(toTypeMap(), ty); }
 
   llvm::DenseMap<Type, Type> toTypeMap() const {
@@ -714,10 +721,16 @@ inline SmallVector<GenericTypeInterface,4> getGenericTypesIn(Type ty) {
 ///   no-op if `unproven == proven`.
 /// - Recursively checks trait requirements and impl assumptions, ensuring all
 ///   subproofs are consistent and present.
+///
+/// `origin` names the caller: this recorder normalizes both claims through the
+/// ground-projection lookup and normalizes the impl's obligations, so it raises
+/// demand, and it runs both inside the stage and inside a proof op's verifier.
+/// It has no default, so a new caller states which it is.
 LogicalResult verifyAndRecordProof(ClaimType unproven,
                                    ClaimType proven,
                                    ModuleOp module,
                                    EvidenceBindings &bindings,
+                                   DemandOrigin origin,
                                    llvm::function_ref<InFlightDiagnostic()> err);
 
 /// Walks the given type and records proven claim substitutions.
@@ -727,9 +740,13 @@ LogicalResult verifyAndRecordProof(ClaimType unproven,
 /// (`claim.asUnproven()`) to the proven claim itself into `subst`.
 /// If a conflicting mapping for the same unproven key already exists,
 /// returns failure and emits an error through `err`.
+///
+/// `origin` names the caller, which every proof this walk records is verified
+/// under. It has no default, so a new caller states which it is.
 LogicalResult recordProofBindingsIn(Type ty,
                                     ModuleOp module,
                                     EvidenceBindings &bindings,
+                                    DemandOrigin origin,
                                     llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
 /// Resolve every ground projection redex in `ty` by module-visible impl
@@ -743,7 +760,18 @@ LogicalResult recordProofBindingsIn(Type ty,
 /// legal program has already discharged the projection's head claim, which is
 /// what its premise witnesses. It never mints proofs, generates impls, or
 /// mutates IR, so it is safe to run inside a verifier.
-Type resolveGroundProjectionsByLookup(Type ty, ModuleOp module);
+///
+/// `origin` names the caller, which the signature otherwise says nothing about.
+/// It classifies the demand this call raises: a verifier's demand is counted,
+/// a stage's is recorded. It has no default, so a new caller states which it
+/// is rather than inheriting an answer.
+Type resolveGroundProjectionsByLookup(Type ty, ModuleOp module,
+                                      DemandOrigin origin);
+
+/// How many irreducible projection crossings the residual tolerance has
+/// accepted in this process. Reported beside the demand census, whose
+/// population it overlaps but does not belong to.
+uint64_t residualToleranceAcceptCount();
 
 std::string generateMangledNameSuffixFor(TypeRange typeArgs);
 

@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
+#include "DemandLedger.hpp"
 #include "Trait.hpp"
 #include "TraitOps.hpp"
 #include "TraitTypes.hpp"
@@ -28,6 +29,10 @@ STATISTIC(numResidualToleranceAccepts,
           "irreducible projection crossings accepted by the residual tolerance");
 
 namespace mlir::trait {
+
+uint64_t residualToleranceAcceptCount() {
+  return numResidualToleranceAccepts.getValue();
+}
 
 void TraitDialect::registerTypes() {
   addTypes<
@@ -79,7 +84,8 @@ std::string applySubstitutionAndGenerateMangledNameSuffix(
 // Ground projection resolution
 //===----------------------------------------------------------------------===//
 
-Type resolveGroundProjectionsByLookup(Type ty, ModuleOp module) {
+Type resolveGroundProjectionsByLookup(Type ty, ModuleOp module,
+                                      DemandOrigin origin) {
   if (!module)
     return ty;
 
@@ -89,8 +95,28 @@ Type resolveGroundProjectionsByLookup(Type ty, ModuleOp module) {
   // it -- repeated projections over the same application skip the module scan.
   DenseMap<TraitApplicationAttr, SmallVector<ImplOp>> candidateCache;
 
+  // The demands this call recorded. Established only when the postcondition
+  // below is armed, so an ordinary call carries no per-call state at all.
+  const bool checkRecordingCoverage = DemandLedger::isPostconditionEnabled() &&
+                                      isDemandRecordingActive() &&
+                                      recordsToLedger(origin);
+  DenseSet<Type> recordedDemands;
+
   AttrTypeReplacer replacer;
   replacer.addReplacement([&](ProjectionType proj) -> std::optional<Type> {
+    // Impl enumeration below builds each candidate's self-claim substitution,
+    // which unifies, which re-enters this callback. The guard makes that
+    // re-entry visible, so a demand raised about a candidate is told apart from
+    // the demand this call was asked about.
+    LookupProbeScope probe;
+
+    auto declineWith = [&](LookupMissReason reason) {
+      recordLookupMiss(Type(proj), reason, origin, probe.getEnclosingDepth());
+      if (checkRecordingCoverage)
+        recordedDemands.insert(Type(proj));
+      return std::optional<Type>(std::nullopt);
+    };
+
     // Only a projection whose arguments are all concrete has a determined
     // resolution. A projection over a still-symbolic base stays spelled as
     // written.
@@ -110,22 +136,24 @@ Type resolveGroundProjectionsByLookup(Type ty, ModuleOp module) {
     if (it == candidateCache.end()) {
       auto trait = app.getTrait(module, nullptr);
       if (failed(trait))
-        return std::nullopt;
+        return declineWith(LookupMissReason::TraitSymbolNotFound);
       it = candidateCache.insert({app, trait->getCandidateImplsFor(claim)}).first;
     }
     const SmallVector<ImplOp> &candidates = it->second;
     if (candidates.size() != 1)
-      return std::nullopt;
+      return declineWith(candidates.empty()
+                             ? LookupMissReason::NoCandidateImpl
+                             : LookupMissReason::MultipleCandidateImpls);
     ImplOp impl = candidates.front();
 
     SmallVector<Type> assocTypeArgs(proj.getAssocTypeArgs());
     auto binding = impl.specializeAssociatedTypeBinding(
         proj.getAssocName().getValue(), assocTypeArgs);
     if (failed(binding))
-      return std::nullopt;
+      return declineWith(LookupMissReason::AssociatedTypeBindingFailed);
     auto subst = impl.buildSubstitutionForSelfClaim(claim);
     if (failed(subst))
-      return std::nullopt;
+      return declineWith(LookupMissReason::SelfClaimSubstitutionFailed);
     return applySubstitutionToFixedPoint(subst->toTypeMap(), *binding);
   });
 
@@ -147,6 +175,28 @@ Type resolveGroundProjectionsByLookup(Type ty, ModuleOp module) {
     module.emitError() << "ground projection normalization did not converge "
                           "within " << maxIterations << " iterations for type "
                        << ty;
+
+  // Every monomorphic projection this call leaves standing is a demand no impl
+  // served, so a recording site must have observed it. A survivor with no
+  // record is a gap in the ledger's wiring, not a fault in the program, so it
+  // goes to the census channel: an error here would fail a correct compile.
+  //
+  // No in-tree program makes this fire, and none is written to: the two halves
+  // are complementary by construction. Every exit that leaves a projection
+  // spelled as written goes through declineWith, which records and then adds to
+  // the set this walk consults, so a survivor the callback visited is in the
+  // set. What remains is a projection the callback never visited -- one the
+  // replacer does not reach -- which is the gap the check exists to find and
+  // which no module can be written to produce today. Deleting an arm's record,
+  // or the set, makes it fire: the census lit rows carry an implicit negative
+  // pin over their whole output, so they fail on the first unhooked line.
+  if (checkRecordingCoverage)
+    ty.walk([&](Type sub) {
+      auto proj = dyn_cast<ProjectionType>(sub);
+      if (!proj || isPolymorphicType(proj) || recordedDemands.contains(sub))
+        return;
+      reportUnhookedMint(sub);
+    });
 
   return ty;
 }
@@ -375,6 +425,7 @@ LogicalResult verifyAndRecordProof(
     ClaimType proven,
     ModuleOp module,
     EvidenceBindings &bindings,
+    DemandOrigin origin,
     llvm::function_ref<InFlightDiagnostic()> err) {
   // the proven side must carry a proof
   if (!proven.isProven()) {
@@ -398,10 +449,12 @@ LogicalResult verifyAndRecordProof(
   // proven spelling, so a second observation matches the first literally
   // instead of reconciling two equivalent spellings.
   {
-    Type normalizedProven = resolveGroundProjectionsByLookup(proven, module);
+    Type normalizedProven =
+        resolveGroundProjectionsByLookup(proven, module, origin);
     proven = cast<ClaimType>(normalizedProven);
 
-    Type normalizedUnproven = resolveGroundProjectionsByLookup(unproven, module);
+    Type normalizedUnproven =
+        resolveGroundProjectionsByLookup(unproven, module, origin);
     unproven = cast<ClaimType>(normalizedUnproven);
   }
 
@@ -450,11 +503,11 @@ LogicalResult verifyAndRecordProof(
   // @D[A[i32]::Out, A[f32]::Out] (the two projections are structurally
   // different even though both resolve to i64).
   auto obligations = proof.getImpl().specializeObligationsAsClaimsFor(
-      proof.getProvenClaim().asUnproven(), err);
+      proof.getProvenClaim().asUnproven(), origin, err);
   if (failed(obligations)) return failure();
 
   // get the subproof claims (also checks arity against obligations)
-  auto subproofs = proof.verifyAndGetSubproofClaims(err);
+  auto subproofs = proof.verifyAndGetSubproofClaims(origin, err);
   if (failed(subproofs)) return failure();
 
   // Bind optimistically before recursing so that coinductive self-references
@@ -464,7 +517,7 @@ LogicalResult verifyAndRecordProof(
 
   // recurse over obligations
   for (auto [ob, sub] : llvm::zip(*obligations, *subproofs)) {
-    if (failed(verifyAndRecordProof(ob, sub, module, bindings, err))) {
+    if (failed(verifyAndRecordProof(ob, sub, module, bindings, origin, err))) {
       bindings.erase(unproven);
       return failure();
     }
@@ -482,6 +535,7 @@ LogicalResult recordProofBindingsIn(
     Type root,
     ModuleOp module,
     EvidenceBindings &bindings,
+    DemandOrigin origin,
     llvm::function_ref<InFlightDiagnostic()> err) {
   LogicalResult status = success();
 
@@ -490,7 +544,8 @@ LogicalResult recordProofBindingsIn(
 
     if (auto claim = dyn_cast<ClaimType>(node)) {
       if (claim.isProven())
-        if (failed(verifyAndRecordProof(claim.asUnproven(), claim, module, bindings, err)))
+        if (failed(verifyAndRecordProof(claim.asUnproven(), claim, module,
+                                        bindings, origin, err)))
           status = failure();
     }
   });
@@ -745,6 +800,33 @@ static LogicalResult unifyStructurally(Type formal,
   return success();
 }
 
+/// Records a monomorphic projection the unifier let stand: it equated the two
+/// sides, or bound a variable to the projection, without asking any impl what
+/// the projection resolves to. These sit apart from the lookup's miss arms --
+/// nothing here consulted the lookup at all.
+///
+/// The test is a root test on purpose. A projection nested inside two
+/// aggregates the unifier found literally equal goes unobserved, because
+/// walking every equality would put a type traversal on the unifier's hottest
+/// path; such a projection is observed here anyway whenever the two sides are
+/// not already equal, since the structural recursion then brings it to this
+/// entry on its own.
+///
+/// The unifier's signature names no caller, so `module` classifies the demand:
+/// the module-free comparator is what a verifier holding no module reaches,
+/// while a caller carrying one is the stage or a committed-fact match inside a
+/// verifier, which the stage's suspension brackets cover.
+static void observeUnifierAcceptance(Type ty, ModuleOp module) {
+  // Cheapest test first: with both switches off there is no observer at all,
+  // which is what keeps this off the unifier's equality path.
+  if (!DemandLedger::areObservationsEnabled())
+    return;
+  if (!isa<ProjectionType>(ty) || isPolymorphicType(ty))
+    return;
+  recordUnifierAcceptance(ty, module ? DemandOrigin::Unification
+                                     : DemandOrigin::ModuleFreeComparison);
+}
+
 /// Unify a projection type with another type. Two entries reach here: a
 /// module-free comparison (a verifier passes no module) and a module-capable
 /// resolution (a pass or a committed-fact substitution build passes the
@@ -779,6 +861,7 @@ LogicalResult ProjectionType::unify(
       return failure();
     }
 
+    observeUnifierAcceptance(*this, module);
     if (failed(unifyTypeRange(formalApp.getTypeArgs(), actualApp.getTypeArgs(),
                               module, subst, err)))
       return failure();
@@ -802,8 +885,10 @@ LogicalResult ProjectionType::unify(
     Type(*this).walk([&](Type t) {
       if (t == other) occurs = true;
     });
-    if (!occurs)
+    if (!occurs) {
+      observeUnifierAcceptance(*this, module);
       return otherVar.unify(*this, module, subst, err);
+    }
   }
 
   // A projection all of whose arguments are concrete and whose trait application
@@ -817,7 +902,8 @@ LogicalResult ProjectionType::unify(
   // lookup, so this step is skipped and an unresolved crossing is a strict
   // mismatch below.
   if (isMonomorphicType(*this) && module) {
-    Type resolved = resolveGroundProjectionsByLookup(*this, module);
+    Type resolved =
+        resolveGroundProjectionsByLookup(*this, module, DemandOrigin::Unification);
     if (resolved != Type(*this))
       return trait::unify(resolved, other, module, subst, err);
   }
@@ -825,7 +911,18 @@ LogicalResult ProjectionType::unify(
   // The projection did not resolve and meets a rigid non-projection type. The
   // module-free comparator (a verifier) holds no evidence for the equality:
   // spellings must be identical after substitution, so reject the crossing.
+  // Counted rather than recorded: this is a demand raised where there is no
+  // module to read facts from, which is outside any stage population by
+  // construction, and it is the exact crossing the tolerance below accepts when
+  // a module is in hand -- the two counts read against each other.
+  //
+  // No test reaches this arm. The module-free comparator has one caller, the
+  // cast op's input/result consistency check, which replaces every projection
+  // over the claim's own application with a variable; what is left to reach
+  // here is a projection over some other application meeting a different type
+  // across the two, which is an ill-formed cast no row spells.
   if (!module) {
+    countModuleFreeProjectionRejection();
     if (err)
       err() << "projection mismatch: expected " << *this << " but found "
             << other;
@@ -887,8 +984,10 @@ LogicalResult unify(
   actual = applySubstitutionToFixedPoint(subst.toTypeMap(), actual);
 
   // if the normalized types are equal, unification succeeds
-  if (formal == actual)
+  if (formal == actual) {
+    observeUnifierAcceptance(formal, module);
     return success();
+  }
 
   // formal-side unifier takes priority
   if (auto formalUnifier = dyn_cast<UnificationTypeInterface>(formal))

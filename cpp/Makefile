@@ -14,7 +14,7 @@ CXX := clang++
 CXXFLAGS := -Wall -Werror -fPIC $(shell $(LLVM_CONFIG) --cxxflags)
 INCLUDES := -I$(BUILD_DIR) -I. -I$(MLIR_SYS_220_PREFIX)/include
 
-DIALECT_SOURCES := c_api.cpp ImplResolution.cpp Specialization.cpp Passes.cpp Trait.cpp TraitAttributes.cpp TraitOps.cpp TraitTypes.cpp
+DIALECT_SOURCES := c_api.cpp DemandLedger.cpp ImplResolution.cpp Specialization.cpp Passes.cpp Trait.cpp TraitAttributes.cpp TraitOps.cpp TraitTypes.cpp
 DIALECT_OBJECTS := $(addprefix $(BUILD_DIR)/,$(DIALECT_SOURCES:.cpp=.o))
 PLUGIN_OBJECTS := $(DIALECT_OBJECTS) $(BUILD_DIR)/Plugin.o
 DEPS := $(PLUGIN_OBJECTS:.o=.d)

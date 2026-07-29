@@ -106,7 +106,8 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &sub
   replacer.addReplacement([=](Type t) -> std::optional<Type> {
     Type result = applySubstitutionToFixedPoint(subst, t);
     if (module)
-      result = resolveGroundProjectionsByLookup(result, module);
+      result = resolveGroundProjectionsByLookup(result, module,
+                                                DemandOrigin::MonomorphStampOut);
 
     // check that the result changed
     return (result != t) ? std::optional<Type>(result) : std::nullopt;
@@ -179,6 +180,38 @@ void specializePolymorphicRegion(OpBuilder& builder,
                                  monomorph,
                                  mapping,
                                  replacer);
+
+  // A detached region has no module, so the replacer above had no lookup to
+  // resolve with. Whether that matters is a question about the clone, not about
+  // the source: substituting a concrete argument into a symbolic projection is
+  // what makes it monomorphic, so a projection invisible in the polymorph can
+  // be a ground redex here. Count them, over the same result and block-argument
+  // types the stage's own leftover-projection sweep walks.
+  //
+  // No caller reaches this today: every one of them passes a region whose
+  // parent op is in a module. The walk is a whole-region traversal, so it is
+  // guarded rather than paid for on a path a detached-region caller would make
+  // hot on the day one appears.
+  if (!module && DemandLedger::areObservationsEnabled()) {
+    auto count = [](Type root) {
+      root.walk([](Type sub) {
+        auto proj = dyn_cast<ProjectionType>(sub);
+        if (proj && isMonomorphicType(proj))
+          countModulelessRegionProjection();
+      });
+    };
+    for (Block &block : monomorph)
+      for (BlockArgument arg : block.getArguments())
+        count(arg.getType());
+    monomorph.walk([&](Operation *op) {
+      for (Type t : op->getResultTypes())
+        count(t);
+      for (Region &r : op->getRegions())
+        for (Block &b : r)
+          for (BlockArgument arg : b.getArguments())
+            count(arg.getType());
+    });
+  }
 }
 
 } // end mlir::trait

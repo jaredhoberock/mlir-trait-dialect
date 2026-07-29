@@ -133,10 +133,18 @@ struct ProofResolutionMemo {
 /// to revisit.
 class ImplResolver {
   public:
-    /// Creates a new `ImplResolver` for the given `module`.
+    /// Creates a new `ImplResolver` for the given `module`, recording the
+    /// demands it declines to serve in `ledger`.
     /// Finds all loaded dialects that provide the `GenerateImplsInterface` and
     /// populates this `ImplResolver`'s `ImplGeneratorsSet`.
-    ImplResolver(ModuleOp module);
+    ///
+    /// The ledger is held by shared pointer because this resolver is moved out
+    /// of the sub-phase that builds it, and the thread-local sink installed
+    /// over both sub-phases points at the ledger's address.
+    ImplResolver(ModuleOp module, std::shared_ptr<DemandLedger> ledger);
+
+    /// The demands this resolver's stage declined to serve.
+    DemandLedger &getDemandLedger() const { return *ledger; }
 
     /// Ensures canonical proof for a fully-concrete trait application `claim`.
     /// Resolution proceeds as follows:
@@ -168,6 +176,7 @@ class ImplResolver {
     /// proven ClaimTypes given the current state of the proof memo
     inline EvidenceBindings buildClaimSubstitutionFromMemo() const {
       MLIRContext* ctx = module.getContext();
+      countClaimSubstitutionRebuild(memo.proofMemo.size());
       EvidenceBindings subst;
       for (auto [app, proof] : memo.proofMemo) {
         ClaimType unproven = ClaimType::get(ctx, app, nullptr);
@@ -192,6 +201,7 @@ class ImplResolver {
                                             OpBuilder &builder);
 
     mutable ModuleOp module;
+    std::shared_ptr<DemandLedger> ledger;
     ProofResolutionMemo memo;
     ImplGeneratorSet generators;
 };

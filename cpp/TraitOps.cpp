@@ -469,10 +469,12 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
       // already run), minting no proof and mutating no IR. The impl side is the
       // front end's own emitted spelling, which already resolves every ground
       // redex its consuming verifier reads locally.
-      Type expectedResolved =
-          resolveGroundProjectionsByLookup(Type(*expectedMethodTy), *module);
-      Type actualResolved =
-          resolveGroundProjectionsByLookup(Type(*actualMethodTy), *module);
+      Type expectedResolved = resolveGroundProjectionsByLookup(
+          Type(*expectedMethodTy), *module,
+          DemandOrigin::ImplSignatureVerification);
+      Type actualResolved = resolveGroundProjectionsByLookup(
+          Type(*actualMethodTy), *module,
+          DemandOrigin::ImplSignatureVerification);
       // Both signatures are reduced to the same grade; compare their spellings
       // with the module-free comparator (no further ground-redex resolution).
       // Any projection that survived the lookup above must match literally.
@@ -597,6 +599,7 @@ FailureOr<Type> ImplOp::specializeAssociatedTypeBinding(
 
 FailureOr<ImplSpecialization> ImplOp::buildImplSpecialization(
     ClaimType provenSelfClaim,
+    DemandOrigin origin,
     llvm::function_ref<InFlightDiagnostic()> err) {
   if (!provenSelfClaim.isProven()) {
     if (err) err() << "expected proven self claim for " << getSymName();
@@ -611,7 +614,8 @@ FailureOr<ImplSpecialization> ImplOp::buildImplSpecialization(
   // Bind the same self claim without a proof to the proven self claim. This
   // recursively records claim -> proven-claim evidence bindings.
   ClaimType unprovenSelfClaim = provenSelfClaim.asUnproven();
-  if (failed(verifyAndRecordProof(unprovenSelfClaim, provenSelfClaim, *module, evidence, err)))
+  if (failed(verifyAndRecordProof(unprovenSelfClaim, provenSelfClaim, *module,
+                                  evidence, origin, err)))
     return failure();
 
   auto specialization = buildSubstitutionForSelfClaim(provenSelfClaim, err);
@@ -746,7 +750,8 @@ FailureOr<func::FuncOp> ImplOp::getOrSpecializeFreeFunctionFromMethod(
   auto method = getOrSpecializeMethod(rewriter, methodName);
   if (failed(method)) return failure();
 
-  auto implSpec = buildImplSpecialization(provenSelfClaim);
+  auto implSpec =
+      buildImplSpecialization(provenSelfClaim, DemandOrigin::ProofRecording);
   if (failed(implSpec)) return failure();
 
   // Build the same substitution that will be used to clone the method body:
@@ -848,6 +853,7 @@ FailureOr<SmallVector<ClaimType>> ImplOp::specializeAssumptionsAsClaimsFor(
 
 FailureOr<SmallVector<ClaimType>> ImplOp::specializeObligationsAsClaimsFor(
     ClaimType actualSelfClaim,
+    DemandOrigin origin,
     llvm::function_ref<InFlightDiagnostic()> errFn) {
   // specialize requirements of the trait
   auto requirements = getTrait().specializeRequirementsAsClaimsFor(actualSelfClaim, errFn);
@@ -869,6 +875,18 @@ FailureOr<SmallVector<ClaimType>> ImplOp::specializeObligationsAsClaimsFor(
     auto resolved = normalization.normalize(req, errFn);
     if (failed(resolved)) return failure();
     req = cast<ClaimType>(*resolved);
+    countObligationNormalization();
+
+    // Normalization reads this impl's own bindings and nothing else, so a
+    // projection over a sibling application survives it. The obligation goes on
+    // to resolution spelled with that projection still standing, which is a
+    // demand this normalization did not serve.
+    if (DemandLedger::areObservationsEnabled())
+      Type(req).walk([&](Type sub) {
+        auto proj = dyn_cast<ProjectionType>(sub);
+        if (proj && isMonomorphicType(proj))
+          recordObligationNormalizationMiss(sub, origin);
+      });
   }
 
   // specialize assumptions of the impl
@@ -993,7 +1011,9 @@ LogicalResult ProofOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
   // recursively verify proof structure and that proof bindings can be recorded
   EvidenceBindings evidence;
-  if (failed(verifyAndRecordProof(getProvenClaim().asUnproven(), getProvenClaim(), module, evidence, errFn)))
+  if (failed(verifyAndRecordProof(getProvenClaim().asUnproven(),
+                                  getProvenClaim(), module, evidence,
+                                  DemandOrigin::ProofVerification, errFn)))
     return failure();
 
   return success();
@@ -1006,7 +1026,8 @@ TraitOp ProofOp::getTrait() {
   return getTraitApplication().getTraitOrAbort(module, "ProofOp::getTrait: couldn't find trait");
 }
 
-FailureOr<SmallVector<ClaimType>> ProofOp::verifyAndGetSubproofClaims(llvm::function_ref<InFlightDiagnostic()> err) {
+FailureOr<SmallVector<ClaimType>> ProofOp::verifyAndGetSubproofClaims(
+    DemandOrigin origin, llvm::function_ref<InFlightDiagnostic()> err) {
   SmallVector<ClaimType> result;
 
   ModuleOp module = getParentOp<ModuleOp>();
@@ -1023,7 +1044,8 @@ FailureOr<SmallVector<ClaimType>> ProofOp::verifyAndGetSubproofClaims(llvm::func
     return failure();
   }
 
-  auto obligations = implOp.specializeObligationsAsClaimsFor(getProvenClaim(), err);
+  auto obligations =
+      implOp.specializeObligationsAsClaimsFor(getProvenClaim(), origin, err);
   if (failed(obligations)) return failure();
 
   ArrayAttr subproofNames = getSubproofNames();
@@ -1589,6 +1611,10 @@ LogicalResult ProjCastOp::verify() {
   auto subst = implOr->buildSubstitutionForSelfClaim(claimTy.asUnproven(), errFn);
   if (failed(subst)) return failure();
 
+  // A verifier runs outside any stage, so what this normalization leaves
+  // standing is counted rather than entered in the demand ledger.
+  countVerifierObligationNormalization();
+
   NormalizationContext normalization;
   normalization.addLocalProjectionRule(*implOr, claimApp, *subst);
   auto resolvedInput = normalization.normalize(inputType, errFn);
@@ -1788,12 +1814,39 @@ FailureOr<CallSubstitution> MethodCallOp::buildParameterSpecialization(ModuleOp 
   // method's own generics stay spelled (still polymorphic) for the local-claim
   // normalization; originalActual keeps the pre-resolution spelling for the
   // proof-binding recording below.
+  //
+  // `unifyModule` says which caller this is: a verifier passes none, a pass
+  // passes the module. The boundary resolution below reads module facts either
+  // way, so the demand it raises is classified by that same discriminator.
   ClaimType callClaim = getClaimType();
   bool callClaimHasEvidence =
       callClaim.isProven() || getClaim().getDefiningOp<DeriveOp>();
+  DemandOrigin origin = unifyModule ? DemandOrigin::CallSiteSpecialization
+                                    : DemandOrigin::CallSignatureVerification;
   if (callClaimHasEvidence) {
-    formal = resolveGroundProjectionsByLookup(formal, *module);
-    actual = cast<FunctionType>(resolveGroundProjectionsByLookup(actual, *module));
+    formal = resolveGroundProjectionsByLookup(formal, *module, origin);
+    actual = cast<FunctionType>(
+        resolveGroundProjectionsByLookup(actual, *module, origin));
+  } else {
+    // No evidence, no license: this call never asked what its ground redexes
+    // resolve to, so those demands reach no engine at all.
+    countWithheldCallClaim();
+    // No test reaches the recording below. Method-call lowering, the only
+    // in-stage caller of this specialization, defers until the call's claim is
+    // proven, and a proven claim carries the license -- so every withheld call
+    // is a verifier's, whose origin does not record, and the statistic above is
+    // the whole of what a test can see.
+    if (isDemandRecordingActive() && recordsToLedger(origin)) {
+      auto record = [](Type root) {
+        root.walk([](Type sub) {
+          auto proj = dyn_cast<ProjectionType>(sub);
+          if (proj && isMonomorphicType(proj))
+            recordWithheldCallClaim(sub);
+        });
+      };
+      record(formal);
+      record(Type(actual));
+    }
   }
 
   SmallVector<Value> localClaims;
@@ -1852,8 +1905,8 @@ FailureOr<CallSubstitution> MethodCallOp::buildParameterSpecialization(ModuleOp 
   normalizeSubstitutionInPlace(merged);
 
   CallSubstitution subst(SpecializationMap::fromTypeMap(merged));
-  if (failed(recordProofBindingsIn(
-          originalActual, *module, subst.getEvidenceBindings(), err)))
+  if (failed(recordProofBindingsIn(originalActual, *module,
+                                   subst.getEvidenceBindings(), origin, err)))
     return failure();
 
   return subst;
@@ -2031,7 +2084,15 @@ FailureOr<CallSubstitution> FuncCallOp::buildParameterSpecialization(ModuleOp un
   if (failed(spec)) return failure();
 
   CallSubstitution subst(*spec);
-  if (failed(recordProofBindingsIn(actual, *module, subst.getEvidenceBindings(), err)))
+  // `unifyModule` says which caller this is, the same discriminator the
+  // boundary resolution above reads: a verifier passes none, a pass passes the
+  // module.
+  if (failed(recordProofBindingsIn(actual, *module,
+                                   subst.getEvidenceBindings(),
+                                   unifyModule
+                                       ? DemandOrigin::CallSiteSpecialization
+                                       : DemandOrigin::CallSignatureVerification,
+                                   err)))
     return failure();
 
   return subst;

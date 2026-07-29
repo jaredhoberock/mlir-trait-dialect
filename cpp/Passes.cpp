@@ -6,6 +6,7 @@
 #include "TraitOps.hpp"
 #include "Trait.hpp"
 #include "TraitTypes.hpp"
+#include <llvm/ADT/ScopeExit.h>
 #include <mlir/Dialect/Arith/IR/Arith.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/Dialect/Func/Transforms/FuncConversions.h>
@@ -67,6 +68,11 @@ LogicalResult verifyDeclaredClaimProofs(ModuleOp module) {
     auto errFn = [&] {
       return f.emitOpError() << "declared claim in signature has an invalid proof: ";
     };
+    // The obligation recorder below normalizes through the ground-projection
+    // lookup, so this check raises demand of its own. The frame gives that
+    // demand the signature it came from; without one it would be recorded
+    // unattributed even though this dialect knows exactly where it arose.
+    DemandFrame frame(f.getLoc());
     Type(f.getFunctionType()).walk([&](Type t) {
       if (status.failed())
         return;
@@ -75,7 +81,7 @@ LogicalResult verifyDeclaredClaimProofs(ModuleOp module) {
         return;
       EvidenceBindings bindings;
       if (failed(verifyAndRecordProof(claim.asUnproven(), claim, module, bindings,
-                                      errFn)))
+                                      DemandOrigin::ProofRecording, errFn)))
         status = failure();
     });
   }
@@ -132,6 +138,7 @@ LogicalResult verifyAcyclicTraits(ModuleOp module) {
     }
   }
 
+  DemandRecordingSuspension verifying;
   return module.verify();
 }
 
@@ -189,6 +196,8 @@ struct ProveClaimResultPattern : public RewritePattern {
     if (!claim.isMonomorphic())
       return rewriter.notifyMatchFailure(op, "polymorphic claim deferred");
 
+    DemandFrame frame(op->getLoc());
+
     auto errFn = [&] { return op->emitOpError(); };
 
     // build or reuse canonical evidence for this claim
@@ -218,6 +227,24 @@ struct ProveClaimResultPattern : public RewritePattern {
 } // end namespace
 
 FailureOr<ImplResolver> resolveImpls(ModuleOp module) {
+  // The ledger is installed before the first sub-phase that can raise a demand:
+  // conversion runs other dialects' patterns, and the declared-proof check
+  // reaches the ground projection lookup through the obligation recorder.
+  auto ledger = std::make_shared<DemandLedger>();
+  DemandLedgerScope recording(*ledger);
+
+  // A failing sub-phase below discards this ledger, so what it observed is
+  // written out here. On success the caller keeps the ledger and reports once
+  // the whole stage is done, which is why exactly one census reaches a reader.
+  bool handedOn = false;
+  auto census = llvm::scope_exit([&] {
+    if (handedOn)
+      return;
+    ledger->reportServedDrainableKeys(module);
+    if (DemandLedger::isRecordingEnabled())
+      ledger->dumpCensus();
+  });
+
   // run convert-to-trait patterns
   if (failed(convertToTrait(module)))
     return failure();
@@ -235,7 +262,7 @@ FailureOr<ImplResolver> resolveImpls(ModuleOp module) {
     return failure();
 
   // an ImplResolver for this module
-  ImplResolver resolver(module);
+  ImplResolver resolver(module, ledger);
 
   MLIRContext *ctx = module.getContext();
 
@@ -264,12 +291,23 @@ FailureOr<ImplResolver> resolveImpls(ModuleOp module) {
   // sees consistent types.
   applySubstitutionInPlace(resolver.buildClaimSubstitutionFromMemo(), module);
 
+  handedOn = true;
   return resolver;
 }
 
 void ResolveImplsPass::runOnOperation() {
-  if (failed(resolveImpls(getOperation())))
+  auto resolver = resolveImpls(getOperation());
+  if (failed(resolver)) {
     signalPassFailure();
+    return;
+  }
+
+  // This pass discards its resolver, so its ledger is checked and written out
+  // here. Run inside instantiate-monomorphs, the same ledger spans both
+  // sub-phases and is reported once at the end of that pass instead.
+  resolver->getDemandLedger().reportServedDrainableKeys(getOperation());
+  if (DemandLedger::isRecordingEnabled())
+    resolver->getDemandLedger().dumpCensus();
 }
 
 std::unique_ptr<Pass> createResolveImplsPass() {
@@ -293,9 +331,14 @@ void CallSubstitution::discoverProjectionBindings(TypeRange types,
         return;
       if (projectionBindings.lookup(proj))
         return;
-      if (auto resolved = resolver.resolveProjectionType(proj, builder);
-          succeeded(resolved))
-        projectionBindings.bind(proj, *resolved);
+      // Failure adds no binding, so the call site closes over a projection it
+      // still cannot spell concretely.
+      auto resolved = resolver.resolveProjectionType(proj, builder);
+      if (failed(resolved)) {
+        recordResolverProjectionMiss(Type(proj));
+        return;
+      }
+      projectionBindings.bind(proj, *resolved);
     });
   }
 }
@@ -307,7 +350,10 @@ LogicalResult CallSubstitution::discoverEvidenceBindings(
     llvm::function_ref<InFlightDiagnostic()> err) {
   for (Type ty : types) {
     Type rewritten = apply(ty);
-    if (failed(recordProofBindingsIn(rewritten, module, evidenceBindings, err)))
+    // Closing a call substitution needs the stage's resolver, so this walk
+    // runs nowhere else and its demand is the stage's.
+    if (failed(recordProofBindingsIn(rewritten, module, evidenceBindings,
+                                     DemandOrigin::ProofRecording, err)))
       return failure();
   }
   return success();
@@ -468,6 +514,8 @@ struct FuncCallOpLowering : public OpRewritePattern<FuncCallOp> {
     if (!nearestTable || !isa<ModuleOp>(nearestTable))
       return rewriter.notifyMatchFailure(callOp, "call is still nested in a method");
 
+    DemandFrame frame(callOp.getLoc());
+
     auto target = specializeCallTarget(
         callOp, rewriter, resolver,
         [](FuncCallOp op) { return op.getCalleeFunctionType(); },
@@ -505,6 +553,8 @@ struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
       return rewriter.notifyMatchFailure(op, "claim is still unproven");
     if (failed(requireProvenClaimOperands(op, op.getArguments(), rewriter)))
       return failure();
+
+    DemandFrame frame(op.getLoc());
 
     auto target = specializeCallTarget(
         op, rewriter, resolver,
@@ -556,6 +606,8 @@ struct MonomorphizeResultTypesPattern
       if (isPolymorphicType(ty))
         return rewriter.notifyMatchFailure(iface, "operands are still polymorphic");
     }
+
+    DemandFrame frame(iface->getLoc());
 
     // try to compute specialized result types; inference failure defers this op
     SmallVector<Type> specializedTypes;
@@ -678,12 +730,17 @@ struct ResolveProjectionsPattern : public RewritePattern {
     if (!opMentionsType<ProjectionType>(op))
       return failure();
 
+    DemandFrame frame(op->getLoc());
+
     AttrTypeReplacer replacer;
     replacer.addReplacement([&](Type t) -> std::optional<Type> {
       auto proj = dyn_cast<ProjectionType>(t);
       if (!proj || isPolymorphicType(proj)) return std::nullopt;
       auto resolved = resolver.resolveProjectionType(proj, rewriter);
-      if (failed(resolved)) return std::nullopt;
+      if (failed(resolved)) {
+        recordResolverProjectionMiss(Type(proj));
+        return std::nullopt;
+      }
       return *resolved;
     });
     if (!wouldReplace(replacer, op,
@@ -762,6 +819,25 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
     return failure();
 
   MLIRContext* ctx = module.getContext();
+
+  // The census is written on every exit from here on, so a run that fails
+  // mid-stage still reports what it observed. It is declared before the span
+  // below so that the span closes first.
+  //
+  // This is where the stage ends as far as the ledger is concerned. The pass
+  // that wraps it goes on to erase the polymorphs and materialize nominal
+  // monomorphs with no sink installed, so what that sweep mints is outside the
+  // population by construction.
+  auto census = llvm::scope_exit([&] {
+    resolver->getDemandLedger().reportServedDrainableKeys(module);
+    if (DemandLedger::isRecordingEnabled())
+      resolver->getDemandLedger().dumpCensus();
+  });
+
+  // The resolver was moved out of the sub-phase that built it, so its ledger is
+  // reinstalled here to span this sub-phase's driver and leftover walks. Both
+  // spans append to the one ledger the census reports.
+  DemandLedgerScope recording(resolver->getDemandLedger());
 
   // rewrite trait.func.call and trait.method.call, prove claim producers
   // (allege, derive, project), resolve projections, and monomorphize any
@@ -864,6 +940,7 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
   if (sawUnresolvedProjection)
     return failure();
 
+  DemandRecordingSuspension verifying;
   return module.verify();
 }
 

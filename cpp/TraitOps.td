@@ -432,7 +432,11 @@ def ImplOp : TraitDialectOp<"impl", [
     /// The result contains the impl's generic type specialization and the
     /// evidence bindings that preserve proof annotations when specializing the
     /// impl method body.
+    ///
+    /// `origin` names the caller: recording the self claim's proof normalizes
+    /// both claims through the ground-projection lookup, so this raises demand.
     FailureOr<ImplSpecialization> buildImplSpecialization(ClaimType provenSelfClaim,
+                                                                  DemandOrigin origin,
                                                                   llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     // Helper to generate unique symbol name for an ImplOp
@@ -452,8 +456,15 @@ def ImplOp : TraitDialectOp<"impl", [
         ClaimType actualSelfClaim,
         llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
 
+    /// Specializes this impl's requirements and assumptions for `actualSelfClaim`.
+    ///
+    /// `origin` names the caller: normalization reads only this impl's own
+    /// bindings, so a projection over a sibling application survives it and is
+    /// recorded as demand this normalization did not serve. Both the stage's
+    /// resolver and a proof op's verifier reach here.
     FailureOr<SmallVector<ClaimType>> specializeObligationsAsClaimsFor(
         ClaimType actualSelfClaim,
+        DemandOrigin origin,
         llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
 
     /// Look up an associated type op by name
@@ -1256,10 +1267,13 @@ def ProofOp : TraitDialectOp<"proof", [
 
     TraitOp getTrait();
 
-    FailureOr<SmallVector<ClaimType>> verifyAndGetSubproofClaims(llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+    /// `origin` names the caller, which the obligation specialization this
+    /// performs raises its demand under.
+    FailureOr<SmallVector<ClaimType>> verifyAndGetSubproofClaims(DemandOrigin origin,
+                                                                 llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     SmallVector<ClaimType> getSubproofClaims() {
-      auto maybeResult = verifyAndGetSubproofClaims();
+      auto maybeResult = verifyAndGetSubproofClaims(DemandOrigin::ProofVerification);
       if (failed(maybeResult))
         llvm_unreachable("ProofOp::getSubproofClaims: verifyAndGetSubproofClaims failed");
       return *maybeResult;

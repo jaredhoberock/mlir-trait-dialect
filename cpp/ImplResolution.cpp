@@ -98,6 +98,8 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
     ClaimType wanted,
     OpBuilder &builder,
     llvm::function_ref<InFlightDiagnostic()> err) {
+  DemandFrame frame{Type(wanted)};
+
   ClaimType originalWanted = wanted;
 
   // Resolution resolves a demanded claim's monomorphic projections before it
@@ -129,12 +131,18 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
 
   // collect candidates for wanted from the trait and
   // partition them into good/bad by satisfiable assumptions
+  //
+  // The partition probes candidates it may then discard, so the demands its
+  // sub-resolutions raise are marked speculative for as long as it runs.
   SmallVector<ImplOp> good, bad;
-  for (ImplOp impl : trait.getCandidateImplsFor(selected)) {
-    if (succeeded(assumptionsSatisfiableFor(impl, selected, builder)))
-      good.push_back(impl);
-    else
-      bad.push_back(impl);
+  {
+    SpeculationScope speculation;
+    for (ImplOp impl : trait.getCandidateImplsFor(selected)) {
+      if (succeeded(assumptionsSatisfiableFor(impl, selected, builder)))
+        good.push_back(impl);
+      else
+        bad.push_back(impl);
+    }
   }
 
   // if there aren't any good candidates, try to generate one
@@ -148,6 +156,7 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
     OpBuilder::InsertionGuard guard(builder);
     builder.setInsertionPointToEnd(module.getBody());
     if (auto impl = generators.generateImpl(trait, selected, builder); succeeded(impl)) {
+      SpeculationScope speculation;
       if (succeeded(assumptionsSatisfiableFor(*impl, selected, builder)))
         good.push_back(*impl);
       else
@@ -170,15 +179,21 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
 // find an existing trait.proof that *explicitly* proves impl by name
 // and proves the same application app
 static ProofOp findExistingProofFor(ModuleOp module, ImplOp impl, TraitApplicationAttr app) {
+  size_t scanned = 0;
   for (ProofOp proof : module.getOps<ProofOp>()) {
+    ++scanned;
     if (proof.getImplName() == impl.getSymName() &&
-        proof.getTraitApplication() == app)
+        proof.getTraitApplication() == app) {
+      countProofScan(scanned);
       return proof;
+    }
   }
+  countProofScan(scanned);
   return nullptr;
 }
 
-ImplResolver::ImplResolver(ModuleOp m) : module(m) {
+ImplResolver::ImplResolver(ModuleOp m, std::shared_ptr<DemandLedger> ledger)
+    : module(m), ledger(std::move(ledger)) {
   // collect ImplGenerators from each dialect with the appropriate interface
   for (Dialect *dialect : module.getContext()->getLoadedDialects()) {
     if (auto *iface = dialect->getRegisteredInterface<GenerateImplsInterface>()) {
@@ -191,6 +206,8 @@ FailureOr<Type> ImplResolver::resolveProjectionType(
     ProjectionType proj,
     OpBuilder &builder,
     llvm::function_ref<InFlightDiagnostic()> err) {
+  DemandFrame frame{Type(proj)};
+
   auto traitApp = proj.getTraitApplication();
   StringRef assocName = proj.getAssocName().getValue();
 
@@ -219,7 +236,15 @@ Type ImplResolver::resolveProjectionsIn(Type ty, OpBuilder &builder) {
     auto proj = dyn_cast<ProjectionType>(t);
     if (!proj || isPolymorphicType(proj)) return std::nullopt;
     auto resolved = resolveProjectionType(proj, builder);
-    if (failed(resolved)) return std::nullopt;
+    if (failed(resolved)) {
+      // The failure is swallowed here -- the projection stays spelled as
+      // written and the walk goes on -- so this is where the second engine's
+      // unserved demand becomes visible. Its count is a lower bound: an
+      // application the negative resolution memo already refuted never reaches
+      // this engine a second time.
+      recordResolverProjectionMiss(Type(proj));
+      return std::nullopt;
+    }
     return *resolved;
   });
   return replacer.replace(ty);
@@ -229,6 +254,8 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
     ClaimType wanted,
     OpBuilder &builder,
     llvm::function_ref<InFlightDiagnostic()> err) {
+  DemandFrame frame{Type(wanted)};
+
   ClaimType originalWanted = wanted;
 
   // resolve an impl for wanted first
@@ -273,14 +300,19 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
   // Compute the proof name early so we can use it as the coinductive memo entry.
   std::string proofName = impl.generateMangledName(monomorphicWanted) + "_p";
   auto proofSym = FlatSymbolRefAttr::get(ctx, proofName);
+  size_t collisionsScanned = 0;
+  auto countCollisionScan =
+      llvm::scope_exit([&] { countProofCollisionScan(collisionsScanned); });
   for (ProofOp proof : module.getOps<ProofOp>()) {
+    ++collisionsScanned;
     if (proof.getSymName() != proofName)
       continue;
 
     ClaimType candidate = ClaimType::get(ctx, app, proofSym);
     EvidenceBindings bindings;
     if (succeeded(verifyAndRecordProof(candidate.asUnproven(), candidate,
-                                       module, bindings, err))) {
+                                       module, bindings,
+                                       DemandOrigin::ProofRecording, err))) {
       memo.proofMemo[app] = proofSym;
       return proofSym;
     }
@@ -298,7 +330,8 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
   auto rollback = llvm::scope_exit([&]{ memo.proofMemo.erase(app); });
 
   // specialize all obligations against the claim selected during resolution
-  auto obligations = impl.specializeObligationsAsClaimsFor(selected, err);
+  auto obligations = impl.specializeObligationsAsClaimsFor(
+      selected, DemandOrigin::ProofRecording, err);
   if (failed(obligations)) return failure();
 
   // recursively prove monomorphic obligations
