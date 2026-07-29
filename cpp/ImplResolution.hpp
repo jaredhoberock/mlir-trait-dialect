@@ -16,10 +16,20 @@ struct ImplGenerator {
   // Creates exactly one new ImplOp for the wanted claim, or fails.
   // Upon success, returns the newly created ImplOp whose self claim
   // must unify with wanted.
+  //
+  // A generator only builds IR, so an OpBuilder suffices; it may leave the
+  // insertion point parked inside the IR it just generated, and restoring the
+  // caller's insertion point is the caller's responsibility.
+  //
+  // When generation runs underneath a greedy pattern driver, the caller must
+  // pass that driver's active PatternRewriter itself rather than a builder of
+  // its own: the builder's listener is what places generated ops on the
+  // driver's worklist, so a builder without that listener silently changes
+  // which ops the driver revisits.
   virtual FailureOr<ImplOp>
   generateImpl(TraitOp trait,
                ClaimType wanted,
-               PatternRewriter &rewriter) const = 0;
+               OpBuilder &builder) const = 0;
 };
 
 // Composite that itself behaves like an ImplGenerator
@@ -28,10 +38,13 @@ class ImplGeneratorSet : public ImplGenerator {
     inline FailureOr<ImplOp>
     generateImpl(TraitOp trait,
                  ClaimType wanted,
-                 PatternRewriter &rewriter) const override {
+                 OpBuilder &builder) const override {
       // return the first successful result of all generators
       for (const auto &g : generators) {
-        auto maybeImpl = g->generateImpl(trait, wanted, rewriter);
+        // a generator may park the insertion point in the IR it generated,
+        // so each attempt starts from the insertion point we were handed
+        OpBuilder::InsertionGuard guard(builder);
+        auto maybeImpl = g->generateImpl(trait, wanted, builder);
         if (succeeded(maybeImpl))
           return maybeImpl;
       }
@@ -110,7 +123,11 @@ struct ProofResolutionMemo {
 /// canonicalization of proofs across calls.
 ///
 /// This class may mutate the IR (e.g. by inserting `trait.proof` or `trait.impl` ops)
-/// through the provided `PatternRewriter`.
+/// through the provided `OpBuilder`. It only builds ops, never erases or
+/// replaces them, so no rewriter capability is required. Callers running under
+/// a greedy pattern driver must still hand down that driver's active
+/// `PatternRewriter`, whose listener enqueues the inserted ops for the driver
+/// to revisit.
 class ImplResolver {
   public:
     /// Creates a new `ImplResolver` for the given `module`.
@@ -124,25 +141,25 @@ class ImplResolver {
     ///   2. Otherwise, recursively resolve and ensure proofs for all requirements
     ///      and assumptions, then create (or reuse) a `trait.proof` op and return
     ///      its symbol.
-    /// This function may mutate the IR via `rewriter`.
+    /// This function may mutate the IR via `builder`.
     ///
     /// Returns the symbol (ImplOp or ProofOp) that proves `claim`, or failure if
     /// no unique and satisfiable impl can be found.
     FailureOr<FlatSymbolRefAttr> resolveAndEnsureProofFor(ClaimType claim,
-                                                          PatternRewriter &rewriter,
+                                                          OpBuilder &builder,
                                                           llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     /// Resolves a concrete ProjectionType to the type it projects to.
     /// Uses the internal impl resolution pipeline to find the matching impl,
     /// then looks up the associated type binding and applies substitution.
     FailureOr<Type> resolveProjectionType(ProjectionType proj,
-                                          PatternRewriter &rewriter,
+                                          OpBuilder &builder,
                                           llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     /// Walks `ty` and replaces every concrete (monomorphic) ProjectionType
     /// with its resolved type via full impl lookup.  Polymorphic projections
     /// are left untouched.  Returns the rewritten type.
-    Type resolveProjectionsIn(Type ty, PatternRewriter &rewriter);
+    Type resolveProjectionsIn(Type ty, OpBuilder &builder);
 
     /// Builds a substitution mapping concrete, unproven ClaimTypes to
     /// proven ClaimTypes given the current state of the proof memo
@@ -162,14 +179,14 @@ class ImplResolver {
     /// claim that was actually used for selection.
     FailureOr<ResolvedImpl> resolveImplFor(
         ClaimType wanted,
-        PatternRewriter &rewriter,
+        OpBuilder &builder,
         llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     /// Checks whether all of `impl`'s where-clause assumptions are satisfiable
     /// when specialized for `concreteSelf`.
     LogicalResult assumptionsSatisfiableFor(ImplOp impl,
                                             ClaimType concreteSelf,
-                                            PatternRewriter &rewriter);
+                                            OpBuilder &builder);
 
     mutable ModuleOp module;
     ProofResolutionMemo memo;

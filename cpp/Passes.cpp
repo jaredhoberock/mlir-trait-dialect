@@ -285,7 +285,7 @@ std::unique_ptr<Pass> createResolveImplsPass() {
 /// types visible after applying the current substitution.
 void CallSubstitution::discoverProjectionBindings(TypeRange types,
                                                   ImplResolver &resolver,
-                                                  PatternRewriter &rewriter) {
+                                                  OpBuilder &builder) {
   for (Type ty : types) {
     apply(ty).walk([&](Type t) {
       auto proj = dyn_cast<ProjectionType>(t);
@@ -293,7 +293,7 @@ void CallSubstitution::discoverProjectionBindings(TypeRange types,
         return;
       if (projectionBindings.lookup(proj))
         return;
-      if (auto resolved = resolver.resolveProjectionType(proj, rewriter);
+      if (auto resolved = resolver.resolveProjectionType(proj, builder);
           succeeded(resolved))
         projectionBindings.bind(proj, *resolved);
     });
@@ -327,7 +327,7 @@ LogicalResult CallSubstitution::discoverEvidenceBindings(
 /// evidence bindings may have been recorded before the failing obligation.
 LogicalResult CallSubstitution::close(
     TypeRange operandTypes, TypeRange resultTypes, FunctionType formalTy,
-    ModuleOp module, ImplResolver &resolver, PatternRewriter &rewriter,
+    ModuleOp module, ImplResolver &resolver, OpBuilder &builder,
     llvm::function_ref<InFlightDiagnostic()> err) {
   bool changed;
   do {
@@ -335,11 +335,11 @@ LogicalResult CallSubstitution::close(
     // so it is not affected by fixed-point normalization of the merged map.
     size_t before = bindingCount();
 
-    discoverProjectionBindings(resultTypes, resolver, rewriter);
-    discoverProjectionBindings(operandTypes, resolver, rewriter);
+    discoverProjectionBindings(resultTypes, resolver, builder);
+    discoverProjectionBindings(operandTypes, resolver, builder);
     if (formalTy) {
-      discoverProjectionBindings(formalTy.getInputs(), resolver, rewriter);
-      discoverProjectionBindings(formalTy.getResults(), resolver, rewriter);
+      discoverProjectionBindings(formalTy.getInputs(), resolver, builder);
+      discoverProjectionBindings(formalTy.getResults(), resolver, builder);
     }
 
     if (failed(discoverEvidenceBindings(operandTypes, module, err)))

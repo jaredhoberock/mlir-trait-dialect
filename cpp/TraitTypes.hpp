@@ -10,7 +10,7 @@
 #include <mlir/IR/OperationSupport.h>
 #include <mlir/IR/SymbolTable.h>
 
-namespace mlir { class PatternRewriter; }
+namespace mlir { class OpBuilder; }
 
 namespace mlir::trait {
 
@@ -271,12 +271,12 @@ public:
   }
   LogicalResult close(TypeRange operandTypes, TypeRange resultTypes,
                       FunctionType formalTy, ModuleOp module,
-                      ImplResolver &resolver, ::mlir::PatternRewriter &rewriter,
+                      ImplResolver &resolver, ::mlir::OpBuilder &builder,
                       llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
 private:
   void discoverProjectionBindings(TypeRange types, ImplResolver &resolver,
-                                  ::mlir::PatternRewriter &rewriter);
+                                  ::mlir::OpBuilder &builder);
   LogicalResult discoverEvidenceBindings(
       TypeRange types, ModuleOp module,
       llvm::function_ref<InFlightDiagnostic()> err = nullptr);

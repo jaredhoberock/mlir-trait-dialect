@@ -8,7 +8,7 @@ namespace mlir::trait {
 LogicalResult
 ImplResolver::assumptionsSatisfiableFor(ImplOp impl,
                                         ClaimType concreteSelf,
-                                        PatternRewriter &rewriter) {
+                                        OpBuilder &builder) {
   ResolutionMemo &memo = this->memo.resolutionMemo;
   TraitApplicationAttr app = concreteSelf.getTraitApplication();
 
@@ -29,13 +29,13 @@ ImplResolver::assumptionsSatisfiableFor(ImplOp impl,
 
   for (ClaimType assume : *assumptions) {
     // find an impl for the assumption
-    auto subImpl = resolveImplFor(assume, rewriter);
+    auto subImpl = resolveImplFor(assume, builder);
     if (failed(subImpl))
       return failure();
 
     // that impl's own assumptions must be satisfiable too
     if (failed(assumptionsSatisfiableFor(subImpl->impl, subImpl->selectedClaim,
-                                         rewriter)))
+                                         builder)))
       return failure();
   }
 
@@ -96,7 +96,7 @@ static LogicalResult diagnoseImplResolutionFailure(
 
 FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
     ClaimType wanted,
-    PatternRewriter &rewriter,
+    OpBuilder &builder,
     llvm::function_ref<InFlightDiagnostic()> err) {
   ClaimType originalWanted = wanted;
 
@@ -112,7 +112,7 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
   // and the proven value's spelling before recording, so coherent spellings of
   // one obligation record identically; recorded-proof equivalence then fires
   // only to reject genuinely incoherent proofs, not to reconcile spellings.)
-  ClaimType selected = cast<ClaimType>(resolveProjectionsIn(wanted, rewriter));
+  ClaimType selected = cast<ClaimType>(resolveProjectionsIn(wanted, builder));
 
   ResolutionMemo &memo = this->memo.resolutionMemo;
   TraitApplicationAttr app = selected.getTraitApplication();
@@ -131,7 +131,7 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
   // partition them into good/bad by satisfiable assumptions
   SmallVector<ImplOp> good, bad;
   for (ImplOp impl : trait.getCandidateImplsFor(selected)) {
-    if (succeeded(assumptionsSatisfiableFor(impl, selected, rewriter)))
+    if (succeeded(assumptionsSatisfiableFor(impl, selected, builder)))
       good.push_back(impl);
     else
       bad.push_back(impl);
@@ -139,10 +139,16 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
 
   // if there aren't any good candidates, try to generate one
   if (good.empty()) {
-    PatternRewriter::InsertionGuard guard(rewriter);
-    rewriter.setInsertionPointToEnd(module.getBody());
-    if (auto impl = generators.generateImpl(trait, selected, rewriter); succeeded(impl)) {
-      if (succeeded(assumptionsSatisfiableFor(*impl, selected, rewriter)))
+    // Generated ops reach the enclosing greedy driver's worklist only through
+    // the builder's listener, so a listener-less builder here would silently
+    // change which ops that driver revisits.
+    assert(builder.getListener() &&
+           "impl generation requires a builder that notifies its caller of "
+           "inserted ops");
+    OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPointToEnd(module.getBody());
+    if (auto impl = generators.generateImpl(trait, selected, builder); succeeded(impl)) {
+      if (succeeded(assumptionsSatisfiableFor(*impl, selected, builder)))
         good.push_back(*impl);
       else
         bad.push_back(*impl);
@@ -183,19 +189,19 @@ ImplResolver::ImplResolver(ModuleOp m) : module(m) {
 
 FailureOr<Type> ImplResolver::resolveProjectionType(
     ProjectionType proj,
-    PatternRewriter &rewriter,
+    OpBuilder &builder,
     llvm::function_ref<InFlightDiagnostic()> err) {
   auto traitApp = proj.getTraitApplication();
   StringRef assocName = proj.getAssocName().getValue();
 
   ClaimType claim = ClaimType::get(proj.getContext(), traitApp);
-  auto resolvedImpl = resolveImplFor(claim, rewriter, err);
+  auto resolvedImpl = resolveImplFor(claim, builder, err);
   if (failed(resolvedImpl)) return failure();
   ImplOp impl = resolvedImpl->impl;
 
   SmallVector<Type> assocTypeArgs;
   for (Type arg : proj.getAssocTypeArgs())
-    assocTypeArgs.push_back(resolveProjectionsIn(arg, rewriter));
+    assocTypeArgs.push_back(resolveProjectionsIn(arg, builder));
 
   auto binding = impl.specializeAssociatedTypeBinding(assocName, assocTypeArgs, err);
   if (failed(binding)) return failure();
@@ -207,12 +213,12 @@ FailureOr<Type> ImplResolver::resolveProjectionType(
   return applySubstitutionToFixedPoint(subst->toTypeMap(), *binding);
 }
 
-Type ImplResolver::resolveProjectionsIn(Type ty, PatternRewriter &rewriter) {
+Type ImplResolver::resolveProjectionsIn(Type ty, OpBuilder &builder) {
   AttrTypeReplacer replacer;
-  replacer.addReplacement([this, &rewriter](Type t) -> std::optional<Type> {
+  replacer.addReplacement([this, &builder](Type t) -> std::optional<Type> {
     auto proj = dyn_cast<ProjectionType>(t);
     if (!proj || isPolymorphicType(proj)) return std::nullopt;
-    auto resolved = resolveProjectionType(proj, rewriter);
+    auto resolved = resolveProjectionType(proj, builder);
     if (failed(resolved)) return std::nullopt;
     return *resolved;
   });
@@ -221,12 +227,12 @@ Type ImplResolver::resolveProjectionsIn(Type ty, PatternRewriter &rewriter) {
 
 FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
     ClaimType wanted,
-    PatternRewriter &rewriter,
+    OpBuilder &builder,
     llvm::function_ref<InFlightDiagnostic()> err) {
   ClaimType originalWanted = wanted;
 
   // resolve an impl for wanted first
-  auto resolvedImpl = resolveImplFor(wanted, rewriter, err);
+  auto resolvedImpl = resolveImplFor(wanted, builder, err);
   if (failed(resolvedImpl)) return failure();
   ImplOp impl = resolvedImpl->impl;
   ClaimType selected = resolvedImpl->selectedClaim;
@@ -298,19 +304,19 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
   // recursively prove monomorphic obligations
   SmallVector<Attribute> subproofSymbols;
   for (ClaimType ob : *obligations) {
-    auto sym = resolveAndEnsureProofFor(ob, rewriter, err);
+    auto sym = resolveAndEnsureProofFor(ob, builder, err);
     if (failed(sym)) return failure();
     subproofSymbols.push_back(*sym);
   }
 
   // create the proof and memoize by the monomorphic app
   rollback.release();
-  PatternRewriter::InsertionGuard guard(rewriter);
-  rewriter.setInsertionPointToEnd(module.getBody());
+  OpBuilder::InsertionGuard guard(builder);
+  builder.setInsertionPointToEnd(module.getBody());
 
   ProofOp proof = ProofOp::create(
-    rewriter,
-    rewriter.getUnknownLoc(),
+    builder,
+    builder.getUnknownLoc(),
     StringAttr::get(ctx, proofName),
     FlatSymbolRefAttr::get(ctx, impl.getSymName()),
     app,
