@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "ImplResolution.hpp"
 #include <llvm/ADT/ScopeExit.h>
+#include <llvm/Support/ErrorHandling.h>
 #include <llvm/Support/Format.h>
 #include <llvm/Support/xxhash.h>
 #include <cinttypes>
@@ -158,7 +159,8 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
            "inserted ops");
     OpBuilder::InsertionGuard guard(builder);
     builder.setInsertionPointToEnd(module.getBody());
-    if (auto impl = generators.generateImpl(trait, selected, builder); succeeded(impl)) {
+    if (auto impl = getImplGenerators().generateImpl(trait, selected, builder);
+        succeeded(impl)) {
       SpeculationScope speculation;
       if (succeeded(assumptionsSatisfiableFor(*impl, selected, builder)))
         good.push_back(*impl);
@@ -499,6 +501,46 @@ void ImplResolver::reportRecordedFacts() const {
                << " assumption-facts="
                << resolution.assumptionsKnownSatisfiable.size()
                << " proofs=" << memo.proofMemo.size() << "\n";
+}
+
+//===----------------------------------------------------------------------===//
+// Freezing impl generation
+//===----------------------------------------------------------------------===//
+
+ImplGenerationFreeze::ImplGenerationFreeze(ImplResolver &resolver,
+                                          StringRef span)
+    : resolver(resolver), span(span.str()),
+      displaced(resolver.installedFreeze) {
+  resolver.installedFreeze = this;
+}
+
+ImplGenerationFreeze::~ImplGenerationFreeze() {
+  // Freezes nest, so the one going out of scope is the one now installed:
+  // restoring what this freeze displaced is only the previous state if no
+  // freeze installed after it is still standing.
+  assert(resolver.installedFreeze == this &&
+         "a freeze must be the innermost one installed when it ends");
+  resolver.installedFreeze = displaced;
+}
+
+FailureOr<ImplOp> ImplGenerationFreeze::generateImpl(TraitOp trait,
+                                                     ClaimType wanted,
+                                                     OpBuilder &builder) const {
+  std::string message;
+  llvm::raw_string_ostream stream(message);
+  stream << "impl generation is frozen for " << span
+         << ", but impl selection demanded an impl of @" << trait.getSymName()
+         << " for " << wanted;
+  llvm::report_fatal_error(Twine(message));
+}
+
+//===----------------------------------------------------------------------===//
+// Reading the recorded facts
+//===----------------------------------------------------------------------===//
+
+LogicalResult ReadOnlyImplResolver::decline(ProjectionType demand) const {
+  recordResolverProjectionMiss(Type(demand));
+  return failure();
 }
 
 } // end mlir::trait

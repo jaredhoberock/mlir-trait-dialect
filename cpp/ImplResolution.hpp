@@ -287,6 +287,9 @@ class ImplResolver {
     }
 
   private:
+    friend class ImplGenerationFreeze;
+    friend class ReadOnlyImplResolver;
+
     /// Finds the unique impl for the wanted claim and returns the normalized
     /// claim that was actually used for selection.
     FailureOr<ResolvedImpl> resolveImplFor(
@@ -300,10 +303,107 @@ class ImplResolver {
                                             ClaimType concreteSelf,
                                             OpBuilder &builder);
 
+    /// The generators impl selection asks when no candidate impl satisfies a
+    /// claim: this resolver's own set, or a freeze while one is installed.
+    const ImplGenerator &getImplGenerators() const {
+      return installedFreeze ? *installedFreeze : generators;
+    }
+
     mutable ModuleOp module;
     std::shared_ptr<DemandLedger> ledger;
     ProofResolutionMemo memo;
     ImplGeneratorSet generators;
+    const ImplGenerator *installedFreeze = nullptr;
+};
+
+/// Stands in for a resolver's impl generators over a span in which no impl may
+/// be generated, and fails the compilation where impl selection asks for one.
+///
+/// A span forbids generation when the work that would have to see a generated
+/// impl has already run: an impl built after that point reaches nothing that
+/// was waiting for it, and what the span produces is quietly incomplete rather
+/// than loudly wrong. A freeze names the claim that was demanded and the span
+/// whose contract the demand broke, at the point selection asked.
+///
+/// XXX TODO: nothing installs a freeze yet. One is installed over the span in
+/// which the stage's pattern drivers run once the stage runs them in rounds and
+/// commits what each round proved between them, generation being a round's own
+/// work rather than a driver's. Delete this if that scheduling does not land.
+class ImplGenerationFreeze : public ImplGenerator {
+public:
+  /// Installs itself as `resolver`'s generators until it goes out of scope.
+  /// `span` names the work whose contract forbids generation, and is what the
+  /// failure reports as broken.
+  ImplGenerationFreeze(ImplResolver &resolver, StringRef span);
+  ~ImplGenerationFreeze();
+
+  ImplGenerationFreeze(const ImplGenerationFreeze &) = delete;
+  ImplGenerationFreeze &operator=(const ImplGenerationFreeze &) = delete;
+
+  /// Never returns: being asked to generate at all is the fault this reports.
+  FailureOr<ImplOp> generateImpl(TraitOp trait,
+                                 ClaimType wanted,
+                                 OpBuilder &builder) const override;
+
+private:
+  ImplResolver &resolver;
+  std::string span;
+  const ImplGenerator *displaced;
+};
+
+/// A read of one resolver's recorded facts, for a caller that must serve from
+/// what impl selection has already settled.
+///
+/// What this handle withholds is the generator arm: a caller reading through it
+/// cannot make impl selection run, so no impl is generated and no proof is
+/// minted on its account. The facts themselves are not frozen -- whoever holds
+/// the resolver goes on recording selections and creating `trait.proof` ops --
+/// so an answer here is what the memo held when it was asked.
+///
+/// Impl selection keys its memo by the claim whose projections it resolved, so
+/// an application asked about here is one spelled as selection recorded it: a
+/// caller holding a source spelling with a projection still in it misses.
+///
+/// XXX TODO: nothing reads through this handle yet. It becomes how the stage's
+/// rewrite patterns reach resolution facts once the stage runs its pattern
+/// drivers in rounds and commits what each round proved between them. Delete it
+/// if that scheduling does not land.
+class ReadOnlyImplResolver {
+public:
+  explicit ReadOnlyImplResolver(const ImplResolver &resolver)
+      : resolver(resolver) {}
+
+  /// What impl selection settled on for `app`: the impl it chose, or the arm it
+  /// refused on. Nothing when selection has not been asked about `app`.
+  inline std::optional<ResolutionOutcome>
+  getRecordedOutcome(TraitApplicationAttr app) const {
+    const auto &chosen = resolver.memo.resolutionMemo.chosen;
+    auto it = chosen.find(app);
+    if (it == chosen.end())
+      return std::nullopt;
+    return it->second;
+  }
+
+  /// The symbol proving `app` -- an impl's own for a self-proof, a
+  /// `trait.proof`'s otherwise. Nothing when no proof of `app` is recorded.
+  inline std::optional<FlatSymbolRefAttr>
+  getRecordedProof(TraitApplicationAttr app) const {
+    const auto &proofs = resolver.memo.proofMemo;
+    auto it = proofs.find(app);
+    if (it == proofs.end())
+      return std::nullopt;
+    return it->second;
+  }
+
+  /// Declines `demand`, recording it as one this read did not serve, and fails.
+  ///
+  /// A caller that declines leaves the demanded projection spelled as written,
+  /// which is what a reader of the recorded demand finds when it asks whether
+  /// an unserved demand is still there to serve.
+  LogicalResult decline(ProjectionType demand) const;
+
+private:
+  const ImplResolver &resolver;
 };
 
 } // end mlir::trait
