@@ -121,8 +121,8 @@ const bool postconditionEnabled =
 /// With both switches off no scope installs a sink and nothing is ever
 /// recorded, so every guard in this file tests this first and the recording
 /// sites never reach thread-local storage. Several of them sit on the stage's
-/// hottest paths -- the unifier's equality check, the claim substitution
-/// rebuild -- where that one skipped access is the difference between an
+/// hottest paths -- the unifier's equality check, the ground-projection
+/// lookup -- where that one skipped access is the difference between an
 /// observer that costs nothing and one that costs a little everywhere.
 const bool observationsEnabled = recordingEnabled || postconditionEnabled;
 
@@ -403,8 +403,6 @@ void DemandLedger::dumpCensus() const {
      << "\n";
 
   os << demandCensusScanPrefix
-     << " claim-substitution-rebuilds=" << claimSubstitutionRebuilds
-     << " claim-substitution-entries-walked=" << claimSubstitutionEntriesWalked
      << " proof-scans=" << proofScans
      << " proof-scan-entries=" << proofScanEntries
      << " proof-collision-scans=" << proofCollisionScans
@@ -596,11 +594,6 @@ void countModulelessRegionProjection() { ++numModulelessRegionProjections; }
 
 void countVerifierObligationNormalization() {
   ++numVerifierObligationNormalizations;
-}
-
-void countClaimSubstitutionRebuild(size_t entries) {
-  if (isDemandRecordingActive())
-    ambientLedger->countClaimSubstitutionRebuild(entries);
 }
 
 void countProofScan(size_t entries) {

@@ -225,7 +225,67 @@ void VerifyAcyclicTraitsPass::runOnOperation() {
 
 namespace {
 
-/// Respells throughout `root` every claim `evidence` has a proven spelling for,
+/// The replacer the agreement check compares against: the same rewrite built as
+/// a substitution over the whole proof memo. Nothing is built when the check is
+/// disarmed, which is what keeps the whole-memo copy off every other run.
+static std::optional<AttrTypeReplacer>
+makeSubstitutionCheckReplacer(const ImplResolver &resolver) {
+  if (!DemandLedger::isPostconditionEnabled())
+    return std::nullopt;
+  return makeTypeReplacerFromSubstitution(
+      resolver.buildClaimSubstitutionFromMemo().toTypeMap(),
+      /*module=*/ModuleOp());
+}
+
+/// Reports every position of `op` that `queried` and `substituted` respell
+/// differently.
+///
+/// The two constructions walk a type differently: a substitution hands every
+/// generic type its own specialization step and stops the walk there, while a
+/// memo lookup walks the type structurally and answers only for claims. The
+/// claim substitution binds no generic type, so that specialization step has
+/// nothing to apply, and only the structural walk reaches a claim nested inside
+/// a generic type. This states that reasoning where it can be contradicted, on
+/// every position the stage respells. A disagreement is a gap in this
+/// reasoning, never a fault in the program being compiled, so it goes to the
+/// census channel; the whole spelling on each side is printed because which
+/// component of a type moved is the question a reader is left with.
+static void reportRespellingDisagreements(AttrTypeReplacer &queried,
+                                          AttrTypeReplacer &substituted,
+                                          Operation *op) {
+  auto report = [&](const Twine &position, auto before, auto byLookup,
+                    auto bySubstitution) {
+    llvm::errs() << demandCensusRespellingDisagreementPrefix
+                 << " op=" << op->getName() << " at=" << op->getLoc()
+                 << " position=" << position << " before=" << before
+                 << " by-lookup=" << byLookup
+                 << " by-substitution=" << bySubstitution << "\n";
+  };
+
+  auto compareType = [&](const Twine &position, Type before) {
+    Type byLookup = queried.replace(before);
+    Type bySubstitution = substituted.replace(before);
+    if (byLookup != bySubstitution)
+      report(position, before, byLookup, bySubstitution);
+  };
+
+  for (auto [index, type] : llvm::enumerate(op->getResultTypes()))
+    compareType("result " + Twine(index), type);
+  for (Region &region : op->getRegions())
+    for (Block &block : region)
+      for (BlockArgument argument : block.getArguments())
+        compareType("block argument " + Twine(argument.getArgNumber()),
+                    argument.getType());
+  for (NamedAttribute attribute : op->getAttrs()) {
+    Attribute byLookup = queried.replace(attribute.getValue());
+    Attribute bySubstitution = substituted.replace(attribute.getValue());
+    if (byLookup != bySubstitution)
+      report("attribute " + attribute.getName().getValue(),
+             attribute.getValue(), byLookup, bySubstitution);
+  }
+}
+
+/// Respells throughout `root` every claim `resolver` has recorded a proof for,
 /// and reports how much of `root` that sweep touched.
 ///
 /// The replacer's recursive entry point is this walk, so driving the walk here
@@ -233,17 +293,25 @@ namespace {
 /// one it left alone. A position is a result type, a block-argument type, or the
 /// attribute dictionary of one op; an op counts once however many of its
 /// positions moved.
-static void applySubstitutionInPlace(const EvidenceBindings& evidence, Operation* root) {
-  if (evidence.empty()) return;
-  DenseMap<Type, Type> substitution = evidence.toTypeMap();
-  AttrTypeReplacer replacer =
-      makeTypeReplacerFromSubstitution(substitution, /*module=*/ModuleOp());
+///
+/// The sweep records no proof of its own, which is the precondition the
+/// replacer it holds across the whole walk asserts.
+static void respellProvenClaimsInPlace(const ImplResolver &resolver,
+                                       Operation *root) {
+  size_t recordedProofs = resolver.getRecordedProofCount();
+  if (recordedProofs == 0) return;
+  AttrTypeReplacer replacer = resolver.makeProvenClaimReplacer();
+  std::optional<AttrTypeReplacer> substituted =
+      makeSubstitutionCheckReplacer(resolver);
 
   bool reporting = DemandLedger::isRecordingEnabled();
   uint64_t opsRespelled = 0;
   uint64_t positionsRespelled = 0;
 
   root->walk([&](Operation *op) {
+    if (substituted)
+      reportRespellingDisagreements(replacer, *substituted, op);
+
     SmallVector<Type, 8> before;
     DictionaryAttr attributesBefore;
     auto eachTypePosition = [&](llvm::function_ref<void(Type)> visit) {
@@ -279,7 +347,7 @@ static void applySubstitutionInPlace(const EvidenceBindings& evidence, Operation
 
   if (reporting)
     llvm::errs() << stageRecordRespellingPrefix
-                 << " bindings=" << substitution.size()
+                 << " bindings=" << recordedProofs
                  << " ops=" << opsRespelled
                  << " positions=" << positionsRespelled << "\n";
 }
@@ -419,10 +487,10 @@ FailureOr<ImplResolver> resolveImpls(ModuleOp module) {
   if (hasLeftovers) return failure();
 
   // Normalize claim types: after allege→witness, a proof's type parameter
-  // may itself contain a claim that was just proven.  Substitute all
-  // unproven claims with their proven forms so that downstream instantiation
+  // may itself contain a claim that was just proven.  Respell all
+  // unproven claims in their proven forms so that downstream instantiation
   // sees consistent types.
-  applySubstitutionInPlace(resolver.buildClaimSubstitutionFromMemo(), module);
+  respellProvenClaimsInPlace(resolver, module);
 
   handedOn = true;
   return resolver;
@@ -804,13 +872,18 @@ static bool wouldReplace(AttrTypeReplacer &replacer, Operation *op,
 /// When ProveClaimResultPattern proves a claim during the greedy rewrite and
 /// FuncCallOpLowering subsequently instantiates a callee that expects that
 /// claim, the newly created ops carry unproven claim types.  This pattern
-/// substitutes those with their proven counterparts, unblocking
+/// respells those in their proven counterparts, unblocking
 /// MethodCallOpLowering within the same rewrite pass.
 ///
 /// Only replaces types owned by the matched op itself (result types, block
 /// argument types, and attributes).  Operand types are SSA-determined and
 /// update automatically once the defining value carries the proven type.
 /// Child ops are visited independently by the greedy driver.
+///
+/// The matched op decides what is asked of the memo, so the questions this
+/// pattern asks are bounded by the op's own type trees however many proofs the
+/// resolver has recorded. The rewrite records no proof, which is the
+/// precondition the replacer asserts.
 struct PropagateProofsPattern : public RewritePattern {
   ImplResolver &resolver;
 
@@ -820,15 +893,20 @@ struct PropagateProofsPattern : public RewritePattern {
 
   LogicalResult matchAndRewrite(Operation *op,
                                 PatternRewriter &rewriter) const override {
-    auto evidence = resolver.buildClaimSubstitutionFromMemo();
-    if (evidence.empty())
-      return failure();
-
+    // An op that spells no claim has nothing to respell whatever the resolver
+    // has proved, and that is answered from the op alone, so it is asked before
+    // anything that reads the memo.
     if (!opMentionsType<ClaimType>(op))
       return failure();
 
-    AttrTypeReplacer replacer =
-        makeTypeReplacerFromSubstitution(evidence.toTypeMap(), /*module=*/ModuleOp());
+    AttrTypeReplacer replacer = resolver.makeProvenClaimReplacer();
+
+    // The check runs on the ops this pattern would respell. An op spelling no
+    // claim is not one of them, so the guard above stands ahead of it.
+    if (std::optional<AttrTypeReplacer> substituted =
+            makeSubstitutionCheckReplacer(resolver))
+      reportRespellingDisagreements(replacer, *substituted, op);
+
     if (!wouldReplace(replacer, op,
                       /*replaceAttrs=*/true,
                       /*replaceLocs=*/false,

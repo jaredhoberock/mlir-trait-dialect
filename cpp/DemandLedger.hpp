@@ -404,12 +404,8 @@ public:
   /// that would replace them can be made against measured work.
   ///
   /// XXX TODO: these counters size scans rather than describe the compiler.
-  /// Delete them once the resolver's claim substitution is maintained
-  /// incrementally and its proof lookup is indexed rather than scanned.
-  void countClaimSubstitutionRebuild(size_t entries) {
-    ++claimSubstitutionRebuilds;
-    claimSubstitutionEntriesWalked += entries;
-  }
+  /// Delete them once the resolver's proof lookup is indexed rather than
+  /// scanned.
   void countProofScan(size_t entries) {
     ++proofScans;
     proofScanEntries += entries;
@@ -484,8 +480,6 @@ private:
   uint64_t observationsByEngine[numDemandEngines][3] = {};
   uint64_t observationsByArm[numLookupMissReasons][3] = {};
   StatisticBaseline statisticsAtBirth;
-  uint64_t claimSubstitutionRebuilds = 0;
-  uint64_t claimSubstitutionEntriesWalked = 0;
   uint64_t proofScans = 0;
   uint64_t proofScanEntries = 0;
   uint64_t proofCollisionScans = 0;
@@ -656,7 +650,6 @@ void countVerifierObligationNormalization();
 
 /// Counts the linear scans the resolver performs, through whatever ledger is
 /// installed.
-void countClaimSubstitutionRebuild(size_t entries);
 void countProofScan(size_t entries);
 void countProofCollisionScan(size_t entries);
 
@@ -703,6 +696,13 @@ inline constexpr const char *demandCensusUnhookedPrefix =
 /// in the program.
 inline constexpr const char *demandCensusServedPrefix =
     "trait-demand-census served";
+
+/// The line a type position produces when respelling it by proof-memo lookup
+/// and respelling it by a substitution built from the whole memo disagree. Like
+/// the two lines above it reports a gap in this dialect's own reasoning and
+/// never a fault in the program being compiled.
+inline constexpr const char *demandCensusRespellingDisagreementPrefix =
+    "trait-demand-census respelling-disagreement";
 
 /// Setting this makes the stage record demands and write the census at its end.
 ///

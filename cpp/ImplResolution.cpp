@@ -262,6 +262,31 @@ Type ImplResolver::resolveProjectionsIn(Type ty, OpBuilder &builder) {
   return replacer.replace(ty);
 }
 
+AttrTypeReplacer ImplResolver::makeProvenClaimReplacer() const {
+  MLIRContext *ctx = module.getContext();
+  AttrTypeReplacer replacer;
+  replacer.addReplacement(
+      [this, ctx, recorded = memo.proofMemo.size()](ClaimType claim)
+          -> std::optional<std::pair<Type, WalkResult>> {
+        assert(memo.proofMemo.size() == recorded &&
+               "a proof was recorded while a replacer reading the memo was in "
+               "use");
+        // A claim that already names its proof is what respelling produces, so
+        // it is left alone rather than looked up again.
+        if (claim.isProven())
+          return std::nullopt;
+        auto it = memo.proofMemo.find(claim.getTraitApplication());
+        if (it == memo.proofMemo.end())
+          return std::nullopt;
+        // The proven spelling names the same application, whose type arguments
+        // can spell claims of their own, so the walk continues into the result
+        // instead of stopping at it.
+        return std::make_pair(Type(ClaimType::get(ctx, it->first, it->second)),
+                              WalkResult::advance());
+      });
+  return replacer;
+}
+
 FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
     ClaimType wanted,
     OpBuilder &builder,

@@ -482,7 +482,14 @@ inline Type applySubstitutionOnce(const llvm::DenseMap<Type,Type> &subst,
     if (auto generic = dyn_cast<GenericTypeInterface>(t)) {
       // GenericTypeInterface types own generic specialization entirely;
       // don't recurse into their result.
-      return std::make_pair(generic.specializeWith(specialization), WalkResult::skip());
+      Type specialized = generic.specializeWith(specialization);
+      // A generic type that cannot spell its specialized form yields no type at
+      // all. Stamping that into the enclosing type would leave a hole in it, so
+      // the type stands as written and whatever consumes it next is what
+      // reports that it never resolved.
+      if (!specialized)
+        specialized = t;
+      return std::make_pair(specialized, WalkResult::skip());
     }
 
     // Otherwise, check the full mixed map for non-generic bindings such as

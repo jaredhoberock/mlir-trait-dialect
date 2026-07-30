@@ -255,11 +255,28 @@ class ImplResolver {
     /// are left untouched.  Returns the rewritten type.
     Type resolveProjectionsIn(Type ty, OpBuilder &builder);
 
-    /// Builds a substitution mapping concrete, unproven ClaimTypes to
-    /// proven ClaimTypes given the current state of the proof memo
+    /// A replacer that respells every unproven claim whose trait application
+    /// this resolver has recorded a proof for.
+    ///
+    /// The replacer reads the memo rather than copying it, so it answers for
+    /// the memo as it stands each time it is asked. A caller must therefore not
+    /// record a proof while a replacer is in use: a replacer caches the answers
+    /// it has already given, so a memo that grew mid-sweep would respell some
+    /// occurrences of a claim and leave others alone. The replacer asserts that
+    /// precondition on every answer.
+    AttrTypeReplacer makeProvenClaimReplacer() const;
+
+    /// How many trait applications this resolver has recorded a proof for.
+    size_t getRecordedProofCount() const { return memo.proofMemo.size(); }
+
+    /// The proof memo as a substitution: every trait application it has a proof
+    /// for, mapped from its unproven claim spelling to its proven one.
+    ///
+    /// Applying this substitution to a type is the same rewrite as asking the
+    /// memo about the claims that type spells, at the cost of a copy of the
+    /// whole memo whatever is being respelled.
     inline EvidenceBindings buildClaimSubstitutionFromMemo() const {
       MLIRContext* ctx = module.getContext();
-      countClaimSubstitutionRebuild(memo.proofMemo.size());
       EvidenceBindings subst;
       for (auto [app, proof] : memo.proofMemo) {
         ClaimType unproven = ClaimType::get(ctx, app, nullptr);

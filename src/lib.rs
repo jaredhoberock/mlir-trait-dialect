@@ -113,6 +113,12 @@ pub const DEMAND_CENSUS_UNHOOKED_MARKER: &str = "trait-demand-census unhooked";
 /// the unhooked marker it reports a gap in the ledger's rules.
 pub const DEMAND_CENSUS_SERVED_MARKER: &str = "trait-demand-census served";
 
+/// The marker a type position carries when respelling it by proof-memo lookup
+/// and respelling it by a substitution built from the whole memo disagree. Like
+/// the two markers above it reports a gap in the dialect's own reasoning.
+pub const DEMAND_CENSUS_RESPELLING_DISAGREEMENT_MARKER: &str =
+    "trait-demand-census respelling-disagreement";
+
 /// The marker a deduplicated demanded type carries. These lines name types, and
 /// a monomorphic type's name embeds a mangled hash, so they are read where a
 /// module is small rather than recorded across a corpus.
