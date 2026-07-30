@@ -31,9 +31,9 @@ func.func @main() -> !trait.proj<@Gen[i64], "B"> {
   return %r : !trait.proj<@Gen[i64], "B">
 }
 
-// CHECK: trait-demand-census demand flags=real drainable=yes observations=15 depth=0
+// CHECK: trait-demand-census demand flags=real drainable=yes observations=19 depth=0
 // CHECK-SAME: arms=assoc-binding-failed
 // CHECK-SAME: type=!trait.proj<@Gen[i64], "B">
 // CHECK: trait-demand-census engine lookup-miss keys=1 observations=3 real=3 speculative=0 probe-internal=0
 // CHECK: trait-demand-census arm assoc-binding-failed keys=1 observations=3 real=3 speculative=0 probe-internal=0
-// CHECK: trait-demand-census summary keys=1 observations=15 drainable-keys=1
+// CHECK: trait-demand-census summary keys=1 observations=19 drainable-keys=1

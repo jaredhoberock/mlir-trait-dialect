@@ -9,6 +9,7 @@
 #include <string>
 #include <llvm/ADT/Statistic.h>
 #include <llvm/ADT/TypeSwitch.h>
+#include <llvm/Support/ErrorHandling.h>
 #include <llvm/Support/Format.h>
 #include <llvm/Support/xxhash.h>
 #include <mlir/IR/Builders.h>
@@ -83,6 +84,41 @@ std::string applySubstitutionAndGenerateMangledNameSuffix(
 //===----------------------------------------------------------------------===//
 // Ground projection resolution
 //===----------------------------------------------------------------------===//
+
+namespace {
+
+/// Stops the compilation at a ground projection whose resolution does not
+/// terminate, naming the demand it arose under.
+///
+/// The rewrite this reports has no normal form, so there is no spelling to
+/// return and no diagnostic a later stage could attach to a spelling it never
+/// received. The enclosing demand is what names where the projection was asked
+/// about; outside a stage span there is no enclosing demand and the module is
+/// all there is to name.
+///
+/// No in-tree program reaches this, and the checks in front of it are why. An
+/// impl whose own associated-type binding projects back through itself
+/// resolves to a spelling equal to the demand, so the lookup makes no progress
+/// and the leftover walk reports the projection as unresolved; a binding cycle
+/// across two impls either grows the type until the substitution that stamps
+/// it runs out of stack, or oscillates without growing and is caught by the
+/// rewrite budget of the driver that keeps re-deriving it. This stands behind
+/// all three.
+[[noreturn]] void reportUnnormalizableGroundProjection(Type ty,
+                                                       unsigned iterations,
+                                                       ModuleOp module) {
+  std::string message;
+  llvm::raw_string_ostream stream(message);
+  stream << "ground projection normalization did not converge within "
+         << iterations << " iterations for type " << ty << ", demanded at ";
+  if (std::optional<Location> anchor = currentDemandAnchor())
+    stream << *anchor;
+  else
+    stream << module.getLoc();
+  llvm::report_fatal_error(Twine(message));
+}
+
+} // namespace
 
 Type resolveGroundProjectionsByLookup(Type ty, ModuleOp module,
                                       DemandOrigin origin) {
@@ -168,13 +204,13 @@ Type resolveGroundProjectionsByLookup(Type ty, ModuleOp module,
 
   // Reaching the iteration cap while the type is still changing means the
   // lookup rewrite has no fixed point (a cyclic or oscillating resolution).
-  // Surface it: the returned type is only a partial normal form, and a caller
-  // comparing spellings against it would reject a well-formed program with a
-  // spelling mismatch that names neither the cycle nor its cause.
+  // What the loop reached is a partial normal form, and every caller either
+  // compares a spelling against it or stamps it into a specialized instance, so
+  // handing it back would turn a resolution that does not terminate into a
+  // spelling mismatch or a mis-specialized monomorph somewhere else entirely.
+  // The compilation stops at the demand that would not normalize instead.
   if (ty != previous)
-    module.emitError() << "ground projection normalization did not converge "
-                          "within " << maxIterations << " iterations for type "
-                       << ty;
+    reportUnnormalizableGroundProjection(ty, maxIterations, module);
 
   // Every monomorphic projection this call leaves standing is a demand no impl
   // served, so a recording site must have observed it. A survivor with no

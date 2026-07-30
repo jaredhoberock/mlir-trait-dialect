@@ -7,6 +7,8 @@
 #include "Trait.hpp"
 #include "TraitTypes.hpp"
 #include <llvm/ADT/ScopeExit.h>
+#include <llvm/ADT/bit.h>
+#include <llvm/Support/Format.h>
 #include <mlir/Dialect/Arith/IR/Arith.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/Dialect/Func/Transforms/FuncConversions.h>
@@ -15,6 +17,7 @@
 #include <mlir/Pass/Pass.h>
 #include <mlir/Transforms/DialectConversion.h>
 #include <mlir/Transforms/GreedyPatternRewriteDriver.h>
+#include <cinttypes>
 
 namespace mlir::trait {
 
@@ -49,8 +52,9 @@ struct RewriteEventCounts : public RewriterBase::Listener {
   /// budget it ran under. A driver with no budget reports none and no headroom
   /// either, rather than a number derived from the sentinel that stands for
   /// "unbounded".
-  void report(StringRef driver, int64_t budget) const {
+  void report(StringRef driver, unsigned round, int64_t budget) const {
     llvm::errs() << stageRecordRewritesPrefix << " driver=" << driver
+                 << " round=" << round
                  << " inserted=" << inserted << " modified=" << modified
                  << " replaced=" << replaced << " erased=" << erased
                  << " applications=" << applications;
@@ -68,30 +72,49 @@ struct RewriteEventCounts : public RewriterBase::Listener {
   uint64_t applications = 0;
 };
 
-/// Runs one greedy pattern driver over `root`, reporting the rewrite events it
-/// raised under the name `driver`.
+/// Runs one greedy pattern driver over `root` in `round`, reporting the rewrite
+/// events it raised under the name `driver` and saying through `changed`
+/// whether it rewrote anything at all.
 ///
 /// No listener is installed unless the counts will be reported, so a run that
-/// nobody is counting costs exactly what it did before.
+/// nobody is counting costs exactly what it did before; the driver answers
+/// whether it changed the IR on its own.
 LogicalResult applyPatternsGreedilyAndReport(Operation *root,
                                              RewritePatternSet &&patterns,
                                              GreedyRewriteConfig config,
-                                             StringRef driver) {
+                                             StringRef driver, unsigned round,
+                                             bool *changed = nullptr) {
   RewriteEventCounts events;
   bool reporting = DemandLedger::isRecordingEnabled();
   if (reporting)
     config.setListener(&events);
 
-  LogicalResult result = applyPatternsGreedily(root, std::move(patterns), config);
+  LogicalResult result =
+      applyPatternsGreedily(root, std::move(patterns), config, changed);
 
   if (reporting)
-    events.report(driver, config.getMaxNumRewrites());
+    events.report(driver, round, config.getMaxNumRewrites());
   return result;
+}
+
+/// The rewrite budget a driver over `module` runs under.
+///
+/// Bounding the total rewrite count makes a non-confluent pattern pair fail
+/// loudly instead of livelocking. The driver's own iteration limit cannot catch
+/// a livelock: two patterns that keep undoing each other's in-place type
+/// rewrites hold the worklist non-empty within one iteration. The bound scales
+/// with input size; a legitimate run rewrites each op a small bounded number of
+/// times as its types refine, so a run that reaches the bound is cycling.
+int64_t rewriteBudgetFor(ModuleOp module) {
+  int64_t opCount = 0;
+  module.walk([&](Operation *) { ++opCount; });
+  return opCount * 1024 + 4096;
 }
 
 } // namespace
 
-LogicalResult convertToTrait(ModuleOp module) {
+LogicalResult convertToTrait(ModuleOp module, unsigned round,
+                             bool *changed = nullptr) {
   MLIRContext* ctx = module.getContext();
 
   RewritePatternSet patterns(ctx);
@@ -102,11 +125,15 @@ LogicalResult convertToTrait(ModuleOp module) {
       iface->populateConvertToTraitPatterns(patterns);
   }
 
+  GreedyRewriteConfig config;
+  config.setMaxNumRewrites(rewriteBudgetFor(module));
+
   // apply patterns
-  if (failed(applyPatternsGreedilyAndReport(module, std::move(patterns),
-                                            GreedyRewriteConfig(),
-                                            "convert-to-trait")))
-    return failure();
+  if (failed(applyPatternsGreedilyAndReport(module, std::move(patterns), config,
+                                            "convert-to-trait", round, changed)))
+    return module.emitError(
+        "convert-to-trait did not converge: rewrite budget exceeded, which "
+        "indicates a non-confluent pattern pair cycling on a type spelling");
 
   return success();
 }
@@ -286,34 +313,44 @@ static void reportRespellingDisagreements(AttrTypeReplacer &queried,
 }
 
 /// Respells throughout `root` every claim `resolver` has recorded a proof for,
-/// and reports how much of `root` that sweep touched.
+/// and returns how many positions of `root` that sweep moved.
 ///
 /// The replacer's recursive entry point is this walk, so driving the walk here
 /// costs nothing extra and is what lets an op the sweep respelled be told from
 /// one it left alone. A position is a result type, a block-argument type, or the
 /// attribute dictionary of one op; an op counts once however many of its
-/// positions moved.
+/// positions moved. The count is what says whether this sweep wrote anything,
+/// so it is taken whether or not anyone is reading the report.
+///
+/// Each op is named while it is visited, so a demand raised under the sweep is
+/// attributed to the op carrying the type rather than to the whole module.
 ///
 /// The sweep records no proof of its own, which is the precondition the
 /// replacer it holds across the whole walk asserts.
-static void respellProvenClaimsInPlace(const ImplResolver &resolver,
-                                       Operation *root) {
+///
+/// `anchor`, when given, receives where one op the sweep moved was written, for
+/// a diagnostic that must name somewhere the round's work landed. A location
+/// rather than the op, because the instantiation that follows the sweep may
+/// erase what the sweep just respelled.
+static uint64_t respellProvenClaimsInPlace(const ImplResolver &resolver,
+                                           Operation *root, unsigned round,
+                                           std::optional<Location> *anchor = nullptr) {
   size_t recordedProofs = resolver.getRecordedProofCount();
-  if (recordedProofs == 0) return;
+  if (recordedProofs == 0) return 0;
   AttrTypeReplacer replacer = resolver.makeProvenClaimReplacer();
   std::optional<AttrTypeReplacer> substituted =
       makeSubstitutionCheckReplacer(resolver);
 
-  bool reporting = DemandLedger::isRecordingEnabled();
   uint64_t opsRespelled = 0;
   uint64_t positionsRespelled = 0;
 
   root->walk([&](Operation *op) {
+    DemandFrame frame(op->getLoc());
+
     if (substituted)
       reportRespellingDisagreements(replacer, *substituted, op);
 
     SmallVector<Type, 8> before;
-    DictionaryAttr attributesBefore;
     auto eachTypePosition = [&](llvm::function_ref<void(Type)> visit) {
       for (Type type : op->getResultTypes())
         visit(type);
@@ -322,18 +359,14 @@ static void respellProvenClaimsInPlace(const ImplResolver &resolver,
           for (BlockArgument argument : block.getArguments())
             visit(argument.getType());
     };
-    if (reporting) {
-      eachTypePosition([&](Type type) { before.push_back(type); });
-      attributesBefore = op->getAttrDictionary();
-    }
+    eachTypePosition([&](Type type) { before.push_back(type); });
+    DictionaryAttr attributesBefore = op->getAttrDictionary();
 
     replacer.replaceElementsIn(op,
                                /*replaceAttrs=*/true,
                                /*replaceLocs=*/false,
                                /*replaceTypes=*/true);
 
-    if (!reporting)
-      return;
     uint64_t movedHere = op->getAttrDictionary() == attributesBefore ? 0 : 1;
     size_t position = 0;
     eachTypePosition([&](Type type) {
@@ -341,15 +374,20 @@ static void respellProvenClaimsInPlace(const ImplResolver &resolver,
         ++movedHere;
     });
     positionsRespelled += movedHere;
-    if (movedHere)
+    if (movedHere) {
       ++opsRespelled;
+      if (anchor)
+        *anchor = op->getLoc();
+    }
   });
 
-  if (reporting)
+  if (DemandLedger::isRecordingEnabled())
     llvm::errs() << stageRecordRespellingPrefix
+                 << " round=" << round
                  << " bindings=" << recordedProofs
                  << " ops=" << opsRespelled
                  << " positions=" << positionsRespelled << "\n";
+  return positionsRespelled;
 }
 
 /// Proves a claim-producing op and replaces it with a trait.witness.
@@ -434,7 +472,7 @@ FailureOr<ImplResolver> resolveImpls(ModuleOp module) {
   });
 
   // run convert-to-trait patterns
-  if (failed(convertToTrait(module)))
+  if (failed(convertToTrait(module, /*round=*/0)))
     return failure();
 
   // verify that monomorphs are legal
@@ -473,7 +511,7 @@ FailureOr<ImplResolver> resolveImpls(ModuleOp module) {
     // rewrite trait.allege -> trait.witness
     if (failed(applyPatternsGreedilyAndReport(module, std::move(patterns),
                                               GreedyRewriteConfig(),
-                                              "resolve-impls")))
+                                              "resolve-impls", /*round=*/0)))
       return failure();
   }
 
@@ -490,7 +528,7 @@ FailureOr<ImplResolver> resolveImpls(ModuleOp module) {
   // may itself contain a claim that was just proven.  Respell all
   // unproven claims in their proven forms so that downstream instantiation
   // sees consistent types.
-  respellProvenClaimsInPlace(resolver, module);
+  respellProvenClaimsInPlace(resolver, module, /*round=*/0);
 
   handedOn = true;
   return resolver;
@@ -866,63 +904,6 @@ static bool wouldReplace(AttrTypeReplacer &replacer, Operation *op,
   return false;
 }
 
-/// Propagates proofs from the resolver's memo into claim types of any op
-/// that carries unproven claims the resolver can now prove.
-///
-/// When ProveClaimResultPattern proves a claim during the greedy rewrite and
-/// FuncCallOpLowering subsequently instantiates a callee that expects that
-/// claim, the newly created ops carry unproven claim types.  This pattern
-/// respells those in their proven counterparts, unblocking
-/// MethodCallOpLowering within the same rewrite pass.
-///
-/// Only replaces types owned by the matched op itself (result types, block
-/// argument types, and attributes).  Operand types are SSA-determined and
-/// update automatically once the defining value carries the proven type.
-/// Child ops are visited independently by the greedy driver.
-///
-/// The matched op decides what is asked of the memo, so the questions this
-/// pattern asks are bounded by the op's own type trees however many proofs the
-/// resolver has recorded. The rewrite records no proof, which is the
-/// precondition the replacer asserts.
-struct PropagateProofsPattern : public RewritePattern {
-  ImplResolver &resolver;
-
-  PropagateProofsPattern(MLIRContext *ctx, ImplResolver &resolver)
-    : RewritePattern(MatchAnyOpTypeTag(), /*benefit=*/1, ctx),
-      resolver(resolver) {}
-
-  LogicalResult matchAndRewrite(Operation *op,
-                                PatternRewriter &rewriter) const override {
-    // An op that spells no claim has nothing to respell whatever the resolver
-    // has proved, and that is answered from the op alone, so it is asked before
-    // anything that reads the memo.
-    if (!opMentionsType<ClaimType>(op))
-      return failure();
-
-    AttrTypeReplacer replacer = resolver.makeProvenClaimReplacer();
-
-    // The check runs on the ops this pattern would respell. An op spelling no
-    // claim is not one of them, so the guard above stands ahead of it.
-    if (std::optional<AttrTypeReplacer> substituted =
-            makeSubstitutionCheckReplacer(resolver))
-      reportRespellingDisagreements(replacer, *substituted, op);
-
-    if (!wouldReplace(replacer, op,
-                      /*replaceAttrs=*/true,
-                      /*replaceLocs=*/false,
-                      /*replaceTypes=*/true))
-      return failure();
-
-    rewriter.modifyOpInPlace(op, [&] {
-      replacer.replaceElementsIn(op,
-                                 /*replaceAttrs=*/true,
-                                 /*replaceLocs=*/false,
-                                 /*replaceTypes=*/true);
-    });
-    return success();
-  }
-};
-
 /// Resolves concrete `!trait.proj` types to their bound types by looking up
 /// the matching `trait.impl`'s associated type binding.
 struct ResolveProjectionsPattern : public RewritePattern {
@@ -1023,15 +1004,240 @@ struct InheritProjCastProofPattern : public OpRewritePattern<ProjCastOp> {
   }
 };
 
+/// What one round did, which is what says whether another round has anything to
+/// do.
+///
+/// A round that wrote nothing minted no fact, found no demand nothing had seen
+/// and rewrote nothing, so the round after it would repeat it exactly. Asking
+/// again about a demand an earlier round already asked about is not writing: a
+/// loop that ran on questions rather than answers would run until its bound.
+struct RoundWork {
+  /// Whether the bridge into trait vocabulary rewrote anything.
+  bool bridged = false;
+  /// Demands put to impl selection.
+  size_t collected = 0;
+  /// How those demands were settled: resolved, refused on the arm no later
+  /// resolution overturns, or left for a later round.
+  uint64_t served = 0;
+  uint64_t refused = 0;
+  uint64_t deferred = 0;
+  /// Ops impl selection inserted serving them.
+  uint64_t insertedServingDemands = 0;
+  /// Type positions the round's commit respelled.
+  uint64_t respelled = 0;
+  /// Whether the instantiation driver rewrote anything.
+  bool instantiated = false;
+  /// How the collected demands split by the way the lookup missed on them, how
+  /// many were declined by an engine that names no way at all, and how many
+  /// carry more than one of the lookup's arms.
+  uint64_t noCandidateImpl = 0;
+  uint64_t multipleCandidateImpls = 0;
+  uint64_t otherArms = 0;
+  uint64_t withoutArm = 0;
+  uint64_t ambiguousArms = 0;
+  /// Refusals the round's flush forgot and kept, and what became of the ones
+  /// the round before it forgot.
+  ImplResolver::RefusalCounts refusals;
+  /// Impls the instantiation driver asked to have generated mid-run.
+  uint64_t midDriverGeneration = 0;
+  /// Whether impl selection minted a fact anywhere in the round.
+  bool mintedFacts = false;
+  /// Whether the drain grew after the round had already collected from it, so
+  /// that a demand raised late in the round has had no round put it to
+  /// selection.
+  bool drainGrewAfterCollect = false;
+
+  bool wrote() const {
+    return bridged || served || insertedServingDemands || respelled ||
+           instantiated || mintedFacts || drainGrewAfterCollect;
+  }
+};
+
+/// Counts the ops one round's own resolution inserts.
+///
+/// Resolution under a pattern driver reaches that driver's worklist through the
+/// rewriter's listener. A round resolves between its drivers and then runs the
+/// next one over the whole module, which reaches an op inserted here without it
+/// having been enqueued; the count is what the listener is for.
+struct RoundInsertionCounts : public OpBuilder::Listener {
+  void notifyOperationInserted(Operation *, OpBuilder::InsertPoint) override {
+    ++inserted;
+  }
+
+  uint64_t inserted = 0;
+};
+
+/// The demands `ledger` holds that no round has settled and that the facts have
+/// moved under since a round last asked about them.
+///
+/// A demand leaves the drain for good when nothing a later round could ask
+/// would settle it differently: impl selection resolved it, or refused it on
+/// the arm no later resolution overturns. `drained` holds those. One selection
+/// could not serve yet stays on the drain, and `attempted` carries the fact
+/// epoch it was last put to selection at, so a round asks about it again
+/// exactly where selection has minted something since -- which is the only
+/// thing that can make the answer differ, and the only thing that keeps asking
+/// again from asking the same question forever.
+static SmallVector<Type>
+collectUndrainedDemands(const DemandLedger &ledger,
+                        const DenseSet<Type> &drained,
+                        const DenseMap<Type, uint64_t> &attempted,
+                        uint64_t epoch) {
+  SmallVector<Type> collected;
+  for (Type demand : ledger.getDrainableDemands()) {
+    if (drained.contains(demand))
+      continue;
+    auto it = attempted.find(demand);
+    if (it != attempted.end() && it->second == epoch)
+      continue;
+    collected.push_back(demand);
+  }
+  return collected;
+}
+
+/// Records in `work` how `collected` splits by the way the lookup missed.
+///
+/// A demand no impl binds is one a generator can supply; a demand several impls
+/// bind is one the premise partition must choose among, and generating for it
+/// would add a candidate to an application that already has too many. Both are
+/// served the same way -- by the impl selection that decides which case it is --
+/// so the split is what the round reports rather than what it routes on.
+static void splitCollectedDemands(const DemandLedger &ledger,
+                                  ArrayRef<Type> collected, RoundWork &work) {
+  for (Type demand : collected) {
+    unsigned arms = ledger.getDrainableArms(demand);
+    // The lookup is the one engine that declines a demand in more than one way,
+    // and it names the way it declined. Its arms accumulate over the whole
+    // stage, across the module changes the rounds themselves make, so one
+    // demand can carry the arm it missed on before an impl was generated for it
+    // and the arm it misses on after. Serving does not route on the arm, so a
+    // demand carrying two of them is reported as carrying two.
+    if (llvm::popcount(arms) > 1)
+      ++work.ambiguousArms;
+    if (arms & (1u << unsigned(LookupMissReason::MultipleCandidateImpls)))
+      ++work.multipleCandidateImpls;
+    else if (arms & (1u << unsigned(LookupMissReason::NoCandidateImpl)))
+      ++work.noCandidateImpl;
+    else if (arms)
+      ++work.otherArms;
+    else
+      ++work.withoutArm;
+  }
+}
+
+/// Puts every demand in `collected` to impl selection, which generates the impl
+/// the demand needs when none binds its application and partitions the
+/// candidates when several do, and records what each attempt settled.
+///
+/// A demand selection resolved or refused for good leaves the drain; one it
+/// could not serve yet stays, against the epoch it was asked at.
+static void serveCollectedDemands(ImplResolver &resolver,
+                                  ArrayRef<Type> collected, OpBuilder &builder,
+                                  DenseSet<Type> &drained,
+                                  DenseSet<Type> &served,
+                                  DenseMap<Type, uint64_t> &attempted,
+                                  RoundWork &work) {
+  for (Type demand : collected) {
+    // Every engine whose declining leaves a demand standing declines a
+    // monomorphic projection and nothing else, so the drain holds projections
+    // and this is total over what it holds.
+    auto projection = dyn_cast<ProjectionType>(demand);
+    assert(projection &&
+           "a drainable demand is a projection an engine left spelled");
+
+    // The epoch is read per demand rather than once per round: serving one
+    // demand mints facts the demands after it in this batch are resolved
+    // under, so a demand asked about before that is one the next round asks
+    // about again.
+    attempted[demand] = resolver.getFactEpoch();
+    switch (resolver.serveDemand(projection, builder)) {
+    case ImplResolver::DemandDisposition::Served:
+      ++work.served;
+      drained.insert(demand);
+      served.insert(demand);
+      break;
+    case ImplResolver::DemandDisposition::Refused:
+      ++work.refused;
+      drained.insert(demand);
+      break;
+    case ImplResolver::DemandDisposition::Deferred:
+      ++work.deferred;
+      break;
+    }
+  }
+}
+
+/// Writes one round's line, naming what it did and the facts it left behind.
+static void reportRound(unsigned round, const RoundWork &work,
+                        const ImplResolver &resolver) {
+  llvm::errs() << stageRecordRoundPrefix << " index=" << round
+               << " bridged=" << (work.bridged ? "yes" : "no")
+               << " collected=" << work.collected
+               << " no-candidate-impl=" << work.noCandidateImpl
+               << " multiple-candidate-impls=" << work.multipleCandidateImpls
+               << " other-arms=" << work.otherArms
+               << " without-arm=" << work.withoutArm
+               << " ambiguous-arms=" << work.ambiguousArms
+               << " served=" << work.served
+               << " declined=" << work.refused + work.deferred
+               << " deferred=" << work.deferred
+               << " inserted-serving-demands=" << work.insertedServingDemands
+               << " respelled-positions=" << work.respelled
+               << " refusals-forgotten=" << work.refusals.forgotten
+               << " refusals-kept=" << work.refusals.kept
+               << " refusals-overturned=" << work.refusals.overturned
+               << " refusals-re-earned=" << work.refusals.reEarned
+               << " mid-driver-generation=" << work.midDriverGeneration
+               << " instantiated=" << (work.instantiated ? "yes" : "no")
+               << llvm::format(" digest=0x%016" PRIx64,
+                               resolver.getRecordedFactsDigest())
+               << "\n";
+}
+
+/// Checks that impl selection left nothing part-way done.
+///
+/// Selection is entered at round zero, at the round's own generation step, and
+/// by the patterns the instantiation driver runs. A reader of its facts between
+/// those points must find every application it opened closed and every proof it
+/// recorded naming a proof the module defines, because a fact read part-way
+/// through is one that is not yet a fact.
+static void checkResolutionBoundary(const ImplResolver &resolver) {
+  assert(resolver.isQuiescent() &&
+         "impl selection must not be part-way through an application at a "
+         "boundary between the stage's steps");
+  // Reading the second half costs a symbol table over a module every round
+  // rewrites, so it is asked where the cross-checks are armed rather than on
+  // every compile.
+  assert((!DemandLedger::isPostconditionEnabled() ||
+          resolver.recordsOnlyRealizedProofs()) &&
+         "every proof recorded at a boundary between the stage's steps must "
+         "name a proof the module defines");
+}
+
 } // end namespace
 
 LogicalResult instantiateMonomorphs(ModuleOp module) {
-  // resolve impls first
+  // Round zero: resolve the impls the module already spells and respell the
+  // claims they prove, before any round asks for an impl that is missing.
   auto resolver = resolveImpls(module);
   if (failed(resolver))
     return failure();
+  checkResolutionBoundary(*resolver);
 
   MLIRContext* ctx = module.getContext();
+
+  // The demands the rounds below settled and the ones they served. A demand is
+  // settled when nothing a later round could ask would answer differently, so
+  // the served demands are a subset: a demand refused on the arm no later
+  // resolution overturns is settled and unserved. The stage-exit checks read
+  // both -- the served set tells a demand the stage answered from one the
+  // drainability rule over-admitted, and the difference is what must still be
+  // spelled for something to report.
+  DenseSet<Type> drained;
+  DenseSet<Type> served;
+  // The fact epoch each unsettled demand was last put to selection at, which is
+  // what says whether asking again could answer differently.
+  DenseMap<Type, uint64_t> attempted;
 
   // The census is written on every exit from here on, so a run that fails
   // mid-stage still reports what it observed. It is declared before the span
@@ -1042,7 +1248,7 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
   // monomorphs with no sink installed, so what that sweep mints is outside the
   // population by construction.
   auto census = llvm::scope_exit([&] {
-    resolver->getDemandLedger().reportServedDrainableKeys(module);
+    resolver->getDemandLedger().reportServedDrainableKeys(module, served);
     if (DemandLedger::isRecordingEnabled()) {
       resolver->getDemandLedger().dumpCensus();
       resolver->reportRecordedFacts();
@@ -1050,47 +1256,182 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
   });
 
   // The resolver was moved out of the sub-phase that built it, so its ledger is
-  // reinstalled here to span this sub-phase's driver and leftover walks. Both
+  // reinstalled here to span this sub-phase's rounds and leftover walks. Both
   // spans append to the one ledger the census reports.
   DemandLedgerScope recording(resolver->getDemandLedger());
 
-  // rewrite trait.func.call and trait.method.call, prove claim producers
-  // (allege, derive, project), resolve projections, and monomorphize any
-  // generic op whose results become monomorphic
-  RewritePatternSet patterns(ctx);
-  patterns.add<ProveClaimResultPattern>(ctx, *resolver, /*allegeOnly=*/false);
-  patterns.add<MonomorphizeResultTypesPattern>(ctx);
-  patterns.add<FuncCallOpLowering>(ctx, *resolver);
-  patterns.add<MethodCallOpLowering>(ctx, *resolver);
-  patterns.add<ResolveProjectionsPattern>(ctx, *resolver);
-  patterns.add<PropagateProofsPattern>(ctx, *resolver);
-  patterns.add<InheritProjCastProofPattern>(ctx);
+  // A round forgets the refusals a later resolution could answer differently,
+  // bridges into trait vocabulary, takes the demands nothing has settled off
+  // the drain, puts them to impl selection, commits what selection proved to
+  // the module's spellings, and only then instantiates. Rounds run until one of
+  // them writes nothing, at which point the round after it would repeat it.
+  //
+  // The flush leads because everything after it asks questions: a round asking
+  // under a negative an earlier round recorded would be told what was true
+  // before the impls this stage has generated since existed.
+  //
+  // Only the demands an engine left standing are collected here. The
+  // obligations impl selection raises proving one claim are resolved on the
+  // same stack that raised them and never reach the drain, and the projections
+  // instantiation meets are served inside the driver by the patterns that meet
+  // them; both are pinned by the leftover walks at the end of the stage.
+  //
+  // Each round's work is bounded by the module and a round that finds nothing
+  // ends the loop, so the count of rounds is the depth of the chain of impls
+  // the module needs generated. A module whose rounds keep finding work is
+  // cycling, and this bound is what makes that loud rather than endless.
+  constexpr unsigned maxRounds = 64;
+  unsigned round = 0;
+  // Whether anything has written to the module since the bridge last ran and
+  // since the commit last swept it. A step whose input has not moved since it
+  // last ran would produce what it produced then, which for both of these is
+  // nothing.
+  bool writtenSinceBridge = true;
+  bool writtenSinceSweep = false;
+  size_t proofsAtSweep = resolver->getRecordedProofCount();
+  // What the last two rounds did, and where the last commit moved something,
+  // for the report the round bound owes a reader.
+  SmallVector<std::pair<unsigned, RoundWork>, 2> lastRounds;
+  std::optional<Location> lastRespelled;
+  for (bool wrote = true; wrote;) {
+    if (++round > maxRounds) {
+      // What the last two rounds did is what says which work is coming back
+      // round, so it is written whether or not anyone asked for the record.
+      for (const auto &[index, past] : lastRounds)
+        reportRound(index, past, *resolver);
+      InFlightDiagnostic diagnostic =
+          emitError(lastRespelled.value_or(module.getLoc()));
+      return diagnostic
+             << "instantiate-monomorphs did not converge: the stage ran its "
+                "rounds to the round bound, which indicates a round writing "
+                "work back for the next one to find";
+    }
 
-  // collect instantiate-monomorphs patterns from other dialects
-  for (Dialect *d : ctx->getLoadedDialects()) {
-    if (auto *iface = d->getRegisteredInterface<MonomorphizationInterface>())
-      iface->populateInstantiateMonomorphsPatterns(patterns);
+    RoundWork work;
+    uint64_t epochAtRoundHead = resolver->getFactEpoch();
+
+    // FLUSH. Every refusal a later resolution could answer differently is
+    // forgotten here, so that the questions the rest of the round asks are
+    // asked against the facts as they now stand.
+    work.refusals = resolver->forgetRetriableRefusals();
+
+    // BRIDGE. The patterns that lift another dialect's vocabulary into trait
+    // claims run whenever something has written to the module since they last
+    // ran, because that writing may have created the ops they lift.
+    if (writtenSinceBridge) {
+      if (failed(convertToTrait(module, round, &work.bridged)))
+        return failure();
+      writtenSinceBridge = false;
+      writtenSinceSweep |= work.bridged;
+    }
+
+    // COLLECT.
+    SmallVector<Type> collected = collectUndrainedDemands(
+        resolver->getDemandLedger(), drained, attempted,
+        resolver->getFactEpoch());
+    work.collected = collected.size();
+    splitCollectedDemands(resolver->getDemandLedger(), collected, work);
+    size_t drainAtCollect =
+        resolver->getDemandLedger().getDrainableDemands().size();
+
+    // GENERATE.
+    {
+      RoundInsertionCounts insertions;
+      OpBuilder builder(ctx);
+      builder.setListener(&insertions);
+      builder.setInsertionPointToEnd(module.getBody());
+      serveCollectedDemands(*resolver, collected, builder, drained, served,
+                            attempted, work);
+      work.insertedServingDemands = insertions.inserted;
+    }
+    writtenSinceBridge |= work.insertedServingDemands != 0;
+    writtenSinceSweep |= work.insertedServingDemands != 0;
+
+    // COMMIT. Every claim the stage has proved is respelled in its proven form
+    // throughout the module, so the round that follows reads one spelling of
+    // each claim wherever it appears.
+    //
+    // The sweep rewrites a claim where the module spells one the proof memo
+    // answers for, so a module nothing has written to since the last sweep,
+    // under a memo that has not grown since, has nothing left for it to move.
+    if (writtenSinceSweep || resolver->getRecordedProofCount() != proofsAtSweep) {
+      work.respelled =
+          respellProvenClaimsInPlace(*resolver, module, round, &lastRespelled);
+      proofsAtSweep = resolver->getRecordedProofCount();
+      writtenSinceSweep = false;
+      writtenSinceBridge |= work.respelled != 0;
+    }
+
+    checkResolutionBoundary(*resolver);
+
+    // INSTANTIATE. Rewrite trait.func.call and trait.method.call, prove claim
+    // producers (allege, derive, project), resolve projections, and monomorphize
+    // any generic op whose results become monomorphic.
+    RewritePatternSet patterns(ctx);
+    patterns.add<ProveClaimResultPattern>(ctx, *resolver, /*allegeOnly=*/false);
+    patterns.add<MonomorphizeResultTypesPattern>(ctx);
+    patterns.add<FuncCallOpLowering>(ctx, *resolver);
+    patterns.add<MethodCallOpLowering>(ctx, *resolver);
+    patterns.add<ResolveProjectionsPattern>(ctx, *resolver);
+    patterns.add<InheritProjCastProofPattern>(ctx);
+
+    // collect instantiate-monomorphs patterns from other dialects
+    for (Dialect *d : ctx->getLoadedDialects()) {
+      if (auto *iface = d->getRegisteredInterface<MonomorphizationInterface>())
+        iface->populateInstantiateMonomorphsPatterns(patterns);
+    }
+
+    GreedyRewriteConfig config;
+    config.setMaxNumRewrites(rewriteBudgetFor(module));
+
+    {
+      // Generating an impl is a round's own work. One generated while the
+      // driver runs is a fact the run's earlier rewrites could not see, so what
+      // is left of that is counted where it happens.
+      ImplGenerationTally midDriverGeneration(*resolver);
+      // XXX TODO: a freeze stands over this span only where the environment
+      // asks for one, which is how the freeze is reached while nothing arms it
+      // for real. It replaces the tally outright once the driver stops asking.
+      std::optional<ImplGenerationFreeze> freeze;
+      if (isInstantiationFreezeRequested())
+        freeze.emplace(*resolver, "the instantiation driver");
+      LogicalResult instantiated = applyPatternsGreedilyAndReport(
+          module, std::move(patterns), config, "instantiate-monomorphs", round,
+          &work.instantiated);
+      work.midDriverGeneration = midDriverGeneration.getAsks();
+      if (failed(instantiated))
+        return module.emitError(
+            "instantiate-monomorphs did not converge: rewrite budget exceeded, "
+            "which indicates a non-confluent pattern pair cycling on a type "
+            "spelling");
+    }
+    writtenSinceBridge |= work.instantiated;
+    writtenSinceSweep |= work.instantiated;
+
+    checkResolutionBoundary(*resolver);
+
+    // A demand raised after this round collected has had no round put it to
+    // selection, and a fact minted anywhere in the round is one the round
+    // before could not have seen; either is work for a round after this one.
+    work.drainGrewAfterCollect =
+        resolver->getDemandLedger().getDrainableDemands().size() >
+        drainAtCollect;
+    work.mintedFacts = resolver->getFactEpoch() != epochAtRoundHead;
+
+    wrote = work.wrote();
+    if (DemandLedger::isRecordingEnabled())
+      reportRound(round, work, *resolver);
+    if (lastRounds.size() == 2)
+      lastRounds.erase(lastRounds.begin());
+    lastRounds.emplace_back(round, work);
   }
 
-  // Bound the total rewrite count so that a non-confluent pattern pair
-  // fails loudly instead of livelocking. The driver's iteration limit
-  // cannot catch a livelock: two patterns that keep undoing each other's
-  // in-place type rewrites hold the worklist non-empty WITHIN one
-  // iteration. The bound scales with input size; legitimate runs rewrite
-  // each op a small bounded number of times as types refine, so any run
-  // that reaches the bound is cycling.
-  int64_t opCount = 0;
-  module.walk([&](Operation *) { ++opCount; });
-  GreedyRewriteConfig config;
-  config.setMaxNumRewrites(opCount * 1024 + 4096);
-
-  // apply patterns
-  if (failed(applyPatternsGreedilyAndReport(module, std::move(patterns), config,
-                                            "instantiate-monomorphs")))
-    return module.emitError(
-        "instantiate-monomorphs did not converge: rewrite budget exceeded, "
-        "which indicates a non-confluent pattern pair cycling on a type "
-        "spelling");
+  // Every demand a round took off the drain was one it undertook to settle, so
+  // at the end of the stage each is served or left for the walks below to
+  // report. A demand taken and dropped is one nothing downstream would mention.
+  if (failed(resolver->getDemandLedger().checkDrainedKeysSettled(module, drained,
+                                                                 served)))
+    return failure();
 
   // Assert that no op produced an unproven monomorphic claim that escaped
   // proving. Keying this check on the result type rather than on the set of

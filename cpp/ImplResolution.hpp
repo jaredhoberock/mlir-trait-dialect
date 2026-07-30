@@ -24,11 +24,15 @@ struct ImplGenerator {
   // insertion point parked inside the IR it just generated, and restoring it
   // is again the caller's responsibility.
   //
-  // When generation runs underneath a greedy pattern driver, the caller must
-  // pass that driver's active PatternRewriter itself rather than a builder of
-  // its own: the builder's listener is what places generated ops on the
-  // driver's worklist, so a builder without that listener silently changes
-  // which ops the driver revisits.
+  // A generated impl is IR nothing revisits unless the caller hears about it,
+  // so the builder must carry a listener and the caller must act on what it
+  // hears. When generation runs underneath a greedy pattern driver, that means
+  // passing the driver's active PatternRewriter itself rather than a builder of
+  // its own: the driver's listener is what places generated ops on its
+  // worklist, and a builder without it silently changes which ops the driver
+  // revisits. A caller with no driver running must instead scan what it
+  // generated itself, which is what a caller that counts insertions and then
+  // runs a driver over the whole module does.
   virtual FailureOr<ImplOp>
   generateImpl(TraitOp trait,
                ClaimType wanted,
@@ -229,6 +233,10 @@ class ImplResolver {
     /// could not tell a change of retry policy apart from a change of fact.
     void reportRecordedFacts() const;
 
+    /// A digest over the canonical rendering of those same facts, for a reader
+    /// comparing what one span of resolution settled against another.
+    uint64_t getRecordedFactsDigest() const;
+
     /// Ensures canonical proof for a fully-concrete trait application `claim`.
     /// Resolution proceeds as follows:
     ///   1. If an unconditional ImplOp exists, return its symbol directly.
@@ -246,9 +254,43 @@ class ImplResolver {
     /// Resolves a concrete ProjectionType to the type it projects to.
     /// Uses the internal impl resolution pipeline to find the matching impl,
     /// then looks up the associated type binding and applies substitution.
+    ///
+    /// `refusedOn`, when given, receives the arm impl selection refused this
+    /// projection's application on, and is left alone when selection did not
+    /// refuse -- a resolution that fails downstream of a selected impl names no
+    /// arm.
     FailureOr<Type> resolveProjectionType(ProjectionType proj,
                                           OpBuilder &builder,
-                                          llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+                                          llvm::function_ref<InFlightDiagnostic()> err = nullptr,
+                                          std::optional<RefutationArm> *refusedOn = nullptr);
+
+    /// What putting one demand to impl selection settled.
+    enum class DemandDisposition : uint8_t {
+      /// Selection resolved the projection.
+      Served,
+      /// Selection refused on the arm no later resolution overturns: two or
+      /// more candidates satisfy the application, and candidates are only
+      /// appended.
+      Refused,
+      /// Selection did not serve it, on facts a later resolution may move.
+      Deferred,
+    };
+
+    /// Puts `demand` to impl selection and says what that settled.
+    ///
+    /// Whether asking again could ever answer differently is what a caller
+    /// scheduling rounds needs and what a bare resolution result does not say.
+    DemandDisposition serveDemand(ProjectionType demand, OpBuilder &builder);
+
+    /// How many facts impl selection has minted: one for each impl it generated
+    /// and one for each proof it recorded.
+    ///
+    /// A refusal stands until the facts it was derived from move, and this is
+    /// the monotone quantity that says they have. It counts writes rather than
+    /// entries, so an optimistic proof entry a failed recursion takes back out
+    /// still counts: a quantity that fell could show a reader the same number
+    /// across a fact base that had changed in between.
+    uint64_t getFactEpoch() const { return factEpoch; }
 
     /// Walks `ty` and replaces every concrete (monomorphic) ProjectionType
     /// with its resolved type via full impl lookup.  Polymorphic projections
@@ -269,6 +311,55 @@ class ImplResolver {
     /// How many trait applications this resolver has recorded a proof for.
     size_t getRecordedProofCount() const { return memo.proofMemo.size(); }
 
+    /// How many refusals of each kind `forgetRetriableRefusals` found, and what
+    /// became of the refusals the call before it forgot.
+    struct RefusalCounts {
+      /// Refusals dropped, on the arm a later resolution can overturn.
+      uint64_t forgotten = 0;
+      /// Refusals kept, on the arm no later resolution can overturn.
+      uint64_t kept = 0;
+      /// Of the refusals the previous call dropped: how many selection has
+      /// since answered with an impl, and how many it has refused again.
+      uint64_t overturned = 0;
+      uint64_t reEarned = 0;
+    };
+
+    /// Forgets every refusal a later resolution could answer differently, and
+    /// says what became of the ones the call before this one forgot.
+    ///
+    /// Selection refuses on two arms and only one of them can move. A refusal
+    /// for want of a satisfiable candidate is one an impl generated since can
+    /// overturn, and the application it was recorded under is a spelling that
+    /// moves too -- respelling a proven claim inside an application's arguments
+    /// makes a different application -- so the entry is dropped rather than
+    /// re-keyed. A refusal for two or more satisfiable candidates cannot be
+    /// overturned: candidates are only ever appended, so a partition that
+    /// already had two of them keeps at least two, and re-deriving it would
+    /// refuse again at the price of the whole partition.
+    ///
+    /// Dropping a negative only pays where a later resolution answers
+    /// differently, so the counts say how much of the last drop was re-earned
+    /// and how much was overturned.
+    RefusalCounts forgetRetriableRefusals();
+
+    /// Whether impl selection is part-way through no application.
+    bool isQuiescent() const { return memo.resolutionMemo.visiting.empty(); }
+
+    /// Whether every proof this resolver has recorded names an op of the module
+    /// that can prove an application: a `trait.proof`, or an unconditional
+    /// `trait.impl`, which proves its own self claim.
+    ///
+    /// Proof creation enters its symbol in the memo before recursing into the
+    /// obligations, so that an obligation coming back round to the claim being
+    /// proven meets the memo instead of diverging, and takes the entry back out
+    /// if that recursion fails. Where no creation is part-way through, every
+    /// entry therefore names a proof that exists.
+    ///
+    /// Answering costs a symbol table over the whole module, which every round
+    /// invalidates by rewriting it, so callers ask where the cross-checks are
+    /// armed rather than on every compile.
+    bool recordsOnlyRealizedProofs() const;
+
     /// The proof memo as a substitution: every trait application it has a proof
     /// for, mapped from its unproven claim spelling to its proven one.
     ///
@@ -288,14 +379,23 @@ class ImplResolver {
 
   private:
     friend class ImplGenerationFreeze;
+    friend class ImplGenerationTally;
     friend class ReadOnlyImplResolver;
 
     /// Finds the unique impl for the wanted claim and returns the normalized
-    /// claim that was actually used for selection.
+    /// claim that was actually used for selection. `refusedOn`, when given,
+    /// receives the arm a refusal was refused on.
     FailureOr<ResolvedImpl> resolveImplFor(
         ClaimType wanted,
         OpBuilder &builder,
-        llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+        llvm::function_ref<InFlightDiagnostic()> err = nullptr,
+        std::optional<RefutationArm> *refusedOn = nullptr);
+
+    /// Records `sym` as what proves `app`, counting the fact.
+    void recordProof(TraitApplicationAttr app, FlatSymbolRefAttr sym) {
+      memo.proofMemo[app] = sym;
+      ++factEpoch;
+    }
 
     /// Checks whether all of `impl`'s where-clause assumptions are satisfiable
     /// when specialized for `concreteSelf`.
@@ -304,16 +404,21 @@ class ImplResolver {
                                             OpBuilder &builder);
 
     /// The generators impl selection asks when no candidate impl satisfies a
-    /// claim: this resolver's own set, or a freeze while one is installed.
+    /// claim: this resolver's own set, or whatever stands in for them while
+    /// something is installed over a span.
     const ImplGenerator &getImplGenerators() const {
-      return installedFreeze ? *installedFreeze : generators;
+      return installedOverride ? *installedOverride : generators;
     }
 
     mutable ModuleOp module;
     std::shared_ptr<DemandLedger> ledger;
     ProofResolutionMemo memo;
     ImplGeneratorSet generators;
-    const ImplGenerator *installedFreeze = nullptr;
+    const ImplGenerator *installedOverride = nullptr;
+    uint64_t factEpoch = 0;
+    /// The applications the last `forgetRetriableRefusals` dropped, so that the
+    /// next one can say what became of them.
+    SmallVector<TraitApplicationAttr> lastForgotten;
 };
 
 /// Stands in for a resolver's impl generators over a span in which no impl may
@@ -325,10 +430,11 @@ class ImplResolver {
 /// than loudly wrong. A freeze names the claim that was demanded and the span
 /// whose contract the demand broke, at the point selection asked.
 ///
-/// XXX TODO: nothing installs a freeze yet. One is installed over the span in
-/// which the stage's pattern drivers run once the stage runs them in rounds and
-/// commits what each round proved between them, generation being a round's own
-/// work rather than a driver's. Delete this if that scheduling does not land.
+/// XXX TODO: a freeze stands over the instantiation driver only where the
+/// environment asks for one (see isInstantiationFreezeRequested); a tally
+/// stands there otherwise, counting the impls the drivers still ask for. The
+/// freeze becomes unconditional once that count is zero on every row. Delete
+/// this if the drivers never stop asking.
 class ImplGenerationFreeze : public ImplGenerator {
 public:
   /// Installs itself as `resolver`'s generators until it goes out of scope.
@@ -351,6 +457,53 @@ private:
   const ImplGenerator *displaced;
 };
 
+/// Setting this in the environment stands a freeze over the stage's
+/// instantiation driver, so a module whose driver still generates impls stops
+/// there and names the claim it asked for.
+///
+/// XXX TODO: this is how the freeze is reached while nothing arms it for real.
+/// Delete it, with the switch below, once the freeze stands over that span
+/// unconditionally and the tally beside it goes.
+inline constexpr const char *freezeInstantiationEnvironmentVariable =
+    "TRAIT_FREEZE_INSTANTIATION";
+
+/// Whether the environment asked for a freeze over the instantiation driver.
+bool isInstantiationFreezeRequested();
+
+/// Counts the impls a span asks impl selection to generate, leaving what the
+/// generators do unchanged.
+///
+/// Generation belongs to whoever schedules resolution, and a span that
+/// generates while a pattern driver is running is generating where its
+/// scheduler did not plan to. The count says how much of that is left.
+///
+/// XXX TODO: this measures the generation a pattern driver still does. Delete
+/// it, and the fallback it measures, once a freeze stands over the driver span
+/// in its place.
+class ImplGenerationTally : public ImplGenerator {
+public:
+  /// Installs itself as `resolver`'s generators until it goes out of scope,
+  /// forwarding to whatever it displaced.
+  explicit ImplGenerationTally(ImplResolver &resolver);
+  ~ImplGenerationTally();
+
+  ImplGenerationTally(const ImplGenerationTally &) = delete;
+  ImplGenerationTally &operator=(const ImplGenerationTally &) = delete;
+
+  FailureOr<ImplOp> generateImpl(TraitOp trait,
+                                 ClaimType wanted,
+                                 OpBuilder &builder) const override;
+
+  /// How many times generation was asked for while this tally stood.
+  uint64_t getAsks() const { return asks; }
+
+private:
+  ImplResolver &resolver;
+  const ImplGenerator &forwardTo;
+  const ImplGenerator *displaced;
+  mutable uint64_t asks = 0;
+};
+
 /// A read of one resolver's recorded facts, for a caller that must serve from
 /// what impl selection has already settled.
 ///
@@ -365,9 +518,9 @@ private:
 /// caller holding a source spelling with a projection still in it misses.
 ///
 /// XXX TODO: nothing reads through this handle yet. It becomes how the stage's
-/// rewrite patterns reach resolution facts once the stage runs its pattern
-/// drivers in rounds and commits what each round proved between them. Delete it
-/// if that scheduling does not land.
+/// rewrite patterns reach resolution facts once a driver no longer generates
+/// impls of its own, which is what the tally over the driver span measures.
+/// Delete it if the drivers never stop generating.
 class ReadOnlyImplResolver {
 public:
   explicit ReadOnlyImplResolver(const ImplResolver &resolver)

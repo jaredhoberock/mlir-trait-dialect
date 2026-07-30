@@ -156,6 +156,10 @@ pub const STAGE_RECORD_REWRITES_MARKER: &str = "trait-stage-record rewrites";
 /// The marker one claim-respelling sweep carries.
 pub const STAGE_RECORD_RESPELLING_MARKER: &str = "trait-stage-record respelling";
 
+/// The marker one round of the monomorphization stage carries: what it took off
+/// the drain, what impl selection settled, and what it rewrote.
+pub const STAGE_RECORD_ROUND_MARKER: &str = "trait-stage-record round";
+
 pub fn register(ctx: &Context) {
     unsafe { traitRegisterDialect(ctx.to_raw()) }
 }

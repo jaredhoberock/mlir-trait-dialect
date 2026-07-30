@@ -50,7 +50,7 @@ func.func @test() {
 
 // Both claims are proved before the sweep runs, so both are available to
 // respell with.
-// CHECK: trait-stage-record respelling bindings=2 ops=6 positions=7
+// CHECK: trait-stage-record respelling round=0 bindings=2 ops=6 positions=7
 
 // The module the stage leaves behind spells no claim at all, so nothing was
 // left holding a spelling respelling failed to reach.

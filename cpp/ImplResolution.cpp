@@ -6,6 +6,7 @@
 #include <llvm/Support/Format.h>
 #include <llvm/Support/xxhash.h>
 #include <cinttypes>
+#include <cstdlib>
 
 namespace mlir::trait {
 
@@ -101,7 +102,8 @@ static LogicalResult diagnoseImplResolutionFailure(
 FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
     ClaimType wanted,
     OpBuilder &builder,
-    llvm::function_ref<InFlightDiagnostic()> err) {
+    llvm::function_ref<InFlightDiagnostic()> err,
+    std::optional<RefutationArm> *refusedOn) {
   DemandFrame frame{Type(wanted)};
 
   ClaimType originalWanted = wanted;
@@ -125,8 +127,11 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
 
   // first check the memo
   if (auto it = memo.chosen.find(app); it != memo.chosen.end()) {
-    if (it->second.isRefusal())
+    if (it->second.isRefusal()) {
+      if (refusedOn)
+        *refusedOn = it->second.getRefutationArm();
       return failure();
+    }
     return ResolvedImpl{it->second.getImpl(), selected};
   }
 
@@ -151,16 +156,19 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
 
   // if there aren't any good candidates, try to generate one
   if (good.empty()) {
-    // Generated ops reach the enclosing greedy driver's worklist only through
-    // the builder's listener, so a listener-less builder here would silently
-    // change which ops that driver revisits.
+    // Whoever hears about an inserted op is what decides whether anything
+    // revisits it, and a generated impl that nothing revisits is IR the caller
+    // never sees. What the listener has to do with the news is the caller's --
+    // it is stated in the ImplGenerator contract -- but that there is one is
+    // checkable here.
     assert(builder.getListener() &&
-           "impl generation requires a builder that notifies its caller of "
-           "inserted ops");
+           "impl generation requires a builder whose insertions someone "
+           "observes");
     OpBuilder::InsertionGuard guard(builder);
     builder.setInsertionPointToEnd(module.getBody());
     if (auto impl = getImplGenerators().generateImpl(trait, selected, builder);
         succeeded(impl)) {
+      ++factEpoch;
       SpeculationScope speculation;
       if (succeeded(assumptionsSatisfiableFor(*impl, selected, builder)))
         good.push_back(*impl);
@@ -187,6 +195,8 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
                           ? RefutationArm::NoSatisfiableCandidate
                           : RefutationArm::MultipleSatisfiableCandidates;
   memo.chosen.insert_or_assign(app, ResolutionOutcome::refused(arm));
+  if (refusedOn)
+    *refusedOn = arm;
   return diagnoseImplResolutionFailure(trait, originalWanted, good, bad, err);
 }
 
@@ -219,14 +229,15 @@ ImplResolver::ImplResolver(ModuleOp m, std::shared_ptr<DemandLedger> ledger)
 FailureOr<Type> ImplResolver::resolveProjectionType(
     ProjectionType proj,
     OpBuilder &builder,
-    llvm::function_ref<InFlightDiagnostic()> err) {
+    llvm::function_ref<InFlightDiagnostic()> err,
+    std::optional<RefutationArm> *refusedOn) {
   DemandFrame frame{Type(proj)};
 
   auto traitApp = proj.getTraitApplication();
   StringRef assocName = proj.getAssocName().getValue();
 
   ClaimType claim = ClaimType::get(proj.getContext(), traitApp);
-  auto resolvedImpl = resolveImplFor(claim, builder, err);
+  auto resolvedImpl = resolveImplFor(claim, builder, err, refusedOn);
   if (failed(resolvedImpl)) return failure();
   ImplOp impl = resolvedImpl->impl;
 
@@ -242,6 +253,27 @@ FailureOr<Type> ImplResolver::resolveProjectionType(
   if (failed(subst)) return failure();
 
   return applySubstitutionToFixedPoint(subst->toTypeMap(), *binding);
+}
+
+ImplResolver::DemandDisposition
+ImplResolver::serveDemand(ProjectionType demand, OpBuilder &builder) {
+  DemandFrame frame{Type(demand)};
+
+  // What selection settles is recorded by selection itself, so the resolved
+  // type is not wanted here -- the answer this call is for is whether asking
+  // again could settle it differently.
+  std::optional<RefutationArm> refusedOn;
+  if (succeeded(resolveProjectionType(demand, builder, /*err=*/nullptr,
+                                      &refusedOn)))
+    return DemandDisposition::Served;
+
+  // A refusal for two or more satisfiable candidates is the one refusal no
+  // later resolution overturns. Every other way of not serving -- no candidate
+  // yet, or a binding whose own arguments have still to resolve -- is one the
+  // facts can move under.
+  return refusedOn == RefutationArm::MultipleSatisfiableCandidates
+             ? DemandDisposition::Refused
+             : DemandDisposition::Deferred;
 }
 
 Type ImplResolver::resolveProjectionsIn(Type ty, OpBuilder &builder) {
@@ -325,14 +357,14 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
   // check for an unconditional impl
   if (impl.isUnconditional()) {
     auto sym = FlatSymbolRefAttr::get(ctx, impl.getSymName());
-    memo.proofMemo[app] = sym;
+    recordProof(app, sym);
     return sym;
   }
 
   // check for an existing proof in the module
   if (ProofOp proof = findExistingProofFor(module, impl, app)) {
     auto sym = FlatSymbolRefAttr::get(ctx, proof.getSymNameAttr());
-    memo.proofMemo[app] = sym;
+    recordProof(app, sym);
     return sym;
   }
 
@@ -352,7 +384,7 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
     if (succeeded(verifyAndRecordProof(candidate.asUnproven(), candidate,
                                        module, bindings,
                                        DemandOrigin::ProofRecording, err))) {
-      memo.proofMemo[app] = proofSym;
+      recordProof(app, proofSym);
       return proofSym;
     }
 
@@ -365,7 +397,7 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
   // proof symbol before recursing into obligations.  If an obligation (after
   // projection resolution) turns out to be the same claim we are currently
   // proving, the recursive call will hit the memo instead of diverging.
-  memo.proofMemo[app] = proofSym;
+  recordProof(app, proofSym);
   auto rollback = llvm::scope_exit([&]{ memo.proofMemo.erase(app); });
 
   // specialize all obligations against the claim selected during resolution
@@ -383,11 +415,10 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
 
   // create the proof and memoize by the monomorphic app
   //
-  // A created proof reaches an enclosing greedy driver's worklist only through
-  // the builder's listener, for the same reason a generated impl does.
+  // A created proof is IR nothing revisits unless someone hears about it, for
+  // the same reason a generated impl is.
   assert(builder.getListener() &&
-         "proof creation requires a builder that notifies its caller of "
-         "inserted ops");
+         "proof creation requires a builder whose insertions someone observes");
   rollback.release();
   OpBuilder::InsertionGuard guard(builder);
   builder.setInsertionPointToEnd(module.getBody());
@@ -402,7 +433,7 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
   );
 
   FlatSymbolRefAttr sym = FlatSymbolRefAttr::get(ctx, proof.getSymNameAttr());
-  memo.proofMemo[app] = sym;
+  recordProof(app, sym);
   return sym;
 }
 
@@ -440,30 +471,27 @@ private:
   llvm::raw_string_ostream stream{pending};
 };
 
-} // namespace
-
-void ImplResolver::reportRecordedFacts() const {
-  const ResolutionMemo &resolution = memo.resolutionMemo;
-
-  // Every application selection opened it has closed, so nothing is part-way
-  // resolved here and the facts below are the whole of what this resolver knows.
-  assert(resolution.visiting.empty() &&
-         "impl selection must not be part-way through an application when its "
-         "facts are read");
-
-  FactRendering facts;
+/// How many recorded selections were of each kind, for the line that reports
+/// the digest.
+struct RecordedFactCounts {
   uint64_t selections = 0;
   uint64_t refusalsByArm[numRefutationArms] = {};
+};
+
+/// Renders everything `memo` holds, one fact per line.
+void renderRecordedFacts(const ProofResolutionMemo &memo, FactRendering &facts,
+                         RecordedFactCounts &counts) {
+  const ResolutionMemo &resolution = memo.resolutionMemo;
 
   for (const auto &entry : resolution.chosen) {
     const ResolutionOutcome &outcome = entry.second;
     llvm::raw_ostream &os = facts.begin();
     os << "impl " << entry.first << " = ";
     if (outcome.isRefusal()) {
-      ++refusalsByArm[static_cast<unsigned>(outcome.getRefutationArm())];
+      ++counts.refusalsByArm[static_cast<unsigned>(outcome.getRefutationArm())];
       os << refusalToken;
     } else {
-      ++selections;
+      ++counts.selections;
       os << outcome.getImpl().getSymName();
     }
     facts.end();
@@ -480,6 +508,35 @@ void ImplResolver::reportRecordedFacts() const {
     facts.begin() << "proof " << entry.first << " = " << entry.second;
     facts.end();
   }
+}
+
+} // namespace
+
+uint64_t ImplResolver::getRecordedFactsDigest() const {
+  FactRendering facts;
+  RecordedFactCounts counts;
+  renderRecordedFacts(memo, facts, counts);
+
+  std::string rendered;
+  for (const std::string &fact : facts.sorted()) {
+    rendered += fact;
+    rendered += '\n';
+  }
+  return llvm::xxh3_64bits(rendered);
+}
+
+void ImplResolver::reportRecordedFacts() const {
+  const ResolutionMemo &resolution = memo.resolutionMemo;
+
+  // Every application selection opened it has closed, so nothing is part-way
+  // resolved here and the facts below are the whole of what this resolver knows.
+  assert(resolution.visiting.empty() &&
+         "impl selection must not be part-way through an application when its "
+         "facts are read");
+
+  FactRendering facts;
+  RecordedFactCounts counts;
+  renderRecordedFacts(memo, facts, counts);
 
   std::string rendered;
   for (const std::string &fact : facts.sorted()) {
@@ -491,12 +548,12 @@ void ImplResolver::reportRecordedFacts() const {
   llvm::errs() << stageRecordDigestPrefix
                << llvm::format(" value=0x%016" PRIx64,
                                llvm::xxh3_64bits(rendered))
-               << " selected-impls=" << selections
+               << " selected-impls=" << counts.selections
                << " refusals-no-candidate="
-               << refusalsByArm[static_cast<unsigned>(
+               << counts.refusalsByArm[static_cast<unsigned>(
                       RefutationArm::NoSatisfiableCandidate)]
                << " refusals-ambiguous="
-               << refusalsByArm[static_cast<unsigned>(
+               << counts.refusalsByArm[static_cast<unsigned>(
                       RefutationArm::MultipleSatisfiableCandidates)]
                << " assumption-facts="
                << resolution.assumptionsKnownSatisfiable.size()
@@ -504,23 +561,90 @@ void ImplResolver::reportRecordedFacts() const {
 }
 
 //===----------------------------------------------------------------------===//
+// Forgetting what a later resolution can answer differently
+//===----------------------------------------------------------------------===//
+
+ImplResolver::RefusalCounts ImplResolver::forgetRetriableRefusals() {
+  DenseMap<TraitApplicationAttr, ResolutionOutcome> &chosen =
+      memo.resolutionMemo.chosen;
+  RefusalCounts counts;
+
+  // What became of the refusals the last call dropped. An application selection
+  // has not been asked about since is neither, and is the remainder.
+  for (TraitApplicationAttr app : lastForgotten) {
+    auto it = chosen.find(app);
+    if (it == chosen.end())
+      continue;
+    if (it->second.isRefusal())
+      ++counts.reEarned;
+    else
+      ++counts.overturned;
+  }
+
+  lastForgotten.clear();
+  for (const auto &entry : chosen) {
+    if (!entry.second.isRefusal())
+      continue;
+    if (entry.second.getRefutationArm() ==
+        RefutationArm::NoSatisfiableCandidate) {
+      lastForgotten.push_back(entry.first);
+      ++counts.forgotten;
+    } else {
+      ++counts.kept;
+    }
+  }
+  for (TraitApplicationAttr app : lastForgotten)
+    chosen.erase(app);
+  return counts;
+}
+
+bool ImplResolver::recordsOnlyRealizedProofs() const {
+  SymbolTable symbols(module);
+  for (const auto &entry : memo.proofMemo) {
+    Operation *defining = symbols.lookup(entry.second.getValue());
+    if (!defining)
+      return false;
+    // The two shapes a recorded proof takes: a trait.proof, or the impl that
+    // proves an application with no obligations of its own. Which application
+    // the named op spells is not compared, because the memo is keyed by the
+    // spelling selection recorded and the commit respells the module's copy of
+    // it -- the two are the same application under different spellings from the
+    // first commit that reaches the proof onwards.
+    if (isa<ProofOp>(defining))
+      continue;
+    auto impl = dyn_cast<ImplOp>(defining);
+    if (!impl || !impl.isUnconditional())
+      return false;
+  }
+  return true;
+}
+
+//===----------------------------------------------------------------------===//
 // Freezing impl generation
 //===----------------------------------------------------------------------===//
+
+bool isInstantiationFreezeRequested() {
+  static const bool requested = [] {
+    const char *value = ::getenv(freezeInstantiationEnvironmentVariable);
+    return value && *value;
+  }();
+  return requested;
+}
 
 ImplGenerationFreeze::ImplGenerationFreeze(ImplResolver &resolver,
                                           StringRef span)
     : resolver(resolver), span(span.str()),
-      displaced(resolver.installedFreeze) {
-  resolver.installedFreeze = this;
+      displaced(resolver.installedOverride) {
+  resolver.installedOverride = this;
 }
 
 ImplGenerationFreeze::~ImplGenerationFreeze() {
-  // Freezes nest, so the one going out of scope is the one now installed:
-  // restoring what this freeze displaced is only the previous state if no
-  // freeze installed after it is still standing.
-  assert(resolver.installedFreeze == this &&
-         "a freeze must be the innermost one installed when it ends");
-  resolver.installedFreeze = displaced;
+  // Stand-ins nest, so the one going out of scope is the one now installed:
+  // restoring what this freeze displaced is only the previous state if nothing
+  // installed after it is still standing.
+  assert(resolver.installedOverride == this &&
+         "a freeze must be the innermost stand-in installed when it ends");
+  resolver.installedOverride = displaced;
 }
 
 FailureOr<ImplOp> ImplGenerationFreeze::generateImpl(TraitOp trait,
@@ -532,6 +656,29 @@ FailureOr<ImplOp> ImplGenerationFreeze::generateImpl(TraitOp trait,
          << ", but impl selection demanded an impl of @" << trait.getSymName()
          << " for " << wanted;
   llvm::report_fatal_error(Twine(message));
+}
+
+//===----------------------------------------------------------------------===//
+// Counting the impls a span generates
+//===----------------------------------------------------------------------===//
+
+ImplGenerationTally::ImplGenerationTally(ImplResolver &resolver)
+    : resolver(resolver), forwardTo(resolver.getImplGenerators()),
+      displaced(resolver.installedOverride) {
+  resolver.installedOverride = this;
+}
+
+ImplGenerationTally::~ImplGenerationTally() {
+  assert(resolver.installedOverride == this &&
+         "a tally must be the innermost stand-in installed when it ends");
+  resolver.installedOverride = displaced;
+}
+
+FailureOr<ImplOp> ImplGenerationTally::generateImpl(TraitOp trait,
+                                                    ClaimType wanted,
+                                                    OpBuilder &builder) const {
+  ++asks;
+  return forwardTo.generateImpl(trait, wanted, builder);
 }
 
 //===----------------------------------------------------------------------===//

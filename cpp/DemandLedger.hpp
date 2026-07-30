@@ -71,7 +71,10 @@ namespace mlir::trait {
 // came from an engine whose declining leaves the demand standing. One unflagged
 // observation is a demand the stage really raised, whatever the other
 // observations of that key were; the engine test is what keeps a demand the
-// very next call serves out of the drain set.
+// very next call serves out of the drain set. The drainable keys are what the
+// stage reads back to decide what to resolve between its pattern drivers, so
+// they are kept on every compile; the rest of what a ledger holds describes the
+// population for a reader and is kept only when a census was asked for.
 //
 // KEYS ARE PER-SITE SPELLINGS. A recording site keys its observation by the type
 // it is holding, and the sites hold different grades of the same demand: the
@@ -194,6 +197,18 @@ constexpr unsigned standingDemandEngineMask() {
     if (leavesDemandStanding(static_cast<DemandEngine>(e)))
       mask |= 1u << e;
   return mask;
+}
+
+/// Whether one observation, on its own, makes its demand one a later round
+/// could be asked to serve: raised for real by an engine whose declining leaves
+/// it standing.
+///
+/// This is the drainability rule stated once. A key is drainable when any one
+/// of its observations satisfies it, which is what `DemandRecord::isDrainable`
+/// reads off the merged flags and what the drain below applies as each
+/// observation arrives.
+inline bool isDrainableObservation(DemandEngine engine, bool isReal) {
+  return isReal && leavesDemandStanding(engine);
 }
 
 /// The component plus, for the lookup, which of its exits fired.
@@ -375,8 +390,10 @@ class DemandLedger {
 public:
   DemandLedger();
 
-  /// Whether demands are entered in the ledger at all. Off unless the census
-  /// environment variable is set.
+  /// Whether the census -- the per-key provenance, the flag cross-tabulation
+  /// and the statistics -- is kept. Off unless the census environment variable
+  /// is set. The drain below is not gated by this: a demand reaches it whenever
+  /// a sink is installed, because the stage itself reads it.
   static bool isRecordingEnabled();
 
   /// Whether the ground-projection lookup's per-call postcondition and the
@@ -400,12 +417,27 @@ public:
   ArrayRef<Type> getKeys() const { return keys.getArrayRef(); }
   const DemandRecord *lookup(Type demand) const;
 
+  /// The demands a later round could be asked to serve, in the order they were
+  /// first raised.
+  ///
+  /// This is the one part of a ledger that is kept whatever the switches say,
+  /// because the stage reads it to decide what to resolve between its pattern
+  /// drivers. Everything else here -- the per-key provenance, the flag
+  /// cross-tabulation, the statistics -- describes a population for a reader
+  /// and is kept only when a census was asked for.
+  ArrayRef<Type> getDrainableDemands() const { return drainable.getArrayRef(); }
+
+  /// Bit per LookupMissReason on which the ground-projection lookup declined
+  /// `demand` in an observation that made it drainable. Zero for a demand no
+  /// lookup declined, and for one that is not drainable at all.
+  unsigned getDrainableArms(Type demand) const;
+
   /// Sizes of the linear scans the resolver performs, so the indexing decision
   /// that would replace them can be made against measured work.
   ///
   /// XXX TODO: these counters size scans rather than describe the compiler.
-  /// Delete them once the resolver's proof lookup is indexed rather than
-  /// scanned.
+  /// Delete them once the proofs and the impls a trait application selects
+  /// among are both indexed rather than scanned.
   void countProofScan(size_t entries) {
     ++proofScans;
     proofScanEntries += entries;
@@ -413,6 +445,10 @@ public:
   void countProofCollisionScan(size_t entries) {
     ++proofCollisionScans;
     proofCollisionScanEntries += entries;
+  }
+  void countCandidateScan(size_t entries) {
+    ++candidateScans;
+    candidateScanEntries += entries;
   }
 
   /// Pushes an enclosing demand, which observations recorded from here on carry
@@ -422,6 +458,13 @@ public:
   void pushFrame(Location origin);
   void popFrame();
   size_t getFrameDepth() const { return frames.size(); }
+
+  /// Where the innermost open demand arose, or nothing when no frame is open.
+  std::optional<Location> getInnermostFrameOrigin() const {
+    if (frames.empty())
+      return std::nullopt;
+    return frames.back().origin;
+  }
 
   /// Writes the census to standard error: one line per deduped key in
   /// first-observation order, then the partition of the population, then the
@@ -439,13 +482,30 @@ public:
   /// gap in this ledger's own rules and never a fault in the program being
   /// compiled, so it goes to the census channel.
   ///
-  /// Which keys the check reaches follows from the exemption. A key carrying a
-  /// miss arm is exempt, and the ground-projection lookup is the only engine
-  /// that records an arm, so its keys are the exempt ones and a run whose only
-  /// drainable keys are the lookup's is silent by construction. Every other
-  /// drainable engine -- the resolver's projection engine, a withheld call
-  /// claim -- records keys with no arm, and those must still be spelled.
-  void reportServedDrainableKeys(ModuleOp module) const;
+  /// Which keys the check reaches follows from the two exemptions. A key in
+  /// `served` is one the engines that resolve it did resolve, so the stage
+  /// served it on purpose and its spelling is gone by design; a key a round
+  /// merely asked about is not exempt, because asking is not answering. Of the
+  /// rest, a key carrying a miss arm is exempt because an engine that refused
+  /// it outright and was never asked again would refuse it again. What remains
+  /// -- a key with no arm that nothing served -- must still be spelled, or the
+  /// drainability rule that admitted it over-reported.
+  void reportServedDrainableKeys(
+      ModuleOp module,
+      const DenseSet<Type> &served = DenseSet<Type>()) const;
+
+  /// Reports every drained key the stage neither served nor left standing, and
+  /// fails when there is one.
+  ///
+  /// A round takes a key off the drain when nothing it could ask later would
+  /// settle it differently: impl selection resolved it, or refused it on the
+  /// arm no later resolution overturns and left its spelling for the stage's
+  /// leftover walks to report. A key that is neither served nor still spelled
+  /// was taken and dropped, and nothing downstream would say so -- which is why
+  /// this is a failure of the stage rather than a line on the census channel.
+  LogicalResult checkDrainedKeysSettled(ModuleOp module,
+                                        const DenseSet<Type> &drained,
+                                        const DenseSet<Type> &served) const;
 
 private:
   struct Frame {
@@ -471,6 +531,10 @@ private:
 
   llvm::SetVector<Type> keys;
   llvm::DenseMap<Type, DemandRecord> records;
+  /// The drain: the keys of the census above that are drainable, kept apart
+  /// from it because they are kept on every compile.
+  llvm::SetVector<Type> drainable;
+  llvm::DenseMap<Type, unsigned> drainableArms;
   SmallVector<Frame, 8> frames;
   uint64_t observationCount = 0;
   /// Observations cross-tabulated as they arrive, by engine and by the lookup's
@@ -484,22 +548,34 @@ private:
   uint64_t proofScanEntries = 0;
   uint64_t proofCollisionScans = 0;
   uint64_t proofCollisionScanEntries = 0;
+  uint64_t candidateScans = 0;
+  uint64_t candidateScanEntries = 0;
 };
 
 //===----------------------------------------------------------------------===//
 // Reaching the ledger
 //===----------------------------------------------------------------------===//
 
-/// True when an observation recorded now would reach a ledger. Every recording
-/// site tests this before doing any work only an observation would need.
+/// True when a ledger is installed on this thread. A demand raised now reaches
+/// its drain; whether anything beyond the drain is kept is what
+/// `DemandLedger::areObservationsEnabled` decides.
+bool isDemandSinkInstalled();
+
+/// Where the innermost demand under resolution on this thread arose. Nothing
+/// outside a stage span, and nothing inside one before a frame is opened.
+std::optional<Location> currentDemandAnchor();
+
+/// True when an observation recorded now would reach a ledger that keeps the
+/// census. Every site that must walk or shape a type to know there was anything
+/// to record tests this before doing that work.
 bool isDemandRecordingActive();
 
 /// Installs `ledger` as this thread's sink and restores the previous sink on
 /// destruction, so nested spans compose.
 ///
-/// The scope is a no-op unless recording or the postcondition is enabled: with
-/// both off there is no sink, every recording site's guard is one predicate,
-/// and nothing is appended.
+/// The sink is installed whatever the switches say, because the drain is kept
+/// on every compile. What the switches decide is how much of an observation the
+/// ledger keeps once it arrives.
 class DemandLedgerScope {
 public:
   explicit DemandLedgerScope(DemandLedger &ledger);
@@ -510,7 +586,6 @@ public:
 
 private:
   DemandLedger *previous;
-  bool installed;
 };
 
 /// Suspends recording for its lifetime.
@@ -648,10 +723,11 @@ void countModulelessRegionProjection();
 /// taken.
 void countVerifierObligationNormalization();
 
-/// Counts the linear scans the resolver performs, through whatever ledger is
+/// Counts the linear scans impl selection performs, through whatever ledger is
 /// installed.
 void countProofScan(size_t entries);
 void countProofCollisionScan(size_t entries);
+void countCandidateScan(size_t entries);
 
 //===----------------------------------------------------------------------===//
 // The census channel
@@ -753,6 +829,11 @@ inline constexpr const char *stageRecordDigestPrefix =
 /// The line one run of a greedy pattern driver produces.
 inline constexpr const char *stageRecordRewritesPrefix =
     "trait-stage-record rewrites";
+
+/// The line one round of the stage produces. It names what the round did and
+/// digests the facts impl resolution had recorded when the round ended, so a
+/// reader can see which round settled what.
+inline constexpr const char *stageRecordRoundPrefix = "trait-stage-record round";
 
 /// The line one claim-respelling sweep produces.
 inline constexpr const char *stageRecordRespellingPrefix =

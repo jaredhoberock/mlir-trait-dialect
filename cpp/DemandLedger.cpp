@@ -118,12 +118,12 @@ const bool recordingEnabled =
 const bool postconditionEnabled =
     environmentVariableIsSet(demandCensusCheckEnvironmentVariable);
 
-/// With both switches off no scope installs a sink and nothing is ever
-/// recorded, so every guard in this file tests this first and the recording
-/// sites never reach thread-local storage. Several of them sit on the stage's
-/// hottest paths -- the unifier's equality check, the ground-projection
-/// lookup -- where that one skipped access is the difference between an
-/// observer that costs nothing and one that costs a little everywhere.
+/// With both switches off a ledger keeps its drain and nothing else, so the
+/// sites that must walk or shape a type to know there was anything to record
+/// test this first and never do that work. Several of them sit on the stage's
+/// hottest paths -- the unifier's equality check, obligation normalization --
+/// where that skipped walk is the difference between an observer that costs
+/// nothing and one that costs a little everywhere.
 const bool observationsEnabled = recordingEnabled || postconditionEnabled;
 
 /// Records `demand` on the installed ledger, if any, having already checked
@@ -185,6 +185,20 @@ void DemandLedger::record(Type demand, DemandObservationKind kind,
   flags.probeInternal = depth > 0;
   flags.unattributed = frames.empty();
 
+  // The drain first, because it is what the stage itself reads and is therefore
+  // kept whether or not a census was asked for. An arm is recorded beside the
+  // demand: it says which way the lookup missed, which is what tells a demand
+  // no impl binds yet from one several impls bind at once.
+  if (isDrainableObservation(kind.getEngine(), flags.isReal())) {
+    drainable.insert(demand);
+    unsigned &arms = drainableArms[demand];
+    if (auto reason = kind.getMissReason())
+      arms |= 1u << static_cast<unsigned>(*reason);
+  }
+
+  if (!observationsEnabled)
+    return;
+
   Location origin = frames.empty() ? Location(UnknownLoc::get(demand.getContext()))
                                    : frames.back().origin;
   Type parent = frames.empty() ? Type() : frames.back().demand;
@@ -232,6 +246,11 @@ void DemandLedger::record(Type demand, DemandObservationKind kind,
 const DemandRecord *DemandLedger::lookup(Type demand) const {
   auto it = records.find(demand);
   return it == records.end() ? nullptr : &it->second;
+}
+
+unsigned DemandLedger::getDrainableArms(Type demand) const {
+  auto it = drainableArms.find(demand);
+  return it == drainableArms.end() ? 0u : it->second;
 }
 
 void DemandLedger::pushFrame(Type demand) {
@@ -406,22 +425,25 @@ void DemandLedger::dumpCensus() const {
      << " proof-scans=" << proofScans
      << " proof-scan-entries=" << proofScanEntries
      << " proof-collision-scans=" << proofCollisionScans
-     << " proof-collision-scan-entries=" << proofCollisionScanEntries << "\n";
+     << " proof-collision-scan-entries=" << proofCollisionScanEntries
+     << " candidate-scans=" << candidateScans
+     << " candidate-scan-entries=" << candidateScanEntries << "\n";
 }
 
-void DemandLedger::reportServedDrainableKeys(ModuleOp module) const {
-  if (!postconditionEnabled)
-    return;
-
-  // What the module still spells. Result and block-argument types are what the
-  // stage's own leftover-projection sweep walks, and an operand type is its
-  // producer's result type, so between them they cover every type a later round
-  // would find to serve.
-  DenseSet<Type> standing;
-  auto collect = [&](Type root) {
+/// The monomorphic projections `module` spells.
+///
+/// Result and block-argument types are what the stage's own leftover-projection
+/// sweep walks, and an operand type is its producer's result type, so between
+/// them they cover every type a later round would find to serve.
+/// `inAttributes` adds the ones an op carries as attribute data instead: a
+/// trait or impl header spells projections nothing serves, which is not what a
+/// round would find but is what a reader would.
+static DenseSet<Type> projectionsSpelledIn(ModuleOp module, bool inAttributes) {
+  DenseSet<Type> spelled;
+  auto collect = [&](auto root) {
     root.walk([&](Type sub) {
       if (isa<ProjectionType>(sub) && isMonomorphicType(sub))
-        standing.insert(sub);
+        spelled.insert(sub);
     });
   };
   module.walk([&](Operation *op) {
@@ -431,15 +453,32 @@ void DemandLedger::reportServedDrainableKeys(ModuleOp module) const {
       for (Block &block : region)
         for (BlockArgument arg : block.getArguments())
           collect(arg.getType());
+    if (inAttributes)
+      collect(Attribute(op->getAttrDictionary()));
   });
+  return spelled;
+}
+
+void DemandLedger::reportServedDrainableKeys(ModuleOp module,
+                                             const DenseSet<Type> &served) const {
+  if (!postconditionEnabled)
+    return;
+
+  DenseSet<Type> standing =
+      projectionsSpelledIn(module, /*inAttributes=*/false);
 
   for (Type key : getKeys()) {
     const DemandRecord *record = lookup(key);
     assert(record && "every ledger key has a record");
     if (!record->isDrainable())
       continue;
-    // An engine that refused the demand outright would refuse it again, so the
-    // key stands whether or not the spelling that carried it survived.
+    // A key the engines that resolve it resolved is one whose spelling is gone
+    // because the stage served it.
+    if (served.contains(key))
+      continue;
+    // An engine that refused the demand outright and was never asked again
+    // would refuse it again, so the key stands whether or not the spelling that
+    // carried it survived.
     if (record->missReasons)
       continue;
 
@@ -456,53 +495,94 @@ void DemandLedger::reportServedDrainableKeys(ModuleOp module) const {
   }
 }
 
+LogicalResult
+DemandLedger::checkDrainedKeysSettled(ModuleOp module,
+                                      const DenseSet<Type> &drained,
+                                      const DenseSet<Type> &served) const {
+  // Served keys are settled by construction and every served key was drained,
+  // so a drained set no larger than the served one holds nothing else to check
+  // and the walk below is not worth taking.
+  assert(served.size() <= drained.size() &&
+         "a key the stage served is one it took off the drain");
+  if (drained.size() == served.size())
+    return success();
+
+  DenseSet<Type> spelled = projectionsSpelledIn(module, /*inAttributes=*/true);
+
+  bool dropped = false;
+  for (Type key : drained) {
+    if (served.contains(key))
+      continue;
+    bool stillSpelled = false;
+    key.walk([&](Type sub) {
+      if (spelled.contains(sub))
+        stillSpelled = true;
+    });
+    if (stillSpelled)
+      continue;
+
+    dropped = true;
+    InFlightDiagnostic diagnostic =
+        module.emitError()
+        << "instantiate-monomorphs took the demand " << key
+        << " to serve and neither served it nor left it to report";
+    // The provenance chain is the census's, so a run with no census names the
+    // demand and stops there.
+    if (const DemandRecord *record = lookup(key)) {
+      Diagnostic &note = diagnostic.attachNote(record->origin)
+                         << "demanded here";
+      if (record->parent)
+        note << ", while resolving " << record->parent;
+    }
+  }
+  return failure(dropped);
+}
+
 //===----------------------------------------------------------------------===//
 // Reaching the ledger
 //===----------------------------------------------------------------------===//
+
+bool isDemandSinkInstalled() { return ambientLedger != nullptr; }
+
+std::optional<Location> currentDemandAnchor() {
+  if (!ambientLedger)
+    return std::nullopt;
+  return ambientLedger->getInnermostFrameOrigin();
+}
 
 bool isDemandRecordingActive() {
   return observationsEnabled && ambientLedger != nullptr;
 }
 
 DemandLedgerScope::DemandLedgerScope(DemandLedger &ledger)
-    : previous(nullptr), installed(observationsEnabled) {
-  if (installed) {
-    previous = ambientLedger;
-    ambientLedger = &ledger;
-  }
+    : previous(ambientLedger) {
+  ambientLedger = &ledger;
 }
 
 DemandLedgerScope::~DemandLedgerScope() {
-  if (!installed)
-    return;
   assert(ambientLedger &&
          ambientLedger->getFrameDepth() == 0 &&
          "every demand frame opened inside a stage span must close inside it");
   ambientLedger = previous;
 }
 
-DemandRecordingSuspension::DemandRecordingSuspension() : previous(nullptr) {
-  if (!observationsEnabled)
-    return;
+DemandRecordingSuspension::DemandRecordingSuspension()
+    : previous(ambientLedger) {
   assert((!ambientLedger || ambientLedger->getFrameDepth() == 0) &&
          "a demand frame must not span a suspension");
-  previous = ambientLedger;
   ambientLedger = nullptr;
 }
 
 DemandRecordingSuspension::~DemandRecordingSuspension() {
-  if (observationsEnabled)
-    ambientLedger = previous;
+  ambientLedger = previous;
 }
 
-DemandFrame::DemandFrame(Type demand)
-    : ledger(isDemandRecordingActive() ? ambientLedger : nullptr) {
+DemandFrame::DemandFrame(Type demand) : ledger(ambientLedger) {
   if (ledger)
     ledger->pushFrame(demand);
 }
 
-DemandFrame::DemandFrame(Location origin)
-    : ledger(isDemandRecordingActive() ? ambientLedger : nullptr) {
+DemandFrame::DemandFrame(Location origin) : ledger(ambientLedger) {
   if (ledger)
     ledger->pushFrame(origin);
 }
@@ -514,25 +594,15 @@ DemandFrame::~DemandFrame() {
     ledger->popFrame();
 }
 
-LookupProbeScope::LookupProbeScope()
-    : enclosingDepth(observationsEnabled ? ambientLookupDepth++ : 0) {}
+LookupProbeScope::LookupProbeScope() : enclosingDepth(ambientLookupDepth++) {}
 
-LookupProbeScope::~LookupProbeScope() {
-  if (observationsEnabled)
-    --ambientLookupDepth;
-}
+LookupProbeScope::~LookupProbeScope() { --ambientLookupDepth; }
 
-SpeculationScope::SpeculationScope() : previous(false) {
-  if (!observationsEnabled)
-    return;
-  previous = ambientSpeculating;
+SpeculationScope::SpeculationScope() : previous(ambientSpeculating) {
   ambientSpeculating = true;
 }
 
-SpeculationScope::~SpeculationScope() {
-  if (observationsEnabled)
-    ambientSpeculating = previous;
-}
+SpeculationScope::~SpeculationScope() { ambientSpeculating = previous; }
 
 //===----------------------------------------------------------------------===//
 // Recording sites
@@ -544,7 +614,7 @@ void recordLookupMiss(Type demand, LookupMissReason reason, DemandOrigin origin,
     ++numVerifierLookupMisses;
     return;
   }
-  if (!isDemandRecordingActive())
+  if (!isDemandSinkInstalled())
     return;
 
   DemandFlags flags;
@@ -562,7 +632,7 @@ void recordUnifierAcceptance(Type demand, DemandOrigin origin) {
 
 void recordResolverProjectionMiss(Type demand) {
   ++numResolverProjectionMisses;
-  if (!isDemandRecordingActive())
+  if (!isDemandSinkInstalled())
     return;
   recordOnAmbientLedger(demand,
                         DemandObservationKind::resolverProjectionEngine());
@@ -579,7 +649,7 @@ void recordObligationNormalizationMiss(Type demand, DemandOrigin origin) {
 void countObligationNormalization() { ++numObligationNormalizations; }
 
 void recordWithheldCallClaim(Type demand) {
-  if (!isDemandRecordingActive())
+  if (!isDemandSinkInstalled())
     return;
   recordOnAmbientLedger(demand, DemandObservationKind::withheldCallClaim());
 }
@@ -604,6 +674,11 @@ void countProofScan(size_t entries) {
 void countProofCollisionScan(size_t entries) {
   if (isDemandRecordingActive())
     ambientLedger->countProofCollisionScan(entries);
+}
+
+void countCandidateScan(size_t entries) {
+  if (isDemandRecordingActive())
+    ambientLedger->countCandidateScan(entries);
 }
 
 void reportUnhookedMint(Type demand) {

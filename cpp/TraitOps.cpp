@@ -286,7 +286,9 @@ SmallVector<ImplOp> TraitOp::getImpls() {
   // symbol-use walk, which materializes every operation's attribute dictionary.
   StringRef traitName = getSymName();
   SmallVector<ImplOp> result;
+  size_t scanned = 0;
   for (Operation &op : *module->getBody()) {
+    ++scanned;
     auto impl = dyn_cast<ImplOp>(op);
     if (!impl)
       continue;
@@ -294,6 +296,7 @@ SmallVector<ImplOp> TraitOp::getImpls() {
     if (selfApp && selfApp.getTraitName().getValue() == traitName)
       result.push_back(impl);
   }
+  countCandidateScan(scanned);
 
   return result;
 }
@@ -1831,12 +1834,18 @@ FailureOr<CallSubstitution> MethodCallOp::buildParameterSpecialization(ModuleOp 
     // No evidence, no license: this call never asked what its ground redexes
     // resolve to, so those demands reach no engine at all.
     countWithheldCallClaim();
-    // No test reaches the recording below. Method-call lowering, the only
-    // in-stage caller of this specialization, defers until the call's claim is
-    // proven, and a proven claim carries the license -- so every withheld call
-    // is a verifier's, whose origin does not record, and the statistic above is
-    // the whole of what a test can see.
-    if (isDemandRecordingActive() && recordsToLedger(origin)) {
+    // A withheld call claim leaves its ground redexes standing, so what is
+    // recorded below reaches the drain and the stage reads it. The drain is
+    // kept whatever the census switch says, so this tests the sink the way the
+    // other standing-demand sites do: gating it on the census would give the
+    // rounds a different demand set under instrumentation than without it.
+    //
+    // No test reaches the recording. Method-call lowering, the only in-stage
+    // caller of this specialization, defers until the call's claim is proven,
+    // and a proven claim carries the license -- so every withheld call is a
+    // verifier's, whose origin does not record, and the statistic above is the
+    // whole of what a test can see.
+    if (isDemandSinkInstalled() && recordsToLedger(origin)) {
       auto record = [](Type root) {
         root.walk([](Type sub) {
           auto proj = dyn_cast<ProjectionType>(sub);

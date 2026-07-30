@@ -37,5 +37,5 @@ func.func private @caller(%claim: !trait.claim<@Unwrap[!X]>, %value: !X, %spare:
 }
 
 // CHECK: trait-demand-census engine withheld-call-claim keys=0 observations=0 real=0 speculative=0 probe-internal=0
-// CHECK: trait-demand-census summary keys=1 observations=2 drainable-keys=1
+// CHECK: trait-demand-census summary keys=1 observations=4 drainable-keys=1
 // CHECK: 1 trait-demand - calls whose claim withheld the license to consult module facts

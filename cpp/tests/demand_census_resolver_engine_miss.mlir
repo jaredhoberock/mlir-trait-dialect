@@ -18,9 +18,9 @@ func.func @main() -> !trait.proj<@T[i64], "A"> {
   return %r : !trait.proj<@T[i64], "A">
 }
 
-// CHECK: trait-demand-census demand flags=real drainable=yes observations=2 depth=0
+// CHECK: trait-demand-census demand flags=real drainable=yes observations=4 depth=0
 // CHECK-SAME: kinds=resolver-engine-miss
 // CHECK-SAME: type=!trait.proj<@T[i64], "A">
 // CHECK: trait-demand-census engine lookup-miss keys=0 observations=0 real=0 speculative=0 probe-internal=0
-// CHECK: trait-demand-census engine resolver-engine-miss keys=1 observations=2 real=2 speculative=0 probe-internal=0
-// CHECK: trait-demand-census summary keys=1 observations=2 drainable-keys=1
+// CHECK: trait-demand-census engine resolver-engine-miss keys=1 observations=4 real=4 speculative=0 probe-internal=0
+// CHECK: trait-demand-census summary keys=1 observations=4 drainable-keys=1

@@ -45,4 +45,4 @@ func.func @test(%x: i32) -> i32 {
   return %res : i32
 }
 
-// CHECK: trait-stage-record respelling bindings=2 ops=1 positions=2
+// CHECK: trait-stage-record respelling round=0 bindings=2 ops=1 positions=2

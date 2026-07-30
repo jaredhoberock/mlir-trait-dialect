@@ -45,10 +45,10 @@ func.func @asks() -> !trait.proj<@Other[i64], "X"> {
   return %r : !trait.proj<@Other[i64], "X">
 }
 
-// CHECK: trait-demand-census demand flags=real,speculative,probe-internal drainable=yes observations=11 depth=0
+// CHECK: trait-demand-census demand flags=real,speculative,probe-internal drainable=yes observations=13 depth=0
 // CHECK-SAME: kinds=lookup-miss,resolver-engine-miss arms=no-candidate-impl
 // CHECK-SAME: origin=loc({{.*}}demand_census_dedup.mlir":42:1)
 // CHECK-SAME: type=!trait.proj<@Other[i64], "X">
 // CHECK: trait-demand-census engine lookup-miss keys=1 observations=7 real=1 speculative=2 probe-internal=4
-// CHECK: trait-demand-census engine resolver-engine-miss keys=1 observations=4 real=4 speculative=0 probe-internal=0
-// CHECK: trait-demand-census summary keys=1 observations=11 drainable-keys=1 unattributed-keys=0 real-keys=1 speculative-keys=0 probe-internal-keys=0
+// CHECK: trait-demand-census engine resolver-engine-miss keys=1 observations=6 real=6 speculative=0 probe-internal=0
+// CHECK: trait-demand-census summary keys=1 observations=13 drainable-keys=1 unattributed-keys=0 real-keys=1 speculative-keys=0 probe-internal-keys=0
