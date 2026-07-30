@@ -69,11 +69,82 @@ class ImplGeneratorSet : public ImplGenerator {
     SmallVector<std::unique_ptr<ImplGenerator>,4> generators;
 };
 
+/// Why impl selection refused a trait application.
+///
+/// Selection wants exactly one candidate whose assumptions hold, and the two
+/// ways to miss that differ in whether the answer can still change: a generator
+/// can supply the impl that is missing, whereas a second satisfiable candidate
+/// can only ever be joined by more.
+enum class RefutationArm : uint8_t {
+  /// No candidate's assumptions were satisfiable and generation supplied none.
+  NoSatisfiableCandidate,
+  /// Two or more candidates' assumptions were satisfiable, so the application
+  /// is proven by no unique impl.
+  MultipleSatisfiableCandidates,
+};
+
+/// The number of refutation arms, for reporting the partition.
+inline constexpr unsigned numRefutationArms = 2;
+
+/// What impl selection settled on for one trait application: the impl it chose,
+/// or the arm on which it refused.
+///
+/// A selection that carried both would name an impl it had refused to select,
+/// and one that carried neither would say nothing at all. The only constructor
+/// refuses either, so every outcome that exists names one of the two.
+class ResolutionOutcome {
+public:
+  /// True when exactly one of an impl and a refutation arm is present.
+  static bool isWellFormed(ImplOp impl, std::optional<RefutationArm> arm) {
+    return static_cast<bool>(impl) != arm.has_value();
+  }
+
+  /// The only constructor. It refuses a pair that is not one outcome.
+  static std::optional<ResolutionOutcome> get(ImplOp impl,
+                                              std::optional<RefutationArm> arm) {
+    if (!isWellFormed(impl, arm))
+      return std::nullopt;
+    return ResolutionOutcome(impl, arm);
+  }
+
+  // Each recording site knows which outcome it reached, so these name a pair
+  // that is well formed by construction.
+  static ResolutionOutcome selected(ImplOp impl) { return of(impl, std::nullopt); }
+  static ResolutionOutcome refused(RefutationArm arm) {
+    return of(ImplOp(), arm);
+  }
+
+  bool isRefusal() const { return arm.has_value(); }
+
+  ImplOp getImpl() const {
+    assert(!isRefusal() && "a refusal names no impl");
+    return impl;
+  }
+
+  RefutationArm getRefutationArm() const {
+    assert(isRefusal() && "a selection was refused on no arm");
+    return *arm;
+  }
+
+private:
+  ResolutionOutcome(ImplOp impl, std::optional<RefutationArm> arm)
+      : impl(impl), arm(arm) {}
+
+  static ResolutionOutcome of(ImplOp impl, std::optional<RefutationArm> arm) {
+    auto outcome = get(impl, arm);
+    assert(outcome && "an outcome is either a selected impl or a refusal");
+    return *outcome;
+  }
+
+  ImplOp impl;
+  std::optional<RefutationArm> arm;
+};
+
 // Memoization state for pure impl resolution (no IR mutations).
 struct ResolutionMemo {
-  // Maps a fully-concrete trait application to its resolved ImplOp
-  // (or to failure if resolution was attempted and no unique impl exists).
-  DenseMap<TraitApplicationAttr, FailureOr<ImplOp>> chosen;
+  // Maps a fully-concrete trait application to the impl selected for it, or to
+  // the arm on which selection was refused when no unique impl exists.
+  DenseMap<TraitApplicationAttr, ResolutionOutcome> chosen;
 
   // Tracks applications currently being resolved to detect resolution cycles.
   DenseSet<TraitApplicationAttr> visiting;
@@ -145,6 +216,18 @@ class ImplResolver {
 
     /// The demands this resolver's stage declined to serve.
     DemandLedger &getDemandLedger() const { return *ledger; }
+
+    /// Writes the facts this resolver has recorded to the stage-record channel:
+    /// a digest over the canonical rendering of all of them, and the counts
+    /// behind it.
+    ///
+    /// The facts live in pointer-keyed maps, whose iteration order is the
+    /// allocator's, so the rendering is sorted before it is digested and one
+    /// run's digest is comparable with another's. Refusals render as one token
+    /// whichever arm they carry: which arm a refusal is refused on decides
+    /// whether a later round may retry it, and a digest that moved with that
+    /// could not tell a change of retry policy apart from a change of fact.
+    void reportRecordedFacts() const;
 
     /// Ensures canonical proof for a fully-concrete trait application `claim`.
     /// Resolution proceeds as follows:

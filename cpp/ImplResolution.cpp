@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "ImplResolution.hpp"
 #include <llvm/ADT/ScopeExit.h>
+#include <llvm/Support/Format.h>
+#include <llvm/Support/xxhash.h>
+#include <cinttypes>
 
 namespace mlir::trait {
 
@@ -121,9 +124,9 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
 
   // first check the memo
   if (auto it = memo.chosen.find(app); it != memo.chosen.end()) {
-    if (failed(it->second))
+    if (it->second.isRefusal())
       return failure();
-    return ResolvedImpl{*it->second, selected};
+    return ResolvedImpl{it->second.getImpl(), selected};
   }
 
   // get the trait
@@ -165,15 +168,24 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
   }
 
   // if exactly one good candidate exists, return it
+  //
+  // A nested resolution of this same application may already have settled it
+  // under the cycle guard, which refuses every candidate it re-enters; this
+  // call resolved it without that guard in the way, so its outcome replaces
+  // whatever the nested one left.
   if (good.size() == 1) {
-    memo.chosen[app] = good.front();
+    memo.chosen.insert_or_assign(app,
+                                 ResolutionOutcome::selected(good.front()));
     return ResolvedImpl{good.front(), selected};
   }
 
-  // otherwise, diagnose resolution failure
-  memo.chosen[app] =
-      diagnoseImplResolutionFailure(trait, originalWanted, good, bad, err);
-  return failure();
+  // otherwise, diagnose resolution failure, recording which of the two ways to
+  // miss a unique satisfiable candidate this application missed on
+  RefutationArm arm = good.empty()
+                          ? RefutationArm::NoSatisfiableCandidate
+                          : RefutationArm::MultipleSatisfiableCandidates;
+  memo.chosen.insert_or_assign(app, ResolutionOutcome::refused(arm));
+  return diagnoseImplResolutionFailure(trait, originalWanted, good, bad, err);
 }
 
 // find an existing trait.proof that *explicitly* proves impl by name
@@ -365,6 +377,103 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
   FlatSymbolRefAttr sym = FlatSymbolRefAttr::get(ctx, proof.getSymNameAttr());
   memo.proofMemo[app] = sym;
   return sym;
+}
+
+//===----------------------------------------------------------------------===//
+// Reporting the recorded facts
+//===----------------------------------------------------------------------===//
+
+namespace {
+
+/// What a refused application renders as, whichever arm refused it.
+constexpr const char *refusalToken = "refused";
+
+/// Collects the renderings of a resolver's facts, one line each, so that facts
+/// held in pointer-keyed maps can be put in a determinate order before they are
+/// digested.
+class FactRendering {
+public:
+  /// Opens a line. The caller writes the fact and closes it with `end`.
+  llvm::raw_ostream &begin() {
+    pending.clear();
+    return stream;
+  }
+  void end() { lines.push_back(pending); }
+
+  /// The renderings in an order that does not depend on where the maps holding
+  /// the facts happened to put them.
+  ArrayRef<std::string> sorted() {
+    llvm::sort(lines);
+    return lines;
+  }
+
+private:
+  SmallVector<std::string> lines;
+  std::string pending;
+  llvm::raw_string_ostream stream{pending};
+};
+
+} // namespace
+
+void ImplResolver::reportRecordedFacts() const {
+  const ResolutionMemo &resolution = memo.resolutionMemo;
+
+  // Every application selection opened it has closed, so nothing is part-way
+  // resolved here and the facts below are the whole of what this resolver knows.
+  assert(resolution.visiting.empty() &&
+         "impl selection must not be part-way through an application when its "
+         "facts are read");
+
+  FactRendering facts;
+  uint64_t selections = 0;
+  uint64_t refusalsByArm[numRefutationArms] = {};
+
+  for (const auto &entry : resolution.chosen) {
+    const ResolutionOutcome &outcome = entry.second;
+    llvm::raw_ostream &os = facts.begin();
+    os << "impl " << entry.first << " = ";
+    if (outcome.isRefusal()) {
+      ++refusalsByArm[static_cast<unsigned>(outcome.getRefutationArm())];
+      os << refusalToken;
+    } else {
+      ++selections;
+      os << outcome.getImpl().getSymName();
+    }
+    facts.end();
+  }
+
+  for (const auto &entry : resolution.assumptionsKnownSatisfiable) {
+    ImplOp impl = entry.first;
+    facts.begin() << "assumptions " << impl.getSymName() << " for "
+                  << entry.second;
+    facts.end();
+  }
+
+  for (const auto &entry : memo.proofMemo) {
+    facts.begin() << "proof " << entry.first << " = " << entry.second;
+    facts.end();
+  }
+
+  std::string rendered;
+  for (const std::string &fact : facts.sorted()) {
+    llvm::errs() << stageRecordFactPrefix << " " << fact << "\n";
+    rendered += fact;
+    rendered += '\n';
+  }
+
+  llvm::errs() << stageRecordDigestPrefix
+               << llvm::format(" value=0x%016" PRIx64,
+                               llvm::xxh3_64bits(rendered))
+               << " selected-impls=" << selections
+               << " refusals-no-candidate="
+               << refusalsByArm[static_cast<unsigned>(
+                      RefutationArm::NoSatisfiableCandidate)]
+               << " refusals-ambiguous="
+               << refusalsByArm[static_cast<unsigned>(
+                      RefutationArm::MultipleSatisfiableCandidates)]
+               << " assumption-facts="
+               << resolution.assumptionsKnownSatisfiable.size()
+               << " proofs=" << memo.proofMemo.size() << "\n";
 }
 
 } // end mlir::trait

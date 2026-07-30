@@ -22,6 +22,75 @@ namespace mlir::trait {
 // convertToTrait
 //===----------------------------------------------------------------------===//
 
+namespace {
+
+/// Counts the rewrite events one run of a greedy pattern driver raises.
+///
+/// The driver notifies the listener its configuration names of every op it
+/// inserts, modifies in place, replaces and erases, and of every pattern
+/// application that succeeded. The applications are what the driver's rewrite
+/// budget bounds, so reporting them beside the budget says both how much a run
+/// rewrote and how much room it had left.
+struct RewriteEventCounts : public RewriterBase::Listener {
+  using RewriterBase::Listener::notifyOperationReplaced;
+
+  void notifyOperationInserted(Operation *, OpBuilder::InsertPoint) override {
+    ++inserted;
+  }
+  void notifyOperationModified(Operation *) override { ++modified; }
+  void notifyOperationReplaced(Operation *, ValueRange) override { ++replaced; }
+  void notifyOperationErased(Operation *) override { ++erased; }
+  void notifyPatternEnd(const Pattern &, LogicalResult status) override {
+    if (succeeded(status))
+      ++applications;
+  }
+
+  /// Writes this run's line, naming the driver that raised the events and the
+  /// budget it ran under. A driver with no budget reports none and no headroom
+  /// either, rather than a number derived from the sentinel that stands for
+  /// "unbounded".
+  void report(StringRef driver, int64_t budget) const {
+    llvm::errs() << stageRecordRewritesPrefix << " driver=" << driver
+                 << " inserted=" << inserted << " modified=" << modified
+                 << " replaced=" << replaced << " erased=" << erased
+                 << " applications=" << applications;
+    if (budget < 0)
+      llvm::errs() << " budget=unbounded headroom=unbounded\n";
+    else
+      llvm::errs() << " budget=" << budget
+                   << " headroom=" << budget - int64_t(applications) << "\n";
+  }
+
+  uint64_t inserted = 0;
+  uint64_t modified = 0;
+  uint64_t replaced = 0;
+  uint64_t erased = 0;
+  uint64_t applications = 0;
+};
+
+/// Runs one greedy pattern driver over `root`, reporting the rewrite events it
+/// raised under the name `driver`.
+///
+/// No listener is installed unless the counts will be reported, so a run that
+/// nobody is counting costs exactly what it did before.
+LogicalResult applyPatternsGreedilyAndReport(Operation *root,
+                                             RewritePatternSet &&patterns,
+                                             GreedyRewriteConfig config,
+                                             StringRef driver) {
+  RewriteEventCounts events;
+  bool reporting = DemandLedger::isRecordingEnabled();
+  if (reporting)
+    config.setListener(&events);
+
+  LogicalResult result = applyPatternsGreedily(root, std::move(patterns), config);
+
+  if (reporting)
+    events.report(driver, config.getMaxNumRewrites());
+  return result;
+}
+
+} // namespace
+
 LogicalResult convertToTrait(ModuleOp module) {
   MLIRContext* ctx = module.getContext();
 
@@ -34,7 +103,9 @@ LogicalResult convertToTrait(ModuleOp module) {
   }
 
   // apply patterns
-  if (failed(applyPatternsGreedily(module, std::move(patterns))))
+  if (failed(applyPatternsGreedilyAndReport(module, std::move(patterns),
+                                            GreedyRewriteConfig(),
+                                            "convert-to-trait")))
     return failure();
 
   return success();
@@ -154,14 +225,63 @@ void VerifyAcyclicTraitsPass::runOnOperation() {
 
 namespace {
 
+/// Respells throughout `root` every claim `evidence` has a proven spelling for,
+/// and reports how much of `root` that sweep touched.
+///
+/// The replacer's recursive entry point is this walk, so driving the walk here
+/// costs nothing extra and is what lets an op the sweep respelled be told from
+/// one it left alone. A position is a result type, a block-argument type, or the
+/// attribute dictionary of one op; an op counts once however many of its
+/// positions moved.
 static void applySubstitutionInPlace(const EvidenceBindings& evidence, Operation* root) {
   if (evidence.empty()) return;
+  DenseMap<Type, Type> substitution = evidence.toTypeMap();
   AttrTypeReplacer replacer =
-      makeTypeReplacerFromSubstitution(evidence.toTypeMap(), /*module=*/ModuleOp());
-  replacer.recursivelyReplaceElementsIn(root,
-                                        /*replaceAttrs=*/true,
-                                        /*replaceLocs=*/false,
-                                        /*replaceTypes=*/true);
+      makeTypeReplacerFromSubstitution(substitution, /*module=*/ModuleOp());
+
+  bool reporting = DemandLedger::isRecordingEnabled();
+  uint64_t opsRespelled = 0;
+  uint64_t positionsRespelled = 0;
+
+  root->walk([&](Operation *op) {
+    SmallVector<Type, 8> before;
+    DictionaryAttr attributesBefore;
+    auto eachTypePosition = [&](llvm::function_ref<void(Type)> visit) {
+      for (Type type : op->getResultTypes())
+        visit(type);
+      for (Region &region : op->getRegions())
+        for (Block &block : region)
+          for (BlockArgument argument : block.getArguments())
+            visit(argument.getType());
+    };
+    if (reporting) {
+      eachTypePosition([&](Type type) { before.push_back(type); });
+      attributesBefore = op->getAttrDictionary();
+    }
+
+    replacer.replaceElementsIn(op,
+                               /*replaceAttrs=*/true,
+                               /*replaceLocs=*/false,
+                               /*replaceTypes=*/true);
+
+    if (!reporting)
+      return;
+    uint64_t movedHere = op->getAttrDictionary() == attributesBefore ? 0 : 1;
+    size_t position = 0;
+    eachTypePosition([&](Type type) {
+      if (type != before[position++])
+        ++movedHere;
+    });
+    positionsRespelled += movedHere;
+    if (movedHere)
+      ++opsRespelled;
+  });
+
+  if (reporting)
+    llvm::errs() << stageRecordRespellingPrefix
+                 << " bindings=" << substitution.size()
+                 << " ops=" << opsRespelled
+                 << " positions=" << positionsRespelled << "\n";
 }
 
 /// Proves a claim-producing op and replaces it with a trait.witness.
@@ -264,6 +384,17 @@ FailureOr<ImplResolver> resolveImpls(ModuleOp module) {
   // an ImplResolver for this module
   ImplResolver resolver(module, ledger);
 
+  // The facts this resolver recorded are reported wherever its census is, and
+  // it is the caller that reports both once the resolver is handed on. This
+  // guard is declared after the resolver so that it runs while the resolver is
+  // still alive, and it covers the failing exits below for the same reason the
+  // census guard above covers them.
+  auto facts = llvm::scope_exit([&] {
+    if (handedOn || !DemandLedger::isRecordingEnabled())
+      return;
+    resolver.reportRecordedFacts();
+  });
+
   MLIRContext *ctx = module.getContext();
 
   // apply rewrite patterns
@@ -272,7 +403,9 @@ FailureOr<ImplResolver> resolveImpls(ModuleOp module) {
     patterns.add<ProveClaimResultPattern>(ctx, resolver, /*allegeOnly=*/true);
 
     // rewrite trait.allege -> trait.witness
-    if (failed(applyPatternsGreedily(module, std::move(patterns))))
+    if (failed(applyPatternsGreedilyAndReport(module, std::move(patterns),
+                                              GreedyRewriteConfig(),
+                                              "resolve-impls")))
       return failure();
   }
 
@@ -306,8 +439,10 @@ void ResolveImplsPass::runOnOperation() {
   // here. Run inside instantiate-monomorphs, the same ledger spans both
   // sub-phases and is reported once at the end of that pass instead.
   resolver->getDemandLedger().reportServedDrainableKeys(getOperation());
-  if (DemandLedger::isRecordingEnabled())
+  if (DemandLedger::isRecordingEnabled()) {
     resolver->getDemandLedger().dumpCensus();
+    resolver->reportRecordedFacts();
+  }
 }
 
 std::unique_ptr<Pass> createResolveImplsPass() {
@@ -830,8 +965,10 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
   // population by construction.
   auto census = llvm::scope_exit([&] {
     resolver->getDemandLedger().reportServedDrainableKeys(module);
-    if (DemandLedger::isRecordingEnabled())
+    if (DemandLedger::isRecordingEnabled()) {
       resolver->getDemandLedger().dumpCensus();
+      resolver->reportRecordedFacts();
+    }
   });
 
   // The resolver was moved out of the sub-phase that built it, so its ledger is
@@ -870,7 +1007,8 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
   config.setMaxNumRewrites(opCount * 1024 + 4096);
 
   // apply patterns
-  if (failed(applyPatternsGreedily(module, std::move(patterns), config)))
+  if (failed(applyPatternsGreedilyAndReport(module, std::move(patterns), config,
+                                            "instantiate-monomorphs")))
     return module.emitError(
         "instantiate-monomorphs did not converge: rewrite budget exceeded, "
         "which indicates a non-confluent pattern pair cycling on a type "

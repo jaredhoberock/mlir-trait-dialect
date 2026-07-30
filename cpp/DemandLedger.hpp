@@ -721,4 +721,41 @@ inline constexpr const char *demandCensusCheckEnvironmentVariable =
 /// Writes one unhooked-mint line for `demand`.
 void reportUnhookedMint(Type demand);
 
+//===----------------------------------------------------------------------===//
+// The stage-record channel
+//===----------------------------------------------------------------------===//
+//
+// Beside the census of what the stage declined to serve, the stage reports what
+// it did: the facts impl resolution recorded, the rewrite events each run of a
+// greedy pattern driver raised, and how much of the module each claim-respelling
+// sweep touched. Rescheduling the stage's work must leave the first alone and
+// must not grow the other two, so all three are recorded per run and read
+// against a baseline.
+//
+// These lines share the census switch, because a reader that wants either wants
+// both, and carry their own marker, because a reader pinning the demand
+// population must not have to re-record it whenever a work count moves.
+
+/// Every stage-record line starts with this word.
+inline constexpr const char *stageRecordPrefix = "trait-stage-record";
+
+/// The line one recorded fact of impl resolution produces. These lines name
+/// trait applications, and a monomorphic type's name embeds a mangled hash, so
+/// like the census's per-key lines they are read where a module is small rather
+/// than recorded across a corpus.
+inline constexpr const char *stageRecordFactPrefix = "trait-stage-record fact";
+
+/// The line the recorded facts produce together: a digest over the canonical
+/// rendering of all of them, and the counts behind it.
+inline constexpr const char *stageRecordDigestPrefix =
+    "trait-stage-record digest";
+
+/// The line one run of a greedy pattern driver produces.
+inline constexpr const char *stageRecordRewritesPrefix =
+    "trait-stage-record rewrites";
+
+/// The line one claim-respelling sweep produces.
+inline constexpr const char *stageRecordRespellingPrefix =
+    "trait-stage-record respelling";
+
 } // end mlir::trait

@@ -127,6 +127,29 @@ pub const DEMAND_CENSUS_SCAN_MARKER: &str = "trait-demand-census scan";
 /// apart from a row whose census never ran.
 pub const DEMAND_CENSUS_SUMMARY_MARKER: &str = "trait-demand-census summary";
 
+/// The marker every line carries that reports what the monomorphization stage
+/// did: the facts impl resolution recorded, the rewrite events each run of a
+/// greedy pattern driver raised, and how much of the module each
+/// claim-respelling sweep touched. These lines share the census switch and
+/// carry their own marker.
+pub const STAGE_RECORD_LINE_PREFIX: &str = "trait-stage-record";
+
+/// The marker one recorded fact carries. These lines name trait applications,
+/// and a monomorphic type's name embeds a mangled hash, so like the census's
+/// per-key lines they are read where a module is small rather than recorded
+/// across a corpus.
+pub const STAGE_RECORD_FACT_MARKER: &str = "trait-stage-record fact";
+
+/// The marker the recorded facts' digest carries, together with the counts
+/// behind it.
+pub const STAGE_RECORD_DIGEST_MARKER: &str = "trait-stage-record digest";
+
+/// The marker one run of a greedy pattern driver carries.
+pub const STAGE_RECORD_REWRITES_MARKER: &str = "trait-stage-record rewrites";
+
+/// The marker one claim-respelling sweep carries.
+pub const STAGE_RECORD_RESPELLING_MARKER: &str = "trait-stage-record respelling";
+
 pub fn register(ctx: &Context) {
     unsafe { traitRegisterDialect(ctx.to_raw()) }
 }
