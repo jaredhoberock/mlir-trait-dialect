@@ -168,7 +168,7 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
     builder.setInsertionPointToEnd(module.getBody());
     if (auto impl = getImplGenerators().generateImpl(trait, selected, builder);
         succeeded(impl)) {
-      ++factEpoch;
+      noteFactWritten();
       SpeculationScope speculation;
       if (succeeded(assumptionsSatisfiableFor(*impl, selected, builder)))
         good.push_back(*impl);

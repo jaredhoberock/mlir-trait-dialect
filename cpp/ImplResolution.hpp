@@ -394,7 +394,14 @@ class ImplResolver {
     /// Records `sym` as what proves `app`, counting the fact.
     void recordProof(TraitApplicationAttr app, FlatSymbolRefAttr sym) {
       memo.proofMemo[app] = sym;
+      noteFactWritten();
+    }
+
+    /// Counts one fact write, and tells the ledger that what it filed as
+    /// derived from the fact base was derived from an earlier one.
+    void noteFactWritten() {
       ++factEpoch;
+      forgetProofDerivations();
     }
 
     /// Checks whether all of `impl`'s where-clause assumptions are satisfiable

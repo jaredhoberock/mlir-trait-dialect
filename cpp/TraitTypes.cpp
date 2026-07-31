@@ -463,6 +463,8 @@ LogicalResult verifyAndRecordProof(
     EvidenceBindings &bindings,
     DemandOrigin origin,
     llvm::function_ref<InFlightDiagnostic()> err) {
+  countProofVerification();
+
   // the proven side must carry a proof
   if (!proven.isProven()) {
     if (err) err() << "expected proven claim, but found " << proven;
@@ -477,6 +479,11 @@ LogicalResult verifyAndRecordProof(
                    << unproven;
     return failure();
   }
+
+  // File the pair as it arrived, before either side is normalized: the pair a
+  // memo of completed derivations would be asked about is the one the caller
+  // holds, and answering from it is what would skip the normalizations below.
+  probeProofDerivation(Type(unproven), Type(proven));
 
   // Normalize both the demanded obligation (the recording key) and the proven
   // value before recording. Requirement obligations arrive at their stamped
@@ -497,9 +504,11 @@ LogicalResult verifyAndRecordProof(
   // early exit if we've already recorded this obligation. The same proof may
   // be observed through multiple equivalent claim spellings, so validate proof
   // coherence instead of requiring syntactic claim equality.
-  if (auto existing = bindings.lookup(unproven))
+  if (auto existing = bindings.lookup(unproven)) {
+    countProofVerificationEarlyExit();
     return verifyEquivalentRecordedProof(
         unproven, *existing, proven, err);
+  }
 
   // look up the trait and its requirements using the unproven claim
   auto trait = unproven.getTraitApplication().getTrait(module, err);

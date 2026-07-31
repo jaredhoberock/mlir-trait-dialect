@@ -253,6 +253,15 @@ unsigned DemandLedger::getDrainableArms(Type demand) const {
   return it == drainableArms.end() ? 0u : it->second;
 }
 
+void DemandLedger::probeProofDerivation(Type unproven, Type proven) {
+  auto pair = std::make_pair(unproven, proven);
+  distinctProofDerivations.insert(pair);
+  if (derivationsSinceFactWrite.insert(pair).second)
+    ++proofDerivationFirstSights;
+  else
+    ++proofDerivationRepeats;
+}
+
 void DemandLedger::pushFrame(Type demand) {
   Location origin = frames.empty()
                         ? Location(UnknownLoc::get(demand.getContext()))
@@ -420,6 +429,23 @@ void DemandLedger::dumpCensus() const {
      << numModulelessRegionProjections.getValue() -
             statisticsAtBirth.modulelessRegionProjections
      << "\n";
+
+  // A third counter line, over the population this ledger's own span bounds:
+  // what recursive proof verification did on the thread that installed this
+  // ledger. A verifier's verification runs on a worker thread with no ledger
+  // installed and is not part of it, which is why these are the ledger's own
+  // counts rather than differences of process-wide statistics. The two sight
+  // columns partition the entries that reached the pair filing, and
+  // `distinct-nodes` is the floor those two are read against: it counts every
+  // pair, where a first sight is counted again after each fact write.
+  os << demandCensusCounterPrefix << " proof"
+     << " verifications=" << proofVerifications
+     << " verification-early-exits=" << proofVerificationEarlyExits
+     << " verification-first-sights=" << proofDerivationFirstSights
+     << " verification-repeats=" << proofDerivationRepeats
+     << " distinct-nodes=" << distinctProofDerivations.size()
+     << " evidence-bindings-recorded=" << evidenceBindingsRecorded
+     << " evidence-bindings-max=" << evidenceBindingsMax << "\n";
 
   os << demandCensusScanPrefix
      << " proof-scans=" << proofScans
@@ -679,6 +705,31 @@ void countProofCollisionScan(size_t entries) {
 void countCandidateScan(size_t entries) {
   if (isDemandRecordingActive())
     ambientLedger->countCandidateScan(entries);
+}
+
+void countProofVerification() {
+  if (isDemandRecordingActive())
+    ambientLedger->countProofVerification();
+}
+
+void countProofVerificationEarlyExit() {
+  if (isDemandRecordingActive())
+    ambientLedger->countProofVerificationEarlyExit();
+}
+
+void probeProofDerivation(Type unproven, Type proven) {
+  if (isDemandRecordingActive())
+    ambientLedger->probeProofDerivation(unproven, proven);
+}
+
+void forgetProofDerivations() {
+  if (isDemandRecordingActive())
+    ambientLedger->forgetProofDerivations();
+}
+
+void countEvidenceBinding(size_t bindingsAfter) {
+  if (isDemandRecordingActive())
+    ambientLedger->countEvidenceBinding(bindingsAfter);
 }
 
 void reportUnhookedMint(Type demand) {

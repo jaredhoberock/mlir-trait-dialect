@@ -202,7 +202,12 @@ public:
     assert(proven.isProven() && "evidence values must be proven claims");
     assert((!bindings.count(unproven) || bindings.lookup(unproven) == proven) &&
            "evidence bindings must not be replaced with a different proof");
+    size_t before = bindings.size();
     bindings[unproven] = proven;
+    // Re-binding the same key to the same proof writes no new entry, so the
+    // count is of the closure this map holds rather than of the calls it took.
+    if (bindings.size() != before)
+      countEvidenceBinding(bindings.size());
   }
 
   // Used by recursive proof verification to roll back an optimistic binding
