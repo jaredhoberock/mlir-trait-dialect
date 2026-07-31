@@ -644,14 +644,6 @@ bool ImplResolver::recordsOnlyRealizedProofs() const {
 // Freezing impl generation
 //===----------------------------------------------------------------------===//
 
-bool isInstantiationFreezeRequested() {
-  static const bool requested = [] {
-    const char *value = ::getenv(freezeInstantiationEnvironmentVariable);
-    return value && *value;
-  }();
-  return requested;
-}
-
 ImplGenerationFreeze::ImplGenerationFreeze(ImplResolver &resolver,
                                           StringRef span)
     : resolver(resolver), span(span.str()),
@@ -677,29 +669,6 @@ FailureOr<ImplOp> ImplGenerationFreeze::generateImpl(TraitOp trait,
          << ", but impl selection demanded an impl of @" << trait.getSymName()
          << " for " << wanted;
   llvm::report_fatal_error(Twine(message));
-}
-
-//===----------------------------------------------------------------------===//
-// Counting the impls a span generates
-//===----------------------------------------------------------------------===//
-
-ImplGenerationTally::ImplGenerationTally(ImplResolver &resolver)
-    : resolver(resolver), forwardTo(resolver.getImplGenerators()),
-      displaced(resolver.installedOverride) {
-  resolver.installedOverride = this;
-}
-
-ImplGenerationTally::~ImplGenerationTally() {
-  assert(resolver.installedOverride == this &&
-         "a tally must be the innermost stand-in installed when it ends");
-  resolver.installedOverride = displaced;
-}
-
-FailureOr<ImplOp> ImplGenerationTally::generateImpl(TraitOp trait,
-                                                    ClaimType wanted,
-                                                    OpBuilder &builder) const {
-  ++asks;
-  return forwardTo.generateImpl(trait, wanted, builder);
 }
 
 //===----------------------------------------------------------------------===//

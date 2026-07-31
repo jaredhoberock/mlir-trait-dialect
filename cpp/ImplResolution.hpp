@@ -403,7 +403,6 @@ class ImplResolver {
 
   private:
     friend class ImplGenerationFreeze;
-    friend class ImplGenerationTally;
     friend class ReadOnlyImplResolver;
 
     /// Finds the unique impl for the wanted claim and returns the normalized
@@ -462,11 +461,9 @@ class ImplResolver {
 /// than loudly wrong. A freeze names the claim that was demanded and the span
 /// whose contract the demand broke, at the point selection asked.
 ///
-/// XXX TODO: a freeze stands over the instantiation driver only where the
-/// environment asks for one (see isInstantiationFreezeRequested); a tally
-/// stands there otherwise, counting the impls the drivers still ask for. The
-/// freeze becomes unconditional once that count is zero on every row. Delete
-/// this if the drivers never stop asking.
+/// The stage stands one over its instantiation driver, whose patterns read the
+/// facts earlier steps recorded and put nothing to selection, so an ask from
+/// under it is a component reaching past the record it is meant to read.
 class ImplGenerationFreeze : public ImplGenerator {
 public:
   /// Installs itself as `resolver`'s generators until it goes out of scope.
@@ -489,53 +486,6 @@ private:
   const ImplGenerator *displaced;
 };
 
-/// Setting this in the environment stands a freeze over the stage's
-/// instantiation driver, so a module whose driver still generates impls stops
-/// there and names the claim it asked for.
-///
-/// XXX TODO: this is how the freeze is reached while nothing arms it for real.
-/// Delete it, with the switch below, once the freeze stands over that span
-/// unconditionally and the tally beside it goes.
-inline constexpr const char *freezeInstantiationEnvironmentVariable =
-    "TRAIT_FREEZE_INSTANTIATION";
-
-/// Whether the environment asked for a freeze over the instantiation driver.
-bool isInstantiationFreezeRequested();
-
-/// Counts the impls a span asks impl selection to generate, leaving what the
-/// generators do unchanged.
-///
-/// Generation belongs to whoever schedules resolution, and a span that
-/// generates while a pattern driver is running is generating where its
-/// scheduler did not plan to. The count says how much of that is left.
-///
-/// XXX TODO: this measures the generation a pattern driver still does. Delete
-/// it, and the fallback it measures, once a freeze stands over the driver span
-/// in its place.
-class ImplGenerationTally : public ImplGenerator {
-public:
-  /// Installs itself as `resolver`'s generators until it goes out of scope,
-  /// forwarding to whatever it displaced.
-  explicit ImplGenerationTally(ImplResolver &resolver);
-  ~ImplGenerationTally();
-
-  ImplGenerationTally(const ImplGenerationTally &) = delete;
-  ImplGenerationTally &operator=(const ImplGenerationTally &) = delete;
-
-  FailureOr<ImplOp> generateImpl(TraitOp trait,
-                                 ClaimType wanted,
-                                 OpBuilder &builder) const override;
-
-  /// How many times generation was asked for while this tally stood.
-  uint64_t getAsks() const { return asks; }
-
-private:
-  ImplResolver &resolver;
-  const ImplGenerator &forwardTo;
-  const ImplGenerator *displaced;
-  mutable uint64_t asks = 0;
-};
-
 /// A read of one resolver's recorded facts, for a caller that must serve from
 /// what impl selection has already settled.
 ///
@@ -548,11 +498,6 @@ private:
 /// Impl selection keys its memo by the claim whose projections it resolved, so
 /// an application asked about here is one spelled as selection recorded it: a
 /// caller holding a source spelling with a projection still in it misses.
-///
-/// XXX TODO: nothing reads through this handle yet. It becomes how the stage's
-/// rewrite patterns reach resolution facts once a driver no longer generates
-/// impls of its own, which is what the tally over the driver span measures.
-/// Delete it if the drivers never stop generating.
 class ReadOnlyImplResolver {
 public:
   explicit ReadOnlyImplResolver(const ImplResolver &resolver)

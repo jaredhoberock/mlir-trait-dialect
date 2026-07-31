@@ -1051,6 +1051,38 @@ struct InheritProjCastProofPattern : public OpRewritePattern<ProjCastOp> {
   }
 };
 
+/// Puts a claim a function's signature declares to impl selection, which the
+/// freeze standing over the instantiation driver forbids.
+///
+/// The driver's own patterns read the facts the steps before them recorded and
+/// put nothing to selection, so nothing the compiler builds reaches the freeze.
+/// This is what exercises it: a claim declared in a signature is one no pattern
+/// discharges and no round collects, so selection meets its application for the
+/// first time here, finds no candidate, and asks the generators -- which is the
+/// ask the freeze turns into a fatal naming the claim and the span. Only the
+/// dialect's plugin adds this pattern; the passes the compiler creates never
+/// do.
+struct AskImplSelectionForADeclaredClaimPattern
+    : public OpRewritePattern<func::FuncOp> {
+  ImplResolver &resolver;
+
+  AskImplSelectionForADeclaredClaimPattern(MLIRContext *ctx,
+                                           ImplResolver &resolver)
+      : OpRewritePattern(ctx), resolver(resolver) {}
+
+  LogicalResult matchAndRewrite(func::FuncOp op,
+                                PatternRewriter &rewriter) const override {
+    for (Type input : op.getFunctionType().getInputs()) {
+      auto claim = dyn_cast<ClaimType>(input);
+      if (!claim || claim.isProven() || !claim.isMonomorphic())
+        continue;
+      (void)resolver.resolveAndEnsureProofFor(claim, rewriter);
+    }
+    // Asking is all this does, so it rewrites nothing and the driver moves on.
+    return failure();
+  }
+};
+
 /// What one round did, which is what says whether another round has anything to
 /// do.
 ///
@@ -1085,8 +1117,6 @@ struct RoundWork {
   /// Refusals the round's flush forgot and kept, and what became of the ones
   /// the round before it forgot.
   ImplResolver::RefusalCounts refusals;
-  /// Impls the instantiation driver asked to have generated mid-run.
-  uint64_t midDriverGeneration = 0;
   /// Facts impl selection minted while the instantiation driver ran. A fact
   /// minted there reaches nothing the driver's earlier rewrites saw, so the
   /// round's own work is what this counts, and it counts writes rather than
@@ -1282,7 +1312,11 @@ static void checkResolutionBoundary(const ImplResolver &resolver) {
 
 } // end namespace
 
-LogicalResult instantiateMonomorphs(ModuleOp module) {
+/// `askImplSelectionForImpls` adds the pattern that puts a declared claim to
+/// impl selection from inside the instantiation driver, which is how the freeze
+/// over that driver is exercised. Only the dialect's plugin passes it.
+LogicalResult instantiateMonomorphs(ModuleOp module,
+                                    bool askImplSelectionForImpls) {
   // Round zero: resolve the impls the module already spells and respell the
   // claims they prove, before any round asks for an impl that is missing.
   auto resolver = resolveImpls(module);
@@ -1443,6 +1477,8 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
     patterns.add<MethodCallOpLowering>(ctx, reading);
     patterns.add<ResolveProjectionsPattern>(ctx, reading);
     patterns.add<InheritProjCastProofPattern>(ctx);
+    if (askImplSelectionForImpls)
+      patterns.add<AskImplSelectionForADeclaredClaimPattern>(ctx, *resolver);
 
     // collect instantiate-monomorphs patterns from other dialects
     for (Dialect *d : ctx->getLoadedDialects()) {
@@ -1455,20 +1491,15 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
 
     uint64_t epochAtInstantiate = resolver->getFactEpoch();
     {
-      // Generating an impl is a round's own work. One generated while the
-      // driver runs is a fact the run's earlier rewrites could not see, so what
-      // is left of that is counted where it happens.
-      ImplGenerationTally midDriverGeneration(*resolver);
-      // XXX TODO: a freeze stands over this span only where the environment
-      // asks for one, which is how the freeze is reached while nothing arms it
-      // for real. It replaces the tally outright once the driver stops asking.
-      std::optional<ImplGenerationFreeze> freeze;
-      if (isInstantiationFreezeRequested())
-        freeze.emplace(*resolver, "the instantiation driver");
+      // Generating an impl is a round's own work, and one generated while the
+      // driver runs is a fact the run's earlier rewrites could not see. The
+      // driver's patterns read what the steps before them recorded and put
+      // nothing to impl selection, so nothing under this reaches the generator
+      // arm; the freeze is what says so.
+      ImplGenerationFreeze freeze(*resolver, "the instantiation driver");
       LogicalResult instantiated = applyPatternsGreedilyAndReport(
           module, std::move(patterns), config, "instantiate-monomorphs", round,
           &work.instantiated);
-      work.midDriverGeneration = midDriverGeneration.getAsks();
       work.instantiateMinted = resolver->getFactEpoch() - epochAtInstantiate;
       if (failed(instantiated))
         return module.emitError(
@@ -1580,12 +1611,19 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
 }
 
 void InstantiateMonomorphsPass::runOnOperation() {
-  if (failed(instantiateMonomorphs(getOperation())))
+  if (failed(instantiateMonomorphs(getOperation(),
+                                   /*askImplSelectionForImpls=*/false)))
     signalPassFailure();
 }
 
 std::unique_ptr<Pass> createInstantiateMonomorphsPass() {
   return std::make_unique<InstantiateMonomorphsPass>();
+}
+
+void AskImplSelectionDuringInstantiationPass::runOnOperation() {
+  if (failed(instantiateMonomorphs(getOperation(),
+                                   /*askImplSelectionForImpls=*/true)))
+    signalPassFailure();
 }
 
 
@@ -1737,7 +1775,8 @@ static LogicalResult erasePolymorphs(ModuleOp module) {
 }
 
 LogicalResult monomorphize(ModuleOp module) {
-  if (failed(instantiateMonomorphs(module)))
+  if (failed(instantiateMonomorphs(module,
+                                   /*askImplSelectionForImpls=*/false)))
     return failure();
 
   return erasePolymorphs(module);

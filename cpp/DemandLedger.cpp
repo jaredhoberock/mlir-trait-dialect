@@ -392,10 +392,10 @@ void DemandLedger::dumpCensus() const {
 
   // Two counter lines, each labelled by the population its numbers cover. Every
   // column names one event and carries a name no other column carries:
-  // `verifier` columns count events only a verifier raises, `total` columns
-  // count events wherever they happen, the stage and the verifiers together. No
-  // column is a part of another, so the two lines are read side by side rather
-  // than differenced.
+  // `verifier` columns count events raised outside this ledger's span, `total`
+  // columns count events raised inside it, by the stage and by the verifiers it
+  // runs. No column is a part of another, so the two lines are read side by
+  // side rather than differenced.
   os << demandCensusCounterPrefix << " verifier"
      << " lookup-misses="
      << numVerifierLookupMisses.getValue() -
@@ -403,6 +403,13 @@ void DemandLedger::dumpCensus() const {
      << " cast-normalizations="
      << numVerifierObligationNormalizations.getValue() -
             statisticsAtBirth.verifierObligationNormalizations
+     // The residual tolerance is reached from committed-fact matches inside op
+     // verifiers as well as from the stage, and the module is verified before
+     // this ledger exists, so what the statistic held at birth is the accepts
+     // no stage raised. It is reported here because the total below is a
+     // difference from that birth value and so cannot show them.
+     << " residual-tolerance-accepts-before-the-stage="
+     << statisticsAtBirth.residualToleranceAccepts
      << "\n";
 
   os << demandCensusCounterPrefix << " total"

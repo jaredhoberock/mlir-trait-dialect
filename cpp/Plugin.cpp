@@ -12,6 +12,10 @@ static void registerPlugin(mlir::DialectRegistry* registry) {
   ::mlir::PassRegistration<::mlir::trait::ResolveImplsPass>();
   ::mlir::PassRegistration<::mlir::trait::InstantiateMonomorphsPass>();
   ::mlir::PassRegistration<::mlir::trait::MonomorphizePass>();
+  // The freeze over the instantiation driver has nothing in a compilation that
+  // asks it anything, so the pass that plants an ask is registered here and
+  // nowhere the compiler builds from.
+  ::mlir::PassRegistration<::mlir::trait::AskImplSelectionDuringInstantiationPass>();
 }
 
 extern "C" ::mlir::DialectPluginLibraryInfo LLVM_ATTRIBUTE_WEAK

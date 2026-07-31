@@ -27,6 +27,23 @@ struct InstantiateMonomorphsPass : PassWrapper<InstantiateMonomorphsPass, Operat
   void runOnOperation() override;
 };
 
+/// Monomorph instantiation with a pattern that puts a claim a function's
+/// signature declares to impl selection from inside the instantiation driver.
+///
+/// The freeze standing over that driver turns any such ask into a fatal, and
+/// the driver's own patterns never make one, so this is what exercises the
+/// freeze. Only the dialect's plugin registers it: nothing the compiler creates
+/// can reach it, and nothing it does belongs in a compilation.
+struct AskImplSelectionDuringInstantiationPass
+    : PassWrapper<AskImplSelectionDuringInstantiationPass, OperationPass<ModuleOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(AskImplSelectionDuringInstantiationPass);
+
+  inline StringRef getArgument() const final { return "ask-impl-selection-during-instantiation-trait"; }
+  inline StringRef getDescription() const final { return "Instantiate monomorphs, asking impl selection for an impl from inside the driver."; }
+
+  void runOnOperation() override;
+};
+
 struct ResolveImplsPass : PassWrapper<ResolveImplsPass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ResolveImplsPass);
 

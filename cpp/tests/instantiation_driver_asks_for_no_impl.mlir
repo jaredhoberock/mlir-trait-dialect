@@ -1,12 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 
-// RUN: env TRAIT_FREEZE_INSTANTIATION=1 mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' -verify-diagnostics
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' -verify-diagnostics
 
 // The instantiation driver reads the facts the steps before it settled and
-// asks impl selection for nothing, so a freeze standing over that span is
-// silent and the two runs below agree.
+// asks impl selection for nothing, so the freeze standing over that span is
+// silent even where the module holds a demand nothing can serve.
 //
 // @Gen[i64] has no impl and no generator supplies one, so the projection over
 // it is a demand the driver declines and a later round collects. That round
