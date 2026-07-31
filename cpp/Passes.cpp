@@ -589,10 +589,6 @@ void ResolveImplsPass::runOnOperation() {
   resolver->getDemandLedger().reportCallLoweringProfile();
 }
 
-std::unique_ptr<Pass> createResolveImplsPass() {
-  return std::make_unique<ResolveImplsPass>();
-}
-
 
 //===----------------------------------------------------------------------===//
 // InstantiateMonomorphsPass

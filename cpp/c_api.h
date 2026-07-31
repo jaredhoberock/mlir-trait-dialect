@@ -16,9 +16,6 @@ void traitRegisterDialect(MlirContext ctx);
 /// Create a monomorphize-trait pass
 MlirPass traitCreateMonomorphizePass();
 
-/// Create a resolve-impls-trait pass
-MlirPass traitCreateResolveImplsPass();
-
 /// Create a TraitApplicationAttr: @Trait[Type...]
 MlirAttribute traitTraitApplicationAttrGet(MlirContext ctx,
                                            MlirStringRef traitName,

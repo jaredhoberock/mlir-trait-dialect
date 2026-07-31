@@ -44,6 +44,15 @@ struct AskImplSelectionDuringInstantiationPass
   void runOnOperation() override;
 };
 
+/// Round zero on its own, for the rows that drive it through `mlir-opt`.
+///
+/// A compilation reaches round zero through instantiate-monomorphs, which runs
+/// it before its first round and keeps the resolver it built; this pass runs it
+/// alone and discards that resolver.
+///
+/// XXX TODO: this housing exists for those rows and for nothing the compiler
+/// builds. It goes when round zero dissolves into the round loop and the rows
+/// drive the loop instead.
 struct ResolveImplsPass : PassWrapper<ResolveImplsPass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ResolveImplsPass);
 
@@ -52,8 +61,6 @@ struct ResolveImplsPass : PassWrapper<ResolveImplsPass, OperationPass<ModuleOp>>
 
   void runOnOperation() override;
 };
-
-std::unique_ptr<Pass> createResolveImplsPass();
 
 struct VerifyAcyclicTraitsPass : PassWrapper<VerifyAcyclicTraitsPass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(VerifyAcyclicTraitsPass);

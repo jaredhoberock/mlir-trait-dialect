@@ -23,10 +23,6 @@ MlirPass traitCreateMonomorphizePass() {
   return wrap(createMonomorphizePass().release());
 }
 
-MlirPass traitCreateResolveImplsPass() {
-  return wrap(createResolveImplsPass().release());
-}
-
 MlirAttribute traitTraitApplicationAttrGet(MlirContext wrappedCtx,
                                            MlirStringRef traitName,
                                            MlirType* typeArgs, intptr_t numTypeArgs) {
