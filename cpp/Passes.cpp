@@ -1127,9 +1127,10 @@ struct RoundWork {
   uint64_t instantiateMinted = 0;
   /// Claim producers left holding a proven result when the driver finished.
   /// Proof propagation can prove a claim out from under the op that produced
-  /// it, which leaves the producer with nothing to do; both producer ops are
+  /// it, which leaves the producer with nothing to do; every producer op is
   /// pure, so the driver's dead-op elimination takes them once no consumer
-  /// wants the operand.
+  /// wants the operand. All three producers the driver's proving rule handles
+  /// are counted, because all three can be proved out from under this way.
   uint64_t provenProducers = 0;
   /// Whether impl selection minted a fact anywhere in the round.
   bool mintedFacts = false;
@@ -1394,6 +1395,13 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
   bool writtenSinceBridge = true;
   bool writtenSinceSweep = false;
   size_t proofsAtSweep = resolver->getRecordedProofCount();
+  // Whether the module stands where the instantiation driver last left it, at
+  // that driver's own fixed point. A driver run that minted nothing leaves it
+  // there; a run that minted is a run whose earlier rewrites read facts its
+  // later ones did not, so what it left is not a fixed point under the facts
+  // as they now stand. No round has run the driver yet, so the first one runs
+  // it unconditionally.
+  bool atInstantiationFixedPoint = false;
   // What the last two rounds did, and where the last commit moved something,
   // for the report the round bound owes a reader.
   SmallVector<std::pair<unsigned, RoundWork>, 2> lastRounds;
@@ -1474,53 +1482,71 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
     // any generic op whose results become monomorphic.
     // The driver reads what the steps before it established. Serving a demand
     // is the round's own work, done where a round can see what it minted.
-    ReadOnlyImplResolver reading(*resolver);
-    RewritePatternSet patterns(ctx);
-    patterns.add<ProveClaimResultPattern>(ctx, reading);
-    patterns.add<MonomorphizeResultTypesPattern>(ctx);
-    patterns.add<FuncCallOpLowering>(ctx, reading);
-    patterns.add<MethodCallOpLowering>(ctx, reading);
-    patterns.add<ResolveProjectionsPattern>(ctx, reading);
-    patterns.add<InheritProjCastProofPattern>(ctx);
-    if (askImplSelectionForImpls)
-      patterns.add<AskImplSelectionForADeclaredClaimPattern>(ctx, *resolver);
+    //
+    // Nothing the steps above did moved what the driver reads when the flush
+    // forgot no refusal, the bridge lifted nothing, serving neither settled a
+    // demand nor inserted an op, the commit respelled no position and no fact
+    // was minted. Under all of those the driver would be handed the module its
+    // own last run left at that run's fixed point, together with the facts that
+    // run read, so it would apply no pattern: the round skips it, `instantiated`
+    // stays false, and the loop ends unless something else this round wrote.
+    bool instantiationInputMoved =
+        work.refusals.forgotten != 0 || work.bridged || work.served != 0 ||
+        work.insertedServingDemands != 0 || work.respelled != 0 ||
+        resolver->getFactEpoch() != epochAtRoundHead;
+    if (!atInstantiationFixedPoint || instantiationInputMoved) {
+      ReadOnlyImplResolver reading(*resolver);
+      RewritePatternSet patterns(ctx);
+      patterns.add<ProveClaimResultPattern>(ctx, reading);
+      patterns.add<MonomorphizeResultTypesPattern>(ctx);
+      patterns.add<FuncCallOpLowering>(ctx, reading);
+      patterns.add<MethodCallOpLowering>(ctx, reading);
+      patterns.add<ResolveProjectionsPattern>(ctx, reading);
+      patterns.add<InheritProjCastProofPattern>(ctx);
+      if (askImplSelectionForImpls)
+        patterns.add<AskImplSelectionForADeclaredClaimPattern>(ctx, *resolver);
 
-    // collect instantiate-monomorphs patterns from other dialects
-    for (Dialect *d : ctx->getLoadedDialects()) {
-      if (auto *iface = d->getRegisteredInterface<MonomorphizationInterface>())
-        iface->populateInstantiateMonomorphsPatterns(patterns);
-    }
+      // collect instantiate-monomorphs patterns from other dialects
+      for (Dialect *d : ctx->getLoadedDialects()) {
+        if (auto *iface = d->getRegisteredInterface<MonomorphizationInterface>())
+          iface->populateInstantiateMonomorphsPatterns(patterns);
+      }
 
-    GreedyRewriteConfig config;
-    config.setMaxNumRewrites(rewriteBudgetFor(module));
+      GreedyRewriteConfig config;
+      config.setMaxNumRewrites(rewriteBudgetFor(module));
 
-    uint64_t epochAtInstantiate = resolver->getFactEpoch();
-    {
-      // Generating an impl is a round's own work, and one generated while the
-      // driver runs is a fact the run's earlier rewrites could not see. The
-      // driver's patterns read what the steps before them recorded and put
-      // nothing to impl selection, so nothing under this reaches the generator
-      // arm; the freeze is what says so.
-      ImplGenerationFreeze freeze(*resolver, "the instantiation driver");
-      LogicalResult instantiated = applyPatternsGreedilyAndReport(
-          module, std::move(patterns), config, "instantiate-monomorphs", round,
-          &work.instantiated);
-      work.instantiateMinted = resolver->getFactEpoch() - epochAtInstantiate;
-      if (failed(instantiated))
-        return module.emitError(
-            "instantiate-monomorphs did not converge: rewrite budget exceeded, "
-            "which indicates a non-confluent pattern pair cycling on a type "
-            "spelling");
+      uint64_t epochAtInstantiate = resolver->getFactEpoch();
+      {
+        // Generating an impl is a round's own work, and one generated while the
+        // driver runs is a fact the run's earlier rewrites could not see. The
+        // driver's patterns read what the steps before them recorded and put
+        // nothing to impl selection, so nothing under this reaches the generator
+        // arm; the freeze is what says so.
+        ImplGenerationFreeze freeze(*resolver, "the instantiation driver");
+        LogicalResult instantiated = applyPatternsGreedilyAndReport(
+            module, std::move(patterns), config, "instantiate-monomorphs", round,
+            &work.instantiated);
+        work.instantiateMinted = resolver->getFactEpoch() - epochAtInstantiate;
+        if (failed(instantiated))
+          return module.emitError(
+              "instantiate-monomorphs did not converge: rewrite budget exceeded, "
+              "which indicates a non-confluent pattern pair cycling on a type "
+              "spelling");
+      }
+      atInstantiationFixedPoint = work.instantiateMinted == 0;
     }
     writtenSinceBridge |= work.instantiated;
     writtenSinceSweep |= work.instantiated;
 
-    module.walk([&](Operation *op) {
-      if (!isa<AllegeOp, DeriveOp>(op))
-        return;
-      if (cast<ClaimType>(op->getResult(0).getType()).isProven())
-        ++work.provenProducers;
-    });
+    // The producers left holding a proven result are watched, not acted on, so
+    // the walk that finds them runs where its count is read.
+    if (DemandLedger::isRecordingEnabled())
+      module.walk([&](Operation *op) {
+        if (!isa<AllegeOp, DeriveOp, ProjectOp>(op))
+          return;
+        if (cast<ClaimType>(op->getResult(0).getType()).isProven())
+          ++work.provenProducers;
+      });
 
     checkResolutionBoundary(*resolver);
 

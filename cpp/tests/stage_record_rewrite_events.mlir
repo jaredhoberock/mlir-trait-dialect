@@ -14,13 +14,16 @@
 // close a run came to the bound that catches a non-confluent pattern pair.
 //
 // Rounds run until one of them writes nothing, so the last round of every run
-// is one that found no demand to serve, respelled nothing and rewrote nothing.
-// That is what its line says, and it is why there is one more round here than
-// there is work to do.
+// is one that found no demand to serve and respelled nothing. That is what its
+// line says, and it is why there is one more round here than there is work to
+// do.
 //
 // A step whose input has not moved since it last ran does not run again, which
 // is why round one reports no respelling sweep: round zero swept after its own
-// writes and the bridge that ran before the sweep would have moved nothing.
+// writes and the bridge that ran before the sweep would have moved nothing. The
+// same holds of the instantiation driver, so the last round reports no rewrite
+// events for it at all: nothing since that driver's own last run moved the
+// module it reads or the facts it reads them against.
 
 !T = !trait.poly<0>
 
@@ -50,7 +53,7 @@ func.func @main(%x: i32) -> i32 {
 // CHECK-SAME: served=0 declined=0 deferred=0
 // CHECK-SAME: instantiated=yes
 // CHECK: trait-stage-record respelling round=2 bindings=1 ops=0 positions=0
-// CHECK: trait-stage-record rewrites driver=instantiate-monomorphs round=2 inserted=0 modified=0 replaced=0 erased=0 applications=0
+// CHECK-NOT: trait-stage-record rewrites driver=instantiate-monomorphs round=2
 // CHECK: trait-stage-record round index=2 bridged=no collected=0
 // CHECK-SAME: ambiguous-arms=0 served=0 declined=0 deferred=0 inserted-serving-demands=0
 // CHECK-SAME: respelled-positions=0 refusals-forgotten=0 refusals-kept=0 refusals-overturned=0 refusals-re-earned=0 instantiate-minted=0 proven-producers=0 instantiated=no

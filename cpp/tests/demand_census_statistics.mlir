@@ -19,5 +19,5 @@ func.func @main() -> !trait.proj<@T[i64], "A"> {
   return %r : !trait.proj<@T[i64], "A">
 }
 
-// CHECK: 4 trait-demand
+// CHECK: 2 trait-demand
 // CHECK-SAME: demands a read of the recorded facts had no answer for

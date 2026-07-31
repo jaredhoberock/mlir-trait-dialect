@@ -40,12 +40,12 @@ func.func @main() -> !trait.proj<@Gen[i64], "A"> {
 // CHECK: trait-stage-record round index=2
 // CHECK-SAME: collected=1 no-candidate-impl=0 multiple-candidate-impls=0 other-arms=0 without-arm=1
 // CHECK-SAME: served=0 declined=1 deferred=0
-// CHECK: trait-demand-census demand flags=real drainable=yes observations=10 depth=0
+// CHECK: trait-demand-census demand flags=real drainable=yes observations=5 depth=0
 // CHECK-SAME: kinds=unifier-acceptance,read-only-resolver arms=-
 // CHECK-SAME: type=!trait.proj<@Gen[i64], "A">
 // CHECK: trait-demand-census engine lookup-miss keys=0 observations=0 real=0 speculative=0 probe-internal=0
-// CHECK: trait-demand-census engine read-only-resolver keys=1 observations=8 real=8 speculative=0 probe-internal=0
+// CHECK: trait-demand-census engine read-only-resolver keys=1 observations=4 real=4 speculative=0 probe-internal=0
 // CHECK: trait-demand-census arm no-candidate-impl keys=0 observations=0 real=0 speculative=0 probe-internal=0
 // CHECK: trait-demand-census arm multiple-candidate-impls keys=0 observations=0 real=0 speculative=0 probe-internal=0
-// CHECK: trait-demand-census summary keys=1 observations=10 drainable-keys=1
+// CHECK: trait-demand-census summary keys=1 observations=5 drainable-keys=1
 // CHECK: trait-stage-record digest value={{.*}} selected-impls=0 refusals-no-candidate=0 refusals-ambiguous=1
