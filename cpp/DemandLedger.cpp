@@ -6,6 +6,7 @@
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <llvm/ADT/Statistic.h>
 #include <llvm/Support/raw_ostream.h>
+#include <chrono>
 #include <cstdlib>
 
 #define DEBUG_TYPE "trait-demand"
@@ -61,6 +62,13 @@ static_assert(static_cast<unsigned>(
                       1 ==
                   numLookupMissReasons,
               "numLookupMissReasons must count every LookupMissReason");
+static_assert(static_cast<unsigned>(DerivationEntry::ImplSelfProof) + 1 ==
+                  numDerivationEntries,
+              "numDerivationEntries must count every DerivationEntry");
+static_assert(static_cast<unsigned>(CallLoweringPhase::CalleeSpecialization) +
+                      1 ==
+                  numCallLoweringPhases,
+              "numCallLoweringPhases must count every CallLoweringPhase");
 
 namespace {
 
@@ -71,6 +79,26 @@ thread_local DemandLedger *ambientLedger = nullptr;
 thread_local unsigned ambientLookupDepth = 0;
 thread_local bool ambientSpeculating = false;
 thread_local bool ambientCrossChecking = false;
+
+const char *derivationEntryName(DerivationEntry entry) {
+  switch (entry) {
+  case DerivationEntry::MethodCallSpecialization: return "method-call";
+  case DerivationEntry::FuncCallSpecialization: return "func-call";
+  case DerivationEntry::SubstitutionClose: return "close";
+  case DerivationEntry::ImplSelfProof: return "impl-self-proof";
+  }
+  return "unknown";
+}
+
+const char *callLoweringPhaseName(CallLoweringPhase phase) {
+  switch (phase) {
+  case CallLoweringPhase::Whole: return "whole";
+  case CallLoweringPhase::Unification: return "unification";
+  case CallLoweringPhase::Closure: return "closure";
+  case CallLoweringPhase::CalleeSpecialization: return "callee-specialization";
+  }
+  return "unknown";
+}
 
 const char *engineName(DemandEngine engine) {
   switch (engine) {
@@ -125,6 +153,8 @@ const bool recordingEnabled =
     environmentVariableIsSet(demandCensusEnvironmentVariable);
 const bool postconditionEnabled =
     environmentVariableIsSet(demandCensusCheckEnvironmentVariable);
+const bool callLoweringProfileEnabled =
+    environmentVariableIsSet(callLoweringProfileEnvironmentVariable);
 
 /// With both switches off a ledger keeps its drain and nothing else, so the
 /// sites that must walk or shape a type to know there was anything to record
@@ -482,6 +512,22 @@ void DemandLedger::dumpCensus() const {
      << " evidence-bindings-recorded=" << evidenceBindingsRecorded
      << " evidence-bindings-max=" << evidenceBindingsMax << "\n";
 
+  // A fourth counter line, over the same span: what lowering trait calls did.
+  // The visits are what the driver put to the read and the distinct reads are
+  // what it put there to ask about, so their ratio says how much of the asking
+  // was answering a question already answered; the clones and the reuses split
+  // the callee specializations by whether a body had to be cloned. The four
+  // entry columns say which step of lowering a call asked for proof bindings.
+  os << demandCensusCounterPrefix << " call-lowering"
+     << " visits=" << callLoweringVisits
+     << " distinct-reads=" << distinctCallLoweringReads.size()
+     << " callee-clones=" << calleeClones
+     << " callee-reuses=" << calleeReuses;
+  for (unsigned e = 0; e != numDerivationEntries; ++e)
+    os << " derivations-at-" << derivationEntryName(static_cast<DerivationEntry>(e))
+       << "=" << derivationEntries[e];
+  os << "\n";
+
   os << demandCensusScanPrefix
      << " proof-scans=" << proofScans
      << " proof-scan-entries=" << proofScanEntries
@@ -489,6 +535,21 @@ void DemandLedger::dumpCensus() const {
      << " proof-collision-scan-entries=" << proofCollisionScanEntries
      << " candidate-scans=" << candidateScans
      << " candidate-scan-entries=" << candidateScanEntries << "\n";
+}
+
+void DemandLedger::reportCallLoweringProfile() const {
+  if (!callLoweringProfileEnabled)
+    return;
+
+  llvm::raw_ostream &os = llvm::errs();
+  os << callLoweringProfilePrefix << " visits=" << callLoweringVisits
+     << " distinct-reads=" << distinctCallLoweringReads.size()
+     << " callee-clones=" << calleeClones
+     << " callee-reuses=" << calleeReuses;
+  for (unsigned p = 0; p != numCallLoweringPhases; ++p)
+    os << " " << callLoweringPhaseName(static_cast<CallLoweringPhase>(p))
+       << "-us=" << callLoweringNanoseconds[p] / 1000;
+  os << "\n";
 }
 
 /// The demands `module` spells: its monomorphic projections, and the unproven
@@ -924,6 +985,55 @@ void countProofDerivationNotRecorded() {
 void countEvidenceBinding(size_t bindingsAfter) {
   if (isDemandRecordingActive())
     ambientLedger->countEvidenceBinding(bindingsAfter);
+}
+
+bool isCallLoweringInstrumented() {
+  return (observationsEnabled || callLoweringProfileEnabled) &&
+         ambientLedger != nullptr && !ambientCrossChecking;
+}
+
+void countCallLoweringVisit(uint64_t record, Type spelling, Type callee) {
+  if (isCallLoweringInstrumented())
+    ambientLedger->countCallLoweringVisit(record, spelling, callee);
+}
+
+void countCalleeSpecialization(bool cloned) {
+  if (isCallLoweringInstrumented())
+    ambientLedger->countCalleeSpecialization(cloned);
+}
+
+void countDerivationEntry(DerivationEntry entry) {
+  if (isCallLoweringInstrumented())
+    ambientLedger->countDerivationEntry(entry);
+}
+
+namespace {
+
+uint64_t nanosecondsNow() {
+  return std::chrono::duration_cast<std::chrono::nanoseconds>(
+             std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+}
+
+} // namespace
+
+CallLoweringSpan::CallLoweringSpan(CallLoweringPhase phase)
+    : phase(phase), timing(callLoweringProfileEnabled &&
+                           ambientLedger != nullptr && !ambientCrossChecking),
+      startedAt(0) {
+  if (timing)
+    startedAt = nanosecondsNow();
+}
+
+CallLoweringSpan::~CallLoweringSpan() {
+  if (!timing)
+    return;
+  // A span opens and closes inside one call lowering, and nothing there
+  // uninstalls the sink; asking again is what keeps this from writing through a
+  // pointer that has gone should that ever stop holding.
+  if (ambientLedger == nullptr)
+    return;
+  ambientLedger->countCallLoweringTime(phase, nanosecondsNow() - startedAt);
 }
 
 void reportUnhookedMint(Type demand) {

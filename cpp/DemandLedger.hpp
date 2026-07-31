@@ -15,6 +15,7 @@
 #include <cassert>
 #include <cstdint>
 #include <optional>
+#include <tuple>
 #include <utility>
 
 namespace mlir::trait {
@@ -352,6 +353,54 @@ inline bool recordsToLedger(DemandOrigin origin) {
 }
 
 //===----------------------------------------------------------------------===//
+// Lowering a call
+//===----------------------------------------------------------------------===//
+
+/// Which step of lowering a call asked for proof bindings to be recorded.
+///
+/// Lowering one call asks at four separate steps, and each of them asks for a
+/// closure a step before it may already have produced. Counting the steps apart
+/// is what says which of them a change stopped asking at.
+///
+/// XXX TODO: these columns exist to measure the re-derivation lowering a call
+/// performs. They go when the call-lowering close does.
+enum class DerivationEntry : uint8_t {
+  /// A method call's parameter specialization, recording the proofs its actual
+  /// signature spells.
+  MethodCallSpecialization,
+  /// A function call's parameter specialization, doing the same.
+  FuncCallSpecialization,
+  /// The call substitution's close, which asks once per type per fixed-point
+  /// iteration.
+  SubstitutionClose,
+  /// The impl specialization a method call's callee is cloned under, verifying
+  /// the self proof the call names.
+  ImplSelfProof,
+};
+
+/// The number of steps, for the partition that reports them.
+inline constexpr unsigned numDerivationEntries = 4;
+
+/// One part of the work lowering a call does.
+///
+/// The parts nest: `Whole` spans a call's whole lowering and the three below
+/// span steps inside it, so what those three leave unaccounted for is the
+/// substitution application between them.
+enum class CallLoweringPhase : uint8_t {
+  /// Lowering one call, from the substitution it builds to the callee it names.
+  Whole,
+  /// Unifying the callee's formal signature with the call's actual one.
+  Unification,
+  /// Closing that substitution under projection and proof bindings.
+  Closure,
+  /// Getting or specializing the callee the closed substitution names.
+  CalleeSpecialization,
+};
+
+/// The number of parts, for the decomposition that reports them.
+inline constexpr unsigned numCallLoweringPhases = 4;
+
+//===----------------------------------------------------------------------===//
 // The ledger
 //===----------------------------------------------------------------------===//
 
@@ -498,6 +547,41 @@ public:
     evidenceBindingsMax = std::max(evidenceBindingsMax, bindingsAfter);
   }
 
+  /// Files one visit that put a call to the read, against the three reads that
+  /// decide what the read answers it: the record epoch, the call's own operand
+  /// and result spelling carried as one uniqued function type, and the callee
+  /// signature it specializes against.
+  ///
+  /// Two visits reading the same triple build the same substitution and close it
+  /// to the same answer, so the distinct triples say how many answers the visits
+  /// stand for. The operation is no part of the key: an address the driver hands
+  /// to a later operation would make two calls one, and the triple is what the
+  /// answer is about.
+  void countCallLoweringVisit(uint64_t record, Type spelling, Type callee) {
+    ++callLoweringVisits;
+    distinctCallLoweringReads.insert(std::make_tuple(record, spelling, callee));
+  }
+
+  /// Files one callee specialization, saying whether the callee body had to be
+  /// cloned or an instance already stood under the name the substitution
+  /// mangles.
+  void countCalleeSpecialization(bool cloned) {
+    if (cloned)
+      ++calleeClones;
+    else
+      ++calleeReuses;
+  }
+
+  /// Files one ask for the proof bindings a step of lowering a call needs.
+  void countDerivationEntry(DerivationEntry entry) {
+    ++derivationEntries[static_cast<unsigned>(entry)];
+  }
+
+  /// Files `nanoseconds` spent in one part of lowering a call.
+  void countCallLoweringTime(CallLoweringPhase phase, uint64_t nanoseconds) {
+    callLoweringNanoseconds[static_cast<unsigned>(phase)] += nanoseconds;
+  }
+
   /// Pushes an enclosing demand, which observations recorded from here on carry
   /// as their parent. A site that knows the demand but not where it came from
   /// keeps the enclosing frame's origin.
@@ -517,6 +601,13 @@ public:
   /// first-observation order, then the partition of the population, then the
   /// statistics and the scan sizes.
   void dumpCensus() const;
+
+  /// Writes how long each part of lowering a call took over this ledger's span,
+  /// when the decomposition switch is set.
+  ///
+  /// Times differ from run to run, so they answer to their own switch and never
+  /// join the census a baseline records.
+  void reportCallLoweringProfile() const;
 
   /// Reports every drainable key `module` no longer has anything to serve.
   ///
@@ -631,6 +722,12 @@ private:
   uint64_t proofDerivationsNotRecorded = 0;
   uint64_t evidenceBindingsRecorded = 0;
   size_t evidenceBindingsMax = 0;
+  uint64_t callLoweringVisits = 0;
+  llvm::DenseSet<std::tuple<uint64_t, Type, Type>> distinctCallLoweringReads;
+  uint64_t calleeClones = 0;
+  uint64_t calleeReuses = 0;
+  uint64_t derivationEntries[numDerivationEntries] = {};
+  uint64_t callLoweringNanoseconds[numCallLoweringPhases] = {};
 };
 
 //===----------------------------------------------------------------------===//
@@ -874,6 +971,39 @@ void countProofDerivationNotRecorded();
 /// being the size of the map that took it.
 void countEvidenceBinding(size_t bindingsAfter);
 
+/// True when what the call-lowering instrument is told would be kept, so that a
+/// site can skip the work of shaping what it would say and a span can skip
+/// reading a clock.
+bool isCallLoweringInstrumented();
+
+/// Counts one visit that put a call to the read, against what it read.
+void countCallLoweringVisit(uint64_t record, Type spelling, Type callee);
+
+/// Counts one callee specialization, `cloned` saying whether the callee body was
+/// cloned rather than an existing instance returned.
+void countCalleeSpecialization(bool cloned);
+
+/// Counts one ask for the proof bindings a step of lowering a call needs.
+void countDerivationEntry(DerivationEntry entry);
+
+/// Times one part of lowering a call for as long as it is in scope.
+///
+/// The clock is read only where the instrument would keep the answer, so a
+/// compilation nobody is measuring pays for one boolean per span.
+class CallLoweringSpan {
+public:
+  explicit CallLoweringSpan(CallLoweringPhase phase);
+  ~CallLoweringSpan();
+
+  CallLoweringSpan(const CallLoweringSpan &) = delete;
+  CallLoweringSpan &operator=(const CallLoweringSpan &) = delete;
+
+private:
+  CallLoweringPhase phase;
+  bool timing;
+  uint64_t startedAt;
+};
+
 //===----------------------------------------------------------------------===//
 // The census channel
 //===----------------------------------------------------------------------===//
@@ -947,6 +1077,25 @@ inline constexpr const char *demandCensusCheckEnvironmentVariable =
 
 /// Writes one unhooked-mint line for `demand`.
 void reportUnhookedMint(Type demand);
+
+//===----------------------------------------------------------------------===//
+// The call-lowering decomposition channel
+//===----------------------------------------------------------------------===//
+//
+// How long each part of lowering a call takes is a measurement rather than a
+// fact about the program, so it answers to a switch of its own and writes on a
+// marker of its own. A baseline records what a compilation did; a time differs
+// between two runs of the same compilation, so nothing that reads a baseline
+// reads this.
+
+/// The line the decomposition produces.
+inline constexpr const char *callLoweringProfilePrefix =
+    "trait-call-lowering-profile";
+
+/// Setting this writes the decomposition of the work lowering trait calls does.
+/// It is read once, at library load, like the census switches.
+inline constexpr const char *callLoweringProfileEnvironmentVariable =
+    "TRAIT_CALL_LOWERING_PROFILE";
 
 //===----------------------------------------------------------------------===//
 // The stage-record channel

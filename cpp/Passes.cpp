@@ -505,6 +505,7 @@ FailureOr<ImplResolver> resolveImpls(ModuleOp module) {
     ledger->reportServedDrainableKeys(module);
     if (DemandLedger::isRecordingEnabled())
       ledger->dumpCensus();
+    ledger->reportCallLoweringProfile();
   });
 
   // run convert-to-trait patterns
@@ -585,6 +586,7 @@ void ResolveImplsPass::runOnOperation() {
     resolver->getDemandLedger().dumpCensus();
     resolver->reportRecordedFacts();
   }
+  resolver->getDemandLedger().reportCallLoweringProfile();
 }
 
 std::unique_ptr<Pass> createResolveImplsPass() {
@@ -629,6 +631,7 @@ LogicalResult CallSubstitution::discoverEvidenceBindings(
     Type rewritten = apply(ty);
     // Closing a call substitution needs the stage's resolver, so this walk
     // runs nowhere else and its demand is the stage's.
+    countDerivationEntry(DerivationEntry::SubstitutionClose);
     if (failed(recordProofBindingsIn(rewritten, module, evidenceBindings,
                                      DemandOrigin::ProofRecording, memo, err)))
       return failure();
@@ -833,20 +836,31 @@ specializeCallTarget(CallOpT op, PatternRewriter &rewriter,
                      bool &unservedProjection) {
   ModuleOp module = op.getOperation()->template getParentOfType<ModuleOp>();
 
+  CallLoweringSpan whole(CallLoweringPhase::Whole);
+  DeclinedCallSites::Reads reads =
+      callLoweringReads(op, formalTy, reading.getRecordEpoch());
+  countCallLoweringVisit(reads.record, reads.spelling, reads.callee);
+
   // Pass time: pass the module so binding a generic mid-solve resolves the
   // ground redex it mints (the module-capable comparator, not the verifier's
   // module-free one).
-  auto subst = op.buildParameterSpecialization(module,
-                                              &reading.getDerivationMemo());
+  auto subst = [&] {
+    CallLoweringSpan unifying(CallLoweringPhase::Unification);
+    return op.buildParameterSpecialization(module,
+                                           &reading.getDerivationMemo());
+  }();
   if (failed(subst)) {
     (void)rewriter.notifyMatchFailure(op, "couldn't build substitution");
     return failure();
   }
 
   auto errFn = [&] { return op.emitOpError(); };
-  if (failed(subst->close(op.getOperandTypes(), op.getResultTypes(), formalTy,
-                          module, reading, errFn, &unservedProjection)))
-    return failure();
+  {
+    CallLoweringSpan closing(CallLoweringPhase::Closure);
+    if (failed(subst->close(op.getOperandTypes(), op.getResultTypes(), formalTy,
+                            module, reading, errFn, &unservedProjection)))
+      return failure();
+  }
 
   SpecializedCallTarget target;
   for (Type r : op.getResultTypes()) {
@@ -858,8 +872,11 @@ specializeCallTarget(CallOpT op, PatternRewriter &rewriter,
     target.resultTypes.push_back(newR);
   }
 
-  auto callee = op.getOrSpecializeCallee(rewriter, *subst,
-                                        &reading.getDerivationMemo());
+  auto callee = [&] {
+    CallLoweringSpan specializing(CallLoweringPhase::CalleeSpecialization);
+    return op.getOrSpecializeCallee(rewriter, *subst,
+                                    &reading.getDerivationMemo());
+  }();
   if (failed(callee)) {
     (void)rewriter.notifyMatchFailure(op, "couldn't get or specialize callee");
     return failure();
@@ -1480,6 +1497,7 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
       resolver->getDemandLedger().dumpCensus();
       resolver->reportRecordedFacts();
     }
+    resolver->getDemandLedger().reportCallLoweringProfile();
   });
 
   // The resolver was moved out of the sub-phase that built it, so its ledger is

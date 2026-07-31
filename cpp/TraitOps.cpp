@@ -618,6 +618,8 @@ FailureOr<ImplSpecialization> ImplOp::buildImplSpecialization(
   // Bind the same self claim without a proof to the proven self claim. This
   // recursively records claim -> proven-claim evidence bindings.
   ClaimType unprovenSelfClaim = provenSelfClaim.asUnproven();
+  if (recordsToLedger(origin))
+    countDerivationEntry(DerivationEntry::ImplSelfProof);
   if (failed(verifyAndRecordProof(unprovenSelfClaim, provenSelfClaim, *module,
                                   evidence, origin, memo, err)))
     return failure();
@@ -780,6 +782,7 @@ FailureOr<func::FuncOp> ImplOp::getOrSpecializeFreeFunctionFromMethod(
     FlatSymbolRefAttr::get(ctx, functionName)
   );
 
+  countCalleeSpecialization(/*cloned=*/!funcOp);
   if (!funcOp) {
     // specialize into grandparent with mangled name
     funcOp = specializeMethodAsFreeFuncWithLeadingSelfProof(
@@ -1921,6 +1924,8 @@ FailureOr<CallSubstitution> MethodCallOp::buildParameterSpecialization(ModuleOp 
   normalizeSubstitutionInPlace(merged);
 
   CallSubstitution subst(SpecializationMap::fromTypeMap(merged));
+  if (recordsToLedger(origin))
+    countDerivationEntry(DerivationEntry::MethodCallSpecialization);
   if (failed(recordProofBindingsIn(originalActual, *module,
                                    subst.getEvidenceBindings(), origin, memo,
                                    err)))
@@ -2107,12 +2112,14 @@ FailureOr<CallSubstitution> FuncCallOp::buildParameterSpecialization(ModuleOp un
   // `unifyModule` says which caller this is, the same discriminator the
   // boundary resolution above reads: a verifier passes none, a pass passes the
   // module.
+  DemandOrigin origin = unifyModule
+                            ? DemandOrigin::CallSiteSpecialization
+                            : DemandOrigin::CallSignatureVerification;
+  if (recordsToLedger(origin))
+    countDerivationEntry(DerivationEntry::FuncCallSpecialization);
   if (failed(recordProofBindingsIn(actual, *module,
-                                   subst.getEvidenceBindings(),
-                                   unifyModule
-                                       ? DemandOrigin::CallSiteSpecialization
-                                       : DemandOrigin::CallSignatureVerification,
-                                   memo, err)))
+                                   subst.getEvidenceBindings(), origin, memo,
+                                   err)))
     return failure();
 
   return subst;
@@ -2142,11 +2149,15 @@ FailureOr<func::FuncOp> FuncCallOp::getOrSpecializeCallee(
   std::string instanceName = calleeInstanceName(*this, subst);
   auto *symOp = SymbolTable::lookupSymbolIn(*module, rewriter.getStringAttr(instanceName));
   func::FuncOp existing = dyn_cast_or_null<func::FuncOp>(symOp);
-  if (existing) return existing;
+  if (existing) {
+    countCalleeSpecialization(/*cloned=*/false);
+    return existing;
+  }
 
   auto callee = getCallee();
   if (failed(callee)) return failure();
 
+  countCalleeSpecialization(/*cloned=*/true);
   PatternRewriter::InsertionGuard guard(rewriter);
   rewriter.setInsertionPointAfter(*callee);
   return specializeAndReplaceAssumes(rewriter, *callee, instanceName, subst.toTypeMap());
