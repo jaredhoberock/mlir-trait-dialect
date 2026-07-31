@@ -301,6 +301,22 @@ class ImplResolver {
     /// across a fact base that had changed in between.
     uint64_t getFactEpoch() const { return factEpoch; }
 
+    /// How many times what a read of this resolver answers from has changed.
+    ///
+    /// A read serves from the selections and the proofs recorded so far and
+    /// from the module those name, so two reads taken at one value of this
+    /// answer alike, and a caller holding an answer knows it still stands while
+    /// this stands. It moves wherever the fact base moves, and also where
+    /// nothing is minted and the record still gains an answer: selection
+    /// settling an application the module already had the impl for, the flush
+    /// dropping a refusal, and the commit respelling what a proof is read
+    /// through.
+    ///
+    /// It counts writes rather than entries, for the same reason the fact epoch
+    /// does: a count that fell could show a reader the same number across a
+    /// record that had changed in between.
+    uint64_t getRecordEpoch() const { return recordEpoch; }
+
     /// Walks `ty` and replaces every concrete (monomorphic) ProjectionType
     /// with its resolved type via full impl lookup.  Polymorphic projections
     /// are left untouched.  Returns the rewritten type.
@@ -333,7 +349,10 @@ class ImplResolver {
     /// A sweep records no proof, so the fact count does not move for it; what
     /// a derivation reads are spellings, so what was derived before the sweep
     /// was derived from a module that no longer stands.
-    void noteRespelling() const { derivations.noteRespelling(); }
+    void noteRespelling() const {
+      derivations.noteRespelling();
+      ++recordEpoch;
+    }
 
     /// How many refusals of each kind `forgetRetriableRefusals` found, and what
     /// became of the refusals the call before it forgot.
@@ -424,8 +443,13 @@ class ImplResolver {
     /// before it is no longer an answer about the fact base after it.
     void noteFactWritten() {
       ++factEpoch;
+      noteRecordWritten();
       derivations.noteFactWritten();
     }
+
+    /// Counts one write to what a read answers from, whether or not it minted
+    /// a fact.
+    void noteRecordWritten() { ++recordEpoch; }
 
     /// Checks whether all of `impl`'s where-clause assumptions are satisfiable
     /// when specialized for `concreteSelf`.
@@ -447,6 +471,7 @@ class ImplResolver {
     ImplGeneratorSet generators;
     const ImplGenerator *installedOverride = nullptr;
     uint64_t factEpoch = 0;
+    mutable uint64_t recordEpoch = 0;
     /// The applications the last `forgetRetriableRefusals` dropped, so that the
     /// next one can say what became of them.
     SmallVector<TraitApplicationAttr> lastForgotten;
@@ -519,6 +544,11 @@ public:
   ProofDerivationMemo &getDerivationMemo() const {
     return resolver.getDerivationMemo();
   }
+
+  /// How many times what this reads from has changed. Every answer here is read
+  /// off what selection has settled, so two reads taken at one value of this
+  /// answer alike.
+  uint64_t getRecordEpoch() const { return resolver.getRecordEpoch(); }
 
   /// The symbol proving `app` -- an impl's own for a self-proof, a
   /// `trait.proof`'s otherwise. Nothing when no proof of `app` is recorded.

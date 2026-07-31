@@ -343,10 +343,16 @@ public:
     normalizeSubstitutionInPlace(result);
     return result;
   }
+  /// `unservedProjection`, when given, receives whether closing failed because
+  /// a projection is one the read cannot answer, as against an obligation that
+  /// could not be recorded. The two failures differ in what would change them:
+  /// the first is a function of the facts and of the types this call spells,
+  /// the second has already reported itself.
   LogicalResult close(TypeRange operandTypes, TypeRange resultTypes,
                       FunctionType formalTy, ModuleOp module,
                       const ReadOnlyImplResolver &reading,
-                      llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+                      llvm::function_ref<InFlightDiagnostic()> err = nullptr,
+                      bool *unservedProjection = nullptr);
 
 private:
   void discoverProjectionBindings(TypeRange types,

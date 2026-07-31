@@ -651,7 +651,7 @@ LogicalResult CallSubstitution::discoverEvidenceBindings(
 LogicalResult CallSubstitution::close(
     TypeRange operandTypes, TypeRange resultTypes, FunctionType formalTy,
     ModuleOp module, const ReadOnlyImplResolver &reading,
-    llvm::function_ref<InFlightDiagnostic()> err) {
+    llvm::function_ref<InFlightDiagnostic()> err, bool *unservedProjection) {
   bool changed;
   bool declined;
   do {
@@ -684,6 +684,8 @@ LogicalResult CallSubstitution::close(
   // specialize the callee against a spelling the projection still stands in,
   // and nothing afterwards revisits a callee already specialized. The demand is
   // recorded, so this call lowers in the round that serves it.
+  if (unservedProjection)
+    *unservedProjection = declined;
   return success(!declined);
 }
 
@@ -696,6 +698,68 @@ struct SpecializedCallTarget {
   func::FuncOp callee;
   SmallVector<Type> resultTypes;
 };
+
+/// The call sites the read turned away over one run of the stage, against what
+/// each of them read when it did.
+///
+/// Whether the read can serve a call is decided by what impl selection has
+/// recorded, by the call's own operand and result spelling, and by the
+/// signature of the callee it specializes against. Nothing else enters it: the
+/// callee's name reaches the substitution only through that signature, its body
+/// only after the substitution has closed, and the derivation memo caches what
+/// the record already determines. The greedy driver revisits a call whenever
+/// anything around it is rewritten, and a revisit whose three reads stand where
+/// they stood would rebuild the same substitution and close it to the same
+/// answer, so this answers for it.
+///
+/// The record epoch is what stands for the recorded facts here, not the fact
+/// epoch: selection settling an application whose impl the module already held
+/// mints nothing and still gives the read an answer it did not have.
+///
+/// The operation indexes the stamps rather than keying them: what a stamp
+/// asserts is about the reads it holds, so an address a later operation reuses
+/// answers for that operation exactly when its three reads agree -- and a call
+/// reading them reads the same answer.
+struct DeclinedCallSites {
+  /// What one turned-away visit read.
+  struct Reads {
+    uint64_t record;
+    Type spelling;
+    Type callee;
+
+    bool operator==(const Reads &other) const {
+      return record == other.record && spelling == other.spelling &&
+             callee == other.callee;
+    }
+  };
+
+  /// Whether `op` was turned away reading exactly `reads`, so that asking again
+  /// would turn it away again.
+  bool holds(Operation *op, const Reads &reads) const {
+    auto it = stamps.find(op);
+    return it != stamps.end() && it->second == reads;
+  }
+
+  /// Records that the read turned `op` away over `reads`.
+  void record(Operation *op, const Reads &reads) { stamps[op] = reads; }
+
+private:
+  DenseMap<Operation *, Reads> stamps;
+};
+
+/// What lowering `op` against the callee signature `formalTy` reads, beside the
+/// record standing at `record`.
+///
+/// The operand and result types travel as one uniqued function type so that two
+/// visits are compared by pointer rather than element by element.
+static DeclinedCallSites::Reads callLoweringReads(Operation *op,
+                                                  FunctionType formalTy,
+                                                  uint64_t record) {
+  return {record,
+          FunctionType::get(op->getContext(), op->getOperandTypes(),
+                            op->getResultTypes()),
+          formalTy};
+}
 
 /// Checks the operand precondition shared by trait function and method calls.
 static LogicalResult requireMonomorphicOperands(Operation *op,
@@ -736,12 +800,17 @@ static LogicalResult requireProvenClaimOperands(Operation *op,
 }
 
 /// Builds and closes the call-site substitution, uses it to specialize the
-/// callee, and computes the concrete result types for the replacement call.
-template <typename CallOpT, typename GetFormalTy>
+/// callee against `formalTy`, and computes the concrete result types for the
+/// replacement call.
+///
+/// `unservedProjection` receives whether the failure was a projection the read
+/// cannot answer, which is the one failure here that is decided by the facts
+/// and by the types this call spells alone.
+template <typename CallOpT>
 static FailureOr<SpecializedCallTarget>
 specializeCallTarget(CallOpT op, PatternRewriter &rewriter,
-                     const ReadOnlyImplResolver &reading,
-                     GetFormalTy getFormalTy, StringRef formalTypeFailure) {
+                     const ReadOnlyImplResolver &reading, FunctionType formalTy,
+                     bool &unservedProjection) {
   ModuleOp module = op.getOperation()->template getParentOfType<ModuleOp>();
 
   // Pass time: pass the module so binding a generic mid-solve resolves the
@@ -754,15 +823,9 @@ specializeCallTarget(CallOpT op, PatternRewriter &rewriter,
     return failure();
   }
 
-  auto formalTy = getFormalTy(op);
-  if (failed(formalTy)) {
-    (void)rewriter.notifyMatchFailure(op, formalTypeFailure);
-    return failure();
-  }
-
   auto errFn = [&] { return op.emitOpError(); };
-  if (failed(subst->close(op.getOperandTypes(), op.getResultTypes(), *formalTy,
-                          module, reading, errFn)))
+  if (failed(subst->close(op.getOperandTypes(), op.getResultTypes(), formalTy,
+                          module, reading, errFn, &unservedProjection)))
     return failure();
 
   SpecializedCallTarget target;
@@ -787,9 +850,11 @@ specializeCallTarget(CallOpT op, PatternRewriter &rewriter,
 
 struct FuncCallOpLowering : public OpRewritePattern<FuncCallOp> {
   ReadOnlyImplResolver reading;
+  DeclinedCallSites &declined;
 
-  FuncCallOpLowering(MLIRContext *ctx, const ReadOnlyImplResolver &reading)
-    : OpRewritePattern(ctx), reading(reading) {}
+  FuncCallOpLowering(MLIRContext *ctx, const ReadOnlyImplResolver &reading,
+                     DeclinedCallSites &declined)
+    : OpRewritePattern(ctx), reading(reading), declined(declined) {}
 
   LogicalResult matchAndRewrite(FuncCallOp callOp, PatternRewriter &rewriter) const override {
     if (failed(requireMonomorphicOperands(callOp, callOp.getOperands(), rewriter)))
@@ -804,14 +869,28 @@ struct FuncCallOpLowering : public OpRewritePattern<FuncCallOp> {
     if (!nearestTable || !isa<ModuleOp>(nearestTable))
       return rewriter.notifyMatchFailure(callOp, "call is still nested in a method");
 
+    // Read ahead of the substitution, which reads it again: a call whose callee
+    // has no signature to specialize against raises no demand either way.
+    auto formalTy = callOp.getCalleeFunctionType();
+    if (failed(formalTy))
+      return rewriter.notifyMatchFailure(callOp, "couldn't get callee function type");
+
+    DeclinedCallSites::Reads reads =
+        callLoweringReads(callOp, *formalTy, reading.getRecordEpoch());
+    if (declined.holds(callOp, reads))
+      return rewriter.notifyMatchFailure(
+          callOp, "the read turned this call away over these same reads");
+
     DemandFrame frame(callOp.getLoc());
 
-    auto target = specializeCallTarget(
-        callOp, rewriter, reading,
-        [](FuncCallOp op) { return op.getCalleeFunctionType(); },
-        "couldn't get callee function type");
-    if (failed(target))
+    bool unservedProjection = false;
+    auto target = specializeCallTarget(callOp, rewriter, reading, *formalTy,
+                                       unservedProjection);
+    if (failed(target)) {
+      if (unservedProjection)
+        declined.record(callOp, reads);
       return failure();
+    }
 
     // Operands pass through untouched (as in MethodCallOpLowering). The
     // requireProvenClaimOperands guard above has already established that every
@@ -832,9 +911,11 @@ struct FuncCallOpLowering : public OpRewritePattern<FuncCallOp> {
 
 struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
   ReadOnlyImplResolver reading;
+  DeclinedCallSites &declined;
 
-  MethodCallOpLowering(MLIRContext *ctx, const ReadOnlyImplResolver &reading)
-    : OpRewritePattern(ctx), reading(reading) {}
+  MethodCallOpLowering(MLIRContext *ctx, const ReadOnlyImplResolver &reading,
+                       DeclinedCallSites &declined)
+    : OpRewritePattern(ctx), reading(reading), declined(declined) {}
 
   LogicalResult matchAndRewrite(MethodCallOp op, PatternRewriter &rewriter) const override {
     if (failed(requireMonomorphicOperands(op, op.getOperands(), rewriter)))
@@ -844,14 +925,28 @@ struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
     if (failed(requireProvenClaimOperands(op, op.getArguments(), rewriter)))
       return failure();
 
+    // Read ahead of the substitution, which reads it again: a call whose method
+    // has no signature to specialize against raises no demand either way.
+    auto formalTy = op.getMethodFunctionType();
+    if (failed(formalTy))
+      return rewriter.notifyMatchFailure(op, "couldn't get method function type");
+
+    DeclinedCallSites::Reads reads =
+        callLoweringReads(op, *formalTy, reading.getRecordEpoch());
+    if (declined.holds(op, reads))
+      return rewriter.notifyMatchFailure(
+          op, "the read turned this call away over these same reads");
+
     DemandFrame frame(op.getLoc());
 
-    auto target = specializeCallTarget(
-        op, rewriter, reading,
-        [](MethodCallOp op) { return op.getMethodFunctionType(); },
-        "couldn't get method function type");
-    if (failed(target))
+    bool unservedProjection = false;
+    auto target = specializeCallTarget(op, rewriter, reading, *formalTy,
+                                       unservedProjection);
+    if (failed(target)) {
+      if (unservedProjection)
+        declined.record(op, reads);
       return failure();
+    }
 
     // pass the claim as the first argument to the specialized callee
     SmallVector<Value> args;
@@ -1402,6 +1497,9 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
   // as they now stand. No round has run the driver yet, so the first one runs
   // it unconditionally.
   bool atInstantiationFixedPoint = false;
+  // The call sites the read turned away, carried across the rounds because a
+  // driver run leaves calls the round after it revisits.
+  DeclinedCallSites declinedCalls;
   // What the last two rounds did, and where the last commit moved something,
   // for the report the round bound owes a reader.
   SmallVector<std::pair<unsigned, RoundWork>, 2> lastRounds;
@@ -1499,8 +1597,8 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
       RewritePatternSet patterns(ctx);
       patterns.add<ProveClaimResultPattern>(ctx, reading);
       patterns.add<MonomorphizeResultTypesPattern>(ctx);
-      patterns.add<FuncCallOpLowering>(ctx, reading);
-      patterns.add<MethodCallOpLowering>(ctx, reading);
+      patterns.add<FuncCallOpLowering>(ctx, reading, declinedCalls);
+      patterns.add<MethodCallOpLowering>(ctx, reading, declinedCalls);
       patterns.add<ResolveProjectionsPattern>(ctx, reading);
       patterns.add<InheritProjCastProofPattern>(ctx);
       if (askImplSelectionForImpls)

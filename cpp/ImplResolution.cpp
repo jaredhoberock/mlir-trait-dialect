@@ -186,6 +186,7 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
   if (good.size() == 1) {
     memo.chosen.insert_or_assign(app,
                                  ResolutionOutcome::selected(good.front()));
+    noteRecordWritten();
     return ResolvedImpl{good.front(), selected};
   }
 
@@ -195,6 +196,7 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
                           ? RefutationArm::NoSatisfiableCandidate
                           : RefutationArm::MultipleSatisfiableCandidates;
   memo.chosen.insert_or_assign(app, ResolutionOutcome::refused(arm));
+  noteRecordWritten();
   if (refusedOn)
     *refusedOn = arm;
   return diagnoseImplResolutionFailure(trait, originalWanted, good, bad, err);
@@ -614,8 +616,10 @@ ImplResolver::RefusalCounts ImplResolver::forgetRetriableRefusals() {
       ++counts.kept;
     }
   }
-  for (TraitApplicationAttr app : lastForgotten)
+  for (TraitApplicationAttr app : lastForgotten) {
     chosen.erase(app);
+    noteRecordWritten();
+  }
   return counts;
 }
 
