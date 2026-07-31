@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 #include "DemandLedger.hpp"
+#include "TraitOps.hpp"
 #include "TraitTypes.hpp"
+#include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <llvm/ADT/Statistic.h>
 #include <llvm/Support/raw_ostream.h>
 #include <cstdlib>
@@ -23,6 +25,10 @@ STATISTIC(numVerifierLookupMisses,
           "ground projection lookup misses raised by a verifier");
 STATISTIC(numResolverProjectionMisses,
           "projections the resolver's engine failed and its caller left spelled");
+STATISTIC(numReadOnlyResolverMisses,
+          "demands a read of the recorded facts had no answer for");
+STATISTIC(numReadOnlyResolverServes,
+          "demands a read of the recorded facts answered");
 STATISTIC(numUnifierAcceptances,
           "monomorphic projections the unifier accepted without resolving");
 STATISTIC(numWithheldCallClaims,
@@ -47,7 +53,7 @@ namespace mlir::trait {
 // The census partitions the population by engine and by miss arm, so its
 // tables are sized by these counts and would silently drop a column if an
 // enumerator were added without them.
-static_assert(static_cast<unsigned>(DemandEngine::WithheldCallClaim) + 1 ==
+static_assert(static_cast<unsigned>(DemandEngine::ReadOnlyResolver) + 1 ==
                   numDemandEngines,
               "numDemandEngines must count every DemandEngine");
 static_assert(static_cast<unsigned>(
@@ -73,6 +79,7 @@ const char *engineName(DemandEngine engine) {
   case DemandEngine::ResolverProjectionEngine: return "resolver-engine-miss";
   case DemandEngine::ObligationNormalization: return "obligation-normalization";
   case DemandEngine::WithheldCallClaim: return "withheld-call-claim";
+  case DemandEngine::ReadOnlyResolver: return "read-only-resolver";
   }
   return "unknown";
 }
@@ -449,15 +456,24 @@ void DemandLedger::dumpCensus() const {
      << " candidate-scan-entries=" << candidateScanEntries << "\n";
 }
 
-/// The monomorphic projections `module` spells.
+/// The demands `module` spells: its monomorphic projections, and the unproven
+/// monomorphic claims something is still meant to prove.
 ///
-/// Result and block-argument types are what the stage's own leftover-projection
-/// sweep walks, and an operand type is its producer's result type, so between
-/// them they cover every type a later round would find to serve.
-/// `inAttributes` adds the ones an op carries as attribute data instead: a
-/// trait or impl header spells projections nothing serves, which is not what a
-/// round would find but is what a reader would.
-static DenseSet<Type> projectionsSpelledIn(ModuleOp module, bool inAttributes) {
+/// Result and block-argument types are what the stage's own leftover sweeps
+/// walk, and an operand type is its producer's result type, so between them
+/// they cover every type a later round would find to serve. `inAttributes`
+/// adds the projections an op carries as attribute data instead: a trait or
+/// impl header spells projections nothing serves, which is not what a round
+/// would find but is what a reader would.
+///
+/// The two populations are not gathered alike, because a claim is a demand only
+/// where something is meant to prove it. A trait or impl header spells unproven
+/// claims that stand for good -- its own requirements and its assumptions --
+/// and the claims of a still-polymorphic template are proved when the template
+/// is cloned for a concrete instance, so both are passed over. That is the
+/// discipline the stage's own leftover-claim sweep applies, and gathering
+/// claims any other way would make a check reading this vacuous for them.
+static DenseSet<Type> demandsSpelledIn(ModuleOp module, bool inAttributes) {
   DenseSet<Type> spelled;
   auto collect = [&](auto root) {
     root.walk([&](Type sub) {
@@ -475,6 +491,28 @@ static DenseSet<Type> projectionsSpelledIn(ModuleOp module, bool inAttributes) {
     if (inAttributes)
       collect(Attribute(op->getAttrDictionary()));
   });
+
+  auto collectClaims = [&](Type root) {
+    root.walk([&](Type sub) {
+      auto claim = dyn_cast<ClaimType>(sub);
+      if (claim && !claim.isProven() && claim.isMonomorphic())
+        spelled.insert(sub);
+    });
+  };
+  module.walk<WalkOrder::PreOrder>([&](Operation *op) {
+    if (isa<TraitOp, ImplOp, ProofOp>(op))
+      return WalkResult::skip();
+    if (auto func = dyn_cast<func::FuncOp>(op))
+      if (isPolymorphicType(Type(func.getFunctionType())))
+        return WalkResult::skip();
+    for (Type ty : op->getResultTypes())
+      collectClaims(ty);
+    for (Region &region : op->getRegions())
+      for (Block &block : region)
+        for (BlockArgument arg : block.getArguments())
+          collectClaims(arg.getType());
+    return WalkResult::advance();
+  });
   return spelled;
 }
 
@@ -484,7 +522,7 @@ void DemandLedger::reportServedDrainableKeys(ModuleOp module,
     return;
 
   DenseSet<Type> standing =
-      projectionsSpelledIn(module, /*inAttributes=*/false);
+      demandsSpelledIn(module, /*inAttributes=*/false);
 
   for (Type key : getKeys()) {
     const DemandRecord *record = lookup(key);
@@ -526,7 +564,7 @@ DemandLedger::checkDrainedKeysSettled(ModuleOp module,
   if (drained.size() == served.size())
     return success();
 
-  DenseSet<Type> spelled = projectionsSpelledIn(module, /*inAttributes=*/true);
+  DenseSet<Type> spelled = demandsSpelledIn(module, /*inAttributes=*/true);
 
   bool dropped = false;
   for (Type key : drained) {
@@ -674,6 +712,21 @@ void recordResolverProjectionMiss(Type demand) {
     return;
   recordOnAmbientLedger(demand,
                         DemandObservationKind::resolverProjectionEngine());
+}
+
+void recordReadOnlyResolverMiss(Type demand) {
+  if (ambientCrossChecking)
+    return;
+  ++numReadOnlyResolverMisses;
+  if (!isDemandSinkInstalled())
+    return;
+  recordOnAmbientLedger(demand, DemandObservationKind::readOnlyResolver());
+}
+
+void countReadOnlyResolverServe() {
+  if (ambientCrossChecking)
+    return;
+  ++numReadOnlyResolverServes;
 }
 
 void recordObligationNormalizationMiss(Type demand, DemandOrigin origin) {

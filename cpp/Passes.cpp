@@ -408,25 +408,42 @@ static uint64_t respellProvenClaimsInPlace(const ImplResolver &resolver,
 /// resolve-impls phase, which runs before instantiation and must not yet
 /// touch claims derived inside still-polymorphic bodies.
 struct ProveClaimResultPattern : public RewritePattern {
-  // one ImplResolver per module; owned by the pass, passed by ref into this pattern
-  ImplResolver& resolver;
-  bool allegeOnly;
+  /// Impl selection itself, where this pattern may establish facts, and nothing
+  /// where it may only read them.
+  ImplResolver *minting;
+  /// A read of what impl selection has settled, which every use has.
+  ReadOnlyImplResolver reading;
 
-  ProveClaimResultPattern(MLIRContext* ctx,
-                          ImplResolver &resolver,
-                          bool allegeOnly)
+  /// The step that establishes the facts the rest of the stage reads. It
+  /// matches `trait.allege` alone: a claim derived inside a still-polymorphic
+  /// body is not yet its business.
+  ProveClaimResultPattern(MLIRContext *ctx, ImplResolver &resolver)
     : RewritePattern(MatchAnyOpTypeTag(), /*benefit=*/1, ctx),
-      resolver(resolver), allegeOnly(allegeOnly) {}
+      minting(&resolver), reading(resolver) {}
+
+  /// The instantiation driver, which reads what earlier steps established. A
+  /// fact minted while the driver runs reaches nothing the driver's earlier
+  /// rewrites saw, so a claim the record does not prove is declined and left
+  /// for the step that can prove it.
+  ProveClaimResultPattern(MLIRContext *ctx, const ReadOnlyImplResolver &reading)
+    : RewritePattern(MatchAnyOpTypeTag(), /*benefit=*/1, ctx),
+      minting(nullptr), reading(reading) {}
 
   LogicalResult matchAndRewrite(Operation *op, PatternRewriter& rewriter) const override {
-    if (allegeOnly ? !isa<AllegeOp>(op) : !isa<AllegeOp, DeriveOp, ProjectOp>(op))
+    if (minting ? !isa<AllegeOp>(op) : !isa<AllegeOp, DeriveOp, ProjectOp>(op))
       return failure();
 
-    // an already-proven result needs no work (in-place retyping by proof
-    // propagation can prove a claim out from under its producing op)
+    // In-place retyping by proof propagation can prove a claim out from under
+    // its producing op, which leaves that op holding exactly the witness it was
+    // going to build: its result type already names both the proof and the
+    // application. Build it, rather than leaving behind a producer nothing
+    // legalizes wherever a consumer still wants its result.
     auto claim = cast<ClaimType>(op->getResult(0).getType());
-    if (claim.isProven())
-      return failure();
+    if (claim.isProven()) {
+      rewriter.replaceOpWithNewOp<WitnessOp>(op, claim.getProof(),
+                                             claim.getTraitApplication());
+      return success();
+    }
 
     // skip polymorphic claims -- they can't be resolved until after monomorphization
     if (!claim.isMonomorphic())
@@ -437,9 +454,14 @@ struct ProveClaimResultPattern : public RewritePattern {
     auto errFn = [&] { return op->emitOpError(); };
 
     // build or reuse canonical evidence for this claim
-    auto sym = resolver.resolveAndEnsureProofFor(claim, rewriter, errFn);
-    if (failed(sym))
+    FailureOr<FlatSymbolRefAttr> sym =
+        minting ? minting->resolveAndEnsureProofFor(claim, rewriter, errFn)
+                : reading.getRecordedProofFor(claim);
+    if (failed(sym)) {
+      if (!minting)
+        (void)reading.decline(claim);
       return rewriter.notifyMatchFailure(op, "couldn't find proof of this claim");
+    }
 
     // Mint the witness at the same spelling the proof was recorded under.
     // Impl selection resolves the claim's monomorphic projections before
@@ -449,7 +471,9 @@ struct ProveClaimResultPattern : public RewritePattern {
     // disagreeing on the projections. Resolving here is deterministic recorded
     // lookup (the impls are already in the module) and is idempotent with the
     // resolution resolveAndEnsureProofFor just performed.
-    auto recorded = cast<ClaimType>(resolver.resolveProjectionsIn(claim, rewriter));
+    auto recorded = cast<ClaimType>(
+        minting ? minting->resolveProjectionsIn(claim, rewriter)
+                : reading.resolveProjectionsIn(claim));
     rewriter.replaceOpWithNewOp<WitnessOp>(
       op,
       *sym,
@@ -516,7 +540,7 @@ FailureOr<ImplResolver> resolveImpls(ModuleOp module) {
   // apply rewrite patterns
   {
     RewritePatternSet patterns(ctx);
-    patterns.add<ProveClaimResultPattern>(ctx, resolver, /*allegeOnly=*/true);
+    patterns.add<ProveClaimResultPattern>(ctx, resolver);
 
     // rewrite trait.allege -> trait.witness
     if (failed(applyPatternsGreedilyAndReport(module, std::move(patterns),
@@ -572,9 +596,8 @@ std::unique_ptr<Pass> createResolveImplsPass() {
 
 /// Extend this substitution with bindings that resolve concrete `!trait.proj`
 /// types visible after applying the current substitution.
-void CallSubstitution::discoverProjectionBindings(TypeRange types,
-                                                  ImplResolver &resolver,
-                                                  OpBuilder &builder) {
+void CallSubstitution::discoverProjectionBindings(
+    TypeRange types, const ReadOnlyImplResolver &reading, bool &declined) {
   for (Type ty : types) {
     apply(ty).walk([&](Type t) {
       auto proj = dyn_cast<ProjectionType>(t);
@@ -584,9 +607,10 @@ void CallSubstitution::discoverProjectionBindings(TypeRange types,
         return;
       // Failure adds no binding, so the call site closes over a projection it
       // still cannot spell concretely.
-      auto resolved = resolver.resolveProjectionType(proj, builder);
+      auto resolved = reading.resolveProjectionType(proj);
       if (failed(resolved)) {
-        recordResolverProjectionMiss(Type(proj));
+        (void)reading.decline(proj);
+        declined = true;
         return;
       }
       projectionBindings.bind(proj, *resolved);
@@ -624,32 +648,41 @@ LogicalResult CallSubstitution::discoverEvidenceBindings(
 /// evidence bindings may have been recorded before the failing obligation.
 LogicalResult CallSubstitution::close(
     TypeRange operandTypes, TypeRange resultTypes, FunctionType formalTy,
-    ModuleOp module, ImplResolver &resolver, OpBuilder &builder,
+    ModuleOp module, const ReadOnlyImplResolver &reading,
     llvm::function_ref<InFlightDiagnostic()> err) {
   bool changed;
+  bool declined;
   do {
     // The component maps grow monotonically; `bindingCount()` is the raw component sum
     // so it is not affected by fixed-point normalization of the merged map.
     size_t before = bindingCount();
 
-    discoverProjectionBindings(resultTypes, resolver, builder);
-    discoverProjectionBindings(operandTypes, resolver, builder);
+    // A projection the read could not answer this time round may be answered
+    // by the bindings this iteration goes on to add, so only the last
+    // iteration's declines say what this substitution is missing.
+    declined = false;
+    discoverProjectionBindings(resultTypes, reading, declined);
+    discoverProjectionBindings(operandTypes, reading, declined);
     if (formalTy) {
-      discoverProjectionBindings(formalTy.getInputs(), resolver, builder);
-      discoverProjectionBindings(formalTy.getResults(), resolver, builder);
+      discoverProjectionBindings(formalTy.getInputs(), reading, declined);
+      discoverProjectionBindings(formalTy.getResults(), reading, declined);
     }
 
     if (failed(discoverEvidenceBindings(operandTypes, module,
-                                        &resolver.getDerivationMemo(), err)))
+                                        &reading.getDerivationMemo(), err)))
       return failure();
     if (failed(discoverEvidenceBindings(resultTypes, module,
-                                        &resolver.getDerivationMemo(), err)))
+                                        &reading.getDerivationMemo(), err)))
       return failure();
 
     changed = bindingCount() != before;
   } while (changed);
 
-  return success();
+  // A substitution that cannot spell one of the call's projections would
+  // specialize the callee against a spelling the projection still stands in,
+  // and nothing afterwards revisits a callee already specialized. The demand is
+  // recorded, so this call lowers in the round that serves it.
+  return success(!declined);
 }
 
 namespace {
@@ -705,15 +738,15 @@ static LogicalResult requireProvenClaimOperands(Operation *op,
 template <typename CallOpT, typename GetFormalTy>
 static FailureOr<SpecializedCallTarget>
 specializeCallTarget(CallOpT op, PatternRewriter &rewriter,
-                     ImplResolver &resolver, GetFormalTy getFormalTy,
-                     StringRef formalTypeFailure) {
+                     const ReadOnlyImplResolver &reading,
+                     GetFormalTy getFormalTy, StringRef formalTypeFailure) {
   ModuleOp module = op.getOperation()->template getParentOfType<ModuleOp>();
 
   // Pass time: pass the module so binding a generic mid-solve resolves the
   // ground redex it mints (the module-capable comparator, not the verifier's
   // module-free one).
   auto subst = op.buildParameterSpecialization(module,
-                                              &resolver.getDerivationMemo());
+                                              &reading.getDerivationMemo());
   if (failed(subst)) {
     (void)rewriter.notifyMatchFailure(op, "couldn't build substitution");
     return failure();
@@ -727,7 +760,7 @@ specializeCallTarget(CallOpT op, PatternRewriter &rewriter,
 
   auto errFn = [&] { return op.emitOpError(); };
   if (failed(subst->close(op.getOperandTypes(), op.getResultTypes(), *formalTy,
-                          module, resolver, rewriter, errFn)))
+                          module, reading, errFn)))
     return failure();
 
   SpecializedCallTarget target;
@@ -741,7 +774,7 @@ specializeCallTarget(CallOpT op, PatternRewriter &rewriter,
   }
 
   auto callee = op.getOrSpecializeCallee(rewriter, *subst,
-                                        &resolver.getDerivationMemo());
+                                        &reading.getDerivationMemo());
   if (failed(callee)) {
     (void)rewriter.notifyMatchFailure(op, "couldn't get or specialize callee");
     return failure();
@@ -751,10 +784,10 @@ specializeCallTarget(CallOpT op, PatternRewriter &rewriter,
 }
 
 struct FuncCallOpLowering : public OpRewritePattern<FuncCallOp> {
-  ImplResolver &resolver;
+  ReadOnlyImplResolver reading;
 
-  FuncCallOpLowering(MLIRContext *ctx, ImplResolver &resolver)
-    : OpRewritePattern(ctx), resolver(resolver) {}
+  FuncCallOpLowering(MLIRContext *ctx, const ReadOnlyImplResolver &reading)
+    : OpRewritePattern(ctx), reading(reading) {}
 
   LogicalResult matchAndRewrite(FuncCallOp callOp, PatternRewriter &rewriter) const override {
     if (failed(requireMonomorphicOperands(callOp, callOp.getOperands(), rewriter)))
@@ -772,7 +805,7 @@ struct FuncCallOpLowering : public OpRewritePattern<FuncCallOp> {
     DemandFrame frame(callOp.getLoc());
 
     auto target = specializeCallTarget(
-        callOp, rewriter, resolver,
+        callOp, rewriter, reading,
         [](FuncCallOp op) { return op.getCalleeFunctionType(); },
         "couldn't get callee function type");
     if (failed(target))
@@ -796,10 +829,10 @@ struct FuncCallOpLowering : public OpRewritePattern<FuncCallOp> {
 };
 
 struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
-  ImplResolver &resolver;
+  ReadOnlyImplResolver reading;
 
-  MethodCallOpLowering(MLIRContext *ctx, ImplResolver &resolver)
-    : OpRewritePattern(ctx), resolver(resolver) {}
+  MethodCallOpLowering(MLIRContext *ctx, const ReadOnlyImplResolver &reading)
+    : OpRewritePattern(ctx), reading(reading) {}
 
   LogicalResult matchAndRewrite(MethodCallOp op, PatternRewriter &rewriter) const override {
     if (failed(requireMonomorphicOperands(op, op.getOperands(), rewriter)))
@@ -812,7 +845,7 @@ struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
     DemandFrame frame(op.getLoc());
 
     auto target = specializeCallTarget(
-        op, rewriter, resolver,
+        op, rewriter, reading,
         [](MethodCallOp op) { return op.getMethodFunctionType(); },
         "couldn't get method function type");
     if (failed(target))
@@ -921,10 +954,10 @@ static bool wouldReplace(AttrTypeReplacer &replacer, Operation *op,
 /// Resolves concrete `!trait.proj` types to their bound types by looking up
 /// the matching `trait.impl`'s associated type binding.
 struct ResolveProjectionsPattern : public RewritePattern {
-  ImplResolver &resolver;
+  ReadOnlyImplResolver reading;
 
-  ResolveProjectionsPattern(MLIRContext *ctx, ImplResolver &resolver)
-    : RewritePattern(MatchAnyOpTypeTag(), /*benefit=*/1, ctx), resolver(resolver) {}
+  ResolveProjectionsPattern(MLIRContext *ctx, const ReadOnlyImplResolver &reading)
+    : RewritePattern(MatchAnyOpTypeTag(), /*benefit=*/1, ctx), reading(reading) {}
 
   LogicalResult matchAndRewrite(Operation *op,
                                 PatternRewriter &rewriter) const override {
@@ -944,9 +977,9 @@ struct ResolveProjectionsPattern : public RewritePattern {
     replacer.addReplacement([&](Type t) -> std::optional<Type> {
       auto proj = dyn_cast<ProjectionType>(t);
       if (!proj || isPolymorphicType(proj)) return std::nullopt;
-      auto resolved = resolver.resolveProjectionType(proj, rewriter);
+      auto resolved = reading.resolveProjectionType(proj);
       if (failed(resolved)) {
-        recordResolverProjectionMiss(Type(proj));
+        (void)reading.decline(proj);
         return std::nullopt;
       }
       return *resolved;
@@ -1054,6 +1087,18 @@ struct RoundWork {
   ImplResolver::RefusalCounts refusals;
   /// Impls the instantiation driver asked to have generated mid-run.
   uint64_t midDriverGeneration = 0;
+  /// Facts impl selection minted while the instantiation driver ran. A fact
+  /// minted there reaches nothing the driver's earlier rewrites saw, so the
+  /// round's own work is what this counts, and it counts writes rather than
+  /// entries: an optimistic proof a failed recursion takes back out still
+  /// moved the fact base the rewrites before it read.
+  uint64_t instantiateMinted = 0;
+  /// Claim producers left holding a proven result when the driver finished.
+  /// Proof propagation can prove a claim out from under the op that produced
+  /// it, which leaves the producer with nothing to do; both producer ops are
+  /// pure, so the driver's dead-op elimination takes them once no consumer
+  /// wants the operand.
+  uint64_t provenProducers = 0;
   /// Whether impl selection minted a fact anywhere in the round.
   bool mintedFacts = false;
   /// Whether the drain grew after the round had already collected from it, so
@@ -1152,19 +1197,25 @@ static void serveCollectedDemands(ImplResolver &resolver,
                                   DenseMap<Type, uint64_t> &attempted,
                                   RoundWork &work) {
   for (Type demand : collected) {
-    // Every engine whose declining leaves a demand standing declines a
-    // monomorphic projection and nothing else, so the drain holds projections
-    // and this is total over what it holds.
-    auto projection = dyn_cast<ProjectionType>(demand);
-    assert(projection &&
-           "a drainable demand is a projection an engine left spelled");
-
     // The epoch is read per demand rather than once per round: serving one
     // demand mints facts the demands after it in this batch are resolved
     // under, so a demand asked about before that is one the next round asks
     // about again.
     attempted[demand] = resolver.getFactEpoch();
-    switch (resolver.serveDemand(projection, builder)) {
+
+    // Every engine whose declining leaves a demand standing declines a
+    // monomorphic projection or an unproven monomorphic claim, so this is
+    // total over what the drain holds.
+    ImplResolver::DemandDisposition disposition;
+    if (auto projection = dyn_cast<ProjectionType>(demand))
+      disposition = resolver.serveDemand(projection, builder);
+    else if (auto claim = dyn_cast<ClaimType>(demand))
+      disposition = resolver.serveDemand(claim, builder);
+    else
+      llvm_unreachable("a drainable demand is a projection or a claim an "
+                       "engine left spelled");
+
+    switch (disposition) {
     case ImplResolver::DemandDisposition::Served:
       ++work.served;
       drained.insert(demand);
@@ -1201,7 +1252,8 @@ static void reportRound(unsigned round, const RoundWork &work,
                << " refusals-kept=" << work.refusals.kept
                << " refusals-overturned=" << work.refusals.overturned
                << " refusals-re-earned=" << work.refusals.reEarned
-               << " mid-driver-generation=" << work.midDriverGeneration
+               << " instantiate-minted=" << work.instantiateMinted
+               << " proven-producers=" << work.provenProducers
                << " instantiated=" << (work.instantiated ? "yes" : "no")
                << llvm::format(" digest=0x%016" PRIx64,
                                resolver.getRecordedFactsDigest())
@@ -1381,12 +1433,15 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
     // INSTANTIATE. Rewrite trait.func.call and trait.method.call, prove claim
     // producers (allege, derive, project), resolve projections, and monomorphize
     // any generic op whose results become monomorphic.
+    // The driver reads what the steps before it established. Serving a demand
+    // is the round's own work, done where a round can see what it minted.
+    ReadOnlyImplResolver reading(*resolver);
     RewritePatternSet patterns(ctx);
-    patterns.add<ProveClaimResultPattern>(ctx, *resolver, /*allegeOnly=*/false);
+    patterns.add<ProveClaimResultPattern>(ctx, reading);
     patterns.add<MonomorphizeResultTypesPattern>(ctx);
-    patterns.add<FuncCallOpLowering>(ctx, *resolver);
-    patterns.add<MethodCallOpLowering>(ctx, *resolver);
-    patterns.add<ResolveProjectionsPattern>(ctx, *resolver);
+    patterns.add<FuncCallOpLowering>(ctx, reading);
+    patterns.add<MethodCallOpLowering>(ctx, reading);
+    patterns.add<ResolveProjectionsPattern>(ctx, reading);
     patterns.add<InheritProjCastProofPattern>(ctx);
 
     // collect instantiate-monomorphs patterns from other dialects
@@ -1398,6 +1453,7 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
     GreedyRewriteConfig config;
     config.setMaxNumRewrites(rewriteBudgetFor(module));
 
+    uint64_t epochAtInstantiate = resolver->getFactEpoch();
     {
       // Generating an impl is a round's own work. One generated while the
       // driver runs is a fact the run's earlier rewrites could not see, so what
@@ -1413,6 +1469,7 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
           module, std::move(patterns), config, "instantiate-monomorphs", round,
           &work.instantiated);
       work.midDriverGeneration = midDriverGeneration.getAsks();
+      work.instantiateMinted = resolver->getFactEpoch() - epochAtInstantiate;
       if (failed(instantiated))
         return module.emitError(
             "instantiate-monomorphs did not converge: rewrite budget exceeded, "
@@ -1421,6 +1478,13 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
     }
     writtenSinceBridge |= work.instantiated;
     writtenSinceSweep |= work.instantiated;
+
+    module.walk([&](Operation *op) {
+      if (!isa<AllegeOp, DeriveOp>(op))
+        return;
+      if (cast<ClaimType>(op->getResult(0).getType()).isProven())
+        ++work.provenProducers;
+    });
 
     checkResolutionBoundary(*resolver);
 

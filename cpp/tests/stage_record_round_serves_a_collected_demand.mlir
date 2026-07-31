@@ -3,22 +3,25 @@
 
 // RUN: env TRAIT_DEMAND_CENSUS=1 TRAIT_DEMAND_CENSUS_CHECK=1 mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' 2>&1 | FileCheck %s --implicit-check-not='trait-demand-census served'
 
-// Two impls bind @Other[i64], so the read-only lookup declines and records
-// @Other[i64]::X as a demand a round could be asked to serve. Deciding between
-// the two is a premise partition, which is impl selection's work and not the
-// lookup's: only @Other_wide's assumption holds. So the round that takes the
-// demand off the drain answers it.
+// The read of impl selection's recorded facts that the instantiation driver
+// holds has no answer for @Gen[i64]::A, which @f's declared claim spells, so it
+// records that demand arm-less: naming which way an application missed is
+// selection's, and this read never ran it. The round that takes it off the
+// drain does run selection, whose candidate probe for @Gen[i64] reaches
+// @Other[i64]::X -- @Gen's one impl spells its own self application through it.
+// Two impls bind that, so the read-only lookup declines there on the
+// multiple-candidate arm and a second demand is recorded. Deciding between the
+// two is a premise partition, which is impl selection's work and not the
+// lookup's: only @Other_wide's assumption holds. So the round after answers it.
 //
 // What each round settled is on its own line, because a demand asked about and
 // answered is not the same as one asked about and declined. Counting the ops
 // serving inserted cannot tell them apart: selecting an impl that already
-// exists writes no IR at all, which is what this row's zero says.
+// exists writes no IR at all, which is what this row's zeros say.
 //
-// The demand is reached only while the resolver probes candidates for @Gen[i64]
-// -- @Gen's one impl spells its own self application through @Other[i64]::X --
-// so nothing in the module ever spells it. That is why the stage-exit check
-// reports no served drainable key: the key it would report is the one the
-// round served on purpose.
+// @Other[i64]::X is reached only inside that probe, so nothing in the module
+// ever spells it. That is why the stage-exit check reports no served drainable
+// key: the keys it would report are the ones the rounds served on purpose.
 
 !T = !trait.poly<0>
 
@@ -56,6 +59,9 @@ func.func private @f(%c: !trait.claim<@Box[!trait.proj<@Gen[i64], "A">] by @Box_
 }
 
 // CHECK: trait-stage-record round index=2
+// CHECK-SAME: collected=1 no-candidate-impl=0 multiple-candidate-impls=0 other-arms=0 without-arm=1
+// CHECK-SAME: served=1 declined=0 deferred=0 inserted-serving-demands=0
+// CHECK: trait-stage-record round index=3
 // CHECK-SAME: collected=1
 // CHECK-SAME: multiple-candidate-impls=1
 // CHECK-SAME: served=1 declined=0 deferred=0 inserted-serving-demands=0

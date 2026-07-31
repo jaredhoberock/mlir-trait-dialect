@@ -3,10 +3,17 @@
 
 // RUN: env TRAIT_DEMAND_CENSUS=1 TRAIT_DEMAND_CENSUS_CHECK=1 mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' -verify-diagnostics 2>&1 | FileCheck %s --implicit-check-not='trait-demand-census unhooked' --implicit-check-not='trait-demand-census served'
 
-// One demanded type asked about eleven times, by two components and under all
+// One demanded type asked about sixteen times, by two components and under all
 // three flag classes, and it produces one entry. That is what a key being the
 // demanded type buys: the observation count says how many times the stage
 // raised the demand, and the flags say what the askings between them were.
+//
+// The second component is the read of impl selection's recorded facts the
+// instantiation driver's patterns hold: what it has no answer for it leaves
+// spelled as written, for the round that may make selection answer it. That
+// read also meets @Gen[i64]::A on its way to @probes' claim, which is the
+// second entry: a different demanded type is a different key, however few times
+// it is asked about.
 //
 // The provenance is the second asker's, not the first's. @probes carries a
 // proven claim in its signature, so the declared-proof check asks about
@@ -45,10 +52,15 @@ func.func @asks() -> !trait.proj<@Other[i64], "X"> {
   return %r : !trait.proj<@Other[i64], "X">
 }
 
-// CHECK: trait-demand-census demand flags=real,speculative,probe-internal drainable=yes observations=13 depth=0
-// CHECK-SAME: kinds=lookup-miss,resolver-engine-miss arms=no-candidate-impl
-// CHECK-SAME: origin=loc({{.*}}demand_census_dedup.mlir":42:1)
+// CHECK: trait-demand-census demand flags=real,speculative,probe-internal drainable=yes observations=16 depth=0
+// CHECK-SAME: kinds=lookup-miss,read-only-resolver arms=no-candidate-impl
+// CHECK-SAME: origin=loc({{.*}}demand_census_dedup.mlir":49:1)
 // CHECK-SAME: type=!trait.proj<@Other[i64], "X">
-// CHECK: trait-demand-census engine lookup-miss keys=1 observations=7 real=1 speculative=2 probe-internal=4
-// CHECK: trait-demand-census engine resolver-engine-miss keys=1 observations=6 real=6 speculative=0 probe-internal=0
-// CHECK: trait-demand-census summary keys=1 observations=13 drainable-keys=1 unattributed-keys=0 real-keys=1 speculative-keys=0 probe-internal-keys=0
+// CHECK: trait-demand-census demand flags=real drainable=yes observations=1 depth=0
+// CHECK-SAME: kinds=read-only-resolver arms=-
+// CHECK-SAME: origin=loc({{.*}}demand_census_dedup.mlir":44:1)
+// CHECK-SAME: type=!trait.proj<@Gen[i64], "A">
+// CHECK: trait-demand-census engine lookup-miss keys=1 observations=8 real=2 speculative=2 probe-internal=4
+// CHECK: trait-demand-census engine resolver-engine-miss keys=0 observations=0 real=0 speculative=0 probe-internal=0
+// CHECK: trait-demand-census engine read-only-resolver keys=2 observations=9 real=9 speculative=0 probe-internal=0
+// CHECK: trait-demand-census summary keys=2 observations=17 drainable-keys=2 unattributed-keys=0 real-keys=2 speculative-keys=0 probe-internal-keys=0

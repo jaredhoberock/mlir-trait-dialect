@@ -25,6 +25,7 @@ class ProjectionBindings;
 class EvidenceBindings;
 class CallSubstitution;
 class ImplResolver;
+class ReadOnlyImplResolver;
 
 }
 
@@ -344,12 +345,13 @@ public:
   }
   LogicalResult close(TypeRange operandTypes, TypeRange resultTypes,
                       FunctionType formalTy, ModuleOp module,
-                      ImplResolver &resolver, ::mlir::OpBuilder &builder,
+                      const ReadOnlyImplResolver &reading,
                       llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
 private:
-  void discoverProjectionBindings(TypeRange types, ImplResolver &resolver,
-                                  ::mlir::OpBuilder &builder);
+  void discoverProjectionBindings(TypeRange types,
+                                  const ReadOnlyImplResolver &reading,
+                                  bool &declined);
   LogicalResult discoverEvidenceBindings(
       TypeRange types, ModuleOp module, ProofDerivationMemo *memo,
       llvm::function_ref<InFlightDiagnostic()> err = nullptr);

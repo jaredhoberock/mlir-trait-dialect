@@ -41,11 +41,11 @@ func.func private @f(%c: !trait.claim<@Box[!trait.proj<@Gen[i64], "A">] by @Box_
   return %x : !T
 }
 
-// CHECK: trait-demand-census demand flags=real,speculative,probe-internal drainable=yes observations=7 depth=0
+// CHECK: trait-demand-census demand flags=real,speculative,probe-internal drainable=yes observations=8 depth=0
 // CHECK-SAME: arms=multiple-candidate-impls
 // CHECK-SAME: parent=!trait.proj<@Gen[i64], "A">
 // CHECK-SAME: type=!trait.proj<@Other[i64], "X">
-// CHECK: trait-demand-census engine lookup-miss keys=1 observations=7 real=1 speculative=2 probe-internal=4
+// CHECK: trait-demand-census engine lookup-miss keys=1 observations=8 real=2 speculative=2 probe-internal=4
 // CHECK: trait-demand-census arm no-candidate-impl keys=0 observations=0 real=0 speculative=0 probe-internal=0
-// CHECK: trait-demand-census arm multiple-candidate-impls keys=1 observations=7 real=1 speculative=2 probe-internal=4
-// CHECK: trait-demand-census summary keys=1 observations=7 drainable-keys=1 unattributed-keys=0 real-keys=1 speculative-keys=0 probe-internal-keys=0
+// CHECK: trait-demand-census arm multiple-candidate-impls keys=1 observations=8 real=2 speculative=2 probe-internal=4
+// CHECK: trait-demand-census summary keys=2 observations=9 drainable-keys=2 unattributed-keys=0 real-keys=2 speculative-keys=0 probe-internal-keys=0

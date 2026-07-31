@@ -247,9 +247,14 @@ class ImplResolver {
     ///
     /// Returns the symbol (ImplOp or ProofOp) that proves `claim`, or failure if
     /// no unique and satisfiable impl can be found.
+    ///
+    /// `refusedOn`, when given, receives the arm impl selection refused this
+    /// claim's application on, and is left alone where selection did not
+    /// refuse -- a proof that fails downstream of a selected impl names no arm.
     FailureOr<FlatSymbolRefAttr> resolveAndEnsureProofFor(ClaimType claim,
                                                           OpBuilder &builder,
-                                                          llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+                                                          llvm::function_ref<InFlightDiagnostic()> err = nullptr,
+                                                          std::optional<RefutationArm> *refusedOn = nullptr);
 
     /// Resolves a concrete ProjectionType to the type it projects to.
     /// Uses the internal impl resolution pipeline to find the matching impl,
@@ -280,7 +285,11 @@ class ImplResolver {
     ///
     /// Whether asking again could ever answer differently is what a caller
     /// scheduling rounds needs and what a bare resolution result does not say.
+    /// A claim is served by proving it, which mints the proof its demander
+    /// could only read; the two dispositions are read off the same refutation
+    /// arm.
     DemandDisposition serveDemand(ProjectionType demand, OpBuilder &builder);
+    DemandDisposition serveDemand(ClaimType demand, OpBuilder &builder);
 
     /// How many facts impl selection has minted: one for each impl it generated
     /// and one for each proof it recorded.
@@ -579,10 +588,42 @@ public:
 
   /// Declines `demand`, recording it as one this read did not serve, and fails.
   ///
-  /// A caller that declines leaves the demanded projection spelled as written,
-  /// which is what a reader of the recorded demand finds when it asks whether
-  /// an unserved demand is still there to serve.
+  /// A caller that declines leaves the demanded projection or claim spelled as
+  /// written, which is what a reader of the recorded demand finds when it asks
+  /// whether an unserved demand is still there to serve.
   LogicalResult decline(ProjectionType demand) const;
+  LogicalResult decline(ClaimType demand) const;
+
+  /// The impl selection settled on for `wanted`, paired with the claim it
+  /// settled it under. Fails where selection was never asked, where it refused,
+  /// and where a projection in `wanted` cannot be resolved from what is
+  /// recorded.
+  ///
+  /// Selection keys what it records by the claim whose projections it resolved,
+  /// so the source spelling is put through the same resolution before it is
+  /// looked up.
+  FailureOr<ResolvedImpl> getRecordedImplFor(ClaimType wanted) const;
+
+  /// The type `proj` projects to, from what impl selection has recorded.
+  ///
+  /// Reading the associated-type binding off the selected impl and specializing
+  /// it for the claim selection settled under are reads of the module, so all
+  /// that separates this from the resolution it stands in for is where the impl
+  /// comes from.
+  FailureOr<Type> resolveProjectionType(ProjectionType proj) const;
+
+  /// Walks `ty` and replaces every monomorphic projection this read can
+  /// resolve, leaving the rest spelled as written and recording each one.
+  Type resolveProjectionsIn(Type ty) const;
+
+  /// The symbol proving `claim`, from what impl selection has recorded. Fails
+  /// where no proof of it is recorded, which is what a caller declines on.
+  ///
+  /// Proofs are recorded under the monomorphic application the selected impl's
+  /// self-claim substitution produces, so a source spelling is put through the
+  /// same two steps -- selection's own projection resolution, then that
+  /// substitution -- before it is looked up.
+  FailureOr<FlatSymbolRefAttr> getRecordedProofFor(ClaimType claim) const;
 
 private:
   const ImplResolver &resolver;

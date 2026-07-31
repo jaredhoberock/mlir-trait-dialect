@@ -53,4 +53,4 @@ func.func @main(%x: i32) -> i32 {
 // CHECK: trait-stage-record rewrites driver=instantiate-monomorphs round=2 inserted=0 modified=0 replaced=0 erased=0 applications=0
 // CHECK: trait-stage-record round index=2 bridged=no collected=0
 // CHECK-SAME: ambiguous-arms=0 served=0 declined=0 deferred=0 inserted-serving-demands=0
-// CHECK-SAME: respelled-positions=0 refusals-forgotten=0 refusals-kept=0 refusals-overturned=0 refusals-re-earned=0 mid-driver-generation=0 instantiated=no
+// CHECK-SAME: respelled-positions=0 refusals-forgotten=0 refusals-kept=0 refusals-overturned=0 refusals-re-earned=0 instantiate-minted=0 proven-producers=0 instantiated=no

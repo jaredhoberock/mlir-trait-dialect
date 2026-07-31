@@ -12,9 +12,13 @@
 // This module has one demand of each kind. @Other[i64]::X is refused nowhere --
 // two impls bind it and one assumption holds, so the round that collects it
 // answers it, and answering leaves a refusal behind for @Mark[i16], which the
-// next round's flush drops. @Absent[i64]::B has no impl at all, so every round
-// that asks about it refuses again, and the round after sees its own forgotten
-// refusal come back.
+// next round's flush drops. @Absent[i64]::B has no impl at all, so the round
+// that asks about it refuses, and the flush after drops that refusal too.
+//
+// Nothing here is re-earned or overturned. A round asks about a demand again
+// only where impl selection has minted something since, and selecting impls
+// that already exist mints nothing, so each of these refusals is derived once
+// and forgotten once.
 
 !T = !trait.poly<0>
 
@@ -56,7 +60,6 @@ trait.trait @Absent[!T] {
 }
 
 func.func @wrap(%x: !T) -> !trait.proj<@Absent[!T], "B"> {
-  // expected-error @below {{unresolved projection '!trait.proj<@Absent[i64], "B">' after instantiate-monomorphs}}
   %r = ub.poison : !trait.proj<@Absent[!T], "B">
   return %r : !trait.proj<@Absent[!T], "B">
 }
@@ -68,15 +71,19 @@ func.func @main() -> !trait.proj<@Absent[i64], "B"> {
   return %r : !trait.proj<@Absent[i64], "B">
 }
 
-// Round two collects both demands: it answers one and leaves the other for a
-// round the facts have moved under, and the refusal it forgot at its head was
-// the one round one recorded.
+// Round two collects both demands the driver's read left standing: it answers
+// one and refuses the other, with nothing to forget at its own head.
 // CHECK: trait-stage-record round index=2
-// CHECK-SAME: collected=2 no-candidate-impl=1 multiple-candidate-impls=1
+// CHECK-SAME: collected=2 no-candidate-impl=0 multiple-candidate-impls=0 other-arms=0 without-arm=2
 // CHECK-SAME: served=1 declined=1 deferred=1
-// CHECK-SAME: refusals-forgotten=1 refusals-kept=0 refusals-overturned=0 refusals-re-earned=0
+// CHECK-SAME: refusals-forgotten=0 refusals-kept=0 refusals-overturned=0 refusals-re-earned=0
 
-// Round three forgets what round two refused, and reports that one of the two
-// refusals its own flush dropped a round earlier came straight back.
+// Round three forgets what round two refused and answers the demand that
+// answering @Gen[i64] raised; round four forgets the refusal that answer left
+// behind, and neither round re-derives what its flush dropped.
 // CHECK: trait-stage-record round index=3
-// CHECK-SAME: refusals-forgotten=2 refusals-kept=0 refusals-overturned=0 refusals-re-earned=1
+// CHECK-SAME: collected=1 no-candidate-impl=0 multiple-candidate-impls=1
+// CHECK-SAME: served=1 declined=0 deferred=0
+// CHECK-SAME: refusals-forgotten=1 refusals-kept=0 refusals-overturned=0 refusals-re-earned=0
+// CHECK: trait-stage-record round index=4
+// CHECK-SAME: refusals-forgotten=1 refusals-kept=0 refusals-overturned=0 refusals-re-earned=0

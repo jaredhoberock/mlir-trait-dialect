@@ -152,10 +152,14 @@ enum class DemandEngine : uint8_t {
   /// A call claim carried no evidence, so the call site never consulted module
   /// facts for the ground redexes its specialization mints.
   WithheldCallClaim,
+  /// A read of impl selection's recorded facts had none for the demand, and its
+  /// caller left the demand spelled as written. The read cannot make selection
+  /// run, so what it declines is for a step that can to serve.
+  ReadOnlyResolver,
 };
 
 /// The number of engines, for the census partition.
-inline constexpr unsigned numDemandEngines = 5;
+inline constexpr unsigned numDemandEngines = 6;
 
 /// Whether an unflagged observation by `engine` is, on its own, evidence that
 /// the demand went unserved.
@@ -175,6 +179,10 @@ constexpr bool leavesDemandStanding(DemandEngine engine) {
   case DemandEngine::GroundProjectionLookup:
   case DemandEngine::ResolverProjectionEngine:
   case DemandEngine::WithheldCallClaim:
+  // A read of the recorded facts returns what it was asked about spelled as
+  // written, and its caller declines the rewrite it was going to make. What it
+  // declined is exactly what a step that may make selection run must serve.
+  case DemandEngine::ReadOnlyResolver:
     return true;
   // The unifier writes nothing: it equated two spellings, or bound a variable,
   // and returned. What it accepted goes on to whatever the caller does next,
@@ -255,6 +263,9 @@ public:
   }
   static DemandObservationKind withheldCallClaim() {
     return of(DemandEngine::WithheldCallClaim, std::nullopt);
+  }
+  static DemandObservationKind readOnlyResolver() {
+    return of(DemandEngine::ReadOnlyResolver, std::nullopt);
   }
 
   DemandEngine getEngine() const { return engine; }
@@ -774,6 +785,17 @@ void recordUnifierAcceptance(Type demand, DemandOrigin origin);
 /// Records a projection the resolver's projection engine failed to resolve and
 /// its caller left spelled as written.
 void recordResolverProjectionMiss(Type demand);
+
+/// Records a demand a read of impl selection's recorded facts had no answer
+/// for, whose caller left it spelled as written.
+void recordReadOnlyResolverMiss(Type demand);
+
+/// Counts one demand a read of impl selection's recorded facts answered.
+///
+/// This is the positive twin of the miss above, and the two together say what
+/// the recorded facts were able to carry: a read that only ever declined would
+/// leave every demand for a later round.
+void countReadOnlyResolverServe();
 
 /// Records a monomorphic projection obligation normalization left standing, or
 /// counts it when the origin is a verifier's.

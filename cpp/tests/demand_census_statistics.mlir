@@ -6,7 +6,8 @@
 // The census is one of two channels. This is the other: statistics that tick
 // whether or not the census is switched on, which is how a demand raised
 // outside any stage -- a verifier's -- is counted at all. The row pins that the
-// second engine's swallowed failures reach that channel.
+// swallowed failures of the read the instantiation driver holds reach that
+// channel.
 
 trait.trait @T[!trait.poly<0>] {
   trait.assoc_type @A
@@ -18,5 +19,5 @@ func.func @main() -> !trait.proj<@T[i64], "A"> {
   return %r : !trait.proj<@T[i64], "A">
 }
 
-// CHECK: trait-demand
-// CHECK-SAME: projections the resolver's engine failed and its caller left spelled
+// CHECK: 4 trait-demand
+// CHECK-SAME: demands a read of the recorded facts had no answer for

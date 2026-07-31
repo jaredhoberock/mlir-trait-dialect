@@ -276,6 +276,25 @@ ImplResolver::serveDemand(ProjectionType demand, OpBuilder &builder) {
              : DemandDisposition::Deferred;
 }
 
+ImplResolver::DemandDisposition
+ImplResolver::serveDemand(ClaimType demand, OpBuilder &builder) {
+  DemandFrame frame{Type(demand)};
+
+  // Proving the claim is what serves it: the demander could read the record
+  // and not write it, so what it was waiting for is the proof this mints.
+  std::optional<RefutationArm> refusedOn;
+  if (succeeded(resolveAndEnsureProofFor(demand, builder, /*err=*/nullptr,
+                                         &refusedOn)))
+    return DemandDisposition::Served;
+
+  // The same reading as for a projection: two or more satisfiable candidates is
+  // the one refusal no later resolution overturns, and every other way of not
+  // serving is one the facts can move under.
+  return refusedOn == RefutationArm::MultipleSatisfiableCandidates
+             ? DemandDisposition::Refused
+             : DemandDisposition::Deferred;
+}
+
 Type ImplResolver::resolveProjectionsIn(Type ty, OpBuilder &builder) {
   AttrTypeReplacer replacer;
   replacer.addReplacement([this, &builder](Type t) -> std::optional<Type> {
@@ -324,13 +343,14 @@ AttrTypeReplacer ImplResolver::makeProvenClaimReplacer() const {
 FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
     ClaimType wanted,
     OpBuilder &builder,
-    llvm::function_ref<InFlightDiagnostic()> err) {
+    llvm::function_ref<InFlightDiagnostic()> err,
+    std::optional<RefutationArm> *refusedOn) {
   DemandFrame frame{Type(wanted)};
 
   ClaimType originalWanted = wanted;
 
   // resolve an impl for wanted first
-  auto resolvedImpl = resolveImplFor(wanted, builder, err);
+  auto resolvedImpl = resolveImplFor(wanted, builder, err, refusedOn);
   if (failed(resolvedImpl)) return failure();
   ImplOp impl = resolvedImpl->impl;
   ClaimType selected = resolvedImpl->selectedClaim;
@@ -687,8 +707,88 @@ FailureOr<ImplOp> ImplGenerationTally::generateImpl(TraitOp trait,
 //===----------------------------------------------------------------------===//
 
 LogicalResult ReadOnlyImplResolver::decline(ProjectionType demand) const {
-  recordResolverProjectionMiss(Type(demand));
+  recordReadOnlyResolverMiss(Type(demand));
   return failure();
+}
+
+LogicalResult ReadOnlyImplResolver::decline(ClaimType demand) const {
+  recordReadOnlyResolverMiss(Type(demand));
+  return failure();
+}
+
+FailureOr<ResolvedImpl>
+ReadOnlyImplResolver::getRecordedImplFor(ClaimType wanted) const {
+  DemandFrame frame{Type(wanted)};
+
+  ClaimType selected = cast<ClaimType>(resolveProjectionsIn(wanted));
+  auto outcome = getRecordedOutcome(selected.getTraitApplication());
+  if (!outcome || outcome->isRefusal())
+    return failure();
+  return ResolvedImpl{outcome->getImpl(), selected};
+}
+
+FailureOr<Type>
+ReadOnlyImplResolver::resolveProjectionType(ProjectionType proj) const {
+  DemandFrame frame{Type(proj)};
+
+  ClaimType claim = ClaimType::get(proj.getContext(), proj.getTraitApplication());
+  auto resolvedImpl = getRecordedImplFor(claim);
+  if (failed(resolvedImpl)) return failure();
+  ImplOp impl = resolvedImpl->impl;
+
+  SmallVector<Type> assocTypeArgs;
+  for (Type arg : proj.getAssocTypeArgs())
+    assocTypeArgs.push_back(resolveProjectionsIn(arg));
+
+  auto binding = impl.specializeAssociatedTypeBinding(
+      proj.getAssocName().getValue(), assocTypeArgs);
+  if (failed(binding)) return failure();
+
+  auto subst = impl.buildSubstitutionForSelfClaim(resolvedImpl->selectedClaim);
+  if (failed(subst)) return failure();
+
+  countReadOnlyResolverServe();
+  return applySubstitutionToFixedPoint(subst->toTypeMap(), *binding);
+}
+
+Type ReadOnlyImplResolver::resolveProjectionsIn(Type ty) const {
+  AttrTypeReplacer replacer;
+  replacer.addReplacement([this](Type t) -> std::optional<Type> {
+    auto proj = dyn_cast<ProjectionType>(t);
+    if (!proj || isPolymorphicType(proj)) return std::nullopt;
+    auto resolved = resolveProjectionType(proj);
+    if (failed(resolved)) {
+      // The projection stays spelled as written and the walk goes on, so this
+      // is where a demand no recorded fact answers becomes visible to the step
+      // that can make selection answer it.
+      (void)decline(proj);
+      return std::nullopt;
+    }
+    return *resolved;
+  });
+  return replacer.replace(ty);
+}
+
+FailureOr<FlatSymbolRefAttr>
+ReadOnlyImplResolver::getRecordedProofFor(ClaimType claim) const {
+  DemandFrame frame{Type(claim)};
+
+  auto resolvedImpl = getRecordedImplFor(claim);
+  if (failed(resolvedImpl)) return failure();
+
+  auto subst =
+      resolvedImpl->impl.buildSubstitutionForSelfClaim(resolvedImpl->selectedClaim);
+  if (failed(subst)) return failure();
+
+  auto monomorphic = dyn_cast_or_null<ClaimType>(applySubstitutionToFixedPoint(
+      subst->toTypeMap(), resolvedImpl->selectedClaim));
+  if (!monomorphic || !monomorphic.isMonomorphic())
+    return failure();
+
+  auto proof = getRecordedProof(monomorphic.getTraitApplication());
+  if (!proof) return failure();
+  countReadOnlyResolverServe();
+  return *proof;
 }
 
 } // end mlir::trait
