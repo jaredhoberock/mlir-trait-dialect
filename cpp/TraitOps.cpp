@@ -2107,17 +2107,55 @@ FailureOr<CallSubstitution> FuncCallOp::buildParameterSpecialization(ModuleOp un
   return subst;
 }
 
-std::string FuncCallOp::getNameOfCalleeInstance() {
-  // Runs at pass time (callee mangling), so pass the module: binding a generic
-  // mid-solve can mint a ground redex that must resolve for the name to match.
-  auto module = getModule();
-  if (failed(module))
-    llvm_unreachable("FuncCallOp::getNameOfCalleeInstance: not inside a module");
-  auto subst = buildParameterSpecialization(*module);
-  if (failed(subst))
-    llvm_unreachable("FuncCallOp::getNameOfCalleeInstance: buildParameterSpecialization failed");
+/// The name the instance of `op`'s callee carries, given the substitution that
+/// specializes its body.
+///
+/// Mangling reads the specialization map alone, which is written when the
+/// substitution is built and is not touched by closing it -- closing adds
+/// projection and evidence bindings -- so the name a call is wired to and the
+/// body it is wired to are read off one object.
+static std::string calleeInstanceName(FuncCallOp op,
+                                      const CallSubstitution &subst) {
+  return op.getCalleeName().str() +
+         applySubstitutionAndGenerateMangledNameSuffix(subst.getSpecialization(),
+                                                       op.getCalleeTypeParams());
+}
 
-  return getCalleeName().str() + applySubstitutionAndGenerateMangledNameSuffix(subst->getSpecialization(), getCalleeTypeParams());
+/// Reports when building `op`'s substitution again names a different callee
+/// instance than the substitution the caller holds does.
+///
+/// A rebuild reads the module's facts as they stand, where the substitution in
+/// hand read them as they stood when the call site was first specialized. While
+/// impl generation can still run in between, a ground redex the rebuild
+/// resolves may be one the first build left spelled -- and the name decides
+/// which body the call is wired to. A disagreement is a gap in this reasoning
+/// and never a fault in the program being compiled, so it goes to the census
+/// channel; a rebuild that fails outright is reported the same way rather than
+/// stopping the compilation, because what is under test is whether the two
+/// agree.
+///
+/// XXX TODO: this rebuilds on every checked lowering what its caller already
+/// holds. Delete it once no impl can be generated between the two reads, which
+/// leaves the rebuild a function of facts that cannot have moved.
+static void checkCalleeInstanceNameAgreement(FuncCallOp op, ModuleOp module,
+                                             StringRef fromSubstitution) {
+  if (!DemandLedger::isPostconditionEnabled())
+    return;
+
+  auto report = [&](const Twine &rebuilt) {
+    llvm::errs() << demandCensusCalleeInstanceDisagreementPrefix
+                 << " at=" << op.getLoc() << " callee=" << op.getCalleeName()
+                 << " from-substitution=" << fromSubstitution
+                 << " rebuilt=" << rebuilt << "\n";
+  };
+
+  auto rebuilt = op.buildParameterSpecialization(module);
+  if (failed(rebuilt))
+    return report("<no substitution>");
+
+  std::string fromRebuild = calleeInstanceName(op, *rebuilt);
+  if (fromRebuild != fromSubstitution)
+    report(fromRebuild);
 }
 
 FailureOr<func::FuncOp> FuncCallOp::getOrSpecializeCallee(
@@ -2126,7 +2164,8 @@ FailureOr<func::FuncOp> FuncCallOp::getOrSpecializeCallee(
   auto module = getModule();
   if (failed(module)) return failure();
 
-  std::string instanceName = getNameOfCalleeInstance();
+  std::string instanceName = calleeInstanceName(*this, subst);
+  checkCalleeInstanceNameAgreement(*this, *module, instanceName);
   auto *symOp = SymbolTable::lookupSymbolIn(*module, rewriter.getStringAttr(instanceName));
   func::FuncOp existing = dyn_cast_or_null<func::FuncOp>(symOp);
   if (existing) return existing;

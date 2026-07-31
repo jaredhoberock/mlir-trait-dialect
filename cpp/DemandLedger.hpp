@@ -849,6 +849,13 @@ inline constexpr const char *demandCensusServedPrefix =
 inline constexpr const char *demandCensusRespellingDisagreementPrefix =
     "trait-demand-census respelling-disagreement";
 
+/// The line a call site produces when the substitution it holds and a fresh
+/// build of that substitution name different instances of its callee. Like the
+/// lines above it reports a gap in this dialect's own reasoning and never a
+/// fault in the program being compiled.
+inline constexpr const char *demandCensusCalleeInstanceDisagreementPrefix =
+    "trait-demand-census callee-instance-disagreement";
+
 /// Setting this makes the stage record demands and write the census at its end.
 ///
 /// Both switches are read once, at library load, so a caller that sets either

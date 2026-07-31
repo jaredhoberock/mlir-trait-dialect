@@ -1214,9 +1214,6 @@ def FuncCallOp : TraitDialectOp<"func.call", [
       return getGenericTypesIn(*getCalleeFunctionType());
     }
 
-    // returns the name of the (possibly specialized) callee after monomorphization
-    std::string getNameOfCalleeInstance();
-
   }];
 
   let assemblyFormat = "$callee_name `(` $operands `)` attr-dict `:` functional-type($operands, results)";
