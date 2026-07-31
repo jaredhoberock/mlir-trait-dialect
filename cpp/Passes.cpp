@@ -699,27 +699,43 @@ struct SpecializedCallTarget {
   SmallVector<Type> resultTypes;
 };
 
-/// The call sites the read turned away over one run of the stage, against what
-/// each of them read when it did.
+/// The call sites the read turned away over one run of the instantiation
+/// driver, against what each of them read when it did.
 ///
 /// Whether the read can serve a call is decided by what impl selection has
 /// recorded, by the call's own operand and result spelling, and by the
 /// signature of the callee it specializes against. Nothing else enters it: the
 /// callee's name reaches the substitution only through that signature, its body
 /// only after the substitution has closed, and the derivation memo caches what
-/// the record already determines. The greedy driver revisits a call whenever
-/// anything around it is rewritten, and a revisit whose three reads stand where
-/// they stood would rebuild the same substitution and close it to the same
-/// answer, so this answers for it.
+/// the record already determines. Both lowerings establish that every operand
+/// is monomorphic and every operand claim proven before they reach a stamp, so
+/// every claim the substitution normalizes is read through its proof and the
+/// derive chains standing behind an assumed claim never enter the answer. The
+/// greedy driver revisits a call whenever anything around it is rewritten, and
+/// a revisit whose three reads stand where they stood would rebuild the same
+/// substitution and close it to the same answer, so this answers for it.
 ///
 /// The record epoch is what stands for the recorded facts here, not the fact
 /// epoch: selection settling an application whose impl the module already held
 /// mints nothing and still gives the read an answer it did not have.
 ///
+/// The facts a stamped answer reads are spelled in the module -- trait
+/// declarations, impl headers and their associated-type bindings, and proof
+/// ops -- and the record epoch stands for them only while nothing rewrites them
+/// behind it. No pattern written here rewrites any of those, and neither
+/// extension point that accepts a foreign pattern may contribute one that does:
+/// populateInstantiateMonomorphsPatterns, whose contributions run beside this
+/// lowering, and populateConvertToTraitPatterns, whose run precedes it in the
+/// round.
+///
 /// The operation indexes the stamps rather than keying them: what a stamp
 /// asserts is about the reads it holds, so an address a later operation reuses
 /// answers for that operation exactly when its three reads agree -- and a call
 /// reading them reads the same answer.
+///
+/// XXX TODO: stamps exist because lowering a call re-enters the substitution
+/// close to find out whether the read can serve it. They go when that re-entry
+/// does.
 struct DeclinedCallSites {
   /// What one turned-away visit read.
   struct Reads {
@@ -742,6 +758,10 @@ struct DeclinedCallSites {
 
   /// Records that the read turned `op` away over `reads`.
   void record(Operation *op, const Reads &reads) { stamps[op] = reads; }
+
+  /// Drops any stamp standing against `op`, which a call that lowers leaves
+  /// behind on an address the run is free to hand to another operation.
+  void forget(Operation *op) { stamps.erase(op); }
 
 private:
   DenseMap<Operation *, Reads> stamps;
@@ -892,6 +912,10 @@ struct FuncCallOpLowering : public OpRewritePattern<FuncCallOp> {
       return failure();
     }
 
+    // A stamp stands against this address, and the replacement below frees it
+    // for the driver to hand to another operation.
+    declined.forget(callOp);
+
     // Operands pass through untouched (as in MethodCallOpLowering). The
     // requireProvenClaimOperands guard above has already established that every
     // operand claim is proven, so specialization never bakes an unprovable
@@ -947,6 +971,10 @@ struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
         declined.record(op, reads);
       return failure();
     }
+
+    // A stamp stands against this address, and the replacement below frees it
+    // for the driver to hand to another operation.
+    declined.forget(op);
 
     // pass the claim as the first argument to the specialized callee
     SmallVector<Value> args;
@@ -1497,9 +1525,6 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
   // as they now stand. No round has run the driver yet, so the first one runs
   // it unconditionally.
   bool atInstantiationFixedPoint = false;
-  // The call sites the read turned away, carried across the rounds because a
-  // driver run leaves calls the round after it revisits.
-  DeclinedCallSites declinedCalls;
   // What the last two rounds did, and where the last commit moved something,
   // for the report the round bound owes a reader.
   SmallVector<std::pair<unsigned, RoundWork>, 2> lastRounds;
@@ -1588,12 +1613,24 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
     // own last run left at that run's fixed point, together with the facts that
     // run read, so it would apply no pattern: the round skips it, `instantiated`
     // stays false, and the loop ends unless something else this round wrote.
+    //
+    // What the driver reads beyond its own rewrites is the facts the module
+    // spells -- trait declarations, impl headers and their associated-type
+    // bindings, and proof ops -- and those move only where the steps above move
+    // them. No pattern written here rewrites any of them, and neither extension
+    // point that accepts a foreign pattern may contribute one that does:
+    // populateInstantiateMonomorphsPatterns below, and
+    // populateConvertToTraitPatterns in the bridge above.
     bool instantiationInputMoved =
         work.refusals.forgotten != 0 || work.bridged || work.served != 0 ||
         work.insertedServingDemands != 0 || work.respelled != 0 ||
         resolver->getFactEpoch() != epochAtRoundHead;
     if (!atInstantiationFixedPoint || instantiationInputMoved) {
       ReadOnlyImplResolver reading(*resolver);
+      // The call sites this run's read turns away. What a stamp asserts is
+      // about the reads it holds, and every step between two driver runs can
+      // move them, so no stamp outlives the run that took it.
+      DeclinedCallSites declinedCalls;
       RewritePatternSet patterns(ctx);
       patterns.add<ProveClaimResultPattern>(ctx, reading);
       patterns.add<MonomorphizeResultTypesPattern>(ctx);
@@ -1637,8 +1674,10 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
     writtenSinceSweep |= work.instantiated;
 
     // The producers left holding a proven result are watched, not acted on, so
-    // the walk that finds them runs where its count is read.
-    if (DemandLedger::isRecordingEnabled())
+    // the walk that finds them runs where its count is read: under recording,
+    // and over the last two rounds the bound leaves room for, whose lines the
+    // bound reports whether or not anyone asked for the record.
+    if (DemandLedger::isRecordingEnabled() || round + 2 > maxRounds)
       module.walk([&](Operation *op) {
         if (!isa<AllegeOp, DeriveOp, ProjectOp>(op))
           return;
