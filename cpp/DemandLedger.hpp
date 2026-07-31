@@ -554,6 +554,28 @@ public:
                                         const DenseSet<Type> &drained,
                                         const DenseSet<Type> &served) const;
 
+  /// Reports every drainable demand still spelled at stage exit that no round
+  /// served, and fails when there is one.
+  ///
+  /// checkDrainedKeysSettled covers the demands a round took off the drain and
+  /// then lost; this covers the complementary case, a drainable demand no round
+  /// settled -- one deferred to a round that never came, or one whose surviving
+  /// spelling the stage's leftover-op walks do not reach because it lives on a
+  /// block argument or in an attribute. Its population is the ledger's drainable
+  /// keys rather than the drain's settled set, because a deferred demand never
+  /// enters that set. A key still spelled here is one the stage undertook to
+  /// serve and did not, which the leftover-op walks would have caught had it
+  /// survived on an op result, so this runs after them as their backstop and a
+  /// key it reaches is a failure of the stage.
+  ///
+  /// A demand several impls bind is refused for good and left spelled by design
+  /// -- the module is rejected for the ambiguity by another check -- so a key
+  /// carrying that arm is exempt, the reasoning reportServedDrainableKeys
+  /// applies to a refused key, narrowed to the one arm no later resolution
+  /// overturns.
+  LogicalResult checkStandingDemandsServed(ModuleOp module,
+                                           const DenseSet<Type> &served) const;
+
 private:
   struct Frame {
     Type demand;
@@ -565,6 +587,10 @@ private:
   /// the census reports the difference rather than the running total.
   struct StatisticBaseline {
     uint64_t residualToleranceAccepts = 0;
+    uint64_t residualToleranceAcceptsGeneratorPending = 0;
+    uint64_t residualToleranceAcceptsMultiCandidate = 0;
+    uint64_t residualToleranceAcceptsHypothesis = 0;
+    uint64_t residualToleranceAcceptsMixedOrOther = 0;
     uint64_t verifierLookupMisses = 0;
     uint64_t verifierObligationNormalizations = 0;
     uint64_t resolverProjectionMisses = 0;
@@ -898,13 +924,6 @@ inline constexpr const char *demandCensusServedPrefix =
 /// never a fault in the program being compiled.
 inline constexpr const char *demandCensusRespellingDisagreementPrefix =
     "trait-demand-census respelling-disagreement";
-
-/// The line a call site produces when the substitution it holds and a fresh
-/// build of that substitution name different instances of its callee. Like the
-/// lines above it reports a gap in this dialect's own reasoning and never a
-/// fault in the program being compiled.
-inline constexpr const char *demandCensusCalleeInstanceDisagreementPrefix =
-    "trait-demand-census callee-instance-disagreement";
 
 /// The line a proof derivation produces when the closure held for it and the
 /// closure deriving it again produces differ. Like the lines above it reports a

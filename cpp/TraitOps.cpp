@@ -2132,48 +2132,6 @@ static std::string calleeInstanceName(FuncCallOp op,
                                                        op.getCalleeTypeParams());
 }
 
-/// Reports when building `op`'s substitution again names a different callee
-/// instance than the substitution the caller holds does.
-///
-/// A rebuild reads the module's facts as they stand, where the substitution in
-/// hand read them as they stood when the call site was first specialized. While
-/// impl generation can still run in between, a ground redex the rebuild
-/// resolves may be one the first build left spelled -- and the name decides
-/// which body the call is wired to. A disagreement is a gap in this reasoning
-/// and never a fault in the program being compiled, so it goes to the census
-/// channel; a rebuild that fails outright is reported the same way rather than
-/// stopping the compilation, because what is under test is whether the two
-/// agree.
-///
-/// The rebuild is a recomputation, so it holds no memo and its work is not the
-/// compilation's: it runs as a cross-check and is counted nowhere, which leaves
-/// the census and the drain saying what the compilation itself did.
-///
-/// XXX TODO: this rebuilds on every checked lowering what its caller already
-/// holds. Delete it once no impl can be generated between the two reads, which
-/// leaves the rebuild a function of facts that cannot have moved.
-static void checkCalleeInstanceNameAgreement(FuncCallOp op, ModuleOp module,
-                                             StringRef fromSubstitution) {
-  if (!DemandLedger::isPostconditionEnabled())
-    return;
-
-  auto report = [&](const Twine &rebuilt) {
-    llvm::errs() << demandCensusCalleeInstanceDisagreementPrefix
-                 << " at=" << op.getLoc() << " callee=" << op.getCalleeName()
-                 << " from-substitution=" << fromSubstitution
-                 << " rebuilt=" << rebuilt << "\n";
-  };
-
-  DemandCrossCheckScope checking;
-  auto rebuilt = op.buildParameterSpecialization(module, /*memo=*/nullptr);
-  if (failed(rebuilt))
-    return report("<no substitution>");
-
-  std::string fromRebuild = calleeInstanceName(op, *rebuilt);
-  if (fromRebuild != fromSubstitution)
-    report(fromRebuild);
-}
-
 FailureOr<func::FuncOp> FuncCallOp::getOrSpecializeCallee(
     PatternRewriter &rewriter,
     const CallSubstitution &subst,
@@ -2182,7 +2140,6 @@ FailureOr<func::FuncOp> FuncCallOp::getOrSpecializeCallee(
   if (failed(module)) return failure();
 
   std::string instanceName = calleeInstanceName(*this, subst);
-  checkCalleeInstanceNameAgreement(*this, *module, instanceName);
   auto *symOp = SymbolTable::lookupSymbolIn(*module, rewriter.getStringAttr(instanceName));
   func::FuncOp existing = dyn_cast_or_null<func::FuncOp>(symOp);
   if (existing) return existing;

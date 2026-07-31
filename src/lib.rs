@@ -119,12 +119,6 @@ pub const DEMAND_CENSUS_SERVED_MARKER: &str = "trait-demand-census served";
 pub const DEMAND_CENSUS_RESPELLING_DISAGREEMENT_MARKER: &str =
     "trait-demand-census respelling-disagreement";
 
-/// The marker a call site carries when the substitution it holds and a fresh
-/// build of that substitution name different instances of its callee. Like the
-/// markers above it reports a gap in the dialect's own reasoning.
-pub const DEMAND_CENSUS_CALLEE_INSTANCE_DISAGREEMENT_MARKER: &str =
-    "trait-demand-census callee-instance-disagreement";
-
 /// The marker a proof derivation carries when the closure held for it and the
 /// closure deriving it again produces differ. Like the markers above it reports
 /// a gap in the dialect's own reasoning.

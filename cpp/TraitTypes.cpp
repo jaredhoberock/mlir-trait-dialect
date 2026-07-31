@@ -29,10 +29,45 @@
 STATISTIC(numResidualToleranceAccepts,
           "irreducible projection crossings accepted by the residual tolerance");
 
+// The same population split by which class of the tolerance site's own taxonomy
+// each accept fell in, so that a zero in one class can be read as a discharged
+// clause rather than lost in the aggregate. A generator-pending accept is a
+// ground base no impl binds yet; a multi-candidate accept is a ground base
+// several impls bind; a hypothesis accept is a still-symbolic base resolvable
+// only through a frame hypothesis; a mixed-or-other accept is a ground base
+// whose projections declined on several arms at once, or on an arm that is
+// neither headline case. The four partition the aggregate: each accept bumps
+// exactly one of them beside it.
+STATISTIC(numResidualToleranceAcceptsGeneratorPending,
+          "residual-tolerance accepts on a ground base no impl binds yet");
+STATISTIC(numResidualToleranceAcceptsMultiCandidate,
+          "residual-tolerance accepts on a ground base several impls bind");
+STATISTIC(numResidualToleranceAcceptsHypothesis,
+          "residual-tolerance accepts on a still-symbolic base");
+STATISTIC(numResidualToleranceAcceptsMixedOrOther,
+          "residual-tolerance accepts on a ground base declining on several or "
+          "non-headline arms");
+
 namespace mlir::trait {
 
 uint64_t residualToleranceAcceptCount() {
   return numResidualToleranceAccepts.getValue();
+}
+
+uint64_t residualToleranceAcceptsGeneratorPendingCount() {
+  return numResidualToleranceAcceptsGeneratorPending.getValue();
+}
+
+uint64_t residualToleranceAcceptsMultiCandidateCount() {
+  return numResidualToleranceAcceptsMultiCandidate.getValue();
+}
+
+uint64_t residualToleranceAcceptsHypothesisCount() {
+  return numResidualToleranceAcceptsHypothesis.getValue();
+}
+
+uint64_t residualToleranceAcceptsMixedOrOtherCount() {
+  return numResidualToleranceAcceptsMixedOrOther.getValue();
 }
 
 void TraitDialect::registerTypes() {
@@ -121,7 +156,8 @@ namespace {
 } // namespace
 
 Type resolveGroundProjectionsByLookup(Type ty, ModuleOp module,
-                                      DemandOrigin origin) {
+                                      DemandOrigin origin,
+                                      unsigned *topLevelMissReasons) {
   if (!module)
     return ty;
 
@@ -150,6 +186,12 @@ Type resolveGroundProjectionsByLookup(Type ty, ModuleOp module,
       recordLookupMiss(Type(proj), reason, origin, probe.getEnclosingDepth());
       if (checkRecordingCoverage)
         recordedDemands.insert(Type(proj));
+      // A caller classifying an accept wants the arms the projections of `ty`
+      // itself declined on, so only the outermost walk contributes. A decline
+      // inside a candidate probe (a nonzero enclosing depth) is about a
+      // candidate the partition may discard, not about `ty`.
+      if (topLevelMissReasons && probe.getEnclosingDepth() == 0)
+        *topLevelMissReasons |= 1u << static_cast<unsigned>(reason);
       return std::optional<Type>(std::nullopt);
     };
 
@@ -1130,9 +1172,11 @@ LogicalResult ProjectionType::unify(
   // no module (the module-free comparator); an equality check performs no module
   // lookup, so this step is skipped and an unresolved crossing is a strict
   // mismatch below.
+  // The arms a ground base declined on, kept so an accept below can be classed.
+  unsigned groundMissReasons = 0;
   if (isMonomorphicType(*this) && module) {
-    Type resolved =
-        resolveGroundProjectionsByLookup(*this, module, DemandOrigin::Unification);
+    Type resolved = resolveGroundProjectionsByLookup(
+        *this, module, DemandOrigin::Unification, &groundMissReasons);
     if (resolved != Type(*this))
       return trait::unify(resolved, other, module, subst, err);
   }
@@ -1166,8 +1210,14 @@ LogicalResult ProjectionType::unify(
   // here, each with its own end condition:
   //   - Generator-pending grounds: a concrete base whose impl a downstream
   //     generator has not yet synthesized (the prelude's Convergence machinery).
-  //     Eliminated when generation runs before lowering, so committed builds no
-  //     longer receive an ungenerated impl.
+  //     Empty on the stage by construction -- generation precedes the lowering
+  //     that runs the ground lookup, so a base reaching it there has every impl
+  //     it will get -- and nonzero on the comparisons a verifier raises against
+  //     committed facts before the stage begins, which generation has not
+  //     reached. Acceptance ends when that second population reaches zero. The
+  //     census reads the two apart in its
+  //     residual-tolerance-accepts-generator-pending and
+  //     residual-tolerance-accepts-before-the-stage-generator-pending columns.
   //   - Hypothesis-resolvable projections: a still-symbolic base resolvable only
   //     through a frame hypothesis (a where-clause equality). The witnessable
   //     part ends when the crossing is witnessed at its cast site; the
@@ -1177,8 +1227,27 @@ LogicalResult ProjectionType::unify(
   //   - Ground multi-candidate crossings: a ground base several impls bind.
   //     Resolution is premise-partitioned and belongs to the resolver alone,
   //     never to this comparison.
-  if (!isCrossChecking())
+  if (!isCrossChecking()) {
     ++numResidualToleranceAccepts;
+    // Split the accept by the tolerance site's taxonomy so law 5's zero clause
+    // can be read against one class. A still-symbolic base never reached the
+    // ground lookup (the block above skips a non-monomorphic type), so it is the
+    // hypothesis class by itself. A ground base declined on the lookup's arms,
+    // and a single headline arm names its class; several arms at once, or an arm
+    // that is neither headline case, is neither generator-pending nor
+    // multi-candidate and goes to the mixed-or-other class.
+    if (!isMonomorphicType(*this)) {
+      ++numResidualToleranceAcceptsHypothesis;
+    } else if (groundMissReasons ==
+               (1u << unsigned(LookupMissReason::NoCandidateImpl))) {
+      ++numResidualToleranceAcceptsGeneratorPending;
+    } else if (groundMissReasons ==
+               (1u << unsigned(LookupMissReason::MultipleCandidateImpls))) {
+      ++numResidualToleranceAcceptsMultiCandidate;
+    } else {
+      ++numResidualToleranceAcceptsMixedOrOther;
+    }
+  }
   return success();
 }
 

@@ -45,6 +45,12 @@ func.func private @f(%c: !trait.claim<@Box[!trait.proj<@Gen[i64], "A">] by @Box_
 // CHECK-SAME: arms=multiple-candidate-impls
 // CHECK-SAME: parent=!trait.proj<@Gen[i64], "A">
 // CHECK-SAME: type=!trait.proj<@Other[i64], "X">
+// The outer projection the driver's read-only handle declines is the second
+// key: its own lookup runs the probe above, and it carries no arm because the
+// read never names one.
+// CHECK: trait-demand-census demand flags=real drainable=yes observations=1 depth=0
+// CHECK-SAME: kinds=read-only-resolver arms=-
+// CHECK-SAME: type=!trait.proj<@Gen[i64], "A">
 // CHECK: trait-demand-census engine lookup-miss keys=1 observations=8 real=2 speculative=2 probe-internal=4
 // CHECK: trait-demand-census arm no-candidate-impl keys=0 observations=0 real=0 speculative=0 probe-internal=0
 // CHECK: trait-demand-census arm multiple-candidate-impls keys=1 observations=8 real=2 speculative=2 probe-internal=4

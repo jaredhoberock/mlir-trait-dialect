@@ -6,14 +6,16 @@
 // The unifier's acceptances are a population of their own: it found the two
 // sides of an equation to be the same projection and returned, having asked no
 // impl what that projection resolves to. Nothing here went wrong -- the whole
-// module lowers -- and the demand went unserved all the same, which is why the
-// census keeps this arm apart from the lookup's miss arms and never folds it
-// into their observation counts.
+// module lowers -- and the unifier served nothing all the same, which is why
+// the census keeps this arm apart from the lookup's miss arms and never folds
+// it into their observation counts.
 //
-// The key is not drainable. The unifier writes nothing: what it accepted goes
-// on to the components that do resolve, and here they resolve it -- the whole
-// module lowers with no projection left standing. A drain built on this key
-// would be asked to serve a demand the stage served.
+// The key is drainable, but not on the unifier's account. The read-only handle
+// the instantiation driver holds declines the same projection, and a read that
+// declines leaves the demand standing, so the drain admits the key. One key,
+// two engines observing it, so its line names both. The drain serves it in the
+// round that collects it -- the whole module lowers with no projection left
+// standing.
 
 !S = !trait.poly<0>
 !T = !trait.poly<1>
@@ -63,7 +65,7 @@ func.func @main() -> i64 {
 }
 
 // CHECK: trait-demand-census demand flags=real drainable=yes observations=7 depth=0
-// CHECK-SAME: kinds=unifier-acceptance
+// CHECK-SAME: kinds=unifier-acceptance,read-only-resolver
 // CHECK-SAME: type=!trait.proj<@Outer[i64], "Item">
 // CHECK: trait-demand-census engine lookup-miss keys=0 observations=0 real=0 speculative=0 probe-internal=0
 // CHECK: trait-demand-census engine unifier-acceptance keys=1 observations=2 real=2 speculative=0 probe-internal=0

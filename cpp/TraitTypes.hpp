@@ -848,13 +848,25 @@ LogicalResult recordProofBindingsIn(Type ty,
 /// It classifies the demand this call raises: a verifier's demand is counted,
 /// a stage's is recorded. It has no default, so a new caller states which it
 /// is rather than inheriting an answer.
+///
+/// `topLevelMissReasons`, when given, receives one bit per LookupMissReason on
+/// which a projection of `ty` itself (not one reached inside a candidate probe)
+/// declined. A caller that goes on to accept the unresolved type reads it to
+/// say which class of the residual tolerance the accept fell in.
 Type resolveGroundProjectionsByLookup(Type ty, ModuleOp module,
-                                      DemandOrigin origin);
+                                      DemandOrigin origin,
+                                      unsigned *topLevelMissReasons = nullptr);
 
 /// How many irreducible projection crossings the residual tolerance has
-/// accepted in this process. Reported beside the demand census, whose
-/// population it overlaps but does not belong to.
+/// accepted in this process, and how those accepts split by the tolerance
+/// site's own taxonomy. The four class counts partition the total. Reported
+/// beside the demand census, whose population it overlaps but does not belong
+/// to.
 uint64_t residualToleranceAcceptCount();
+uint64_t residualToleranceAcceptsGeneratorPendingCount();
+uint64_t residualToleranceAcceptsMultiCandidateCount();
+uint64_t residualToleranceAcceptsHypothesisCount();
+uint64_t residualToleranceAcceptsMixedOrOtherCount();
 
 std::string generateMangledNameSuffixFor(TypeRange typeArgs);
 

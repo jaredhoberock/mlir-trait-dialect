@@ -404,9 +404,11 @@ static uint64_t respellProvenClaimsInPlace(const ImplResolver &resolver,
 ///
 /// The proving obligation is keyed on the result ClaimType, not the
 /// producing op: allege, derive, and project results all discharge through
-/// this one rule. `allegeOnly` restricts matching to trait.allege for the
-/// resolve-impls phase, which runs before instantiation and must not yet
-/// touch claims derived inside still-polymorphic bodies.
+/// this one rule. Which producers it matches follows from which constructor
+/// built it: the fact-establishing use matches trait.allege alone, because a
+/// claim derived inside a still-polymorphic body is not yet its business,
+/// while the read-only driver use matches allege, derive and project results
+/// alike.
 struct ProveClaimResultPattern : public RewritePattern {
   /// Impl selection itself, where this pattern may establish facts, and nothing
   /// where it may only read them.
@@ -1292,11 +1294,12 @@ static void reportRound(unsigned round, const RoundWork &work,
 
 /// Checks that impl selection left nothing part-way done.
 ///
-/// Selection is entered at round zero, at the round's own generation step, and
-/// by the patterns the instantiation driver runs. A reader of its facts between
-/// those points must find every application it opened closed and every proof it
-/// recorded naming a proof the module defines, because a fact read part-way
-/// through is one that is not yet a fact.
+/// Selection is entered at round zero and at the round's own serving step,
+/// where the drain puts demands to it; the instantiation driver only reads what
+/// those steps settled. A reader of its facts between any two of those points
+/// must find every application it opened closed and every proof it recorded
+/// naming a proof the module defines, because a fact read part-way through is
+/// one that is not yet a fact.
 static void checkResolutionBoundary(const ImplResolver &resolver) {
   assert(resolver.isQuiescent() &&
          "impl selection must not be part-way through an application at a "
@@ -1372,9 +1375,11 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
   //
   // Only the demands an engine left standing are collected here. The
   // obligations impl selection raises proving one claim are resolved on the
-  // same stack that raised them and never reach the drain, and the projections
-  // instantiation meets are served inside the driver by the patterns that meet
-  // them; both are pinned by the leftover walks at the end of the stage.
+  // same stack that raised them and never reach the drain. The projections and
+  // claims the instantiation driver meets it reads rather than resolves,
+  // declining any the recorded facts do not yet answer; each decline is a demand
+  // a later round collects and serves. Anything still standing at the end of the
+  // stage is pinned by the leftover walks.
   //
   // Each round's work is bounded by the module and a round that finds nothing
   // ends the loop, so the count of rounds is the depth of the chain of impls
@@ -1604,6 +1609,17 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
     return WalkResult::advance();
   });
   if (sawUnresolvedProjection)
+    return failure();
+
+  // The two walks above reject a demand still spelled on an op result or block
+  // argument. A demand can also stand at a place they do not reach -- a claim on
+  // a block argument the leftover-claim walk passes over, or a projection stored
+  // in an attribute neither walk reads -- and a demand deferred to a round that
+  // never came stands with no spelling change to find. This backstops both: a
+  // drainable demand the stage never served that is still spelled anywhere is a
+  // demand the stage undertook to serve and did not.
+  if (failed(resolver->getDemandLedger().checkStandingDemandsServed(module,
+                                                                    served)))
     return failure();
 
   DemandRecordingSuspension verifying;

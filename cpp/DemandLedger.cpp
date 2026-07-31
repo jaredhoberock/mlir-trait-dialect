@@ -166,6 +166,14 @@ bool DemandLedger::areObservationsEnabled() { return observationsEnabled; }
 
 DemandLedger::DemandLedger() {
   statisticsAtBirth.residualToleranceAccepts = residualToleranceAcceptCount();
+  statisticsAtBirth.residualToleranceAcceptsGeneratorPending =
+      residualToleranceAcceptsGeneratorPendingCount();
+  statisticsAtBirth.residualToleranceAcceptsMultiCandidate =
+      residualToleranceAcceptsMultiCandidateCount();
+  statisticsAtBirth.residualToleranceAcceptsHypothesis =
+      residualToleranceAcceptsHypothesisCount();
+  statisticsAtBirth.residualToleranceAcceptsMixedOrOther =
+      residualToleranceAcceptsMixedOrOtherCount();
   statisticsAtBirth.verifierLookupMisses = numVerifierLookupMisses.getValue();
   statisticsAtBirth.verifierObligationNormalizations =
       numVerifierObligationNormalizations.getValue();
@@ -390,12 +398,17 @@ void DemandLedger::dumpCensus() const {
        << keysByClass[c];
   os << "\n";
 
-  // Two counter lines, each labelled by the population its numbers cover. Every
-  // column names one event and carries a name no other column carries:
-  // `verifier` columns count events raised outside this ledger's span, `total`
-  // columns count events raised inside it, by the stage and by the verifiers it
-  // runs. No column is a part of another, so the two lines are read side by
-  // side rather than differenced.
+  // Two counter lines, each labelled by the population its numbers cover. Both
+  // lines report the difference a column's statistic moved over this ledger's
+  // span, so both count events raised during the ledger's life: the `verifier`
+  // line the ones a verifier raised, the `total` line the ones the stage and
+  // the verifiers it runs raised. The one exception is the residual tolerance's
+  // before-the-stage columns, reported at their birth value: the module is
+  // verified before this ledger exists, so those accepts are the ones no stage
+  // could have raised, and the total line differences them away. Every column
+  // names one event and carries a name no other column carries, and the four
+  // residual-tolerance class columns partition the residual-tolerance accepts on
+  // each line.
   os << demandCensusCounterPrefix << " verifier"
      << " lookup-misses="
      << numVerifierLookupMisses.getValue() -
@@ -403,19 +416,34 @@ void DemandLedger::dumpCensus() const {
      << " cast-normalizations="
      << numVerifierObligationNormalizations.getValue() -
             statisticsAtBirth.verifierObligationNormalizations
-     // The residual tolerance is reached from committed-fact matches inside op
-     // verifiers as well as from the stage, and the module is verified before
-     // this ledger exists, so what the statistic held at birth is the accepts
-     // no stage raised. It is reported here because the total below is a
-     // difference from that birth value and so cannot show them.
      << " residual-tolerance-accepts-before-the-stage="
      << statisticsAtBirth.residualToleranceAccepts
+     << " residual-tolerance-accepts-before-the-stage-generator-pending="
+     << statisticsAtBirth.residualToleranceAcceptsGeneratorPending
+     << " residual-tolerance-accepts-before-the-stage-multi-candidate="
+     << statisticsAtBirth.residualToleranceAcceptsMultiCandidate
+     << " residual-tolerance-accepts-before-the-stage-hypothesis="
+     << statisticsAtBirth.residualToleranceAcceptsHypothesis
+     << " residual-tolerance-accepts-before-the-stage-mixed-or-other="
+     << statisticsAtBirth.residualToleranceAcceptsMixedOrOther
      << "\n";
 
   os << demandCensusCounterPrefix << " total"
      << " residual-tolerance-accepts="
      << residualToleranceAcceptCount() -
             statisticsAtBirth.residualToleranceAccepts
+     << " residual-tolerance-accepts-generator-pending="
+     << residualToleranceAcceptsGeneratorPendingCount() -
+            statisticsAtBirth.residualToleranceAcceptsGeneratorPending
+     << " residual-tolerance-accepts-multi-candidate="
+     << residualToleranceAcceptsMultiCandidateCount() -
+            statisticsAtBirth.residualToleranceAcceptsMultiCandidate
+     << " residual-tolerance-accepts-hypothesis="
+     << residualToleranceAcceptsHypothesisCount() -
+            statisticsAtBirth.residualToleranceAcceptsHypothesis
+     << " residual-tolerance-accepts-mixed-or-other="
+     << residualToleranceAcceptsMixedOrOtherCount() -
+            statisticsAtBirth.residualToleranceAcceptsMixedOrOther
      << " resolver-engine-misses="
      << numResolverProjectionMisses.getValue() -
             statisticsAtBirth.resolverProjectionMisses
@@ -474,21 +502,40 @@ void DemandLedger::dumpCensus() const {
 /// would find but is what a reader would.
 ///
 /// The two populations are not gathered alike, because a claim is a demand only
-/// where something is meant to prove it. A trait or impl header spells unproven
-/// claims that stand for good -- its own requirements and its assumptions --
-/// and the claims of a still-polymorphic template are proved when the template
-/// is cloned for a concrete instance, so both are passed over. That is the
-/// discipline the stage's own leftover-claim sweep applies, and gathering
-/// claims any other way would make a check reading this vacuous for them.
-static DenseSet<Type> demandsSpelledIn(ModuleOp module, bool inAttributes) {
+/// where something is meant to prove it. This walk applies two skips to the
+/// claim side unconditionally: a trait, impl or proof op spells unproven claims
+/// that stand for good -- its own requirements and its assumptions -- so its
+/// whole subtree is passed over, and a still-polymorphic template function
+/// spells claims that are proved when the template is cloned for a concrete
+/// instance, so it is passed over too. Gathering claims without these two skips
+/// would make a check reading this vacuous for them.
+///
+/// `servableOnly` applies the same two skips to the projection side. A ground
+/// projection inside trait infrastructure or a still-polymorphic template is
+/// resolved when the template is cloned, not by a later round, so a caller
+/// asking which demands a round could still serve -- rather than which the
+/// module spells anywhere -- passes them over just as the leftover-projection
+/// sweep does.
+static DenseSet<Type> demandsSpelledIn(ModuleOp module, bool inAttributes,
+                                       bool servableOnly = false) {
   DenseSet<Type> spelled;
+  auto skipsTemplate = [](Operation *op) {
+    if (isa<TraitOp, ImplOp, ProofOp>(op))
+      return true;
+    if (auto func = dyn_cast<func::FuncOp>(op))
+      return isPolymorphicType(Type(func.getFunctionType()));
+    return false;
+  };
+
   auto collect = [&](auto root) {
     root.walk([&](Type sub) {
       if (isa<ProjectionType>(sub) && isMonomorphicType(sub))
         spelled.insert(sub);
     });
   };
-  module.walk([&](Operation *op) {
+  module.walk<WalkOrder::PreOrder>([&](Operation *op) -> WalkResult {
+    if (servableOnly && skipsTemplate(op))
+      return WalkResult::skip();
     for (Type ty : op->getResultTypes())
       collect(ty);
     for (Region &region : op->getRegions())
@@ -497,6 +544,7 @@ static DenseSet<Type> demandsSpelledIn(ModuleOp module, bool inAttributes) {
           collect(arg.getType());
     if (inAttributes)
       collect(Attribute(op->getAttrDictionary()));
+    return WalkResult::advance();
   });
 
   auto collectClaims = [&](Type root) {
@@ -506,12 +554,9 @@ static DenseSet<Type> demandsSpelledIn(ModuleOp module, bool inAttributes) {
         spelled.insert(sub);
     });
   };
-  module.walk<WalkOrder::PreOrder>([&](Operation *op) {
-    if (isa<TraitOp, ImplOp, ProofOp>(op))
+  module.walk<WalkOrder::PreOrder>([&](Operation *op) -> WalkResult {
+    if (skipsTemplate(op))
       return WalkResult::skip();
-    if (auto func = dyn_cast<func::FuncOp>(op))
-      if (isPolymorphicType(Type(func.getFunctionType())))
-        return WalkResult::skip();
     for (Type ty : op->getResultTypes())
       collectClaims(ty);
     for (Region &region : op->getRegions())
@@ -600,6 +645,53 @@ DemandLedger::checkDrainedKeysSettled(ModuleOp module,
     }
   }
   return failure(dropped);
+}
+
+LogicalResult
+DemandLedger::checkStandingDemandsServed(ModuleOp module,
+                                         const DenseSet<Type> &served) const {
+  // A demand spelled only inside trait infrastructure or a still-polymorphic
+  // template is resolved on cloning, not served by a round, so it is not a
+  // demand this check is owed -- the leftover-projection sweep passes those over
+  // for the same reason, and this backstops that sweep.
+  DenseSet<Type> spelled =
+      demandsSpelledIn(module, /*inAttributes=*/true, /*servableOnly=*/true);
+
+  bool standing = false;
+  for (Type key : getDrainableDemands()) {
+    // A key reaches the drain only on a real, non-speculative observation, so
+    // the population needs no flag filter here.
+    if (served.contains(key))
+      continue;
+    // The one refusal no later resolution overturns leaves its demand spelled
+    // on purpose; the ambiguity is reported elsewhere, so this walk passes it
+    // over. The arm is recorded whether or not a census was asked for.
+    if (getDrainableArms(key) &
+        (1u << static_cast<unsigned>(LookupMissReason::MultipleCandidateImpls)))
+      continue;
+
+    bool stillSpelled = false;
+    key.walk([&](Type sub) {
+      if (spelled.contains(sub))
+        stillSpelled = true;
+    });
+    if (!stillSpelled)
+      continue;
+
+    standing = true;
+    InFlightDiagnostic diagnostic =
+        module.emitError()
+        << "instantiate-monomorphs left the demand " << key
+        << " standing and never served it";
+    // The provenance chain is the census's, so a run with no census names the
+    // demand and stops there.
+    if (const DemandRecord *record = lookup(key)) {
+      Diagnostic &note = diagnostic.attachNote(record->origin) << "demanded here";
+      if (record->parent)
+        note << ", while resolving " << record->parent;
+    }
+  }
+  return failure(standing);
 }
 
 //===----------------------------------------------------------------------===//
