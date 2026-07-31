@@ -383,7 +383,8 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
     EvidenceBindings bindings;
     if (succeeded(verifyAndRecordProof(candidate.asUnproven(), candidate,
                                        module, bindings,
-                                       DemandOrigin::ProofRecording, err))) {
+                                       DemandOrigin::ProofRecording,
+                                       &derivations, err))) {
       recordProof(app, proofSym);
       return proofSym;
     }

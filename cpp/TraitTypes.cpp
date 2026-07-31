@@ -456,13 +456,140 @@ static LogicalResult verifyEquivalentRecordedProof(
   return failure();
 }
 
-LogicalResult verifyAndRecordProof(
-    ClaimType unproven,
-    ClaimType proven,
-    ModuleOp module,
-    EvidenceBindings &bindings,
-    DemandOrigin origin,
-    llvm::function_ref<InFlightDiagnostic()> err) {
+namespace {
+
+/// What one node of a derivation produced.
+///
+/// A node's closure is its own binding followed by its children's, which is
+/// what replaying it into another evidence map has to write. A node is complete
+/// when this derivation computed all of that: a child that exited early on a
+/// binding this derivation did not itself write contributes a closure nobody
+/// here knows, and neither it nor anything above it can be held.
+struct DerivedNode {
+  ProofDerivationMemo::Closure closure;
+  bool complete = true;
+};
+
+/// The nodes one top-level derivation has completed, held until it succeeds.
+///
+/// Nothing is put in the memo while the derivation that produced it is still
+/// running. A node reached through an ancestor's optimistic binding was derived
+/// under an assumption that ancestor can still take back, and the map the
+/// derivation writes into is rolled back with it; publishing on the outermost
+/// success is what keeps the memo from outliving an assumption that failed.
+///
+/// A node is also what a later node of the same derivation exits early on, so
+/// this is indexed by the normalized obligation the early exit looks up as well
+/// as by the pair the memo is keyed on.
+class DerivationStaging {
+public:
+  void hold(ClaimType keyUnproven, ClaimType keyProven,
+            ClaimType normalizedUnproven,
+            const ProofDerivationMemo::Closure &closure) {
+    byNormalizedObligation[normalizedUnproven] = held.size();
+    held.push_back(Held{keyUnproven, keyProven, closure});
+  }
+
+  /// What deriving the obligation now bound to `normalizedUnproven` produced,
+  /// when this derivation is what bound it.
+  const ProofDerivationMemo::Closure *
+  lookupDerived(ClaimType normalizedUnproven) const {
+    auto it = byNormalizedObligation.find(normalizedUnproven);
+    if (it == byNormalizedObligation.end())
+      return nullptr;
+    return &held[it->second].closure;
+  }
+
+  void publishInto(ProofDerivationMemo &memo) const {
+    for (const Held &node : held) {
+      memo.record(node.keyUnproven, node.keyProven, node.closure);
+      countProofDerivationRecorded();
+    }
+  }
+
+private:
+  struct Held {
+    ClaimType keyUnproven;
+    ClaimType keyProven;
+    ProofDerivationMemo::Closure closure;
+  };
+
+  SmallVector<Held, 8> held;
+  llvm::DenseMap<ClaimType, size_t> byNormalizedObligation;
+};
+
+} // namespace
+
+static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
+                                 ModuleOp module, EvidenceBindings &bindings,
+                                 DemandOrigin origin,
+                                 ProofDerivationMemo *memo,
+                                 DerivationStaging &staging,
+                                 DerivedNode &derived,
+                                 llvm::function_ref<InFlightDiagnostic()> err);
+
+/// Writes a closure a derivation already produced into `bindings`.
+///
+/// Every entry is looked up before it is written, because a differing
+/// re-binding is a program the compiler must diagnose rather than an
+/// impossibility it may assume: the same obligation can arrive proven by two
+/// symbols, and that is the incoherent proof mapping the derivation this
+/// replaces reports at its own early exit.
+static LogicalResult replayClosure(const ProofDerivationMemo::Closure &closure,
+                                   EvidenceBindings &bindings,
+                                   llvm::function_ref<InFlightDiagnostic()> err) {
+  for (auto [unproven, proven] : closure) {
+    if (auto existing = bindings.lookup(unproven)) {
+      if (failed(verifyEquivalentRecordedProof(unproven, *existing, proven, err)))
+        return failure();
+      continue;
+    }
+    bindings.bind(unproven, proven);
+  }
+  return success();
+}
+
+/// Reports where the closure held for `(unproven, proven)` and the closure
+/// deriving that pair again produces differ.
+///
+/// The held closure is what the replay writes in place of a derivation, so
+/// deriving the pair again is the statement being tested. That re-derivation is
+/// work the compilation does not do, so it runs as a cross-check and is counted
+/// nowhere. A disagreement is a gap in this dialect's own reasoning and never a
+/// fault in the program being compiled, so it goes to the census channel.
+static void checkHeldClosureAgrees(ClaimType unproven, ClaimType proven,
+                                   ModuleOp module, DemandOrigin origin,
+                                   const ProofDerivationMemo::Closure &held) {
+  if (!DemandLedger::isPostconditionEnabled())
+    return;
+
+  auto report = [&](const Twine &derived) {
+    llvm::errs() << demandCensusProofDerivationDisagreementPrefix
+                 << " unproven=" << unproven << " proven=" << proven
+                 << " held=" << held.size() << " derived=" << derived << "\n";
+  };
+
+  DemandCrossCheckScope checking;
+  EvidenceBindings scratch;
+  DerivationStaging staging;
+  DerivedNode derived;
+  if (failed(deriveProof(unproven, proven, module, scratch, origin,
+                         /*memo=*/nullptr, staging, derived, /*err=*/nullptr)))
+    return report("<no derivation>");
+
+  if (derived.closure != held)
+    report(Twine(derived.closure.size()) + " entries, differing");
+}
+
+/// Derives one node of a proof, extending `bindings` with everything the node's
+/// own claim and its obligations bind.
+static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
+                                 ModuleOp module, EvidenceBindings &bindings,
+                                 DemandOrigin origin,
+                                 ProofDerivationMemo *memo,
+                                 DerivationStaging &staging,
+                                 DerivedNode &derived,
+                                 llvm::function_ref<InFlightDiagnostic()> err) {
   countProofVerification();
 
   // the proven side must carry a proof
@@ -480,10 +607,21 @@ LogicalResult verifyAndRecordProof(
     return failure();
   }
 
-  // File the pair as it arrived, before either side is normalized: the pair a
-  // memo of completed derivations would be asked about is the one the caller
-  // holds, and answering from it is what would skip the normalizations below.
-  probeProofDerivation(Type(unproven), Type(proven));
+  // The memo answers for the pair as it arrived, before either side is
+  // normalized: that is the pair a caller holds, and answering here is what
+  // skips the two normalizations below as well as the derivation under them.
+  ClaimType askedUnproven = unproven;
+  ClaimType askedProven = proven;
+  if (memo) {
+    if (const auto *closure = memo->lookup(askedUnproven, askedProven)) {
+      countProofDerivationMemoHit();
+      checkHeldClosureAgrees(askedUnproven, askedProven, module, origin,
+                             *closure);
+      derived.closure = *closure;
+      return replayClosure(*closure, bindings, err);
+    }
+    countProofDerivationMemoMiss();
+  }
 
   // Normalize both the demanded obligation (the recording key) and the proven
   // value before recording. Requirement obligations arrive at their stamped
@@ -506,8 +644,17 @@ LogicalResult verifyAndRecordProof(
   // coherence instead of requiring syntactic claim equality.
   if (auto existing = bindings.lookup(unproven)) {
     countProofVerificationEarlyExit();
-    return verifyEquivalentRecordedProof(
-        unproven, *existing, proven, err);
+    if (failed(verifyEquivalentRecordedProof(unproven, *existing, proven, err)))
+      return failure();
+    // What this node would have written is already written. When this
+    // derivation is what wrote it, that closure is in hand and stands for this
+    // node's; when something before this derivation wrote it, no closure here
+    // describes the node, and nothing containing it can be held either.
+    if (const auto *closure = staging.lookupDerived(unproven))
+      derived.closure = *closure;
+    else
+      derived.complete = false;
+    return success();
   }
 
   // look up the trait and its requirements using the unproven claim
@@ -527,6 +674,9 @@ LogicalResult verifyAndRecordProof(
 
     // success: bind the whole claim so that later normalization keeps the proof
     bindings.bind(unproven, proven);
+    // A leaf: the binding it wrote is the whole of what deriving it produces.
+    derived.closure.emplace_back(unproven, proven);
+    staging.hold(askedUnproven, askedProven, unproven, derived.closure);
     return success();
   }
 
@@ -559,15 +709,48 @@ LogicalResult verifyAndRecordProof(
   // (where an obligation resolves back to the same claim) hit the early exit
   // at the top of this function instead of diverging.
   bindings.bind(unproven, proven);
+  derived.closure.emplace_back(unproven, proven);
 
   // recurse over obligations
   for (auto [ob, sub] : llvm::zip(*obligations, *subproofs)) {
-    if (failed(verifyAndRecordProof(ob, sub, module, bindings, origin, err))) {
+    DerivedNode child;
+    if (failed(deriveProof(ob, sub, module, bindings, origin, memo, staging,
+                           child, err))) {
       bindings.erase(unproven);
       return failure();
     }
+    derived.complete &= child.complete;
+    if (derived.complete)
+      derived.closure.append(child.closure.begin(), child.closure.end());
   }
 
+  if (derived.complete) {
+    staging.hold(askedUnproven, askedProven, unproven, derived.closure);
+  } else {
+    derived.closure.clear();
+    countProofDerivationNotRecorded();
+  }
+  return success();
+}
+
+LogicalResult verifyAndRecordProof(
+    ClaimType unproven,
+    ClaimType proven,
+    ModuleOp module,
+    EvidenceBindings &bindings,
+    DemandOrigin origin,
+    ProofDerivationMemo *memo,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  DerivationStaging staging;
+  DerivedNode derived;
+  if (failed(deriveProof(unproven, proven, module, bindings, origin, memo,
+                         staging, derived, err)))
+    return failure();
+
+  // Everything this derivation completed goes into the memo together, now that
+  // the derivation it was completed under has returned success.
+  if (memo)
+    staging.publishInto(*memo);
   return success();
 }
 
@@ -581,6 +764,7 @@ LogicalResult recordProofBindingsIn(
     ModuleOp module,
     EvidenceBindings &bindings,
     DemandOrigin origin,
+    ProofDerivationMemo *memo,
     llvm::function_ref<InFlightDiagnostic()> err) {
   LogicalResult status = success();
 
@@ -590,7 +774,7 @@ LogicalResult recordProofBindingsIn(
     if (auto claim = dyn_cast<ClaimType>(node)) {
       if (claim.isProven())
         if (failed(verifyAndRecordProof(claim.asUnproven(), claim, module,
-                                        bindings, origin, err)))
+                                        bindings, origin, memo, err)))
           status = failure();
     }
   });
@@ -993,7 +1177,8 @@ LogicalResult ProjectionType::unify(
   //   - Ground multi-candidate crossings: a ground base several impls bind.
   //     Resolution is premise-partitioned and belongs to the resolver alone,
   //     never to this comparison.
-  ++numResidualToleranceAccepts;
+  if (!isCrossChecking())
+    ++numResidualToleranceAccepts;
   return success();
 }
 

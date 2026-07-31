@@ -311,6 +311,21 @@ class ImplResolver {
     /// How many trait applications this resolver has recorded a proof for.
     size_t getRecordedProofCount() const { return memo.proofMemo.size(); }
 
+    /// The proof derivations completed over this resolver's span.
+    ///
+    /// Derivation is a computation over the module's facts and not a fact of
+    /// its own, so this is a cache rather than part of the record: a reader
+    /// holding this resolver through a handle that may not resolve may still
+    /// serve from it and still hold what it derives.
+    ProofDerivationMemo &getDerivationMemo() const { return derivations; }
+
+    /// Says a sweep has respelled the module's copy of the recorded facts.
+    ///
+    /// A sweep records no proof, so the fact count does not move for it; what
+    /// a derivation reads are spellings, so what was derived before the sweep
+    /// was derived from a module that no longer stands.
+    void noteRespelling() const { derivations.noteRespelling(); }
+
     /// How many refusals of each kind `forgetRetriableRefusals` found, and what
     /// became of the refusals the call before it forgot.
     struct RefusalCounts {
@@ -397,11 +412,11 @@ class ImplResolver {
       noteFactWritten();
     }
 
-    /// Counts one fact write, and tells the ledger that what it filed as
-    /// derived from the fact base was derived from an earlier one.
+    /// Counts one fact write, so that what was derived from the fact base
+    /// before it is no longer an answer about the fact base after it.
     void noteFactWritten() {
       ++factEpoch;
-      forgetProofDerivations();
+      derivations.noteFactWritten();
     }
 
     /// Checks whether all of `impl`'s where-clause assumptions are satisfiable
@@ -420,6 +435,7 @@ class ImplResolver {
     mutable ModuleOp module;
     std::shared_ptr<DemandLedger> ledger;
     ProofResolutionMemo memo;
+    mutable ProofDerivationMemo derivations;
     ImplGeneratorSet generators;
     const ImplGenerator *installedOverride = nullptr;
     uint64_t factEpoch = 0;
@@ -542,6 +558,12 @@ public:
     if (it == chosen.end())
       return std::nullopt;
     return it->second;
+  }
+
+  /// The proof derivations completed over the resolver's span. Serving from
+  /// them and holding what is derived through them takes no generator arm.
+  ProofDerivationMemo &getDerivationMemo() const {
+    return resolver.getDerivationMemo();
   }
 
   /// The symbol proving `app` -- an impl's own for a self-proof, a

@@ -35,10 +35,10 @@ func.func @main() -> !trait.proj<@Gen[i64], "A"> {
   return %r : !trait.proj<@Gen[i64], "A">
 }
 
-// CHECK: trait-demand-census demand flags=real drainable=yes observations=19 depth=0
+// CHECK: trait-demand-census demand flags=real drainable=yes observations=18 depth=0
 // CHECK-SAME: arms=no-candidate-impl
 // CHECK-SAME: type=!trait.proj<@Gen[i64], "A">
 // CHECK: trait-demand-census arm trait-symbol-not-found keys=0 observations=0 real=0 speculative=0 probe-internal=0
 // CHECK: trait-demand-census arm no-candidate-impl keys=1 observations=3 real=3 speculative=0 probe-internal=0
 // CHECK: trait-demand-census arm self-claim-substitution-failed keys=0 observations=0 real=0 speculative=0 probe-internal=0
-// CHECK: trait-demand-census summary keys=1 observations=19 drainable-keys=1
+// CHECK: trait-demand-census summary keys=1 observations=18 drainable-keys=1

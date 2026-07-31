@@ -178,8 +178,11 @@ LogicalResult verifyDeclaredClaimProofs(ModuleOp module) {
       if (!claim || !claim.isProven())
         return;
       EvidenceBindings bindings;
+      // This check runs before the stage builds a resolver, so it holds no
+      // memo and derives what it needs itself.
       if (failed(verifyAndRecordProof(claim.asUnproven(), claim, module, bindings,
-                                      DemandOrigin::ProofRecording, errFn)))
+                                      DemandOrigin::ProofRecording,
+                                      /*memo=*/nullptr, errFn)))
         status = failure();
     });
   }
@@ -380,6 +383,13 @@ static uint64_t respellProvenClaimsInPlace(const ImplResolver &resolver,
         *anchor = op->getLoc();
     }
   });
+
+  // A sweep records no proof, so the count of facts does not move for it; what
+  // it moves is the module's spelling of them, which is what proof derivation
+  // reads. A sweep that respelled nothing leaves every derivation reading the
+  // module it read.
+  if (positionsRespelled != 0)
+    resolver.noteRespelling();
 
   if (DemandLedger::isRecordingEnabled())
     llvm::errs() << stageRecordRespellingPrefix
@@ -587,14 +597,14 @@ void CallSubstitution::discoverProjectionBindings(TypeRange types,
 /// Record proven-claim bindings visible after applying the current
 /// substitution.
 LogicalResult CallSubstitution::discoverEvidenceBindings(
-    TypeRange types, ModuleOp module,
+    TypeRange types, ModuleOp module, ProofDerivationMemo *memo,
     llvm::function_ref<InFlightDiagnostic()> err) {
   for (Type ty : types) {
     Type rewritten = apply(ty);
     // Closing a call substitution needs the stage's resolver, so this walk
     // runs nowhere else and its demand is the stage's.
     if (failed(recordProofBindingsIn(rewritten, module, evidenceBindings,
-                                     DemandOrigin::ProofRecording, err)))
+                                     DemandOrigin::ProofRecording, memo, err)))
       return failure();
   }
   return success();
@@ -629,9 +639,11 @@ LogicalResult CallSubstitution::close(
       discoverProjectionBindings(formalTy.getResults(), resolver, builder);
     }
 
-    if (failed(discoverEvidenceBindings(operandTypes, module, err)))
+    if (failed(discoverEvidenceBindings(operandTypes, module,
+                                        &resolver.getDerivationMemo(), err)))
       return failure();
-    if (failed(discoverEvidenceBindings(resultTypes, module, err)))
+    if (failed(discoverEvidenceBindings(resultTypes, module,
+                                        &resolver.getDerivationMemo(), err)))
       return failure();
 
     changed = bindingCount() != before;
@@ -700,7 +712,8 @@ specializeCallTarget(CallOpT op, PatternRewriter &rewriter,
   // Pass time: pass the module so binding a generic mid-solve resolves the
   // ground redex it mints (the module-capable comparator, not the verifier's
   // module-free one).
-  auto subst = op.buildParameterSpecialization(module);
+  auto subst = op.buildParameterSpecialization(module,
+                                              &resolver.getDerivationMemo());
   if (failed(subst)) {
     (void)rewriter.notifyMatchFailure(op, "couldn't build substitution");
     return failure();
@@ -727,7 +740,8 @@ specializeCallTarget(CallOpT op, PatternRewriter &rewriter,
     target.resultTypes.push_back(newR);
   }
 
-  auto callee = op.getOrSpecializeCallee(rewriter, *subst);
+  auto callee = op.getOrSpecializeCallee(rewriter, *subst,
+                                        &resolver.getDerivationMemo());
   if (failed(callee)) {
     (void)rewriter.notifyMatchFailure(op, "couldn't get or specialize callee");
     return failure();

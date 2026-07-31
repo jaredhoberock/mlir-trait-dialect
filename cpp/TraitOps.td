@@ -420,7 +420,8 @@ def ImplOp : TraitDialectOp<"impl", [
     /// Builds the impl specialization from the proven self claim, merges the
     /// call-site substitution, and monomorphizes the cloned method.
     FailureOr<func::FuncOp> getOrSpecializeFreeFunctionFromMethod(PatternRewriter& rewriter, ClaimType provenSelfClaim, StringRef methodName,
-                                                                   const CallSubstitution &callSubst);
+                                                                   const CallSubstitution &callSubst,
+                                                                   ProofDerivationMemo *memo);
 
     /// Builds the specialization that maps this impl's generic parameters to
     /// the corresponding types in `actualSelfClaim`.
@@ -437,6 +438,7 @@ def ImplOp : TraitDialectOp<"impl", [
     /// both claims through the ground-projection lookup, so this raises demand.
     FailureOr<ImplSpecialization> buildImplSpecialization(ClaimType provenSelfClaim,
                                                                   DemandOrigin origin,
+                                                                  ProofDerivationMemo *memo,
                                                                   llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     // Helper to generate unique symbol name for an ImplOp
@@ -1092,11 +1094,12 @@ def MethodCallOp : TraitDialectOp<"method.call", [
     /// Builds the initial call substitution by unifying the callee's formal
     /// function type with the actual argument and result types at this call
     /// site. Projection bindings are added later during call lowering.
-    FailureOr<CallSubstitution> buildParameterSpecialization(ModuleOp unifyModule, llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+    FailureOr<CallSubstitution> buildParameterSpecialization(ModuleOp unifyModule, ProofDerivationMemo *memo, llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     /// Specializes the callee as a free function using a pre-built substitution.
     FailureOr<func::FuncOp> getOrSpecializeCallee(PatternRewriter &rewriter,
-                                                  const CallSubstitution &subst);
+                                                  const CallSubstitution &subst,
+                                                  ProofDerivationMemo *memo);
 
     ClaimType getClaimType() {
       return cast<ClaimType>(getClaim().getType());
@@ -1202,12 +1205,13 @@ def FuncCallOp : TraitDialectOp<"func.call", [
 
     /// Looks up or specializes the monomorphized callee using a pre-built substitution.
     FailureOr<func::FuncOp> getOrSpecializeCallee(PatternRewriter &rewriter,
-                                                  const CallSubstitution &subst);
+                                                  const CallSubstitution &subst,
+                                                  ProofDerivationMemo *memo);
 
     /// Builds the initial call substitution by unifying the callee's formal
     /// function type with the actual argument and result types at this call
     /// site. Projection bindings are added later during call lowering.
-    FailureOr<CallSubstitution> buildParameterSpecialization(ModuleOp unifyModule, llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+    FailureOr<CallSubstitution> buildParameterSpecialization(ModuleOp unifyModule, ProofDerivationMemo *memo, llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     // returns all distinct generic types that occur in the FunctionType of this FuncOp's callee
     SmallVector<GenericTypeInterface, 4> getCalleeTypeParams() {

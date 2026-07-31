@@ -603,6 +603,7 @@ FailureOr<Type> ImplOp::specializeAssociatedTypeBinding(
 FailureOr<ImplSpecialization> ImplOp::buildImplSpecialization(
     ClaimType provenSelfClaim,
     DemandOrigin origin,
+    ProofDerivationMemo *memo,
     llvm::function_ref<InFlightDiagnostic()> err) {
   if (!provenSelfClaim.isProven()) {
     if (err) err() << "expected proven self claim for " << getSymName();
@@ -618,7 +619,7 @@ FailureOr<ImplSpecialization> ImplOp::buildImplSpecialization(
   // recursively records claim -> proven-claim evidence bindings.
   ClaimType unprovenSelfClaim = provenSelfClaim.asUnproven();
   if (failed(verifyAndRecordProof(unprovenSelfClaim, provenSelfClaim, *module,
-                                  evidence, origin, err)))
+                                  evidence, origin, memo, err)))
     return failure();
 
   auto specialization = buildSubstitutionForSelfClaim(provenSelfClaim, err);
@@ -746,7 +747,8 @@ FailureOr<func::FuncOp> ImplOp::getOrSpecializeFreeFunctionFromMethod(
     PatternRewriter& rewriter,
     ClaimType provenSelfClaim,
     StringRef methodName,
-    const CallSubstitution &callSubst) {
+    const CallSubstitution &callSubst,
+    ProofDerivationMemo *memo) {
   // check that methodName names a valid trait method
   if (!getTrait().hasMethod(methodName)) return failure();
 
@@ -754,7 +756,8 @@ FailureOr<func::FuncOp> ImplOp::getOrSpecializeFreeFunctionFromMethod(
   if (failed(method)) return failure();
 
   auto implSpec =
-      buildImplSpecialization(provenSelfClaim, DemandOrigin::ProofRecording);
+      buildImplSpecialization(provenSelfClaim, DemandOrigin::ProofRecording,
+                              memo);
   if (failed(implSpec)) return failure();
 
   // Build the same substitution that will be used to clone the method body:
@@ -1012,11 +1015,14 @@ LogicalResult ProofOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (failed(implOp.buildSubstitutionForSelfClaim(getProvenClaim(), errFn)))
     return failure();
 
-  // recursively verify proof structure and that proof bindings can be recorded
+  // recursively verify proof structure and that proof bindings can be recorded.
+  // A verifier runs on whatever thread the verification was handed to and holds
+  // no memo, so it derives what it needs itself.
   EvidenceBindings evidence;
   if (failed(verifyAndRecordProof(getProvenClaim().asUnproven(),
                                   getProvenClaim(), module, evidence,
-                                  DemandOrigin::ProofVerification, errFn)))
+                                  DemandOrigin::ProofVerification,
+                                  /*memo=*/nullptr, errFn)))
     return failure();
 
   return success();
@@ -1769,10 +1775,11 @@ LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable)
   // check that we can build a consistent substitution for this method call.
   // The verifier compares spellings with the module-free comparator: no
   // ground-redex resolution, so an unresolved crossing is a strict mismatch.
-  return buildParameterSpecialization(/*unifyModule=*/ModuleOp(), errFn);
+  return buildParameterSpecialization(/*unifyModule=*/ModuleOp(),
+                                      /*memo=*/nullptr, errFn);
 }
 
-FailureOr<CallSubstitution> MethodCallOp::buildParameterSpecialization(ModuleOp unifyModule, llvm::function_ref<InFlightDiagnostic()> err) {
+FailureOr<CallSubstitution> MethodCallOp::buildParameterSpecialization(ModuleOp unifyModule, ProofDerivationMemo *memo, llvm::function_ref<InFlightDiagnostic()> err) {
   auto module = getModule(err);
   if (failed(module)) return failure();
 
@@ -1915,7 +1922,8 @@ FailureOr<CallSubstitution> MethodCallOp::buildParameterSpecialization(ModuleOp 
 
   CallSubstitution subst(SpecializationMap::fromTypeMap(merged));
   if (failed(recordProofBindingsIn(originalActual, *module,
-                                   subst.getEvidenceBindings(), origin, err)))
+                                   subst.getEvidenceBindings(), origin, memo,
+                                   err)))
     return failure();
 
   return subst;
@@ -1938,10 +1946,12 @@ ImplOp MethodCallOp::getProvenImpl() {
 
 FailureOr<func::FuncOp> MethodCallOp::getOrSpecializeCallee(
     PatternRewriter &rewriter,
-    const CallSubstitution &subst) {
+    const CallSubstitution &subst,
+    ProofDerivationMemo *memo) {
   ClaimType claimTy = cast<ClaimType>(getClaim().getType());
   return getProvenImpl()
-    .getOrSpecializeFreeFunctionFromMethod(rewriter, claimTy, getMethodName(), subst);
+    .getOrSpecializeFreeFunctionFromMethod(rewriter, claimTy, getMethodName(),
+                                           subst, memo);
 }
 
 ParseResult MethodCallOp::parse(OpAsmParser& p, OperationState &st) {
@@ -2072,10 +2082,11 @@ LogicalResult FuncCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
   // check that we can build a substitution. The verifier compares spellings
   // with the module-free comparator (no ground-redex resolution).
-  return buildParameterSpecialization(/*unifyModule=*/ModuleOp(), errFn);
+  return buildParameterSpecialization(/*unifyModule=*/ModuleOp(),
+                                      /*memo=*/nullptr, errFn);
 }
 
-FailureOr<CallSubstitution> FuncCallOp::buildParameterSpecialization(ModuleOp unifyModule, llvm::function_ref<InFlightDiagnostic()> err) {
+FailureOr<CallSubstitution> FuncCallOp::buildParameterSpecialization(ModuleOp unifyModule, ProofDerivationMemo *memo, llvm::function_ref<InFlightDiagnostic()> err) {
   auto module = getModule(err);
   if (failed(module)) return failure();
 
@@ -2101,7 +2112,7 @@ FailureOr<CallSubstitution> FuncCallOp::buildParameterSpecialization(ModuleOp un
                                    unifyModule
                                        ? DemandOrigin::CallSiteSpecialization
                                        : DemandOrigin::CallSignatureVerification,
-                                   err)))
+                                   memo, err)))
     return failure();
 
   return subst;
@@ -2134,6 +2145,10 @@ static std::string calleeInstanceName(FuncCallOp op,
 /// stopping the compilation, because what is under test is whether the two
 /// agree.
 ///
+/// The rebuild is a recomputation, so it holds no memo and its work is not the
+/// compilation's: it runs as a cross-check and is counted nowhere, which leaves
+/// the census and the drain saying what the compilation itself did.
+///
 /// XXX TODO: this rebuilds on every checked lowering what its caller already
 /// holds. Delete it once no impl can be generated between the two reads, which
 /// leaves the rebuild a function of facts that cannot have moved.
@@ -2149,7 +2164,8 @@ static void checkCalleeInstanceNameAgreement(FuncCallOp op, ModuleOp module,
                  << " rebuilt=" << rebuilt << "\n";
   };
 
-  auto rebuilt = op.buildParameterSpecialization(module);
+  DemandCrossCheckScope checking;
+  auto rebuilt = op.buildParameterSpecialization(module, /*memo=*/nullptr);
   if (failed(rebuilt))
     return report("<no substitution>");
 
@@ -2160,7 +2176,8 @@ static void checkCalleeInstanceNameAgreement(FuncCallOp op, ModuleOp module,
 
 FailureOr<func::FuncOp> FuncCallOp::getOrSpecializeCallee(
     PatternRewriter &rewriter,
-    const CallSubstitution &subst) {
+    const CallSubstitution &subst,
+    ProofDerivationMemo *memo) {
   auto module = getModule();
   if (failed(module)) return failure();
 

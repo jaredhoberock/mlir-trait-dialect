@@ -125,6 +125,12 @@ pub const DEMAND_CENSUS_RESPELLING_DISAGREEMENT_MARKER: &str =
 pub const DEMAND_CENSUS_CALLEE_INSTANCE_DISAGREEMENT_MARKER: &str =
     "trait-demand-census callee-instance-disagreement";
 
+/// The marker a proof derivation carries when the closure held for it and the
+/// closure deriving it again produces differ. Like the markers above it reports
+/// a gap in the dialect's own reasoning.
+pub const DEMAND_CENSUS_PROOF_DERIVATION_DISAGREEMENT_MARKER: &str =
+    "trait-demand-census proof-derivation-disagreement";
+
 /// The marker a deduplicated demanded type carries. These lines name types, and
 /// a monomorphic type's name embeds a mangled hash, so they are read where a
 /// module is small rather than recorded across a corpus.

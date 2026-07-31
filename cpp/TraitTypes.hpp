@@ -231,6 +231,67 @@ private:
   llvm::DenseMap<ClaimType, ClaimType> bindings;
 };
 
+/// The proof derivations one span of resolution has completed, so that a
+/// derivation performed once can be replayed rather than performed again.
+///
+/// Recursive proof verification derives an obligation once per call site,
+/// because each call site's evidence map is born empty. A derivation's whole
+/// output is the closure of bindings it writes into that map, so replaying that
+/// closure into another map leaves it holding what deriving would have left it
+/// holding. This is an acceptance shortcut and nothing else: a pair it has no
+/// answer for is derived exactly as before.
+///
+/// A derivation reads the module. The ground-projection lookup resolves only
+/// where exactly one candidate binds an application, so an impl minted since
+/// can make an obligation newly resolvable or newly ambiguous and specialize it
+/// differently. Every entry therefore names the fact base it was read from, and
+/// an entry read from an earlier one is not an answer. Two events move that
+/// fact base and neither moves with the other: impl selection minting a fact,
+/// and a sweep respelling the module's copy of the facts -- a sweep records no
+/// proof, so a count of facts cannot see it, and what a derivation reads are
+/// spellings.
+///
+/// This holds no fact: everything in it is derivable again, which is what lets
+/// a reader keep it through a handle that may not resolve and makes dropping an
+/// entry always safe.
+class ProofDerivationMemo {
+public:
+  /// The evidence bindings one derivation wrote, in the order it wrote them.
+  using Closure = SmallVector<std::pair<ClaimType, ClaimType>, 4>;
+
+  /// The closure deriving `proven` for `unproven` produced, or nothing when no
+  /// derivation of that pair is held against the fact base as it stands.
+  const Closure *lookup(ClaimType unproven, ClaimType proven) const {
+    auto it = entries.find(std::make_pair(unproven, proven));
+    if (it == entries.end() || it->second.factBase != factBase)
+      return nullptr;
+    return &it->second.closure;
+  }
+
+  /// Holds `closure` as what deriving `proven` for `unproven` produced, against
+  /// the fact base as it stands.
+  void record(ClaimType unproven, ClaimType proven, Closure closure) {
+    entries[std::make_pair(unproven, proven)] = Entry{std::move(closure),
+                                                      factBase};
+  }
+
+  /// Says impl selection has minted a fact, so nothing derived before now was
+  /// derived from the module as it stands.
+  void noteFactWritten() { ++factBase; }
+
+  /// Says a sweep has respelled the module's copy of the facts.
+  void noteRespelling() { ++factBase; }
+
+private:
+  struct Entry {
+    Closure closure;
+    uint64_t factBase = 0;
+  };
+
+  llvm::DenseMap<std::pair<ClaimType, ClaimType>, Entry> entries;
+  uint64_t factBase = 0;
+};
+
 /// ImplSpecialization: SpecializationMap + EvidenceBindings.
 ///
 /// The complete set of type rewrites needed to specialize an impl method for a
@@ -290,7 +351,7 @@ private:
   void discoverProjectionBindings(TypeRange types, ImplResolver &resolver,
                                   ::mlir::OpBuilder &builder);
   LogicalResult discoverEvidenceBindings(
-      TypeRange types, ModuleOp module,
+      TypeRange types, ModuleOp module, ProofDerivationMemo *memo,
       llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
   size_t bindingCount() const {
@@ -738,11 +799,17 @@ inline SmallVector<GenericTypeInterface,4> getGenericTypesIn(Type ty) {
 /// ground-projection lookup and normalizes the impl's obligations, so it raises
 /// demand, and it runs both inside the stage and inside a proof op's verifier.
 /// It has no default, so a new caller states which it is.
+///
+/// `memo`, when given, is consulted for the pair before anything else is done
+/// with it and holds what this derivation produces. It is the stage's, and one
+/// thread's: a verifier runs on a worker thread and passes none. Like `origin`
+/// it has no default, so a new caller states whether it has one.
 LogicalResult verifyAndRecordProof(ClaimType unproven,
                                    ClaimType proven,
                                    ModuleOp module,
                                    EvidenceBindings &bindings,
                                    DemandOrigin origin,
+                                   ProofDerivationMemo *memo,
                                    llvm::function_ref<InFlightDiagnostic()> err);
 
 /// Walks the given type and records proven claim substitutions.
@@ -754,11 +821,13 @@ LogicalResult verifyAndRecordProof(ClaimType unproven,
 /// returns failure and emits an error through `err`.
 ///
 /// `origin` names the caller, which every proof this walk records is verified
-/// under. It has no default, so a new caller states which it is.
+/// under, and `memo` is what each of those verifications is served from and
+/// held in. Neither has a default, so a new caller states both.
 LogicalResult recordProofBindingsIn(Type ty,
                                     ModuleOp module,
                                     EvidenceBindings &bindings,
                                     DemandOrigin origin,
+                                    ProofDerivationMemo *memo,
                                     llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
 /// Resolve every ground projection redex in `ty` by module-visible impl

@@ -464,19 +464,16 @@ public:
   void countProofVerification() { ++proofVerifications; }
   void countProofVerificationEarlyExit() { ++proofVerificationEarlyExits; }
 
-  /// Files one verified `(unproven, proven)` pair, counting it as a first sight
-  /// or as a repeat of one already verified against the facts as they stand.
+  /// What the memo of completed derivations answered when it was asked, and
+  /// how much of what was derived it can hold.
   ///
-  /// XXX TODO: this table answers nothing -- it exists to say how much of
-  /// verification a memo of completed derivations would serve before one is
-  /// built. Delete it, and take these two counts off that memo's own hits and
-  /// misses, once proof derivation is memoized.
-  void probeProofDerivation(Type unproven, Type proven);
-
-  /// Drops every filed derivation, because the facts they were derived from
-  /// have moved. Impl selection calls this where it counts a fact write, so a
-  /// pair filed before the write is a first sight again after it.
-  void forgetProofDerivations() { derivationsSinceFactWrite.clear(); }
+  /// A derivation is held only when this run computed the whole of its closure.
+  /// One that exited early on a binding written before it began produces a
+  /// closure nobody computed, so it is counted here and not held.
+  void countProofDerivationMemoHit() { ++proofDerivationMemoHits; }
+  void countProofDerivationMemoMiss() { ++proofDerivationMemoMisses; }
+  void countProofDerivationRecorded() { ++proofDerivationsRecorded; }
+  void countProofDerivationNotRecorded() { ++proofDerivationsNotRecorded; }
 
   /// Files one evidence binding written into some substitution's map, and the
   /// high-water mark of the map that took it.
@@ -591,15 +588,12 @@ private:
   uint64_t candidateScanEntries = 0;
   uint64_t proofVerifications = 0;
   uint64_t proofVerificationEarlyExits = 0;
-  uint64_t proofDerivationFirstSights = 0;
-  uint64_t proofDerivationRepeats = 0;
+  uint64_t proofDerivationMemoHits = 0;
+  uint64_t proofDerivationMemoMisses = 0;
+  uint64_t proofDerivationsRecorded = 0;
+  uint64_t proofDerivationsNotRecorded = 0;
   uint64_t evidenceBindingsRecorded = 0;
   size_t evidenceBindingsMax = 0;
-  /// The verified pairs, kept two ways: the ones still derivable from the facts
-  /// as they stand, and every one this ledger has seen. The first is what a
-  /// memo could serve; the second is the floor it would be measured against.
-  llvm::DenseSet<std::pair<Type, Type>> derivationsSinceFactWrite;
-  llvm::DenseSet<std::pair<Type, Type>> distinctProofDerivations;
 };
 
 //===----------------------------------------------------------------------===//
@@ -662,6 +656,40 @@ public:
 private:
   DemandLedger *previous;
 };
+
+/// Marks work the compiler does only to compare one of its answers against
+/// another, so that nothing here counts it.
+///
+/// A cross-check re-derives what an answer stood in for, or rebuilds what the
+/// caller already holds. That is not work the program asked for: a ledger, a
+/// statistic or a drain that counted it would report the checking and the
+/// compilation together, and every population pinned off this channel would
+/// move with whether a check was armed. Under this scope the sink is
+/// uninstalled and every recording site is silent, so an armed check leaves the
+/// census, the statistics and the drain saying what the compilation did.
+///
+/// Unlike a recording suspension this may open under a demand frame: a check
+/// runs where the answer it checks was given, which is inside whatever the
+/// stage was resolving. The frame is left where it is and goes on naming its
+/// demand afterwards, because this replaces the sink rather than popping what
+/// another sink holds; a frame opened underneath binds no sink and pushes
+/// nothing.
+class DemandCrossCheckScope {
+public:
+  DemandCrossCheckScope();
+  ~DemandCrossCheckScope();
+
+  DemandCrossCheckScope(const DemandCrossCheckScope &) = delete;
+  DemandCrossCheckScope &operator=(const DemandCrossCheckScope &) = delete;
+
+private:
+  DemandLedger *previousLedger;
+  bool previousChecking;
+};
+
+/// True while a cross-check is running on this thread, and its work is
+/// therefore counted nowhere.
+bool isCrossChecking();
 
 /// Names what an enclosing site is working on, so observations recorded
 /// underneath carry a parent, an origin, or both. A rewrite pattern knows where
@@ -781,18 +809,18 @@ void countCandidateScan(size_t entries);
 
 /// Counts what recursive proof verification did, through whatever ledger is
 /// installed: one entry, one exit taken on a binding the caller's own evidence
-/// map already held, and one pair filed against the facts as they stand.
+/// map already held, what the memo of completed derivations answered, and how
+/// much of what was derived it could hold.
 ///
-/// These reach the ledger rather than a statistic because two of them need a
-/// table the ledger's lifetime bounds, and a population split across a
-/// process-wide counter and a per-span table could not be read as one.
+/// These reach the ledger rather than a statistic because the memo is the
+/// stage's and one thread's, so a population split across a process-wide
+/// counter and a per-span one could not be read as one.
 void countProofVerification();
 void countProofVerificationEarlyExit();
-void probeProofDerivation(Type unproven, Type proven);
-
-/// Drops every filed derivation on the installed ledger, because the facts they
-/// were derived from have moved.
-void forgetProofDerivations();
+void countProofDerivationMemoHit();
+void countProofDerivationMemoMiss();
+void countProofDerivationRecorded();
+void countProofDerivationNotRecorded();
 
 /// Counts one evidence binding written into a substitution's map, `bindingsAfter`
 /// being the size of the map that took it.
@@ -855,6 +883,12 @@ inline constexpr const char *demandCensusRespellingDisagreementPrefix =
 /// fault in the program being compiled.
 inline constexpr const char *demandCensusCalleeInstanceDisagreementPrefix =
     "trait-demand-census callee-instance-disagreement";
+
+/// The line a proof derivation produces when the closure held for it and the
+/// closure deriving it again produces differ. Like the lines above it reports a
+/// gap in this dialect's own reasoning and never a fault in the program.
+inline constexpr const char *demandCensusProofDerivationDisagreementPrefix =
+    "trait-demand-census proof-derivation-disagreement";
 
 /// Setting this makes the stage record demands and write the census at its end.
 ///

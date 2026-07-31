@@ -64,6 +64,7 @@ namespace {
 thread_local DemandLedger *ambientLedger = nullptr;
 thread_local unsigned ambientLookupDepth = 0;
 thread_local bool ambientSpeculating = false;
+thread_local bool ambientCrossChecking = false;
 
 const char *engineName(DemandEngine engine) {
   switch (engine) {
@@ -253,14 +254,6 @@ unsigned DemandLedger::getDrainableArms(Type demand) const {
   return it == drainableArms.end() ? 0u : it->second;
 }
 
-void DemandLedger::probeProofDerivation(Type unproven, Type proven) {
-  auto pair = std::make_pair(unproven, proven);
-  distinctProofDerivations.insert(pair);
-  if (derivationsSinceFactWrite.insert(pair).second)
-    ++proofDerivationFirstSights;
-  else
-    ++proofDerivationRepeats;
-}
 
 void DemandLedger::pushFrame(Type demand) {
   Location origin = frames.empty()
@@ -433,17 +426,17 @@ void DemandLedger::dumpCensus() const {
   // A third counter line, over the population this ledger's own span bounds:
   // what recursive proof verification did on the thread that installed this
   // ledger. A verifier's verification runs on a worker thread with no ledger
-  // installed and is not part of it, which is why these are the ledger's own
-  // counts rather than differences of process-wide statistics. The two sight
-  // columns partition the entries that reached the pair filing, and
-  // `distinct-nodes` is the floor those two are read against: it counts every
-  // pair, where a first sight is counted again after each fact write.
+  // installed and is not part of it, and neither is a derivation run to check
+  // one this memo answered, which runs with recording suspended. The two memo
+  // columns partition the entries that reached the memo, and the two held
+  // columns say how much of what was derived the memo could keep.
   os << demandCensusCounterPrefix << " proof"
      << " verifications=" << proofVerifications
      << " verification-early-exits=" << proofVerificationEarlyExits
-     << " verification-first-sights=" << proofDerivationFirstSights
-     << " verification-repeats=" << proofDerivationRepeats
-     << " distinct-nodes=" << distinctProofDerivations.size()
+     << " memo-hits=" << proofDerivationMemoHits
+     << " memo-misses=" << proofDerivationMemoMisses
+     << " derivations-recorded=" << proofDerivationsRecorded
+     << " derivations-not-recorded=" << proofDerivationsNotRecorded
      << " evidence-bindings-recorded=" << evidenceBindingsRecorded
      << " evidence-bindings-max=" << evidenceBindingsMax << "\n";
 
@@ -570,6 +563,8 @@ DemandLedger::checkDrainedKeysSettled(ModuleOp module,
 
 bool isDemandSinkInstalled() { return ambientLedger != nullptr; }
 
+bool isCrossChecking() { return ambientCrossChecking; }
+
 std::optional<Location> currentDemandAnchor() {
   if (!ambientLedger)
     return std::nullopt;
@@ -597,6 +592,17 @@ DemandRecordingSuspension::DemandRecordingSuspension()
   assert((!ambientLedger || ambientLedger->getFrameDepth() == 0) &&
          "a demand frame must not span a suspension");
   ambientLedger = nullptr;
+}
+
+DemandCrossCheckScope::DemandCrossCheckScope()
+    : previousLedger(ambientLedger), previousChecking(ambientCrossChecking) {
+  ambientLedger = nullptr;
+  ambientCrossChecking = true;
+}
+
+DemandCrossCheckScope::~DemandCrossCheckScope() {
+  ambientLedger = previousLedger;
+  ambientCrossChecking = previousChecking;
 }
 
 DemandRecordingSuspension::~DemandRecordingSuspension() {
@@ -636,6 +642,8 @@ SpeculationScope::~SpeculationScope() { ambientSpeculating = previous; }
 
 void recordLookupMiss(Type demand, LookupMissReason reason, DemandOrigin origin,
                       unsigned enclosingDepth) {
+  if (ambientCrossChecking)
+    return;
   if (!recordsToLedger(origin)) {
     ++numVerifierLookupMisses;
     return;
@@ -650,6 +658,8 @@ void recordLookupMiss(Type demand, LookupMissReason reason, DemandOrigin origin,
 }
 
 void recordUnifierAcceptance(Type demand, DemandOrigin origin) {
+  if (ambientCrossChecking)
+    return;
   ++numUnifierAcceptances;
   if (!recordsToLedger(origin) || !isDemandRecordingActive())
     return;
@@ -657,6 +667,8 @@ void recordUnifierAcceptance(Type demand, DemandOrigin origin) {
 }
 
 void recordResolverProjectionMiss(Type demand) {
+  if (ambientCrossChecking)
+    return;
   ++numResolverProjectionMisses;
   if (!isDemandSinkInstalled())
     return;
@@ -665,6 +677,8 @@ void recordResolverProjectionMiss(Type demand) {
 }
 
 void recordObligationNormalizationMiss(Type demand, DemandOrigin origin) {
+  if (ambientCrossChecking)
+    return;
   ++numObligationNormalizationMisses;
   if (!recordsToLedger(origin) || !isDemandRecordingActive())
     return;
@@ -672,23 +686,41 @@ void recordObligationNormalizationMiss(Type demand, DemandOrigin origin) {
                         DemandObservationKind::obligationNormalization());
 }
 
-void countObligationNormalization() { ++numObligationNormalizations; }
+void countObligationNormalization() {
+  if (ambientCrossChecking)
+    return;
+  ++numObligationNormalizations;
+}
 
 void recordWithheldCallClaim(Type demand) {
+  if (ambientCrossChecking)
+    return;
   if (!isDemandSinkInstalled())
     return;
   recordOnAmbientLedger(demand, DemandObservationKind::withheldCallClaim());
 }
 
-void countWithheldCallClaim() { ++numWithheldCallClaims; }
+void countWithheldCallClaim() {
+  if (ambientCrossChecking)
+    return;
+  ++numWithheldCallClaims;
+}
 
 void countModuleFreeProjectionRejection() {
+  if (ambientCrossChecking)
+    return;
   ++numModuleFreeProjectionRejections;
 }
 
-void countModulelessRegionProjection() { ++numModulelessRegionProjections; }
+void countModulelessRegionProjection() {
+  if (ambientCrossChecking)
+    return;
+  ++numModulelessRegionProjections;
+}
 
 void countVerifierObligationNormalization() {
+  if (ambientCrossChecking)
+    return;
   ++numVerifierObligationNormalizations;
 }
 
@@ -717,14 +749,24 @@ void countProofVerificationEarlyExit() {
     ambientLedger->countProofVerificationEarlyExit();
 }
 
-void probeProofDerivation(Type unproven, Type proven) {
+void countProofDerivationMemoHit() {
   if (isDemandRecordingActive())
-    ambientLedger->probeProofDerivation(unproven, proven);
+    ambientLedger->countProofDerivationMemoHit();
 }
 
-void forgetProofDerivations() {
+void countProofDerivationMemoMiss() {
   if (isDemandRecordingActive())
-    ambientLedger->forgetProofDerivations();
+    ambientLedger->countProofDerivationMemoMiss();
+}
+
+void countProofDerivationRecorded() {
+  if (isDemandRecordingActive())
+    ambientLedger->countProofDerivationRecorded();
+}
+
+void countProofDerivationNotRecorded() {
+  if (isDemandRecordingActive())
+    ambientLedger->countProofDerivationNotRecorded();
 }
 
 void countEvidenceBinding(size_t bindingsAfter) {
@@ -733,6 +775,8 @@ void countEvidenceBinding(size_t bindingsAfter) {
 }
 
 void reportUnhookedMint(Type demand) {
+  if (ambientCrossChecking)
+    return;
   ++numUnhookedMints;
   llvm::errs() << demandCensusUnhookedPrefix << " type=" << demand << "\n";
 }
