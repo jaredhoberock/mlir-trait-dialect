@@ -1841,30 +1841,13 @@ FailureOr<SpecializationMap> MethodCallOp::buildParameterSpecialization(ModuleOp
         resolveGroundProjectionsByLookup(actual, *module, origin));
   } else {
     // No evidence, no license: this call never asked what its ground redexes
-    // resolve to, so those demands reach no engine at all.
+    // resolve to, so those demands reach no engine at all. Nothing records
+    // them either: method-call lowering, the only in-stage caller of this
+    // specialization, defers until the call's claim is proven, and a proven
+    // claim carries the license -- so every withheld call is a verifier's, and
+    // a verifier's demand is counted rather than entered in a ledger. The
+    // statistic is the whole of what this site can say.
     countWithheldCallClaim();
-    // A withheld call claim leaves its ground redexes standing, so what is
-    // recorded below reaches the drain and the stage reads it. The drain is
-    // kept whatever the census switch says, so this tests the sink the way the
-    // other standing-demand sites do: gating it on the census would give the
-    // rounds a different demand set under instrumentation than without it.
-    //
-    // No test reaches the recording. Method-call lowering, the only in-stage
-    // caller of this specialization, defers until the call's claim is proven,
-    // and a proven claim carries the license -- so every withheld call is a
-    // verifier's, whose origin does not record, and the statistic above is the
-    // whole of what a test can see.
-    if (isDemandSinkInstalled() && recordsToLedger(origin)) {
-      auto record = [](Type root) {
-        root.walk([](Type sub) {
-          auto proj = dyn_cast<ProjectionType>(sub);
-          if (proj && isMonomorphicType(proj))
-            recordWithheldCallClaim(sub);
-        });
-      };
-      record(formal);
-      record(Type(actual));
-    }
   }
 
   SmallVector<Value> localClaims;

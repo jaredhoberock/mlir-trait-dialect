@@ -9,14 +9,13 @@
 // method's signature specializes to @Broad[i64]::Output on both sides, so the
 // call's comparison is a spelling match that reads nothing.
 //
-// Both census channels report on this row, and they report different things.
-// The statistic counts the withheld call, because a call op's verifier reaches
-// this branch wherever the op is. The ledger's engine column is empty, and one
-// precondition is why: method-call lowering, the only in-stage caller of the
-// specialization, defers until the call's claim is proven, and a proven claim
-// carries the license. So today this engine's population is a verifier's, and
-// the statistic is where it is visible. The ledger column becomes nonzero the
-// day an in-stage caller reaches the specialization with an unproven claim.
+// The statistic is where this is visible, and it is the only place it can be.
+// A call op's verifier reaches this branch wherever the op is, and a verifier's
+// demand is counted rather than entered in a ledger; method-call lowering, the
+// only in-stage caller of the specialization, defers until the call's claim is
+// proven, and a proven claim carries the license. So no stage ever raises this
+// and there is no ledger engine for it -- the statistic says what happened and
+// the summary below says the ledger heard nothing about it.
 
 !T = !trait.poly<0>
 !X = !trait.proj<@Broad[i64], "Output">
@@ -36,6 +35,6 @@ func.func private @caller(%claim: !trait.claim<@Unwrap[!X]>, %value: !X, %spare:
   return %result : !X
 }
 
-// CHECK: trait-demand-census engine withheld-call-claim keys=0 observations=0 real=0 speculative=0 probe-internal=0
+// CHECK-NOT: trait-demand-census engine withheld-call-claim
 // CHECK: trait-demand-census summary keys=1 observations=3 drainable-keys=1
 // CHECK: 1 trait-demand - calls whose claim withheld the license to consult module facts

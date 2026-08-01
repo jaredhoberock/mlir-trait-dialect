@@ -104,7 +104,6 @@ const char *engineName(DemandEngine engine) {
   case DemandEngine::UnifierAcceptance: return "unifier-acceptance";
   case DemandEngine::ResolverProjectionEngine: return "resolver-engine-miss";
   case DemandEngine::ObligationNormalization: return "obligation-normalization";
-  case DemandEngine::WithheldCallClaim: return "withheld-call-claim";
   case DemandEngine::ReadOnlyResolver: return "read-only-resolver";
   }
   return "unknown";
@@ -905,13 +904,6 @@ void countObligationNormalization() {
   ++numObligationNormalizations;
 }
 
-void recordWithheldCallClaim(Type demand) {
-  if (ambientCrossChecking)
-    return;
-  if (!isDemandSinkInstalled())
-    return;
-  recordOnAmbientLedger(demand, DemandObservationKind::withheldCallClaim());
-}
 
 void countWithheldCallClaim() {
   if (ambientCrossChecking)

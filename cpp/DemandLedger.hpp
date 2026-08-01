@@ -150,9 +150,6 @@ enum class DemandEngine : uint8_t {
   /// Obligation normalization left a monomorphic projection standing, having
   /// only one impl's own bindings to read.
   ObligationNormalization,
-  /// A call claim carried no evidence, so the call site never consulted module
-  /// facts for the ground redexes its specialization mints.
-  WithheldCallClaim,
   /// A read of impl selection's recorded facts had none for the demand, and its
   /// caller left the demand spelled as written. The read cannot make selection
   /// run, so what it declines is for a step that can to serve.
@@ -169,7 +166,7 @@ enum class DemandEngine : uint8_t {
 };
 
 /// The number of engines, for the census partition.
-inline constexpr unsigned numDemandEngines = 6;
+inline constexpr unsigned numDemandEngines = 5;
 
 /// Whether an unflagged observation by `engine` is, on its own, evidence that
 /// the demand went unserved.
@@ -183,12 +180,10 @@ inline constexpr unsigned numDemandEngines = 6;
 constexpr bool leavesDemandStanding(DemandEngine engine) {
   switch (engine) {
   // Each of these returns the demanded type spelled as written to a caller that
-  // keeps that spelling: the lookup's replacement declines, the resolver's
-  // engine fails and its caller leaves the projection alone, and a withheld
-  // call claim never asks in the first place.
+  // keeps that spelling: the lookup's replacement declines, and the resolver's
+  // engine fails and its caller leaves the projection alone.
   case DemandEngine::GroundProjectionLookup:
   case DemandEngine::ResolverProjectionEngine:
-  case DemandEngine::WithheldCallClaim:
   // A read of the recorded facts returns what it was asked about spelled as
   // written, and its caller declines the rewrite it was going to make. What it
   // declined is exactly what a step that may make selection run must serve.
@@ -270,9 +265,6 @@ public:
   }
   static DemandObservationKind obligationNormalization() {
     return of(DemandEngine::ObligationNormalization, std::nullopt);
-  }
-  static DemandObservationKind withheldCallClaim() {
-    return of(DemandEngine::WithheldCallClaim, std::nullopt);
   }
   static DemandObservationKind readOnlyResolver() {
     return of(DemandEngine::ReadOnlyResolver, std::nullopt);
@@ -1024,8 +1016,6 @@ void countObligationNormalization();
 
 /// Records a ground redex a call site never asked about because its claim
 /// carried no evidence.
-void recordWithheldCallClaim(Type demand);
-
 /// Counts one call whose claim withheld the license to consult module facts.
 void countWithheldCallClaim();
 
