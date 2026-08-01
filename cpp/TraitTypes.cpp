@@ -842,6 +842,37 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
   return success();
 }
 
+bool mentionsMonomorphicProjection(Type ty) {
+  bool found = false;
+  DenseSet<Type> seen;
+
+  auto visit = [&](Type node, auto &visitRef) -> void {
+    if (found || !seen.insert(node).second)
+      return;
+    if (auto projection = dyn_cast<ProjectionType>(node)) {
+      if (isMonomorphicType(projection)) {
+        found = true;
+        return;
+      }
+      for (Type arg : projection.getTraitApplication().getTypeArgs())
+        visitRef(arg, visitRef);
+      for (Type arg : projection.getAssocTypeArgs())
+        visitRef(arg, visitRef);
+    } else if (auto claim = dyn_cast<ClaimType>(node)) {
+      for (Type arg : claim.getTraitApplication().getTypeArgs())
+        visitRef(arg, visitRef);
+    }
+
+    node.walkImmediateSubElements(
+        /*walkAttrsFn=*/[](Attribute) {},
+        /*walkTypesFn=*/[&](Type subTy) { visitRef(subTy, visitRef); });
+  };
+
+  visit(ty, visit);
+  return found;
+}
+
+
 LogicalResult verifyAndRecordProof(
     ClaimType unproven,
     ClaimType proven,

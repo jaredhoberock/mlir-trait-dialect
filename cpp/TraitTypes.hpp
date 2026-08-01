@@ -1006,6 +1006,26 @@ inline SmallVector<GenericTypeInterface,4> getGenericTypesIn(Type ty) {
   return result;
 }
 
+/// Whether `ty` spells a projection whose resolution is determined but not yet
+/// written: a `ProjectionType` with no type variable left inside it.
+///
+/// A step that reads a spelling and cannot revisit what it read asks this
+/// first. Mangling a name is the case that matters: the name is computed from
+/// the spelling and nothing later recomputes it, so a name mangled while a
+/// projection still stands is a name for a type the module no longer has once
+/// the projection resolves.
+///
+/// The test is narrower than groundness on purpose. A type argument carrying a
+/// proven claim is not ground and never becomes ground, so a step deferring on
+/// groundness would defer forever; what it must wait for is the projection
+/// alone. Claim and projection types carry their trait application as an
+/// attribute, so this descends through those arguments explicitly rather than
+/// relying only on the structural type walk.
+///
+/// Defined out of line so that a dialect asking it links one symbol rather than
+/// the type identities this dialect's own library carries.
+bool mentionsMonomorphicProjection(Type ty);
+
 /// Verify that a `proven` claim soundly proves the (possibly still polymorphic)
 /// `unproven` claim and extend `subst` with a mapping when appropriate.
 ///
