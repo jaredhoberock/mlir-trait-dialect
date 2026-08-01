@@ -410,9 +410,9 @@ enum class DerivationEntry : uint8_t {
   MethodCallSpecialization,
   /// A function call's parameter specialization, doing the same.
   FuncCallSpecialization,
-  /// The call substitution's close, which asks once per type per fixed-point
-  /// iteration.
-  SubstitutionClose,
+  /// The call substitution's evidence walk, which asks once per type per
+  /// fixed-point iteration of the factory that builds it.
+  CallSubstitutionEvidence,
   /// The impl specialization a method call's callee is cloned under, verifying
   /// the self proof the call names.
   ImplSelfProof,
@@ -587,10 +587,28 @@ public:
   void countProofClosureUnanswered() { ++proofClosuresUnanswered; }
   void countProofDerivationRecovered() { ++proofDerivationsRecovered; }
 
+  /// Splits the asks the record could not answer by whether impl selection had
+  /// recorded a proof for the application asked about.
+  ///
+  /// An ask the record cannot answer is a pair nothing has derived yet, and the
+  /// two columns say whether anything could have: a proof this stage recorded
+  /// was minted by an arm that could in principle have derived its closure
+  /// then, and a proof it did not record came in with the module and reaches no
+  /// arm at all. The two partition the unanswered asks a call site makes.
+  void countFirstAskUnderRecordedProof() { ++firstAsksUnderRecordedProof; }
+  void countFirstAskUnderUnrecordedProof() { ++firstAsksUnderUnrecordedProof; }
+
   /// Files one pair the record withdrew because two derivations of it reached
   /// two closures, so that the population it therefore answers for no longer is
   /// visible rather than silent.
   void countProofClosureWithdrawn() { ++proofClosuresWithdrawn; }
+
+  /// Files one node the record answered for, which therefore derived nothing.
+  ///
+  /// A node is either replayed from the record or derived, so this and the
+  /// derivations recorded below partition the nodes a derivation reaches once
+  /// its spelling-pair memo has missed.
+  void countProofClosureReplayed() { ++proofClosuresReplayed; }
 
   /// Files one derivation of a pair the record already held.
   ///
@@ -786,8 +804,11 @@ private:
   uint64_t proofDerivationsNotRecorded = 0;
   uint64_t proofClosuresAnswered = 0;
   uint64_t proofClosuresUnanswered = 0;
+  uint64_t firstAsksUnderRecordedProof = 0;
+  uint64_t firstAsksUnderUnrecordedProof = 0;
   uint64_t proofDerivationsRecovered = 0;
   uint64_t proofClosuresWithdrawn = 0;
+  uint64_t proofClosuresReplayed = 0;
   uint64_t recordedPairsRederived = 0;
   uint64_t evidenceBindingsRecorded = 0;
   size_t evidenceBindingsMax = 0;
@@ -1043,9 +1064,17 @@ void countProofClosureAnswered();
 void countProofClosureUnanswered();
 void countProofDerivationRecovered();
 
+/// Splits the asks the record could not answer by whether impl selection had
+/// recorded a proof for the application asked about.
+void countFirstAskUnderRecordedProof();
+void countFirstAskUnderUnrecordedProof();
+
 /// Counts one pair the record of per-application closures withdrew because two
 /// derivations of it reached two closures.
 void countProofClosureWithdrawn();
+
+/// Counts one node the record of per-application closures answered for.
+void countProofClosureReplayed();
 
 /// Counts one derivation of a pair the record already held.
 void countRecordedPairRederived();

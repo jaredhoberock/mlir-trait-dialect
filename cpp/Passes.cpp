@@ -618,65 +618,110 @@ void CallSubstitution::discoverProjectionBindings(
   }
 }
 
-/// Record proven-claim bindings visible after applying the current
-/// substitution.
-LogicalResult CallSubstitution::discoverEvidenceBindings(
-    TypeRange types, ModuleOp module, ProofDerivationMemo *memo,
+/// Counts what the record of per-pair closures answers for the proven claims
+/// `ty` spells, and what class each ask it cannot answer falls in.
+///
+/// This is the ask a reader that must not derive makes: one per proven claim,
+/// in the grade the record is keyed in, because a reader resolves the
+/// projections in its spelling before it asks. An ask the record cannot answer
+/// is a pair no derivation has reached before, and the two classes of those
+/// differ in whether anything could have reached it earlier: a claim whose
+/// application impl selection recorded a proof for was proven by an arm of the
+/// stage, and one it did not was proven before the stage began and reaches no
+/// arm at all. Normalizing to ask costs a lookup the compilation does not
+/// otherwise do, so this runs only where someone is reading the answer.
+static void countCallSiteProofAsks(Type ty, ModuleOp module,
+                                   const ReadOnlyImplResolver &reading) {
+  if (!isDemandRecordingActive())
+    return;
+  const ProofClosureRecord &closures = reading.getDerivationMemo().getClosures();
+  ty.walk([&](Type node) {
+    auto claim = dyn_cast<ClaimType>(node);
+    if (!claim || !claim.isProven())
+      return;
+    bool answered = false;
+    {
+      // The normalization this asking needs is work the compilation does not
+      // do, so nothing counts it.
+      DemandCrossCheckScope measuring;
+      auto normalized = [&](ClaimType spelling) {
+        return cast<ClaimType>(resolveGroundProjectionsByLookup(
+            Type(spelling), module, DemandOrigin::ProofRecording));
+      };
+      answered = closures.lookup(normalized(claim.asUnproven()),
+                                 normalized(claim)) != nullptr;
+    }
+    if (answered) {
+      countProofClosureAnswered();
+      return;
+    }
+    countProofClosureUnanswered();
+    if (reading.getRecordedProof(claim.getTraitApplication()))
+      countFirstAskUnderRecordedProof();
+    else
+      countFirstAskUnderUnrecordedProof();
+  });
+}
+
+/// Read the proven-claim bindings visible after applying the current
+/// substitution off the record, deriving only a pair the record has no answer
+/// for.
+LogicalResult CallSubstitution::readEvidenceBindings(
+    TypeRange types, ModuleOp module, const ReadOnlyImplResolver &reading,
     llvm::function_ref<InFlightDiagnostic()> err) {
   for (Type ty : types) {
     Type rewritten = apply(ty);
-    // Closing a call substitution needs the stage's resolver, so this walk
+    // Building a call substitution needs the stage's resolver, so this walk
     // runs nowhere else and its demand is the stage's.
-    countDerivationEntry(DerivationEntry::SubstitutionClose);
+    countDerivationEntry(DerivationEntry::CallSubstitutionEvidence);
+    countCallSiteProofAsks(rewritten, module, reading);
     if (failed(recordProofBindingsIn(rewritten, module, evidenceBindings,
-                                     DemandOrigin::ProofRecording, memo, err)))
+                                     DemandOrigin::ProofRecording,
+                                     &reading.getDerivationMemo(), err)))
       return failure();
   }
   return success();
 }
 
-/// Close this substitution under projection and proof bindings.
-///
-/// The initial call substitution contains direct polymorphic-type bindings and
-/// proof spellings visible at the call site. Projection bindings can rewrite
-/// those spellings, which can reveal new proof bindings; newly recorded proof
-/// bindings may in turn expose projections in their normalized type. Iterate
-/// until no new component bindings are discovered so call lowering does not
-/// depend on a particular phase order.
-///
-/// The fixed-point loop relies on disjoint component key kinds and monotone
-/// binding growth. If closing fails, discard this substitution; partial
-/// evidence bindings may have been recorded before the failing obligation.
-LogicalResult CallSubstitution::close(
-    TypeRange operandTypes, TypeRange resultTypes, FunctionType formalTy,
-    ModuleOp module, const ReadOnlyImplResolver &reading,
+FailureOr<CallSubstitution> CallSubstitution::forCall(
+    SpecializationMap specialization, TypeRange operandTypes,
+    TypeRange resultTypes, FunctionType formalTy, ModuleOp module,
+    const ReadOnlyImplResolver &reading,
     llvm::function_ref<InFlightDiagnostic()> err, bool *unservedProjection) {
+  CallSubstitution subst(std::move(specialization));
+
+  // A projection over a claim argument is spelled one way while the argument is
+  // an obligation and another once it names its proof, so the proofs this call
+  // spells are read before any projection is put to the read.
+  if (failed(subst.readEvidenceBindings(operandTypes, module, reading, err)))
+    return failure();
+  if (failed(subst.readEvidenceBindings(resultTypes, module, reading, err)))
+    return failure();
+
   bool changed;
   bool declined;
   do {
     // The component maps grow monotonically; `bindingCount()` is the raw component sum
     // so it is not affected by fixed-point normalization of the merged map.
-    size_t before = bindingCount();
+    size_t before = subst.bindingCount();
 
     // A projection the read could not answer this time round may be answered
     // by the bindings this iteration goes on to add, so only the last
     // iteration's declines say what this substitution is missing.
     declined = false;
-    discoverProjectionBindings(resultTypes, reading, declined);
-    discoverProjectionBindings(operandTypes, reading, declined);
+    subst.discoverProjectionBindings(resultTypes, reading, declined);
+    subst.discoverProjectionBindings(operandTypes, reading, declined);
     if (formalTy) {
-      discoverProjectionBindings(formalTy.getInputs(), reading, declined);
-      discoverProjectionBindings(formalTy.getResults(), reading, declined);
+      subst.discoverProjectionBindings(formalTy.getInputs(), reading, declined);
+      subst.discoverProjectionBindings(formalTy.getResults(), reading, declined);
     }
 
-    if (failed(discoverEvidenceBindings(operandTypes, module,
-                                        &reading.getDerivationMemo(), err)))
+    if (failed(subst.readEvidenceBindings(operandTypes, module, reading, err)))
       return failure();
-    if (failed(discoverEvidenceBindings(resultTypes, module,
-                                        &reading.getDerivationMemo(), err)))
+    if (failed(subst.readEvidenceBindings(resultTypes, module, reading, err)))
       return failure();
 
-    changed = bindingCount() != before;
+    changed = subst.bindingCount() != before;
   } while (changed);
 
   // A substitution that cannot spell one of the call's projections would
@@ -685,7 +730,9 @@ LogicalResult CallSubstitution::close(
   // recorded, so this call lowers in the round that serves it.
   if (unservedProjection)
     *unservedProjection = declined;
-  return success(!declined);
+  if (declined)
+    return failure();
+  return subst;
 }
 
 namespace {
@@ -840,23 +887,25 @@ specializeCallTarget(CallOpT op, PatternRewriter &rewriter,
   // Pass time: pass the module so binding a generic mid-solve resolves the
   // ground redex it mints (the module-capable comparator, not the verifier's
   // module-free one).
-  auto subst = [&] {
+  auto specialization = [&] {
     CallLoweringSpan unifying(CallLoweringPhase::Unification);
-    return op.buildParameterSpecialization(module,
-                                           &reading.getDerivationMemo());
+    return op.buildParameterSpecialization(module);
   }();
-  if (failed(subst)) {
+  if (failed(specialization)) {
     (void)rewriter.notifyMatchFailure(op, "couldn't build substitution");
     return failure();
   }
 
   auto errFn = [&] { return op.emitOpError(); };
-  {
+  auto subst = [&] {
     CallLoweringSpan closing(CallLoweringPhase::Closure);
-    if (failed(subst->close(op.getOperandTypes(), op.getResultTypes(), formalTy,
-                            module, reading, errFn, &unservedProjection)))
-      return failure();
-  }
+    return CallSubstitution::forCall(std::move(*specialization),
+                                     op.getOperandTypes(), op.getResultTypes(),
+                                     formalTy, module, reading, errFn,
+                                     &unservedProjection);
+  }();
+  if (failed(subst))
+    return failure();
 
   SpecializedCallTarget target;
   for (Type r : op.getResultTypes()) {

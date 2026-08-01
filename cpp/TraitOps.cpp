@@ -1778,11 +1778,10 @@ LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable)
   // check that we can build a consistent substitution for this method call.
   // The verifier compares spellings with the module-free comparator: no
   // ground-redex resolution, so an unresolved crossing is a strict mismatch.
-  return buildParameterSpecialization(/*unifyModule=*/ModuleOp(),
-                                      /*memo=*/nullptr, errFn);
+  return buildParameterSpecialization(/*unifyModule=*/ModuleOp(), errFn);
 }
 
-FailureOr<CallSubstitution> MethodCallOp::buildParameterSpecialization(ModuleOp unifyModule, ProofDerivationMemo *memo, llvm::function_ref<InFlightDiagnostic()> err) {
+FailureOr<SpecializationMap> MethodCallOp::buildParameterSpecialization(ModuleOp unifyModule, llvm::function_ref<InFlightDiagnostic()> err) {
   auto module = getModule(err);
   if (failed(module)) return failure();
 
@@ -1923,15 +1922,21 @@ FailureOr<CallSubstitution> MethodCallOp::buildParameterSpecialization(ModuleOp 
   }
   normalizeSubstitutionInPlace(merged);
 
-  CallSubstitution subst(SpecializationMap::fromTypeMap(merged));
-  if (recordsToLedger(origin))
-    countDerivationEntry(DerivationEntry::MethodCallSpecialization);
-  if (failed(recordProofBindingsIn(originalActual, *module,
-                                   subst.getEvidenceBindings(), origin, memo,
-                                   err)))
-    return failure();
+  // The proofs this call's actual signature spells are bound where the call is
+  // lowered: the factory that closes the substitution walks the same spellings
+  // and reads them off the record. A verifier has no lowering behind it, so it
+  // checks them here or nowhere, and it runs on a worker thread with no memo of
+  // its own to serve them from.
+  if (!unifyModule) {
+    EvidenceBindings evidence;
+    if (recordsToLedger(origin))
+      countDerivationEntry(DerivationEntry::MethodCallSpecialization);
+    if (failed(recordProofBindingsIn(originalActual, *module, evidence, origin,
+                                     /*memo=*/nullptr, err)))
+      return failure();
+  }
 
-  return subst;
+  return SpecializationMap::fromTypeMap(merged);
 }
 
 ImplOp MethodCallOp::getProvenImpl() {
@@ -2087,11 +2092,10 @@ LogicalResult FuncCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
   // check that we can build a substitution. The verifier compares spellings
   // with the module-free comparator (no ground-redex resolution).
-  return buildParameterSpecialization(/*unifyModule=*/ModuleOp(),
-                                      /*memo=*/nullptr, errFn);
+  return buildParameterSpecialization(/*unifyModule=*/ModuleOp(), errFn);
 }
 
-FailureOr<CallSubstitution> FuncCallOp::buildParameterSpecialization(ModuleOp unifyModule, ProofDerivationMemo *memo, llvm::function_ref<InFlightDiagnostic()> err) {
+FailureOr<SpecializationMap> FuncCallOp::buildParameterSpecialization(ModuleOp unifyModule, llvm::function_ref<InFlightDiagnostic()> err) {
   auto module = getModule(err);
   if (failed(module)) return failure();
 
@@ -2108,21 +2112,27 @@ FailureOr<CallSubstitution> FuncCallOp::buildParameterSpecialization(ModuleOp un
   auto spec = buildSpecialization(formal, actual, unifyModule, err);
   if (failed(spec)) return failure();
 
-  CallSubstitution subst(*spec);
   // `unifyModule` says which caller this is, the same discriminator the
   // boundary resolution above reads: a verifier passes none, a pass passes the
   // module.
   DemandOrigin origin = unifyModule
                             ? DemandOrigin::CallSiteSpecialization
                             : DemandOrigin::CallSignatureVerification;
-  if (recordsToLedger(origin))
-    countDerivationEntry(DerivationEntry::FuncCallSpecialization);
-  if (failed(recordProofBindingsIn(actual, *module,
-                                   subst.getEvidenceBindings(), origin, memo,
-                                   err)))
-    return failure();
+  // The proofs this call's actual signature spells are bound where the call is
+  // lowered: the factory that closes the substitution walks the same spellings
+  // and reads them off the record. A verifier has no lowering behind it, so it
+  // checks them here or nowhere, and it runs on a worker thread with no memo of
+  // its own to serve them from.
+  if (!unifyModule) {
+    EvidenceBindings evidence;
+    if (recordsToLedger(origin))
+      countDerivationEntry(DerivationEntry::FuncCallSpecialization);
+    if (failed(recordProofBindingsIn(actual, *module, evidence, origin,
+                                     /*memo=*/nullptr, err)))
+      return failure();
+  }
 
-  return subst;
+  return *spec;
 }
 
 /// The name the instance of `op`'s callee carries, given the substitution that

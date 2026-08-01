@@ -518,14 +518,39 @@ private:
 
 /// CallSubstitution: SpecializationMap + ProjectionBindings + EvidenceBindings.
 ///
-/// The complete set of type rewrites needed to lower one call site.
+/// The complete set of type rewrites needed to lower one call site, closed under
+/// the projections and the proofs those rewrites expose.
+///
+/// The factory below is the only way to make one, so a substitution that exists
+/// is one the read closed: every monomorphic projection the call spells is bound
+/// to what impl selection settled for it, and every proven claim it spells is
+/// bound together with everything that claim's proof binds underneath.
 class CallSubstitution {
 public:
-  explicit CallSubstitution(SpecializationMap specialization)
-      : specialization(std::move(specialization)) {}
+  /// The closed substitution that lowers a call whose operands and results are
+  /// `operandTypes` and `resultTypes` and whose callee signature is `formalTy`,
+  /// starting from the parameter specialization the call's unification produced.
+  ///
+  /// The components expose bindings for one another -- a projection binding can
+  /// rewrite a spelling into one that names a proof, and a proof binding can
+  /// expose a projection in the claim it names -- so all three are chased
+  /// together until no component grows. Every proven claim is read off the record
+  /// of what deriving each pair produces, and only a pair no derivation has
+  /// reached before is derived, through the same prover proof birth uses.
+  ///
+  /// `unservedProjection`, when given, receives whether closing failed because a
+  /// projection is one the read cannot answer, as against an obligation that
+  /// could not be recorded. The two failures differ in what would change them:
+  /// the first is a function of the facts and of the types this call spells, the
+  /// second has already reported itself.
+  static FailureOr<CallSubstitution>
+  forCall(SpecializationMap specialization, TypeRange operandTypes,
+          TypeRange resultTypes, FunctionType formalTy, ModuleOp module,
+          const ReadOnlyImplResolver &reading,
+          llvm::function_ref<InFlightDiagnostic()> err = nullptr,
+          bool *unservedProjection = nullptr);
 
   const SpecializationMap &getSpecialization() const { return specialization; }
-  EvidenceBindings &getEvidenceBindings() { return evidenceBindings; }
 
   // The components can expose bindings for one another, so call substitutions
   // must chase to a fixed point.
@@ -542,24 +567,17 @@ public:
     normalizeSubstitutionInPlace(result);
     return result;
   }
-  /// `unservedProjection`, when given, receives whether closing failed because
-  /// a projection is one the read cannot answer, as against an obligation that
-  /// could not be recorded. The two failures differ in what would change them:
-  /// the first is a function of the facts and of the types this call spells,
-  /// the second has already reported itself.
-  LogicalResult close(TypeRange operandTypes, TypeRange resultTypes,
-                      FunctionType formalTy, ModuleOp module,
-                      const ReadOnlyImplResolver &reading,
-                      llvm::function_ref<InFlightDiagnostic()> err = nullptr,
-                      bool *unservedProjection = nullptr);
 
 private:
+  explicit CallSubstitution(SpecializationMap specialization)
+      : specialization(std::move(specialization)) {}
+
   void discoverProjectionBindings(TypeRange types,
                                   const ReadOnlyImplResolver &reading,
                                   bool &declined);
-  LogicalResult discoverEvidenceBindings(
-      TypeRange types, ModuleOp module, ProofDerivationMemo *memo,
-      llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+  LogicalResult readEvidenceBindings(
+      TypeRange types, ModuleOp module, const ReadOnlyImplResolver &reading,
+      llvm::function_ref<InFlightDiagnostic()> err);
 
   size_t bindingCount() const {
     return specialization.bindingCount() + projectionBindings.bindingCount() +

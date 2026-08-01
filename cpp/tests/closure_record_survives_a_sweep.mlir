@@ -22,6 +22,11 @@
 // So two distinct pairs are asked and exactly one ask of each goes unanswered.
 // A transcription that moved a position's grade would leave the @P pair
 // unanswered twice.
+//
+// The second ask of each pair is replayed off the record rather than derived
+// again, which is what the two replays and the absent re-derivation below say:
+// a derivation reaching a pair the record holds writes the closure the record
+// holds and stops there.
 
 trait.trait @P[!trait.poly<0>] {}
 trait.impl @P_impl for @P[!trait.poly<1>] {}
@@ -69,3 +74,5 @@ func.func @user2(%x: i32) -> i32 {
 // CHECK-SAME: derivations-not-recorded=0
 // CHECK-SAME: closures-unanswered=2
 // CHECK-SAME: closures-withdrawn=0
+// CHECK-SAME: closures-replayed=2
+// CHECK-SAME: re-derivations=0

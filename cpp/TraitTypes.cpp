@@ -722,6 +722,23 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
     unproven = cast<ClaimType>(normalizedUnproven);
   }
 
+  // What deriving one settled pair produces is a fact about the proof standing
+  // over it and not about the caller that reached it, so a pair the record
+  // already holds is replayed here instead of derived a second time. This is
+  // the node every reader shares: a call site asking about a proven claim, and
+  // an obligation underneath some other derivation, both arrive at this pair in
+  // the grade the record is keyed in, and both get the closure the derivation
+  // that ran first wrote. Replaying it writes exactly the bindings deriving
+  // would write, including the pair's own, so nothing below needs to run.
+  if (memo) {
+    if (const auto *closure = memo->getClosures().lookup(unproven, proven)) {
+      countProofClosureReplayed();
+      checkHeldClosureAgrees(unproven, proven, module, origin, *closure);
+      derived.take(*closure);
+      return replayClosure(*closure, bindings, err);
+    }
+  }
+
   // early exit if we've already recorded this obligation. The same proof may
   // be observed through multiple equivalent claim spellings, so validate proof
   // coherence instead of requiring syntactic claim equality.
@@ -865,31 +882,6 @@ LogicalResult recordProofBindingsIn(
 
     if (auto claim = dyn_cast<ClaimType>(node)) {
       if (claim.isProven()) {
-        // This is the ask a reader that must not derive makes: one per proven
-        // claim the walked type spells. What the record of per-pair closures
-        // would answer for it is counted here, in the grade the record is keyed
-        // in, because a reader resolves the projections in its spelling before
-        // it asks. Normalizing to ask costs a lookup, so it is done only where
-        // someone is reading the answer.
-        if (memo && isDemandRecordingActive()) {
-          bool answered = false;
-          {
-            // The normalization this asking needs is work the compilation does
-            // not do, so nothing counts it.
-            DemandCrossCheckScope measuring;
-            auto normalized = [&](ClaimType spelling) {
-              return cast<ClaimType>(resolveGroundProjectionsByLookup(
-                  Type(spelling), module, origin));
-            };
-            answered = memo->getClosures().lookup(
-                           normalized(claim.asUnproven()),
-                           normalized(claim)) != nullptr;
-          }
-          if (answered)
-            countProofClosureAnswered();
-          else
-            countProofClosureUnanswered();
-        }
         if (failed(verifyAndRecordProof(claim.asUnproven(), claim, module,
                                         bindings, origin, memo, err)))
           status = failure();

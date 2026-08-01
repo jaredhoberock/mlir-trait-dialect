@@ -84,7 +84,7 @@ const char *derivationEntryName(DerivationEntry entry) {
   switch (entry) {
   case DerivationEntry::MethodCallSpecialization: return "method-call";
   case DerivationEntry::FuncCallSpecialization: return "func-call";
-  case DerivationEntry::SubstitutionClose: return "close";
+  case DerivationEntry::CallSubstitutionEvidence: return "call-substitution";
   case DerivationEntry::ImplSelfProof: return "impl-self-proof";
   }
   return "unknown";
@@ -514,7 +514,11 @@ void DemandLedger::dumpCensus() const {
      << " derivations-recovered=" << proofDerivationsRecovered
      << " closures-answered=" << proofClosuresAnswered
      << " closures-unanswered=" << proofClosuresUnanswered
+     << " first-asks-under-a-recorded-proof=" << firstAsksUnderRecordedProof
+     << " first-asks-under-an-unrecorded-proof="
+     << firstAsksUnderUnrecordedProof
      << " closures-withdrawn=" << proofClosuresWithdrawn
+     << " closures-replayed=" << proofClosuresReplayed
      << " re-derivations=" << recordedPairsRederived
      << " evidence-bindings-recorded=" << evidenceBindingsRecorded
      << " evidence-bindings-max=" << evidenceBindingsMax << "\n";
@@ -990,9 +994,24 @@ void countProofDerivationRecovered() {
     ambientLedger->countProofDerivationRecovered();
 }
 
+void countFirstAskUnderRecordedProof() {
+  if (isDemandRecordingActive())
+    ambientLedger->countFirstAskUnderRecordedProof();
+}
+
+void countFirstAskUnderUnrecordedProof() {
+  if (isDemandRecordingActive())
+    ambientLedger->countFirstAskUnderUnrecordedProof();
+}
+
 void countProofClosureWithdrawn() {
   if (isDemandRecordingActive())
     ambientLedger->countProofClosureWithdrawn();
+}
+
+void countProofClosureReplayed() {
+  if (isDemandRecordingActive())
+    ambientLedger->countProofClosureReplayed();
 }
 
 void countRecordedPairRederived() {
