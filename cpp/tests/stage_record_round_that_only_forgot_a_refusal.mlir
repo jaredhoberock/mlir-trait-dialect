@@ -46,11 +46,11 @@ func.func @asks() -> !trait.proj<@Other[i64], "X"> {
   return %r : !trait.proj<@Other[i64], "X">
 }
 
-// CHECK: trait-stage-record round index=2
+// CHECK: trait-stage-record round index=1
 // CHECK-SAME: served=1
 // CHECK-SAME: instantiated=yes
-// CHECK-NOT: trait-stage-record rewrites driver=instantiate-monomorphs round=3
-// CHECK: trait-stage-record round index=3
+// CHECK-NOT: trait-stage-record rewrites driver=instantiate-monomorphs round=2
+// CHECK: trait-stage-record round index=2
 // CHECK-SAME: collected=0
 // CHECK-SAME: served=0 declined=0 deferred=0 inserted-serving-demands=0
 // CHECK-SAME: respelled-positions=0 refusals-forgotten=1

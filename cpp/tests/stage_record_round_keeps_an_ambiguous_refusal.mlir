@@ -44,11 +44,11 @@ func.func @main() -> (!trait.proj<@Gen[i64], "A">, !trait.proj<@Res[i64], "X">) 
   return %r, %s : !trait.proj<@Gen[i64], "A">, !trait.proj<@Res[i64], "X">
 }
 
-// CHECK: trait-stage-record round index=2
+// CHECK: trait-stage-record round index=1
 // CHECK-SAME: collected=2 no-candidate-impl=0 multiple-candidate-impls=0 other-arms=0 without-arm=2
 // CHECK-SAME: served=1 declined=1 deferred=0
 // CHECK-SAME: refusals-forgotten=0 refusals-kept=0
-// CHECK: trait-stage-record round index=3
+// CHECK: trait-stage-record round index=2
 // CHECK-SAME: served=0 declined=0 deferred=0
 // CHECK-SAME: refusals-forgotten=0 refusals-kept=1 refusals-overturned=0 refusals-re-earned=0
 // CHECK: trait-stage-record digest value={{.*}} selected-impls=1 refusals-no-candidate=0 refusals-ambiguous=1

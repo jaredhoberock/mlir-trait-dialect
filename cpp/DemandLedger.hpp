@@ -402,8 +402,17 @@ enum class DemandSkip : uint8_t {
 ///
 /// The two sides carry their own skip because they answer different questions;
 /// each caller states which it is asking.
-DenseSet<Type> demandsSpelledIn(ModuleOp module, bool inAttributes,
-                                DemandSkip projections, DemandSkip claims);
+/// The result is in the order the walk found them, so a caller putting these to
+/// impl selection asks in an order one run repeats.
+///
+/// `origins`, when given, receives where each demand was first found spelled.
+/// A caller that puts one to impl selection names that place while it does, so
+/// what the ask raises underneath is attributed to the op carrying the spelling
+/// rather than to the module.
+llvm::SetVector<Type> demandsSpelledIn(ModuleOp module, bool inAttributes,
+                                       DemandSkip projections,
+                                       DemandSkip claims,
+                                       DenseMap<Type, Location> *origins = nullptr);
 
 //===----------------------------------------------------------------------===//
 // Lowering a call

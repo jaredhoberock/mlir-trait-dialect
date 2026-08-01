@@ -6,11 +6,13 @@
 // Two impls bind @Gen[i64], so the read of impl selection's recorded facts that
 // the instantiation driver holds has no answer for @Gen[i64]::A and leaves it
 // spelled as written, and so does the module lookup the call puts it to next:
-// resolving needs exactly one impl to read. The arm the lookup names is what
-// tells this apart from a trait with no impl at all, and the round then puts
-// the demand to selection, where two satisfiable candidates is the refusal no
-// later fact overturns -- candidates are only ever appended -- so the demand
-// leaves the drain refused where a missing impl would have left it deferred.
+// resolving needs exactly one impl to read. The first round collects it off the
+// module before either of those has named an arm, and puts it to selection,
+// where two satisfiable candidates is the refusal no later fact overturns --
+// candidates are only ever appended -- so the demand leaves the drain refused
+// where a missing impl would have left it deferred. The arm the census records
+// is the lookup's, raised afterwards, and it is what tells this apart from a
+// trait with no impl at all.
 
 !T = !trait.poly<0>
 
@@ -38,8 +40,8 @@ func.func @main() -> !trait.proj<@Gen[i64], "A"> {
   return %r : !trait.proj<@Gen[i64], "A">
 }
 
-// CHECK: trait-stage-record round index=2
-// CHECK-SAME: collected=1 no-candidate-impl=0 multiple-candidate-impls=1 other-arms=0 without-arm=0
+// CHECK: trait-stage-record round index=1
+// CHECK-SAME: collected=1 no-candidate-impl=0 multiple-candidate-impls=0 other-arms=0 without-arm=1
 // CHECK-SAME: served=0 declined=1 deferred=0
 // CHECK: trait-demand-census demand flags=real drainable=yes observations=5 depth=0
 // CHECK-SAME: kinds=lookup-miss,unifier-acceptance,read-only-resolver arms=multiple-candidate-impls

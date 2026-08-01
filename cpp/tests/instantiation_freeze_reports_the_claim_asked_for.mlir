@@ -13,6 +13,13 @@
 // for one, and the freeze names the claim and the span whose contract the ask
 // broke.
 //
+// @declares carries no body on purpose. A round collects the claims the module
+// spells in a result type or a block argument, and a function that only declares
+// itself has neither -- its claim lives in the function type alone, which is
+// where the pattern reads it. So this is an ask about an application no round
+// ever put to selection, which is the only kind that can still reach a generator
+// from under the driver.
+//
 // The second line is the same module through the compiler's own pipeline, where
 // no pattern asks, so the freeze is silent and the stage completes.
 
@@ -20,9 +27,7 @@
 
 trait.trait @Gen[!T] {}
 
-func.func private @declares(%c: !trait.claim<@Gen[i64]>, %x: !T) -> !T {
-  return %x : !T
-}
+func.func private @declares(!trait.claim<@Gen[i64]>, !T) -> !T
 
 func.func @main() -> i64 {
   %x = arith.constant 1 : i64

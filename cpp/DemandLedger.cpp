@@ -557,9 +557,11 @@ void DemandLedger::reportCallLoweringProfile() const {
   os << "\n";
 }
 
-DenseSet<Type> demandsSpelledIn(ModuleOp module, bool inAttributes,
-                                DemandSkip projections, DemandSkip claims) {
-  DenseSet<Type> spelled;
+llvm::SetVector<Type> demandsSpelledIn(ModuleOp module, bool inAttributes,
+                                       DemandSkip projections,
+                                       DemandSkip claims,
+                                       DenseMap<Type, Location> *origins) {
+  llvm::SetVector<Type> spelled;
   auto skips = [](DemandSkip discipline, Operation *op) {
     if (discipline == DemandSkip::Nothing)
       return false;
@@ -572,15 +574,21 @@ DenseSet<Type> demandsSpelledIn(ModuleOp module, bool inAttributes,
     return false;
   };
 
+  Operation *spellingOp = nullptr;
+  auto note = [&](Type demand) {
+    if (spelled.insert(demand) && origins && spellingOp)
+      origins->try_emplace(demand, spellingOp->getLoc());
+  };
   auto collect = [&](auto root) {
     root.walk([&](Type sub) {
       if (isa<ProjectionType>(sub) && isMonomorphicType(sub))
-        spelled.insert(sub);
+        note(sub);
     });
   };
   module.walk<WalkOrder::PreOrder>([&](Operation *op) -> WalkResult {
     if (skips(projections, op))
       return WalkResult::skip();
+    spellingOp = op;
     for (Type ty : op->getResultTypes())
       collect(ty);
     for (Region &region : op->getRegions())
@@ -596,12 +604,13 @@ DenseSet<Type> demandsSpelledIn(ModuleOp module, bool inAttributes,
     root.walk([&](Type sub) {
       auto claim = dyn_cast<ClaimType>(sub);
       if (claim && !claim.isProven() && claim.isMonomorphic())
-        spelled.insert(sub);
+        note(sub);
     });
   };
   module.walk<WalkOrder::PreOrder>([&](Operation *op) -> WalkResult {
     if (skips(claims, op))
       return WalkResult::skip();
+    spellingOp = op;
     for (Type ty : op->getResultTypes())
       collectClaims(ty);
     for (Region &region : op->getRegions())
@@ -621,7 +630,7 @@ void DemandLedger::reportServedDrainableKeys(ModuleOp module,
   // What the module spells anywhere, trait and impl headers included: a key
   // this check reaches must be gone from the whole module, not merely from where
   // a round would have looked.
-  DenseSet<Type> standing = demandsSpelledIn(
+  llvm::SetVector<Type> standing = demandsSpelledIn(
       module, /*inAttributes=*/false, DemandSkip::Nothing,
       DemandSkip::InfrastructureAndTemplates);
 
@@ -665,7 +674,7 @@ DemandLedger::checkDrainedKeysSettled(ModuleOp module,
   if (drained.size() == served.size())
     return success();
 
-  DenseSet<Type> spelled =
+  llvm::SetVector<Type> spelled =
       demandsSpelledIn(module, /*inAttributes=*/true, DemandSkip::Nothing,
                        DemandSkip::InfrastructureAndTemplates);
 
@@ -705,7 +714,7 @@ DemandLedger::checkStandingDemandsServed(ModuleOp module,
   // template is resolved on cloning, not served by a round, so it is not a
   // demand this check is owed -- the leftover-projection sweep passes those over
   // for the same reason, and this backstops that sweep.
-  DenseSet<Type> spelled = demandsSpelledIn(
+  llvm::SetVector<Type> spelled = demandsSpelledIn(
       module, /*inAttributes=*/true, DemandSkip::InfrastructureAndTemplates,
       DemandSkip::InfrastructureAndTemplates);
 

@@ -64,9 +64,16 @@ func.func @main() -> i64 {
   return %result : i64
 }
 
-// CHECK: trait-demand-census demand flags=real drainable=yes observations=7 depth=0
-// CHECK-SAME: kinds=unifier-acceptance,read-only-resolver
+// The projection is served in the first round, because the module spells it and
+// a round walks the module for what it spells. So the read never meets it and
+// the unifier's acceptance is the whole of what this key records -- one
+// observation, and not one a later round could be asked to serve.
+// CHECK: trait-stage-record round index=1
+// CHECK-SAME: collected=2
+// CHECK-SAME: served=2
+// CHECK: trait-demand-census demand flags=real drainable=no observations=1 depth=0
+// CHECK-SAME: kinds=unifier-acceptance
 // CHECK-SAME: type=!trait.proj<@Outer[i64], "Item">
 // CHECK: trait-demand-census engine lookup-miss keys=0 observations=0 real=0 speculative=0 probe-internal=0
 // CHECK: trait-demand-census engine unifier-acceptance keys=1 observations=1 real=1 speculative=0 probe-internal=0
-// CHECK: trait-demand-census summary keys=1 observations=7 drainable-keys=1
+// CHECK: trait-demand-census summary keys=1 observations=1 drainable-keys=0

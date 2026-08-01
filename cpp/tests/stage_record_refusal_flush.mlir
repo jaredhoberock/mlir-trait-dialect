@@ -71,22 +71,21 @@ func.func @main() -> !trait.proj<@Absent[i64], "B"> {
   return %r : !trait.proj<@Absent[i64], "B">
 }
 
-// Round two collects both demands the driver's read left standing: it answers
-// one and refuses the other, with nothing to forget at its own head. The call
-// that left @Absent[i64]::B standing put it to the module's impls first, so it
-// arrives naming the arm it missed on; @Gen[i64]::A was left standing inside a
-// claim the read was normalizing and arrives with none.
-// CHECK: trait-stage-record round index=2
-// CHECK-SAME: collected=2 no-candidate-impl=1 multiple-candidate-impls=0 other-arms=0 without-arm=1
+// The first round collects both demands the module spells: it answers one and
+// refuses the other, with nothing to forget at its own head. Neither arrives
+// naming an arm, because the round walks the module before anything has asked
+// the lookup about either of them.
+// CHECK: trait-stage-record round index=1
+// CHECK-SAME: collected=2 no-candidate-impl=0 multiple-candidate-impls=0 other-arms=0 without-arm=2
 // CHECK-SAME: served=1 declined=1 deferred=1
 // CHECK-SAME: refusals-forgotten=0 refusals-kept=0 refusals-overturned=0 refusals-re-earned=0
 
 // Round three forgets what round two refused and answers the demand that
 // answering @Gen[i64] raised; round four forgets the refusal that answer left
 // behind, and neither round re-derives what its flush dropped.
-// CHECK: trait-stage-record round index=3
+// CHECK: trait-stage-record round index=2
 // CHECK-SAME: collected=1 no-candidate-impl=0 multiple-candidate-impls=1
 // CHECK-SAME: served=1 declined=0 deferred=0
 // CHECK-SAME: refusals-forgotten=1 refusals-kept=0 refusals-overturned=0 refusals-re-earned=0
-// CHECK: trait-stage-record round index=4
+// CHECK: trait-stage-record round index=3
 // CHECK-SAME: refusals-forgotten=1 refusals-kept=0 refusals-overturned=0 refusals-re-earned=0

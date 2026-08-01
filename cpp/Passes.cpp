@@ -1247,8 +1247,17 @@ struct RoundInsertionCounts : public OpBuilder::Listener {
   uint64_t inserted = 0;
 };
 
-/// The demands `ledger` holds that no round has settled and that the facts have
-/// moved under since a round last asked about them.
+/// The demands a round puts to impl selection: what `module` spells, and what a
+/// recording engine declined and `ledger` therefore holds.
+///
+/// The two reach one population two ways, and neither reaches all of it. The
+/// module is where a demand a later round can still serve must be standing, so
+/// walking it finds every such demand wherever it was raised -- including the
+/// ones nothing declined, because the step that would have declined them never
+/// ran. What the module does not spell is what a component minted while it was
+/// working and did not write down: a spelling a substitution built, or one a
+/// candidate probe reached. Those exist only in what the engine that met them
+/// recorded.
 ///
 /// A demand leaves the drain for good when nothing a later round could ask
 /// would settle it differently: impl selection resolved it, or refused it on
@@ -1257,21 +1266,36 @@ struct RoundInsertionCounts : public OpBuilder::Listener {
 /// epoch it was last put to selection at, so a round asks about it again
 /// exactly where selection has minted something since -- which is the only
 /// thing that can make the answer differ, and the only thing that keeps asking
-/// again from asking the same question forever.
+/// again from asking the same question forever. Both halves of the union are
+/// held to that same discipline, so a key the walk keeps finding is asked about
+/// exactly as often as one an engine recorded once.
+///
+/// The order is the ledger's first, then the walk's, and both are the order
+/// their own source produced: one run's rounds ask in the order another run's
+/// do.
 static SmallVector<Type>
-collectUndrainedDemands(const DemandLedger &ledger,
+collectUndrainedDemands(ModuleOp module, const DemandLedger &ledger,
                         const DenseSet<Type> &drained,
                         const DenseMap<Type, uint64_t> &attempted,
-                        uint64_t epoch) {
+                        uint64_t epoch, DenseMap<Type, Location> &origins) {
   SmallVector<Type> collected;
-  for (Type demand : ledger.getDrainableDemands()) {
+  DenseSet<Type> taken;
+  auto take = [&](Type demand) {
     if (drained.contains(demand))
-      continue;
+      return;
     auto it = attempted.find(demand);
     if (it != attempted.end() && it->second == epoch)
-      continue;
+      return;
+    if (!taken.insert(demand).second)
+      return;
     collected.push_back(demand);
-  }
+  };
+  for (Type demand : ledger.getDrainableDemands())
+    take(demand);
+  for (Type demand : demandsSpelledIn(module, /*inAttributes=*/true,
+                                      DemandSkip::Infrastructure,
+                                      DemandSkip::Infrastructure, &origins))
+    take(demand);
   return collected;
 }
 
@@ -1326,7 +1350,7 @@ static void splitCollectedDemands(const DemandLedger &ledger,
 /// spelled in a top-level signature is a claim no engine declines today.
 static void reportCollectorWalk(ModuleOp module, const ImplResolver &resolver,
                                 ArrayRef<Type> collected, unsigned round) {
-  DenseSet<Type> walked =
+  llvm::SetVector<Type> walked =
       demandsSpelledIn(module, /*inAttributes=*/true, DemandSkip::Infrastructure,
                        DemandSkip::Infrastructure);
 
@@ -1334,7 +1358,7 @@ static void reportCollectorWalk(ModuleOp module, const ImplResolver &resolver,
   // not cover a demand and left asking where it went: a key this holds and the
   // walk does not is one spelled only inside a template the walk passes over,
   // and a key neither holds is one no spelling in the module carries.
-  DenseSet<Type> anywhere = demandsSpelledIn(
+  llvm::SetVector<Type> anywhere = demandsSpelledIn(
       module, /*inAttributes=*/true, DemandSkip::Nothing, DemandSkip::Nothing);
 
   const DemandLedger &ledger = resolver.getDemandLedger();
@@ -1402,12 +1426,21 @@ static void reportCollectorWalk(ModuleOp module, const ImplResolver &resolver,
 /// A demand selection resolved or refused for good leaves the drain; one it
 /// could not serve yet stays, against the epoch it was asked at.
 static void serveCollectedDemands(ImplResolver &resolver,
-                                  ArrayRef<Type> collected, OpBuilder &builder,
+                                  ArrayRef<Type> collected,
+                                  const DenseMap<Type, Location> &origins,
+                                  OpBuilder &builder,
                                   DenseSet<Type> &drained,
                                   DenseSet<Type> &served,
                                   DenseMap<Type, uint64_t> &attempted,
                                   RoundWork &work) {
   for (Type demand : collected) {
+    // A demand found by walking the module is named while it is put to
+    // selection, so what the ask raises underneath is attributed to the op
+    // carrying the spelling. A demand an engine recorded already carries where
+    // it was raised, and the frame it was raised under is gone by now.
+    std::optional<DemandFrame> spelledAt;
+    if (auto origin = origins.find(demand); origin != origins.end())
+      spelledAt.emplace(origin->second);
     // The epoch is read per demand rather than once per round: serving one
     // demand mints facts the demands after it in this batch are resolved
     // under, so a demand asked about before that is one the next round asks
@@ -1622,9 +1655,10 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
     }
 
     // COLLECT.
+    DenseMap<Type, Location> spelledAt;
     SmallVector<Type> collected = collectUndrainedDemands(
-        resolver->getDemandLedger(), drained, attempted,
-        resolver->getFactEpoch());
+        module, resolver->getDemandLedger(), drained, attempted,
+        resolver->getFactEpoch(), spelledAt);
     work.collected = collected.size();
     splitCollectedDemands(resolver->getDemandLedger(), collected, work);
     if (isCollectorWalkReported())
@@ -1638,7 +1672,8 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
       OpBuilder builder(ctx);
       builder.setListener(&insertions);
       builder.setInsertionPointToEnd(module.getBody());
-      serveCollectedDemands(*resolver, collected, builder, drained, served,
+      serveCollectedDemands(*resolver, collected, spelledAt, builder, drained,
+                            served,
                             attempted, work);
       work.insertedServingDemands = insertions.inserted;
     }

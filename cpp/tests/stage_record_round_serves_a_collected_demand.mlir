@@ -58,10 +58,10 @@ func.func private @f(%c: !trait.claim<@Box[!trait.proj<@Gen[i64], "A">] by @Box_
   return %x : !T
 }
 
-// CHECK: trait-stage-record round index=2
+// CHECK: trait-stage-record round index=1
 // CHECK-SAME: collected=1 no-candidate-impl=0 multiple-candidate-impls=0 other-arms=0 without-arm=1
 // CHECK-SAME: served=1 declined=0 deferred=0 inserted-serving-demands=0
-// CHECK: trait-stage-record round index=3
+// CHECK: trait-stage-record round index=2
 // CHECK-SAME: collected=1
 // CHECK-SAME: multiple-candidate-impls=1
 // CHECK-SAME: served=1 declined=0 deferred=0 inserted-serving-demands=0
