@@ -833,31 +833,6 @@ LogicalResult verifyAndRecordProof(
     DemandOrigin origin,
     ProofDerivationMemo *memo,
     llvm::function_ref<InFlightDiagnostic()> err) {
-  // What the record of per-pair closures would answer for this whole ask is
-  // counted here, because this is the ask a reader that must not derive makes:
-  // one per proven claim its types spell, with the projections it has resolved.
-  // The record is keyed on the normalized pair, so the question is put in the
-  // grade such a reader would put it in -- normalizing costs a lookup, so it is
-  // asked only where someone is reading the answer.
-  if (memo && isDemandRecordingActive()) {
-    bool answered = false;
-    {
-      // The normalization this asking needs is work the compilation does not
-      // do, so nothing counts it.
-      DemandCrossCheckScope measuring;
-      auto normalized = [&](ClaimType claim) {
-        return cast<ClaimType>(
-            resolveGroundProjectionsByLookup(Type(claim), module, origin));
-      };
-      answered = memo->getClosures().lookup(normalized(unproven),
-                                            normalized(proven)) != nullptr;
-    }
-    if (answered)
-      countProofClosureAnswered();
-    else
-      countProofClosureUnanswered();
-  }
-
   DerivationStaging staging;
   DerivedNode derived;
   if (failed(deriveProof(unproven, proven, module, bindings, origin, memo,
@@ -889,10 +864,36 @@ LogicalResult recordProofBindingsIn(
     if (status.failed()) return;
 
     if (auto claim = dyn_cast<ClaimType>(node)) {
-      if (claim.isProven())
+      if (claim.isProven()) {
+        // This is the ask a reader that must not derive makes: one per proven
+        // claim the walked type spells. What the record of per-pair closures
+        // would answer for it is counted here, in the grade the record is keyed
+        // in, because a reader resolves the projections in its spelling before
+        // it asks. Normalizing to ask costs a lookup, so it is done only where
+        // someone is reading the answer.
+        if (memo && isDemandRecordingActive()) {
+          bool answered = false;
+          {
+            // The normalization this asking needs is work the compilation does
+            // not do, so nothing counts it.
+            DemandCrossCheckScope measuring;
+            auto normalized = [&](ClaimType spelling) {
+              return cast<ClaimType>(resolveGroundProjectionsByLookup(
+                  Type(spelling), module, origin));
+            };
+            answered = memo->getClosures().lookup(
+                           normalized(claim.asUnproven()),
+                           normalized(claim)) != nullptr;
+          }
+          if (answered)
+            countProofClosureAnswered();
+          else
+            countProofClosureUnanswered();
+        }
         if (failed(verifyAndRecordProof(claim.asUnproven(), claim, module,
                                         bindings, origin, memo, err)))
           status = failure();
+      }
     }
   });
 
