@@ -353,6 +353,46 @@ inline bool recordsToLedger(DemandOrigin origin) {
 }
 
 //===----------------------------------------------------------------------===//
+// The demands a module spells
+//===----------------------------------------------------------------------===//
+
+/// Which subtrees one side of a demand walk passes over.
+///
+/// The two sides are chosen apart because the callers differ in what they are
+/// asking. A reader tallying what the module spells anywhere wants a trait
+/// header's projections; a caller asking which demands a round could still serve
+/// does not, because a projection inside a template is resolved when the
+/// template is cloned. A claim is a demand only where something is meant to
+/// prove it, so the claim side is never gathered without at least the
+/// infrastructure skip.
+enum class DemandSkip : uint8_t {
+  /// Nothing: every op the module holds, trait and impl headers included.
+  Nothing,
+  /// Trait, impl and proof ops and their whole subtrees. What they spell -- a
+  /// trait's own requirements, an impl's assumptions, the projections in either
+  /// header -- stands for good and is nothing to serve.
+  Infrastructure,
+  /// Those, and a still-polymorphic template function besides. What it spells is
+  /// resolved when the template is cloned for a concrete instance, not by a
+  /// round.
+  InfrastructureAndTemplates,
+};
+
+/// The demands `module` spells: its monomorphic projections, and the unproven
+/// monomorphic claims something is still meant to prove.
+///
+/// Result and block-argument types are what the stage's own leftover sweeps
+/// walk, and an operand type is its producer's result type, so between them they
+/// cover every type a later round would find to serve. `inAttributes` adds the
+/// projections an op carries as attribute data instead, which no leftover sweep
+/// reads and a pattern that rewrites an op's whole dictionary does.
+///
+/// The two sides carry their own skip because they answer different questions;
+/// each caller states which it is asking.
+DenseSet<Type> demandsSpelledIn(ModuleOp module, bool inAttributes,
+                                DemandSkip projections, DemandSkip claims);
+
+//===----------------------------------------------------------------------===//
 // Lowering a call
 //===----------------------------------------------------------------------===//
 
@@ -1096,6 +1136,29 @@ inline constexpr const char *callLoweringProfilePrefix =
 /// It is read once, at library load, like the census switches.
 inline constexpr const char *callLoweringProfileEnvironmentVariable =
     "TRAIT_CALL_LOWERING_PROFILE";
+
+//===----------------------------------------------------------------------===//
+// The collector-walk channel
+//===----------------------------------------------------------------------===//
+//
+// A round puts to impl selection what the ledger's engines declined. A walk over
+// the module finds what those engines meet -- every demand the module spells
+// where a pattern would have met it -- and the two populations must be compared
+// before one can stand in for the other. The comparison is a measurement of the
+// compiler rather than a fact about the program, so it answers to a switch of
+// its own and writes on a marker of its own.
+
+/// The line one round's comparison produces.
+inline constexpr const char *collectorWalkPrefix = "trait-collector-walk";
+
+/// Setting this writes that comparison, one line per round. It is read once, at
+/// library load, like the census switches.
+inline constexpr const char *collectorWalkEnvironmentVariable =
+    "TRAIT_COLLECTOR_WALK";
+
+/// True when the comparison would be written, so that the walk it needs is taken
+/// only where someone is reading it.
+bool isCollectorWalkReported();
 
 //===----------------------------------------------------------------------===//
 // The stage-record channel

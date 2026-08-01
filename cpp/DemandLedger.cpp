@@ -155,6 +155,8 @@ const bool postconditionEnabled =
     environmentVariableIsSet(demandCensusCheckEnvironmentVariable);
 const bool callLoweringProfileEnabled =
     environmentVariableIsSet(callLoweringProfileEnvironmentVariable);
+const bool collectorWalkEnabled =
+    environmentVariableIsSet(collectorWalkEnvironmentVariable);
 
 /// With both switches off a ledger keeps its drain and nothing else, so the
 /// sites that must walk or shape a type to know there was anything to record
@@ -552,37 +554,16 @@ void DemandLedger::reportCallLoweringProfile() const {
   os << "\n";
 }
 
-/// The demands `module` spells: its monomorphic projections, and the unproven
-/// monomorphic claims something is still meant to prove.
-///
-/// Result and block-argument types are what the stage's own leftover sweeps
-/// walk, and an operand type is its producer's result type, so between them
-/// they cover every type a later round would find to serve. `inAttributes`
-/// adds the projections an op carries as attribute data instead: a trait or
-/// impl header spells projections nothing serves, which is not what a round
-/// would find but is what a reader would.
-///
-/// The two populations are not gathered alike, because a claim is a demand only
-/// where something is meant to prove it. This walk applies two skips to the
-/// claim side unconditionally: a trait, impl or proof op spells unproven claims
-/// that stand for good -- its own requirements and its assumptions -- so its
-/// whole subtree is passed over, and a still-polymorphic template function
-/// spells claims that are proved when the template is cloned for a concrete
-/// instance, so it is passed over too. Gathering claims without these two skips
-/// would make a check reading this vacuous for them.
-///
-/// `servableOnly` applies the same two skips to the projection side. A ground
-/// projection inside trait infrastructure or a still-polymorphic template is
-/// resolved when the template is cloned, not by a later round, so a caller
-/// asking which demands a round could still serve -- rather than which the
-/// module spells anywhere -- passes them over just as the leftover-projection
-/// sweep does.
-static DenseSet<Type> demandsSpelledIn(ModuleOp module, bool inAttributes,
-                                       bool servableOnly = false) {
+DenseSet<Type> demandsSpelledIn(ModuleOp module, bool inAttributes,
+                                DemandSkip projections, DemandSkip claims) {
   DenseSet<Type> spelled;
-  auto skipsTemplate = [](Operation *op) {
+  auto skips = [](DemandSkip discipline, Operation *op) {
+    if (discipline == DemandSkip::Nothing)
+      return false;
     if (isa<TraitOp, ImplOp, ProofOp>(op))
       return true;
+    if (discipline != DemandSkip::InfrastructureAndTemplates)
+      return false;
     if (auto func = dyn_cast<func::FuncOp>(op))
       return isPolymorphicType(Type(func.getFunctionType()));
     return false;
@@ -595,7 +576,7 @@ static DenseSet<Type> demandsSpelledIn(ModuleOp module, bool inAttributes,
     });
   };
   module.walk<WalkOrder::PreOrder>([&](Operation *op) -> WalkResult {
-    if (servableOnly && skipsTemplate(op))
+    if (skips(projections, op))
       return WalkResult::skip();
     for (Type ty : op->getResultTypes())
       collect(ty);
@@ -616,7 +597,7 @@ static DenseSet<Type> demandsSpelledIn(ModuleOp module, bool inAttributes,
     });
   };
   module.walk<WalkOrder::PreOrder>([&](Operation *op) -> WalkResult {
-    if (skipsTemplate(op))
+    if (skips(claims, op))
       return WalkResult::skip();
     for (Type ty : op->getResultTypes())
       collectClaims(ty);
@@ -634,8 +615,12 @@ void DemandLedger::reportServedDrainableKeys(ModuleOp module,
   if (!postconditionEnabled)
     return;
 
-  DenseSet<Type> standing =
-      demandsSpelledIn(module, /*inAttributes=*/false);
+  // What the module spells anywhere, trait and impl headers included: a key
+  // this check reaches must be gone from the whole module, not merely from where
+  // a round would have looked.
+  DenseSet<Type> standing = demandsSpelledIn(
+      module, /*inAttributes=*/false, DemandSkip::Nothing,
+      DemandSkip::InfrastructureAndTemplates);
 
   for (Type key : getKeys()) {
     const DemandRecord *record = lookup(key);
@@ -677,7 +662,9 @@ DemandLedger::checkDrainedKeysSettled(ModuleOp module,
   if (drained.size() == served.size())
     return success();
 
-  DenseSet<Type> spelled = demandsSpelledIn(module, /*inAttributes=*/true);
+  DenseSet<Type> spelled =
+      demandsSpelledIn(module, /*inAttributes=*/true, DemandSkip::Nothing,
+                       DemandSkip::InfrastructureAndTemplates);
 
   bool dropped = false;
   for (Type key : drained) {
@@ -715,8 +702,9 @@ DemandLedger::checkStandingDemandsServed(ModuleOp module,
   // template is resolved on cloning, not served by a round, so it is not a
   // demand this check is owed -- the leftover-projection sweep passes those over
   // for the same reason, and this backstops that sweep.
-  DenseSet<Type> spelled =
-      demandsSpelledIn(module, /*inAttributes=*/true, /*servableOnly=*/true);
+  DenseSet<Type> spelled = demandsSpelledIn(
+      module, /*inAttributes=*/true, DemandSkip::InfrastructureAndTemplates,
+      DemandSkip::InfrastructureAndTemplates);
 
   bool standing = false;
   for (Type key : getDrainableDemands()) {
@@ -986,6 +974,8 @@ void countEvidenceBinding(size_t bindingsAfter) {
   if (isDemandRecordingActive())
     ambientLedger->countEvidenceBinding(bindingsAfter);
 }
+
+bool isCollectorWalkReported() { return collectorWalkEnabled; }
 
 bool isCallLoweringInstrumented() {
   return (observationsEnabled || callLoweringProfileEnabled) &&

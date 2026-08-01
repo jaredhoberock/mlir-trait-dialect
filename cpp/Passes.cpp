@@ -1353,6 +1353,96 @@ static void splitCollectedDemands(const DemandLedger &ledger,
   }
 }
 
+/// Reports how the demands the module spells compare with the demands the
+/// ledger fed one round.
+///
+/// The walk gathers what a pattern meeting a demand where it is spelled would
+/// meet: everything outside a trait, impl or proof body, attributes included,
+/// because the pattern that resolves projections rewrites an op's whole
+/// dictionary. It reaches inside a still-polymorphic template, because those
+/// patterns do too.
+///
+/// What no walk can reach is a demand no spelling carries -- one a substitution
+/// minted and put to the ground-projection lookup, which records it where it is
+/// raised. So the population that could stand in for the feed is the walk
+/// together with the keys that lookup declined, and `uncovered` is how much of
+/// the feed neither of them holds. The drain keeps a lookup arm per key whatever
+/// the census switch says, which is what makes that half readable here.
+///
+/// The claim columns say what serving the walk's own claims would do: one the
+/// proof memo answers for is served by reading it and mints nothing, and one
+/// spelled in a top-level signature is a claim no engine declines today.
+static void reportCollectorWalk(ModuleOp module, const ImplResolver &resolver,
+                                ArrayRef<Type> collected, unsigned round) {
+  DenseSet<Type> walked =
+      demandsSpelledIn(module, /*inAttributes=*/true, DemandSkip::Infrastructure,
+                       DemandSkip::Infrastructure);
+
+  // What the module spells anywhere at all, for a reader told that the walk did
+  // not cover a demand and left asking where it went: a key this holds and the
+  // walk does not is one spelled only inside a template the walk passes over,
+  // and a key neither holds is one no spelling in the module carries.
+  DenseSet<Type> anywhere = demandsSpelledIn(
+      module, /*inAttributes=*/true, DemandSkip::Nothing, DemandSkip::Nothing);
+
+  const DemandLedger &ledger = resolver.getDemandLedger();
+  uint64_t uncovered = 0;
+  uint64_t uncoveredInTemplates = 0;
+  uint64_t fedOnly = 0;
+  for (Type demand : collected) {
+    if (walked.contains(demand))
+      continue;
+    ++fedOnly;
+    if (ledger.getDrainableArms(demand) != 0)
+      continue;
+    ++uncovered;
+    if (anywhere.contains(demand))
+      ++uncoveredInTemplates;
+  }
+
+  DenseSet<Type> signatureClaims;
+  for (auto function : module.getOps<func::FuncOp>()) {
+    if (isPolymorphicType(Type(function.getFunctionType())))
+      continue;
+    for (Type input : function.getFunctionType().getInputs())
+      input.walk([&](Type sub) {
+        if (auto claim = dyn_cast<ClaimType>(sub))
+          if (!claim.isProven() && claim.isMonomorphic())
+            signatureClaims.insert(sub);
+      });
+  }
+
+  DenseSet<Type> fed(collected.begin(), collected.end());
+  ReadOnlyImplResolver reading(resolver);
+  uint64_t walkOnly = 0;
+  uint64_t claimsProven = 0;
+  uint64_t claimsUnproven = 0;
+  uint64_t claimsInSignatures = 0;
+  for (Type demand : walked) {
+    if (!fed.contains(demand))
+      ++walkOnly;
+    auto claim = dyn_cast<ClaimType>(demand);
+    if (!claim)
+      continue;
+    if (reading.getRecordedProof(claim.getTraitApplication()))
+      ++claimsProven;
+    else
+      ++claimsUnproven;
+    if (signatureClaims.contains(demand))
+      ++claimsInSignatures;
+  }
+
+  llvm::errs() << collectorWalkPrefix << " round=" << round
+               << " walked=" << walked.size() << " fed=" << collected.size()
+               << " uncovered=" << uncovered
+               << " uncovered-in-templates=" << uncoveredInTemplates
+               << " fed-only=" << fedOnly
+               << " walk-only=" << walkOnly
+               << " walk-claims-proven=" << claimsProven
+               << " walk-claims-unproven=" << claimsUnproven
+               << " walk-claims-in-signatures=" << claimsInSignatures << "\n";
+}
+
 /// Puts every demand in `collected` to impl selection, which generates the impl
 /// the demand needs when none binds its application and partitions the
 /// candidates when several do, and records what each attempt settled.
@@ -1585,6 +1675,8 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
         resolver->getFactEpoch());
     work.collected = collected.size();
     splitCollectedDemands(resolver->getDemandLedger(), collected, work);
+    if (isCollectorWalkReported())
+      reportCollectorWalk(module, *resolver, collected, round);
     size_t drainAtCollect =
         resolver->getDemandLedger().getDrainableDemands().size();
 
