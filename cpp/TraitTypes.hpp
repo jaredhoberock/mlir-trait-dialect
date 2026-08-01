@@ -538,17 +538,14 @@ public:
   /// of what deriving each pair produces, and only a pair no derivation has
   /// reached before is derived, through the same prover proof birth uses.
   ///
-  /// `unservedProjection`, when given, receives whether closing failed because a
-  /// projection is one the read cannot answer, as against an obligation that
-  /// could not be recorded. The two failures differ in what would change them:
-  /// the first is a function of the facts and of the types this call spells, the
-  /// second has already reported itself.
+  /// Fails where the read cannot close it: a projection it cannot answer leaves
+  /// the call spelling a type it cannot make concrete, and an obligation it
+  /// cannot record has already reported itself.
   static FailureOr<CallSubstitution>
   forCall(SpecializationMap specialization, TypeRange operandTypes,
           TypeRange resultTypes, FunctionType formalTy, ModuleOp module,
           const ReadOnlyImplResolver &reading,
-          llvm::function_ref<InFlightDiagnostic()> err = nullptr,
-          bool *unservedProjection = nullptr);
+          llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
   const SpecializationMap &getSpecialization() const { return specialization; }
 
@@ -1037,18 +1034,18 @@ LogicalResult verifyAndRecordProof(ClaimType unproven,
                                    ProofDerivationMemo *memo,
                                    llvm::function_ref<InFlightDiagnostic()> err);
 
-/// Walks the given type and records proven claim substitutions.
+/// Walks `ty` and binds every proof the types it spells name.
 ///
-/// For every `ClaimType` node inside `ty` that carries a proof
-/// (i.e. `isProven()`), this adds a mapping from its unproven form
-/// (`claim.asUnproven()`) to the proven claim itself into `subst`.
-/// If a conflicting mapping for the same unproven key already exists,
-/// returns failure and emits an error through `err`.
+/// For every `ClaimType` node inside `ty` that carries a proof (i.e.
+/// `isProven()`), this binds its unproven form (`claim.asUnproven()`) to the
+/// proven claim itself, and binds whatever that claim's proof binds underneath.
+/// If a conflicting binding for the same unproven key already exists, returns
+/// failure and emits an error through `err`.
 ///
-/// `origin` names the caller, which every proof this walk records is verified
+/// `origin` names the caller, which every proof this walk verifies is verified
 /// under, and `memo` is what each of those verifications is served from and
 /// held in. Neither has a default, so a new caller states both.
-LogicalResult recordProofBindingsIn(Type ty,
+LogicalResult bindProofsIn(Type ty,
                                     ModuleOp module,
                                     EvidenceBindings &bindings,
                                     DemandOrigin origin,

@@ -1929,9 +1929,7 @@ FailureOr<SpecializationMap> MethodCallOp::buildParameterSpecialization(ModuleOp
   // its own to serve them from.
   if (!unifyModule) {
     EvidenceBindings evidence;
-    if (recordsToLedger(origin))
-      countDerivationEntry(DerivationEntry::MethodCallSpecialization);
-    if (failed(recordProofBindingsIn(originalActual, *module, evidence, origin,
+    if (failed(bindProofsIn(originalActual, *module, evidence, origin,
                                      /*memo=*/nullptr, err)))
       return failure();
   }
@@ -2125,9 +2123,7 @@ FailureOr<SpecializationMap> FuncCallOp::buildParameterSpecialization(ModuleOp u
   // its own to serve them from.
   if (!unifyModule) {
     EvidenceBindings evidence;
-    if (recordsToLedger(origin))
-      countDerivationEntry(DerivationEntry::FuncCallSpecialization);
-    if (failed(recordProofBindingsIn(actual, *module, evidence, origin,
+    if (failed(bindProofsIn(actual, *module, evidence, origin,
                                      /*memo=*/nullptr, err)))
       return failure();
   }

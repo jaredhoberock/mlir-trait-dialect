@@ -82,8 +82,6 @@ thread_local bool ambientCrossChecking = false;
 
 const char *derivationEntryName(DerivationEntry entry) {
   switch (entry) {
-  case DerivationEntry::MethodCallSpecialization: return "method-call";
-  case DerivationEntry::FuncCallSpecialization: return "func-call";
   case DerivationEntry::CallSubstitutionEvidence: return "call-substitution";
   case DerivationEntry::ImplSelfProof: return "impl-self-proof";
   }
@@ -524,14 +522,11 @@ void DemandLedger::dumpCensus() const {
      << " evidence-bindings-max=" << evidenceBindingsMax << "\n";
 
   // A fourth counter line, over the same span: what lowering trait calls did.
-  // The visits are what the driver put to the read and the distinct reads are
-  // what it put there to ask about, so their ratio says how much of the asking
-  // was answering a question already answered; the clones and the reuses split
-  // the callee specializations by whether a body had to be cloned. The four
+  // The visits are what the driver put to the read; the clones and the reuses
+  // split the callee specializations by whether a body had to be cloned. The
   // entry columns say which step of lowering a call asked for proof bindings.
   os << demandCensusCounterPrefix << " call-lowering"
      << " visits=" << callLoweringVisits
-     << " distinct-reads=" << distinctCallLoweringReads.size()
      << " callee-clones=" << calleeClones
      << " callee-reuses=" << calleeReuses;
   for (unsigned e = 0; e != numDerivationEntries; ++e)
@@ -554,7 +549,6 @@ void DemandLedger::reportCallLoweringProfile() const {
 
   llvm::raw_ostream &os = llvm::errs();
   os << callLoweringProfilePrefix << " visits=" << callLoweringVisits
-     << " distinct-reads=" << distinctCallLoweringReads.size()
      << " callee-clones=" << calleeClones
      << " callee-reuses=" << calleeReuses;
   for (unsigned p = 0; p != numCallLoweringPhases; ++p)
@@ -1031,9 +1025,9 @@ bool isCallLoweringInstrumented() {
          ambientLedger != nullptr && !ambientCrossChecking;
 }
 
-void countCallLoweringVisit(uint64_t record, Type spelling, Type callee) {
+void countCallLoweringVisit() {
   if (isCallLoweringInstrumented())
-    ambientLedger->countCallLoweringVisit(record, spelling, callee);
+    ambientLedger->countCallLoweringVisit();
 }
 
 void countCalleeSpecialization(bool cloned) {

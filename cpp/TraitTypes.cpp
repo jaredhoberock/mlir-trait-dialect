@@ -868,7 +868,7 @@ LogicalResult verifyAndRecordProof(
 /// These entries are used during unification so that
 /// `applySubstitutionToFixedPoint` can normalize claims before
 /// per-type unification dispatch.
-LogicalResult recordProofBindingsIn(
+LogicalResult bindProofsIn(
     Type root,
     ModuleOp module,
     EvidenceBindings &bindings,

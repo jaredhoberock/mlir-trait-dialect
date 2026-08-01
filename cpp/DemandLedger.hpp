@@ -398,18 +398,14 @@ DenseSet<Type> demandsSpelledIn(ModuleOp module, bool inAttributes,
 
 /// Which step of lowering a call asked for proof bindings to be recorded.
 ///
-/// Lowering one call asks at four separate steps, and each of them asks for a
-/// closure a step before it may already have produced. Counting the steps apart
-/// is what says which of them a change stopped asking at.
+/// Counting the steps apart is what says which of them a change stopped asking
+/// at. These two are the whole of the asking a pass does: a call's parameter
+/// specialization asks for a verifier alone, and a verifier's origin does not
+/// record to a ledger.
 ///
 /// XXX TODO: these columns exist to measure the re-derivation lowering a call
-/// performs. They go when the call-lowering close does.
+/// performs. They go when the call substitution's own resolution does.
 enum class DerivationEntry : uint8_t {
-  /// A method call's parameter specialization, recording the proofs its actual
-  /// signature spells.
-  MethodCallSpecialization,
-  /// A function call's parameter specialization, doing the same.
-  FuncCallSpecialization,
   /// The call substitution's evidence walk, which asks once per type per
   /// fixed-point iteration of the factory that builds it.
   CallSubstitutionEvidence,
@@ -419,7 +415,7 @@ enum class DerivationEntry : uint8_t {
 };
 
 /// The number of steps, for the partition that reports them.
-inline constexpr unsigned numDerivationEntries = 4;
+inline constexpr unsigned numDerivationEntries = 2;
 
 /// One part of the work lowering a call does.
 ///
@@ -629,20 +625,8 @@ public:
     evidenceBindingsMax = std::max(evidenceBindingsMax, bindingsAfter);
   }
 
-  /// Files one visit that put a call to the read, against the three reads that
-  /// decide what the read answers it: the record epoch, the call's own operand
-  /// and result spelling carried as one uniqued function type, and the callee
-  /// signature it specializes against.
-  ///
-  /// Two visits reading the same triple build the same substitution and close it
-  /// to the same answer, so the distinct triples say how many answers the visits
-  /// stand for. The operation is no part of the key: an address the driver hands
-  /// to a later operation would make two calls one, and the triple is what the
-  /// answer is about.
-  void countCallLoweringVisit(uint64_t record, Type spelling, Type callee) {
-    ++callLoweringVisits;
-    distinctCallLoweringReads.insert(std::make_tuple(record, spelling, callee));
-  }
+  /// Files one visit that put a call to the read.
+  void countCallLoweringVisit() { ++callLoweringVisits; }
 
   /// Files one callee specialization, saying whether the callee body had to be
   /// cloned or an instance already stood under the name the substitution
@@ -813,7 +797,6 @@ private:
   uint64_t evidenceBindingsRecorded = 0;
   size_t evidenceBindingsMax = 0;
   uint64_t callLoweringVisits = 0;
-  llvm::DenseSet<std::tuple<uint64_t, Type, Type>> distinctCallLoweringReads;
   uint64_t calleeClones = 0;
   uint64_t calleeReuses = 0;
   uint64_t derivationEntries[numDerivationEntries] = {};
@@ -1088,8 +1071,8 @@ void countEvidenceBinding(size_t bindingsAfter);
 /// reading a clock.
 bool isCallLoweringInstrumented();
 
-/// Counts one visit that put a call to the read, against what it read.
-void countCallLoweringVisit(uint64_t record, Type spelling, Type callee);
+/// Counts one visit that put a call to the read.
+void countCallLoweringVisit();
 
 /// Counts one callee specialization, `cloned` saying whether the callee body was
 /// cloned rather than an existing instance returned.
