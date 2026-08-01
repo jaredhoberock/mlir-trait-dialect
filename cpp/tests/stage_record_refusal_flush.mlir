@@ -80,8 +80,8 @@ func.func @main() -> !trait.proj<@Absent[i64], "B"> {
 // CHECK-SAME: served=1 declined=1 deferred=1
 // CHECK-SAME: refusals-forgotten=0 refusals-kept=0 refusals-overturned=0 refusals-re-earned=0
 
-// Round three forgets what round two refused and answers the demand that
-// answering @Gen[i64] raised; round four forgets the refusal that answer left
+// Round two forgets what round one refused and answers the demand that
+// answering @Gen[i64] raised; round three forgets the refusal that answer left
 // behind, and neither round re-derives what its flush dropped.
 // CHECK: trait-stage-record round index=2
 // CHECK-SAME: collected=1 no-candidate-impl=0 multiple-candidate-impls=1

@@ -1041,8 +1041,8 @@ static bool wouldReplace(AttrTypeReplacer &replacer, Operation *op,
 /// running -- stamping a concrete argument into a projection spelling turns a
 /// symbolic projection into a ground one that no earlier sweep could have seen.
 /// Moving the work into the commit was built and measured: it cost 2-3% of a
-/// compile and left 91 of these redexes standing for this pattern to resolve
-/// anyway, so it was refused and this is the resolution arm.
+/// compile and still left this pattern applying 91 times -- once per operation
+/// it rewrote -- so it was refused and this is the resolution arm.
 struct ResolveProjectionsPattern : public RewritePattern {
   ReadOnlyImplResolver reading;
 
@@ -1146,12 +1146,14 @@ struct InheritProjCastProofPattern : public OpRewritePattern<ProjCastOp> {
 ///
 /// The driver's own patterns read the facts the steps before them recorded and
 /// put nothing to selection, so nothing the compiler builds reaches the freeze.
-/// This is what exercises it: a claim declared in a signature is one no pattern
-/// discharges and no round collects, so selection meets its application for the
-/// first time here, finds no candidate, and asks the generators -- which is the
-/// ask the freeze turns into a fatal naming the claim and the span. Only the
-/// dialect's plugin adds this pattern; the passes the compiler creates never
-/// do.
+/// This is what exercises it. A round collects the claims a result type or a
+/// block argument spells, so a claim on a function carrying a body is one a
+/// round has already collected; what is left for this pattern is a claim living
+/// in a function type alone, which is a declaration with no body to spell it.
+/// Selection meets that application for the first time here, finds no
+/// candidate, and asks the generators -- which is the ask the freeze turns into
+/// a fatal naming the claim and the span. Only the dialect's plugin adds this
+/// pattern; the passes the compiler creates never do.
 struct AskImplSelectionForADeclaredClaimPattern
     : public OpRewritePattern<func::FuncOp> {
   ImplResolver &resolver;

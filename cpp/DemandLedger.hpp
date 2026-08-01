@@ -160,8 +160,8 @@ enum class DemandEngine : uint8_t {
   /// they serve is the ground redexes a substitution MINTS while the driver runs,
   /// which no sweep over what the module spells can reach, because the module
   /// never spells them. Resolving projections in the commit was measured against
-  /// that population and refused: it cost 2-3% of a compile and left 91 of those
-  /// redexes for the pattern to resolve anyway.
+  /// that population and refused: it cost 2-3% of a compile and still left that
+  /// pattern applying 91 times, once per operation it rewrote.
   ReadOnlyResolver,
 };
 

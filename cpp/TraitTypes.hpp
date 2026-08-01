@@ -315,37 +315,33 @@ public:
   /// impl.
   ///
   /// A second derivation of one settled pair reaching a different closure is a
-  /// pair this cannot answer for: whichever answer it gave, one of the two
-  /// derivations would have written something else. The entry is withdrawn and
-  /// the pair is refused from then on, so that what this holds is only ever what
-  /// deriving would have produced -- a reader gets no answer rather than the
-  /// wrong one, and the reader's own fallback is what covers it.
+  /// pair this answers for no longer: the entry is withdrawn and the pair is
+  /// refused from then on, so that what this holds is only ever what deriving
+  /// would have produced.
   bool record(ClaimType unproven, ClaimType proven, Closure closure) {
     assert(isWellGraded(unproven, proven) &&
            "a recorded pair is an obligation and the claim proving it");
-    auto key = std::make_pair(unproven, proven);
-    if (disputed.contains(key))
-      return false;
     if (!isSettled(unproven, proven, closure))
       return false;
-    auto [entry, inserted] = entries.try_emplace(key, std::move(closure));
-    if (inserted)
+    switch (place(entries, std::make_pair(unproven, proven),
+                  std::move(closure))) {
+    case Placement::Held:
       return true;
-    if (entry->second == closure) {
+    case Placement::Agreed:
       // The pair was derived again and reached the answer already held. Nothing
       // needed deriving: this is the work a reader serving from the record is
       // meant to have stopped doing, so it is counted rather than passed over.
       countRecordedPairRederived();
       return true;
+    case Placement::Withdrawn:
+    case Placement::Refused:
+      return false;
     }
-    entries.erase(entry);
-    disputed.insert(key);
-    countProofClosureWithdrawn();
-    return false;
+    llvm_unreachable("a closure is placed, agreed with, withdrawn or refused");
   }
 
-  /// How many pairs two derivations disagreed over, which this therefore
-  /// answers for no longer.
+  /// How many pairs two closures disagreed over, which this therefore answers
+  /// for no longer.
   size_t disputedCount() const { return disputed.size(); }
 
   /// Respells every key and every binding this holds through `replacer`, which
@@ -353,10 +349,13 @@ public:
   ///
   /// Two pairs can respell to one -- an unproven claim among the type arguments
   /// of both gains the same proof -- and the closures they carry are then two
-  /// derivations of one pair, so the first stands and the second is dropped,
-  /// exactly as recording a second time does.
+  /// closures held for one pair. That pair meets the rule a pair derived twice
+  /// meets: the closures are compared, equal ones leave it answered, differing
+  /// ones withdraw it, and a pair already disputed takes neither. So what this
+  /// holds after a transcription is still only what deriving would have
+  /// produced.
   void respellWith(AttrTypeReplacer &replacer) {
-    llvm::DenseMap<std::pair<ClaimType, ClaimType>, Closure> respelled;
+    EntryMap respelled;
     respelled.reserve(entries.size());
     // The sweep's rewrite is the one that gives an unproven claim its proof, so
     // applying it to a spelling rewrites what is nested inside that spelling AND
@@ -376,25 +375,76 @@ public:
       return std::make_pair(respellObligation(pair.first),
                             respellProof(pair.second));
     };
-    for (auto &entry : entries) {
-      Closure closure;
-      closure.reserve(entry.second.size());
-      for (auto &binding : entry.second)
-        closure.push_back(respellPair(binding));
-      respelled.try_emplace(respellPair(entry.first), std::move(closure));
-    }
-    entries = std::move(respelled);
-    llvm::DenseSet<std::pair<ClaimType, ClaimType>> respelledDisputes;
+    // The disputes are transcribed first, because a disputed pair is one no
+    // closure answers for again: an entry whose key respells onto a disputed
+    // one is refused by it, rather than the two deciding it between them.
+    llvm::DenseSet<Key> respelledDisputes;
     respelledDisputes.reserve(disputed.size());
     for (auto &key : disputed)
       respelledDisputes.insert(respellPair(key));
     disputed = std::move(respelledDisputes);
+    for (auto &entry : entries) {
+      Closure closure;
+      closure.reserve(entry.second.size());
+      for (auto &binding : entry.second) {
+        // A closure is the set of bindings replaying it writes, and two
+        // bindings that were distinct can respell alike. Keeping both would
+        // make comparing closures stricter than comparing the bindings they
+        // write, so a binding already in hand is not written again.
+        Key respelledBinding = respellPair(binding);
+        if (!llvm::is_contained(closure, respelledBinding))
+          closure.push_back(respelledBinding);
+      }
+      // Nothing derived anything here, so the re-derivation the recording site
+      // counts has no counterpart: two closures that agree leave the pair
+      // answered and file nothing.
+      place(respelled, respellPair(entry.first), std::move(closure));
+    }
+    entries = std::move(respelled);
     assert(gradesHold() && "transcribing must leave every position its grade");
   }
 
   size_t size() const { return entries.size(); }
 
 private:
+  /// An obligation and the claim proving it, which is what every key and every
+  /// binding this holds is.
+  using Key = std::pair<ClaimType, ClaimType>;
+  using EntryMap = llvm::DenseMap<Key, Closure>;
+
+  /// What placing a closure under a key left this holding.
+  enum class Placement {
+    /// The key held no closure and now holds this one.
+    Held,
+    /// The key held an equal closure, which is the one that stands.
+    Agreed,
+    /// The key held a differing closure, so neither stands.
+    Withdrawn,
+    /// The key is disputed, so it takes no closure.
+    Refused,
+  };
+
+  /// Places `closure` under `key` in `into`, holding a key to one closure.
+  ///
+  /// Two closures held for one pair that disagree are a pair this cannot answer
+  /// for: whichever answer it gave, the other closure would have been what
+  /// deriving produced. The entry is withdrawn and the pair is refused from
+  /// then on, so a reader gets no answer rather than the wrong one and the
+  /// reader's own fallback is what covers it.
+  Placement place(EntryMap &into, const Key &key, Closure closure) {
+    if (disputed.contains(key))
+      return Placement::Refused;
+    auto [entry, inserted] = into.try_emplace(key, std::move(closure));
+    if (inserted)
+      return Placement::Held;
+    if (entry->second == closure)
+      return Placement::Agreed;
+    into.erase(entry);
+    disputed.insert(key);
+    countProofClosureWithdrawn();
+    return Placement::Withdrawn;
+  }
+
   /// Whether a pair is an obligation paired with a claim proving it, which is
   /// what every key and every binding this holds is.
   static bool isWellGraded(ClaimType unproven, ClaimType proven) {
@@ -416,8 +466,8 @@ private:
     return true;
   }
 
-  llvm::DenseMap<std::pair<ClaimType, ClaimType>, Closure> entries;
-  llvm::DenseSet<std::pair<ClaimType, ClaimType>> disputed;
+  EntryMap entries;
+  llvm::DenseSet<Key> disputed;
 };
 
 /// The proof derivations one span of resolution has completed, so that a

@@ -10,12 +10,12 @@
 // the census keeps this arm apart from the lookup's miss arms and never folds
 // it into their observation counts.
 //
-// The key is drainable, but not on the unifier's account. The read-only handle
-// the instantiation driver holds declines the same projection, and a read that
-// declines leaves the demand standing, so the drain admits the key. One key,
-// two engines observing it, so its line names both. The drain serves it in the
-// round that collects it -- the whole module lowers with no projection left
-// standing.
+// The key is not drainable, and the round is why. A round collects what the
+// module spells, so this projection is put to impl selection in the round that
+// finds it and served there; the read-only handle the instantiation driver
+// holds never meets it, nothing declines it, and the drain has no key to admit.
+// One engine observes it, so its line names one -- and the acceptance is not an
+// observation a later round could be asked to serve.
 
 !S = !trait.poly<0>
 !T = !trait.poly<1>
@@ -64,10 +64,6 @@ func.func @main() -> i64 {
   return %result : i64
 }
 
-// The projection is served in the first round, because the module spells it and
-// a round walks the module for what it spells. So the read never meets it and
-// the unifier's acceptance is the whole of what this key records -- one
-// observation, and not one a later round could be asked to serve.
 // CHECK: trait-stage-record round index=1
 // CHECK-SAME: collected=2
 // CHECK-SAME: served=2
