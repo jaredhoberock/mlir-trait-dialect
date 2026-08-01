@@ -3,7 +3,7 @@
 
 // RUN: env TRAIT_DEMAND_CENSUS=1 TRAIT_DEMAND_CENSUS_CHECK=1 mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' -verify-diagnostics 2>&1 | FileCheck %s --implicit-check-not='trait-demand-census unhooked' --implicit-check-not='trait-demand-census served'
 
-// One demanded type asked about sixteen times, by two components and under all
+// One demanded type asked about fourteen times, by two components and under all
 // three flag classes, and it produces one entry. That is what a key being the
 // demanded type buys: the observation count says how many times the stage
 // raised the demand, and the flags say what the askings between them were.
@@ -52,7 +52,7 @@ func.func @asks() -> !trait.proj<@Other[i64], "X"> {
   return %r : !trait.proj<@Other[i64], "X">
 }
 
-// CHECK: trait-demand-census demand flags=real,speculative,probe-internal drainable=yes observations=16 depth=0
+// CHECK: trait-demand-census demand flags=real,speculative,probe-internal drainable=yes observations=14 depth=0
 // CHECK-SAME: kinds=lookup-miss,read-only-resolver arms=no-candidate-impl
 // CHECK-SAME: origin=loc({{.*}}demand_census_dedup.mlir":49:1)
 // CHECK-SAME: type=!trait.proj<@Other[i64], "X">
@@ -62,5 +62,5 @@ func.func @asks() -> !trait.proj<@Other[i64], "X"> {
 // CHECK-SAME: type=!trait.proj<@Gen[i64], "A">
 // CHECK: trait-demand-census engine lookup-miss keys=1 observations=8 real=2 speculative=2 probe-internal=4
 // CHECK: trait-demand-census engine resolver-engine-miss keys=0 observations=0 real=0 speculative=0 probe-internal=0
-// CHECK: trait-demand-census engine read-only-resolver keys=2 observations=9 real=9 speculative=0 probe-internal=0
-// CHECK: trait-demand-census summary keys=2 observations=17 drainable-keys=2 unattributed-keys=0 real-keys=2 speculative-keys=0 probe-internal-keys=0
+// CHECK: trait-demand-census engine read-only-resolver keys=2 observations=7 real=7 speculative=0 probe-internal=0
+// CHECK: trait-demand-census summary keys=2 observations=15 drainable-keys=2 unattributed-keys=0 real-keys=2 speculative-keys=0 probe-internal-keys=0

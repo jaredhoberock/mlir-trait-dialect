@@ -191,12 +191,16 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
   }
 
   // otherwise, diagnose resolution failure, recording which of the two ways to
-  // miss a unique satisfiable candidate this application missed on
+  // miss a unique satisfiable candidate this application missed on.
+  //
+  // A refusal is what selection will not have to derive again, and no answer a
+  // read of the record is given: a read fails on a refused application exactly
+  // as it fails on one selection has never been asked about. So the record
+  // epoch stands still for it, as it does for the flush that drops it again.
   RefutationArm arm = good.empty()
                           ? RefutationArm::NoSatisfiableCandidate
                           : RefutationArm::MultipleSatisfiableCandidates;
   memo.chosen.insert_or_assign(app, ResolutionOutcome::refused(arm));
-  noteRecordWritten();
   if (refusedOn)
     *refusedOn = arm;
   return diagnoseImplResolutionFailure(trait, originalWanted, good, bad, err);
@@ -616,10 +620,11 @@ ImplResolver::RefusalCounts ImplResolver::forgetRetriableRefusals() {
       ++counts.kept;
     }
   }
-  for (TraitApplicationAttr app : lastForgotten) {
+  // The drops move no record epoch, for the same reason writing the refusal
+  // did not: what is erased here is a question impl selection will have to
+  // answer again, never an answer a read of the record was given.
+  for (TraitApplicationAttr app : lastForgotten)
     chosen.erase(app);
-    noteRecordWritten();
-  }
   return counts;
 }
 

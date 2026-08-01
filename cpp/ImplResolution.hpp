@@ -307,10 +307,16 @@ class ImplResolver {
     /// from the module those name, so two reads taken at one value of this
     /// answer alike, and a caller holding an answer knows it still stands while
     /// this stands. It moves wherever the fact base moves, and also where
-    /// nothing is minted and the record still gains an answer: selection
-    /// settling an application the module already had the impl for, the flush
-    /// dropping a refusal, and the commit respelling what a proof is read
-    /// through.
+    /// nothing is minted and a read still gains an answer: selection settling an
+    /// application the module already had the impl for, and the commit
+    /// respelling what a proof is read through.
+    ///
+    /// Refusing an application is not such a change, and neither is forgetting
+    /// the refusal again. A read fails on a refused application exactly as it
+    /// fails on one selection has never been asked about, so writing the entry
+    /// and dropping it both leave every answer a read gives where it stood. What
+    /// they move is what asking selection itself would have to derive, which is
+    /// the negative memo's business and not this quantity's.
     ///
     /// It counts writes rather than entries, for the same reason the fact epoch
     /// does: a count that fell could show a reader the same number across a

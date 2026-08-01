@@ -1531,7 +1531,10 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
   // nothing.
   bool writtenSinceBridge = true;
   bool writtenSinceSweep = false;
-  size_t proofsAtSweep = resolver->getRecordedProofCount();
+  // What the record stood at when the commit last swept. The sweep reads the
+  // record and rewrites the module through it, so a record that has gained no
+  // answer since leaves the sweep with nothing the last one did not already do.
+  uint64_t recordAtSweep = resolver->getRecordEpoch();
   // Whether the module stands where the instantiation driver last left it, at
   // that driver's own fixed point. A driver run that minted nothing leaves it
   // there; a run that minted is a run whose earlier rewrites read facts its
@@ -1559,6 +1562,7 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
 
     RoundWork work;
     uint64_t epochAtRoundHead = resolver->getFactEpoch();
+    uint64_t recordAtRoundHead = resolver->getRecordEpoch();
 
     // FLUSH. Every refusal a later resolution could answer differently is
     // forgotten here, so that the questions the rest of the round asks are
@@ -1601,13 +1605,18 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
     // throughout the module, so the round that follows reads one spelling of
     // each claim wherever it appears.
     //
-    // The sweep rewrites a claim where the module spells one the proof memo
-    // answers for, so a module nothing has written to since the last sweep,
-    // under a memo that has not grown since, has nothing left for it to move.
-    if (writtenSinceSweep || resolver->getRecordedProofCount() != proofsAtSweep) {
+    // The sweep rewrites where the module spells something the record answers
+    // for, so a module nothing has written to since the last sweep, under a
+    // record that has gained no answer since, has nothing left for it to move.
+    // The record rather than the count of proofs, because settling an
+    // application whose impl the module already held mints no proof and still
+    // gives the sweep an answer the last one did not have.
+    if (writtenSinceSweep || resolver->getRecordEpoch() != recordAtSweep) {
       work.respelled =
           respellProvenClaimsInPlace(*resolver, module, round, &lastRespelled);
-      proofsAtSweep = resolver->getRecordedProofCount();
+      // Sampled after the sweep, which moves the record itself wherever it
+      // respelled what a proof is read through.
+      recordAtSweep = resolver->getRecordEpoch();
       writtenSinceSweep = false;
       writtenSinceBridge |= work.respelled != 0;
     }
@@ -1620,13 +1629,23 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
     // The driver reads what the steps before it established. Serving a demand
     // is the round's own work, done where a round can see what it minted.
     //
-    // Nothing the steps above did moved what the driver reads when the flush
-    // forgot no refusal, the bridge lifted nothing, serving neither settled a
-    // demand nor inserted an op, the commit respelled no position and no fact
-    // was minted. Under all of those the driver would be handed the module its
-    // own last run left at that run's fixed point, together with the facts that
-    // run read, so it would apply no pattern: the round skips it, `instantiated`
-    // stays false, and the loop ends unless something else this round wrote.
+    // Nothing the steps above did moved what the driver reads when the bridge
+    // lifted nothing and the record gained no answer. The driver's own patterns
+    // serve from the record, so one quantity stands for all of what the steps
+    // above could have given them: serving a demand settles an application there
+    // whether or not it mints, and the commit's respelling moves it too. The
+    // bridge is named beside it because it rewrites the module without the
+    // resolver hearing of it. Under both the driver would be handed the module
+    // its own last run left at that run's fixed point, together with the record
+    // that run read, so it would apply no pattern: the round skips it,
+    // `instantiated` stays false, and the loop ends unless something else this
+    // round wrote.
+    //
+    // Neither the flush nor a refusal is among them. A read fails on a refused
+    // application exactly as it fails on one selection has never been asked
+    // about, so neither writing the refusal nor dropping it again moves the
+    // record; a round whose only work was to refuse an application, or to forget
+    // that it had, hands the driver exactly what its last run left.
     //
     // What the driver reads beyond its own rewrites is the facts the module
     // spells -- trait declarations, impl headers and their associated-type
@@ -1636,9 +1655,7 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
     // populateInstantiateMonomorphsPatterns below, and
     // populateConvertToTraitPatterns in the bridge above.
     bool instantiationInputMoved =
-        work.refusals.forgotten != 0 || work.bridged || work.served != 0 ||
-        work.insertedServingDemands != 0 || work.respelled != 0 ||
-        resolver->getFactEpoch() != epochAtRoundHead;
+        work.bridged || resolver->getRecordEpoch() != recordAtRoundHead;
     if (!atInstantiationFixedPoint || instantiationInputMoved) {
       ReadOnlyImplResolver reading(*resolver);
       // The call sites this run's read turns away. What a stamp asserts is
