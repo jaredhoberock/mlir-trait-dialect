@@ -572,7 +572,7 @@ private:
   explicit CallSubstitution(SpecializationMap specialization)
       : specialization(std::move(specialization)) {}
 
-  void discoverProjectionBindings(TypeRange types,
+  void discoverProjectionBindings(TypeRange types, ModuleOp module,
                                   const ReadOnlyImplResolver &reading,
                                   bool &declined);
   LogicalResult readEvidenceBindings(

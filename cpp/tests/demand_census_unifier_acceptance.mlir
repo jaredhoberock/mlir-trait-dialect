@@ -68,5 +68,5 @@ func.func @main() -> i64 {
 // CHECK-SAME: kinds=unifier-acceptance,read-only-resolver
 // CHECK-SAME: type=!trait.proj<@Outer[i64], "Item">
 // CHECK: trait-demand-census engine lookup-miss keys=0 observations=0 real=0 speculative=0 probe-internal=0
-// CHECK: trait-demand-census engine unifier-acceptance keys=1 observations=2 real=2 speculative=0 probe-internal=0
+// CHECK: trait-demand-census engine unifier-acceptance keys=1 observations=1 real=1 speculative=0 probe-internal=0
 // CHECK: trait-demand-census summary keys=1 observations=7 drainable-keys=1

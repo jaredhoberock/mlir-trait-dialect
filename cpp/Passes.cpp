@@ -597,7 +597,8 @@ void ResolveImplsPass::runOnOperation() {
 /// Extend this substitution with bindings that resolve concrete `!trait.proj`
 /// types visible after applying the current substitution.
 void CallSubstitution::discoverProjectionBindings(
-    TypeRange types, const ReadOnlyImplResolver &reading, bool &declined) {
+    TypeRange types, ModuleOp module, const ReadOnlyImplResolver &reading,
+    bool &declined) {
   for (Type ty : types) {
     apply(ty).walk([&](Type t) {
       auto proj = dyn_cast<ProjectionType>(t);
@@ -605,15 +606,26 @@ void CallSubstitution::discoverProjectionBindings(
         return;
       if (projectionBindings.lookup(proj))
         return;
-      // Failure adds no binding, so the call site closes over a projection it
-      // still cannot spell concretely.
       auto resolved = reading.resolveProjectionType(proj);
-      if (failed(resolved)) {
-        (void)reading.decline(proj);
+      if (succeeded(resolved)) {
+        projectionBindings.bind(proj, *resolved);
+        return;
+      }
+      // The read answers from the impls selection has settled on, and it settles
+      // one only for an application some round put to it. A projection exactly
+      // one impl in the module binds is one selection would settle the same way
+      // whenever it were asked, so it is read from the module here instead of
+      // waited for: waiting costs a round and arrives at the same impl. Where
+      // the module binds it with no impl or with several, the lookup declines
+      // and records which, and the call closes over a projection it still
+      // cannot spell concretely -- so it lowers in the round that serves it.
+      Type byLookup = resolveGroundProjectionsByLookup(
+          Type(proj), module, DemandOrigin::CallSiteSpecialization);
+      if (byLookup == Type(proj)) {
         declined = true;
         return;
       }
-      projectionBindings.bind(proj, *resolved);
+      projectionBindings.bind(proj, byLookup);
     });
   }
 }
@@ -709,11 +721,13 @@ FailureOr<CallSubstitution> CallSubstitution::forCall(
     // by the bindings this iteration goes on to add, so only the last
     // iteration's declines say what this substitution is missing.
     declined = false;
-    subst.discoverProjectionBindings(resultTypes, reading, declined);
-    subst.discoverProjectionBindings(operandTypes, reading, declined);
+    subst.discoverProjectionBindings(resultTypes, module, reading, declined);
+    subst.discoverProjectionBindings(operandTypes, module, reading, declined);
     if (formalTy) {
-      subst.discoverProjectionBindings(formalTy.getInputs(), reading, declined);
-      subst.discoverProjectionBindings(formalTy.getResults(), reading, declined);
+      subst.discoverProjectionBindings(formalTy.getInputs(), module, reading,
+                                       declined);
+      subst.discoverProjectionBindings(formalTy.getResults(), module, reading,
+                                       declined);
     }
 
     if (failed(subst.readEvidenceBindings(operandTypes, module, reading, err)))

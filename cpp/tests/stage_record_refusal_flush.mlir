@@ -72,9 +72,12 @@ func.func @main() -> !trait.proj<@Absent[i64], "B"> {
 }
 
 // Round two collects both demands the driver's read left standing: it answers
-// one and refuses the other, with nothing to forget at its own head.
+// one and refuses the other, with nothing to forget at its own head. The call
+// that left @Absent[i64]::B standing put it to the module's impls first, so it
+// arrives naming the arm it missed on; @Gen[i64]::A was left standing inside a
+// claim the read was normalizing and arrives with none.
 // CHECK: trait-stage-record round index=2
-// CHECK-SAME: collected=2 no-candidate-impl=0 multiple-candidate-impls=0 other-arms=0 without-arm=2
+// CHECK-SAME: collected=2 no-candidate-impl=1 multiple-candidate-impls=0 other-arms=0 without-arm=1
 // CHECK-SAME: served=1 declined=1 deferred=1
 // CHECK-SAME: refusals-forgotten=0 refusals-kept=0 refusals-overturned=0 refusals-re-earned=0
 

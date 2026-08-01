@@ -42,8 +42,8 @@ func.func @main() -> i64 {
 // CHECK: trait-demand-census demand flags=real drainable=yes observations=8 depth=0
 // CHECK-SAME: kinds=lookup-miss,resolver-engine-miss,read-only-resolver arms=no-candidate-impl
 // CHECK-SAME: type=!trait.proj<@T[i64], "A">
-// CHECK: trait-demand-census engine lookup-miss keys=1 observations=2 real=2 speculative=0 probe-internal=0
+// CHECK: trait-demand-census engine lookup-miss keys=1 observations=4 real=4 speculative=0 probe-internal=0
 // CHECK: trait-demand-census engine resolver-engine-miss keys=1 observations=2 real=2 speculative=0 probe-internal=0
-// CHECK: trait-demand-census engine read-only-resolver keys=1 observations=4 real=4 speculative=0 probe-internal=0
+// CHECK: trait-demand-census engine read-only-resolver keys=1 observations=2 real=2 speculative=0 probe-internal=0
 // CHECK: trait-demand-census summary keys=1 observations=8 drainable-keys=1
 // CHECK: trait-demand-census counter total residual-tolerance-accepts=0 residual-tolerance-accepts-generator-pending=0 residual-tolerance-accepts-multi-candidate=0 residual-tolerance-accepts-hypothesis=0 residual-tolerance-accepts-mixed-or-other=0 resolver-engine-misses=2

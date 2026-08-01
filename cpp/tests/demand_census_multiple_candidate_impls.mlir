@@ -5,11 +5,12 @@
 
 // Two impls bind @Gen[i64], so the read of impl selection's recorded facts that
 // the instantiation driver holds has no answer for @Gen[i64]::A and leaves it
-// spelled as written, exactly as it would for a trait with no impl at all. What
-// tells the two apart is the round: it puts the demand to selection, and two
-// satisfiable candidates is the refusal no later fact overturns -- candidates
-// are only ever appended -- so the demand leaves the drain refused where a
-// missing impl would have left it deferred.
+// spelled as written, and so does the module lookup the call puts it to next:
+// resolving needs exactly one impl to read. The arm the lookup names is what
+// tells this apart from a trait with no impl at all, and the round then puts
+// the demand to selection, where two satisfiable candidates is the refusal no
+// later fact overturns -- candidates are only ever appended -- so the demand
+// leaves the drain refused where a missing impl would have left it deferred.
 
 !T = !trait.poly<0>
 
@@ -38,14 +39,14 @@ func.func @main() -> !trait.proj<@Gen[i64], "A"> {
 }
 
 // CHECK: trait-stage-record round index=2
-// CHECK-SAME: collected=1 no-candidate-impl=0 multiple-candidate-impls=0 other-arms=0 without-arm=1
+// CHECK-SAME: collected=1 no-candidate-impl=0 multiple-candidate-impls=1 other-arms=0 without-arm=0
 // CHECK-SAME: served=0 declined=1 deferred=0
 // CHECK: trait-demand-census demand flags=real drainable=yes observations=5 depth=0
-// CHECK-SAME: kinds=unifier-acceptance,read-only-resolver arms=-
+// CHECK-SAME: kinds=lookup-miss,unifier-acceptance,read-only-resolver arms=multiple-candidate-impls
 // CHECK-SAME: type=!trait.proj<@Gen[i64], "A">
-// CHECK: trait-demand-census engine lookup-miss keys=0 observations=0 real=0 speculative=0 probe-internal=0
-// CHECK: trait-demand-census engine read-only-resolver keys=1 observations=4 real=4 speculative=0 probe-internal=0
+// CHECK: trait-demand-census engine lookup-miss keys=1 observations=2 real=2 speculative=0 probe-internal=0
+// CHECK: trait-demand-census engine read-only-resolver keys=1 observations=2 real=2 speculative=0 probe-internal=0
 // CHECK: trait-demand-census arm no-candidate-impl keys=0 observations=0 real=0 speculative=0 probe-internal=0
-// CHECK: trait-demand-census arm multiple-candidate-impls keys=0 observations=0 real=0 speculative=0 probe-internal=0
+// CHECK: trait-demand-census arm multiple-candidate-impls keys=1 observations=2 real=2 speculative=0 probe-internal=0
 // CHECK: trait-demand-census summary keys=1 observations=5 drainable-keys=1
 // CHECK: trait-stage-record digest value={{.*}} selected-impls=0 refusals-no-candidate=0 refusals-ambiguous=1

@@ -16,15 +16,26 @@
 // @user1 asks the @P[i32] pair in round one. @user2's call to @h is turned away
 // in round one over the projection @g2's signature spells; round two selects the
 // impl that resolves it, the call lowers, and it asks the same @P[i32] pair.
+//
+// Two impls bind @R[i32], so nothing but impl selection can settle the
+// projection: reading the module finds two candidates and declines, and only
+// the partition by assumption satisfiability picks one. That is what keeps the
+// call waiting for a round it could otherwise lower in.
 
 trait.trait @P[!trait.poly<0>] {}
 trait.impl @P_impl for @P[!trait.poly<1>] {}
 
+trait.trait @Mark[!trait.poly<7>] {}
+trait.impl @Mark_i32 for @Mark[i32] {}
+
 trait.trait @R[!trait.poly<2>] {
   trait.assoc_type @A
 }
-trait.impl @R_impl for @R[i32] {
+trait.impl @R_held for @R[i32] where [@Mark[i32]] {
   trait.assoc_type @A = i32
+}
+trait.impl @R_unheld for @R[i32] where [@Mark[i16]] {
+  trait.assoc_type @A = i64
 }
 
 !T = !trait.poly<4>
@@ -58,6 +69,13 @@ func.func @user2(%x: i32) -> i32 {
   %y = builtin.unrealized_conversion_cast %r : !trait.proj<@R[i32], "A"> to i32
   return %y : i32
 }
+
+// The round between the two asks settles the projection by the partition and
+// respells nothing, so the record stands untranscribed across it.
+// CHECK: trait-stage-record round index=2
+// CHECK-SAME: multiple-candidate-impls=1
+// CHECK-SAME: served=1
+// CHECK-SAME: respelled-positions=0
 
 // One pair, asked in two rounds, unanswered once.
 // CHECK: trait-demand-census counter proof
