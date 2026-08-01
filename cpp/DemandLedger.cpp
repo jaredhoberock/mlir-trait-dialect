@@ -511,6 +511,10 @@ void DemandLedger::dumpCensus() const {
      << " memo-misses=" << proofDerivationMemoMisses
      << " derivations-recorded=" << proofDerivationsRecorded
      << " derivations-not-recorded=" << proofDerivationsNotRecorded
+     << " derivations-recovered=" << proofDerivationsRecovered
+     << " closures-answered=" << proofClosuresAnswered
+     << " closures-unanswered=" << proofClosuresUnanswered
+     << " closures-withdrawn=" << proofClosuresWithdrawn
      << " evidence-bindings-recorded=" << evidenceBindingsRecorded
      << " evidence-bindings-max=" << evidenceBindingsMax << "\n";
 
@@ -968,6 +972,26 @@ void countProofDerivationRecorded() {
 void countProofDerivationNotRecorded() {
   if (isDemandRecordingActive())
     ambientLedger->countProofDerivationNotRecorded();
+}
+
+void countProofClosureAnswered() {
+  if (isDemandRecordingActive())
+    ambientLedger->countProofClosureAnswered();
+}
+
+void countProofClosureUnanswered() {
+  if (isDemandRecordingActive())
+    ambientLedger->countProofClosureUnanswered();
+}
+
+void countProofDerivationRecovered() {
+  if (isDemandRecordingActive())
+    ambientLedger->countProofDerivationRecovered();
+}
+
+void countProofClosureWithdrawn() {
+  if (isDemandRecordingActive())
+    ambientLedger->countProofClosureWithdrawn();
 }
 
 void countEvidenceBinding(size_t bindingsAfter) {

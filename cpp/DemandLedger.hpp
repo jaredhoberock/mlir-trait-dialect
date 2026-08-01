@@ -575,6 +575,23 @@ public:
   void countProofDerivationRecorded() { ++proofDerivationsRecorded; }
   void countProofDerivationNotRecorded() { ++proofDerivationsNotRecorded; }
 
+  /// What the record of per-application closures could answer where the memo of
+  /// spelling pairs was asked, and how many nodes it described that the
+  /// derivation running over them could not.
+  ///
+  /// The first pair is the record's coverage of the memo's own population,
+  /// which is what a reader that must not derive at all is owed. The third is
+  /// the closure a node exiting early on a binding written before this
+  /// derivation began would otherwise have gone without.
+  void countProofClosureAnswered() { ++proofClosuresAnswered; }
+  void countProofClosureUnanswered() { ++proofClosuresUnanswered; }
+  void countProofDerivationRecovered() { ++proofDerivationsRecovered; }
+
+  /// Files one pair the record withdrew because two derivations of it reached
+  /// two closures, so that the population it therefore answers for no longer is
+  /// visible rather than silent.
+  void countProofClosureWithdrawn() { ++proofClosuresWithdrawn; }
+
   /// Files one evidence binding written into some substitution's map, and the
   /// high-water mark of the map that took it.
   ///
@@ -760,6 +777,10 @@ private:
   uint64_t proofDerivationMemoMisses = 0;
   uint64_t proofDerivationsRecorded = 0;
   uint64_t proofDerivationsNotRecorded = 0;
+  uint64_t proofClosuresAnswered = 0;
+  uint64_t proofClosuresUnanswered = 0;
+  uint64_t proofDerivationsRecovered = 0;
+  uint64_t proofClosuresWithdrawn = 0;
   uint64_t evidenceBindingsRecorded = 0;
   size_t evidenceBindingsMax = 0;
   uint64_t callLoweringVisits = 0;
@@ -1006,6 +1027,17 @@ void countProofDerivationMemoHit();
 void countProofDerivationMemoMiss();
 void countProofDerivationRecorded();
 void countProofDerivationNotRecorded();
+
+/// Counts what the record of per-application closures could answer where the
+/// memo of spelling pairs was asked, and the nodes it described that the
+/// derivation running over them could not.
+void countProofClosureAnswered();
+void countProofClosureUnanswered();
+void countProofDerivationRecovered();
+
+/// Counts one pair the record of per-application closures withdrew because two
+/// derivations of it reached two closures.
+void countProofClosureWithdrawn();
 
 /// Counts one evidence binding written into a substitution's map, `bindingsAfter`
 /// being the size of the map that took it.

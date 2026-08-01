@@ -389,7 +389,7 @@ static uint64_t respellProvenClaimsInPlace(const ImplResolver &resolver,
   // reads. A sweep that respelled nothing leaves every derivation reading the
   // module it read.
   if (positionsRespelled != 0)
-    resolver.noteRespelling();
+    resolver.noteRespelling(replacer);
 
   if (DemandLedger::isRecordingEnabled())
     llvm::errs() << stageRecordRespellingPrefix

@@ -36,6 +36,7 @@ class ReadOnlyImplResolver;
 
 namespace mlir::trait {
 
+inline bool isPolymorphicType(Type root);
 inline Type applySubstitutionOnce(const llvm::DenseMap<Type,Type> &subst,
                                   Type root);
 inline Type applySubstitutionToFixedPoint(const llvm::DenseMap<Type,Type> &subst,
@@ -232,6 +233,150 @@ private:
   llvm::DenseMap<ClaimType, ClaimType> bindings;
 };
 
+/// What deriving each proven obligation produced, kept for as long as the proof
+/// stands.
+///
+/// The evidence bindings a derivation writes are the closure of one proof: the
+/// obligation it discharges bound to the claim proving it, then the same for
+/// every obligation underneath. That closure is a fact about the proof, not
+/// about the caller that asked for it, so it is kept once per normalized pair
+/// rather than once per asking, and it is kept whatever else the fact base
+/// does: an impl minted since can make a NEW application resolvable, but it
+/// cannot change what the proof already standing over this one binds.
+///
+/// The key is the pair AS NORMALIZED -- the demanded obligation and the proven
+/// value with their ground projections resolved -- rather than the pair as some
+/// caller happened to spell it. Two callers reaching one obligation through
+/// different projection spellings key it identically that way, which is what
+/// lets one record answer both. The obligation is part of the key and not
+/// derivable from the proven value: an obligation and the claim proving it need
+/// not name the same application, and the closure's first binding is between
+/// exactly those two.
+///
+/// The spellings inside a closure are the module's, and a sweep respells those,
+/// so the record is transcribed with the module by the sweep that moves them --
+/// storing them at a grade nothing respells would mean storing them without
+/// their proofs, which is what the closure is for.
+///
+/// Entries are only ever added, and re-recording one is checked rather than
+/// trusted: two derivations of one application that disagree are a fault this
+/// must report, not a race to the map.
+class ProofClosureRecord {
+public:
+  /// The evidence bindings one derivation wrote, in the order it wrote them.
+  using Closure = SmallVector<std::pair<ClaimType, ClaimType>, 4>;
+
+  /// What deriving `proven` for `unproven` produced, or nothing when no
+  /// derivation of that pair has been recorded. Both sides are the normalized
+  /// spellings.
+  const Closure *lookup(ClaimType unproven, ClaimType proven) const {
+    auto it = entries.find(std::make_pair(unproven, proven));
+    return it == entries.end() ? nullptr : &it->second;
+  }
+
+  /// Whether a spelling is one nothing but a respelling can move.
+  ///
+  /// Two things leave a spelling open. A ground projection is one the impls
+  /// standing when it was normalized could not resolve, so an impl generated
+  /// since may resolve it and reach a different closure. A type variable is one
+  /// the template it belongs to binds differently for each instance, so a pair
+  /// carrying one is a coincidence of the instance being derived rather than a
+  /// fact about the proof. A spelling with neither has no open question in it:
+  /// the proof it names is settled, and the only thing that moves it afterwards
+  /// is the sweep, which this record is transcribed by.
+  static bool isSettled(ClaimType claim) {
+    if (isPolymorphicType(Type(claim)))
+      return false;
+    bool open = false;
+    Type(claim).walk([&](Type sub) {
+      if (isa<ProjectionType>(sub))
+        open = true;
+    });
+    return !open;
+  }
+
+  /// Whether the pair and every binding in `closure` are settled, which is the
+  /// condition on holding a derivation for longer than the fact base stands.
+  static bool isSettled(ClaimType unproven, ClaimType proven,
+                        const Closure &closure) {
+    if (!isSettled(unproven) || !isSettled(proven))
+      return false;
+    for (auto [boundUnproven, boundProven] : closure)
+      if (!isSettled(boundUnproven) || !isSettled(boundProven))
+        return false;
+    return true;
+  }
+
+  /// Records `closure` as what deriving `proven` for `unproven` produces, and
+  /// says whether this record now answers for the pair.
+  ///
+  /// A derivation that is not settled is refused: this answers for as long as
+  /// the proof stands, and an unsettled derivation stands only until the next
+  /// impl.
+  ///
+  /// A second derivation of one settled pair reaching a different closure is a
+  /// pair this cannot answer for: whichever answer it gave, one of the two
+  /// derivations would have written something else. The entry is withdrawn and
+  /// the pair is refused from then on, so that what this holds is only ever what
+  /// deriving would have produced -- a reader gets no answer rather than the
+  /// wrong one, and the reader's own fallback is what covers it.
+  bool record(ClaimType unproven, ClaimType proven, Closure closure) {
+    auto key = std::make_pair(unproven, proven);
+    if (disputed.contains(key))
+      return false;
+    if (!isSettled(unproven, proven, closure))
+      return false;
+    auto [entry, inserted] = entries.try_emplace(key, std::move(closure));
+    if (inserted || entry->second == closure)
+      return true;
+    entries.erase(entry);
+    disputed.insert(key);
+    countProofClosureWithdrawn();
+    return false;
+  }
+
+  /// How many pairs two derivations disagreed over, which this therefore
+  /// answers for no longer.
+  size_t disputedCount() const { return disputed.size(); }
+
+  /// Respells every key and every binding this holds through `replacer`, which
+  /// is the same rewrite the sweep applies to the module.
+  ///
+  /// Two pairs can respell to one -- an unproven claim among the type arguments
+  /// of both gains the same proof -- and the closures they carry are then two
+  /// derivations of one pair, so the first stands and the second is dropped,
+  /// exactly as recording a second time does.
+  void respellWith(AttrTypeReplacer &replacer) {
+    llvm::DenseMap<std::pair<ClaimType, ClaimType>, Closure> respelled;
+    respelled.reserve(entries.size());
+    auto respell = [&](ClaimType claim) {
+      return cast<ClaimType>(replacer.replace(Type(claim)));
+    };
+    for (auto &entry : entries) {
+      Closure closure;
+      closure.reserve(entry.second.size());
+      for (auto [unproven, proven] : entry.second)
+        closure.emplace_back(respell(unproven), respell(proven));
+      respelled.try_emplace(std::make_pair(respell(entry.first.first),
+                                           respell(entry.first.second)),
+                            std::move(closure));
+    }
+    entries = std::move(respelled);
+    llvm::DenseSet<std::pair<ClaimType, ClaimType>> respelledDisputes;
+    respelledDisputes.reserve(disputed.size());
+    for (auto &key : disputed)
+      respelledDisputes.insert(
+          std::make_pair(respell(key.first), respell(key.second)));
+    disputed = std::move(respelledDisputes);
+  }
+
+  size_t size() const { return entries.size(); }
+
+private:
+  llvm::DenseMap<std::pair<ClaimType, ClaimType>, Closure> entries;
+  llvm::DenseSet<std::pair<ClaimType, ClaimType>> disputed;
+};
+
 /// The proof derivations one span of resolution has completed, so that a
 /// derivation performed once can be replayed rather than performed again.
 ///
@@ -255,10 +400,20 @@ private:
 /// This holds no fact: everything in it is derivable again, which is what lets
 /// a reader keep it through a handle that may not resolve and makes dropping an
 /// entry always safe.
+///
+/// Beside it, and reached through it because every site that derives already
+/// carries it, sits the record of what deriving each proven application
+/// produces. That record answers for a pair however the caller spelled its
+/// projections, and for as long as the proof stands; this memo answers for the
+/// pair exactly as it arrived, and only until the next fact.
 class ProofDerivationMemo {
 public:
   /// The evidence bindings one derivation wrote, in the order it wrote them.
-  using Closure = SmallVector<std::pair<ClaimType, ClaimType>, 4>;
+  using Closure = ProofClosureRecord::Closure;
+
+  /// What deriving each proven application produces.
+  ProofClosureRecord &getClosures() { return closures; }
+  const ProofClosureRecord &getClosures() const { return closures; }
 
   /// The closure deriving `proven` for `unproven` produced, or nothing when no
   /// derivation of that pair is held against the fact base as it stands.
@@ -290,6 +445,7 @@ private:
   };
 
   llvm::DenseMap<std::pair<ClaimType, ClaimType>, Entry> entries;
+  ProofClosureRecord closures;
   uint64_t factBase = 0;
 };
 

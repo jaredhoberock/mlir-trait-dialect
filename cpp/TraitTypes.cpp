@@ -510,6 +510,35 @@ namespace {
 struct DerivedNode {
   ProofDerivationMemo::Closure closure;
   bool complete = true;
+
+  /// Adds one binding, which a node already carrying it has already written.
+  ///
+  /// A closure is the SET of bindings replaying it writes, kept in derivation
+  /// order for a reader. One obligation can be reached through two of a proof's
+  /// subtrees, and whether the second reaching writes it again or exits early on
+  /// the first is decided by the order the caller's own map was filled in -- so
+  /// keeping a binding once is what makes two derivations of one pair produce
+  /// one closure.
+  void add(ClaimType unproven, ClaimType proven) {
+    if (written.insert(std::make_pair(unproven, proven)).second)
+      closure.emplace_back(unproven, proven);
+  }
+
+  void addAll(const ProofDerivationMemo::Closure &other) {
+    for (auto [unproven, proven] : other)
+      add(unproven, proven);
+  }
+
+  /// Takes `other` as this node's whole closure, which a node that wrote
+  /// nothing of its own does when another derivation already holds it.
+  void take(const ProofDerivationMemo::Closure &other) {
+    closure.clear();
+    written.clear();
+    addAll(other);
+  }
+
+private:
+  llvm::DenseSet<std::pair<ClaimType, ClaimType>> written;
 };
 
 /// The nodes one top-level derivation has completed, held until it succeeds.
@@ -526,10 +555,12 @@ struct DerivedNode {
 class DerivationStaging {
 public:
   void hold(ClaimType keyUnproven, ClaimType keyProven,
-            ClaimType normalizedUnproven,
+            ClaimType normalizedUnproven, ClaimType normalizedProven,
             const ProofDerivationMemo::Closure &closure) {
     byNormalizedObligation[normalizedUnproven] = held.size();
-    held.push_back(Held{keyUnproven, keyProven, closure});
+    held.push_back(
+        Held{keyUnproven, keyProven, normalizedUnproven, normalizedProven,
+             closure});
   }
 
   /// What deriving the obligation now bound to `normalizedUnproven` produced,
@@ -542,10 +573,18 @@ public:
     return &held[it->second].closure;
   }
 
+  /// Publishes every node into the memo of spelling pairs, and every node's
+  /// closure into the record of what deriving its pair produces.
+  ///
+  /// The record decides for itself what it can keep: an unsettled derivation and
+  /// a pair two derivations disagree over are both refused there.
   void publishInto(ProofDerivationMemo &memo) const {
+    ProofClosureRecord &closures = memo.getClosures();
     for (const Held &node : held) {
       memo.record(node.keyUnproven, node.keyProven, node.closure);
       countProofDerivationRecorded();
+      (void)closures.record(node.normalizedUnproven, node.normalizedProven,
+                            node.closure);
     }
   }
 
@@ -553,6 +592,8 @@ private:
   struct Held {
     ClaimType keyUnproven;
     ClaimType keyProven;
+    ClaimType normalizedUnproven;
+    ClaimType normalizedProven;
     ProofDerivationMemo::Closure closure;
   };
 
@@ -655,11 +696,21 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
   ClaimType askedUnproven = unproven;
   ClaimType askedProven = proven;
   if (memo) {
+    // What the record of per-application closures would have answered here is
+    // counted beside the memo's own answer, because a reader that must not
+    // derive at all has only the record to serve from and this is where its
+    // coverage of the memo's population is measured. The spelling asked with is
+    // the one such a reader holds, so it is asked with the same one.
+    if (memo->getClosures().lookup(askedUnproven, askedProven))
+      countProofClosureAnswered();
+    else
+      countProofClosureUnanswered();
+
     if (const auto *closure = memo->lookup(askedUnproven, askedProven)) {
       countProofDerivationMemoHit();
       checkHeldClosureAgrees(askedUnproven, askedProven, module, origin,
                              *closure);
-      derived.closure = *closure;
+      derived.take(*closure);
       return replayClosure(*closure, bindings, err);
     }
     countProofDerivationMemoMiss();
@@ -690,12 +741,21 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
       return failure();
     // What this node would have written is already written. When this
     // derivation is what wrote it, that closure is in hand and stands for this
-    // node's; when something before this derivation wrote it, no closure here
-    // describes the node, and nothing containing it can be held either.
-    if (const auto *closure = staging.lookupDerived(unproven))
-      derived.closure = *closure;
-    else
+    // node's; when something before this derivation wrote it, the record of
+    // what deriving the application produces is where the closure is, because
+    // it is kept per application rather than per derivation. Only where neither
+    // has it does the node go undescribed, and nothing containing it can be
+    // held either.
+    if (const auto *closure = staging.lookupDerived(unproven)) {
+      derived.take(*closure);
+    } else if (const auto *recorded =
+                   memo ? memo->getClosures().lookup(unproven, proven)
+                        : nullptr) {
+      countProofDerivationRecovered();
+      derived.take(*recorded);
+    } else {
       derived.complete = false;
+    }
     return success();
   }
 
@@ -717,8 +777,8 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
     // success: bind the whole claim so that later normalization keeps the proof
     bindings.bind(unproven, proven);
     // A leaf: the binding it wrote is the whole of what deriving it produces.
-    derived.closure.emplace_back(unproven, proven);
-    staging.hold(askedUnproven, askedProven, unproven, derived.closure);
+    derived.add(unproven, proven);
+    staging.hold(askedUnproven, askedProven, unproven, proven, derived.closure);
     return success();
   }
 
@@ -751,7 +811,7 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
   // (where an obligation resolves back to the same claim) hit the early exit
   // at the top of this function instead of diverging.
   bindings.bind(unproven, proven);
-  derived.closure.emplace_back(unproven, proven);
+  derived.add(unproven, proven);
 
   // recurse over obligations
   for (auto [ob, sub] : llvm::zip(*obligations, *subproofs)) {
@@ -763,13 +823,13 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
     }
     derived.complete &= child.complete;
     if (derived.complete)
-      derived.closure.append(child.closure.begin(), child.closure.end());
+      derived.addAll(child.closure);
   }
 
   if (derived.complete) {
-    staging.hold(askedUnproven, askedProven, unproven, derived.closure);
+    staging.hold(askedUnproven, askedProven, unproven, proven, derived.closure);
   } else {
-    derived.closure.clear();
+    derived.take({});
     countProofDerivationNotRecorded();
   }
   return success();

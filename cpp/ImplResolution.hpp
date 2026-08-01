@@ -350,12 +350,18 @@ class ImplResolver {
     /// serve from it and still hold what it derives.
     ProofDerivationMemo &getDerivationMemo() const { return derivations; }
 
-    /// Says a sweep has respelled the module's copy of the recorded facts.
+    /// Says a sweep has respelled the module's copy of the recorded facts,
+    /// `replacer` being the rewrite it applied.
     ///
     /// A sweep records no proof, so the fact count does not move for it; what
     /// a derivation reads are spellings, so what was derived before the sweep
-    /// was derived from a module that no longer stands.
-    void noteRespelling() const {
+    /// was derived from a module that no longer stands. The memo of spelling
+    /// pairs answers that by holding nothing across the sweep; the record of
+    /// per-application closures is transcribed instead, because it is what a
+    /// reader that must not derive serves from and dropping it would leave that
+    /// reader with nothing.
+    void noteRespelling(AttrTypeReplacer &replacer) const {
+      derivations.getClosures().respellWith(replacer);
       derivations.noteRespelling();
       ++recordEpoch;
     }
