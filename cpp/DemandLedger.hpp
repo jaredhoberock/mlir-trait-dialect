@@ -156,6 +156,15 @@ enum class DemandEngine : uint8_t {
   /// A read of impl selection's recorded facts had none for the demand, and its
   /// caller left the demand spelled as written. The read cannot make selection
   /// run, so what it declines is for a step that can to serve.
+  ///
+  /// This engine is permanent. Its writers are the two patterns the instantiation
+  /// driver keeps -- the one that resolves projections and the one that proves
+  /// claim results -- and both are permanent for the same reason: the population
+  /// they serve is the ground redexes a substitution MINTS while the driver runs,
+  /// which no sweep over what the module spells can reach, because the module
+  /// never spells them. Resolving projections in the commit was measured against
+  /// that population and refused: it cost 2-3% of a compile and left 91 of those
+  /// redexes for the pattern to resolve anyway.
   ReadOnlyResolver,
 };
 

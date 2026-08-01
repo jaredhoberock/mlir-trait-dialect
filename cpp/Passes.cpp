@@ -409,6 +409,11 @@ static uint64_t respellProvenClaimsInPlace(const ImplResolver &resolver,
 /// claim derived inside a still-polymorphic body is not yet its business,
 /// while the read-only driver use matches allege, derive and project results
 /// alike.
+///
+/// Both registrations are permanent. A claim result the driver's own rewrites
+/// produce is one no step before the driver could have seen, for the same reason
+/// the projection resolution beside it is permanent: what the driver mints is
+/// not what the module spelled when the round's commit swept it.
 struct ProveClaimResultPattern : public RewritePattern {
   /// Impl selection itself, where this pattern may establish facts, and nothing
   /// where it may only read them.
@@ -1029,6 +1034,15 @@ static bool wouldReplace(AttrTypeReplacer &replacer, Operation *op,
 
 /// Resolves concrete `!trait.proj` types to their bound types by looking up
 /// the matching `trait.impl`'s associated type binding.
+///
+/// This runs in the driver rather than in the commit that sweeps the module, and
+/// that is where it belongs. A commit resolves what the module SPELLS; the
+/// redexes this meets are the ones a substitution MINTS while the driver is
+/// running -- stamping a concrete argument into a projection spelling turns a
+/// symbolic projection into a ground one that no earlier sweep could have seen.
+/// Moving the work into the commit was built and measured: it cost 2-3% of a
+/// compile and left 91 of these redexes standing for this pattern to resolve
+/// anyway, so it was refused and this is the resolution arm.
 struct ResolveProjectionsPattern : public RewritePattern {
   ReadOnlyImplResolver reading;
 
