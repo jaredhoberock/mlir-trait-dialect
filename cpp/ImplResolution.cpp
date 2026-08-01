@@ -735,14 +735,19 @@ Type ReadOnlyImplResolver::resolveProjectionsIn(Type ty) const {
     auto proj = dyn_cast<ProjectionType>(t);
     if (!proj || isPolymorphicType(proj)) return std::nullopt;
     auto resolved = resolveProjectionType(proj);
-    if (failed(resolved)) {
-      // The projection stays spelled as written and the walk goes on, so this
-      // is where a demand no recorded fact answers becomes visible to the step
-      // that can make selection answer it.
-      (void)decline(proj);
+    if (succeeded(resolved))
+      return *resolved;
+    // Selection settles a projection only for an application some round put to
+    // it, so a spelling nothing has asked about yet has no recorded fact to
+    // read. One exactly one impl in the module binds is one selection would
+    // settle the same way, so the module answers it here; where no impl or
+    // several bind it, the lookup declines and says which, and the projection
+    // stays spelled as written for the step that can make selection answer it.
+    Type byLookup = resolveGroundProjectionsByLookup(
+        Type(proj), resolver.module, DemandOrigin::RecordedFactRead);
+    if (byLookup == Type(proj))
       return std::nullopt;
-    }
-    return *resolved;
+    return byLookup;
   });
   return replacer.replace(ty);
 }

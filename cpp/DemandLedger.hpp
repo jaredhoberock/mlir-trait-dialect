@@ -321,6 +321,9 @@ enum class DemandOrigin : uint8_t {
   Unification,
   /// A call site specializing its callee at pass time.
   CallSiteSpecialization,
+  /// A read of the recorded facts falling back to the module's impls for a
+  /// projection impl selection has settled nothing for.
+  RecordedFactRead,
   /// ImplOp::verifySymbolUses comparing an impl method signature.
   ImplSignatureVerification,
   /// A call op's verifier comparing its formal and actual signatures.
@@ -342,6 +345,7 @@ inline bool recordsToLedger(DemandOrigin origin) {
   case DemandOrigin::ProofRecording:
   case DemandOrigin::Unification:
   case DemandOrigin::CallSiteSpecialization:
+  case DemandOrigin::RecordedFactRead:
     return true;
   case DemandOrigin::ImplSignatureVerification:
   case DemandOrigin::CallSignatureVerification:
