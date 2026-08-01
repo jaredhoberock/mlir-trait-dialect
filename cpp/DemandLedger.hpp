@@ -592,6 +592,13 @@ public:
   /// visible rather than silent.
   void countProofClosureWithdrawn() { ++proofClosuresWithdrawn; }
 
+  /// Files one derivation of a pair the record already held.
+  ///
+  /// A pair is derived once and read thereafter, so this is the work reading
+  /// the record is meant to have stopped: what it counts is a reader that
+  /// derived anyway, or an entry that stopped answering between the two asks.
+  void countRecordedPairRederived() { ++recordedPairsRederived; }
+
   /// Files one evidence binding written into some substitution's map, and the
   /// high-water mark of the map that took it.
   ///
@@ -781,6 +788,7 @@ private:
   uint64_t proofClosuresUnanswered = 0;
   uint64_t proofDerivationsRecovered = 0;
   uint64_t proofClosuresWithdrawn = 0;
+  uint64_t recordedPairsRederived = 0;
   uint64_t evidenceBindingsRecorded = 0;
   size_t evidenceBindingsMax = 0;
   uint64_t callLoweringVisits = 0;
@@ -1038,6 +1046,9 @@ void countProofDerivationRecovered();
 /// Counts one pair the record of per-application closures withdrew because two
 /// derivations of it reached two closures.
 void countProofClosureWithdrawn();
+
+/// Counts one derivation of a pair the record already held.
+void countRecordedPairRederived();
 
 /// Counts one evidence binding written into a substitution's map, `bindingsAfter`
 /// being the size of the map that took it.

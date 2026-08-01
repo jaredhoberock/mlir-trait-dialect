@@ -321,14 +321,23 @@ public:
   /// deriving would have produced -- a reader gets no answer rather than the
   /// wrong one, and the reader's own fallback is what covers it.
   bool record(ClaimType unproven, ClaimType proven, Closure closure) {
+    assert(isWellGraded(unproven, proven) &&
+           "a recorded pair is an obligation and the claim proving it");
     auto key = std::make_pair(unproven, proven);
     if (disputed.contains(key))
       return false;
     if (!isSettled(unproven, proven, closure))
       return false;
     auto [entry, inserted] = entries.try_emplace(key, std::move(closure));
-    if (inserted || entry->second == closure)
+    if (inserted)
       return true;
+    if (entry->second == closure) {
+      // The pair was derived again and reached the answer already held. Nothing
+      // needed deriving: this is the work a reader serving from the record is
+      // meant to have stopped doing, so it is counted rather than passed over.
+      countRecordedPairRederived();
+      return true;
+    }
     entries.erase(entry);
     disputed.insert(key);
     countProofClosureWithdrawn();
@@ -349,30 +358,64 @@ public:
   void respellWith(AttrTypeReplacer &replacer) {
     llvm::DenseMap<std::pair<ClaimType, ClaimType>, Closure> respelled;
     respelled.reserve(entries.size());
-    auto respell = [&](ClaimType claim) {
+    // The sweep's rewrite is the one that gives an unproven claim its proof, so
+    // applying it to a spelling rewrites what is nested inside that spelling AND
+    // the spelling itself. Only the first is wanted here: every position of this
+    // record is an obligation or the claim proving one, and which it is says how
+    // a reader will spell its ask. So each position keeps its own grade and
+    // takes the interior rewrite -- an obligation stays an obligation whose type
+    // arguments now name their proofs, which is exactly the spelling the next
+    // ask arrives in.
+    auto respellObligation = [&](ClaimType claim) {
+      return cast<ClaimType>(replacer.replace(Type(claim))).asUnproven();
+    };
+    auto respellProof = [&](ClaimType claim) {
       return cast<ClaimType>(replacer.replace(Type(claim)));
+    };
+    auto respellPair = [&](const std::pair<ClaimType, ClaimType> &pair) {
+      return std::make_pair(respellObligation(pair.first),
+                            respellProof(pair.second));
     };
     for (auto &entry : entries) {
       Closure closure;
       closure.reserve(entry.second.size());
-      for (auto [unproven, proven] : entry.second)
-        closure.emplace_back(respell(unproven), respell(proven));
-      respelled.try_emplace(std::make_pair(respell(entry.first.first),
-                                           respell(entry.first.second)),
-                            std::move(closure));
+      for (auto &binding : entry.second)
+        closure.push_back(respellPair(binding));
+      respelled.try_emplace(respellPair(entry.first), std::move(closure));
     }
     entries = std::move(respelled);
     llvm::DenseSet<std::pair<ClaimType, ClaimType>> respelledDisputes;
     respelledDisputes.reserve(disputed.size());
     for (auto &key : disputed)
-      respelledDisputes.insert(
-          std::make_pair(respell(key.first), respell(key.second)));
+      respelledDisputes.insert(respellPair(key));
     disputed = std::move(respelledDisputes);
+    assert(gradesHold() && "transcribing must leave every position its grade");
   }
 
   size_t size() const { return entries.size(); }
 
 private:
+  /// Whether a pair is an obligation paired with a claim proving it, which is
+  /// what every key and every binding this holds is.
+  static bool isWellGraded(ClaimType unproven, ClaimType proven) {
+    return !unproven.isProven() && proven.isProven();
+  }
+
+  /// Whether every position this holds carries the grade its place demands.
+  bool gradesHold() const {
+    for (auto &entry : entries) {
+      if (!isWellGraded(entry.first.first, entry.first.second))
+        return false;
+      for (auto [unproven, proven] : entry.second)
+        if (!isWellGraded(unproven, proven))
+          return false;
+    }
+    for (auto &key : disputed)
+      if (!isWellGraded(key.first, key.second))
+        return false;
+    return true;
+  }
+
   llvm::DenseMap<std::pair<ClaimType, ClaimType>, Closure> entries;
   llvm::DenseSet<std::pair<ClaimType, ClaimType>> disputed;
 };
