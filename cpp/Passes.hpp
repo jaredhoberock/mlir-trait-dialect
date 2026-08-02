@@ -27,6 +27,23 @@ struct InstantiateMonomorphsPass : PassWrapper<InstantiateMonomorphsPass, Operat
   void runOnOperation() override;
 };
 
+std::unique_ptr<Pass> createInstantiateMonomorphsPass();
+
+/// Erases all residual polymorphism from the module, the second half of
+/// monomorphization: it runs after instantiate-monomorphs has proved every
+/// monomorphic claim, and erases the trait templates, the claims and
+/// projections, and the polymorphic function signatures they stood on.
+struct ErasePolymorphsPass : PassWrapper<ErasePolymorphsPass, OperationPass<ModuleOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ErasePolymorphsPass);
+
+  inline StringRef getArgument() const final { return "erase-polymorphs-trait"; }
+  inline StringRef getDescription() const final { return "Erase all residual polymorphism from the module."; }
+
+  void runOnOperation() override;
+};
+
+std::unique_ptr<Pass> createErasePolymorphsPass();
+
 /// Monomorph instantiation with a pattern that puts a claim a function's
 /// signature declares to impl selection from inside the instantiation driver.
 ///

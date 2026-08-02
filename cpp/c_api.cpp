@@ -23,6 +23,14 @@ MlirPass traitCreateMonomorphizePass() {
   return wrap(createMonomorphizePass().release());
 }
 
+MlirPass traitCreateInstantiateMonomorphsPass() {
+  return wrap(createInstantiateMonomorphsPass().release());
+}
+
+MlirPass traitCreateErasePolymorphsPass() {
+  return wrap(createErasePolymorphsPass().release());
+}
+
 MlirAttribute traitTraitApplicationAttrGet(MlirContext wrappedCtx,
                                            MlirStringRef traitName,
                                            MlirType* typeArgs, intptr_t numTypeArgs) {

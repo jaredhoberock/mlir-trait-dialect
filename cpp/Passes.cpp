@@ -2078,5 +2078,14 @@ std::unique_ptr<Pass> createMonomorphizePass() {
   return std::make_unique<MonomorphizePass>();
 }
 
+void ErasePolymorphsPass::runOnOperation() {
+  if (failed(erasePolymorphs(getOperation())))
+    signalPassFailure();
+}
+
+std::unique_ptr<Pass> createErasePolymorphsPass() {
+  return std::make_unique<ErasePolymorphsPass>();
+}
+
 
 } // end mlir::trait
