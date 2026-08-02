@@ -33,4 +33,8 @@ fn main() {
 
     println!("cargo:rerun-if-env-changed=MLIR_SYS_220_PREFIX");
     println!("cargo:rerun-if-changed=cpp");
+    // This dialect compiles against the driver's contribution headers rather
+    // than linking them, so a change to either must recompile its C++.
+    println!("cargo:rerun-if-changed={lowering_driver_source_dir}/LoweringContribution.hpp");
+    println!("cargo:rerun-if-changed={lowering_driver_source_dir}/c_api.h");
 }
