@@ -7,6 +7,7 @@ links = "trait_dialect"
 [dependencies]
 melior = "0.27"
 mlir-sys = "220.0.1"
+lowering_driver = { path = "../mlir-lowering-driver", package = "mlir-lowering-driver" }
 
 [lib]
 name = "trait_dialect"

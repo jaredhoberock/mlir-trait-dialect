@@ -8,10 +8,13 @@ fn main() {
     let crate_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let cpp_dir = crate_dir.join("cpp");
     let build_dir = PathBuf::from(env::var("OUT_DIR").unwrap()).join("cpp");
+    let lowering_driver_source_dir = env::var("DEP_LOWERING_DRIVER_SOURCE_DIR")
+        .expect("DEP_LOWERING_DRIVER_SOURCE_DIR must be set by mlir-lowering-driver");
 
     let status = Command::new("make")
         .arg("-j")
         .arg(format!("BUILD_DIR={}", build_dir.display()))
+        .arg(format!("LOWERING_DRIVER_SOURCE_DIR={lowering_driver_source_dir}"))
         .current_dir(&cpp_dir)
         .status()
         .expect("Failed to run make in cpp/");

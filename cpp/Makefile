@@ -10,9 +10,11 @@ LLVM_BIN_PATH := $(MLIR_SYS_220_PREFIX)/bin
 LLVM_CONFIG := $(LLVM_BIN_PATH)/llvm-config
 TBLGEN := $(LLVM_BIN_PATH)/mlir-tblgen
 
+LOWERING_DRIVER_SOURCE_DIR := ../../mlir-lowering-driver/cpp
+
 CXX := clang++
 CXXFLAGS := -Wall -Werror -fPIC $(shell $(LLVM_CONFIG) --cxxflags)
-INCLUDES := -I$(BUILD_DIR) -I. -I$(MLIR_SYS_220_PREFIX)/include
+INCLUDES := -I$(BUILD_DIR) -I. -I$(MLIR_SYS_220_PREFIX)/include -I$(LOWERING_DRIVER_SOURCE_DIR)
 
 DIALECT_SOURCES := c_api.cpp DemandLedger.cpp ImplResolution.cpp Specialization.cpp Passes.cpp Trait.cpp TraitAttributes.cpp TraitOps.cpp TraitTypes.cpp
 DIALECT_OBJECTS := $(addprefix $(BUILD_DIR)/,$(DIALECT_SOURCES:.cpp=.o))
