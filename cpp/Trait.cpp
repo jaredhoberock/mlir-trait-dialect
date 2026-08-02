@@ -11,18 +11,21 @@
 namespace mlir::trait {
 
 namespace {
-/// Monomorphization is the trait dialect's lowering, and it runs as two steps.
-/// The first instantiates the monomorphs each trait call needs and leaves the
-/// polymorphic templates standing, so it removes no whole class. The second
-/// erases those templates and the claims and projections resolved against them;
-/// the coordinate types the type system carried leave the module there, so that
-/// step discharges the coord dialect.
+/// Monomorphization is the trait dialect's lowering: one step spanning two
+/// passes. The first instantiates the monomorphs each trait call needs and
+/// leaves the polymorphic templates standing; the second erases those templates
+/// and the claims and projections resolved against them. The step discharges
+/// the coordinate types the type system carried and the trait dialect's
+/// vocabulary — all but the generic types standing inside nominal attributes,
+/// which the nominal conversion takes with those attributes and which the step
+/// therefore leaves for it. The step requests the cleanup interlude that runs
+/// after it, so it is that interlude's requester.
 struct LoweringContribution : lowering::LoweringContributionInterface {
   using lowering::LoweringContributionInterface::LoweringContributionInterface;
   void contributeSteps(lowering::LoweringStepSink &sink) const override {
-    sink.beginStep("instantiate-monomorphs", false, "", false);
-    sink.beginStep("erase-polymorphs", false, "", false);
+    sink.beginStep("monomorphize", /*wantsCleanup=*/true, "", false);
     sink.dischargeDialect("coord");
+    sink.dischargeDialect("trait");
   }
 };
 } // namespace
