@@ -7,6 +7,15 @@
 
 namespace mlir::trait {
 
+/// Runs monomorphization to completion in one pass: instantiates the monomorphs
+/// every trait call needs and erases all residual polymorphism. The compiler
+/// runs the two halves as separate passes (instantiate-monomorphs then
+/// erase-polymorphs), but this fused housing survives because it is the only way
+/// to run monomorphization to completion under a per-pass verifier: the state
+/// between the two halves — monomorphs standing over the templates they were cut
+/// from — does not recursively verify, so the split passes cannot compose under
+/// a verifying pass manager. The lit rows that drive `monomorphize-trait`
+/// through `mlir-opt`, and the integration test, run monomorphization this way.
 struct MonomorphizePass : PassWrapper<MonomorphizePass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(MonomorphizePass);
 
@@ -18,6 +27,13 @@ struct MonomorphizePass : PassWrapper<MonomorphizePass, OperationPass<ModuleOp>>
 
 std::unique_ptr<Pass> createMonomorphizePass();
 
+/// The first half of monomorphization: instantiates the monomorphs every trait
+/// call needs and proves the monomorphic claims, leaving the polymorphic
+/// templates standing for erase-polymorphs to remove. Its output is
+/// mid-transformation and is not guaranteed to verify — monomorphs can stand
+/// over their templates, which the verifier rejects, as inputs across the srcc
+/// corpus exhibit — so it runs either with its pass manager's verifier off or
+/// immediately before erase-polymorphs.
 struct InstantiateMonomorphsPass : PassWrapper<InstantiateMonomorphsPass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(InstantiateMonomorphsPass);
 
