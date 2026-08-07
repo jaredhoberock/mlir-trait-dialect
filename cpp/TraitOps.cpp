@@ -1910,6 +1910,270 @@ OpFoldResult ProjCastOp::fold(FoldAdaptor) {
 
 
 //===----------------------------------------------------------------------===//
+// CoerceOp
+//===----------------------------------------------------------------------===//
+
+namespace {
+
+// Ground congruence closure over the subterm DAG of a coerce's endpoints and
+// its cited equalities. It seeds the union-find with the equalities, then
+// closes under congruence: two terms with the same constructor and pairwise
+// equal children are united. It only unites -- it never decomposes, so
+// f(a) = f(b) is not read backwards to a = b at projection heads or anywhere
+// else. Child enumeration descends into type-bearing trait attributes (claims,
+// projections) and reads equality endpoints directly, since the generic walkers
+// are opaque to those.
+class GroundCongruence {
+public:
+  // Seed an equality between two endpoints (and intern their subterms).
+  void seed(Type a, Type b) { unite(intern(a), intern(b)); }
+
+  // Intern a type and all its subterms; returns its term id.
+  unsigned intern(Type t) {
+    auto it = ids.find(t);
+    if (it != ids.end())
+      return it->second;
+    unsigned id = terms.size();
+    ids[t] = id;
+    terms.push_back(t);
+    parent.push_back(id);
+    ctorKey.push_back(llvm::hash_code(0));
+    children.emplace_back();
+
+    Decomp d = decompose(t);
+    ctorKey[id] = d.ctor;
+    SmallVector<unsigned> childIds;
+    for (Type c : d.children)
+      childIds.push_back(intern(c));
+    children[id] = std::move(childIds);
+    return id;
+  }
+
+  // Close under congruence to a fixed point.
+  void close() {
+    bool changed = true;
+    while (changed) {
+      changed = false;
+      for (unsigned i = 0, n = terms.size(); i != n; ++i)
+        for (unsigned j = i + 1; j != n; ++j) {
+          if (find(i) == find(j))
+            continue;
+          if (ctorKey[i] != ctorKey[j] ||
+              children[i].size() != children[j].size())
+            continue;
+          bool allEqual = true;
+          for (auto [ci, cj] : llvm::zip(children[i], children[j]))
+            if (find(ci) != find(cj)) {
+              allEqual = false;
+              break;
+            }
+          if (allEqual) {
+            unite(i, j);
+            changed = true;
+          }
+        }
+    }
+  }
+
+  bool equal(Type a, Type b) { return find(intern(a)) == find(intern(b)); }
+
+private:
+  struct Decomp {
+    llvm::hash_code ctor;
+    SmallVector<Type, 4> children;
+  };
+
+  // The term-signature contract: constructor identity and child enumeration
+  // across types AND type-bearing attributes, an exact decomposition rather
+  // than the generic unifier (which treats attributes as opaque).
+  static Decomp decompose(Type t) {
+    Decomp d;
+    if (auto claim = dyn_cast<ClaimType>(t)) {
+      if (auto eq = claim.getEqualityAttr()) {
+        d.ctor = llvm::hash_combine(StringRef("trait.claim.eq"));
+        d.children.push_back(eq.getLhs());
+        d.children.push_back(eq.getRhs());
+        return d;
+      }
+      // Application receipts are stripped before the closure runs, so the
+      // constructor ignores the proof.
+      auto app = claim.getTraitApplication();
+      d.ctor = llvm::hash_combine(StringRef("trait.claim"),
+                                  app.getTraitName().getValue());
+      for (Type a : app.getTypeArgs())
+        d.children.push_back(a);
+      return d;
+    }
+    if (auto proj = dyn_cast<ProjectionType>(t)) {
+      auto app = proj.getTraitApplication();
+      d.ctor = llvm::hash_combine(StringRef("trait.proj"),
+                                  app.getTraitName().getValue(),
+                                  proj.getAssocName().getValue(),
+                                  (unsigned)proj.getAssocTypeArgs().size());
+      for (Type a : app.getTypeArgs())
+        d.children.push_back(a);
+      for (Type a : proj.getAssocTypeArgs())
+        d.children.push_back(a);
+      return d;
+    }
+
+    // Generic types: immediate sub-element types are the children. A type with
+    // no sub-element types is a leaf whose whole spelling is its constructor,
+    // so distinct constants (i32 vs i64, distinct !trait.poly) never merge; a
+    // container's constructor is its type id, immediate attributes, and arity,
+    // so two containers are congruent exactly when their children are.
+    SmallVector<Attribute> subAttrs;
+    SmallVector<Type> subTypes;
+    t.walkImmediateSubElements([&](Attribute a) { subAttrs.push_back(a); },
+                               [&](Type ty) { subTypes.push_back(ty); });
+    if (subTypes.empty()) {
+      d.ctor = llvm::hash_combine(t);
+      return d;
+    }
+    llvm::hash_code h = llvm::hash_combine(t.getTypeID());
+    for (Attribute a : subAttrs)
+      h = llvm::hash_combine(h, a);
+    h = llvm::hash_combine(h, (unsigned)subTypes.size());
+    d.ctor = h;
+    d.children = std::move(subTypes);
+    return d;
+  }
+
+  unsigned find(unsigned x) {
+    while (parent[x] != x) {
+      parent[x] = parent[parent[x]];
+      x = parent[x];
+    }
+    return x;
+  }
+  void unite(unsigned a, unsigned b) {
+    a = find(a);
+    b = find(b);
+    if (a != b)
+      parent[a] = b;
+  }
+
+  DenseMap<Type, unsigned> ids;
+  SmallVector<Type> terms;
+  SmallVector<unsigned> parent;
+  SmallVector<llvm::hash_code> ctorKey;
+  SmallVector<SmallVector<unsigned>> children;
+};
+
+} // namespace
+
+ParseResult CoerceOp::parse(OpAsmParser &p, OperationState &st) {
+  OpAsmParser::UnresolvedOperand input;
+  Type inputType, resultType;
+  if (p.parseOperand(input) || p.parseColon() || p.parseType(inputType) ||
+      p.parseKeyword("to") || p.parseType(resultType))
+    return failure();
+
+  SmallVector<OpAsmParser::UnresolvedOperand> equalities;
+  SmallVector<Type> equalityTypes;
+  if (succeeded(p.parseOptionalKeyword("via"))) {
+    if (p.parseOperandList(equalities, OpAsmParser::Delimiter::Paren) ||
+        p.parseColon() ||
+        p.parseCommaSeparatedList(OpAsmParser::Delimiter::Paren, [&] {
+          Type ty;
+          if (p.parseType(ty))
+            return failure();
+          equalityTypes.push_back(ty);
+          return success();
+        }))
+      return failure();
+  }
+
+  st.addTypes(resultType);
+  if (p.resolveOperand(input, inputType, st.operands))
+    return failure();
+  if (p.resolveOperands(equalities, equalityTypes, p.getCurrentLocation(),
+                        st.operands))
+    return failure();
+  return success();
+}
+
+void CoerceOp::print(OpAsmPrinter &p) {
+  p << " " << getInput() << " : " << getInput().getType() << " to "
+    << getResult().getType();
+  if (!getEqualities().empty()) {
+    p << " via (";
+    llvm::interleaveComma(getEqualities(), p,
+                          [&](Value v) { p.printOperand(v); });
+    p << ") : (";
+    llvm::interleaveComma(getEqualities().getTypes(), p,
+                          [&](Type t) { p.printType(t); });
+    p << ")";
+  }
+}
+
+LogicalResult CoerceOp::verify() {
+  // A verdict that is a pure function of op, operands, and attributes.
+
+  // 1. Strip application-claim receipts from the input and result. Comparison
+  // is modulo the receipt, permanently.
+  AttrTypeReplacer strip;
+  strip.addReplacement([](ClaimType claim) -> std::optional<Type> {
+    if (claim.isProven())
+      return Type(claim.asUnproven());
+    return std::nullopt;
+  });
+  Type input = strip.replace(getInput().getType());
+  Type result = strip.replace(getResult().getType());
+
+  // 3. Seed the closure with each cited equality (endpoints receipt-stripped),
+  // interning the endpoints too.
+  GroundCongruence closure;
+  closure.intern(input);
+  closure.intern(result);
+  for (Value e : getEqualities()) {
+    auto claim = dyn_cast<ClaimType>(e.getType());
+    if (!claim || !claim.isEquality())
+      return emitOpError() << "coerce cites equality claims, but operand has "
+                              "type " << e.getType();
+    TypeEqualityAttr eq = claim.getEqualityAttr();
+    closure.seed(strip.replace(eq.getLhs()), strip.replace(eq.getRhs()));
+  }
+  closure.close();
+
+  // 4. The two endpoint classes must be equal.
+  if (!closure.equal(input, result))
+    return emitOpError() << "input type " << getInput().getType()
+                         << " and result type " << getResult().getType()
+                         << " are not equal under the cited equalities";
+
+  // 2. The no-proof-swap clause. The endpoints denote one claim once the
+  // equalities reconcile them, so a receipt present on the result and absent or
+  // different on the input is a swap the coerce may not perform.
+  auto rejectProofSwap = [&](ClaimType fromClaim,
+                             ClaimType toClaim) -> LogicalResult {
+    if (!toClaim || !toClaim.isProven())
+      return success();
+    if (!fromClaim || !fromClaim.isProven() ||
+        fromClaim.getProof() != toClaim.getProof())
+      return emitOpError() << "may not swap the proof backing claim "
+                           << toClaim.getTraitApplication()
+                           << ": a coerce compares modulo a receipt but may not "
+                              "exchange it for another";
+    return success();
+  };
+  if (failed(rejectProofSwap(dyn_cast<ClaimType>(getInput().getType()),
+                             dyn_cast<ClaimType>(getResult().getType()))))
+    return failure();
+
+  return success();
+}
+
+OpFoldResult CoerceOp::fold(FoldAdaptor) {
+  // The zero-evidence reflexive form is the discharged terminal state: it folds
+  // to its operand, and any cited evidence then dies by ordinary DCE.
+  if (getInput().getType() == getResult().getType())
+    return getInput();
+  return {};
+}
+
+
+//===----------------------------------------------------------------------===//
 // MethodCallOp
 //===----------------------------------------------------------------------===//
 

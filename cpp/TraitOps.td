@@ -1062,6 +1062,70 @@ def ProjCastOp : TraitDialectOp<"proj.cast", [
 }
 
 
+def CoerceOp : TraitDialectOp<"coerce", [
+  Pure
+]> {
+  let summary = "Change a value's written type by citing type equalities";
+  let description = [{
+    The sole consumer of equality evidence and the only constructor of type
+    bridges. It changes a value's written type from the input spelling to the
+    result spelling, justified by the cited equality claims.
+
+    Operands: the value, plus N equality-claim operands, N >= 0. There is no
+    application-claim operand; the demand chain the old cast's claim operand
+    carried moves to the demand-walk accessor, which exposes each cited
+    equality's endpoints to walks that classify theory content.
+
+    The verdict is a pure function of op, operands, and attributes:
+      1. application-claim receipts are stripped uniformly from the input and
+         result types -- comparison is modulo the label, permanently;
+      2. a coerce may not relate two application spellings whose receipts name
+         different proofs (the no-proof-swap clause): stripping is symmetric,
+         but exchanging which impl proves a claim is refused;
+      3. ground congruence closure over the subterm DAG of the two endpoints
+         plus every cited equality's current endpoints, seeded with the
+         equalities and closed under congruence -- union only, never
+         decomposition at projection heads or anywhere else;
+      4. the two endpoint classes must be equal.
+
+    Closure decides ground equational entailment, so every derivation the
+    frontend's smart constructors build replays, and nothing beyond what the
+    cited leaves entail is accepted. The endpoints are assumed ground and
+    binder-free.
+
+    The zero-evidence reflexive form (input and result identical, no
+    outstanding equality) is legal and is the discharged terminal state; it
+    folds to its operand, and cited evidence then dies by ordinary DCE.
+
+    XXX TODO: trait.coerce lands beside trait.proj.cast during the migration;
+    proj.cast is retired once the frontend transcribes coerces and nothing
+    emits the old cast (the retirement rung).
+  }];
+
+  let arguments = (ins AnyType:$input, Variadic<Claim>:$equalities);
+  let results = (outs AnyType:$result);
+
+  let extraClassDeclaration = [{
+    // The cited equalities as their endpoint attributes, read through the
+    // accessor because the endpoints are opaque to the generic walkers. This is
+    // the demand-walk accessor: readers that classify theory content consult it
+    // for a coerce's equality operands.
+    llvm::SmallVector<::mlir::trait::TypeEqualityAttr, 2> getCitedEqualities() {
+      llvm::SmallVector<::mlir::trait::TypeEqualityAttr, 2> result;
+      for (::mlir::Value e : getEqualities())
+        if (auto claim = ::mlir::dyn_cast<ClaimType>(e.getType()))
+          if (auto eq = claim.getEqualityAttr())
+            result.push_back(eq);
+      return result;
+    }
+  }];
+
+  let hasCustomAssemblyFormat = 1;
+  let hasVerifier = 1;
+  let hasFolder = 1;
+}
+
+
 //===----------------------------------------------------------------------===//
 // Call ops
 //===----------------------------------------------------------------------===//
