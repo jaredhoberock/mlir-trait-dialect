@@ -97,6 +97,26 @@ def ClaimType : TypeDef<TraitDialect, "Claim", [
     without dataflow or CFG analysis.  A claim value may flow through
     block arguments, function parameters, or other SSA indirections
     where the defining operation is not directly visible.
+
+    ### Provenance doctrine (settled; do not relitigate)
+
+    The IR is the sole authority on proof provenance.  A claim's proof
+    is resolvable from the module text alone: from the proof spelled in
+    the type, or in principle by searching the module's impls and
+    introductions.  Every in-memory resolution structure (the record,
+    the ledger, any memo) is an acceleration of that search and is
+    never authoritative: no behavior may depend on memory state that
+    the module text cannot reproduce.
+
+    Removing spelled proofs from claim types in favor of side state
+    was evaluated in depth and rejected by owner ruling: it makes the
+    text depend on state outside itself.  Verifiers, by contrast,
+    never require the spelled proof to agree with a re-derivation —
+    comparisons across claim types are made modulo proof, so the
+    spelling informs without ever being re-checked at a distance.
+    Solving may consult the module and its caches; checking stays
+    local.  Any future proposal to move provenance out of the spelled
+    type requires an explicit owner ruling to reopen.
   }];
 
   let parameters = (ins
