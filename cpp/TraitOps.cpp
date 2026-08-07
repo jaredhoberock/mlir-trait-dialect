@@ -1544,7 +1544,55 @@ LogicalResult ProjCastOp::verify() {
                          << " does not justify any projection in input or result "
                          << "types";
 
+  // A proof receipt spelled into a claim records which impl established it. Two
+  // claims over the same trait application denote the same claim whether or not
+  // that record is spelled, so every comparison of a cast's endpoints is made
+  // modulo the receipt. Comparison modulo the receipt must still forbid one
+  // thing: exchanging it. Were a cast free to relate a claim proven by one impl
+  // to the same claim proven by another, it would silently rewrite provenance.
+  // The grade-monotone rule closes that gap -- at each claim position the two
+  // endpoints share once receipts are stripped, the result's receipt is absent
+  // or names the same proof as the input's. Establishing a proof a value did not
+  // carry, or trading one proof for another, is an audited introduction, never a
+  // cast.
+  AttrTypeReplacer stripReceipts;
+  stripReceipts.addReplacement([](ClaimType claim) -> std::optional<Type> {
+    if (claim.isProven())
+      return Type(claim.asUnproven());
+    return std::nullopt;
+  });
+  auto rejectProofSwap = [&](Type from, Type to) -> LogicalResult {
+    // Only endpoints that name the same spelling once receipts are stripped can
+    // swap a receipt. When they differ in more than a receipt the enclosing
+    // judgment compares them, and their claim positions need not correspond.
+    if (stripReceipts.replace(from) != stripReceipts.replace(to))
+      return success();
+    SmallVector<ClaimType> fromClaims, toClaims;
+    from.walk([&](ClaimType claim) { fromClaims.push_back(claim); });
+    to.walk([&](ClaimType claim) { toClaims.push_back(claim); });
+    if (fromClaims.size() != toClaims.size())
+      return success();
+    for (size_t i = 0, e = fromClaims.size(); i < e; ++i) {
+      ClaimType fromClaim = fromClaims[i];
+      ClaimType toClaim = toClaims[i];
+      if (!toClaim.isProven())
+        continue;
+      if (!fromClaim.isProven() || fromClaim.getProof() != toClaim.getProof())
+        return emitOpError() << "may not swap the proof backing claim "
+                             << toClaim.getTraitApplication()
+                             << ": a cast may drop a proof receipt but not "
+                             << "exchange it for another";
+    }
+    return success();
+  };
+
   if (!claimTy.isProven()) {
+    // Even an unproven claim's consistency check compares endpoints modulo
+    // receipts (below), so it must refuse a receipt swap for the same reason the
+    // proven judgment does.
+    if (failed(rejectProofSwap(inputType, resultType)))
+      return failure();
+
     // The claim justifies resolving projections over its own trait application,
     // and nothing else. Replace each such projection with a fresh unification
     // variable -- the same projection maps to the same variable -- then unify
@@ -1614,9 +1662,10 @@ LogicalResult ProjCastOp::verify() {
 
   // Proven claim: resolve only the projections over the claim's own trait
   // application through the impl's bindings, then require the input and result to
-  // agree. A projection over another trait application stays spelled as written
-  // and so must match literally on both sides -- the claim justifies nothing
-  // about it, so a cast that relies on resolving it is not justified here.
+  // agree modulo proof receipts. A projection over another trait application
+  // stays spelled as written and so must match literally on both sides -- the
+  // claim justifies nothing about it, so a cast that relies on resolving it is
+  // not justified here.
   auto implOr = ProofOp::getImplFromProof(module, claimTy.getProof(), errFn);
   if (failed(implOr)) return failure();
 
@@ -1636,7 +1685,13 @@ LogicalResult ProjCastOp::verify() {
   if (failed(resolvedResult))
     return failure();
 
-  if (*resolvedInput != *resolvedResult)
+  // The claim may not swap a receipt; a receipt otherwise informs the reader
+  // without ever failing a correct cast, so the endpoints are compared with
+  // receipts stripped symmetrically from both.
+  if (failed(rejectProofSwap(*resolvedInput, *resolvedResult)))
+    return failure();
+
+  if (stripReceipts.replace(*resolvedInput) != stripReceipts.replace(*resolvedResult))
     return emitOpError() << "resolved input type " << *resolvedInput
                          << " does not match resolved result type "
                          << *resolvedResult;

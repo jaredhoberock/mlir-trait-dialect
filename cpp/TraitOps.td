@@ -964,25 +964,32 @@ def ProjCastOp : TraitDialectOp<"proj.cast", [
 ]> {
   let summary = "Convert between equivalent types via an associated type binding";
   let description = [{
-    Converts a value between types that are equivalent under a trait's
-    associated type binding. The claim operand justifies the equivalence.
+    Converts a value between types that denote the same type once the claim's
+    associated type binding is applied. The claim operand justifies the
+    equivalence.
 
-    The input and result types must differ only in projection types that
-    can be resolved via the claim's trait. Cases include:
+    The input and result denote the same type modulo two spellings the cast
+    reconciles: projections over the claim's trait application, which resolve
+    through the binding, and proof receipts on `!trait.claim` positions, which
+    comparison disregards. Cases include:
     1. Concrete <-> projection (at call sites)
     2. Projection <-> projection (impl method boundaries)
     3. Types containing projections, e.g., claim types like
        `!trait.claim<@Trait[!trait.proj<...>]>` (resolving projections
        inside derived claims)
 
-    Verification: if the claim is proven, the verifier resolves the
-    projections over the claim's trait application via the impl's bindings and
-    requires the input and result to agree once resolved. If the claim is
-    unproven, the verifier replaces each projection over the claim's trait
-    application with a shared unification variable (the same projection maps to
-    the same variable) and unifies input against result, so non-projection
-    positions must match and one projection cannot stand for two different
-    types.
+    Verification: if the claim is proven, the verifier resolves the projections
+    over the claim's trait application via the impl's bindings and requires the
+    input and result to agree once resolved, comparing modulo proof receipts. If
+    the claim is unproven, the verifier replaces each projection over the claim's
+    trait application with a shared unification variable (the same projection
+    maps to the same variable) and unifies input against result, so
+    non-projection positions must match and one projection cannot stand for two
+    different types.
+
+    A receipt may be dropped but never exchanged: a cast whose result names a
+    proof different from the input's for the same claim is rejected, so a cast
+    never rewrites which impl proves a claim.
   }];
 
   let arguments = (ins AnyType:$input, Claim:$claim);
