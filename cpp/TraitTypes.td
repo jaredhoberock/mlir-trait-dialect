@@ -73,22 +73,43 @@ def ClaimType : TypeDef<TraitDialect, "Claim", [
   DeclareTypeInterfaceMethods<SymbolUserTypeInterface>
 ]> {
   let mnemonic = "claim";
-  let summary = "Claim that a type list implements a trait";
+  let summary = "Evidence that a predicate over types holds";
 
   let description = [{
-    The `!trait.claim` type represents evidence that some list of types satisfies a trait.
+    The `!trait.claim` type carries evidence that a *predicate* over types
+    holds. Its first parameter is the predicate; there are two arms, distinct
+    in meaning and sharing only the carrier:
 
-    For example,
+    * `TraitApplicationAttr` — an implementation exists for a trait applied to
+      a list of types. For example,
 
-        !trait.claim<@PartialEq[i32,i32]>
+          !trait.claim<@PartialEq[i32,i32]>
 
-    represents an unproven claim that an implementation exists for `@PartialEq` with `i32` supplied for both type parameters.
+      is an unproven claim that an implementation exists for `@PartialEq` with
+      `i32` supplied for both type parameters, and
 
-    And
-   
-        !trait.claim<@PartialEq[i32,i32], @PartialEq_impl_i32_i32>
+          !trait.claim<@PartialEq[i32,i32] by @PartialEq_impl_i32_i32>
 
-    represents a proven claim that an implementation (i.e, `@PartialEq_impl_i32_i32`) exists for `@PartialEq[i32,i32]`.
+      is a proven claim naming the impl (`@PartialEq_impl_i32_i32`) that
+      establishes it.
+
+    * `TypeEqualityAttr` — two type spellings name one type:
+
+          !trait.claim<!A = !B>
+
+      Introduced by `trait.witness` and consumed by `trait.coerce`. The
+      equality arm never carries a proof receipt; comparison on it is exact and
+      direction-blind.
+
+    Consumers dispatch on the arm; a claim of one arm is never acceptable where
+    the other is required.
+
+    A predicate attribute states a proposition. Constructing it does not imply
+    the proposition holds — hypotheses and deliberately-false witness tests must
+    be spellable. The evidence invariant lives one level up: a *value* of claim
+    type, in verifier-valid IR, is evidence that its predicate holds. It is
+    established by `trait.witness` for closed values and contractually assumed
+    at function and block arguments.
 
     ### Why proofs are attached to the type
 
@@ -120,9 +141,11 @@ def ClaimType : TypeDef<TraitDialect, "Claim", [
   }];
 
   let parameters = (ins
-    "::mlir::trait::TraitApplicationAttr":$trait_application,
+    "::mlir::Attribute":$predicate,
     "::mlir::FlatSymbolRefAttr":$proof
   );
+
+  let genVerifyDecl = 1;
 
   let extraClassDeclaration = [{
     static ClaimType get(MLIRContext* ctx, TraitApplicationAttr app) {
@@ -133,11 +156,45 @@ def ClaimType : TypeDef<TraitDialect, "Claim", [
       return ClaimType::get(ctx, TraitApplicationAttr::get(ctx, trait, typeArgs));
     }
 
+    // Build an equality-arm claim. The equality arm never carries a proof, so
+    // the receipt is null by construction.
+    static ClaimType getEquality(MLIRContext *ctx, TypeEqualityAttr eq) {
+      return ClaimType::get(ctx, eq, /*proof=*/nullptr);
+    }
+    static ClaimType getEquality(MLIRContext *ctx, Type lhs, Type rhs) {
+      return getEquality(ctx, TypeEqualityAttr::get(ctx, lhs, rhs));
+    }
+
+    // Arm predicates.
+    bool isApplication() const {
+      return static_cast<bool>(mlir::dyn_cast<TraitApplicationAttr>(getPredicate()));
+    }
+    bool isEquality() const {
+      return static_cast<bool>(mlir::dyn_cast<TypeEqualityAttr>(getPredicate()));
+    }
+
+    // Arm-asserting accessor for the application arm. Every hand-written caller
+    // that reads a trait application from a claim goes through here; a caller
+    // that could also meet an equality claim must dispatch on the arm first.
+    TraitApplicationAttr getTraitApplication() const {
+      auto app = mlir::dyn_cast<TraitApplicationAttr>(getPredicate());
+      assert(app && "getTraitApplication() on a non-application claim; "
+                    "the caller must dispatch on the claim arm");
+      return app;
+    }
+
+    // Endpoint accessor for the equality arm; null on the application arm.
+    TypeEqualityAttr getEqualityAttr() const {
+      return mlir::dyn_cast<TypeEqualityAttr>(getPredicate());
+    }
+
     bool isMonomorphic() const { return !isPolymorphic(); }
 
     bool isProven() const { return static_cast<bool>(getProof()); }
 
     ClaimType asUnproven() const {
+      if (isEquality())
+        return *this;
       return ClaimType::get(getContext(), getTraitApplication());
     }
 

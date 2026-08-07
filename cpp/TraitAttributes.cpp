@@ -7,10 +7,94 @@
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/DialectImplementation.h>
 
+namespace mlir::trait::detail {
+
+// Hand-written storage for TypeEqualityAttr. The uniquing key retains both
+// endpoints, so distinct equalities are distinct attributes; getAsKey() returns
+// no sub-elements, so MLIR's sub-element walkers and the generic
+// AttrTypeReplacer never see or rewrite the endpoints. Endpoints move only
+// through the sanctioned clone rule, and readers reach them through the
+// dedicated endpoint accessors.
+struct TypeEqualityAttrStorage : public ::mlir::AttributeStorage {
+  using KeyTy = std::tuple<::mlir::Type, ::mlir::Type>;
+
+  TypeEqualityAttrStorage(::mlir::Type lhs, ::mlir::Type rhs)
+      : lhs(lhs), rhs(rhs) {}
+
+  // Walk-opaque by construction: this storage defines no getAsKey(), so MLIR's
+  // sub-element walkers and the generic AttrTypeReplacer never visit the
+  // endpoints. Uniquing still distinguishes distinct equalities through the key
+  // below. The endpoints move only through the sanctioned clone rule; readers
+  // reach them through the dedicated accessors.
+  bool operator==(const KeyTy &key) const {
+    return lhs == std::get<0>(key) && rhs == std::get<1>(key);
+  }
+
+  static ::llvm::hash_code hashKey(const KeyTy &key) {
+    return ::llvm::hash_combine(std::get<0>(key), std::get<1>(key));
+  }
+
+  static TypeEqualityAttrStorage *
+  construct(::mlir::AttributeStorageAllocator &allocator, KeyTy &&key) {
+    return new (allocator.allocate<TypeEqualityAttrStorage>())
+        TypeEqualityAttrStorage(std::get<0>(key), std::get<1>(key));
+  }
+
+  ::mlir::Type lhs;
+  ::mlir::Type rhs;
+};
+
+} // namespace mlir::trait::detail
+
 #define GET_ATTRDEF_CLASSES
 #include <TraitAttributes.cpp.inc>
 
 namespace mlir::trait {
+
+// Structural well-formedness of an equality proposition. Endpoints must be
+// receipt-free: a proven claim spelled into an endpoint would carry a proof
+// receipt into the arm that forbids one, re-creating the asymmetric proof
+// comparison the equality arm exists to avoid. Constructing the attribute does
+// not assert the equality; only a value of the enclosing claim type is
+// evidence.
+LogicalResult TypeEqualityAttr::verify(
+    llvm::function_ref<InFlightDiagnostic()> emitError,
+    Type lhs, Type rhs) {
+  if (!lhs || !rhs)
+    return emitError() << "type equality requires two endpoint types";
+
+  auto carriesReceipt = [](Type endpoint) {
+    bool found = false;
+    endpoint.walk([&](Type sub) {
+      if (auto claim = dyn_cast<ClaimType>(sub))
+        if (claim.isProven())
+          found = true;
+    });
+    return found;
+  };
+  if (carriesReceipt(lhs) || carriesReceipt(rhs))
+    return emitError() << "type-equality endpoints must be receipt-free";
+
+  return success();
+}
+
+// Endpoint accessors read the hand-written storage directly; the generated
+// class declares them but leaves them to the custom storage owner.
+Type TypeEqualityAttr::getLhs() const { return getImpl()->lhs; }
+Type TypeEqualityAttr::getRhs() const { return getImpl()->rhs; }
+
+Attribute TypeEqualityAttr::parse(AsmParser &parser, Type) {
+  Type lhs, rhs;
+  if (parser.parseType(lhs) || parser.parseEqual() || parser.parseType(rhs))
+    return {};
+  return TypeEqualityAttr::getChecked(
+      [&]() { return parser.emitError(parser.getNameLoc()); },
+      parser.getContext(), lhs, rhs);
+}
+
+void TypeEqualityAttr::print(AsmPrinter &printer) const {
+  printer << getLhs() << " = " << getRhs();
+}
 
 void TraitDialect::registerAttributes() {
   addAttributes<

@@ -59,6 +59,45 @@ def TraitApplicationAttr : AttrDef<TraitDialect, "TraitApplication",
   let hasCustomAssemblyFormat = 1;
 }
 
+// States that two type spellings name one type. The predicate carried by an
+// equality-arm !trait.claim; see ClaimType.
+def TypeEqualityAttr : AttrDef<TraitDialect, "TypeEquality", []> {
+  let mnemonic = "equality";
+  let summary = "A proposition that two type spellings name one type";
+  let description = [{
+    Represents the proposition that two types, `lhs` and `rhs`, denote one
+    type. It is the equality-arm predicate of `!trait.claim`; the assembly form
+    `!trait.claim<!A = !B>` carries it.
+
+    Constructing this attribute states the proposition; it does not assert that
+    the equality holds. Hypotheses and deliberately-false witness tests must be
+    spellable, so the checked constructor enforces structural well-formedness
+    only: the endpoints carry no proof receipts (a receipt would let the
+    endpoint fall into the asymmetric proof comparison that the equality arm
+    forbids). A *value* of the enclosing claim type, in verifier-valid IR, is
+    the evidence that the equality holds.
+
+    The endpoints are ordered; orientation is recorded for audit provenance
+    only. Replay is direction-blind, so no symmetry construct exists.
+
+    The endpoints are opaque to sub-element walking: the generic
+    `AttrTypeReplacer` cannot visit or rewrite them, so they move only through
+    the sanctioned clone rule (one substitution applied to both endpoints
+    atomically, rebuilt through this constructor). Readers that must inspect an
+    endpoint reach it through the dedicated endpoint accessors, never the walk.
+  }];
+
+  let parameters = (ins "::mlir::Type":$lhs, "::mlir::Type":$rhs);
+
+  // The endpoints live in a hand-written storage whose getAsKey() is
+  // walk-opaque while the uniquing key retains both endpoints (see
+  // TraitAttributes.cpp).
+  let genStorageClass = 0;
+  let genVerifyDecl = 1;
+
+  let hasCustomAssemblyFormat = 1;
+}
+
 def TraitApplicationArrayAttr : AttrDef<TraitDialect, "TraitApplicationArray",
     [DeclareAttrInterfaceMethods<SymbolUserAttrInterface>]> {
   let mnemonic = "application_array";

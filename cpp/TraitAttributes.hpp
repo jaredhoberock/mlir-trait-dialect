@@ -10,6 +10,11 @@
 namespace mlir::trait {
   // forward declaration of TraitOp for Attributes.td/Attributes.hpp.inc
   class TraitOp;
+
+  // TypeEqualityAttr uses a hand-written storage (defined in
+  // TraitAttributes.cpp) so its endpoints are opaque to sub-element walking;
+  // the generated attribute class names the storage, so declare it first.
+  namespace detail { struct TypeEqualityAttrStorage; }
 }
 
 #define GET_ATTRDEF_CLASSES

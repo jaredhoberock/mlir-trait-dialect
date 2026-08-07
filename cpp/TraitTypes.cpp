@@ -413,6 +413,36 @@ static ModuleOp getAnchorModule(Operation *anchor) {
   return anchor->getParentOfType<ModuleOp>();
 }
 
+// A claim's predicate is one of exactly two arms; the equality arm never
+// carries a proof receipt.
+LogicalResult ClaimType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
+                                Attribute predicate, FlatSymbolRefAttr proof) {
+  if (isa<TraitApplicationAttr>(predicate))
+    return success();
+  if (isa<TypeEqualityAttr>(predicate)) {
+    if (proof)
+      return emitError() << "an equality claim may not carry a proof receipt";
+    return success();
+  }
+  return emitError() << "claim predicate must be a trait application or a type "
+                        "equality, found " << predicate;
+}
+
+// Verify the symbol-using types reachable inside an equality endpoint. The
+// endpoints are opaque to the framework's sub-element walk, so the equality
+// arm bridges into them explicitly here; a nested equality claim is reached as
+// a SymbolUserTypeInterface node and recurses through this same entry point.
+static LogicalResult verifyEqualityEndpointSymbols(Type endpoint, Operation *op,
+                                                   SymbolTableCollection &st) {
+  LogicalResult result = success();
+  endpoint.walk([&](Type sub) {
+    if (auto user = dyn_cast<SymbolUserTypeInterface>(sub))
+      if (failed(user.verifySymbolUses(op, st)))
+        result = failure();
+  });
+  return result;
+}
+
 // Entry point for the upstream SymbolUserTypeInterface: symbol-table
 // verification invokes this for every claim reachable from an operation, and an
 // owning op may call it directly. The module is recovered from the anchoring
@@ -425,11 +455,18 @@ LogicalResult ClaimType::verifySymbolUses(Operation *op,
                            << ": anchor operation is not nested in a module";
   auto err = [&] { return op->emitError(); };
 
-  // verify trait application
+  // Equality arm: no trait symbol and no proof; verify the symbols nested in
+  // the endpoints through the accessor.
+  if (auto eq = getEqualityAttr()) {
+    if (failed(verifyEqualityEndpointSymbols(eq.getLhs(), op, symbolTable)))
+      return failure();
+    return verifyEqualityEndpointSymbols(eq.getRhs(), op, symbolTable);
+  }
+
+  // Application arm: verify the trait application, then any proof.
   if (failed(getTraitApplication().verifySymbolUses(op, symbolTable)))
     return failure();
 
-  // if there's a proof, verify that it points to a valid symbol
   if (auto proof = getProof())
     if (failed(ProofOp::getProofOpOrUnconditionalImplOp(module, proof, err)))
       return failure();
@@ -439,37 +476,84 @@ LogicalResult ClaimType::verifySymbolUses(Operation *op,
 
 Type ClaimType::parse(AsmParser& p) {
   MLIRContext *ctx = p.getContext();
+  auto errFn = [&]() { return p.emitError(p.getNameLoc()); };
 
   if (p.parseLess())
     return {};
 
-  TraitApplicationAttr app = mlir::dyn_cast_or_null<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
-  if (!app)
-    return {};
-
-  FlatSymbolRefAttr proof;
-  if (succeeded(p.parseOptionalKeyword("by"))) {
-    if (p.parseAttribute(proof))
+  // The application arm opens with a trait symbol (`@Trait[...]`); anything
+  // else is the equality arm (`!A = !B`), disambiguated by the leading `@`.
+  FlatSymbolRefAttr traitName;
+  OptionalParseResult symRes = p.parseOptionalAttribute(traitName);
+  if (symRes.has_value()) {
+    if (failed(*symRes))
       return {};
+
+    if (p.parseLSquare())
+      return {};
+    SmallVector<Type> typeArgs;
+    do {
+      Type ty;
+      if (p.parseType(ty))
+        return {};
+      typeArgs.push_back(ty);
+    } while (succeeded(p.parseOptionalComma()));
+    if (p.parseRSquare())
+      return {};
+
+    auto app = TraitApplicationAttr::get(ctx, traitName, ArrayRef<Type>(typeArgs));
+
+    FlatSymbolRefAttr proof;
+    if (succeeded(p.parseOptionalKeyword("by"))) {
+      if (p.parseAttribute(proof))
+        return {};
+    }
+
+    if (p.parseGreater())
+      return {};
+
+    ClaimType claim = ClaimType::getChecked(errFn, ctx, app, proof);
+    return claim ? Type(claim) : Type();
   }
 
+  // Equality arm.
+  Type lhs, rhs;
+  if (p.parseType(lhs) || p.parseEqual() || p.parseType(rhs))
+    return {};
+  // The equality arm never carries a proof receipt; refuse `by @...` here so
+  // the receipt-free invariant holds at parse as well as at construction.
+  if (succeeded(p.parseOptionalKeyword("by"))) {
+    p.emitError(p.getNameLoc(),
+                "an equality claim may not carry a proof receipt");
+    return {};
+  }
+  auto eq = TypeEqualityAttr::getChecked(errFn, ctx, lhs, rhs);
+  if (!eq)
+    return {};
   if (p.parseGreater())
     return {};
-
-  return ClaimType::get(ctx, app, proof);
+  ClaimType claim = ClaimType::getChecked(errFn, ctx, eq, /*proof=*/nullptr);
+  return claim ? Type(claim) : Type();
 }
 
 void ClaimType::print(AsmPrinter& p) const {
   p << "<";
-  getTraitApplication().print(p);
-  if (isProven()) {
-    p << " by " << getProof();
+  if (auto eq = getEqualityAttr()) {
+    eq.print(p);
+  } else {
+    getTraitApplication().print(p);
+    if (isProven())
+      p << " by " << getProof();
   }
   p << ">";
 }
 
 bool ClaimType::isPolymorphic() const {
-  // a !trait.claim<@Trait[Types...]> is polymorphic if any of its type arguments are polymorphic
+  // An equality claim is polymorphic if either endpoint is; an application
+  // claim if any of its type arguments is.
+  if (auto eq = getEqualityAttr())
+    return mlir::trait::isPolymorphicType(eq.getLhs()) ||
+           mlir::trait::isPolymorphicType(eq.getRhs());
   return llvm::any_of(getTraitApplication().getTypeArgs(), [](Type ty) {
     return mlir::trait::isPolymorphicType(ty);
   });
@@ -926,6 +1010,10 @@ LogicalResult bindProofsIn(
 void ClaimType::getProjections(
     ModuleOp module,
     SmallVectorImpl<ClaimType>& result) {
+  // Equality claims are not projected from; they are consumed by trait.coerce.
+  if (isEquality())
+    return;
+
   // identity
   result.push_back(*this);
 
@@ -977,6 +1065,26 @@ LogicalResult ClaimType::unify(
   }
 
   // do claim-specific checks below
+
+  // Arm dispatch. A claim of one arm never unifies with the other.
+  if (auto formalEq = formal.getEqualityAttr()) {
+    auto actualEq = actual.getEqualityAttr();
+    if (!actualEq) {
+      if (err) err() << "expected an equality claim, but found " << actual;
+      return failure();
+    }
+    // Endpoint-wise unification through the ordinary substitution machinery:
+    // variable binding, no leniency, no projection tolerance, no proof
+    // sensitivity (the equality arm carries none). Orientation is fixed, so
+    // lhs matches lhs and rhs matches rhs.
+    if (failed(trait::unify(formalEq.getLhs(), actualEq.getLhs(), module, subst, err)))
+      return failure();
+    return trait::unify(formalEq.getRhs(), actualEq.getRhs(), module, subst, err);
+  }
+  if (actual.getEqualityAttr()) {
+    if (err) err() << "expected a trait-application claim, but found " << actual;
+    return failure();
+  }
 
   auto formalApp = formal.getTraitApplication();
   auto actualApp = actual.getTraitApplication();
