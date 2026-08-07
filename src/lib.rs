@@ -86,6 +86,24 @@ unsafe extern "C" {
                               input: MlirValue,
                               claim: MlirValue,
                               result_type: MlirType) -> MlirOperation;
+    fn traitTypeEqualityAttrGet(ctx: MlirContext,
+                                lhs: MlirType, rhs: MlirType) -> MlirAttribute;
+    fn traitClaimTypeGetEquality(ctx: MlirContext,
+                                 lhs: MlirType, rhs: MlirType) -> MlirType;
+    fn traitTypeIsAnEqualityClaim(ty: MlirType) -> bool;
+    fn traitWitnessCertificateAttrGet(ctx: MlirContext,
+                                      redex: MlirType, contractum: MlirType,
+                                      impl_name: MlirStringRef) -> MlirAttribute;
+    fn traitWitnessProjResolveOpCreate(loc: MlirLocation,
+                                       certificate: MlirAttribute,
+                                       premises: *const MlirValue, num_premises: isize,
+                                       result_type: MlirType) -> MlirOperation;
+    fn traitWitnessReflOpCreate(loc: MlirLocation,
+                                result_type: MlirType) -> MlirOperation;
+    fn traitCoerceOpCreate(loc: MlirLocation,
+                           input: MlirValue,
+                           equalities: *const MlirValue, num_equalities: isize,
+                           result_type: MlirType) -> MlirOperation;
     fn traitAssocTypeOpCreate(loc: MlirLocation,
                               name: MlirStringRef,
                               bound_type: MlirType,
@@ -576,6 +594,55 @@ pub fn proj_cast<'c>(
         claim.to_raw(),
         result_type.to_raw(),
     ))}
+}
+
+/// Create an equality-arm `!trait.claim<lhs = rhs>` type. Returns `None` if the
+/// endpoints are not receipt-free.
+pub fn equality_claim_type<'c>(ctx: &'c Context, lhs: Type<'c>, rhs: Type<'c>) -> Option<Type<'c>> {
+    let ty = unsafe { Type::from_raw(traitClaimTypeGetEquality(ctx.to_raw(), lhs.to_raw(), rhs.to_raw())) };
+    if ty.to_raw().ptr.is_null() { None } else { Some(ty) }
+}
+
+/// The `#trait.equality<lhs = rhs>` predicate attribute. Returns `None` if the
+/// endpoints are not receipt-free.
+pub fn type_equality_attr<'c>(ctx: &'c Context, lhs: Type<'c>, rhs: Type<'c>) -> Option<Attribute<'c>> {
+    let attr = unsafe { Attribute::from_raw(traitTypeEqualityAttrGet(ctx.to_raw(), lhs.to_raw(), rhs.to_raw())) };
+    if attr.to_raw().ptr.is_null() { None } else { Some(attr) }
+}
+
+/// Check whether a type is an equality-arm `!trait.claim`.
+pub fn is_equality_claim_type(ty: Type) -> bool {
+    unsafe { traitTypeIsAnEqualityClaim(ty.to_raw()) }
+}
+
+/// The `#trait.certificate<redex resolves contractum by @impl>` attribute frozen
+/// into a projection-resolution equality witness. Returns `None` if construction
+/// fails.
+pub fn witness_certificate_attr<'c>(ctx: &'c Context, redex: Type<'c>, contractum: Type<'c>, impl_name: &str) -> Option<Attribute<'c>> {
+    let attr = unsafe { Attribute::from_raw(traitWitnessCertificateAttrGet(
+        ctx.to_raw(), redex.to_raw(), contractum.to_raw(), StringRef::new(impl_name).to_raw())) };
+    if attr.to_raw().ptr.is_null() { None } else { Some(attr) }
+}
+
+/// Create a projection-resolution `trait.witness`. `certificate` is a
+/// `#trait.certificate` attribute; `premises` are equality-claim values.
+pub fn witness_proj_resolve<'c>(loc: Location<'c>, certificate: Attribute<'c>, premises: &[Value<'c, '_>], result_type: Type<'c>) -> Operation<'c> {
+    let raw: Vec<MlirValue> = premises.iter().map(|v| v.to_raw()).collect();
+    unsafe { Operation::from_raw(traitWitnessProjResolveOpCreate(
+        loc.to_raw(), certificate.to_raw(), raw.as_ptr(), raw.len() as isize, result_type.to_raw())) }
+}
+
+/// Create a refl `trait.witness` introducing an `A = A` equality claim.
+pub fn witness_refl<'c>(loc: Location<'c>, result_type: Type<'c>) -> Operation<'c> {
+    unsafe { Operation::from_raw(traitWitnessReflOpCreate(loc.to_raw(), result_type.to_raw())) }
+}
+
+/// Create a `trait.coerce` op: change `input`'s written type to `result_type`,
+/// justified by the cited `equalities` (equality-claim values).
+pub fn coerce<'c>(loc: Location<'c>, input: Value<'c, '_>, equalities: &[Value<'c, '_>], result_type: Type<'c>) -> Operation<'c> {
+    let raw: Vec<MlirValue> = equalities.iter().map(|v| v.to_raw()).collect();
+    unsafe { Operation::from_raw(traitCoerceOpCreate(
+        loc.to_raw(), input.to_raw(), raw.as_ptr(), raw.len() as isize, result_type.to_raw())) }
 }
 
 /// Create a `trait.assoc_type` op. Pass `None` for a bare declaration (inside a

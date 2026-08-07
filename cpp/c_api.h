@@ -147,6 +147,45 @@ MlirOperation traitProjCastOpCreate(MlirLocation loc,
                                      MlirValue claim,
                                      MlirType resultType);
 
+/// Return the #trait.equality<lhs = rhs> predicate attribute. Endpoints must be
+/// receipt-free; returns a null attribute if construction fails.
+MlirAttribute traitTypeEqualityAttrGet(MlirContext ctx,
+                                       MlirType lhs, MlirType rhs);
+
+/// Return the equality-arm !trait.claim<lhs = rhs> type. Returns a null type if
+/// construction fails.
+MlirType traitClaimTypeGetEquality(MlirContext ctx,
+                                   MlirType lhs, MlirType rhs);
+
+/// Checks whether the given type is an equality-arm claim.
+bool traitTypeIsAnEqualityClaim(MlirType type);
+
+/// Return the #trait.certificate<redex resolves contractum by @impl> attribute
+/// frozen into a projection-resolution equality witness. Returns a null
+/// attribute if construction fails.
+MlirAttribute traitWitnessCertificateAttrGet(MlirContext ctx,
+                                             MlirType redex, MlirType contractum,
+                                             MlirStringRef implName);
+
+/// Create a projection-resolution trait.witness. `certificate` is a
+/// #trait.certificate attribute; `premises` are equality-claim values consumed
+/// by the projection-headed audit rule. `resultType` is the equality claim.
+MlirOperation traitWitnessProjResolveOpCreate(MlirLocation loc,
+                                              MlirAttribute certificate,
+                                              MlirValue *premises,
+                                              intptr_t numPremises,
+                                              MlirType resultType);
+
+/// Create a refl trait.witness introducing an A = A equality claim.
+MlirOperation traitWitnessReflOpCreate(MlirLocation loc, MlirType resultType);
+
+/// Create a trait.coerce operation: change `input`'s written type to
+/// `resultType`, justified by the cited `equalities` (equality-claim values).
+MlirOperation traitCoerceOpCreate(MlirLocation loc,
+                                  MlirValue input,
+                                  MlirValue *equalities, intptr_t numEqualities,
+                                  MlirType resultType);
+
 /// Create a trait.assoc_type op. If boundType.ptr is non-null, the op gets a
 /// bound_type attribute (for use inside trait.impl); otherwise it is a bare
 /// declaration (for use inside trait.trait).
