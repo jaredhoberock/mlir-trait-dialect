@@ -11,10 +11,14 @@ namespace mlir::trait {
   // forward declaration of TraitOp for Attributes.td/Attributes.hpp.inc
   class TraitOp;
 
-  // TypeEqualityAttr uses a hand-written storage (defined in
-  // TraitAttributes.cpp) so its endpoints are opaque to sub-element walking;
-  // the generated attribute class names the storage, so declare it first.
-  namespace detail { struct TypeEqualityAttrStorage; }
+  // TypeEqualityAttr and WitnessCertificateAttr use hand-written storage
+  // (defined in TraitAttributes.cpp) so their type-bearing fields are opaque to
+  // sub-element walking; the generated attribute classes name the storage, so
+  // declare it first.
+  namespace detail {
+    struct TypeEqualityAttrStorage;
+    struct WitnessCertificateAttrStorage;
+  }
 }
 
 #define GET_ATTRDEF_CLASSES

@@ -44,6 +44,38 @@ struct TypeEqualityAttrStorage : public ::mlir::AttributeStorage {
   ::mlir::Type rhs;
 };
 
+// Hand-written storage for WitnessCertificateAttr. As with TypeEqualityAttr, it
+// defines no getAsKey(), so the frozen redex and contractum are opaque to the
+// framework's walkers and the generic replacer; uniquing retains every field.
+struct WitnessCertificateAttrStorage : public ::mlir::AttributeStorage {
+  using KeyTy = std::tuple<::mlir::Type, ::mlir::Type, ::mlir::FlatSymbolRefAttr>;
+
+  WitnessCertificateAttrStorage(::mlir::Type redex, ::mlir::Type contractum,
+                                ::mlir::FlatSymbolRefAttr cited_impl)
+      : redex(redex), contractum(contractum), cited_impl(cited_impl) {}
+
+  bool operator==(const KeyTy &key) const {
+    return redex == std::get<0>(key) && contractum == std::get<1>(key) &&
+           cited_impl == std::get<2>(key);
+  }
+
+  static ::llvm::hash_code hashKey(const KeyTy &key) {
+    return ::llvm::hash_combine(std::get<0>(key), std::get<1>(key),
+                                std::get<2>(key));
+  }
+
+  static WitnessCertificateAttrStorage *
+  construct(::mlir::AttributeStorageAllocator &allocator, KeyTy &&key) {
+    return new (allocator.allocate<WitnessCertificateAttrStorage>())
+        WitnessCertificateAttrStorage(std::get<0>(key), std::get<1>(key),
+                                      std::get<2>(key));
+  }
+
+  ::mlir::Type redex;
+  ::mlir::Type contractum;
+  ::mlir::FlatSymbolRefAttr cited_impl;
+};
+
 } // namespace mlir::trait::detail
 
 #define GET_ATTRDEF_CLASSES
@@ -94,6 +126,56 @@ Attribute TypeEqualityAttr::parse(AsmParser &parser, Type) {
 
 void TypeEqualityAttr::print(AsmPrinter &printer) const {
   printer << getLhs() << " = " << getRhs();
+}
+
+// A projection-resolution certificate cites an impl and freezes the endpoints
+// it relates. All three fields are present, and the frozen endpoints are
+// receipt-free for the same reason the equality arm is.
+LogicalResult WitnessCertificateAttr::verify(
+    llvm::function_ref<InFlightDiagnostic()> emitError,
+    Type redex, Type contractum, FlatSymbolRefAttr citedImpl) {
+  if (!redex || !contractum)
+    return emitError() << "a projection-resolution certificate freezes two "
+                          "endpoint types";
+  if (!citedImpl)
+    return emitError() << "a projection-resolution certificate must cite an impl";
+
+  auto carriesReceipt = [](Type endpoint) {
+    bool found = false;
+    endpoint.walk([&](Type sub) {
+      if (auto claim = dyn_cast<ClaimType>(sub))
+        if (claim.isProven())
+          found = true;
+    });
+    return found;
+  };
+  if (carriesReceipt(redex) || carriesReceipt(contractum))
+    return emitError() << "certificate endpoints must be receipt-free";
+
+  return success();
+}
+
+Type WitnessCertificateAttr::getRedex() const { return getImpl()->redex; }
+Type WitnessCertificateAttr::getContractum() const { return getImpl()->contractum; }
+FlatSymbolRefAttr WitnessCertificateAttr::getCitedImpl() const {
+  return getImpl()->cited_impl;
+}
+
+Attribute WitnessCertificateAttr::parse(AsmParser &parser, Type) {
+  Type redex, contractum;
+  FlatSymbolRefAttr citedImpl;
+  if (parser.parseType(redex) || parser.parseKeyword("resolves") ||
+      parser.parseType(contractum) || parser.parseKeyword("by") ||
+      parser.parseAttribute(citedImpl))
+    return {};
+  return WitnessCertificateAttr::getChecked(
+      [&]() { return parser.emitError(parser.getNameLoc()); },
+      parser.getContext(), redex, contractum, citedImpl);
+}
+
+void WitnessCertificateAttr::print(AsmPrinter &printer) const {
+  printer << getRedex() << " resolves " << getContractum() << " by "
+          << getCitedImpl();
 }
 
 void TraitDialect::registerAttributes() {

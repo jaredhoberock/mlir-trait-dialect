@@ -913,16 +913,17 @@ def WitnessOp : TraitDialectOp<"witness", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
   Pure
 ]>{
-  let summary = "Materializes a proven claim value for a concrete trait implementation";
+  let summary = "Introduces audited evidence for a claim";
   let description = [{
-    Introduces a value of type `!trait.claim<@Trait[Types...], @Symbol>` that
-    represents a proof that the trait application is satisfied.
+    The dialect's sole audited evidence introduction. It has two arms, matched
+    to the arm of the result claim.
 
-    The symbol may refer to either
-      * a `trait.proof` that transitively discharges the trait's requirements and the impl's assumptions
+    Application arm. Introduces a value of type
+    `!trait.claim<@Trait[Types...] by @Symbol>` that represents a proof that the
+    trait application is satisfied. The symbol may refer to either
+      * a `trait.proof` that transitively discharges the trait's requirements
+        and the impl's assumptions
       * a `trait.impl` that is unconditional
-
-    Verification ensures that the symbol proves the trait application as claimed.
 
     Example:
       // @PartialEq has no obligations, so we refer directly to a trait.impl
@@ -930,32 +931,91 @@ def WitnessOp : TraitDialectOp<"witness", [
 
       // @Ord has obligations, so we refer to a trait.proof
       %ord_w = trait.witness @Ord_impl_i32_p for @Ord[i32]
+
+    Equality arm. Introduces a value of type `!trait.claim<!A = !B>` that is
+    evidence the two spellings name one type. There are two leaves:
+
+      * proj-resolve: cites an impl by symbol and carries a frozen certificate.
+        The equality holds because the cited impl binds the associated type
+        named by the redex projection to the contractum. Projection-headed impl
+        self-applications do not first-order match; their audit consumes
+        explicit equality `premises` and matches modulo the cited equalities.
+        Under the collapse ruling this is the one axiom kind in the certificate
+        grammar.
+
+      * refl: proof-free, cites nothing; the endpoints are identical at
+        construction. It exists because a concrete instantiation of an equality
+        predicate can specialize to `A = A`, and a caller must still supply a
+        claim value.
+
+    THE ADMISSION LAW. Only definitional equalities -- one type, two spellings
+    -- are admissible leaves; a representational leaf (a layout cast, a
+    zero-cost view, a witnessed expand()) is refused. Screech has GHC's
+    unsoundness ingredient (generative nominals plus congruence exercised
+    through projection heads), so this sentence is the fence; role machinery is
+    adopted before any representational leaf lands.
+
+    Verification (verify() and verifySymbolUses) ensures the present attributes
+    match the result claim's arm, that the result type equals the claim
+    reconstructed from those attributes, and, for the equality arm, that the
+    cited impl actually binds as stated and that the current endpoints are a
+    single-substitution instance of the frozen certificate.
   }];
 
   let arguments = (ins
-    FlatSymbolRefAttr:$proof, // refers to trait.proof or trait.impl
-    TraitApplicationAttr:$trait_application
+    // Application arm.
+    OptionalAttr<FlatSymbolRefAttr>:$proof, // refers to trait.proof or trait.impl
+    OptionalAttr<TraitApplicationAttr>:$trait_application,
+    // Equality arm.
+    OptionalAttr<WitnessCertificateAttr>:$certificate, // proj-resolve leaf
+    UnitAttr:$refl,                                     // refl leaf
+    Variadic<Claim>:$premises
   );
 
   let builders = [
-    // builder infers the result type
+    // Application arm: builder infers the result type.
     OpBuilder<(ins "::mlir::FlatSymbolRefAttr":$proof,
                    "::mlir::trait::TraitApplicationAttr":$trait_application), [{
       MLIRContext* ctx = $_builder.getContext();
       ClaimType claimTy = ClaimType::get(ctx, trait_application, proof);
-      build($_builder, $_state, claimTy, proof, trait_application);
+      build($_builder, $_state, claimTy, proof, trait_application,
+            /*certificate=*/nullptr, /*refl=*/nullptr, /*premises=*/{});
+    }]>,
+    // Equality proj-resolve arm.
+    OpBuilder<(ins "::mlir::trait::TypeEqualityAttr":$equality,
+                   "::mlir::trait::WitnessCertificateAttr":$certificate,
+                   "::mlir::ValueRange":$premises), [{
+      MLIRContext* ctx = $_builder.getContext();
+      ClaimType claimTy = ClaimType::getEquality(ctx, equality);
+      build($_builder, $_state, claimTy, /*proof=*/nullptr,
+            /*trait_application=*/nullptr, certificate, /*refl=*/nullptr,
+            premises);
+    }]>,
+    // Equality refl arm.
+    OpBuilder<(ins "::mlir::trait::TypeEqualityAttr":$equality), [{
+      MLIRContext* ctx = $_builder.getContext();
+      ClaimType claimTy = ClaimType::getEquality(ctx, equality);
+      build($_builder, $_state, claimTy, /*proof=*/nullptr,
+            /*trait_application=*/nullptr, /*certificate=*/nullptr,
+            $_builder.getUnitAttr(), /*premises=*/{});
     }]>
   ];
 
   let results = (outs Claim:$result);
 
   let extraClassDeclaration = [{
+    ClaimType getResultClaim() {
+      return cast<ClaimType>(getResult().getType());
+    }
+
+    // Valid only on the application arm.
     ClaimType getProvenClaim() {
-      return ClaimType::get(getContext(), getTraitApplication(), getProofAttr());
+      return ClaimType::get(getContext(), getTraitApplicationAttr(), getProofAttr());
     }
   }];
 
   let hasCustomAssemblyFormat = 1;
+  let hasVerifier = 1;
 }
 
 

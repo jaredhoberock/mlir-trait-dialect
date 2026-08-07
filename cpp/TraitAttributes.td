@@ -98,6 +98,45 @@ def TypeEqualityAttr : AttrDef<TraitDialect, "TypeEquality", []> {
   let hasCustomAssemblyFormat = 1;
 }
 
+// The frozen audit capsule of a projection-resolution equality witness. It
+// records, immutably from birth, the equality the witness established and the
+// impl that establishes it, so the witness verifier can replay the audit
+// locally without a fresh module search.
+def WitnessCertificateAttr : AttrDef<TraitDialect, "WitnessCertificate", []> {
+  let mnemonic = "certificate";
+  let summary = "The frozen audit of a projection-resolution equality witness";
+  let description = [{
+    Records a projection-resolution leaf: the equality `redex = contractum`
+    holds because the cited `impl` binds the associated type named by `redex`
+    (a projection carrying its member and any associated-type arguments) to
+    `contractum`, once the impl is specialized for the projection's trait
+    application.
+
+    The capsule is immutable from birth to death. Its `redex` and `contractum`
+    are opaque to sub-element walking, so no generic replacer drifts them; the
+    only sanctioned mover is the clone rule, which rebuilds the whole capsule
+    through this constructor under one substitution. The witness verifier reads
+    the fields through the accessors, never the walk.
+
+    Renaming the cited impl (or a symbol inside a frozen endpoint) during the
+    capsule's lifetime is forbidden; the sanctioned path is an audit-aware
+    atomic rebuild.
+  }];
+
+  let parameters = (ins
+    "::mlir::Type":$redex,
+    "::mlir::Type":$contractum,
+    "::mlir::FlatSymbolRefAttr":$cited_impl
+  );
+
+  // Hand-written storage (TraitAttributes.cpp) with no getAsKey, so the
+  // type-bearing fields are opaque to walkers while uniquing retains them.
+  let genStorageClass = 0;
+  let genVerifyDecl = 1;
+
+  let hasCustomAssemblyFormat = 1;
+}
+
 def TraitApplicationArrayAttr : AttrDef<TraitDialect, "TraitApplicationArray",
     [DeclareAttrInterfaceMethods<SymbolUserAttrInterface>]> {
   let mnemonic = "application_array";

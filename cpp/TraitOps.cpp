@@ -1172,26 +1172,76 @@ FailureOr<Operation*> ProofOp::getProofOpOrUnconditionalImplOp(
 //===----------------------------------------------------------------------===//
 
 ParseResult WitnessOp::parse(OpAsmParser &p, OperationState& result) {
-  // parse @Symbol
+  MLIRContext *ctx = p.getContext();
+
+  // Equality proj-resolve arm: `proj_resolve !redex resolves !contractum
+  // by @impl [given(%premises...) : (types...)] : <result-type>`.
+  if (succeeded(p.parseOptionalKeyword("proj_resolve"))) {
+    Type redex, contractum;
+    FlatSymbolRefAttr citedImpl;
+    if (p.parseType(redex) || p.parseKeyword("resolves") ||
+        p.parseType(contractum) || p.parseKeyword("by") ||
+        p.parseAttribute(citedImpl))
+      return failure();
+    auto cert = WitnessCertificateAttr::getChecked(
+        [&] { return p.emitError(p.getCurrentLocation()); }, ctx, redex,
+        contractum, citedImpl);
+    if (!cert)
+      return failure();
+    result.addAttribute("certificate", cert);
+
+    if (succeeded(p.parseOptionalKeyword("given"))) {
+      SmallVector<OpAsmParser::UnresolvedOperand> premises;
+      if (p.parseOperandList(premises, OpAsmParser::Delimiter::Paren))
+        return failure();
+      SmallVector<Type> premiseTypes;
+      if (p.parseColon() ||
+          p.parseCommaSeparatedList(OpAsmParser::Delimiter::Paren, [&] {
+            Type ty;
+            if (p.parseType(ty))
+              return failure();
+            premiseTypes.push_back(ty);
+            return success();
+          }))
+        return failure();
+      if (p.resolveOperands(premises, premiseTypes, p.getCurrentLocation(),
+                            result.operands))
+        return failure();
+    }
+
+    Type resultType;
+    if (p.parseColon() || p.parseType(resultType))
+      return failure();
+    result.addTypes(resultType);
+    return success();
+  }
+
+  // Equality refl arm: `refl : <result-type>`.
+  if (succeeded(p.parseOptionalKeyword("refl"))) {
+    result.addAttribute("refl", UnitAttr::get(ctx));
+    Type resultType;
+    if (p.parseColon() || p.parseType(resultType))
+      return failure();
+    result.addTypes(resultType);
+    return success();
+  }
+
+  // Application arm: `@proof for @Trait[Types...]`.
   FlatSymbolRefAttr proof;
   if (p.parseAttribute(proof, "proof", result.attributes))
     return failure();
 
-  // parse `for`
   if (p.parseKeyword("for"))
     return failure();
 
-  // parse @Trait[Types...]
   TraitApplicationAttr traitApp = dyn_cast<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
   if (!traitApp)
     return p.emitError(p.getCurrentLocation(), "expected a TraitApplicationAttr");
   result.addAttribute("trait_application", traitApp);
 
-  // construct the result type
-  ClaimType claimTy = ClaimType::get(p.getContext(), traitApp, proof);
+  ClaimType claimTy = ClaimType::get(ctx, traitApp, proof);
   result.addTypes(claimTy);
 
-  // parse additional attributes
   if (p.parseOptionalAttrDictWithKeyword(result.attributes))
     return failure();
 
@@ -1199,13 +1249,114 @@ ParseResult WitnessOp::parse(OpAsmParser &p, OperationState& result) {
 }
 
 void WitnessOp::print(OpAsmPrinter &p) {
+  if (auto cert = getCertificateAttr()) {
+    p << " proj_resolve " << cert.getRedex() << " resolves "
+      << cert.getContractum() << " by " << cert.getCitedImpl();
+    if (!getPremises().empty()) {
+      p << " given(";
+      llvm::interleaveComma(getPremises(), p,
+                            [&](Value v) { p.printOperand(v); });
+      p << ") : (";
+      llvm::interleaveComma(getPremises().getTypes(), p,
+                            [&](Type t) { p.printType(t); });
+      p << ")";
+    }
+    p << " : " << getResult().getType();
+    return;
+  }
+
+  if (getRefl()) {
+    p << " refl : " << getResult().getType();
+    return;
+  }
+
+  // Application arm; printed byte-identically to before.
   p << " " << getProofAttr() << " for ";
-  getTraitApplication().print(p);
+  getTraitApplicationAttr().print(p);
 
   p.printOptionalAttrDictWithKeyword(
     (*this)->getAttrs(),
-    /*elidedAttrs=*/{"proof", "trait_application"}
+    /*elidedAttrs=*/{"proof", "trait_application", "certificate", "refl"}
   );
+}
+
+// Rewrite `ty` by the cited equality premises: each premise's lhs endpoint
+// rewrites to its rhs. Projection-headed impl self-applications do not
+// first-order match, so their seam audit matches modulo these equalities.
+static Type applyEqualityPremises(Type ty, ValueRange premises) {
+  DenseMap<Type, Type> subst;
+  for (Value premise : premises) {
+    auto claim = dyn_cast<ClaimType>(premise.getType());
+    if (!claim)
+      continue;
+    if (auto eq = claim.getEqualityAttr())
+      subst[eq.getLhs()] = eq.getRhs();
+  }
+  if (subst.empty())
+    return ty;
+  return applySubstitutionToFixedPoint(subst, ty);
+}
+
+// The op's attributes must match the result claim's arm exactly, and the result
+// type must equal the claim reconstructed from those attributes. For the
+// equality arm, the current endpoints must be a single-substitution first-order
+// instance of the frozen certificate (proj-resolve) or identical (refl).
+LogicalResult WitnessOp::verify() {
+  ClaimType result = dyn_cast<ClaimType>(getResult().getType());
+  if (!result)
+    return emitOpError() << "result must be a !trait.claim";
+
+  bool hasProof = static_cast<bool>(getProofAttr());
+  bool hasApp = static_cast<bool>(getTraitApplicationAttr());
+  bool hasCert = static_cast<bool>(getCertificateAttr());
+  bool hasRefl = getRefl();
+
+  // Equality arm.
+  if (result.isEquality()) {
+    if (hasProof || hasApp)
+      return emitOpError() << "an equality witness carries no proof or trait "
+                              "application";
+    if (hasCert == hasRefl)
+      return emitOpError() << "an equality witness is exactly one of "
+                              "proj-resolve (a certificate) or refl";
+    TypeEqualityAttr eq = result.getEqualityAttr();
+
+    if (hasRefl) {
+      if (!getPremises().empty())
+        return emitOpError() << "a refl witness takes no premises";
+      if (eq.getLhs() != eq.getRhs())
+        return emitOpError() << "a refl witness requires identical endpoints, "
+                             << "found " << eq.getLhs() << " and " << eq.getRhs();
+      return success();
+    }
+
+    // proj-resolve: the current endpoints must be a single-substitution
+    // first-order instance of the frozen certificate endpoints, receipts
+    // stripped. This passes birth (identity), the clone-substituted state, and
+    // ground, and rejects any non-substitution mangling.
+    WitnessCertificateAttr cert = getCertificateAttr();
+    UnificationMap subst;
+    if (failed(trait::unify(cert.getRedex(), eq.getLhs(), ModuleOp(), subst)) ||
+        failed(trait::unify(cert.getContractum(), eq.getRhs(), ModuleOp(), subst)))
+      return emitOpError() << "result endpoints " << eq.getLhs() << " = "
+                           << eq.getRhs()
+                           << " are not an instance of the certificate "
+                           << cert.getRedex() << " = " << cert.getContractum();
+    return success();
+  }
+
+  // Application arm.
+  if (hasCert || hasRefl || !getPremises().empty())
+    return emitOpError() << "an application witness carries neither a "
+                            "certificate, a refl marker, nor premises";
+  if (!hasProof || !hasApp)
+    return emitOpError() << "an application witness carries a proof and a "
+                            "trait application";
+  if (result != getProvenClaim())
+    return emitOpError() << "result " << result
+                         << " does not match the witnessed claim "
+                         << getProvenClaim();
+  return success();
 }
 
 LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
@@ -1215,8 +1366,56 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
   auto errFn = [&] { return emitOpError(); };
 
-  // Resolve the proof symbol to its impl in one lookup; a directly-named impl
-  // must be unconditional. The impl must then build a substitution for our claim.
+  // Equality proj-resolve arm: audit the citation at the symbol seam. The cited
+  // impl must bind the associated type named by the frozen redex projection to
+  // the frozen contractum, once specialized for the redex's trait application.
+  // The module read runs here, at the sanctioned seam, on every full module
+  // verification -- not per consumer.
+  if (auto cert = getCertificateAttr()) {
+    auto redexProj = dyn_cast<ProjectionType>(cert.getRedex());
+    if (!redexProj)
+      return emitOpError() << "a projection-resolution certificate's redex must "
+                              "be a projection, found " << cert.getRedex();
+
+    auto implOp = SymbolTable::lookupNearestSymbolFrom<ImplOp>(
+        module, cert.getCitedImpl());
+    if (!implOp)
+      return emitOpError() << "cannot find trait.impl '" << cert.getCitedImpl()
+                           << "' cited by the certificate";
+
+    ClaimType selfClaim = ClaimType::get(getContext(), redexProj.getTraitApplication());
+    auto subst = implOp.buildSubstitutionForSelfClaim(selfClaim, errFn);
+    if (failed(subst))
+      return failure();
+
+    auto bound = implOp.specializeAssociatedTypeBinding(
+        redexProj.getAssocName().getValue(), redexProj.getAssocTypeArgs());
+    if (failed(bound))
+      return emitOpError() << "impl '" << cert.getCitedImpl()
+                           << "' does not bind associated type '"
+                           << redexProj.getAssocName().getValue() << "'";
+    Type resolved = subst->apply(*bound);
+
+    // Receipt-blind exact comparison. Projection-headed impl self-applications
+    // do not first-order match; their audit matches modulo the cited equality
+    // premises, applied to the resolved binding before comparison.
+    resolved = applyEqualityPremises(resolved, getPremises());
+    Type contractum = applyEqualityPremises(cert.getContractum(), getPremises());
+    if (resolved != contractum)
+      return emitOpError() << "impl '" << cert.getCitedImpl()
+                           << "' binds the redex to " << resolved
+                           << ", not the certified contractum "
+                           << cert.getContractum();
+    return success();
+  }
+
+  // Refl arm: nothing to audit at the seam.
+  if (getRefl())
+    return success();
+
+  // Application arm: resolve the proof to its impl in one lookup; a
+  // directly-named impl must be unconditional. The impl must then build a
+  // substitution for our claim.
   auto impl = ProofOp::getImplFromProof(module, getProofAttr(), errFn,
                                         /*requireUnconditionalDirectImpl=*/true);
   if (failed(impl)) return failure();
