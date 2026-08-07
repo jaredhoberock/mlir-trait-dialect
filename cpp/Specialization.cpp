@@ -112,6 +112,32 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &sub
     // check that the result changed
     return (result != t) ? std::optional<Type>(result) : std::nullopt;
   });
+
+  // The clone rule for equality evidence. An equality claim's endpoints are
+  // opaque to the generic replacer above, so a specializing clone would leave
+  // them polymorphic while the surrounding value specializes. This rebuilds the
+  // claim with one substitution applied to both endpoints atomically, through
+  // the fallible constructor. A witness's frozen certificate is deliberately
+  // NOT rewritten -- the audit is immutable, and the specialized result claim
+  // is verified against it as an instance.
+  replacer.addReplacement([=](ClaimType claim) -> std::optional<Type> {
+    auto eq = claim.getEqualityAttr();
+    if (!eq)
+      return std::nullopt; // application claims: handled by the generic rule
+    auto substEndpoint = [&](Type endpoint) {
+      Type r = applySubstitutionToFixedPoint(subst, endpoint);
+      if (module)
+        r = resolveGroundProjectionsByLookup(r, module,
+                                             DemandOrigin::MonomorphStampOut);
+      return r;
+    };
+    Type newLhs = substEndpoint(eq.getLhs());
+    Type newRhs = substEndpoint(eq.getRhs());
+    if (newLhs == eq.getLhs() && newRhs == eq.getRhs())
+      return std::nullopt;
+    return Type(ClaimType::getEquality(claim.getContext(), newLhs, newRhs));
+  });
+
   return replacer;
 }
 

@@ -1331,13 +1331,17 @@ LogicalResult WitnessOp::verify() {
     }
 
     // proj-resolve: the current endpoints must be a single-substitution
-    // first-order instance of the frozen certificate endpoints, receipts
-    // stripped. This passes birth (identity), the clone-substituted state, and
-    // ground, and rejects any non-substitution mangling.
+    // first-order instance of the frozen certificate endpoints. The frozen
+    // endpoints' generic parameters are the variables; a single substitution
+    // must carry the frozen redex/contractum pair to the current one. This
+    // passes birth (identity), the clone-substituted state, and ground, and
+    // rejects any non-substitution mangling. It is structural and local -- no
+    // module lookup -- so the pair is matched with a null module.
     WitnessCertificateAttr cert = getCertificateAttr();
-    UnificationMap subst;
-    if (failed(trait::unify(cert.getRedex(), eq.getLhs(), ModuleOp(), subst)) ||
-        failed(trait::unify(cert.getContractum(), eq.getRhs(), ModuleOp(), subst)))
+    MLIRContext *ctx = getContext();
+    Type frozenPair = TupleType::get(ctx, {cert.getRedex(), cert.getContractum()});
+    Type currentPair = TupleType::get(ctx, {eq.getLhs(), eq.getRhs()});
+    if (failed(buildSpecialization(frozenPair, currentPair, ModuleOp())))
       return emitOpError() << "result endpoints " << eq.getLhs() << " = "
                            << eq.getRhs()
                            << " are not an instance of the certificate "
