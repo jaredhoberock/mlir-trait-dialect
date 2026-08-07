@@ -636,13 +636,40 @@ private:
   EvidenceBindings evidenceBindings;
 };
 
-// this walks a Type and looks for any occurrence of the given NeedleType
+// The demand-walk accessor. An equality claim's endpoints are opaque to the
+// generic type walk, so a reader that classifies theory content -- projections,
+// claims -- must consult this to reach content nested only inside an endpoint.
+// It invokes `callback` on both endpoints of every equality claim reachable in
+// `root`; callers then walk those endpoints with their own classification. This
+// is the binding read-side rule: every walk that classifies theory content
+// consults the accessor for equality claims.
+inline void walkEqualityEndpoints(Type root,
+                                  llvm::function_ref<void(Type)> callback) {
+  root.walk([&](Type sub) {
+    if (auto claim = dyn_cast<ClaimType>(sub))
+      if (auto eq = claim.getEqualityAttr()) {
+        callback(eq.getLhs());
+        callback(eq.getRhs());
+      }
+  });
+}
+
+// this walks a Type and looks for any occurrence of the given NeedleType.
+// Equality-claim endpoints are opaque to Type::walk, so this also routes through
+// the demand-walk accessor: a needle reachable only inside an equality endpoint
+// is still found. This is the opacity boundary theory-classification callers
+// (opMentionsType, the resolve-projection gate, the erase backstop) cross.
 template<class NeedleType> bool containsType(Type ty) {
   bool found = false;
   ty.walk([&](Type sub) {
     if (isa<NeedleType>(sub))
       found = true;
   });
+  if (!found)
+    walkEqualityEndpoints(ty, [&](Type endpoint) {
+      if (containsType<NeedleType>(endpoint))
+        found = true;
+    });
   return found;
 }
 
