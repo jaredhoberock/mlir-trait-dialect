@@ -987,9 +987,11 @@ def ProjCastOp : TraitDialectOp<"proj.cast", [
     non-projection positions must match and one projection cannot stand for two
     different types.
 
-    A receipt may be dropped but never exchanged: a cast whose result names a
-    proof different from the input's for the same claim is rejected, so a cast
-    never rewrites which impl proves a claim.
+    A receipt may be dropped but neither attached nor exchanged: once its
+    projections are reconciled, a cast whose result names a proof the input did
+    not carry -- a different proof for the same claim, or a proof where the input
+    carried none -- is rejected, so a cast never rewrites which impl proves a
+    claim.
   }];
 
   let arguments = (ins AnyType:$input, Claim:$claim);

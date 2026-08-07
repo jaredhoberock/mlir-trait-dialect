@@ -1546,53 +1546,40 @@ LogicalResult ProjCastOp::verify() {
 
   // A proof receipt spelled into a claim records which impl established it. Two
   // claims over the same trait application denote the same claim whether or not
-  // that record is spelled, so every comparison of a cast's endpoints is made
-  // modulo the receipt. Comparison modulo the receipt must still forbid one
-  // thing: exchanging it. Were a cast free to relate a claim proven by one impl
-  // to the same claim proven by another, it would silently rewrite provenance.
-  // The grade-monotone rule closes that gap -- at each claim position the two
-  // endpoints share once receipts are stripped, the result's receipt is absent
-  // or names the same proof as the input's. Establishing a proof a value did not
-  // carry, or trading one proof for another, is an audited introduction, never a
-  // cast.
+  // that record is spelled, so a cast's endpoints are compared modulo the
+  // receipt. Comparison modulo the receipt must still forbid one thing: altering
+  // it. Were a cast free to relate a claim proven by one impl to the same claim
+  // proven by another, or to attach a proof a claim never carried, it would
+  // silently rewrite provenance. Establishing or trading a proof is an audited
+  // introduction, never a cast; a cast may only drop a receipt or leave it
+  // unchanged.
   AttrTypeReplacer stripReceipts;
   stripReceipts.addReplacement([](ClaimType claim) -> std::optional<Type> {
     if (claim.isProven())
       return Type(claim.asUnproven());
     return std::nullopt;
   });
-  auto rejectProofSwap = [&](Type from, Type to) -> LogicalResult {
-    // Only endpoints that name the same spelling once receipts are stripped can
-    // swap a receipt. When they differ in more than a receipt the enclosing
-    // judgment compares them, and their claim positions need not correspond.
-    if (stripReceipts.replace(from) != stripReceipts.replace(to))
+  // A claim carries a receipt only at the root of an endpoint: claims may not
+  // nest inside an aggregate (rejected above) nor inside another claim's
+  // arguments, so the two endpoints' root claims are the only receipts a cast
+  // could alter. This refusal compares those root claims directly. It presumes
+  // the caller has already established that the endpoints denote the same claim
+  // once the cast's projections are reconciled -- so a receipt present on the
+  // result and absent or different on the input is an alteration, not an
+  // artifact of two spellings.
+  auto rejectProofSwap = [&](ClaimType fromClaim,
+                             ClaimType toClaim) -> LogicalResult {
+    if (!toClaim.isProven())
       return success();
-    SmallVector<ClaimType> fromClaims, toClaims;
-    from.walk([&](ClaimType claim) { fromClaims.push_back(claim); });
-    to.walk([&](ClaimType claim) { toClaims.push_back(claim); });
-    if (fromClaims.size() != toClaims.size())
-      return success();
-    for (size_t i = 0, e = fromClaims.size(); i < e; ++i) {
-      ClaimType fromClaim = fromClaims[i];
-      ClaimType toClaim = toClaims[i];
-      if (!toClaim.isProven())
-        continue;
-      if (!fromClaim.isProven() || fromClaim.getProof() != toClaim.getProof())
-        return emitOpError() << "may not swap the proof backing claim "
-                             << toClaim.getTraitApplication()
-                             << ": a cast may drop a proof receipt but not "
-                             << "exchange it for another";
-    }
+    if (!fromClaim.isProven() || fromClaim.getProof() != toClaim.getProof())
+      return emitOpError() << "may not swap the proof backing claim "
+                           << toClaim.getTraitApplication()
+                           << ": a cast may drop a proof receipt but not "
+                           << "exchange it for another";
     return success();
   };
 
   if (!claimTy.isProven()) {
-    // Even an unproven claim's consistency check compares endpoints modulo
-    // receipts (below), so it must refuse a receipt swap for the same reason the
-    // proven judgment does.
-    if (failed(rejectProofSwap(inputType, resultType)))
-      return failure();
-
     // The claim justifies resolving projections over its own trait application,
     // and nothing else. Replace each such projection with a fresh unification
     // variable -- the same projection maps to the same variable -- then unify
@@ -1630,6 +1617,17 @@ LogicalResult ProjCastOp::verify() {
       return emitOpError() << "input type " << inputType << " and result type "
                            << resultType
                            << " are not consistent under claim " << claimApp;
+
+    // Unification has established that the endpoints denote the same claim once
+    // the claim's projections resolve, so their root claims differ at most in a
+    // receipt. A receipt that differs here is therefore an alteration, not a
+    // coincidence of spelling -- which is why this refusal follows the
+    // reconciliation and reads the raw endpoints, whose projection spellings may
+    // differ from the concrete positions they resolve to.
+    if (auto inClaim = dyn_cast<ClaimType>(inputType))
+      if (auto outClaim = dyn_cast<ClaimType>(resultType))
+        if (failed(rejectProofSwap(inClaim, outClaim)))
+          return failure();
 
     // A claim-application projection standing for a fresh variable must resolve
     // to a concrete position, not to a DIFFERENT such variable. Binding one hole
@@ -1685,16 +1683,21 @@ LogicalResult ProjCastOp::verify() {
   if (failed(resolvedResult))
     return failure();
 
-  // The claim may not swap a receipt; a receipt otherwise informs the reader
-  // without ever failing a correct cast, so the endpoints are compared with
-  // receipts stripped symmetrically from both.
-  if (failed(rejectProofSwap(*resolvedInput, *resolvedResult)))
-    return failure();
-
+  // Endpoints that differ in more than a receipt are not the same claim; a
+  // receipt otherwise informs the reader without ever failing a correct cast, so
+  // this mismatch is judged with receipts stripped symmetrically from both.
   if (stripReceipts.replace(*resolvedInput) != stripReceipts.replace(*resolvedResult))
     return emitOpError() << "resolved input type " << *resolvedInput
                          << " does not match resolved result type "
                          << *resolvedResult;
+
+  // The resolved endpoints now denote the same claim modulo a receipt, so a
+  // receipt present on the result and absent or different on the input is a swap
+  // the cast may not perform.
+  if (auto inClaim = dyn_cast<ClaimType>(*resolvedInput))
+    if (auto outClaim = dyn_cast<ClaimType>(*resolvedResult))
+      if (failed(rejectProofSwap(inClaim, outClaim)))
+        return failure();
 
   return success();
 }

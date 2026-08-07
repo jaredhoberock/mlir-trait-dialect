@@ -13,11 +13,11 @@
 //     distinct logical claims (@tpl, below).
 //
 // The pattern also declines to overwrite an already-proven result, but that
-// case has no valid-IR witness to pin here: a cast whose input and result name
-// one application under two different proofs is a proof swap the verifier
-// refuses outright (invalid_proj_cast_proof_swap.mlir), and one under a single
-// proof coincides and folds away, so the pattern only ever meets an unproven
-// result.
+// case has no valid-IR witness to pin here: the casts below carry an unproven
+// claim operand, and a cast whose input and result name one application under
+// two different proofs is a proof swap the unproven judgment refuses outright
+// (invalid_proj_cast_unproven_proof_swap.mlir), while one under a single proof
+// coincides and folds away, so the pattern only ever meets an unproven result.
 //
 // Runs `instantiate-monomorphs-trait` rather than the full pipeline because the
 // full pipeline prunes these never-instantiated templates, erasing the very
