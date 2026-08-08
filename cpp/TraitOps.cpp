@@ -1919,14 +1919,90 @@ OpFoldResult ProjCastOp::fold(FoldAdaptor) {
 
 namespace {
 
+// A type's term decomposition for ground reasoning: an exact constructor
+// identity together with the positional type children the constructor is
+// applied to. Two types denote the same constructor exactly when their keys are
+// equal; the key carries every part of a type that is not a child -- a function
+// type's arity split, a vector's or memref's shape, a memref's layout and memory
+// space, a trait or associated-type name -- so distinct constructors never share
+// a key and congruence over the children is sound.
+struct TermShape {
+  Attribute key;
+  SmallVector<Type, 4> children;
+};
+
+// A distinct sentinel type per child position. A shell is only ever compared
+// against another shell and children are compared separately, so a sentinel
+// coinciding with a real leaf type is harmless: it merely marks that a child
+// occupied that position.
+static Type positionPlaceholder(MLIRContext *ctx, unsigned position) {
+  return IntegerType::get(ctx, position + 1);
+}
+
+// Decompose a type into its constructor key and positional type children.
+// Claims, projections, and equality endpoints carry their type arguments inside
+// hand-written attribute storage the generic sub-element walk cannot see, so
+// each is enumerated explicitly. Every other type derives its key by rebuilding
+// itself with its immediate sub-element types replaced by numbered placeholders:
+// the resulting shell holds the full non-child storage by construction and
+// compares by exact type equality, so two containers share a key exactly when
+// they differ only in their children.
+static TermShape decomposeTerm(Type t) {
+  TermShape s;
+  MLIRContext *ctx = t.getContext();
+  if (auto claim = dyn_cast<ClaimType>(t)) {
+    if (auto eq = claim.getEqualityAttr()) {
+      s.key = StringAttr::get(ctx, "trait.claim.eq");
+      s.children.push_back(eq.getLhs());
+      s.children.push_back(eq.getRhs());
+      return s;
+    }
+    // Application receipts are compared modulo the proof, so the key ignores it.
+    auto app = claim.getTraitApplication();
+    s.key = ArrayAttr::get(
+        ctx, {StringAttr::get(ctx, "trait.claim.app"), app.getTraitName()});
+    for (Type a : app.getTypeArgs())
+      s.children.push_back(a);
+    return s;
+  }
+  if (auto proj = dyn_cast<ProjectionType>(t)) {
+    auto app = proj.getTraitApplication();
+    s.key = ArrayAttr::get(
+        ctx, {StringAttr::get(ctx, "trait.proj"), app.getTraitName(),
+              proj.getAssocName(),
+              IntegerAttr::get(IntegerType::get(ctx, 64),
+                               (int64_t)proj.getAssocTypeArgs().size())});
+    for (Type a : app.getTypeArgs())
+      s.children.push_back(a);
+    for (Type a : proj.getAssocTypeArgs())
+      s.children.push_back(a);
+    return s;
+  }
+
+  SmallVector<Attribute> subAttrs;
+  SmallVector<Type> subTypes;
+  t.walkImmediateSubElements([&](Attribute a) { subAttrs.push_back(a); },
+                             [&](Type ty) { subTypes.push_back(ty); });
+  if (subTypes.empty()) {
+    s.key = TypeAttr::get(t);
+    return s;
+  }
+  SmallVector<Type> placeholders;
+  for (unsigned i = 0, n = subTypes.size(); i < n; ++i)
+    placeholders.push_back(positionPlaceholder(ctx, i));
+  s.key = TypeAttr::get(t.replaceImmediateSubElements(subAttrs, placeholders));
+  s.children = std::move(subTypes);
+  return s;
+}
+
 // Ground congruence closure over the subterm DAG of a coerce's endpoints and
 // its cited equalities. It seeds the union-find with the equalities, then
 // closes under congruence: two terms with the same constructor and pairwise
 // equal children are united. It only unites -- it never decomposes, so
 // f(a) = f(b) is not read backwards to a = b at projection heads or anywhere
-// else. Child enumeration descends into type-bearing trait attributes (claims,
-// projections) and reads equality endpoints directly, since the generic walkers
-// are opaque to those.
+// else. Child enumeration and constructor identity both come from decomposeTerm,
+// which reads through the type-bearing trait attributes the generic walkers are
+// opaque to.
 class GroundCongruence {
 public:
   // Seed an equality between two endpoints (and intern their subterms).
@@ -1941,13 +2017,13 @@ public:
     ids[t] = id;
     terms.push_back(t);
     parent.push_back(id);
-    ctorKey.push_back(llvm::hash_code(0));
+    ctorKey.push_back(Attribute());
     children.emplace_back();
 
-    Decomp d = decompose(t);
-    ctorKey[id] = d.ctor;
+    TermShape shape = decomposeTerm(t);
+    ctorKey[id] = shape.key;
     SmallVector<unsigned> childIds;
-    for (Type c : d.children)
+    for (Type c : shape.children)
       childIds.push_back(intern(c));
     children[id] = std::move(childIds);
     return id;
@@ -1982,67 +2058,6 @@ public:
   bool equal(Type a, Type b) { return find(intern(a)) == find(intern(b)); }
 
 private:
-  struct Decomp {
-    llvm::hash_code ctor;
-    SmallVector<Type, 4> children;
-  };
-
-  // The term-signature contract: constructor identity and child enumeration
-  // across types AND type-bearing attributes, an exact decomposition rather
-  // than the generic unifier (which treats attributes as opaque).
-  static Decomp decompose(Type t) {
-    Decomp d;
-    if (auto claim = dyn_cast<ClaimType>(t)) {
-      if (auto eq = claim.getEqualityAttr()) {
-        d.ctor = llvm::hash_combine(StringRef("trait.claim.eq"));
-        d.children.push_back(eq.getLhs());
-        d.children.push_back(eq.getRhs());
-        return d;
-      }
-      // Application receipts are stripped before the closure runs, so the
-      // constructor ignores the proof.
-      auto app = claim.getTraitApplication();
-      d.ctor = llvm::hash_combine(StringRef("trait.claim"),
-                                  app.getTraitName().getValue());
-      for (Type a : app.getTypeArgs())
-        d.children.push_back(a);
-      return d;
-    }
-    if (auto proj = dyn_cast<ProjectionType>(t)) {
-      auto app = proj.getTraitApplication();
-      d.ctor = llvm::hash_combine(StringRef("trait.proj"),
-                                  app.getTraitName().getValue(),
-                                  proj.getAssocName().getValue(),
-                                  (unsigned)proj.getAssocTypeArgs().size());
-      for (Type a : app.getTypeArgs())
-        d.children.push_back(a);
-      for (Type a : proj.getAssocTypeArgs())
-        d.children.push_back(a);
-      return d;
-    }
-
-    // Generic types: immediate sub-element types are the children. A type with
-    // no sub-element types is a leaf whose whole spelling is its constructor,
-    // so distinct constants (i32 vs i64, distinct !trait.poly) never merge; a
-    // container's constructor is its type id, immediate attributes, and arity,
-    // so two containers are congruent exactly when their children are.
-    SmallVector<Attribute> subAttrs;
-    SmallVector<Type> subTypes;
-    t.walkImmediateSubElements([&](Attribute a) { subAttrs.push_back(a); },
-                               [&](Type ty) { subTypes.push_back(ty); });
-    if (subTypes.empty()) {
-      d.ctor = llvm::hash_combine(t);
-      return d;
-    }
-    llvm::hash_code h = llvm::hash_combine(t.getTypeID());
-    for (Attribute a : subAttrs)
-      h = llvm::hash_combine(h, a);
-    h = llvm::hash_combine(h, (unsigned)subTypes.size());
-    d.ctor = h;
-    d.children = std::move(subTypes);
-    return d;
-  }
-
   unsigned find(unsigned x) {
     while (parent[x] != x) {
       parent[x] = parent[parent[x]];
@@ -2060,7 +2075,7 @@ private:
   DenseMap<Type, unsigned> ids;
   SmallVector<Type> terms;
   SmallVector<unsigned> parent;
-  SmallVector<llvm::hash_code> ctorKey;
+  SmallVector<Attribute> ctorKey;
   SmallVector<SmallVector<unsigned>> children;
 };
 
