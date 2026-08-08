@@ -136,7 +136,7 @@ def TraitOp : TraitDialectOp<"trait", [
   let arguments = (ins
     SymbolNameAttr:$sym_name,
     TypeArrayAttr:$type_params,
-    TraitApplicationArrayAttr:$requirements
+    PredicateArrayAttr:$requirements
   );
 
   let regions = (region SizedRegion<1>:$body);
@@ -244,7 +244,7 @@ def TraitOp : TraitDialectOp<"trait", [
     // low-level builder
     OpBuilder<(ins "::mlir::StringAttr":$sym_name,
                    "::mlir::ArrayAttr":$type_params,
-                   "TraitApplicationArrayAttr":$requirements), [{
+                   "PredicateArrayAttr":$requirements), [{
       $_state.addAttribute("sym_name", sym_name);
       $_state.addAttribute("type_params", type_params);
       $_state.addAttribute("requirements", requirements);
@@ -255,7 +255,7 @@ def TraitOp : TraitDialectOp<"trait", [
     // convenience accepts type_params as ArrayRef<Type>
     OpBuilder<(ins "::mlir::StringAttr":$sym_name,
                    "::mlir::ArrayRef<Type>":$type_params,
-                   "TraitApplicationArrayAttr":$requirements), [{
+                   "PredicateArrayAttr":$requirements), [{
       MLIRContext* ctx = $_builder.getContext();
       SmallVector<Attribute,8> typeAttrs;
       typeAttrs.reserve(type_params.size());
@@ -271,7 +271,17 @@ def TraitOp : TraitDialectOp<"trait", [
                    "::mlir::ArrayRef<Type>":$type_params,
                    "::mlir::ArrayRef<TraitApplicationAttr>":$requirements), [{
       MLIRContext* ctx = $_builder.getContext();
-      auto reqsAttr = TraitApplicationArrayAttr::get(ctx, requirements);
+      auto reqsAttr = PredicateArrayAttr::get(ctx, requirements);
+      build($_builder, $_state, sym_name, type_params, reqsAttr);
+    }]>,
+
+    // convenience accepts requirements as a TraitApplicationArrayAttr -- the
+    // application-only shape older callers and sibling dialects build
+    OpBuilder<(ins "::mlir::StringAttr":$sym_name,
+                   "::mlir::ArrayRef<Type>":$type_params,
+                   "TraitApplicationArrayAttr":$requirements), [{
+      MLIRContext* ctx = $_builder.getContext();
+      auto reqsAttr = PredicateArrayAttr::get(ctx, requirements);
       build($_builder, $_state, sym_name, type_params, reqsAttr);
     }]>
   ];

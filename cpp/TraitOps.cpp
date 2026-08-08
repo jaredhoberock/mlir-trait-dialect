@@ -197,32 +197,53 @@ LogicalResult TraitOp::verify() {
     }
   }
 
+  // An endpoint mentions a type parameter when any generic hiding inside it is
+  // one of the trait's parameters or a GAT parameter; getGenericTypesIn descends
+  // projections (and opaque equality endpoints) that a plain walk would miss.
+  auto endpointMentionsParam = [&](Type endpoint) {
+    for (GenericTypeInterface g : getGenericTypesIn(endpoint))
+      if (uniqueParams.contains(Type(g)) || gatParams.contains(Type(g)))
+        return true;
+    return false;
+  };
+
   // check requirements
-  for (auto& app : getRequirements()) {
-    // each TraitApplicationAttr must use at least one of the trait's type parameters
-    // OR at least one GAT type parameter
-    bool mentionsTraitParam = llvm::any_of(uniqueParams, [&](Type param) {
-      return app.mentionsType(param);
-    });
-    bool mentionsGatParam = llvm::any_of(gatParams, [&](Type param) {
-      return app.mentionsType(param);
-    });
+  for (Attribute pred : getRequirements()) {
+    if (auto app = dyn_cast<TraitApplicationAttr>(pred)) {
+      // each application requirement must use at least one of the trait's type
+      // parameters OR at least one GAT type parameter
+      bool mentionsTraitParam = llvm::any_of(uniqueParams, [&](Type param) {
+        return app.mentionsType(param);
+      });
+      bool mentionsGatParam = llvm::any_of(gatParams, [&](Type param) {
+        return app.mentionsType(param);
+      });
 
-    if (!mentionsTraitParam && !mentionsGatParam)
-      return emitOpError() << "'where' clause requirement " << app
-                           << " must mention at least one type parameter";
-
-    // A direct self-reference like @Trait[!S] would create a circular
-    // obligation that no impl can satisfy. However, a self-reference whose
-    // self argument goes through a projection (e.g. @Trait[!trait.proj<...>])
-    // is safe: the projection resolves to a concrete type during
-    // monomorphization, so the obligation is discharged against a different
-    // impl, not the one being defined.
-    if (app.getTraitName().getValue() == getSymName()) {
-      bool selfArgHasProjection = containsType<ProjectionType>(app.getTypeArgs().front());
-      if (!selfArgHasProjection)
+      if (!mentionsTraitParam && !mentionsGatParam)
         return emitOpError() << "'where' clause requirement " << app
-                             << " must not reference the current trait";
+                             << " must mention at least one type parameter";
+
+      // A direct self-reference like @Trait[!S] would create a circular
+      // obligation that no impl can satisfy. However, a self-reference whose
+      // self argument goes through a projection (e.g. @Trait[!trait.proj<...>])
+      // is safe: the projection resolves to a concrete type during
+      // monomorphization, so the obligation is discharged against a different
+      // impl, not the one being defined.
+      if (app.getTraitName().getValue() == getSymName()) {
+        bool selfArgHasProjection = containsType<ProjectionType>(app.getTypeArgs().front());
+        if (!selfArgHasProjection)
+          return emitOpError() << "'where' clause requirement " << app
+                               << " must not reference the current trait";
+      }
+    } else if (auto eq = dyn_cast<TypeEqualityAttr>(pred)) {
+      // An equality requirement has no trait head, so there is no
+      // self-reference to forbid; it must still relate the trait's parameters,
+      // mentioning at least one through either endpoint.
+      if (!endpointMentionsParam(eq.getLhs()) &&
+          !endpointMentionsParam(eq.getRhs()))
+        return emitOpError() << "'where' clause equality requirement "
+                             << ClaimType::getEquality(getContext(), eq)
+                             << " must mention at least one type parameter";
     }
   }
 
@@ -252,9 +273,16 @@ FailureOr<SpecializationMap> TraitOp::buildSubstitutionForSelfClaim(ClaimType ac
 
 SmallVector<ClaimType> TraitOp::getRequirementsAsClaims() {
   MLIRContext *ctx = getContext();
-  return llvm::map_to_vector(getRequirements(), [ctx](TraitApplicationAttr app) {
-    return ClaimType::get(ctx, app);
-  });
+  // Each requirement becomes a claim of its arm: an application claim for an
+  // application entry, an equality claim for an equality entry.
+  SmallVector<ClaimType> result;
+  for (Attribute pred : getRequirements()) {
+    if (auto app = dyn_cast<TraitApplicationAttr>(pred))
+      result.push_back(ClaimType::get(ctx, app));
+    else if (auto eq = dyn_cast<TypeEqualityAttr>(pred))
+      result.push_back(ClaimType::getEquality(ctx, eq));
+  }
+  return result;
 }
 
 FailureOr<SmallVector<ClaimType>> TraitOp::specializeRequirementsAsClaimsFor(
@@ -337,11 +365,11 @@ ParseResult TraitOp::parse(OpAsmParser &p, OperationState &s) {
   s.addAttribute("type_params", ArrayAttr::get(ctx, typeAttrs));
 
   // requirements
-  auto requirements = TraitApplicationArrayAttr::get(ctx, {});
+  auto requirements = PredicateArrayAttr::get(ctx, ArrayRef<Attribute>());
   if (succeeded(p.parseOptionalKeyword("where"))) {
-    requirements = dyn_cast_or_null<TraitApplicationArrayAttr>(TraitApplicationArrayAttr::parse(p,{}));
+    requirements = dyn_cast_or_null<PredicateArrayAttr>(PredicateArrayAttr::parse(p,{}));
     if (!requirements)
-      return p.emitError(p.getCurrentLocation(), "expected a TraitApplicationArrayAttr");
+      return p.emitError(p.getCurrentLocation(), "expected a predicate array");
   }
   s.addAttribute("requirements", requirements);
 
@@ -532,6 +560,53 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     }
   }
 
+  // Birth-check the trait's equality requirements against this impl. Each
+  // equality the trait requires (e.g. Self::Output = Self) must hold once its
+  // parameters are this impl's self arguments: the projection endpoints resolve
+  // -- through this impl's own bindings for its own application, or by module
+  // lookup for a sibling -- and the two spellings must agree. Application
+  // requirements are proved at impl selection, not here. An endpoint that stays
+  // symbolic cannot be decided at birth; it is checked when the impl is
+  // instantiated (the leftover check refuses an equality that does not
+  // ground-resolve), so only a ground mismatch is a birth error.
+  //
+  // Guarded on the trait actually carrying an equality requirement: a trait
+  // with none owes no birth check, and the guard keeps the self-claim
+  // specialization off impls whose trait declares nothing to check.
+  bool hasEqualityRequirement = llvm::any_of(
+      traitOp.getRequirements(), [](Attribute pred) {
+        return mlir::isa<TypeEqualityAttr>(pred);
+      });
+  if (hasEqualityRequirement) {
+    auto specReqs = traitOp.specializeRequirementsAsClaimsFor(getSelfClaim(), errFn);
+    if (failed(specReqs)) return failure();
+
+    auto reqSubst = traitOp.buildSubstitutionForSelfClaim(getSelfClaim(), errFn);
+    if (failed(reqSubst)) return failure();
+    NormalizationContext eqNorm;
+    eqNorm.addLocalProjectionRule(*this, getSelfApplication(), *reqSubst);
+
+    for (ClaimType req : *specReqs) {
+      auto eq = req.getEqualityAttr();
+      if (!eq) continue;
+
+      auto lhsN = eqNorm.normalize(eq.getLhs(), errFn);
+      if (failed(lhsN)) return failure();
+      auto rhsN = eqNorm.normalize(eq.getRhs(), errFn);
+      if (failed(rhsN)) return failure();
+
+      Type lhsR = resolveGroundProjectionsByLookup(
+          *lhsN, *module, DemandOrigin::ImplSignatureVerification);
+      Type rhsR = resolveGroundProjectionsByLookup(
+          *rhsN, *module, DemandOrigin::ImplSignatureVerification);
+
+      if (isGroundType(lhsR) && isGroundType(rhsR) && lhsR != rhsR)
+        return emitOpError()
+               << "does not satisfy trait-header equality requirement " << req
+               << ": " << lhsR << " and " << rhsR << " are not the same type";
+    }
+  }
+
   return success();
 }
 
@@ -540,9 +615,11 @@ bool ImplOp::isUnconditional() {
   // 1. it is monomorphic (no type parameters),
   // 2. its TraitOp has no requirements, and
   // 3. it has no assumptions
+  // A birth-checked equality requirement does not make an impl conditional, so
+  // only application requirements count against unconditionality.
   return getTypeParams().empty() &&
          getAssumptions().empty() &&
-         getTrait().getRequirements().empty();
+         !getTrait().getRequirements().hasApplications();
 }
 
 LogicalResult ImplOp::verifyIsUnconditional(llvm::function_ref<InFlightDiagnostic()> err) {
@@ -871,6 +948,13 @@ FailureOr<SmallVector<ClaimType>> ImplOp::specializeObligationsAsClaimsFor(
   // specialize requirements of the trait
   auto requirements = getTrait().specializeRequirementsAsClaimsFor(actualSelfClaim, errFn);
   if (failed(requirements)) return failure();
+
+  // The obligation stream is proved and derived through impl selection, an
+  // application-arm operation. Trait-header equality requirements are checked
+  // at impl birth against the impl's own bindings, never proved here, so they
+  // do not enter the obligation stream (the proof/derive zips would have no
+  // subproof for them).
+  llvm::erase_if(*requirements, [](ClaimType c) { return c.isEquality(); });
 
   // Resolve projections in requirements using this impl's associated type
   // bindings (e.g., `Coord[Tensor[Self]::Shape]` becomes `Coord[tuple<i64,i64>]`

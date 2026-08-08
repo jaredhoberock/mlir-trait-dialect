@@ -215,7 +215,12 @@ LogicalResult verifyAcyclicTraits(ModuleOp module) {
     s = Status::InPath;
     stack.push_back(u);
 
-    for (auto &app : u.getRequirements()) {
+    for (Attribute pred : u.getRequirements()) {
+      // Only application requirements form trait-to-trait edges; an equality
+      // requirement has no trait head and cannot close a `where`-clause cycle.
+      auto app = dyn_cast<TraitApplicationAttr>(pred);
+      if (!app)
+        continue;
       auto v = app.getTraitOrAbort(module, "verifyAcyclicTraits");
       // A requirement like @Trait[!trait.proj<@Trait[!S], "Assoc">] is a
       // syntactic self-reference, but not a real cycle: the projection resolves

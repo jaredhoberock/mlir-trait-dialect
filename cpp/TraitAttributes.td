@@ -199,4 +199,81 @@ def TraitApplicationArrayAttr : AttrDef<TraitDialect, "TraitApplicationArray",
   let hasCustomAssemblyFormat = 1;
 }
 
+// An ordered array of the one-hop predicates that must hold whenever a trait
+// holds -- a trait's `where` clause. It generalizes TraitApplicationArrayAttr
+// with a second arm so a trait may require a type equality as well as a trait
+// application.
+def PredicateArrayAttr : AttrDef<TraitDialect, "PredicateArray",
+    [DeclareAttrInterfaceMethods<SymbolUserAttrInterface>]> {
+  let mnemonic = "predicate_array";
+  let summary = "An ordered array of predicates required by a trait";
+  let description = [{
+    Represents the ordered list of one-hop predicates a `trait.trait` requires
+    (its `where` clause). Each entry is one of two arms, distinct in meaning:
+
+      * a `TraitApplicationAttr` -- an implementation must exist for a trait
+        applied to a list of types, e.g. `@Eq[!S]`;
+      * a `TypeEqualityAttr` -- two spellings must name one type, e.g.
+        `!trait.proj<@Trait[!S], "Assoc"> = i64`.
+
+    Application entries are proved at impl selection; equality entries are
+    checked at impl birth against the impl's own bindings. An application-only
+    array prints and parses exactly as the trait application array it
+    generalizes, so existing textual forms round-trip unchanged.
+
+    Example:
+      !S = trait.poly<0>
+      trait.trait @FoldFn[!S] where [
+        @Callable[!S],
+        !trait.proj<@FoldFn[!S], "Output"> = !S
+      ] { ... }
+  }];
+
+  let parameters = (ins
+    ArrayRefParameter<"::mlir::Attribute">:$predicates
+  );
+
+  let extraClassDeclaration = [{
+    // behave like a range of the raw predicate attributes
+    auto begin() const { return getPredicates().begin(); }
+    auto end() const { return getPredicates().end(); }
+    bool empty() const { return getPredicates().empty(); }
+    size_t size() const { return getPredicates().size(); }
+
+    // The application-arm entries only, in declaration order. Consumers that
+    // read a trait application off each requirement -- the proof/derive
+    // obligation streams, acyclicity, unconditionality -- iterate these.
+    llvm::SmallVector<TraitApplicationAttr> getApplications() const {
+      llvm::SmallVector<TraitApplicationAttr> apps;
+      for (::mlir::Attribute p : getPredicates())
+        if (auto app = mlir::dyn_cast<TraitApplicationAttr>(p))
+          apps.push_back(app);
+      return apps;
+    }
+
+    // Whether any entry is an application requirement.
+    bool hasApplications() const {
+      return llvm::any_of(getPredicates(), [](::mlir::Attribute p) {
+        return mlir::isa<TraitApplicationAttr>(p);
+      });
+    }
+
+    // Convenience: build from application entries alone (the common case, and
+    // the shape sibling dialects construct).
+    static PredicateArrayAttr get(MLIRContext *ctx,
+                                  ArrayRef<TraitApplicationAttr> apps) {
+      SmallVector<Attribute> preds(apps.begin(), apps.end());
+      return PredicateArrayAttr::get(ctx, preds);
+    }
+    static PredicateArrayAttr get(MLIRContext *ctx,
+                                  TraitApplicationArrayAttr apps) {
+      SmallVector<Attribute> preds(apps.begin(), apps.end());
+      return PredicateArrayAttr::get(ctx, preds);
+    }
+  }];
+
+  let genVerifyDecl = 1;
+  let hasCustomAssemblyFormat = 1;
+}
+
 #endif // TRAIT_ATTRIBUTES_TD

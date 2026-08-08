@@ -334,4 +334,93 @@ void TraitApplicationArrayAttr::print(mlir::AsmPrinter &printer) const {
   printer << ']';
 }
 
+LogicalResult PredicateArrayAttr::verify(
+    llvm::function_ref<InFlightDiagnostic()> emitError,
+    ArrayRef<Attribute> predicates) {
+  for (Attribute p : predicates)
+    if (!mlir::isa<TraitApplicationAttr, TypeEqualityAttr>(p))
+      return emitError() << "a trait requirement must be a trait application "
+                            "or a type equality";
+  return success();
+}
+
+// Verify each predicate: application entries name a trait symbol, equality
+// entries carry their symbol users nested (opaque) in the endpoints. The
+// equality arm defers to the claim verifier, which reaches the endpoints
+// through the accessor.
+LogicalResult PredicateArrayAttr::verifySymbolUses(
+    Operation *op, SymbolTableCollection &symbolTable) const {
+  for (Attribute p : getPredicates()) {
+    if (auto app = mlir::dyn_cast<TraitApplicationAttr>(p)) {
+      if (failed(app.verifySymbolUses(op, symbolTable)))
+        return failure();
+    } else if (auto eq = mlir::dyn_cast<TypeEqualityAttr>(p)) {
+      auto claim = ClaimType::getEquality(op->getContext(), eq);
+      if (failed(claim.verifySymbolUses(op, symbolTable)))
+        return failure();
+    }
+  }
+  return success();
+}
+
+Attribute PredicateArrayAttr::parse(AsmParser &p, Type) {
+  MLIRContext *ctx = p.getContext();
+  auto errFn = [&]{ return p.emitError(p.getCurrentLocation()); };
+
+  SmallVector<Attribute> preds;
+
+  if (p.parseLSquare())
+    return {};
+  if (succeeded(p.parseOptionalRSquare()))
+    return PredicateArrayAttr::getChecked(errFn, ctx, preds);
+
+  // Each entry is an application (`@Trait[...]`) or an equality (`!A = !B`),
+  // disambiguated by the leading `@` -- the same discriminator ClaimType uses.
+  do {
+    FlatSymbolRefAttr traitName;
+    OptionalParseResult symRes = p.parseOptionalAttribute(traitName);
+    if (symRes.has_value()) {
+      if (failed(*symRes))
+        return {};
+      if (p.parseLSquare())
+        return {};
+      SmallVector<Type> typeArgs;
+      do {
+        Type ty;
+        if (p.parseType(ty))
+          return {};
+        typeArgs.push_back(ty);
+      } while (succeeded(p.parseOptionalComma()));
+      if (p.parseRSquare())
+        return {};
+      preds.push_back(TraitApplicationAttr::get(ctx, traitName,
+                                                ArrayRef<Type>(typeArgs)));
+    } else {
+      Type lhs, rhs;
+      if (p.parseType(lhs) || p.parseEqual() || p.parseType(rhs))
+        return {};
+      auto eq = TypeEqualityAttr::getChecked(errFn, ctx, lhs, rhs);
+      if (!eq)
+        return {};
+      preds.push_back(eq);
+    }
+  } while (succeeded(p.parseOptionalComma()));
+
+  if (p.parseRSquare())
+    return {};
+
+  return PredicateArrayAttr::getChecked(errFn, ctx, preds);
+}
+
+void PredicateArrayAttr::print(mlir::AsmPrinter &printer) const {
+  printer << "[";
+  llvm::interleaveComma(getPredicates(), printer, [&](Attribute p) {
+    if (auto app = mlir::dyn_cast<TraitApplicationAttr>(p))
+      app.print(printer);
+    else
+      mlir::cast<TypeEqualityAttr>(p).print(printer);
+  });
+  printer << ']';
+}
+
 } // end mlir::trait
