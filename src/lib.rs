@@ -26,6 +26,10 @@ unsafe extern "C" {
                           name: MlirStringRef,
                           type_params: *const MlirType, num_type_params: isize,
                           requirements: *const MlirAttribute, num_requirements: isize) -> MlirOperation;
+    fn traitTraitOpCreateWithPredicates(loc: MlirLocation,
+                                        name: MlirStringRef,
+                                        type_params: *const MlirType, num_type_params: isize,
+                                        predicates: *const MlirAttribute, num_predicates: isize) -> MlirOperation;
     fn traitImplOpCreate(loc: MlirLocation,
                          self_trait_app: MlirAttribute,
                          assumptions: *const MlirAttribute, num_assumptions: isize) -> MlirOperation;
@@ -33,6 +37,10 @@ unsafe extern "C" {
                               sym_name: MlirStringRef,
                               self_trait_app: MlirAttribute,
                               assumptions: *const MlirAttribute, num_assumptions: isize) -> MlirOperation;
+    fn traitImplOpCreateNamedWithPredicates(loc: MlirLocation,
+                                            sym_name: MlirStringRef,
+                                            self_trait_app: MlirAttribute,
+                                            predicates: *const MlirAttribute, num_predicates: isize) -> MlirOperation;
     fn traitMethodCallOpCreate(loc: MlirLocation,
                                trait_name: MlirStringRef,
                                method_name: MlirStringRef,
@@ -64,6 +72,8 @@ unsafe extern "C" {
                            assumptions: *const MlirValue, num_assumptions: isize) -> MlirOperation;
     fn traitAssumeOpCreate(loc: MlirLocation,
                            trait_app: MlirAttribute) -> MlirOperation;
+    fn traitAssumeOpCreateEquality(loc: MlirLocation,
+                                   lhs: MlirType, rhs: MlirType) -> MlirOperation;
 
     fn traitPolyTypeGet(ctx: MlirContext, unique_id: u32) -> MlirType;
 
@@ -299,6 +309,23 @@ pub fn trait_<'c>(loc: Location<'c>,
     ))}
 }
 
+/// Build a `trait.trait` whose `where` clause carries a mixed list of
+/// predicates: each entry is a trait application or a type equality attribute.
+pub fn trait_predicates<'c>(loc: Location<'c>,
+                            name: &str,
+                            type_params: &[Type<'c>],
+                            predicates: &[Attribute<'c>],
+) -> Operation<'c> {
+    unsafe { Operation::from_raw(traitTraitOpCreateWithPredicates(
+        loc.to_raw(),
+        StringRef::new(name).to_raw(),
+        type_params.as_ptr() as *const _,
+        type_params.len() as isize,
+        predicates.as_ptr() as *const _,
+        predicates.len() as isize,
+    ))}
+}
+
 pub fn impl_<'c>(loc: Location<'c>,
                  self_trait_app: TraitApplicationAttribute<'c>,
                  assumptions: &[TraitApplicationAttribute<'c>],
@@ -328,6 +355,24 @@ pub fn impl_named<'c>(loc: Location<'c>,
         app_attr.to_raw(),
         asm_attrs.as_ptr() as *const _,
         asm_attrs.len() as isize,
+    ))}
+}
+
+/// Build a named `trait.impl` whose `where` clause carries a mixed list of
+/// predicates: each entry is a trait application the impl assumes, or a type
+/// equality it asserts about its own bindings.
+pub fn impl_named_with_predicates<'c>(loc: Location<'c>,
+                                      sym_name: &str,
+                                      self_trait_app: TraitApplicationAttribute<'c>,
+                                      predicates: &[Attribute<'c>],
+) -> Operation<'c> {
+    let app_attr: Attribute<'c> = self_trait_app.into();
+    unsafe { Operation::from_raw(traitImplOpCreateNamedWithPredicates(
+        loc.to_raw(),
+        StringRef::new(sym_name).to_raw(),
+        app_attr.to_raw(),
+        predicates.as_ptr() as *const _,
+        predicates.len() as isize,
     ))}
 }
 
@@ -447,6 +492,18 @@ pub fn assume<'c>(loc: Location<'c>,
     unsafe { Operation::from_raw(traitAssumeOpCreate(
         loc.to_raw(),
         app_attr.to_raw(),
+    ))}
+}
+
+/// Build an equality-arm `trait.assume` introducing the hypothesis `lhs = rhs`.
+pub fn assume_equality<'c>(loc: Location<'c>,
+                          lhs: Type<'c>,
+                          rhs: Type<'c>,
+) -> Operation<'c> {
+    unsafe { Operation::from_raw(traitAssumeOpCreateEquality(
+        loc.to_raw(),
+        lhs.to_raw(),
+        rhs.to_raw(),
     ))}
 }
 

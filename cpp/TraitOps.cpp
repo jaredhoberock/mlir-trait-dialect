@@ -432,6 +432,14 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (failed(selfApp.verifySymbolUses(getOperation(), symbolTable)))
     return failure();
 
+  // Verify the where-clause predicates' symbol uses: application entries name a
+  // valid trait at the right arity; equality entries carry their symbol users
+  // nested in the endpoints. The automatic symbol-user driver skips inherent
+  // attributes, so the owning op delegates here, exactly as trait.trait does for
+  // its requirements.
+  if (failed(getAssumptions().verifySymbolUses(getOperation(), symbolTable)))
+    return failure();
+
   // Get the trait
   auto traitOp = getTrait();
 
@@ -566,9 +574,10 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // -- through this impl's own bindings for its own application, or by module
   // lookup for a sibling -- and the two spellings must agree. Application
   // requirements are proved at impl selection, not here. An endpoint that stays
-  // symbolic cannot be decided at birth; it is checked when the impl is
-  // instantiated (the leftover check refuses an equality that does not
-  // ground-resolve), so only a ground mismatch is a birth error.
+  // symbolic cannot be decided against the impl's bindings at birth and is
+  // accepted here; its correctness is established where the impl is selected and,
+  // for evidence that is consumed, at the use site (a false equality's coerce
+  // fails the erase barrier). Only a ground mismatch is a birth error.
   //
   // Guarded on the trait actually carrying an equality requirement: a trait
   // with none owes no birth check, and the guard keeps the self-claim
@@ -607,18 +616,59 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     }
   }
 
+  // Birth-check this impl's own equality assumptions. Each equality entry of the
+  // impl's where clause (e.g. F::Output = Acc) is spelled in the impl's own
+  // variables, so no trait-to-impl specialization is needed: normalize the
+  // endpoints through this impl's own bindings for its own application, resolve
+  // any ground projection redex by module lookup, and refuse only a ground
+  // mismatch. A symbolic endpoint cannot be decided at birth and is accepted
+  // here, exactly as a trait-header equality requirement is: its correctness is
+  // established where the impl is selected and, for evidence that is consumed, at
+  // the use site (a false equality's coerce fails the erase barrier); an unused
+  // one is inert. Guarded on the impl actually assuming an equality.
+  bool assumesEquality = llvm::any_of(getAssumptions(), [](Attribute pred) {
+    return mlir::isa<TypeEqualityAttr>(pred);
+  });
+  if (assumesEquality) {
+    auto subst = buildSubstitutionForSelfClaim(getSelfClaim(), errFn);
+    if (failed(subst)) return failure();
+    NormalizationContext eqNorm;
+    eqNorm.addLocalProjectionRule(*this, getSelfApplication(), *subst);
+
+    for (Attribute pred : getAssumptions()) {
+      auto eq = dyn_cast<TypeEqualityAttr>(pred);
+      if (!eq) continue;
+
+      auto lhsN = eqNorm.normalize(eq.getLhs(), errFn);
+      if (failed(lhsN)) return failure();
+      auto rhsN = eqNorm.normalize(eq.getRhs(), errFn);
+      if (failed(rhsN)) return failure();
+
+      Type lhsR = resolveGroundProjectionsByLookup(
+          *lhsN, *module, DemandOrigin::ImplSignatureVerification);
+      Type rhsR = resolveGroundProjectionsByLookup(
+          *rhsN, *module, DemandOrigin::ImplSignatureVerification);
+
+      if (isGroundType(lhsR) && isGroundType(rhsR) && lhsR != rhsR)
+        return emitOpError()
+               << "does not satisfy its own equality predicate " << eq
+               << ": " << lhsR << " and " << rhsR << " are not the same type";
+    }
+  }
+
   return success();
 }
 
 bool ImplOp::isUnconditional() {
   // an ImplOp is unconditional if:
   // 1. it is monomorphic (no type parameters),
-  // 2. its TraitOp has no requirements, and
-  // 3. it has no assumptions
-  // A birth-checked equality requirement does not make an impl conditional, so
-  // only application requirements count against unconditionality.
+  // 2. its TraitOp has no application requirements, and
+  // 3. it assumes no application predicates.
+  // A birth-checked equality -- whether a trait-header requirement or one of
+  // this impl's own assumptions -- does not make an impl conditional, so only
+  // application predicates count against unconditionality.
   return getTypeParams().empty() &&
-         getAssumptions().empty() &&
+         !getAssumptions().hasApplications() &&
          !getTrait().getRequirements().hasApplications();
 }
 
@@ -714,6 +764,15 @@ SmallVector<GenericTypeInterface, 4> ImplOp::getTypeParams() {
   for (ClaimType a : getAssumptionsAsClaims()) {
     allOurTypes.push_back(a);
   }
+  // An equality assumption's endpoints are opaque to the generic walk, so push
+  // them directly: a generic that appears only in an assumed equality (e.g. the
+  // accumulator in `F::Output = Acc`) is still one of this impl's parameters.
+  for (Attribute pred : getAssumptions()) {
+    if (auto eq = dyn_cast<TypeEqualityAttr>(pred)) {
+      allOurTypes.push_back(eq.getLhs());
+      allOurTypes.push_back(eq.getRhs());
+    }
+  }
 
   // tuple the types
   TupleType tupled = TupleType::get(getContext(), allOurTypes);
@@ -752,20 +811,37 @@ static func::FuncOp specializeAndReplaceAssumes(
     StringRef name, const DenseMap<Type,Type> &subst) {
   auto funcOp = specializePolymorph(rewriter, callee, name, subst);
 
-  // trait.assume materializes an application-arm hypothesis, so only
-  // application-arm parameters can satisfy one. An equality-arm parameter is
-  // never the subject of a trait.assume and is skipped.
-  DenseMap<TraitApplicationAttr, Value> claimMap;
+  // A trait.assume materializes a hypothesis whose evidence, once the function
+  // is specialized, is carried by a claim-typed parameter of the same arm: an
+  // application assume is satisfied by an application parameter naming the same
+  // trait application, an equality assume by an equality parameter carrying the
+  // same equality. Map both arms by their predicate, then replace each assume
+  // that has a matching parameter with that parameter's value.
+  DenseMap<TraitApplicationAttr, Value> applicationParams;
+  DenseMap<TypeEqualityAttr, Value> equalityParams;
   for (auto arg : funcOp.getArguments())
-    if (auto claimTy = dyn_cast<ClaimType>(arg.getType()))
+    if (auto claimTy = dyn_cast<ClaimType>(arg.getType())) {
       if (claimTy.isApplication())
-        claimMap[claimTy.getTraitApplication()] = arg;
+        applicationParams[claimTy.getTraitApplication()] = arg;
+      else if (auto eq = claimTy.getEqualityAttr())
+        equalityParams[eq] = arg;
+    }
 
   SmallVector<AssumeOp> toErase;
   funcOp.walk([&](AssumeOp a) {
-    auto it = claimMap.find(a.getTraitApplication());
-    if (it != claimMap.end()) {
-      rewriter.replaceAllUsesWith(a.getResult(), it->second);
+    ClaimType claim = a.getClaim();
+    Value replacement;
+    if (auto eq = claim.getEqualityAttr()) {
+      auto it = equalityParams.find(eq);
+      if (it != equalityParams.end())
+        replacement = it->second;
+    } else {
+      auto it = applicationParams.find(claim.getTraitApplication());
+      if (it != applicationParams.end())
+        replacement = it->second;
+    }
+    if (replacement) {
+      rewriter.replaceAllUsesWith(a.getResult(), replacement);
       toErase.push_back(a);
     }
   });
@@ -802,9 +878,18 @@ static func::FuncOp specializeMethodAsFreeFuncWithLeadingSelfProof(
   });
   BlockArgument selfProofArg = funcOp.getArgument(0);
 
-  // replace remaining AssumeOps with projections from selfProofArg
+  // replace remaining application AssumeOps with projections from selfProofArg.
+  // A projection derives an application consequence of the self proof; an
+  // equality is not a projection consequence (it is established by
+  // trait.witness/coerce, not projected -- see ClaimType::getProjections), so an
+  // equality assume is never rewritten to a projection here. Any equality assume
+  // whose evidence is a claim-typed parameter was already discharged in
+  // specializeAndReplaceAssumes above.
   SmallVector<AssumeOp> toErase;
   funcOp.walk([&](AssumeOp a) {
+    if (a.getClaim().isEquality())
+      return;
+
     PatternRewriter::InsertionGuard guard(rewriter);
     rewriter.setInsertionPoint(a);
 
@@ -885,20 +970,40 @@ FailureOr<func::FuncOp> ImplOp::getOrSpecializeFreeFunctionFromMethod(
 /// 64-bit xxHash of the full type argument and assumption signature. This
 /// keeps symbols short and bounded in length.
 std::string ImplOp::generateSymName(TraitApplicationAttr selfApp,
-                                    TraitApplicationArrayAttr assumptions) {
-  // Build the full type argument and assumption signature for hashing
+                                    PredicateArrayAttr assumptions) {
+  // Build the full type-argument and where-clause signature for hashing. The
+  // application entries hash exactly as an application-only impl always has, so
+  // generalizing the where clause to carry equalities never perturbs the
+  // synthesized name of an impl that assumes only applications. Equality entries
+  // then contribute their own entropy, so two impls that differ only in an
+  // equality assumption synthesize distinct names.
   std::string signature;
   llvm::raw_string_ostream os(signature);
   for (auto ty : selfApp.getTypeArgs()) {
     os << "_" << ty;
   }
-  if (!assumptions.empty()) {
+  SmallVector<TraitApplicationAttr> apps =
+      assumptions ? assumptions.getApplications()
+                  : SmallVector<TraitApplicationAttr>{};
+  if (!apps.empty()) {
     os << "_where";
-    for (auto app : assumptions) {
+    for (auto app : apps) {
       os << "_" << app.getTraitName().getValue();
       for (auto typeArg : app.getTypeArgs()) {
         os << "_" << typeArg;
       }
+    }
+  }
+  if (assumptions) {
+    bool firstEquality = true;
+    for (Attribute pred : assumptions) {
+      auto eq = dyn_cast<TypeEqualityAttr>(pred);
+      if (!eq) continue;
+      if (firstEquality) {
+        os << "_eq";
+        firstEquality = false;
+      }
+      os << "_" << eq.getLhs() << "_" << eq.getRhs();
     }
   }
   os.flush();
@@ -916,7 +1021,12 @@ std::string ImplOp::generateMangledName(ClaimType claim) {
 
 SmallVector<ClaimType> ImplOp::getAssumptionsAsClaims() {
   MLIRContext *ctx = getContext();
-  return llvm::map_to_vector(getAssumptions(), [ctx](TraitApplicationAttr app) {
+  // The proof/derive/satisfiability streams read application-arm assumptions
+  // only; equality entries are birth-checked against the impl's own bindings and
+  // never proved through impl selection, so they are filtered out here at the
+  // one place every obligation consumer flows through.
+  return llvm::map_to_vector(getAssumptions().getApplications(),
+                             [ctx](TraitApplicationAttr app) {
     return ClaimType::get(ctx, app);
   });
 }
@@ -1012,12 +1122,15 @@ ParseResult ImplOp::parse(OpAsmParser &p, OperationState &result) {
     return p.emitError(p.getCurrentLocation(), "expected a TraitApplicationAttr");
   result.addAttribute("self_application", selfApp);  
   
-  // assumptions
-  auto assumptions = TraitApplicationArrayAttr::get(p.getContext(), {});
+  // where clause: one mixed PredicateArrayAttr (application and equality arms in
+  // declaration order), stored directly as $assumptions -- no second array and
+  // no partition. An application-only clause parses byte-identically to the
+  // trait application array it generalizes.
+  auto assumptions = PredicateArrayAttr::get(p.getContext(), ArrayRef<Attribute>{});
   if (succeeded(p.parseOptionalKeyword("where"))) {
-    assumptions = dyn_cast_or_null<TraitApplicationArrayAttr>(TraitApplicationArrayAttr::parse(p, {}));
+    assumptions = dyn_cast_or_null<PredicateArrayAttr>(PredicateArrayAttr::parse(p, {}));
     if (!assumptions)
-      return p.emitError(p.getCurrentLocation(), "expected a TraitApplicationArrayAttr");
+      return p.emitError(p.getCurrentLocation(), "expected a PredicateArrayAttr");
   }
   result.addAttribute("assumptions", assumptions);
 
@@ -1807,13 +1920,37 @@ LogicalResult DeriveOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 //===----------------------------------------------------------------------===//
 
 ParseResult AssumeOp::parse(OpAsmParser &p, OperationState &st) {
-  // parse `@Trait[Types...]`
-  TraitApplicationAttr app = dyn_cast_or_null<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
-  if (!app) return p.emitError(p.getCurrentLocation(), "expected a TraitApplicationAttr");
+  MLIRContext *ctx = p.getContext();
 
-  // result type is the claim of the trait application
-  auto claimTy = ClaimType::get(p.getContext(), app);
-  st.addTypes(claimTy);
+  // Disambiguate the two arms by the leading `@` -- the same discriminator the
+  // predicate array and claim type use. `@Trait[...]` is an application
+  // hypothesis; anything else is an equality hypothesis `!A = !B`.
+  FlatSymbolRefAttr traitName;
+  OptionalParseResult symRes = p.parseOptionalAttribute(traitName);
+  if (symRes.has_value()) {
+    if (failed(*symRes))
+      return failure();
+    if (p.parseLSquare())
+      return failure();
+    SmallVector<Type> typeArgs;
+    do {
+      Type ty;
+      if (p.parseType(ty))
+        return failure();
+      typeArgs.push_back(ty);
+    } while (succeeded(p.parseOptionalComma()));
+    if (p.parseRSquare())
+      return failure();
+    auto app = TraitApplicationAttr::get(ctx, traitName, ArrayRef<Type>(typeArgs));
+    st.addTypes(ClaimType::get(ctx, app));
+    return success();
+  }
+
+  // equality arm: `!A = !B`
+  Type lhs, rhs;
+  if (p.parseType(lhs) || p.parseEqual() || p.parseType(rhs))
+    return failure();
+  st.addTypes(ClaimType::getEquality(ctx, lhs, rhs));
 
   return success();
 }
@@ -1821,8 +1958,15 @@ ParseResult AssumeOp::parse(OpAsmParser &p, OperationState &st) {
 void AssumeOp::print(OpAsmPrinter &p) {
   p << " ";
 
-  // print the witnessed trait application
-  getClaim().getTraitApplication().print(p);
+  ClaimType claim = getClaim();
+  if (auto eq = claim.getEqualityAttr()) {
+    // equality arm: `!lhs = !rhs`
+    p << eq.getLhs() << " = " << eq.getRhs();
+    return;
+  }
+
+  // application arm: print the assumed trait application
+  claim.getTraitApplication().print(p);
 }
 
 LogicalResult AssumeOp::verify() {
@@ -1838,25 +1982,58 @@ LogicalResult AssumeOp::verify() {
     return emitOpError() << "must be within a 'func.func', found "
                          << isolatedAncestor->getName();
 
-  // collect all assumable trait applications
-  DenseSet<TraitApplicationAttr> assumable;
-
-  // primary: function claim-typed parameters
-  for (auto argType : funcOp.getArgumentTypes()) {
-    if (auto claimTy = dyn_cast<ClaimType>(argType))
-      assumable.insert(claimTy.getTraitApplication());
-  }
-
-  // fallback: enclosing trait/impl
+  ClaimType claim = getClaim();
   TraitOp enclosingTrait = funcOp->getParentOfType<TraitOp>();
   ImplOp enclosingImpl = funcOp->getParentOfType<ImplOp>();
 
+  // Equality arm: an assumed equality is an axiom of the enclosing scope exactly
+  // when it matches, by identity, an equality claim parameter of the enclosing
+  // function, an equality entry of the enclosing impl's assumptions (an impl
+  // method body), or an equality requirement of the enclosing trait (a trait
+  // method body). A method body shares the enclosing declaration's polymorphic
+  // variables, so identity of the equality predicate is the check; no weaker
+  // match is accepted. The trait's requirement list anchors an equality assume
+  // exactly as the impl's assumption list anchors an application assume.
+  if (auto assumedEq = claim.getEqualityAttr()) {
+    DenseSet<TypeEqualityAttr> assumable;
+    for (auto argType : funcOp.getArgumentTypes())
+      if (auto c = dyn_cast<ClaimType>(argType))
+        if (auto eq = c.getEqualityAttr())
+          assumable.insert(eq);
+    if (enclosingImpl)
+      for (Attribute pred : enclosingImpl.getAssumptions())
+        if (auto eq = dyn_cast<TypeEqualityAttr>(pred))
+          assumable.insert(eq);
+    if (enclosingTrait)
+      for (Attribute pred : enclosingTrait.getRequirements())
+        if (auto eq = dyn_cast<TypeEqualityAttr>(pred))
+          assumable.insert(eq);
+
+    if (!assumable.contains(assumedEq))
+      return emitOpError() << "assumed equality " << assumedEq
+                           << " is not assumable in this context";
+
+    return success();
+  }
+
+  // Application arm: collect all assumable trait applications.
+  DenseSet<TraitApplicationAttr> assumable;
+
+  // primary: function claim-typed parameters. Only an application-arm parameter
+  // can satisfy an application assume; an equality claim parameter is skipped.
+  for (auto argType : funcOp.getArgumentTypes()) {
+    if (auto claimTy = dyn_cast<ClaimType>(argType))
+      if (claimTy.isApplication())
+        assumable.insert(claimTy.getTraitApplication());
+  }
+
+  // fallback: enclosing trait/impl
   if (enclosingTrait)
     assumable.insert(enclosingTrait.getSelfApplication());
 
   if (enclosingImpl) {
     assumable.insert(enclosingImpl.getSelfApplication());
-    for (auto a : enclosingImpl.getAssumptions())
+    for (auto a : enclosingImpl.getAssumptions().getApplications())
       assumable.insert(a);
   }
 

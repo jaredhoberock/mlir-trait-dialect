@@ -84,6 +84,40 @@ MlirOperation traitTraitOpCreate(MlirLocation loc, MlirStringRef name,
   return wrap(op.getOperation());
 }
 
+MlirOperation traitTraitOpCreateWithPredicates(MlirLocation loc, MlirStringRef name,
+                                               MlirType* wrappedTypeParams, intptr_t numTypeParams,
+                                               MlirAttribute* predicates, intptr_t numPredicates) {
+  MLIRContext* ctx = unwrap(loc)->getContext();
+  OpBuilder builder(ctx);
+
+  SmallVector<Type> typeParams;
+  typeParams.reserve(numTypeParams);
+  for (intptr_t i = 0; i < numTypeParams; ++i) {
+    typeParams.push_back(unwrap(wrappedTypeParams[i]));
+  }
+
+  // The mixed where-clause: each predicate is a trait application or a type
+  // equality. A non-predicate attribute is rejected by returning a null op.
+  SmallVector<Attribute> preds;
+  preds.reserve(numPredicates);
+  for (intptr_t i = 0; i < numPredicates; ++i) {
+    Attribute p = unwrap(predicates[i]);
+    if (!isa<TraitApplicationAttr, TypeEqualityAttr>(p))
+      return {};
+    preds.push_back(p);
+  }
+  auto predsAttr = PredicateArrayAttr::get(ctx, preds);
+
+  auto op = TraitOp::create(builder,
+    unwrap(loc),
+    builder.getStringAttr(StringRef(name.data, name.length)),
+    typeParams,
+    predsAttr
+  );
+
+  return wrap(op.getOperation());
+}
+
 MlirOperation traitImplOpCreate(MlirLocation loc,
                                 MlirAttribute wrappedSelfTraitApp,
                                 MlirAttribute* assumptions, intptr_t numAssumptions) {
@@ -131,6 +165,39 @@ MlirOperation traitImplOpCreateNamed(MlirLocation loc,
     StringRef(symName.data, symName.length),
     selfApp,
     appAttrs
+  );
+
+  return wrap(op.getOperation());
+}
+
+MlirOperation traitImplOpCreateNamedWithPredicates(MlirLocation loc,
+                                                   MlirStringRef symName,
+                                                   MlirAttribute wrappedSelfTraitApp,
+                                                   MlirAttribute* predicates, intptr_t numPredicates) {
+  TraitApplicationAttr selfApp = dyn_cast<TraitApplicationAttr>(unwrap(wrappedSelfTraitApp));
+  if (!selfApp) return {}; // invalid type of attribute
+
+  MLIRContext* ctx = unwrap(loc)->getContext();
+  OpBuilder builder(ctx);
+
+  // The impl's mixed where-clause: application entries are proof obligations,
+  // equality entries assert the impl's own bindings. A non-predicate attribute
+  // is rejected by returning a null op.
+  SmallVector<Attribute> preds;
+  preds.reserve(numPredicates);
+  for (intptr_t i = 0; i < numPredicates; ++i) {
+    Attribute p = unwrap(predicates[i]);
+    if (!isa<TraitApplicationAttr, TypeEqualityAttr>(p))
+      return {};
+    preds.push_back(p);
+  }
+  auto predsAttr = PredicateArrayAttr::get(ctx, preds);
+
+  auto op = ImplOp::create(builder,
+    unwrap(loc),
+    StringRef(symName.data, symName.length),
+    selfApp,
+    predsAttr
   );
 
   return wrap(op.getOperation());
@@ -332,6 +399,22 @@ MlirOperation traitAssumeOpCreate(MlirLocation loc,
   if (!traitApp) return {}; // invalid attribute type
 
   auto op = AssumeOp::create(builder, unwrap(loc), traitApp);
+
+  return wrap(op.getOperation());
+}
+
+MlirOperation traitAssumeOpCreateEquality(MlirLocation loc,
+                                          MlirType lhs, MlirType rhs) {
+  MLIRContext* ctx = unwrap(loc)->getContext();
+  OpBuilder builder(ctx);
+
+  auto eq = TypeEqualityAttr::getChecked(
+      [&] { return emitError(unwrap(loc)); }, ctx, unwrap(lhs), unwrap(rhs));
+  if (!eq)
+    return {}; // endpoints carry a proof receipt, or are otherwise ill-formed
+  auto claimTy = ClaimType::getEquality(ctx, eq);
+
+  auto op = AssumeOp::create(builder, unwrap(loc), claimTy);
 
   return wrap(op.getOperation());
 }

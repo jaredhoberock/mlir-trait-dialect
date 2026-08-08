@@ -31,21 +31,40 @@ MlirAttribute traitTraitApplicationAttrGet(MlirContext ctx,
 /// Checks whether the given attribute is a trait application.
 bool traitAttributeIsATraitApplication(MlirAttribute attr);
 
-/// Create a trait.trait operation
+/// Create a trait.trait operation. `requirements` must all be trait
+/// applications; use traitTraitOpCreateWithPredicates for a mixed where clause.
 MlirOperation traitTraitOpCreate(MlirLocation loc, MlirStringRef name,
                                  MlirType* typeParams, intptr_t numTypeParams,
                                  MlirAttribute* requirements, intptr_t numRequirements);
 
-/// Create a trait.impl operation
+/// Create a trait.trait operation whose `where` clause carries a mixed list of
+/// predicates: each entry is a trait application or a type equality. A
+/// non-predicate attribute yields a null operation.
+MlirOperation traitTraitOpCreateWithPredicates(MlirLocation loc, MlirStringRef name,
+                                               MlirType* typeParams, intptr_t numTypeParams,
+                                               MlirAttribute* predicates, intptr_t numPredicates);
+
+/// Create a trait.impl operation. `assumptions` must all be trait applications;
+/// use traitImplOpCreateNamedWithPredicates for a mixed where clause.
 MlirOperation traitImplOpCreate(MlirLocation loc,
                                 MlirAttribute selfTraitApp,
                                 MlirAttribute* assumptions, intptr_t numAssumptions);
 
-/// Create a named trait.impl operation
+/// Create a named trait.impl operation. `assumptions` must all be trait
+/// applications; use traitImplOpCreateNamedWithPredicates for a mixed clause.
 MlirOperation traitImplOpCreateNamed(MlirLocation loc,
                                      MlirStringRef symName,
                                      MlirAttribute selfTraitApp,
                                      MlirAttribute* assumptions, intptr_t numAssumptions);
+
+/// Create a named trait.impl operation whose `where` clause carries a mixed list
+/// of predicates: each entry is a trait application the impl assumes, or a type
+/// equality it asserts about its own bindings. A non-predicate attribute yields
+/// a null operation.
+MlirOperation traitImplOpCreateNamedWithPredicates(MlirLocation loc,
+                                                   MlirStringRef symName,
+                                                   MlirAttribute selfTraitApp,
+                                                   MlirAttribute* predicates, intptr_t numPredicates);
 
 /// Create a trait.method.call operation
 MlirOperation traitMethodCallOpCreate(MlirLocation loc,
@@ -92,8 +111,13 @@ MlirOperation traitDeriveOpCreate(MlirLocation loc,
                                   MlirStringRef implName,
                                   MlirValue* assumptions, intptr_t numAssumptions);
 
-/// Create a trait.assume operation
+/// Create an application-arm trait.assume operation
 MlirOperation traitAssumeOpCreate(MlirLocation loc, MlirAttribute traitApp);
+
+/// Create an equality-arm trait.assume operation introducing `lhs = rhs`.
+/// Endpoints must be receipt-free; yields a null operation otherwise.
+MlirOperation traitAssumeOpCreateEquality(MlirLocation loc,
+                                          MlirType lhs, MlirType rhs);
 
 /// Return the !trait.poly<uniqueId> type
 MlirType traitPolyTypeGet(MlirContext ctx, unsigned int uniqueId);

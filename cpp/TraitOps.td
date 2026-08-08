@@ -373,12 +373,20 @@ def ImplOp : TraitDialectOp<"impl", [
       }
     }
     ```
-  }]; 
 
-  let arguments = (ins 
+    The `where` clause is one ordered `PredicateArrayAttr`, the same mixed shape
+    a `trait.trait` carries: each entry is either a trait application the impl
+    assumes as a proof obligation, or a type equality the impl asserts about its
+    own bindings. The two arms share one list in declaration order; there is no
+    second parallel array. Application entries are discharged when the impl is
+    selected; equality entries are birth-checked against the impl's own bindings
+    and drive the equality-arm `trait.assume` inside the impl's method bodies.
+  }];
+
+  let arguments = (ins
     SymbolNameAttr:$sym_name,
     TraitApplicationAttr:$self_application,
-    TraitApplicationArrayAttr:$assumptions
+    PredicateArrayAttr:$assumptions
   );
   let regions = (region SizedRegion<1>:$body);
 
@@ -452,7 +460,14 @@ def ImplOp : TraitDialectOp<"impl", [
                                                                   llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     // Helper to generate unique symbol name for an ImplOp
-    static std::string generateSymName(TraitApplicationAttr selfApp, TraitApplicationArrayAttr assumptions);
+    static std::string generateSymName(TraitApplicationAttr selfApp, PredicateArrayAttr assumptions);
+
+    // Application-only convenience for callers holding a TraitApplicationArrayAttr
+    // of assumptions (the shape sibling dialects synthesize). Wraps the
+    // applications into the mixed predicate list.
+    static std::string generateSymName(TraitApplicationAttr selfApp, TraitApplicationArrayAttr assumptions) {
+      return generateSymName(selfApp, PredicateArrayAttr::get(selfApp.getContext(), assumptions));
+    }
 
     // Helper to generate a unique symbol prefix for polymophic ImplOps
     // getSelfClaim() will be substituted with claim
@@ -539,10 +554,12 @@ def ImplOp : TraitDialectOp<"impl", [
   // builders create one empty block in the body region
   let skipDefaultBuilders = 1;
   let builders = [
-    // override the default low-level builder to ensure that a block always exists
+    // override the default low-level builder to ensure that a block always exists.
+    // The where-clause is one mixed PredicateArrayAttr (application and equality
+    // arms in declaration order).
     OpBuilder<(ins "::mlir::StringRef":$sym_name,
                    "::mlir::trait::TraitApplicationAttr":$self_application,
-                   "TraitApplicationArrayAttr":$assumptions), [{
+                   "PredicateArrayAttr":$assumptions), [{
       $_state.addAttribute("sym_name", $_builder.getStringAttr(sym_name));
       $_state.addAttribute("self_application", self_application);
       $_state.addAttribute("assumptions", assumptions);
@@ -552,27 +569,49 @@ def ImplOp : TraitDialectOp<"impl", [
 
     // this builder automatically generates $sym_name if it is not given
     OpBuilder<(ins "::mlir::trait::TraitApplicationAttr":$self_application,
-                   "TraitApplicationArrayAttr":$assumptions), [{
+                   "PredicateArrayAttr":$assumptions), [{
       // Auto-generate unique symbol name
       std::string symName = generateSymName(self_application, assumptions);
       build($_builder, $_state, symName, self_application, assumptions);
     }]>,
 
-    // convenience wraps the assumptions in a TraitApplicationArrayAttr and defers to the lower-level builder
+    // application-only compatibility: sibling dialects build an impl from a
+    // TraitApplicationArrayAttr of assumptions. Wrap it into the mixed predicate
+    // list this op now stores. These two overloads keep those callers building
+    // without a source change.
+    OpBuilder<(ins "::mlir::StringRef":$sym_name,
+                   "::mlir::trait::TraitApplicationAttr":$self_application,
+                   "TraitApplicationArrayAttr":$assumptions), [{
+      MLIRContext *ctx = $_builder.getContext();
+      auto preds = PredicateArrayAttr::get(ctx, assumptions);
+      build($_builder, $_state, sym_name, self_application, preds);
+    }]>,
+
+    OpBuilder<(ins "::mlir::trait::TraitApplicationAttr":$self_application,
+                   "TraitApplicationArrayAttr":$assumptions), [{
+      MLIRContext *ctx = $_builder.getContext();
+      auto preds = PredicateArrayAttr::get(ctx, assumptions);
+      build($_builder, $_state, self_application, preds);
+    }]>,
+
+    // convenience wraps application-only assumptions into the mixed
+    // PredicateArrayAttr -- the shape sibling dialects construct through the
+    // C API -- and defers to the auto-naming builder
     OpBuilder<(ins "::mlir::trait::TraitApplicationAttr":$self_application,
                    "::mlir::ArrayRef<TraitApplicationAttr>":$assumptions), [{
       MLIRContext *ctx = $_builder.getContext();
-      auto appArrayAttr = TraitApplicationArrayAttr::get(ctx, assumptions);
-      build($_builder, $_state, self_application, appArrayAttr);
+      auto preds = PredicateArrayAttr::get(ctx, assumptions);
+      build($_builder, $_state, self_application, preds);
     }]>,
 
-    // convenience accepts sym_name as StringRef and assumptions as ArrayRef
+    // convenience accepts sym_name as StringRef and application-only assumptions
+    // as ArrayRef
     OpBuilder<(ins "::mlir::StringRef":$sym_name,
                    "::mlir::trait::TraitApplicationAttr":$self_application,
                    "::mlir::ArrayRef<TraitApplicationAttr>":$assumptions), [{
       MLIRContext *ctx = $_builder.getContext();
-      auto appArrayAttr = TraitApplicationArrayAttr::get(ctx, assumptions);
-      build($_builder, $_state, sym_name, self_application, appArrayAttr);
+      auto preds = PredicateArrayAttr::get(ctx, assumptions);
+      build($_builder, $_state, sym_name, self_application, preds);
     }]>
   ];
 
@@ -735,19 +774,30 @@ def AssumeOp : TraitDialectOp<"assume", [
 ]>{
   let summary = "Introduce an axiomatic claim from the enclosing scope";
   let description = [{
-    Creates a zero-sized SSA value of type `!trait.claim<@Trait[types]>` that
-    introduces a **hypothesis** — a trait application that holds axiomatically
-    in the current scope.
+    Creates a zero-sized SSA value of type `!trait.claim<...>` that introduces a
+    **hypothesis** holding axiomatically in the current scope. The claim is
+    either arm: an application `@Trait[types]`, or a type equality `!A = !B`.
 
-    Use `trait.project` to derive *consequences* of these axioms (e.g., trait
-    requirements or impl assumptions). Use `trait.witness` for claims backed
-    by concrete impl evidence.
+    Use `trait.project` to derive *consequences* of an application axiom (e.g.,
+    trait requirements or impl assumptions). Use `trait.witness` for claims
+    backed by concrete impl evidence.
 
-    The assumed trait application must be an axiom of the enclosing scope,
-    checked in order:
+    An **application** assume must name an axiom of the enclosing scope, checked
+    in order:
       1. A `!trait.claim`-typed parameter of the enclosing function
       2. The enclosing `trait.trait`'s self application
-      3. The enclosing `trait.impl`'s self application or a declared assumption
+      3. The enclosing `trait.impl`'s self application or an assumed application
+
+    An **equality** assume is legal exactly when its equality matches, by
+    identity, one equality axiom of the enclosing scope:
+      1. An equality `!trait.claim`-typed parameter of the enclosing function
+      2. An equality entry of the enclosing declaration's `where` clause -- the
+         enclosing `trait.impl`'s assumptions inside an impl method, or the
+         enclosing `trait.trait`'s requirements inside a trait method.
+    A trait's requirement list anchors an equality assume exactly as an impl's
+    assumption list anchors an application assume; a method body shares the
+    enclosing declaration's polymorphic variables, so identity of the equality
+    predicate is the check and no weaker match is accepted.
 
     Example inside a trait method body:
       trait.trait @PartialEq[!S,!O] {
