@@ -837,7 +837,11 @@ def DeriveOp : TraitDialectOp<"derive", [
   let arguments = (ins
     TraitApplicationAttr:$trait_application,
     FlatSymbolRefAttr:$impl,
-    Variadic<ApplicationClaim>:$assumptions
+    // Every assumption operand must be an application claim, but the arm is
+    // checked in the verifier (a located diagnostic naming the design law)
+    // rather than as an operand-type constraint, so an equality claim reaching
+    // here is diagnosed at its operand instead of failing a generic ODS message.
+    Variadic<Claim>:$assumptions
   );
 
   let results = (outs Claim:$result);
@@ -1202,7 +1206,11 @@ def MethodCallOp : TraitDialectOp<"method.call", [
 
   let arguments = (ins
     SymbolRefAttr:$method_ref,
-    ApplicationClaim:$claim,
+    // The receiver must be an application claim -- a method call names its trait
+    // through it -- but the arm is checked in the verifier (a located diagnostic)
+    // rather than as an operand-type constraint, so an equality receiver is
+    // diagnosed at its operand instead of failing a generic ODS message.
+    Claim:$claim,
     Variadic<AnyType>:$arguments
   );
 

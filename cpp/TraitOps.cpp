@@ -1714,6 +1714,17 @@ ImplOp DeriveOp::getImplOp() {
 LogicalResult DeriveOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   auto errFn = [&] { return emitOpError(); };
 
+  // A trait.derive discharges the cited impl's application-arm assumptions, so
+  // every assumption operand must be a trait-application claim. An equality
+  // claim carries no application to match and is not a legal derive operand.
+  for (auto [i, operand] : llvm::enumerate(getAssumptions())) {
+    auto operandClaim = cast<ClaimType>(operand.getType());
+    if (!operandClaim.isApplication())
+      return emitOpError() << "assumption operand #" << i << " (" << operandClaim
+                           << ") must be a trait-application claim; an equality "
+                              "claim is not a legal trait.derive operand";
+  }
+
   // look up impl by symbol
   auto implOp = getImplOp();
   if (!implOp)
@@ -2531,6 +2542,14 @@ LogicalResult MethodCallOp::verify() {
   ClaimType claim = dyn_cast_or_null<ClaimType>(getClaim().getType());
   if (!claim)
     return emitOpError() << "expected !trait.claim type, found " << getClaim().getType();
+
+  // A method call names its trait through the receiver claim's application, so
+  // the receiver must be a trait-application claim. An equality claim names no
+  // trait and is not a legal receiver.
+  if (!claim.isApplication())
+    return emitOpError() << "receiver (" << claim << ") must be a "
+                            "trait-application claim; an equality claim names no "
+                            "trait to call";
 
   // verify that the named trait matches the claim's trait
   auto expectedTraitAttr = getTraitAttr();
