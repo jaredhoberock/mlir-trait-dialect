@@ -2062,9 +2062,12 @@ static TermShape decomposeTerm(Type t) {
 // closes under congruence: two terms with the same constructor and pairwise
 // equal children are united. It only unites -- it never decomposes, so
 // f(a) = f(b) is not read backwards to a = b at projection heads or anywhere
-// else. Child enumeration and constructor identity both come from decomposeTerm,
-// which reads through the type-bearing trait attributes the generic walkers are
-// opaque to.
+// else. It also closes across normalizing type constructors: a composite is
+// united with the normal form its own constructor yields when a united class
+// member is substituted into it, so an equality a constructor establishes by
+// normalizing its arguments is not missed. Child enumeration and constructor
+// identity both come from decomposeTerm, which reads through the type-bearing
+// trait attributes the generic walkers are opaque to.
 class GroundCongruence {
 public:
   // Seed an equality between two endpoints (and intern their subterms).
@@ -2091,8 +2094,15 @@ public:
     return id;
   }
 
-  // Close under congruence to a fixed point.
+  // Close under congruence and constructor normalization to a fixed point.
   void close() {
+    // A backstop for the rebuild's termination guarantee: with the
+    // free-application filter in place the rebuild mints only normal forms, a
+    // finite set, so the DAG stays far under this bound. A future constructor
+    // that normalized without a fixed point could mint without bound; the
+    // assert below then aborts a build that compiles asserts rather than
+    // looping forever. It is generous and never bears on a verdict.
+    const size_t mintCeiling = terms.size() * 8 + 256;
     bool changed = true;
     while (changed) {
       changed = false;
@@ -2114,6 +2124,8 @@ public:
             changed = true;
           }
         }
+      if (rebuildNormalizedParents(mintCeiling))
+        changed = true;
     }
   }
 
@@ -2132,6 +2144,78 @@ private:
     b = find(b);
     if (a != b)
       parent[a] = b;
+  }
+
+  // Extend the closure across type constructors that normalize their arguments
+  // when a type is built. Each parent a type constructor built is rebuilt
+  // through that same constructor with a united class member substituted for one
+  // child; a normalizing constructor folds the rebuilt form to its normal form,
+  // and uniting that form with the parent adds only what congruence and the
+  // constructor's own definitional law already entail.
+  //
+  // The invariant this depends on: a type constructor may normalize purely as a
+  // context-free, deterministic function of its arguments -- the rebuilt object
+  // IS the normal form the constructor names. An identification that turns on
+  // facts outside the arguments must never enter construction; it belongs to the
+  // surrounding environment, and this rule would otherwise import it as if a
+  // constructor had settled it.
+  //
+  // The invariant behind the filter: a rebuild that merely re-applies the
+  // constructor -- same key, children exactly the substituted list -- is
+  // dropped. Such free applications state no equality congruence does not already
+  // decide over the existing terms, and minting them has no fixed point over a
+  // cyclic cited equality: the closure would build ever-larger terms and never
+  // terminate.
+  bool rebuildNormalizedParents([[maybe_unused]] size_t mintCeiling) {
+    bool changed = false;
+    // Terms minted below join the next pass, so the parent set rebuilt this pass
+    // is fixed and the loop bounds stay valid as terms grows.
+    unsigned n = terms.size();
+    for (unsigned i = 0; i != n; ++i) {
+      if (children[i].empty())
+        continue;
+      // Only type constructors normalize; claim and projection keys are not
+      // TypeAttr and carry no construction-time law to reapply.
+      if (!isa<TypeAttr>(ctorKey[i]))
+        continue;
+      SmallVector<Attribute> subAttrs;
+      SmallVector<Type> subTypes;
+      terms[i].walkImmediateSubElements(
+          [&](Attribute a) { subAttrs.push_back(a); },
+          [&](Type t) { subTypes.push_back(t); });
+      for (unsigned pos = 0; pos != subTypes.size(); ++pos) {
+        unsigned childId = children[i][pos];
+        for (unsigned m = 0; m != n; ++m) {
+          if (m == childId || find(m) != find(childId))
+            continue;
+          SmallVector<Type> repl(subTypes.begin(), subTypes.end());
+          repl[pos] = terms[m];
+          // Rebuild through the real constructor: get() applies whatever
+          // normalization the type defines. A partial constructor returns null
+          // and an unchanged rebuild carries nothing new -- skip both.
+          Type r = terms[i].replaceImmediateSubElements(subAttrs, repl);
+          if (!r || r == terms[i])
+            continue;
+          TermShape rs = decomposeTerm(r);
+          bool freeReapplication =
+              rs.key == ctorKey[i] && rs.children.size() == repl.size();
+          for (unsigned k = 0; freeReapplication && k != repl.size(); ++k)
+            if (rs.children[k] != repl[k])
+              freeReapplication = false;
+          if (freeReapplication)
+            continue;
+          unsigned rid = intern(r);
+          assert(terms.size() <= mintCeiling &&
+                 "ground congruence rebuild minted past its budget: a "
+                 "constructor is normalizing without a fixed point");
+          if (find(i) != find(rid)) {
+            unite(i, rid);
+            changed = true;
+          }
+        }
+      }
+    }
+    return changed;
   }
 
   DenseMap<Type, unsigned> ids;
