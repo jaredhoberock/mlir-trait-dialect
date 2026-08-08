@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 use melior::{
     Context, pass::Pass, StringRef,
-    ir::{AttributeLike, Location, Operation, Type, TypeLike, Value, ValueLike},
+    ir::{AttributeLike, Location, Module, Operation, Type, TypeLike, Value, ValueLike},
     ir::attribute::Attribute,
 };
 use mlir_sys::{
-    MlirAttribute, MlirContext, MlirLocation,
+    MlirAttribute, MlirContext, MlirLocation, MlirModule,
     MlirOperation, MlirPass, MlirStringRef,
     MlirType, MlirValue,
 };
@@ -104,6 +104,10 @@ unsafe extern "C" {
                            input: MlirValue,
                            equalities: *const MlirValue, num_equalities: isize,
                            result_type: MlirType) -> MlirOperation;
+    fn traitWitnessSeamAuditAccepts(module: MlirModule,
+                                    redex: MlirType, contractum: MlirType,
+                                    impl_name: MlirStringRef,
+                                    premises: *const MlirType, num_premises: isize) -> bool;
     fn traitAssocTypeOpCreate(loc: MlirLocation,
                               name: MlirStringRef,
                               bound_type: MlirType,
@@ -643,6 +647,33 @@ pub fn coerce<'c>(loc: Location<'c>, input: Value<'c, '_>, equalities: &[Value<'
     let raw: Vec<MlirValue> = equalities.iter().map(|v| v.to_raw()).collect();
     unsafe { Operation::from_raw(traitCoerceOpCreate(
         loc.to_raw(), input.to_raw(), raw.as_ptr(), raw.len() as isize, result_type.to_raw())) }
+}
+
+/// Answer whether the projection-resolution witness seam audit accepts the
+/// certificate `(redex, contractum)` cited to `impl_name`, looking that impl up
+/// in `module` and matching modulo `premises` (equality-arm claim types, usually
+/// empty). This is the same check `trait.witness`'s equality arm runs at the
+/// symbol seam, so a consumer classifying a certificate against this answer
+/// cannot disagree with the verifier. Refusal is a plain `false`, not a
+/// diagnostic.
+pub fn witness_seam_audit_accepts(
+    module: &Module,
+    redex: Type,
+    contractum: Type,
+    impl_name: &str,
+    premises: &[Type],
+) -> bool {
+    let raw: Vec<MlirType> = premises.iter().map(|t| t.to_raw()).collect();
+    unsafe {
+        traitWitnessSeamAuditAccepts(
+            module.to_raw(),
+            redex.to_raw(),
+            contractum.to_raw(),
+            StringRef::new(impl_name).to_raw(),
+            raw.as_ptr(),
+            raw.len() as isize,
+        )
+    }
 }
 
 /// Create a `trait.assoc_type` op. Pass `None` for a bare declaration (inside a

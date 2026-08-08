@@ -525,3 +525,35 @@ fn the_type_family_predicates_separate_generics_claims_and_ground_types() {
     assert!(!trait_::is_generic_type(ground));
     assert!(!trait_::carries_polymorphism(ground));
 }
+
+#[test]
+fn the_seam_audit_query_and_the_witness_verifier_share_one_verdict() {
+    let registry = DialectRegistry::new();
+    register_all_dialects(&registry);
+    let context = Context::new();
+    context.append_dialect_registry(&registry);
+    trait_::register(&context);
+    context.load_all_available_dialects();
+
+    // A module whose only impl binds @Assoc[i64]::Output to i64.
+    let module = Module::parse(
+        &context,
+        "!S = !trait.poly<0>\n\
+         trait.trait @Assoc[!S] { trait.assoc_type @Output }\n\
+         trait.impl @Assoc_impl for @Assoc[i64] { trait.assoc_type @Output = i64 }\n",
+    )
+    .expect("the fixture module parses");
+
+    let redex = melior::ir::Type::parse(&context, "!trait.proj<@Assoc[i64], \"Output\">")
+        .expect("the redex projection parses");
+    let i64_ty: melior::ir::Type = IntegerType::new(&context, 64).into();
+    let i32_ty: melior::ir::Type = IntegerType::new(&context, 32).into();
+
+    // The impl binds the redex to i64, so the seam-audit query accepts the true
+    // certificate, rejects a wrong contractum, and rejects a citation to a
+    // missing impl -- the same verdict trait.witness's equality arm reaches at
+    // the symbol seam.
+    assert!(trait_::witness_seam_audit_accepts(&module, redex, i64_ty, "Assoc_impl", &[]));
+    assert!(!trait_::witness_seam_audit_accepts(&module, redex, i32_ty, "Assoc_impl", &[]));
+    assert!(!trait_::witness_seam_audit_accepts(&module, redex, i64_ty, "Missing_impl", &[]));
+}

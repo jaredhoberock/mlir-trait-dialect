@@ -1307,16 +1307,11 @@ static bool typeOccursIn(Type needle, Type haystack) {
 // such as !S = tuple<!S> is the degenerate self-loop. Refusing here keeps the
 // verifier total on spellable IR.
 static FailureOr<Type> applyEqualityPremises(
-    Type ty, ValueRange premises,
+    Type ty, ArrayRef<TypeEqualityAttr> premises,
     llvm::function_ref<InFlightDiagnostic()> err) {
   DenseMap<Type, Type> subst;
-  for (Value premise : premises) {
-    auto claim = dyn_cast<ClaimType>(premise.getType());
-    if (!claim)
-      continue;
-    if (auto eq = claim.getEqualityAttr())
-      subst[eq.getLhs()] = eq.getRhs();
-  }
+  for (TypeEqualityAttr eq : premises)
+    subst[eq.getLhs()] = eq.getRhs();
   if (subst.empty())
     return ty;
 
@@ -1351,6 +1346,52 @@ static FailureOr<Type> applyEqualityPremises(
       }
 
   return applySubstitutionToFixedPoint(subst, ty);
+}
+
+LogicalResult mlir::trait::auditProjResolveCertificate(
+    ModuleOp module, Type redex, Type contractum, FlatSymbolRefAttr citedImpl,
+    ArrayRef<TypeEqualityAttr> premises,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  auto redexProj = dyn_cast<ProjectionType>(redex);
+  if (!redexProj)
+    return err() << "a projection-resolution certificate's redex must "
+                    "be a projection, found " << redex;
+
+  auto implOp =
+      SymbolTable::lookupNearestSymbolFrom<ImplOp>(module, citedImpl);
+  if (!implOp)
+    return err() << "cannot find trait.impl '" << citedImpl
+                 << "' cited by the certificate";
+
+  ClaimType selfClaim =
+      ClaimType::get(module.getContext(), redexProj.getTraitApplication());
+  auto subst = implOp.buildSubstitutionForSelfClaim(selfClaim, err);
+  if (failed(subst))
+    return failure();
+
+  auto bound = implOp.specializeAssociatedTypeBinding(
+      redexProj.getAssocName().getValue(), redexProj.getAssocTypeArgs());
+  if (failed(bound))
+    return err() << "impl '" << citedImpl
+                 << "' does not bind associated type '"
+                 << redexProj.getAssocName().getValue() << "'";
+  Type resolved = subst->apply(*bound);
+
+  // Receipt-blind exact comparison. Projection-headed impl self-applications
+  // do not first-order match; their audit matches modulo the cited equality
+  // premises, applied to the resolved binding before comparison.
+  auto resolvedOr = applyEqualityPremises(resolved, premises, err);
+  if (failed(resolvedOr))
+    return failure();
+  resolved = *resolvedOr;
+  auto contractumOr = applyEqualityPremises(contractum, premises, err);
+  if (failed(contractumOr))
+    return failure();
+  if (resolved != *contractumOr)
+    return err() << "impl '" << citedImpl << "' binds the redex to "
+                 << resolved << ", not the certified contractum "
+                 << contractum;
+  return success();
 }
 
 // The op's attributes must match the result claim's arm exactly, and the result
@@ -1430,49 +1471,18 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // impl must bind the associated type named by the frozen redex projection to
   // the frozen contractum, once specialized for the redex's trait application.
   // The module read runs here, at the sanctioned seam, on every full module
-  // verification -- not per consumer.
+  // verification -- not per consumer -- through the same audit the C-API
+  // seam-audit query runs, so a consumer classifying a certificate cannot
+  // disagree with this verdict.
   if (auto cert = getCertificateAttr()) {
-    auto redexProj = dyn_cast<ProjectionType>(cert.getRedex());
-    if (!redexProj)
-      return emitOpError() << "a projection-resolution certificate's redex must "
-                              "be a projection, found " << cert.getRedex();
-
-    auto implOp = SymbolTable::lookupNearestSymbolFrom<ImplOp>(
-        module, cert.getCitedImpl());
-    if (!implOp)
-      return emitOpError() << "cannot find trait.impl '" << cert.getCitedImpl()
-                           << "' cited by the certificate";
-
-    ClaimType selfClaim = ClaimType::get(getContext(), redexProj.getTraitApplication());
-    auto subst = implOp.buildSubstitutionForSelfClaim(selfClaim, errFn);
-    if (failed(subst))
-      return failure();
-
-    auto bound = implOp.specializeAssociatedTypeBinding(
-        redexProj.getAssocName().getValue(), redexProj.getAssocTypeArgs());
-    if (failed(bound))
-      return emitOpError() << "impl '" << cert.getCitedImpl()
-                           << "' does not bind associated type '"
-                           << redexProj.getAssocName().getValue() << "'";
-    Type resolved = subst->apply(*bound);
-
-    // Receipt-blind exact comparison. Projection-headed impl self-applications
-    // do not first-order match; their audit matches modulo the cited equality
-    // premises, applied to the resolved binding before comparison.
-    auto resolvedOr = applyEqualityPremises(resolved, getPremises(), errFn);
-    if (failed(resolvedOr))
-      return failure();
-    resolved = *resolvedOr;
-    auto contractumOr = applyEqualityPremises(cert.getContractum(), getPremises(), errFn);
-    if (failed(contractumOr))
-      return failure();
-    Type contractum = *contractumOr;
-    if (resolved != contractum)
-      return emitOpError() << "impl '" << cert.getCitedImpl()
-                           << "' binds the redex to " << resolved
-                           << ", not the certified contractum "
-                           << cert.getContractum();
-    return success();
+    SmallVector<TypeEqualityAttr> premises;
+    for (Value premise : getPremises())
+      if (auto claim = dyn_cast<ClaimType>(premise.getType()))
+        if (auto eq = claim.getEqualityAttr())
+          premises.push_back(eq);
+    return auditProjResolveCertificate(module, cert.getRedex(),
+                                       cert.getContractum(), cert.getCitedImpl(),
+                                       premises, errFn);
   }
 
   // Refl arm: nothing to audit at the seam.

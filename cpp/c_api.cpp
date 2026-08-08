@@ -501,6 +501,35 @@ MlirOperation traitCoerceOpCreate(MlirLocation loc,
   return wrap(op.getOperation());
 }
 
+bool traitWitnessSeamAuditAccepts(MlirModule wrappedModule,
+                                  MlirType redex, MlirType contractum,
+                                  MlirStringRef implName,
+                                  MlirType *premises, intptr_t numPremises) {
+  ModuleOp module = unwrap(wrappedModule);
+  MLIRContext *ctx = module.getContext();
+  FlatSymbolRefAttr implRef =
+      FlatSymbolRefAttr::get(ctx, StringRef(implName.data, implName.length));
+
+  SmallVector<TypeEqualityAttr> premiseAttrs;
+  premiseAttrs.reserve(numPremises);
+  for (intptr_t i = 0; i < numPremises; ++i) {
+    auto claim = dyn_cast<ClaimType>(unwrap(premises[i]));
+    if (!claim)
+      return false;
+    auto eq = claim.getEqualityAttr();
+    if (!eq)
+      return false;
+    premiseAttrs.push_back(eq);
+  }
+
+  // A refused audit is a classification answer, not a compile error, so swallow
+  // the diagnostics the shared audit emits on refusal.
+  ScopedDiagnosticHandler handler(ctx, [](Diagnostic &) { return success(); });
+  auto err = [&] { return emitError(UnknownLoc::get(ctx)); };
+  return succeeded(auditProjResolveCertificate(
+      module, unwrap(redex), unwrap(contractum), implRef, premiseAttrs, err));
+}
+
 MlirOperation traitAssocTypeOpCreate(MlirLocation loc,
                                      MlirStringRef name,
                                      MlirType boundType,

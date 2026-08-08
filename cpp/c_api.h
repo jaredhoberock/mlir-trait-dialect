@@ -186,6 +186,19 @@ MlirOperation traitCoerceOpCreate(MlirLocation loc,
                                   MlirValue *equalities, intptr_t numEqualities,
                                   MlirType resultType);
 
+/// Answer whether the projection-resolution witness seam audit accepts a
+/// certificate. This runs the same check as trait.witness's equality-arm
+/// verifySymbolUses: it looks the impl named by `implName` up in `module`,
+/// resolves `redex` through that impl's associated-type binding, applies the
+/// equality-claim `premises`, and compares the result against `contractum`.
+/// `premises` are equality-arm !trait.claim types; a non-equality premise
+/// makes the audit refuse. Diagnostics are suppressed -- a refusal is a
+/// classification answer, not a compile error.
+bool traitWitnessSeamAuditAccepts(MlirModule module,
+                                  MlirType redex, MlirType contractum,
+                                  MlirStringRef implName,
+                                  MlirType *premises, intptr_t numPremises);
+
 /// Create a trait.assoc_type op. If boundType.ptr is non-null, the op gets a
 /// bound_type attribute (for use inside trait.impl); otherwise it is a bare
 /// declaration (for use inside trait.trait).

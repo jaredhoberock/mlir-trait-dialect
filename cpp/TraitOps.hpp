@@ -27,6 +27,21 @@ public:
   }
 };
 
+/// The projection-resolution certificate audit at the symbol seam, factored so
+/// that both `WitnessOp::verifySymbolUses` and the C-API seam-audit query run
+/// exactly this check on the same inputs. Looks the cited impl up in `module`,
+/// resolves the `redex` projection through the impl's associated-type binding
+/// specialized for the redex's trait application, applies the equality
+/// `premises`, and compares the result against `contractum` receipt-blind.
+/// Succeeds when the cited impl binds the redex to the contractum. `err` (never
+/// null) receives the diagnostic on refusal; a caller that treats refusal as a
+/// classification answer rather than an error suppresses it at the diagnostic
+/// engine.
+LogicalResult auditProjResolveCertificate(
+    ModuleOp module, Type redex, Type contractum, FlatSymbolRefAttr citedImpl,
+    ArrayRef<TypeEqualityAttr> premises,
+    llvm::function_ref<InFlightDiagnostic()> err);
+
 } // end mlir::trait
 
 namespace mlir::OpTrait {
