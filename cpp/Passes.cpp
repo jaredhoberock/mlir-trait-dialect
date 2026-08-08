@@ -451,6 +451,14 @@ struct ProveClaimResultPattern : public RewritePattern {
     // application. Build it, rather than leaving behind a producer nothing
     // legalizes wherever a consumer still wants its result.
     auto claim = cast<ClaimType>(op->getResult(0).getType());
+
+    // An equality claim is never proven by impl selection; a projection hop to a
+    // trait's equality requirement is established by the requirement itself and
+    // discharged when its endpoints ground-resolve at the leftover check. This
+    // pattern only mints application-arm evidence.
+    if (claim.isEquality())
+      return rewriter.notifyMatchFailure(op, "equality claim is not impl-proved");
+
     if (claim.isProven()) {
       rewriter.replaceOpWithNewOp<WitnessOp>(op, claim.getProof(),
                                              claim.getTraitApplication());

@@ -3059,21 +3059,44 @@ ParseResult ProjectOp::parse(OpAsmParser &p, OperationState &st) {
   if (p.parseKeyword("to"))
     return failure();
 
-  // @DstTrait[...]
-  TraitApplicationAttr dstApp = dyn_cast_or_null<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
-  if (!dstApp) return p.emitError(p.getCurrentLocation(), "expected a TraitApplicationAttr");
-
-  // (by @DstProof)?
-  FlatSymbolRefAttr dstProof;
-  if (succeeded(p.parseOptionalKeyword("by"))) {
-    if (p.parseAttribute(dstProof))
+  // The result is either an application projection (@DstTrait[...] (by
+  // @DstProof)?) or the equality hop to a trait's equality requirement
+  // (!A = !B), disambiguated by the leading `@`. The equality arm never carries
+  // a proof.
+  ClaimType dstTy;
+  FlatSymbolRefAttr dstTrait;
+  OptionalParseResult dstSym = p.parseOptionalAttribute(dstTrait);
+  if (dstSym.has_value()) {
+    if (failed(*dstSym))
       return failure();
-  }
+    if (p.parseLSquare())
+      return failure();
+    SmallVector<Type> dstArgs;
+    do {
+      Type ty;
+      if (p.parseType(ty))
+        return failure();
+      dstArgs.push_back(ty);
+    } while (succeeded(p.parseOptionalComma()));
+    if (p.parseRSquare())
+      return failure();
+    auto dstApp = TraitApplicationAttr::get(p.getContext(), dstTrait,
+                                            ArrayRef<Type>(dstArgs));
 
-  // result type is the claim of the result application
-  ClaimType dstTy = dstProof
-    ? ClaimType::get(p.getContext(), dstApp, dstProof)
-    : ClaimType::get(p.getContext(), dstApp);
+    // (by @DstProof)?
+    FlatSymbolRefAttr dstProof;
+    if (succeeded(p.parseOptionalKeyword("by"))) {
+      if (p.parseAttribute(dstProof))
+        return failure();
+    }
+    dstTy = dstProof ? ClaimType::get(p.getContext(), dstApp, dstProof)
+                     : ClaimType::get(p.getContext(), dstApp);
+  } else {
+    Type lhs, rhs;
+    if (p.parseType(lhs) || p.parseEqual() || p.parseType(rhs))
+      return failure();
+    dstTy = ClaimType::getEquality(p.getContext(), lhs, rhs);
+  }
   st.addTypes(dstTy);
 
   return success();
@@ -3093,13 +3116,16 @@ void ProjectOp::print(OpAsmPrinter& p) {
   if (srcTy.isProven())
     p << " by " << srcTy.getProof();
 
-  // Destination: to @DstTrait[...] (by @DstProof)?
+  // Destination: to @DstTrait[...] (by @DstProof)? or the equality hop to !A = !B
   p << " to ";
   ClaimType dstTy = getResultClaim();
-  dstTy.getTraitApplication().print(p);
-
-  if (dstTy.isProven())
-    p << " by " << dstTy.getProof();
+  if (auto eq = dstTy.getEqualityAttr()) {
+    eq.print(p);
+  } else {
+    dstTy.getTraitApplication().print(p);
+    if (dstTy.isProven())
+      p << " by " << dstTy.getProof();
+  }
 }
 
 LogicalResult ProjectOp::verifySymbolUses(SymbolTableCollection &/*symbolTable*/) {
@@ -3110,13 +3136,18 @@ LogicalResult ProjectOp::verifySymbolUses(SymbolTableCollection &/*symbolTable*/
   ClaimType src = getSourceClaim();
   ClaimType dst = getResultClaim();
 
-  // verify proofness parity
-  bool srcProven = src.isProven();
-  bool dstProven = dst.isProven();
-  if (srcProven != dstProven) {
-    if (!srcProven)
-      return emitOpError() << "result cannot have 'by' when source has no 'by'";
-    return emitOpError() << "result must have 'by' when source has 'by'";
+  // Verify proofness parity for an application result: a proven source projects
+  // to a proven result, an unproven to an unproven. An equality result is
+  // exempt -- an equality claim is never proven, so projecting one from a proven
+  // source does not force a receipt it cannot carry.
+  if (!dst.isEquality()) {
+    bool srcProven = src.isProven();
+    bool dstProven = dst.isProven();
+    if (srcProven != dstProven) {
+      if (!srcProven)
+        return emitOpError() << "result cannot have 'by' when source has no 'by'";
+      return emitOpError() << "result must have 'by' when source has 'by'";
+    }
   }
 
   // get candidate projections
