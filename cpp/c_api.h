@@ -203,6 +203,15 @@ MlirOperation traitWitnessProjResolveOpCreate(MlirLocation loc,
 /// Create a refl trait.witness introducing an A = A equality claim.
 MlirOperation traitWitnessReflOpCreate(MlirLocation loc, MlirType resultType);
 
+/// Create a composition trait.witness. `premises` are equality-claim values
+/// whose ground congruence closure entails `resultType` (an equality claim).
+/// The witness stores only the leaf premises; verify() re-derives the multi-hop
+/// equality the result names by replaying that closure.
+MlirOperation traitWitnessOpCreateCompose(MlirLocation loc,
+                                          MlirType resultType,
+                                          MlirValue *premises,
+                                          intptr_t numPremises);
+
 /// Create a trait.coerce operation: change `input`'s written type to
 /// `resultType`, justified by the cited `equalities` (equality-claim values).
 MlirOperation traitCoerceOpCreate(MlirLocation loc,

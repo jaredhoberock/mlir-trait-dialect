@@ -110,6 +110,9 @@ unsafe extern "C" {
                                        result_type: MlirType) -> MlirOperation;
     fn traitWitnessReflOpCreate(loc: MlirLocation,
                                 result_type: MlirType) -> MlirOperation;
+    fn traitWitnessOpCreateCompose(loc: MlirLocation,
+                                   result_type: MlirType,
+                                   premises: *const MlirValue, num_premises: isize) -> MlirOperation;
     fn traitCoerceOpCreate(loc: MlirLocation,
                            input: MlirValue,
                            equalities: *const MlirValue, num_equalities: isize,
@@ -697,6 +700,16 @@ pub fn witness_proj_resolve<'c>(loc: Location<'c>, certificate: Attribute<'c>, p
 /// Create a refl `trait.witness` introducing an `A = A` equality claim.
 pub fn witness_refl<'c>(loc: Location<'c>, result_type: Type<'c>) -> Operation<'c> {
     unsafe { Operation::from_raw(traitWitnessReflOpCreate(loc.to_raw(), result_type.to_raw())) }
+}
+
+/// Create a composition `trait.witness`. `premises` are equality-claim values
+/// whose ground congruence closure entails `result_type` (an equality claim).
+/// The witness stores only the leaf premises; the multi-hop equality it names is
+/// re-derived at verify by replaying that closure.
+pub fn witness_compose<'c>(loc: Location<'c>, premises: &[Value<'c, '_>], result_type: Type<'c>) -> Operation<'c> {
+    let raw: Vec<MlirValue> = premises.iter().map(|v| v.to_raw()).collect();
+    unsafe { Operation::from_raw(traitWitnessOpCreateCompose(
+        loc.to_raw(), result_type.to_raw(), raw.as_ptr(), raw.len() as isize)) }
 }
 
 /// Create a `trait.coerce` op: change `input`'s written type to `result_type`,

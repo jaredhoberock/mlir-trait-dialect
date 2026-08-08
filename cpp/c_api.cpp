@@ -567,6 +567,27 @@ MlirOperation traitWitnessReflOpCreate(MlirLocation loc, MlirType resultType) {
   return wrap(op.getOperation());
 }
 
+MlirOperation traitWitnessOpCreateCompose(MlirLocation loc,
+                                          MlirType resultType,
+                                          MlirValue *premises,
+                                          intptr_t numPremises) {
+  auto claim = dyn_cast<ClaimType>(unwrap(resultType));
+  if (!claim || !claim.isEquality())
+    return {};
+
+  MLIRContext *ctx = unwrap(loc)->getContext();
+  OpBuilder builder(ctx);
+
+  SmallVector<Value> premiseVals;
+  premiseVals.reserve(numPremises);
+  for (intptr_t i = 0; i < numPremises; ++i)
+    premiseVals.push_back(unwrap(premises[i]));
+
+  auto op = WitnessOp::create(builder, unwrap(loc), claim.getEqualityAttr(),
+                              ValueRange(premiseVals));
+  return wrap(op.getOperation());
+}
+
 MlirOperation traitCoerceOpCreate(MlirLocation loc,
                                   MlirValue input,
                                   MlirValue *equalities, intptr_t numEqualities,

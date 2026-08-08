@@ -14,6 +14,7 @@
 #include <mlir/Interfaces/FunctionImplementation.h>
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/IRMapping.h>
+#include <mlir/IR/RegionKindInterface.h>
 #include <optional>
 #include <variant>
 
@@ -1427,6 +1428,34 @@ ParseResult WitnessOp::parse(OpAsmParser &p, OperationState& result) {
     return success();
   }
 
+  // Equality composition arm: `compose(%premises...) : (types...) :
+  // <result-type>`. The premise types are spelled -- SSA operands resolve
+  // against written types -- and the result equality is spelled too, since it is
+  // derived from the premises and not inferable from them.
+  if (succeeded(p.parseOptionalKeyword("compose"))) {
+    SmallVector<OpAsmParser::UnresolvedOperand> premises;
+    if (p.parseOperandList(premises, OpAsmParser::Delimiter::Paren))
+      return failure();
+    SmallVector<Type> premiseTypes;
+    if (p.parseColon() ||
+        p.parseCommaSeparatedList(OpAsmParser::Delimiter::Paren, [&] {
+          Type ty;
+          if (p.parseType(ty))
+            return failure();
+          premiseTypes.push_back(ty);
+          return success();
+        }))
+      return failure();
+    if (p.resolveOperands(premises, premiseTypes, p.getCurrentLocation(),
+                          result.operands))
+      return failure();
+    Type resultType;
+    if (p.parseColon() || p.parseType(resultType))
+      return failure();
+    result.addTypes(resultType);
+    return success();
+  }
+
   // Application arm: `@proof for @Trait[Types...]`.
   FlatSymbolRefAttr proof;
   if (p.parseAttribute(proof, "proof", result.attributes))
@@ -1468,6 +1497,19 @@ void WitnessOp::print(OpAsmPrinter &p) {
 
   if (getRefl()) {
     p << " refl : " << getResult().getType();
+    return;
+  }
+
+  // Composition arm: an equality result with neither a certificate nor a refl
+  // marker. Print the premises with their types and the spelled result equality.
+  if (getResultClaim().isEquality()) {
+    p << " compose(";
+    llvm::interleaveComma(getPremises(), p,
+                          [&](Value v) { p.printOperand(v); });
+    p << ") : (";
+    llvm::interleaveComma(getPremises().getTypes(), p,
+                          [&](Type t) { p.printType(t); });
+    p << ") : " << getResult().getType();
     return;
   }
 
@@ -1645,10 +1687,18 @@ LogicalResult mlir::trait::auditProjResolveCertificate(
   return success();
 }
 
+// Whether the premise equalities entail the result equality under the ground
+// congruence closure -- the same closure trait.coerce replays to decide
+// equational entailment. Defined beside that closure (below); declared here for
+// the witness composition arm's verifier.
+static bool equalityCompositionEntails(TypeEqualityAttr result,
+                                       ArrayRef<TypeEqualityAttr> premises);
+
 // The op's attributes must match the result claim's arm exactly, and the result
 // type must equal the claim reconstructed from those attributes. For the
 // equality arm, the current endpoints must be a single-substitution first-order
-// instance of the frozen certificate (proj-resolve) or identical (refl).
+// instance of the frozen certificate (proj-resolve), identical (refl), or
+// entailed by the premises' ground congruence closure (compose).
 LogicalResult WitnessOp::verify() {
   ClaimType result = dyn_cast<ClaimType>(getResult().getType());
   if (!result)
@@ -1664,9 +1714,9 @@ LogicalResult WitnessOp::verify() {
     if (hasProof || hasApp)
       return emitOpError() << "an equality witness carries no proof or trait "
                               "application";
-    if (hasCert == hasRefl)
-      return emitOpError() << "an equality witness is exactly one of "
-                              "proj-resolve (a certificate) or refl";
+    if (hasCert && hasRefl)
+      return emitOpError() << "an equality witness carries at most one of a "
+                              "proj-resolve certificate or a refl marker";
     TypeEqualityAttr eq = result.getEqualityAttr();
 
     if (hasRefl) {
@@ -1678,22 +1728,62 @@ LogicalResult WitnessOp::verify() {
       return success();
     }
 
-    // proj-resolve: the current endpoints must be a single-substitution
-    // first-order instance of the frozen certificate endpoints. The frozen
-    // endpoints' generic parameters are the variables; a single substitution
-    // must carry the frozen redex/contractum pair to the current one. This
-    // passes birth (identity), the clone-substituted state, and ground, and
-    // rejects any non-substitution mangling. It is structural and local -- no
-    // module lookup -- so the pair is matched with a null module.
-    WitnessCertificateAttr cert = getCertificateAttr();
-    MLIRContext *ctx = getContext();
-    Type frozenPair = TupleType::get(ctx, {cert.getRedex(), cert.getContractum()});
-    Type currentPair = TupleType::get(ctx, {eq.getLhs(), eq.getRhs()});
-    if (failed(buildSpecialization(frozenPair, currentPair, ModuleOp())))
-      return emitOpError() << "result endpoints " << eq.getLhs() << " = "
-                           << eq.getRhs()
-                           << " are not an instance of the certificate "
-                           << cert.getRedex() << " = " << cert.getContractum();
+    if (hasCert) {
+      // proj-resolve: the current endpoints must be a single-substitution
+      // first-order instance of the frozen certificate endpoints. The frozen
+      // endpoints' generic parameters are the variables; a single substitution
+      // must carry the frozen redex/contractum pair to the current one. This
+      // passes birth (identity), the clone-substituted state, and ground, and
+      // rejects any non-substitution mangling. It is structural and local -- no
+      // module lookup -- so the pair is matched with a null module.
+      WitnessCertificateAttr cert = getCertificateAttr();
+      MLIRContext *ctx = getContext();
+      Type frozenPair = TupleType::get(ctx, {cert.getRedex(), cert.getContractum()});
+      Type currentPair = TupleType::get(ctx, {eq.getLhs(), eq.getRhs()});
+      if (failed(buildSpecialization(frozenPair, currentPair, ModuleOp())))
+        return emitOpError() << "result endpoints " << eq.getLhs() << " = "
+                             << eq.getRhs()
+                             << " are not an instance of the certificate "
+                             << cert.getRedex() << " = " << cert.getContractum();
+      return success();
+    }
+
+    // Composition: neither a certificate nor refl. The result equality is
+    // derived from the leaf equality premises by replaying the ground congruence
+    // closure -- the transitivity and congruence that carry the premises to the
+    // result are never stored, only the leaves are, so the admission law holds.
+    // An equality claim carries no proof receipt by that law, so there is no
+    // proof-swap for this arm to police.
+    //
+    // The composition arm is the only equality leaf whose evidence is another
+    // claim value rather than a certificate or an identical-endpoint marker, so
+    // it is the only one whose validity can rest on its operands. In a region
+    // without SSA dominance (a graph region such as a module body) a premise may
+    // be the op's own result, letting two composes justify each other in a cycle
+    // that grounds a false equality on nothing. Requiring an SSA-dominance region
+    // makes the induction bottom out at certificate- or refl-anchored leaves: a
+    // false composition would need a false premise, which needs a false leaf, and
+    // the certificate and refl leaves refuse those.
+    if (Region *parent = getOperation()->getParentRegion();
+        parent && !mlir::mayHaveSSADominance(*parent))
+      return emitOpError() << "a composition witness must be in a region that "
+                              "enforces SSA dominance, so its premises cannot be "
+                              "justified by its own result";
+    if (getPremises().empty())
+      return emitOpError() << "a composition witness requires at least one "
+                              "equality premise";
+    SmallVector<TypeEqualityAttr> premiseEqualities;
+    for (Value premise : getPremises()) {
+      auto claim = dyn_cast<ClaimType>(premise.getType());
+      if (!claim || !claim.isEquality())
+        return emitOpError() << "a composition witness premise must be an "
+                                "equality claim, but a premise has type "
+                             << premise.getType();
+      premiseEqualities.push_back(claim.getEqualityAttr());
+    }
+    if (!equalityCompositionEntails(eq, premiseEqualities))
+      return emitOpError() << "the premises do not entail " << eq.getLhs()
+                           << " = " << eq.getRhs();
     return success();
   }
 
@@ -1746,6 +1836,12 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
   // Refl arm: nothing to audit at the seam.
   if (getRefl())
+    return success();
+
+  // Composition arm: an equality result with neither a certificate nor a refl
+  // marker cites nothing by symbol -- its premises are SSA values -- so there is
+  // no citation to audit at the seam.
+  if (getResultClaim().isEquality())
     return success();
 
   // Application arm: resolve the proof to its impl in one lookup; a
@@ -2629,6 +2725,34 @@ void CoerceOp::print(OpAsmPrinter &p) {
                           [&](Type t) { p.printType(t); });
     p << ")";
   }
+}
+
+// The witness composition arm's entailment decision, sharing the ground
+// congruence closure trait.coerce uses so the two consumers of equality
+// evidence agree on what a leaf set entails. Application-claim receipts are
+// stripped from every endpoint first, exactly as the coerce does. The
+// transitivity and congruence that carry the premises to the result are derived
+// here at verify and never stored: the composition witness holds only its leaf
+// premises, preserving the admission law.
+static bool equalityCompositionEntails(TypeEqualityAttr result,
+                                       ArrayRef<TypeEqualityAttr> premises) {
+  AttrTypeReplacer strip;
+  strip.addReplacement([](ClaimType claim) -> std::optional<Type> {
+    if (claim.isProven())
+      return Type(claim.asUnproven());
+    return std::nullopt;
+  });
+  Type lhs = strip.replace(result.getLhs());
+  Type rhs = strip.replace(result.getRhs());
+
+  GroundCongruence closure;
+  closure.intern(lhs);
+  closure.intern(rhs);
+  for (TypeEqualityAttr eq : premises)
+    closure.seed(strip.replace(eq.getLhs()), strip.replace(eq.getRhs()));
+  closure.close();
+
+  return closure.equal(lhs, rhs);
 }
 
 LogicalResult CoerceOp::verify() {

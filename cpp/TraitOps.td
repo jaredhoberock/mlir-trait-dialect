@@ -1011,7 +1011,7 @@ def WitnessOp : TraitDialectOp<"witness", [
       %ord_w = trait.witness @Ord_impl_i32_p for @Ord[i32]
 
     Equality arm. Introduces a value of type `!trait.claim<!A = !B>` that is
-    evidence the two spellings name one type. There are two leaves:
+    evidence the two spellings name one type. There are three leaves:
 
       * proj-resolve: cites an impl by symbol and carries a frozen certificate.
         The equality holds because the cited impl binds the associated type
@@ -1042,6 +1042,18 @@ def WitnessOp : TraitDialectOp<"witness", [
         predicate can specialize to `A = A`, and a caller must still supply a
         claim value.
 
+      * compose: cites nothing by symbol; consumes variadic equality-claim
+        `premises` and introduces the equality their ground congruence closure
+        entails. It builds a multi-hop equality (for instance
+        `@A[T]::Item = @B[T]::Item` from `@A[T]::Item = i64` and
+        `@B[T]::Item = i64`) without alleging it: the result is derived, not
+        asserted. The composition form stores ONLY its leaf equality premises.
+        The transitivity and congruence that carry those premises to the result
+        are never stored; they are re-derived at verify by replaying the same
+        ground congruence closure `trait.coerce` uses to decide equational
+        entailment. This preserves the admission law -- only definitional leaves
+        are stored as evidence -- while letting a caller name a derived equality.
+
     THE ADMISSION LAW. Only definitional equalities -- one type, two spellings
     -- are admissible leaves; a representational leaf (a layout cast, a
     zero-cost view, a witnessed expand()) is refused. Screech has GHC's
@@ -1051,9 +1063,12 @@ def WitnessOp : TraitDialectOp<"witness", [
 
     Verification (verify() and verifySymbolUses) ensures the present attributes
     match the result claim's arm, that the result type equals the claim
-    reconstructed from those attributes, and, for the equality arm, that the
-    cited impl actually binds as stated and that the current endpoints are a
-    single-substitution instance of the frozen certificate.
+    reconstructed from those attributes, and, for the equality arm's proj-resolve
+    leaf, that the cited impl actually binds as stated and that the current
+    endpoints are a single-substitution instance of the frozen certificate. For
+    the composition leaf verify() replays the ground congruence closure over the
+    premises and requires it to entail the result equality; the leaf cites no
+    symbol, so verifySymbolUses is a no-op for it.
   }];
 
   let arguments = (ins
@@ -1092,6 +1107,17 @@ def WitnessOp : TraitDialectOp<"witness", [
       build($_builder, $_state, claimTy, /*proof=*/nullptr,
             /*trait_application=*/nullptr, /*certificate=*/nullptr,
             $_builder.getUnitAttr(), /*premises=*/{});
+    }]>,
+    // Equality composition arm. Distinct in arity from the proj-resolve builder
+    // (that one takes a certificate too); it carries only the premises whose
+    // ground congruence closure entails the result equality.
+    OpBuilder<(ins "::mlir::trait::TypeEqualityAttr":$equality,
+                   "::mlir::ValueRange":$premises), [{
+      MLIRContext* ctx = $_builder.getContext();
+      ClaimType claimTy = ClaimType::getEquality(ctx, equality);
+      build($_builder, $_state, claimTy, /*proof=*/nullptr,
+            /*trait_application=*/nullptr, /*certificate=*/nullptr,
+            /*refl=*/nullptr, premises);
     }]>
   ];
 
