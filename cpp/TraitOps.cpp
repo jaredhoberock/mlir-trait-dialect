@@ -1280,10 +1280,35 @@ void WitnessOp::print(OpAsmPrinter &p) {
   );
 }
 
+// Does `needle` occur as a subterm of `haystack`? Equality-claim endpoints are
+// opaque to Type::walk, so this descends through them the way containsType does,
+// so a needle reachable only inside an endpoint is still found.
+static bool typeOccursIn(Type needle, Type haystack) {
+  bool hit = false;
+  std::function<void(Type)> visit = [&](Type root) {
+    root.walk([&](Type sub) {
+      if (sub == needle)
+        hit = true;
+    });
+    if (!hit)
+      walkEqualityEndpoints(root, [&](Type endpoint) { visit(endpoint); });
+  };
+  visit(haystack);
+  return hit;
+}
+
 // Rewrite `ty` by the cited equality premises: each premise's lhs endpoint
 // rewrites to its rhs. Projection-headed impl self-applications do not
 // first-order match, so their seam audit matches modulo these equalities.
-static Type applyEqualityPremises(Type ty, ValueRange premises) {
+//
+// A premise set whose rewrite relation cycles has no finite solution and its
+// fixed point would not terminate, so it is refused. The relation orders key a
+// before key b when b occurs in the value bound to a; a self-referential premise
+// such as !S = tuple<!S> is the degenerate self-loop. Refusing here keeps the
+// verifier total on spellable IR.
+static FailureOr<Type> applyEqualityPremises(
+    Type ty, ValueRange premises,
+    llvm::function_ref<InFlightDiagnostic()> err) {
   DenseMap<Type, Type> subst;
   for (Value premise : premises) {
     auto claim = dyn_cast<ClaimType>(premise.getType());
@@ -1294,6 +1319,37 @@ static Type applyEqualityPremises(Type ty, ValueRange premises) {
   }
   if (subst.empty())
     return ty;
+
+  SmallVector<Type> keys;
+  for (auto &kv : subst)
+    keys.push_back(kv.first);
+  // A depth-first walk of the rewrite relation reporting a back edge. The color
+  // marks are unvisited, on the current path, and finished.
+  DenseMap<Type, unsigned> color;
+  std::function<Type(Type)> findCycle = [&](Type key) -> Type {
+    color[key] = 1;
+    Type value = subst.lookup(key);
+    for (Type other : keys)
+      if (typeOccursIn(other, value)) {
+        unsigned c = color.lookup(other);
+        if (c == 1)
+          return other;
+        if (c == 0)
+          if (Type hit = findCycle(other))
+            return hit;
+      }
+    color[key] = 2;
+    return Type();
+  };
+  for (Type key : keys)
+    if (color.lookup(key) == 0)
+      if (Type cyclic = findCycle(key)) {
+        if (err)
+          err() << "a self-referential equality premise (" << cyclic
+                << " occurs in its own rewrite) has no finite solution";
+        return failure();
+      }
+
   return applySubstitutionToFixedPoint(subst, ty);
 }
 
@@ -1403,8 +1459,14 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     // Receipt-blind exact comparison. Projection-headed impl self-applications
     // do not first-order match; their audit matches modulo the cited equality
     // premises, applied to the resolved binding before comparison.
-    resolved = applyEqualityPremises(resolved, getPremises());
-    Type contractum = applyEqualityPremises(cert.getContractum(), getPremises());
+    auto resolvedOr = applyEqualityPremises(resolved, getPremises(), errFn);
+    if (failed(resolvedOr))
+      return failure();
+    resolved = *resolvedOr;
+    auto contractumOr = applyEqualityPremises(cert.getContractum(), getPremises(), errFn);
+    if (failed(contractumOr))
+      return failure();
+    Type contractum = *contractumOr;
     if (resolved != contractum)
       return emitOpError() << "impl '" << cert.getCitedImpl()
                            << "' binds the redex to " << resolved
