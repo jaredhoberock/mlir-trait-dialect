@@ -772,8 +772,8 @@ static LogicalResult requireMonomorphicOperands(Operation *op,
   return success();
 }
 
-/// Defers call lowering while any operand is a monomorphic claim that is not
-/// yet proven.
+/// Defers call lowering while any operand is a monomorphic application claim
+/// that is not yet proven.
 ///
 /// Lowering a call specializes its callee against the call's argument claims,
 /// and the callee body may discharge those claims through their proofs. If the
@@ -790,12 +790,20 @@ static LogicalResult requireMonomorphicOperands(Operation *op,
 /// result is diagnosed there, while a claim that exists only as the block
 /// argument of a still-polymorphic template is pruned by full monomorphization
 /// instead.
+///
+/// This gate governs the application arm only. An equality-arm claim carries no
+/// proof receipt: its evidence is the value itself, established at the witness
+/// or contractually assumed at the parameter. There is nothing to await, so an
+/// equality operand is settled the moment the call is otherwise eligible, and
+/// the callee specializes against it directly. A monomorphic equality whose
+/// endpoints never ground-resolve to one spelling is caught by the leftover
+/// check downstream, exactly as an unprovable application claim is.
 static LogicalResult requireProvenClaimOperands(Operation *op,
                                                 ValueRange operands,
                                                 PatternRewriter &rewriter) {
   for (Value operand : operands)
     if (auto claim = dyn_cast<ClaimType>(operand.getType()))
-      if (claim.isMonomorphic() && !claim.isProven())
+      if (claim.isApplication() && claim.isMonomorphic() && !claim.isProven())
         return rewriter.notifyMatchFailure(op, "operand claim is still unproven");
   return success();
 }
@@ -1527,6 +1535,41 @@ static void checkResolutionBoundary(const ImplResolver &resolver) {
          "name a proof the module defines");
 }
 
+/// Whether a monomorphic equality claim is settled at the leftover check: its
+/// two endpoints ground-resolve to one spelling through the impls selection has
+/// discharged.
+///
+/// An equality claim carries no proof receipt -- its evidence is the value
+/// itself -- so unlike an application claim it is never "proven"; it is
+/// discharged instead when the projections in its endpoints resolve and the two
+/// endpoints meet at one ground type. Resolution is the obligation-aware
+/// recorded-outcome kind ResolveProjectionsPattern uses, so a projection whose
+/// only candidate impl is conditional with no discharged obligation stays
+/// spelled and the endpoints do not meet. The endpoints are read through the
+/// accessor because the generic walker treats them as opaque.
+static bool equalityClaimGroundResolvesToOneSpelling(
+    ClaimType claim, const ReadOnlyImplResolver &reading) {
+  auto eq = claim.getEqualityAttr();
+  if (!eq)
+    return false;
+  auto resolveEndpoint = [&](Type endpoint) -> Type {
+    AttrTypeReplacer replacer;
+    replacer.addReplacement([&](Type t) -> std::optional<Type> {
+      auto proj = dyn_cast<ProjectionType>(t);
+      if (!proj || isPolymorphicType(proj))
+        return std::nullopt;
+      auto resolved = reading.resolveProjectionType(proj);
+      if (failed(resolved))
+        return std::nullopt;
+      return *resolved;
+    });
+    return replacer.replace(endpoint);
+  };
+  Type lhs = resolveEndpoint(eq.getLhs());
+  Type rhs = resolveEndpoint(eq.getRhs());
+  return lhs == rhs && isGroundType(lhs);
+}
+
 } // end namespace
 
 /// `askImplSelectionForImpls` adds the pattern that puts a declared claim to
@@ -1826,6 +1869,7 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
   // too, not only a claim that is the root type. Trait infrastructure regions
   // are templates and keep their unproven claims.
   bool hasLeftovers = false;
+  ReadOnlyImplResolver reading(*resolver);
   module.walk<WalkOrder::PreOrder>([&](Operation *op) {
     if (isa<TraitOp, ImplOp, ProofOp>(op))
       return WalkResult::skip();
@@ -1833,6 +1877,14 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
       result.getType().walk([&](Type sub) {
         auto claim = dyn_cast<ClaimType>(sub);
         if (!claim || claim.isProven() || !claim.isMonomorphic())
+          return;
+        // An equality claim has no proof to await; it is settled when its
+        // endpoints ground-resolve to one spelling through the discharged impl
+        // selections. A monomorphic equality that resolves is not a leftover;
+        // one whose projection has no discharged impl stays unequal and is
+        // reported like an unprovable application claim.
+        if (claim.isEquality() &&
+            equalityClaimGroundResolvesToOneSpelling(claim, reading))
           return;
         hasLeftovers = true;
         op->emitError() << "unproven monomorphic claim " << claim

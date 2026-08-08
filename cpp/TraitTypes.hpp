@@ -1080,8 +1080,15 @@ inline SmallVector<GenericTypeInterface,4> getGenericTypesIn(Type ty) {
     }
 
     if (auto claim = dyn_cast<ClaimType>(ty)) {
-      for (Type arg : claim.getTraitApplication().getTypeArgs())
-        collectRef(arg, collectRef);
+      if (auto eq = claim.getEqualityAttr()) {
+        // The equality arm's endpoints are opaque to the structural walk, so
+        // descend them explicitly to collect any generic hiding inside.
+        collectRef(eq.getLhs(), collectRef);
+        collectRef(eq.getRhs(), collectRef);
+      } else {
+        for (Type arg : claim.getTraitApplication().getTypeArgs())
+          collectRef(arg, collectRef);
+      }
     } else if (auto projection = dyn_cast<ProjectionType>(ty)) {
       for (Type arg : projection.getTraitApplication().getTypeArgs())
         collectRef(arg, collectRef);

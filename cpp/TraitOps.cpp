@@ -675,10 +675,14 @@ static func::FuncOp specializeAndReplaceAssumes(
     StringRef name, const DenseMap<Type,Type> &subst) {
   auto funcOp = specializePolymorph(rewriter, callee, name, subst);
 
+  // trait.assume materializes an application-arm hypothesis, so only
+  // application-arm parameters can satisfy one. An equality-arm parameter is
+  // never the subject of a trait.assume and is skipped.
   DenseMap<TraitApplicationAttr, Value> claimMap;
   for (auto arg : funcOp.getArguments())
     if (auto claimTy = dyn_cast<ClaimType>(arg.getType()))
-      claimMap[claimTy.getTraitApplication()] = arg;
+      if (claimTy.isApplication())
+        claimMap[claimTy.getTraitApplication()] = arg;
 
   SmallVector<AssumeOp> toErase;
   funcOp.walk([&](AssumeOp a) {
