@@ -578,20 +578,28 @@ llvm::SetVector<Type> demandsSpelledIn(ModuleOp module, bool inAttributes,
     if (spelled.insert(demand) && origins && spellingOp)
       origins->try_emplace(demand, spellingOp->getLoc());
   };
+  // Note every monomorphic projection reachable in a type, descending through
+  // equality-claim endpoints -- opaque to Type::walk -- the way containsType
+  // does, so a projection nested only inside an endpoint, even one itself inside
+  // a further equality claim, is still demanded and its impl generated.
+  std::function<void(Type)> noteProjectionsDeep = [&](Type root) {
+    root.walk([&](Type sub) {
+      if (isa<ProjectionType>(sub) && isMonomorphicType(sub))
+        note(sub);
+    });
+    walkEqualityEndpoints(root, [&](Type endpoint) { noteProjectionsDeep(endpoint); });
+  };
   auto collect = [&](auto root) {
     root.walk([&](Type sub) {
       if (isa<ProjectionType>(sub) && isMonomorphicType(sub))
         note(sub);
       // Equality-claim endpoints are opaque to this walk; the demand-walk
-      // accessor descends through them so a projection reachable only inside an
-      // endpoint is still demanded and its impl generated.
+      // accessor descends through them recursively so a projection reachable
+      // only inside an endpoint is still demanded and its impl generated.
       if (auto claim = dyn_cast<ClaimType>(sub))
         if (auto eq = claim.getEqualityAttr())
           for (Type endpoint : {eq.getLhs(), eq.getRhs()})
-            endpoint.walk([&](Type inner) {
-              if (isa<ProjectionType>(inner) && isMonomorphicType(inner))
-                note(inner);
-            });
+            noteProjectionsDeep(endpoint);
     });
   };
   module.walk<WalkOrder::PreOrder>([&](Operation *op) -> WalkResult {
