@@ -609,6 +609,20 @@ def Claim : Type<
   "::mlir::trait::ClaimType"
 >;
 
+// A claim constrained to the trait-application arm. Ops that read a trait
+// application off a claim -- to name a trait, select an impl, or match an
+// impl's assumptions -- require this so an equality claim is refused as a
+// parse/verify diagnostic at the operand rather than asserting deep inside the
+// arm-asserting accessor.
+def ApplicationClaim : Type<
+  And<[
+    CPred<"::mlir::isa<::mlir::trait::ClaimType>($_self)">,
+    CPred<"::mlir::cast<::mlir::trait::ClaimType>($_self).isApplication()">
+  ]>,
+  "a trait-application '!trait.claim' type",
+  "::mlir::trait::ClaimType"
+>;
+
 def Projection : Type<
   CPred<"::mlir::isa<ProjectionType>($_self)">,
   "any '!trait.proj' type",
@@ -813,7 +827,7 @@ def DeriveOp : TraitDialectOp<"derive", [
   let arguments = (ins
     TraitApplicationAttr:$trait_application,
     FlatSymbolRefAttr:$impl,
-    Variadic<Claim>:$assumptions
+    Variadic<ApplicationClaim>:$assumptions
   );
 
   let results = (outs Claim:$result);
@@ -1162,7 +1176,7 @@ def MethodCallOp : TraitDialectOp<"method.call", [
 
   let arguments = (ins
     SymbolRefAttr:$method_ref,
-    Claim:$claim,
+    ApplicationClaim:$claim,
     Variadic<AnyType>:$arguments
   );
 
