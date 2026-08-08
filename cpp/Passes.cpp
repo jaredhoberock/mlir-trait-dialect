@@ -1958,6 +1958,37 @@ struct EraseProjCastOp : public OpConversionPattern<ProjCastOp> {
   }
 };
 
+struct EraseCoerceOp : public OpConversionPattern<CoerceOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(CoerceOp op, OneToNOpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    // Erasure is a checked judgment on the op, not a trusting forward. Every
+    // cited equality is a claim value that maps to zero here, and so is a
+    // claim-typed input (a claim-to-claim coerce shrinking 1:0). A coerce whose
+    // input itself erased, or whose result is unused, leaves nothing to forward
+    // and is erased.
+    ValueRange input = adaptor.getInput();
+    if (input.empty() || op.getResult().use_empty()) {
+      rewriter.eraseOp(op);
+      return success();
+    }
+    // The input survived as one value. Forwarding it is a no-op exactly when its
+    // post-conversion type equals the result type -- the discharged (reflexive)
+    // form, which projection resolution has produced by here. An undischarged
+    // coerce still relates two different types; it is refused, so the op stays
+    // illegal and the conversion fails loudly. The audit is deliberately not
+    // consulted: the replay endpoints are authoritative at the barrier.
+    if (input.front().getType() == op.getResult().getType()) {
+      rewriter.replaceOp(op, input);
+      return success();
+    }
+    return rewriter.notifyMatchFailure(
+        op, "a coerce whose endpoints still differ after conversion is not "
+            "discharged and cannot cross the erase barrier");
+  }
+};
+
 
 /// Erases all residual polymorphism from the module.
 ///
@@ -2024,7 +2055,7 @@ static LogicalResult erasePolymorphs(ModuleOp module) {
 
   // Add trait dialect's own patterns
   patterns.add<EraseProjectOp, EraseWitnessOp>(ctx);
-  patterns.add<EraseProjCastOp>(opConverter, ctx);
+  patterns.add<EraseProjCastOp, EraseCoerceOp>(opConverter, ctx);
 
   populateFunctionOpInterfaceTypeConversionPattern<func::FuncOp>(patterns, opConverter);
   populateCallOpTypeConversionPattern(patterns, opConverter);
@@ -2032,7 +2063,8 @@ static LogicalResult erasePolymorphs(ModuleOp module) {
 
   // Mark !trait.claim and !trait.proj as illegal
   ConversionTarget target(*ctx);
-  target.addIllegalOp<AllegeOp, DeriveOp, ProjectOp, WitnessOp, ProjCastOp>();
+  target.addIllegalOp<AllegeOp, DeriveOp, ProjectOp, WitnessOp, ProjCastOp,
+                      CoerceOp>();
   target.markUnknownOpDynamicallyLegal([&](Operation *op) {
     return !opMentionsType<ClaimType>(op) && !opMentionsType<ProjectionType>(op);
   });
