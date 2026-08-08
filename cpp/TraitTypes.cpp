@@ -1480,11 +1480,13 @@ LogicalResult ProjectionType::unify(
   // construction, and it is the exact crossing the tolerance below accepts when
   // a module is in hand -- the two counts read against each other.
   //
-  // No test reaches this arm. The module-free comparator has one caller, the
-  // cast op's input/result consistency check, which replaces every projection
-  // over the claim's own application with a variable; what is left to reach
-  // here is a projection over some other application meeting a different type
-  // across the two, which is an ill-formed cast no row spells.
+  // The module-free comparator has two callers. The cast op's input/result
+  // consistency check replaces every projection over the claim's own
+  // application with a variable, so its only crossings here are a projection
+  // over some other application meeting a different type across the two. A
+  // func.call's signature verification unifies each declared formal against the
+  // actual with no module, and reaches this arm whenever a ground-projection
+  // formal meets a mismatched concrete actual.
   if (!module) {
     countModuleFreeProjectionRejection();
     if (err)
