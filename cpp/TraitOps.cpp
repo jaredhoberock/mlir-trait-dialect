@@ -2008,7 +2008,9 @@ static Type positionPlaceholder(MLIRContext *ctx, unsigned position) {
 // itself with its immediate sub-element types replaced by numbered placeholders:
 // the resulting shell holds the full non-child storage by construction and
 // compares by exact type equality, so two containers share a key exactly when
-// they differ only in their children.
+// they differ only in their children. A constructor that declines the
+// placeholder arguments yields no shell; that type is keyed atomically instead
+// (see the guard below).
 static TermShape decomposeTerm(Type t) {
   TermShape s;
   MLIRContext *ctx = t.getContext();
@@ -2052,7 +2054,20 @@ static TermShape decomposeTerm(Type t) {
   SmallVector<Type> placeholders;
   for (unsigned i = 0, n = subTypes.size(); i < n; ++i)
     placeholders.push_back(positionPlaceholder(ctx, i));
-  s.key = TypeAttr::get(t.replaceImmediateSubElements(subAttrs, placeholders));
+  // A partial constructor declines the placeholder arguments -- its inference
+  // fails on them, as a weak product with no result does -- and returns a null
+  // shell. Such a type is keyed atomically: its own TypeAttr, no children
+  // enumerated, exactly as a leaf is. Congruence and the position-paired
+  // proof-swap walk both read children from here, so neither descends past this
+  // constructor's shell. Completeness across it is deliberately forgone, not
+  // lost by accident: a coerce that needs the crossing refuses with the ordinary
+  // not-equal diagnostic rather than crashing on the null shell.
+  Type shell = t.replaceImmediateSubElements(subAttrs, placeholders);
+  if (!shell) {
+    s.key = TypeAttr::get(t);
+    return s;
+  }
+  s.key = TypeAttr::get(shell);
   s.children = std::move(subTypes);
   return s;
 }
