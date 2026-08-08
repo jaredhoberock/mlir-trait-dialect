@@ -117,22 +117,18 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &sub
   // opaque to the generic replacer above, so a specializing clone would leave
   // them polymorphic while the surrounding value specializes. This rebuilds the
   // claim with one substitution applied to both endpoints atomically, through
-  // the fallible constructor. A witness's frozen certificate is deliberately
-  // NOT rewritten -- the audit is immutable, and the specialized result claim
-  // is verified against it as an instance.
+  // the fallible constructor. The endpoints are pure substitution: no ground
+  // projection is resolved inside them, matching the travel law the witness
+  // instance check enforces (the current endpoints must be a single-substitution
+  // instance of the frozen certificate, which a resolution would break). A
+  // witness's frozen certificate is likewise NOT rewritten -- the audit is
+  // immutable -- so resolution stays outside the frozen-evidence path entirely.
   replacer.addReplacement([=](ClaimType claim) -> std::optional<Type> {
     auto eq = claim.getEqualityAttr();
     if (!eq)
       return std::nullopt; // application claims: handled by the generic rule
-    auto substEndpoint = [&](Type endpoint) {
-      Type r = applySubstitutionToFixedPoint(subst, endpoint);
-      if (module)
-        r = resolveGroundProjectionsByLookup(r, module,
-                                             DemandOrigin::MonomorphStampOut);
-      return r;
-    };
-    Type newLhs = substEndpoint(eq.getLhs());
-    Type newRhs = substEndpoint(eq.getRhs());
+    Type newLhs = applySubstitutionToFixedPoint(subst, eq.getLhs());
+    Type newRhs = applySubstitutionToFixedPoint(subst, eq.getRhs());
     if (newLhs == eq.getLhs() && newRhs == eq.getRhs())
       return std::nullopt;
     return Type(ClaimType::getEquality(claim.getContext(), newLhs, newRhs));
