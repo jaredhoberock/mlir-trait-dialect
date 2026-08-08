@@ -1547,6 +1547,23 @@ Type instantiate(Type root, InstantiationMap &inst, uint64_t &idCounter) {
     return std::nullopt;
   });
 
+  // An equality claim's endpoints live in hand-written storage the generic
+  // replacer cannot see, so a formal claim<!poly = T> would keep a rigid poly
+  // and never share the inference variable the rest of the formal instantiates
+  // to. Instantiate both endpoints through the same map and rebuild the claim,
+  // so a claim endpoint variable unifies across a call boundary like any other.
+  // Registered last, so it takes priority over the generic rule for claims.
+  r.addReplacement([&](ClaimType claim) -> std::optional<Type> {
+    auto eq = claim.getEqualityAttr();
+    if (!eq)
+      return std::nullopt;
+    Type newLhs = instantiate(eq.getLhs(), inst, idCounter);
+    Type newRhs = instantiate(eq.getRhs(), inst, idCounter);
+    if (newLhs == eq.getLhs() && newRhs == eq.getRhs())
+      return std::nullopt;
+    return Type(ClaimType::getEquality(claim.getContext(), newLhs, newRhs));
+  });
+
   // this walks into types nested inside attributes (e.g., trait applications)
   // and replaces all GenericTypeInterface types according to (and extending) inst
   return r.replace(root);

@@ -612,7 +612,12 @@ llvm::SetVector<Type> demandsSpelledIn(ModuleOp module, bool inAttributes,
   auto collectClaims = [&](Type root) {
     root.walk([&](Type sub) {
       auto claim = dyn_cast<ClaimType>(sub);
-      if (claim && !claim.isProven() && claim.isMonomorphic())
+      // Only application claims are impl-resolution demands. An equality claim is
+      // established by trait.witness, not by selecting an impl, so it is never a
+      // demand the resolver serves -- and it carries no trait application to
+      // resolve for.
+      if (claim && claim.isApplication() && !claim.isProven() &&
+          claim.isMonomorphic())
         note(sub);
     });
   };

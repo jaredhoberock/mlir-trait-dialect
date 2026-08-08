@@ -865,6 +865,23 @@ inline Type applySubstitutionOnce(const llvm::DenseMap<Type,Type> &subst,
 
     return std::nullopt;
   });
+
+  // An equality claim's endpoints live in hand-written storage the generic
+  // replacer cannot see, so substitute both endpoints through the same map and
+  // rebuild the claim -- otherwise a nested equality claim would keep an
+  // endpoint a substitution still binds. Registered last, so it takes priority
+  // over the generic rule for claims.
+  replacer.addReplacement([&](ClaimType claim) -> std::optional<Type> {
+    auto eq = claim.getEqualityAttr();
+    if (!eq)
+      return std::nullopt;
+    Type newLhs = applySubstitutionOnce(subst, eq.getLhs());
+    Type newRhs = applySubstitutionOnce(subst, eq.getRhs());
+    if (newLhs == eq.getLhs() && newRhs == eq.getRhs())
+      return std::nullopt;
+    return Type(ClaimType::getEquality(claim.getContext(), newLhs, newRhs));
+  });
+
   return replacer.replace(root);
 }
 
