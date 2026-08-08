@@ -2223,9 +2223,13 @@ LogicalResult CoerceOp::verify() {
                          << " and result type " << getResult().getType()
                          << " are not equal under the cited equalities";
 
-  // 2. The no-proof-swap clause. The endpoints denote one claim once the
-  // equalities reconcile them, so a receipt present on the result and absent or
-  // different on the input is a swap the coerce may not perform.
+  // 2. The no-proof-swap clause runs deep. The endpoints denote one claim once
+  // the equalities reconcile them, so a receipt present on the result and absent
+  // or different on the input is a swap the coerce may not perform -- at every
+  // position an application claim sits, not only the root. Positions are paired
+  // by walking the two endpoint trees in lockstep off the same decomposition the
+  // congruence closure keys on, over the unstripped types so the receipts are
+  // still present.
   auto rejectProofSwap = [&](ClaimType fromClaim,
                              ClaimType toClaim) -> LogicalResult {
     if (!toClaim || !toClaim.isProven())
@@ -2238,8 +2242,41 @@ LogicalResult CoerceOp::verify() {
                               "exchange it for another";
     return success();
   };
-  if (failed(rejectProofSwap(dyn_cast<ClaimType>(getInput().getType()),
-                             dyn_cast<ClaimType>(getResult().getType()))))
+  // Does a proven application-claim receipt sit anywhere in this type?
+  std::function<bool(Type)> carriesProvenClaim = [&](Type t) -> bool {
+    if (auto c = dyn_cast<ClaimType>(t))
+      if (c.isApplication() && c.isProven())
+        return true;
+    for (Type child : decomposeTerm(t).children)
+      if (carriesProvenClaim(child))
+        return true;
+    return false;
+  };
+  std::function<LogicalResult(Type, Type)> checkNoSwap =
+      [&](Type in, Type out) -> LogicalResult {
+    if (failed(rejectProofSwap(dyn_cast<ClaimType>(in),
+                               dyn_cast<ClaimType>(out))))
+      return failure();
+    TermShape di = decomposeTerm(in);
+    TermShape dout = decomposeTerm(out);
+    if (di.key == dout.key && di.children.size() == dout.children.size()) {
+      for (auto [a, b] : llvm::zip(di.children, dout.children))
+        if (failed(checkNoSwap(a, b)))
+          return failure();
+      return success();
+    }
+    // The two trees diverge in shape here, so no further positions pair. A proof
+    // still standing on the result side has no input position to match and is a
+    // swap; a receipt-free divergence is the reconciliation the equalities
+    // already licensed.
+    if (carriesProvenClaim(out))
+      return emitOpError() << "may not swap the proof backing a claim nested in "
+                           << getResult().getType()
+                           << ": a coerce compares modulo a receipt but may not "
+                              "exchange it for another";
+    return success();
+  };
+  if (failed(checkNoSwap(getInput().getType(), getResult().getType())))
     return failure();
 
   return success();
