@@ -1436,27 +1436,20 @@ static FailureOr<Type> applyEqualityPremises(
   return applySubstitutionToFixedPoint(subst, ty);
 }
 
-// Without obligation mode the audit's judgment is exactly the citation's
-// binding: that the cited impl, specialized for the redex's trait application
-// and its associated-type arguments and read modulo the equality premises, binds
-// the projected associated type to the contractum. This binding-only judgment
-// does not extend to the cited impl's own assumptions -- a conditional impl
-// whose where-bounds have no satisfying impl for this instantiation still audits
-// clean here when its binding is correct. That binding-only scope is sound
-// because the compiler cites only impls the solver has already discharged, and
-// the lowering pipeline refuses any undischarged monomorphic claim after
-// instantiate-monomorphs.
+// The audit's judgment has two parts. The binding: the cited impl, specialized
+// for the redex's trait application and its associated-type arguments and read
+// modulo the equality premises, binds the projected associated type to the
+// contractum. The obligation discharge (obligation mode): the cited impl's own
+// assumptions, specialized for the redex, must each be supplied by an
+// application-arm premise, receipt-stripped and modulo the equality premises --
+// so a witness citing a conditional impl carries the claims that discharge its
+// assumptions. trait.witness's verifier runs both, and the seam-audit query
+// runs the binding half alone in binding mode and both in obligation mode.
 //
-// The obligation-discharge check below (obligation mode) additionally demands
-// the cited impl's own assumptions be supplied by application-arm premises. It
-// runs today only through the seam-audit query so a classifier can preview the
-// stronger verdict.
-//
-// XXX TODO: flip trait.witness's verifier to run obligation mode by default,
-// once the equality ABI supplies those premises at the call boundary. The
-// binding-only accept granted today then becomes a refusal, and the lit row that
-// pins it (witness_conditional_impl_binding_only_scope.mlir) must be
-// deliberately flipped.
+// The binding half deliberately stops at the impl's own assumptions and does not
+// reach its trait's requirements, which may quantify over GAT variables with no
+// ground instance at the witness; requirement discharge belongs to the proof and
+// birth machinery.
 LogicalResult mlir::trait::auditProjResolveCertificate(
     ModuleOp module, Type redex, Type contractum, FlatSymbolRefAttr citedImpl,
     ArrayRef<TypeEqualityAttr> premises,
@@ -1614,20 +1607,28 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
   // Equality proj-resolve arm: audit the citation at the symbol seam. The cited
   // impl must bind the associated type named by the frozen redex projection to
-  // the frozen contractum, once specialized for the redex's trait application.
-  // The module read runs here, at the sanctioned seam, on every full module
-  // verification -- not per consumer -- through the same audit the C-API
-  // seam-audit query runs, so a consumer classifying a certificate cannot
-  // disagree with this verdict.
+  // the frozen contractum, once specialized for the redex's trait application,
+  // AND the witness's premises must discharge the cited impl's own assumptions.
+  // The premises split by arm: equality claims are the comparison modulus,
+  // application claims discharge the assumptions. The module read runs here, at
+  // the sanctioned seam, on every full module verification -- not per consumer --
+  // through the same obligation-aware audit the C-API seam-audit query runs in
+  // obligation mode, so a consumer classifying a certificate cannot disagree
+  // with this verdict.
   if (auto cert = getCertificateAttr()) {
-    SmallVector<TypeEqualityAttr> premises;
+    SmallVector<TypeEqualityAttr> equalityPremises;
+    SmallVector<TraitApplicationAttr> applicationPremises;
     for (Value premise : getPremises())
-      if (auto claim = dyn_cast<ClaimType>(premise.getType()))
+      if (auto claim = dyn_cast<ClaimType>(premise.getType())) {
         if (auto eq = claim.getEqualityAttr())
-          premises.push_back(eq);
-    return auditProjResolveCertificate(module, cert.getRedex(),
-                                       cert.getContractum(), cert.getCitedImpl(),
-                                       premises, errFn);
+          equalityPremises.push_back(eq);
+        else if (claim.isApplication())
+          applicationPremises.push_back(claim.getTraitApplication());
+      }
+    return auditProjResolveCertificate(
+        module, cert.getRedex(), cert.getContractum(), cert.getCitedImpl(),
+        equalityPremises, errFn, applicationPremises,
+        /*dischargeObligations=*/true);
   }
 
   // Refl arm: nothing to audit at the seam.
