@@ -1348,6 +1348,22 @@ static FailureOr<Type> applyEqualityPremises(
   return applySubstitutionToFixedPoint(subst, ty);
 }
 
+// The audit's judgment is exactly the citation's binding: that the cited impl,
+// specialized for the redex's trait application and its associated-type
+// arguments and read modulo the equality premises, binds the projected
+// associated type to the contractum. It deliberately does not extend to the
+// cited impl's own requirements -- a conditional impl whose where-bounds have no
+// satisfying impl for this instantiation still audits clean here when its
+// binding is correct. That binding-only scope is sound because the compiler
+// cites only impls the solver has already discharged, and the lowering pipeline
+// refuses any undischarged monomorphic claim after instantiate-monomorphs.
+//
+// XXX TODO: strengthen this audit to also require the witness's premises to
+// discharge the cited impl's requirement list, once equality claims gain their
+// call-boundary channel to supply those premises. The binding-only accept
+// granted today then becomes a refusal, and the lit row that pins it
+// (witness_conditional_impl_binding_only_scope.mlir) must be deliberately
+// flipped.
 LogicalResult mlir::trait::auditProjResolveCertificate(
     ModuleOp module, Type redex, Type contractum, FlatSymbolRefAttr citedImpl,
     ArrayRef<TypeEqualityAttr> premises,

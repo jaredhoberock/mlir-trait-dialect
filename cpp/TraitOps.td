@@ -957,6 +957,22 @@ def WitnessOp : TraitDialectOp<"witness", [
         Under the collapse ruling this is the one axiom kind in the certificate
         grammar.
 
+        The proj-resolve audit's judgment is exactly the citation's binding:
+        the redex, the contractum, the cited impl, and the associated type's
+        own arguments. It does not extend to the cited impl's own requirements
+        -- a conditional impl whose where-bounds have no satisfying impl for the
+        instantiation still audits clean here when its binding is correct. That
+        binding-only scope is sound because the compiler cites only impls the
+        solver has already discharged, and the lowering pipeline refuses any
+        undischarged monomorphic claim after instantiate-monomorphs.
+
+        XXX TODO: strengthen the audit to also require the witness's premises to
+        discharge the cited impl's requirement list, once equality claims gain
+        their call-boundary channel to supply those premises. The binding-only
+        accept granted today then becomes a refusal, and the lit row pinning it
+        (witness_conditional_impl_binding_only_scope.mlir) must be deliberately
+        flipped.
+
       * refl: proof-free, cites nothing; the endpoints are identical at
         construction. It exists because a concrete instantiation of an equality
         predicate can specialize to `A = A`, and a caller must still supply a
