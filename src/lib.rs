@@ -107,7 +107,8 @@ unsafe extern "C" {
     fn traitWitnessSeamAuditAccepts(module: MlirModule,
                                     redex: MlirType, contractum: MlirType,
                                     impl_name: MlirStringRef,
-                                    premises: *const MlirType, num_premises: isize) -> bool;
+                                    premises: *const MlirType, num_premises: isize,
+                                    check_obligations: bool) -> bool;
     fn traitAssocTypeOpCreate(loc: MlirLocation,
                               name: MlirStringRef,
                               bound_type: MlirType,
@@ -652,9 +653,9 @@ pub fn coerce<'c>(loc: Location<'c>, input: Value<'c, '_>, equalities: &[Value<'
 /// Answer whether the projection-resolution witness seam audit accepts the
 /// certificate `(redex, contractum)` cited to `impl_name`, looking that impl up
 /// in `module` and matching modulo `premises` (equality-arm claim types, usually
-/// empty). This is the same check `trait.witness`'s equality arm runs at the
-/// symbol seam, so a consumer classifying a certificate against this answer
-/// cannot disagree with the verifier. Refusal is a plain `false`, not a
+/// empty). This is the same binding-only check `trait.witness`'s equality arm
+/// runs at the symbol seam, so a consumer classifying a certificate against this
+/// answer cannot disagree with the verifier. Refusal is a plain `false`, not a
 /// diagnostic.
 pub fn witness_seam_audit_accepts(
     module: &Module,
@@ -662,6 +663,33 @@ pub fn witness_seam_audit_accepts(
     contractum: Type,
     impl_name: &str,
     premises: &[Type],
+) -> bool {
+    witness_seam_audit(module, redex, contractum, impl_name, premises, false)
+}
+
+/// The obligation-aware seam audit: like [`witness_seam_audit_accepts`], but the
+/// cited impl's own assumptions must additionally be discharged by the
+/// application-arm claims among `premises` (the equality-arm claims remain the
+/// comparison modulus). This previews the verdict the equality arm's verifier
+/// reaches once its audit becomes obligation-aware, so a classifier can refuse
+/// exactly what the flipped verifier would before the flip lands.
+pub fn witness_seam_audit_accepts_obligation_mode(
+    module: &Module,
+    redex: Type,
+    contractum: Type,
+    impl_name: &str,
+    premises: &[Type],
+) -> bool {
+    witness_seam_audit(module, redex, contractum, impl_name, premises, true)
+}
+
+fn witness_seam_audit(
+    module: &Module,
+    redex: Type,
+    contractum: Type,
+    impl_name: &str,
+    premises: &[Type],
+    check_obligations: bool,
 ) -> bool {
     let raw: Vec<MlirType> = premises.iter().map(|t| t.to_raw()).collect();
     unsafe {
@@ -672,6 +700,7 @@ pub fn witness_seam_audit_accepts(
             StringRef::new(impl_name).to_raw(),
             raw.as_ptr(),
             raw.len() as isize,
+            check_obligations,
         )
     }
 }

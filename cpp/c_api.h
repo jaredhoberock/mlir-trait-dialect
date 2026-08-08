@@ -191,13 +191,19 @@ MlirOperation traitCoerceOpCreate(MlirLocation loc,
 /// verifySymbolUses: it looks the impl named by `implName` up in `module`,
 /// resolves `redex` through that impl's associated-type binding, applies the
 /// equality-claim `premises`, and compares the result against `contractum`.
-/// `premises` are equality-arm !trait.claim types; a non-equality premise
-/// makes the audit refuse. Diagnostics are suppressed -- a refusal is a
-/// classification answer, not a compile error.
+/// `premises` are !trait.claim types.
+///
+/// When `checkObligations` is false (binding mode, the verifier's verdict) the
+/// premises must all be equality claims -- a non-equality premise makes the
+/// audit refuse. When true (obligation mode) the premises split by arm: the
+/// equality claims are the comparison modulus, and the application claims must
+/// discharge the cited impl's own assumptions. Diagnostics are suppressed -- a
+/// refusal is a classification answer, not a compile error.
 bool traitWitnessSeamAuditAccepts(MlirModule module,
                                   MlirType redex, MlirType contractum,
                                   MlirStringRef implName,
-                                  MlirType *premises, intptr_t numPremises);
+                                  MlirType *premises, intptr_t numPremises,
+                                  bool checkObligations);
 
 /// Create a trait.assoc_type op. If boundType.ptr is non-null, the op gets a
 /// bound_type attribute (for use inside trait.impl); otherwise it is a bare

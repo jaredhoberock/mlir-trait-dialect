@@ -557,3 +557,47 @@ fn the_seam_audit_query_and_the_witness_verifier_share_one_verdict() {
     assert!(!trait_::witness_seam_audit_accepts(&module, redex, i32_ty, "Assoc_impl", &[]));
     assert!(!trait_::witness_seam_audit_accepts(&module, redex, i64_ty, "Missing_impl", &[]));
 }
+
+#[test]
+fn the_obligation_mode_seam_audit_demands_the_cited_impl_s_assumptions() {
+    let registry = DialectRegistry::new();
+    register_all_dialects(&registry);
+    let context = Context::new();
+    context.append_dialect_registry(&registry);
+    trait_::register(&context);
+    context.load_all_available_dialects();
+
+    // @Has_tuple binds @Has[tuple<!U>]::Out to i64 and requires @X[!U]. The
+    // module carries no impl of @X, so for !U = i32 the assumption is unmet.
+    let module = Module::parse(
+        &context,
+        "!U = !trait.poly<0>\n\
+         trait.trait @X[!U] {}\n\
+         trait.trait @Has[!U] { trait.assoc_type @Out }\n\
+         trait.impl @Has_tuple for @Has[tuple<!U>] where [@X[!U]] { trait.assoc_type @Out = i64 }\n",
+    )
+    .expect("the fixture module parses");
+
+    let redex = melior::ir::Type::parse(&context, "!trait.proj<@Has[tuple<i32>], \"Out\">")
+        .expect("the redex projection parses");
+    let i64_ty: melior::ir::Type = IntegerType::new(&context, 64).into();
+    let i32_ty: melior::ir::Type = IntegerType::new(&context, 32).into();
+
+    // Binding mode accepts: the impl binds the redex to i64, its requirements
+    // unread -- the verifier's verdict today.
+    assert!(trait_::witness_seam_audit_accepts(&module, redex, i64_ty, "Has_tuple", &[]));
+
+    // Obligation mode with no premise refuses: the impl's @X[i32] assumption is
+    // undischarged.
+    assert!(!trait_::witness_seam_audit_accepts_obligation_mode(
+        &module, redex, i64_ty, "Has_tuple", &[]
+    ));
+
+    // Supplying an @X[i32] application premise discharges the assumption, and the
+    // obligation-mode audit accepts.
+    let x_i32 = trait_::trait_application_attr(&context, "X", &[i32_ty]);
+    let x_i32_claim: melior::ir::Type = trait_::claim_type(&context, x_i32).into();
+    assert!(trait_::witness_seam_audit_accepts_obligation_mode(
+        &module, redex, i64_ty, "Has_tuple", &[x_i32_claim]
+    ));
+}

@@ -37,10 +37,22 @@ public:
 /// null) receives the diagnostic on refusal; a caller that treats refusal as a
 /// classification answer rather than an error suppresses it at the diagnostic
 /// engine.
+///
+/// When `dischargeObligations` is set, the audit additionally requires the cited
+/// impl's own assumptions -- specialized for the redex's application -- each to
+/// be discharged by one of the application-arm `obligationPremises`, compared
+/// receipt-stripped and modulo the equality `premises`. It deliberately does not
+/// reach the cited impl's trait requirements, which may quantify over GAT
+/// variables with no ground instance at the witness; requirement discharge
+/// belongs to the proof and birth machinery. The obligation mode is off by
+/// default -- the verifier stays binding-only -- and is turned on only by the
+/// obligation-mode seam-audit query.
 LogicalResult auditProjResolveCertificate(
     ModuleOp module, Type redex, Type contractum, FlatSymbolRefAttr citedImpl,
     ArrayRef<TypeEqualityAttr> premises,
-    llvm::function_ref<InFlightDiagnostic()> err);
+    llvm::function_ref<InFlightDiagnostic()> err,
+    ArrayRef<TraitApplicationAttr> obligationPremises = {},
+    bool dischargeObligations = false);
 
 } // end mlir::trait
 

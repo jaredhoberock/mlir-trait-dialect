@@ -504,22 +504,30 @@ MlirOperation traitCoerceOpCreate(MlirLocation loc,
 bool traitWitnessSeamAuditAccepts(MlirModule wrappedModule,
                                   MlirType redex, MlirType contractum,
                                   MlirStringRef implName,
-                                  MlirType *premises, intptr_t numPremises) {
+                                  MlirType *premises, intptr_t numPremises,
+                                  bool checkObligations) {
   ModuleOp module = unwrap(wrappedModule);
   MLIRContext *ctx = module.getContext();
   FlatSymbolRefAttr implRef =
       FlatSymbolRefAttr::get(ctx, StringRef(implName.data, implName.length));
 
-  SmallVector<TypeEqualityAttr> premiseAttrs;
-  premiseAttrs.reserve(numPremises);
+  // Premises split by arm: the equality claims are the comparison modulus, the
+  // application claims discharge the impl's assumptions in obligation mode. In
+  // binding mode an application premise is illegal, matching the verifier's
+  // equality-only filter.
+  SmallVector<TypeEqualityAttr> equalityPremises;
+  SmallVector<TraitApplicationAttr> applicationPremises;
   for (intptr_t i = 0; i < numPremises; ++i) {
     auto claim = dyn_cast<ClaimType>(unwrap(premises[i]));
     if (!claim)
       return false;
-    auto eq = claim.getEqualityAttr();
-    if (!eq)
+    if (auto eq = claim.getEqualityAttr()) {
+      equalityPremises.push_back(eq);
+    } else if (checkObligations && claim.isApplication()) {
+      applicationPremises.push_back(claim.getTraitApplication());
+    } else {
       return false;
-    premiseAttrs.push_back(eq);
+    }
   }
 
   // A refused audit is a classification answer, not a compile error, so swallow
@@ -527,7 +535,8 @@ bool traitWitnessSeamAuditAccepts(MlirModule wrappedModule,
   ScopedDiagnosticHandler handler(ctx, [](Diagnostic &) { return success(); });
   auto err = [&] { return emitError(UnknownLoc::get(ctx)); };
   return succeeded(auditProjResolveCertificate(
-      module, unwrap(redex), unwrap(contractum), implRef, premiseAttrs, err));
+      module, unwrap(redex), unwrap(contractum), implRef, equalityPremises, err,
+      applicationPremises, checkObligations));
 }
 
 MlirOperation traitAssocTypeOpCreate(MlirLocation loc,
