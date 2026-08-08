@@ -1223,11 +1223,33 @@ static std::pair<SmallVector<Type, 4>, SmallVector<Attribute, 4>> getImmediateSu
   return std::pair(childTypes, childAttrs);
 }
 
-static LogicalResult unifyStructurally(Type formal,
-                                       Type actual,
-                                       ModuleOp module,
-                                       UnificationMap &subst,
-                                       llvm::function_ref<InFlightDiagnostic()> err) {
+/// Whether `ty` carries a projection all of whose arguments are concrete, i.e.
+/// one a unique module-visible impl could resolve. Only such a projection lets
+/// the resolve-then-rebuild step in `unifyStructurally` change a type, so its
+/// presence gates that step.
+static bool carriesResolvableProjection(Type ty) {
+  bool found = false;
+  ty.walk([&](Type sub) -> WalkResult {
+    if (auto proj = dyn_cast<ProjectionType>(sub);
+        proj && !isPolymorphicType(proj)) {
+      found = true;
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+  return found;
+}
+
+/// Equate two types by equating their children: same constructor, same arity,
+/// equal attributes, then unify corresponding child types. This is exact only
+/// for injective constructors; a constructor that normalizes its arguments when
+/// a type is built can make two types equal whose children are not, which
+/// `unifyStructurally` reconciles before reaching here.
+static LogicalResult unifyChildwise(Type formal,
+                                    Type actual,
+                                    ModuleOp module,
+                                    UnificationMap &subst,
+                                    llvm::function_ref<InFlightDiagnostic()> err) {
   if (formal == actual) return success();
 
   // check for same
@@ -1276,6 +1298,68 @@ static LogicalResult unifyStructurally(Type formal,
   }
 
   return success();
+}
+
+/// Unify two types that neither side drove through UnificationTypeInterface.
+///
+/// The child-wise decomposition in `unifyChildwise` assumes each type
+/// constructor is injective. A constructor that normalizes its arguments when a
+/// type is built is not injective: two types it makes equal can decompose into
+/// children that are not, so equating the children misses the equality the
+/// constructor establishes. When either side carries a ground projection the
+/// module can resolve, resolve it and let each enclosing type rebuild through
+/// that type's own constructor -- the same construction-time normalization then
+/// applies to the resolved form -- and unify the rebuilt types.
+///
+/// The rebuild is attempted only when the direct decomposition cannot already
+/// equate the two, so a decomposition that succeeds keeps its exact result and
+/// its exact demand record. The failed decomposition runs on a saved
+/// substitution with its diagnostic held back so it leaves no binding behind;
+/// the resolution probe is an answer computed only to decide whether a rebuild
+/// changes anything, so it runs as a cross-check and records nothing.
+///
+/// This terminates. resolveGroundProjectionsByLookup returns a fixed point of
+/// its own rewrite, so a rebuilt type carries no resolvable ground projection
+/// left for this step to change; the re-unification either settles the two types
+/// or falls to `unifyChildwise`, which recurses only on strictly smaller
+/// children.
+static LogicalResult unifyStructurally(Type formal,
+                                       Type actual,
+                                       ModuleOp module,
+                                       UnificationMap &subst,
+                                       llvm::function_ref<InFlightDiagnostic()> err) {
+  if (formal == actual) return success();
+
+  // With no resolvable projection to rebuild, the decomposition is exact.
+  if (!module || !(carriesResolvableProjection(formal) ||
+                   carriesResolvableProjection(actual)))
+    return unifyChildwise(formal, actual, module, subst, err);
+
+  // Try the decomposition once, on a saved substitution and with the diagnostic
+  // held back. A decomposition that succeeds is the answer and has recorded
+  // exactly what a direct decomposition would; a failure must leave no binding
+  // and no diagnostic behind so the rebuild below runs cleanly.
+  UnificationMap saved = subst;
+  if (succeeded(unifyChildwise(formal, actual, module, subst, /*err=*/{})))
+    return success();
+  subst = saved;
+
+  Type resolvedFormal, resolvedActual;
+  {
+    DemandCrossCheckScope quiet;
+    resolvedFormal = resolveGroundProjectionsByLookup(
+        formal, module, DemandOrigin::Unification);
+    resolvedActual = resolveGroundProjectionsByLookup(
+        actual, module, DemandOrigin::Unification);
+  }
+  if (resolvedFormal != formal || resolvedActual != actual)
+    return unify(resolvedFormal, resolvedActual, module, subst, err);
+
+  // Nothing resolved: the decomposition's failure is the answer. Re-run it only
+  // to surface the diagnostic; its recording repeats the held-back attempt
+  // above, so keep it silent.
+  DemandCrossCheckScope quiet;
+  return unifyChildwise(formal, actual, module, subst, err);
 }
 
 /// Records a monomorphic projection the unifier let stand: it equated the two
