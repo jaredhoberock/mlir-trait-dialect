@@ -334,6 +334,13 @@ AttrTypeReplacer ImplResolver::makeProvenClaimReplacer() const {
         // it is left alone rather than looked up again.
         if (claim.isProven())
           return std::nullopt;
+        // The memo is keyed by trait application, and only the application arm
+        // carries one. An equality-arm claim holds a type equality, never an
+        // impl-resolution proof, so it is never respelled here; the arm is
+        // dispatched before the application is read, which would otherwise
+        // assert.
+        if (!claim.isApplication())
+          return std::nullopt;
         auto it = memo.proofMemo.find(claim.getTraitApplication());
         if (it == memo.proofMemo.end())
           return std::nullopt;
