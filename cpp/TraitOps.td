@@ -381,12 +381,25 @@ def ImplOp : TraitDialectOp<"impl", [
     second parallel array. Application entries are discharged when the impl is
     selected; equality entries are birth-checked against the impl's own bindings
     and drive the equality-arm `trait.assume` inside the impl's method bodies.
+
+    The optional `premises` array carries projection-resolution certificates for
+    the ground sibling projections this impl's own bindings cannot resolve. Each
+    entry names a redex projection, the type it resolves to, and the impl that
+    binds it. The verifier audits every entry against its cited impl and then
+    replays it as a local resolution rule while comparing this impl's method
+    signatures and its equality endpoints, so a redex a sibling impl resolves is
+    reduced without the verifier enumerating candidate impls. The replayed rules
+    ride the same associated-type replacer the impl's own bindings use: they are
+    blind inside a walk-opaque equality endpoint and cure no
+    equality-claim-parameter mismatch, exactly the reach the own bindings have.
   }];
 
   let arguments = (ins
     SymbolNameAttr:$sym_name,
     TraitApplicationAttr:$self_application,
-    PredicateArrayAttr:$assumptions
+    PredicateArrayAttr:$assumptions,
+    OptionalAttr<TypedArrayAttrBase<WitnessCertificateAttr,
+        "array of projection-resolution certificates">>:$premises
   );
   let regions = (region SizedRegion<1>:$body);
 

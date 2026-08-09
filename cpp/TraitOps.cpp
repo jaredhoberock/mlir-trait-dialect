@@ -441,6 +441,56 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (failed(getAssumptions().verifySymbolUses(getOperation(), symbolTable)))
     return failure();
 
+  // Audit the declared projection-resolution premises and turn each into a local
+  // resolution rule the comparisons below replay. A premise certifies that a
+  // sibling impl binds a ground projection redex to a contractum; the audit reads
+  // that cited impl at the sanctioned symbol seam -- obligation-aware, so a
+  // premise citing a conditional impl is legal exactly when this impl's own
+  // where-clause covers the cited impl's assumptions -- and every audited premise
+  // then resolves its redex the way this impl's own bindings resolve its own
+  // projections. The per-entry audit runs with an EMPTY equality modulus: sibling
+  // premises never serve as each other's modulus, because an attribute array has
+  // no dominance and mutual justification could ground a false equality on
+  // nothing. The comparisons add these rules after their own-binding rule and let
+  // the fixed-point walk apply them innermost-first, so a nested redex reduces
+  // its inner application before its outer one.
+  struct PremiseRule {
+    ImplOp impl;
+    TraitApplicationAttr app;
+    SpecializationMap subst;
+  };
+  SmallVector<PremiseRule> premiseRules;
+  if (ArrayAttr premises = getPremisesAttr()) {
+    SmallVector<TraitApplicationAttr> obligationPremises(
+        getAssumptions().getApplications());
+    for (Attribute entry : premises) {
+      auto cert = dyn_cast<WitnessCertificateAttr>(entry);
+      if (!cert)
+        return emitOpError() << "premise entry must be a projection-resolution "
+                                "certificate, found " << entry;
+      auto redexProj = dyn_cast<ProjectionType>(cert.getRedex());
+      if (!redexProj)
+        return emitOpError() << "premise redex must be a projection, found "
+                             << cert.getRedex();
+      if (failed(auditProjResolveCertificate(
+              *module, cert.getRedex(), cert.getContractum(), cert.getCitedImpl(),
+              /*premises=*/{}, errFn, obligationPremises,
+              /*dischargeObligations=*/true)))
+        return failure();
+      auto citedImpl = mlir::SymbolTable::lookupNearestSymbolFrom<ImplOp>(
+          *module, cert.getCitedImpl());
+      ClaimType redexClaim =
+          ClaimType::get(getContext(), redexProj.getTraitApplication());
+      auto subst = citedImpl.buildSubstitutionForSelfClaim(redexClaim, errFn);
+      if (failed(subst)) return failure();
+      premiseRules.push_back({citedImpl, redexProj.getTraitApplication(), *subst});
+    }
+  }
+  auto addPremiseRules = [&](NormalizationContext &ctx) {
+    for (const PremiseRule &r : premiseRules)
+      ctx.addLocalProjectionRule(r.impl, r.app, r.subst);
+  };
+
   // Get the trait
   auto traitOp = getTrait();
 
@@ -484,6 +534,7 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
       NormalizationContext normalization;
       normalization.addLocalProjectionRule(
           *this, getSelfApplication(), *traitSubst);
+      addPremiseRules(normalization);
 
       // Check that the impl method's signature can specialize to the expected
       // signature. Only projections naming this impl's exact trait application
@@ -595,6 +646,7 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     if (failed(reqSubst)) return failure();
     NormalizationContext eqNorm;
     eqNorm.addLocalProjectionRule(*this, getSelfApplication(), *reqSubst);
+    addPremiseRules(eqNorm);
 
     for (ClaimType req : *specReqs) {
       auto eq = req.getEqualityAttr();
@@ -635,6 +687,7 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     if (failed(subst)) return failure();
     NormalizationContext eqNorm;
     eqNorm.addLocalProjectionRule(*this, getSelfApplication(), *subst);
+    addPremiseRules(eqNorm);
 
     for (Attribute pred : getAssumptions()) {
       auto eq = dyn_cast<TypeEqualityAttr>(pred);
@@ -1135,6 +1188,18 @@ ParseResult ImplOp::parse(OpAsmParser &p, OperationState &result) {
   }
   result.addAttribute("assumptions", assumptions);
 
+  // Optional projection-resolution premises: an array of certificates resolving
+  // the ground sibling projections this impl's own bindings do not. Absent
+  // premises leave the printed and parsed form byte-identical to an impl without
+  // them; the synthesized sym_name reads only the self application and
+  // assumptions, so premises never perturb it.
+  if (succeeded(p.parseOptionalKeyword("premises"))) {
+    ArrayAttr premises;
+    if (p.parseAttribute(premises))
+      return failure();
+    result.addAttribute("premises", premises);
+  }
+
   // sym_name: use parsed or synthesize from parameters
   StringAttr symNameAttr = parsedSymName
     ? parsedSymName
@@ -1177,10 +1242,18 @@ void ImplOp::print(OpAsmPrinter &printer) {
     printer << "where ";
     getAssumptions().print(printer);
   }
-  
+
+  // print premises if present and non-empty
+  if (ArrayAttr premises = getPremisesAttr()) {
+    if (!premises.empty()) {
+      printer << "premises ";
+      printer.printAttribute(premises);
+    }
+  }
+
   printer.printOptionalAttrDictWithKeyword(
-    (*this)->getAttrs(), 
-    /*elidedAttrs=*/{"sym_name", "self_application", "assumptions"}
+    (*this)->getAttrs(),
+    /*elidedAttrs=*/{"sym_name", "self_application", "assumptions", "premises"}
   );
   printer << " ";
   printer.printRegion(getBody());

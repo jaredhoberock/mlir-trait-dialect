@@ -4,6 +4,7 @@ use melior::{
     Context, pass::Pass, StringRef,
     ir::{AttributeLike, Location, Module, Operation, Type, TypeLike, Value, ValueLike},
     ir::attribute::Attribute,
+    ir::operation::OperationLike,
 };
 use mlir_sys::{
     MlirAttribute, MlirContext, MlirLocation, MlirModule,
@@ -41,6 +42,8 @@ unsafe extern "C" {
                                             sym_name: MlirStringRef,
                                             self_trait_app: MlirAttribute,
                                             predicates: *const MlirAttribute, num_predicates: isize) -> MlirOperation;
+    fn traitImplOpSetPremises(impl_op: MlirOperation,
+                              premises: *const MlirAttribute, num_premises: isize) -> bool;
     fn traitMethodCallOpCreate(loc: MlirLocation,
                                trait_name: MlirStringRef,
                                method_name: MlirStringRef,
@@ -377,6 +380,19 @@ pub fn impl_named_with_predicates<'c>(loc: Location<'c>,
         predicates.as_ptr() as *const _,
         predicates.len() as isize,
     ))}
+}
+
+/// Attach projection-resolution premises to an existing `trait.impl` op. Each
+/// entry is a `#trait.certificate` attribute resolving a ground sibling
+/// projection the impl's own bindings do not; the impl verifier audits them at
+/// birth. Returns false if an entry is not a certificate. An empty slice removes
+/// any premises the impl already carries. Premises are attached after the impl
+/// header prepass completes, so every cited impl is present in the module.
+pub fn set_impl_premises<'c>(impl_op: &Operation<'c>, premises: &[Attribute<'c>]) -> bool {
+    let raw: Vec<MlirAttribute> = premises.iter().map(|a| a.to_raw()).collect();
+    unsafe {
+        traitImplOpSetPremises(impl_op.to_raw(), raw.as_ptr(), raw.len() as isize)
+    }
 }
 
 pub fn method_call<'c>(loc: Location<'c>,

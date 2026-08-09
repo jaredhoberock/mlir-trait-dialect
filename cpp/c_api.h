@@ -66,6 +66,14 @@ MlirOperation traitImplOpCreateNamedWithPredicates(MlirLocation loc,
                                                    MlirAttribute selfTraitApp,
                                                    MlirAttribute* predicates, intptr_t numPredicates);
 
+/// Attach projection-resolution premises to a trait.impl operation. Each
+/// `premises` entry must be a `#trait.certificate` attribute; a non-certificate
+/// entry leaves the impl unchanged and returns false. The premises resolve the
+/// ground sibling projections the impl's own bindings do not, and are audited by
+/// the impl verifier. Attaching an empty array removes any existing premises.
+bool traitImplOpSetPremises(MlirOperation implOp,
+                            MlirAttribute* premises, intptr_t numPremises);
+
 /// Create a trait.method.call operation
 MlirOperation traitMethodCallOpCreate(MlirLocation loc,
                                       MlirStringRef traitName,

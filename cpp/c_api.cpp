@@ -203,6 +203,27 @@ MlirOperation traitImplOpCreateNamedWithPredicates(MlirLocation loc,
   return wrap(op.getOperation());
 }
 
+bool traitImplOpSetPremises(MlirOperation wrappedImpl,
+                            MlirAttribute* premises, intptr_t numPremises) {
+  auto impl = dyn_cast_or_null<ImplOp>(unwrap(wrappedImpl));
+  if (!impl) return false;
+
+  SmallVector<Attribute> certs;
+  certs.reserve(numPremises);
+  for (intptr_t i = 0; i < numPremises; ++i) {
+    Attribute a = unwrap(premises[i]);
+    if (!isa<WitnessCertificateAttr>(a))
+      return false;
+    certs.push_back(a);
+  }
+
+  if (certs.empty())
+    impl.removePremisesAttr();
+  else
+    impl.setPremisesAttr(ArrayAttr::get(impl.getContext(), certs));
+  return true;
+}
+
 MlirOperation traitMethodCallOpCreate(MlirLocation loc,
                                       MlirStringRef traitName,
                                       MlirStringRef methodName,
