@@ -5,12 +5,11 @@
 
 // A trait method returns a sibling trait's associated type whose only impl is
 // CONDITIONAL. Substituting the impl's self application makes it the ground
-// projection Sibling[i64]::Elem. The impl declaration boundary resolves it by
-// module-visible impl lookup: the sole candidate impl is selected by head match
-// alone, and its where-clause premise (@Needs[i64], which no impl proves) is
-// NOT evaluated. A well-formed program discharges that head claim where the
-// projection is spelled; the boundary trusts its producer and does not re-prove
-// it, so the impl verifies.
+// projection Sibling[i64]::Elem. The host impl declares a premise citing that
+// conditional impl; the audit is obligation-aware, so the premise is legal only
+// because the host impl's own where-clause carries @Needs[i64], which discharges
+// the cited impl's assumption. The verifier never enumerates candidates or
+// trusts an unproven head claim -- it replays the audited premise and accepts.
 
 !S = !trait.poly<0>
 
@@ -30,7 +29,8 @@ trait.trait @Host[!S] {
 }
 
 // CHECK: trait.impl @Host_i64
-trait.impl @Host_i64 for @Host[i64] {
+trait.impl @Host_i64 for @Host[i64] where [@Needs[i64]]
+    premises [#trait<certificate !trait.proj<@Sibling[i64], "Elem"> resolves i64 by @Sibling_i64>] {
   trait.assoc_type @Out = i64
   func.func @make(%x: i64) -> i64 {
     %r = ub.poison : i64

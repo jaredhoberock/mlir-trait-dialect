@@ -552,28 +552,17 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
       // Substituting this impl's self application into the trait method
       // signature can mint a ground projection redex the impl's own bindings do
       // not resolve -- a sibling impl's application, e.g. Group[coop.block]::
-      // Shape. Resolve those redexes on BOTH signatures by module-visible impl
-      // lookup so the strict comparison reads two spellings reduced to the same
-      // grade; comparing a normalized spelling against an un-normalized one is
-      // not a post-substitution comparison. The lookup is a read-only
-      // named-fact read (the engine monomorph stamp-out and the proof recorder
-      // already run), minting no proof and mutating no IR. The impl side is the
-      // front end's own emitted spelling, which already resolves every ground
-      // redex its consuming verifier reads locally.
-      Type expectedResolved = resolveGroundProjectionsByLookup(
-          Type(*expectedMethodTy), *module,
-          DemandOrigin::ImplSignatureVerification);
-      Type actualResolved = resolveGroundProjectionsByLookup(
-          Type(*actualMethodTy), *module,
-          DemandOrigin::ImplSignatureVerification);
-      // Both signatures are reduced to the same grade; compare their spellings
-      // with the module-free comparator (no further ground-redex resolution).
-      // Any projection that survived the lookup above must match literally.
-      if (failed(buildSpecialization(expectedResolved, actualResolved,
-                                     ModuleOp(), errFn))) {
+      // Shape. A declared premise, audited and replayed above, reduces exactly
+      // those redexes, so both signatures reach this comparison at the same
+      // grade. Compare their spellings with the module-free comparator: the
+      // verifier enumerates no candidate impls. Any projection still standing is
+      // not ground (the front end quotes an unresolved redex symbolically), so it
+      // must match literally.
+      if (failed(buildSpecialization(Type(*expectedMethodTy),
+                                     Type(*actualMethodTy), ModuleOp(), errFn))) {
         return emitOpError() << "method '" << name << "' has incompatible signature: "
-                             << "expected " << expectedResolved
-                             << " but found " << actualResolved;
+                             << "expected " << *expectedMethodTy
+                             << " but found " << *actualMethodTy;
       }
     } else if (auto assocType = dyn_cast<AssocTypeOp>(op)) {
       StringRef name = assocType.getSymName();
@@ -623,13 +612,16 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // Birth-check the trait's equality requirements against this impl. Each
   // equality the trait requires (e.g. Self::Output = Self) must hold once its
   // parameters are this impl's self arguments: the projection endpoints resolve
-  // -- through this impl's own bindings for its own application, or by module
-  // lookup for a sibling -- and the two spellings must agree. Application
+  // -- through this impl's own bindings for its own application, or a declared
+  // premise for a sibling -- and the two spellings must agree. Application
   // requirements are proved at impl selection, not here. An endpoint that stays
   // symbolic cannot be decided against the impl's bindings at birth and is
   // accepted here; its correctness is established where the impl is selected and,
   // for evidence that is consumed, at the use site (a false equality's coerce
-  // fails the erase barrier). Only a ground mismatch is a birth error.
+  // fails the erase barrier). Only a ground mismatch is a birth error. A ground
+  // sibling requirement no premise resolves stays symbolic and defers -- and a
+  // false requirement whose evidence is never consumed is accepted by design, the
+  // same inert corner Rust's unsatisfiable where-clause bounds occupy.
   //
   // Guarded on the trait actually carrying an equality requirement: a trait
   // with none owes no birth check, and the guard keeps the self-claim
@@ -657,28 +649,23 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
       auto rhsN = eqNorm.normalize(eq.getRhs(), errFn);
       if (failed(rhsN)) return failure();
 
-      Type lhsR = resolveGroundProjectionsByLookup(
-          *lhsN, *module, DemandOrigin::ImplSignatureVerification);
-      Type rhsR = resolveGroundProjectionsByLookup(
-          *rhsN, *module, DemandOrigin::ImplSignatureVerification);
-
-      if (isGroundType(lhsR) && isGroundType(rhsR) && lhsR != rhsR)
+      if (isGroundType(*lhsN) && isGroundType(*rhsN) && *lhsN != *rhsN)
         return emitOpError()
                << "does not satisfy trait-header equality requirement " << req
-               << ": " << lhsR << " and " << rhsR << " are not the same type";
+               << ": " << *lhsN << " and " << *rhsN << " are not the same type";
     }
   }
 
   // Birth-check this impl's own equality assumptions. Each equality entry of the
   // impl's where clause (e.g. F::Output = Acc) is spelled in the impl's own
   // variables, so no trait-to-impl specialization is needed: normalize the
-  // endpoints through this impl's own bindings for its own application, resolve
-  // any ground projection redex by module lookup, and refuse only a ground
-  // mismatch. A symbolic endpoint cannot be decided at birth and is accepted
-  // here, exactly as a trait-header equality requirement is: its correctness is
-  // established where the impl is selected and, for evidence that is consumed, at
-  // the use site (a false equality's coerce fails the erase barrier); an unused
-  // one is inert. Guarded on the impl actually assuming an equality.
+  // endpoints through this impl's own bindings for its own application and a
+  // declared premise for a sibling, and refuse only a ground mismatch. A symbolic
+  // endpoint cannot be decided at birth and is accepted here, exactly as a
+  // trait-header equality requirement is: its correctness is established where the
+  // impl is selected and, for evidence that is consumed, at the use site (a false
+  // equality's coerce fails the erase barrier); an unused one is inert. Guarded on
+  // the impl actually assuming an equality.
   bool assumesEquality = llvm::any_of(getAssumptions(), [](Attribute pred) {
     return mlir::isa<TypeEqualityAttr>(pred);
   });
@@ -698,15 +685,10 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
       auto rhsN = eqNorm.normalize(eq.getRhs(), errFn);
       if (failed(rhsN)) return failure();
 
-      Type lhsR = resolveGroundProjectionsByLookup(
-          *lhsN, *module, DemandOrigin::ImplSignatureVerification);
-      Type rhsR = resolveGroundProjectionsByLookup(
-          *rhsN, *module, DemandOrigin::ImplSignatureVerification);
-
-      if (isGroundType(lhsR) && isGroundType(rhsR) && lhsR != rhsR)
+      if (isGroundType(*lhsN) && isGroundType(*rhsN) && *lhsN != *rhsN)
         return emitOpError()
                << "does not satisfy its own equality predicate " << eq
-               << ": " << lhsR << " and " << rhsR << " are not the same type";
+               << ": " << *lhsN << " and " << *rhsN << " are not the same type";
     }
   }
 
@@ -718,9 +700,12 @@ bool ImplOp::isUnconditional() {
   // 1. it is monomorphic (no type parameters),
   // 2. its TraitOp has no application requirements, and
   // 3. it assumes no application predicates.
-  // A birth-checked equality -- whether a trait-header requirement or one of
-  // this impl's own assumptions -- does not make an impl conditional, so only
-  // application predicates count against unconditionality.
+  // An equality predicate -- whether a trait-header requirement or one of this
+  // impl's own assumptions -- does not make an impl conditional: it is settled at
+  // birth when its endpoints reduce to ground (through the impl's own bindings or
+  // a declared premise) and deferred to selection and use otherwise, never proved
+  // through impl selection. So only application predicates count against
+  // unconditionality.
   return getTypeParams().empty() &&
          !getAssumptions().hasApplications() &&
          !getTrait().getRequirements().hasApplications();

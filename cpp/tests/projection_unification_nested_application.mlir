@@ -6,8 +6,10 @@
 // Projection unification must recurse through trait-application type arguments.
 // The impl method below specializes @Base[i32]::Assoc to i64. Its where-clause
 // claim contains two projections of @Fn::Output whose @Fn argument lists differ
-// only by that nested spelling. The impl verifier should accept those as the
-// same signature under the impl's associated-type binding.
+// only by that nested spelling. @Base[i32]::Assoc is a sibling projection this
+// impl's own bindings do not resolve, so the impl declares a premise citing
+// @Base_i32; the verifier replays it and accepts the two spellings as the same
+// signature.
 
 !S = !trait.poly<0>
 !F = !trait.poly<1>
@@ -40,7 +42,8 @@ trait.impl @Base_i32 for @Base[i32] {
   trait.assoc_type @Assoc = i64
 }
 
-trait.impl @Trait_i32 for @Trait[i32] {
+trait.impl @Trait_i32 for @Trait[i32]
+    premises [#trait<certificate !trait.proj<@Base[i32], "Assoc"> resolves i64 by @Base_i32>] {
   func.func @method(
     %self: i32,
     %f: !F,

@@ -6,8 +6,8 @@
 // A trait method returns a SIBLING trait's associated type. Substituting the
 // impl's self application turns that into a ground projection
 // (Sibling[i64]::Elem) that this impl's own bindings do not resolve. The impl
-// declaration boundary resolves it by module-visible impl lookup (here to i32)
-// before the strict comparison, so an impl method returning a DIFFERENT rigid
+// declares a premise citing @Sibling_i64, so the verifier replays it (to i32)
+// before the strict comparison, and an impl method returning a DIFFERENT rigid
 // type is rejected: the resolved sibling grade meets the impl's rigid return
 // and the two spellings differ.
 
@@ -28,7 +28,8 @@ trait.trait @Host[!S] {
 
 // expected-error @below {{type mismatch: expected 'i32' but found 'i64'}}
 // expected-error @below {{has incompatible signature}}
-trait.impl @Host_i64 for @Host[i64] {
+trait.impl @Host_i64 for @Host[i64]
+    premises [#trait<certificate !trait.proj<@Sibling[i64], "Elem"> resolves i32 by @Sibling_i64>] {
   trait.assoc_type @Out = i64
   // The sibling projection resolves to i32, but this method returns i64.
   func.func @make(%x: i64) -> i64 {

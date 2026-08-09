@@ -325,8 +325,6 @@ enum class DemandOrigin : uint8_t {
   /// A read of the recorded facts falling back to the module's impls for a
   /// projection impl selection has settled nothing for.
   RecordedFactRead,
-  /// ImplOp::verifySymbolUses comparing an impl method signature.
-  ImplSignatureVerification,
   /// A call op's verifier comparing its formal and actual signatures.
   CallSignatureVerification,
   /// A proof op's verifier walking the proof structure it declares.
@@ -348,7 +346,6 @@ inline bool recordsToLedger(DemandOrigin origin) {
   case DemandOrigin::CallSiteSpecialization:
   case DemandOrigin::RecordedFactRead:
     return true;
-  case DemandOrigin::ImplSignatureVerification:
   case DemandOrigin::CallSignatureVerification:
   case DemandOrigin::ProofVerification:
   case DemandOrigin::ModuleFreeComparison:
