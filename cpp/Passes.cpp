@@ -1809,17 +1809,19 @@ static Type resolveGroundProjectionsRecorded(Type type,
   return current;
 }
 
-/// Bridge each standing derive operand the respell rounds drifted from the
-/// specialized assumption its cited impl requires.
+/// Bridge each standing derive operand that projection resolution drifted from
+/// the specialized assumption its cited impl requires.
 ///
 /// A trait.derive discharges its impl's application-arm assumptions by exact
 /// spelling: each operand claim must equal the assumption the impl requires
 /// under the derived claim's specialization. The rounds above resolve a
 /// where-clause projection over impl variables to its ground spelling on the
-/// operand value (`respellProvenClaimsInPlace` rewrites a proven claim to its
-/// resolved, receipt-carrying form), while the derive verifier recomputes the
-/// assumption by pure substitution and leaves the projection symbolic -- so an
-/// operand the rounds touched drifts from the expectation with no proof at
+/// operand value: `ResolveProjectionsPattern` drifts the application,
+/// provenness-blind, and `respellProvenClaimsInPlace` then stamps a receipt onto
+/// that drifted claim exactly when the resolver's memo proves its resolved form,
+/// leaving an unprovable one unproven. Meanwhile the derive verifier recomputes
+/// the assumption by pure substitution and leaves the projection symbolic -- so
+/// an operand the rounds touched drifts from the expectation with no proof at
 /// stake, only resolution grade. This mints the coerce that carries the operand
 /// back to the expected spelling, citing the same per-hop proj-resolve
 /// certificates the equality-assume reduction mints, so the verifier's exact
@@ -1835,12 +1837,15 @@ static Type resolveGroundProjectionsRecorded(Type type,
 /// is bridged, because minting a certificate's premises may generate an impl and
 /// insert it at the module body.
 ///
-/// Only a proven operand is bridged. The respell that produces the drift only
-/// rewrites proven claims, so a proven drift is the writer's own; a bare
-/// unproven operand that merely spells the resolved form is not, and is left for
-/// the verifier to refuse. A proven drift whose resolution does not reach the
-/// operand's spelling is a genuine mismatch, reported here with a located
-/// diagnostic rather than bridged.
+/// Only a proven operand is bridged, because provenness is exactly the
+/// resolver's verdict on the drift. Projection resolution drifts the application
+/// provenness-blind; the receipt-stamping sweep then marks a drifted claim
+/// proven exactly when its resolved form is provable, so a proven drift is one
+/// the resolver proved and is sound to bridge. A bare unproven operand is a
+/// drift the resolver could not prove, and is left for the verifier to refuse:
+/// provable drift is bridged, unprovable drift is left to the verifier. A proven
+/// drift whose resolution does not reach the operand's spelling is a genuine
+/// mismatch, reported here with a located diagnostic rather than bridged.
 static LogicalResult reconcileDerivedAssumptions(
     ModuleOp module, const ReadOnlyImplResolver &reading, ImplResolver &resolver) {
   SmallVector<DeriveOp> derives;
