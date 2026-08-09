@@ -1549,34 +1549,65 @@ static void checkResolutionBoundary(const ImplResolver &resolver) {
 }
 
 /// Whether a monomorphic equality claim is settled at the leftover check: its
-/// two endpoints ground-resolve to one spelling through the impls selection has
-/// discharged.
+/// two endpoints ground-resolve to one spelling through impls whose obligations
+/// hold.
 ///
 /// An equality claim carries no proof receipt -- its evidence is the value
 /// itself -- so unlike an application claim it is never "proven"; it is
 /// discharged instead when the projections in its endpoints resolve and the two
-/// endpoints meet at one ground type. Resolution is the obligation-aware
-/// recorded-outcome kind ResolveProjectionsPattern uses, so a projection whose
-/// only candidate impl is conditional with no discharged obligation stays
-/// spelled and the endpoints do not meet. The endpoints are read through the
-/// accessor because the generic walker treats them as opaque.
+/// endpoints meet at one ground type. Each projection resolves first from what
+/// impl selection has recorded, the spelling every projection some round put to
+/// selection already carries. The rounds treat an equality's endpoints as
+/// opaque and never put the projections inside them to selection, so a
+/// projection whose resolution chain runs through an impl nothing else demanded
+/// has no recorded outcome; such a projection is put to selection here instead.
+/// Selection resolves a projection only through an impl whose assumptions are
+/// satisfiable and refuses it otherwise, so a projection whose only candidate
+/// impl is conditional with an undischarged assumption stays spelled and the
+/// endpoints do not meet -- the settlement never resolves through an impl whose
+/// where-bounds do not hold. Resolution runs to a fixed point because one hop's
+/// binding may spell the next. The endpoints are read through the accessor
+/// because the generic walker treats them as opaque.
 static bool equalityClaimGroundResolvesToOneSpelling(
-    ClaimType claim, const ReadOnlyImplResolver &reading) {
+    ClaimType claim, const ReadOnlyImplResolver &reading, ImplResolver &resolver,
+    OpBuilder &builder) {
   auto eq = claim.getEqualityAttr();
   if (!eq)
     return false;
   auto resolveEndpoint = [&](Type endpoint) -> Type {
-    AttrTypeReplacer replacer;
-    replacer.addReplacement([&](Type t) -> std::optional<Type> {
-      auto proj = dyn_cast<ProjectionType>(t);
-      if (!proj || isPolymorphicType(proj))
-        return std::nullopt;
-      auto resolved = reading.resolveProjectionType(proj);
-      if (failed(resolved))
-        return std::nullopt;
-      return *resolved;
-    });
-    return replacer.replace(endpoint);
+    // Each projection is answered from the recorded facts first. One nothing
+    // recorded is put to impl selection, which resolves it only through an impl
+    // whose obligations hold. The sub-resolutions that raises are discardable
+    // probes of the module -- not demands this stage undertook to serve -- so
+    // they are marked speculative and never reach the drain.
+    auto resolveOne = [&](ProjectionType proj) -> std::optional<Type> {
+      if (auto recorded = reading.resolveProjectionType(proj);
+          succeeded(recorded))
+        return *recorded;
+      SpeculationScope speculation;
+      if (auto selected = resolver.resolveProjectionType(proj, builder);
+          succeeded(selected))
+        return *selected;
+      return std::nullopt;
+    };
+    // A resolved binding may itself spell a projection, so run to a fixed point.
+    // The bound matches the ground-projection lookup's; a chain that outruns it
+    // is left spelled and reported as an unresolved projection downstream.
+    constexpr unsigned maxHops = 64;
+    Type previous;
+    Type current = endpoint;
+    for (unsigned i = 0; i != maxHops && current != previous; ++i) {
+      previous = current;
+      AttrTypeReplacer replacer;
+      replacer.addReplacement([&](Type t) -> std::optional<Type> {
+        auto proj = dyn_cast<ProjectionType>(t);
+        if (!proj || isPolymorphicType(proj))
+          return std::nullopt;
+        return resolveOne(proj);
+      });
+      current = replacer.replace(current);
+    }
+    return current;
   };
   Type lhs = resolveEndpoint(eq.getLhs());
   Type rhs = resolveEndpoint(eq.getRhs());
@@ -1883,6 +1914,12 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
   // are templates and keep their unproven claims.
   bool hasLeftovers = false;
   ReadOnlyImplResolver reading(*resolver);
+  // Settling an equality claim resolves the projections in its endpoints, which
+  // may put an undemanded impl to selection and generate the impl a resolution
+  // chain runs through. That inserts into the module, so the candidate claims
+  // are gathered under the walk and judged after it closes, never while the
+  // walk holds the module open.
+  SmallVector<std::pair<Operation *, ClaimType>> monomorphicClaims;
   module.walk<WalkOrder::PreOrder>([&](Operation *op) {
     if (isa<TraitOp, ImplOp, ProofOp>(op))
       return WalkResult::skip();
@@ -1891,21 +1928,32 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
         auto claim = dyn_cast<ClaimType>(sub);
         if (!claim || claim.isProven() || !claim.isMonomorphic())
           return;
-        // An equality claim has no proof to await; it is settled when its
-        // endpoints ground-resolve to one spelling through the discharged impl
-        // selections. A monomorphic equality that resolves is not a leftover;
-        // one whose projection has no discharged impl stays unequal and is
-        // reported like an unprovable application claim.
-        if (claim.isEquality() &&
-            equalityClaimGroundResolvesToOneSpelling(claim, reading))
-          return;
-        hasLeftovers = true;
-        op->emitError() << "unproven monomorphic claim " << claim
-                        << " after instantiate-monomorphs";
+        monomorphicClaims.emplace_back(op, claim);
       });
     }
     return WalkResult::advance();
   });
+  // A builder whose insertions a listener observes: settling an equality may
+  // reach impl generation for a resolution chain no round demanded, and a
+  // generated impl is IR nothing revisits unless the caller hears about it. The
+  // insertion point is the module body, where a generated impl belongs.
+  RoundInsertionCounts settleInsertions;
+  OpBuilder settleBuilder(ctx);
+  settleBuilder.setListener(&settleInsertions);
+  settleBuilder.setInsertionPointToEnd(module.getBody());
+  for (auto [op, claim] : monomorphicClaims) {
+    // An equality claim has no proof to await; it is settled when its endpoints
+    // ground-resolve to one spelling through impls whose obligations hold. A
+    // monomorphic equality that resolves is not a leftover; one whose projection
+    // has no obligation-holding impl stays unequal and is reported like an
+    // unprovable application claim.
+    if (claim.isEquality() && equalityClaimGroundResolvesToOneSpelling(
+                                  claim, reading, *resolver, settleBuilder))
+      continue;
+    hasLeftovers = true;
+    op->emitError() << "unproven monomorphic claim " << claim
+                    << " after instantiate-monomorphs";
+  }
   if (hasLeftovers) return failure();
 
   // Reject each concrete-base projection that survived resolution. Walking the
