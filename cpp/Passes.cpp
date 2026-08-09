@@ -1614,6 +1614,133 @@ static bool equalityClaimGroundResolvesToOneSpelling(
   return lhs == rhs && isGroundType(lhs);
 }
 
+/// Replace a ground-resolvable equality `trait.assume` with the witness that
+/// proves its equality, inserted at the assume so it dominates the assume's
+/// uses.
+///
+/// An equality assume is an axiom the enclosing scope inherited (an impl's or
+/// trait's where-clause equality re-established inside a method body). Where it
+/// feeds only a `trait.coerce` that folds once the projection resolves, the
+/// assume goes dead and is eliminated; where it feeds a use that keeps the
+/// equality claim -- an operand of an already-ground callee that retains the
+/// parameter -- nothing consumes it, and a bare `trait.assume` is an axiom no
+/// legalization removes. Now that the equality ground-resolves, this mints the
+/// evidence that proves it, exactly as codegen mints where the equality is
+/// first established: a refl marker for identical endpoints, or a proj-resolve
+/// certificate citing the impl each projection endpoint resolves through, with
+/// application-arm premises discharging a conditional impl's own assumptions so
+/// the certificate passes its seam audit. A single projection against its own
+/// binding is proved by that certificate directly when the orientation matches;
+/// otherwise the endpoints' certificates compose to the result equality, whose
+/// congruence closure is direction-blind. Endpoints that meet only across
+/// several resolution hops are left for the caller to report; the realistic
+/// shape -- a where-clause equality `T::A = U` ground to `proj = U` -- meets in
+/// one. Proofs the premises need are minted through `proofBuilder` at the module
+/// body; the witnesses themselves are inserted at the assume.
+static LogicalResult reduceGroundEqualityAssume(
+    AssumeOp assume, TypeEqualityAttr eq, const ReadOnlyImplResolver &reading,
+    ImplResolver &resolver, OpBuilder &proofBuilder) {
+  MLIRContext *ctx = assume.getContext();
+  Location loc = assume.getLoc();
+  Type lhs = eq.getLhs();
+  Type rhs = eq.getRhs();
+
+  OpBuilder builder(ctx);
+  builder.setInsertionPoint(assume);
+
+  auto replaceWith = [&](Value witness) {
+    assume.getResult().replaceAllUsesWith(witness);
+    assume.erase();
+  };
+
+  // refl: identical endpoints carry their own evidence.
+  if (lhs == rhs) {
+    replaceWith(WitnessOp::create(builder, loc, eq).getResult());
+    return success();
+  }
+
+  // A proj-resolve premise proving `<proj = binding>`, where the cited impl
+  // binds the projected member to `binding` in one hop. Null where `proj` is
+  // not a single-hop-resolvable ground projection.
+  auto projResolvePremise = [&](ProjectionType proj) -> Value {
+    if (isPolymorphicType(proj))
+      return nullptr;
+    ClaimType selfClaim = ClaimType::get(ctx, proj.getTraitApplication());
+    auto resolvedImpl = reading.getRecordedImplFor(selfClaim);
+    if (failed(resolvedImpl))
+      return nullptr;
+    auto binding = reading.resolveProjectionType(proj);
+    if (failed(binding))
+      return nullptr;
+    // Premises discharging the cited impl's own assumptions, so a certificate
+    // that cites a conditional impl passes the obligation-discharge seam audit.
+    SmallVector<Value> obligationPremises;
+    if (!resolvedImpl->impl.isUnconditional()) {
+      auto assumptions = resolvedImpl->impl.specializeAssumptionsAsClaimsFor(
+          resolvedImpl->selectedClaim);
+      if (failed(assumptions))
+        return nullptr;
+      for (ClaimType assumption : *assumptions) {
+        auto proof = resolver.resolveAndEnsureProofFor(assumption, proofBuilder);
+        if (failed(proof))
+          return nullptr;
+        obligationPremises.push_back(
+            WitnessOp::create(builder, loc, *proof,
+                              assumption.getTraitApplication())
+                .getResult());
+      }
+    }
+    auto cert = WitnessCertificateAttr::get(
+        ctx, Type(proj), *binding,
+        FlatSymbolRefAttr::get(ctx, resolvedImpl->impl.getSymName()));
+    TypeEqualityAttr premiseEq =
+        TypeEqualityAttr::get(ctx, Type(proj), *binding);
+    return WitnessOp::create(builder, loc, premiseEq, cert, obligationPremises)
+        .getResult();
+  };
+
+  // Resolve each endpoint to its one-hop spelling (itself where concrete). The
+  // caller reaches here only for an equality whose endpoints ground-resolve to
+  // one type; this leaf covers those that meet in a single hop.
+  auto oneHop = [&](Type endpoint) -> Type {
+    if (auto proj = dyn_cast<ProjectionType>(endpoint);
+        proj && !isPolymorphicType(proj))
+      if (auto r = reading.resolveProjectionType(proj); succeeded(r))
+        return *r;
+    return endpoint;
+  };
+  if (oneHop(lhs) != oneHop(rhs))
+    return failure();
+
+  SmallVector<Value> premises;
+  if (auto lproj = dyn_cast<ProjectionType>(lhs)) {
+    Value premise = projResolvePremise(lproj);
+    if (!premise)
+      return failure();
+    premises.push_back(premise);
+  }
+  if (auto rproj = dyn_cast<ProjectionType>(rhs)) {
+    Value premise = projResolvePremise(rproj);
+    if (!premise)
+      return failure();
+    premises.push_back(premise);
+  }
+  if (premises.empty())
+    return failure();
+
+  // A sole certificate that already proves the result equality outright is the
+  // witness; otherwise the certificates compose to it.
+  if (premises.size() == 1)
+    if (auto sole = cast<WitnessOp>(premises.front().getDefiningOp());
+        sole.getResultClaim().getEqualityAttr() == eq) {
+      replaceWith(premises.front());
+      return success();
+    }
+  replaceWith(
+      WitnessOp::create(builder, loc, eq, ValueRange(premises)).getResult());
+  return success();
+}
+
 } // end namespace
 
 /// `askImplSelectionForImpls` adds the pattern that puts a declared claim to
@@ -1948,8 +2075,23 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
     // has no obligation-holding impl stays unequal and is reported like an
     // unprovable application claim.
     if (claim.isEquality() && equalityClaimGroundResolvesToOneSpelling(
-                                  claim, reading, *resolver, settleBuilder))
+                                  claim, reading, *resolver, settleBuilder)) {
+      // A surviving equality `trait.assume` is an inherited axiom no
+      // legalization removes; now that it ground-resolves, replace it with the
+      // witness proving it. Producers already carrying legal evidence (a
+      // `trait.witness`) need nothing here.
+      if (auto assume = dyn_cast<AssumeOp>(op))
+        if (failed(reduceGroundEqualityAssume(assume, claim.getEqualityAttr(),
+                                              reading, *resolver,
+                                              settleBuilder))) {
+          hasLeftovers = true;
+          op->emitError()
+              << "ground-resolvable equality assumption " << claim
+              << " could not be reduced to a witness after "
+                 "instantiate-monomorphs";
+        }
       continue;
+    }
     hasLeftovers = true;
     op->emitError() << "unproven monomorphic claim " << claim
                     << " after instantiate-monomorphs";
