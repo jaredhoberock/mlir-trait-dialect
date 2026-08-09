@@ -1548,6 +1548,32 @@ static void checkResolutionBoundary(const ImplResolver &resolver) {
          "name a proof the module defines");
 }
 
+/// A monomorphic projection's resolution runs to a fixed point through a
+/// bounded chain of hops, one binding spelling the next. Both the settlement's
+/// leftover check and the equality-assume reduction below walk that chain; the
+/// bound is shared so they agree on where a chain that never grounds out is cut
+/// and reported as unresolvable rather than followed without end.
+constexpr unsigned maxProjectionResolutionHops = 64;
+
+/// Resolve one hop of a monomorphic projection through an obligation-holding
+/// impl. The recorded facts answer first; a projection nothing recorded is put
+/// to impl selection, which resolves it only through an impl whose obligations
+/// hold and refuses it otherwise. Selection's own sub-resolutions are
+/// discardable probes of the module -- not demands this stage undertook to
+/// serve -- so they are marked speculative and never reach the drain. Nothing
+/// where the projection has no obligation-holding impl.
+static std::optional<Type>
+resolveProjectionHop(ProjectionType proj, const ReadOnlyImplResolver &reading,
+                     ImplResolver &resolver, OpBuilder &builder) {
+  if (auto recorded = reading.resolveProjectionType(proj); succeeded(recorded))
+    return *recorded;
+  SpeculationScope speculation;
+  if (auto selected = resolver.resolveProjectionType(proj, builder);
+      succeeded(selected))
+    return *selected;
+  return std::nullopt;
+}
+
 /// Whether a monomorphic equality claim is settled at the leftover check: its
 /// two endpoints ground-resolve to one spelling through impls whose obligations
 /// hold.
@@ -1575,35 +1601,21 @@ static bool equalityClaimGroundResolvesToOneSpelling(
   if (!eq)
     return false;
   auto resolveEndpoint = [&](Type endpoint) -> Type {
-    // Each projection is answered from the recorded facts first. One nothing
-    // recorded is put to impl selection, which resolves it only through an impl
-    // whose obligations hold. The sub-resolutions that raises are discardable
-    // probes of the module -- not demands this stage undertook to serve -- so
-    // they are marked speculative and never reach the drain.
-    auto resolveOne = [&](ProjectionType proj) -> std::optional<Type> {
-      if (auto recorded = reading.resolveProjectionType(proj);
-          succeeded(recorded))
-        return *recorded;
-      SpeculationScope speculation;
-      if (auto selected = resolver.resolveProjectionType(proj, builder);
-          succeeded(selected))
-        return *selected;
-      return std::nullopt;
-    };
     // A resolved binding may itself spell a projection, so run to a fixed point.
-    // The bound matches the ground-projection lookup's; a chain that outruns it
-    // is left spelled and reported as an unresolved projection downstream.
-    constexpr unsigned maxHops = 64;
+    // The bound is shared with the reduction that follows a settled chain; a
+    // chain that outruns it is left spelled and reported as an unresolved
+    // projection downstream.
     Type previous;
     Type current = endpoint;
-    for (unsigned i = 0; i != maxHops && current != previous; ++i) {
+    for (unsigned i = 0;
+         i != maxProjectionResolutionHops && current != previous; ++i) {
       previous = current;
       AttrTypeReplacer replacer;
       replacer.addReplacement([&](Type t) -> std::optional<Type> {
         auto proj = dyn_cast<ProjectionType>(t);
         if (!proj || isPolymorphicType(proj))
           return std::nullopt;
-        return resolveOne(proj);
+        return resolveProjectionHop(proj, reading, resolver, builder);
       });
       current = replacer.replace(current);
     }
@@ -1626,17 +1638,20 @@ static bool equalityClaimGroundResolvesToOneSpelling(
 /// parameter -- nothing consumes it, and a bare `trait.assume` is an axiom no
 /// legalization removes. Now that the equality ground-resolves, this mints the
 /// evidence that proves it, exactly as codegen mints where the equality is
-/// first established: a refl marker for identical endpoints, or a proj-resolve
-/// certificate citing the impl each projection endpoint resolves through, with
-/// application-arm premises discharging a conditional impl's own assumptions so
-/// the certificate passes its seam audit. A single projection against its own
-/// binding is proved by that certificate directly when the orientation matches;
-/// otherwise the endpoints' certificates compose to the result equality, whose
-/// congruence closure is direction-blind. Endpoints that meet only across
-/// several resolution hops are left for the caller to report; the realistic
-/// shape -- a where-clause equality `T::A = U` ground to `proj = U` -- meets in
-/// one. Proofs the premises need are minted through `proofBuilder` at the module
-/// body; the witnesses themselves are inserted at the assume.
+/// first established: a refl marker for identical endpoints, or one proj-resolve
+/// certificate per hop of each projection endpoint's resolution chain -- since a
+/// resolved binding may itself spell a projection -- each citing the impl that
+/// binds one hop, with application-arm premises discharging a conditional impl's
+/// own assumptions so the certificate passes its seam audit. A lone certificate
+/// that already proves the result equality outright is that witness when the
+/// orientation matches; otherwise the hops' certificates compose to the result
+/// equality, whose ground congruence closure carries the endpoints together
+/// across every hop and is direction-blind. Settlement gates this reduction on
+/// the same fixed-point resolution reaching one ground spelling within the hop
+/// bound, so the walk here terminates; a chain that outruns the bound fails and
+/// is reported like an unresolvable one. Proofs the premises need are minted
+/// through `proofBuilder` at the module body; the witnesses themselves are
+/// inserted at the assume.
 static LogicalResult reduceGroundEqualityAssume(
     AssumeOp assume, TypeEqualityAttr eq, const ReadOnlyImplResolver &reading,
     ImplResolver &resolver, OpBuilder &proofBuilder) {
@@ -1659,31 +1674,33 @@ static LogicalResult reduceGroundEqualityAssume(
     return success();
   }
 
-  // A proj-resolve premise proving `<proj = binding>`, where the cited impl
-  // binds the projected member to `binding` in one hop. Null where `proj` is
-  // not a single-hop-resolvable ground projection.
-  auto projResolvePremise = [&](ProjectionType proj) -> Value {
-    if (isPolymorphicType(proj))
-      return nullptr;
+  // Mint the proj-resolve certificate proving `<proj = binding>`, where the
+  // impl `proj`'s trait application resolves through binds the projected member
+  // to `binding` in one hop, paired with that binding. Resolution goes through
+  // the same obligation-holding selection the settlement ran, so the cited impl
+  // is one whose bounds hold. Premises discharging that impl's own assumptions
+  // ride along, so a certificate citing a conditional impl passes the
+  // obligation-discharge seam audit. Fails where the projection has no
+  // obligation-holding impl.
+  auto projResolveCertificate =
+      [&](ProjectionType proj) -> FailureOr<std::pair<Value, Type>> {
+    auto binding = resolveProjectionHop(proj, reading, resolver, proofBuilder);
+    if (!binding)
+      return failure();
     ClaimType selfClaim = ClaimType::get(ctx, proj.getTraitApplication());
     auto resolvedImpl = reading.getRecordedImplFor(selfClaim);
     if (failed(resolvedImpl))
-      return nullptr;
-    auto binding = reading.resolveProjectionType(proj);
-    if (failed(binding))
-      return nullptr;
-    // Premises discharging the cited impl's own assumptions, so a certificate
-    // that cites a conditional impl passes the obligation-discharge seam audit.
+      return failure();
     SmallVector<Value> obligationPremises;
     if (!resolvedImpl->impl.isUnconditional()) {
       auto assumptions = resolvedImpl->impl.specializeAssumptionsAsClaimsFor(
           resolvedImpl->selectedClaim);
       if (failed(assumptions))
-        return nullptr;
+        return failure();
       for (ClaimType assumption : *assumptions) {
         auto proof = resolver.resolveAndEnsureProofFor(assumption, proofBuilder);
         if (failed(proof))
-          return nullptr;
+          return failure();
         obligationPremises.push_back(
             WitnessOp::create(builder, loc, *proof,
                               assumption.getTraitApplication())
@@ -1695,41 +1712,42 @@ static LogicalResult reduceGroundEqualityAssume(
         FlatSymbolRefAttr::get(ctx, resolvedImpl->impl.getSymName()));
     TypeEqualityAttr premiseEq =
         TypeEqualityAttr::get(ctx, Type(proj), *binding);
-    return WitnessOp::create(builder, loc, premiseEq, cert, obligationPremises)
-        .getResult();
+    Value witness =
+        WitnessOp::create(builder, loc, premiseEq, cert, obligationPremises)
+            .getResult();
+    return std::make_pair(witness, *binding);
   };
 
-  // Resolve each endpoint to its one-hop spelling (itself where concrete). The
-  // caller reaches here only for an equality whose endpoints ground-resolve to
-  // one type; this leaf covers those that meet in a single hop.
-  auto oneHop = [&](Type endpoint) -> Type {
-    if (auto proj = dyn_cast<ProjectionType>(endpoint);
-        proj && !isPolymorphicType(proj))
-      if (auto r = reading.resolveProjectionType(proj); succeeded(r))
-        return *r;
-    return endpoint;
-  };
-  if (oneHop(lhs) != oneHop(rhs))
+  // Walk a projection endpoint to its ground spelling, appending one certificate
+  // per hop since a resolved binding may itself spell a projection. A concrete
+  // endpoint contributes no hop. The bound is the settlement's; a chain that
+  // outruns it fails and is reported like an unresolvable one.
+  auto resolveChain = [&](Type endpoint,
+                          SmallVector<Value> &premises) -> LogicalResult {
+    Type current = endpoint;
+    for (unsigned hop = 0; hop != maxProjectionResolutionHops; ++hop) {
+      auto proj = dyn_cast<ProjectionType>(current);
+      if (!proj || isPolymorphicType(proj))
+        return success();
+      auto cert = projResolveCertificate(proj);
+      if (failed(cert))
+        return failure();
+      premises.push_back(cert->first);
+      current = cert->second;
+    }
     return failure();
+  };
 
   SmallVector<Value> premises;
-  if (auto lproj = dyn_cast<ProjectionType>(lhs)) {
-    Value premise = projResolvePremise(lproj);
-    if (!premise)
-      return failure();
-    premises.push_back(premise);
-  }
-  if (auto rproj = dyn_cast<ProjectionType>(rhs)) {
-    Value premise = projResolvePremise(rproj);
-    if (!premise)
-      return failure();
-    premises.push_back(premise);
-  }
+  if (failed(resolveChain(lhs, premises)) ||
+      failed(resolveChain(rhs, premises)))
+    return failure();
   if (premises.empty())
     return failure();
 
   // A sole certificate that already proves the result equality outright is the
-  // witness; otherwise the certificates compose to it.
+  // witness; otherwise the hops' certificates compose to it, whose ground
+  // congruence closure carries the endpoints together and is direction-blind.
   if (premises.size() == 1)
     if (auto sole = cast<WitnessOp>(premises.front().getDefiningOp());
         sole.getResultClaim().getEqualityAttr() == eq) {
@@ -2060,10 +2078,14 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
     }
     return WalkResult::advance();
   });
-  // A builder whose insertions a listener observes: settling an equality may
-  // reach impl generation for a resolution chain no round demanded, and a
-  // generated impl is IR nothing revisits unless the caller hears about it. The
-  // insertion point is the module body, where a generated impl belongs.
+  // Settling an equality may reach impl generation -- for a resolution chain no
+  // round demanded, or a satisfiability probe of a conditional impl -- and impl
+  // generation requires a builder whose insertions are observed, so this builder
+  // must carry a listener. Its presence is the precondition; its tally is not
+  // read here, because unlike the round loop above (where the insertion count
+  // decides whether another round runs) no round follows this leftover check. A
+  // generated impl is a complete monomorphic definition the module verifier
+  // checks, inserted at the module body where it belongs.
   RoundInsertionCounts settleInsertions;
   OpBuilder settleBuilder(ctx);
   settleBuilder.setListener(&settleInsertions);
