@@ -1626,6 +1626,83 @@ static bool equalityClaimGroundResolvesToOneSpelling(
   return lhs == rhs && isGroundType(lhs);
 }
 
+/// Mint the proj-resolve certificate proving `<proj = binding>`, where the impl
+/// `proj`'s trait application resolves through binds the projected member to
+/// `binding` in one hop, paired with that binding. Resolution goes through the
+/// same obligation-holding selection the settlement ran, so the cited impl is
+/// one whose bounds hold. Premises discharging that impl's own assumptions ride
+/// along, so a certificate citing a conditional impl passes the
+/// obligation-discharge seam audit. The witnesses insert through
+/// `witnessBuilder` at the consumer, so they dominate it; premise proofs and any
+/// impl generation go through `proofBuilder` at the module body. Fails where the
+/// projection has no obligation-holding impl.
+static FailureOr<std::pair<Value, Type>>
+mintProjectionResolveCertificate(ProjectionType proj, Location loc,
+                                 const ReadOnlyImplResolver &reading,
+                                 ImplResolver &resolver,
+                                 OpBuilder &witnessBuilder,
+                                 OpBuilder &proofBuilder) {
+  MLIRContext *ctx = proj.getContext();
+  auto binding = resolveProjectionHop(proj, reading, resolver, proofBuilder);
+  if (!binding)
+    return failure();
+  ClaimType selfClaim = ClaimType::get(ctx, proj.getTraitApplication());
+  auto resolvedImpl = reading.getRecordedImplFor(selfClaim);
+  if (failed(resolvedImpl))
+    return failure();
+  SmallVector<Value> obligationPremises;
+  if (!resolvedImpl->impl.isUnconditional()) {
+    auto assumptions = resolvedImpl->impl.specializeAssumptionsAsClaimsFor(
+        resolvedImpl->selectedClaim);
+    if (failed(assumptions))
+      return failure();
+    for (ClaimType assumption : *assumptions) {
+      auto proof = resolver.resolveAndEnsureProofFor(assumption, proofBuilder);
+      if (failed(proof))
+        return failure();
+      obligationPremises.push_back(
+          WitnessOp::create(witnessBuilder, loc, *proof,
+                            assumption.getTraitApplication())
+              .getResult());
+    }
+  }
+  auto cert = WitnessCertificateAttr::get(
+      ctx, Type(proj), *binding,
+      FlatSymbolRefAttr::get(ctx, resolvedImpl->impl.getSymName()));
+  TypeEqualityAttr premiseEq = TypeEqualityAttr::get(ctx, Type(proj), *binding);
+  Value witness =
+      WitnessOp::create(witnessBuilder, loc, premiseEq, cert, obligationPremises)
+          .getResult();
+  return std::make_pair(witness, *binding);
+}
+
+/// Walk a projection endpoint to its ground spelling, appending one certificate
+/// per hop since a resolved binding may itself spell a projection. A concrete
+/// endpoint contributes no hop. The bound is the settlement's; a chain that
+/// outruns it fails and is reported like an unresolvable one. Both the
+/// equality-assume reduction and the derive reconciliation walk read this one
+/// definition of a projection's resolution chain.
+static LogicalResult
+mintProjectionResolveChain(Type endpoint, Location loc,
+                           const ReadOnlyImplResolver &reading,
+                           ImplResolver &resolver, OpBuilder &witnessBuilder,
+                           OpBuilder &proofBuilder,
+                           SmallVector<Value> &certificates) {
+  Type current = endpoint;
+  for (unsigned hop = 0; hop != maxProjectionResolutionHops; ++hop) {
+    auto proj = dyn_cast<ProjectionType>(current);
+    if (!proj || isPolymorphicType(proj))
+      return success();
+    auto cert = mintProjectionResolveCertificate(proj, loc, reading, resolver,
+                                                 witnessBuilder, proofBuilder);
+    if (failed(cert))
+      return failure();
+    certificates.push_back(cert->first);
+    current = cert->second;
+  }
+  return failure();
+}
+
 /// Replace a ground-resolvable equality `trait.assume` with the witness that
 /// proves its equality, inserted at the assume so it dominates the assume's
 /// uses.
@@ -1674,73 +1751,17 @@ static LogicalResult reduceGroundEqualityAssume(
     return success();
   }
 
-  // Mint the proj-resolve certificate proving `<proj = binding>`, where the
-  // impl `proj`'s trait application resolves through binds the projected member
-  // to `binding` in one hop, paired with that binding. Resolution goes through
-  // the same obligation-holding selection the settlement ran, so the cited impl
-  // is one whose bounds hold. Premises discharging that impl's own assumptions
-  // ride along, so a certificate citing a conditional impl passes the
-  // obligation-discharge seam audit. Fails where the projection has no
-  // obligation-holding impl.
-  auto projResolveCertificate =
-      [&](ProjectionType proj) -> FailureOr<std::pair<Value, Type>> {
-    auto binding = resolveProjectionHop(proj, reading, resolver, proofBuilder);
-    if (!binding)
-      return failure();
-    ClaimType selfClaim = ClaimType::get(ctx, proj.getTraitApplication());
-    auto resolvedImpl = reading.getRecordedImplFor(selfClaim);
-    if (failed(resolvedImpl))
-      return failure();
-    SmallVector<Value> obligationPremises;
-    if (!resolvedImpl->impl.isUnconditional()) {
-      auto assumptions = resolvedImpl->impl.specializeAssumptionsAsClaimsFor(
-          resolvedImpl->selectedClaim);
-      if (failed(assumptions))
-        return failure();
-      for (ClaimType assumption : *assumptions) {
-        auto proof = resolver.resolveAndEnsureProofFor(assumption, proofBuilder);
-        if (failed(proof))
-          return failure();
-        obligationPremises.push_back(
-            WitnessOp::create(builder, loc, *proof,
-                              assumption.getTraitApplication())
-                .getResult());
-      }
-    }
-    auto cert = WitnessCertificateAttr::get(
-        ctx, Type(proj), *binding,
-        FlatSymbolRefAttr::get(ctx, resolvedImpl->impl.getSymName()));
-    TypeEqualityAttr premiseEq =
-        TypeEqualityAttr::get(ctx, Type(proj), *binding);
-    Value witness =
-        WitnessOp::create(builder, loc, premiseEq, cert, obligationPremises)
-            .getResult();
-    return std::make_pair(witness, *binding);
-  };
-
-  // Walk a projection endpoint to its ground spelling, appending one certificate
-  // per hop since a resolved binding may itself spell a projection. A concrete
-  // endpoint contributes no hop. The bound is the settlement's; a chain that
-  // outruns it fails and is reported like an unresolvable one.
-  auto resolveChain = [&](Type endpoint,
-                          SmallVector<Value> &premises) -> LogicalResult {
-    Type current = endpoint;
-    for (unsigned hop = 0; hop != maxProjectionResolutionHops; ++hop) {
-      auto proj = dyn_cast<ProjectionType>(current);
-      if (!proj || isPolymorphicType(proj))
-        return success();
-      auto cert = projResolveCertificate(proj);
-      if (failed(cert))
-        return failure();
-      premises.push_back(cert->first);
-      current = cert->second;
-    }
-    return failure();
-  };
-
+  // Each projection endpoint resolves to ground through per-hop proj-resolve
+  // certificates minted at the assume, one citing the impl that binds each hop.
+  // A lone certificate that already proves the result equality is that witness;
+  // otherwise the hops compose to it below. The witnesses insert at the assume
+  // (through `builder`); premise proofs go to the module body (through
+  // `proofBuilder`).
   SmallVector<Value> premises;
-  if (failed(resolveChain(lhs, premises)) ||
-      failed(resolveChain(rhs, premises)))
+  if (failed(mintProjectionResolveChain(lhs, loc, reading, resolver, builder,
+                                        proofBuilder, premises)) ||
+      failed(mintProjectionResolveChain(rhs, loc, reading, resolver, builder,
+                                        proofBuilder, premises)))
     return failure();
   if (premises.empty())
     return failure();
@@ -1757,6 +1778,151 @@ static LogicalResult reduceGroundEqualityAssume(
   replaceWith(
       WitnessOp::create(builder, loc, eq, ValueRange(premises)).getResult());
   return success();
+}
+
+/// Resolve to a fixed point every ground projection standing in `type` through
+/// the facts impl selection has recorded, leaving polymorphic projections and
+/// any projection nothing recorded untouched. The read-only counterpart of the
+/// hop chain above: the reconciliation walk reads it to see whether an operand's
+/// drift is exactly the respell rounds' projection resolution before it commits
+/// to minting a bridge, so nothing is minted for a drift that is a genuine
+/// mismatch.
+static Type resolveGroundProjectionsRecorded(Type type,
+                                             const ReadOnlyImplResolver &reading) {
+  Type previous;
+  Type current = type;
+  for (unsigned i = 0;
+       i != maxProjectionResolutionHops && current != previous; ++i) {
+    previous = current;
+    AttrTypeReplacer replacer;
+    replacer.addReplacement([&](Type t) -> std::optional<Type> {
+      auto proj = dyn_cast<ProjectionType>(t);
+      if (!proj || isPolymorphicType(proj))
+        return std::nullopt;
+      if (auto recorded = reading.resolveProjectionType(proj);
+          succeeded(recorded))
+        return *recorded;
+      return std::nullopt;
+    });
+    current = replacer.replace(current);
+  }
+  return current;
+}
+
+/// Bridge each standing derive operand the respell rounds drifted from the
+/// specialized assumption its cited impl requires.
+///
+/// A trait.derive discharges its impl's application-arm assumptions by exact
+/// spelling: each operand claim must equal the assumption the impl requires
+/// under the derived claim's specialization. The rounds above resolve a
+/// where-clause projection over impl variables to its ground spelling on the
+/// operand value (`respellProvenClaimsInPlace` rewrites a proven claim to its
+/// resolved, receipt-carrying form), while the derive verifier recomputes the
+/// assumption by pure substitution and leaves the projection symbolic -- so an
+/// operand the rounds touched drifts from the expectation with no proof at
+/// stake, only resolution grade. This mints the coerce that carries the operand
+/// back to the expected spelling, citing the same per-hop proj-resolve
+/// certificates the equality-assume reduction mints, so the verifier's exact
+/// compare holds with no verifier change.
+///
+/// Runs once at the instantiate epilogue, after the leftover-claim and
+/// projection walks: the coerce result carries the unresolved projection the
+/// expectation spells, which those walks would otherwise reject, and the
+/// certificates it cites carry claims those walks would judge. Every standing
+/// derive is a candidate, template-hosted or not -- the exact-spelling check is
+/// armed for all of them, unlike the leftover-claim and projection checks the
+/// sibling walks suppress inside templates. The derives are gathered before any
+/// is bridged, because minting a certificate's premises may generate an impl and
+/// insert it at the module body.
+///
+/// Only a proven operand is bridged. The respell that produces the drift only
+/// rewrites proven claims, so a proven drift is the writer's own; a bare
+/// unproven operand that merely spells the resolved form is not, and is left for
+/// the verifier to refuse. A proven drift whose resolution does not reach the
+/// operand's spelling is a genuine mismatch, reported here with a located
+/// diagnostic rather than bridged.
+static LogicalResult reconcileDerivedAssumptions(
+    ModuleOp module, const ReadOnlyImplResolver &reading, ImplResolver &resolver) {
+  SmallVector<DeriveOp> derives;
+  module.walk([&](DeriveOp derive) { derives.push_back(derive); });
+
+  // Premise proofs and any impl a certificate generates go to the module body,
+  // through a builder whose insertions are observed -- impl generation requires
+  // one. The tally is not read; the listener's presence is the precondition.
+  RoundInsertionCounts reconcileInsertions;
+  OpBuilder proofBuilder(module.getContext());
+  proofBuilder.setListener(&reconcileInsertions);
+  proofBuilder.setInsertionPointToEnd(module.getBody());
+
+  bool sawUnbridgeableDrift = false;
+  for (DeriveOp derive : derives) {
+    ImplOp impl = derive.getImplOp();
+    if (!impl)
+      continue; // an unresolved impl reference is the verifier's to report
+    auto expected =
+        impl.specializeAssumptionsAsClaimsFor(derive.getDerivedClaim());
+    if (failed(expected) || expected->size() != derive.getAssumptions().size())
+      continue; // an ill-formed specialization or arity is the verifier's
+
+    // Certificates and the coerce insert at the derive, so they dominate it.
+    OpBuilder witnessBuilder(derive);
+    for (auto [i, exp] : llvm::enumerate(*expected)) {
+      Value operand = derive.getAssumptions()[i];
+      auto operandClaim = cast<ClaimType>(operand.getType());
+      if (operandClaim.getTraitApplication() == exp.getTraitApplication())
+        continue; // the operand already carries exactly the expected spelling
+      if (!operandClaim.isProven())
+        continue; // not a respell-produced drift; the verifier refuses it
+
+      // The reconcilable drift is exactly a projection the expectation still
+      // spells resolving to the ground the operand now carries. Confirm the
+      // resolution meets the operand before minting anything.
+      auto resolved = dyn_cast<ClaimType>(
+          resolveGroundProjectionsRecorded(Type(exp), reading));
+      if (!resolved ||
+          resolved.getTraitApplication() != operandClaim.getTraitApplication()) {
+        derive.emitOpError()
+            << "assumption operand #" << i << " drifted to " << operandClaim
+            << " from the specialized assumption " << exp
+            << ", and the drift does not ground-derive: resolving that "
+               "assumption's projections does not reach the operand's spelling";
+        sawUnbridgeableDrift = true;
+        continue;
+      }
+
+      // Mint one proj-resolve certificate chain per projection the expectation
+      // spells, then bridge the operand to the expectation citing them.
+      SmallVector<ProjectionType> projections;
+      Type(exp).walk([&](Type sub) {
+        if (auto proj = dyn_cast<ProjectionType>(sub))
+          if (!isPolymorphicType(proj))
+            projections.push_back(proj);
+      });
+      SmallVector<Value> certificates;
+      bool minted = true;
+      for (ProjectionType proj : projections)
+        if (failed(mintProjectionResolveChain(Type(proj), derive.getLoc(),
+                                              reading, resolver, witnessBuilder,
+                                              proofBuilder, certificates))) {
+          minted = false;
+          break;
+        }
+      if (!minted || certificates.empty()) {
+        derive.emitOpError()
+            << "assumption operand #" << i << " drifted to " << operandClaim
+            << " from the specialized assumption " << exp
+            << ", and the drift does not ground-derive: no obligation-holding "
+               "impl resolves its projections";
+        sawUnbridgeableDrift = true;
+        continue;
+      }
+      Value bridged = CoerceOp::create(witnessBuilder, derive.getLoc(),
+                                       Type(exp), operand, certificates)
+                          .getResult();
+      derive->setOperand(i, bridged);
+    }
+  }
+  return success(!sawUnbridgeableDrift);
 }
 
 } // end namespace
@@ -2168,6 +2334,13 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
   // demand the stage undertook to serve and did not.
   if (failed(resolver->getDemandLedger().checkStandingDemandsServed(module,
                                                                     served)))
+    return failure();
+
+  // With every demand settled and every projection resolved, bridge each derive
+  // operand the respell rounds drifted from the assumption its impl requires.
+  // This runs last because the bridges it mints carry the unresolved projection
+  // spelling the two walks above reject; the module verifies with them in place.
+  if (failed(reconcileDerivedAssumptions(module, reading, *resolver)))
     return failure();
 
   DemandRecordingSuspension verifying;
