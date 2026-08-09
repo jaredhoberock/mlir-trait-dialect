@@ -865,6 +865,15 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
       return failure();
     }
 
+    // Naming an unconditional impl is not the same as proving this claim: the
+    // receipt could cite an impl of a different trait, or of this trait at
+    // arguments the claim does not meet, and nothing above has compared the two.
+    // Specialize the impl's own self claim to the proven claim -- the same
+    // citation audit the witness seam runs -- so a receipt whose impl cannot
+    // specialize to its claim is refused here rather than trusted to a leaf.
+    if (failed(impl.buildSubstitutionForSelfClaim(proven, err)))
+      return failure();
+
     // success: bind the whole claim so that later normalization keeps the proof
     bindings.bind(unproven, proven);
     // A leaf: the binding it wrote is the whole of what deriving it produces.

@@ -10,10 +10,12 @@
 //
 // @probes carries a proven claim spelled through that projection, so the
 // declared-proof check normalizes it through the read-only lookup, which is the
-// one engine that names the arm it missed on. The round then takes the demand
-// off the drain and puts it to impl selection, which settles on @Gen_i64 and
-// still has no binding to answer with, so the demand is deferred with an impl
-// selected and no refusal recorded.
+// one engine that names the arm it missed on, and then audits the receipt's
+// cited impl against the claim, driving that same ground projection through one
+// more lookup that misses. The round then takes the demand off the drain and
+// puts it to impl selection, which settles on @Gen_i64 and still has no binding
+// to answer with, so the demand is deferred with an impl selected and no refusal
+// recorded.
 
 !T = !trait.poly<0>
 
@@ -49,11 +51,11 @@ func.func @main() -> !trait.proj<@Gen[i64], "B"> {
 // CHECK: trait-stage-record round index=1
 // CHECK-SAME: collected=1 no-candidate-impl=0 multiple-candidate-impls=0 other-arms=1 without-arm=0
 // CHECK-SAME: served=0 declined=1 deferred=1
-// CHECK: trait-demand-census demand flags=real drainable=yes observations=8 depth=0
+// CHECK: trait-demand-census demand flags=real drainable=yes observations=9 depth=0
 // CHECK-SAME: kinds=lookup-miss,unifier-acceptance,read-only-resolver arms=assoc-binding-failed
 // CHECK-SAME: type=!trait.proj<@Gen[i64], "B">
-// CHECK: trait-demand-census engine lookup-miss keys=1 observations=4 real=4 speculative=0 probe-internal=0
+// CHECK: trait-demand-census engine lookup-miss keys=1 observations=5 real=5 speculative=0 probe-internal=0
 // CHECK: trait-demand-census engine read-only-resolver keys=1 observations=3 real=3 speculative=0 probe-internal=0
-// CHECK: trait-demand-census arm assoc-binding-failed keys=1 observations=4 real=4 speculative=0 probe-internal=0
-// CHECK: trait-demand-census summary keys=1 observations=8 drainable-keys=1
+// CHECK: trait-demand-census arm assoc-binding-failed keys=1 observations=5 real=5 speculative=0 probe-internal=0
+// CHECK: trait-demand-census summary keys=1 observations=9 drainable-keys=1
 // CHECK: trait-stage-record digest value={{.*}} selected-impls=1 refusals-no-candidate=0 refusals-ambiguous=0
