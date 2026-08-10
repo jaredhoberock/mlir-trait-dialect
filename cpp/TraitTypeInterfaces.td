@@ -105,4 +105,44 @@ def UnificationTypeInterface : TypeInterface<"UnificationTypeInterface"> {
   }];
 }
 
+// Interface for types with a definitional respelling substitution should adopt
+def DefinitionalRespellTypeInterface
+    : TypeInterface<"DefinitionalRespellTypeInterface"> {
+  let cppNamespace = "::mlir::trait";
+  let description = [{
+    Types implementing this interface offer a *definitional respelling*: a
+    different spelling of the exact same type that the substitution machinery
+    adopts in place of this one when it rebuilds a type. The two spellings name
+    one type, so the respelling carries no proof obligation -- it is neither an
+    equality claim nor a value coercion.
+
+    A substitution can rebuild a composite whose new spelling has a simpler
+    equivalent that the substituted parts made available -- for example a
+    nested uniform whose outer wrapper the substituted payload makes redundant.
+    The stacked spelling exists only to unify against the polymorphic
+    declaration during matching; once the substitution is known and the
+    declaration is specialized, the specialized spelling is the collapsed one.
+    The specialization machinery consults this interface once its monomorphs
+    are stamped and every type is ground -- a single module-wide sweep -- and
+    replaces each type with the respelling it offers; a null result leaves the
+    type as written. Consulting per rebuild instead would collapse a call's
+    operand types before its callee is specialized off them, so the collapse
+    waits until specialization has converged.
+
+    The returned respelling is fully normalized: consulting the result again
+    returns null. An implementation that peels a nested structure therefore
+    peels to a fixed point, mirroring a constructor that normalizes at
+    construction.
+  }];
+
+  let methods = [
+    InterfaceMethod<
+      "Return an equivalent, fully-normalized respelling of `*this` for the "
+      "specialization machinery to adopt, or null if this type stands as "
+      "written.",
+      "mlir::Type", "respellUnderSubstitution"
+    >
+  ];
+}
+
 #endif // TRAIT_TYPE_INTERFACES_TD

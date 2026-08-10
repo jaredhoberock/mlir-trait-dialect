@@ -2594,6 +2594,28 @@ static LogicalResult erasePolymorphs(ModuleOp module) {
       return std::nullopt;
     return converted;
   });
+
+  // Collapse the justified cross-group uniform stacking that specialization
+  // formed -- a wrapper over a finer group whose payload is already uniform over
+  // a coarser group naming the same values. Monomorphization has converged and
+  // every type is now ground, so the whole module collapses in one sweep and a
+  // specialized signature, its call sites, and the values flowing between them
+  // all reach the same spelling. Collapsing earlier, inside a single
+  // specialization, would instead corrupt the operand types a nested
+  // trait.func.call's callee is selected from (its actual signature is read off
+  // those operands), leaving the callee unspecializable. The respelling is
+  // definitional -- one type, two spellings -- so no value is moved. A type the
+  // hierarchy does not order stands as written.
+  typeSweep.addReplacement([](Type t) -> std::optional<Type> {
+    auto respellable = dyn_cast<DefinitionalRespellTypeInterface>(t);
+    if (!respellable)
+      return std::nullopt;
+    Type respelled = respellable.respellUnderSubstitution();
+    if (!respelled || respelled == t)
+      return std::nullopt;
+    return respelled;
+  });
+
   typeSweep.recursivelyReplaceElementsIn(module,
                                          /*replaceAttrs=*/true,
                                          /*replaceLocs=*/false,
