@@ -123,6 +123,14 @@ MlirOperation traitProjectOpCreate(MlirLocation loc,
                                    MlirValue srcClaim,
                                    MlirAttribute destTraitApp);
 
+/// Create a trait.project operation whose result claim is given directly, rather
+/// than built from a destination trait application. This spells the projection's
+/// equality hop: the result is an equality claim over a trait requirement's
+/// endpoints. Returns a null operation if `resultClaim` is not a claim type.
+MlirOperation traitProjectOpCreateToClaim(MlirLocation loc,
+                                          MlirValue srcClaim,
+                                          MlirType resultClaim);
+
 /// Create a trait.derive operation
 MlirOperation traitDeriveOpCreate(MlirLocation loc,
                                   MlirAttribute traitApp,
@@ -280,6 +288,13 @@ bool traitWitnessSeamAuditAcceptsWithDischarges(MlirModule module,
                                                 intptr_t numPremises,
                                                 MlirAttribute *discharges,
                                                 intptr_t numDischarges);
+
+/// Whether `srcClaim` projects to `dstClaim`: `dstClaim` exactly matches one of
+/// the source's candidate projections (identity, a trait requirement specialized
+/// at the source, or a proven impl's assumption). This is the exact membership
+/// the ProjectOp verifier checks, exposed so codegen can consult before spelling
+/// a projection hop. Returns false if either argument is not a claim type.
+bool traitClaimProjectsTo(MlirModule module, MlirType srcClaim, MlirType dstClaim);
 
 /// Create a trait.assoc_type op. If boundType.ptr is non-null, the op gets a
 /// bound_type attribute (for use inside trait.impl); otherwise it is a bare

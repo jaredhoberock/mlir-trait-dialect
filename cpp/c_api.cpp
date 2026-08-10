@@ -404,6 +404,18 @@ MlirOperation traitProjectOpCreate(MlirLocation loc,
   return wrap(op.getOperation());
 }
 
+MlirOperation traitProjectOpCreateToClaim(MlirLocation loc,
+                                          MlirValue srcClaim,
+                                          MlirType resultClaim) {
+  MLIRContext* ctx = unwrap(loc)->getContext();
+  auto resultType = dyn_cast<ClaimType>(unwrap(resultClaim));
+  if (!resultType) return {}; // invalid result type
+
+  OpBuilder builder(ctx);
+  auto op = ProjectOp::create(builder, unwrap(loc), resultType, unwrap(srcClaim));
+  return wrap(op.getOperation());
+}
+
 MlirOperation traitDeriveOpCreate(MlirLocation loc,
                                   MlirAttribute wrappedTraitApp,
                                   MlirStringRef implName,
@@ -695,6 +707,16 @@ bool traitWitnessSeamAuditAccepts(MlirModule wrappedModule,
   return succeeded(auditProjResolveCertificate(
       module, unwrap(redex), unwrap(contractum), implRef, equalityPremises, err,
       applicationPremises, checkObligations));
+}
+
+bool traitClaimProjectsTo(MlirModule wrappedModule, MlirType srcClaim,
+                          MlirType dstClaim) {
+  ModuleOp module = unwrap(wrappedModule);
+  auto src = dyn_cast<ClaimType>(unwrap(srcClaim));
+  auto dst = dyn_cast<ClaimType>(unwrap(dstClaim));
+  if (!src || !dst)
+    return false;
+  return src.projectsTo(module, dst);
 }
 
 bool traitWitnessSeamAuditAcceptsWithDischarges(MlirModule wrappedModule,

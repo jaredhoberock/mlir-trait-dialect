@@ -1042,6 +1042,15 @@ void ClaimType::getProjections(
   }
 }
 
+bool ClaimType::projectsTo(ModuleOp module, ClaimType dst) {
+  SmallVector<ClaimType> candidates;
+  getProjections(module, candidates);
+  for (ClaimType cand : candidates)
+    if (cand == dst)
+      return true;
+  return false;
+}
+
 static LogicalResult unifyTypeRange(ArrayRef<Type> formalTypes,
                                     ArrayRef<Type> actualTypes,
                                     ModuleOp module,

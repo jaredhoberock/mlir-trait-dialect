@@ -3817,17 +3817,10 @@ LogicalResult ProjectOp::verifySymbolUses(SymbolTableCollection &/*symbolTable*/
     }
   }
 
-  // get candidate projections
-  SmallVector<ClaimType> candidates;
-  src.getProjections(module, candidates);
+  // The result must be one of the source's candidate projections.
+  if (src.projectsTo(module, dst))
+    return success();
 
-  // any matching candidate will do
-  for (auto cand : candidates) {
-    if (cand == dst)
-      return success();
-  }
-
-  // no matching candidate found
   return emitOpError()
          << "projected claim " << dst
          << "is not a candidate projection of " << src;

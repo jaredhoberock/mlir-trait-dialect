@@ -74,6 +74,9 @@ unsafe extern "C" {
     fn traitProjectOpCreate(loc: MlirLocation,
                             src_claim: MlirValue,
                             dest_trait_app: MlirAttribute) -> MlirOperation;
+    fn traitProjectOpCreateToClaim(loc: MlirLocation,
+                                   src_claim: MlirValue,
+                                   result_claim: MlirType) -> MlirOperation;
     fn traitDeriveOpCreate(loc: MlirLocation,
                            trait_app: MlirAttribute,
                            impl_name: MlirStringRef,
@@ -130,6 +133,8 @@ unsafe extern "C" {
                                     impl_name: MlirStringRef,
                                     premises: *const MlirType, num_premises: isize,
                                     check_obligations: bool) -> bool;
+    fn traitClaimProjectsTo(module: MlirModule,
+                            src_claim: MlirType, dst_claim: MlirType) -> bool;
     fn traitWitnessSeamAuditAcceptsWithDischarges(module: MlirModule,
                                                   redex: MlirType, contractum: MlirType,
                                                   impl_name: MlirStringRef,
@@ -515,6 +520,21 @@ pub fn project<'c>(loc: Location<'c>,
     ))}
 }
 
+/// Create a `trait.project` op whose result claim is given directly rather than
+/// built from a destination trait application. This spells the projection's
+/// equality hop: `result_claim` is an equality claim over one of the source
+/// trait's requirement endpoints, specialized at the source application.
+pub fn project_to_claim<'c>(loc: Location<'c>,
+                            src_claim: Value<'c,'_>,
+                            result_claim: Type<'c>,
+) -> Operation<'c> {
+    unsafe { Operation::from_raw(traitProjectOpCreateToClaim(
+        loc.to_raw(),
+        src_claim.to_raw(),
+        result_claim.to_raw(),
+    ))}
+}
+
 pub fn derive<'c>(loc: Location<'c>,
                   trait_app: TraitApplicationAttribute<'c>,
                   impl_name: &str,
@@ -785,6 +805,15 @@ pub fn witness_seam_audit_accepts(
     premises: &[Type],
 ) -> bool {
     witness_seam_audit(module, redex, contractum, impl_name, premises, false)
+}
+
+/// Whether `src_claim` projects to `dst_claim`: `dst_claim` exactly matches one
+/// of the source's candidate projections. This is the exact membership the
+/// `trait.project` verifier checks, so codegen can consult it before spelling a
+/// projection hop and never disagree with the verifier. Both arguments are claim
+/// types; a non-claim argument answers `false`.
+pub fn claim_projects_to(module: &Module, src_claim: Type, dst_claim: Type) -> bool {
+    unsafe { traitClaimProjectsTo(module.to_raw(), src_claim.to_raw(), dst_claim.to_raw()) }
 }
 
 /// The obligation-aware seam audit: like [`witness_seam_audit_accepts`], but the

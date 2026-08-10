@@ -559,6 +559,49 @@ fn the_seam_audit_query_and_the_witness_verifier_share_one_verdict() {
 }
 
 #[test]
+fn the_projection_query_and_the_project_verifier_share_one_verdict() {
+    let registry = DialectRegistry::new();
+    register_all_dialects(&registry);
+    let context = Context::new();
+    context.append_dialect_registry(&registry);
+    trait_::register(&context);
+    context.load_all_available_dialects();
+
+    // @Has requires Self::Out = i64, so a claim of @Has[i32] projects to the
+    // equality hop !trait.proj<@Has[i32], "Out"> = i64 -- the requirement
+    // specialized at the source application, exactly what the trait.project
+    // verifier accepts as a candidate projection.
+    let module = Module::parse(
+        &context,
+        "!S = !trait.poly<0>\n\
+         trait.trait @Has[!S] where [!trait.proj<@Has[!S], \"Out\"> = i64] { trait.assoc_type @Out }\n",
+    )
+    .expect("the fixture module parses");
+
+    let src = melior::ir::Type::parse(&context, "!trait.claim<@Has[i32]>")
+        .expect("the source claim parses");
+    let hop = melior::ir::Type::parse(
+        &context,
+        "!trait.claim<!trait.proj<@Has[i32], \"Out\"> = i64>",
+    )
+    .expect("the equality hop claim parses");
+    let wrong_hop = melior::ir::Type::parse(
+        &context,
+        "!trait.claim<!trait.proj<@Has[i32], \"Out\"> = i32>",
+    )
+    .expect("the wrong hop claim parses");
+    let identity = melior::ir::Type::parse(&context, "!trait.claim<@Has[i32]>")
+        .expect("the identity claim parses");
+
+    // The query accepts the true equality hop and the identity projection, and
+    // rejects a hop whose contractum the requirement does not license -- the same
+    // membership the trait.project verifier checks at the symbol seam.
+    assert!(trait_::claim_projects_to(&module, src, hop));
+    assert!(trait_::claim_projects_to(&module, src, identity));
+    assert!(!trait_::claim_projects_to(&module, src, wrong_hop));
+}
+
+#[test]
 fn the_obligation_mode_seam_audit_demands_the_cited_impl_s_assumptions() {
     let registry = DialectRegistry::new();
     register_all_dialects(&registry);

@@ -204,6 +204,12 @@ def ClaimType : TypeDef<TraitDialect, "Claim", [
     void getProjections(ModuleOp module,
                         SmallVectorImpl<ClaimType>& result);
 
+    /// Whether this claim projects to `dst`: `dst` exactly matches one of the
+    /// candidate projections `getProjections` enumerates. The ProjectOp verifier
+    /// and the codegen consultation query share this membership so the two never
+    /// disagree on whether a projection hop is well formed.
+    bool projectsTo(ModuleOp module, ClaimType dst);
+
     // for PolymorphicTypeInterface
     bool isPolymorphic() const;
 
