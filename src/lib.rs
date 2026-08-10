@@ -103,10 +103,6 @@ unsafe extern "C" {
     fn traitTypeIsAProjection(ty: MlirType) -> bool;
     fn traitTypeIsGeneric(ty: MlirType) -> bool;
     fn traitTypeCarriesPolymorphism(ty: MlirType) -> bool;
-    fn traitProjCastOpCreate(loc: MlirLocation,
-                              input: MlirValue,
-                              claim: MlirValue,
-                              result_type: MlirType) -> MlirOperation;
     fn traitTypeEqualityAttrGet(ctx: MlirContext,
                                 lhs: MlirType, rhs: MlirType) -> MlirAttribute;
     fn traitClaimTypeGetEquality(ctx: MlirContext,
@@ -709,21 +705,6 @@ pub fn is_generic_type(ty: Type) -> bool {
 /// from a dialect outside the trait type system answers false.
 pub fn carries_polymorphism(ty: Type) -> bool {
     unsafe { traitTypeCarriesPolymorphism(ty.to_raw()) }
-}
-
-/// Create a `trait.proj.cast` op that converts between equivalent types via a claim.
-pub fn proj_cast<'c>(
-    loc: Location<'c>,
-    input: Value<'c, '_>,
-    claim: Value<'c, '_>,
-    result_type: Type<'c>,
-) -> Operation<'c> {
-    unsafe { Operation::from_raw(traitProjCastOpCreate(
-        loc.to_raw(),
-        input.to_raw(),
-        claim.to_raw(),
-        result_type.to_raw(),
-    ))}
 }
 
 /// Create an equality-arm `!trait.claim<lhs = rhs>` type. Returns `None` if the

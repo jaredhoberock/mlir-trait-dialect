@@ -38,8 +38,6 @@ STATISTIC(numObligationNormalizations,
           "obligations normalized against one impl's own local bindings");
 STATISTIC(numObligationNormalizationMisses,
           "monomorphic projections obligation normalization left standing");
-STATISTIC(numVerifierObligationNormalizations,
-          "projection normalizations run inside a cast verifier");
 STATISTIC(numModuleFreeProjectionRejections,
           "projection crossings the module-free comparator rejected");
 STATISTIC(numModulelessRegionProjections,
@@ -204,8 +202,6 @@ DemandLedger::DemandLedger() {
   statisticsAtBirth.residualToleranceAcceptsMixedOrOther =
       residualToleranceAcceptsMixedOrOtherCount();
   statisticsAtBirth.verifierLookupMisses = numVerifierLookupMisses.getValue();
-  statisticsAtBirth.verifierObligationNormalizations =
-      numVerifierObligationNormalizations.getValue();
   statisticsAtBirth.resolverProjectionMisses =
       numResolverProjectionMisses.getValue();
   statisticsAtBirth.unifierAcceptances = numUnifierAcceptances.getValue();
@@ -442,9 +438,6 @@ void DemandLedger::dumpCensus() const {
      << " lookup-misses="
      << numVerifierLookupMisses.getValue() -
             statisticsAtBirth.verifierLookupMisses
-     << " cast-normalizations="
-     << numVerifierObligationNormalizations.getValue() -
-            statisticsAtBirth.verifierObligationNormalizations
      << " residual-tolerance-accepts-before-the-stage="
      << statisticsAtBirth.residualToleranceAccepts
      << " residual-tolerance-accepts-before-the-stage-generator-pending="
@@ -944,12 +937,6 @@ void countModulelessRegionProjection() {
   if (ambientCrossChecking)
     return;
   ++numModulelessRegionProjections;
-}
-
-void countVerifierObligationNormalization() {
-  if (ambientCrossChecking)
-    return;
-  ++numVerifierObligationNormalizations;
 }
 
 void countProofScan(size_t entries) {

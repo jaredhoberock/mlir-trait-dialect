@@ -39,7 +39,9 @@ func.func @gen(%p: !trait.proj<@Trait[!S], "Output">, %c: !trait.claim<@Trait[!S
 func.func @caller() -> i64 {
   %x = arith.constant 7 : i64
   %w = trait.witness @Trait_i64_p for @Trait[i64]
-  %pw = trait.proj.cast %x, %w : i64 to !trait.proj<@Trait[i64], "Output"> by !trait.claim<@Trait[i64] by @Trait_i64_p>
+  %e = trait.witness proj_resolve !trait.proj<@Trait[i64], "Output"> resolves i64 by @Trait_impl
+    : !trait.claim<!trait.proj<@Trait[i64], "Output"> = i64>
+  %pw = trait.coerce %x : i64 to !trait.proj<@Trait[i64], "Output"> via (%e) : (!trait.claim<!trait.proj<@Trait[i64], "Output"> = i64>)
   %r = trait.func.call @gen(%pw, %w) : (!trait.proj<@Trait[i64], "Output">, !trait.claim<@Trait[i64] by @Trait_i64_p>) -> i64
   return %r : i64
 }

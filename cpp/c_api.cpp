@@ -531,23 +531,6 @@ bool traitTypeCarriesPolymorphism(MlirType type) {
   return isa<PolymorphicTypeInterface>(unwrap(type));
 }
 
-MlirOperation traitProjCastOpCreate(MlirLocation loc,
-                                     MlirValue input,
-                                     MlirValue claim,
-                                     MlirType resultType) {
-  MLIRContext *ctx = unwrap(loc)->getContext();
-  OpBuilder builder(ctx);
-
-  auto op = ProjCastOp::create(builder,
-    unwrap(loc),
-    unwrap(resultType),
-    unwrap(input),
-    unwrap(claim)
-  );
-
-  return wrap(op.getOperation());
-}
-
 MlirAttribute traitTypeEqualityAttrGet(MlirContext wrappedCtx,
                                        MlirType lhs, MlirType rhs) {
   MLIRContext *ctx = unwrap(wrappedCtx);

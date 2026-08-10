@@ -793,10 +793,10 @@ static LogicalResult requireMonomorphicOperands(Operation *op,
 /// callee is specialized while an argument claim is still unproven, the clone
 /// bakes in an unprovable parameter and any method call the body makes through
 /// it cannot be resolved. An argument claim's proof can land after the call
-/// first becomes eligible -- for instance a forwarded claim whose proj.cast
-/// result inherits the input's proof and then folds -- so waiting for every
-/// monomorphic operand claim to be proven makes callee specialization
-/// independent of the order in which operand proofs settle. This mirrors the
+/// first becomes eligible -- a later round resolves the impl backing it -- so
+/// waiting for every monomorphic operand claim to be proven makes callee
+/// specialization independent of the order in which operand proofs settle. This
+/// mirrors the
 /// existing requirement that a method call's self claim be proven before it
 /// lowers. An operand claim that never becomes proven is caught downstream: the
 /// leftover check keys on op results, so an unprovable claim that is an op
@@ -913,9 +913,8 @@ struct FuncCallOpLowering : public OpRewritePattern<FuncCallOp> {
     // Operands pass through untouched (as in MethodCallOpLowering). The
     // requireProvenClaimOperands guard above has already established that every
     // operand claim is proven, so specialization never bakes an unprovable
-    // claim parameter into the callee: a forwarded proj.cast claim reaches this
-    // point only after its projection resolved, its proof was inherited from the
-    // input, and the identity cast folded away.
+    // claim parameter into the callee: an operand application claim reaches this
+    // point only after the impl backing it resolved and its proof settled.
     rewriter.replaceOpWithNewOp<func::CallOp>(
       callOp,
       target->callee.getSymName(),
@@ -1107,57 +1106,6 @@ struct ResolveProjectionsPattern : public RewritePattern {
                                  /*replaceLocs=*/false,
                                  /*replaceTypes=*/true);
     });
-    return success();
-  }
-};
-
-/// Inherits a proven proof onto a `trait.proj.cast` result whose input is a
-/// proven claim naming the same trait application.
-///
-/// Once the projections inside a forwarded claim are resolved, a proj.cast can
-/// be left with a proven input claim and an unproven result claim that name the
-/// same trait application, differing only in the proof annotation. This arises
-/// when the frontend forwards a generic callable into a projection-spelled
-/// bound: the cast's result claim is unproven by construction (see the
-/// ProjCastOp description in TraitOps.td), and the projection it carried later
-/// normalizes to the same concrete trait application the input already proves.
-///
-/// A proj.cast never changes which impl proves a claim -- its claim operand
-/// only witnesses the projection equality relating input and result. So when
-/// the input and result trait applications coincide, they are the same logical
-/// claim and must share the same proof. Retyping the result in place to the
-/// input's proven type lets the folder collapse the now-identity cast, after
-/// which every consumer sees the proven claim. The rewrite is monotone: it only
-/// ever turns an unproven result into a proven one.
-///
-/// A pure folder cannot do this because an MLIR folder may not change a result
-/// type; hence this pattern followed by the identity fold.
-///
-/// Inheriting from the input SSA type is deliberate and cannot be replaced by
-/// memo-based proof propagation: frontend-emitted trait.witness proofs are never
-/// entered into the resolver's proof memo, so the input value's own type is the
-/// only place that proof is recorded. The pattern trusts trait-application
-/// equality and does not re-derive the cast's claim-operand justification;
-/// soundness is anchored at the proof producers, and per-projection consistency
-/// of the cast is enforced separately by the ProjCastOp verifier.
-struct InheritProjCastProofPattern : public OpRewritePattern<ProjCastOp> {
-  using OpRewritePattern::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(ProjCastOp op,
-                                PatternRewriter &rewriter) const override {
-    auto inputClaim = dyn_cast<ClaimType>(op.getInput().getType());
-    auto resultClaim = dyn_cast<ClaimType>(op.getResult().getType());
-    if (!inputClaim || !resultClaim)
-      return failure();
-
-    // Guards, all required: input proven, result unproven, and both name the
-    // same trait application (hence the same logical claim).
-    if (!inputClaim.isProven() || resultClaim.isProven())
-      return failure();
-    if (inputClaim.getTraitApplication() != resultClaim.getTraitApplication())
-      return failure();
-
-    rewriter.modifyOpInPlace(op, [&] { op.getResult().setType(inputClaim); });
     return success();
   }
 };
@@ -2161,7 +2109,6 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
       patterns.add<FuncCallOpLowering>(ctx, reading);
       patterns.add<MethodCallOpLowering>(ctx, reading);
       patterns.add<ResolveProjectionsPattern>(ctx, reading);
-      patterns.add<InheritProjCastProofPattern>(ctx);
       if (askImplSelectionForImpls)
         patterns.add<AskImplSelectionForADeclaredClaimPattern>(ctx, *resolver);
 
@@ -2433,26 +2380,6 @@ struct EraseProjectOp : public OpRewritePattern<ProjectOp> {
   }
 };
 
-struct EraseProjCastOp : public OpConversionPattern<ProjCastOp> {
-  using OpConversionPattern::OpConversionPattern;
-
-  LogicalResult matchAndRewrite(ProjCastOp op, OneToNOpAdaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const override {
-    // After projection resolution, input and result have the same
-    // concrete type. If the input survived conversion (regular value),
-    // forward it. If the input was erased (claim type mapped to 0
-    // values, or defining op erased by another pattern), erase the
-    // proj_cast too — there is nothing to forward.
-    auto input = adaptor.getInput();
-    if (input.empty()) {
-      rewriter.eraseOp(op);
-    } else {
-      rewriter.replaceOp(op, input);
-    }
-    return success();
-  }
-};
-
 struct EraseCoerceOp : public OpConversionPattern<CoerceOp> {
   using OpConversionPattern::OpConversionPattern;
 
@@ -2565,7 +2492,7 @@ static LogicalResult erasePolymorphs(ModuleOp module) {
 
   // Add trait dialect's own patterns
   patterns.add<EraseProjectOp, EraseWitnessOp>(ctx);
-  patterns.add<EraseProjCastOp, EraseCoerceOp>(opConverter, ctx);
+  patterns.add<EraseCoerceOp>(opConverter, ctx);
 
   populateFunctionOpInterfaceTypeConversionPattern<func::FuncOp>(patterns, opConverter);
   populateCallOpTypeConversionPattern(patterns, opConverter);
@@ -2573,8 +2500,7 @@ static LogicalResult erasePolymorphs(ModuleOp module) {
 
   // Mark !trait.claim and !trait.proj as illegal
   ConversionTarget target(*ctx);
-  target.addIllegalOp<AllegeOp, DeriveOp, ProjectOp, WitnessOp, ProjCastOp,
-                      CoerceOp>();
+  target.addIllegalOp<AllegeOp, DeriveOp, ProjectOp, WitnessOp, CoerceOp>();
   target.markUnknownOpDynamicallyLegal([&](Operation *op) {
     return !opMentionsType<ClaimType>(op) && !opMentionsType<ProjectionType>(op);
   });

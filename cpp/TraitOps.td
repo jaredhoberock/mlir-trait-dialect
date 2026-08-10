@@ -1164,49 +1164,6 @@ def WitnessOp : TraitDialectOp<"witness", [
 }
 
 
-def ProjCastOp : TraitDialectOp<"proj.cast", [
-  Pure
-]> {
-  let summary = "Convert between equivalent types via an associated type binding";
-  let description = [{
-    Converts a value between types that denote the same type once the claim's
-    associated type binding is applied. The claim operand justifies the
-    equivalence.
-
-    The input and result denote the same type modulo two spellings the cast
-    reconciles: projections over the claim's trait application, which resolve
-    through the binding, and proof receipts on `!trait.claim` positions, which
-    comparison disregards. Cases include:
-    1. Concrete <-> projection (at call sites)
-    2. Projection <-> projection (impl method boundaries)
-    3. Types containing projections, e.g., claim types like
-       `!trait.claim<@Trait[!trait.proj<...>]>` (resolving projections
-       inside derived claims)
-
-    Verification: if the claim is proven, the verifier resolves the projections
-    over the claim's trait application via the impl's bindings and requires the
-    input and result to agree once resolved, comparing modulo proof receipts. If
-    the claim is unproven, the verifier replaces each projection over the claim's
-    trait application with a shared unification variable (the same projection
-    maps to the same variable) and unifies input against result, so
-    non-projection positions must match and one projection cannot stand for two
-    different types.
-
-    A receipt may be dropped but neither attached nor exchanged: once its
-    projections are reconciled, a cast whose result names a proof the input did
-    not carry -- a different proof for the same claim, or a proof where the input
-    carried none -- is rejected, so a cast never rewrites which impl proves a
-    claim.
-  }];
-
-  let arguments = (ins AnyType:$input, Claim:$claim);
-  let results = (outs AnyType:$result);
-  let hasCustomAssemblyFormat = 1;
-  let hasVerifier = 1;
-  let hasFolder = 1;
-}
-
-
 def CoerceOp : TraitDialectOp<"coerce", [
   Pure
 ]> {
@@ -1264,10 +1221,6 @@ def CoerceOp : TraitDialectOp<"coerce", [
     the folder collapses -- or, if the two lookups ground to different types,
     failing the build. A marked coerce surviving past monomorphization is a hard
     error, never a tolerated residual.
-
-    XXX TODO: trait.coerce lands beside trait.proj.cast during the migration;
-    proj.cast is retired once the frontend transcribes coerces and nothing
-    emits the old cast (the retirement rung).
   }];
 
   let arguments = (ins AnyType:$input, Variadic<Claim>:$equalities,

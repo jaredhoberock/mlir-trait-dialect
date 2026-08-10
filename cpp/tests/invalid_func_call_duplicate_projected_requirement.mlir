@@ -38,11 +38,12 @@ module {
     %x = arith.constant 1 : i64
     %t2 = trait.witness @T2_i64_p for @T2[i64]
     %t1 = trait.witness @T1_i64_b for @T1[i64]
-    %t0 = trait.witness @T0_i64 for @T0[i64]
-    %t1_projected = trait.proj.cast %t1, %t0
+    %eq = trait.witness proj_resolve !trait.proj<@T0[i64], "A"> resolves i64 by @T0_i64
+      : !trait.claim<!trait.proj<@T0[i64], "A"> = i64>
+    %t1_projected = trait.coerce %t1
       : !trait.claim<@T1[i64] by @T1_i64_b>
       to !trait.claim<@T1[!trait.proj<@T0[i64], "A">] by @T1_i64_b>
-      by !trait.claim<@T0[i64] by @T0_i64>
+      via (%eq) : (!trait.claim<!trait.proj<@T0[i64], "A"> = i64>)
     // expected-error @below {{inconsistent proof mapping}}
     %r = trait.func.call @f(%x, %t2, %t1_projected)
       : (i64,

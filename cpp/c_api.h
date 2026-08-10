@@ -191,12 +191,6 @@ bool traitTypeIsGeneric(MlirType type);
 /// does, and is deleted by the same upstream query.
 bool traitTypeCarriesPolymorphism(MlirType type);
 
-/// Create a trait.proj.cast operation
-MlirOperation traitProjCastOpCreate(MlirLocation loc,
-                                     MlirValue input,
-                                     MlirValue claim,
-                                     MlirType resultType);
-
 /// Return the #trait.equality<lhs = rhs> predicate attribute. Endpoints must be
 /// receipt-free; returns a null attribute if construction fails.
 MlirAttribute traitTypeEqualityAttrGet(MlirContext ctx,

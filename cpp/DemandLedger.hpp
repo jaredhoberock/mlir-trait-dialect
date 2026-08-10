@@ -760,7 +760,6 @@ private:
     uint64_t residualToleranceAcceptsHypothesis = 0;
     uint64_t residualToleranceAcceptsMixedOrOther = 0;
     uint64_t verifierLookupMisses = 0;
-    uint64_t verifierObligationNormalizations = 0;
     uint64_t resolverProjectionMisses = 0;
     uint64_t unifierAcceptances = 0;
     uint64_t obligationNormalizations = 0;
@@ -1023,10 +1022,6 @@ void countModuleFreeProjectionRejection();
 /// Counts a region specialized with no module in scope that still carries a
 /// monomorphic projection -- a mint no lookup could have served.
 void countModulelessRegionProjection();
-
-/// Counts obligation normalization run in a verifier, where no ledger record is
-/// taken.
-void countVerifierObligationNormalization();
 
 /// Counts the linear scans impl selection performs, through whatever ledger is
 /// installed.

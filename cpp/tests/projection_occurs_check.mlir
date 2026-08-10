@@ -22,7 +22,8 @@
 // through the trait application binds one to the other -- the proj-vs-proj
 // recursion this test exercises. (A projection meeting a free inference variable
 // it does not occur in binds that variable directly; that branch is exercised by
-// proj_cast_claim_method_call.mlir. A projection meeting a rigid type it cannot
+// the marked-coerce proj-resolution forms in coerce_unproven_pending.mlir. A
+// projection meeting a rigid type it cannot
 // resolve is a strict mismatch under the module-free comparison a verifier uses;
 // the module-capable entry a pass or committed-fact build uses resolves it if a
 // unique impl binds it, and tolerates only an irreducible crossing.)
