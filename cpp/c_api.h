@@ -253,6 +253,13 @@ MlirOperation traitCoerceOpCreate(MlirLocation loc,
                                   MlirValue *equalities, intptr_t numEqualities,
                                   MlirType resultType);
 
+/// Create a marked (unproven) trait.coerce: change `input`'s written type to
+/// `resultType` with no cited equalities, standing in the pending judgment its
+/// projections discharge at monomorphization.
+MlirOperation traitCoerceOpCreateUnproven(MlirLocation loc,
+                                          MlirValue input,
+                                          MlirType resultType);
+
 /// Answer whether the projection-resolution witness seam audit accepts a
 /// certificate. This runs the same check as trait.witness's equality-arm
 /// verifySymbolUses: it looks the impl named by `implName` up in `module`,

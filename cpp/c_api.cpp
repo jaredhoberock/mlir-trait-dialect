@@ -671,6 +671,19 @@ MlirOperation traitCoerceOpCreate(MlirLocation loc,
   return wrap(op.getOperation());
 }
 
+MlirOperation traitCoerceOpCreateUnproven(MlirLocation loc,
+                                          MlirValue input,
+                                          MlirType resultType) {
+  MLIRContext *ctx = unwrap(loc)->getContext();
+  OpBuilder builder(ctx);
+  // The marked form cites no equalities: its reconciling equality is supplied by
+  // an impl minted at monomorphization.
+  auto op = CoerceOp::create(builder, unwrap(loc), unwrap(resultType),
+                             unwrap(input), ValueRange{});
+  op.setUnproven(true);
+  return wrap(op.getOperation());
+}
+
 bool traitWitnessSeamAuditAccepts(MlirModule wrappedModule,
                                   MlirType redex, MlirType contractum,
                                   MlirStringRef implName,

@@ -128,6 +128,9 @@ unsafe extern "C" {
                            input: MlirValue,
                            equalities: *const MlirValue, num_equalities: isize,
                            result_type: MlirType) -> MlirOperation;
+    fn traitCoerceOpCreateUnproven(loc: MlirLocation,
+                                   input: MlirValue,
+                                   result_type: MlirType) -> MlirOperation;
     fn traitWitnessSeamAuditAccepts(module: MlirModule,
                                     redex: MlirType, contractum: MlirType,
                                     impl_name: MlirStringRef,
@@ -788,6 +791,15 @@ pub fn coerce<'c>(loc: Location<'c>, input: Value<'c, '_>, equalities: &[Value<'
     let raw: Vec<MlirValue> = equalities.iter().map(|v| v.to_raw()).collect();
     unsafe { Operation::from_raw(traitCoerceOpCreate(
         loc.to_raw(), input.to_raw(), raw.as_ptr(), raw.len() as isize, result_type.to_raw())) }
+}
+
+/// Create a marked (unproven) `trait.coerce`: change `input`'s written type to
+/// `result_type` citing no equalities. The reconciling equality is supplied by
+/// an impl minted at monomorphization, which respells the endpoints' projections
+/// to ground and leaves the reflexive form the folder discharges.
+pub fn coerce_unproven<'c>(loc: Location<'c>, input: Value<'c, '_>, result_type: Type<'c>) -> Operation<'c> {
+    unsafe { Operation::from_raw(traitCoerceOpCreateUnproven(
+        loc.to_raw(), input.to_raw(), result_type.to_raw())) }
 }
 
 /// Answer whether the projection-resolution witness seam audit accepts the
