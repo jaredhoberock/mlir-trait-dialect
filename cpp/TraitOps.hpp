@@ -38,9 +38,23 @@ public:
 /// classification answer rather than an error suppresses it at the diagnostic
 /// engine.
 ///
+/// When `rigidHeadMatch` is set, the head match instantiates ONLY the cited
+/// impl's own generics; the redex's application (the actual side) stays rigid, so
+/// no module-visible impl resolves a projection spelled there and the audit
+/// verdict never depends on the unrelated impls the module carries. The impl
+/// birth audit sets it, so an impl's verdict is estate-independent. Left unset
+/// (the default), the head match resolves the actual side's ground projections
+/// by module lookup, as a witness-site audit does. When `outSubst` is non-null it
+/// receives the head-match substitution, so a caller replaying the premise reuses
+/// this build rather than deriving it a second time.
+///
 /// When `dischargeObligations` is set, the audit additionally requires the cited
 /// impl's own assumptions -- specialized for the redex's application -- each to
-/// be discharged by one of the application-arm `obligationPremises`, compared
+/// be discharged: either by a hypothetical cover from the application-arm
+/// `obligationPremises` (the citing impl's own where clause), or by a
+/// `dischargeCitations` entry whose spelled application is the assumption and
+/// whose named impl, specialized for it, has each of its own assumptions
+/// discharged in turn over the same finite citation list. Both compare
 /// receipt-stripped and modulo the equality `premises`. It deliberately does not
 /// reach the cited impl's trait requirements, which may quantify over GAT
 /// variables with no ground instance at the witness; requirement discharge
@@ -52,7 +66,10 @@ LogicalResult auditProjResolveCertificate(
     ArrayRef<TypeEqualityAttr> premises,
     llvm::function_ref<InFlightDiagnostic()> err,
     ArrayRef<TraitApplicationAttr> obligationPremises = {},
-    bool dischargeObligations = false);
+    bool dischargeObligations = false,
+    ArrayRef<DischargeCitationAttr> dischargeCitations = {},
+    bool rigidHeadMatch = false,
+    SpecializationMap *outSubst = nullptr);
 
 } // end mlir::trait
 

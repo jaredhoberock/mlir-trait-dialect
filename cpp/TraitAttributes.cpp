@@ -178,6 +178,22 @@ void WitnessCertificateAttr::print(AsmPrinter &printer) const {
           << getCitedImpl();
 }
 
+Attribute DischargeCitationAttr::parse(AsmParser &parser, Type) {
+  auto application =
+      dyn_cast_or_null<TraitApplicationAttr>(TraitApplicationAttr::parse(parser, {}));
+  FlatSymbolRefAttr dischargingImpl;
+  if (!application || parser.parseKeyword("by") ||
+      parser.parseAttribute(dischargingImpl))
+    return {};
+  return DischargeCitationAttr::get(parser.getContext(), application,
+                                    dischargingImpl);
+}
+
+void DischargeCitationAttr::print(AsmPrinter &printer) const {
+  getApplication().print(printer);
+  printer << " by " << getDischargingImpl();
+}
+
 void TraitDialect::registerAttributes() {
   addAttributes<
 #define GET_ATTRDEF_LIST

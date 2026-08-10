@@ -446,14 +446,15 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // sibling impl binds a ground projection redex to a contractum; the audit reads
   // that cited impl at the sanctioned symbol seam -- obligation-aware, so a
   // premise citing a conditional impl is legal exactly when this impl's own
-  // where-clause covers the cited impl's assumptions -- and every audited premise
-  // then resolves its redex the way this impl's own bindings resolve its own
-  // projections. The per-entry audit runs with an EMPTY equality modulus: sibling
-  // premises never serve as each other's modulus, because an attribute array has
-  // no dominance and mutual justification could ground a false equality on
-  // nothing. The comparisons add these rules after their own-binding rule and let
-  // the fixed-point walk apply them innermost-first, so a nested redex reduces
-  // its inner application before its outer one.
+  // where clause covers the cited impl's assumptions or a declared discharge
+  // citation supplies them -- and every audited premise then resolves its redex
+  // the way this impl's own bindings resolve its own projections. The per-entry
+  // audit runs with an EMPTY equality modulus: sibling premises never serve as
+  // each other's modulus, because an attribute array has no dominance and mutual
+  // justification could ground a false equality on nothing. The comparisons add
+  // these rules after their own-binding rule and let the fixed-point walk apply
+  // them innermost-first, so a nested redex reduces its inner application before
+  // its outer one.
   struct PremiseRule {
     ImplOp impl;
     TraitApplicationAttr app;
@@ -463,6 +464,10 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (ArrayAttr premises = getPremisesAttr()) {
     SmallVector<TraitApplicationAttr> obligationPremises(
         getAssumptions().getApplications());
+    SmallVector<DischargeCitationAttr> dischargeCitations;
+    if (ArrayAttr discharges = getDischargesAttr())
+      for (Attribute entry : discharges)
+        dischargeCitations.push_back(cast<DischargeCitationAttr>(entry));
     for (Attribute entry : premises) {
       auto cert = dyn_cast<WitnessCertificateAttr>(entry);
       if (!cert)
@@ -472,18 +477,26 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
       if (!redexProj)
         return emitOpError() << "premise redex must be a projection, found "
                              << cert.getRedex();
+      // A premise resolves only a GROUND sibling projection; a redex still
+      // carrying a poly variable is not ground, and resolving it by unifying
+      // that variable with a single cited impl's concrete head would accept a
+      // generic impl on the strength of one instance. This mirrors the guard the
+      // retired candidate lookup applied before it reduced a redex.
+      if (isPolymorphicType(cert.getRedex()))
+        return emitOpError() << "premise redex " << cert.getRedex()
+                             << " is not ground; a premise resolves only a "
+                                "ground sibling projection";
+      SpecializationMap subst;
       if (failed(auditProjResolveCertificate(
               *module, cert.getRedex(), cert.getContractum(), cert.getCitedImpl(),
               /*premises=*/{}, errFn, obligationPremises,
-              /*dischargeObligations=*/true)))
+              /*dischargeObligations=*/true, dischargeCitations,
+              /*rigidHeadMatch=*/true, &subst)))
         return failure();
       auto citedImpl = mlir::SymbolTable::lookupNearestSymbolFrom<ImplOp>(
           *module, cert.getCitedImpl());
-      ClaimType redexClaim =
-          ClaimType::get(getContext(), redexProj.getTraitApplication());
-      auto subst = citedImpl.buildSubstitutionForSelfClaim(redexClaim, errFn);
-      if (failed(subst)) return failure();
-      premiseRules.push_back({citedImpl, redexProj.getTraitApplication(), *subst});
+      premiseRules.push_back(
+          {citedImpl, redexProj.getTraitApplication(), std::move(subst)});
     }
   }
   auto addPremiseRules = [&](NormalizationContext &ctx) {
@@ -618,10 +631,13 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // symbolic cannot be decided against the impl's bindings at birth and is
   // accepted here; its correctness is established where the impl is selected and,
   // for evidence that is consumed, at the use site (a false equality's coerce
-  // fails the erase barrier). Only a ground mismatch is a birth error. A ground
-  // sibling requirement no premise resolves stays symbolic and defers -- and a
-  // false requirement whose evidence is never consumed is accepted by design, the
-  // same inert corner Rust's unsatisfiable where-clause bounds occupy.
+  // fails the erase barrier). Only a ground mismatch is a birth error. A sibling
+  // requirement neither this impl's own bindings nor a declared premise resolves
+  // stays symbolic and defers -- the inert corner Rust's unsatisfiable
+  // where-clause bounds occupy. But once a declared premise reduces the endpoint
+  // to a ground value, a false requirement refuses at birth whether or not its
+  // evidence is ever consumed: the acceptance is the symbolic case alone, not a
+  // blanket pass for unused evidence.
   //
   // Guarded on the trait actually carrying an equality requirement: a trait
   // with none owes no birth check, and the guard keeps the self-claim
@@ -664,8 +680,11 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // endpoint cannot be decided at birth and is accepted here, exactly as a
   // trait-header equality requirement is: its correctness is established where the
   // impl is selected and, for evidence that is consumed, at the use site (a false
-  // equality's coerce fails the erase barrier); an unused one is inert. Guarded on
-  // the impl actually assuming an equality.
+  // equality's coerce fails the erase barrier). The acceptance is the symbolic
+  // case alone: once a declared premise reduces the endpoint to a ground value,
+  // a false assumption refuses at birth even when its evidence is never used --
+  // an unused false assumption is inert only while its redex stays symbolic.
+  // Guarded on the impl actually assuming an equality.
   bool assumesEquality = llvm::any_of(getAssumptions(), [](Attribute pred) {
     return mlir::isa<TypeEqualityAttr>(pred);
   });
@@ -1185,6 +1204,17 @@ ParseResult ImplOp::parse(OpAsmParser &p, OperationState &result) {
     result.addAttribute("premises", premises);
   }
 
+  // Optional obligation discharge citations: an array naming, per application
+  // obligation a cited conditional premise leaves standing, the impl that
+  // discharges it. Absent citations leave the printed and parsed form
+  // byte-identical to an impl without them.
+  if (succeeded(p.parseOptionalKeyword("discharges"))) {
+    ArrayAttr discharges;
+    if (p.parseAttribute(discharges))
+      return failure();
+    result.addAttribute("discharges", discharges);
+  }
+
   // sym_name: use parsed or synthesize from parameters
   StringAttr symNameAttr = parsedSymName
     ? parsedSymName
@@ -1236,9 +1266,18 @@ void ImplOp::print(OpAsmPrinter &printer) {
     }
   }
 
+  // print discharge citations if present and non-empty
+  if (ArrayAttr discharges = getDischargesAttr()) {
+    if (!discharges.empty()) {
+      printer << "discharges ";
+      printer.printAttribute(discharges);
+    }
+  }
+
   printer.printOptionalAttrDictWithKeyword(
     (*this)->getAttrs(),
-    /*elidedAttrs=*/{"sym_name", "self_application", "assumptions", "premises"}
+    /*elidedAttrs=*/{"sym_name", "self_application", "assumptions", "premises",
+                     "discharges"}
   );
   printer << " ";
   printer.printRegion(getBody());
@@ -1663,12 +1702,106 @@ static FailureOr<Type> applyEqualityPremises(
 // reach its trait's requirements, which may quantify over GAT variables with no
 // ground instance at the witness; requirement discharge belongs to the proof and
 // birth machinery.
+// Specializes `impl`'s own application assumptions for `selfClaim` through
+// `subst` -- the head-match substitution the audit already built -- rather than
+// rebuilding one module-grade. Keeping the same rigid substitution here as at
+// the head match is what makes the assumptions the discharge check inspects
+// agree with the head the audit matched.
+static SmallVector<ClaimType> specializeAssumptionsThroughSubst(
+    ImplOp impl, const SpecializationMap &subst) {
+  auto typeMap = subst.toTypeMap();
+  return llvm::map_to_vector(impl.getAssumptionsAsClaims(), [&](ClaimType a) {
+    return cast<ClaimType>(applySubstitutionToFixedPoint(typeMap, a));
+  });
+}
+
+// Whether `want` -- a ground application obligation, already read modulo the
+// equality `premises` -- is discharged. Arm (i): a hypothetical cover among the
+// citing impl's own where-clause `obligationPremises`. Arm (ii): a discharge
+// citation whose spelled application is `want` and whose named impl,
+// instantiated ONLY over its own generics for that application, has each of its
+// own assumptions discharged in turn.
+//
+// Termination: arm (ii) recurses only into a citation whose application is not
+// already on the active `inProgress` stack; the declared citation list is
+// finite, so each recursion pushes a distinct application and the depth is
+// bounded by the list length. A citation that would re-enter an application
+// under resolution is a cycle and discharges nothing along that path.
+static bool dischargeApplicationObligation(
+    ModuleOp module, Type want, ArrayRef<TypeEqualityAttr> premises,
+    ArrayRef<TraitApplicationAttr> obligationPremises,
+    ArrayRef<DischargeCitationAttr> dischargeCitations,
+    SmallVectorImpl<TraitApplicationAttr> &inProgress,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  MLIRContext *ctx = module.getContext();
+
+  // Arm (i): the citing impl's own where clause covers the obligation. The
+  // equality premises are already known non-cyclic here (the audit rewrote its
+  // endpoints through them before reaching this check), so the rewrite cannot
+  // fail on a well-formed audit.
+  for (TraitApplicationAttr premiseApp : obligationPremises) {
+    ClaimType premiseClaim = ClaimType::get(ctx, premiseApp);
+    auto haveOr = applyEqualityPremises(Type(premiseClaim), premises, err);
+    if (succeeded(haveOr) && *haveOr == want)
+      return true;
+  }
+
+  // Arm (ii): a declared discharge citation names the obligation and an impl
+  // that supplies it.
+  for (DischargeCitationAttr citation : dischargeCitations) {
+    ClaimType citedApp = ClaimType::get(ctx, citation.getApplication());
+    auto citedOr = applyEqualityPremises(Type(citedApp), premises, err);
+    if (failed(citedOr) || *citedOr != want)
+      continue;
+    if (llvm::is_contained(inProgress, citation.getApplication()))
+      continue; // cycle: this path grounds nothing
+
+    auto dischargerOp = SymbolTable::lookupNearestSymbolFrom<ImplOp>(
+        module, citation.getDischargingImpl());
+    if (!dischargerOp)
+      continue;
+
+    // The named impl must genuinely supply the application: instantiate only
+    // its own generics for the application (rigid actual side, no module scan).
+    ClaimType appClaim = ClaimType::get(ctx, citation.getApplication());
+    auto subst = buildSpecialization(dischargerOp.getSelfClaim(), Type(appClaim),
+                                     ModuleOp());
+    if (failed(subst))
+      continue;
+
+    // Its own assumptions, specialized through that same substitution, must each
+    // discharge in turn.
+    inProgress.push_back(citation.getApplication());
+    bool allDischarged = true;
+    for (ClaimType assumption :
+         specializeAssumptionsThroughSubst(dischargerOp, *subst)) {
+      auto subWantOr =
+          applyEqualityPremises(Type(assumption.asUnproven()), premises, err);
+      if (failed(subWantOr) ||
+          !dischargeApplicationObligation(module, *subWantOr, premises,
+                                          obligationPremises, dischargeCitations,
+                                          inProgress, err)) {
+        allDischarged = false;
+        break;
+      }
+    }
+    inProgress.pop_back();
+    if (allDischarged)
+      return true;
+  }
+
+  return false;
+}
+
 LogicalResult mlir::trait::auditProjResolveCertificate(
     ModuleOp module, Type redex, Type contractum, FlatSymbolRefAttr citedImpl,
     ArrayRef<TypeEqualityAttr> premises,
     llvm::function_ref<InFlightDiagnostic()> err,
     ArrayRef<TraitApplicationAttr> obligationPremises,
-    bool dischargeObligations) {
+    bool dischargeObligations,
+    ArrayRef<DischargeCitationAttr> dischargeCitations,
+    bool rigidHeadMatch,
+    SpecializationMap *outSubst) {
   auto redexProj = dyn_cast<ProjectionType>(redex);
   if (!redexProj)
     return err() << "a projection-resolution certificate's redex must "
@@ -1680,11 +1813,23 @@ LogicalResult mlir::trait::auditProjResolveCertificate(
     return err() << "cannot find trait.impl '" << citedImpl
                  << "' cited by the certificate";
 
+  // Head match the cited impl against the redex's application. The impl birth
+  // audit sets rigidHeadMatch: it instantiates only the cited impl's own
+  // generics against a null module, so a projection spelled in the redex
+  // application stays rigid and is never resolved by a module-visible impl --
+  // an impl's verdict cannot then turn on the unrelated impls the module carries.
+  // A witness-site audit leaves it unset and resolves the actual side's ground
+  // projections by module lookup, as it always has.
   ClaimType selfClaim =
       ClaimType::get(module.getContext(), redexProj.getTraitApplication());
-  auto subst = implOp.buildSubstitutionForSelfClaim(selfClaim, err);
+  auto subst = rigidHeadMatch
+                   ? buildSpecialization(implOp.getSelfClaim(), Type(selfClaim),
+                                         ModuleOp(), err)
+                   : implOp.buildSubstitutionForSelfClaim(selfClaim, err);
   if (failed(subst))
     return failure();
+  if (outSubst)
+    *outSubst = *subst;
 
   auto bound = implOp.specializeAssociatedTypeBinding(
       redexProj.getAssocName().getValue(), redexProj.getAssocTypeArgs());
@@ -1710,33 +1855,23 @@ LogicalResult mlir::trait::auditProjResolveCertificate(
                  << contractum;
 
   // Obligation-discharge check (obligation mode only). The cited impl's own
-  // assumptions -- specialized for the redex's application -- must each be
-  // supplied by an application-arm premise, compared receipt-stripped and modulo
-  // the cited equality premises. Set semantics: each assumption is discharged by
-  // at least one premise; extra premises are harmless. The impl's trait
-  // requirements are deliberately not reached here (they may quantify over GAT
-  // variables with no ground instance at the witness).
+  // assumptions -- specialized through the same rigid head-match substitution --
+  // must each be discharged, receipt-stripped and modulo the cited equality
+  // premises, by a hypothetical cover (arm i) or a declared discharge citation
+  // (arm ii). The impl's trait requirements are deliberately not reached here
+  // (they may quantify over GAT variables with no ground instance at the
+  // witness).
   if (dischargeObligations) {
-    auto assumptions = implOp.specializeAssumptionsAsClaimsFor(selfClaim, err);
-    if (failed(assumptions))
-      return failure();
-    for (ClaimType assumption : *assumptions) {
+    for (ClaimType assumption :
+         specializeAssumptionsThroughSubst(implOp, *subst)) {
       auto wantOr =
           applyEqualityPremises(Type(assumption.asUnproven()), premises, err);
       if (failed(wantOr))
         return failure();
-      bool discharged = false;
-      for (TraitApplicationAttr premiseApp : obligationPremises) {
-        ClaimType premiseClaim = ClaimType::get(module.getContext(), premiseApp);
-        auto haveOr = applyEqualityPremises(Type(premiseClaim), premises, err);
-        if (failed(haveOr))
-          return failure();
-        if (*wantOr == *haveOr) {
-          discharged = true;
-          break;
-        }
-      }
-      if (!discharged)
+      SmallVector<TraitApplicationAttr> inProgress;
+      if (!dischargeApplicationObligation(module, *wantOr, premises,
+                                          obligationPremises, dischargeCitations,
+                                          inProgress, err))
         return err() << "cited impl '" << citedImpl
                      << "' has an undischarged assumption " << assumption
                      << "; the witness premises do not supply it";

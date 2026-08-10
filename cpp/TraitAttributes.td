@@ -137,6 +137,37 @@ def WitnessCertificateAttr : AttrDef<TraitDialect, "WitnessCertificate", []> {
   let hasCustomAssemblyFormat = 1;
 }
 
+// Names one application obligation and the impl that discharges it. An impl
+// carries a flat list of these alongside its projection-resolution premises: a
+// premise that cites a CONDITIONAL sibling impl leaves that impl's own
+// assumptions to discharge, and where the citing impl's own where clause does
+// not cover such an assumption, a discharge citation names the impl that does.
+// The audit resolves the named impl by symbol and matches it against the
+// obligation -- it never scans the module for a discharger. The obligation is
+// spelled (`application`) so the audit compares against it directly; the
+// discharger is named (`discharging_impl`) so a conditional discharger's own
+// assumptions can in turn be discharged by further citations in the same list.
+def DischargeCitationAttr : AttrDef<TraitDialect, "DischargeCitation", []> {
+  let mnemonic = "discharge";
+  let summary = "Names the impl that discharges one application obligation";
+  let description = [{
+    Pairs an application obligation with the impl that discharges it. The impl
+    verifier's premise audit uses these to discharge the assumptions a cited
+    conditional impl leaves standing: an assumption is discharged either by a
+    hypothetical cover from the citing impl's own where-clause applications, or
+    by a discharge citation whose spelled `application` is that assumption and
+    whose named `discharging_impl`, specialized for the application, has each of
+    its own assumptions discharged in turn over this same finite list.
+  }];
+
+  let parameters = (ins
+    "::mlir::trait::TraitApplicationAttr":$application,
+    "::mlir::FlatSymbolRefAttr":$discharging_impl
+  );
+
+  let hasCustomAssemblyFormat = 1;
+}
+
 def TraitApplicationArrayAttr : AttrDef<TraitDialect, "TraitApplicationArray",
     [DeclareAttrInterfaceMethods<SymbolUserAttrInterface>]> {
   let mnemonic = "application_array";

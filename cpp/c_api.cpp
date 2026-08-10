@@ -224,6 +224,27 @@ bool traitImplOpSetPremises(MlirOperation wrappedImpl,
   return true;
 }
 
+bool traitImplOpSetDischarges(MlirOperation wrappedImpl,
+                              MlirAttribute* discharges, intptr_t numDischarges) {
+  auto impl = dyn_cast_or_null<ImplOp>(unwrap(wrappedImpl));
+  if (!impl) return false;
+
+  SmallVector<Attribute> citations;
+  citations.reserve(numDischarges);
+  for (intptr_t i = 0; i < numDischarges; ++i) {
+    Attribute a = unwrap(discharges[i]);
+    if (!isa<DischargeCitationAttr>(a))
+      return false;
+    citations.push_back(a);
+  }
+
+  if (citations.empty())
+    impl.removeDischargesAttr();
+  else
+    impl.setDischargesAttr(ArrayAttr::get(impl.getContext(), citations));
+  return true;
+}
+
 MlirOperation traitMethodCallOpCreate(MlirLocation loc,
                                       MlirStringRef traitName,
                                       MlirStringRef methodName,
@@ -552,6 +573,18 @@ MlirAttribute traitWitnessCertificateAttrGet(MlirContext wrappedCtx,
   return wrap(cert);
 }
 
+MlirAttribute traitDischargeCitationAttrGet(MlirContext wrappedCtx,
+                                            MlirAttribute application,
+                                            MlirStringRef implName) {
+  MLIRContext *ctx = unwrap(wrappedCtx);
+  auto app = dyn_cast<TraitApplicationAttr>(unwrap(application));
+  if (!app)
+    return {};
+  FlatSymbolRefAttr implRef =
+      FlatSymbolRefAttr::get(ctx, StringRef(implName.data, implName.length));
+  return wrap(DischargeCitationAttr::get(ctx, app, implRef));
+}
+
 MlirOperation traitWitnessProjResolveOpCreate(MlirLocation loc,
                                               MlirAttribute wrappedCert,
                                               MlirValue *premises,
@@ -662,6 +695,52 @@ bool traitWitnessSeamAuditAccepts(MlirModule wrappedModule,
   return succeeded(auditProjResolveCertificate(
       module, unwrap(redex), unwrap(contractum), implRef, equalityPremises, err,
       applicationPremises, checkObligations));
+}
+
+bool traitWitnessSeamAuditAcceptsWithDischarges(MlirModule wrappedModule,
+                                                MlirType redex,
+                                                MlirType contractum,
+                                                MlirStringRef implName,
+                                                MlirType *premises,
+                                                intptr_t numPremises,
+                                                MlirAttribute *discharges,
+                                                intptr_t numDischarges) {
+  ModuleOp module = unwrap(wrappedModule);
+  MLIRContext *ctx = module.getContext();
+  FlatSymbolRefAttr implRef =
+      FlatSymbolRefAttr::get(ctx, StringRef(implName.data, implName.length));
+
+  // Obligation mode: the equality claims are the comparison modulus, the
+  // application claims are the citing impl's own where clause (arm i).
+  SmallVector<TypeEqualityAttr> equalityPremises;
+  SmallVector<TraitApplicationAttr> applicationPremises;
+  for (intptr_t i = 0; i < numPremises; ++i) {
+    auto claim = dyn_cast<ClaimType>(unwrap(premises[i]));
+    if (!claim)
+      return false;
+    if (auto eq = claim.getEqualityAttr())
+      equalityPremises.push_back(eq);
+    else if (claim.isApplication())
+      applicationPremises.push_back(claim.getTraitApplication());
+    else
+      return false;
+  }
+
+  // The declared discharge citations (arm ii).
+  SmallVector<DischargeCitationAttr> dischargeCitations;
+  for (intptr_t i = 0; i < numDischarges; ++i) {
+    auto citation = dyn_cast<DischargeCitationAttr>(unwrap(discharges[i]));
+    if (!citation)
+      return false;
+    dischargeCitations.push_back(citation);
+  }
+
+  ScopedDiagnosticHandler handler(ctx, [](Diagnostic &) { return success(); });
+  auto err = [&] { return emitError(UnknownLoc::get(ctx)); };
+  return succeeded(auditProjResolveCertificate(
+      module, unwrap(redex), unwrap(contractum), implRef, equalityPremises, err,
+      applicationPremises, /*dischargeObligations=*/true, dischargeCitations,
+      /*rigidHeadMatch=*/true));
 }
 
 MlirOperation traitAssocTypeOpCreate(MlirLocation loc,

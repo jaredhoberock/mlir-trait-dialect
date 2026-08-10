@@ -392,6 +392,16 @@ def ImplOp : TraitDialectOp<"impl", [
     ride the same associated-type replacer the impl's own bindings use: they are
     blind inside a walk-opaque equality endpoint and cure no
     equality-claim-parameter mismatch, exactly the reach the own bindings have.
+
+    A premise may cite a CONDITIONAL sibling impl, whose own assumptions must
+    then be discharged for the citation to be legal. The optional `discharges`
+    array names, per obligation, the impl that supplies it: the audit discharges
+    a cited impl's assumption either by a hypothetical cover from this impl's own
+    where-clause applications, or by a discharge citation whose spelled
+    application is that assumption and whose named impl -- specialized for it --
+    has each of ITS assumptions discharged in turn over the same finite list.
+    Every discharger is named; the audit resolves symbols and never scans the
+    module for one.
   }];
 
   let arguments = (ins
@@ -399,7 +409,9 @@ def ImplOp : TraitDialectOp<"impl", [
     TraitApplicationAttr:$self_application,
     PredicateArrayAttr:$assumptions,
     OptionalAttr<TypedArrayAttrBase<WitnessCertificateAttr,
-        "array of projection-resolution certificates">>:$premises
+        "array of projection-resolution certificates">>:$premises,
+    OptionalAttr<TypedArrayAttrBase<DischargeCitationAttr,
+        "array of obligation discharge citations">>:$discharges
   );
   let regions = (region SizedRegion<1>:$body);
 

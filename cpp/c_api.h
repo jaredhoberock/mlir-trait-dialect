@@ -74,6 +74,16 @@ MlirOperation traitImplOpCreateNamedWithPredicates(MlirLocation loc,
 bool traitImplOpSetPremises(MlirOperation implOp,
                             MlirAttribute* premises, intptr_t numPremises);
 
+/// Attach obligation discharge citations to a trait.impl operation. Each
+/// `discharges` entry must be a `#trait.discharge` attribute; a non-discharge
+/// entry leaves the impl unchanged and returns false. A citation names an
+/// application obligation a cited conditional premise leaves standing and the
+/// impl that supplies it, so the impl verifier can discharge that assumption
+/// without scanning the module. Attaching an empty array removes any existing
+/// citations.
+bool traitImplOpSetDischarges(MlirOperation implOp,
+                              MlirAttribute* discharges, intptr_t numDischarges);
+
 /// Create a trait.method.call operation
 MlirOperation traitMethodCallOpCreate(MlirLocation loc,
                                       MlirStringRef traitName,
@@ -199,6 +209,14 @@ MlirAttribute traitWitnessCertificateAttrGet(MlirContext ctx,
                                              MlirType redex, MlirType contractum,
                                              MlirStringRef implName);
 
+/// Return the #trait.discharge<@Application[...] by @impl> attribute that names
+/// `implName` as the discharger of the obligation `application` (a
+/// `#trait.application` attribute). Returns a null attribute if `application` is
+/// not a trait application.
+MlirAttribute traitDischargeCitationAttrGet(MlirContext ctx,
+                                            MlirAttribute application,
+                                            MlirStringRef implName);
+
 /// Create a projection-resolution trait.witness. `certificate` is a
 /// #trait.certificate attribute; `premises` are equality-claim values consumed
 /// by the projection-headed audit rule. `resultType` is the equality claim.
@@ -245,6 +263,23 @@ bool traitWitnessSeamAuditAccepts(MlirModule module,
                                   MlirStringRef implName,
                                   MlirType *premises, intptr_t numPremises,
                                   bool checkObligations);
+
+/// Like `traitWitnessSeamAuditAccepts` in obligation mode, but a cited
+/// conditional impl's assumption may also be discharged by one of the
+/// `discharges` -- each a `#trait.discharge` attribute naming an obligation and
+/// the impl that supplies it -- in addition to the application-arm `premises`
+/// (the citing impl's own where clause). This previews exactly the verdict the
+/// ImplOp verifier reaches with the same premises and discharge citations, so a
+/// front end writing them cannot disagree with the verifier. Diagnostics are
+/// suppressed; a refusal is a plain false.
+bool traitWitnessSeamAuditAcceptsWithDischarges(MlirModule module,
+                                                MlirType redex,
+                                                MlirType contractum,
+                                                MlirStringRef implName,
+                                                MlirType *premises,
+                                                intptr_t numPremises,
+                                                MlirAttribute *discharges,
+                                                intptr_t numDischarges);
 
 /// Create a trait.assoc_type op. If boundType.ptr is non-null, the op gets a
 /// bound_type attribute (for use inside trait.impl); otherwise it is a bare

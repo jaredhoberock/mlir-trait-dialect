@@ -44,6 +44,11 @@ unsafe extern "C" {
                                             predicates: *const MlirAttribute, num_predicates: isize) -> MlirOperation;
     fn traitImplOpSetPremises(impl_op: MlirOperation,
                               premises: *const MlirAttribute, num_premises: isize) -> bool;
+    fn traitImplOpSetDischarges(impl_op: MlirOperation,
+                                discharges: *const MlirAttribute, num_discharges: isize) -> bool;
+    fn traitDischargeCitationAttrGet(ctx: MlirContext,
+                                     application: MlirAttribute,
+                                     impl_name: MlirStringRef) -> MlirAttribute;
     fn traitMethodCallOpCreate(loc: MlirLocation,
                                trait_name: MlirStringRef,
                                method_name: MlirStringRef,
@@ -125,6 +130,12 @@ unsafe extern "C" {
                                     impl_name: MlirStringRef,
                                     premises: *const MlirType, num_premises: isize,
                                     check_obligations: bool) -> bool;
+    fn traitWitnessSeamAuditAcceptsWithDischarges(module: MlirModule,
+                                                  redex: MlirType, contractum: MlirType,
+                                                  impl_name: MlirStringRef,
+                                                  premises: *const MlirType, num_premises: isize,
+                                                  discharges: *const MlirAttribute,
+                                                  num_discharges: isize) -> bool;
     fn traitAssocTypeOpCreate(loc: MlirLocation,
                               name: MlirStringRef,
                               bound_type: MlirType,
@@ -392,6 +403,20 @@ pub fn set_impl_premises<'c>(impl_op: &Operation<'c>, premises: &[Attribute<'c>]
     let raw: Vec<MlirAttribute> = premises.iter().map(|a| a.to_raw()).collect();
     unsafe {
         traitImplOpSetPremises(impl_op.to_raw(), raw.as_ptr(), raw.len() as isize)
+    }
+}
+
+/// Attach obligation discharge citations to an existing `trait.impl` op. Each
+/// entry is a `#trait.discharge` attribute naming an application obligation a
+/// cited conditional premise leaves standing and the impl that supplies it; the
+/// impl verifier reads them alongside the premises at birth. Returns false if an
+/// entry is not a discharge citation. An empty slice removes any citations the
+/// impl already carries. Attached after the impl header prepass completes, so
+/// every discharger is present in the module.
+pub fn set_impl_discharges<'c>(impl_op: &Operation<'c>, discharges: &[Attribute<'c>]) -> bool {
+    let raw: Vec<MlirAttribute> = discharges.iter().map(|a| a.to_raw()).collect();
+    unsafe {
+        traitImplOpSetDischarges(impl_op.to_raw(), raw.as_ptr(), raw.len() as isize)
     }
 }
 
@@ -705,6 +730,15 @@ pub fn witness_certificate_attr<'c>(ctx: &'c Context, redex: Type<'c>, contractu
     if attr.to_raw().ptr.is_null() { None } else { Some(attr) }
 }
 
+/// The `#trait.discharge<@Application[...] by @impl>` attribute naming `impl_name`
+/// as the discharger of the obligation `application` (a `#trait.application`
+/// attribute). Returns `None` if `application` is not a trait application.
+pub fn discharge_citation_attr<'c>(ctx: &'c Context, application: Attribute<'c>, impl_name: &str) -> Option<Attribute<'c>> {
+    let attr = unsafe { Attribute::from_raw(traitDischargeCitationAttrGet(
+        ctx.to_raw(), application.to_raw(), StringRef::new(impl_name).to_raw())) };
+    if attr.to_raw().ptr.is_null() { None } else { Some(attr) }
+}
+
 /// Create a projection-resolution `trait.witness`. `certificate` is a
 /// `#trait.certificate` attribute; `premises` are equality-claim values.
 pub fn witness_proj_resolve<'c>(loc: Location<'c>, certificate: Attribute<'c>, premises: &[Value<'c, '_>], result_type: Type<'c>) -> Operation<'c> {
@@ -767,6 +801,37 @@ pub fn witness_seam_audit_accepts_obligation_mode(
     premises: &[Type],
 ) -> bool {
     witness_seam_audit(module, redex, contractum, impl_name, premises, true)
+}
+
+/// The obligation-aware seam audit extended with declared discharge citations:
+/// like [`witness_seam_audit_accepts_obligation_mode`], but a cited conditional
+/// impl's assumption may also be discharged by one of the `discharges` -- each a
+/// `#trait.discharge` attribute naming an obligation and the impl that supplies
+/// it -- in addition to the application-arm `premises` (the citing impl's own
+/// where clause). This previews exactly the verdict the ImplOp verifier reaches
+/// with the same premises and discharge citations.
+pub fn witness_seam_audit_accepts_obligation_mode_with_discharges<'c>(
+    module: &Module,
+    redex: Type,
+    contractum: Type,
+    impl_name: &str,
+    premises: &[Type],
+    discharges: &[Attribute<'c>],
+) -> bool {
+    let raw_premises: Vec<MlirType> = premises.iter().map(|t| t.to_raw()).collect();
+    let raw_discharges: Vec<MlirAttribute> = discharges.iter().map(|a| a.to_raw()).collect();
+    unsafe {
+        traitWitnessSeamAuditAcceptsWithDischarges(
+            module.to_raw(),
+            redex.to_raw(),
+            contractum.to_raw(),
+            StringRef::new(impl_name).to_raw(),
+            raw_premises.as_ptr(),
+            raw_premises.len() as isize,
+            raw_discharges.as_ptr(),
+            raw_discharges.len() as isize,
+        )
+    }
 }
 
 fn witness_seam_audit(
