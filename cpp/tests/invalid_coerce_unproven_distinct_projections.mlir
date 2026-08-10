@@ -4,9 +4,9 @@
 // RUN: mlir-opt %s -split-input-file -verify-diagnostics
 
 // A projection is a shared unification variable keyed by the projection itself.
-// It may resolve only to a projection-free position or stand for itself; a
-// binding that still carries a distinct projection would equate two projections
-// the pending form never licensed.
+// It may resolve to a projection-free position, stand for itself, or alias
+// another bare projection; what it may NOT resolve to is a composite still
+// carrying a projection, nor stand for two concrete types at once.
 
 trait.trait @Fold[!trait.poly<0>] {
   trait.assoc_type @Item
@@ -31,12 +31,15 @@ trait.trait @Fold[!trait.poly<0>] {
   trait.assoc_type @B
 }
 
-// Two distinct projections crossing: @Fold[i64]::A is asked to stand for
-// @Fold[i64]::B, equating associated types the pending form does not justify.
-func.func @distinct_projections(%x: !trait.proj<@Fold[i64], "A">)
-    -> !trait.proj<@Fold[i64], "B"> {
+// A bare alias @Fold[i64]::A <-> @Fold[i64]::B is licensed (both owed a
+// grounding at discharge), but a projection may not resolve to a COMPOSITE that
+// still carries a projection: @Fold[i64]::A asked to stand for
+// tuple<@Fold[i64]::B> would equate two distinct projections inside a rigid
+// constructor, a shape the pending form never licensed.
+func.func @projection_bearing_composite(%x: !trait.proj<@Fold[i64], "A">)
+    -> tuple<!trait.proj<@Fold[i64], "B">> {
   // expected-error @below {{equate distinct projections in a pending coerce}}
   %y = trait.coerce %x : !trait.proj<@Fold[i64], "A">
-    to !trait.proj<@Fold[i64], "B"> unproven
-  return %y : !trait.proj<@Fold[i64], "B">
+    to tuple<!trait.proj<@Fold[i64], "B">> unproven
+  return %y : tuple<!trait.proj<@Fold[i64], "B">>
 }

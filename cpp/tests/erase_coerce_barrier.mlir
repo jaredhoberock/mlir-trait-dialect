@@ -6,8 +6,10 @@
 // erase-polymorphs erases a trait.coerce as a checked judgment, not a trusting
 // forward: every cited equality is a claim value that maps to zero at the
 // barrier, and so is a claim-typed input. A discharged (reflexive) coerce
-// forwards its surviving input; an unused coerce is erased outright even when
-// its endpoints differ.
+// forwards its surviving input; a claim-to-claim respell that grounded to
+// identical endpoints erases 1:0. Dropping it is conditioned on those endpoints
+// matching -- a respell whose lookups grounded to different types is refused,
+// not erased (see invalid_coerce_undischarged_at_barrier).
 
 // CHECK-LABEL: func.func @discharged
 // CHECK-NOT: trait.coerce
@@ -19,10 +21,12 @@ func.func @discharged(%v: i1) -> i1 {
   return %c : i1
 }
 
-// CHECK-LABEL: func.func @unused_nonreflexive
+// CHECK-LABEL: func.func @dead_reflexive_respell
 // CHECK-NOT: trait.coerce
-// CHECK: return
-func.func @unused_nonreflexive(%v: i32, %e: !trait.claim<i32 = i16>) {
-  %c = trait.coerce %v : i32 to i16 via (%e) : (!trait.claim<i32 = i16>)
+// CHECK-NEXT: return
+func.func @dead_reflexive_respell(%b: !trait.claim<@Bound[i64]>) {
+  %c = trait.coerce %b : !trait.claim<@Bound[i64]> to !trait.claim<@Bound[i64]>
   return
 }
+
+trait.trait @Bound[!trait.poly<0>] {}

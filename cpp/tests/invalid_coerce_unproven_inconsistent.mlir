@@ -31,3 +31,23 @@ func.func @unabsorbable_delta(%x: tuple<!trait.proj<@Fold[i64], "Item">, i64>)
   %y = trait.coerce %x : tuple<!trait.proj<@Fold[i64], "Item">, i64> to f64 unproven
   return %y : f64
 }
+
+// -----
+
+trait.trait @Fold[!trait.poly<0>] {
+  trait.assoc_type @A
+  trait.assoc_type @B
+}
+
+// A licensed bare alias in one position does not relax the rigid position beside
+// it: @Fold[i64]::A aliases @Fold[i64]::B in the first tuple slot, but the second
+// slot pairs rigid tuple<i32> against tuple<i64>. Aliasing projections never
+// equates tokens standing where no projection sits, so the delta is refused.
+func.func @alias_does_not_relax_rigid(
+    %x: tuple<!trait.proj<@Fold[i64], "A">, tuple<i32>>)
+    -> tuple<!trait.proj<@Fold[i64], "B">, tuple<i64>> {
+  // expected-error @below {{are not consistent as a pending coerce}}
+  %y = trait.coerce %x : tuple<!trait.proj<@Fold[i64], "A">, tuple<i32>>
+    to tuple<!trait.proj<@Fold[i64], "B">, tuple<i64>> unproven
+  return %y : tuple<!trait.proj<@Fold[i64], "B">, tuple<i64>>
+}

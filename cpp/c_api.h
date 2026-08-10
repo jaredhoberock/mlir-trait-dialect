@@ -260,6 +260,15 @@ MlirOperation traitCoerceOpCreateUnproven(MlirLocation loc,
                                           MlirValue input,
                                           MlirType resultType);
 
+/// Answer whether `input` and `result` could converge under the pending judgment
+/// a marked (unproven) trait.coerce carries: the same check `CoerceOp::verify`
+/// runs for the marked arm (application-claim receipts stripped, then projection
+/// unification with each projection an opaque variable keyed by itself, every
+/// other position rigid, bare-projection aliases admitted). Diagnostics are
+/// suppressed -- a refusal is a classification answer the frontend consults
+/// before routing a site to the marked form, not a compile error.
+bool traitCoercePendingAccepts(MlirType input, MlirType result);
+
 /// Answer whether the projection-resolution witness seam audit accepts a
 /// certificate. This runs the same check as trait.witness's equality-arm
 /// verifySymbolUses: it looks the impl named by `implName` up in `module`,

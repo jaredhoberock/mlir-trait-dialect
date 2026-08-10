@@ -2956,6 +2956,16 @@ static bool equalityCompositionEntails(TypeEqualityAttr result,
   return closure.equal(lhs, rhs);
 }
 
+Type mlir::trait::stripClaimReceipts(Type type) {
+  AttrTypeReplacer strip;
+  strip.addReplacement([](ClaimType claim) -> std::optional<Type> {
+    if (claim.isProven())
+      return Type(claim.asUnproven());
+    return std::nullopt;
+  });
+  return strip.replace(type);
+}
+
 // The pending judgment a marked (unproven) coerce carries. Its reconciling
 // equalities are not yet citable -- the impl that supplies them is minted at
 // monomorphization -- so instead of ground congruence over cited leaves the
@@ -2966,16 +2976,21 @@ static bool equalityCompositionEntails(TypeEqualityAttr result,
 // descended through decomposeTerm, whose enumeration reaches the hand-written
 // attribute storage the generic type walkers are opaque to. A whole projection
 // is one opaque variable: its own trait-application and associated-type
-// arguments are NOT descended during reconciliation, so two projections that
-// differ only inside their arguments do not unify. Reflexive endpoints pass. A
-// projection may resolve only to a projection-free position (the ground type the
-// minted impl supplies) or stand for itself; binding it to a type still carrying
-// a distinct projection would equate two projections this form never licensed,
-// and binding it to a type that contains the projection itself is an unfoundable
-// infinite type -- both are refused, the latter by an occurs check that also
-// keeps the binding acyclic so the resolution walks below terminate. Endpoints
-// arrive with receipts already stripped.
-static LogicalResult verifyPendingProjectionUnification(
+// arguments are NOT descended during reconciliation, so two projections meet as
+// whole variables -- the same variable, or a pair aliased and owed one grounding
+// at discharge -- never unified by matching their arguments. Reflexive endpoints
+// pass. A
+// projection may resolve to a projection-free position (the ground type the
+// minted impl supplies), or stand for itself, or alias another bare projection --
+// two lookups asserted to denote one type, each still owed a projection-free
+// grounding at discharge. What it may NOT resolve to is a composite still
+// carrying a projection: that would equate two distinct projections inside a
+// rigid constructor, a shape this form never licensed. Binding a projection to a
+// type that contains the projection itself is an unfoundable infinite type; it is
+// refused by an occurs check that also keeps the binding acyclic so the
+// resolution walks below terminate. Endpoints arrive with receipts already
+// stripped.
+LogicalResult mlir::trait::verifyPendingProjectionUnification(
     Type input, Type result,
     llvm::function_ref<InFlightDiagnostic()> emitError) {
   // Each projection stands for at most one type; a projection absent from the
@@ -3055,13 +3070,22 @@ static LogicalResult verifyPendingProjectionUnification(
   if (failed(unifyPending(input, result)))
     return failure();
 
-  // A projection resolving to a type that still carries a projection equates two
-  // distinct projections; only a projection-free resolution is licensed.
-  for (auto &[proj, bound] : binding)
-    if (carriesProjection(bound))
+  // A binding whose resolved representative is itself a bare projection is a
+  // direct alias: two lookups asserted to denote one type, each still owed a
+  // projection-free grounding the minted impl supplies at discharge -- it stays
+  // pending. A binding that resolves to a COMPOSITE still carrying a projection
+  // would equate two distinct projections inside a rigid constructor, which this
+  // form never licensed; only a projection-free resolution or a bare alias is
+  // licensed.
+  for (auto &[proj, bound] : binding) {
+    Type terminal = resolve(bound);
+    if (isa<ProjectionType>(terminal))
+      continue;
+    if (carriesProjection(terminal))
       return emitError() << "input type " << input << " and result type "
                          << result
                          << " equate distinct projections in a pending coerce";
+  }
 
   return success();
 }

@@ -71,6 +71,27 @@ LogicalResult auditProjResolveCertificate(
     bool rigidHeadMatch = false,
     SpecializationMap *outSubst = nullptr);
 
+/// Rewrite a type with every proven application-claim receipt stripped to its
+/// unproven form. Coerce comparison is modulo the receipt, permanently, so the
+/// pending judgment and its consult run over receipt-stripped endpoints.
+Type stripClaimReceipts(Type type);
+
+/// The pending judgment a marked (unproven) coerce carries, factored so that
+/// `CoerceOp::verify`, the instantiate lie-catch (which adds a birth-spelling
+/// note), and the C-API consult all run exactly this check. The endpoints must
+/// unify with every `!trait.proj` term a shared unification variable keyed by the
+/// projection itself: the same projection is one variable, every other position
+/// is rigid, and a whole projection is opaque (its arguments are not descended).
+/// A projection may resolve to a projection-free position or to another bare
+/// projection (a direct alias, both owed a grounding at discharge); a binding
+/// that resolves to a composite still carrying a projection, or that closes a
+/// cycle, is refused. Endpoints arrive with receipts already stripped. `err`
+/// (never null) receives the diagnostic on refusal; a caller that treats refusal
+/// as a classification answer suppresses it at the diagnostic engine.
+LogicalResult verifyPendingProjectionUnification(
+    Type input, Type result,
+    llvm::function_ref<InFlightDiagnostic()> emitError);
+
 } // end mlir::trait
 
 namespace mlir::OpTrait {

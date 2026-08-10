@@ -684,6 +684,20 @@ MlirOperation traitCoerceOpCreateUnproven(MlirLocation loc,
   return wrap(op.getOperation());
 }
 
+bool traitCoercePendingAccepts(MlirType input, MlirType result) {
+  // The consult runs the verifier's own marked arm: strip receipts, then the
+  // shared projection-unification judgment. Sharing the function keeps the
+  // classifier's verdict and the codegen-exit verifier's from ever disagreeing.
+  Type in = stripClaimReceipts(unwrap(input));
+  Type out = stripClaimReceipts(unwrap(result));
+  MLIRContext *ctx = in.getContext();
+  // A refused pending judgment is a classification answer, not a compile error,
+  // so swallow the diagnostics the shared judgment emits on refusal.
+  ScopedDiagnosticHandler handler(ctx, [](Diagnostic &) { return success(); });
+  auto err = [&] { return emitError(UnknownLoc::get(ctx)); };
+  return succeeded(verifyPendingProjectionUnification(in, out, err));
+}
+
 bool traitWitnessSeamAuditAccepts(MlirModule wrappedModule,
                                   MlirType redex, MlirType contractum,
                                   MlirStringRef implName,

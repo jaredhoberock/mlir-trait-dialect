@@ -1937,6 +1937,19 @@ static LogicalResult reconcileDerivedAssumptions(
 /// over that driver is exercised. Only the dialect's plugin passes it.
 LogicalResult instantiateMonomorphs(ModuleOp module,
                                     bool askImplSelectionForImpls) {
+  // A marked coerce's endpoints as the frontend emitted them, captured before
+  // any round respells its projections. When such a coerce grounds to
+  // inconsistent endpoints, the re-judgment below reports at the op with these
+  // birth spellings in hand, not only the ground types that replaced them.
+  // Coerces minted later (clones of instantiated bodies, reconciliation bridges)
+  // are absent here and re-judged on their ground endpoints alone.
+  DenseMap<Operation *, std::pair<Type, Type>> markedCoerceBirth;
+  module.walk([&](CoerceOp coerce) {
+    if (coerce.getUnproven())
+      markedCoerceBirth[coerce] = {coerce.getInput().getType(),
+                                   coerce.getResult().getType()};
+  });
+
   // Round zero: resolve the impls the module already spells and respell the
   // claims they prove, before any round asks for an impl that is missing.
   auto resolver = resolveImpls(module);
@@ -2348,6 +2361,33 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
   if (failed(reconcileDerivedAssumptions(module, reading, *resolver)))
     return failure();
 
+  // Re-judge each marked coerce now that its projections have grounded. A
+  // coerce whose two lookups grounded to different types is a promise the rounds
+  // falsified; it fails here at its own op, and where its birth spelling was
+  // captured the diagnostic carries it as a note beside the ground endpoints.
+  // This shares the verifier's own pending judgment, so a coerce that passes
+  // here passes the module verification below unchanged.
+  bool markedCoerceLie = false;
+  module.walk([&](CoerceOp coerce) {
+    if (!coerce.getUnproven())
+      return;
+    Type in = stripClaimReceipts(coerce.getInput().getType());
+    Type out = stripClaimReceipts(coerce.getResult().getType());
+    auto emit = [&]() -> InFlightDiagnostic {
+      InFlightDiagnostic diag = coerce.emitOpError();
+      auto it = markedCoerceBirth.find(coerce);
+      if (it != markedCoerceBirth.end())
+        diag.attachNote(coerce.getLoc())
+            << "at emission the coerce related " << it->second.first << " and "
+            << it->second.second;
+      return diag;
+    };
+    if (failed(verifyPendingProjectionUnification(in, out, emit)))
+      markedCoerceLie = true;
+  });
+  if (markedCoerceLie)
+    return failure();
+
   DemandRecordingSuspension verifying;
   return module.verify();
 }
@@ -2422,9 +2462,24 @@ struct EraseCoerceOp : public OpConversionPattern<CoerceOp> {
     // cited equality is a claim value that maps to zero here, and so is a
     // claim-typed input (a claim-to-claim coerce shrinking 1:0). A coerce whose
     // input itself erased, or whose result is unused, leaves nothing to forward
-    // and is erased.
+    // -- but dropping it is still conditioned on its own recorded endpoints: a
+    // discharged respell carries endpoints that coincide here (projection
+    // resolution rewrote both to the same ground type), while an undischarged one
+    // (its two projections ground to different types) still relates two spellings
+    // and may not cross the barrier unjudged: every claim-to-claim coerce that
+    // reaches the barrier live, proven or marked, is judged here (one dropped as
+    // dead earlier, during instantiate-monomorphs, forwarded no value and so needs
+    // no judgment). Comparison strips application-claim receipts, exactly as the verifier does:
+    // a coerce compares modulo the receipt permanently, so exchanging a proof
+    // label alone is not a surviving difference. (The value-carrying arm below
+    // needs no strip; the values it forwards are receipt-free.)
     ValueRange input = adaptor.getInput();
     if (input.empty() || op.getResult().use_empty()) {
+      if (stripClaimReceipts(op.getInput().getType()) !=
+          stripClaimReceipts(op.getResult().getType()))
+        return rewriter.notifyMatchFailure(
+            op, "a coerce whose endpoints still differ after conversion is not "
+                "discharged and cannot cross the erase barrier");
       rewriter.eraseOp(op);
       return success();
     }

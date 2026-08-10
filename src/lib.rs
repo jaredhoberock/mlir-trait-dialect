@@ -131,6 +131,7 @@ unsafe extern "C" {
     fn traitCoerceOpCreateUnproven(loc: MlirLocation,
                                    input: MlirValue,
                                    result_type: MlirType) -> MlirOperation;
+    fn traitCoercePendingAccepts(input: MlirType, result: MlirType) -> bool;
     fn traitWitnessSeamAuditAccepts(module: MlirModule,
                                     redex: MlirType, contractum: MlirType,
                                     impl_name: MlirStringRef,
@@ -800,6 +801,18 @@ pub fn coerce<'c>(loc: Location<'c>, input: Value<'c, '_>, equalities: &[Value<'
 pub fn coerce_unproven<'c>(loc: Location<'c>, input: Value<'c, '_>, result_type: Type<'c>) -> Operation<'c> {
     unsafe { Operation::from_raw(traitCoerceOpCreateUnproven(
         loc.to_raw(), input.to_raw(), result_type.to_raw())) }
+}
+
+/// Answer whether `input` and `result` could converge under the pending
+/// judgment a marked (unproven) `trait.coerce` carries: the same check
+/// `CoerceOp::verify` runs for the marked arm (receipts stripped, then
+/// projection unification with each projection an opaque variable, bare-
+/// projection aliases admitted). A consumer classifying a site against this
+/// answer before routing it to the marked form cannot disagree with the
+/// verifier that re-runs the judgment at codegen exit. Refusal is a plain
+/// `false`, not a diagnostic.
+pub fn coerce_pending_accepts(input: Type, result: Type) -> bool {
+    unsafe { traitCoercePendingAccepts(input.to_raw(), result.to_raw()) }
 }
 
 /// Answer whether the projection-resolution witness seam audit accepts the

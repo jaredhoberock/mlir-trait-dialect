@@ -39,3 +39,31 @@ func.func @swap_wrap(
     to tuple<tuple<!trait.proj<@Fold[i64], "J">>, !trait.proj<@Fold[i64], "I">> unproven
   return %y : tuple<tuple<!trait.proj<@Fold[i64], "J">>, !trait.proj<@Fold[i64], "I">>
 }
+
+// -----
+
+trait.trait @Fold[!trait.poly<0>] {
+  trait.assoc_type @A
+  trait.assoc_type @B
+  trait.assoc_type @C
+}
+
+// A chain of bare aliases that closes into a composite on itself. Unifying binds
+// A to B and B to C (all licensed bare aliases), then asks C to stand for
+// tuple<A>; since A resolves through the chain back to C, that binding closes a
+// cycle on C. The occurs check refuses it even though every intermediate step
+// was an admitted alias.
+func.func @alias_chain_into_composite(
+    %x: tuple<!trait.proj<@Fold[i64], "A">, !trait.proj<@Fold[i64], "B">,
+              !trait.proj<@Fold[i64], "C">>)
+    -> tuple<!trait.proj<@Fold[i64], "B">, !trait.proj<@Fold[i64], "C">,
+             tuple<!trait.proj<@Fold[i64], "A">>> {
+  // expected-error @below {{are not consistent as a pending coerce}}
+  %y = trait.coerce %x
+    : tuple<!trait.proj<@Fold[i64], "A">, !trait.proj<@Fold[i64], "B">,
+            !trait.proj<@Fold[i64], "C">>
+    to tuple<!trait.proj<@Fold[i64], "B">, !trait.proj<@Fold[i64], "C">,
+             tuple<!trait.proj<@Fold[i64], "A">>> unproven
+  return %y : tuple<!trait.proj<@Fold[i64], "B">, !trait.proj<@Fold[i64], "C">,
+                    tuple<!trait.proj<@Fold[i64], "A">>>
+}
