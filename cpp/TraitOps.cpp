@@ -2897,6 +2897,12 @@ ParseResult CoerceOp::parse(OpAsmParser &p, OperationState &st) {
       return failure();
   }
 
+  // The `unproven` marker is a trailing keyword: the printer emits no attribute
+  // dictionary, so a declared, explicitly printed attribute is the only spelling
+  // that survives a round trip.
+  if (succeeded(p.parseOptionalKeyword("unproven")))
+    st.addAttribute("unproven", p.getBuilder().getUnitAttr());
+
   st.addTypes(resultType);
   if (p.resolveOperand(input, inputType, st.operands))
     return failure();
@@ -2918,6 +2924,8 @@ void CoerceOp::print(OpAsmPrinter &p) {
                           [&](Type t) { p.printType(t); });
     p << ")";
   }
+  if (getUnproven())
+    p << " unproven";
 }
 
 // The witness composition arm's entailment decision, sharing the ground
@@ -2948,6 +2956,116 @@ static bool equalityCompositionEntails(TypeEqualityAttr result,
   return closure.equal(lhs, rhs);
 }
 
+// The pending judgment a marked (unproven) coerce carries. Its reconciling
+// equalities are not yet citable -- the impl that supplies them is minted at
+// monomorphization -- so instead of ground congruence over cited leaves the
+// endpoints must UNIFY, with every !trait.proj term treated as a shared
+// unification variable keyed by the projection itself: the same projection is
+// one variable and cannot stand for two types, every other constructor position
+// is rigid, and a claim's (or any other composite's) predicate arguments are
+// descended through decomposeTerm, whose enumeration reaches the hand-written
+// attribute storage the generic type walkers are opaque to. A whole projection
+// is one opaque variable: its own trait-application and associated-type
+// arguments are NOT descended during reconciliation, so two projections that
+// differ only inside their arguments do not unify. Reflexive endpoints pass. A
+// projection may resolve only to a projection-free position (the ground type the
+// minted impl supplies) or stand for itself; binding it to a type still carrying
+// a distinct projection would equate two projections this form never licensed,
+// and binding it to a type that contains the projection itself is an unfoundable
+// infinite type -- both are refused, the latter by an occurs check that also
+// keeps the binding acyclic so the resolution walks below terminate. Endpoints
+// arrive with receipts already stripped.
+static LogicalResult verifyPendingProjectionUnification(
+    Type input, Type result,
+    llvm::function_ref<InFlightDiagnostic()> emitError) {
+  // Each projection stands for at most one type; a projection absent from the
+  // map is unbound and stands for itself. The occurs check below keeps the map
+  // acyclic, so `resolve` and the descent walks always terminate.
+  DenseMap<ProjectionType, Type> binding;
+
+  std::function<Type(Type)> resolve = [&](Type t) -> Type {
+    while (auto proj = dyn_cast<ProjectionType>(t)) {
+      auto it = binding.find(proj);
+      if (it == binding.end() || it->second == t)
+        return t;
+      t = it->second;
+    }
+    return t;
+  };
+
+  // Whether the projection `p` occurs anywhere in `t` once bindings resolve to a
+  // fixed point. Binding `p` to such a `t` would close a cycle (an infinite
+  // type), so it is refused before the binding is made; the acyclic invariant
+  // this preserves is what bounds the recursion here and in `carriesProjection`.
+  std::function<bool(ProjectionType, Type)> occursIn =
+      [&](ProjectionType p, Type t) -> bool {
+    t = resolve(t);
+    if (auto pt = dyn_cast<ProjectionType>(t))
+      return pt == p;
+    for (Type child : decomposeTerm(t).children)
+      if (occursIn(p, child))
+        return true;
+    return false;
+  };
+
+  // Whether a type still carries a projection once its bindings resolve to a
+  // fixed point. A bound projection must reach a projection-free type.
+  std::function<bool(Type)> carriesProjection = [&](Type t) -> bool {
+    t = resolve(t);
+    if (isa<ProjectionType>(t))
+      return true;
+    for (Type child : decomposeTerm(t).children)
+      if (carriesProjection(child))
+        return true;
+    return false;
+  };
+
+  std::function<LogicalResult(Type, Type)> unifyPending =
+      [&](Type a, Type b) -> LogicalResult {
+    a = resolve(a);
+    b = resolve(b);
+    if (a == b)
+      return success();
+    if (auto pa = dyn_cast<ProjectionType>(a)) {
+      if (occursIn(pa, b))
+        return emitError() << "input type " << input << " and result type "
+                           << result << " are not consistent as a pending coerce";
+      binding[pa] = b;
+      return success();
+    }
+    if (auto pb = dyn_cast<ProjectionType>(b)) {
+      if (occursIn(pb, a))
+        return emitError() << "input type " << input << " and result type "
+                           << result << " are not consistent as a pending coerce";
+      binding[pb] = a;
+      return success();
+    }
+    // Both sides are rigid here: same constructor identity, children paired.
+    TermShape sa = decomposeTerm(a);
+    TermShape sb = decomposeTerm(b);
+    if (sa.key != sb.key || sa.children.size() != sb.children.size())
+      return emitError() << "input type " << input << " and result type "
+                         << result << " are not consistent as a pending coerce";
+    for (auto [ca, cb] : llvm::zip(sa.children, sb.children))
+      if (failed(unifyPending(ca, cb)))
+        return failure();
+    return success();
+  };
+
+  if (failed(unifyPending(input, result)))
+    return failure();
+
+  // A projection resolving to a type that still carries a projection equates two
+  // distinct projections; only a projection-free resolution is licensed.
+  for (auto &[proj, bound] : binding)
+    if (carriesProjection(bound))
+      return emitError() << "input type " << input << " and result type "
+                         << result
+                         << " equate distinct projections in a pending coerce";
+
+  return success();
+}
+
 LogicalResult CoerceOp::verify() {
   // A verdict that is a pure function of op, operands, and attributes.
 
@@ -2962,26 +3080,39 @@ LogicalResult CoerceOp::verify() {
   Type input = strip.replace(getInput().getType());
   Type result = strip.replace(getResult().getType());
 
-  // 3. Seed the closure with each cited equality (endpoints receipt-stripped),
-  // interning the endpoints too.
-  GroundCongruence closure;
-  closure.intern(input);
-  closure.intern(result);
-  for (Value e : getEqualities()) {
-    auto claim = dyn_cast<ClaimType>(e.getType());
-    if (!claim || !claim.isEquality())
-      return emitOpError() << "coerce cites equality claims, but operand has "
-                              "type " << e.getType();
-    TypeEqualityAttr eq = claim.getEqualityAttr();
-    closure.seed(strip.replace(eq.getLhs()), strip.replace(eq.getRhs()));
-  }
-  closure.close();
+  if (getUnproven()) {
+    // The marked form cites nothing: its reconciling equalities are supplied by
+    // an impl minted only at monomorphization, so the endpoints stand in the
+    // pending judgment rather than under a ground congruence over cited leaves.
+    if (!getEqualities().empty())
+      return emitOpError()
+             << "an unproven coerce may not cite equalities; it stands in a "
+                "pending judgment discharged at monomorphization";
+    if (failed(verifyPendingProjectionUnification(
+            input, result, [&]() -> InFlightDiagnostic { return emitOpError(); })))
+      return failure();
+  } else {
+    // 3. Seed the closure with each cited equality (endpoints receipt-stripped),
+    // interning the endpoints too.
+    GroundCongruence closure;
+    closure.intern(input);
+    closure.intern(result);
+    for (Value e : getEqualities()) {
+      auto claim = dyn_cast<ClaimType>(e.getType());
+      if (!claim || !claim.isEquality())
+        return emitOpError() << "coerce cites equality claims, but operand has "
+                                "type " << e.getType();
+      TypeEqualityAttr eq = claim.getEqualityAttr();
+      closure.seed(strip.replace(eq.getLhs()), strip.replace(eq.getRhs()));
+    }
+    closure.close();
 
-  // 4. The two endpoint classes must be equal.
-  if (!closure.equal(input, result))
-    return emitOpError() << "input type " << getInput().getType()
-                         << " and result type " << getResult().getType()
-                         << " are not equal under the cited equalities";
+    // 4. The two endpoint classes must be equal.
+    if (!closure.equal(input, result))
+      return emitOpError() << "input type " << getInput().getType()
+                           << " and result type " << getResult().getType()
+                           << " are not equal under the cited equalities";
+  }
 
   // 2. The no-proof-swap clause runs deep. The endpoints denote one claim once
   // the equalities reconcile them, so a receipt present on the result and absent

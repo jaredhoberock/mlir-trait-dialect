@@ -1242,12 +1242,30 @@ def CoerceOp : TraitDialectOp<"coerce", [
     outstanding equality) is legal and is the discharged terminal state; it
     folds to its operand, and cited evidence then dies by ordinary DCE.
 
+    The `unproven` marker names a coerce whose reconciling equalities cannot be
+    cited yet because the impl that supplies them is minted only at
+    monomorphization (a compiler auto-rule head). A marked coerce cites nothing
+    -- `equalities` must be empty -- and stands in a pending judgment: with the
+    receipts stripped and the no-proof-swap clause enforced exactly as above, the
+    endpoints must unify where every `!trait.proj` term is a shared unification
+    variable keyed by the projection itself (the same projection is one variable
+    and cannot stand for two types) and every other position is rigid, descending
+    a claim's predicate arguments the generic walkers are opaque to (a whole
+    projection is one opaque variable -- its own arguments are not descended). A
+    projection may resolve only to a projection-free position or stand for itself;
+    binding it to a type that still carries a distinct projection, or to a type
+    that contains the projection itself, is refused. The marked form mints nothing
+    consumable: monomorphization respells its projections to ground, leaving the
+    reflexive form the folder discharges. A marked coerce surviving past
+    monomorphization is a hard error, never a tolerated residual.
+
     XXX TODO: trait.coerce lands beside trait.proj.cast during the migration;
     proj.cast is retired once the frontend transcribes coerces and nothing
     emits the old cast (the retirement rung).
   }];
 
-  let arguments = (ins AnyType:$input, Variadic<Claim>:$equalities);
+  let arguments = (ins AnyType:$input, Variadic<Claim>:$equalities,
+                   UnitAttr:$unproven);
   let results = (outs AnyType:$result);
 
   let extraClassDeclaration = [{
