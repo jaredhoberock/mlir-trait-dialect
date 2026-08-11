@@ -58,9 +58,10 @@ public:
 /// receipt-stripped and modulo the equality `premises`. It deliberately does not
 /// reach the cited impl's trait requirements, which may quantify over GAT
 /// variables with no ground instance at the witness; requirement discharge
-/// belongs to the proof and birth machinery. The obligation mode is off by
-/// default -- the verifier stays binding-only -- and is turned on only by the
-/// obligation-mode seam-audit query.
+/// belongs to the proof and birth machinery. The obligation mode is off by the
+/// parameter default and set by every caller that discharges obligations -- the
+/// witness-site and impl-birth verifiers and the seam-audit query -- so a witness
+/// never cites an impl whose own assumptions are unmet.
 LogicalResult auditProjResolveCertificate(
     ModuleOp module, Type redex, Type contractum, FlatSymbolRefAttr citedImpl,
     ArrayRef<TypeEqualityAttr> premises,

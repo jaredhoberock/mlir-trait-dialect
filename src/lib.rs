@@ -26,26 +26,17 @@ unsafe extern "C" {
     fn traitTraitOpCreate(loc: MlirLocation,
                           name: MlirStringRef,
                           type_params: *const MlirType, num_type_params: isize,
-                          requirements: *const MlirAttribute, num_requirements: isize) -> MlirOperation;
-    fn traitTraitOpCreateWithPredicates(loc: MlirLocation,
-                                        name: MlirStringRef,
-                                        type_params: *const MlirType, num_type_params: isize,
-                                        predicates: *const MlirAttribute, num_predicates: isize) -> MlirOperation;
+                          predicates: *const MlirAttribute, num_predicates: isize) -> MlirOperation;
     fn traitImplOpCreate(loc: MlirLocation,
                          self_trait_app: MlirAttribute,
                          assumptions: *const MlirAttribute, num_assumptions: isize) -> MlirOperation;
     fn traitImplOpCreateNamed(loc: MlirLocation,
                               sym_name: MlirStringRef,
                               self_trait_app: MlirAttribute,
-                              assumptions: *const MlirAttribute, num_assumptions: isize) -> MlirOperation;
-    fn traitImplOpCreateNamedWithPredicates(loc: MlirLocation,
-                                            sym_name: MlirStringRef,
-                                            self_trait_app: MlirAttribute,
-                                            predicates: *const MlirAttribute, num_predicates: isize) -> MlirOperation;
-    fn traitImplOpSetPremises(impl_op: MlirOperation,
-                              premises: *const MlirAttribute, num_premises: isize) -> bool;
-    fn traitImplOpSetDischarges(impl_op: MlirOperation,
-                                discharges: *const MlirAttribute, num_discharges: isize) -> bool;
+                              predicates: *const MlirAttribute, num_predicates: isize) -> MlirOperation;
+    fn traitImplOpSetCheckedArray(impl_op: MlirOperation,
+                                  attrs: *const MlirAttribute, num_attrs: isize,
+                                  discharges: bool) -> bool;
     fn traitDischargeCitationAttrGet(ctx: MlirContext,
                                      application: MlirAttribute,
                                      impl_name: MlirStringRef) -> MlirAttribute;
@@ -73,18 +64,13 @@ unsafe extern "C" {
                           subproof_names: *const MlirStringRef, num_subproofs: isize) -> MlirOperation;
     fn traitProjectOpCreate(loc: MlirLocation,
                             src_claim: MlirValue,
-                            dest_trait_app: MlirAttribute) -> MlirOperation;
-    fn traitProjectOpCreateToClaim(loc: MlirLocation,
-                                   src_claim: MlirValue,
-                                   result_claim: MlirType) -> MlirOperation;
+                            result_claim: MlirType) -> MlirOperation;
     fn traitDeriveOpCreate(loc: MlirLocation,
                            trait_app: MlirAttribute,
                            impl_name: MlirStringRef,
                            assumptions: *const MlirValue, num_assumptions: isize) -> MlirOperation;
     fn traitAssumeOpCreate(loc: MlirLocation,
-                           trait_app: MlirAttribute) -> MlirOperation;
-    fn traitAssumeOpCreateEquality(loc: MlirLocation,
-                                   lhs: MlirType, rhs: MlirType) -> MlirOperation;
+                           claim: MlirType) -> MlirOperation;
 
     fn traitPolyTypeGet(ctx: MlirContext, unique_id: u32) -> MlirType;
 
@@ -123,24 +109,17 @@ unsafe extern "C" {
     fn traitCoerceOpCreate(loc: MlirLocation,
                            input: MlirValue,
                            equalities: *const MlirValue, num_equalities: isize,
-                           result_type: MlirType) -> MlirOperation;
-    fn traitCoerceOpCreateUnproven(loc: MlirLocation,
-                                   input: MlirValue,
-                                   result_type: MlirType) -> MlirOperation;
+                           result_type: MlirType,
+                           unproven: bool) -> MlirOperation;
     fn traitCoercePendingAccepts(input: MlirType, result: MlirType) -> bool;
     fn traitWitnessSeamAuditAccepts(module: MlirModule,
                                     redex: MlirType, contractum: MlirType,
                                     impl_name: MlirStringRef,
                                     premises: *const MlirType, num_premises: isize,
-                                    check_obligations: bool) -> bool;
+                                    discharges: *const MlirAttribute, num_discharges: isize,
+                                    rigid_head_match: bool) -> bool;
     fn traitClaimProjectsTo(module: MlirModule,
                             src_claim: MlirType, dst_claim: MlirType) -> bool;
-    fn traitWitnessSeamAuditAcceptsWithDischarges(module: MlirModule,
-                                                  redex: MlirType, contractum: MlirType,
-                                                  impl_name: MlirStringRef,
-                                                  premises: *const MlirType, num_premises: isize,
-                                                  discharges: *const MlirAttribute,
-                                                  num_discharges: isize) -> bool;
     fn traitAssocTypeOpCreate(loc: MlirLocation,
                               name: MlirStringRef,
                               bound_type: MlirType,
@@ -314,31 +293,14 @@ pub fn trait_application_attr<'c>(
     )
 }
 
+/// Build a `trait.trait` whose `where` clause carries a mixed list of
+/// predicates: each entry is a trait application or a type equality attribute.
 pub fn trait_<'c>(loc: Location<'c>,
                   name: &str,
                   type_params: &[Type<'c>],
-                  requirements: &[TraitApplicationAttribute<'c>],
+                  predicates: &[Attribute<'c>],
 ) -> Operation<'c> {
-    let req_attrs: Vec<Attribute<'c>> =
-        requirements.iter().copied().map(Into::into).collect();
     unsafe { Operation::from_raw(traitTraitOpCreate(
-        loc.to_raw(),
-        StringRef::new(name).to_raw(),
-        type_params.as_ptr() as *const _,
-        type_params.len() as isize,
-        req_attrs.as_ptr() as *const _,
-        req_attrs.len() as isize,
-    ))}
-}
-
-/// Build a `trait.trait` whose `where` clause carries a mixed list of
-/// predicates: each entry is a trait application or a type equality attribute.
-pub fn trait_predicates<'c>(loc: Location<'c>,
-                            name: &str,
-                            type_params: &[Type<'c>],
-                            predicates: &[Attribute<'c>],
-) -> Operation<'c> {
-    unsafe { Operation::from_raw(traitTraitOpCreateWithPredicates(
         loc.to_raw(),
         StringRef::new(name).to_raw(),
         type_params.as_ptr() as *const _,
@@ -363,33 +325,16 @@ pub fn impl_<'c>(loc: Location<'c>,
     ))}
 }
 
-pub fn impl_named<'c>(loc: Location<'c>,
-                      sym_name: &str,
-                      self_trait_app: TraitApplicationAttribute<'c>,
-                      assumptions: &[TraitApplicationAttribute<'c>],
-) -> Operation<'c> {
-    let app_attr: Attribute<'c> = self_trait_app.into();
-    let asm_attrs: Vec<Attribute<'c>> =
-        assumptions.iter().copied().map(Into::into).collect();
-    unsafe { Operation::from_raw(traitImplOpCreateNamed(
-        loc.to_raw(),
-        StringRef::new(sym_name).to_raw(),
-        app_attr.to_raw(),
-        asm_attrs.as_ptr() as *const _,
-        asm_attrs.len() as isize,
-    ))}
-}
-
 /// Build a named `trait.impl` whose `where` clause carries a mixed list of
 /// predicates: each entry is a trait application the impl assumes, or a type
 /// equality it asserts about its own bindings.
-pub fn impl_named_with_predicates<'c>(loc: Location<'c>,
-                                      sym_name: &str,
-                                      self_trait_app: TraitApplicationAttribute<'c>,
-                                      predicates: &[Attribute<'c>],
+pub fn impl_named<'c>(loc: Location<'c>,
+                      sym_name: &str,
+                      self_trait_app: TraitApplicationAttribute<'c>,
+                      predicates: &[Attribute<'c>],
 ) -> Operation<'c> {
     let app_attr: Attribute<'c> = self_trait_app.into();
-    unsafe { Operation::from_raw(traitImplOpCreateNamedWithPredicates(
+    unsafe { Operation::from_raw(traitImplOpCreateNamed(
         loc.to_raw(),
         StringRef::new(sym_name).to_raw(),
         app_attr.to_raw(),
@@ -398,30 +343,33 @@ pub fn impl_named_with_predicates<'c>(loc: Location<'c>,
     ))}
 }
 
-/// Attach projection-resolution premises to an existing `trait.impl` op. Each
-/// entry is a `#trait.certificate` attribute resolving a ground sibling
-/// projection the impl's own bindings do not; the impl verifier audits them at
-/// birth. Returns false if an entry is not a certificate. An empty slice removes
-/// any premises the impl already carries. Premises are attached after the impl
-/// header prepass completes, so every cited impl is present in the module.
-pub fn set_impl_premises<'c>(impl_op: &Operation<'c>, premises: &[Attribute<'c>]) -> bool {
-    let raw: Vec<MlirAttribute> = premises.iter().map(|a| a.to_raw()).collect();
-    unsafe {
-        traitImplOpSetPremises(impl_op.to_raw(), raw.as_ptr(), raw.len() as isize)
-    }
+/// Which checked attribute array on a `trait.impl` [`set_impl_checked_array`]
+/// targets.
+pub enum ImplCheckedArray {
+    /// Projection-resolution premises, each a `#trait.certificate` resolving a
+    /// ground sibling projection the impl's own bindings do not.
+    Premises,
+    /// Obligation discharge citations, each a `#trait.discharge` naming an
+    /// application obligation a cited conditional premise leaves standing and the
+    /// impl that supplies it.
+    Discharges,
 }
 
-/// Attach obligation discharge citations to an existing `trait.impl` op. Each
-/// entry is a `#trait.discharge` attribute naming an application obligation a
-/// cited conditional premise leaves standing and the impl that supplies it; the
-/// impl verifier reads them alongside the premises at birth. Returns false if an
-/// entry is not a discharge citation. An empty slice removes any citations the
-/// impl already carries. Attached after the impl header prepass completes, so
-/// every discharger is present in the module.
-pub fn set_impl_discharges<'c>(impl_op: &Operation<'c>, discharges: &[Attribute<'c>]) -> bool {
-    let raw: Vec<MlirAttribute> = discharges.iter().map(|a| a.to_raw()).collect();
+/// Attach a checked attribute array to an existing `trait.impl` op -- its
+/// projection-resolution premises or its obligation discharge citations. The
+/// impl verifier audits them at birth. Returns false if an entry is not the
+/// targeted array's attribute kind. An empty slice removes the impl's existing
+/// entries of that kind. Attached after the impl header prepass completes, so
+/// every cited impl is present in the module.
+pub fn set_impl_checked_array<'c>(
+    impl_op: &Operation<'c>,
+    which: ImplCheckedArray,
+    attrs: &[Attribute<'c>],
+) -> bool {
+    let raw: Vec<MlirAttribute> = attrs.iter().map(|a| a.to_raw()).collect();
+    let discharges = matches!(which, ImplCheckedArray::Discharges);
     unsafe {
-        traitImplOpSetDischarges(impl_op.to_raw(), raw.as_ptr(), raw.len() as isize)
+        traitImplOpSetCheckedArray(impl_op.to_raw(), raw.as_ptr(), raw.len() as isize, discharges)
     }
 }
 
@@ -508,27 +456,15 @@ pub fn proof<'c>(loc: Location<'c>,
     ))}
 }
 
+/// Create a `trait.project` op whose result claim is given directly: either the
+/// destination trait application's claim or a projection's equality hop --
+/// `result_claim` an equality claim over one of the source trait's requirement
+/// endpoints, specialized at the source application.
 pub fn project<'c>(loc: Location<'c>,
                    src_claim: Value<'c,'_>,
-                   dest_trait_app: TraitApplicationAttribute<'c>,
+                   result_claim: Type<'c>,
 ) -> Operation<'c> {
-    let app_attr: Attribute<'c> = dest_trait_app.into();
     unsafe { Operation::from_raw(traitProjectOpCreate(
-        loc.to_raw(),
-        src_claim.to_raw(),
-        app_attr.to_raw(),
-    ))}
-}
-
-/// Create a `trait.project` op whose result claim is given directly rather than
-/// built from a destination trait application. This spells the projection's
-/// equality hop: `result_claim` is an equality claim over one of the source
-/// trait's requirement endpoints, specialized at the source application.
-pub fn project_to_claim<'c>(loc: Location<'c>,
-                            src_claim: Value<'c,'_>,
-                            result_claim: Type<'c>,
-) -> Operation<'c> {
-    unsafe { Operation::from_raw(traitProjectOpCreateToClaim(
         loc.to_raw(),
         src_claim.to_raw(),
         result_claim.to_raw(),
@@ -549,25 +485,14 @@ pub fn derive<'c>(loc: Location<'c>,
     ))}
 }
 
+/// Build a `trait.assume` introducing the hypothesis `claim`: an application
+/// claim `@Trait[...]` or an equality claim `!A = !B`.
 pub fn assume<'c>(loc: Location<'c>,
-                  trait_app: TraitApplicationAttribute<'c>,
+                  claim: Type<'c>,
 ) -> Operation<'c> {
-    let app_attr: Attribute<'c> = trait_app.into();
     unsafe { Operation::from_raw(traitAssumeOpCreate(
         loc.to_raw(),
-        app_attr.to_raw(),
-    ))}
-}
-
-/// Build an equality-arm `trait.assume` introducing the hypothesis `lhs = rhs`.
-pub fn assume_equality<'c>(loc: Location<'c>,
-                          lhs: Type<'c>,
-                          rhs: Type<'c>,
-) -> Operation<'c> {
-    unsafe { Operation::from_raw(traitAssumeOpCreateEquality(
-        loc.to_raw(),
-        lhs.to_raw(),
-        rhs.to_raw(),
+        claim.to_raw(),
     ))}
 }
 
@@ -772,7 +697,8 @@ pub fn witness_compose<'c>(loc: Location<'c>, premises: &[Value<'c, '_>], result
 pub fn coerce<'c>(loc: Location<'c>, input: Value<'c, '_>, equalities: &[Value<'c, '_>], result_type: Type<'c>) -> Operation<'c> {
     let raw: Vec<MlirValue> = equalities.iter().map(|v| v.to_raw()).collect();
     unsafe { Operation::from_raw(traitCoerceOpCreate(
-        loc.to_raw(), input.to_raw(), raw.as_ptr(), raw.len() as isize, result_type.to_raw())) }
+        loc.to_raw(), input.to_raw(), raw.as_ptr(), raw.len() as isize, result_type.to_raw(),
+        /*unproven=*/false)) }
 }
 
 /// Create a marked (unproven) `trait.coerce`: change `input`'s written type to
@@ -780,8 +706,9 @@ pub fn coerce<'c>(loc: Location<'c>, input: Value<'c, '_>, equalities: &[Value<'
 /// an impl minted at monomorphization, which respells the endpoints' projections
 /// to ground and leaves the reflexive form the folder discharges.
 pub fn coerce_unproven<'c>(loc: Location<'c>, input: Value<'c, '_>, result_type: Type<'c>) -> Operation<'c> {
-    unsafe { Operation::from_raw(traitCoerceOpCreateUnproven(
-        loc.to_raw(), input.to_raw(), result_type.to_raw())) }
+    unsafe { Operation::from_raw(traitCoerceOpCreate(
+        loc.to_raw(), input.to_raw(), std::ptr::null(), 0, result_type.to_raw(),
+        /*unproven=*/true)) }
 }
 
 /// Answer whether `input` and `result` could converge under the pending
@@ -798,19 +725,39 @@ pub fn coerce_pending_accepts(input: Type, result: Type) -> bool {
 
 /// Answer whether the projection-resolution witness seam audit accepts the
 /// certificate `(redex, contractum)` cited to `impl_name`, looking that impl up
-/// in `module` and matching modulo `premises` (equality-arm claim types, usually
-/// empty). This is the same binding-only check `trait.witness`'s equality arm
-/// runs at the symbol seam, so a consumer classifying a certificate against this
-/// answer cannot disagree with the verifier. Refusal is a plain `false`, not a
+/// in `module`. `premises` are claim types split by arm: the equality claims are
+/// the comparison modulus (usually empty), the application claims and the
+/// `discharges` citations cover the cited impl's own assumptions. `rigid_head_match`
+/// keeps the redex's application rigid, so the verdict never depends on unrelated
+/// module impls -- the impl-birth audit sets it; a witness-site audit clears it.
+/// This is the same obligation-aware check `trait.witness`'s equality arm runs at
+/// the symbol seam, so a consumer classifying a certificate against this answer
+/// cannot disagree with the verifier. Refusal is a plain `false`, not a
 /// diagnostic.
-pub fn witness_seam_audit_accepts(
+pub fn witness_seam_audit_accepts<'c>(
     module: &Module,
     redex: Type,
     contractum: Type,
     impl_name: &str,
     premises: &[Type],
+    discharges: &[Attribute<'c>],
+    rigid_head_match: bool,
 ) -> bool {
-    witness_seam_audit(module, redex, contractum, impl_name, premises, false)
+    let raw_premises: Vec<MlirType> = premises.iter().map(|t| t.to_raw()).collect();
+    let raw_discharges: Vec<MlirAttribute> = discharges.iter().map(|a| a.to_raw()).collect();
+    unsafe {
+        traitWitnessSeamAuditAccepts(
+            module.to_raw(),
+            redex.to_raw(),
+            contractum.to_raw(),
+            StringRef::new(impl_name).to_raw(),
+            raw_premises.as_ptr(),
+            raw_premises.len() as isize,
+            raw_discharges.as_ptr(),
+            raw_discharges.len() as isize,
+            rigid_head_match,
+        )
+    }
 }
 
 /// Whether `src_claim` projects to `dst_claim`: `dst_claim` exactly matches one
@@ -820,75 +767,6 @@ pub fn witness_seam_audit_accepts(
 /// types; a non-claim argument answers `false`.
 pub fn claim_projects_to(module: &Module, src_claim: Type, dst_claim: Type) -> bool {
     unsafe { traitClaimProjectsTo(module.to_raw(), src_claim.to_raw(), dst_claim.to_raw()) }
-}
-
-/// The obligation-aware seam audit: like [`witness_seam_audit_accepts`], but the
-/// cited impl's own assumptions must additionally be discharged by the
-/// application-arm claims among `premises` (the equality-arm claims remain the
-/// comparison modulus). This previews the verdict the equality arm's verifier
-/// reaches once its audit becomes obligation-aware, so a classifier can refuse
-/// exactly what the flipped verifier would before the flip lands.
-pub fn witness_seam_audit_accepts_obligation_mode(
-    module: &Module,
-    redex: Type,
-    contractum: Type,
-    impl_name: &str,
-    premises: &[Type],
-) -> bool {
-    witness_seam_audit(module, redex, contractum, impl_name, premises, true)
-}
-
-/// The obligation-aware seam audit extended with declared discharge citations:
-/// like [`witness_seam_audit_accepts_obligation_mode`], but a cited conditional
-/// impl's assumption may also be discharged by one of the `discharges` -- each a
-/// `#trait.discharge` attribute naming an obligation and the impl that supplies
-/// it -- in addition to the application-arm `premises` (the citing impl's own
-/// where clause). This previews exactly the verdict the ImplOp verifier reaches
-/// with the same premises and discharge citations.
-pub fn witness_seam_audit_accepts_obligation_mode_with_discharges<'c>(
-    module: &Module,
-    redex: Type,
-    contractum: Type,
-    impl_name: &str,
-    premises: &[Type],
-    discharges: &[Attribute<'c>],
-) -> bool {
-    let raw_premises: Vec<MlirType> = premises.iter().map(|t| t.to_raw()).collect();
-    let raw_discharges: Vec<MlirAttribute> = discharges.iter().map(|a| a.to_raw()).collect();
-    unsafe {
-        traitWitnessSeamAuditAcceptsWithDischarges(
-            module.to_raw(),
-            redex.to_raw(),
-            contractum.to_raw(),
-            StringRef::new(impl_name).to_raw(),
-            raw_premises.as_ptr(),
-            raw_premises.len() as isize,
-            raw_discharges.as_ptr(),
-            raw_discharges.len() as isize,
-        )
-    }
-}
-
-fn witness_seam_audit(
-    module: &Module,
-    redex: Type,
-    contractum: Type,
-    impl_name: &str,
-    premises: &[Type],
-    check_obligations: bool,
-) -> bool {
-    let raw: Vec<MlirType> = premises.iter().map(|t| t.to_raw()).collect();
-    unsafe {
-        traitWitnessSeamAuditAccepts(
-            module.to_raw(),
-            redex.to_raw(),
-            contractum.to_raw(),
-            StringRef::new(impl_name).to_raw(),
-            raw.as_ptr(),
-            raw.len() as isize,
-            check_obligations,
-        )
-    }
 }
 
 /// Create a `trait.assoc_type` op. Pass `None` for a bare declaration (inside a

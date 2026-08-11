@@ -683,20 +683,6 @@ def Claim : Type<
   "::mlir::trait::ClaimType"
 >;
 
-// A claim constrained to the trait-application arm. Ops that read a trait
-// application off a claim -- to name a trait, select an impl, or match an
-// impl's assumptions -- require this so an equality claim is refused as a
-// parse/verify diagnostic at the operand rather than asserting deep inside the
-// arm-asserting accessor.
-def ApplicationClaim : Type<
-  And<[
-    CPred<"::mlir::isa<::mlir::trait::ClaimType>($_self)">,
-    CPred<"::mlir::cast<::mlir::trait::ClaimType>($_self).isApplication()">
-  ]>,
-  "a trait-application '!trait.claim' type",
-  "::mlir::trait::ClaimType"
->;
-
 def Projection : Type<
   CPred<"::mlir::isa<ProjectionType>($_self)">,
   "any '!trait.proj' type",
@@ -912,10 +898,8 @@ def DeriveOp : TraitDialectOp<"derive", [
   let arguments = (ins
     TraitApplicationAttr:$trait_application,
     FlatSymbolRefAttr:$impl,
-    // Every assumption operand must be an application claim, but the arm is
-    // checked in the verifier (a located diagnostic naming the design law)
-    // rather than as an operand-type constraint, so an equality claim reaching
-    // here is diagnosed at its operand instead of failing a generic ODS message.
+    // Each assumption operand must be an application claim; the verifier checks
+    // the arm so an equality claim is diagnosed at its operand.
     Variadic<Claim>:$assumptions
   );
 
@@ -1046,21 +1030,14 @@ def WitnessOp : TraitDialectOp<"witness", [
         Under the collapse ruling this is the one axiom kind in the certificate
         grammar.
 
-        The proj-resolve audit's judgment is exactly the citation's binding:
-        the redex, the contractum, the cited impl, and the associated type's
-        own arguments. It does not extend to the cited impl's own requirements
-        -- a conditional impl whose where-bounds have no satisfying impl for the
-        instantiation still audits clean here when its binding is correct. That
-        binding-only scope is sound because the compiler cites only impls the
-        solver has already discharged, and the lowering pipeline refuses any
-        undischarged monomorphic claim after instantiate-monomorphs.
-
-        XXX TODO: strengthen the audit to also require the witness's premises to
-        discharge the cited impl's requirement list, once equality claims gain
-        their call-boundary channel to supply those premises. The binding-only
-        accept granted today then becomes a refusal, and the lit row pinning it
-        (witness_conditional_impl_binding_only_scope.mlir) must be deliberately
-        flipped.
+        The proj-resolve audit resolves the redex through the cited impl's
+        binding and additionally requires the cited impl's own assumptions --
+        specialized for the redex's application -- to be discharged, either by
+        the witness's application-arm `premises` or by a declared discharge
+        citation. It deliberately does not reach the cited impl's trait
+        requirements, which may quantify over GAT variables with no ground
+        instance at the witness; that discharge belongs to the proof and birth
+        machinery.
 
       * refl: proof-free, cites nothing; the endpoints are identical at
         construction. It exists because a concrete instantiation of an equality
@@ -1227,21 +1204,6 @@ def CoerceOp : TraitDialectOp<"coerce", [
                    UnitAttr:$unproven);
   let results = (outs AnyType:$result);
 
-  let extraClassDeclaration = [{
-    // The cited equalities as their endpoint attributes, read through the
-    // accessor because the endpoints are opaque to the generic walkers. This is
-    // the demand-walk accessor: readers that classify theory content consult it
-    // for a coerce's equality operands.
-    llvm::SmallVector<::mlir::trait::TypeEqualityAttr, 2> getCitedEqualities() {
-      llvm::SmallVector<::mlir::trait::TypeEqualityAttr, 2> result;
-      for (::mlir::Value e : getEqualities())
-        if (auto claim = ::mlir::dyn_cast<ClaimType>(e.getType()))
-          if (auto eq = claim.getEqualityAttr())
-            result.push_back(eq);
-      return result;
-    }
-  }];
-
   let hasCustomAssemblyFormat = 1;
   let hasVerifier = 1;
   let hasFolder = 1;
@@ -1285,9 +1247,8 @@ def MethodCallOp : TraitDialectOp<"method.call", [
   let arguments = (ins
     SymbolRefAttr:$method_ref,
     // The receiver must be an application claim -- a method call names its trait
-    // through it -- but the arm is checked in the verifier (a located diagnostic)
-    // rather than as an operand-type constraint, so an equality receiver is
-    // diagnosed at its operand instead of failing a generic ODS message.
+    // through it -- and the verifier checks the arm so an equality receiver is
+    // diagnosed at its operand.
     Claim:$claim,
     Variadic<AnyType>:$arguments
   );

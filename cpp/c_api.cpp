@@ -56,37 +56,7 @@ bool traitAttributeIsATraitApplication(MlirAttribute attribute) {
 
 MlirOperation traitTraitOpCreate(MlirLocation loc, MlirStringRef name,
                                  MlirType* wrappedTypeParams, intptr_t numTypeParams,
-                                 MlirAttribute* requirements, intptr_t numRequirements) {
-  MLIRContext* ctx = unwrap(loc)->getContext();
-  OpBuilder builder(ctx);
-
-  SmallVector<Type> typeParams;
-  typeParams.reserve(numTypeParams);
-  for (intptr_t i = 0; i < numTypeParams; ++i) {
-    typeParams.push_back(unwrap(wrappedTypeParams[i]));
-  }
-
-  SmallVector<TraitApplicationAttr> appAttrs;
-  appAttrs.reserve(numRequirements);
-  for (intptr_t i = 0; i < numRequirements; ++i) {
-    auto app = dyn_cast<TraitApplicationAttr>(unwrap(requirements[i]));
-    if (!app) return {}; // invalid type of attribute
-    appAttrs.push_back(app);
-  }
-
-  auto op = TraitOp::create(builder,
-    unwrap(loc),
-    builder.getStringAttr(StringRef(name.data, name.length)),
-    typeParams,
-    appAttrs
-  );
-
-  return wrap(op.getOperation());
-}
-
-MlirOperation traitTraitOpCreateWithPredicates(MlirLocation loc, MlirStringRef name,
-                                               MlirType* wrappedTypeParams, intptr_t numTypeParams,
-                                               MlirAttribute* predicates, intptr_t numPredicates) {
+                                 MlirAttribute* predicates, intptr_t numPredicates) {
   MLIRContext* ctx = unwrap(loc)->getContext();
   OpBuilder builder(ctx);
 
@@ -146,34 +116,7 @@ MlirOperation traitImplOpCreate(MlirLocation loc,
 MlirOperation traitImplOpCreateNamed(MlirLocation loc,
                                      MlirStringRef symName,
                                      MlirAttribute wrappedSelfTraitApp,
-                                     MlirAttribute* assumptions, intptr_t numAssumptions) {
-  TraitApplicationAttr selfApp = dyn_cast<TraitApplicationAttr>(unwrap(wrappedSelfTraitApp));
-  if (!selfApp) return {}; // invalid type of attribute
-
-  SmallVector<TraitApplicationAttr> appAttrs;
-  for (intptr_t i = 0; i < numAssumptions; ++i) {
-    auto app = dyn_cast<TraitApplicationAttr>(unwrap(assumptions[i]));
-    if (!app) return {}; // invalid type of attribute
-    appAttrs.push_back(app);
-  }
-
-  MLIRContext* ctx = unwrap(loc)->getContext();
-  OpBuilder builder(ctx);
-
-  auto op = ImplOp::create(builder,
-    unwrap(loc),
-    StringRef(symName.data, symName.length),
-    selfApp,
-    appAttrs
-  );
-
-  return wrap(op.getOperation());
-}
-
-MlirOperation traitImplOpCreateNamedWithPredicates(MlirLocation loc,
-                                                   MlirStringRef symName,
-                                                   MlirAttribute wrappedSelfTraitApp,
-                                                   MlirAttribute* predicates, intptr_t numPredicates) {
+                                     MlirAttribute* predicates, intptr_t numPredicates) {
   TraitApplicationAttr selfApp = dyn_cast<TraitApplicationAttr>(unwrap(wrappedSelfTraitApp));
   if (!selfApp) return {}; // invalid type of attribute
 
@@ -203,45 +146,31 @@ MlirOperation traitImplOpCreateNamedWithPredicates(MlirLocation loc,
   return wrap(op.getOperation());
 }
 
-bool traitImplOpSetPremises(MlirOperation wrappedImpl,
-                            MlirAttribute* premises, intptr_t numPremises) {
+bool traitImplOpSetCheckedArray(MlirOperation wrappedImpl,
+                                MlirAttribute* attrs, intptr_t numAttrs,
+                                bool discharges) {
   auto impl = dyn_cast_or_null<ImplOp>(unwrap(wrappedImpl));
   if (!impl) return false;
 
-  SmallVector<Attribute> certs;
-  certs.reserve(numPremises);
-  for (intptr_t i = 0; i < numPremises; ++i) {
-    Attribute a = unwrap(premises[i]);
-    if (!isa<WitnessCertificateAttr>(a))
+  // Premises are certificates, discharge citations are discharges; an entry of
+  // the wrong kind for the targeted array refuses.
+  SmallVector<Attribute> checked;
+  checked.reserve(numAttrs);
+  for (intptr_t i = 0; i < numAttrs; ++i) {
+    Attribute a = unwrap(attrs[i]);
+    bool wellKinded = discharges ? isa<DischargeCitationAttr>(a)
+                                 : isa<WitnessCertificateAttr>(a);
+    if (!wellKinded)
       return false;
-    certs.push_back(a);
+    checked.push_back(a);
   }
 
-  if (certs.empty())
-    impl.removePremisesAttr();
-  else
-    impl.setPremisesAttr(ArrayAttr::get(impl.getContext(), certs));
-  return true;
-}
-
-bool traitImplOpSetDischarges(MlirOperation wrappedImpl,
-                              MlirAttribute* discharges, intptr_t numDischarges) {
-  auto impl = dyn_cast_or_null<ImplOp>(unwrap(wrappedImpl));
-  if (!impl) return false;
-
-  SmallVector<Attribute> citations;
-  citations.reserve(numDischarges);
-  for (intptr_t i = 0; i < numDischarges; ++i) {
-    Attribute a = unwrap(discharges[i]);
-    if (!isa<DischargeCitationAttr>(a))
-      return false;
-    citations.push_back(a);
+  if (checked.empty()) {
+    if (discharges) impl.removeDischargesAttr(); else impl.removePremisesAttr();
+  } else {
+    ArrayAttr array = ArrayAttr::get(impl.getContext(), checked);
+    if (discharges) impl.setDischargesAttr(array); else impl.setPremisesAttr(array);
   }
-
-  if (citations.empty())
-    impl.removeDischargesAttr();
-  else
-    impl.setDischargesAttr(ArrayAttr::get(impl.getContext(), citations));
   return true;
 }
 
@@ -387,26 +316,7 @@ MlirOperation traitProofOpCreate(MlirLocation loc,
 
 MlirOperation traitProjectOpCreate(MlirLocation loc,
                                    MlirValue srcClaim,
-                                   MlirAttribute destTraitApp) {
-  MLIRContext* ctx = unwrap(loc)->getContext();
-  MlirType wrappedResultType = traitClaimTypeGet(wrap(ctx), destTraitApp);
-  ClaimType resultType = dyn_cast<ClaimType>(unwrap(wrappedResultType));
-  if (!resultType) return {}; // invalid result type
-
-  OpBuilder builder(ctx);
-
-  auto op = ProjectOp::create(builder,
-    unwrap(loc),
-    resultType,
-    unwrap(srcClaim)
-  );
-
-  return wrap(op.getOperation());
-}
-
-MlirOperation traitProjectOpCreateToClaim(MlirLocation loc,
-                                          MlirValue srcClaim,
-                                          MlirType resultClaim) {
+                                   MlirType resultClaim) {
   MLIRContext* ctx = unwrap(loc)->getContext();
   auto resultType = dyn_cast<ClaimType>(unwrap(resultClaim));
   if (!resultType) return {}; // invalid result type
@@ -443,32 +353,14 @@ MlirOperation traitDeriveOpCreate(MlirLocation loc,
   return wrap(op.getOperation());
 }
 
-MlirOperation traitAssumeOpCreate(MlirLocation loc,
-                                  MlirAttribute wrappedTraitApp) {
-  MLIRContext* ctx = unwrap(loc)->getContext();
-
-  OpBuilder builder(ctx);
-
-  TraitApplicationAttr traitApp = dyn_cast<TraitApplicationAttr>(unwrap(wrappedTraitApp));
-  if (!traitApp) return {}; // invalid attribute type
-
-  auto op = AssumeOp::create(builder, unwrap(loc), traitApp);
-
-  return wrap(op.getOperation());
-}
-
-MlirOperation traitAssumeOpCreateEquality(MlirLocation loc,
-                                          MlirType lhs, MlirType rhs) {
+MlirOperation traitAssumeOpCreate(MlirLocation loc, MlirType wrappedClaim) {
   MLIRContext* ctx = unwrap(loc)->getContext();
   OpBuilder builder(ctx);
 
-  auto eq = TypeEqualityAttr::getChecked(
-      [&] { return emitError(unwrap(loc)); }, ctx, unwrap(lhs), unwrap(rhs));
-  if (!eq)
-    return {}; // endpoints carry a proof receipt, or are otherwise ill-formed
-  auto claimTy = ClaimType::getEquality(ctx, eq);
+  auto claim = dyn_cast<ClaimType>(unwrap(wrappedClaim));
+  if (!claim) return {}; // invalid claim type
 
-  auto op = AssumeOp::create(builder, unwrap(loc), claimTy);
+  auto op = AssumeOp::create(builder, unwrap(loc), claim);
 
   return wrap(op.getOperation());
 }
@@ -640,10 +532,13 @@ MlirOperation traitWitnessOpCreateCompose(MlirLocation loc,
 MlirOperation traitCoerceOpCreate(MlirLocation loc,
                                   MlirValue input,
                                   MlirValue *equalities, intptr_t numEqualities,
-                                  MlirType resultType) {
+                                  MlirType resultType,
+                                  bool unproven) {
   MLIRContext *ctx = unwrap(loc)->getContext();
   OpBuilder builder(ctx);
 
+  // A marked coerce cites no equalities: its reconciling equality is supplied by
+  // an impl minted at monomorphization.
   SmallVector<Value> eqVals;
   eqVals.reserve(numEqualities);
   for (intptr_t i = 0; i < numEqualities; ++i)
@@ -651,19 +546,8 @@ MlirOperation traitCoerceOpCreate(MlirLocation loc,
 
   auto op = CoerceOp::create(builder, unwrap(loc), unwrap(resultType),
                              unwrap(input), ValueRange(eqVals));
-  return wrap(op.getOperation());
-}
-
-MlirOperation traitCoerceOpCreateUnproven(MlirLocation loc,
-                                          MlirValue input,
-                                          MlirType resultType) {
-  MLIRContext *ctx = unwrap(loc)->getContext();
-  OpBuilder builder(ctx);
-  // The marked form cites no equalities: its reconciling equality is supplied by
-  // an impl minted at monomorphization.
-  auto op = CoerceOp::create(builder, unwrap(loc), unwrap(resultType),
-                             unwrap(input), ValueRange{});
-  op.setUnproven(true);
+  if (unproven)
+    op.setUnproven(true);
   return wrap(op.getOperation());
 }
 
@@ -685,65 +569,15 @@ bool traitWitnessSeamAuditAccepts(MlirModule wrappedModule,
                                   MlirType redex, MlirType contractum,
                                   MlirStringRef implName,
                                   MlirType *premises, intptr_t numPremises,
-                                  bool checkObligations) {
+                                  MlirAttribute *discharges, intptr_t numDischarges,
+                                  bool rigidHeadMatch) {
   ModuleOp module = unwrap(wrappedModule);
   MLIRContext *ctx = module.getContext();
   FlatSymbolRefAttr implRef =
       FlatSymbolRefAttr::get(ctx, StringRef(implName.data, implName.length));
 
   // Premises split by arm: the equality claims are the comparison modulus, the
-  // application claims discharge the impl's assumptions in obligation mode. In
-  // binding mode an application premise is illegal, matching the verifier's
-  // equality-only filter.
-  SmallVector<TypeEqualityAttr> equalityPremises;
-  SmallVector<TraitApplicationAttr> applicationPremises;
-  for (intptr_t i = 0; i < numPremises; ++i) {
-    auto claim = dyn_cast<ClaimType>(unwrap(premises[i]));
-    if (!claim)
-      return false;
-    if (auto eq = claim.getEqualityAttr()) {
-      equalityPremises.push_back(eq);
-    } else if (checkObligations && claim.isApplication()) {
-      applicationPremises.push_back(claim.getTraitApplication());
-    } else {
-      return false;
-    }
-  }
-
-  // A refused audit is a classification answer, not a compile error, so swallow
-  // the diagnostics the shared audit emits on refusal.
-  ScopedDiagnosticHandler handler(ctx, [](Diagnostic &) { return success(); });
-  auto err = [&] { return emitError(UnknownLoc::get(ctx)); };
-  return succeeded(auditProjResolveCertificate(
-      module, unwrap(redex), unwrap(contractum), implRef, equalityPremises, err,
-      applicationPremises, checkObligations));
-}
-
-bool traitClaimProjectsTo(MlirModule wrappedModule, MlirType srcClaim,
-                          MlirType dstClaim) {
-  ModuleOp module = unwrap(wrappedModule);
-  auto src = dyn_cast<ClaimType>(unwrap(srcClaim));
-  auto dst = dyn_cast<ClaimType>(unwrap(dstClaim));
-  if (!src || !dst)
-    return false;
-  return src.projectsTo(module, dst);
-}
-
-bool traitWitnessSeamAuditAcceptsWithDischarges(MlirModule wrappedModule,
-                                                MlirType redex,
-                                                MlirType contractum,
-                                                MlirStringRef implName,
-                                                MlirType *premises,
-                                                intptr_t numPremises,
-                                                MlirAttribute *discharges,
-                                                intptr_t numDischarges) {
-  ModuleOp module = unwrap(wrappedModule);
-  MLIRContext *ctx = module.getContext();
-  FlatSymbolRefAttr implRef =
-      FlatSymbolRefAttr::get(ctx, StringRef(implName.data, implName.length));
-
-  // Obligation mode: the equality claims are the comparison modulus, the
-  // application claims are the citing impl's own where clause (arm i).
+  // application claims discharge the cited impl's assumptions.
   SmallVector<TypeEqualityAttr> equalityPremises;
   SmallVector<TraitApplicationAttr> applicationPremises;
   for (intptr_t i = 0; i < numPremises; ++i) {
@@ -758,7 +592,8 @@ bool traitWitnessSeamAuditAcceptsWithDischarges(MlirModule wrappedModule,
       return false;
   }
 
-  // The declared discharge citations (arm ii).
+  // The declared discharge citations that cover a cited conditional impl's own
+  // assumptions.
   SmallVector<DischargeCitationAttr> dischargeCitations;
   for (intptr_t i = 0; i < numDischarges; ++i) {
     auto citation = dyn_cast<DischargeCitationAttr>(unwrap(discharges[i]));
@@ -767,12 +602,24 @@ bool traitWitnessSeamAuditAcceptsWithDischarges(MlirModule wrappedModule,
     dischargeCitations.push_back(citation);
   }
 
+  // A refused audit is a classification answer, not a compile error, so swallow
+  // the diagnostics the shared audit emits on refusal.
   ScopedDiagnosticHandler handler(ctx, [](Diagnostic &) { return success(); });
   auto err = [&] { return emitError(UnknownLoc::get(ctx)); };
   return succeeded(auditProjResolveCertificate(
       module, unwrap(redex), unwrap(contractum), implRef, equalityPremises, err,
       applicationPremises, /*dischargeObligations=*/true, dischargeCitations,
-      /*rigidHeadMatch=*/true));
+      rigidHeadMatch));
+}
+
+bool traitClaimProjectsTo(MlirModule wrappedModule, MlirType srcClaim,
+                          MlirType dstClaim) {
+  ModuleOp module = unwrap(wrappedModule);
+  auto src = dyn_cast<ClaimType>(unwrap(srcClaim));
+  auto dst = dyn_cast<ClaimType>(unwrap(dstClaim));
+  if (!src || !dst)
+    return false;
+  return src.projectsTo(module, dst);
 }
 
 MlirOperation traitAssocTypeOpCreate(MlirLocation loc,

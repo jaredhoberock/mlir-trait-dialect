@@ -83,6 +83,19 @@ struct WitnessCertificateAttrStorage : public ::mlir::AttributeStorage {
 
 namespace mlir::trait {
 
+// Whether a type carries a proof receipt anywhere -- a proven claim spelled into
+// a position that forbids one. The equality arm and the projection-resolution
+// certificate both freeze receipt-free endpoints.
+static bool carriesReceipt(Type type) {
+  bool found = false;
+  type.walk([&](Type sub) {
+    if (auto claim = dyn_cast<ClaimType>(sub))
+      if (claim.isProven())
+        found = true;
+  });
+  return found;
+}
+
 // Structural well-formedness of an equality proposition. Endpoints must be
 // receipt-free: a proven claim spelled into an endpoint would carry a proof
 // receipt into the arm that forbids one, re-creating the asymmetric proof
@@ -95,15 +108,6 @@ LogicalResult TypeEqualityAttr::verify(
   if (!lhs || !rhs)
     return emitError() << "type equality requires two endpoint types";
 
-  auto carriesReceipt = [](Type endpoint) {
-    bool found = false;
-    endpoint.walk([&](Type sub) {
-      if (auto claim = dyn_cast<ClaimType>(sub))
-        if (claim.isProven())
-          found = true;
-    });
-    return found;
-  };
   if (carriesReceipt(lhs) || carriesReceipt(rhs))
     return emitError() << "type-equality endpoints must be receipt-free";
 
@@ -140,15 +144,6 @@ LogicalResult WitnessCertificateAttr::verify(
   if (!citedImpl)
     return emitError() << "a projection-resolution certificate must cite an impl";
 
-  auto carriesReceipt = [](Type endpoint) {
-    bool found = false;
-    endpoint.walk([&](Type sub) {
-      if (auto claim = dyn_cast<ClaimType>(sub))
-        if (claim.isProven())
-          found = true;
-    });
-    return found;
-  };
   if (carriesReceipt(redex) || carriesReceipt(contractum))
     return emitError() << "certificate endpoints must be receipt-free";
 
@@ -390,36 +385,12 @@ Attribute PredicateArrayAttr::parse(AsmParser &p, Type) {
   if (succeeded(p.parseOptionalRSquare()))
     return PredicateArrayAttr::getChecked(errFn, ctx, preds);
 
-  // Each entry is an application (`@Trait[...]`) or an equality (`!A = !B`),
-  // disambiguated by the leading `@` -- the same discriminator ClaimType uses.
+  // Each entry is an application (`@Trait[...]`) or an equality (`!A = !B`).
   do {
-    FlatSymbolRefAttr traitName;
-    OptionalParseResult symRes = p.parseOptionalAttribute(traitName);
-    if (symRes.has_value()) {
-      if (failed(*symRes))
-        return {};
-      if (p.parseLSquare())
-        return {};
-      SmallVector<Type> typeArgs;
-      do {
-        Type ty;
-        if (p.parseType(ty))
-          return {};
-        typeArgs.push_back(ty);
-      } while (succeeded(p.parseOptionalComma()));
-      if (p.parseRSquare())
-        return {};
-      preds.push_back(TraitApplicationAttr::get(ctx, traitName,
-                                                ArrayRef<Type>(typeArgs)));
-    } else {
-      Type lhs, rhs;
-      if (p.parseType(lhs) || p.parseEqual() || p.parseType(rhs))
-        return {};
-      auto eq = TypeEqualityAttr::getChecked(errFn, ctx, lhs, rhs);
-      if (!eq)
-        return {};
-      preds.push_back(eq);
-    }
+    FailureOr<Attribute> pred = parseApplicationOrEqualityPredicate(p);
+    if (failed(pred))
+      return {};
+    preds.push_back(*pred);
   } while (succeeded(p.parseOptionalComma()));
 
   if (p.parseRSquare())

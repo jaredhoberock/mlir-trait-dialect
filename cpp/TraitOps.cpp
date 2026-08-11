@@ -622,26 +622,40 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     }
   }
 
-  // Birth-check the trait's equality requirements against this impl. Each
-  // equality the trait requires (e.g. Self::Output = Self) must hold once its
-  // parameters are this impl's self arguments: the projection endpoints resolve
-  // -- through this impl's own bindings for its own application, or a declared
-  // premise for a sibling -- and the two spellings must agree. Application
-  // requirements are proved at impl selection, not here. An endpoint that stays
-  // symbolic cannot be decided against the impl's bindings at birth and is
-  // accepted here; its correctness is established where the impl is selected and,
-  // for evidence that is consumed, at the use site (a false equality's coerce
-  // fails the erase barrier). Only a ground mismatch is a birth error. A sibling
-  // requirement neither this impl's own bindings nor a declared premise resolves
-  // stays symbolic and defers -- the inert corner Rust's unsatisfiable
-  // where-clause bounds occupy. But once a declared premise reduces the endpoint
-  // to a ground value, a false requirement refuses at birth whether or not its
-  // evidence is ever consumed: the acceptance is the symbolic case alone, not a
-  // blanket pass for unused evidence.
-  //
-  // Guarded on the trait actually carrying an equality requirement: a trait
-  // with none owes no birth check, and the guard keeps the self-claim
-  // specialization off impls whose trait declares nothing to check.
+  // Birth-check each equality this impl must satisfy: a trait-header equality
+  // requirement specialized for the impl's self arguments (e.g. Self::Output =
+  // Self), and each equality entry of the impl's own where clause (e.g.
+  // F::Output = Acc). The shared judgment normalizes both endpoints -- through
+  // this impl's own bindings for its own application, or a declared premise for a
+  // sibling -- and refuses only a GROUND mismatch. An endpoint that stays
+  // symbolic cannot be decided at birth and is accepted; its correctness is
+  // established where the impl is selected and, for evidence that is consumed, at
+  // the use site (a false equality's coerce fails the erase barrier). The
+  // acceptance is the symbolic case alone: once a declared premise reduces the
+  // endpoint to a ground value, a false equality refuses at birth whether or not
+  // its evidence is ever consumed. Application requirements are proved at impl
+  // selection, not here.
+  auto selfEqNorm = [&](NormalizationContext &eqNorm) -> LogicalResult {
+    auto subst = buildSubstitutionForSelfClaim(getSelfClaim(), errFn);
+    if (failed(subst)) return failure();
+    eqNorm.addLocalProjectionRule(*this, getSelfApplication(), *subst);
+    addPremiseRules(eqNorm);
+    return success();
+  };
+  auto birthCheckEquality =
+      [&](NormalizationContext &eqNorm, TypeEqualityAttr eq,
+          llvm::function_ref<InFlightDiagnostic()> mismatch) -> LogicalResult {
+    auto lhsN = eqNorm.normalize(eq.getLhs(), errFn);
+    if (failed(lhsN)) return failure();
+    auto rhsN = eqNorm.normalize(eq.getRhs(), errFn);
+    if (failed(rhsN)) return failure();
+    if (isGroundType(*lhsN) && isGroundType(*rhsN) && *lhsN != *rhsN)
+      return mismatch() << *lhsN << " and " << *rhsN << " are not the same type";
+    return success();
+  };
+
+  // Each guard keeps the self-claim specialization off an impl with nothing of
+  // that kind to check.
   bool hasEqualityRequirement = llvm::any_of(
       traitOp.getRequirements(), [](Attribute pred) {
         return mlir::isa<TypeEqualityAttr>(pred);
@@ -649,65 +663,34 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (hasEqualityRequirement) {
     auto specReqs = traitOp.specializeRequirementsAsClaimsFor(getSelfClaim(), errFn);
     if (failed(specReqs)) return failure();
-
-    auto reqSubst = traitOp.buildSubstitutionForSelfClaim(getSelfClaim(), errFn);
-    if (failed(reqSubst)) return failure();
     NormalizationContext eqNorm;
-    eqNorm.addLocalProjectionRule(*this, getSelfApplication(), *reqSubst);
-    addPremiseRules(eqNorm);
-
+    if (failed(selfEqNorm(eqNorm))) return failure();
     for (ClaimType req : *specReqs) {
       auto eq = req.getEqualityAttr();
       if (!eq) continue;
-
-      auto lhsN = eqNorm.normalize(eq.getLhs(), errFn);
-      if (failed(lhsN)) return failure();
-      auto rhsN = eqNorm.normalize(eq.getRhs(), errFn);
-      if (failed(rhsN)) return failure();
-
-      if (isGroundType(*lhsN) && isGroundType(*rhsN) && *lhsN != *rhsN)
-        return emitOpError()
-               << "does not satisfy trait-header equality requirement " << req
-               << ": " << *lhsN << " and " << *rhsN << " are not the same type";
+      if (failed(birthCheckEquality(eqNorm, eq, [&] {
+            return emitOpError()
+                   << "does not satisfy trait-header equality requirement " << req
+                   << ": ";
+          })))
+        return failure();
     }
   }
 
-  // Birth-check this impl's own equality assumptions. Each equality entry of the
-  // impl's where clause (e.g. F::Output = Acc) is spelled in the impl's own
-  // variables, so no trait-to-impl specialization is needed: normalize the
-  // endpoints through this impl's own bindings for its own application and a
-  // declared premise for a sibling, and refuse only a ground mismatch. A symbolic
-  // endpoint cannot be decided at birth and is accepted here, exactly as a
-  // trait-header equality requirement is: its correctness is established where the
-  // impl is selected and, for evidence that is consumed, at the use site (a false
-  // equality's coerce fails the erase barrier). The acceptance is the symbolic
-  // case alone: once a declared premise reduces the endpoint to a ground value,
-  // a false assumption refuses at birth even when its evidence is never used --
-  // an unused false assumption is inert only while its redex stays symbolic.
-  // Guarded on the impl actually assuming an equality.
   bool assumesEquality = llvm::any_of(getAssumptions(), [](Attribute pred) {
     return mlir::isa<TypeEqualityAttr>(pred);
   });
   if (assumesEquality) {
-    auto subst = buildSubstitutionForSelfClaim(getSelfClaim(), errFn);
-    if (failed(subst)) return failure();
     NormalizationContext eqNorm;
-    eqNorm.addLocalProjectionRule(*this, getSelfApplication(), *subst);
-    addPremiseRules(eqNorm);
-
+    if (failed(selfEqNorm(eqNorm))) return failure();
     for (Attribute pred : getAssumptions()) {
       auto eq = dyn_cast<TypeEqualityAttr>(pred);
       if (!eq) continue;
-
-      auto lhsN = eqNorm.normalize(eq.getLhs(), errFn);
-      if (failed(lhsN)) return failure();
-      auto rhsN = eqNorm.normalize(eq.getRhs(), errFn);
-      if (failed(rhsN)) return failure();
-
-      if (isGroundType(*lhsN) && isGroundType(*rhsN) && *lhsN != *rhsN)
-        return emitOpError()
-               << "does not satisfy its own equality predicate " << eq
-               << ": " << *lhsN << " and " << *rhsN << " are not the same type";
+      if (failed(birthCheckEquality(eqNorm, eq, [&] {
+            return emitOpError()
+                   << "does not satisfy its own equality predicate " << eq << ": ";
+          })))
+        return failure();
     }
   }
 
@@ -1470,6 +1453,36 @@ FailureOr<Operation*> ProofOp::getProofOpOrUnconditionalImplOp(
 // WitnessOp
 //===----------------------------------------------------------------------===//
 
+// A spelled operand list: operands in parens, then their types in parens,
+// `(%a, %b) : (T, U)`. SSA operands resolve against written types. The caller
+// resolves the parsed operands once it knows where in the operand list they go.
+static ParseResult parseTypedOperandList(
+    OpAsmParser &p,
+    SmallVectorImpl<OpAsmParser::UnresolvedOperand> &operands,
+    SmallVectorImpl<Type> &types) {
+  if (p.parseOperandList(operands, OpAsmParser::Delimiter::Paren) ||
+      p.parseColon() ||
+      p.parseCommaSeparatedList(OpAsmParser::Delimiter::Paren, [&] {
+        Type ty;
+        if (p.parseType(ty))
+          return failure();
+        types.push_back(ty);
+        return success();
+      }))
+    return failure();
+  return success();
+}
+
+// Prints the `(%a, %b) : (T, U)` form parseTypedOperandList reads. The caller
+// prints the keyword that precedes it.
+static void printTypedOperandList(OpAsmPrinter &p, ValueRange operands) {
+  p << "(";
+  llvm::interleaveComma(operands, p, [&](Value v) { p.printOperand(v); });
+  p << ") : (";
+  llvm::interleaveComma(operands.getTypes(), p, [&](Type t) { p.printType(t); });
+  p << ")";
+}
+
 ParseResult WitnessOp::parse(OpAsmParser &p, OperationState& result) {
   MLIRContext *ctx = p.getContext();
 
@@ -1491,17 +1504,8 @@ ParseResult WitnessOp::parse(OpAsmParser &p, OperationState& result) {
 
     if (succeeded(p.parseOptionalKeyword("given"))) {
       SmallVector<OpAsmParser::UnresolvedOperand> premises;
-      if (p.parseOperandList(premises, OpAsmParser::Delimiter::Paren))
-        return failure();
       SmallVector<Type> premiseTypes;
-      if (p.parseColon() ||
-          p.parseCommaSeparatedList(OpAsmParser::Delimiter::Paren, [&] {
-            Type ty;
-            if (p.parseType(ty))
-              return failure();
-            premiseTypes.push_back(ty);
-            return success();
-          }))
+      if (parseTypedOperandList(p, premises, premiseTypes))
         return failure();
       if (p.resolveOperands(premises, premiseTypes, p.getCurrentLocation(),
                             result.operands))
@@ -1531,17 +1535,8 @@ ParseResult WitnessOp::parse(OpAsmParser &p, OperationState& result) {
   // derived from the premises and not inferable from them.
   if (succeeded(p.parseOptionalKeyword("compose"))) {
     SmallVector<OpAsmParser::UnresolvedOperand> premises;
-    if (p.parseOperandList(premises, OpAsmParser::Delimiter::Paren))
-      return failure();
     SmallVector<Type> premiseTypes;
-    if (p.parseColon() ||
-        p.parseCommaSeparatedList(OpAsmParser::Delimiter::Paren, [&] {
-          Type ty;
-          if (p.parseType(ty))
-            return failure();
-          premiseTypes.push_back(ty);
-          return success();
-        }))
+    if (parseTypedOperandList(p, premises, premiseTypes))
       return failure();
     if (p.resolveOperands(premises, premiseTypes, p.getCurrentLocation(),
                           result.operands))
@@ -1553,22 +1548,26 @@ ParseResult WitnessOp::parse(OpAsmParser &p, OperationState& result) {
     return success();
   }
 
-  // Application arm: `@proof for @Trait[Types...]`.
+  // parse @Symbol
   FlatSymbolRefAttr proof;
   if (p.parseAttribute(proof, "proof", result.attributes))
     return failure();
 
+  // parse `for`
   if (p.parseKeyword("for"))
     return failure();
 
+  // parse @Trait[Types...]
   TraitApplicationAttr traitApp = dyn_cast<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
   if (!traitApp)
     return p.emitError(p.getCurrentLocation(), "expected a TraitApplicationAttr");
   result.addAttribute("trait_application", traitApp);
 
-  ClaimType claimTy = ClaimType::get(ctx, traitApp, proof);
+  // construct the result type
+  ClaimType claimTy = ClaimType::get(p.getContext(), traitApp, proof);
   result.addTypes(claimTy);
 
+  // parse additional attributes
   if (p.parseOptionalAttrDictWithKeyword(result.attributes))
     return failure();
 
@@ -1580,13 +1579,8 @@ void WitnessOp::print(OpAsmPrinter &p) {
     p << " proj_resolve " << cert.getRedex() << " resolves "
       << cert.getContractum() << " by " << cert.getCitedImpl();
     if (!getPremises().empty()) {
-      p << " given(";
-      llvm::interleaveComma(getPremises(), p,
-                            [&](Value v) { p.printOperand(v); });
-      p << ") : (";
-      llvm::interleaveComma(getPremises().getTypes(), p,
-                            [&](Type t) { p.printType(t); });
-      p << ")";
+      p << " given";
+      printTypedOperandList(p, getPremises());
     }
     p << " : " << getResult().getType();
     return;
@@ -1600,13 +1594,9 @@ void WitnessOp::print(OpAsmPrinter &p) {
   // Composition arm: an equality result with neither a certificate nor a refl
   // marker. Print the premises with their types and the spelled result equality.
   if (getResultClaim().isEquality()) {
-    p << " compose(";
-    llvm::interleaveComma(getPremises(), p,
-                          [&](Value v) { p.printOperand(v); });
-    p << ") : (";
-    llvm::interleaveComma(getPremises().getTypes(), p,
-                          [&](Type t) { p.printType(t); });
-    p << ") : " << getResult().getType();
+    p << " compose";
+    printTypedOperandList(p, getPremises());
+    p << " : " << getResult().getType();
     return;
   }
 
@@ -1695,8 +1685,8 @@ static FailureOr<Type> applyEqualityPremises(
 // assumptions, specialized for the redex, must each be supplied by an
 // application-arm premise, receipt-stripped and modulo the equality premises --
 // so a witness citing a conditional impl carries the claims that discharge its
-// assumptions. trait.witness's verifier runs both, and the seam-audit query
-// runs the binding half alone in binding mode and both in obligation mode.
+// assumptions. trait.witness's verifier and the seam-audit query both run the
+// binding and the obligation discharge.
 //
 // The binding half deliberately stops at the impl's own assumptions and does not
 // reach its trait's requirements, which may quantify over GAT variables with no
@@ -2211,35 +2201,15 @@ LogicalResult DeriveOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 ParseResult AssumeOp::parse(OpAsmParser &p, OperationState &st) {
   MLIRContext *ctx = p.getContext();
 
-  // Disambiguate the two arms by the leading `@` -- the same discriminator the
-  // predicate array and claim type use. `@Trait[...]` is an application
-  // hypothesis; anything else is an equality hypothesis `!A = !B`.
-  FlatSymbolRefAttr traitName;
-  OptionalParseResult symRes = p.parseOptionalAttribute(traitName);
-  if (symRes.has_value()) {
-    if (failed(*symRes))
-      return failure();
-    if (p.parseLSquare())
-      return failure();
-    SmallVector<Type> typeArgs;
-    do {
-      Type ty;
-      if (p.parseType(ty))
-        return failure();
-      typeArgs.push_back(ty);
-    } while (succeeded(p.parseOptionalComma()));
-    if (p.parseRSquare())
-      return failure();
-    auto app = TraitApplicationAttr::get(ctx, traitName, ArrayRef<Type>(typeArgs));
-    st.addTypes(ClaimType::get(ctx, app));
-    return success();
-  }
-
-  // equality arm: `!A = !B`
-  Type lhs, rhs;
-  if (p.parseType(lhs) || p.parseEqual() || p.parseType(rhs))
+  // `@Trait[...]` is an application hypothesis; `!A = !B` is an equality
+  // hypothesis. The claim's result type wraps whichever predicate is parsed.
+  FailureOr<Attribute> pred = parseApplicationOrEqualityPredicate(p);
+  if (failed(pred))
     return failure();
-  st.addTypes(ClaimType::getEquality(ctx, lhs, rhs));
+  if (auto app = dyn_cast<TraitApplicationAttr>(*pred))
+    st.addTypes(ClaimType::get(ctx, app));
+  else
+    st.addTypes(ClaimType::getEquality(ctx, cast<TypeEqualityAttr>(*pred)));
 
   return success();
 }
@@ -2275,63 +2245,47 @@ LogicalResult AssumeOp::verify() {
   TraitOp enclosingTrait = funcOp->getParentOfType<TraitOp>();
   ImplOp enclosingImpl = funcOp->getParentOfType<ImplOp>();
 
-  // Equality arm: an assumed equality is an axiom of the enclosing scope exactly
-  // when it matches, by identity, an equality claim parameter of the enclosing
-  // function, an equality entry of the enclosing impl's assumptions (an impl
-  // method body), or an equality requirement of the enclosing trait (a trait
-  // method body). A method body shares the enclosing declaration's polymorphic
-  // variables, so identity of the equality predicate is the check; no weaker
-  // match is accepted. The trait's requirement list anchors an equality assume
-  // exactly as the impl's assumption list anchors an application assume.
-  if (auto assumedEq = claim.getEqualityAttr()) {
-    DenseSet<TypeEqualityAttr> assumable;
-    for (auto argType : funcOp.getArgumentTypes())
-      if (auto c = dyn_cast<ClaimType>(argType))
-        if (auto eq = c.getEqualityAttr())
-          assumable.insert(eq);
-    if (enclosingImpl)
-      for (Attribute pred : enclosingImpl.getAssumptions())
-        if (auto eq = dyn_cast<TypeEqualityAttr>(pred))
-          assumable.insert(eq);
-    if (enclosingTrait)
-      for (Attribute pred : enclosingTrait.getRequirements())
-        if (auto eq = dyn_cast<TypeEqualityAttr>(pred))
-          assumable.insert(eq);
+  // An assumed predicate is an axiom of the enclosing scope exactly when it
+  // matches one by identity -- a method body shares the enclosing declaration's
+  // polymorphic variables, so no weaker match is accepted. Application and
+  // equality predicates are disjoint attribute kinds, so one set serves both
+  // arms: an equality assume can match only an equality entry, an application
+  // assume only an application entry. The sources are the enclosing function's
+  // claim parameters, the enclosing impl's assumptions, the enclosing trait's
+  // equality requirements, and -- anchoring an application assume as the impl's
+  // assumption list anchors an equality one -- the enclosing trait's and impl's
+  // own self-applications.
+  DenseSet<Attribute> assumable;
+  for (Type argType : funcOp.getArgumentTypes())
+    if (auto c = dyn_cast<ClaimType>(argType)) {
+      if (auto eq = c.getEqualityAttr())
+        assumable.insert(eq);
+      else if (c.isApplication())
+        assumable.insert(c.getTraitApplication());
+    }
+  if (enclosingImpl) {
+    assumable.insert(enclosingImpl.getSelfApplication());
+    for (Attribute pred : enclosingImpl.getAssumptions())
+      assumable.insert(pred);
+  }
+  if (enclosingTrait) {
+    assumable.insert(enclosingTrait.getSelfApplication());
+    for (Attribute pred : enclosingTrait.getRequirements())
+      if (isa<TypeEqualityAttr>(pred))
+        assumable.insert(pred);
+  }
 
+  if (auto assumedEq = claim.getEqualityAttr()) {
     if (!assumable.contains(assumedEq))
       return emitOpError() << "assumed equality " << assumedEq
                            << " is not assumable in this context";
-
     return success();
   }
 
-  // Application arm: collect all assumable trait applications.
-  DenseSet<TraitApplicationAttr> assumable;
-
-  // primary: function claim-typed parameters. Only an application-arm parameter
-  // can satisfy an application assume; an equality claim parameter is skipped.
-  for (auto argType : funcOp.getArgumentTypes()) {
-    if (auto claimTy = dyn_cast<ClaimType>(argType))
-      if (claimTy.isApplication())
-        assumable.insert(claimTy.getTraitApplication());
-  }
-
-  // fallback: enclosing trait/impl
-  if (enclosingTrait)
-    assumable.insert(enclosingTrait.getSelfApplication());
-
-  if (enclosingImpl) {
-    assumable.insert(enclosingImpl.getSelfApplication());
-    for (auto a : enclosingImpl.getAssumptions().getApplications())
-      assumable.insert(a);
-  }
-
   auto assumedApp = getTraitApplication();
-
   if (!assumable.contains(assumedApp))
     return emitOpError() << "assumed trait application " << assumedApp
                          << " is not assumable in this context";
-
   return success();
 }
 
@@ -2620,15 +2574,7 @@ ParseResult CoerceOp::parse(OpAsmParser &p, OperationState &st) {
   SmallVector<OpAsmParser::UnresolvedOperand> equalities;
   SmallVector<Type> equalityTypes;
   if (succeeded(p.parseOptionalKeyword("via"))) {
-    if (p.parseOperandList(equalities, OpAsmParser::Delimiter::Paren) ||
-        p.parseColon() ||
-        p.parseCommaSeparatedList(OpAsmParser::Delimiter::Paren, [&] {
-          Type ty;
-          if (p.parseType(ty))
-            return failure();
-          equalityTypes.push_back(ty);
-          return success();
-        }))
+    if (parseTypedOperandList(p, equalities, equalityTypes))
       return failure();
   }
 
@@ -2651,13 +2597,8 @@ void CoerceOp::print(OpAsmPrinter &p) {
   p << " " << getInput() << " : " << getInput().getType() << " to "
     << getResult().getType();
   if (!getEqualities().empty()) {
-    p << " via (";
-    llvm::interleaveComma(getEqualities(), p,
-                          [&](Value v) { p.printOperand(v); });
-    p << ") : (";
-    llvm::interleaveComma(getEqualities().getTypes(), p,
-                          [&](Type t) { p.printType(t); });
-    p << ")";
+    p << " via ";
+    printTypedOperandList(p, getEqualities());
   }
   if (getUnproven())
     p << " unproven";
@@ -2672,20 +2613,15 @@ void CoerceOp::print(OpAsmPrinter &p) {
 // premises, preserving the admission law.
 static bool equalityCompositionEntails(TypeEqualityAttr result,
                                        ArrayRef<TypeEqualityAttr> premises) {
-  AttrTypeReplacer strip;
-  strip.addReplacement([](ClaimType claim) -> std::optional<Type> {
-    if (claim.isProven())
-      return Type(claim.asUnproven());
-    return std::nullopt;
-  });
-  Type lhs = strip.replace(result.getLhs());
-  Type rhs = strip.replace(result.getRhs());
+  Type lhs = stripClaimReceipts(result.getLhs());
+  Type rhs = stripClaimReceipts(result.getRhs());
 
   GroundCongruence closure;
   closure.intern(lhs);
   closure.intern(rhs);
   for (TypeEqualityAttr eq : premises)
-    closure.seed(strip.replace(eq.getLhs()), strip.replace(eq.getRhs()));
+    closure.seed(stripClaimReceipts(eq.getLhs()),
+                 stripClaimReceipts(eq.getRhs()));
   closure.close();
 
   return closure.equal(lhs, rhs);
@@ -2830,14 +2766,8 @@ LogicalResult CoerceOp::verify() {
 
   // 1. Strip application-claim receipts from the input and result. Comparison
   // is modulo the receipt, permanently.
-  AttrTypeReplacer strip;
-  strip.addReplacement([](ClaimType claim) -> std::optional<Type> {
-    if (claim.isProven())
-      return Type(claim.asUnproven());
-    return std::nullopt;
-  });
-  Type input = strip.replace(getInput().getType());
-  Type result = strip.replace(getResult().getType());
+  Type input = stripClaimReceipts(getInput().getType());
+  Type result = stripClaimReceipts(getResult().getType());
 
   if (getUnproven()) {
     // The marked form cites nothing: its reconciling equalities are supplied by
@@ -2862,7 +2792,8 @@ LogicalResult CoerceOp::verify() {
         return emitOpError() << "coerce cites equality claims, but operand has "
                                 "type " << e.getType();
       TypeEqualityAttr eq = claim.getEqualityAttr();
-      closure.seed(strip.replace(eq.getLhs()), strip.replace(eq.getRhs()));
+      closure.seed(stripClaimReceipts(eq.getLhs()),
+                   stripClaimReceipts(eq.getRhs()));
     }
     closure.close();
 

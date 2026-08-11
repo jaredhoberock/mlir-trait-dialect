@@ -31,58 +31,40 @@ MlirAttribute traitTraitApplicationAttrGet(MlirContext ctx,
 /// Checks whether the given attribute is a trait application.
 bool traitAttributeIsATraitApplication(MlirAttribute attr);
 
-/// Create a trait.trait operation. `requirements` must all be trait
-/// applications; use traitTraitOpCreateWithPredicates for a mixed where clause.
-MlirOperation traitTraitOpCreate(MlirLocation loc, MlirStringRef name,
-                                 MlirType* typeParams, intptr_t numTypeParams,
-                                 MlirAttribute* requirements, intptr_t numRequirements);
-
 /// Create a trait.trait operation whose `where` clause carries a mixed list of
 /// predicates: each entry is a trait application or a type equality. A
 /// non-predicate attribute yields a null operation.
-MlirOperation traitTraitOpCreateWithPredicates(MlirLocation loc, MlirStringRef name,
-                                               MlirType* typeParams, intptr_t numTypeParams,
-                                               MlirAttribute* predicates, intptr_t numPredicates);
+MlirOperation traitTraitOpCreate(MlirLocation loc, MlirStringRef name,
+                                 MlirType* typeParams, intptr_t numTypeParams,
+                                 MlirAttribute* predicates, intptr_t numPredicates);
 
 /// Create a trait.impl operation. `assumptions` must all be trait applications;
-/// use traitImplOpCreateNamedWithPredicates for a mixed where clause.
+/// use traitImplOpCreateNamed for a named impl with a mixed where clause.
 MlirOperation traitImplOpCreate(MlirLocation loc,
                                 MlirAttribute selfTraitApp,
                                 MlirAttribute* assumptions, intptr_t numAssumptions);
-
-/// Create a named trait.impl operation. `assumptions` must all be trait
-/// applications; use traitImplOpCreateNamedWithPredicates for a mixed clause.
-MlirOperation traitImplOpCreateNamed(MlirLocation loc,
-                                     MlirStringRef symName,
-                                     MlirAttribute selfTraitApp,
-                                     MlirAttribute* assumptions, intptr_t numAssumptions);
 
 /// Create a named trait.impl operation whose `where` clause carries a mixed list
 /// of predicates: each entry is a trait application the impl assumes, or a type
 /// equality it asserts about its own bindings. A non-predicate attribute yields
 /// a null operation.
-MlirOperation traitImplOpCreateNamedWithPredicates(MlirLocation loc,
-                                                   MlirStringRef symName,
-                                                   MlirAttribute selfTraitApp,
-                                                   MlirAttribute* predicates, intptr_t numPredicates);
+MlirOperation traitImplOpCreateNamed(MlirLocation loc,
+                                     MlirStringRef symName,
+                                     MlirAttribute selfTraitApp,
+                                     MlirAttribute* predicates, intptr_t numPredicates);
 
-/// Attach projection-resolution premises to a trait.impl operation. Each
-/// `premises` entry must be a `#trait.certificate` attribute; a non-certificate
-/// entry leaves the impl unchanged and returns false. The premises resolve the
-/// ground sibling projections the impl's own bindings do not, and are audited by
-/// the impl verifier. Attaching an empty array removes any existing premises.
-bool traitImplOpSetPremises(MlirOperation implOp,
-                            MlirAttribute* premises, intptr_t numPremises);
-
-/// Attach obligation discharge citations to a trait.impl operation. Each
-/// `discharges` entry must be a `#trait.discharge` attribute; a non-discharge
-/// entry leaves the impl unchanged and returns false. A citation names an
-/// application obligation a cited conditional premise leaves standing and the
-/// impl that supplies it, so the impl verifier can discharge that assumption
-/// without scanning the module. Attaching an empty array removes any existing
-/// citations.
-bool traitImplOpSetDischarges(MlirOperation implOp,
-                              MlirAttribute* discharges, intptr_t numDischarges);
+/// Attach a checked attribute array to a trait.impl operation. When `discharges`
+/// is false the array is the impl's projection-resolution premises (each entry a
+/// `#trait.certificate` that resolves a ground sibling projection the impl's own
+/// bindings do not); when true it is the impl's obligation discharge citations
+/// (each entry a `#trait.discharge` naming an application obligation a cited
+/// conditional premise leaves standing and the impl that supplies it). An entry
+/// of the wrong kind leaves the impl unchanged and returns false. Both arrays are
+/// audited by the impl verifier. Attaching an empty array removes the impl's
+/// existing entries of that kind.
+bool traitImplOpSetCheckedArray(MlirOperation implOp,
+                                MlirAttribute* attrs, intptr_t numAttrs,
+                                bool discharges);
 
 /// Create a trait.method.call operation
 MlirOperation traitMethodCallOpCreate(MlirLocation loc,
@@ -118,18 +100,13 @@ MlirOperation traitProofOpCreate(MlirLocation loc,
                                  MlirAttribute traitApp,
                                  MlirStringRef* subproofNames, intptr_t numSubproofs);
 
-/// Create a trait.project operation
+/// Create a trait.project operation whose result claim is given directly. The
+/// result is either the destination trait application's claim or a projection's
+/// equality hop (an equality claim over a trait requirement's endpoints). Returns
+/// a null operation if `resultClaim` is not a claim type.
 MlirOperation traitProjectOpCreate(MlirLocation loc,
                                    MlirValue srcClaim,
-                                   MlirAttribute destTraitApp);
-
-/// Create a trait.project operation whose result claim is given directly, rather
-/// than built from a destination trait application. This spells the projection's
-/// equality hop: the result is an equality claim over a trait requirement's
-/// endpoints. Returns a null operation if `resultClaim` is not a claim type.
-MlirOperation traitProjectOpCreateToClaim(MlirLocation loc,
-                                          MlirValue srcClaim,
-                                          MlirType resultClaim);
+                                   MlirType resultClaim);
 
 /// Create a trait.derive operation
 MlirOperation traitDeriveOpCreate(MlirLocation loc,
@@ -137,13 +114,10 @@ MlirOperation traitDeriveOpCreate(MlirLocation loc,
                                   MlirStringRef implName,
                                   MlirValue* assumptions, intptr_t numAssumptions);
 
-/// Create an application-arm trait.assume operation
-MlirOperation traitAssumeOpCreate(MlirLocation loc, MlirAttribute traitApp);
-
-/// Create an equality-arm trait.assume operation introducing `lhs = rhs`.
-/// Endpoints must be receipt-free; yields a null operation otherwise.
-MlirOperation traitAssumeOpCreateEquality(MlirLocation loc,
-                                          MlirType lhs, MlirType rhs);
+/// Create a trait.assume operation introducing the hypothesis `claim`: an
+/// application claim `@Trait[...]` or an equality claim `!A = !B`. Yields a null
+/// operation if `claim` is not a claim type.
+MlirOperation traitAssumeOpCreate(MlirLocation loc, MlirType claim);
 
 /// Return the !trait.poly<uniqueId> type
 MlirType traitPolyTypeGet(MlirContext ctx, unsigned int uniqueId);
@@ -241,18 +215,15 @@ MlirOperation traitWitnessOpCreateCompose(MlirLocation loc,
                                           intptr_t numPremises);
 
 /// Create a trait.coerce operation: change `input`'s written type to
-/// `resultType`, justified by the cited `equalities` (equality-claim values).
+/// `resultType`. A proven coerce is justified by the cited `equalities`
+/// (equality-claim values). A marked coerce (`unproven` true) cites no equalities
+/// and stands in the pending judgment its projections discharge at
+/// monomorphization.
 MlirOperation traitCoerceOpCreate(MlirLocation loc,
                                   MlirValue input,
                                   MlirValue *equalities, intptr_t numEqualities,
-                                  MlirType resultType);
-
-/// Create a marked (unproven) trait.coerce: change `input`'s written type to
-/// `resultType` with no cited equalities, standing in the pending judgment its
-/// projections discharge at monomorphization.
-MlirOperation traitCoerceOpCreateUnproven(MlirLocation loc,
-                                          MlirValue input,
-                                          MlirType resultType);
+                                  MlirType resultType,
+                                  bool unproven);
 
 /// Answer whether `input` and `result` could converge under the pending judgment
 /// a marked (unproven) trait.coerce carries: the same check `CoerceOp::verify`
@@ -264,40 +235,25 @@ MlirOperation traitCoerceOpCreateUnproven(MlirLocation loc,
 bool traitCoercePendingAccepts(MlirType input, MlirType result);
 
 /// Answer whether the projection-resolution witness seam audit accepts a
-/// certificate. This runs the same check as trait.witness's equality-arm
-/// verifySymbolUses: it looks the impl named by `implName` up in `module`,
-/// resolves `redex` through that impl's associated-type binding, applies the
-/// equality-claim `premises`, and compares the result against `contractum`.
-/// `premises` are !trait.claim types.
-///
-/// When `checkObligations` is false (binding mode, the verifier's verdict) the
-/// premises must all be equality claims -- a non-equality premise makes the
-/// audit refuse. When true (obligation mode) the premises split by arm: the
-/// equality claims are the comparison modulus, and the application claims must
-/// discharge the cited impl's own assumptions. Diagnostics are suppressed -- a
+/// certificate. This runs the same obligation-aware audit as trait.witness's
+/// equality-arm verifySymbolUses: it looks the impl named by `implName` up in
+/// `module`, resolves `redex` through that impl's associated-type binding, applies
+/// the equality-claim `premises`, and compares the result against `contractum`;
+/// the cited impl's own assumptions must additionally be discharged, either by the
+/// application-claim `premises` or by a `discharges` citation (each a
+/// `#trait.discharge` attribute naming an obligation and the impl that supplies
+/// it). `premises` are !trait.claim types split by arm: equality claims are the
+/// comparison modulus, application claims cover the assumptions. When
+/// `rigidHeadMatch` is set the redex's application stays rigid, so the verdict
+/// never depends on the unrelated impls the module carries -- the impl-birth audit
+/// sets it; a witness-site audit leaves it clear. Diagnostics are suppressed -- a
 /// refusal is a classification answer, not a compile error.
 bool traitWitnessSeamAuditAccepts(MlirModule module,
                                   MlirType redex, MlirType contractum,
                                   MlirStringRef implName,
                                   MlirType *premises, intptr_t numPremises,
-                                  bool checkObligations);
-
-/// Like `traitWitnessSeamAuditAccepts` in obligation mode, but a cited
-/// conditional impl's assumption may also be discharged by one of the
-/// `discharges` -- each a `#trait.discharge` attribute naming an obligation and
-/// the impl that supplies it -- in addition to the application-arm `premises`
-/// (the citing impl's own where clause). This previews exactly the verdict the
-/// ImplOp verifier reaches with the same premises and discharge citations, so a
-/// front end writing them cannot disagree with the verifier. Diagnostics are
-/// suppressed; a refusal is a plain false.
-bool traitWitnessSeamAuditAcceptsWithDischarges(MlirModule module,
-                                                MlirType redex,
-                                                MlirType contractum,
-                                                MlirStringRef implName,
-                                                MlirType *premises,
-                                                intptr_t numPremises,
-                                                MlirAttribute *discharges,
-                                                intptr_t numDischarges);
+                                  MlirAttribute *discharges, intptr_t numDischarges,
+                                  bool rigidHeadMatch);
 
 /// Whether `srcClaim` projects to `dstClaim`: `dstClaim` exactly matches one of
 /// the source's candidate projections (identity, a trait requirement specialized

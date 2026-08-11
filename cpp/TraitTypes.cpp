@@ -463,15 +463,51 @@ LogicalResult ClaimType::verifySymbolUses(Operation *op,
     return verifyEqualityEndpointSymbols(eq.getRhs(), op, symbolTable);
   }
 
-  // Application arm: verify the trait application, then any proof.
+  // Application arm: verify the trait application.
   if (failed(getTraitApplication().verifySymbolUses(op, symbolTable)))
     return failure();
 
+  // if there's a proof, verify that it points to a valid symbol
   if (auto proof = getProof())
     if (failed(ProofOp::getProofOpOrUnconditionalImplOp(module, proof, err)))
       return failure();
 
   return success();
+}
+
+FailureOr<Attribute> parseApplicationOrEqualityPredicate(AsmParser &p) {
+  MLIRContext *ctx = p.getContext();
+
+  // The application arm opens with a trait symbol (`@Trait[...]`); anything else
+  // is the equality arm (`!A = !B`), disambiguated by the leading `@`.
+  FlatSymbolRefAttr traitName;
+  OptionalParseResult symRes = p.parseOptionalAttribute(traitName);
+  if (symRes.has_value()) {
+    if (failed(*symRes))
+      return failure();
+    if (p.parseLSquare())
+      return failure();
+    SmallVector<Type> typeArgs;
+    do {
+      Type ty;
+      if (p.parseType(ty))
+        return failure();
+      typeArgs.push_back(ty);
+    } while (succeeded(p.parseOptionalComma()));
+    if (p.parseRSquare())
+      return failure();
+    return Attribute(
+        TraitApplicationAttr::get(ctx, traitName, ArrayRef<Type>(typeArgs)));
+  }
+
+  Type lhs, rhs;
+  if (p.parseType(lhs) || p.parseEqual() || p.parseType(rhs))
+    return failure();
+  auto errFn = [&] { return p.emitError(p.getCurrentLocation()); };
+  auto eq = TypeEqualityAttr::getChecked(errFn, ctx, lhs, rhs);
+  if (!eq)
+    return failure();
+  return Attribute(eq);
 }
 
 Type ClaimType::parse(AsmParser& p) {
@@ -481,55 +517,31 @@ Type ClaimType::parse(AsmParser& p) {
   if (p.parseLess())
     return {};
 
-  // The application arm opens with a trait symbol (`@Trait[...]`); anything
-  // else is the equality arm (`!A = !B`), disambiguated by the leading `@`.
-  FlatSymbolRefAttr traitName;
-  OptionalParseResult symRes = p.parseOptionalAttribute(traitName);
-  if (symRes.has_value()) {
-    if (failed(*symRes))
-      return {};
+  FailureOr<Attribute> pred = parseApplicationOrEqualityPredicate(p);
+  if (failed(pred))
+    return {};
 
-    if (p.parseLSquare())
-      return {};
-    SmallVector<Type> typeArgs;
-    do {
-      Type ty;
-      if (p.parseType(ty))
-        return {};
-      typeArgs.push_back(ty);
-    } while (succeeded(p.parseOptionalComma()));
-    if (p.parseRSquare())
-      return {};
-
-    auto app = TraitApplicationAttr::get(ctx, traitName, ArrayRef<Type>(typeArgs));
-
+  if (auto app = dyn_cast<TraitApplicationAttr>(*pred)) {
+    // An application claim may carry a `by @proof` receipt.
     FlatSymbolRefAttr proof;
     if (succeeded(p.parseOptionalKeyword("by"))) {
       if (p.parseAttribute(proof))
         return {};
     }
-
     if (p.parseGreater())
       return {};
-
     ClaimType claim = ClaimType::getChecked(errFn, ctx, app, proof);
     return claim ? Type(claim) : Type();
   }
 
-  // Equality arm.
-  Type lhs, rhs;
-  if (p.parseType(lhs) || p.parseEqual() || p.parseType(rhs))
-    return {};
   // The equality arm never carries a proof receipt; refuse `by @...` here so
   // the receipt-free invariant holds at parse as well as at construction.
+  auto eq = cast<TypeEqualityAttr>(*pred);
   if (succeeded(p.parseOptionalKeyword("by"))) {
     p.emitError(p.getNameLoc(),
                 "an equality claim may not carry a proof receipt");
     return {};
   }
-  auto eq = TypeEqualityAttr::getChecked(errFn, ctx, lhs, rhs);
-  if (!eq)
-    return {};
   if (p.parseGreater())
     return {};
   ClaimType claim = ClaimType::getChecked(errFn, ctx, eq, /*proof=*/nullptr);
@@ -1496,12 +1508,9 @@ LogicalResult ProjectionType::unify(
   // Counted rather than recorded: this is a demand raised where there is no
   // module to read facts from, which is outside any stage population by
   // construction, and it is the exact crossing the tolerance below accepts when
-  // a module is in hand -- the two counts read against each other.
-  //
-  // A verifier holds no module by construction, so it enumerates no impl: a
-  // projection still standing after substitution is not ground and can only
-  // stand for itself, so it must match the other side literally. A mismatch
-  // here is a real signature disagreement, reported at the op that raised it.
+  // a module is in hand -- the two counts read against each other. Holding no
+  // module, the comparator enumerates no impl, so a projection still standing is
+  // not ground and must match the other side literally.
   if (!module) {
     countModuleFreeProjectionRejection();
     if (err)
@@ -1657,21 +1666,14 @@ Type instantiate(Type root, InstantiationMap &inst, uint64_t &idCounter) {
     return std::nullopt;
   });
 
-  // An equality claim's endpoints live in hand-written storage the generic
-  // replacer cannot see, so a formal claim<!poly = T> would keep a rigid poly
-  // and never share the inference variable the rest of the formal instantiates
-  // to. Instantiate both endpoints through the same map and rebuild the claim,
-  // so a claim endpoint variable unifies across a call boundary like any other.
-  // Registered last, so it takes priority over the generic rule for claims.
+  // Instantiate the equality endpoints the generic rule above cannot reach:
+  // otherwise a formal claim<!poly = T> would keep a rigid poly and never share
+  // the inference variable the rest of the formal instantiates to, so a claim
+  // endpoint variable unifies across a call boundary like any other.
   r.addReplacement([&](ClaimType claim) -> std::optional<Type> {
-    auto eq = claim.getEqualityAttr();
-    if (!eq)
-      return std::nullopt;
-    Type newLhs = instantiate(eq.getLhs(), inst, idCounter);
-    Type newRhs = instantiate(eq.getRhs(), inst, idCounter);
-    if (newLhs == eq.getLhs() && newRhs == eq.getRhs())
-      return std::nullopt;
-    return Type(ClaimType::getEquality(claim.getContext(), newLhs, newRhs));
+    return respellEqualityEndpoints(claim, [&](Type t) {
+      return instantiate(t, inst, idCounter);
+    });
   });
 
   // this walks into types nested inside attributes (e.g., trait applications)

@@ -1010,8 +1010,6 @@ void recordObligationNormalizationMiss(Type demand, DemandOrigin origin);
 /// Counts one obligation normalized against an impl's own local bindings.
 void countObligationNormalization();
 
-/// Records a ground redex a call site never asked about because its claim
-/// carried no evidence.
 /// Counts one call whose claim withheld the license to consult module facts.
 void countWithheldCallClaim();
 

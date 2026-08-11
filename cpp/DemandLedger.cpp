@@ -294,7 +294,6 @@ unsigned DemandLedger::getDrainableArms(Type demand) const {
   return it == drainableArms.end() ? 0u : it->second;
 }
 
-
 void DemandLedger::pushFrame(Type demand) {
   Location origin = frames.empty()
                         ? Location(UnknownLoc::get(demand.getContext()))
@@ -919,7 +918,6 @@ void countObligationNormalization() {
     return;
   ++numObligationNormalizations;
 }
-
 
 void countWithheldCallClaim() {
   if (ambientCrossChecking)

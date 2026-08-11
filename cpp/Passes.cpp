@@ -1522,6 +1522,32 @@ resolveProjectionHop(ProjectionType proj, const ReadOnlyImplResolver &reading,
   return std::nullopt;
 }
 
+/// Resolve to a fixed point every ground projection standing anywhere in `type`,
+/// descending composites, through `hop`. A projection `hop` declines and any
+/// polymorphic projection are left standing. Resolution runs to a fixed point
+/// because one hop's binding may spell the next; a chain that outruns the bound
+/// is left spelled and reported as unresolved downstream. Both the settlement
+/// check and the derive-reconciliation walk read this one descent, differing only
+/// in the per-projection hop rule they supply.
+static Type resolveGroundProjections(
+    Type type, llvm::function_ref<std::optional<Type>(ProjectionType)> hop) {
+  Type previous;
+  Type current = type;
+  for (unsigned i = 0;
+       i != maxProjectionResolutionHops && current != previous; ++i) {
+    previous = current;
+    AttrTypeReplacer replacer;
+    replacer.addReplacement([&](Type t) -> std::optional<Type> {
+      auto proj = dyn_cast<ProjectionType>(t);
+      if (!proj || isPolymorphicType(proj))
+        return std::nullopt;
+      return hop(proj);
+    });
+    current = replacer.replace(current);
+  }
+  return current;
+}
+
 /// Whether a monomorphic equality claim is settled at the leftover check: its
 /// two endpoints ground-resolve to one spelling through impls whose obligations
 /// hold.
@@ -1548,26 +1574,13 @@ static bool equalityClaimGroundResolvesToOneSpelling(
   auto eq = claim.getEqualityAttr();
   if (!eq)
     return false;
+  // Each projection resolves through the recorded facts first, then impl
+  // selection; the bound is shared with the reduction that follows a settled
+  // chain.
   auto resolveEndpoint = [&](Type endpoint) -> Type {
-    // A resolved binding may itself spell a projection, so run to a fixed point.
-    // The bound is shared with the reduction that follows a settled chain; a
-    // chain that outruns it is left spelled and reported as an unresolved
-    // projection downstream.
-    Type previous;
-    Type current = endpoint;
-    for (unsigned i = 0;
-         i != maxProjectionResolutionHops && current != previous; ++i) {
-      previous = current;
-      AttrTypeReplacer replacer;
-      replacer.addReplacement([&](Type t) -> std::optional<Type> {
-        auto proj = dyn_cast<ProjectionType>(t);
-        if (!proj || isPolymorphicType(proj))
-          return std::nullopt;
-        return resolveProjectionHop(proj, reading, resolver, builder);
-      });
-      current = replacer.replace(current);
-    }
-    return current;
+    return resolveGroundProjections(endpoint, [&](ProjectionType proj) {
+      return resolveProjectionHop(proj, reading, resolver, builder);
+    });
   };
   Type lhs = resolveEndpoint(eq.getLhs());
   Type rhs = resolveEndpoint(eq.getRhs());
@@ -1737,24 +1750,11 @@ static LogicalResult reduceGroundEqualityAssume(
 /// mismatch.
 static Type resolveGroundProjectionsRecorded(Type type,
                                              const ReadOnlyImplResolver &reading) {
-  Type previous;
-  Type current = type;
-  for (unsigned i = 0;
-       i != maxProjectionResolutionHops && current != previous; ++i) {
-    previous = current;
-    AttrTypeReplacer replacer;
-    replacer.addReplacement([&](Type t) -> std::optional<Type> {
-      auto proj = dyn_cast<ProjectionType>(t);
-      if (!proj || isPolymorphicType(proj))
-        return std::nullopt;
-      if (auto recorded = reading.resolveProjectionType(proj);
-          succeeded(recorded))
-        return *recorded;
-      return std::nullopt;
-    });
-    current = replacer.replace(current);
-  }
-  return current;
+  return resolveGroundProjections(type, [&](ProjectionType proj) -> std::optional<Type> {
+    if (auto recorded = reading.resolveProjectionType(proj); succeeded(recorded))
+      return *recorded;
+    return std::nullopt;
+  });
 }
 
 /// Bridge each standing derive operand that projection resolution drifted from
@@ -1885,19 +1885,6 @@ static LogicalResult reconcileDerivedAssumptions(
 /// over that driver is exercised. Only the dialect's plugin passes it.
 LogicalResult instantiateMonomorphs(ModuleOp module,
                                     bool askImplSelectionForImpls) {
-  // A marked coerce's endpoints as the frontend emitted them, captured before
-  // any round respells its projections. When such a coerce grounds to
-  // inconsistent endpoints, the re-judgment below reports at the op with these
-  // birth spellings in hand, not only the ground types that replaced them.
-  // Coerces minted later (clones of instantiated bodies, reconciliation bridges)
-  // are absent here and re-judged on their ground endpoints alone.
-  DenseMap<Operation *, std::pair<Type, Type>> markedCoerceBirth;
-  module.walk([&](CoerceOp coerce) {
-    if (coerce.getUnproven())
-      markedCoerceBirth[coerce] = {coerce.getInput().getType(),
-                                   coerce.getResult().getType()};
-  });
-
   // Round zero: resolve the impls the module already spells and respell the
   // claims they prove, before any round asks for an impl that is missing.
   auto resolver = resolveImpls(module);
@@ -2308,33 +2295,10 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
   if (failed(reconcileDerivedAssumptions(module, reading, *resolver)))
     return failure();
 
-  // Re-judge each marked coerce now that its projections have grounded. A
-  // coerce whose two lookups grounded to different types is a promise the rounds
-  // falsified; it fails here at its own op, and where its birth spelling was
-  // captured the diagnostic carries it as a note beside the ground endpoints.
-  // This shares the verifier's own pending judgment, so a coerce that passes
-  // here passes the module verification below unchanged.
-  bool markedCoerceLie = false;
-  module.walk([&](CoerceOp coerce) {
-    if (!coerce.getUnproven())
-      return;
-    Type in = stripClaimReceipts(coerce.getInput().getType());
-    Type out = stripClaimReceipts(coerce.getResult().getType());
-    auto emit = [&]() -> InFlightDiagnostic {
-      InFlightDiagnostic diag = coerce.emitOpError();
-      auto it = markedCoerceBirth.find(coerce);
-      if (it != markedCoerceBirth.end())
-        diag.attachNote(coerce.getLoc())
-            << "at emission the coerce related " << it->second.first << " and "
-            << it->second.second;
-      return diag;
-    };
-    if (failed(verifyPendingProjectionUnification(in, out, emit)))
-      markedCoerceLie = true;
-  });
-  if (markedCoerceLie)
-    return failure();
-
+  // With every demand settled and every projection resolved, the module
+  // verifies. This runs CoerceOp::verify on each marked coerce, whose pending
+  // judgment catches a coerce the rounds grounded to inconsistent endpoints at
+  // its own op.
   DemandRecordingSuspension verifying;
   return module.verify();
 }

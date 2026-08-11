@@ -5,9 +5,8 @@
 
 // A bare-alias marked coerce is a promise that its two lookups denote one type.
 // When monomorphization grounds them to DIFFERENT types the promise is broken:
-// @Base[i64]::A resolves to i1, @Base[i64]::B to i32, and the re-judgment at the
-// instantiate epilogue reports the falsified obligation at the op, carrying the
-// birth spelling as a note beside the ground endpoints that replaced it. The
+// @Base[i64]::A resolves to i1, @Base[i64]::B to i32, and the coerce verifier
+// reports the falsified obligation at the op once the module verifies. The
 // marker never tolerates a survivor that ground to a lie.
 
 trait.trait @Base[!trait.poly<0>] {
@@ -21,7 +20,6 @@ trait.impl @Base_i64 for @Base[i64] {
 }
 
 // CHECK: error: 'trait.coerce' op input type 'i1' and result type 'i32' are not consistent as a pending coerce
-// CHECK: note: at emission the coerce related '!trait.proj<@Base[i64], "A">' and '!trait.proj<@Base[i64], "B">'
 func.func @use(%x: !trait.proj<@Base[i64], "A">) -> !trait.proj<@Base[i64], "B"> {
   %y = trait.coerce %x : !trait.proj<@Base[i64], "A">
     to !trait.proj<@Base[i64], "B"> unproven
