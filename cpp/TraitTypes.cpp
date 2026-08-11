@@ -1498,13 +1498,10 @@ LogicalResult ProjectionType::unify(
   // construction, and it is the exact crossing the tolerance below accepts when
   // a module is in hand -- the two counts read against each other.
   //
-  // The module-free comparator has two callers. The cast op's input/result
-  // consistency check replaces every projection over the claim's own
-  // application with a variable, so its only crossings here are a projection
-  // over some other application meeting a different type across the two. A
-  // func.call's signature verification unifies each declared formal against the
-  // actual with no module, and reaches this arm whenever a ground-projection
-  // formal meets a mismatched concrete actual.
+  // A verifier holds no module by construction, so it enumerates no impl: a
+  // projection still standing after substitution is not ground and can only
+  // stand for itself, so it must match the other side literally. A mismatch
+  // here is a real signature disagreement, reported at the op that raised it.
   if (!module) {
     countModuleFreeProjectionRejection();
     if (err)
@@ -1513,12 +1510,16 @@ LogicalResult ProjectionType::unify(
     return failure();
   }
 
-  // XXX TODO(residual tolerance): the module-capable entry reached an
-  // irreducible crossing that no committed fact determines here and accepts it
-  // without a binding. This entry runs both at pass time and inside verifiers on
-  // committed-fact matches (witness, proof, derive, and per-candidate
-  // enumeration), so the tolerance is not pass-exclusive. Three classes survive
-  // here, each with its own end condition:
+  // The module-capable entry reached an irreducible crossing that no committed
+  // fact determines here and accepts it without a binding. The IR is
+  // authoritative: a claim carries its own proof, and this comparison's caches
+  // are acceleration, not the record. So a crossing accepted here whose equality
+  // is real is witnessed elsewhere in the IR -- a coerce citing the equality, or
+  // the proof on the claim -- and one whose equality is false is refused where
+  // that evidence is consumed (a false equality's coerce fails the erase
+  // barrier). The entry runs at pass time and inside verifiers on committed-fact
+  // matches, so this acceptance is not pass-exclusive. Each class it serves
+  // states its own end condition or its permanence:
   //   - Generator-pending grounds: a concrete base whose impl a downstream
   //     generator has not yet synthesized (the prelude's Convergence machinery).
   //     Empty on the stage by construction -- generation precedes the lowering
@@ -1530,14 +1531,19 @@ LogicalResult ProjectionType::unify(
   //     residual-tolerance-accepts-generator-pending and
   //     residual-tolerance-accepts-before-the-stage-generator-pending columns.
   //   - Hypothesis-resolvable projections: a still-symbolic base resolvable only
-  //     through a frame hypothesis (a where-clause equality). The witnessable
-  //     part ends when the crossing is witnessed at its cast site; the
-  //     un-witnessable subclass (a hypothesis with no recordable provider) is
-  //     PERMANENT, so acceptance ends here only if committed builds provably
-  //     never receive that subclass.
+  //     through a frame hypothesis (a where-clause equality). A hypothesis with
+  //     a recordable provider -- a declared equality claim carried as a
+  //     parameter, or a trait or impl where-clause equality -- is witnessed by a
+  //     coerce citing that claim and settled when its projections ground, never
+  //     reaching this arm. A hypothesis with no recordable provider (a
+  //     discarded-result generic closure output records none) has no fact to
+  //     witness; a front end discharges its crossing strictly at the receiving
+  //     boundary, reading the committed impl's own binding before a strict
+  //     compare, so a committed build never routes it here. What remains is
+  //     hand-written IR that supplies neither.
   //   - Ground multi-candidate crossings: a ground base several impls bind.
   //     Resolution is premise-partitioned and belongs to the resolver alone,
-  //     never to this comparison.
+  //     never to this comparison -- permanent here.
   if (!isCrossChecking()) {
     ++numResidualToleranceAccepts;
     // Split the accept by the tolerance site's taxonomy so law 5's zero clause

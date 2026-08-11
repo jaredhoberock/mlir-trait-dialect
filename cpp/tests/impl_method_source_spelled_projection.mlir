@@ -8,9 +8,12 @@
 // application. The verifier resolves it through the impl's associated type
 // bindings rather than requiring the pre-resolved spelling.
 //
-// NOTE: today this also verifies via the lenient projection-vs-concrete
-// unification rule; this test is the regression net for when that rule is
-// removed (the binding-resolution path must carry the weight alone).
+// The binding-resolution path carries the check alone: the source-spelled
+// projection and the trait's resolved requirement meet at the same grade, with
+// no appeal to a lenient projection-vs-concrete rule (this scenario raises no
+// residual-tolerance accept). invalid_impl_method_source_spelled_projection.mlir
+// is its net: a source spelling whose binding-resolved form disagrees is a
+// located hard failure, never a tolerated crossing.
 
 // CHECK-LABEL: trait @Container
 !S = !trait.poly<0>
