@@ -53,19 +53,6 @@ MlirOperation traitImplOpCreateNamed(MlirLocation loc,
                                      MlirAttribute selfTraitApp,
                                      MlirAttribute* predicates, intptr_t numPredicates);
 
-/// Attach a checked attribute array to a trait.impl operation. When `discharges`
-/// is false the array is the impl's projection-resolution premises (each entry a
-/// `#trait.certificate` that resolves a ground sibling projection the impl's own
-/// bindings do not); when true it is the impl's obligation discharge citations
-/// (each entry a `#trait.discharge` naming an application obligation a cited
-/// conditional premise leaves standing and the impl that supplies it). An entry
-/// of the wrong kind leaves the impl unchanged and returns false. Both arrays are
-/// audited by the impl verifier. Attaching an empty array removes the impl's
-/// existing entries of that kind.
-bool traitImplOpSetCheckedArray(MlirOperation implOp,
-                                MlirAttribute* attrs, intptr_t numAttrs,
-                                bool discharges);
-
 /// Create a trait.method.call operation
 MlirOperation traitMethodCallOpCreate(MlirLocation loc,
                                       MlirStringRef traitName,
@@ -100,24 +87,11 @@ MlirOperation traitProofOpCreate(MlirLocation loc,
                                  MlirAttribute traitApp,
                                  MlirStringRef* subproofNames, intptr_t numSubproofs);
 
-/// Create a trait.project operation whose result claim is given directly. The
-/// result is either the destination trait application's claim or a projection's
-/// equality hop (an equality claim over a trait requirement's endpoints). Returns
-/// a null operation if `resultClaim` is not a claim type.
-MlirOperation traitProjectOpCreate(MlirLocation loc,
-                                   MlirValue srcClaim,
-                                   MlirType resultClaim);
-
 /// Create a trait.derive operation
 MlirOperation traitDeriveOpCreate(MlirLocation loc,
                                   MlirAttribute traitApp,
                                   MlirStringRef implName,
                                   MlirValue* assumptions, intptr_t numAssumptions);
-
-/// Create a trait.assume operation introducing the hypothesis `claim`: an
-/// application claim `@Trait[...]` or an equality claim `!A = !B`. Yields a null
-/// operation if `claim` is not a claim type.
-MlirOperation traitAssumeOpCreate(MlirLocation loc, MlirType claim);
 
 /// Return the !trait.poly<uniqueId> type
 MlirType traitPolyTypeGet(MlirContext ctx, unsigned int uniqueId);
@@ -175,9 +149,6 @@ MlirAttribute traitTypeEqualityAttrGet(MlirContext ctx,
 MlirType traitClaimTypeGetEquality(MlirContext ctx,
                                    MlirType lhs, MlirType rhs);
 
-/// Checks whether the given type is an equality-arm claim.
-bool traitTypeIsAnEqualityClaim(MlirType type);
-
 /// Return the #trait.certificate<redex resolves contractum by @impl> attribute
 /// frozen into a projection-resolution equality witness. Returns a null
 /// attribute if construction fails.
@@ -193,61 +164,20 @@ MlirAttribute traitDischargeCitationAttrGet(MlirContext ctx,
                                             MlirAttribute application,
                                             MlirStringRef implName);
 
-/// Create a projection-resolution trait.witness. `certificate` is a
-/// #trait.certificate attribute; `premises` are equality-claim values consumed
-/// by the projection-headed audit rule. `resultType` is the equality claim.
-MlirOperation traitWitnessProjResolveOpCreate(MlirLocation loc,
-                                              MlirAttribute certificate,
-                                              MlirValue *premises,
-                                              intptr_t numPremises,
-                                              MlirType resultType);
-
-/// Create a refl trait.witness introducing an A = A equality claim.
-MlirOperation traitWitnessReflOpCreate(MlirLocation loc, MlirType resultType);
-
-/// Create a composition trait.witness. `premises` are equality-claim values
-/// whose ground congruence closure entails `resultType` (an equality claim).
-/// The witness stores only the leaf premises; verify() re-derives the multi-hop
-/// equality the result names by replaying that closure.
-MlirOperation traitWitnessOpCreateCompose(MlirLocation loc,
-                                          MlirType resultType,
-                                          MlirValue *premises,
-                                          intptr_t numPremises);
-
-/// Create a trait.coerce operation: change `input`'s written type to
-/// `resultType`. A proven coerce is justified by the cited `equalities`
-/// (equality-claim values). A marked coerce (`unproven` true) cites no equalities
-/// and stands in the pending judgment its projections discharge at
-/// monomorphization.
-MlirOperation traitCoerceOpCreate(MlirLocation loc,
-                                  MlirValue input,
-                                  MlirValue *equalities, intptr_t numEqualities,
-                                  MlirType resultType,
-                                  bool unproven);
-
-/// Answer whether `input` and `result` could converge under the pending judgment
-/// a marked (unproven) trait.coerce carries: the same check `CoerceOp::verify`
-/// runs for the marked arm (application-claim receipts stripped, then projection
-/// unification with each projection an opaque variable keyed by itself, every
-/// other position rigid, bare-projection aliases admitted). Diagnostics are
-/// suppressed -- a refusal is a classification answer the frontend consults
-/// before routing a site to the marked form, not a compile error.
+/// Answer whether `input` and `result` converge under the pending judgment a
+/// marked coerce carries -- the check `CoerceOp::verify` runs for the marked arm
+/// (verifyPendingProjectionUnification, TraitOps.hpp). Diagnostics are suppressed;
+/// a refusal is a classification answer the frontend consults, not a compile error.
 bool traitCoercePendingAccepts(MlirType input, MlirType result);
 
 /// Answer whether the projection-resolution witness seam audit accepts a
-/// certificate. This runs the same obligation-aware audit as trait.witness's
-/// equality-arm verifySymbolUses: it looks the impl named by `implName` up in
-/// `module`, resolves `redex` through that impl's associated-type binding, applies
-/// the equality-claim `premises`, and compares the result against `contractum`;
-/// the cited impl's own assumptions must additionally be discharged, either by the
-/// application-claim `premises` or by a `discharges` citation (each a
-/// `#trait.discharge` attribute naming an obligation and the impl that supplies
-/// it). `premises` are !trait.claim types split by arm: equality claims are the
-/// comparison modulus, application claims cover the assumptions. When
-/// `rigidHeadMatch` is set the redex's application stays rigid, so the verdict
-/// never depends on the unrelated impls the module carries -- the impl-birth audit
-/// sets it; a witness-site audit leaves it clear. Diagnostics are suppressed -- a
-/// refusal is a classification answer, not a compile error.
+/// certificate cited to `implName` in `module` -- the same obligation-aware audit
+/// trait.witness's equality-arm verifySymbolUses runs (auditProjResolveCertificate,
+/// TraitOps.hpp). `premises` are !trait.claim types split by arm (equality claims
+/// the comparison modulus, application claims covering the cited impl's
+/// assumptions) and `discharges` are `#trait.discharge` citations; `rigidHeadMatch`
+/// keeps the redex's application rigid, as the impl-birth audit needs. Diagnostics
+/// are suppressed; a refusal is a classification answer, not a compile error.
 bool traitWitnessSeamAuditAccepts(MlirModule module,
                                   MlirType redex, MlirType contractum,
                                   MlirStringRef implName,

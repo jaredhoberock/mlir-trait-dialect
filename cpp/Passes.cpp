@@ -1627,12 +1627,12 @@ mintProjectionResolveCertificate(ProjectionType proj, Location loc,
               .getResult());
     }
   }
+  TypeEqualityAttr equality = TypeEqualityAttr::get(ctx, Type(proj), *binding);
   auto cert = WitnessCertificateAttr::get(
-      ctx, Type(proj), *binding,
+      ctx, equality,
       FlatSymbolRefAttr::get(ctx, resolvedImpl->impl.getSymName()));
-  TypeEqualityAttr premiseEq = TypeEqualityAttr::get(ctx, Type(proj), *binding);
   Value witness =
-      WitnessOp::create(witnessBuilder, loc, premiseEq, cert, obligationPremises)
+      WitnessOp::create(witnessBuilder, loc, equality, cert, obligationPremises)
           .getResult();
   return std::make_pair(witness, *binding);
 }

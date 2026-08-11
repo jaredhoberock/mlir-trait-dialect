@@ -112,28 +112,34 @@ def WitnessCertificateAttr : AttrDef<TraitDialect, "WitnessCertificate", []> {
     `contractum`, once the impl is specialized for the projection's trait
     application.
 
-    The capsule is immutable from birth to death. Its `redex` and `contractum`
-    are opaque to sub-element walking, so no generic replacer drifts them; the
-    only sanctioned mover is the clone rule, which rebuilds the whole capsule
-    through this constructor under one substitution. The witness verifier reads
-    the fields through the accessors, never the walk.
+    The relation is stored as a `TypeEqualityAttr`, so the frozen `redex` and
+    `contractum` inherit that attribute's walk-opacity: no generic replacer
+    reaches or drifts them, and readers reach them through `getRedex`/
+    `getContractum`, never the walk. The capsule's own storage is generated, so
+    the endpoints stay opaque only through the equality's opacity: NO
+    attribute-level replacement rule may be registered for `TypeEqualityAttr`,
+    since such a rule would rewrite a frozen capsule's relation wholesale.
 
-    Renaming the cited impl (or a symbol inside a frozen endpoint) during the
-    capsule's lifetime is forbidden; the sanctioned path is an audit-aware
-    atomic rebuild.
+    The cited impl, by contrast, is a plain symbol reference the generated
+    storage leaves visible to sub-element walks, so its immutability is not
+    structural: it rests on the estate registering no symbol rewrite over this
+    attribute. Renaming the cited impl during the capsule's lifetime is
+    forbidden; the only sanctioned mover is the clone rule, which rebuilds the
+    whole capsule through this constructor under one substitution.
   }];
 
   let parameters = (ins
-    "::mlir::Type":$redex,
-    "::mlir::Type":$contractum,
+    "::mlir::trait::TypeEqualityAttr":$equality,
     "::mlir::FlatSymbolRefAttr":$cited_impl
   );
 
-  // Hand-written storage (TraitAttributes.cpp) with no getAsKey, so the
-  // type-bearing fields are opaque to walkers while uniquing retains them.
-  let genStorageClass = 0;
-  let genVerifyDecl = 1;
+  let extraClassDeclaration = [{
+    // The frozen relation's endpoints, read off the stored equality.
+    Type getRedex() const { return getEquality().getLhs(); }
+    Type getContractum() const { return getEquality().getRhs(); }
+  }];
 
+  let genVerifyDecl = 1;
   let hasCustomAssemblyFormat = 1;
 }
 
@@ -168,72 +174,9 @@ def DischargeCitationAttr : AttrDef<TraitDialect, "DischargeCitation", []> {
   let hasCustomAssemblyFormat = 1;
 }
 
-def TraitApplicationArrayAttr : AttrDef<TraitDialect, "TraitApplicationArray",
-    [DeclareAttrInterfaceMethods<SymbolUserAttrInterface>]> {
-  let mnemonic = "application_array";
-  let summary = "An array of prerequisite trait applications required by traits or assumed by implementation";
-  let description = [{
-    Represents trait applications that are required to hold when implementing
-    the enclosing trait. These assumptions are available as subproofs via
-    `trait.project` on the self-proof obtained from `trait.assume`.
-
-    This models a Rust-style `where` clause on a `trait` definition or implementation.
-    It describes what must be assumed about type parameters in order for the trait’s methods
-    to be implementable.
-
-    Example:
-      !S = trait.poly<0>
-      trait.trait @Ord[!S] where [
-        @Eq[!S],
-        @PartialOrd[!S,!S]
-      ]
-      {
-        ...
-      }
-
-    This indicates that implementing `@Ord[!S]` requires implementations of
-    `@Eq[!S]` and `@PartialOrd[!S,!S]`.
-  }];
-
-  let parameters = (ins
-    ArrayRefParameter<"::mlir::trait::TraitApplicationAttr">:$applications
-  );
-
-  let extraClassDeclaration = [{
-    auto getApplicationsOf(FlatSymbolRefAttr traitName) const {
-      return llvm::make_filter_range(
-        getApplications(),
-        [traitName](TraitApplicationAttr app) {
-          return app.getTraitName() == traitName;
-        }
-      );
-    }
-
-    // behave like a range of TraitApplicationAttr
-    auto begin() const {
-      return getApplications().begin();
-    }
-
-    auto end() const {
-      return getApplications().end();
-    }
-
-    bool empty() const {
-      return getApplications().empty();
-    }
-
-    size_t size() const {
-      return getApplications().size();
-    }
-  }];
-
-  let hasCustomAssemblyFormat = 1;
-}
-
 // An ordered array of the one-hop predicates that must hold whenever a trait
-// holds -- a trait's `where` clause. It generalizes TraitApplicationArrayAttr
-// with a second arm so a trait may require a type equality as well as a trait
-// application.
+// holds -- a trait's `where` clause. Each entry is a trait application or a type
+// equality, so a trait may require either as a requirement.
 def PredicateArrayAttr : AttrDef<TraitDialect, "PredicateArray",
     [DeclareAttrInterfaceMethods<SymbolUserAttrInterface>]> {
   let mnemonic = "predicate_array";
@@ -293,11 +236,6 @@ def PredicateArrayAttr : AttrDef<TraitDialect, "PredicateArray",
     // the shape sibling dialects construct).
     static PredicateArrayAttr get(MLIRContext *ctx,
                                   ArrayRef<TraitApplicationAttr> apps) {
-      SmallVector<Attribute> preds(apps.begin(), apps.end());
-      return PredicateArrayAttr::get(ctx, preds);
-    }
-    static PredicateArrayAttr get(MLIRContext *ctx,
-                                  TraitApplicationArrayAttr apps) {
       SmallVector<Attribute> preds(apps.begin(), apps.end());
       return PredicateArrayAttr::get(ctx, preds);
     }

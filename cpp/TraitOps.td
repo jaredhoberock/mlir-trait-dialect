@@ -273,16 +273,6 @@ def TraitOp : TraitDialectOp<"trait", [
       MLIRContext* ctx = $_builder.getContext();
       auto reqsAttr = PredicateArrayAttr::get(ctx, requirements);
       build($_builder, $_state, sym_name, type_params, reqsAttr);
-    }]>,
-
-    // convenience accepts requirements as a TraitApplicationArrayAttr -- the
-    // application-only shape older callers and sibling dialects build
-    OpBuilder<(ins "::mlir::StringAttr":$sym_name,
-                   "::mlir::ArrayRef<Type>":$type_params,
-                   "TraitApplicationArrayAttr":$requirements), [{
-      MLIRContext* ctx = $_builder.getContext();
-      auto reqsAttr = PredicateArrayAttr::get(ctx, requirements);
-      build($_builder, $_state, sym_name, type_params, reqsAttr);
     }]>
   ];
 
@@ -487,13 +477,6 @@ def ImplOp : TraitDialectOp<"impl", [
     // Helper to generate unique symbol name for an ImplOp
     static std::string generateSymName(TraitApplicationAttr selfApp, PredicateArrayAttr assumptions);
 
-    // Application-only convenience for callers holding a TraitApplicationArrayAttr
-    // of assumptions (the shape sibling dialects synthesize). Wraps the
-    // applications into the mixed predicate list.
-    static std::string generateSymName(TraitApplicationAttr selfApp, TraitApplicationArrayAttr assumptions) {
-      return generateSymName(selfApp, PredicateArrayAttr::get(selfApp.getContext(), assumptions));
-    }
-
     // Helper to generate a unique symbol prefix for polymophic ImplOps
     // getSelfClaim() will be substituted with claim
     std::string generateMangledName(ClaimType claim);
@@ -598,25 +581,6 @@ def ImplOp : TraitDialectOp<"impl", [
       // Auto-generate unique symbol name
       std::string symName = generateSymName(self_application, assumptions);
       build($_builder, $_state, symName, self_application, assumptions);
-    }]>,
-
-    // application-only compatibility: sibling dialects build an impl from a
-    // TraitApplicationArrayAttr of assumptions. Wrap it into the mixed predicate
-    // list this op now stores. These two overloads keep those callers building
-    // without a source change.
-    OpBuilder<(ins "::mlir::StringRef":$sym_name,
-                   "::mlir::trait::TraitApplicationAttr":$self_application,
-                   "TraitApplicationArrayAttr":$assumptions), [{
-      MLIRContext *ctx = $_builder.getContext();
-      auto preds = PredicateArrayAttr::get(ctx, assumptions);
-      build($_builder, $_state, sym_name, self_application, preds);
-    }]>,
-
-    OpBuilder<(ins "::mlir::trait::TraitApplicationAttr":$self_application,
-                   "TraitApplicationArrayAttr":$assumptions), [{
-      MLIRContext *ctx = $_builder.getContext();
-      auto preds = PredicateArrayAttr::get(ctx, assumptions);
-      build($_builder, $_state, self_application, preds);
     }]>,
 
     // convenience wraps application-only assumptions into the mixed
@@ -1031,13 +995,8 @@ def WitnessOp : TraitDialectOp<"witness", [
         grammar.
 
         The proj-resolve audit resolves the redex through the cited impl's
-        binding and additionally requires the cited impl's own assumptions --
-        specialized for the redex's application -- to be discharged, either by
-        the witness's application-arm `premises` or by a declared discharge
-        citation. It deliberately does not reach the cited impl's trait
-        requirements, which may quantify over GAT variables with no ground
-        instance at the witness; that discharge belongs to the proof and birth
-        machinery.
+        binding and additionally discharges the cited impl's own assumptions;
+        `auditProjResolveCertificate` (TraitOps.hpp) states the full contract.
 
       * refl: proof-free, cites nothing; the endpoints are identical at
         construction. It exists because a concrete instantiation of an equality

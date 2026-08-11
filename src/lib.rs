@@ -2,14 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 use melior::{
     Context, pass::Pass, StringRef,
-    ir::{AttributeLike, Location, Module, Operation, Type, TypeLike, Value, ValueLike},
+    ir::{AttributeLike, Identifier, Location, Module, Operation, Type, TypeLike, Value, ValueLike},
     ir::attribute::Attribute,
-    ir::operation::OperationLike,
+    ir::operation::{OperationBuilder, OperationLike},
 };
 use mlir_sys::{
     MlirAttribute, MlirContext, MlirLocation, MlirModule,
     MlirOperation, MlirPass, MlirStringRef,
     MlirType, MlirValue,
+    mlirArrayAttrGet, mlirIdentifierGet, mlirLocationGetContext,
+    mlirOperationGetContext, mlirOperationRemoveAttributeByName,
+    mlirOperationSetAttributeByName, mlirUnitAttrGet,
 };
 
 unsafe extern "C" {
@@ -34,9 +37,6 @@ unsafe extern "C" {
                               sym_name: MlirStringRef,
                               self_trait_app: MlirAttribute,
                               predicates: *const MlirAttribute, num_predicates: isize) -> MlirOperation;
-    fn traitImplOpSetCheckedArray(impl_op: MlirOperation,
-                                  attrs: *const MlirAttribute, num_attrs: isize,
-                                  discharges: bool) -> bool;
     fn traitDischargeCitationAttrGet(ctx: MlirContext,
                                      application: MlirAttribute,
                                      impl_name: MlirStringRef) -> MlirAttribute;
@@ -62,15 +62,10 @@ unsafe extern "C" {
                           impl_name: MlirStringRef,
                           trait_app: MlirAttribute,
                           subproof_names: *const MlirStringRef, num_subproofs: isize) -> MlirOperation;
-    fn traitProjectOpCreate(loc: MlirLocation,
-                            src_claim: MlirValue,
-                            result_claim: MlirType) -> MlirOperation;
     fn traitDeriveOpCreate(loc: MlirLocation,
                            trait_app: MlirAttribute,
                            impl_name: MlirStringRef,
                            assumptions: *const MlirValue, num_assumptions: isize) -> MlirOperation;
-    fn traitAssumeOpCreate(loc: MlirLocation,
-                           claim: MlirType) -> MlirOperation;
 
     fn traitPolyTypeGet(ctx: MlirContext, unique_id: u32) -> MlirType;
 
@@ -93,24 +88,9 @@ unsafe extern "C" {
                                 lhs: MlirType, rhs: MlirType) -> MlirAttribute;
     fn traitClaimTypeGetEquality(ctx: MlirContext,
                                  lhs: MlirType, rhs: MlirType) -> MlirType;
-    fn traitTypeIsAnEqualityClaim(ty: MlirType) -> bool;
     fn traitWitnessCertificateAttrGet(ctx: MlirContext,
                                       redex: MlirType, contractum: MlirType,
                                       impl_name: MlirStringRef) -> MlirAttribute;
-    fn traitWitnessProjResolveOpCreate(loc: MlirLocation,
-                                       certificate: MlirAttribute,
-                                       premises: *const MlirValue, num_premises: isize,
-                                       result_type: MlirType) -> MlirOperation;
-    fn traitWitnessReflOpCreate(loc: MlirLocation,
-                                result_type: MlirType) -> MlirOperation;
-    fn traitWitnessOpCreateCompose(loc: MlirLocation,
-                                   result_type: MlirType,
-                                   premises: *const MlirValue, num_premises: isize) -> MlirOperation;
-    fn traitCoerceOpCreate(loc: MlirLocation,
-                           input: MlirValue,
-                           equalities: *const MlirValue, num_equalities: isize,
-                           result_type: MlirType,
-                           unproven: bool) -> MlirOperation;
     fn traitCoercePendingAccepts(input: MlirType, result: MlirType) -> bool;
     fn traitWitnessSeamAuditAccepts(module: MlirModule,
                                     redex: MlirType, contractum: MlirType,
@@ -221,6 +201,31 @@ pub fn create_instantiate_monomorphs_pass() -> Pass {
 /// claims and projections, and the polymorphic function signatures.
 pub fn create_erase_polymorphs_pass() -> Pass {
     unsafe { Pass::from_raw(traitCreateErasePolymorphsPass()) }
+}
+
+/// Finish a trait op assembled through melior's generic operation builder. These
+/// ops declare explicit result types and wire no regions here, so a build
+/// failure means a malformed operation state rather than a rejected program; the
+/// module verifier run at codegen exit is the authority that refuses an
+/// ill-formed op.
+fn build_op<'c>(builder: OperationBuilder<'c>) -> Operation<'c> {
+    builder.build().expect("trait operation state was malformed")
+}
+
+/// A named attribute identifier in the location's context. The context is read
+/// as a raw handle rather than a borrowed `&Context`, since the only borrow a
+/// `Location` yields is a temporary `ContextRef` that would dangle once bound.
+fn identifier<'c>(loc: Location<'c>, name: &str) -> Identifier<'c> {
+    unsafe {
+        let ctx = mlirLocationGetContext(loc.to_raw());
+        Identifier::from_raw(mlirIdentifierGet(ctx, StringRef::new(name).to_raw()))
+    }
+}
+
+/// The unit attribute in the location's context (the value of a present
+/// `UnitAttr`, e.g. a witness's `refl` or a coerce's `unproven` marker).
+fn unit_attr<'c>(loc: Location<'c>) -> Attribute<'c> {
+    unsafe { Attribute::from_raw(mlirUnitAttrGet(mlirLocationGetContext(loc.to_raw()))) }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -356,21 +361,32 @@ pub enum ImplCheckedArray {
 }
 
 /// Attach a checked attribute array to an existing `trait.impl` op -- its
-/// projection-resolution premises or its obligation discharge citations. The
-/// impl verifier audits them at birth. Returns false if an entry is not the
-/// targeted array's attribute kind. An empty slice removes the impl's existing
-/// entries of that kind. Attached after the impl header prepass completes, so
-/// every cited impl is present in the module.
+/// projection-resolution premises or its obligation discharge citations. An
+/// empty slice removes the impl's existing entries of that kind. The impl
+/// verifier audits every entry, its attribute kind included, at birth, so this
+/// only assembles the array and always returns `true`. Attached after the impl
+/// header prepass completes, so every cited impl is present in the module.
 pub fn set_impl_checked_array<'c>(
     impl_op: &Operation<'c>,
     which: ImplCheckedArray,
     attrs: &[Attribute<'c>],
 ) -> bool {
-    let raw: Vec<MlirAttribute> = attrs.iter().map(|a| a.to_raw()).collect();
-    let discharges = matches!(which, ImplCheckedArray::Discharges);
+    let name = match which {
+        ImplCheckedArray::Premises => "premises",
+        ImplCheckedArray::Discharges => "discharges",
+    };
     unsafe {
-        traitImplOpSetCheckedArray(impl_op.to_raw(), raw.as_ptr(), raw.len() as isize, discharges)
+        let name_ref = StringRef::new(name).to_raw();
+        if attrs.is_empty() {
+            mlirOperationRemoveAttributeByName(impl_op.to_raw(), name_ref);
+        } else {
+            let ctx = mlirOperationGetContext(impl_op.to_raw());
+            let raw: Vec<MlirAttribute> = attrs.iter().map(|a| a.to_raw()).collect();
+            let array = mlirArrayAttrGet(ctx, raw.len() as isize, raw.as_ptr());
+            mlirOperationSetAttributeByName(impl_op.to_raw(), name_ref, array);
+        }
     }
+    true
 }
 
 pub fn method_call<'c>(loc: Location<'c>,
@@ -464,11 +480,9 @@ pub fn project<'c>(loc: Location<'c>,
                    src_claim: Value<'c,'_>,
                    result_claim: Type<'c>,
 ) -> Operation<'c> {
-    unsafe { Operation::from_raw(traitProjectOpCreate(
-        loc.to_raw(),
-        src_claim.to_raw(),
-        result_claim.to_raw(),
-    ))}
+    build_op(OperationBuilder::new("trait.project", loc)
+        .add_operands(&[src_claim])
+        .add_results(&[result_claim]))
 }
 
 pub fn derive<'c>(loc: Location<'c>,
@@ -490,10 +504,8 @@ pub fn derive<'c>(loc: Location<'c>,
 pub fn assume<'c>(loc: Location<'c>,
                   claim: Type<'c>,
 ) -> Operation<'c> {
-    unsafe { Operation::from_raw(traitAssumeOpCreate(
-        loc.to_raw(),
-        claim.to_raw(),
-    ))}
+    build_op(OperationBuilder::new("trait.assume", loc)
+        .add_results(&[claim]))
 }
 
 pub fn poly_type<'c>(
@@ -646,11 +658,6 @@ pub fn type_equality_attr<'c>(ctx: &'c Context, lhs: Type<'c>, rhs: Type<'c>) ->
     if attr.to_raw().ptr.is_null() { None } else { Some(attr) }
 }
 
-/// Check whether a type is an equality-arm `!trait.claim`.
-pub fn is_equality_claim_type(ty: Type) -> bool {
-    unsafe { traitTypeIsAnEqualityClaim(ty.to_raw()) }
-}
-
 /// The `#trait.certificate<redex resolves contractum by @impl>` attribute frozen
 /// into a projection-resolution equality witness. Returns `None` if construction
 /// fails.
@@ -672,14 +679,17 @@ pub fn discharge_citation_attr<'c>(ctx: &'c Context, application: Attribute<'c>,
 /// Create a projection-resolution `trait.witness`. `certificate` is a
 /// `#trait.certificate` attribute; `premises` are equality-claim values.
 pub fn witness_proj_resolve<'c>(loc: Location<'c>, certificate: Attribute<'c>, premises: &[Value<'c, '_>], result_type: Type<'c>) -> Operation<'c> {
-    let raw: Vec<MlirValue> = premises.iter().map(|v| v.to_raw()).collect();
-    unsafe { Operation::from_raw(traitWitnessProjResolveOpCreate(
-        loc.to_raw(), certificate.to_raw(), raw.as_ptr(), raw.len() as isize, result_type.to_raw())) }
+    build_op(OperationBuilder::new("trait.witness", loc)
+        .add_attributes(&[(identifier(loc, "certificate"), certificate)])
+        .add_operands(premises)
+        .add_results(&[result_type]))
 }
 
 /// Create a refl `trait.witness` introducing an `A = A` equality claim.
 pub fn witness_refl<'c>(loc: Location<'c>, result_type: Type<'c>) -> Operation<'c> {
-    unsafe { Operation::from_raw(traitWitnessReflOpCreate(loc.to_raw(), result_type.to_raw())) }
+    build_op(OperationBuilder::new("trait.witness", loc)
+        .add_attributes(&[(identifier(loc, "refl"), unit_attr(loc))])
+        .add_results(&[result_type]))
 }
 
 /// Create a composition `trait.witness`. `premises` are equality-claim values
@@ -687,18 +697,18 @@ pub fn witness_refl<'c>(loc: Location<'c>, result_type: Type<'c>) -> Operation<'
 /// The witness stores only the leaf premises; the multi-hop equality it names is
 /// re-derived at verify by replaying that closure.
 pub fn witness_compose<'c>(loc: Location<'c>, premises: &[Value<'c, '_>], result_type: Type<'c>) -> Operation<'c> {
-    let raw: Vec<MlirValue> = premises.iter().map(|v| v.to_raw()).collect();
-    unsafe { Operation::from_raw(traitWitnessOpCreateCompose(
-        loc.to_raw(), result_type.to_raw(), raw.as_ptr(), raw.len() as isize)) }
+    build_op(OperationBuilder::new("trait.witness", loc)
+        .add_operands(premises)
+        .add_results(&[result_type]))
 }
 
 /// Create a `trait.coerce` op: change `input`'s written type to `result_type`,
 /// justified by the cited `equalities` (equality-claim values).
 pub fn coerce<'c>(loc: Location<'c>, input: Value<'c, '_>, equalities: &[Value<'c, '_>], result_type: Type<'c>) -> Operation<'c> {
-    let raw: Vec<MlirValue> = equalities.iter().map(|v| v.to_raw()).collect();
-    unsafe { Operation::from_raw(traitCoerceOpCreate(
-        loc.to_raw(), input.to_raw(), raw.as_ptr(), raw.len() as isize, result_type.to_raw(),
-        /*unproven=*/false)) }
+    build_op(OperationBuilder::new("trait.coerce", loc)
+        .add_operands(&[input])
+        .add_operands(equalities)
+        .add_results(&[result_type]))
 }
 
 /// Create a marked (unproven) `trait.coerce`: change `input`'s written type to
@@ -706,9 +716,10 @@ pub fn coerce<'c>(loc: Location<'c>, input: Value<'c, '_>, equalities: &[Value<'
 /// an impl minted at monomorphization, which respells the endpoints' projections
 /// to ground and leaves the reflexive form the folder discharges.
 pub fn coerce_unproven<'c>(loc: Location<'c>, input: Value<'c, '_>, result_type: Type<'c>) -> Operation<'c> {
-    unsafe { Operation::from_raw(traitCoerceOpCreate(
-        loc.to_raw(), input.to_raw(), std::ptr::null(), 0, result_type.to_raw(),
-        /*unproven=*/true)) }
+    build_op(OperationBuilder::new("trait.coerce", loc)
+        .add_operands(&[input])
+        .add_attributes(&[(identifier(loc, "unproven"), unit_attr(loc))])
+        .add_results(&[result_type]))
 }
 
 /// Answer whether `input` and `result` could converge under the pending

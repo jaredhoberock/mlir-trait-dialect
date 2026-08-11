@@ -489,8 +489,7 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
       SpecializationMap subst;
       if (failed(auditProjResolveCertificate(
               *module, cert.getRedex(), cert.getContractum(), cert.getCitedImpl(),
-              /*premises=*/{}, errFn, obligationPremises,
-              /*dischargeObligations=*/true, dischargeCitations,
+              /*premises=*/{}, errFn, obligationPremises, dischargeCitations,
               /*rigidHeadMatch=*/true, &subst)))
         return failure();
       auto citedImpl = mlir::SymbolTable::lookupNearestSymbolFrom<ImplOp>(
@@ -1495,9 +1494,11 @@ ParseResult WitnessOp::parse(OpAsmParser &p, OperationState& result) {
         p.parseType(contractum) || p.parseKeyword("by") ||
         p.parseAttribute(citedImpl))
       return failure();
-    auto cert = WitnessCertificateAttr::getChecked(
-        [&] { return p.emitError(p.getCurrentLocation()); }, ctx, redex,
-        contractum, citedImpl);
+    auto err = [&] { return p.emitError(p.getCurrentLocation()); };
+    auto equality = TypeEqualityAttr::getChecked(err, ctx, redex, contractum);
+    if (!equality)
+      return failure();
+    auto cert = WitnessCertificateAttr::getChecked(err, ctx, equality, citedImpl);
     if (!cert)
       return failure();
     result.addAttribute("certificate", cert);
@@ -1678,20 +1679,9 @@ static FailureOr<Type> applyEqualityPremises(
   return applySubstitutionToFixedPoint(subst, ty);
 }
 
-// The audit's judgment has two parts. The binding: the cited impl, specialized
-// for the redex's trait application and its associated-type arguments and read
-// modulo the equality premises, binds the projected associated type to the
-// contractum. The obligation discharge (obligation mode): the cited impl's own
-// assumptions, specialized for the redex, must each be supplied by an
-// application-arm premise, receipt-stripped and modulo the equality premises --
-// so a witness citing a conditional impl carries the claims that discharge its
-// assumptions. trait.witness's verifier and the seam-audit query both run the
-// binding and the obligation discharge.
-//
-// The binding half deliberately stops at the impl's own assumptions and does not
-// reach its trait's requirements, which may quantify over GAT variables with no
-// ground instance at the witness; requirement discharge belongs to the proof and
-// birth machinery.
+// auditProjResolveCertificate's contract -- the binding and the obligation
+// discharge -- is stated in full at its declaration in TraitOps.hpp.
+
 // Specializes `impl`'s own application assumptions for `selfClaim` through
 // `subst` -- the head-match substitution the audit already built -- rather than
 // rebuilding one module-grade. Keeping the same rigid substitution here as at
@@ -1788,7 +1778,6 @@ LogicalResult mlir::trait::auditProjResolveCertificate(
     ArrayRef<TypeEqualityAttr> premises,
     llvm::function_ref<InFlightDiagnostic()> err,
     ArrayRef<TraitApplicationAttr> obligationPremises,
-    bool dischargeObligations,
     ArrayRef<DischargeCitationAttr> dischargeCitations,
     bool rigidHeadMatch,
     SpecializationMap *outSubst) {
@@ -1844,37 +1833,34 @@ LogicalResult mlir::trait::auditProjResolveCertificate(
                  << resolved << ", not the certified contractum "
                  << contractum;
 
-  // Obligation-discharge check (obligation mode only). The cited impl's own
-  // assumptions -- specialized through the same rigid head-match substitution --
-  // must each be discharged, receipt-stripped and modulo the cited equality
-  // premises, by a hypothetical cover (arm i) or a declared discharge citation
-  // (arm ii). The impl's trait requirements are deliberately not reached here
-  // (they may quantify over GAT variables with no ground instance at the
-  // witness).
-  if (dischargeObligations) {
-    for (ClaimType assumption :
-         specializeAssumptionsThroughSubst(implOp, *subst)) {
-      auto wantOr =
-          applyEqualityPremises(Type(assumption.asUnproven()), premises, err);
-      if (failed(wantOr))
-        return failure();
-      SmallVector<TraitApplicationAttr> inProgress;
-      if (!dischargeApplicationObligation(module, *wantOr, premises,
-                                          obligationPremises, dischargeCitations,
-                                          inProgress, err))
-        return err() << "cited impl '" << citedImpl
-                     << "' has an undischarged assumption " << assumption
-                     << "; the witness premises do not supply it";
-    }
+  // Obligation-discharge check. The cited impl's own assumptions -- specialized
+  // through the same rigid head-match substitution -- must each be discharged,
+  // receipt-stripped and modulo the cited equality premises, by a hypothetical
+  // cover (arm i) or a declared discharge citation (arm ii). The impl's trait
+  // requirements are deliberately not reached here (they may quantify over GAT
+  // variables with no ground instance at the witness).
+  for (ClaimType assumption :
+       specializeAssumptionsThroughSubst(implOp, *subst)) {
+    auto wantOr =
+        applyEqualityPremises(Type(assumption.asUnproven()), premises, err);
+    if (failed(wantOr))
+      return failure();
+    SmallVector<TraitApplicationAttr> inProgress;
+    if (!dischargeApplicationObligation(module, *wantOr, premises,
+                                        obligationPremises, dischargeCitations,
+                                        inProgress, err))
+      return err() << "cited impl '" << citedImpl
+                   << "' has an undischarged assumption " << assumption
+                   << "; the witness premises do not supply it";
   }
   return success();
 }
 
-// Whether the premise equalities entail the result equality under the ground
-// congruence closure -- the same closure trait.coerce replays to decide
-// equational entailment. Defined beside that closure (below); declared here for
-// the witness composition arm's verifier.
-static bool equalityCompositionEntails(TypeEqualityAttr result,
+// Whether `lhs` and `rhs` are equal under the ground congruence closure of the
+// premise equalities -- the one entailment decision the witness composition arm
+// and trait.coerce's proven arm share. Defined beside the closure (below);
+// declared here for the composition arm's verifier.
+static bool entailedByGroundCongruence(Type lhs, Type rhs,
                                        ArrayRef<TypeEqualityAttr> premises);
 
 // The op's attributes must match the result claim's arm exactly, and the result
@@ -1964,7 +1950,7 @@ LogicalResult WitnessOp::verify() {
                              << premise.getType();
       premiseEqualities.push_back(claim.getEqualityAttr());
     }
-    if (!equalityCompositionEntails(eq, premiseEqualities))
+    if (!entailedByGroundCongruence(eq.getLhs(), eq.getRhs(), premiseEqualities))
       return emitOpError() << "the premises do not entail " << eq.getLhs()
                            << " = " << eq.getRhs();
     return success();
@@ -2013,8 +1999,7 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
       }
     return auditProjResolveCertificate(
         module, cert.getRedex(), cert.getContractum(), cert.getCitedImpl(),
-        equalityPremises, errFn, applicationPremises,
-        /*dischargeObligations=*/true);
+        equalityPremises, errFn, applicationPremises);
   }
 
   // Refl arm: nothing to audit at the seam.
@@ -2604,17 +2589,18 @@ void CoerceOp::print(OpAsmPrinter &p) {
     p << " unproven";
 }
 
-// The witness composition arm's entailment decision, sharing the ground
-// congruence closure trait.coerce uses so the two consumers of equality
-// evidence agree on what a leaf set entails. Application-claim receipts are
-// stripped from every endpoint first, exactly as the coerce does. The
-// transitivity and congruence that carry the premises to the result are derived
-// here at verify and never stored: the composition witness holds only its leaf
-// premises, preserving the admission law.
-static bool equalityCompositionEntails(TypeEqualityAttr result,
+// The one ground-entailment decision the witness composition arm and
+// trait.coerce's proven arm share: whether `lhs` and `rhs` fall in one class of
+// the ground congruence closure seeded by the premise equalities. Application-
+// claim receipts are stripped from every endpoint first (comparison is modulo
+// the receipt, permanently). For the composition arm the transitivity and
+// congruence that carry the premises to the result are derived here at verify
+// and never stored, so the witness holds only its leaf premises and the
+// admission law holds.
+static bool entailedByGroundCongruence(Type lhs, Type rhs,
                                        ArrayRef<TypeEqualityAttr> premises) {
-  Type lhs = stripClaimReceipts(result.getLhs());
-  Type rhs = stripClaimReceipts(result.getRhs());
+  lhs = stripClaimReceipts(lhs);
+  rhs = stripClaimReceipts(rhs);
 
   GroundCongruence closure;
   closure.intern(lhs);
@@ -2781,24 +2767,19 @@ LogicalResult CoerceOp::verify() {
             input, result, [&]() -> InFlightDiagnostic { return emitOpError(); })))
       return failure();
   } else {
-    // 3. Seed the closure with each cited equality (endpoints receipt-stripped),
-    // interning the endpoints too.
-    GroundCongruence closure;
-    closure.intern(input);
-    closure.intern(result);
+    // 3. Collect the cited equalities; each operand must be an equality claim.
+    SmallVector<TypeEqualityAttr> cited;
     for (Value e : getEqualities()) {
       auto claim = dyn_cast<ClaimType>(e.getType());
       if (!claim || !claim.isEquality())
         return emitOpError() << "coerce cites equality claims, but operand has "
                                 "type " << e.getType();
-      TypeEqualityAttr eq = claim.getEqualityAttr();
-      closure.seed(stripClaimReceipts(eq.getLhs()),
-                   stripClaimReceipts(eq.getRhs()));
+      cited.push_back(claim.getEqualityAttr());
     }
-    closure.close();
 
-    // 4. The two endpoint classes must be equal.
-    if (!closure.equal(input, result))
+    // 4. The two endpoints must fall in one class of the ground congruence
+    // closure the cited equalities seed -- the shared entailment decision.
+    if (!entailedByGroundCongruence(input, result, cited))
       return emitOpError() << "input type " << getInput().getType()
                            << " and result type " << getResult().getType()
                            << " are not equal under the cited equalities";

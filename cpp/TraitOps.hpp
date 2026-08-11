@@ -48,26 +48,22 @@ public:
 /// receives the head-match substitution, so a caller replaying the premise reuses
 /// this build rather than deriving it a second time.
 ///
-/// When `dischargeObligations` is set, the audit additionally requires the cited
-/// impl's own assumptions -- specialized for the redex's application -- each to
-/// be discharged: either by a hypothetical cover from the application-arm
-/// `obligationPremises` (the citing impl's own where clause), or by a
-/// `dischargeCitations` entry whose spelled application is the assumption and
-/// whose named impl, specialized for it, has each of its own assumptions
-/// discharged in turn over the same finite citation list. Both compare
-/// receipt-stripped and modulo the equality `premises`. It deliberately does not
-/// reach the cited impl's trait requirements, which may quantify over GAT
-/// variables with no ground instance at the witness; requirement discharge
-/// belongs to the proof and birth machinery. The obligation mode is off by the
-/// parameter default and set by every caller that discharges obligations -- the
-/// witness-site and impl-birth verifiers and the seam-audit query -- so a witness
+/// The audit additionally requires the cited impl's own assumptions --
+/// specialized for the redex's application -- each to be discharged: either by a
+/// hypothetical cover from the application-arm `obligationPremises` (the citing
+/// impl's own where clause), or by a `dischargeCitations` entry whose spelled
+/// application is the assumption and whose named impl, specialized for it, has
+/// each of its own assumptions discharged in turn over the same finite citation
+/// list. Both compare receipt-stripped and modulo the equality `premises`. It
+/// deliberately does not reach the cited impl's trait requirements, which may
+/// quantify over GAT variables with no ground instance at the witness;
+/// requirement discharge belongs to the proof and birth machinery. So a witness
 /// never cites an impl whose own assumptions are unmet.
 LogicalResult auditProjResolveCertificate(
     ModuleOp module, Type redex, Type contractum, FlatSymbolRefAttr citedImpl,
     ArrayRef<TypeEqualityAttr> premises,
     llvm::function_ref<InFlightDiagnostic()> err,
     ArrayRef<TraitApplicationAttr> obligationPremises = {},
-    bool dischargeObligations = false,
     ArrayRef<DischargeCitationAttr> dischargeCitations = {},
     bool rigidHeadMatch = false,
     SpecializationMap *outSubst = nullptr);

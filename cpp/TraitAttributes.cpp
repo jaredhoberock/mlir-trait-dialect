@@ -44,38 +44,6 @@ struct TypeEqualityAttrStorage : public ::mlir::AttributeStorage {
   ::mlir::Type rhs;
 };
 
-// Hand-written storage for WitnessCertificateAttr. As with TypeEqualityAttr, it
-// defines no getAsKey(), so the frozen redex and contractum are opaque to the
-// framework's walkers and the generic replacer; uniquing retains every field.
-struct WitnessCertificateAttrStorage : public ::mlir::AttributeStorage {
-  using KeyTy = std::tuple<::mlir::Type, ::mlir::Type, ::mlir::FlatSymbolRefAttr>;
-
-  WitnessCertificateAttrStorage(::mlir::Type redex, ::mlir::Type contractum,
-                                ::mlir::FlatSymbolRefAttr cited_impl)
-      : redex(redex), contractum(contractum), cited_impl(cited_impl) {}
-
-  bool operator==(const KeyTy &key) const {
-    return redex == std::get<0>(key) && contractum == std::get<1>(key) &&
-           cited_impl == std::get<2>(key);
-  }
-
-  static ::llvm::hash_code hashKey(const KeyTy &key) {
-    return ::llvm::hash_combine(std::get<0>(key), std::get<1>(key),
-                                std::get<2>(key));
-  }
-
-  static WitnessCertificateAttrStorage *
-  construct(::mlir::AttributeStorageAllocator &allocator, KeyTy &&key) {
-    return new (allocator.allocate<WitnessCertificateAttrStorage>())
-        WitnessCertificateAttrStorage(std::get<0>(key), std::get<1>(key),
-                                      std::get<2>(key));
-  }
-
-  ::mlir::Type redex;
-  ::mlir::Type contractum;
-  ::mlir::FlatSymbolRefAttr cited_impl;
-};
-
 } // namespace mlir::trait::detail
 
 #define GET_ATTRDEF_CLASSES
@@ -132,28 +100,20 @@ void TypeEqualityAttr::print(AsmPrinter &printer) const {
   printer << getLhs() << " = " << getRhs();
 }
 
-// A projection-resolution certificate cites an impl and freezes the endpoints
-// it relates. All three fields are present, and the frozen endpoints are
-// receipt-free for the same reason the equality arm is.
+// A projection-resolution certificate cites an impl and freezes the equality it
+// establishes. The frozen endpoints' receipt-freeness is the stored
+// TypeEqualityAttr's own invariant, enforced when that equality is constructed,
+// so this checks only that both fields are present.
 LogicalResult WitnessCertificateAttr::verify(
     llvm::function_ref<InFlightDiagnostic()> emitError,
-    Type redex, Type contractum, FlatSymbolRefAttr citedImpl) {
-  if (!redex || !contractum)
-    return emitError() << "a projection-resolution certificate freezes two "
-                          "endpoint types";
+    TypeEqualityAttr equality, FlatSymbolRefAttr citedImpl) {
+  if (!equality)
+    return emitError() << "a projection-resolution certificate freezes an "
+                          "equality";
   if (!citedImpl)
     return emitError() << "a projection-resolution certificate must cite an impl";
 
-  if (carriesReceipt(redex) || carriesReceipt(contractum))
-    return emitError() << "certificate endpoints must be receipt-free";
-
   return success();
-}
-
-Type WitnessCertificateAttr::getRedex() const { return getImpl()->redex; }
-Type WitnessCertificateAttr::getContractum() const { return getImpl()->contractum; }
-FlatSymbolRefAttr WitnessCertificateAttr::getCitedImpl() const {
-  return getImpl()->cited_impl;
 }
 
 Attribute WitnessCertificateAttr::parse(AsmParser &parser, Type) {
@@ -163,9 +123,13 @@ Attribute WitnessCertificateAttr::parse(AsmParser &parser, Type) {
       parser.parseType(contractum) || parser.parseKeyword("by") ||
       parser.parseAttribute(citedImpl))
     return {};
-  return WitnessCertificateAttr::getChecked(
-      [&]() { return parser.emitError(parser.getNameLoc()); },
-      parser.getContext(), redex, contractum, citedImpl);
+  auto err = [&]() { return parser.emitError(parser.getNameLoc()); };
+  auto equality =
+      TypeEqualityAttr::getChecked(err, parser.getContext(), redex, contractum);
+  if (!equality)
+    return {};
+  return WitnessCertificateAttr::getChecked(err, parser.getContext(), equality,
+                                            citedImpl);
 }
 
 void WitnessCertificateAttr::print(AsmPrinter &printer) const {
@@ -260,15 +224,6 @@ LogicalResult TraitApplicationAttr::verifySymbolUses(
   return success();
 }
 
-// Verify each application in turn; see TraitApplicationAttr above.
-LogicalResult TraitApplicationArrayAttr::verifySymbolUses(
-    Operation *op, SymbolTableCollection &symbolTable) const {
-  for (TraitApplicationAttr app : getApplications())
-    if (failed(app.verifySymbolUses(op, symbolTable)))
-      return failure();
-  return success();
-}
-
 Attribute TraitApplicationAttr::parse(AsmParser &parser, Type type) {
   // Expect: @TraitName[!T1, !T2, ...]
   FlatSymbolRefAttr traitName;
@@ -300,48 +255,6 @@ void TraitApplicationAttr::print(mlir::AsmPrinter &printer) const {
 
   printer << '[';
   llvm::interleaveComma(getTypeArgs(), printer);
-  printer << ']';
-}
-
-Attribute TraitApplicationArrayAttr::parse(AsmParser &p, Type type) {
-  MLIRContext *ctx = p.getContext();
-  auto errFn = [&]{ return p.emitError(p.getCurrentLocation()); };
-
-  SmallVector<TraitApplicationAttr> apps;
-
-  // expect `[ ... ]`
-  if (p.parseLSquare())
-    return {};
-
-  // handle empty list early
-  if (succeeded(p.parseOptionalRSquare()))
-    return TraitApplicationArrayAttr::getChecked(errFn, ctx, apps);
-
-  // parse at least one TraitApplicationAttr, then optional `,`-separated rest
-  do {
-    Attribute raw = TraitApplicationAttr::parse(p, {});
-    if (!raw) return {}; // parse already emitted a diagnostic
-
-    auto app = mlir::dyn_cast<TraitApplicationAttr>(raw);
-    if (!app) {
-      errFn() << "expected trait application like @Trait[Types...]";
-      return {};
-    }
-    apps.push_back(app);
-  } while(succeeded(p.parseOptionalComma()));
-
-  if (p.parseRSquare())
-    return {};
-
-  return TraitApplicationArrayAttr::getChecked(errFn, ctx, apps);
-}
-
-void TraitApplicationArrayAttr::print(mlir::AsmPrinter &printer) const {
-  printer << "[";
-  llvm::interleaveComma(getApplications(), printer,
-                        [&](TraitApplicationAttr a) {
-                          a.print(printer);
-                        });
   printer << ']';
 }
 
