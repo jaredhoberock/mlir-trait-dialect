@@ -11,7 +11,9 @@
 //
 // The projected argument is built one coerce per application: the equality
 // @A[i32]::Out = i64 reconciles the first element, @A[f32]::Out = i64 the
-// second.
+// second. A coerce that respells both elements at once while citing only one of
+// the two sibling equalities is refused; that negative lives in
+// invalid_coerce_missing_sibling_equality.mlir.
 
 module {
   trait.trait @D[!trait.poly<0>, !trait.poly<1>] {}

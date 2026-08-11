@@ -3,10 +3,13 @@
 
 // RUN: mlir-opt %s | FileCheck %s
 
-// The equality hop from a PROVEN source. Proofness parity would force a proven
-// source to project to a proven result, but an equality claim is never proven,
-// so the equality arm is exempt: the proven claim of @Has[i32] projects to
-// !trait.proj<@Has[i32], "Out"> = i64 with no receipt on the result.
+// The equality hop, from a proven and from an unproven source. Proofness parity
+// would force a proven source to project to a proven result, but an equality
+// claim is never proven, so the equality arm is exempt: the proven claim of
+// @Has[i32] projects to !trait.proj<@Has[i32], "Out"> = i64 with no receipt on
+// the result. The unproven source (@f) prints the same hop with no `by`, so the
+// candidate-set membership accepts the requirement specialized at the source
+// application from either source.
 
 !S = !trait.poly<0>
 
@@ -22,5 +25,12 @@ trait.impl @Has_i32 for @Has[i32] {
 // CHECK: trait.project %arg0: @Has[i32] by @Has_i32 to !trait.proj<@Has[i32], "Out"> = i64
 func.func @g(%p: !trait.claim<@Has[i32] by @Has_i32>) -> !trait.claim<!trait.proj<@Has[i32], "Out"> = i64> {
   %e = trait.project %p : @Has[i32] by @Has_i32 to !trait.proj<@Has[i32], "Out"> = i64
+  return %e : !trait.claim<!trait.proj<@Has[i32], "Out"> = i64>
+}
+
+// CHECK-LABEL: func.func @f
+// CHECK: trait.project %arg0: @Has[i32] to !trait.proj<@Has[i32], "Out"> = i64
+func.func @f(%p: !trait.claim<@Has[i32]>) -> !trait.claim<!trait.proj<@Has[i32], "Out"> = i64> {
+  %e = trait.project %p : @Has[i32] to !trait.proj<@Has[i32], "Out"> = i64
   return %e : !trait.claim<!trait.proj<@Has[i32], "Out"> = i64>
 }
