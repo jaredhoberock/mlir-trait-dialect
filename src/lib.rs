@@ -364,13 +364,13 @@ pub enum ImplCheckedArray {
 /// projection-resolution premises or its obligation discharge citations. An
 /// empty slice removes the impl's existing entries of that kind. The impl
 /// verifier audits every entry, its attribute kind included, at birth, so this
-/// only assembles the array and always returns `true`. Attached after the impl
-/// header prepass completes, so every cited impl is present in the module.
+/// only assembles the array. Attached after the impl header prepass completes,
+/// so every cited impl is present in the module.
 pub fn set_impl_checked_array<'c>(
     impl_op: &Operation<'c>,
     which: ImplCheckedArray,
     attrs: &[Attribute<'c>],
-) -> bool {
+) {
     let name = match which {
         ImplCheckedArray::Premises => "premises",
         ImplCheckedArray::Discharges => "discharges",
@@ -386,7 +386,6 @@ pub fn set_impl_checked_array<'c>(
             mlirOperationSetAttributeByName(impl_op.to_raw(), name_ref, array);
         }
     }
-    true
 }
 
 pub fn method_call<'c>(loc: Location<'c>,
