@@ -3,7 +3,7 @@
 
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(resolve-impls-trait)' -verify-diagnostics
 
-// A `by @impl` proof naming a bare unconditional impl is audited the same way a
+// A `by @impl` proof naming a bare unconditional impl is verified the same way a
 // `by @proof` is: the impl's own self claim must specialize to the claim the
 // proof annotates. Here the signature claims @Other[...] but names
 // @HasPart_i64, an impl of an entirely different trait. Naming an unconditional

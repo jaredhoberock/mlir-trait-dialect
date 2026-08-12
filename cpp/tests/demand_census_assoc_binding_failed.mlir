@@ -10,7 +10,7 @@
 //
 // @probes carries a proven claim spelled through that projection, so the
 // declared-proof check normalizes it through the read-only lookup, which is the
-// one engine that names the arm it missed on, and then audits the proof's
+// one engine that names the arm it missed on, and then verifies the proof's
 // cited impl against the claim, driving that same ground projection through one
 // more lookup that misses. The round then takes the demand off the drain and
 // puts it to impl selection, which settles on @Gen_i64 and still has no binding

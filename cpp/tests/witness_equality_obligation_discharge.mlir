@@ -5,8 +5,8 @@
 
 // The positive counterpart of witness_conditional_impl_undischarged_assumption:
 // the witness over the conditional impl @Has_tuple supplies the @X[i32]
-// application premise that discharges the impl's assumption, so the
-// obligation-aware seam audit accepts it. The premise rides the witness as a
+// application premise that discharges the impl's assumption, so
+// obligation-aware verification accepts it. The premise rides the witness as a
 // claim operand beside the certificate.
 
 !U = !trait.poly<0>

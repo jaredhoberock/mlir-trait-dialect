@@ -54,7 +54,7 @@ include "TraitTypes.td"
 // 4. The IR is the sole authority on claims.  All proof structure lives
 //    in the IR itself — no side tables, no external state.  Analysis
 //    passes read the IR; transformation passes update it.  This keeps
-//    the IR self-contained and makes correctness auditable by inspection.
+//    the IR self-contained and makes correctness checkable by inspection.
 //
 //===----------------------------------------------------------------------===//
 
@@ -374,11 +374,11 @@ def ImplOp : TraitDialectOp<"impl", [
 
     The optional `premises` array carries projection-resolution certificates for
     the ground sibling projections this impl's own bindings cannot resolve. Each
-    entry names a redex projection, the type it resolves to, and the impl that
-    binds it. The verifier audits every entry against its cited impl and then
+    entry names a projection, the type it resolves to, and the impl that
+    binds it. The verifier checks every entry against its cited impl and then
     replays it as a local resolution rule while comparing this impl's method
-    signatures and its equality endpoints, so a redex a sibling impl resolves is
-    reduced without the verifier enumerating candidate impls. The replayed rules
+    signatures and its equality endpoints, so a projection a sibling impl
+    resolves is reduced without the verifier enumerating candidate impls. The replayed rules
     ride the same associated-type replacer the impl's own bindings use: they are
     blind inside a walk-opaque equality endpoint and cure no
     equality-claim-parameter mismatch, exactly the reach the own bindings have.
@@ -386,7 +386,7 @@ def ImplOp : TraitDialectOp<"impl", [
     A premise may cite a CONDITIONAL sibling impl, whose own assumptions must
     then be discharged for the citation to be legal. The optional `discharges`
     array names, per obligation, the impl that supplies it; the discharge
-    recursion is the citation-discharge contract, which the premise audit
+    recursion is the citation-discharge contract, which premise verification
     replays and which resolves every discharger by symbol without scanning the
     module.
   }];
@@ -962,10 +962,19 @@ def WitnessOp : TraitDialectOp<"witness", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
   Pure
 ]>{
-  let summary = "Introduces audited evidence for a claim";
+  let summary = "Introduces verified evidence for a claim";
   let description = [{
-    The dialect's sole audited evidence introduction. It has two arms, matched
+    The dialect's sole verified-evidence introduction. It has two arms, matched
     to the arm of the result claim.
+
+    This op is the value-producing carrier of a witness: it wraps the same
+    content a `#trait.witness` attribute holds and hands code a typed claim value
+    wherever evidence must be consumed as one -- call arguments, coercion
+    citations. The same content stands alone as a `#trait.witness` attribute at
+    declaration level -- the entries an impl's `premises` and `discharges` arrays
+    carry (both detailed under `trait.impl`). The equality arm's compose leaf is
+    the one form that is irreducibly op-shaped, because it builds evidence from
+    other claim values.
 
     Application arm. Introduces a value of type
     `!trait.claim<@Trait[Types...] by @Symbol>` that represents a proof that the
@@ -984,36 +993,50 @@ def WitnessOp : TraitDialectOp<"witness", [
     Equality arm. Introduces a value of type `!trait.claim<!A = !B>` that is
     evidence the two spellings name one type. There are three leaves:
 
-      * proj-resolve: cites an impl by symbol and carries a frozen certificate.
-        The equality holds because the cited impl binds the associated type
-        named by the redex projection to the contractum. Projection-headed impl
-        self-applications do not first-order match; their audit consumes
-        explicit equality `premises` and matches modulo the cited equalities.
-        Under the collapse ruling this is the one axiom kind in the certificate
-        grammar.
+      * proj-resolve: cites an impl by symbol and carries an immutable
+        certificate. The equality holds because the cited impl binds the
+        associated type the projection names to the resolved type. When the
+        cited impl's own Self application is itself spelled with projections,
+        structural matching cannot align it with the projection being resolved,
+        so verification reads the explicit equality `premises` and matches
+        modulo those cited equalities. This is the sole leaf form of equality
+        evidence: the refl and compose arms only combine equalities that
+        proj-resolve leaves establish.
 
-        The proj-resolve audit resolves the redex through the cited impl's
-        binding and additionally discharges the cited impl's own assumptions;
-        `auditProjResolveCertificate` (TraitOps.hpp) states the full contract.
+        // @A[i64]::Item resolves to i64 through impl @A_impl's binding.
+        %item_eq = trait.witness proj_resolve !trait.proj<@A[i64], "Item"> resolves i64 by @A_impl
+
+        Verifying the certificate resolves the projection through the cited
+        impl's binding and additionally discharges the cited impl's own
+        assumptions; `verifyProjectionResolution` (TraitOps.hpp) states the full
+        contract.
 
       * refl: proof-free, cites nothing; the endpoints are identical at
         construction. It exists because a concrete instantiation of an equality
         predicate can specialize to `A = A`, and a caller must still supply a
         claim value.
 
+        %refl = trait.witness refl : !trait.claim<i64 = i64>
+
       * compose: cites nothing by symbol; consumes variadic equality-claim
         `premises` and introduces the equality their ground congruence closure
-        entails. It builds a multi-hop equality (for instance
-        `@A[T]::Item = @B[T]::Item` from `@A[T]::Item = i64` and
-        `@B[T]::Item = i64`) without alleging it: the result is derived, not
-        asserted. Only the leaf premises are stored; the transitivity and
-        congruence carrying them to the result are re-derived at verify by
-        replaying the same ground congruence closure `trait.coerce` uses to
-        decide equational entailment. Storing only definitional leaves keeps the
-        admission law while letting a caller name a derived equality.
+        entails. It builds a multi-hop equality without alleging it: the result
+        is derived, not asserted.
+
+        // From @A[i64]::Item = i64 and @B[i64]::Item = i64, derive
+        // @A[i64]::Item = @B[i64]::Item without asserting it.
+        %a_eq = trait.witness proj_resolve !trait.proj<@A[i64], "Item"> resolves i64 by @A_impl
+        %b_eq = trait.witness proj_resolve !trait.proj<@B[i64], "Item"> resolves i64 by @B_impl
+        %item_eq = trait.witness compose(%a_eq, %b_eq)
+
+        Only the leaf premises are stored; the transitivity and congruence
+        carrying them to the result are re-derived at verify by replaying the
+        same ground congruence closure `trait.coerce` uses to decide equational
+        entailment. Storing only definitional leaves keeps the admission law
+        while letting a caller name a derived equality.
 
     Admissible leaves are only definitional equalities -- one type, two
-    spellings. The three leaves above are the whole grammar; none is
+    spellings. The three leaves above are exhaustive; none is
     representational (a layout cast, a zero-cost view, a witnessed expand()), so
     such a leaf is unconstructable. Screech has GHC's unsoundness ingredient
     (generative nominals plus congruence exercised through projection heads), so
@@ -1024,7 +1047,8 @@ def WitnessOp : TraitDialectOp<"witness", [
     match the result claim's arm, that the result type equals the claim
     reconstructed from those attributes, and, for the equality arm's proj-resolve
     leaf, that the cited impl actually binds as stated and that the current
-    endpoints are a single-substitution instance of the frozen certificate. For
+    endpoints are a single-substitution instance of the certificate's
+    endpoints. For
     the composition leaf verify() replays the ground congruence closure over the
     premises and requires it to entail the result equality; the leaf cites no
     symbol, so verifySymbolUses is a no-op for it.

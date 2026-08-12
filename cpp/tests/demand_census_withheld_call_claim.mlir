@@ -4,7 +4,7 @@
 // RUN: env TRAIT_DEMAND_CENSUS=1 TRAIT_DEMAND_CENSUS_CHECK=1 mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' -stats -verify-diagnostics 2>&1 | FileCheck %s --implicit-check-not='trait-demand-census unhooked' --implicit-check-not='trait-demand-census served'
 
 // A call claim that carries no evidence withholds the license to consult module
-// facts, so the ground redexes the call's specialization mints are never asked
+// facts, so the ground projections the call's specialization mints are never asked
 // about at all. @caller's claim parameter is an ordinary unproven claim and the
 // method's signature specializes to @Broad[i64]::Output on both sides, so the
 // call's comparison is a spelling match that reads nothing.

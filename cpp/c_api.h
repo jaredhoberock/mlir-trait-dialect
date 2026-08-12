@@ -151,7 +151,7 @@ MlirType traitClaimTypeGetEquality(MlirContext ctx,
 
 /// Return the #trait.witness<predicate by @impl> attribute pairing `predicate`
 /// with `implName` as the impl that witnesses it. `predicate` is either a type
-/// equality (a projection-resolution certificate `redex = contractum`) or a
+/// equality (a projection-resolution certificate `projection = resolved`) or a
 /// `#trait.application` attribute (an obligation the impl discharges). Returns a
 /// null attribute if `predicate` is neither arm or construction fails.
 MlirAttribute traitWitnessAttrGet(MlirContext ctx,
@@ -164,20 +164,20 @@ MlirAttribute traitWitnessAttrGet(MlirContext ctx,
 /// a refusal is a classification answer the frontend consults, not a compile error.
 bool traitCoercePendingAccepts(MlirType input, MlirType result);
 
-/// Answer whether the projection-resolution witness seam audit accepts a
-/// certificate cited to `implName` in `module` -- the same obligation-aware audit
-/// trait.witness's equality-arm verifySymbolUses runs (auditProjResolveCertificate,
-/// TraitOps.hpp). `premises` are !trait.claim types split by arm (equality claims
-/// the comparison modulus, application claims covering the cited impl's
-/// assumptions) and `discharges` are `#trait.discharge` citations; `rigidHeadMatch`
-/// keeps the redex's application rigid, as the impl-birth audit needs. Diagnostics
+/// Answer whether a projection-resolution certificate cited to `implName` in
+/// `module` verifies -- the same obligation-aware check trait.witness's
+/// equality-arm verifySymbolUses runs (verifyProjectionResolution, TraitOps.hpp).
+/// `premises` are !trait.claim types split by arm (equality claims the comparison
+/// modulus, application claims covering the cited impl's assumptions) and
+/// `discharges` are `#trait.discharge` citations; `rigidHeadMatch` keeps the
+/// projection's application rigid, as impl-birth verification needs. Diagnostics
 /// are suppressed; a refusal is a classification answer, not a compile error.
-bool traitWitnessSeamAuditAccepts(MlirModule module,
-                                  MlirType redex, MlirType contractum,
-                                  MlirStringRef implName,
-                                  MlirType *premises, intptr_t numPremises,
-                                  MlirAttribute *discharges, intptr_t numDischarges,
-                                  bool rigidHeadMatch);
+bool traitProjectionResolutionVerifies(MlirModule module,
+                                       MlirType projection, MlirType resolved,
+                                       MlirStringRef implName,
+                                       MlirType *premises, intptr_t numPremises,
+                                       MlirAttribute *discharges, intptr_t numDischarges,
+                                       bool rigidHeadMatch);
 
 /// Whether `srcClaim` projects to `dstClaim`: `dstClaim` exactly matches one of
 /// the source's candidate projections (identity, a trait requirement specialized

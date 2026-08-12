@@ -422,8 +422,8 @@ void TraitOp::print(OpAsmPrinter &p) {
 // a `premises` witness resolves an equality (a projection-resolution
 // certificate), a `discharges` witness names an application obligation. This
 // local check restores the static shape guarantee the two former element types
-// carried, so the symbol-use audit below reads a premise's equality endpoints
-// without first testing the arm.
+// carried, so the symbol-use verification below reads a premise's equality
+// endpoints without first testing the arm.
 LogicalResult ImplOp::verify() {
   if (ArrayAttr premises = getPremisesAttr())
     for (Attribute entry : premises) {
@@ -466,20 +466,20 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (failed(getAssumptions().verifySymbolUses(getOperation(), symbolTable)))
     return failure();
 
-  // Audit the declared projection-resolution premises and turn each into a local
+  // Verify the declared projection-resolution premises and turn each into a local
   // resolution rule the comparisons below replay. A premise certifies that a
-  // sibling impl binds a ground projection redex to a contractum; the audit reads
-  // that cited impl at the sanctioned symbol seam -- obligation-aware, so a
+  // sibling impl binds a ground projection to a resolved type; verification reads
+  // that cited impl at the sanctioned symbol boundary -- obligation-aware, so a
   // premise citing a conditional impl is legal exactly when this impl's own
   // where clause covers the cited impl's assumptions or a declared discharge
-  // citation supplies them -- and every audited premise then resolves its redex
-  // the way this impl's own bindings resolve its own projections. The per-entry
-  // audit runs with an EMPTY equality modulus: sibling premises never serve as
-  // each other's modulus, because an attribute array has no dominance and mutual
-  // justification could ground a false equality on nothing. The comparisons add
-  // these rules after their own-binding rule and let the fixed-point walk apply
-  // them innermost-first, so a nested redex reduces its inner application before
-  // its outer one.
+  // citation supplies them -- and every verified premise then resolves its
+  // projection the way this impl's own bindings resolve its own projections. The
+  // per-entry verification runs with an EMPTY equality modulus: sibling premises
+  // never serve as each other's modulus, because an attribute array has no
+  // dominance and mutual justification could ground a false equality on nothing.
+  // The comparisons add these rules after their own-binding rule and let the
+  // fixed-point walk apply them innermost-first, so a nested projection reduces
+  // its inner application before its outer one.
   struct PremiseRule {
     ImplOp impl;
     TraitApplicationAttr app;
@@ -498,29 +498,29 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
       // already required every premise equality-headed, so the endpoints read
       // off the equality below.
       auto cert = cast<WitnessAttr>(entry);
-      auto redexProj = dyn_cast<ProjectionType>(cert.getRedex());
-      if (!redexProj)
-        return emitOpError() << "premise redex must be a projection, found "
-                             << cert.getRedex();
-      // A premise resolves only a GROUND sibling projection; a redex still
+      auto projectionTy = dyn_cast<ProjectionType>(cert.getProjection());
+      if (!projectionTy)
+        return emitOpError() << "a premise must name a projection, found "
+                             << cert.getProjection();
+      // A premise resolves only a GROUND sibling projection; a projection still
       // carrying a poly variable is not ground, and resolving it by unifying
       // that variable with a single cited impl's concrete head would accept a
       // generic impl on the strength of one instance. This mirrors the guard the
-      // retired candidate lookup applied before it reduced a redex.
-      if (isPolymorphicType(cert.getRedex()))
-        return emitOpError() << "premise redex " << cert.getRedex()
+      // retired candidate lookup applied before it reduced a projection.
+      if (isPolymorphicType(cert.getProjection()))
+        return emitOpError() << "premise projection " << cert.getProjection()
                              << " is not ground; a premise resolves only a "
                                 "ground sibling projection";
       SpecializationMap subst;
-      if (failed(auditProjResolveCertificate(
-              *module, cert.getRedex(), cert.getContractum(), cert.getImplRef(),
+      if (failed(verifyProjectionResolution(
+              *module, cert.getProjection(), cert.getResolved(), cert.getImplRef(),
               /*premises=*/{}, errFn, obligationPremises, dischargeWitnesses,
               /*rigidHeadMatch=*/true, &subst)))
         return failure();
       auto citedImpl = mlir::SymbolTable::lookupNearestSymbolFrom<ImplOp>(
           *module, cert.getImplRef());
       premiseRules.push_back(
-          {citedImpl, redexProj.getTraitApplication(), std::move(subst)});
+          {citedImpl, projectionTy.getTraitApplication(), std::move(subst)});
     }
   }
   auto addPremiseRules = [&](NormalizationContext &ctx) {
@@ -587,14 +587,14 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
         return failure();
 
       // Substituting this impl's self application into the trait method
-      // signature can mint a ground projection redex the impl's own bindings do
+      // signature can mint a ground projection the impl's own bindings do
       // not resolve -- a sibling impl's application, e.g. Group[coop.block]::
-      // Shape. A declared premise, audited and replayed above, reduces exactly
-      // those redexes, so both signatures reach this comparison at the same
+      // Shape. A declared premise, verified and replayed above, reduces exactly
+      // those projections, so both signatures reach this comparison at the same
       // grade. Compare their spellings with the module-free comparator: the
       // verifier enumerates no candidate impls. Any projection still standing is
-      // not ground (the front end quotes an unresolved redex symbolically), so it
-      // must match literally.
+      // not ground (the front end quotes an unresolved projection symbolically),
+      // so it must match literally.
       if (failed(buildSpecialization(Type(*expectedMethodTy),
                                      Type(*actualMethodTy), ModuleOp(), errFn))) {
         return emitOpError() << "method '" << name << "' has incompatible signature: "
@@ -760,8 +760,8 @@ FailureOr<SpecializationMap> ImplOp::buildSubstitutionForSelfClaim(ClaimType act
   // Building this candidate impl's self-claim substitution is a computation
   // over its own committed facts, not the verifier's spelling comparison -- and
   // getCandidateImplsFor runs it as a per-candidate match probe before any impl
-  // is chosen. Passing the module drives ground-redex resolution inside
-  // unification, so the ground projection redexes the match mints -- the actual
+  // is chosen. Passing the module drives ground-projection resolution inside
+  // unification, so the ground projections the match mints -- the actual
   // claim's arguments (a caller cast a witness to a projection spelling) and this
   // impl's own self application (a blanket impl spells `Trait[T]::A`, ground once
   // `T` binds) -- reduce to their determined values and the two meet at one
@@ -1101,7 +1101,7 @@ FailureOr<SmallVector<ClaimType>> ImplOp::specializeAssumptionsAsClaimsFor(
   // build a specialized substitution for actualSelfClaim. This runs while
   // partitioning candidates by their assumptions, before any impl is chosen, so
   // it settles only this one candidate's own match -- the self-claim build
-  // reduces the ground redexes it mints rather than crossing the tail.
+  // reduces the ground projections it mints rather than crossing the tail.
   auto spec = buildSubstitutionForSelfClaim(actualSelfClaim, errFn);
   if (failed(spec)) return failure();
   auto subst = spec->toTypeMap();
@@ -1509,17 +1509,17 @@ static void printTypedOperandList(OpAsmPrinter &p, ValueRange operands) {
 ParseResult WitnessOp::parse(OpAsmParser &p, OperationState& result) {
   MLIRContext *ctx = p.getContext();
 
-  // Equality proj-resolve arm: `proj_resolve !redex resolves !contractum
+  // Equality proj-resolve arm: `proj_resolve !projection resolves !resolved
   // by @impl [given(%premises...) : (types...)] : <result-type>`.
   if (succeeded(p.parseOptionalKeyword("proj_resolve"))) {
-    Type redex, contractum;
+    Type projection, resolved;
     FlatSymbolRefAttr citedImpl;
-    if (p.parseType(redex) || p.parseKeyword("resolves") ||
-        p.parseType(contractum) || p.parseKeyword("by") ||
+    if (p.parseType(projection) || p.parseKeyword("resolves") ||
+        p.parseType(resolved) || p.parseKeyword("by") ||
         p.parseAttribute(citedImpl))
       return failure();
     auto err = [&] { return p.emitError(p.getCurrentLocation()); };
-    auto equality = TypeEqualityAttr::getChecked(err, ctx, redex, contractum);
+    auto equality = TypeEqualityAttr::getChecked(err, ctx, projection, resolved);
     if (!equality)
       return failure();
     auto cert = WitnessAttr::getChecked(err, ctx, Attribute(equality), citedImpl);
@@ -1601,8 +1601,8 @@ ParseResult WitnessOp::parse(OpAsmParser &p, OperationState& result) {
 
 void WitnessOp::print(OpAsmPrinter &p) {
   if (auto cert = getCertificateAttr()) {
-    p << " proj_resolve " << cert.getRedex() << " resolves "
-      << cert.getContractum() << " by " << cert.getImplRef();
+    p << " proj_resolve " << cert.getProjection() << " resolves "
+      << cert.getResolved() << " by " << cert.getImplRef();
     if (!getPremises().empty()) {
       p << " given";
       printTypedOperandList(p, getPremises());
@@ -1653,8 +1653,8 @@ static bool typeOccursIn(Type needle, Type haystack) {
 }
 
 // Rewrite `ty` by the cited equality premises: each premise's lhs endpoint
-// rewrites to its rhs. Projection-headed impl self-applications do not
-// first-order match, so their seam audit matches modulo these equalities.
+// rewrites to its rhs. When a projection-headed impl self-application cannot be
+// aligned by structural matching, verification matches modulo these equalities.
 //
 // A premise set whose rewrite relation cycles has no finite solution and its
 // fixed point would not terminate, so it is refused. The relation orders key a
@@ -1703,14 +1703,14 @@ static FailureOr<Type> applyEqualityPremises(
   return applySubstitutionToFixedPoint(subst, ty);
 }
 
-// auditProjResolveCertificate's contract -- the binding and the obligation
+// verifyProjectionResolution's contract -- the binding and the obligation
 // discharge -- is stated in full at its declaration in TraitOps.hpp.
 
 // Specializes `impl`'s own application assumptions for `selfClaim` through
-// `subst` -- the head-match substitution the audit already built -- rather than
-// rebuilding one module-grade. Keeping the same rigid substitution here as at
-// the head match is what makes the assumptions the discharge check inspects
-// agree with the head the audit matched.
+// `subst` -- the head-match substitution verification already built -- rather
+// than rebuilding one module-grade. Keeping the same rigid substitution here as
+// at the head match is what makes the assumptions the discharge check inspects
+// agree with the head the match produced.
 static SmallVector<ClaimType> specializeAssumptionsThroughSubst(
     ImplOp impl, const SpecializationMap &subst) {
   auto typeMap = subst.toTypeMap();
@@ -1740,9 +1740,9 @@ static bool dischargeApplicationObligation(
   MLIRContext *ctx = module.getContext();
 
   // Arm (i): the citing impl's own where clause covers the obligation. The
-  // equality premises are already known non-cyclic here (the audit rewrote its
+  // equality premises are already known non-cyclic here (verification rewrote its
   // endpoints through them before reaching this check), so the rewrite cannot
-  // fail on a well-formed audit.
+  // fail on a well-formed premise set.
   for (TraitApplicationAttr premiseApp : obligationPremises) {
     ClaimType premiseClaim = ClaimType::get(ctx, premiseApp);
     auto haveOr = applyEqualityPremises(Type(premiseClaim), premises, err);
@@ -1797,18 +1797,18 @@ static bool dischargeApplicationObligation(
   return false;
 }
 
-LogicalResult mlir::trait::auditProjResolveCertificate(
-    ModuleOp module, Type redex, Type contractum, FlatSymbolRefAttr citedImpl,
+LogicalResult mlir::trait::verifyProjectionResolution(
+    ModuleOp module, Type projection, Type resolved, FlatSymbolRefAttr citedImpl,
     ArrayRef<TypeEqualityAttr> premises,
     llvm::function_ref<InFlightDiagnostic()> err,
     ArrayRef<TraitApplicationAttr> obligationPremises,
     ArrayRef<WitnessAttr> dischargeWitnesses,
     bool rigidHeadMatch,
     SpecializationMap *outSubst) {
-  auto redexProj = dyn_cast<ProjectionType>(redex);
-  if (!redexProj)
-    return err() << "a projection-resolution certificate's redex must "
-                    "be a projection, found " << redex;
+  auto projectionTy = dyn_cast<ProjectionType>(projection);
+  if (!projectionTy)
+    return err() << "a projection-resolution certificate must "
+                    "name a projection, found " << projection;
 
   auto implOp =
       SymbolTable::lookupNearestSymbolFrom<ImplOp>(module, citedImpl);
@@ -1816,15 +1816,15 @@ LogicalResult mlir::trait::auditProjResolveCertificate(
     return err() << "cannot find trait.impl '" << citedImpl
                  << "' cited by the certificate";
 
-  // Head match the cited impl against the redex's application. The impl birth
-  // audit sets rigidHeadMatch: it instantiates only the cited impl's own
-  // generics against a null module, so a projection spelled in the redex
+  // Head match the cited impl against the projection's application. Impl-birth
+  // verification sets rigidHeadMatch: it instantiates only the cited impl's own
+  // generics against a null module, so a projection spelled in the projection's
   // application stays rigid and is never resolved by a module-visible impl --
   // an impl's verdict cannot then turn on the unrelated impls the module carries.
-  // A witness-site audit leaves it unset and resolves the actual side's ground
-  // projections by module lookup, as it always has.
+  // Verifying a witness at its use site leaves it unset and resolves the actual
+  // side's ground projections by module lookup, as it always has.
   ClaimType selfClaim =
-      ClaimType::get(module.getContext(), redexProj.getTraitApplication());
+      ClaimType::get(module.getContext(), projectionTy.getTraitApplication());
   auto subst = rigidHeadMatch
                    ? buildSpecialization(implOp.getSelfClaim(), Type(selfClaim),
                                          ModuleOp(), err)
@@ -1835,27 +1835,28 @@ LogicalResult mlir::trait::auditProjResolveCertificate(
     *outSubst = *subst;
 
   auto bound = implOp.specializeAssociatedTypeBinding(
-      redexProj.getAssocName().getValue(), redexProj.getAssocTypeArgs());
+      projectionTy.getAssocName().getValue(), projectionTy.getAssocTypeArgs());
   if (failed(bound))
     return err() << "impl '" << citedImpl
                  << "' does not bind associated type '"
-                 << redexProj.getAssocName().getValue() << "'";
-  Type resolved = subst->apply(*bound);
+                 << projectionTy.getAssocName().getValue() << "'";
+  Type actual = subst->apply(*bound);
 
-  // Proof-blind exact comparison. Projection-headed impl self-applications
-  // do not first-order match; their audit matches modulo the cited equality
-  // premises, applied to the resolved binding before comparison.
+  // Proof-blind exact comparison. When a projection-headed impl self-application
+  // cannot be aligned by structural matching, the comparison runs modulo the
+  // cited equality premises, applied to both the impl's binding and the certified
+  // resolution before comparison.
+  auto actualOr = applyEqualityPremises(actual, premises, err);
+  if (failed(actualOr))
+    return failure();
+  actual = *actualOr;
   auto resolvedOr = applyEqualityPremises(resolved, premises, err);
   if (failed(resolvedOr))
     return failure();
-  resolved = *resolvedOr;
-  auto contractumOr = applyEqualityPremises(contractum, premises, err);
-  if (failed(contractumOr))
-    return failure();
-  if (resolved != *contractumOr)
-    return err() << "impl '" << citedImpl << "' binds the redex to "
-                 << resolved << ", not the certified contractum "
-                 << contractum;
+  if (actual != *resolvedOr)
+    return err() << "impl '" << citedImpl << "' binds the projection to "
+                 << actual << ", not the certified resolution "
+                 << resolved;
 
   // Obligation-discharge check. The cited impl's own assumptions -- specialized
   // through the same rigid head-match substitution -- must each be discharged,
@@ -1889,8 +1890,8 @@ static bool entailedByGroundCongruence(Type lhs, Type rhs,
 
 // The op's attributes must match the result claim's arm exactly, and the result
 // type must equal the claim reconstructed from those attributes. For the
-// equality arm, the current endpoints must be a single-substitution first-order
-// instance of the frozen certificate (proj-resolve), identical (refl), or
+// equality arm, the current endpoints must be a single-substitution structural
+// instance of the certificate's endpoints (proj-resolve), identical (refl), or
 // entailed by the premises' ground congruence closure (compose).
 LogicalResult WitnessOp::verify() {
   ClaimType result = dyn_cast<ClaimType>(getResult().getType());
@@ -1923,9 +1924,9 @@ LogicalResult WitnessOp::verify() {
 
     if (hasCert) {
       // proj-resolve: the current endpoints must be a single-substitution
-      // first-order instance of the frozen certificate endpoints. The frozen
-      // endpoints' generic parameters are the variables; a single substitution
-      // must carry the frozen redex/contractum pair to the current one. This
+      // structural instance of the certificate's endpoints. The certificate's
+      // generic parameters are the variables; a single substitution must carry
+      // the certificate's projection and resolved type to the current pair. This
       // passes birth (identity), the clone-substituted state, and ground, and
       // rejects any non-substitution mangling. It is structural and local -- no
       // module lookup -- so the pair is matched with a null module.
@@ -1937,13 +1938,13 @@ LogicalResult WitnessOp::verify() {
         return emitOpError() << "a proj-resolve certificate must witness an "
                                 "equality";
       MLIRContext *ctx = getContext();
-      Type frozenPair = TupleType::get(ctx, {cert.getRedex(), cert.getContractum()});
+      Type certificatePair = TupleType::get(ctx, {cert.getProjection(), cert.getResolved()});
       Type currentPair = TupleType::get(ctx, {eq.getLhs(), eq.getRhs()});
-      if (failed(buildSpecialization(frozenPair, currentPair, ModuleOp())))
+      if (failed(buildSpecialization(certificatePair, currentPair, ModuleOp())))
         return emitOpError() << "result endpoints " << eq.getLhs() << " = "
                              << eq.getRhs()
                              << " are not an instance of the certificate "
-                             << cert.getRedex() << " = " << cert.getContractum();
+                             << cert.getProjection() << " = " << cert.getResolved();
       return success();
     }
 
@@ -2007,16 +2008,16 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
   auto errFn = [&] { return emitOpError(); };
 
-  // Equality proj-resolve arm: audit the citation at the symbol seam. The cited
-  // impl must bind the associated type named by the frozen redex projection to
-  // the frozen contractum, once specialized for the redex's trait application,
-  // AND the witness's premises must discharge the cited impl's own assumptions.
-  // The premises split by arm: equality claims are the comparison modulus,
-  // application claims discharge the assumptions. The module read runs here, at
-  // the sanctioned seam, on every full module verification -- not per consumer --
-  // through the same obligation-aware audit the C-API seam-audit query runs in
-  // obligation mode, so a consumer classifying a certificate cannot disagree
-  // with this verdict.
+  // Equality proj-resolve arm: verify the citation where its symbol uses are
+  // checked. The cited impl must bind the associated type the certificate's
+  // projection names to its resolved type, once specialized for the projection's
+  // trait application, AND the witness's premises must discharge the cited impl's
+  // own assumptions. The premises split by arm: equality claims are the
+  // comparison modulus, application claims discharge the assumptions. The module
+  // read runs here, on every full module verification -- not per consumer --
+  // through the same obligation-aware check the C-API projection-resolution query
+  // runs in obligation mode, so a consumer classifying a certificate cannot
+  // disagree with this verdict.
   if (auto cert = getCertificateAttr()) {
     SmallVector<TypeEqualityAttr> equalityPremises;
     SmallVector<TraitApplicationAttr> applicationPremises;
@@ -2027,18 +2028,18 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
         else if (claim.isApplication())
           applicationPremises.push_back(claim.getTraitApplication());
       }
-    return auditProjResolveCertificate(
-        module, cert.getRedex(), cert.getContractum(), cert.getImplRef(),
+    return verifyProjectionResolution(
+        module, cert.getProjection(), cert.getResolved(), cert.getImplRef(),
         equalityPremises, errFn, applicationPremises);
   }
 
-  // Refl arm: nothing to audit at the seam.
+  // Refl arm: nothing to verify here.
   if (getRefl())
     return success();
 
   // Composition arm: an equality result with neither a certificate nor a refl
   // marker cites nothing by symbol -- its premises are SSA values -- so there is
-  // no citation to audit at the seam.
+  // no citation to verify here.
   if (getResultClaim().isEquality())
     return success();
 
@@ -3012,7 +3013,7 @@ LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable)
 
   // check that we can build a consistent substitution for this method call.
   // The verifier compares spellings with the module-free comparator: no
-  // ground-redex resolution, so an unresolved crossing is a strict mismatch.
+  // ground-projection resolution, so an unresolved crossing is a strict mismatch.
   return buildParameterSpecialization(/*unifyModule=*/ModuleOp(), errFn);
 }
 
@@ -3039,23 +3040,23 @@ FailureOr<SpecializationMap> MethodCallOp::buildParameterSpecialization(ModuleOp
   FunctionType originalActual = actual;
 
   // Specializing the method signature by the call claim can mint a ground
-  // projection redex -- an argument or result that becomes a ground projection
-  // meeting the caller's concrete spelling. Resolve every such redex on BOTH
+  // projection -- an argument or result that becomes a ground projection
+  // meeting the caller's concrete spelling. Resolve every such projection on BOTH
   // sides BEFORE the input specialization, so the strict comparison meets two
   // spellings reduced to one grade rather than tolerating the crossing (the
   // input unification below runs before the local-claim normalization, so a
-  // redex left here reaches the tail there).
+  // projection left here reaches the tail there).
   //
   // The call claim's evidence is a LOCALITY LICENSE, not a filter: it grants
   // permission to consult module facts at this call. Once granted, resolution
-  // is claim-INDEPENDENT -- every ground redex whose application a unique module
-  // impl binds is read to its determined value, whether or not this claim
+  // is claim-INDEPENDENT -- every ground projection whose application a unique
+  // module impl binds is read to its determined value, whether or not this claim
   // covers it. So the gate does not itself prevent laundering; safety for a
-  // redex the evidence does not cover rests on the trusted-producer boundary:
+  // projection the evidence does not cover rests on the trusted-producer boundary:
   // the front end discharges a ground projection's head claim where it spells
   // the projection, before this op sees it. An ordinary unproven claim withholds
   // the license entirely -- with no committing evidence at the site this op
-  // reads no module facts, so its ground redexes stay spelled and the strict
+  // reads no module facts, so its ground projections stay spelled and the strict
   // comparison rejects a head mismatch (the
   // invalid_method_call_unproven_projection_mismatch pin). Projections over the
   // method's own generics stay spelled (still polymorphic) for the local-claim
@@ -3075,7 +3076,7 @@ FailureOr<SpecializationMap> MethodCallOp::buildParameterSpecialization(ModuleOp
     actual = cast<FunctionType>(
         resolveGroundProjectionsByLookup(actual, *module, origin));
   } else {
-    // No evidence, no license: this call never asked what its ground redexes
+    // No evidence, no license: this call never asked what its ground projections
     // resolve to, so those demands reach no engine at all. Nothing records
     // them either: method-call lowering, the only in-stage caller of this
     // specialization, defers until the call's claim is proven, and a proven
@@ -3099,7 +3100,7 @@ FailureOr<SpecializationMap> MethodCallOp::buildParameterSpecialization(ModuleOp
   // resolution and the local-claim normalization above have already reduced.
   // `unifyModule` selects the comparator: a verifier passes none (strict), a
   // pass passes the module so binding a generic mid-solve resolves the ground
-  // redex it mints.
+  // projection it mints.
   FunctionType formalFunction = cast<FunctionType>(formal);
   auto inputSpec = buildSpecialization(
       FunctionType::get(getContext(), formalFunction.getInputs(), TypeRange{}),
@@ -3307,7 +3308,7 @@ LogicalResult FuncCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (failed(callee)) return failure();
 
   // check that we can build a substitution. The verifier compares spellings
-  // with the module-free comparator (no ground-redex resolution).
+  // with the module-free comparator (no ground-projection resolution).
   return buildParameterSpecialization(/*unifyModule=*/ModuleOp(), errFn);
 }
 
@@ -3324,7 +3325,7 @@ FailureOr<SpecializationMap> FuncCallOp::buildParameterSpecialization(ModuleOp u
 
   // build a substitution unifying formal & actual. `unifyModule` selects the
   // comparator: a verifier passes none (strict); a pass passes the module so a
-  // ground redex minted by binding a generic mid-solve resolves.
+  // ground projection minted by binding a generic mid-solve resolves.
   auto spec = buildSpecialization(formal, actual, unifyModule, err);
   if (failed(spec)) return failure();
 

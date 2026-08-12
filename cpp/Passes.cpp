@@ -834,7 +834,7 @@ specializeCallTarget(CallOpT op, PatternRewriter &rewriter,
   countCallLoweringVisit();
 
   // Pass time: pass the module so binding a generic mid-solve resolves the
-  // ground redex it mints (the module-capable comparator, not the verifier's
+  // ground projection it mints (the module-capable comparator, not the verifier's
   // module-free one).
   auto specialization = [&] {
     CallLoweringSpan unifying(CallLoweringPhase::Unification);
@@ -1056,7 +1056,7 @@ static bool wouldReplace(AttrTypeReplacer &replacer, Operation *op,
 ///
 /// This runs in the driver rather than in the commit that sweeps the module, and
 /// that is where it belongs. A commit resolves what the module SPELLS; the
-/// redexes this meets are the ones a substitution MINTS while the driver is
+/// projections this meets are the ones a substitution MINTS while the driver is
 /// running -- stamping a concrete argument into a projection spelling turns a
 /// symbolic projection into a ground one that no earlier sweep could have seen.
 /// Moving the work into the commit was built and measured: it cost 2-3% of a
@@ -1590,8 +1590,8 @@ static bool equalityClaimGroundResolvesToOneSpelling(
 /// `binding` in one hop, paired with that binding. Resolution goes through the
 /// same obligation-holding selection the settlement ran, so the cited impl is
 /// one whose bounds hold. Premises discharging that impl's own assumptions ride
-/// along, so a certificate citing a conditional impl passes the
-/// obligation-discharge seam audit. The witnesses insert through
+/// along, so a certificate citing a conditional impl passes
+/// obligation-discharge verification. The witnesses insert through
 /// `witnessBuilder` at the consumer, so they dominate it; premise proofs and any
 /// impl generation go through `proofBuilder` at the module body. Fails where the
 /// projection has no obligation-holding impl.
@@ -1678,7 +1678,7 @@ mintProjectionResolveChain(Type endpoint, Location loc,
 /// certificate per hop of each projection endpoint's resolution chain -- since a
 /// resolved binding may itself spell a projection -- each citing the impl that
 /// binds one hop, with application-arm premises discharging a conditional impl's
-/// own assumptions so the certificate passes its seam audit. A lone certificate
+/// own assumptions so the certificate passes verification. A lone certificate
 /// that already proves the result equality outright is that witness when the
 /// orientation matches; otherwise the hops' certificates compose to the result
 /// equality, whose ground congruence closure carries the endpoints together
@@ -2370,8 +2370,8 @@ struct EraseCoerceOp : public OpConversionPattern<CoerceOp> {
     // post-conversion type equals the result type -- the discharged (reflexive)
     // form, which projection resolution has produced by here. An undischarged
     // coerce still relates two different types; it is refused, so the op stays
-    // illegal and the conversion fails loudly. The audit is deliberately not
-    // consulted: the replay endpoints are authoritative at the barrier.
+    // illegal and the conversion fails loudly. The certificate is deliberately
+    // not re-verified: the replay endpoints are authoritative at the barrier.
     if (input.front().getType() == op.getResult().getType()) {
       rewriter.replaceOp(op, input);
       return success();

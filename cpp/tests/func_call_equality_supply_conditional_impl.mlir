@@ -7,7 +7,7 @@
 // The call-boundary accept path through a CONDITIONAL impl. The supplied
 // equality witness cites @Has_tuple, whose assumption @X[!U] is met for
 // !U = i32 by @X_i32, and it carries the @X[i32] claim as the premise that
-// discharges that assumption for the obligation-aware audit. The equality claim
+// discharges that assumption for obligation-aware verification. The equality claim
 // crosses the call and survives to the leftover check as a call operand; there
 // its projection ground-resolves to i64 through the discharged conditional
 // selection, the endpoints meet, and the claim is accepted. Without @X_i32 the

@@ -3,14 +3,14 @@
 
 // RUN: mlir-opt %s | mlir-opt | FileCheck %s
 
-// The clone rule specializes an equality claim's endpoints while the frozen
+// The clone rule specializes an equality claim's endpoints while the
 // certificate stays immutable. This pins the post-clone state: the certificate
-// is frozen at the general spelling (over !trait.poly<0>), and the result claim
+// holds the general spelling (over !trait.poly<0>), and the result claim
 // is a specialized instance (i64). verify() accepts it because the current
-// endpoints are a single-substitution instance of the frozen ones, and the seam
-// audit accepts it because the cited generic impl binds the general redex to the
-// general contractum. This is the invariant the bespoke clone rule maintains
-// when a surrounding value specializes.
+// endpoints are a single-substitution instance of the certificate's endpoints,
+// and verification accepts it because the cited generic impl binds the general
+// projection to the general resolved type. This is the invariant the bespoke
+// clone rule maintains when a surrounding value specializes.
 
 !S = !trait.poly<0>
 !U = !trait.poly<1>

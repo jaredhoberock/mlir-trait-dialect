@@ -416,12 +416,12 @@ bool traitCoercePendingAccepts(MlirType input, MlirType result) {
   return succeeded(verifyPendingProjectionUnification(in, out, err));
 }
 
-bool traitWitnessSeamAuditAccepts(MlirModule wrappedModule,
-                                  MlirType redex, MlirType contractum,
-                                  MlirStringRef implName,
-                                  MlirType *premises, intptr_t numPremises,
-                                  MlirAttribute *discharges, intptr_t numDischarges,
-                                  bool rigidHeadMatch) {
+bool traitProjectionResolutionVerifies(MlirModule wrappedModule,
+                                       MlirType projection, MlirType resolved,
+                                       MlirStringRef implName,
+                                       MlirType *premises, intptr_t numPremises,
+                                       MlirAttribute *discharges, intptr_t numDischarges,
+                                       bool rigidHeadMatch) {
   ModuleOp module = unwrap(wrappedModule);
   MLIRContext *ctx = module.getContext();
   FlatSymbolRefAttr implRef =
@@ -453,12 +453,12 @@ bool traitWitnessSeamAuditAccepts(MlirModule wrappedModule,
     dischargeWitnesses.push_back(citation);
   }
 
-  // A refused audit is a classification answer, not a compile error, so swallow
-  // the diagnostics the shared audit emits on refusal.
+  // A refused verification is a classification answer, not a compile error, so
+  // swallow the diagnostics the shared check emits on refusal.
   ScopedDiagnosticHandler handler(ctx, [](Diagnostic &) { return success(); });
   auto err = [&] { return emitError(UnknownLoc::get(ctx)); };
-  return succeeded(auditProjResolveCertificate(
-      module, unwrap(redex), unwrap(contractum), implRef, equalityPremises, err,
+  return succeeded(verifyProjectionResolution(
+      module, unwrap(projection), unwrap(resolved), implRef, equalityPremises, err,
       applicationPremises, dischargeWitnesses, rigidHeadMatch));
 }
 

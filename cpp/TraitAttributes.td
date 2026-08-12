@@ -87,7 +87,7 @@ def TypeEqualityAttr : AttrDef<TraitDialect, "TypeEquality", []> {
     one spelling. The single place value provenance meets fact-level evidence
     is the coerce verdict, which strips proofs at that one boundary.
 
-    The endpoints are ordered; orientation is recorded for audit provenance
+    The endpoints are ordered; orientation is recorded for provenance
     only. Replay is direction-blind, so no symmetry construct exists.
 
     The endpoints are opaque to sub-element walking: the generic
@@ -118,7 +118,7 @@ def TypeEqualityAttr : AttrDef<TraitDialect, "TypeEquality", []> {
 }
 
 // A predicate and the impl that witnesses it. One shape serves two roles, read
-// off the predicate arm: an equality `redex = contractum` the impl's
+// off the predicate arm: an equality `projection = resolved` the impl's
 // associated-type binding resolves (the projection-resolution certificate an
 // impl's `premises` array and a `trait.witness` certificate slot carry), or a
 // trait application the impl discharges (the obligation-discharge citation an
@@ -131,26 +131,33 @@ def WitnessAttr : AttrDef<TraitDialect, "Witness", []> {
     resolved by the impl's associated-type binding, or an application obligation
     the impl supplies. The predicate is one of two arms:
 
-      * a `TypeEqualityAttr` `redex = contractum`, resolved because the impl
-        binds the associated type named by `redex` (a projection carrying its
-        member and any associated-type arguments) to `contractum`, once the impl
+      * a `TypeEqualityAttr` `projection = resolved`, holding because the impl
+        binds the associated type `projection` names (a projection carrying its
+        member and any associated-type arguments) to `resolved`, once the impl
         is specialized for the projection's trait application. This is the leaf
         an impl's `premises` array and a `trait.witness` certificate slot carry.
 
       * a `TraitApplicationAttr`, an obligation the impl supplies. This is the
         discharge an impl's `discharges` array carries to cover a cited
-        conditional sibling impl's standing assumptions; the audit resolves the
+        conditional sibling impl's standing assumptions; verification resolves the
         named impl by symbol and never scans the module, so an impl's verdict
         does not depend on the estate around it.
 
+    Witnessing is one concept carried two ways, chosen by scope. This attribute
+    IS the witness and stands alone wherever no code consumes it: an impl's
+    `premises` and `discharges` are declaration-level witnessing. Where code must
+    consume evidence as a typed claim value -- a call argument, a coercion
+    citation -- the `trait.witness` op wraps this same content and produces the
+    value.
+
     An equality predicate keeps the walk-opacity of its own `TypeEqualityAttr`
     storage: no generic replacer reaches its endpoints, and readers use
-    `getRedex`/`getContractum`, never the walk. An application predicate stays
+    `getProjection`/`getResolved`, never the walk. An application predicate stays
     walk-visible. The witness's own storage is generated, so its immutability
     under substitution is not structural: it rests on the estate registering no
     attribute-level replacement rule for `TypeEqualityAttr` and no symbol-rename
     pass over this attribute (neither exists today). The only mover that
-    preserves a frozen equality witness is the clone rule's whole-capsule
+    preserves an immutable equality witness is the clone rule's whole-capsule
     rebuild.
   }];
 
@@ -165,8 +172,10 @@ def WitnessAttr : AttrDef<TraitDialect, "Witness", []> {
     TypeEqualityAttr getEquality() const {
       return ::mlir::cast<TypeEqualityAttr>(getPredicate());
     }
-    Type getRedex() const { return getEquality().getLhs(); }
-    Type getContractum() const { return getEquality().getRhs(); }
+    // The projection this citation resolves and the type it resolves to, read
+    // off the equality endpoints; valid only for an equality-headed citation.
+    Type getProjection() const { return getEquality().getLhs(); }
+    Type getResolved() const { return getEquality().getRhs(); }
     // The application this citation discharges; valid only for an
     // application-headed citation.
     TraitApplicationAttr getApplication() const {

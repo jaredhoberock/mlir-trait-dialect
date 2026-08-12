@@ -3,10 +3,10 @@
 
 // RUN: mlir-opt %s -verify-diagnostics -split-input-file
 
-// A witness's seam audit rewrites its resolved binding by the cited equality
+// Verifying a witness rewrites its resolved binding by the cited equality
 // premises. A premise whose left endpoint occurs in its right endpoint,
 // !poly<0> = tuple<!poly<0>>, describes a rewrite with no finite fixed point.
-// The audit refuses the premise rather than expanding the substitution forever,
+// Verification refuses the premise rather than expanding the substitution forever,
 // so the verifier stays total on spellable IR.
 
 !S = !trait.poly<0>

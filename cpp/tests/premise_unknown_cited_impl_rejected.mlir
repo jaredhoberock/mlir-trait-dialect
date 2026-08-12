@@ -3,7 +3,7 @@
 
 // RUN: mlir-opt %s -verify-diagnostics
 
-// A premise cites its resolving impl by symbol; the audit looks it up in the
+// A premise cites its resolving impl by symbol; verification looks it up in the
 // module. A premise naming an impl that does not exist is refused at birth, so
 // a certificate cannot cite a phantom resolver.
 

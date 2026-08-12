@@ -151,8 +151,8 @@ public:
   // substitution pass is enough.
   //
   // Applying a substitution resolves nothing. Stamping a concrete argument into
-  // a projection spelling can turn a symbolic projection into a ground redex,
-  // and the result carries that redex still spelled as written: it reaches an
+  // a projection spelling can turn a symbolic projection into a ground one,
+  // and the result carries that projection still spelled as written: it reaches an
   // engine that could resolve it only if this caller goes on to unify with a
   // module or to stamp through the module-capable replacer.
   Type apply(Type ty) const { return applySubstitutionOnce(toTypeMap(), ty); }
@@ -1194,7 +1194,7 @@ LogicalResult bindProofsIn(Type ty,
                                     ProofDerivationMemo *memo,
                                     llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
-/// Resolve every ground projection redex in `ty` by module-visible impl
+/// Resolve every ground projection in `ty` by module-visible impl
 /// lookup, leaving non-ground and unresolvable projections spelled as written.
 ///
 /// This is a read-only lookup: it selects the unique existing impl whose self

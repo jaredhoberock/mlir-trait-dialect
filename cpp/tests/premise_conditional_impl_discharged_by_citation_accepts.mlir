@@ -9,7 +9,7 @@
 // discharge @Y[i64]. A declared discharge citation names @Y_i64 -- an
 // unconditional impl of @Y[i64] -- as the discharger, so arm (ii) supplies the
 // assumption, the premise replays, and the expected signature reduces to
-// (i64) -> i32 and matches. The discharger is named; the audit resolves the
+// (i64) -> i32 and matches. The discharger is named; verification resolves the
 // symbol and never scans the module for one.
 
 !S = !trait.poly<0>

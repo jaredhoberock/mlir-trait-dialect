@@ -6,7 +6,7 @@
 // An obligation premise spelled through a projection discharges the cited impl's
 // assumption modulo an equality premise. @Has_tuple's assumption specializes to
 // @X[i32]; the witness supplies @X[!Other[i32]::A] together with the equality
-// premise !Other[i32]::A = i32. The audit rewrites the respelled premise by that
+// premise !Other[i32]::A = i32. Verification rewrites the respelled premise by that
 // equality to @X[i32] and the assumption is discharged -- the equality premise
 // serves as the rewrite modulus, and the two admitted moduli (proof strip and
 // equality premises) are the only ones.

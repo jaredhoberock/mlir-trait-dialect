@@ -157,7 +157,7 @@ enum class DemandEngine : uint8_t {
   /// This engine is permanent. Its writers are the two patterns the instantiation
   /// driver keeps -- the one that resolves projections and the one that proves
   /// claim results -- and both are permanent for the same reason: the population
-  /// they serve is the ground redexes a substitution MINTS while the driver runs,
+  /// they serve is the ground projections a substitution MINTS while the driver runs,
   /// which no sweep over what the module spells can reach, because the module
   /// never spells them. Resolving projections in the commit was measured against
   /// that population and refused: it cost 2-3% of a compile and still left that
@@ -311,14 +311,14 @@ struct DemandFlags {
 /// The sites that record carry a type and a module and say nothing about who
 /// wants the answer, so every caller states it here. The parameter is not
 /// defaulted anywhere it is threaded: a new caller must classify itself or the
-/// build fails, which is what keeps this ledger's caller audit from going
-/// stale.
+/// build fails, which is what keeps this ledger's caller classification from
+/// going stale.
 enum class DemandOrigin : uint8_t {
   /// The module-capable replacer that stamps a specialized monomorph.
   MonomorphStampOut,
   /// The obligation recorder normalizing both sides before recording a proof.
   ProofRecording,
-  /// The unifier reducing a ground redex a mid-solve binding minted.
+  /// The unifier reducing a ground projection a mid-solve binding minted.
   Unification,
   /// A call site specializing its callee at pass time.
   CallSiteSpecialization,

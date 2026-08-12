@@ -93,9 +93,9 @@ static void cloneRegionWithTypeReplacement(
 // Every type this replacer stamps into a specialized clone is chased to the
 // substitution's fixed point, so a specialized monomorph never carries a type
 // that some remaining substitution entry would still rewrite. Substituting a
-// concrete argument into a projection spelling can mint a ground redex the
+// concrete argument into a projection spelling can mint a ground projection the
 // fixed point alone does not close; when `module` is supplied the replacer
-// resolves those redexes by module-visible impl lookup, so a specialized
+// resolves those projections by module-visible impl lookup, so a specialized
 // monomorph carries no ground projection that a unique module-visible impl
 // resolves. Projections whose impl is generator-pending or
 // whose application matches several candidates survive stamp-out unchanged, to
@@ -116,9 +116,9 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &sub
   // The clone rule for equality evidence: the endpoints are pure substitution,
   // no ground projection resolved inside them, matching the travel law the
   // witness instance check enforces (the current endpoints must be a
-  // single-substitution instance of the frozen certificate, which a resolution
-  // would break). A witness's frozen certificate is likewise NOT rewritten --
-  // the audit is immutable -- so resolution stays outside the frozen-evidence
+  // single-substitution instance of the certificate, which a resolution
+  // would break). A witness's certificate is likewise NOT rewritten -- it is
+  // immutable evidence -- so resolution stays outside the immutable-evidence
   // path entirely.
   replacer.addReplacement([=](ClaimType claim) -> std::optional<Type> {
     return respellEqualityEndpoints(claim, [&](Type t) {
@@ -140,7 +140,7 @@ func::FuncOp specializePolymorph(OpBuilder& builder,
 
   Location loc = polymorph.getLoc();
 
-  // make a type replacer that also resolves the ground projection redexes this
+  // make a type replacer that also resolves the ground projections this
   // substitution mints, so the specialized instance is stamped in normal form
   AttrTypeReplacer replacer = makeTypeReplacerFromSubstitution(
       substitution, polymorph->getParentOfType<ModuleOp>());
@@ -181,7 +181,7 @@ void specializePolymorphicRegion(OpBuilder& builder,
                                   const DenseMap<Type,Type> &subst) {
   assert(monomorph.empty() && "Region is not empty");
 
-  // make a type replacer that also resolves the ground projection redexes this
+  // make a type replacer that also resolves the ground projections this
   // substitution mints, so the specialized region is stamped in normal form
   ModuleOp module =
       polymorph.getParentOp() ? polymorph.getParentOp()->getParentOfType<ModuleOp>()
@@ -199,7 +199,7 @@ void specializePolymorphicRegion(OpBuilder& builder,
   // resolve with. Whether that matters is a question about the clone, not about
   // the source: substituting a concrete argument into a symbolic projection is
   // what makes it monomorphic, so a projection invisible in the polymorph can
-  // be a ground redex here. Count them, over the same result and block-argument
+  // be a ground projection here. Count them, over the same result and block-argument
   // types the stage's own leftover-projection sweep walks.
   //
   // No caller reaches this today: every one of them passes a region whose

@@ -804,7 +804,7 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
 
   // Normalize both the demanded obligation (the recording key) and the proven
   // value before recording. Requirement obligations arrive at their stamped
-  // declaration projections; resolving those ground redexes means every path
+  // declaration projections; resolving those ground projections means every path
   // that reaches the same obligation keys it identically and records the same
   // proven spelling, so a second observation matches the first literally
   // instead of reconciling two equivalent spellings.
@@ -881,7 +881,7 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
     // proof could cite an impl of a different trait, or of this trait at
     // arguments the claim does not meet, and nothing above has compared the two.
     // Specialize the impl's own self claim to the proven claim -- the same
-    // citation audit the witness seam runs -- so a proof whose impl cannot
+    // citation check that verifying a witness runs -- so a proof whose impl cannot
     // specialize to its claim is refused here rather than trusted to a leaf.
     if (failed(impl.buildSubstitutionForSelfClaim(proven, err)))
       return failure();
@@ -898,10 +898,10 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
   auto proof = dyn_cast<ProofOp>(*symOp);
 
   // check that the proof's claim can specialize to match proven. Both name this
-  // one committed proof, so reducing ground redexes its spellings mint is a
+  // one committed proof, so reducing ground projections its spellings mint is a
   // computation over the proof's own facts, not a spelling comparison -- the
   // recorder is a ratified minting point that reads module facts (the real
-  // module drives the ground-redex resolution inside unification).
+  // module drives the ground-projection resolution inside unification).
   if (failed(buildSpecialization(proof.getProvenClaim(), proven, module, err)))
     return failure();
 
@@ -1485,7 +1485,7 @@ LogicalResult ProjectionType::unify(
 
   // A projection all of whose arguments are concrete and whose trait application
   // a unique module-visible impl binds has one determined resolution. Binding a
-  // variable mid-solve mints such ground redexes (binding V:=i64 turns
+  // variable mid-solve mints such ground projections (binding V:=i64 turns
   // proj<@Prod[V]> into the ground proj<@Prod[i64]>), so a caller carrying a
   // module -- a pass, or a committed-fact substitution build -- resolves them
   // here and unifies the resolved type against `other`, catching a real mismatch

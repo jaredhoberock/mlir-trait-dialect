@@ -4,12 +4,12 @@
 // RUN: mlir-opt %s -verify-diagnostics
 
 // A committed-fact substitution build (here the witness verifier's self-claim
-// match) resolves a ground redex its own substitution mints, then compares the
+// match) resolves a ground projection its own substitution mints, then compares the
 // resolved value. @Gen[i64]::A binds to i32 through @Gen's unique impl, so:
 //   - a witness for @T[@Gen[i64]::A] backed by a proof of @T[i32] resolves the
-//     redex to i32 and matches (accepted);
+//     projection to i32 and matches (accepted);
 //   - a witness for @T[@Gen[i64]::A] backed by a proof of @T[f32] resolves the
-//     redex to i32 and finds it distinct from f32 (rejected).
+//     projection to i32 and finds it distinct from f32 (rejected).
 // The resolution is module-capable and premise-blind: it reads @Gen's one impl
 // binding, nothing more.
 

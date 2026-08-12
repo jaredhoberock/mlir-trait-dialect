@@ -7,7 +7,7 @@
 // discharges it -- the named impl's own assumptions must in turn be discharged.
 // The premise cites @Sib_i64_cond (assumes @Y[i64]); the citation names @Y_cond
 // as the discharger of @Y[i64], but @Y_cond itself assumes @Z[i64], and no
-// citation and no where entry supplies @Z[i64]. The audit follows the citation
+// citation and no where entry supplies @Z[i64]. Verification follows the citation
 // to @Y_cond, finds its assumption @Z[i64] undischarged, and refuses -- the
 // obligation @Y[i64] therefore stays undischarged and the impl is refused at
 // birth.

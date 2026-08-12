@@ -4,7 +4,7 @@
 // RUN: mlir-opt %s -verify-diagnostics -split-input-file
 
 // The witness instance check requires the current endpoints to be a single
-// substitution instance of the frozen certificate. Resolving a projection redex
+// substitution instance of the certificate. Resolving a projection
 // inside an endpoint -- collapsing @Trait[i64]::Output to i64 -- is not a
 // substitution instance of the projection spelling, so the resolved endpoint
 // form is refused. This is why the specializing clone rule leaves an equality

@@ -565,15 +565,15 @@ fn the_projection_query_and_the_project_verifier_share_one_verdict() {
         .expect("the identity claim parses");
 
     // The query accepts the true equality hop and the identity projection, and
-    // rejects a hop whose contractum the requirement does not license -- the same
-    // membership the trait.project verifier checks at the symbol seam.
+    // rejects a hop whose resolved type the requirement does not license -- the same
+    // membership the trait.project verifier checks when its symbol uses are verified.
     assert!(trait_::claim_projects_to(&module, src, hop));
     assert!(trait_::claim_projects_to(&module, src, identity));
     assert!(!trait_::claim_projects_to(&module, src, wrong_hop));
 }
 
 #[test]
-fn the_obligation_mode_seam_audit_demands_the_cited_impl_s_assumptions() {
+fn the_obligation_aware_verification_demands_the_cited_impl_s_assumptions() {
     let registry = DialectRegistry::new();
     register_all_dialects(&registry);
     let context = Context::new();
@@ -592,22 +592,22 @@ fn the_obligation_mode_seam_audit_demands_the_cited_impl_s_assumptions() {
     )
     .expect("the fixture module parses");
 
-    let redex = melior::ir::Type::parse(&context, "!trait.proj<@Has[tuple<i32>], \"Out\">")
-        .expect("the redex projection parses");
+    let projection = melior::ir::Type::parse(&context, "!trait.proj<@Has[tuple<i32>], \"Out\">")
+        .expect("the projection parses");
     let i64_ty: melior::ir::Type = IntegerType::new(&context, 64).into();
     let i32_ty: melior::ir::Type = IntegerType::new(&context, 32).into();
 
-    // With no premise the audit refuses: the impl's @X[i32] assumption is
+    // With no premise verification refuses: the impl's @X[i32] assumption is
     // undischarged.
-    assert!(!trait_::witness_seam_audit_accepts(
-        &module, redex, i64_ty, "Has_tuple", &[], &[], /*rigid_head_match=*/false
+    assert!(!trait_::projection_resolution_verifies(
+        &module, projection, i64_ty, "Has_tuple", &[], &[], /*rigid_head_match=*/false
     ));
 
-    // Supplying an @X[i32] application premise discharges the assumption, and the
-    // audit accepts.
+    // Supplying an @X[i32] application premise discharges the assumption, and
+    // verification accepts.
     let x_i32 = trait_::trait_application_attr(&context, "X", &[i32_ty]);
     let x_i32_claim: melior::ir::Type = trait_::claim_type(&context, x_i32).into();
-    assert!(trait_::witness_seam_audit_accepts(
-        &module, redex, i64_ty, "Has_tuple", &[x_i32_claim], &[], /*rigid_head_match=*/false
+    assert!(trait_::projection_resolution_verifies(
+        &module, projection, i64_ty, "Has_tuple", &[x_i32_claim], &[], /*rigid_head_match=*/false
     ));
 }

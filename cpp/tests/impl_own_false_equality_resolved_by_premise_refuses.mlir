@@ -3,10 +3,10 @@
 
 // RUN: mlir-opt %s -verify-diagnostics
 
-// An impl's own false equality assumption is inert only while its redex stays
-// symbolic. @T2_i64 assumes proj<@Sib[i64],"Elem"> = i1, and it declares a
+// An impl's own false equality assumption is inert only while its projection
+// stays symbolic. @T2_i64 assumes proj<@Sib[i64],"Elem"> = i1, and it declares a
 // premise -- citing the conditional @Sib_cond, its @X[i64] assumption supplied
-// by a discharge citation -- that resolves the redex to i64. The own-equality
+// by a discharge citation -- that resolves the projection to i64. The own-equality
 // birth check replays the premise, reduces the endpoint to the ground value
 // i64, and refuses the ground mismatch against i1, even though the impl never
 // consumes the equality. The acceptance is the symbolic case alone.

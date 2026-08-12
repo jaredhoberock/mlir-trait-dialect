@@ -4,7 +4,7 @@
 // RUN: mlir-opt %s -verify-diagnostics
 
 // Byte-identical to ..._sole except for ONE added, unrelated impl of @Other.
-// With the rigid head match the projection in the redex application is never
+// With the rigid head match the projection in the projection's application is never
 // resolved through the module, so the added impl changes nothing: this impl
 // reaches the SAME refusal its sole companion does. Before the head match was
 // made rigid, the second impl made the inner projection two-candidate, the

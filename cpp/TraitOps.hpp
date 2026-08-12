@@ -27,40 +27,40 @@ public:
   }
 };
 
-/// The projection-resolution certificate audit at the symbol seam, factored so
-/// that both `WitnessOp::verifySymbolUses` and the C-API seam-audit query run
-/// exactly this check on the same inputs. Looks the cited impl up in `module`,
-/// resolves the `redex` projection through the impl's associated-type binding
-/// specialized for the redex's trait application, applies the equality
-/// `premises`, and compares the result against `contractum` proof-blind.
-/// Succeeds when the cited impl binds the redex to the contractum. `err` (never
-/// null) receives the diagnostic on refusal; a caller that treats refusal as a
+/// Verifies a projection-resolution certificate against `module`, factored so
+/// that both `WitnessOp::verifySymbolUses` and the C-API projection-resolution
+/// query run exactly this check on the same inputs. Looks the cited impl up in
+/// `module`, resolves the `projection` through the impl's associated-type binding
+/// specialized for the projection's trait application, applies the equality
+/// `premises`, and compares the result against `resolved` proof-blind. Succeeds
+/// when the cited impl binds the projection to `resolved`. `err` (never null)
+/// receives the diagnostic on refusal; a caller that treats refusal as a
 /// classification answer rather than an error suppresses it at the diagnostic
 /// engine.
 ///
 /// When `rigidHeadMatch` is set, the head match instantiates ONLY the cited
-/// impl's own generics; the redex's application (the actual side) stays rigid, so
-/// no module-visible impl resolves a projection spelled there and the audit
-/// verdict never depends on the unrelated impls the module carries. The impl
-/// birth audit sets it, so an impl's verdict is estate-independent. Left unset
+/// impl's own generics; the projection's application (the actual side) stays
+/// rigid, so no module-visible impl resolves a projection spelled there and the
+/// verdict never depends on the unrelated impls the module carries. Impl-birth
+/// verification sets it, so an impl's verdict is estate-independent. Left unset
 /// (the default), the head match resolves the actual side's ground projections
-/// by module lookup, as a witness-site audit does. When `outSubst` is non-null it
-/// receives the head-match substitution, so a caller replaying the premise reuses
-/// this build rather than deriving it a second time.
+/// by module lookup, as verifying a witness at its use site does. When `outSubst`
+/// is non-null it receives the head-match substitution, so a caller replaying the
+/// premise reuses this build rather than deriving it a second time.
 ///
-/// The audit additionally requires the cited impl's own assumptions --
-/// specialized for the redex's application -- each to be discharged: either by a
-/// hypothetical cover from the application-arm `obligationPremises` (the citing
-/// impl's own where clause), or by a `dischargeWitnesses` entry whose spelled
-/// application is the assumption and whose named impl, specialized for it, has
-/// each of its own assumptions discharged in turn over the same finite citation
-/// list. Both compare proof-stripped and modulo the equality `premises`. It
-/// deliberately does not reach the cited impl's trait requirements, which may
+/// Verification additionally requires the cited impl's own assumptions --
+/// specialized for the projection's application -- each to be discharged: either
+/// by a hypothetical cover from the application-arm `obligationPremises` (the
+/// citing impl's own where clause), or by a `dischargeWitnesses` entry whose
+/// spelled application is the assumption and whose named impl, specialized for
+/// it, has each of its own assumptions discharged in turn over the same finite
+/// citation list. Both compare proof-stripped and modulo the equality `premises`.
+/// It deliberately does not reach the cited impl's trait requirements, which may
 /// quantify over GAT variables with no ground instance at the witness;
 /// requirement discharge belongs to the proof and birth machinery. So a witness
 /// never cites an impl whose own assumptions are unmet.
-LogicalResult auditProjResolveCertificate(
-    ModuleOp module, Type redex, Type contractum, FlatSymbolRefAttr citedImpl,
+LogicalResult verifyProjectionResolution(
+    ModuleOp module, Type projection, Type resolved, FlatSymbolRefAttr citedImpl,
     ArrayRef<TypeEqualityAttr> premises,
     llvm::function_ref<InFlightDiagnostic()> err,
     ArrayRef<TraitApplicationAttr> obligationPremises = {},

@@ -3,7 +3,7 @@
 
 // RUN: mlir-opt %s --emit-bytecode | mlir-opt | FileCheck %s
 
-// The frozen certificate's endpoints are opaque to sub-element walking, so
+// The certificate's endpoints are opaque to sub-element walking, so
 // bytecode cannot recover them from the generic walk; the attribute's own
 // print/parse carries them. This pins that a proj-resolve witness -- capsule
 // and equality-claim result together -- survives a bytecode round-trip

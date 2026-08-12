@@ -89,8 +89,8 @@ unsafe extern "C" {
                            predicate: MlirAttribute,
                            impl_name: MlirStringRef) -> MlirAttribute;
     fn traitCoercePendingAccepts(input: MlirType, result: MlirType) -> bool;
-    fn traitWitnessSeamAuditAccepts(module: MlirModule,
-                                    redex: MlirType, contractum: MlirType,
+    fn traitProjectionResolutionVerifies(module: MlirModule,
+                                    projection: MlirType, resolved: MlirType,
                                     impl_name: MlirStringRef,
                                     premises: *const MlirType, num_premises: isize,
                                     discharges: *const MlirAttribute, num_discharges: isize,
@@ -360,7 +360,7 @@ pub enum ImplCheckedArray {
 /// Attach a checked attribute array to an existing `trait.impl` op -- its
 /// projection-resolution premises or its obligation discharge citations. An
 /// empty slice removes the impl's existing entries of that kind. The impl
-/// verifier audits every entry, its attribute kind included, at birth, so this
+/// verifier checks every entry, its attribute kind included, at birth, so this
 /// only assembles the array. Attached after the impl header prepass completes,
 /// so every cited impl is present in the module.
 pub fn set_impl_checked_array<'c>(
@@ -723,21 +723,21 @@ pub fn coerce_pending_accepts(input: Type, result: Type) -> bool {
     unsafe { traitCoercePendingAccepts(input.to_raw(), result.to_raw()) }
 }
 
-/// Answer whether the projection-resolution witness seam audit accepts the
-/// certificate `(redex, contractum)` cited to `impl_name`, looking that impl up
-/// in `module`. `premises` are claim types split by arm: the equality claims are
-/// the comparison modulus (usually empty), the application claims and the
-/// `discharges` citations cover the cited impl's own assumptions. `rigid_head_match`
-/// keeps the redex's application rigid, so the verdict never depends on unrelated
-/// module impls -- the impl-birth audit sets it; a witness-site audit clears it.
-/// This is the same obligation-aware check `trait.witness`'s equality arm runs at
-/// the symbol seam, so a consumer classifying a certificate against this answer
-/// cannot disagree with the verifier. Refusal is a plain `false`, not a
-/// diagnostic.
-pub fn witness_seam_audit_accepts<'c>(
+/// Answer whether the projection-resolution certificate `(projection, resolved)`
+/// cited to `impl_name` verifies, looking that impl up in `module`. `premises`
+/// are claim types split by arm: the equality claims are the comparison modulus
+/// (usually empty), the application claims and the `discharges` citations cover
+/// the cited impl's own assumptions. `rigid_head_match` keeps the projection's
+/// application rigid, so the verdict never depends on unrelated module impls --
+/// impl-birth verification sets it; verifying a witness at its use site clears
+/// it. This is the same obligation-aware check `trait.witness`'s equality arm
+/// runs when its symbol uses are verified, so a consumer classifying a
+/// certificate against this answer cannot disagree with the verifier. Refusal is
+/// a plain `false`, not a diagnostic.
+pub fn projection_resolution_verifies<'c>(
     module: &Module,
-    redex: Type,
-    contractum: Type,
+    projection: Type,
+    resolved: Type,
     impl_name: &str,
     premises: &[Type],
     discharges: &[Attribute<'c>],
@@ -746,10 +746,10 @@ pub fn witness_seam_audit_accepts<'c>(
     let raw_premises: Vec<MlirType> = premises.iter().map(|t| t.to_raw()).collect();
     let raw_discharges: Vec<MlirAttribute> = discharges.iter().map(|a| a.to_raw()).collect();
     unsafe {
-        traitWitnessSeamAuditAccepts(
+        traitProjectionResolutionVerifies(
             module.to_raw(),
-            redex.to_raw(),
-            contractum.to_raw(),
+            projection.to_raw(),
+            resolved.to_raw(),
             StringRef::new(impl_name).to_raw(),
             raw_premises.as_ptr(),
             raw_premises.len() as isize,
