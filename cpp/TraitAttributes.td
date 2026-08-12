@@ -72,26 +72,45 @@ def TypeEqualityAttr : AttrDef<TraitDialect, "TypeEquality", []> {
     Constructing this attribute states the proposition; it does not assert that
     the equality holds. Hypotheses and deliberately-false witness tests must be
     spellable, so the checked constructor enforces structural well-formedness
-    only: no endpoint contains a proven claim (a proven claim would let the
-    endpoint fall into the asymmetric proof comparison that the equality arm
-    forbids). A *value* of the enclosing claim type, in verifier-valid IR, is
-    the evidence that the equality holds.
+    only. A *value* of the enclosing claim type, in verifier-valid IR, is the
+    evidence that the equality holds.
+
+    Endpoints are statements of fact, so they admit no proven claims. A proven
+    claim type glues a fact to one value's provenance (`by @impl`), and the
+    provenance legitimately varies value by value while the fact does not. An
+    equality must apply wherever its fact holds: if provenance could appear in
+    an endpoint, either it would participate in matching — the same fact spelled
+    `by @A` and `by @B` would look like two facts, correct coercions would be
+    refused, and the composition judgment's endpoint matching would fail to
+    connect valid chains — or it would be ignored everywhere, a dead field
+    inviting misreading. The constructor forbids the state instead: one fact,
+    one spelling. The single place value provenance meets fact-level evidence
+    is the coerce verdict, which strips proofs at that one boundary.
 
     The endpoints are ordered; orientation is recorded for audit provenance
     only. Replay is direction-blind, so no symmetry construct exists.
 
     The endpoints are opaque to sub-element walking: the generic
-    `AttrTypeReplacer` cannot visit or rewrite them, so they move only through
-    the sanctioned clone rule (one substitution applied to both endpoints
-    atomically, rebuilt through this constructor). Readers that must inspect an
-    endpoint reach it through the dedicated endpoint accessors, never the walk.
+    `AttrTypeReplacer` cannot visit or rewrite them. This carries the previous
+    rule through the pipeline. Global type rewrites — proof stamping foremost —
+    rewrite claim types wherever they can see them; a walkable endpoint would
+    receive a stamped proof and become exactly the state the constructor
+    forbids, so two individually-correct passes would kill a legal program.
+    Sealing the endpoints puts that impossibility in the attribute itself
+    rather than in an exclusion every present and future rewrite would have to
+    remember. Endpoints move only through the sanctioned clone rule (one
+    substitution applied to both endpoints atomically, rebuilt through this
+    constructor, re-checked); readers reach them through the dedicated
+    accessors, never the walk.
   }];
 
   let parameters = (ins "::mlir::Type":$lhs, "::mlir::Type":$rhs);
 
-  // The endpoints live in a hand-written storage whose getAsKey() is
-  // walk-opaque while the uniquing key retains both endpoints (see
-  // TraitAttributes.cpp).
+  // Walk-opacity is a property of the storage: MLIR's walkers descend only
+  // into storages exposing getAsKey(), and generated storage always exposes
+  // it. Hand-writing the storage (no getAsKey; the uniquing key still retains
+  // both endpoints) is the only way to seal the endpoints -- there is no
+  // declarative opt-out. See TraitAttributes.cpp.
   let genStorageClass = 0;
   let genVerifyDecl = 1;
 
