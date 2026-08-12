@@ -169,7 +169,7 @@ bool traitCoercePendingAccepts(MlirType input, MlirType result);
 /// equality-arm verifySymbolUses runs (verifyProjectionResolution, TraitOps.hpp).
 /// `premises` are !trait.claim types split by arm (equality claims the comparison
 /// modulus, application claims covering the cited impl's assumptions) and
-/// `discharges` are `#trait.discharge` citations; `rigidHeadMatch` keeps the
+/// `discharges` are `#trait.witness` citations; `rigidHeadMatch` keeps the
 /// projection's application rigid, as impl-birth verification needs. Diagnostics
 /// are suppressed; a refusal is a classification answer, not a compile error.
 bool traitProjectionResolutionVerifies(MlirModule module,

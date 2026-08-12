@@ -345,35 +345,20 @@ pub fn impl_named<'c>(loc: Location<'c>,
     ))}
 }
 
-/// Which checked attribute array on a `trait.impl` [`set_impl_checked_array`]
-/// targets.
-pub enum ImplCheckedArray {
-    /// Projection-resolution premises, each a `#trait.certificate` resolving a
-    /// ground sibling projection the impl's own bindings do not.
-    Premises,
-    /// Obligation discharge citations, each a `#trait.discharge` naming an
-    /// application obligation a cited conditional premise leaves standing and the
-    /// impl that supplies it.
-    Discharges,
-}
-
-/// Attach a checked attribute array to an existing `trait.impl` op -- its
-/// projection-resolution premises or its obligation discharge citations. An
-/// empty slice removes the impl's existing entries of that kind. The impl
-/// verifier checks every entry, its attribute kind included, at birth, so this
-/// only assembles the array. Attached after the impl header prepass completes,
-/// so every cited impl is present in the module.
-pub fn set_impl_checked_array<'c>(
+/// Attach the checked `witnesses` array to an existing `trait.impl` op -- each a
+/// `#trait.witness` the impl verifier reads by arm: an equality-armed
+/// projection-resolution certificate, or an application-armed obligation
+/// discharge covering a cited conditional impl's standing assumption. An empty
+/// slice removes the impl's existing witnesses. The impl verifier checks every
+/// entry, its attribute kind included, at birth, so this only assembles the
+/// array. Attached after the impl header prepass completes, so every cited impl
+/// is present in the module.
+pub fn set_impl_witnesses<'c>(
     impl_op: &Operation<'c>,
-    which: ImplCheckedArray,
     attrs: &[Attribute<'c>],
 ) {
-    let name = match which {
-        ImplCheckedArray::Premises => "premises",
-        ImplCheckedArray::Discharges => "discharges",
-    };
     unsafe {
-        let name_ref = StringRef::new(name).to_raw();
+        let name_ref = StringRef::new("witnesses").to_raw();
         if attrs.is_empty() {
             mlirOperationRemoveAttributeByName(impl_op.to_raw(), name_ref);
         } else {

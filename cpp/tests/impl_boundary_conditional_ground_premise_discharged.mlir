@@ -30,7 +30,7 @@ trait.trait @Host[!S] {
 
 // CHECK: trait.impl @Host_i64
 trait.impl @Host_i64 for @Host[i64] where [@Needs[i64]]
-    premises [#trait<witness !trait.proj<@Sibling[i64], "Elem"> = i64 by @Sibling_i64>] {
+    witnesses [#trait<witness !trait.proj<@Sibling[i64], "Elem"> = i64 by @Sibling_i64>] {
   trait.assoc_type @Out = i64
   func.func @make(%x: i64) -> i64 {
     %r = ub.poison : i64

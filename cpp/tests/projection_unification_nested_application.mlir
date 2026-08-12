@@ -43,7 +43,7 @@ trait.impl @Base_i32 for @Base[i32] {
 }
 
 trait.impl @Trait_i32 for @Trait[i32]
-    premises [#trait<witness !trait.proj<@Base[i32], "Assoc"> = i64 by @Base_i32>] {
+    witnesses [#trait<witness !trait.proj<@Base[i32], "Assoc"> = i64 by @Base_i32>] {
   func.func @method(
     %self: i32,
     %f: !F,

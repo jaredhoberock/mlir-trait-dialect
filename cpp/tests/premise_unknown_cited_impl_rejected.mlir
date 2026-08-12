@@ -23,7 +23,7 @@ trait.trait @Host[!S] {
 
 // expected-error @below {{cannot find trait.impl '@Nope' cited by the certificate}}
 trait.impl @Host_i64 for @Host[i64]
-    premises [#trait<witness !trait.proj<@Sib[i64], "Elem"> = i32 by @Nope>] {
+    witnesses [#trait<witness !trait.proj<@Sib[i64], "Elem"> = i32 by @Nope>] {
   func.func @make(%x: i64) -> i32 {
     %r = ub.poison : i32
     return %r : i32

@@ -372,23 +372,21 @@ def ImplOp : TraitDialectOp<"impl", [
     selected; equality entries are birth-checked against the impl's own bindings
     and drive the equality-arm `trait.assume` inside the impl's method bodies.
 
-    The optional `premises` array carries projection-resolution certificates for
-    the ground sibling projections this impl's own bindings cannot resolve. Each
-    entry names a projection, the type it resolves to, and the impl that
-    binds it. The verifier checks every entry against its cited impl and then
-    replays it as a local resolution rule while comparing this impl's method
-    signatures and its equality endpoints, so a projection a sibling impl
-    resolves is reduced without the verifier enumerating candidate impls. The replayed rules
-    ride the same associated-type replacer the impl's own bindings use: they are
-    blind inside a walk-opaque equality endpoint and cure no
-    equality-claim-parameter mismatch, exactly the reach the own bindings have.
-
-    A premise may cite a CONDITIONAL sibling impl, whose own assumptions must
-    then be discharged for the citation to be legal. The optional `discharges`
-    array names, per obligation, the impl that supplies it; the discharge
-    recursion is the citation-discharge contract, which premise verification
-    replays and which resolves every discharger by symbol without scanning the
-    module.
+    The optional `witnesses` array carries the impl's declaration-level
+    witnesses, each a `#trait.witness` read by its predicate arm. An
+    equality-armed witness is a projection-resolution certificate: it names a
+    ground sibling projection this impl's own bindings cannot resolve, the type
+    it resolves to, and the impl that binds it. The verifier checks each against
+    its cited impl and replays it as a local resolution rule while comparing this
+    impl's method signatures and its equality endpoints, so a projection a sibling
+    impl resolves is reduced without the verifier enumerating candidate impls; the
+    replayed rules ride the same associated-type replacer the own bindings use, so
+    they are blind inside a walk-opaque equality endpoint and cure no
+    equality-claim-parameter mismatch. When such a witness cites a CONDITIONAL
+    sibling impl, its own assumptions must be discharged for the citation to be
+    legal: an application-armed witness names, per obligation, the impl that
+    supplies it, and the discharge recursion resolves every discharger by symbol
+    without scanning the module.
   }];
 
   let arguments = (ins
@@ -396,9 +394,7 @@ def ImplOp : TraitDialectOp<"impl", [
     TraitApplicationAttr:$self_application,
     PredicateArrayAttr:$assumptions,
     OptionalAttr<TypedArrayAttrBase<WitnessAttr,
-        "array of projection-resolution certificate witnesses">>:$premises,
-    OptionalAttr<TypedArrayAttrBase<WitnessAttr,
-        "array of obligation discharge witnesses">>:$discharges
+        "array of impl witnesses">>:$witnesses
   );
   let regions = (region SizedRegion<1>:$body);
 
@@ -602,7 +598,6 @@ def ImplOp : TraitDialectOp<"impl", [
   ];
 
   let hasCustomAssemblyFormat = 1;
-  let hasVerifier = 1;
 }
 
 
@@ -971,8 +966,8 @@ def WitnessOp : TraitDialectOp<"witness", [
     content a `#trait.witness` attribute holds and hands code a typed claim value
     wherever evidence must be consumed as one -- call arguments, coercion
     citations. The same content stands alone as a `#trait.witness` attribute at
-    declaration level -- the entries an impl's `premises` and `discharges` arrays
-    carry (both detailed under `trait.impl`). The equality arm's compose leaf is
+    declaration level -- the entries an impl's `witnesses` array carries
+    (detailed under `trait.impl`). The equality arm's compose leaf is
     the one form that is irreducibly op-shaped, because it builds evidence from
     other claim values.
 

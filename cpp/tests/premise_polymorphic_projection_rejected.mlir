@@ -25,9 +25,9 @@ trait.trait @Host[!S] {
   func.func private @make(!S) -> !trait.proj<@Sib[!S], "Elem">
 }
 
-// expected-error @below {{premise projection '!trait.proj<@Sib[!trait.poly<0>], "Elem">' is not ground; a premise resolves only a ground sibling projection}}
+// expected-error @below {{witness projection '!trait.proj<@Sib[!trait.poly<0>], "Elem">' is not ground; a witness resolves only a ground sibling projection}}
 trait.impl @Host_T for @Host[!S]
-    premises [#trait<witness !trait.proj<@Sib[!S], "Elem"> = i32 by @Sib_i64>] {
+    witnesses [#trait<witness !trait.proj<@Sib[!S], "Elem"> = i32 by @Sib_i64>] {
   func.func @make(%x: !S) -> i32 {
     %r = ub.poison : i32
     return %r : i32

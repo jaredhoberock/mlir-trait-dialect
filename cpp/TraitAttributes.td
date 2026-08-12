@@ -120,9 +120,9 @@ def TypeEqualityAttr : AttrDef<TraitDialect, "TypeEquality", []> {
 // A predicate and the impl that witnesses it. One shape serves two roles, read
 // off the predicate arm: an equality `projection = resolved` the impl's
 // associated-type binding resolves (the projection-resolution certificate an
-// impl's `premises` array and a `trait.witness` certificate slot carry), or a
-// trait application the impl discharges (the obligation-discharge citation an
-// impl's `discharges` array carries).
+// entry of an impl's `witnesses` array or a `trait.witness` certificate slot
+// carries), or a trait application the impl discharges (the obligation-discharge
+// entry an impl's `witnesses` array also carries).
 def WitnessAttr : AttrDef<TraitDialect, "Witness", []> {
   let mnemonic = "witness";
   let summary = "A predicate and the impl that witnesses it";
@@ -135,20 +135,20 @@ def WitnessAttr : AttrDef<TraitDialect, "Witness", []> {
         binds the associated type `projection` names (a projection carrying its
         member and any associated-type arguments) to `resolved`, once the impl
         is specialized for the projection's trait application. This is the leaf
-        an impl's `premises` array and a `trait.witness` certificate slot carry.
+        an equality-armed entry of an impl's `witnesses` array or a
+        `trait.witness` certificate slot carries.
 
       * a `TraitApplicationAttr`, an obligation the impl supplies. This is the
-        discharge an impl's `discharges` array carries to cover a cited
-        conditional sibling impl's standing assumptions; verification resolves the
-        named impl by symbol and never scans the module, so an impl's verdict
-        does not depend on the estate around it.
+        discharge an application-armed entry of an impl's `witnesses` array
+        carries to cover a cited conditional sibling impl's standing assumptions;
+        verification resolves the named impl by symbol and never scans the module,
+        so an impl's verdict does not depend on the estate around it.
 
     Witnessing is one concept carried two ways, chosen by scope. This attribute
     IS the witness and stands alone wherever no code consumes it: an impl's
-    `premises` and `discharges` are declaration-level witnessing. Where code must
-    consume evidence as a typed claim value -- a call argument, a coercion
-    citation -- the `trait.witness` op wraps this same content and produces the
-    value.
+    `witnesses` array is declaration-level witnessing. Where code must consume
+    evidence as a typed claim value -- a call argument, a coercion citation --
+    the `trait.witness` op wraps this same content and produces the value.
 
     An equality predicate keeps the walk-opacity of its own `TypeEqualityAttr`
     storage: no generic replacer reaches its endpoints, and readers use

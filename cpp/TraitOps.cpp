@@ -418,31 +418,6 @@ void TraitOp::print(OpAsmPrinter &p) {
 // ImplOp
 //===----------------------------------------------------------------------===//
 
-// The two witness arrays share one attribute shape but split by predicate arm:
-// a `premises` witness resolves an equality (a projection-resolution
-// certificate), a `discharges` witness names an application obligation. This
-// local check restores the static shape guarantee the two former element types
-// carried, so the symbol-use verification below reads a premise's equality
-// endpoints without first testing the arm.
-LogicalResult ImplOp::verify() {
-  if (ArrayAttr premises = getPremisesAttr())
-    for (Attribute entry : premises) {
-      auto witness = cast<WitnessAttr>(entry);
-      if (!isa<TypeEqualityAttr>(witness.getPredicate()))
-        return emitOpError() << "an impl premise must witness an equality, found "
-                             << witness.getPredicate();
-    }
-  if (ArrayAttr discharges = getDischargesAttr())
-    for (Attribute entry : discharges) {
-      auto witness = cast<WitnessAttr>(entry);
-      if (!isa<TraitApplicationAttr>(witness.getPredicate()))
-        return emitOpError()
-               << "an impl discharge must witness a trait application, found "
-               << witness.getPredicate();
-    }
-  return success();
-}
-
 LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   auto errFn = [&]{ return emitOpError(); };
 
@@ -466,15 +441,15 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (failed(getAssumptions().verifySymbolUses(getOperation(), symbolTable)))
     return failure();
 
-  // Verify the declared projection-resolution premises and turn each into a local
-  // resolution rule the comparisons below replay. A premise certifies that a
-  // sibling impl binds a ground projection to a resolved type; verification reads
-  // that cited impl at the sanctioned symbol boundary -- obligation-aware, so a
-  // premise citing a conditional impl is legal exactly when this impl's own
-  // where clause covers the cited impl's assumptions or a declared discharge
-  // citation supplies them -- and every verified premise then resolves its
+  // Verify the equality-armed witnesses and turn each into a local resolution
+  // rule the comparisons below replay. Such a witness certifies that a sibling
+  // impl binds a ground projection to a resolved type; verification reads that
+  // cited impl at the sanctioned symbol boundary -- obligation-aware, so a
+  // witness citing a conditional impl is legal exactly when this impl's own
+  // where clause covers the cited impl's assumptions or an application-armed
+  // witness supplies them -- and every verified witness then resolves its
   // projection the way this impl's own bindings resolve its own projections. The
-  // per-entry verification runs with an EMPTY equality modulus: sibling premises
+  // per-entry verification runs with an EMPTY equality modulus: sibling witnesses
   // never serve as each other's modulus, because an attribute array has no
   // dominance and mutual justification could ground a false equality on nothing.
   // The comparisons add these rules after their own-binding rule and let the
@@ -486,39 +461,48 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     SpecializationMap subst;
   };
   SmallVector<PremiseRule> premiseRules;
-  if (ArrayAttr premises = getPremisesAttr()) {
+  if (ArrayAttr witnesses = getWitnessesAttr()) {
     SmallVector<TraitApplicationAttr> obligationPremises(
         getAssumptions().getApplications());
+    // The application-armed witnesses cover a cited conditional impl's standing
+    // assumptions; gather them first so every equality-armed witness below
+    // verifies against the whole discharge set regardless of array order.
     SmallVector<WitnessAttr> dischargeWitnesses;
-    if (ArrayAttr discharges = getDischargesAttr())
-      for (Attribute entry : discharges)
-        dischargeWitnesses.push_back(cast<WitnessAttr>(entry));
-    for (Attribute entry : premises) {
-      // The array's element type gives a WitnessAttr, and ImplOp::verify has
-      // already required every premise equality-headed, so the endpoints read
-      // off the equality below.
-      auto cert = cast<WitnessAttr>(entry);
-      auto projectionTy = dyn_cast<ProjectionType>(cert.getProjection());
+    for (Attribute entry : witnesses) {
+      auto witness = cast<WitnessAttr>(entry);
+      if (isa<TraitApplicationAttr>(witness.getPredicate()))
+        dischargeWitnesses.push_back(witness);
+    }
+    for (Attribute entry : witnesses) {
+      // The array's element type gives a WitnessAttr; the arm is read off the
+      // predicate. An application-armed witness is a discharge already gathered
+      // above; an equality-armed one resolves a sibling projection, its
+      // endpoints read off the equality below.
+      auto witness = cast<WitnessAttr>(entry);
+      if (!isa<TypeEqualityAttr>(witness.getPredicate()))
+        continue;
+      auto projectionTy = dyn_cast<ProjectionType>(witness.getProjection());
       if (!projectionTy)
-        return emitOpError() << "a premise must name a projection, found "
-                             << cert.getProjection();
-      // A premise resolves only a GROUND sibling projection; a projection still
+        return emitOpError() << "a witness must name a projection, found "
+                             << witness.getProjection();
+      // A witness resolves only a GROUND sibling projection; a projection still
       // carrying a poly variable is not ground, and resolving it by unifying
       // that variable with a single cited impl's concrete head would accept a
       // generic impl on the strength of one instance. This mirrors the guard the
       // retired candidate lookup applied before it reduced a projection.
-      if (isPolymorphicType(cert.getProjection()))
-        return emitOpError() << "premise projection " << cert.getProjection()
-                             << " is not ground; a premise resolves only a "
+      if (isPolymorphicType(witness.getProjection()))
+        return emitOpError() << "witness projection " << witness.getProjection()
+                             << " is not ground; a witness resolves only a "
                                 "ground sibling projection";
       SpecializationMap subst;
       if (failed(verifyProjectionResolution(
-              *module, cert.getProjection(), cert.getResolved(), cert.getImplRef(),
+              *module, witness.getProjection(), witness.getResolved(),
+              witness.getImplRef(),
               /*premises=*/{}, errFn, obligationPremises, dischargeWitnesses,
               /*rigidHeadMatch=*/true, &subst)))
         return failure();
       auto citedImpl = mlir::SymbolTable::lookupNearestSymbolFrom<ImplOp>(
-          *module, cert.getImplRef());
+          *module, witness.getImplRef());
       premiseRules.push_back(
           {citedImpl, projectionTy.getTraitApplication(), std::move(subst)});
     }
@@ -1198,27 +1182,16 @@ ParseResult ImplOp::parse(OpAsmParser &p, OperationState &result) {
   }
   result.addAttribute("assumptions", assumptions);
 
-  // Optional projection-resolution premises: an array of certificates resolving
-  // the ground sibling projections this impl's own bindings do not. Absent
-  // premises leave the printed and parsed form byte-identical to an impl without
-  // them; the synthesized sym_name reads only the self application and
-  // assumptions, so premises never perturb it.
-  if (succeeded(p.parseOptionalKeyword("premises"))) {
-    ArrayAttr premises;
-    if (p.parseAttribute(premises))
+  // Optional witnesses: one array of #trait.witness entries, each an
+  // equality-armed projection-resolution certificate or an application-armed
+  // obligation discharge. Absent, the printed and parsed form is byte-identical
+  // to an impl without them; the synthesized sym_name reads only the self
+  // application and assumptions, so witnesses never perturb it.
+  if (succeeded(p.parseOptionalKeyword("witnesses"))) {
+    ArrayAttr witnesses;
+    if (p.parseAttribute(witnesses))
       return failure();
-    result.addAttribute("premises", premises);
-  }
-
-  // Optional obligation discharge citations: an array naming, per application
-  // obligation a cited conditional premise leaves standing, the impl that
-  // discharges it. Absent, they round-trip identically, exactly as premises
-  // above.
-  if (succeeded(p.parseOptionalKeyword("discharges"))) {
-    ArrayAttr discharges;
-    if (p.parseAttribute(discharges))
-      return failure();
-    result.addAttribute("discharges", discharges);
+    result.addAttribute("witnesses", witnesses);
   }
 
   // sym_name: use parsed or synthesize from parameters
@@ -1264,26 +1237,17 @@ void ImplOp::print(OpAsmPrinter &printer) {
     getAssumptions().print(printer);
   }
 
-  // print premises if present and non-empty
-  if (ArrayAttr premises = getPremisesAttr()) {
-    if (!premises.empty()) {
-      printer << "premises ";
-      printer.printAttribute(premises);
-    }
-  }
-
-  // print discharge citations if present and non-empty
-  if (ArrayAttr discharges = getDischargesAttr()) {
-    if (!discharges.empty()) {
-      printer << "discharges ";
-      printer.printAttribute(discharges);
+  // print witnesses if present and non-empty
+  if (ArrayAttr witnesses = getWitnessesAttr()) {
+    if (!witnesses.empty()) {
+      printer << "witnesses ";
+      printer.printAttribute(witnesses);
     }
   }
 
   printer.printOptionalAttrDictWithKeyword(
     (*this)->getAttrs(),
-    /*elidedAttrs=*/{"sym_name", "self_application", "assumptions", "premises",
-                     "discharges"}
+    /*elidedAttrs=*/{"sym_name", "self_application", "assumptions", "witnesses"}
   );
   printer << " ";
   printer.printRegion(getBody());
