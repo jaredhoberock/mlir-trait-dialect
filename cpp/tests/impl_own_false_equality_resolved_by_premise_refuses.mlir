@@ -29,8 +29,8 @@ trait.trait @T2[!S] {
 
 // expected-error @below {{does not satisfy its own equality predicate #trait<equality!trait.proj<@Sib[i64], "Elem"> = i1>: 'i64' and 'i1' are not the same type}}
 trait.impl @T2_i64 for @T2[i64] where [!trait.proj<@Sib[i64], "Elem"> = i1]
-    premises [#trait<certificate !trait.proj<@Sib[i64], "Elem"> resolves i64 by @Sib_cond>]
-    discharges [#trait<discharge @X[i64] by @X_i64>] {
+    premises [#trait<witness !trait.proj<@Sib[i64], "Elem"> = i64 by @Sib_cond>]
+    discharges [#trait<witness @X[i64] by @X_i64>] {
   func.func @id(%x: i64) -> i64 {
     return %x : i64
   }

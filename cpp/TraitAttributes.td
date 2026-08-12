@@ -72,7 +72,7 @@ def TypeEqualityAttr : AttrDef<TraitDialect, "TypeEquality", []> {
     Constructing this attribute states the proposition; it does not assert that
     the equality holds. Hypotheses and deliberately-false witness tests must be
     spellable, so the checked constructor enforces structural well-formedness
-    only: the endpoints carry no proof receipts (a receipt would let the
+    only: no endpoint contains a proven claim (a proven claim would let the
     endpoint fall into the asymmetric proof comparison that the equality arm
     forbids). A *value* of the enclosing claim type, in verifier-valid IR, is
     the evidence that the equality holds.
@@ -98,77 +98,64 @@ def TypeEqualityAttr : AttrDef<TraitDialect, "TypeEquality", []> {
   let hasCustomAssemblyFormat = 1;
 }
 
-// The frozen audit capsule of a projection-resolution equality witness. It
-// records, immutably from birth, the equality the witness established and the
-// impl that establishes it, so the witness verifier can replay the audit
-// locally without a fresh module search.
-def WitnessCertificateAttr : AttrDef<TraitDialect, "WitnessCertificate", []> {
-  let mnemonic = "certificate";
-  let summary = "The frozen audit of a projection-resolution equality witness";
+// A predicate and the impl that witnesses it. One shape serves two roles, read
+// off the predicate arm: an equality `redex = contractum` the impl's
+// associated-type binding resolves (the projection-resolution certificate an
+// impl's `premises` array and a `trait.witness` certificate slot carry), or a
+// trait application the impl discharges (the obligation-discharge citation an
+// impl's `discharges` array carries).
+def WitnessAttr : AttrDef<TraitDialect, "Witness", []> {
+  let mnemonic = "witness";
+  let summary = "A predicate and the impl that witnesses it";
   let description = [{
-    Records a projection-resolution leaf: the equality `redex = contractum`
-    holds because the cited `impl` binds the associated type named by `redex`
-    (a projection carrying its member and any associated-type arguments) to
-    `contractum`, once the impl is specialized for the projection's trait
-    application.
+    Pairs a `predicate` with the `impl` that witnesses it -- an equality
+    resolved by the impl's associated-type binding, or an application obligation
+    the impl supplies. The predicate is one of two arms:
 
-    The relation is stored as a `TypeEqualityAttr`, so the frozen `redex` and
-    `contractum` inherit that attribute's walk-opacity: no generic replacer
-    reaches them, and readers use `getRedex`/`getContractum`, never the walk.
-    The capsule's own storage is generated, so the endpoints stay opaque only
-    through the equality's opacity -- the frozen capsules stay immutable only
-    while no attribute-level replacement rule is registered for
-    `TypeEqualityAttr`, since such a rule would rewrite every capsule's relation
-    wholesale and break the instance-check and clone-rule contract. None is
-    registered today; a future one must account for the capsules first.
+      * a `TypeEqualityAttr` `redex = contractum`, resolved because the impl
+        binds the associated type named by `redex` (a projection carrying its
+        member and any associated-type arguments) to `contractum`, once the impl
+        is specialized for the projection's trait application. This is the leaf
+        an impl's `premises` array and a `trait.witness` certificate slot carry.
 
-    The cited impl, by contrast, is a plain symbol reference the generated
-    storage leaves walk-visible, so its immutability is not structural: it rests
-    on the estate registering no symbol-rename pass over this attribute (none
-    exists today). A consistent rename would verify clean while rewriting frozen
-    audit provenance in place; the only mover that preserves the audit is the
-    clone rule's whole-capsule rebuild.
+      * a `TraitApplicationAttr`, an obligation the impl supplies. This is the
+        discharge an impl's `discharges` array carries to cover a cited
+        conditional sibling impl's standing assumptions; the audit resolves the
+        named impl by symbol and never scans the module, so an impl's verdict
+        does not depend on the estate around it.
+
+    An equality predicate keeps the walk-opacity of its own `TypeEqualityAttr`
+    storage: no generic replacer reaches its endpoints, and readers use
+    `getRedex`/`getContractum`, never the walk. An application predicate stays
+    walk-visible. The witness's own storage is generated, so its immutability
+    under substitution is not structural: it rests on the estate registering no
+    attribute-level replacement rule for `TypeEqualityAttr` and no symbol-rename
+    pass over this attribute (neither exists today). The only mover that
+    preserves a frozen equality witness is the clone rule's whole-capsule
+    rebuild.
   }];
 
   let parameters = (ins
-    "::mlir::trait::TypeEqualityAttr":$equality,
-    "::mlir::FlatSymbolRefAttr":$cited_impl
+    "::mlir::Attribute":$predicate,
+    "::mlir::FlatSymbolRefAttr":$impl_ref
   );
 
   let extraClassDeclaration = [{
-    // The frozen relation's endpoints, read off the stored equality.
+    // The equality this citation resolves, read off the predicate; valid only
+    // for an equality-headed citation.
+    TypeEqualityAttr getEquality() const {
+      return ::mlir::cast<TypeEqualityAttr>(getPredicate());
+    }
     Type getRedex() const { return getEquality().getLhs(); }
     Type getContractum() const { return getEquality().getRhs(); }
+    // The application this citation discharges; valid only for an
+    // application-headed citation.
+    TraitApplicationAttr getApplication() const {
+      return ::mlir::cast<TraitApplicationAttr>(getPredicate());
+    }
   }];
 
   let genVerifyDecl = 1;
-  let hasCustomAssemblyFormat = 1;
-}
-
-// Names the impl that discharges one application obligation. An impl carries a
-// flat list of these to discharge the standing assumptions of the conditional
-// sibling impls its premises cite; see the description and
-// auditProjResolveCertificate for the recursion.
-def DischargeCitationAttr : AttrDef<TraitDialect, "DischargeCitation", []> {
-  let mnemonic = "discharge";
-  let summary = "Names the impl that discharges one application obligation";
-  let description = [{
-    Pairs an application obligation with the impl that discharges it. The impl
-    verifier's premise audit uses these to discharge the assumptions a cited
-    conditional impl leaves standing: an assumption is discharged either by a
-    hypothetical cover from the citing impl's own where-clause applications, or
-    by a discharge citation whose spelled `application` is that assumption and
-    whose named `discharging_impl`, specialized for the application, has each of
-    its own assumptions discharged in turn over this same finite list. The audit
-    resolves each named impl by symbol and never scans the module for a
-    discharger, so an impl's verdict does not depend on the estate around it.
-  }];
-
-  let parameters = (ins
-    "::mlir::trait::TraitApplicationAttr":$application,
-    "::mlir::FlatSymbolRefAttr":$discharging_impl
-  );
-
   let hasCustomAssemblyFormat = 1;
 }
 

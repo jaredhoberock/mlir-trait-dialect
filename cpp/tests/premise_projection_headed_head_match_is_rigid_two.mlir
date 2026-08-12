@@ -37,7 +37,7 @@ trait.trait @Host[!S] {
 
 // expected-error @below {{projection mismatch: expected '!trait.proj<@Other[i64], "X">' but found 'i32'}}
 trait.impl @Host_p for @Host[!trait.proj<@Other[i64], "X">]
-    premises [#trait<certificate !trait.proj<@Sib[!trait.proj<@Other[i64], "X">], "Elem"> resolves f32 by @Sib_i32>] {
+    premises [#trait<witness !trait.proj<@Sib[!trait.proj<@Other[i64], "X">], "Elem"> = f32 by @Sib_i32>] {
   func.func @make(%x: !trait.proj<@Other[i64], "X">) -> f32 {
     %r = ub.poison : f32
     return %r : f32

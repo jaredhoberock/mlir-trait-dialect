@@ -27,7 +27,7 @@ trait.trait @Host[!S] {
 
 // expected-error @below {{premise redex '!trait.proj<@Sib[!trait.poly<0>], "Elem">' is not ground; a premise resolves only a ground sibling projection}}
 trait.impl @Host_T for @Host[!S]
-    premises [#trait<certificate !trait.proj<@Sib[!S], "Elem"> resolves i32 by @Sib_i64>] {
+    premises [#trait<witness !trait.proj<@Sib[!S], "Elem"> = i32 by @Sib_i64>] {
   func.func @make(%x: !S) -> i32 {
     %r = ub.poison : i32
     return %r : i32

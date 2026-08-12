@@ -37,9 +37,6 @@ unsafe extern "C" {
                               sym_name: MlirStringRef,
                               self_trait_app: MlirAttribute,
                               predicates: *const MlirAttribute, num_predicates: isize) -> MlirOperation;
-    fn traitDischargeCitationAttrGet(ctx: MlirContext,
-                                     application: MlirAttribute,
-                                     impl_name: MlirStringRef) -> MlirAttribute;
     fn traitMethodCallOpCreate(loc: MlirLocation,
                                trait_name: MlirStringRef,
                                method_name: MlirStringRef,
@@ -88,9 +85,9 @@ unsafe extern "C" {
                                 lhs: MlirType, rhs: MlirType) -> MlirAttribute;
     fn traitClaimTypeGetEquality(ctx: MlirContext,
                                  lhs: MlirType, rhs: MlirType) -> MlirType;
-    fn traitWitnessCertificateAttrGet(ctx: MlirContext,
-                                      redex: MlirType, contractum: MlirType,
-                                      impl_name: MlirStringRef) -> MlirAttribute;
+    fn traitWitnessAttrGet(ctx: MlirContext,
+                           predicate: MlirAttribute,
+                           impl_name: MlirStringRef) -> MlirAttribute;
     fn traitCoercePendingAccepts(input: MlirType, result: MlirType) -> bool;
     fn traitWitnessSeamAuditAccepts(module: MlirModule,
                                     redex: MlirType, contractum: MlirType,
@@ -643,40 +640,33 @@ pub fn carries_polymorphism(ty: Type) -> bool {
     unsafe { traitTypeCarriesPolymorphism(ty.to_raw()) }
 }
 
-/// Create an equality-arm `!trait.claim<lhs = rhs>` type. Returns `None` if the
-/// endpoints are not receipt-free.
+/// Create an equality-arm `!trait.claim<lhs = rhs>` type. Returns `None` if an
+/// endpoint contains a proven claim.
 pub fn equality_claim_type<'c>(ctx: &'c Context, lhs: Type<'c>, rhs: Type<'c>) -> Option<Type<'c>> {
     let ty = unsafe { Type::from_raw(traitClaimTypeGetEquality(ctx.to_raw(), lhs.to_raw(), rhs.to_raw())) };
     if ty.to_raw().ptr.is_null() { None } else { Some(ty) }
 }
 
-/// The `#trait.equality<lhs = rhs>` predicate attribute. Returns `None` if the
-/// endpoints are not receipt-free.
+/// The `#trait.equality<lhs = rhs>` predicate attribute. Returns `None` if an
+/// endpoint contains a proven claim.
 pub fn type_equality_attr<'c>(ctx: &'c Context, lhs: Type<'c>, rhs: Type<'c>) -> Option<Attribute<'c>> {
     let attr = unsafe { Attribute::from_raw(traitTypeEqualityAttrGet(ctx.to_raw(), lhs.to_raw(), rhs.to_raw())) };
     if attr.to_raw().ptr.is_null() { None } else { Some(attr) }
 }
 
-/// The `#trait.certificate<redex resolves contractum by @impl>` attribute frozen
-/// into a projection-resolution equality witness. Returns `None` if construction
-/// fails.
-pub fn witness_certificate_attr<'c>(ctx: &'c Context, redex: Type<'c>, contractum: Type<'c>, impl_name: &str) -> Option<Attribute<'c>> {
-    let attr = unsafe { Attribute::from_raw(traitWitnessCertificateAttrGet(
-        ctx.to_raw(), redex.to_raw(), contractum.to_raw(), StringRef::new(impl_name).to_raw())) };
+/// The `#trait.witness<predicate by @impl>` attribute pairing `predicate` (a
+/// type equality resolving a projection, or a `#trait.application` the impl
+/// discharges) with `impl_name` as the impl that witnesses it. Returns `None`
+/// if `predicate` is neither arm or construction fails.
+pub fn witness_attr<'c>(ctx: &'c Context, predicate: Attribute<'c>, impl_name: &str) -> Option<Attribute<'c>> {
+    let attr = unsafe { Attribute::from_raw(traitWitnessAttrGet(
+        ctx.to_raw(), predicate.to_raw(), StringRef::new(impl_name).to_raw())) };
     if attr.to_raw().ptr.is_null() { None } else { Some(attr) }
 }
 
-/// The `#trait.discharge<@Application[...] by @impl>` attribute naming `impl_name`
-/// as the discharger of the obligation `application` (a `#trait.application`
-/// attribute). Returns `None` if `application` is not a trait application.
-pub fn discharge_citation_attr<'c>(ctx: &'c Context, application: Attribute<'c>, impl_name: &str) -> Option<Attribute<'c>> {
-    let attr = unsafe { Attribute::from_raw(traitDischargeCitationAttrGet(
-        ctx.to_raw(), application.to_raw(), StringRef::new(impl_name).to_raw())) };
-    if attr.to_raw().ptr.is_null() { None } else { Some(attr) }
-}
-
-/// Create a projection-resolution `trait.witness`. `certificate` is a
-/// `#trait.certificate` attribute; `premises` are equality-claim values.
+/// Create a projection-resolution `trait.witness`. `certificate` is an
+/// equality-headed `#trait.witness` attribute; `premises` are equality-claim
+/// values.
 pub fn witness_proj_resolve<'c>(loc: Location<'c>, certificate: Attribute<'c>, premises: &[Value<'c, '_>], result_type: Type<'c>) -> Operation<'c> {
     build_op(OperationBuilder::new("trait.witness", loc)
         .add_attributes(&[(identifier(loc, "certificate"), certificate)])
@@ -723,7 +713,7 @@ pub fn coerce_unproven<'c>(loc: Location<'c>, input: Value<'c, '_>, result_type:
 
 /// Answer whether `input` and `result` could converge under the pending
 /// judgment a marked (unproven) `trait.coerce` carries: the same check
-/// `CoerceOp::verify` runs for the marked arm (receipts stripped, then
+/// `CoerceOp::verify` runs for the marked arm (proofs stripped, then
 /// projection unification with each projection an opaque variable, bare-
 /// projection aliases admitted). A consumer classifying a site against this
 /// answer before routing it to the marked form cannot disagree with the

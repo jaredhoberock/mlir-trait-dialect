@@ -98,7 +98,7 @@ def ClaimType : TypeDef<TraitDialect, "Claim", [
           !trait.claim<!A = !B>
 
       Introduced by `trait.witness` and consumed by `trait.coerce`. The
-      equality arm never carries a proof receipt; comparison on it is exact and
+      equality arm never carries a proof; comparison on it is exact and
       direction-blind.
 
     Consumers dispatch on the arm; a claim of one arm is never acceptable where
@@ -157,7 +157,7 @@ def ClaimType : TypeDef<TraitDialect, "Claim", [
     }
 
     // Build an equality-arm claim. The equality arm never carries a proof, so
-    // the receipt is null by construction.
+    // the proof field is null by construction.
     static ClaimType getEquality(MLIRContext *ctx, TypeEqualityAttr eq) {
       return ClaimType::get(ctx, eq, /*proof=*/nullptr);
     }

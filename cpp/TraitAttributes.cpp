@@ -48,10 +48,11 @@ struct TypeEqualityAttrStorage : public ::mlir::AttributeStorage {
 
 namespace mlir::trait {
 
-// Whether a type carries a proof receipt anywhere -- a proven claim spelled into
-// a position that forbids one. The equality arm and the projection-resolution
-// certificate both freeze receipt-free endpoints.
-static bool carriesReceipt(Type type) {
+// Whether any claim nested in the type is proven -- a proven claim spelled
+// into a position that forbids one. The equality arm and the
+// projection-resolution certificate both freeze endpoints that contain no
+// proven claim.
+static bool containsProvenClaim(Type type) {
   bool found = false;
   type.walk([&](Type sub) {
     if (auto claim = dyn_cast<ClaimType>(sub))
@@ -61,9 +62,9 @@ static bool carriesReceipt(Type type) {
   return found;
 }
 
-// Structural well-formedness of an equality proposition. Endpoints must be
-// receipt-free: a proven claim spelled into an endpoint would carry a proof
-// receipt into the arm that forbids one, re-creating the asymmetric proof
+// Structural well-formedness of an equality proposition. An endpoint must not
+// contain a proven claim: a proven claim spelled into an endpoint would carry a
+// proof into the arm that forbids one, re-creating the asymmetric proof
 // comparison the equality arm exists to avoid. Constructing the attribute does
 // not assert the equality; only a value of the enclosing claim type is
 // evidence.
@@ -73,8 +74,8 @@ LogicalResult TypeEqualityAttr::verify(
   if (!lhs || !rhs)
     return emitError() << "type equality requires two endpoint types";
 
-  if (carriesReceipt(lhs) || carriesReceipt(rhs))
-    return emitError() << "type-equality endpoints must be receipt-free";
+  if (containsProvenClaim(lhs) || containsProvenClaim(rhs))
+    return emitError() << "a type-equality endpoint must not contain a proven claim";
 
   return success();
 }
@@ -97,57 +98,41 @@ void TypeEqualityAttr::print(AsmPrinter &printer) const {
   printer << getLhs() << " = " << getRhs();
 }
 
-// A projection-resolution certificate cites an impl and freezes the equality it
-// establishes. The frozen endpoints' receipt-freeness is the stored
-// TypeEqualityAttr's own invariant, enforced when that equality is constructed,
-// so this checks only that both fields are present.
-LogicalResult WitnessCertificateAttr::verify(
+// Structural well-formedness of a witness: the predicate is one of the two arms
+// and an impl is named. An equality predicate's own invariant -- it contains no
+// proven claim -- is enforced when the `TypeEqualityAttr` is constructed, so
+// this checks only the arm and the presence of both fields.
+LogicalResult WitnessAttr::verify(
     llvm::function_ref<InFlightDiagnostic()> emitError,
-    TypeEqualityAttr equality, FlatSymbolRefAttr citedImpl) {
-  if (!equality)
-    return emitError() << "a projection-resolution certificate freezes an "
-                          "equality";
-  if (!citedImpl)
-    return emitError() << "a projection-resolution certificate must cite an impl";
+    Attribute predicate, FlatSymbolRefAttr impl) {
+  if (!predicate)
+    return emitError() << "a witness pairs a predicate with an impl";
+  if (!isa<TraitApplicationAttr, TypeEqualityAttr>(predicate))
+    return emitError() << "a witness predicate must be a trait application or "
+                          "a type equality, found " << predicate;
+  if (!impl)
+    return emitError() << "a witness must name the impl that witnesses it";
 
   return success();
 }
 
-Attribute WitnessCertificateAttr::parse(AsmParser &parser, Type) {
-  Type redex, contractum;
-  FlatSymbolRefAttr citedImpl;
-  if (parser.parseType(redex) || parser.parseKeyword("resolves") ||
-      parser.parseType(contractum) || parser.parseKeyword("by") ||
-      parser.parseAttribute(citedImpl))
+Attribute WitnessAttr::parse(AsmParser &parser, Type) {
+  FailureOr<Attribute> predicate = parseApplicationOrEqualityPredicate(parser);
+  if (failed(predicate))
+    return {};
+  FlatSymbolRefAttr impl;
+  if (parser.parseKeyword("by") || parser.parseAttribute(impl))
     return {};
   auto err = [&]() { return parser.emitError(parser.getNameLoc()); };
-  auto equality =
-      TypeEqualityAttr::getChecked(err, parser.getContext(), redex, contractum);
-  if (!equality)
-    return {};
-  return WitnessCertificateAttr::getChecked(err, parser.getContext(), equality,
-                                            citedImpl);
+  return WitnessAttr::getChecked(err, parser.getContext(), *predicate, impl);
 }
 
-void WitnessCertificateAttr::print(AsmPrinter &printer) const {
-  printer << getRedex() << " resolves " << getContractum() << " by "
-          << getCitedImpl();
-}
-
-Attribute DischargeCitationAttr::parse(AsmParser &parser, Type) {
-  auto application =
-      dyn_cast_or_null<TraitApplicationAttr>(TraitApplicationAttr::parse(parser, {}));
-  FlatSymbolRefAttr dischargingImpl;
-  if (!application || parser.parseKeyword("by") ||
-      parser.parseAttribute(dischargingImpl))
-    return {};
-  return DischargeCitationAttr::get(parser.getContext(), application,
-                                    dischargingImpl);
-}
-
-void DischargeCitationAttr::print(AsmPrinter &printer) const {
-  getApplication().print(printer);
-  printer << " by " << getDischargingImpl();
+void WitnessAttr::print(AsmPrinter &printer) const {
+  if (auto app = dyn_cast<TraitApplicationAttr>(getPredicate()))
+    app.print(printer);
+  else
+    cast<TypeEqualityAttr>(getPredicate()).print(printer);
+  printer << " by " << getImplRef();
 }
 
 void TraitDialect::registerAttributes() {

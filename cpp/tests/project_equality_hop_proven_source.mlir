@@ -6,7 +6,7 @@
 // The equality hop, from a proven and from an unproven source. Proofness parity
 // would force a proven source to project to a proven result, but an equality
 // claim is never proven, so the equality arm is exempt: the proven claim of
-// @Has[i32] projects to !trait.proj<@Has[i32], "Out"> = i64 with no receipt on
+// @Has[i32] projects to !trait.proj<@Has[i32], "Out"> = i64 with no proof on
 // the result. The unproven source (@f) prints the same hop with no `by`, so the
 // candidate-set membership accepts the requirement specialized at the source
 // application from either source.

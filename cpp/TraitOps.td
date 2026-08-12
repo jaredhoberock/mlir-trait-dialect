@@ -386,7 +386,7 @@ def ImplOp : TraitDialectOp<"impl", [
     A premise may cite a CONDITIONAL sibling impl, whose own assumptions must
     then be discharged for the citation to be legal. The optional `discharges`
     array names, per obligation, the impl that supplies it; the discharge
-    recursion is the `DischargeCitationAttr` contract, which the premise audit
+    recursion is the citation-discharge contract, which the premise audit
     replays and which resolves every discharger by symbol without scanning the
     module.
   }];
@@ -395,10 +395,10 @@ def ImplOp : TraitDialectOp<"impl", [
     SymbolNameAttr:$sym_name,
     TraitApplicationAttr:$self_application,
     PredicateArrayAttr:$assumptions,
-    OptionalAttr<TypedArrayAttrBase<WitnessCertificateAttr,
-        "array of projection-resolution certificates">>:$premises,
-    OptionalAttr<TypedArrayAttrBase<DischargeCitationAttr,
-        "array of obligation discharge citations">>:$discharges
+    OptionalAttr<TypedArrayAttrBase<WitnessAttr,
+        "array of projection-resolution certificate witnesses">>:$premises,
+    OptionalAttr<TypedArrayAttrBase<WitnessAttr,
+        "array of obligation discharge witnesses">>:$discharges
   );
   let regions = (region SizedRegion<1>:$body);
 
@@ -602,6 +602,7 @@ def ImplOp : TraitDialectOp<"impl", [
   ];
 
   let hasCustomAssemblyFormat = 1;
+  let hasVerifier = 1;
 }
 
 
@@ -1034,7 +1035,7 @@ def WitnessOp : TraitDialectOp<"witness", [
     OptionalAttr<FlatSymbolRefAttr>:$proof, // refers to trait.proof or trait.impl
     OptionalAttr<TraitApplicationAttr>:$trait_application,
     // Equality arm.
-    OptionalAttr<WitnessCertificateAttr>:$certificate, // proj-resolve leaf
+    OptionalAttr<WitnessAttr>:$certificate,           // proj-resolve leaf
     UnitAttr:$refl,                                     // refl leaf
     Variadic<Claim>:$premises
   );
@@ -1050,7 +1051,7 @@ def WitnessOp : TraitDialectOp<"witness", [
     }]>,
     // Equality proj-resolve arm.
     OpBuilder<(ins "::mlir::trait::TypeEqualityAttr":$equality,
-                   "::mlir::trait::WitnessCertificateAttr":$certificate,
+                   "::mlir::trait::WitnessAttr":$certificate,
                    "::mlir::ValueRange":$premises), [{
       MLIRContext* ctx = $_builder.getContext();
       ClaimType claimTy = ClaimType::getEquality(ctx, equality);
@@ -1112,9 +1113,9 @@ def CoerceOp : TraitDialectOp<"coerce", [
     equality's endpoints to walks that classify theory content.
 
     The verdict is a pure function of op, operands, and attributes:
-      1. application-claim receipts are stripped uniformly from the input and
+      1. application-claim proofs are stripped uniformly from the input and
          result types -- comparison is modulo the label, permanently;
-      2. a coerce may not relate two application spellings whose receipts name
+      2. a coerce may not relate two application spellings whose proofs name
          different proofs (the no-proof-swap clause): stripping is symmetric,
          but exchanging which impl proves a claim is refused;
       3. ground congruence closure over the subterm DAG of the two endpoints
@@ -1137,7 +1138,7 @@ def CoerceOp : TraitDialectOp<"coerce", [
     equalities cannot be cited yet because the impl that supplies them is minted
     only at monomorphization (a compiler auto-rule head). A marked coerce cites
     nothing -- `equalities` must be empty -- and stands in a pending judgment:
-    with the receipts stripped and the no-proof-swap clause enforced exactly as
+    with the proofs stripped and the no-proof-swap clause enforced exactly as
     above, the endpoints must unify where every `!trait.proj` term is a shared
     unification variable keyed by the projection itself (the same projection is
     one variable and cannot stand for two types) and every other position is

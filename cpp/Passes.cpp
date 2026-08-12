@@ -804,7 +804,7 @@ static LogicalResult requireMonomorphicOperands(Operation *op,
 /// instead.
 ///
 /// This gate governs the application arm only. An equality-arm claim carries no
-/// proof receipt: its evidence is the value itself, established at the witness
+/// proof: its evidence is the value itself, established at the witness
 /// or contractually assumed at the parameter. There is nothing to await, so an
 /// equality operand is settled the moment the call is otherwise eligible, and
 /// the callee specializes against it directly. A monomorphic equality whose
@@ -1551,7 +1551,7 @@ static Type resolveGroundProjections(
 /// two endpoints ground-resolve to one spelling through impls whose obligations
 /// hold.
 ///
-/// An equality claim carries no proof receipt -- its evidence is the value
+/// An equality claim carries no proof -- its evidence is the value
 /// itself -- so unlike an application claim it is never "proven"; it is
 /// discharged instead when the projections in its endpoints resolve and the two
 /// endpoints meet at one ground type. Each projection resolves first from what
@@ -1626,8 +1626,8 @@ mintProjectionResolveCertificate(ProjectionType proj, Location loc,
     }
   }
   TypeEqualityAttr equality = TypeEqualityAttr::get(ctx, Type(proj), *binding);
-  auto cert = WitnessCertificateAttr::get(
-      ctx, equality,
+  auto cert = WitnessAttr::get(
+      ctx, Attribute(equality),
       FlatSymbolRefAttr::get(ctx, resolvedImpl->impl.getSymName()));
   Value witness =
       WitnessOp::create(witnessBuilder, loc, equality, cert, obligationPremises)
@@ -1758,7 +1758,7 @@ static Type resolveGroundProjectionsRecorded(Type type,
 /// under the derived claim's specialization. The rounds above resolve a
 /// where-clause projection over impl variables to its ground spelling on the
 /// operand value: `ResolveProjectionsPattern` drifts the application,
-/// provenness-blind, and `respellProvenClaimsInPlace` then stamps a receipt onto
+/// provenness-blind, and `respellProvenClaimsInPlace` then stamps a proof onto
 /// that drifted claim exactly when the resolver's memo proves its resolved form,
 /// leaving an unprovable one unproven. Meanwhile the derive verifier recomputes
 /// the assumption by pure substitution and leaves the projection symbolic -- so
@@ -1780,7 +1780,7 @@ static Type resolveGroundProjectionsRecorded(Type type,
 ///
 /// Only a proven operand is bridged, because provenness is exactly the
 /// resolver's verdict on the drift. Projection resolution drifts the application
-/// provenness-blind; the receipt-stamping sweep then marks a drifted claim
+/// provenness-blind; the proof-stamping sweep then marks a drifted claim
 /// proven exactly when its resolved form is provable, so a proven drift is one
 /// the resolver proved and is sound to bridge. A bare unproven operand is a
 /// drift the resolver could not prove, and is left for the verifier to refuse:
@@ -2352,14 +2352,14 @@ struct EraseCoerceOp : public OpConversionPattern<CoerceOp> {
     // and may not cross the barrier unjudged: every claim-to-claim coerce that
     // reaches the barrier live, proven or marked, is judged here (one dropped as
     // dead earlier, during instantiate-monomorphs, forwarded no value and so needs
-    // no judgment). Comparison strips application-claim receipts, exactly as the verifier does:
-    // a coerce compares modulo the receipt permanently, so exchanging a proof
+    // no judgment). Comparison strips application-claim proofs, exactly as the verifier does:
+    // a coerce compares modulo the proof permanently, so exchanging a proof
     // label alone is not a surviving difference. (The value-carrying arm below
-    // needs no strip; the values it forwards are receipt-free.)
+    // needs no strip; the values it forwards carry no proof.)
     ValueRange input = adaptor.getInput();
     if (input.empty() || op.getResult().use_empty()) {
-      if (stripClaimReceipts(op.getInput().getType()) !=
-          stripClaimReceipts(op.getResult().getType()))
+      if (stripClaimProofs(op.getInput().getType()) !=
+          stripClaimProofs(op.getResult().getType()))
         return rewriter.notifyMatchFailure(
             op, "a coerce whose endpoints still differ after conversion is not "
                 "discharged and cannot cross the erase barrier");

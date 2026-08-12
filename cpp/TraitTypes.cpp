@@ -414,14 +414,14 @@ static ModuleOp getAnchorModule(Operation *anchor) {
 }
 
 // A claim's predicate is one of exactly two arms; the equality arm never
-// carries a proof receipt.
+// carries a proof.
 LogicalResult ClaimType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
                                 Attribute predicate, FlatSymbolRefAttr proof) {
   if (isa<TraitApplicationAttr>(predicate))
     return success();
   if (isa<TypeEqualityAttr>(predicate)) {
     if (proof)
-      return emitError() << "an equality claim may not carry a proof receipt";
+      return emitError() << "an equality claim may not carry a proof";
     return success();
   }
   return emitError() << "claim predicate must be a trait application or a type "
@@ -522,7 +522,7 @@ Type ClaimType::parse(AsmParser& p) {
     return {};
 
   if (auto app = dyn_cast<TraitApplicationAttr>(*pred)) {
-    // An application claim may carry a `by @proof` receipt.
+    // An application claim may carry a `by @proof`.
     FlatSymbolRefAttr proof;
     if (succeeded(p.parseOptionalKeyword("by"))) {
       if (p.parseAttribute(proof))
@@ -534,12 +534,12 @@ Type ClaimType::parse(AsmParser& p) {
     return claim ? Type(claim) : Type();
   }
 
-  // The equality arm never carries a proof receipt; refuse `by @...` here so
-  // the receipt-free invariant holds at parse as well as at construction.
+  // The equality arm never carries a proof; refuse `by @...` here so the
+  // no-proof invariant holds at parse as well as at construction.
   auto eq = cast<TypeEqualityAttr>(*pred);
   if (succeeded(p.parseOptionalKeyword("by"))) {
     p.emitError(p.getNameLoc(),
-                "an equality claim may not carry a proof receipt");
+                "an equality claim may not carry a proof");
     return {};
   }
   if (p.parseGreater())
@@ -878,10 +878,10 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
     }
 
     // Naming an unconditional impl is not the same as proving this claim: the
-    // receipt could cite an impl of a different trait, or of this trait at
+    // proof could cite an impl of a different trait, or of this trait at
     // arguments the claim does not meet, and nothing above has compared the two.
     // Specialize the impl's own self claim to the proven claim -- the same
-    // citation audit the witness seam runs -- so a receipt whose impl cannot
+    // citation audit the witness seam runs -- so a proof whose impl cannot
     // specialize to its claim is refused here rather than trusted to a leaf.
     if (failed(impl.buildSubstitutionForSelfClaim(proven, err)))
       return failure();

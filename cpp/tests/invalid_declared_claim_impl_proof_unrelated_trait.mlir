@@ -3,12 +3,12 @@
 
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(resolve-impls-trait)' -verify-diagnostics
 
-// A `by @impl` receipt naming a bare unconditional impl is audited the same way
-// a `by @proof` receipt is: the impl's own self claim must specialize to the
-// claim the receipt annotates. Here the signature claims @Other[...] but names
+// A `by @impl` proof naming a bare unconditional impl is audited the same way a
+// `by @proof` is: the impl's own self claim must specialize to the claim the
+// proof annotates. Here the signature claims @Other[...] but names
 // @HasPart_i64, an impl of an entirely different trait. Naming an unconditional
 // impl is not proving the claim, so the mismatch must be refused where the
-// receipt is declared rather than trusted through to a leaf binding.
+// proof is declared rather than trusted through to a leaf binding.
 
 trait.trait @HasPart[!trait.poly<0>] {
   trait.assoc_type @Part

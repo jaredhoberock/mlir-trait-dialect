@@ -418,6 +418,31 @@ void TraitOp::print(OpAsmPrinter &p) {
 // ImplOp
 //===----------------------------------------------------------------------===//
 
+// The two witness arrays share one attribute shape but split by predicate arm:
+// a `premises` witness resolves an equality (a projection-resolution
+// certificate), a `discharges` witness names an application obligation. This
+// local check restores the static shape guarantee the two former element types
+// carried, so the symbol-use audit below reads a premise's equality endpoints
+// without first testing the arm.
+LogicalResult ImplOp::verify() {
+  if (ArrayAttr premises = getPremisesAttr())
+    for (Attribute entry : premises) {
+      auto witness = cast<WitnessAttr>(entry);
+      if (!isa<TypeEqualityAttr>(witness.getPredicate()))
+        return emitOpError() << "an impl premise must witness an equality, found "
+                             << witness.getPredicate();
+    }
+  if (ArrayAttr discharges = getDischargesAttr())
+    for (Attribute entry : discharges) {
+      auto witness = cast<WitnessAttr>(entry);
+      if (!isa<TraitApplicationAttr>(witness.getPredicate()))
+        return emitOpError()
+               << "an impl discharge must witness a trait application, found "
+               << witness.getPredicate();
+    }
+  return success();
+}
+
 LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   auto errFn = [&]{ return emitOpError(); };
 
@@ -464,15 +489,15 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (ArrayAttr premises = getPremisesAttr()) {
     SmallVector<TraitApplicationAttr> obligationPremises(
         getAssumptions().getApplications());
-    SmallVector<DischargeCitationAttr> dischargeCitations;
+    SmallVector<WitnessAttr> dischargeWitnesses;
     if (ArrayAttr discharges = getDischargesAttr())
       for (Attribute entry : discharges)
-        dischargeCitations.push_back(cast<DischargeCitationAttr>(entry));
+        dischargeWitnesses.push_back(cast<WitnessAttr>(entry));
     for (Attribute entry : premises) {
-      auto cert = dyn_cast<WitnessCertificateAttr>(entry);
-      if (!cert)
-        return emitOpError() << "premise entry must be a projection-resolution "
-                                "certificate, found " << entry;
+      // The array's element type gives a WitnessAttr, and ImplOp::verify has
+      // already required every premise equality-headed, so the endpoints read
+      // off the equality below.
+      auto cert = cast<WitnessAttr>(entry);
       auto redexProj = dyn_cast<ProjectionType>(cert.getRedex());
       if (!redexProj)
         return emitOpError() << "premise redex must be a projection, found "
@@ -488,12 +513,12 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
                                 "ground sibling projection";
       SpecializationMap subst;
       if (failed(auditProjResolveCertificate(
-              *module, cert.getRedex(), cert.getContractum(), cert.getCitedImpl(),
-              /*premises=*/{}, errFn, obligationPremises, dischargeCitations,
+              *module, cert.getRedex(), cert.getContractum(), cert.getImplRef(),
+              /*premises=*/{}, errFn, obligationPremises, dischargeWitnesses,
               /*rigidHeadMatch=*/true, &subst)))
         return failure();
       auto citedImpl = mlir::SymbolTable::lookupNearestSymbolFrom<ImplOp>(
-          *module, cert.getCitedImpl());
+          *module, cert.getImplRef());
       premiseRules.push_back(
           {citedImpl, redexProj.getTraitApplication(), std::move(subst)});
     }
@@ -1497,7 +1522,7 @@ ParseResult WitnessOp::parse(OpAsmParser &p, OperationState& result) {
     auto equality = TypeEqualityAttr::getChecked(err, ctx, redex, contractum);
     if (!equality)
       return failure();
-    auto cert = WitnessCertificateAttr::getChecked(err, ctx, equality, citedImpl);
+    auto cert = WitnessAttr::getChecked(err, ctx, Attribute(equality), citedImpl);
     if (!cert)
       return failure();
     result.addAttribute("certificate", cert);
@@ -1577,7 +1602,7 @@ ParseResult WitnessOp::parse(OpAsmParser &p, OperationState& result) {
 void WitnessOp::print(OpAsmPrinter &p) {
   if (auto cert = getCertificateAttr()) {
     p << " proj_resolve " << cert.getRedex() << " resolves "
-      << cert.getContractum() << " by " << cert.getCitedImpl();
+      << cert.getContractum() << " by " << cert.getImplRef();
     if (!getPremises().empty()) {
       p << " given";
       printTypedOperandList(p, getPremises());
@@ -1709,7 +1734,7 @@ static SmallVector<ClaimType> specializeAssumptionsThroughSubst(
 static bool dischargeApplicationObligation(
     ModuleOp module, Type want, ArrayRef<TypeEqualityAttr> premises,
     ArrayRef<TraitApplicationAttr> obligationPremises,
-    ArrayRef<DischargeCitationAttr> dischargeCitations,
+    ArrayRef<WitnessAttr> dischargeWitnesses,
     SmallVectorImpl<TraitApplicationAttr> &inProgress,
     llvm::function_ref<InFlightDiagnostic()> err) {
   MLIRContext *ctx = module.getContext();
@@ -1727,7 +1752,7 @@ static bool dischargeApplicationObligation(
 
   // Arm (ii): a declared discharge citation names the obligation and an impl
   // that supplies it.
-  for (DischargeCitationAttr citation : dischargeCitations) {
+  for (WitnessAttr citation : dischargeWitnesses) {
     ClaimType citedApp = ClaimType::get(ctx, citation.getApplication());
     auto citedOr = applyEqualityPremises(Type(citedApp), premises, err);
     if (failed(citedOr) || *citedOr != want)
@@ -1736,7 +1761,7 @@ static bool dischargeApplicationObligation(
       continue; // cycle: this path grounds nothing
 
     auto dischargerOp = SymbolTable::lookupNearestSymbolFrom<ImplOp>(
-        module, citation.getDischargingImpl());
+        module, citation.getImplRef());
     if (!dischargerOp)
       continue;
 
@@ -1758,7 +1783,7 @@ static bool dischargeApplicationObligation(
           applyEqualityPremises(Type(assumption.asUnproven()), premises, err);
       if (failed(subWantOr) ||
           !dischargeApplicationObligation(module, *subWantOr, premises,
-                                          obligationPremises, dischargeCitations,
+                                          obligationPremises, dischargeWitnesses,
                                           inProgress, err)) {
         allDischarged = false;
         break;
@@ -1777,7 +1802,7 @@ LogicalResult mlir::trait::auditProjResolveCertificate(
     ArrayRef<TypeEqualityAttr> premises,
     llvm::function_ref<InFlightDiagnostic()> err,
     ArrayRef<TraitApplicationAttr> obligationPremises,
-    ArrayRef<DischargeCitationAttr> dischargeCitations,
+    ArrayRef<WitnessAttr> dischargeWitnesses,
     bool rigidHeadMatch,
     SpecializationMap *outSubst) {
   auto redexProj = dyn_cast<ProjectionType>(redex);
@@ -1817,7 +1842,7 @@ LogicalResult mlir::trait::auditProjResolveCertificate(
                  << redexProj.getAssocName().getValue() << "'";
   Type resolved = subst->apply(*bound);
 
-  // Receipt-blind exact comparison. Projection-headed impl self-applications
+  // Proof-blind exact comparison. Projection-headed impl self-applications
   // do not first-order match; their audit matches modulo the cited equality
   // premises, applied to the resolved binding before comparison.
   auto resolvedOr = applyEqualityPremises(resolved, premises, err);
@@ -1834,7 +1859,7 @@ LogicalResult mlir::trait::auditProjResolveCertificate(
 
   // Obligation-discharge check. The cited impl's own assumptions -- specialized
   // through the same rigid head-match substitution -- must each be discharged,
-  // receipt-stripped and modulo the cited equality premises, by a hypothetical
+  // proof-stripped and modulo the cited equality premises, by a hypothetical
   // cover (arm i) or a declared discharge citation (arm ii). The impl's trait
   // requirements are deliberately not reached here (they may quantify over GAT
   // variables with no ground instance at the witness).
@@ -1846,7 +1871,7 @@ LogicalResult mlir::trait::auditProjResolveCertificate(
       return failure();
     SmallVector<TraitApplicationAttr> inProgress;
     if (!dischargeApplicationObligation(module, *wantOr, premises,
-                                        obligationPremises, dischargeCitations,
+                                        obligationPremises, dischargeWitnesses,
                                         inProgress, err))
       return err() << "cited impl '" << citedImpl
                    << "' has an undischarged assumption " << assumption
@@ -1904,7 +1929,13 @@ LogicalResult WitnessOp::verify() {
       // passes birth (identity), the clone-substituted state, and ground, and
       // rejects any non-substitution mangling. It is structural and local -- no
       // module lookup -- so the pair is matched with a null module.
-      WitnessCertificateAttr cert = getCertificateAttr();
+      WitnessAttr cert = getCertificateAttr();
+      // The certificate slot carries a proj-resolve leaf, so its predicate is an
+      // equality; a coerce discharge's application-headed witness has no place
+      // here. Guard before reading the endpoints off the equality.
+      if (!isa<TypeEqualityAttr>(cert.getPredicate()))
+        return emitOpError() << "a proj-resolve certificate must witness an "
+                                "equality";
       MLIRContext *ctx = getContext();
       Type frozenPair = TupleType::get(ctx, {cert.getRedex(), cert.getContractum()});
       Type currentPair = TupleType::get(ctx, {eq.getLhs(), eq.getRhs()});
@@ -1920,7 +1951,7 @@ LogicalResult WitnessOp::verify() {
     // derived from the leaf equality premises by replaying the ground congruence
     // closure -- the transitivity and congruence that carry the premises to the
     // result are never stored, only the leaves are, so the admission law holds.
-    // An equality claim carries no proof receipt by that law, so there is no
+    // An equality claim carries no proof by that law, so there is no
     // proof-swap for this arm to police.
     //
     // The composition arm is the only equality leaf whose evidence is another
@@ -1997,7 +2028,7 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
           applicationPremises.push_back(claim.getTraitApplication());
       }
     return auditProjResolveCertificate(
-        module, cert.getRedex(), cert.getContractum(), cert.getCitedImpl(),
+        module, cert.getRedex(), cert.getContractum(), cert.getImplRef(),
         equalityPremises, errFn, applicationPremises);
   }
 
@@ -2327,7 +2358,7 @@ static TermShape decomposeTerm(Type t) {
       s.children.push_back(eq.getRhs());
       return s;
     }
-    // Application receipts are compared modulo the proof, so the key ignores it.
+    // Application claims are compared modulo the proof, so the key ignores it.
     auto app = claim.getTraitApplication();
     s.key = ArrayAttr::get(
         ctx, {StringAttr::get(ctx, "trait.claim.app"), app.getTraitName()});
@@ -2591,28 +2622,28 @@ void CoerceOp::print(OpAsmPrinter &p) {
 // The one ground-entailment decision the witness composition arm and
 // trait.coerce's proven arm share: whether `lhs` and `rhs` fall in one class of
 // the ground congruence closure seeded by the premise equalities. Application-
-// claim receipts are stripped from every endpoint first (comparison is modulo
-// the receipt, permanently). For the composition arm the transitivity and
+// claim proofs are stripped from every endpoint first (comparison is modulo
+// the proof, permanently). For the composition arm the transitivity and
 // congruence that carry the premises to the result are derived here at verify
 // and never stored, so the witness holds only its leaf premises and the
 // admission law holds.
 static bool entailedByGroundCongruence(Type lhs, Type rhs,
                                        ArrayRef<TypeEqualityAttr> premises) {
-  lhs = stripClaimReceipts(lhs);
-  rhs = stripClaimReceipts(rhs);
+  lhs = stripClaimProofs(lhs);
+  rhs = stripClaimProofs(rhs);
 
   GroundCongruence closure;
   closure.intern(lhs);
   closure.intern(rhs);
   for (TypeEqualityAttr eq : premises)
-    closure.seed(stripClaimReceipts(eq.getLhs()),
-                 stripClaimReceipts(eq.getRhs()));
+    closure.seed(stripClaimProofs(eq.getLhs()),
+                 stripClaimProofs(eq.getRhs()));
   closure.close();
 
   return closure.equal(lhs, rhs);
 }
 
-Type mlir::trait::stripClaimReceipts(Type type) {
+Type mlir::trait::stripClaimProofs(Type type) {
   AttrTypeReplacer strip;
   strip.addReplacement([](ClaimType claim) -> std::optional<Type> {
     if (claim.isProven())
@@ -2644,7 +2675,7 @@ Type mlir::trait::stripClaimReceipts(Type type) {
 // rigid constructor, a shape this form never licensed. Binding a projection to a
 // type that contains the projection itself is an unfoundable infinite type; it is
 // refused by an occurs check that also keeps the binding acyclic so the
-// resolution walks below terminate. Endpoints arrive with receipts already
+// resolution walks below terminate. Endpoints arrive with proofs already
 // stripped.
 LogicalResult mlir::trait::verifyPendingProjectionUnification(
     Type input, Type result,
@@ -2746,10 +2777,10 @@ LogicalResult mlir::trait::verifyPendingProjectionUnification(
 LogicalResult CoerceOp::verify() {
   // A verdict that is a pure function of op, operands, and attributes.
 
-  // 1. Strip application-claim receipts from the input and result. Comparison
-  // is modulo the receipt, permanently.
-  Type input = stripClaimReceipts(getInput().getType());
-  Type result = stripClaimReceipts(getResult().getType());
+  // 1. Strip application-claim proofs from the input and result. Comparison
+  // is modulo the proof, permanently.
+  Type input = stripClaimProofs(getInput().getType());
+  Type result = stripClaimProofs(getResult().getType());
 
   if (getUnproven()) {
     // The marked form cites nothing: its reconciling equalities are minted only
@@ -2781,11 +2812,11 @@ LogicalResult CoerceOp::verify() {
   }
 
   // 2. The no-proof-swap clause runs deep. The endpoints denote one claim once
-  // the equalities reconcile them, so a receipt present on the result and absent
+  // the equalities reconcile them, so a proof present on the result and absent
   // or different on the input is a swap the coerce may not perform -- at every
   // position an application claim sits, not only the root. Positions are paired
   // by walking the two endpoint trees in lockstep off the same decomposition the
-  // congruence closure keys on, over the unstripped types so the receipts are
+  // congruence closure keys on, over the unstripped types so the proofs are
   // still present.
   auto rejectProofSwap = [&](ClaimType fromClaim,
                              ClaimType toClaim) -> LogicalResult {
@@ -2795,11 +2826,11 @@ LogicalResult CoerceOp::verify() {
         fromClaim.getProof() != toClaim.getProof())
       return emitOpError() << "may not swap the proof backing claim "
                            << toClaim.getTraitApplication()
-                           << ": a coerce compares modulo a receipt but may not "
+                           << ": a coerce compares modulo a proof but may not "
                               "exchange it for another";
     return success();
   };
-  // Does a proven application-claim receipt sit anywhere in this type?
+  // Does a proven application claim sit anywhere in this type?
   std::function<bool(Type)> carriesProvenClaim = [&](Type t) -> bool {
     if (auto c = dyn_cast<ClaimType>(t))
       if (c.isApplication() && c.isProven())
@@ -2824,12 +2855,12 @@ LogicalResult CoerceOp::verify() {
     }
     // The two trees diverge in shape here, so no further positions pair. A proof
     // still standing on the result side has no input position to match and is a
-    // swap; a receipt-free divergence is the reconciliation the equalities
+    // swap; a proof-free divergence is the reconciliation the equalities
     // already licensed.
     if (carriesProvenClaim(out))
       return emitOpError() << "may not swap the proof backing a claim nested in "
                            << getResult().getType()
-                           << ": a coerce compares modulo a receipt but may not "
+                           << ": a coerce compares modulo a proof but may not "
                               "exchange it for another";
     return success();
   };
@@ -3472,7 +3503,7 @@ LogicalResult ProjectOp::verifySymbolUses(SymbolTableCollection &/*symbolTable*/
   // Verify proofness parity for an application result: a proven source projects
   // to a proven result, an unproven to an unproven. An equality result is
   // exempt -- an equality claim is never proven, so projecting one from a proven
-  // source does not force a receipt it cannot carry.
+  // source does not force a proof it cannot carry.
   if (!dst.isEquality()) {
     bool srcProven = src.isProven();
     bool dstProven = dst.isProven();

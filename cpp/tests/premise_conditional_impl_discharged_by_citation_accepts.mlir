@@ -30,10 +30,10 @@ trait.trait @Host[!S] {
   func.func private @make(!S) -> !trait.proj<@Sib[!S], "Elem">
 }
 
-// CHECK: trait.impl @Host_i64 for @Host[i64]premises [#trait<certificate!trait.proj<@Sib[i64], "Elem"> resolves i32 by @Sib_i64_cond>]discharges [#trait<discharge@Y[i64] by @Y_i64>]
+// CHECK: trait.impl @Host_i64 for @Host[i64]premises [#trait<witness!trait.proj<@Sib[i64], "Elem"> = i32 by @Sib_i64_cond>]discharges [#trait<witness@Y[i64] by @Y_i64>]
 trait.impl @Host_i64 for @Host[i64]
-    premises [#trait<certificate !trait.proj<@Sib[i64], "Elem"> resolves i32 by @Sib_i64_cond>]
-    discharges [#trait<discharge @Y[i64] by @Y_i64>] {
+    premises [#trait<witness !trait.proj<@Sib[i64], "Elem"> = i32 by @Sib_i64_cond>]
+    discharges [#trait<witness @Y[i64] by @Y_i64>] {
   func.func @make(%x: i64) -> i32 {
     %r = ub.poison : i32
     return %r : i32

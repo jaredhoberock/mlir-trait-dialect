@@ -7,7 +7,7 @@
 // the SAME application with one argument respelled through a cited child
 // equality. This is the shape a bridge cast produces when it respells a claim's
 // trait application. The proof backing the operand claim is PRESERVED on the
-// result (a respell compares modulo the receipt, never exchanges it), so the
+// result (a respell compares modulo the proof, never exchanges it), so the
 // deep no-swap clause is satisfied and the congruence closure lifts the child
 // equality through the application argument.
 
@@ -29,9 +29,9 @@ trait.impl @Safe_impl for @Safe[i32, i64] {
 
 trait.proof @Safe_proof proves @Safe_impl for @Safe[i32, i64] given []
 
-// CHECK-LABEL: func.func @respell_preserves_receipt
+// CHECK-LABEL: func.func @respell_preserves_proof
 // CHECK: trait.coerce %{{.*}} : !trait.claim<@Safe[i32, i64] by @Safe_proof> to !trait.claim<@Safe[i32, !trait.proj<@Conv[i1], "At">] by @Safe_proof>
-func.func @respell_preserves_receipt()
+func.func @respell_preserves_proof()
     -> !trait.claim<@Safe[i32, !trait.proj<@Conv[i1], "At">] by @Safe_proof> {
   %safe = trait.witness @Safe_proof for @Safe[i32, i64]
   %eq = trait.witness proj_resolve !trait.proj<@Conv[i1], "At"> resolves i64 by @Conv_i1

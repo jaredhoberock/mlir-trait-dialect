@@ -139,8 +139,8 @@ bool traitTypeIsGeneric(MlirType type);
 /// does, and is deleted by the same upstream query.
 bool traitTypeCarriesPolymorphism(MlirType type);
 
-/// Return the #trait.equality<lhs = rhs> predicate attribute. Endpoints must be
-/// receipt-free; returns a null attribute if construction fails.
+/// Return the #trait.equality<lhs = rhs> predicate attribute. An endpoint must
+/// not contain a proven claim; returns a null attribute if construction fails.
 MlirAttribute traitTypeEqualityAttrGet(MlirContext ctx,
                                        MlirType lhs, MlirType rhs);
 
@@ -149,20 +149,14 @@ MlirAttribute traitTypeEqualityAttrGet(MlirContext ctx,
 MlirType traitClaimTypeGetEquality(MlirContext ctx,
                                    MlirType lhs, MlirType rhs);
 
-/// Return the #trait.certificate<redex resolves contractum by @impl> attribute
-/// frozen into a projection-resolution equality witness. Returns a null
-/// attribute if construction fails.
-MlirAttribute traitWitnessCertificateAttrGet(MlirContext ctx,
-                                             MlirType redex, MlirType contractum,
-                                             MlirStringRef implName);
-
-/// Return the #trait.discharge<@Application[...] by @impl> attribute that names
-/// `implName` as the discharger of the obligation `application` (a
-/// `#trait.application` attribute). Returns a null attribute if `application` is
-/// not a trait application.
-MlirAttribute traitDischargeCitationAttrGet(MlirContext ctx,
-                                            MlirAttribute application,
-                                            MlirStringRef implName);
+/// Return the #trait.witness<predicate by @impl> attribute pairing `predicate`
+/// with `implName` as the impl that witnesses it. `predicate` is either a type
+/// equality (a projection-resolution certificate `redex = contractum`) or a
+/// `#trait.application` attribute (an obligation the impl discharges). Returns a
+/// null attribute if `predicate` is neither arm or construction fails.
+MlirAttribute traitWitnessAttrGet(MlirContext ctx,
+                                  MlirAttribute predicate,
+                                  MlirStringRef implName);
 
 /// Answer whether `input` and `result` converge under the pending judgment a
 /// marked coerce carries -- the check `CoerceOp::verify` runs for the marked arm

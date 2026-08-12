@@ -3,7 +3,7 @@
 
 // RUN: mlir-opt %s -verify-diagnostics -split-input-file
 
-// A coerce compares application receipts modulo the label, but may not exchange
+// A coerce compares application claims modulo the label, but may not exchange
 // one proof for another. The two endpoints denote one claim once reconciled, so
 // naming a different proof on the result than the input carries is a swap the
 // verifier refuses. Two impls of one application, each with its own proof, make
@@ -29,7 +29,7 @@ func.func @swap() -> !trait.claim<@Safe[i32, i64] by @Safe_proof_alt> {
 // -----
 
 // The swap clause runs deep: wrapping each claim in a container does not hide
-// the swap. The two tuples reconcile once receipts are stripped, but the result
+// the swap. The two tuples reconcile once proofs are stripped, but the result
 // tuple carries a different proof at its claim position than the input tuple, so
 // the position-wise check refuses it.
 

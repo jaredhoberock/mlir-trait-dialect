@@ -32,7 +32,7 @@ public:
 /// exactly this check on the same inputs. Looks the cited impl up in `module`,
 /// resolves the `redex` projection through the impl's associated-type binding
 /// specialized for the redex's trait application, applies the equality
-/// `premises`, and compares the result against `contractum` receipt-blind.
+/// `premises`, and compares the result against `contractum` proof-blind.
 /// Succeeds when the cited impl binds the redex to the contractum. `err` (never
 /// null) receives the diagnostic on refusal; a caller that treats refusal as a
 /// classification answer rather than an error suppresses it at the diagnostic
@@ -51,10 +51,10 @@ public:
 /// The audit additionally requires the cited impl's own assumptions --
 /// specialized for the redex's application -- each to be discharged: either by a
 /// hypothetical cover from the application-arm `obligationPremises` (the citing
-/// impl's own where clause), or by a `dischargeCitations` entry whose spelled
+/// impl's own where clause), or by a `dischargeWitnesses` entry whose spelled
 /// application is the assumption and whose named impl, specialized for it, has
 /// each of its own assumptions discharged in turn over the same finite citation
-/// list. Both compare receipt-stripped and modulo the equality `premises`. It
+/// list. Both compare proof-stripped and modulo the equality `premises`. It
 /// deliberately does not reach the cited impl's trait requirements, which may
 /// quantify over GAT variables with no ground instance at the witness;
 /// requirement discharge belongs to the proof and birth machinery. So a witness
@@ -64,14 +64,14 @@ LogicalResult auditProjResolveCertificate(
     ArrayRef<TypeEqualityAttr> premises,
     llvm::function_ref<InFlightDiagnostic()> err,
     ArrayRef<TraitApplicationAttr> obligationPremises = {},
-    ArrayRef<DischargeCitationAttr> dischargeCitations = {},
+    ArrayRef<WitnessAttr> dischargeWitnesses = {},
     bool rigidHeadMatch = false,
     SpecializationMap *outSubst = nullptr);
 
-/// Rewrite a type with every proven application-claim receipt stripped to its
-/// unproven form. Coerce comparison is modulo the receipt, permanently, so the
-/// pending judgment and its consult run over receipt-stripped endpoints.
-Type stripClaimReceipts(Type type);
+/// Rewrite a type with every proven application claim stripped to its unproven
+/// form. Coerce comparison is modulo the proof, permanently, so the pending
+/// judgment and its consult run over proof-stripped endpoints.
+Type stripClaimProofs(Type type);
 
 /// The pending judgment a marked (unproven) coerce carries, factored so that
 /// `CoerceOp::verify`, the instantiate lie-catch (which adds a birth-spelling
@@ -82,7 +82,7 @@ Type stripClaimReceipts(Type type);
 /// A projection may resolve to a projection-free position or to another bare
 /// projection (a direct alias, both owed a grounding at discharge); a binding
 /// that resolves to a composite still carrying a projection, or that closes a
-/// cycle, is refused. Endpoints arrive with receipts already stripped. `err`
+/// cycle, is refused. Endpoints arrive with proofs already stripped. `err`
 /// (never null) receives the diagnostic on refusal; a caller that treats refusal
 /// as a classification answer suppresses it at the diagnostic engine.
 LogicalResult verifyPendingProjectionUnification(

@@ -33,8 +33,8 @@ trait.trait @Host[!S] {
 
 // expected-error @below {{cited impl '@Sib_i64_cond' has an undischarged assumption '!trait.claim<@Y[i64]>'; the witness premises do not supply it}}
 trait.impl @Host_i64 for @Host[i64]
-    premises [#trait<certificate !trait.proj<@Sib[i64], "Elem"> resolves i32 by @Sib_i64_cond>]
-    discharges [#trait<discharge @Y[i64] by @Y_cond>] {
+    premises [#trait<witness !trait.proj<@Sib[i64], "Elem"> = i32 by @Sib_i64_cond>]
+    discharges [#trait<witness @Y[i64] by @Y_cond>] {
   func.func @make(%x: i64) -> i32 {
     %r = ub.poison : i32
     return %r : i32

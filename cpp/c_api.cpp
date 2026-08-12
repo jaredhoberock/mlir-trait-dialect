@@ -391,39 +391,23 @@ MlirType traitClaimTypeGetEquality(MlirContext wrappedCtx,
   return wrap(ClaimType::getEquality(ctx, eq));
 }
 
-MlirAttribute traitWitnessCertificateAttrGet(MlirContext wrappedCtx,
-                                             MlirType redex, MlirType contractum,
-                                             MlirStringRef implName) {
+MlirAttribute traitWitnessAttrGet(MlirContext wrappedCtx,
+                                  MlirAttribute predicate,
+                                  MlirStringRef implName) {
   MLIRContext *ctx = unwrap(wrappedCtx);
   auto err = [&] { return emitError(UnknownLoc::get(ctx)); };
-  auto equality =
-      TypeEqualityAttr::getChecked(err, ctx, unwrap(redex), unwrap(contractum));
-  if (!equality)
-    return {};
   FlatSymbolRefAttr implRef =
       FlatSymbolRefAttr::get(ctx, StringRef(implName.data, implName.length));
-  auto cert = WitnessCertificateAttr::getChecked(err, ctx, equality, implRef);
-  return wrap(cert);
-}
-
-MlirAttribute traitDischargeCitationAttrGet(MlirContext wrappedCtx,
-                                            MlirAttribute application,
-                                            MlirStringRef implName) {
-  MLIRContext *ctx = unwrap(wrappedCtx);
-  auto app = dyn_cast<TraitApplicationAttr>(unwrap(application));
-  if (!app)
-    return {};
-  FlatSymbolRefAttr implRef =
-      FlatSymbolRefAttr::get(ctx, StringRef(implName.data, implName.length));
-  return wrap(DischargeCitationAttr::get(ctx, app, implRef));
+  auto witness = WitnessAttr::getChecked(err, ctx, unwrap(predicate), implRef);
+  return wrap(witness);
 }
 
 bool traitCoercePendingAccepts(MlirType input, MlirType result) {
-  // The consult runs the verifier's own marked arm: strip receipts, then the
+  // The consult runs the verifier's own marked arm: strip proofs, then the
   // shared projection-unification judgment. Sharing the function keeps the
   // classifier's verdict and the codegen-exit verifier's from ever disagreeing.
-  Type in = stripClaimReceipts(unwrap(input));
-  Type out = stripClaimReceipts(unwrap(result));
+  Type in = stripClaimProofs(unwrap(input));
+  Type out = stripClaimProofs(unwrap(result));
   MLIRContext *ctx = in.getContext();
   // A refused pending judgment is a classification answer, not a compile error,
   // so swallow the diagnostics the shared judgment emits on refusal.
@@ -461,12 +445,12 @@ bool traitWitnessSeamAuditAccepts(MlirModule wrappedModule,
 
   // The declared discharge citations that cover a cited conditional impl's own
   // assumptions.
-  SmallVector<DischargeCitationAttr> dischargeCitations;
+  SmallVector<WitnessAttr> dischargeWitnesses;
   for (intptr_t i = 0; i < numDischarges; ++i) {
-    auto citation = dyn_cast<DischargeCitationAttr>(unwrap(discharges[i]));
-    if (!citation)
+    auto citation = dyn_cast<WitnessAttr>(unwrap(discharges[i]));
+    if (!citation || !isa<TraitApplicationAttr>(citation.getPredicate()))
       return false;
-    dischargeCitations.push_back(citation);
+    dischargeWitnesses.push_back(citation);
   }
 
   // A refused audit is a classification answer, not a compile error, so swallow
@@ -475,7 +459,7 @@ bool traitWitnessSeamAuditAccepts(MlirModule wrappedModule,
   auto err = [&] { return emitError(UnknownLoc::get(ctx)); };
   return succeeded(auditProjResolveCertificate(
       module, unwrap(redex), unwrap(contractum), implRef, equalityPremises, err,
-      applicationPremises, dischargeCitations, rigidHeadMatch));
+      applicationPremises, dischargeWitnesses, rigidHeadMatch));
 }
 
 bool traitClaimProjectsTo(MlirModule wrappedModule, MlirType srcClaim,

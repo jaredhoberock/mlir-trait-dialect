@@ -39,8 +39,9 @@ namespace mlir { class AsmParser; }
 namespace mlir::trait {
 
 /// Parse one where-clause predicate: an application `@Trait[types...]` yielding a
-/// TraitApplicationAttr, or an equality `!A = !B` yielding a receipt-checked
-/// TypeEqualityAttr, disambiguated by the leading `@`. This is the single grammar
+/// TraitApplicationAttr, or an equality `!A = !B` yielding a checked
+/// TypeEqualityAttr whose endpoints carry no proven claim, disambiguated by the
+/// leading `@`. This is the single grammar
 /// the claim type, the predicate array, and trait.assume each read; a `by @proof`
 /// tail (allowed only on an application claim) is the caller's to add. Fails on a
 /// malformed predicate, having emitted the diagnostic where the endpoints are

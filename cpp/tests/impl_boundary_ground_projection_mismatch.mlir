@@ -29,7 +29,7 @@ trait.trait @Host[!S] {
 // expected-error @below {{type mismatch: expected 'i32' but found 'i64'}}
 // expected-error @below {{has incompatible signature}}
 trait.impl @Host_i64 for @Host[i64]
-    premises [#trait<certificate !trait.proj<@Sibling[i64], "Elem"> resolves i32 by @Sibling_i64>] {
+    premises [#trait<witness !trait.proj<@Sibling[i64], "Elem"> = i32 by @Sibling_i64>] {
   trait.assoc_type @Out = i64
   // The sibling projection resolves to i32, but this method returns i64.
   func.func @make(%x: i64) -> i64 {
