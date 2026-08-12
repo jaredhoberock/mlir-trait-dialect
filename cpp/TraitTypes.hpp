@@ -685,8 +685,7 @@ inline void walkEqualityEndpoints(Type root,
 // this walks a Type and looks for any occurrence of the given NeedleType.
 // Equality-claim endpoints are opaque to Type::walk, so this also routes through
 // the demand-walk accessor: a needle reachable only inside an equality endpoint
-// is still found. This is the opacity boundary theory-classification callers
-// (opMentionsType, the resolve-projection gate, the erase backstop) cross.
+// is still found.
 template<class NeedleType> bool containsType(Type ty) {
   bool found = false;
   ty.walk([&](Type sub) {

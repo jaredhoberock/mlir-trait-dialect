@@ -454,8 +454,7 @@ struct ProveClaimResultPattern : public RewritePattern {
 
     // An equality claim is never proven by impl selection; a projection hop to a
     // trait's equality requirement is established by the requirement itself and
-    // discharged when its endpoints ground-resolve at the leftover check. This
-    // pattern only mints application-arm evidence.
+    // discharged when its endpoints ground-resolve at the leftover check.
     if (claim.isEquality())
       return rewriter.notifyMatchFailure(op, "equality claim is not impl-proved");
 
@@ -1574,9 +1573,8 @@ static bool equalityClaimGroundResolvesToOneSpelling(
   auto eq = claim.getEqualityAttr();
   if (!eq)
     return false;
-  // Each projection resolves through the recorded facts first, then impl
-  // selection; the bound is shared with the reduction that follows a settled
-  // chain.
+  // Resolve each endpoint's ground projections to the shared hop bound
+  // (recorded facts first, then impl selection -- see the helpers).
   auto resolveEndpoint = [&](Type endpoint) -> Type {
     return resolveGroundProjections(endpoint, [&](ProjectionType proj) {
       return resolveProjectionHop(proj, reading, resolver, builder);
@@ -1712,12 +1710,8 @@ static LogicalResult reduceGroundEqualityAssume(
     return success();
   }
 
-  // Each projection endpoint resolves to ground through per-hop proj-resolve
-  // certificates minted at the assume, one citing the impl that binds each hop.
-  // A lone certificate that already proves the result equality is that witness;
-  // otherwise the hops compose to it below. The witnesses insert at the assume
-  // (through `builder`); premise proofs go to the module body (through
-  // `proofBuilder`).
+  // Mint each endpoint's per-hop resolution chain (see the function doc);
+  // no premises means the endpoints did not ground-resolve.
   SmallVector<Value> premises;
   if (failed(mintProjectionResolveChain(lhs, loc, reading, resolver, builder,
                                         proofBuilder, premises)) ||
@@ -1727,9 +1721,8 @@ static LogicalResult reduceGroundEqualityAssume(
   if (premises.empty())
     return failure();
 
-  // A sole certificate that already proves the result equality outright is the
-  // witness; otherwise the hops' certificates compose to it, whose ground
-  // congruence closure carries the endpoints together and is direction-blind.
+  // A sole certificate that already proves the result equality is the witness;
+  // otherwise the hops' certificates compose to it below.
   if (premises.size() == 1)
     if (auto sole = cast<WitnessOp>(premises.front().getDefiningOp());
         sole.getResultClaim().getEqualityAttr() == eq) {
@@ -2295,10 +2288,9 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
   if (failed(reconcileDerivedAssumptions(module, reading, *resolver)))
     return failure();
 
-  // With every demand settled and every projection resolved, the module
-  // verifies. This runs CoerceOp::verify on each marked coerce, whose pending
-  // judgment catches a coerce the rounds grounded to inconsistent endpoints at
-  // its own op.
+  // The module verifies. This runs CoerceOp::verify on each marked coerce, whose
+  // pending judgment catches a coerce the rounds grounded to inconsistent
+  // endpoints at its own op.
   DemandRecordingSuspension verifying;
   return module.verify();
 }

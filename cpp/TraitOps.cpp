@@ -855,8 +855,7 @@ static func::FuncOp specializeAndReplaceAssumes(
   // is specialized, is carried by a claim-typed parameter of the same arm: an
   // application assume is satisfied by an application parameter naming the same
   // trait application, an equality assume by an equality parameter carrying the
-  // same equality. Map both arms by their predicate, then replace each assume
-  // that has a matching parameter with that parameter's value.
+  // same equality.
   DenseMap<TraitApplicationAttr, Value> applicationParams;
   DenseMap<TypeEqualityAttr, Value> equalityParams;
   for (auto arg : funcOp.getArguments())
@@ -1188,8 +1187,8 @@ ParseResult ImplOp::parse(OpAsmParser &p, OperationState &result) {
 
   // Optional obligation discharge citations: an array naming, per application
   // obligation a cited conditional premise leaves standing, the impl that
-  // discharges it. Absent citations leave the printed and parsed form
-  // byte-identical to an impl without them.
+  // discharges it. Absent, they round-trip identically, exactly as premises
+  // above.
   if (succeeded(p.parseOptionalKeyword("discharges"))) {
     ArrayAttr discharges;
     if (p.parseAttribute(discharges))
@@ -2636,9 +2635,9 @@ Type mlir::trait::stripClaimReceipts(Type type) {
 // arguments are NOT descended during reconciliation, so two projections meet as
 // whole variables -- the same variable, or a pair aliased and owed one grounding
 // at discharge -- never unified by matching their arguments. Reflexive endpoints
-// pass. A
-// projection may resolve to a projection-free position (the ground type the
-// minted impl supplies), or stand for itself, or alias another bare projection --
+// pass. A projection may resolve to a projection-free position (the ground type
+// the minted impl supplies), or stand for itself, or alias another bare
+// projection --
 // two lookups asserted to denote one type, each still owed a projection-free
 // grounding at discharge. What it may NOT resolve to is a composite still
 // carrying a projection: that would equate two distinct projections inside a
@@ -2727,13 +2726,10 @@ LogicalResult mlir::trait::verifyPendingProjectionUnification(
   if (failed(unifyPending(input, result)))
     return failure();
 
-  // A binding whose resolved representative is itself a bare projection is a
-  // direct alias: two lookups asserted to denote one type, each still owed a
-  // projection-free grounding the minted impl supplies at discharge -- it stays
-  // pending. A binding that resolves to a COMPOSITE still carrying a projection
-  // would equate two distinct projections inside a rigid constructor, which this
-  // form never licensed; only a projection-free resolution or a bare alias is
-  // licensed.
+  // Final licensing check (the header states the rule): a bare-projection
+  // terminal is a direct alias, still owed a grounding at discharge, and stays
+  // pending; a terminal still carrying a projection would equate two distinct
+  // projections in a rigid constructor and is refused.
   for (auto &[proj, bound] : binding) {
     Type terminal = resolve(bound);
     if (isa<ProjectionType>(terminal))
@@ -2756,9 +2752,8 @@ LogicalResult CoerceOp::verify() {
   Type result = stripClaimReceipts(getResult().getType());
 
   if (getUnproven()) {
-    // The marked form cites nothing: its reconciling equalities are supplied by
-    // an impl minted only at monomorphization, so the endpoints stand in the
-    // pending judgment rather than under a ground congruence over cited leaves.
+    // The marked form cites nothing: its reconciling equalities are minted only
+    // at monomorphization, so the endpoints stand in the pending judgment.
     if (!getEqualities().empty())
       return emitOpError()
              << "an unproven coerce may not cite equalities; it stands in a "

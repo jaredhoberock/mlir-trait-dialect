@@ -114,18 +114,20 @@ def WitnessCertificateAttr : AttrDef<TraitDialect, "WitnessCertificate", []> {
 
     The relation is stored as a `TypeEqualityAttr`, so the frozen `redex` and
     `contractum` inherit that attribute's walk-opacity: no generic replacer
-    reaches or drifts them, and readers reach them through `getRedex`/
-    `getContractum`, never the walk. The capsule's own storage is generated, so
-    the endpoints stay opaque only through the equality's opacity: NO
-    attribute-level replacement rule may be registered for `TypeEqualityAttr`,
-    since such a rule would rewrite a frozen capsule's relation wholesale.
+    reaches them, and readers use `getRedex`/`getContractum`, never the walk.
+    The capsule's own storage is generated, so the endpoints stay opaque only
+    through the equality's opacity -- the frozen capsules stay immutable only
+    while no attribute-level replacement rule is registered for
+    `TypeEqualityAttr`, since such a rule would rewrite every capsule's relation
+    wholesale and break the instance-check and clone-rule contract. None is
+    registered today; a future one must account for the capsules first.
 
     The cited impl, by contrast, is a plain symbol reference the generated
-    storage leaves visible to sub-element walks, so its immutability is not
-    structural: it rests on the estate registering no symbol rewrite over this
-    attribute. Renaming the cited impl during the capsule's lifetime is
-    forbidden; the only sanctioned mover is the clone rule, which rebuilds the
-    whole capsule through this constructor under one substitution.
+    storage leaves walk-visible, so its immutability is not structural: it rests
+    on the estate registering no symbol-rename pass over this attribute (none
+    exists today). A consistent rename would verify clean while rewriting frozen
+    audit provenance in place; the only mover that preserves the audit is the
+    clone rule's whole-capsule rebuild.
   }];
 
   let parameters = (ins
@@ -143,16 +145,10 @@ def WitnessCertificateAttr : AttrDef<TraitDialect, "WitnessCertificate", []> {
   let hasCustomAssemblyFormat = 1;
 }
 
-// Names one application obligation and the impl that discharges it. An impl
-// carries a flat list of these alongside its projection-resolution premises: a
-// premise that cites a CONDITIONAL sibling impl leaves that impl's own
-// assumptions to discharge, and where the citing impl's own where clause does
-// not cover such an assumption, a discharge citation names the impl that does.
-// The audit resolves the named impl by symbol and matches it against the
-// obligation -- it never scans the module for a discharger. The obligation is
-// spelled (`application`) so the audit compares against it directly; the
-// discharger is named (`discharging_impl`) so a conditional discharger's own
-// assumptions can in turn be discharged by further citations in the same list.
+// Names the impl that discharges one application obligation. An impl carries a
+// flat list of these to discharge the standing assumptions of the conditional
+// sibling impls its premises cite; see the description and
+// auditProjResolveCertificate for the recursion.
 def DischargeCitationAttr : AttrDef<TraitDialect, "DischargeCitation", []> {
   let mnemonic = "discharge";
   let summary = "Names the impl that discharges one application obligation";
@@ -163,7 +159,9 @@ def DischargeCitationAttr : AttrDef<TraitDialect, "DischargeCitation", []> {
     hypothetical cover from the citing impl's own where-clause applications, or
     by a discharge citation whose spelled `application` is that assumption and
     whose named `discharging_impl`, specialized for the application, has each of
-    its own assumptions discharged in turn over this same finite list.
+    its own assumptions discharged in turn over this same finite list. The audit
+    resolves each named impl by symbol and never scans the module for a
+    discharger, so an impl's verdict does not depend on the estate around it.
   }];
 
   let parameters = (ins
@@ -174,9 +172,9 @@ def DischargeCitationAttr : AttrDef<TraitDialect, "DischargeCitation", []> {
   let hasCustomAssemblyFormat = 1;
 }
 
-// An ordered array of the one-hop predicates that must hold whenever a trait
-// holds -- a trait's `where` clause. Each entry is a trait application or a type
-// equality, so a trait may require either as a requirement.
+// An ordered array of the one-hop predicates a trait requires -- its `where`
+// clause; each entry is a trait application or a type equality (see the
+// description).
 def PredicateArrayAttr : AttrDef<TraitDialect, "PredicateArray",
     [DeclareAttrInterfaceMethods<SymbolUserAttrInterface>]> {
   let mnemonic = "predicate_array";

@@ -21,11 +21,8 @@ struct TypeEqualityAttrStorage : public ::mlir::AttributeStorage {
   TypeEqualityAttrStorage(::mlir::Type lhs, ::mlir::Type rhs)
       : lhs(lhs), rhs(rhs) {}
 
-  // Walk-opaque by construction: this storage defines no getAsKey(), so MLIR's
-  // sub-element walkers and the generic AttrTypeReplacer never visit the
-  // endpoints. Uniquing still distinguishes distinct equalities through the key
-  // below. The endpoints move only through the sanctioned clone rule; readers
-  // reach them through the dedicated accessors.
+  // Uniquing compares and hashes both endpoints; walk-opacity is the storage
+  // doc above (this storage defines no getAsKey()).
   bool operator==(const KeyTy &key) const {
     return lhs == std::get<0>(key) && rhs == std::get<1>(key);
   }

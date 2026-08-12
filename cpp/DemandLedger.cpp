@@ -585,9 +585,8 @@ llvm::SetVector<Type> demandsSpelledIn(ModuleOp module, bool inAttributes,
     root.walk([&](Type sub) {
       if (isa<ProjectionType>(sub) && isMonomorphicType(sub))
         note(sub);
-      // Equality-claim endpoints are opaque to this walk; the demand-walk
-      // accessor descends through them recursively so a projection reachable
-      // only inside an endpoint is still demanded and its impl generated.
+      // Descend equality-claim endpoints too -- opaque to this walk (see
+      // noteProjectionsDeep).
       if (auto claim = dyn_cast<ClaimType>(sub))
         if (auto eq = claim.getEqualityAttr())
           for (Type endpoint : {eq.getLhs(), eq.getRhs()})

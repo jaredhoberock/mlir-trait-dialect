@@ -385,13 +385,10 @@ def ImplOp : TraitDialectOp<"impl", [
 
     A premise may cite a CONDITIONAL sibling impl, whose own assumptions must
     then be discharged for the citation to be legal. The optional `discharges`
-    array names, per obligation, the impl that supplies it: the audit discharges
-    a cited impl's assumption either by a hypothetical cover from this impl's own
-    where-clause applications, or by a discharge citation whose spelled
-    application is that assumption and whose named impl -- specialized for it --
-    has each of ITS assumptions discharged in turn over the same finite list.
-    Every discharger is named; the audit resolves symbols and never scans the
-    module for one.
+    array names, per obligation, the impl that supplies it; the discharge
+    recursion is the `DischargeCitationAttr` contract, which the premise audit
+    replays and which resolves every discharger by symbol without scanning the
+    module.
   }];
 
   let arguments = (ins
@@ -1008,19 +1005,19 @@ def WitnessOp : TraitDialectOp<"witness", [
         entails. It builds a multi-hop equality (for instance
         `@A[T]::Item = @B[T]::Item` from `@A[T]::Item = i64` and
         `@B[T]::Item = i64`) without alleging it: the result is derived, not
-        asserted. The composition form stores ONLY its leaf equality premises.
-        The transitivity and congruence that carry those premises to the result
-        are never stored; they are re-derived at verify by replaying the same
-        ground congruence closure `trait.coerce` uses to decide equational
-        entailment. This preserves the admission law -- only definitional leaves
-        are stored as evidence -- while letting a caller name a derived equality.
+        asserted. Only the leaf premises are stored; the transitivity and
+        congruence carrying them to the result are re-derived at verify by
+        replaying the same ground congruence closure `trait.coerce` uses to
+        decide equational entailment. Storing only definitional leaves keeps the
+        admission law while letting a caller name a derived equality.
 
-    THE ADMISSION LAW. Only definitional equalities -- one type, two spellings
-    -- are admissible leaves; a representational leaf (a layout cast, a
-    zero-cost view, a witnessed expand()) is refused. Screech has GHC's
-    unsoundness ingredient (generative nominals plus congruence exercised
-    through projection heads), so this sentence is the fence; role machinery is
-    adopted before any representational leaf lands.
+    Admissible leaves are only definitional equalities -- one type, two
+    spellings. The three leaves above are the whole grammar; none is
+    representational (a layout cast, a zero-cost view, a witnessed expand()), so
+    such a leaf is unconstructable. Screech has GHC's unsoundness ingredient
+    (generative nominals plus congruence exercised through projection heads), so
+    any future representational leaf requires role machinery first -- the
+    design's recorded escalation trigger.
 
     Verification (verify() and verifySymbolUses) ensures the present attributes
     match the result claim's arm, that the result type equals the claim
@@ -1105,9 +1102,9 @@ def CoerceOp : TraitDialectOp<"coerce", [
 ]> {
   let summary = "Change a value's written type by citing type equalities";
   let description = [{
-    The sole consumer of equality evidence and the only constructor of type
-    bridges. It changes a value's written type from the input spelling to the
-    result spelling, justified by the cited equality claims.
+    The only op that changes a value's written type; it consumes equality
+    evidence to justify the change from the input spelling to the result
+    spelling.
 
     Operands: the value, plus N equality-claim operands, N >= 0. There is no
     application-claim operand; the demand chain the old cast's claim operand
