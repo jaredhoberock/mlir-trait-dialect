@@ -400,22 +400,20 @@ bool traitCoercePendingAccepts(MlirType input, MlirType result) {
   // classifier's verdict and the codegen-exit verifier's from ever disagreeing.
   Type in = stripClaimProofs(unwrap(input));
   Type out = stripClaimProofs(unwrap(result));
-  MLIRContext *ctx = in.getContext();
   // A refused pending judgment is a classification answer, not a compile error,
-  // so swallow the diagnostics the shared judgment emits on refusal.
-  ScopedDiagnosticHandler handler(ctx, [](Diagnostic &) { return success(); });
-  auto err = [&] { return emitError(UnknownLoc::get(ctx)); };
-  return succeeded(verifyPendingProjectionUnification(in, out, err));
+  // so this consult passes no diagnostic sink and the judgment stays silent.
+  return succeeded(
+      verifyPendingProjectionUnification(in, out, /*emitError=*/nullptr));
 }
 
 // The shared body of the two projection-resolution consults. It splits the
-// premises by arm, packs the checked projection-resolution certificate under a
-// suppressing diagnostic handler, and hands the packed witness and split
-// premises to `runCore`, which runs the arm-specific judgment. A malformed
-// premise, or an endpoint carrying a proven claim (which the equality arm
-// refuses), answers false without consulting the judgment. A refused
-// verification is a classification answer, not a compile error, so the
-// diagnostics the shared check emits on refusal are swallowed.
+// premises by arm, packs the checked projection-resolution certificate, and
+// hands the packed witness and split premises to `runCore`, which runs the
+// arm-specific judgment. A malformed premise, or an endpoint carrying a proven
+// claim (which the equality arm refuses), answers false without consulting the
+// judgment. A refused verification is a classification answer, not a compile
+// error, so this consult passes no diagnostic sink and the checks stay silent
+// on refusal.
 static bool projectionResolutionVerifies(
     MlirModule wrappedModule, MlirType projection, MlirType resolved,
     MlirStringRef implName, MlirType *premises, intptr_t numPremises,
@@ -445,22 +443,20 @@ static bool projectionResolutionVerifies(
       return false;
   }
 
-  // A refused verification is a classification answer, not a compile error, so
-  // swallow the diagnostics the shared check emits on refusal.
-  ScopedDiagnosticHandler handler(ctx, [](Diagnostic &) { return success(); });
-  auto err = [&] { return emitError(UnknownLoc::get(ctx)); };
-
   // Pack the equality into the witness the arm-specific judgment reads off. An
   // endpoint carrying a proven claim is one the equality arm refuses, so this
-  // consult answers no rather than aborting on it.
-  auto eqCert = TypeEqualityAttr::getChecked(err, ctx, unwrap(projection),
+  // consult answers no rather than aborting on it. A refused verification is a
+  // classification answer, not a compile error, so no diagnostic sink is passed
+  // and the checks stay silent on refusal.
+  auto eqCert = TypeEqualityAttr::getChecked(/*emitError=*/nullptr, ctx,
+                                             unwrap(projection),
                                              unwrap(resolved));
   if (!eqCert)
     return false;
   auto witnessAttr = WitnessAttr::get(ctx, eqCert, implRef);
 
-  return succeeded(
-      runCore(module, witnessAttr, equalityPremises, applicationPremises, err));
+  return succeeded(runCore(module, witnessAttr, equalityPremises,
+                           applicationPremises, /*err=*/nullptr));
 }
 
 // Use-site verification resolves the actual side's ground projections by module

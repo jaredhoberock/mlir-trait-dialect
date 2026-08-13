@@ -71,11 +71,17 @@ static bool containsProvenClaim(Type type) {
 LogicalResult TypeEqualityAttr::verify(
     llvm::function_ref<InFlightDiagnostic()> emitError,
     Type lhs, Type rhs) {
-  if (!lhs || !rhs)
-    return emitError() << "type equality requires two endpoint types";
+  if (!lhs || !rhs) {
+    if (emitError)
+      emitError() << "type equality requires two endpoint types";
+    return failure();
+  }
 
-  if (containsProvenClaim(lhs) || containsProvenClaim(rhs))
-    return emitError() << "a type-equality endpoint must not contain a proven claim";
+  if (containsProvenClaim(lhs) || containsProvenClaim(rhs)) {
+    if (emitError)
+      emitError() << "a type-equality endpoint must not contain a proven claim";
+    return failure();
+  }
 
   return success();
 }

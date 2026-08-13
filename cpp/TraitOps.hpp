@@ -35,9 +35,8 @@ public:
 /// through the impl's associated-type binding specialized for the projection's
 /// trait application, applies the equality `premises`, and compares the result
 /// against the resolved type proof-blind. Succeeds when the cited impl binds the
-/// projection to the resolved type. `err` (never null) receives the diagnostic
-/// on refusal; a caller that treats refusal as a classification answer rather
-/// than an error suppresses it at the diagnostic engine.
+/// projection to the resolved type. `err`, when non-null, receives the
+/// diagnostic on refusal.
 ///
 /// Verification additionally requires the cited impl's own assumptions --
 /// specialized for the projection's application -- each to be discharged by a
@@ -87,9 +86,8 @@ Type stripClaimProofs(Type type);
 /// A projection may resolve to a projection-free position or to another bare
 /// projection (a direct alias, both owed a grounding at discharge); a binding
 /// that resolves to a composite still carrying a projection, or that closes a
-/// cycle, is refused. Endpoints arrive with proofs already stripped. `err`
-/// (never null) receives the diagnostic on refusal; a caller that treats refusal
-/// as a classification answer suppresses it at the diagnostic engine.
+/// cycle, is refused. Endpoints arrive with proofs already stripped. `err`, when
+/// non-null, receives the diagnostic on refusal.
 LogicalResult verifyPendingProjectionUnification(
     Type input, Type result,
     llvm::function_ref<InFlightDiagnostic()> emitError);
