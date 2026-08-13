@@ -484,6 +484,10 @@ static FailureOr<SmallVector<ImplWitnessRule>> collectImplWitnessRules(
   return rules;
 }
 
+static LogicalResult verifyEqualityObligations(
+    ImplOp impl, TraitOp traitOp, ArrayRef<ImplWitnessRule> witnessRules,
+    llvm::function_ref<InFlightDiagnostic()> errFn);
+
 LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   auto errFn = [&]{ return emitOpError(); };
 
@@ -637,27 +641,36 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     }
   }
 
-  // Birth-check each equality this impl must satisfy: a trait-header equality
-  // requirement specialized for the impl's self arguments (e.g. Self::Output =
-  // Self), and each equality entry of the impl's own where clause (e.g.
-  // F::Output = Acc). The shared judgment normalizes both endpoints -- through
-  // this impl's own bindings for its own application, or a declared premise for a
-  // sibling -- and refuses only a GROUND mismatch. An endpoint that stays
-  // symbolic cannot be decided at birth and is accepted; its correctness is
-  // established where the impl is selected and, for evidence that is consumed, at
-  // the use site (a false equality's coerce fails the erase barrier). The
-  // acceptance is the symbolic case alone: once a declared premise reduces the
-  // endpoint to a ground value, a false equality refuses at birth whether or not
-  // its evidence is ever consumed. Application requirements are proved at impl
-  // selection, not here.
+  if (failed(verifyEqualityObligations(*this, traitOp, *premiseRules, errFn)))
+    return failure();
+
+  return success();
+}
+
+/// Verifies each equality this impl must satisfy: the trait-header equality
+/// requirements specialized for the impl's self arguments (e.g. Self::Output =
+/// Self), and the equality entries of the impl's own where clause (e.g.
+/// F::Output = Acc). Both endpoints normalize -- through the impl's own
+/// bindings for its own application, or a declared witness rule for a sibling
+/// -- and only a GROUND mismatch refuses. An endpoint that stays symbolic
+/// cannot be decided here and is accepted; its correctness is established
+/// where the impl is selected and, for evidence that is consumed, at the use
+/// site (a false equality's coerce fails the erase barrier). Once a witness
+/// rule reduces an endpoint to a ground value, a false equality refuses here
+/// whether or not its evidence is ever consumed. Application requirements are
+/// proved at impl selection, not here.
+static LogicalResult verifyEqualityObligations(
+    ImplOp impl, TraitOp traitOp, ArrayRef<ImplWitnessRule> witnessRules,
+    llvm::function_ref<InFlightDiagnostic()> errFn) {
   auto selfEqNorm = [&](NormalizationContext &eqNorm) -> LogicalResult {
-    auto subst = buildSubstitutionForSelfClaim(getSelfClaim(), errFn);
+    auto subst = impl.buildSubstitutionForSelfClaim(impl.getSelfClaim(), errFn);
     if (failed(subst)) return failure();
-    eqNorm.addLocalProjectionRule(*this, getSelfApplication(), *subst);
-    addPremiseRules(eqNorm);
+    eqNorm.addLocalProjectionRule(impl, impl.getSelfApplication(), *subst);
+    for (const ImplWitnessRule &r : witnessRules)
+      eqNorm.addLocalProjectionRule(r.impl, r.app, r.subst);
     return success();
   };
-  auto birthCheckEquality =
+  auto checkEquality =
       [&](NormalizationContext &eqNorm, TypeEqualityAttr eq,
           llvm::function_ref<InFlightDiagnostic()> mismatch) -> LogicalResult {
     auto lhsN = eqNorm.normalize(eq.getLhs(), errFn);
@@ -676,15 +689,16 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
         return mlir::isa<TypeEqualityAttr>(pred);
       });
   if (hasEqualityRequirement) {
-    auto specReqs = traitOp.specializeRequirementsAsClaimsFor(getSelfClaim(), errFn);
+    auto specReqs =
+        traitOp.specializeRequirementsAsClaimsFor(impl.getSelfClaim(), errFn);
     if (failed(specReqs)) return failure();
     NormalizationContext eqNorm;
     if (failed(selfEqNorm(eqNorm))) return failure();
     for (ClaimType req : *specReqs) {
       auto eq = req.getEqualityAttr();
       if (!eq) continue;
-      if (failed(birthCheckEquality(eqNorm, eq, [&] {
-            return emitOpError()
+      if (failed(checkEquality(eqNorm, eq, [&] {
+            return impl.emitOpError()
                    << "does not satisfy trait-header equality requirement " << req
                    << ": ";
           })))
@@ -692,17 +706,17 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     }
   }
 
-  bool assumesEquality = llvm::any_of(getAssumptions(), [](Attribute pred) {
+  bool assumesEquality = llvm::any_of(impl.getAssumptions(), [](Attribute pred) {
     return mlir::isa<TypeEqualityAttr>(pred);
   });
   if (assumesEquality) {
     NormalizationContext eqNorm;
     if (failed(selfEqNorm(eqNorm))) return failure();
-    for (Attribute pred : getAssumptions()) {
+    for (Attribute pred : impl.getAssumptions()) {
       auto eq = dyn_cast<TypeEqualityAttr>(pred);
       if (!eq) continue;
-      if (failed(birthCheckEquality(eqNorm, eq, [&] {
-            return emitOpError()
+      if (failed(checkEquality(eqNorm, eq, [&] {
+            return impl.emitOpError()
                    << "does not satisfy its own equality predicate " << eq << ": ";
           })))
         return failure();
