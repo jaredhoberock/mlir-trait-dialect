@@ -494,17 +494,15 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
         return emitOpError() << "witness projection " << witness.getProjection()
                              << " is not ground; a witness resolves only a "
                                 "ground sibling projection";
-      SpecializationMap subst;
-      if (failed(verifyProjectionResolution(
-              *module, witness.getProjection(), witness.getResolved(),
-              witness.getImplRef(),
-              /*premises=*/{}, errFn, obligationPremises, dischargeWitnesses,
-              /*rigidHeadMatch=*/true, &subst)))
+      auto subst = verifyProjectionResolutionAtBirth(
+          *module, witness, /*premises=*/{}, obligationPremises,
+          dischargeWitnesses, errFn);
+      if (failed(subst))
         return failure();
       auto citedImpl = mlir::SymbolTable::lookupNearestSymbolFrom<ImplOp>(
           *module, witness.getImplRef());
       premiseRules.push_back(
-          {citedImpl, projectionTy.getTraitApplication(), std::move(subst)});
+          {citedImpl, projectionTy.getTraitApplication(), std::move(*subst)});
     }
   }
   auto addPremiseRules = [&](NormalizationContext &ctx) {
@@ -1667,8 +1665,9 @@ static FailureOr<Type> applyEqualityPremises(
   return applySubstitutionToFixedPoint(subst, ty);
 }
 
-// verifyProjectionResolution's contract -- the binding and the obligation
-// discharge -- is stated in full at its declaration in TraitOps.hpp.
+// verifyProjectionResolutionAtUse and verifyProjectionResolutionAtBirth share
+// the static core below; their contract -- the binding and the obligation
+// discharge -- is stated in full at their declarations in TraitOps.hpp.
 
 // Specializes `impl`'s own application assumptions for `selfClaim` through
 // `subst` -- the head-match substitution verification already built -- rather
@@ -1761,32 +1760,46 @@ static bool dischargeApplicationObligation(
   return false;
 }
 
-LogicalResult mlir::trait::verifyProjectionResolution(
-    ModuleOp module, Type projection, Type resolved, FlatSymbolRefAttr citedImpl,
+// The binding check and obligation discharge both public entries run, written
+// once. On success it returns the head-match substitution the birth entry hands
+// back; the use entry discards it. `rigidHeadMatch` selects the head-match mode
+// the two entries differ on; `witness` is equality-armed (a caller invariant the
+// public entries document).
+static FailureOr<SpecializationMap> verifyProjectionResolutionCore(
+    ModuleOp module, WitnessAttr witness,
     ArrayRef<TypeEqualityAttr> premises,
-    llvm::function_ref<InFlightDiagnostic()> err,
     ArrayRef<TraitApplicationAttr> obligationPremises,
     ArrayRef<WitnessAttr> dischargeWitnesses,
     bool rigidHeadMatch,
-    SpecializationMap *outSubst) {
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  assert(isa<TypeEqualityAttr>(witness.getPredicate()) &&
+         "projection-resolution verification requires an equality-armed witness");
+  Type projection = witness.getProjection();
+  Type resolved = witness.getResolved();
+  FlatSymbolRefAttr citedImpl = witness.getImplRef();
+
   auto projectionTy = dyn_cast<ProjectionType>(projection);
-  if (!projectionTy)
-    return err() << "a projection-resolution certificate must "
-                    "name a projection, found " << projection;
+  if (!projectionTy) {
+    err() << "a projection-resolution certificate must "
+             "name a projection, found " << projection;
+    return failure();
+  }
 
   auto implOp =
       SymbolTable::lookupNearestSymbolFrom<ImplOp>(module, citedImpl);
-  if (!implOp)
-    return err() << "cannot find trait.impl '" << citedImpl
-                 << "' cited by the certificate";
+  if (!implOp) {
+    err() << "cannot find trait.impl '" << citedImpl
+          << "' cited by the certificate";
+    return failure();
+  }
 
-  // Head match the cited impl against the projection's application. Impl-birth
-  // verification sets rigidHeadMatch: it instantiates only the cited impl's own
+  // Head match the cited impl against the projection's application. The impl-
+  // birth entry passes rigidHeadMatch: it instantiates only the cited impl's own
   // generics against a null module, so a projection spelled in the projection's
   // application stays rigid and is never resolved by a module-visible impl --
   // an impl's verdict cannot then turn on the unrelated impls the module carries.
-  // Verifying a witness at its use site leaves it unset and resolves the actual
-  // side's ground projections by module lookup, as it always has.
+  // The use-site entry leaves it clear and resolves the actual side's ground
+  // projections by module lookup, as it always has.
   ClaimType selfClaim =
       ClaimType::get(module.getContext(), projectionTy.getTraitApplication());
   auto subst = rigidHeadMatch
@@ -1795,15 +1808,15 @@ LogicalResult mlir::trait::verifyProjectionResolution(
                    : implOp.buildSubstitutionForSelfClaim(selfClaim, err);
   if (failed(subst))
     return failure();
-  if (outSubst)
-    *outSubst = *subst;
 
   auto bound = implOp.specializeAssociatedTypeBinding(
       projectionTy.getAssocName().getValue(), projectionTy.getAssocTypeArgs());
-  if (failed(bound))
-    return err() << "impl '" << citedImpl
-                 << "' does not bind associated type '"
-                 << projectionTy.getAssocName().getValue() << "'";
+  if (failed(bound)) {
+    err() << "impl '" << citedImpl
+          << "' does not bind associated type '"
+          << projectionTy.getAssocName().getValue() << "'";
+    return failure();
+  }
   Type actual = subst->apply(*bound);
 
   // Proof-blind exact comparison. When a projection-headed impl self-application
@@ -1817,10 +1830,11 @@ LogicalResult mlir::trait::verifyProjectionResolution(
   auto resolvedOr = applyEqualityPremises(resolved, premises, err);
   if (failed(resolvedOr))
     return failure();
-  if (actual != *resolvedOr)
-    return err() << "impl '" << citedImpl << "' binds the projection to "
-                 << actual << ", not the certified resolution "
-                 << resolved;
+  if (actual != *resolvedOr) {
+    err() << "impl '" << citedImpl << "' binds the projection to "
+          << actual << ", not the certified resolution " << resolved;
+    return failure();
+  }
 
   // Obligation-discharge check. The cited impl's own assumptions -- specialized
   // through the same rigid head-match substitution -- must each be discharged,
@@ -1837,12 +1851,38 @@ LogicalResult mlir::trait::verifyProjectionResolution(
     SmallVector<TraitApplicationAttr> inProgress;
     if (!dischargeApplicationObligation(module, *wantOr, premises,
                                         obligationPremises, dischargeWitnesses,
-                                        inProgress, err))
-      return err() << "cited impl '" << citedImpl
-                   << "' has an undischarged assumption " << assumption
-                   << "; the witness premises do not supply it";
+                                        inProgress, err)) {
+      err() << "cited impl '" << citedImpl
+            << "' has an undischarged assumption " << assumption
+            << "; the witness premises do not supply it";
+      return failure();
+    }
   }
+  return *subst;
+}
+
+LogicalResult mlir::trait::verifyProjectionResolutionAtUse(
+    ModuleOp module, WitnessAttr witness,
+    ArrayRef<TypeEqualityAttr> premises,
+    ArrayRef<TraitApplicationAttr> obligationPremises,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  if (failed(verifyProjectionResolutionCore(module, witness, premises,
+                                            obligationPremises,
+                                            /*dischargeWitnesses=*/{},
+                                            /*rigidHeadMatch=*/false, err)))
+    return failure();
   return success();
+}
+
+FailureOr<SpecializationMap> mlir::trait::verifyProjectionResolutionAtBirth(
+    ModuleOp module, WitnessAttr witness,
+    ArrayRef<TypeEqualityAttr> premises,
+    ArrayRef<TraitApplicationAttr> obligationPremises,
+    ArrayRef<WitnessAttr> dischargeWitnesses,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  return verifyProjectionResolutionCore(module, witness, premises,
+                                        obligationPremises, dischargeWitnesses,
+                                        /*rigidHeadMatch=*/true, err);
 }
 
 // Whether `lhs` and `rhs` are equal under the ground congruence closure of the
@@ -1992,9 +2032,8 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
         else if (claim.isApplication())
           applicationPremises.push_back(claim.getTraitApplication());
       }
-    return verifyProjectionResolution(
-        module, cert.getProjection(), cert.getResolved(), cert.getImplRef(),
-        equalityPremises, errFn, applicationPremises);
+    return verifyProjectionResolutionAtUse(module, cert, equalityPremises,
+                                           applicationPremises, errFn);
   }
 
   // Refl arm: nothing to verify here.

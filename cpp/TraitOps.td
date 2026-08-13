@@ -1003,8 +1003,8 @@ def WitnessOp : TraitDialectOp<"witness", [
 
         Verifying the certificate resolves the projection through the cited
         impl's binding and additionally discharges the cited impl's own
-        assumptions; `verifyProjectionResolution` (TraitOps.hpp) states the full
-        contract.
+        assumptions; `verifyProjectionResolutionAtUse` (TraitOps.hpp) states the
+        full contract.
 
       * refl: proof-free, cites nothing; the endpoints are identical at
         construction. It exists because a concrete instantiation of an equality

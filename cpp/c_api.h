@@ -166,7 +166,8 @@ bool traitCoercePendingAccepts(MlirType input, MlirType result);
 
 /// Answer whether a projection-resolution certificate cited to `implName` in
 /// `module` verifies -- the same obligation-aware check trait.witness's
-/// equality-arm verifySymbolUses runs (verifyProjectionResolution, TraitOps.hpp).
+/// equality-arm verifySymbolUses runs (verifyProjectionResolutionAtUse, or
+/// verifyProjectionResolutionAtBirth when `rigidHeadMatch` is set; TraitOps.hpp).
 /// `premises` are !trait.claim types split by arm (equality claims the comparison
 /// modulus, application claims covering the cited impl's assumptions) and
 /// `discharges` are `#trait.witness` citations; `rigidHeadMatch` keeps the
