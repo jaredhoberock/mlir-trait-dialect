@@ -374,7 +374,7 @@ def ImplOp : TraitDialectOp<"impl", [
 
     The optional `witnesses` array carries the impl's declaration-level
     witnesses, each a `#trait.witness` read by its predicate arm. An
-    equality-armed witness is a projection-resolution certificate: it names a
+    equality-armed witness is a projection-resolution witness: it names a
     ground sibling projection this impl's own bindings cannot resolve, the type
     it resolves to, and the impl that binds it. The verifier checks each against
     its cited impl and replays it as a local resolution rule while comparing this
@@ -989,7 +989,7 @@ def WitnessOp : TraitDialectOp<"witness", [
     evidence the two spellings name one type. There are three leaves:
 
       * proj-resolve: cites an impl by symbol and carries an immutable
-        certificate. The equality holds because the cited impl binds the
+        witness. The equality holds because the cited impl binds the
         associated type the projection names to the resolved type. When the
         cited impl's own Self application is itself spelled with projections,
         structural matching cannot align it with the projection being resolved,
@@ -1001,7 +1001,7 @@ def WitnessOp : TraitDialectOp<"witness", [
         // @A[i64]::Item resolves to i64 through impl @A_impl's binding.
         %item_eq = trait.witness proj_resolve !trait.proj<@A[i64], "Item"> resolves i64 by @A_impl
 
-        Verifying the certificate resolves the projection through the cited
+        Verifying the witness resolves the projection through the cited
         impl's binding and additionally discharges the cited impl's own
         assumptions; `verifyProjectionResolutionAtUse` (TraitOps.hpp) states the
         full contract.
@@ -1027,8 +1027,8 @@ def WitnessOp : TraitDialectOp<"witness", [
         Only the leaf premises are stored; the transitivity and congruence
         carrying them to the result are re-derived at verify by replaying the
         same ground congruence closure `trait.coerce` uses to decide equational
-        entailment. Storing only definitional leaves keeps the admission law
-        while letting a caller name a derived equality.
+        entailment. Storing only definitional leaves keeps every stored equality
+        leaf definitional while letting a caller name a derived equality.
 
     Admissible leaves are only definitional equalities -- one type, two
     spellings. The three leaves above are exhaustive; none is
@@ -1042,7 +1042,7 @@ def WitnessOp : TraitDialectOp<"witness", [
     match the result claim's arm, that the result type equals the claim
     reconstructed from those attributes, and, for the equality arm's proj-resolve
     leaf, that the cited impl actually binds as stated and that the current
-    endpoints are a single-substitution instance of the certificate's
+    endpoints are a single-substitution instance of the witness's
     endpoints. For
     the composition leaf verify() replays the ground congruence closure over the
     premises and requires it to entail the result equality; the leaf cites no
@@ -1054,7 +1054,7 @@ def WitnessOp : TraitDialectOp<"witness", [
     OptionalAttr<FlatSymbolRefAttr>:$proof, // refers to trait.proof or trait.impl
     OptionalAttr<TraitApplicationAttr>:$trait_application,
     // Equality arm.
-    OptionalAttr<WitnessAttr>:$certificate,           // proj-resolve leaf
+    OptionalAttr<WitnessAttr>:$witness,               // proj-resolve leaf
     UnitAttr:$refl,                                     // refl leaf
     Variadic<Claim>:$premises
   );
@@ -1066,16 +1066,16 @@ def WitnessOp : TraitDialectOp<"witness", [
       MLIRContext* ctx = $_builder.getContext();
       ClaimType claimTy = ClaimType::get(ctx, trait_application, proof);
       build($_builder, $_state, claimTy, proof, trait_application,
-            /*certificate=*/nullptr, /*refl=*/nullptr, /*premises=*/{});
+            /*witness=*/nullptr, /*refl=*/nullptr, /*premises=*/{});
     }]>,
     // Equality proj-resolve arm.
     OpBuilder<(ins "::mlir::trait::TypeEqualityAttr":$equality,
-                   "::mlir::trait::WitnessAttr":$certificate,
+                   "::mlir::trait::WitnessAttr":$witness,
                    "::mlir::ValueRange":$premises), [{
       MLIRContext* ctx = $_builder.getContext();
       ClaimType claimTy = ClaimType::getEquality(ctx, equality);
       build($_builder, $_state, claimTy, /*proof=*/nullptr,
-            /*trait_application=*/nullptr, certificate, /*refl=*/nullptr,
+            /*trait_application=*/nullptr, witness, /*refl=*/nullptr,
             premises);
     }]>,
     // Equality refl arm.
@@ -1083,18 +1083,18 @@ def WitnessOp : TraitDialectOp<"witness", [
       MLIRContext* ctx = $_builder.getContext();
       ClaimType claimTy = ClaimType::getEquality(ctx, equality);
       build($_builder, $_state, claimTy, /*proof=*/nullptr,
-            /*trait_application=*/nullptr, /*certificate=*/nullptr,
+            /*trait_application=*/nullptr, /*witness=*/nullptr,
             $_builder.getUnitAttr(), /*premises=*/{});
     }]>,
     // Equality composition arm. Distinct in arity from the proj-resolve builder
-    // (that one takes a certificate too); it carries only the premises whose
+    // (that one takes a witness too); it carries only the premises whose
     // ground congruence closure entails the result equality.
     OpBuilder<(ins "::mlir::trait::TypeEqualityAttr":$equality,
                    "::mlir::ValueRange":$premises), [{
       MLIRContext* ctx = $_builder.getContext();
       ClaimType claimTy = ClaimType::getEquality(ctx, equality);
       build($_builder, $_state, claimTy, /*proof=*/nullptr,
-            /*trait_application=*/nullptr, /*certificate=*/nullptr,
+            /*trait_application=*/nullptr, /*witness=*/nullptr,
             /*refl=*/nullptr, premises);
     }]>
   ];

@@ -5,7 +5,7 @@
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' | FileCheck %s
 
 // The composition leaf of trait.witness builds a multi-hop equality from its
-// equality-claim premises without alleging it. Two proj-resolve certificates
+// equality-claim premises without alleging it. Two proj-resolve witnesses
 // establish @A[i64]::Item = i64 and @B[i64]::Item = i64; composing them names
 // the equality their ground congruence closure entails, @A[i64]::Item =
 // @B[i64]::Item, because both projections unite with i64 and hence with each

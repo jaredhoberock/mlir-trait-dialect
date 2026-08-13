@@ -10,7 +10,7 @@
 // holds only across two resolution hops: @Wrap_i64 binds Item to @Mid[i64]::Out,
 // and @Mid_i64 binds that Out to i64. Settlement's fixed-point resolution
 // grounds both hops; reducing the assume to a witness walks the same chain,
-// minting one proj-resolve certificate per hop and composing them -- a single
+// minting one proj-resolve witness per hop and composing them -- a single
 // hop would leave @Mid[i64]::Out still spelled and the equality unproven.
 
 // VERIFY: trait.assume !trait.proj<@Wrap[!trait.poly<0>], "Item"> = i64

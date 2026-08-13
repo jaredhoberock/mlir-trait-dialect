@@ -114,10 +114,10 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &sub
   });
 
   // The clone rule for equality evidence: the endpoints are pure substitution,
-  // no ground projection resolved inside them, matching the travel law the
-  // witness instance check enforces (the current endpoints must be a
-  // single-substitution instance of the certificate, which a resolution
-  // would break). A witness's certificate is likewise NOT rewritten -- it is
+  // no ground projection resolved inside them, matching what the witness
+  // verifier enforces: the current endpoints must be a single-substitution
+  // instance of the witness's own equality, which a resolution would break.
+  // A witness's stored equality is likewise NOT rewritten -- it is
   // immutable evidence -- so resolution stays outside the immutable-evidence
   // path entirely.
   replacer.addReplacement([=](ClaimType claim) -> std::optional<Type> {

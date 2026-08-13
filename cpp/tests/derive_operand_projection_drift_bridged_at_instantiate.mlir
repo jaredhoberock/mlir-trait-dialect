@@ -12,7 +12,7 @@
 // while the derive verifier recomputes the assumption by pure substitution and
 // leaves the projection symbolic. The reconciliation walk bridges the resolved
 // operand back to the expected spelling with a coerce citing the per-hop
-// proj-resolve certificate, so the verifier's exact compare holds; without the
+// proj-resolve witness, so the verifier's exact compare holds; without the
 // bridge the module would not verify after the pass.
 
 !S = !trait.poly<0>

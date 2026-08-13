@@ -10,7 +10,7 @@
 // made rigid, the second impl made the inner projection two-candidate, the
 // rebuild's lookup declined, the module-capable unifier tolerated the unresolved
 // crossing, and the impl was accepted -- an unrelated impl flipping a birth
-// verdict. That estate dependence is gone.
+// verdict. An impl's verdict no longer turns on unrelated module impls.
 
 !S = !trait.poly<0>
 

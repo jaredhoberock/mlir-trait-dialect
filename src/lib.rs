@@ -347,7 +347,7 @@ pub fn impl_named<'c>(loc: Location<'c>,
 
 /// Attach the checked `witnesses` array to an existing `trait.impl` op -- each a
 /// `#trait.witness` the impl verifier reads by arm: an equality-armed
-/// projection-resolution certificate, or an application-armed obligation
+/// projection-resolution witness, or an application-armed obligation
 /// discharge covering a cited conditional impl's standing assumption. An empty
 /// slice removes the impl's existing witnesses. The impl verifier checks every
 /// entry, its attribute kind included, at birth, so this only assembles the
@@ -649,12 +649,12 @@ pub fn witness_attr<'c>(ctx: &'c Context, predicate: Attribute<'c>, impl_name: &
     if attr.to_raw().ptr.is_null() { None } else { Some(attr) }
 }
 
-/// Create a projection-resolution `trait.witness`. `certificate` is an
+/// Create a projection-resolution `trait.witness`. `witness` is an
 /// equality-headed `#trait.witness` attribute; `premises` are equality-claim
 /// values.
-pub fn witness_proj_resolve<'c>(loc: Location<'c>, certificate: Attribute<'c>, premises: &[Value<'c, '_>], result_type: Type<'c>) -> Operation<'c> {
+pub fn witness_proj_resolve<'c>(loc: Location<'c>, witness: Attribute<'c>, premises: &[Value<'c, '_>], result_type: Type<'c>) -> Operation<'c> {
     build_op(OperationBuilder::new("trait.witness", loc)
-        .add_attributes(&[(identifier(loc, "certificate"), certificate)])
+        .add_attributes(&[(identifier(loc, "witness"), witness)])
         .add_operands(premises)
         .add_results(&[result_type]))
 }
@@ -705,13 +705,13 @@ pub fn coerce_pending_accepts(input: Type, result: Type) -> bool {
     unsafe { traitCoercePendingAccepts(input.to_raw(), result.to_raw()) }
 }
 
-/// Answer whether the projection-resolution certificate `(projection, resolved)`
+/// Answer whether the projection-resolution witness `(projection, resolved)`
 /// cited to `impl_name` verifies, looking that impl up in `module`. `premises`
 /// are claim types split by arm: the equality claims are the comparison modulus
 /// (usually empty), the application claims and the `discharges` citations cover
 /// the cited impl's own assumptions. `rigid_head_match` keeps the projection's
 /// application rigid, so the verdict never depends on unrelated module impls.
-/// This is the one obligation-aware check every checker of the certificate
+/// This is the one obligation-aware check every checker of the witness
 /// shares. Refusal is a plain `false`, not a diagnostic.
 pub fn projection_resolution_verifies<'c>(
     module: &Module,

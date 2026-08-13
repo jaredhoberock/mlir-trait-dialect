@@ -3,7 +3,7 @@
 
 // RUN: mlir-opt %s -verify-diagnostics -split-input-file
 
-// A projection-resolution certificate carries the associated type's own type
+// A projection-resolution witness carries the associated type's own type
 // arguments (a generic associated type). Verification specializes the impl's
 // binding for those arguments: @Trait[i64]::Assoc<i1> resolves to i1 because the
 // impl binds Assoc<!poly<99>> = !poly<99>. A citation of the true resolved type

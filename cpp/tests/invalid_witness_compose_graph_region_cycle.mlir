@@ -9,7 +9,7 @@
 // other, and each would pass its local entailment check because its premise IS
 // its result, grounding a false equality on nothing. Requiring an SSA-dominance
 // region refuses the cycle, so the induction bottoms out at the
-// certificate- and refl-anchored leaves that admit no false equality.
+// proj-resolve- and refl-anchored leaves that admit no false equality.
 
 // The verifier refuses the first op of the cycle it reaches; that one refusal
 // is enough to reject the module and stops verification, so a single diagnostic

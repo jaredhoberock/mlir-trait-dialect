@@ -1582,10 +1582,10 @@ static bool equalityClaimGroundResolvesToOneSpelling(
   return lhs == rhs && isGroundType(lhs);
 }
 
-/// The resolvers, builders, and location a projection-resolution certificate
+/// The resolvers, builders, and location a projection-resolution witness
 /// mint reads but never varies as the chain walks hop to hop. Recorded facts
 /// and obligation-holding selection come from `reading` and `resolver`; the
-/// certificate and its premise witnesses insert at the consumer through
+/// witness and its premise witnesses insert at the consumer through
 /// `witnessBuilder`, so they dominate it, while premise proofs and any impl
 /// generation go to the module body through `proofBuilder`; every op carries
 /// `loc`.
@@ -1597,17 +1597,17 @@ struct ProjectionResolveMintContext {
   OpBuilder &proofBuilder;
 };
 
-/// Mint the proj-resolve certificate proving `<proj = binding>`, where the impl
+/// Mint the proj-resolve witness proving `<proj = binding>`, where the impl
 /// `proj`'s trait application resolves through binds the projected member to
 /// `binding` in one hop, paired with that binding. Resolution goes through the
 /// same obligation-holding selection the settlement ran, so the cited impl is
 /// one whose bounds hold. Premises discharging that impl's own assumptions ride
-/// along, so a certificate citing a conditional impl passes obligation-discharge
+/// along, so a witness citing a conditional impl passes obligation-discharge
 /// verification. The minting `ctx` supplies the resolvers and builders. Fails
 /// where the projection has no obligation-holding impl.
 static FailureOr<std::pair<Value, Type>>
-mintProjectionResolveCertificate(ProjectionType proj,
-                                 const ProjectionResolveMintContext &ctx) {
+mintProjectionResolutionWitness(ProjectionType proj,
+                                const ProjectionResolveMintContext &ctx) {
   MLIRContext *mlirCtx = proj.getContext();
   auto binding =
       resolveProjectionHop(proj, ctx.reading, ctx.resolver, ctx.proofBuilder);
@@ -1636,33 +1636,33 @@ mintProjectionResolveCertificate(ProjectionType proj,
   }
   TypeEqualityAttr equality =
       TypeEqualityAttr::get(mlirCtx, Type(proj), *binding);
-  auto cert = WitnessAttr::get(
+  auto witness_attr = WitnessAttr::get(
       mlirCtx, Attribute(equality),
       FlatSymbolRefAttr::get(mlirCtx, resolvedImpl->impl.getSymName()));
-  Value witness = WitnessOp::create(ctx.witnessBuilder, ctx.loc, equality, cert,
+  Value witness = WitnessOp::create(ctx.witnessBuilder, ctx.loc, equality, witness_attr,
                                     obligationPremises)
                       .getResult();
   return std::make_pair(witness, *binding);
 }
 
-/// Walk a projection endpoint to its ground spelling, appending one certificate
+/// Walk a projection endpoint to its ground spelling, appending one witness
 /// per hop since a resolved binding may itself spell a projection. A concrete
 /// endpoint contributes no hop. A chain that outruns the hop bound fails and is
 /// reported like an unresolvable one.
 static LogicalResult
 mintProjectionResolveChain(Type endpoint,
                            const ProjectionResolveMintContext &ctx,
-                           SmallVector<Value> &certificates) {
+                           SmallVector<Value> &witnesses) {
   Type current = endpoint;
   for (unsigned hop = 0; hop != maxProjectionResolutionHops; ++hop) {
     auto proj = dyn_cast<ProjectionType>(current);
     if (!proj || isPolymorphicType(proj))
       return success();
-    auto cert = mintProjectionResolveCertificate(proj, ctx);
-    if (failed(cert))
+    auto witness = mintProjectionResolutionWitness(proj, ctx);
+    if (failed(witness))
       return failure();
-    certificates.push_back(cert->first);
-    current = cert->second;
+    witnesses.push_back(witness->first);
+    current = witness->second;
   }
   return failure();
 }
@@ -1680,12 +1680,12 @@ mintProjectionResolveChain(Type endpoint,
 /// legalization removes. Now that the equality ground-resolves, this mints the
 /// evidence that proves it, exactly as codegen mints where the equality is
 /// first established: a refl marker for identical endpoints, or one proj-resolve
-/// certificate per hop of each projection endpoint's resolution chain -- since a
+/// witness per hop of each projection endpoint's resolution chain -- since a
 /// resolved binding may itself spell a projection -- each citing the impl that
 /// binds one hop, with application-arm premises discharging a conditional impl's
-/// own assumptions so the certificate passes verification. A lone certificate
+/// own assumptions so the witness passes verification. A lone witness
 /// that already proves the result equality outright is that witness when the
-/// orientation matches; otherwise the hops' certificates compose to the result
+/// orientation matches; otherwise the hops' witnesses compose to the result
 /// equality, whose ground congruence closure carries the endpoints together
 /// across every hop and is direction-blind. Settlement gates this reduction on
 /// the same fixed-point resolution reaching one ground spelling within the hop
@@ -1726,8 +1726,8 @@ static LogicalResult reduceGroundEqualityAssume(
   if (premises.empty())
     return failure();
 
-  // A sole certificate that already proves the result equality is the witness;
-  // otherwise the hops' certificates compose to it below.
+  // A sole hop witness that already proves the result equality is used as is;
+  // otherwise the hops' witnesses compose to it below.
   if (premises.size() == 1)
     if (auto sole = cast<WitnessOp>(premises.front().getDefiningOp());
         sole.getResultClaim().getEqualityAttr() == eq) {
@@ -1767,17 +1767,17 @@ static Type resolveGroundProjectionsRecorded(Type type,
 /// an operand the rounds touched drifts from the expectation with no proof at
 /// stake, only resolution grade. This mints the coerce that carries the operand
 /// back to the expected spelling, citing the same per-hop proj-resolve
-/// certificates the equality-assume reduction mints, so the verifier's exact
+/// witnesses the equality-assume reduction mints, so the verifier's exact
 /// compare holds with no verifier change.
 ///
 /// Runs once at the instantiate epilogue, after the leftover-claim and
 /// projection walks: the coerce result carries the unresolved projection the
 /// expectation spells, which those walks would otherwise reject, and the
-/// certificates it cites carry claims those walks would judge. Every standing
+/// witnesses it cites carry claims those walks would judge. Every standing
 /// derive is a candidate, template-hosted or not -- the exact-spelling check is
 /// armed for all of them, unlike the leftover-claim and projection checks the
 /// sibling walks suppress inside templates. The derives are gathered before any
-/// is bridged, because minting a certificate's premises may generate an impl and
+/// is bridged, because minting a witness's premises may generate an impl and
 /// insert it at the module body.
 ///
 /// Only a proven operand is bridged, because provenness is exactly the
@@ -1794,7 +1794,7 @@ static LogicalResult reconcileDerivedAssumptions(
   SmallVector<DeriveOp> derives;
   module.walk([&](DeriveOp derive) { derives.push_back(derive); });
 
-  // Premise proofs and any impl a certificate generates go to the module body,
+  // Premise proofs and any impl a witness generates go to the module body,
   // through a builder whose insertions are observed -- impl generation requires
   // one. The tally is not read; the listener's presence is the precondition.
   RoundInsertionCounts reconcileInsertions;
@@ -1812,7 +1812,7 @@ static LogicalResult reconcileDerivedAssumptions(
     if (failed(expected) || expected->size() != derive.getAssumptions().size())
       continue; // an ill-formed specialization or arity is the verifier's
 
-    // Certificates and the coerce insert at the derive, so they dominate it.
+    // Witnesses and the coerce insert at the derive, so they dominate it.
     OpBuilder witnessBuilder(derive);
     for (auto [i, exp] : llvm::enumerate(*expected)) {
       Value operand = derive.getAssumptions()[i];
@@ -1832,13 +1832,13 @@ static LogicalResult reconcileDerivedAssumptions(
         derive.emitOpError()
             << "assumption operand #" << i << " drifted to " << operandClaim
             << " from the specialized assumption " << exp
-            << ", and the drift does not ground-derive: resolving that "
+            << ": resolving that "
                "assumption's projections does not reach the operand's spelling";
         sawUnbridgeableDrift = true;
         continue;
       }
 
-      // Mint one proj-resolve certificate chain per projection the expectation
+      // Mint one proj-resolve witness chain per projection the expectation
       // spells, then bridge the operand to the expectation citing them.
       SmallVector<ProjectionType> projections;
       Type(exp).walk([&](Type sub) {
@@ -1848,25 +1848,25 @@ static LogicalResult reconcileDerivedAssumptions(
       });
       ProjectionResolveMintContext mintCtx{derive.getLoc(), reading, resolver,
                                            witnessBuilder, proofBuilder};
-      SmallVector<Value> certificates;
+      SmallVector<Value> witnesses;
       bool minted = true;
       for (ProjectionType proj : projections)
         if (failed(
-                mintProjectionResolveChain(Type(proj), mintCtx, certificates))) {
+                mintProjectionResolveChain(Type(proj), mintCtx, witnesses))) {
           minted = false;
           break;
         }
-      if (!minted || certificates.empty()) {
+      if (!minted || witnesses.empty()) {
         derive.emitOpError()
             << "assumption operand #" << i << " drifted to " << operandClaim
             << " from the specialized assumption " << exp
-            << ", and the drift does not ground-derive: no obligation-holding "
+            << ": no obligation-holding "
                "impl resolves its projections";
         sawUnbridgeableDrift = true;
         continue;
       }
       Value bridged = CoerceOp::create(witnessBuilder, derive.getLoc(),
-                                       Type(exp), operand, certificates)
+                                       Type(exp), operand, witnesses)
                           .getResult();
       derive->setOperand(i, bridged);
     }
@@ -2373,7 +2373,7 @@ struct EraseCoerceOp : public OpConversionPattern<CoerceOp> {
     // post-conversion type equals the result type -- the discharged (reflexive)
     // form, which projection resolution has produced by here. An undischarged
     // coerce still relates two different types; it is refused, so the op stays
-    // illegal and the conversion fails loudly. The certificate is deliberately
+    // illegal and the conversion fails loudly. The witness is deliberately
     // not re-verified: the replay endpoints are authoritative at the barrier.
     if (input.front().getType() == op.getResult().getType()) {
       rewriter.replaceOp(op, input);

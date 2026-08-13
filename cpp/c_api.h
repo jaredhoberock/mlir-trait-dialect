@@ -155,7 +155,7 @@ MlirType traitClaimTypeGetEquality(MlirContext ctx,
 
 /// Return the #trait.witness<predicate by @impl> attribute pairing `predicate`
 /// with `implName` as the impl that witnesses it. `predicate` is either a type
-/// equality (a projection-resolution certificate `projection = resolved`) or a
+/// equality (a projection-resolution witness `projection = resolved`) or a
 /// `#trait.application` attribute (an obligation the impl discharges). Returns a
 /// null attribute if `predicate` is neither arm or construction fails.
 MlirAttribute traitWitnessAttrGet(MlirContext ctx,
@@ -168,7 +168,7 @@ MlirAttribute traitWitnessAttrGet(MlirContext ctx,
 /// answer, not a compile error.
 bool traitCoercePendingAccepts(MlirType input, MlirType result);
 
-/// Answer whether a projection-resolution certificate cited to `implName` in
+/// Answer whether a projection-resolution witness cited to `implName` in
 /// `module` verifies, running verifyProjectionResolutionAtUse (or
 /// verifyProjectionResolutionAtBirth when `rigidHeadMatch` is set; TraitOps.hpp).
 /// `premises` are !trait.claim types split by arm (equality claims the comparison

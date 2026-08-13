@@ -119,7 +119,7 @@ def TypeEqualityAttr : AttrDef<TraitDialect, "TypeEquality", []> {
 
 // A predicate and the impl that witnesses it. One shape serves two roles, read
 // off the predicate arm: an equality `projection = resolved` the impl's
-// associated-type binding resolves (a projection-resolution certificate), or a
+// associated-type binding resolves (a projection-resolution witness), or a
 // trait application the impl discharges (an obligation discharge).
 def WitnessAttr : AttrDef<TraitDialect, "Witness", []> {
   let mnemonic = "witness";
@@ -137,7 +137,7 @@ def WitnessAttr : AttrDef<TraitDialect, "Witness", []> {
       * a `TraitApplicationAttr`, an obligation the impl supplies, discharging a
         cited conditional sibling impl's standing assumptions; verification
         resolves the named impl by symbol and never scans the module, so an
-        impl's verdict does not depend on the estate around it.
+        impl's verdict does not depend on the unrelated impls the module carries.
 
     Witnessing is one concept carried two ways, chosen by scope. This attribute
     IS the witness and stands alone as declaration-level witnessing. Where
@@ -148,11 +148,12 @@ def WitnessAttr : AttrDef<TraitDialect, "Witness", []> {
     storage: no generic replacer reaches its endpoints, and readers use
     `getProjection`/`getResolved`, never the walk. An application predicate stays
     walk-visible. The witness's own storage is generated, so its immutability
-    under substitution is not structural: it rests on the estate registering no
+    under substitution is not structural: it rests on no pass registering an
     attribute-level replacement rule for `TypeEqualityAttr` and no symbol-rename
     pass over this attribute (neither exists today). The only mover that
-    preserves an immutable equality witness is the clone rule's whole-capsule
-    rebuild.
+    preserves an immutable equality witness is the clone rule's rebuild of the
+    whole witness: one substitution applied to both endpoints atomically, rebuilt
+    through the checked constructor.
   }];
 
   let parameters = (ins
@@ -161,17 +162,17 @@ def WitnessAttr : AttrDef<TraitDialect, "Witness", []> {
   );
 
   let extraClassDeclaration = [{
-    // The equality this citation resolves, read off the predicate; valid only
-    // for an equality-headed citation.
+    // The equality this witness resolves, read off the predicate; valid only
+    // for an equality-headed witness.
     TypeEqualityAttr getEquality() const {
       return ::mlir::cast<TypeEqualityAttr>(getPredicate());
     }
-    // The projection this citation resolves and the type it resolves to, read
-    // off the equality endpoints; valid only for an equality-headed citation.
+    // The projection this witness resolves and the type it resolves to, read
+    // off the equality endpoints; valid only for an equality-headed witness.
     Type getProjection() const { return getEquality().getLhs(); }
     Type getResolved() const { return getEquality().getRhs(); }
-    // The application this citation discharges; valid only for an
-    // application-headed citation.
+    // The application this witness discharges; valid only for an
+    // application-headed witness.
     TraitApplicationAttr getApplication() const {
       return ::mlir::cast<TraitApplicationAttr>(getPredicate());
     }

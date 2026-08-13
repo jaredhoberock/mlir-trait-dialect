@@ -50,7 +50,7 @@ namespace mlir::trait {
 
 // Whether any claim nested in the type is proven -- a proven claim spelled
 // into a position that forbids one. The equality arm and the
-// projection-resolution certificate both freeze endpoints that contain no
+// projection-resolution witness both freeze endpoints that contain no
 // proven claim.
 static bool containsProvenClaim(Type type) {
   bool found = false;

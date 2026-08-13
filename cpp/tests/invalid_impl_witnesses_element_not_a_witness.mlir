@@ -5,7 +5,7 @@
 
 // An impl's `witnesses` array carries `#trait.witness` entries and nothing else.
 // The element-type constraint is the array's only shape rule -- each arm (an
-// equality-armed certificate or an application-armed discharge) is read at use,
+// equality-armed witness or an application-armed discharge) is read at use,
 // not policed here -- so a non-witness element is the one refusal at this level.
 
 !S = !trait.poly<0>

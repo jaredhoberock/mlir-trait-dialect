@@ -7,7 +7,7 @@
 // the witness over the conditional impl @Has_tuple supplies the @X[i32]
 // application premise that discharges the impl's assumption, so
 // obligation-aware verification accepts it. The premise rides the witness as a
-// claim operand beside the certificate.
+// claim operand beside the witness.
 
 !U = !trait.poly<0>
 

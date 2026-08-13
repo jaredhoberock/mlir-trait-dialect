@@ -6,7 +6,7 @@
 // A conditional impl cited by a witness proj_resolve that supplies no premise
 // for the impl's assumption. @Has_tuple binds @Has[tuple<!U>]::Out to i64 and
 // requires @X[!U]; for !U = i32 the module carries no impl of @X[i32], and the
-// witness carries no premise supplying it. The certificate's binding is correct,
+// witness carries no premise supplying it. The witness's binding is correct,
 // but obligation-aware verification additionally demands the cited impl's own
 // assumptions be discharged by the witness's premises, so the witness is refused.
 // Supplying the @X[i32] premise is what discharges the assumption (see

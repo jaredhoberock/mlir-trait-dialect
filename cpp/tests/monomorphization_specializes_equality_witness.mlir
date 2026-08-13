@@ -7,8 +7,8 @@
 // parameter, and a coerce consuming it. Monomorphizing the caller runs the
 // clone rule over that witness. The rule specializes the endpoints by pure
 // substitution -- @Trait[!poly<0>]::Output = !poly<0> becomes
-// @Trait[i64]::Output = i64, a single substitution instance of the
-// certificate the witness check accepts -- and the concrete projection then
+// @Trait[i64]::Output = i64, a single substitution instance
+// the witness check accepts -- and the concrete projection then
 // resolves and the coerce discharges, leaving the identity the source denotes.
 // The whole path clones, checks, and lowers with no leftover claim.
 

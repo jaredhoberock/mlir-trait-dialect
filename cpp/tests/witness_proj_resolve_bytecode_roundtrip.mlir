@@ -3,11 +3,11 @@
 
 // RUN: mlir-opt %s --emit-bytecode | mlir-opt | FileCheck %s
 
-// The certificate's endpoints are opaque to sub-element walking, so
+// The witness's endpoints are opaque to sub-element walking, so
 // bytecode cannot recover them from the generic walk; the attribute's own
-// print/parse carries them. This pins that a proj-resolve witness -- capsule
-// and equality-claim result together -- survives a bytecode round-trip
-// unchanged.
+// print/parse carries them. This pins that a proj-resolve witness -- its
+// attribute and its equality-claim result together -- survives a bytecode
+// round-trip unchanged.
 
 !S = !trait.poly<0>
 

@@ -27,9 +27,9 @@ public:
   }
 };
 
-/// Verifies a projection-resolution certificate against `module`. The
-/// equality-armed `witness` supplies the certificate: `getProjection()` and
-/// `getResolved()` name the projection and the type it is certified to resolve
+/// Verifies a projection-resolution witness against `module`. The
+/// equality-armed `witness` supplies it: `getProjection()` and
+/// `getResolved()` name the projection and the type it resolves
 /// to, cited to `witness.getImplRef()`. Passing an application-armed witness is
 /// a caller bug. Looks the cited impl up in `module`, resolves the projection
 /// through the impl's associated-type binding specialized for the projection's

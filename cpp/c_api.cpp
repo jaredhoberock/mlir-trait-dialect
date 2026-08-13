@@ -458,20 +458,20 @@ bool traitProjectionResolutionVerifies(MlirModule wrappedModule,
   ScopedDiagnosticHandler handler(ctx, [](Diagnostic &) { return success(); });
   auto err = [&] { return emitError(UnknownLoc::get(ctx)); };
 
-  // Pack the certificate into the equality-armed witness both entries read off.
+  // Pack the equality into the witness both entries read off.
   // Impl-birth verification keeps the projection's application rigid and admits
   // the discharge citations; a use-site query resolves ground projections by
   // module lookup and carries none. Either way the head-match substitution the
   // birth entry hands back is dropped: this query answers only yes or no.
-  auto certificate = WitnessAttr::get(
+  auto witnessAttr = WitnessAttr::get(
       ctx, TypeEqualityAttr::get(ctx, unwrap(projection), unwrap(resolved)),
       implRef);
   if (rigidHeadMatch)
     return succeeded(verifyProjectionResolutionAtBirth(
-        module, certificate, equalityPremises, applicationPremises,
+        module, witnessAttr, equalityPremises, applicationPremises,
         dischargeWitnesses, err));
   return succeeded(verifyProjectionResolutionAtUse(
-      module, certificate, equalityPremises, applicationPremises, err));
+      module, witnessAttr, equalityPremises, applicationPremises, err));
 }
 
 bool traitClaimProjectsTo(MlirModule wrappedModule, MlirType srcClaim,

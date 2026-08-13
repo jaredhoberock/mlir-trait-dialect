@@ -1181,7 +1181,7 @@ ParseResult ImplOp::parse(OpAsmParser &p, OperationState &result) {
   result.addAttribute("assumptions", assumptions);
 
   // Optional witnesses: one array of #trait.witness entries, each an
-  // equality-armed projection-resolution certificate or an application-armed
+  // equality-armed projection-resolution witness or an application-armed
   // obligation discharge. Absent, the printed and parsed form is byte-identical
   // to an impl without them; the synthesized sym_name reads only the self
   // application and assumptions, so witnesses never perturb it.
@@ -1484,10 +1484,10 @@ ParseResult WitnessOp::parse(OpAsmParser &p, OperationState& result) {
     auto equality = TypeEqualityAttr::getChecked(err, ctx, projection, resolved);
     if (!equality)
       return failure();
-    auto cert = WitnessAttr::getChecked(err, ctx, Attribute(equality), citedImpl);
-    if (!cert)
+    auto witness = WitnessAttr::getChecked(err, ctx, Attribute(equality), citedImpl);
+    if (!witness)
       return failure();
-    result.addAttribute("certificate", cert);
+    result.addAttribute("witness", witness);
 
     if (succeeded(p.parseOptionalKeyword("given"))) {
       SmallVector<OpAsmParser::UnresolvedOperand> premises;
@@ -1562,9 +1562,9 @@ ParseResult WitnessOp::parse(OpAsmParser &p, OperationState& result) {
 }
 
 void WitnessOp::print(OpAsmPrinter &p) {
-  if (auto cert = getCertificateAttr()) {
-    p << " proj_resolve " << cert.getProjection() << " resolves "
-      << cert.getResolved() << " by " << cert.getImplRef();
+  if (auto witness = getWitnessAttr()) {
+    p << " proj_resolve " << witness.getProjection() << " resolves "
+      << witness.getResolved() << " by " << witness.getImplRef();
     if (!getPremises().empty()) {
       p << " given";
       printTypedOperandList(p, getPremises());
@@ -1578,7 +1578,7 @@ void WitnessOp::print(OpAsmPrinter &p) {
     return;
   }
 
-  // Composition arm: an equality result with neither a certificate nor a refl
+  // Composition arm: an equality result with neither a witness nor a refl
   // marker. Print the premises with their types and the spelled result equality.
   if (getResultClaim().isEquality()) {
     p << " compose";
@@ -1593,7 +1593,7 @@ void WitnessOp::print(OpAsmPrinter &p) {
 
   p.printOptionalAttrDictWithKeyword(
     (*this)->getAttrs(),
-    /*elidedAttrs=*/{"proof", "trait_application", "certificate", "refl"}
+    /*elidedAttrs=*/{"proof", "trait_application", "witness", "refl"}
   );
 }
 
@@ -1682,7 +1682,7 @@ static SmallVector<ClaimType> specializeAssumptionsThroughSubst(
   });
 }
 
-// The estate and diagnostic context an obligation discharge reads but never
+// What an obligation discharge reads but never
 // varies as it recurses: the module the citations resolve in, the equality
 // premises the comparisons run modulo, the citing impl's own where-clause cover
 // and the discharge citations the two arms consult, and the diagnostic sink.
@@ -1790,7 +1790,7 @@ static FailureOr<SpecializationMap> verifyProjectionResolutionCore(
 
   auto projectionTy = dyn_cast<ProjectionType>(projection);
   if (!projectionTy) {
-    err() << "a projection-resolution certificate must "
+    err() << "a projection-resolution witness must "
              "name a projection, found " << projection;
     return failure();
   }
@@ -1799,7 +1799,7 @@ static FailureOr<SpecializationMap> verifyProjectionResolutionCore(
       SymbolTable::lookupNearestSymbolFrom<ImplOp>(module, citedImpl);
   if (!implOp) {
     err() << "cannot find trait.impl '" << citedImpl
-          << "' cited by the certificate";
+          << "' cited by the witness";
     return failure();
   }
 
@@ -1905,7 +1905,7 @@ static bool entailedByGroundCongruence(Type lhs, Type rhs,
 // The op's attributes must match the result claim's arm exactly, and the result
 // type must equal the claim reconstructed from those attributes. For the
 // equality arm, the current endpoints must be a single-substitution structural
-// instance of the certificate's endpoints (proj-resolve), identical (refl), or
+// instance of the witness's endpoints (proj-resolve), identical (refl), or
 // entailed by the premises' ground congruence closure (compose).
 LogicalResult WitnessOp::verify() {
   ClaimType result = dyn_cast<ClaimType>(getResult().getType());
@@ -1914,7 +1914,7 @@ LogicalResult WitnessOp::verify() {
 
   bool hasProof = static_cast<bool>(getProofAttr());
   bool hasApp = static_cast<bool>(getTraitApplicationAttr());
-  bool hasCert = static_cast<bool>(getCertificateAttr());
+  bool hasWitness = static_cast<bool>(getWitnessAttr());
   bool hasRefl = getRefl();
 
   // Equality arm.
@@ -1922,9 +1922,9 @@ LogicalResult WitnessOp::verify() {
     if (hasProof || hasApp)
       return emitOpError() << "an equality witness carries no proof or trait "
                               "application";
-    if (hasCert && hasRefl)
+    if (hasWitness && hasRefl)
       return emitOpError() << "an equality witness carries at most one of a "
-                              "proj-resolve certificate or a refl marker";
+                              "proj-resolve leaf or a refl marker";
     TypeEqualityAttr eq = result.getEqualityAttr();
 
     if (hasRefl) {
@@ -1936,48 +1936,48 @@ LogicalResult WitnessOp::verify() {
       return success();
     }
 
-    if (hasCert) {
+    if (hasWitness) {
       // proj-resolve: the current endpoints must be a single-substitution
-      // structural instance of the certificate's endpoints. The certificate's
+      // structural instance of the witness's endpoints. The witness's
       // generic parameters are the variables; a single substitution must carry
-      // the certificate's projection and resolved type to the current pair. This
+      // the witness's projection and resolved type to the current pair. This
       // passes birth (identity), the clone-substituted state, and ground, and
       // rejects any non-substitution mangling. It is structural and local -- no
       // module lookup -- so the pair is matched with a null module.
-      WitnessAttr cert = getCertificateAttr();
-      // The certificate slot carries a proj-resolve leaf, so its predicate is an
+      WitnessAttr witness = getWitnessAttr();
+      // The witness slot carries a proj-resolve leaf, so its predicate is an
       // equality; a coerce discharge's application-headed witness has no place
       // here. Guard before reading the endpoints off the equality.
-      if (!isa<TypeEqualityAttr>(cert.getPredicate()))
-        return emitOpError() << "a proj-resolve certificate must witness an "
+      if (!isa<TypeEqualityAttr>(witness.getPredicate()))
+        return emitOpError() << "a proj-resolve witness must carry an "
                                 "equality";
       MLIRContext *ctx = getContext();
-      Type certificatePair = TupleType::get(ctx, {cert.getProjection(), cert.getResolved()});
+      Type witnessPair = TupleType::get(ctx, {witness.getProjection(), witness.getResolved()});
       Type currentPair = TupleType::get(ctx, {eq.getLhs(), eq.getRhs()});
-      if (failed(buildSpecialization(certificatePair, currentPair, ModuleOp())))
+      if (failed(buildSpecialization(witnessPair, currentPair, ModuleOp())))
         return emitOpError() << "result endpoints " << eq.getLhs() << " = "
                              << eq.getRhs()
-                             << " are not an instance of the certificate "
-                             << cert.getProjection() << " = " << cert.getResolved();
+                             << " are not an instance of the witness "
+                             << witness.getProjection() << " = " << witness.getResolved();
       return success();
     }
 
-    // Composition: neither a certificate nor refl. The result equality is
+    // Composition: neither a witness nor refl. The result equality is
     // derived from the leaf equality premises by replaying the ground congruence
     // closure -- the transitivity and congruence that carry the premises to the
-    // result are never stored, only the leaves are, so the admission law holds.
-    // An equality claim carries no proof by that law, so there is no
-    // proof-swap for this arm to police.
+    // result are never stored, only the leaves are, so only definitional leaves
+    // are ever stored. An equality claim carries no proof by that rule, so there
+    // is no proof-swap for this arm to police.
     //
     // The composition arm is the only equality leaf whose evidence is another
-    // claim value rather than a certificate or an identical-endpoint marker, so
+    // claim value rather than a witness or an identical-endpoint marker, so
     // it is the only one whose validity can rest on its operands. In a region
     // without SSA dominance (a graph region such as a module body) a premise may
     // be the op's own result, letting two composes justify each other in a cycle
     // that grounds a false equality on nothing. Requiring an SSA-dominance region
-    // makes the induction bottom out at certificate- or refl-anchored leaves: a
+    // makes the induction bottom out at proj-resolve- or refl-anchored leaves: a
     // false composition would need a false premise, which needs a false leaf, and
-    // the certificate and refl leaves refuse those.
+    // the proj-resolve and refl leaves refuse those.
     if (Region *parent = getOperation()->getParentRegion();
         parent && !mlir::mayHaveSSADominance(*parent))
       return emitOpError() << "a composition witness must be in a region that "
@@ -2002,9 +2002,9 @@ LogicalResult WitnessOp::verify() {
   }
 
   // Application arm.
-  if (hasCert || hasRefl || !getPremises().empty())
+  if (hasWitness || hasRefl || !getPremises().empty())
     return emitOpError() << "an application witness carries neither a "
-                            "certificate, a refl marker, nor premises";
+                            "proj-resolve leaf, a refl marker, nor premises";
   if (!hasProof || !hasApp)
     return emitOpError() << "an application witness carries a proof and a "
                             "trait application";
@@ -2023,16 +2023,16 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   auto errFn = [&] { return emitOpError(); };
 
   // Equality proj-resolve arm: verify the citation where its symbol uses are
-  // checked. The cited impl must bind the associated type the certificate's
+  // checked. The cited impl must bind the associated type the witness's
   // projection names to its resolved type, once specialized for the projection's
   // trait application, AND the witness's premises must discharge the cited impl's
   // own assumptions. The premises split by arm: equality claims are the
   // comparison modulus, application claims discharge the assumptions. The module
   // read runs here, on every full module verification -- not per consumer --
   // through the same obligation-aware check the C-API projection-resolution query
-  // runs in obligation mode, so a consumer classifying a certificate cannot
+  // runs in obligation mode, so a consumer classifying a witness cannot
   // disagree with this verdict.
-  if (auto cert = getCertificateAttr()) {
+  if (auto witness = getWitnessAttr()) {
     SmallVector<TypeEqualityAttr> equalityPremises;
     SmallVector<TraitApplicationAttr> applicationPremises;
     for (Value premise : getPremises())
@@ -2042,7 +2042,7 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
         else if (claim.isApplication())
           applicationPremises.push_back(claim.getTraitApplication());
       }
-    return verifyProjectionResolutionAtUse(module, cert, equalityPremises,
+    return verifyProjectionResolutionAtUse(module, witness, equalityPremises,
                                            applicationPremises, errFn);
   }
 
@@ -2050,7 +2050,7 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (getRefl())
     return success();
 
-  // Composition arm: an equality result with neither a certificate nor a refl
+  // Composition arm: an equality result with neither a witness nor a refl
   // marker cites nothing by symbol -- its premises are SSA values -- so there is
   // no citation to verify here.
   if (getResultClaim().isEquality())
@@ -2639,8 +2639,8 @@ void CoerceOp::print(OpAsmPrinter &p) {
 // claim proofs are stripped from every endpoint first (comparison is modulo
 // the proof, permanently). For the composition arm the transitivity and
 // congruence that carry the premises to the result are derived here at verify
-// and never stored, so the witness holds only its leaf premises and the
-// admission law holds.
+// and never stored, so the witness holds only its leaf premises and only
+// definitional leaves are ever stored.
 static bool entailedByGroundCongruence(Type lhs, Type rhs,
                                        ArrayRef<TypeEqualityAttr> premises) {
   lhs = stripClaimProofs(lhs);
