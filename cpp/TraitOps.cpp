@@ -488,8 +488,7 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
       // A witness resolves only a GROUND sibling projection; a projection still
       // carrying a poly variable is not ground, and resolving it by unifying
       // that variable with a single cited impl's concrete head would accept a
-      // generic impl on the strength of one instance. This mirrors the guard the
-      // retired candidate lookup applied before it reduced a projection.
+      // generic impl on the strength of one instance.
       if (isPolymorphicType(witness.getProjection()))
         return emitOpError() << "witness projection " << witness.getProjection()
                              << " is not ground; a witness resolves only a "
@@ -1170,8 +1169,8 @@ ParseResult ImplOp::parse(OpAsmParser &p, OperationState &result) {
   
   // where clause: one mixed PredicateArrayAttr (application and equality arms in
   // declaration order), stored directly as $assumptions -- no second array and
-  // no partition. An application-only clause parses byte-identically to the
-  // trait application array it generalizes.
+  // no partition. An application-only clause parses as a plain array of trait
+  // applications.
   auto assumptions = PredicateArrayAttr::get(p.getContext(), ArrayRef<Attribute>{});
   if (succeeded(p.parseOptionalKeyword("where"))) {
     assumptions = dyn_cast_or_null<PredicateArrayAttr>(PredicateArrayAttr::parse(p, {}));
@@ -1587,7 +1586,7 @@ void WitnessOp::print(OpAsmPrinter &p) {
     return;
   }
 
-  // Application arm; printed byte-identically to before.
+  // Application arm.
   p << " " << getProofAttr() << " for ";
   getTraitApplicationAttr().print(p);
 
@@ -1802,7 +1801,7 @@ static FailureOr<SpecializationMap> verifyProjectionResolutionCore(
   // application stays rigid and is never resolved by a module-visible impl --
   // an impl's verdict cannot then turn on the unrelated impls the module carries.
   // The use-site entry leaves it clear and resolves the actual side's ground
-  // projections by module lookup, as it always has.
+  // projections by module lookup.
   ClaimType selfClaim =
       ClaimType::get(module.getContext(), projectionTy.getTraitApplication());
   auto subst = rigidHeadMatch

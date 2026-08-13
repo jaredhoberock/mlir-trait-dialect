@@ -111,9 +111,12 @@ def TraitOp : TraitDialectOp<"trait", [
     }
     ```
 
-    The `where` clause lists the one-hop prerequisite trait applications that must hold
-    whenever the trait holds. Each requirement is written using the trait's type
-    parameters and is stored in the `requirements` argument.
+    The `where` clause is one ordered `PredicateArrayAttr` whose entries are of two
+    arms: a one-hop trait application that must hold whenever the trait holds, or a
+    type equality two spellings must satisfy (checked at an impl's birth against the
+    impl's bindings, and projectable through `trait.project`'s equality hop). Each
+    requirement is written using the trait's type parameters and is stored in the
+    `requirements` argument.
 
     Concretely, if you declare:
 
@@ -131,6 +134,17 @@ def TraitOp : TraitDialectOp<"trait", [
     ```
 
     Then any proof of `@PartialOrd[T,U]` must also discharge `@PartialEq[T,U]`.
+
+    A `where` clause may mix both arms; an equality entry names a type equality the
+    trait's associated types satisfy:
+
+    ```mlir
+    // @Callable[!S] must hold, and @FoldFn's "Output" projects to !S.
+    trait.trait @FoldFn[!S] where [
+      @Callable[!S],
+      !trait.proj<@FoldFn[!S], "Output"> = !S
+    ] { ... }
+    ```
   }];
 
   let arguments = (ins
@@ -387,6 +401,19 @@ def ImplOp : TraitDialectOp<"impl", [
     legal: an application-armed witness names, per obligation, the impl that
     supplies it, and the discharge recursion resolves every discharger by symbol
     without scanning the module.
+
+    Example of the mixed `where` clause and the `witnesses` array:
+
+    ```mlir
+    trait.impl @T2_i64 for @T2[i64] where [!trait.proj<@Sib[i64], "Elem"> = i64]
+        witnesses [#trait<witness !trait.proj<@Sib[i64], "Elem"> = i64 by @Sib_cond>,
+                   #trait<witness @X[i64] by @X_i64>] {
+      // the equality-armed witness resolves the sibling projection to i64;
+      // the application-armed witness discharges the cited conditional impl's
+      // @X[i64] assumption.
+      ...
+    }
+    ```
   }];
 
   let arguments = (ins
@@ -577,8 +604,7 @@ def ImplOp : TraitDialectOp<"impl", [
     }]>,
 
     // convenience wraps application-only assumptions into the mixed
-    // PredicateArrayAttr -- the shape sibling dialects construct through the
-    // C API -- and defers to the auto-naming builder
+    // PredicateArrayAttr and defers to the auto-naming builder
     OpBuilder<(ins "::mlir::trait::TraitApplicationAttr":$self_application,
                    "::mlir::ArrayRef<TraitApplicationAttr>":$assumptions), [{
       MLIRContext *ctx = $_builder.getContext();
@@ -767,6 +793,15 @@ def AssumeOp : TraitDialectOp<"assume", [
     enclosing declaration's polymorphic variables, so identity of the equality
     predicate is the check and no weaker match is accepted.
 
+    Example of an equality assume anchored by the enclosing trait's requirement:
+      trait.trait @FoldFn[!S] where [!trait.proj<@FoldFn[!S], "Output"> = !S] {
+        trait.assoc_type @Output
+        func.func @fold(%x: !S) -> !S {
+          %e = trait.assume !trait.proj<@FoldFn[!S], "Output"> = !S
+          ...
+        }
+      }
+
     Example inside a trait method body:
       trait.trait @PartialEq[!S,!O] {
         func.func @eq(!S, !O) -> i1
@@ -889,16 +924,19 @@ def ProjectOp : TraitDialectOp<"project", [
 ]> {
   let summary = "Derive a consequence from an existing claim";
   let description = [{
-    Given a claim, derive a **consequence** — a trait application that follows
-    from the source claim's trait requirements or impl assumptions. While
-    `trait.assume` introduces axioms, `trait.project` extracts their logical
+    Given a claim, derive a **consequence** — a trait application or type equality
+    that follows from the source claim's trait requirements or impl assumptions.
+    While `trait.assume` introduces axioms, `trait.project` extracts their logical
     consequences.
 
     Given a claim of `@Trait[Args...]`, produce a claim of either:
       1. the **identity** projection `@Trait[Args...]` itself, or
       2. a one-hop **trait requirement** `@Req[Args...]` declared in the
          `where` clause of `trait.trait @Trait`, or
-      3. (if the input claim is **proven**) an **impl assumption** declared in the
+      3. a one-hop **equality requirement** `!A = !B` declared in the `where`
+         clause of `trait.trait @Trait`, specialized at `Args...` -- an equality
+         claim reachable from a proven or an unproven source, or
+      4. (if the input claim is **proven**) an **impl assumption** declared in the
          `where` clause of the referenced `trait.impl` (or discharged via
          its `trait.proof`).
 
@@ -925,15 +963,24 @@ def ProjectOp : TraitDialectOp<"project", [
     // impl assumption (requires a proven source claim)
     %wA = trait.witness @A_impl_i32 for @A[i32]
     %wB = trait.project %wA : @A[i32] by @A_impl_i32 to @B[i32] by @B_impl_i32
+
+    // equality requirement (works for unproven or proven source claims)
+    // @Has[!S] where [ !trait.proj<@Has[!S], "Out"> = i64 ]
+    %he = trait.project %p : @Has[i32] by @Has_i32 to !trait.proj<@Has[i32], "Out"> = i64
     ```
 
     Verification:
     * For an **unproven** source claim (e.g., from `trait.assume` or `trait.allege`),
       the target must match one of `@Trait`'s `where` requirements after substitution,
-      or be the identity. The target of an unproven source claim must also be unproven.
+      or be the identity. An **application** target of an unproven source claim must
+      also be unproven.
     * For a **proven** source claim (e.g., from `trait.witness`), the target may match
       the identity, a trait-level requirement, or an assumption of the referenced proof,
-      after substitution. The target of a proven source claim must also be proven.
+      after substitution. An **application** target of a proven source claim must also
+      be proven.
+    * An **equality** target is exempt from proofness parity from either source: an
+      equality claim never carries a proof (the equality arm seals its endpoints), so
+      an equality requirement projected from a proven source is still unproven.
   }];
 
   let arguments = (ins Claim:$source);
@@ -1031,12 +1078,11 @@ def WitnessOp : TraitDialectOp<"witness", [
         leaf definitional while letting a caller name a derived equality.
 
     Admissible leaves are only definitional equalities -- one type, two
-    spellings. The three leaves above are exhaustive; none is
-    representational (a layout cast, a zero-cost view, a witnessed expand()), so
-    such a leaf is unconstructable. Screech has GHC's unsoundness ingredient
-    (generative nominals plus congruence exercised through projection heads), so
-    any future representational leaf requires role machinery first -- the
-    design's recorded escalation trigger.
+    spellings. The three leaves above are exhaustive; none is representational (a
+    layout cast, a zero-cost view), so such a leaf is unconstructable. The
+    dialect's nominal types are generative and congruence is exercised through
+    projection heads -- the combination that made GHC's unscoped newtype coercions
+    unsound -- so admitting a representational leaf requires role machinery first.
 
     Verification (verify() and verifySymbolUses) ensures the present attributes
     match the result claim's arm, that the result type equals the claim
@@ -1147,9 +1193,16 @@ def CoerceOp : TraitDialectOp<"coerce", [
     cited leaves entail is accepted. The endpoints are assumed ground and
     binder-free.
 
+    Example, citing evidence:
+      %c = trait.coerce %v : !trait.proj<@Has[i32], "Out"> to i64 via (%eq)
+        : (!trait.claim<!trait.proj<@Has[i32], "Out"> = i64>)
+
     The zero-evidence reflexive form (input and result identical, no
     outstanding equality) is legal and is the discharged terminal state; it
     folds to its operand, and cited evidence then dies by ordinary DCE.
+
+    Example, reflexive:
+      %r = trait.coerce %v : i64 to i64  // discharged terminal state; folds to %v
 
     The `unproven` marker names a coerce standing in a projection-convergence
     obligation whose evidence is not available at emission: the reconciling
@@ -1172,7 +1225,10 @@ def CoerceOp : TraitDialectOp<"coerce", [
     its projections to ground, discharging the obligation to the reflexive form
     the folder collapses -- or, if the two lookups ground to different types,
     failing the build. A marked coerce surviving past monomorphization is a hard
-    error, never a tolerated residual.
+    error (the erase barrier refuses it), never a tolerated residual.
+
+    Example, marked:
+      %u = trait.coerce %x : !trait.proj<@Fold[i64], "Item"> to i64 unproven
   }];
 
   let arguments = (ins AnyType:$input, Variadic<Claim>:$equalities,

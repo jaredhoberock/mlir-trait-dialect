@@ -142,7 +142,8 @@ def WitnessAttr : AttrDef<TraitDialect, "Witness", []> {
     Witnessing is one concept carried two ways, chosen by scope. This attribute
     IS the witness and stands alone as declaration-level witnessing. Where
     evidence must be a typed claim value, the `trait.witness` op wraps this same
-    content and produces the value.
+    content and produces the value. See `trait.impl` for a printed `witnesses [...]`
+    array carrying both arms.
 
     An equality predicate keeps the walk-opacity of its own `TypeEqualityAttr`
     storage: no generic replacer reaches its endpoints, and readers use
@@ -200,8 +201,8 @@ def PredicateArrayAttr : AttrDef<TraitDialect, "PredicateArray",
 
     Application entries are proved at impl selection; equality entries are
     checked at impl birth against the impl's own bindings. An application-only
-    array prints and parses exactly as the trait application array it
-    generalizes, so existing textual forms round-trip unchanged.
+    array prints and parses as a plain array of trait applications; existing
+    textual forms round-trip unchanged.
 
     Example:
       !S = trait.poly<0>
@@ -238,8 +239,7 @@ def PredicateArrayAttr : AttrDef<TraitDialect, "PredicateArray",
       });
     }
 
-    // Convenience: build from application entries alone (the common case, and
-    // the shape sibling dialects construct).
+    // Convenience: build from application entries alone (the common case).
     static PredicateArrayAttr get(MLIRContext *ctx,
                                   ArrayRef<TraitApplicationAttr> apps) {
       SmallVector<Attribute> preds(apps.begin(), apps.end());

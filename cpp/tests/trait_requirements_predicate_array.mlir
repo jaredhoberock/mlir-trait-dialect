@@ -6,9 +6,9 @@
 
 // A trait's `where` clause carries a mix of arms: an application requirement
 // and an equality requirement, in declaration order. An application-only array
-// prints exactly as before, so the application entry here is byte-identical to
-// the trait application array it generalizes; the equality entry rides beside
-// it. The clause survives both the textual and the bytecode round-trip.
+// prints as a plain array of trait applications, so the application entry here
+// prints unchanged; the equality entry rides beside it. The clause survives both
+// the textual and the bytecode round-trip.
 
 !S = !trait.poly<0>
 
