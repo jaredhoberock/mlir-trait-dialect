@@ -1501,6 +1501,16 @@ static void checkResolutionBoundary(const ImplResolver &resolver) {
 /// following it without end.
 constexpr unsigned maxProjectionResolutionHops = 64;
 
+/// The resolvers and module-body builder every projection-settlement helper
+/// reads but never varies as it descends. Recorded facts and obligation-holding
+/// selection come from `reading` and `resolver`; the impls a resolution chain
+/// drives selection to generate insert at the module body through `proofBuilder`.
+struct ProjectionSettleContext {
+  const ReadOnlyImplResolver &reading;
+  ImplResolver &resolver;
+  OpBuilder &proofBuilder;
+};
+
 /// Resolve one hop of a monomorphic projection through an obligation-holding
 /// impl. The recorded facts answer first; a projection nothing recorded is put
 /// to impl selection, which resolves it only through an impl whose obligations
@@ -1509,12 +1519,13 @@ constexpr unsigned maxProjectionResolutionHops = 64;
 /// serve -- so they are marked speculative and never reach the drain. Nothing
 /// where the projection has no obligation-holding impl.
 static std::optional<Type>
-resolveProjectionHop(ProjectionType proj, const ReadOnlyImplResolver &reading,
-                     ImplResolver &resolver, OpBuilder &builder) {
-  if (auto recorded = reading.resolveProjectionType(proj); succeeded(recorded))
+resolveProjectionHop(ProjectionType proj, const ProjectionSettleContext &settle) {
+  if (auto recorded = settle.reading.resolveProjectionType(proj);
+      succeeded(recorded))
     return *recorded;
   SpeculationScope speculation;
-  if (auto selected = resolver.resolveProjectionType(proj, builder);
+  if (auto selected =
+          settle.resolver.resolveProjectionType(proj, settle.proofBuilder);
       succeeded(selected))
     return *selected;
   return std::nullopt;
@@ -1565,8 +1576,7 @@ static Type resolveGroundProjections(
 /// binding may spell the next. The endpoints are read through the accessor
 /// because the generic walker treats them as opaque.
 static bool equalityClaimGroundResolvesToOneSpelling(
-    ClaimType claim, const ReadOnlyImplResolver &reading, ImplResolver &resolver,
-    OpBuilder &builder) {
+    ClaimType claim, const ProjectionSettleContext &settle) {
   auto eq = claim.getEqualityAttr();
   if (!eq)
     return false;
@@ -1574,7 +1584,7 @@ static bool equalityClaimGroundResolvesToOneSpelling(
   // (recorded facts first, then impl selection -- see the helpers).
   auto resolveEndpoint = [&](Type endpoint) -> Type {
     return resolveGroundProjections(endpoint, [&](ProjectionType proj) {
-      return resolveProjectionHop(proj, reading, resolver, builder);
+      return resolveProjectionHop(proj, settle);
     });
   };
   Type lhs = resolveEndpoint(eq.getLhs());
@@ -1582,19 +1592,17 @@ static bool equalityClaimGroundResolvesToOneSpelling(
   return lhs == rhs && isGroundType(lhs);
 }
 
-/// The resolvers, builders, and location a projection-resolution witness
-/// mint reads but never varies as the chain walks hop to hop. Recorded facts
-/// and obligation-holding selection come from `reading` and `resolver`; the
-/// witness and its premise witnesses insert at the consumer through
-/// `witnessBuilder`, so they dominate it, while premise proofs and any impl
-/// generation go to the module body through `proofBuilder`; every op carries
-/// `loc`.
+/// The settlement resolvers, per-site builder, and location a projection-
+/// resolution witness mint reads but never varies as the chain walks hop to
+/// hop. Recorded facts, obligation-holding selection, and the module-body
+/// builder impl generation goes through come from `settle`; the witness and its
+/// premise witnesses insert at the consumer through `witnessBuilder`, so they
+/// dominate it, while premise proofs and any impl generation go to the module
+/// body through `settle.proofBuilder`; every op carries `loc`.
 struct ProjectionResolveMintContext {
+  ProjectionSettleContext settle;
   Location loc;
-  const ReadOnlyImplResolver &reading;
-  ImplResolver &resolver;
   OpBuilder &witnessBuilder;
-  OpBuilder &proofBuilder;
 };
 
 /// Mint the proj-resolve witness proving `<proj = binding>`, where the impl
@@ -1609,12 +1617,11 @@ static FailureOr<std::pair<Value, Type>>
 mintProjectionResolutionWitness(ProjectionType proj,
                                 const ProjectionResolveMintContext &ctx) {
   MLIRContext *mlirCtx = proj.getContext();
-  auto binding =
-      resolveProjectionHop(proj, ctx.reading, ctx.resolver, ctx.proofBuilder);
+  auto binding = resolveProjectionHop(proj, ctx.settle);
   if (!binding)
     return failure();
   ClaimType selfClaim = ClaimType::get(mlirCtx, proj.getTraitApplication());
-  auto resolvedImpl = ctx.reading.getRecordedImplFor(selfClaim);
+  auto resolvedImpl = ctx.settle.reading.getRecordedImplFor(selfClaim);
   if (failed(resolvedImpl))
     return failure();
   SmallVector<Value> obligationPremises;
@@ -1624,8 +1631,8 @@ mintProjectionResolutionWitness(ProjectionType proj,
     if (failed(assumptions))
       return failure();
     for (ClaimType assumption : *assumptions) {
-      auto proof =
-          ctx.resolver.resolveAndEnsureProofFor(assumption, ctx.proofBuilder);
+      auto proof = ctx.settle.resolver.resolveAndEnsureProofFor(
+          assumption, ctx.settle.proofBuilder);
       if (failed(proof))
         return failure();
       obligationPremises.push_back(
@@ -1691,11 +1698,10 @@ mintProjectionResolveChain(Type endpoint,
 /// the same fixed-point resolution reaching one ground spelling within the hop
 /// bound, so the walk here terminates; a chain that outruns the bound fails and
 /// is reported like an unresolvable one. Proofs the premises need are minted
-/// through `proofBuilder` at the module body; the witnesses themselves are
-/// inserted at the assume.
+/// through `settle.proofBuilder` at the module body; the witnesses themselves
+/// are inserted at the assume.
 static LogicalResult reduceGroundEqualityAssume(
-    AssumeOp assume, TypeEqualityAttr eq, const ReadOnlyImplResolver &reading,
-    ImplResolver &resolver, OpBuilder &proofBuilder) {
+    AssumeOp assume, TypeEqualityAttr eq, const ProjectionSettleContext &settle) {
   MLIRContext *ctx = assume.getContext();
   Location loc = assume.getLoc();
   Type lhs = eq.getLhs();
@@ -1717,8 +1723,7 @@ static LogicalResult reduceGroundEqualityAssume(
 
   // Mint each endpoint's per-hop resolution chain (see the function doc);
   // no premises means the endpoints did not ground-resolve.
-  ProjectionResolveMintContext mintCtx{loc, reading, resolver, builder,
-                                       proofBuilder};
+  ProjectionResolveMintContext mintCtx{settle, loc, builder};
   SmallVector<Value> premises;
   if (failed(mintProjectionResolveChain(lhs, mintCtx, premises)) ||
       failed(mintProjectionResolveChain(rhs, mintCtx, premises)))
@@ -1801,6 +1806,7 @@ static LogicalResult reconcileDerivedAssumptions(
   OpBuilder proofBuilder(module.getContext());
   proofBuilder.setListener(&reconcileInsertions);
   proofBuilder.setInsertionPointToEnd(module.getBody());
+  ProjectionSettleContext settle{reading, resolver, proofBuilder};
 
   bool sawUnbridgeableDrift = false;
   for (DeriveOp derive : derives) {
@@ -1846,8 +1852,8 @@ static LogicalResult reconcileDerivedAssumptions(
           if (!isPolymorphicType(proj))
             projections.push_back(proj);
       });
-      ProjectionResolveMintContext mintCtx{derive.getLoc(), reading, resolver,
-                                           witnessBuilder, proofBuilder};
+      ProjectionResolveMintContext mintCtx{settle, derive.getLoc(),
+                                           witnessBuilder};
       SmallVector<Value> witnesses;
       bool minted = true;
       for (ProjectionType proj : projections)
@@ -2204,22 +2210,22 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
   OpBuilder settleBuilder(ctx);
   settleBuilder.setListener(&settleInsertions);
   settleBuilder.setInsertionPointToEnd(module.getBody());
+  ProjectionSettleContext settle{reading, *resolver, settleBuilder};
   for (auto [op, claim] : monomorphicClaims) {
     // An equality claim has no proof to await; it is settled when its endpoints
     // ground-resolve to one spelling through impls whose obligations hold. A
     // monomorphic equality that resolves is not a leftover; one whose projection
     // has no obligation-holding impl stays unequal and is reported like an
     // unprovable application claim.
-    if (claim.isEquality() && equalityClaimGroundResolvesToOneSpelling(
-                                  claim, reading, *resolver, settleBuilder)) {
+    if (claim.isEquality() &&
+        equalityClaimGroundResolvesToOneSpelling(claim, settle)) {
       // A surviving equality `trait.assume` is an inherited axiom no
       // legalization removes; now that it ground-resolves, replace it with the
       // witness proving it. Producers already carrying legal evidence (a
       // `trait.witness`) need nothing here.
       if (auto assume = dyn_cast<AssumeOp>(op))
         if (failed(reduceGroundEqualityAssume(assume, claim.getEqualityAttr(),
-                                              reading, *resolver,
-                                              settleBuilder))) {
+                                              settle))) {
           hasLeftovers = true;
           op->emitError()
               << "ground-resolvable equality assumption " << claim
