@@ -402,8 +402,7 @@ bool traitCoercePendingAccepts(MlirType input, MlirType result) {
   Type out = stripClaimProofs(unwrap(result));
   // A refused pending judgment is a classification answer, not a compile error,
   // so this consult passes no diagnostic sink and the judgment stays silent.
-  return succeeded(
-      verifyPendingProjectionUnification(in, out, /*emitError=*/nullptr));
+  return succeeded(verifyPendingProjectionUnification(in, out));
 }
 
 // The shared body of the two projection-resolution consults. It splits the

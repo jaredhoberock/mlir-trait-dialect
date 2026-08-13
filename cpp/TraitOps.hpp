@@ -27,70 +27,51 @@ public:
   }
 };
 
-/// Verifies a projection-resolution witness against `module`. The
-/// equality-armed `witness` supplies it: `getProjection()` and
-/// `getResolved()` name the projection and the type it resolves
-/// to, cited to `witness.getImplRef()`. Passing an application-armed witness is
-/// a caller bug. Looks the cited impl up in `module`, resolves the projection
-/// through the impl's associated-type binding specialized for the projection's
-/// trait application, applies the equality `premises`, and compares the result
-/// against the resolved type proof-blind. Succeeds when the cited impl binds the
-/// projection to the resolved type. `err`, when non-null, receives the
-/// diagnostic on refusal.
-///
-/// Verification additionally requires the cited impl's own assumptions --
-/// specialized for the projection's application -- each to be discharged by a
-/// hypothetical cover from the application-arm `obligationPremises` (the citing
-/// impl's own where clause), compared proof-stripped and modulo the equality
-/// `premises`. It deliberately does not reach the cited impl's trait
+/// Verifies an equality-armed projection-resolution `witness` against `module`;
+/// passing an application-armed witness is a caller bug. Succeeds iff the cited
+/// impl (`witness.getImplRef()`), specialized for the projection's application
+/// and modulo the equality `premises`, binds the projection to the resolved
+/// type, proofs ignored. The cited impl's own assumptions must each be covered
+/// by the application-arm `obligationPremises` -- deliberately not its trait
 /// requirements, which may quantify over GAT variables with no ground instance
-/// at the witness; requirement discharge belongs to the proof and birth
-/// machinery. So a witness never cites an impl whose own assumptions are unmet.
-///
-/// This use-site entry resolves the actual side's ground projections by module
-/// lookup, as verifying a witness at its use site does, and admits no discharge
-/// citations.
+/// here. This use-site entry resolves the actual side's ground projections by
+/// module lookup. `err`, when non-null, receives the diagnostic on refusal.
 LogicalResult verifyProjectionResolutionAtUse(
     ModuleOp module, WitnessAttr witness,
     ArrayRef<TypeEqualityAttr> premises,
     ArrayRef<TraitApplicationAttr> obligationPremises,
-    llvm::function_ref<InFlightDiagnostic()> err);
+    llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
 /// The impl-birth companion to `verifyProjectionResolutionAtUse`, running the
-/// same binding check and assumption discharge over the shared core and
-/// differing in three ways. Its head match is rigid: it instantiates ONLY the
-/// cited impl's own generics, so the projection's application (the actual side)
-/// stays rigid and no module-visible impl resolves a projection spelled there --
-/// an impl's verdict cannot then turn on the unrelated impls the module carries.
-/// Its assumptions may be discharged not only by `obligationPremises` but by a
-/// `dischargeWitnesses` entry whose spelled application is the assumption and
-/// whose named impl, specialized for it, has each of its own assumptions
-/// discharged in turn over the same finite citation list. And on success it
-/// returns the head-match substitution.
+/// same binding check and assumption discharge, differing in three ways. Its
+/// head match is rigid -- only the cited impl's own generics instantiate -- so
+/// the verdict is estate-independent. Its assumptions may also be covered by a
+/// `dischargeWitnesses` entry, recursively over the same finite list. And on
+/// success it returns the head-match substitution.
 FailureOr<SpecializationMap> verifyProjectionResolutionAtBirth(
     ModuleOp module, WitnessAttr witness,
     ArrayRef<TypeEqualityAttr> premises,
     ArrayRef<TraitApplicationAttr> obligationPremises,
     ArrayRef<WitnessAttr> dischargeWitnesses,
-    llvm::function_ref<InFlightDiagnostic()> err);
+    llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
 /// Rewrite a type with every proven application claim stripped to its unproven
 /// form. Coerce comparison is modulo the proof, permanently.
 Type stripClaimProofs(Type type);
 
 /// The pending judgment a marked (unproven) coerce carries; one judgment serves
-/// every checker of this evidence. The endpoints must
-/// unify with every `!trait.proj` term a shared unification variable keyed by the
-/// projection itself: the same projection is one variable, every other position
-/// is rigid, and a whole projection is opaque (its arguments are not descended).
-/// A projection may resolve to a projection-free position or to another bare
-/// projection (a direct alias, both owed a grounding at discharge); a binding
-/// that resolves to a composite still carrying a projection, or that closes a
-/// cycle, is refused. Endpoints arrive with proofs already stripped. `err`, when
-/// non-null, receives the diagnostic on refusal.
+/// every checker of this evidence. The endpoints must unify, giving every
+/// `!trait.proj` term a shared variable keyed by the projection itself: the same
+/// projection is one variable, every other position is rigid, and a whole
+/// projection is opaque (its arguments are not descended). A projection may
+/// resolve to a projection-free position or to another bare projection (a direct
+/// alias, both owed a grounding at discharge); a binding that resolves to a
+/// composite still carrying a projection, or that closes a cycle, is refused.
+/// Endpoints arrive with proofs already stripped. `err`, when non-null, receives
+/// the diagnostic on refusal.
 LogicalResult verifyPendingProjectionUnification(
     Type input, Type result,
-    llvm::function_ref<InFlightDiagnostic()> emitError);
+    llvm::function_ref<InFlightDiagnostic()> emitError = nullptr);
 
 } // end mlir::trait
 

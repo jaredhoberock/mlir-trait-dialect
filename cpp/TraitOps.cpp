@@ -1782,18 +1782,15 @@ static FailureOr<SpecializationMap> verifyProjectionResolutionCore(
 
   auto projectionTy = dyn_cast<ProjectionType>(projection);
   if (!projectionTy) {
-    if (err)
-      err() << "a projection-resolution witness must "
-               "name a projection, found " << projection;
+    if (err) err() << "a projection-resolution witness must name a projection, found "
+                   << projection;
     return failure();
   }
 
   auto implOp =
       SymbolTable::lookupNearestSymbolFrom<ImplOp>(module, citedImpl);
   if (!implOp) {
-    if (err)
-      err() << "cannot find trait.impl '" << citedImpl
-            << "' cited by the witness";
+    if (err) err() << "cannot find trait.impl '" << citedImpl << "' cited by the witness";
     return failure();
   }
 
@@ -1816,10 +1813,9 @@ static FailureOr<SpecializationMap> verifyProjectionResolutionCore(
   auto bound = implOp.specializeAssociatedTypeBinding(
       projectionTy.getAssocName().getValue(), projectionTy.getAssocTypeArgs());
   if (failed(bound)) {
-    if (err)
-      err() << "impl '" << citedImpl
-            << "' does not bind associated type '"
-            << projectionTy.getAssocName().getValue() << "'";
+    if (err) err() << "impl '" << citedImpl
+                   << "' does not bind associated type '"
+                   << projectionTy.getAssocName().getValue() << "'";
     return failure();
   }
   Type actual = subst->apply(*bound);
@@ -1836,9 +1832,8 @@ static FailureOr<SpecializationMap> verifyProjectionResolutionCore(
   if (failed(resolvedOr))
     return failure();
   if (actual != *resolvedOr) {
-    if (err)
-      err() << "impl '" << citedImpl << "' binds the projection to "
-            << actual << ", not the certified resolution " << resolved;
+    if (err) err() << "impl '" << citedImpl << "' binds the projection to "
+                   << actual << ", not the certified resolution " << resolved;
     return failure();
   }
 
@@ -1858,10 +1853,9 @@ static FailureOr<SpecializationMap> verifyProjectionResolutionCore(
       return failure();
     SmallVector<TraitApplicationAttr> inProgress;
     if (!dischargeApplicationObligation(dischargeCtx, *wantOr, inProgress)) {
-      if (err)
-        err() << "cited impl '" << citedImpl
-              << "' has an undischarged assumption " << assumption
-              << "; the witness premises do not supply it";
+      if (err) err() << "cited impl '" << citedImpl
+                     << "' has an undischarged assumption " << assumption
+                     << "; the witness premises do not supply it";
       return failure();
     }
   }
@@ -2741,9 +2735,8 @@ LogicalResult mlir::trait::verifyPendingProjectionUnification(
       return success();
     if (auto pa = dyn_cast<ProjectionType>(a)) {
       if (occursIn(pa, b)) {
-        if (emitError)
-          emitError() << "input type " << input << " and result type "
-                      << result << " are not consistent as a pending coerce";
+        if (emitError) emitError() << "input type " << input << " and result type "
+                                   << result << " are not consistent as a pending coerce";
         return failure();
       }
       binding[pa] = b;
@@ -2751,9 +2744,8 @@ LogicalResult mlir::trait::verifyPendingProjectionUnification(
     }
     if (auto pb = dyn_cast<ProjectionType>(b)) {
       if (occursIn(pb, a)) {
-        if (emitError)
-          emitError() << "input type " << input << " and result type "
-                      << result << " are not consistent as a pending coerce";
+        if (emitError) emitError() << "input type " << input << " and result type "
+                                   << result << " are not consistent as a pending coerce";
         return failure();
       }
       binding[pb] = a;
@@ -2763,9 +2755,8 @@ LogicalResult mlir::trait::verifyPendingProjectionUnification(
     TermShape sa = decomposeTerm(a);
     TermShape sb = decomposeTerm(b);
     if (sa.key != sb.key || sa.children.size() != sb.children.size()) {
-      if (emitError)
-        emitError() << "input type " << input << " and result type "
-                    << result << " are not consistent as a pending coerce";
+      if (emitError) emitError() << "input type " << input << " and result type "
+                                 << result << " are not consistent as a pending coerce";
       return failure();
     }
     for (auto [ca, cb] : llvm::zip(sa.children, sb.children))
@@ -2786,10 +2777,9 @@ LogicalResult mlir::trait::verifyPendingProjectionUnification(
     if (isa<ProjectionType>(terminal))
       continue;
     if (carriesProjection(terminal)) {
-      if (emitError)
-        emitError() << "input type " << input << " and result type "
-                    << result
-                    << " equate distinct projections in a pending coerce";
+      if (emitError) emitError() << "input type " << input << " and result type "
+                                 << result
+                                 << " equate distinct projections in a pending coerce";
       return failure();
     }
   }
