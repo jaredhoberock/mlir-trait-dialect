@@ -67,16 +67,17 @@ MlirOperation traitTraitOpCreate(MlirLocation loc, MlirStringRef name,
   }
 
   // The mixed where-clause: each predicate is a trait application or a type
-  // equality. A non-predicate attribute is rejected by returning a null op.
+  // equality. The array's own verifier judges the arm of every entry; a
+  // non-predicate attribute is rejected by returning a null op.
   SmallVector<Attribute> preds;
   preds.reserve(numPredicates);
-  for (intptr_t i = 0; i < numPredicates; ++i) {
-    Attribute p = unwrap(predicates[i]);
-    if (!isa<TraitApplicationAttr, TypeEqualityAttr>(p))
-      return {};
-    preds.push_back(p);
-  }
-  auto predsAttr = PredicateArrayAttr::get(ctx, preds);
+  for (intptr_t i = 0; i < numPredicates; ++i)
+    preds.push_back(unwrap(predicates[i]));
+  auto predsAttr = PredicateArrayAttr::getChecked(
+      [&] { return emitError(UnknownLoc::get(ctx)); }, ctx,
+      ArrayRef<Attribute>(preds));
+  if (!predsAttr)
+    return {};
 
   auto op = TraitOp::create(builder,
     unwrap(loc),
@@ -124,17 +125,18 @@ MlirOperation traitImplOpCreateNamed(MlirLocation loc,
   OpBuilder builder(ctx);
 
   // The impl's mixed where-clause: application entries are proof obligations,
-  // equality entries assert the impl's own bindings. A non-predicate attribute
-  // is rejected by returning a null op.
+  // equality entries assert the impl's own bindings. The array's own verifier
+  // judges the arm of every entry; a non-predicate attribute is rejected by
+  // returning a null op.
   SmallVector<Attribute> preds;
   preds.reserve(numPredicates);
-  for (intptr_t i = 0; i < numPredicates; ++i) {
-    Attribute p = unwrap(predicates[i]);
-    if (!isa<TraitApplicationAttr, TypeEqualityAttr>(p))
-      return {};
-    preds.push_back(p);
-  }
-  auto predsAttr = PredicateArrayAttr::get(ctx, preds);
+  for (intptr_t i = 0; i < numPredicates; ++i)
+    preds.push_back(unwrap(predicates[i]));
+  auto predsAttr = PredicateArrayAttr::getChecked(
+      [&] { return emitError(UnknownLoc::get(ctx)); }, ctx,
+      ArrayRef<Attribute>(preds));
+  if (!predsAttr)
+    return {};
 
   auto op = ImplOp::create(builder,
     unwrap(loc),
@@ -319,11 +321,12 @@ MlirType traitPolyTypeGet(MlirContext wrappedCtx,
 }
 
 MlirType traitClaimTypeGet(MlirContext wrappedCtx,
-                           MlirAttribute wrappedTraitApp) {
+                           MlirAttribute wrappedPredicate) {
   MLIRContext* ctx = unwrap(wrappedCtx);
-  TraitApplicationAttr traitApp = dyn_cast<TraitApplicationAttr>(unwrap(wrappedTraitApp));
-  if (!traitApp) return {}; // invalid attribute type
-  return wrap(ClaimType::get(ctx, traitApp));
+  auto claim = ClaimType::getChecked(
+      [&] { return emitError(UnknownLoc::get(ctx)); }, ctx,
+      unwrap(wrappedPredicate), /*proof=*/FlatSymbolRefAttr());
+  return wrap(claim);
 }
 
 MlirType traitClaimTypeWithApplication(MlirType wrappedClaimType,
@@ -380,17 +383,6 @@ MlirAttribute traitTypeEqualityAttrGet(MlirContext wrappedCtx,
   return wrap(eq);
 }
 
-MlirType traitClaimTypeGetEquality(MlirContext wrappedCtx,
-                                   MlirType lhs, MlirType rhs) {
-  MLIRContext *ctx = unwrap(wrappedCtx);
-  auto eq = TypeEqualityAttr::getChecked(
-      [&] { return emitError(UnknownLoc::get(ctx)); }, ctx, unwrap(lhs),
-      unwrap(rhs));
-  if (!eq)
-    return {};
-  return wrap(ClaimType::getEquality(ctx, eq));
-}
-
 MlirAttribute traitWitnessAttrGet(MlirContext wrappedCtx,
                                   MlirAttribute predicate,
                                   MlirStringRef implName) {
@@ -416,12 +408,22 @@ bool traitCoercePendingAccepts(MlirType input, MlirType result) {
   return succeeded(verifyPendingProjectionUnification(in, out, err));
 }
 
-bool traitProjectionResolutionVerifies(MlirModule wrappedModule,
-                                       MlirType projection, MlirType resolved,
-                                       MlirStringRef implName,
-                                       MlirType *premises, intptr_t numPremises,
-                                       MlirAttribute *discharges, intptr_t numDischarges,
-                                       bool rigidHeadMatch) {
+// The shared body of the two projection-resolution consults. It splits the
+// premises by arm, packs the checked projection-resolution certificate under a
+// suppressing diagnostic handler, and hands the packed witness and split
+// premises to `runCore`, which runs the arm-specific judgment. A malformed
+// premise, or an endpoint carrying a proven claim (which the equality arm
+// refuses), answers false without consulting the judgment. A refused
+// verification is a classification answer, not a compile error, so the
+// diagnostics the shared check emits on refusal are swallowed.
+static bool projectionResolutionVerifies(
+    MlirModule wrappedModule, MlirType projection, MlirType resolved,
+    MlirStringRef implName, MlirType *premises, intptr_t numPremises,
+    llvm::function_ref<LogicalResult(
+        ModuleOp, WitnessAttr, ArrayRef<TypeEqualityAttr>,
+        ArrayRef<TraitApplicationAttr>,
+        llvm::function_ref<InFlightDiagnostic()>)>
+        runCore) {
   ModuleOp module = unwrap(wrappedModule);
   MLIRContext *ctx = module.getContext();
   FlatSymbolRefAttr implRef =
@@ -443,35 +445,73 @@ bool traitProjectionResolutionVerifies(MlirModule wrappedModule,
       return false;
   }
 
-  // The declared discharge citations that cover a cited conditional impl's own
-  // assumptions.
-  SmallVector<WitnessAttr> dischargeWitnesses;
-  for (intptr_t i = 0; i < numDischarges; ++i) {
-    auto citation = dyn_cast<WitnessAttr>(unwrap(discharges[i]));
-    if (!citation || !isa<TraitApplicationAttr>(citation.getPredicate()))
-      return false;
-    dischargeWitnesses.push_back(citation);
-  }
-
   // A refused verification is a classification answer, not a compile error, so
   // swallow the diagnostics the shared check emits on refusal.
   ScopedDiagnosticHandler handler(ctx, [](Diagnostic &) { return success(); });
   auto err = [&] { return emitError(UnknownLoc::get(ctx)); };
 
-  // Pack the equality into the witness both entries read off.
-  // Impl-birth verification keeps the projection's application rigid and admits
-  // the discharge citations; a use-site query resolves ground projections by
-  // module lookup and carries none. Either way the head-match substitution the
-  // birth entry hands back is dropped: this query answers only yes or no.
-  auto witnessAttr = WitnessAttr::get(
-      ctx, TypeEqualityAttr::get(ctx, unwrap(projection), unwrap(resolved)),
-      implRef);
-  if (rigidHeadMatch)
-    return succeeded(verifyProjectionResolutionAtBirth(
-        module, witnessAttr, equalityPremises, applicationPremises,
-        dischargeWitnesses, err));
-  return succeeded(verifyProjectionResolutionAtUse(
-      module, witnessAttr, equalityPremises, applicationPremises, err));
+  // Pack the equality into the witness the arm-specific judgment reads off. An
+  // endpoint carrying a proven claim is one the equality arm refuses, so this
+  // consult answers no rather than aborting on it.
+  auto eqCert = TypeEqualityAttr::getChecked(err, ctx, unwrap(projection),
+                                             unwrap(resolved));
+  if (!eqCert)
+    return false;
+  auto witnessAttr = WitnessAttr::get(ctx, eqCert, implRef);
+
+  return succeeded(
+      runCore(module, witnessAttr, equalityPremises, applicationPremises, err));
+}
+
+// Use-site verification resolves the actual side's ground projections by module
+// lookup and admits no discharge citations.
+bool traitProjectionResolutionVerifiesAtUse(MlirModule module,
+                                            MlirType projection,
+                                            MlirType resolved,
+                                            MlirStringRef implName,
+                                            MlirType *premises,
+                                            intptr_t numPremises) {
+  return projectionResolutionVerifies(
+      module, projection, resolved, implName, premises, numPremises,
+      [](ModuleOp module, WitnessAttr witness,
+         ArrayRef<TypeEqualityAttr> equalityPremises,
+         ArrayRef<TraitApplicationAttr> applicationPremises,
+         llvm::function_ref<InFlightDiagnostic()> err) {
+        return verifyProjectionResolutionAtUse(
+            module, witness, equalityPremises, applicationPremises, err);
+      });
+}
+
+// Impl-birth verification keeps the projection's application rigid and admits
+// the discharge citations that cover a cited conditional impl's own
+// assumptions. The head-match substitution the birth judgment hands back is
+// dropped: this query answers only yes or no.
+bool traitProjectionResolutionVerifiesAtBirth(MlirModule module,
+                                              MlirType projection,
+                                              MlirType resolved,
+                                              MlirStringRef implName,
+                                              MlirType *premises,
+                                              intptr_t numPremises,
+                                              MlirAttribute *discharges,
+                                              intptr_t numDischarges) {
+  return projectionResolutionVerifies(
+      module, projection, resolved, implName, premises, numPremises,
+      [&](ModuleOp module, WitnessAttr witness,
+          ArrayRef<TypeEqualityAttr> equalityPremises,
+          ArrayRef<TraitApplicationAttr> applicationPremises,
+          llvm::function_ref<InFlightDiagnostic()> err) -> LogicalResult {
+        SmallVector<WitnessAttr> dischargeWitnesses;
+        for (intptr_t i = 0; i < numDischarges; ++i) {
+          auto citation = dyn_cast<WitnessAttr>(unwrap(discharges[i]));
+          if (!citation || !isa<TraitApplicationAttr>(citation.getPredicate()))
+            return failure();
+          dischargeWitnesses.push_back(citation);
+        }
+        return verifyProjectionResolutionAtBirth(module, witness,
+                                                 equalityPremises,
+                                                 applicationPremises,
+                                                 dischargeWitnesses, err);
+      });
 }
 
 bool traitClaimProjectsTo(MlirModule wrappedModule, MlirType srcClaim,

@@ -599,15 +599,15 @@ fn the_obligation_aware_verification_demands_the_cited_impl_s_assumptions() {
 
     // With no premise verification refuses: the impl's @X[i32] assumption is
     // undischarged.
-    assert!(!trait_::projection_resolution_verifies(
-        &module, projection, i64_ty, "Has_tuple", &[], &[], /*rigid_head_match=*/false
+    assert!(!trait_::projection_resolution_verifies_at_use(
+        &module, projection, i64_ty, "Has_tuple", &[]
     ));
 
     // Supplying an @X[i32] application premise discharges the assumption, and
     // verification accepts.
     let x_i32 = trait_::trait_application_attr(&context, "X", &[i32_ty]);
     let x_i32_claim: melior::ir::Type = trait_::claim_type(&context, x_i32).into();
-    assert!(trait_::projection_resolution_verifies(
-        &module, projection, i64_ty, "Has_tuple", &[x_i32_claim], &[], /*rigid_head_match=*/false
+    assert!(trait_::projection_resolution_verifies_at_use(
+        &module, projection, i64_ty, "Has_tuple", &[x_i32_claim]
     ));
 }

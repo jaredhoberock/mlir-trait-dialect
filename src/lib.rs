@@ -11,7 +11,7 @@ use mlir_sys::{
     MlirOperation, MlirPass, MlirStringRef,
     MlirType, MlirValue,
     mlirArrayAttrGet, mlirIdentifierGet, mlirLocationGetContext,
-    mlirOperationGetContext, mlirOperationRemoveAttributeByName,
+    mlirOperationGetContext,
     mlirOperationSetAttributeByName, mlirUnitAttrGet,
 };
 
@@ -67,7 +67,7 @@ unsafe extern "C" {
     fn traitPolyTypeGet(ctx: MlirContext, unique_id: u32) -> MlirType;
 
     fn traitClaimTypeGet(ctx: MlirContext,
-                         trait_app: MlirAttribute) -> MlirType;
+                         predicate: MlirAttribute) -> MlirType;
     fn traitClaimTypeWithApplication(claim_ty: MlirType,
                                      trait_app: MlirAttribute) -> MlirType;
     fn traitClaimTypeGetTraitApplication(claim_ty: MlirType) -> MlirAttribute;
@@ -83,18 +83,19 @@ unsafe extern "C" {
     fn traitTypeCarriesPolymorphism(ty: MlirType) -> bool;
     fn traitTypeEqualityAttrGet(ctx: MlirContext,
                                 lhs: MlirType, rhs: MlirType) -> MlirAttribute;
-    fn traitClaimTypeGetEquality(ctx: MlirContext,
-                                 lhs: MlirType, rhs: MlirType) -> MlirType;
     fn traitWitnessAttrGet(ctx: MlirContext,
                            predicate: MlirAttribute,
                            impl_name: MlirStringRef) -> MlirAttribute;
     fn traitCoercePendingAccepts(input: MlirType, result: MlirType) -> bool;
-    fn traitProjectionResolutionVerifies(module: MlirModule,
+    fn traitProjectionResolutionVerifiesAtUse(module: MlirModule,
+                                    projection: MlirType, resolved: MlirType,
+                                    impl_name: MlirStringRef,
+                                    premises: *const MlirType, num_premises: isize) -> bool;
+    fn traitProjectionResolutionVerifiesAtBirth(module: MlirModule,
                                     projection: MlirType, resolved: MlirType,
                                     impl_name: MlirStringRef,
                                     premises: *const MlirType, num_premises: isize,
-                                    discharges: *const MlirAttribute, num_discharges: isize,
-                                    rigid_head_match: bool) -> bool;
+                                    discharges: *const MlirAttribute, num_discharges: isize) -> bool;
     fn traitClaimProjectsTo(module: MlirModule,
                             src_claim: MlirType, dst_claim: MlirType) -> bool;
     fn traitAssocTypeOpCreate(loc: MlirLocation,
@@ -348,25 +349,19 @@ pub fn impl_named<'c>(loc: Location<'c>,
 /// Attach the checked `witnesses` array to an existing `trait.impl` op -- each a
 /// `#trait.witness` the impl verifier reads by arm: an equality-armed
 /// projection-resolution witness, or an application-armed obligation
-/// discharge covering a cited conditional impl's standing assumption. An empty
-/// slice removes the impl's existing witnesses. The impl verifier checks every
-/// entry, its attribute kind included, at birth, so this only assembles the
-/// array. Attached after the impl header prepass completes, so every cited impl
-/// is present in the module.
+/// discharge covering a cited conditional impl's standing assumption. The impl
+/// verifier checks every entry, its attribute kind included, at birth, so this
+/// only assembles the array.
 pub fn set_impl_witnesses<'c>(
     impl_op: &Operation<'c>,
     attrs: &[Attribute<'c>],
 ) {
     unsafe {
         let name_ref = StringRef::new("witnesses").to_raw();
-        if attrs.is_empty() {
-            mlirOperationRemoveAttributeByName(impl_op.to_raw(), name_ref);
-        } else {
-            let ctx = mlirOperationGetContext(impl_op.to_raw());
-            let raw: Vec<MlirAttribute> = attrs.iter().map(|a| a.to_raw()).collect();
-            let array = mlirArrayAttrGet(ctx, raw.len() as isize, raw.as_ptr());
-            mlirOperationSetAttributeByName(impl_op.to_raw(), name_ref, array);
-        }
+        let ctx = mlirOperationGetContext(impl_op.to_raw());
+        let raw: Vec<MlirAttribute> = attrs.iter().map(|a| a.to_raw()).collect();
+        let array = mlirArrayAttrGet(ctx, raw.len() as isize, raw.as_ptr());
+        mlirOperationSetAttributeByName(impl_op.to_raw(), name_ref, array);
     }
 }
 
@@ -628,7 +623,8 @@ pub fn carries_polymorphism(ty: Type) -> bool {
 /// Create an equality-arm `!trait.claim<lhs = rhs>` type. Returns `None` if an
 /// endpoint contains a proven claim.
 pub fn equality_claim_type<'c>(ctx: &'c Context, lhs: Type<'c>, rhs: Type<'c>) -> Option<Type<'c>> {
-    let ty = unsafe { Type::from_raw(traitClaimTypeGetEquality(ctx.to_raw(), lhs.to_raw(), rhs.to_raw())) };
+    let eq = type_equality_attr(ctx, lhs, rhs)?;
+    let ty = unsafe { Type::from_raw(traitClaimTypeGet(ctx.to_raw(), eq.to_raw())) };
     if ty.to_raw().ptr.is_null() { None } else { Some(ty) }
 }
 
@@ -706,26 +702,51 @@ pub fn coerce_pending_accepts(input: Type, result: Type) -> bool {
 }
 
 /// Answer whether the projection-resolution witness `(projection, resolved)`
-/// cited to `impl_name` verifies, looking that impl up in `module`. `premises`
-/// are claim types split by arm: the equality claims are the comparison modulus
-/// (usually empty), the application claims and the `discharges` citations cover
-/// the cited impl's own assumptions. `rigid_head_match` keeps the projection's
-/// application rigid, so the verdict never depends on unrelated module impls.
-/// This is the one obligation-aware check every checker of the witness
-/// shares. Refusal is a plain `false`, not a diagnostic.
-pub fn projection_resolution_verifies<'c>(
+/// cited to `impl_name` verifies at a use site, looking that impl up in
+/// `module`. `premises` are claim types split by arm: the equality claims are
+/// the comparison modulus (usually empty), the application claims cover the
+/// cited impl's own assumptions. Ground projections resolve by module lookup, so
+/// the verdict may consult the module's other impls. Refusal is a plain `false`,
+/// not a diagnostic.
+pub fn projection_resolution_verifies_at_use(
+    module: &Module,
+    projection: Type,
+    resolved: Type,
+    impl_name: &str,
+    premises: &[Type],
+) -> bool {
+    let raw_premises: Vec<MlirType> = premises.iter().map(|t| t.to_raw()).collect();
+    unsafe {
+        traitProjectionResolutionVerifiesAtUse(
+            module.to_raw(),
+            projection.to_raw(),
+            resolved.to_raw(),
+            StringRef::new(impl_name).to_raw(),
+            raw_premises.as_ptr(),
+            raw_premises.len() as isize,
+        )
+    }
+}
+
+/// Answer whether the projection-resolution witness `(projection, resolved)`
+/// cited to `impl_name` verifies at the citing impl's birth, looking that impl
+/// up in `module`. `premises` are claim types split by arm: the equality claims
+/// are the comparison modulus, the application claims and the `discharges`
+/// citations cover the cited impl's own assumptions. The projection's
+/// application stays rigid, so the verdict never depends on unrelated module
+/// impls. Refusal is a plain `false`, not a diagnostic.
+pub fn projection_resolution_verifies_at_birth<'c>(
     module: &Module,
     projection: Type,
     resolved: Type,
     impl_name: &str,
     premises: &[Type],
     discharges: &[Attribute<'c>],
-    rigid_head_match: bool,
 ) -> bool {
     let raw_premises: Vec<MlirType> = premises.iter().map(|t| t.to_raw()).collect();
     let raw_discharges: Vec<MlirAttribute> = discharges.iter().map(|a| a.to_raw()).collect();
     unsafe {
-        traitProjectionResolutionVerifies(
+        traitProjectionResolutionVerifiesAtBirth(
             module.to_raw(),
             projection.to_raw(),
             resolved.to_raw(),
@@ -734,7 +755,6 @@ pub fn projection_resolution_verifies<'c>(
             raw_premises.len() as isize,
             raw_discharges.as_ptr(),
             raw_discharges.len() as isize,
-            rigid_head_match,
         )
     }
 }

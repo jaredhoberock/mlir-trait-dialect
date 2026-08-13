@@ -100,9 +100,11 @@ MlirOperation traitDeriveOpCreate(MlirLocation loc,
 /// Return the !trait.poly<uniqueId> type
 MlirType traitPolyTypeGet(MlirContext ctx, unsigned int uniqueId);
 
-/// Return the !trait.claim<@Trait[Type1, Type2, ...]> type (unproven)
+/// Return the unproven !trait.claim over `predicate`: a #trait.application
+/// yields an application claim, a #trait.equality an equality claim. Any other
+/// attribute yields a null type.
 MlirType traitClaimTypeGet(MlirContext ctx,
-                           MlirAttribute traitApp);
+                           MlirAttribute predicate);
 
 /// Return a claim type with the same proof as `claimType` but
 /// with a different trait application.
@@ -148,11 +150,6 @@ bool traitTypeCarriesPolymorphism(MlirType type);
 MlirAttribute traitTypeEqualityAttrGet(MlirContext ctx,
                                        MlirType lhs, MlirType rhs);
 
-/// Return the equality-arm !trait.claim<lhs = rhs> type. Returns a null type if
-/// construction fails.
-MlirType traitClaimTypeGetEquality(MlirContext ctx,
-                                   MlirType lhs, MlirType rhs);
-
 /// Return the #trait.witness<predicate by @impl> attribute pairing `predicate`
 /// with `implName` as the impl that witnesses it. `predicate` is either a type
 /// equality (a projection-resolution witness `projection = resolved`) or a
@@ -169,19 +166,29 @@ MlirAttribute traitWitnessAttrGet(MlirContext ctx,
 bool traitCoercePendingAccepts(MlirType input, MlirType result);
 
 /// Answer whether a projection-resolution witness cited to `implName` in
-/// `module` verifies, running verifyProjectionResolutionAtUse (or
-/// verifyProjectionResolutionAtBirth when `rigidHeadMatch` is set; TraitOps.hpp).
-/// `premises` are !trait.claim types split by arm (equality claims the comparison
-/// modulus, application claims covering the cited impl's assumptions) and
-/// `discharges` are `#trait.witness` citations; `rigidHeadMatch` keeps the
-/// projection's application rigid. Diagnostics are suppressed; a refusal is a
+/// `module` verifies at a use site, running verifyProjectionResolutionAtUse
+/// (TraitOps.hpp). `premises` are !trait.claim types split by arm (equality
+/// claims the comparison modulus, application claims covering the cited impl's
+/// assumptions); ground projections resolve by module lookup. Diagnostics are
+/// suppressed; a refusal is a classification answer, not a compile error.
+bool traitProjectionResolutionVerifiesAtUse(MlirModule module,
+                                            MlirType projection, MlirType resolved,
+                                            MlirStringRef implName,
+                                            MlirType *premises, intptr_t numPremises);
+
+/// Answer whether a projection-resolution witness cited to `implName` in
+/// `module` verifies at the citing impl's birth, running
+/// verifyProjectionResolutionAtBirth (TraitOps.hpp). `premises` are !trait.claim
+/// types split by arm (equality claims the comparison modulus, application claims
+/// covering the cited impl's assumptions) and `discharges` are `#trait.witness`
+/// citations covering the cited impl's conditional assumptions; the projection's
+/// application stays rigid. Diagnostics are suppressed; a refusal is a
 /// classification answer, not a compile error.
-bool traitProjectionResolutionVerifies(MlirModule module,
-                                       MlirType projection, MlirType resolved,
-                                       MlirStringRef implName,
-                                       MlirType *premises, intptr_t numPremises,
-                                       MlirAttribute *discharges, intptr_t numDischarges,
-                                       bool rigidHeadMatch);
+bool traitProjectionResolutionVerifiesAtBirth(MlirModule module,
+                                              MlirType projection, MlirType resolved,
+                                              MlirStringRef implName,
+                                              MlirType *premises, intptr_t numPremises,
+                                              MlirAttribute *discharges, intptr_t numDischarges);
 
 /// Whether `srcClaim` projects to `dstClaim`: `dstClaim` exactly matches one of
 /// the source's candidate projections (identity, a trait requirement specialized
