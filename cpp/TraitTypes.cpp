@@ -485,19 +485,11 @@ FailureOr<Attribute> parseApplicationOrEqualityPredicate(AsmParser &p) {
   if (symRes.has_value()) {
     if (failed(*symRes))
       return failure();
-    if (p.parseLSquare())
+    FailureOr<TraitApplicationAttr> app =
+        parseTraitApplicationBody(p, traitName);
+    if (failed(app))
       return failure();
-    SmallVector<Type> typeArgs;
-    do {
-      Type ty;
-      if (p.parseType(ty))
-        return failure();
-      typeArgs.push_back(ty);
-    } while (succeeded(p.parseOptionalComma()));
-    if (p.parseRSquare())
-      return failure();
-    return Attribute(
-        TraitApplicationAttr::get(ctx, traitName, ArrayRef<Type>(typeArgs)));
+    return Attribute(*app);
   }
 
   Type lhs, rhs;

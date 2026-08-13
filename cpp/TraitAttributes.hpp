@@ -22,7 +22,19 @@ namespace mlir::trait {
 #define GET_ATTRDEF_CLASSES
 #include <TraitAttributes.hpp.inc>
 
+namespace mlir { class AsmParser; }
+
 namespace mlir::trait {
+
+/// Parse the bracketed type-argument list of a trait application `@Trait[...]`
+/// whose leading symbol `traitName` has already been read, and build the checked
+/// application. This is the single grammar for the application body; the entry
+/// token that precedes it -- a required symbol, or the optional symbol that
+/// distinguishes an application from an equality in a where-clause predicate --
+/// is the caller's to read. Fails, having emitted a diagnostic, on a malformed
+/// argument list.
+FailureOr<TraitApplicationAttr>
+parseTraitApplicationBody(AsmParser &parser, FlatSymbolRefAttr traitName);
 
 inline Attribute applySubstitutionOnce(const llvm::DenseMap<Type,Type> &substitution,
                                    Attribute attr) {

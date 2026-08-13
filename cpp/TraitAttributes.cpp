@@ -206,30 +206,45 @@ LogicalResult TraitApplicationAttr::verifySymbolUses(
   return success();
 }
 
+// The single grammar for a trait application's `[!T1, !T2, ...]` body, shared by
+// TraitApplicationAttr::parse and by the where-clause predicate parser; only the
+// entry token that reads the leading symbol differs between them.
+FailureOr<TraitApplicationAttr>
+parseTraitApplicationBody(AsmParser &parser, FlatSymbolRefAttr traitName) {
+  // Parse required type arguments in brackets.
+  if (parser.parseLSquare())
+    return failure();
+
+  SmallVector<Type> typeArgs;
+  do {
+    Type ty;
+    if (parser.parseType(ty))
+      return failure();
+    typeArgs.push_back(ty);
+  } while (succeeded(parser.parseOptionalComma()));
+
+  if (parser.parseRSquare())
+    return failure();
+
+  TraitApplicationAttr app = TraitApplicationAttr::getChecked(
+      [&]() { return parser.emitError(parser.getNameLoc()); },
+      parser.getContext(), traitName, typeArgs);
+  if (!app)
+    return failure();
+  return app;
+}
+
 Attribute TraitApplicationAttr::parse(AsmParser &parser, Type type) {
   // Expect: @TraitName[!T1, !T2, ...]
   FlatSymbolRefAttr traitName;
   if (parser.parseAttribute(traitName))
     return {};
 
-  // Parse required type arguments in brackets
-  if (parser.parseLSquare())
+  FailureOr<TraitApplicationAttr> app =
+      parseTraitApplicationBody(parser, traitName);
+  if (failed(app))
     return {};
-
-  SmallVector<Type> typeArgs;
-  do {
-    Type ty;
-    if (parser.parseType(ty))
-      return {};
-    typeArgs.push_back(ty);
-  } while (succeeded(parser.parseOptionalComma()));
-
-  if (parser.parseRSquare())
-    return {};
-
-  return TraitApplicationAttr::getChecked(
-      [&]() { return parser.emitError(parser.getNameLoc()); },
-      parser.getContext(), traitName, typeArgs);
+  return *app;
 }
 
 void TraitApplicationAttr::print(mlir::AsmPrinter &printer) const {
