@@ -41,18 +41,16 @@ namespace mlir::trait {
 /// Parse one where-clause predicate: an application `@Trait[types...]` yielding a
 /// TraitApplicationAttr, or an equality `!A = !B` yielding a checked
 /// TypeEqualityAttr whose endpoints carry no proven claim, disambiguated by the
-/// leading `@`. This is the single grammar
-/// the claim type, the predicate array, and trait.assume each read; a `by @proof`
-/// tail (allowed only on an application claim) is the caller's to add. Fails on a
-/// malformed predicate, having emitted the diagnostic where the endpoints are
-/// ill-formed.
+/// leading `@`. This is the single grammar for a where-clause predicate; a
+/// `by @proof` tail (allowed only on an application claim) is the caller's to
+/// add. Fails on a malformed predicate, having emitted the diagnostic where the
+/// endpoints are ill-formed.
 FailureOr<Attribute> parseApplicationOrEqualityPredicate(AsmParser &p);
 
 /// Rebuild an equality claim with `respell` applied to each endpoint, or nullopt
 /// when `claim` is not an equality claim or neither endpoint changes. An equality
 /// claim's endpoints live in hand-written storage the generic type replacer
-/// cannot see, so a replacer that must reach them registers this rule for
-/// ClaimType -- last, to take priority over any generic claim rule.
+/// cannot see.
 inline std::optional<Type> respellEqualityEndpoints(
     ClaimType claim, llvm::function_ref<Type(Type)> respell) {
   auto eq = claim.getEqualityAttr();

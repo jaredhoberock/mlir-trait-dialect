@@ -119,10 +119,8 @@ def TypeEqualityAttr : AttrDef<TraitDialect, "TypeEquality", []> {
 
 // A predicate and the impl that witnesses it. One shape serves two roles, read
 // off the predicate arm: an equality `projection = resolved` the impl's
-// associated-type binding resolves (the projection-resolution certificate an
-// entry of an impl's `witnesses` array or a `trait.witness` certificate slot
-// carries), or a trait application the impl discharges (the obligation-discharge
-// entry an impl's `witnesses` array also carries).
+// associated-type binding resolves (a projection-resolution certificate), or a
+// trait application the impl discharges (an obligation discharge).
 def WitnessAttr : AttrDef<TraitDialect, "Witness", []> {
   let mnemonic = "witness";
   let summary = "A predicate and the impl that witnesses it";
@@ -134,21 +132,17 @@ def WitnessAttr : AttrDef<TraitDialect, "Witness", []> {
       * a `TypeEqualityAttr` `projection = resolved`, holding because the impl
         binds the associated type `projection` names (a projection carrying its
         member and any associated-type arguments) to `resolved`, once the impl
-        is specialized for the projection's trait application. This is the leaf
-        an equality-armed entry of an impl's `witnesses` array or a
-        `trait.witness` certificate slot carries.
+        is specialized for the projection's trait application.
 
-      * a `TraitApplicationAttr`, an obligation the impl supplies. This is the
-        discharge an application-armed entry of an impl's `witnesses` array
-        carries to cover a cited conditional sibling impl's standing assumptions;
-        verification resolves the named impl by symbol and never scans the module,
-        so an impl's verdict does not depend on the estate around it.
+      * a `TraitApplicationAttr`, an obligation the impl supplies, discharging a
+        cited conditional sibling impl's standing assumptions; verification
+        resolves the named impl by symbol and never scans the module, so an
+        impl's verdict does not depend on the estate around it.
 
     Witnessing is one concept carried two ways, chosen by scope. This attribute
-    IS the witness and stands alone wherever no code consumes it: an impl's
-    `witnesses` array is declaration-level witnessing. Where code must consume
-    evidence as a typed claim value -- a call argument, a coercion citation --
-    the `trait.witness` op wraps this same content and produces the value.
+    IS the witness and stands alone as declaration-level witnessing. Where
+    evidence must be a typed claim value, the `trait.witness` op wraps this same
+    content and produces the value.
 
     An equality predicate keeps the walk-opacity of its own `TypeEqualityAttr`
     storage: no generic replacer reaches its endpoints, and readers use
@@ -227,9 +221,7 @@ def PredicateArrayAttr : AttrDef<TraitDialect, "PredicateArray",
     bool empty() const { return getPredicates().empty(); }
     size_t size() const { return getPredicates().size(); }
 
-    // The application-arm entries only, in declaration order. Consumers that
-    // read a trait application off each requirement -- the proof/derive
-    // obligation streams, acyclicity, unconditionality -- iterate these.
+    // The application-arm entries only, in declaration order.
     llvm::SmallVector<TraitApplicationAttr> getApplications() const {
       llvm::SmallVector<TraitApplicationAttr> apps;
       for (::mlir::Attribute p : getPredicates())

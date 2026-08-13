@@ -97,8 +97,7 @@ def ClaimType : TypeDef<TraitDialect, "Claim", [
 
           !trait.claim<!A = !B>
 
-      Introduced by `trait.witness` and consumed by `trait.coerce`. The
-      equality arm never carries a proof; comparison on it is exact and
+      The equality arm never carries a proof; comparison on it is exact and
       direction-blind.
 
     Consumers dispatch on the arm; a claim of one arm is never acceptable where
@@ -173,9 +172,8 @@ def ClaimType : TypeDef<TraitDialect, "Claim", [
       return static_cast<bool>(mlir::dyn_cast<TypeEqualityAttr>(getPredicate()));
     }
 
-    // Arm-asserting accessor for the application arm. Every hand-written caller
-    // that reads a trait application from a claim goes through here; a caller
-    // that could also meet an equality claim must dispatch on the arm first.
+    // Arm-asserting accessor for the application arm; a caller that could also
+    // meet an equality claim must dispatch on the arm first.
     TraitApplicationAttr getTraitApplication() const {
       auto app = mlir::dyn_cast<TraitApplicationAttr>(getPredicate());
       assert(app && "getTraitApplication() on a non-application claim; "
@@ -205,9 +203,8 @@ def ClaimType : TypeDef<TraitDialect, "Claim", [
                         SmallVectorImpl<ClaimType>& result);
 
     /// Whether this claim projects to `dst`: `dst` exactly matches one of the
-    /// candidate projections `getProjections` enumerates. The ProjectOp verifier
-    /// and the codegen consultation query share this membership so the two never
-    /// disagree on whether a projection hop is well formed.
+    /// candidate projections `getProjections` enumerates. This is the one
+    /// membership that defines a well-formed projection hop.
     bool projectsTo(ModuleOp module, ClaimType dst);
 
     // for PolymorphicTypeInterface

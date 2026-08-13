@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+// Every entry in this API is a pure query: attribute and type getters intern
+// canonical values (a null return answers "not well-formed"), the boolean
+// entries consult the dialect's own judgments, and nothing here mutates IR.
+
 #include "mlir-c/IR.h"
 #include "mlir-c/Pass.h"
 #include "mlir-c/Support.h"
@@ -159,20 +163,19 @@ MlirAttribute traitWitnessAttrGet(MlirContext ctx,
                                   MlirStringRef implName);
 
 /// Answer whether `input` and `result` converge under the pending judgment a
-/// marked coerce carries -- the check `CoerceOp::verify` runs for the marked arm
-/// (verifyPendingProjectionUnification, TraitOps.hpp). Diagnostics are suppressed;
-/// a refusal is a classification answer the frontend consults, not a compile error.
+/// marked coerce carries, running verifyPendingProjectionUnification
+/// (TraitOps.hpp). Diagnostics are suppressed; a refusal is a classification
+/// answer, not a compile error.
 bool traitCoercePendingAccepts(MlirType input, MlirType result);
 
 /// Answer whether a projection-resolution certificate cited to `implName` in
-/// `module` verifies -- the same obligation-aware check trait.witness's
-/// equality-arm verifySymbolUses runs (verifyProjectionResolutionAtUse, or
+/// `module` verifies, running verifyProjectionResolutionAtUse (or
 /// verifyProjectionResolutionAtBirth when `rigidHeadMatch` is set; TraitOps.hpp).
 /// `premises` are !trait.claim types split by arm (equality claims the comparison
 /// modulus, application claims covering the cited impl's assumptions) and
 /// `discharges` are `#trait.witness` citations; `rigidHeadMatch` keeps the
-/// projection's application rigid, as impl-birth verification needs. Diagnostics
-/// are suppressed; a refusal is a classification answer, not a compile error.
+/// projection's application rigid. Diagnostics are suppressed; a refusal is a
+/// classification answer, not a compile error.
 bool traitProjectionResolutionVerifies(MlirModule module,
                                        MlirType projection, MlirType resolved,
                                        MlirStringRef implName,
@@ -182,9 +185,9 @@ bool traitProjectionResolutionVerifies(MlirModule module,
 
 /// Whether `srcClaim` projects to `dstClaim`: `dstClaim` exactly matches one of
 /// the source's candidate projections (identity, a trait requirement specialized
-/// at the source, or a proven impl's assumption). This is the exact membership
-/// the ProjectOp verifier checks, exposed so codegen can consult before spelling
-/// a projection hop. Returns false if either argument is not a claim type.
+/// at the source, or a proven impl's assumption). This is the exact membership a
+/// projection hop must satisfy. Returns false if either argument is not a claim
+/// type.
 bool traitClaimProjectsTo(MlirModule module, MlirType srcClaim, MlirType dstClaim);
 
 /// Create a trait.assoc_type op. If boundType.ptr is non-null, the op gets a

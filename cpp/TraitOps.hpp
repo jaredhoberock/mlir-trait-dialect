@@ -50,8 +50,7 @@ public:
 ///
 /// This use-site entry resolves the actual side's ground projections by module
 /// lookup, as verifying a witness at its use site does, and admits no discharge
-/// citations. `WitnessOp::verifySymbolUses` and the C-API projection-resolution
-/// query run exactly this check.
+/// citations.
 LogicalResult verifyProjectionResolutionAtUse(
     ModuleOp module, WitnessAttr witness,
     ArrayRef<TypeEqualityAttr> premises,
@@ -68,9 +67,7 @@ LogicalResult verifyProjectionResolutionAtUse(
 /// `dischargeWitnesses` entry whose spelled application is the assumption and
 /// whose named impl, specialized for it, has each of its own assumptions
 /// discharged in turn over the same finite citation list. And on success it
-/// returns the head-match substitution, so a caller replaying the premise reuses
-/// this build rather than deriving it a second time. `ImplOp::verifySymbolUses`
-/// and the C-API with-discharges query run this entry.
+/// returns the head-match substitution.
 FailureOr<SpecializationMap> verifyProjectionResolutionAtBirth(
     ModuleOp module, WitnessAttr witness,
     ArrayRef<TypeEqualityAttr> premises,
@@ -79,13 +76,11 @@ FailureOr<SpecializationMap> verifyProjectionResolutionAtBirth(
     llvm::function_ref<InFlightDiagnostic()> err);
 
 /// Rewrite a type with every proven application claim stripped to its unproven
-/// form. Coerce comparison is modulo the proof, permanently, so the pending
-/// judgment and its consult run over proof-stripped endpoints.
+/// form. Coerce comparison is modulo the proof, permanently.
 Type stripClaimProofs(Type type);
 
-/// The pending judgment a marked (unproven) coerce carries, factored so that
-/// `CoerceOp::verify`, the instantiate lie-catch (which adds a birth-spelling
-/// note), and the C-API consult all run exactly this check. The endpoints must
+/// The pending judgment a marked (unproven) coerce carries; one judgment serves
+/// every checker of this evidence. The endpoints must
 /// unify with every `!trait.proj` term a shared unification variable keyed by the
 /// projection itself: the same projection is one variable, every other position
 /// is rigid, and a whole projection is opaque (its arguments are not descended).

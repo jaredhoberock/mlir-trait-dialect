@@ -1772,11 +1772,9 @@ static bool dischargeApplicationObligation(
   return false;
 }
 
-// The binding check and obligation discharge both public entries run, written
-// once. On success it returns the head-match substitution the birth entry hands
-// back; the use entry discards it. `rigidHeadMatch` selects the head-match mode
-// the two entries differ on; `witness` is equality-armed (a caller invariant the
-// public entries document).
+// The binding check and obligation discharge, written once. On success it
+// returns the head-match substitution; `rigidHeadMatch` selects the head-match
+// mode. `witness` must be equality-armed.
 static FailureOr<SpecializationMap> verifyProjectionResolutionCore(
     ModuleOp module, WitnessAttr witness,
     ArrayRef<TypeEqualityAttr> premises,

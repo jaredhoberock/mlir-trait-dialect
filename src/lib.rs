@@ -697,13 +697,10 @@ pub fn coerce_unproven<'c>(loc: Location<'c>, input: Value<'c, '_>, result_type:
 }
 
 /// Answer whether `input` and `result` could converge under the pending
-/// judgment a marked (unproven) `trait.coerce` carries: the same check
-/// `CoerceOp::verify` runs for the marked arm (proofs stripped, then
+/// judgment a marked (unproven) `trait.coerce` carries: proofs stripped, then
 /// projection unification with each projection an opaque variable, bare-
-/// projection aliases admitted). A consumer classifying a site against this
-/// answer before routing it to the marked form cannot disagree with the
-/// verifier that re-runs the judgment at codegen exit. Refusal is a plain
-/// `false`, not a diagnostic.
+/// projection aliases admitted. This is the one judgment every checker of the
+/// marked coerce shares. Refusal is a plain `false`, not a diagnostic.
 pub fn coerce_pending_accepts(input: Type, result: Type) -> bool {
     unsafe { traitCoercePendingAccepts(input.to_raw(), result.to_raw()) }
 }
@@ -713,12 +710,9 @@ pub fn coerce_pending_accepts(input: Type, result: Type) -> bool {
 /// are claim types split by arm: the equality claims are the comparison modulus
 /// (usually empty), the application claims and the `discharges` citations cover
 /// the cited impl's own assumptions. `rigid_head_match` keeps the projection's
-/// application rigid, so the verdict never depends on unrelated module impls --
-/// impl-birth verification sets it; verifying a witness at its use site clears
-/// it. This is the same obligation-aware check `trait.witness`'s equality arm
-/// runs when its symbol uses are verified, so a consumer classifying a
-/// certificate against this answer cannot disagree with the verifier. Refusal is
-/// a plain `false`, not a diagnostic.
+/// application rigid, so the verdict never depends on unrelated module impls.
+/// This is the one obligation-aware check every checker of the certificate
+/// shares. Refusal is a plain `false`, not a diagnostic.
 pub fn projection_resolution_verifies<'c>(
     module: &Module,
     projection: Type,
@@ -746,10 +740,9 @@ pub fn projection_resolution_verifies<'c>(
 }
 
 /// Whether `src_claim` projects to `dst_claim`: `dst_claim` exactly matches one
-/// of the source's candidate projections. This is the exact membership the
-/// `trait.project` verifier checks, so codegen can consult it before spelling a
-/// projection hop and never disagree with the verifier. Both arguments are claim
-/// types; a non-claim argument answers `false`.
+/// of the source's candidate projections. This is the exact membership a
+/// `trait.project` hop must satisfy. Both arguments are claim types; a non-claim
+/// argument answers `false`.
 pub fn claim_projects_to(module: &Module, src_claim: Type, dst_claim: Type) -> bool {
     unsafe { traitClaimProjectsTo(module.to_raw(), src_claim.to_raw(), dst_claim.to_raw()) }
 }

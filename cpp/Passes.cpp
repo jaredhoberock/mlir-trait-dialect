@@ -1496,10 +1496,9 @@ static void checkResolutionBoundary(const ImplResolver &resolver) {
 }
 
 /// A monomorphic projection's resolution runs to a fixed point through a
-/// bounded chain of hops, one binding spelling the next. Both the settlement's
-/// leftover check and the equality-assume reduction below walk that chain; the
-/// bound is shared so they agree on where a chain that never grounds out is cut
-/// and reported as unresolvable rather than followed without end.
+/// bounded chain of hops, one binding spelling the next. This single bound cuts
+/// a chain that never grounds out, reporting it as unresolvable rather than
+/// following it without end.
 constexpr unsigned maxProjectionResolutionHops = 64;
 
 /// Resolve one hop of a monomorphic projection through an obligation-holding
@@ -1525,9 +1524,7 @@ resolveProjectionHop(ProjectionType proj, const ReadOnlyImplResolver &reading,
 /// descending composites, through `hop`. A projection `hop` declines and any
 /// polymorphic projection are left standing. Resolution runs to a fixed point
 /// because one hop's binding may spell the next; a chain that outruns the bound
-/// is left spelled and reported as unresolved downstream. Both the settlement
-/// check and the derive-reconciliation walk read this one descent, differing only
-/// in the per-projection hop rule they supply.
+/// is left spelled and reported as unresolved downstream.
 static Type resolveGroundProjections(
     Type type, llvm::function_ref<std::optional<Type>(ProjectionType)> hop) {
   Type previous;
@@ -1650,10 +1647,8 @@ mintProjectionResolveCertificate(ProjectionType proj,
 
 /// Walk a projection endpoint to its ground spelling, appending one certificate
 /// per hop since a resolved binding may itself spell a projection. A concrete
-/// endpoint contributes no hop. The bound is the settlement's; a chain that
-/// outruns it fails and is reported like an unresolvable one. Both the
-/// equality-assume reduction and the derive reconciliation walk read this one
-/// definition of a projection's resolution chain.
+/// endpoint contributes no hop. A chain that outruns the hop bound fails and is
+/// reported like an unresolvable one.
 static LogicalResult
 mintProjectionResolveChain(Type endpoint,
                            const ProjectionResolveMintContext &ctx,
@@ -1746,11 +1741,8 @@ static LogicalResult reduceGroundEqualityAssume(
 
 /// Resolve to a fixed point every ground projection standing in `type` through
 /// the facts impl selection has recorded, leaving polymorphic projections and
-/// any projection nothing recorded untouched. The read-only counterpart of the
-/// hop chain above: the reconciliation walk reads it to see whether an operand's
-/// drift is exactly the respell rounds' projection resolution before it commits
-/// to minting a bridge, so nothing is minted for a drift that is a genuine
-/// mismatch.
+/// any projection nothing recorded untouched. This is the read-only counterpart
+/// of the hop chain above: it never drives impl selection.
 static Type resolveGroundProjectionsRecorded(Type type,
                                              const ReadOnlyImplResolver &reading) {
   return resolveGroundProjections(type, [&](ProjectionType proj) -> std::optional<Type> {
