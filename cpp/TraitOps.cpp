@@ -418,6 +418,72 @@ void TraitOp::print(OpAsmPrinter &p) {
 // ImplOp
 //===----------------------------------------------------------------------===//
 
+/// A verified equality-armed witness in replayable form: the cited impl, the
+/// projection's trait application, and the head-match substitution, ready for
+/// NormalizationContext::addLocalProjectionRule.
+struct ImplWitnessRule {
+  ImplOp impl;
+  TraitApplicationAttr app;
+  SpecializationMap subst;
+};
+
+/// Verifies an impl's equality-armed witnesses and returns each as a local
+/// resolution rule. Such a witness certifies that a sibling impl binds a
+/// ground projection to a resolved type; a witness citing a conditional impl
+/// is legal exactly when the impl's own where clause covers the cited impl's
+/// assumptions or an application-armed witness supplies them. Each entry
+/// verifies with an EMPTY equality modulus: sibling witnesses never serve as
+/// each other's modulus, because an attribute array has no dominance and
+/// mutual justification could ground a false equality on nothing. A witness
+/// must name a GROUND projection -- resolving a poly-carrying projection by
+/// unifying its variable with one cited impl's concrete head would accept a
+/// generic impl on the strength of one instance.
+static FailureOr<SmallVector<ImplWitnessRule>> collectImplWitnessRules(
+    ImplOp impl, ModuleOp module,
+    llvm::function_ref<InFlightDiagnostic()> errFn) {
+  SmallVector<ImplWitnessRule> rules;
+  ArrayAttr witnesses = impl.getWitnessesAttr();
+  if (!witnesses)
+    return rules;
+
+  SmallVector<TraitApplicationAttr> obligationPremises(
+      impl.getAssumptions().getApplications());
+  // The application-armed witnesses cover a cited conditional impl's standing
+  // assumptions; gather them first so every equality-armed witness below
+  // verifies against the whole discharge set regardless of array order.
+  SmallVector<WitnessAttr> dischargeWitnesses;
+  for (Attribute entry : witnesses) {
+    auto witness = cast<WitnessAttr>(entry);
+    if (isa<TraitApplicationAttr>(witness.getPredicate()))
+      dischargeWitnesses.push_back(witness);
+  }
+  for (Attribute entry : witnesses) {
+    auto witness = cast<WitnessAttr>(entry);
+    if (!isa<TypeEqualityAttr>(witness.getPredicate()))
+      continue;
+    auto projectionTy = dyn_cast<ProjectionType>(witness.getProjection());
+    if (!projectionTy)
+      return impl.emitOpError()
+             << "a witness must name a projection, found "
+             << witness.getProjection();
+    if (isPolymorphicType(witness.getProjection()))
+      return impl.emitOpError()
+             << "witness projection " << witness.getProjection()
+             << " is not ground; a witness resolves only a "
+                "ground sibling projection";
+    auto subst = verifyProjectionResolutionAtBirth(
+        module, witness, /*premises=*/{}, obligationPremises,
+        dischargeWitnesses, errFn);
+    if (failed(subst))
+      return failure();
+    auto citedImpl = mlir::SymbolTable::lookupNearestSymbolFrom<ImplOp>(
+        module, witness.getImplRef());
+    rules.push_back(
+        {citedImpl, projectionTy.getTraitApplication(), std::move(*subst)});
+  }
+  return rules;
+}
+
 LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   auto errFn = [&]{ return emitOpError(); };
 
@@ -441,71 +507,15 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (failed(getAssumptions().verifySymbolUses(getOperation(), symbolTable)))
     return failure();
 
-  // Verify the equality-armed witnesses and turn each into a local resolution
-  // rule the comparisons below replay. Such a witness certifies that a sibling
-  // impl binds a ground projection to a resolved type; verification reads that
-  // cited impl at the sanctioned symbol boundary -- obligation-aware, so a
-  // witness citing a conditional impl is legal exactly when this impl's own
-  // where clause covers the cited impl's assumptions or an application-armed
-  // witness supplies them -- and every verified witness then resolves its
-  // projection the way this impl's own bindings resolve its own projections. The
-  // per-entry verification runs with an EMPTY equality modulus: sibling witnesses
-  // never serve as each other's modulus, because an attribute array has no
-  // dominance and mutual justification could ground a false equality on nothing.
-  // The comparisons add these rules after their own-binding rule and let the
-  // fixed-point walk apply them innermost-first, so a nested projection reduces
-  // its inner application before its outer one.
-  struct PremiseRule {
-    ImplOp impl;
-    TraitApplicationAttr app;
-    SpecializationMap subst;
-  };
-  SmallVector<PremiseRule> premiseRules;
-  if (ArrayAttr witnesses = getWitnessesAttr()) {
-    SmallVector<TraitApplicationAttr> obligationPremises(
-        getAssumptions().getApplications());
-    // The application-armed witnesses cover a cited conditional impl's standing
-    // assumptions; gather them first so every equality-armed witness below
-    // verifies against the whole discharge set regardless of array order.
-    SmallVector<WitnessAttr> dischargeWitnesses;
-    for (Attribute entry : witnesses) {
-      auto witness = cast<WitnessAttr>(entry);
-      if (isa<TraitApplicationAttr>(witness.getPredicate()))
-        dischargeWitnesses.push_back(witness);
-    }
-    for (Attribute entry : witnesses) {
-      // The array's element type gives a WitnessAttr; the arm is read off the
-      // predicate. An application-armed witness is a discharge already gathered
-      // above; an equality-armed one resolves a sibling projection, its
-      // endpoints read off the equality below.
-      auto witness = cast<WitnessAttr>(entry);
-      if (!isa<TypeEqualityAttr>(witness.getPredicate()))
-        continue;
-      auto projectionTy = dyn_cast<ProjectionType>(witness.getProjection());
-      if (!projectionTy)
-        return emitOpError() << "a witness must name a projection, found "
-                             << witness.getProjection();
-      // A witness resolves only a GROUND sibling projection; a projection still
-      // carrying a poly variable is not ground, and resolving it by unifying
-      // that variable with a single cited impl's concrete head would accept a
-      // generic impl on the strength of one instance.
-      if (isPolymorphicType(witness.getProjection()))
-        return emitOpError() << "witness projection " << witness.getProjection()
-                             << " is not ground; a witness resolves only a "
-                                "ground sibling projection";
-      auto subst = verifyProjectionResolutionAtBirth(
-          *module, witness, /*premises=*/{}, obligationPremises,
-          dischargeWitnesses, errFn);
-      if (failed(subst))
-        return failure();
-      auto citedImpl = mlir::SymbolTable::lookupNearestSymbolFrom<ImplOp>(
-          *module, witness.getImplRef());
-      premiseRules.push_back(
-          {citedImpl, projectionTy.getTraitApplication(), std::move(*subst)});
-    }
-  }
+  // The verified witnesses become local resolution rules the comparisons below
+  // replay after their own-binding rule; the fixed-point walk applies them
+  // innermost-first, so a nested projection reduces its inner application
+  // before its outer one.
+  auto premiseRules = collectImplWitnessRules(*this, *module, errFn);
+  if (failed(premiseRules))
+    return failure();
   auto addPremiseRules = [&](NormalizationContext &ctx) {
-    for (const PremiseRule &r : premiseRules)
+    for (const ImplWitnessRule &r : *premiseRules)
       ctx.addLocalProjectionRule(r.impl, r.app, r.subst);
   };
 
