@@ -200,7 +200,7 @@ def PredicateArrayAttr : AttrDef<TraitDialect, "PredicateArray",
         `!trait.proj<@Trait[!S], "Assoc"> = i64`.
 
     Application entries are proved at impl selection; equality entries are
-    checked at impl birth against the impl's own bindings. An application-only
+    checked at impl verification against the impl's own bindings. An application-only
     array prints and parses as a plain array of trait applications; existing
     textual forms round-trip unchanged.
 

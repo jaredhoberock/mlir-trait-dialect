@@ -113,7 +113,7 @@ def TraitOp : TraitDialectOp<"trait", [
 
     The `where` clause is one ordered `PredicateArrayAttr` whose entries are of two
     arms: a one-hop trait application that must hold whenever the trait holds, or a
-    type equality two spellings must satisfy (checked at an impl's birth against the
+    type equality two spellings must satisfy (checked at an impl's verification against the
     impl's bindings, and projectable through `trait.project`'s equality hop). Each
     requirement is written using the trait's type parameters and is stored in the
     `requirements` argument.
@@ -383,7 +383,7 @@ def ImplOp : TraitDialectOp<"impl", [
     assumes as a proof obligation, or a type equality the impl asserts about its
     own bindings. The two arms share one list in declaration order; there is no
     second parallel array. Application entries are discharged when the impl is
-    selected; equality entries are birth-checked against the impl's own bindings
+    selected; equality entries are checked at impl verification against the impl's own bindings
     and drive the equality-arm `trait.assume` inside the impl's method bodies.
 
     The optional `witnesses` array carries the impl's declaration-level

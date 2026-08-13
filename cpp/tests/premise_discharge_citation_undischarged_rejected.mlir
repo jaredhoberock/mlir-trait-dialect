@@ -10,7 +10,7 @@
 // citation and no where entry supplies @Z[i64]. Verification follows the citation
 // to @Y_cond, finds its assumption @Z[i64] undischarged, and refuses -- the
 // obligation @Y[i64] therefore stays undischarged and the impl is refused at
-// birth.
+// impl verification.
 
 !S = !trait.poly<0>
 

@@ -42,13 +42,13 @@ LogicalResult verifyProjectionResolutionAtUse(
     ArrayRef<TraitApplicationAttr> obligationPremises,
     llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
-/// The impl-birth companion to `verifyProjectionResolutionAtUse`, running the
+/// The ImplOp-verification companion to `verifyProjectionResolutionAtUse`, running the
 /// same binding check and assumption discharge, differing in three ways. Its
 /// head match is rigid -- only the cited impl's own generics instantiate -- so
 /// the verdict is estate-independent. Its assumptions may also be covered by a
 /// `dischargeWitnesses` entry, recursively over the same finite list. And on
 /// success it returns the head-match substitution.
-FailureOr<SpecializationMap> verifyProjectionResolutionAtBirth(
+FailureOr<SpecializationMap> verifyProjectionResolutionAtImpl(
     ModuleOp module, WitnessAttr witness,
     ArrayRef<TypeEqualityAttr> premises,
     ArrayRef<TraitApplicationAttr> obligationPremises,

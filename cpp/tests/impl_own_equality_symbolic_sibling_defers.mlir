@@ -5,12 +5,12 @@
 
 // An impl's own equality assumption has a sibling-projection endpoint whose only
 // impl is CONDITIONAL on a premise no impl proves (@Sib_i8 needs @X[i8]). No
-// declared premise resolves that endpoint, so it stays symbolic at birth: a
+// declared premise resolves that endpoint, so it stays symbolic at impl verification: a
 // non-ground projection cannot be decided against the impl's bindings, and the
-// birth check defers rather than refuse. Its correctness is established where the
+// impl-verification check defers rather than refuse. Its correctness is established where the
 // impl is selected and, for consumed evidence, at the use site. A blind lookup
 // would have resolved the conditional impl anyway and over-refused f32 != i64;
-// the birth check no longer enumerates candidates, so it defers.
+// the impl-verification check no longer enumerates candidates, so it defers.
 
 !S = !trait.poly<0>
 

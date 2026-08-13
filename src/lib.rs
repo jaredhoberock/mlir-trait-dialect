@@ -91,7 +91,7 @@ unsafe extern "C" {
                                     projection: MlirType, resolved: MlirType,
                                     impl_name: MlirStringRef,
                                     premises: *const MlirType, num_premises: isize) -> bool;
-    fn traitProjectionResolutionVerifiesAtBirth(module: MlirModule,
+    fn traitProjectionResolutionVerifiesAtImpl(module: MlirModule,
                                     projection: MlirType, resolved: MlirType,
                                     impl_name: MlirStringRef,
                                     premises: *const MlirType, num_premises: isize,
@@ -350,7 +350,7 @@ pub fn impl_named<'c>(loc: Location<'c>,
 /// `#trait.witness` the impl verifier reads by arm: an equality-armed
 /// projection-resolution witness, or an application-armed obligation
 /// discharge covering a cited conditional impl's standing assumption. The impl
-/// verifier checks every entry, its attribute kind included, at birth, so this
+/// verifier checks every entry, its attribute kind included, at impl verification, so this
 /// only assembles the array.
 pub fn set_impl_witnesses<'c>(
     impl_op: &Operation<'c>,
@@ -729,13 +729,13 @@ pub fn projection_resolution_verifies_at_use(
 }
 
 /// Answer whether the projection-resolution witness `(projection, resolved)`
-/// cited to `impl_name` verifies at the citing impl's birth, looking that impl
+/// cited to `impl_name` verifies at the citing impl's verification, looking that impl
 /// up in `module`. `premises` are claim types split by arm: the equality claims
 /// are the comparison modulus, the application claims and the `discharges`
 /// citations cover the cited impl's own assumptions. The projection's
 /// application stays rigid, so the verdict never depends on unrelated module
 /// impls. Refusal is a plain `false`, not a diagnostic.
-pub fn projection_resolution_verifies_at_birth<'c>(
+pub fn projection_resolution_verifies_at_impl<'c>(
     module: &Module,
     projection: Type,
     resolved: Type,
@@ -746,7 +746,7 @@ pub fn projection_resolution_verifies_at_birth<'c>(
     let raw_premises: Vec<MlirType> = premises.iter().map(|t| t.to_raw()).collect();
     let raw_discharges: Vec<MlirAttribute> = discharges.iter().map(|a| a.to_raw()).collect();
     unsafe {
-        traitProjectionResolutionVerifiesAtBirth(
+        traitProjectionResolutionVerifiesAtImpl(
             module.to_raw(),
             projection.to_raw(),
             resolved.to_raw(),

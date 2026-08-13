@@ -4,7 +4,7 @@
 // RUN: mlir-opt %s -verify-diagnostics
 
 // A premise cites its resolving impl by symbol; verification looks it up in the
-// module. A premise naming an impl that does not exist is refused at birth, so
+// module. A premise naming an impl that does not exist is refused at impl verification, so
 // a witness cannot cite a phantom resolver.
 
 !S = !trait.poly<0>

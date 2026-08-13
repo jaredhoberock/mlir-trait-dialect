@@ -477,11 +477,11 @@ bool traitProjectionResolutionVerifiesAtUse(MlirModule module,
       });
 }
 
-// Impl-birth verification keeps the projection's application rigid and admits
+// Impl verification keeps the projection's application rigid and admits
 // the discharge citations that cover a cited conditional impl's own
-// assumptions. The head-match substitution the birth judgment hands back is
+// assumptions. The head-match substitution the verification hands back is
 // dropped: this query answers only yes or no.
-bool traitProjectionResolutionVerifiesAtBirth(MlirModule module,
+bool traitProjectionResolutionVerifiesAtImpl(MlirModule module,
                                               MlirType projection,
                                               MlirType resolved,
                                               MlirStringRef implName,
@@ -502,7 +502,7 @@ bool traitProjectionResolutionVerifiesAtBirth(MlirModule module,
             return failure();
           dischargeWitnesses.push_back(citation);
         }
-        return verifyProjectionResolutionAtBirth(module, witness,
+        return verifyProjectionResolutionAtImpl(module, witness,
                                                  equalityPremises,
                                                  applicationPremises,
                                                  dischargeWitnesses, err);

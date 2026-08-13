@@ -10,7 +10,7 @@
 // @B[i64] names @B_cond, which assumes @A[i64] again. Neither conditional impl
 // has a base case, so following the citations re-enters @A[i64] under
 // resolution -- a cycle that grounds nothing -- and the obligation stays
-// undischarged. The impl is refused at birth rather than looping.
+// undischarged. The impl is refused at impl verification rather than looping.
 
 !S = !trait.poly<0>
 

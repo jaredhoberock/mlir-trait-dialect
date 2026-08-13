@@ -5,7 +5,7 @@
 
 // @FoldFn requires Self::Output = Self. The impl for i32 binds Output to i32, so
 // the projection Self::Output resolves through the impl's own binding to i32,
-// the two endpoints meet, and the impl is born clean.
+// the two endpoints meet, and the impl verifies clean.
 
 !S = !trait.poly<0>
 

@@ -5,7 +5,7 @@
 
 // An impl asserts its own equality Self::Output = i32 but binds Output to i64.
 // The projection resolves through the impl's own binding to i64, which is not
-// i32, so the impl fails its own-assumption equality birth check.
+// i32, so the impl fails its own-assumption equality check at impl verification.
 
 !S = !trait.poly<0>
 

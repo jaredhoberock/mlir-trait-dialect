@@ -471,7 +471,7 @@ static FailureOr<SmallVector<ImplWitnessRule>> collectImplWitnessRules(
              << "witness projection " << witness.getProjection()
              << " is not ground; a witness resolves only a "
                 "ground sibling projection";
-    auto subst = verifyProjectionResolutionAtBirth(
+    auto subst = verifyProjectionResolutionAtImpl(
         module, witness, /*premises=*/{}, obligationPremises,
         dischargeWitnesses, errFn);
     if (failed(subst))
@@ -733,7 +733,7 @@ bool ImplOp::isUnconditional() {
   // 3. it assumes no application predicates.
   // An equality predicate -- whether a trait-header requirement or one of this
   // impl's own assumptions -- does not make an impl conditional: it is settled at
-  // birth when its endpoints reduce to ground (through the impl's own bindings or
+  // impl verification when its endpoints reduce to ground (through the impl's own bindings or
   // a declared premise) and deferred to selection and use otherwise, never proved
   // through impl selection. So only application predicates count against
   // unconditionality.
@@ -1091,7 +1091,7 @@ std::string ImplOp::generateMangledName(ClaimType claim) {
 SmallVector<ClaimType> ImplOp::getAssumptionsAsClaims() {
   MLIRContext *ctx = getContext();
   // The proof/derive/satisfiability streams read application-arm assumptions
-  // only; equality entries are birth-checked against the impl's own bindings and
+  // only; equality entries are checked at impl verification against the impl's own bindings and
   // never proved through impl selection, so they are filtered out here at the
   // one place every obligation consumer flows through.
   return llvm::map_to_vector(getAssumptions().getApplications(),
@@ -1130,7 +1130,7 @@ FailureOr<SmallVector<ClaimType>> ImplOp::specializeObligationsAsClaimsFor(
 
   // The obligation stream is proved and derived through impl selection, an
   // application-arm operation. Trait-header equality requirements are checked
-  // at impl birth against the impl's own bindings, never proved here, so they
+  // at impl verification against the impl's own bindings, never proved here, so they
   // do not enter the obligation stream (the proof/derive zips would have no
   // subproof for them).
   llvm::erase_if(*requirements, [](ClaimType c) { return c.isEquality(); });
@@ -1681,7 +1681,7 @@ static FailureOr<Type> applyEqualityPremises(
   return applySubstitutionToFixedPoint(subst, ty);
 }
 
-// verifyProjectionResolutionAtUse and verifyProjectionResolutionAtBirth share
+// verifyProjectionResolutionAtUse and verifyProjectionResolutionAtImpl share
 // the static core below; their contract -- the binding and the obligation
 // discharge -- is stated in full at their declarations in TraitOps.hpp.
 
@@ -1819,7 +1819,7 @@ static FailureOr<SpecializationMap> verifyProjectionResolutionCore(
   }
 
   // Head match the cited impl against the projection's application. The impl-
-  // birth entry passes rigidHeadMatch: it instantiates only the cited impl's own
+  // verification entry passes rigidHeadMatch: it instantiates only the cited impl's own
   // generics against a null module, so a projection spelled in the projection's
   // application stays rigid and is never resolved by a module-visible impl --
   // an impl's verdict cannot then turn on the unrelated impls the module carries.
@@ -1899,7 +1899,7 @@ LogicalResult mlir::trait::verifyProjectionResolutionAtUse(
   return success();
 }
 
-FailureOr<SpecializationMap> mlir::trait::verifyProjectionResolutionAtBirth(
+FailureOr<SpecializationMap> mlir::trait::verifyProjectionResolutionAtImpl(
     ModuleOp module, WitnessAttr witness,
     ArrayRef<TypeEqualityAttr> premises,
     ArrayRef<TraitApplicationAttr> obligationPremises,
@@ -1956,7 +1956,7 @@ LogicalResult WitnessOp::verify() {
       // structural instance of the witness's endpoints. The witness's
       // generic parameters are the variables; a single substitution must carry
       // the witness's projection and resolved type to the current pair. This
-      // passes birth (identity), the clone-substituted state, and ground, and
+      // passes impl verification (identity), the clone-substituted state, and ground, and
       // rejects any non-substitution mangling. It is structural and local -- no
       // module lookup -- so the pair is matched with a null module.
       WitnessAttr witness = getWitnessAttr();

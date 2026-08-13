@@ -177,14 +177,14 @@ bool traitProjectionResolutionVerifiesAtUse(MlirModule module,
                                             MlirType *premises, intptr_t numPremises);
 
 /// Answer whether a projection-resolution witness cited to `implName` in
-/// `module` verifies at the citing impl's birth, running
-/// verifyProjectionResolutionAtBirth (TraitOps.hpp). `premises` are !trait.claim
+/// `module` verifies at the citing impl's verification, running
+/// verifyProjectionResolutionAtImpl (TraitOps.hpp). `premises` are !trait.claim
 /// types split by arm (equality claims the comparison modulus, application claims
 /// covering the cited impl's assumptions) and `discharges` are `#trait.witness`
 /// citations covering the cited impl's conditional assumptions; the projection's
 /// application stays rigid. Diagnostics are suppressed; a refusal is a
 /// classification answer, not a compile error.
-bool traitProjectionResolutionVerifiesAtBirth(MlirModule module,
+bool traitProjectionResolutionVerifiesAtImpl(MlirModule module,
                                               MlirType projection, MlirType resolved,
                                               MlirStringRef implName,
                                               MlirType *premises, intptr_t numPremises,

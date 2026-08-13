@@ -5,8 +5,8 @@
 
 // A polymorphic impl asserts its own equality Self::Output = Acc, where Acc is a
 // free parameter it also binds Output to. Both endpoints stay symbolic, so the
-// birth check cannot decide the equality and defers it to instantiation, exactly
-// as a symbolic trait-header equality requirement defers. The impl is born clean.
+// impl-verification check cannot decide the equality and defers it to instantiation, exactly
+// as a symbolic trait-header equality requirement defers. The impl verifies clean.
 
 !S = !trait.poly<0>
 !Acc = !trait.poly<1>

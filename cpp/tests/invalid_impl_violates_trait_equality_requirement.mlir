@@ -5,7 +5,7 @@
 
 // @FoldFn requires Self::Output = Self, but the impl for i32 binds Output to
 // i64. The projection Self::Output resolves through the impl's binding to i64,
-// which is not i32, so the impl fails its birth check.
+// which is not i32, so the impl fails verification.
 
 !S = !trait.poly<0>
 
