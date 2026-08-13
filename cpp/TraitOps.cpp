@@ -1682,9 +1682,23 @@ static SmallVector<ClaimType> specializeAssumptionsThroughSubst(
   });
 }
 
+// The estate and diagnostic context an obligation discharge reads but never
+// varies as it recurses: the module the citations resolve in, the equality
+// premises the comparisons run modulo, the citing impl's own where-clause cover
+// and the discharge citations the two arms consult, and the diagnostic sink.
+// The verification core owns one and threads it through the recursion; only the
+// obligation under discharge and the active-citation guard vary per call.
+struct ObligationDischargeContext {
+  ModuleOp module;
+  ArrayRef<TypeEqualityAttr> premises;
+  ArrayRef<TraitApplicationAttr> obligationPremises;
+  ArrayRef<WitnessAttr> dischargeWitnesses;
+  llvm::function_ref<InFlightDiagnostic()> err;
+};
+
 // Whether `want` -- a ground application obligation, already read modulo the
-// equality `premises` -- is discharged. Arm (i): a hypothetical cover among the
-// citing impl's own where-clause `obligationPremises`. Arm (ii): a discharge
+// context's equality premises -- is discharged. Arm (i): a hypothetical cover
+// among the citing impl's own where-clause premises. Arm (ii): a discharge
 // citation whose spelled application is `want` and whose named impl,
 // instantiated ONLY over its own generics for that application, has each of its
 // own assumptions discharged in turn.
@@ -1695,29 +1709,29 @@ static SmallVector<ClaimType> specializeAssumptionsThroughSubst(
 // bounded by the list length. A citation that would re-enter an application
 // under resolution is a cycle and discharges nothing along that path.
 static bool dischargeApplicationObligation(
-    ModuleOp module, Type want, ArrayRef<TypeEqualityAttr> premises,
-    ArrayRef<TraitApplicationAttr> obligationPremises,
-    ArrayRef<WitnessAttr> dischargeWitnesses,
-    SmallVectorImpl<TraitApplicationAttr> &inProgress,
-    llvm::function_ref<InFlightDiagnostic()> err) {
-  MLIRContext *ctx = module.getContext();
+    const ObligationDischargeContext &ctx, Type want,
+    SmallVectorImpl<TraitApplicationAttr> &inProgress) {
+  ModuleOp module = ctx.module;
+  MLIRContext *mlirCtx = module.getContext();
 
   // Arm (i): the citing impl's own where clause covers the obligation. The
   // equality premises are already known non-cyclic here (verification rewrote its
   // endpoints through them before reaching this check), so the rewrite cannot
   // fail on a well-formed premise set.
-  for (TraitApplicationAttr premiseApp : obligationPremises) {
-    ClaimType premiseClaim = ClaimType::get(ctx, premiseApp);
-    auto haveOr = applyEqualityPremises(Type(premiseClaim), premises, err);
+  for (TraitApplicationAttr premiseApp : ctx.obligationPremises) {
+    ClaimType premiseClaim = ClaimType::get(mlirCtx, premiseApp);
+    auto haveOr =
+        applyEqualityPremises(Type(premiseClaim), ctx.premises, ctx.err);
     if (succeeded(haveOr) && *haveOr == want)
       return true;
   }
 
   // Arm (ii): a declared discharge citation names the obligation and an impl
   // that supplies it.
-  for (WitnessAttr citation : dischargeWitnesses) {
-    ClaimType citedApp = ClaimType::get(ctx, citation.getApplication());
-    auto citedOr = applyEqualityPremises(Type(citedApp), premises, err);
+  for (WitnessAttr citation : ctx.dischargeWitnesses) {
+    ClaimType citedApp = ClaimType::get(mlirCtx, citation.getApplication());
+    auto citedOr =
+        applyEqualityPremises(Type(citedApp), ctx.premises, ctx.err);
     if (failed(citedOr) || *citedOr != want)
       continue;
     if (llvm::is_contained(inProgress, citation.getApplication()))
@@ -1730,7 +1744,7 @@ static bool dischargeApplicationObligation(
 
     // The named impl must genuinely supply the application: instantiate only
     // its own generics for the application (rigid actual side, no module scan).
-    ClaimType appClaim = ClaimType::get(ctx, citation.getApplication());
+    ClaimType appClaim = ClaimType::get(mlirCtx, citation.getApplication());
     auto subst = buildSpecialization(dischargerOp.getSelfClaim(), Type(appClaim),
                                      ModuleOp());
     if (failed(subst))
@@ -1742,12 +1756,10 @@ static bool dischargeApplicationObligation(
     bool allDischarged = true;
     for (ClaimType assumption :
          specializeAssumptionsThroughSubst(dischargerOp, *subst)) {
-      auto subWantOr =
-          applyEqualityPremises(Type(assumption.asUnproven()), premises, err);
+      auto subWantOr = applyEqualityPremises(Type(assumption.asUnproven()),
+                                             ctx.premises, ctx.err);
       if (failed(subWantOr) ||
-          !dischargeApplicationObligation(module, *subWantOr, premises,
-                                          obligationPremises, dischargeWitnesses,
-                                          inProgress, err)) {
+          !dischargeApplicationObligation(ctx, *subWantOr, inProgress)) {
         allDischarged = false;
         break;
       }
@@ -1842,6 +1854,8 @@ static FailureOr<SpecializationMap> verifyProjectionResolutionCore(
   // cover (arm i) or a declared discharge citation (arm ii). The impl's trait
   // requirements are deliberately not reached here (they may quantify over GAT
   // variables with no ground instance at the witness).
+  ObligationDischargeContext dischargeCtx{module, premises, obligationPremises,
+                                          dischargeWitnesses, err};
   for (ClaimType assumption :
        specializeAssumptionsThroughSubst(implOp, *subst)) {
     auto wantOr =
@@ -1849,9 +1863,7 @@ static FailureOr<SpecializationMap> verifyProjectionResolutionCore(
     if (failed(wantOr))
       return failure();
     SmallVector<TraitApplicationAttr> inProgress;
-    if (!dischargeApplicationObligation(module, *wantOr, premises,
-                                        obligationPremises, dischargeWitnesses,
-                                        inProgress, err)) {
+    if (!dischargeApplicationObligation(dischargeCtx, *wantOr, inProgress)) {
       err() << "cited impl '" << citedImpl
             << "' has an undischarged assumption " << assumption
             << "; the witness premises do not supply it";

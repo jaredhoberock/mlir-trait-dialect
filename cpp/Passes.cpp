@@ -1585,28 +1585,39 @@ static bool equalityClaimGroundResolvesToOneSpelling(
   return lhs == rhs && isGroundType(lhs);
 }
 
+/// The resolvers, builders, and location a projection-resolution certificate
+/// mint reads but never varies as the chain walks hop to hop. Recorded facts
+/// and obligation-holding selection come from `reading` and `resolver`; the
+/// certificate and its premise witnesses insert at the consumer through
+/// `witnessBuilder`, so they dominate it, while premise proofs and any impl
+/// generation go to the module body through `proofBuilder`; every op carries
+/// `loc`.
+struct ProjectionResolveMintContext {
+  Location loc;
+  const ReadOnlyImplResolver &reading;
+  ImplResolver &resolver;
+  OpBuilder &witnessBuilder;
+  OpBuilder &proofBuilder;
+};
+
 /// Mint the proj-resolve certificate proving `<proj = binding>`, where the impl
 /// `proj`'s trait application resolves through binds the projected member to
 /// `binding` in one hop, paired with that binding. Resolution goes through the
 /// same obligation-holding selection the settlement ran, so the cited impl is
 /// one whose bounds hold. Premises discharging that impl's own assumptions ride
-/// along, so a certificate citing a conditional impl passes
-/// obligation-discharge verification. The witnesses insert through
-/// `witnessBuilder` at the consumer, so they dominate it; premise proofs and any
-/// impl generation go through `proofBuilder` at the module body. Fails where the
-/// projection has no obligation-holding impl.
+/// along, so a certificate citing a conditional impl passes obligation-discharge
+/// verification. The minting `ctx` supplies the resolvers and builders. Fails
+/// where the projection has no obligation-holding impl.
 static FailureOr<std::pair<Value, Type>>
-mintProjectionResolveCertificate(ProjectionType proj, Location loc,
-                                 const ReadOnlyImplResolver &reading,
-                                 ImplResolver &resolver,
-                                 OpBuilder &witnessBuilder,
-                                 OpBuilder &proofBuilder) {
-  MLIRContext *ctx = proj.getContext();
-  auto binding = resolveProjectionHop(proj, reading, resolver, proofBuilder);
+mintProjectionResolveCertificate(ProjectionType proj,
+                                 const ProjectionResolveMintContext &ctx) {
+  MLIRContext *mlirCtx = proj.getContext();
+  auto binding =
+      resolveProjectionHop(proj, ctx.reading, ctx.resolver, ctx.proofBuilder);
   if (!binding)
     return failure();
-  ClaimType selfClaim = ClaimType::get(ctx, proj.getTraitApplication());
-  auto resolvedImpl = reading.getRecordedImplFor(selfClaim);
+  ClaimType selfClaim = ClaimType::get(mlirCtx, proj.getTraitApplication());
+  auto resolvedImpl = ctx.reading.getRecordedImplFor(selfClaim);
   if (failed(resolvedImpl))
     return failure();
   SmallVector<Value> obligationPremises;
@@ -1616,22 +1627,24 @@ mintProjectionResolveCertificate(ProjectionType proj, Location loc,
     if (failed(assumptions))
       return failure();
     for (ClaimType assumption : *assumptions) {
-      auto proof = resolver.resolveAndEnsureProofFor(assumption, proofBuilder);
+      auto proof =
+          ctx.resolver.resolveAndEnsureProofFor(assumption, ctx.proofBuilder);
       if (failed(proof))
         return failure();
       obligationPremises.push_back(
-          WitnessOp::create(witnessBuilder, loc, *proof,
+          WitnessOp::create(ctx.witnessBuilder, ctx.loc, *proof,
                             assumption.getTraitApplication())
               .getResult());
     }
   }
-  TypeEqualityAttr equality = TypeEqualityAttr::get(ctx, Type(proj), *binding);
+  TypeEqualityAttr equality =
+      TypeEqualityAttr::get(mlirCtx, Type(proj), *binding);
   auto cert = WitnessAttr::get(
-      ctx, Attribute(equality),
-      FlatSymbolRefAttr::get(ctx, resolvedImpl->impl.getSymName()));
-  Value witness =
-      WitnessOp::create(witnessBuilder, loc, equality, cert, obligationPremises)
-          .getResult();
+      mlirCtx, Attribute(equality),
+      FlatSymbolRefAttr::get(mlirCtx, resolvedImpl->impl.getSymName()));
+  Value witness = WitnessOp::create(ctx.witnessBuilder, ctx.loc, equality, cert,
+                                    obligationPremises)
+                      .getResult();
   return std::make_pair(witness, *binding);
 }
 
@@ -1642,18 +1655,15 @@ mintProjectionResolveCertificate(ProjectionType proj, Location loc,
 /// equality-assume reduction and the derive reconciliation walk read this one
 /// definition of a projection's resolution chain.
 static LogicalResult
-mintProjectionResolveChain(Type endpoint, Location loc,
-                           const ReadOnlyImplResolver &reading,
-                           ImplResolver &resolver, OpBuilder &witnessBuilder,
-                           OpBuilder &proofBuilder,
+mintProjectionResolveChain(Type endpoint,
+                           const ProjectionResolveMintContext &ctx,
                            SmallVector<Value> &certificates) {
   Type current = endpoint;
   for (unsigned hop = 0; hop != maxProjectionResolutionHops; ++hop) {
     auto proj = dyn_cast<ProjectionType>(current);
     if (!proj || isPolymorphicType(proj))
       return success();
-    auto cert = mintProjectionResolveCertificate(proj, loc, reading, resolver,
-                                                 witnessBuilder, proofBuilder);
+    auto cert = mintProjectionResolveCertificate(proj, ctx);
     if (failed(cert))
       return failure();
     certificates.push_back(cert->first);
@@ -1712,11 +1722,11 @@ static LogicalResult reduceGroundEqualityAssume(
 
   // Mint each endpoint's per-hop resolution chain (see the function doc);
   // no premises means the endpoints did not ground-resolve.
+  ProjectionResolveMintContext mintCtx{loc, reading, resolver, builder,
+                                       proofBuilder};
   SmallVector<Value> premises;
-  if (failed(mintProjectionResolveChain(lhs, loc, reading, resolver, builder,
-                                        proofBuilder, premises)) ||
-      failed(mintProjectionResolveChain(rhs, loc, reading, resolver, builder,
-                                        proofBuilder, premises)))
+  if (failed(mintProjectionResolveChain(lhs, mintCtx, premises)) ||
+      failed(mintProjectionResolveChain(rhs, mintCtx, premises)))
     return failure();
   if (premises.empty())
     return failure();
@@ -1844,12 +1854,13 @@ static LogicalResult reconcileDerivedAssumptions(
           if (!isPolymorphicType(proj))
             projections.push_back(proj);
       });
+      ProjectionResolveMintContext mintCtx{derive.getLoc(), reading, resolver,
+                                           witnessBuilder, proofBuilder};
       SmallVector<Value> certificates;
       bool minted = true;
       for (ProjectionType proj : projections)
-        if (failed(mintProjectionResolveChain(Type(proj), derive.getLoc(),
-                                              reading, resolver, witnessBuilder,
-                                              proofBuilder, certificates))) {
+        if (failed(
+                mintProjectionResolveChain(Type(proj), mintCtx, certificates))) {
           minted = false;
           break;
         }
