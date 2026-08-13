@@ -663,40 +663,42 @@ private:
   EvidenceBindings evidenceBindings;
 };
 
-// The demand-walk accessor. An equality claim's endpoints are opaque to the
-// generic type walk, so a reader that classifies theory content -- projections,
-// claims -- must consult this to reach content nested only inside an endpoint.
-// It invokes `callback` on both endpoints of every equality claim reachable in
-// `root`; callers then walk those endpoints with their own classification. This
-// is the binding read-side rule: every walk that classifies theory content
-// consults the accessor for equality claims.
-inline void walkEqualityEndpoints(Type root,
-                                  llvm::function_ref<void(Type)> callback) {
-  root.walk([&](Type sub) {
+// A deep walk over the types reachable in `root`, descending through the
+// endpoints of every equality claim. An equality claim seals its two endpoints
+// from Type::walk, so a walk that classifies content nested only inside an
+// endpoint -- a projection or claim -- uses this instead: it applies `callback`
+// to every reachable type, follows each equality claim's endpoints
+// transitively, and honours WalkResult interruption the way Type::walk does.
+// `root` may be a Type or an Attribute, matching Type::walk / Attribute::walk.
+template <class Root>
+WalkResult walkTypesDeep(Root root,
+                         llvm::function_ref<WalkResult(Type)> callback) {
+  auto visit = [&](Type sub, auto &visitRef) -> WalkResult {
+    if (callback(sub).wasInterrupted())
+      return WalkResult::interrupt();
     if (auto claim = dyn_cast<ClaimType>(sub))
       if (auto eq = claim.getEqualityAttr()) {
-        callback(eq.getLhs());
-        callback(eq.getRhs());
+        auto descend = [&](Type endpoint) {
+          return visitRef(endpoint, visitRef);
+        };
+        if (eq.getLhs().walk(descend).wasInterrupted())
+          return WalkResult::interrupt();
+        if (eq.getRhs().walk(descend).wasInterrupted())
+          return WalkResult::interrupt();
       }
-  });
+    return WalkResult::advance();
+  };
+  return root.walk([&](Type sub) { return visit(sub, visit); });
 }
 
-// this walks a Type and looks for any occurrence of the given NeedleType.
-// Equality-claim endpoints are opaque to Type::walk, so this also routes through
-// the demand-walk accessor: a needle reachable only inside an equality endpoint
-// is still found.
+// Whether any occurrence of NeedleType is reachable in `ty`. Equality-claim
+// endpoints are sealed from Type::walk, so this classifies through the deep
+// walk: a needle reachable only inside an endpoint is still found.
 template<class NeedleType> bool containsType(Type ty) {
-  bool found = false;
-  ty.walk([&](Type sub) {
-    if (isa<NeedleType>(sub))
-      found = true;
-  });
-  if (!found)
-    walkEqualityEndpoints(ty, [&](Type endpoint) {
-      if (containsType<NeedleType>(endpoint))
-        found = true;
-    });
-  return found;
+  return walkTypesDeep(ty, [](Type sub) {
+           return isa<NeedleType>(sub) ? WalkResult::interrupt()
+                                       : WalkResult::advance();
+         }).wasInterrupted();
 }
 
 inline bool isPolymorphicType(Type root) {

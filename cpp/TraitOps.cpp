@@ -1598,20 +1598,13 @@ void WitnessOp::print(OpAsmPrinter &p) {
 }
 
 // Does `needle` occur as a subterm of `haystack`? Equality-claim endpoints are
-// opaque to Type::walk, so this descends through them the way containsType does,
-// so a needle reachable only inside an endpoint is still found.
+// sealed from Type::walk, so this classifies through the deep walk: a needle
+// reachable only inside an endpoint is still found.
 static bool typeOccursIn(Type needle, Type haystack) {
-  bool hit = false;
-  std::function<void(Type)> visit = [&](Type root) {
-    root.walk([&](Type sub) {
-      if (sub == needle)
-        hit = true;
-    });
-    if (!hit)
-      walkEqualityEndpoints(root, [&](Type endpoint) { visit(endpoint); });
-  };
-  visit(haystack);
-  return hit;
+  return walkTypesDeep(haystack, [&](Type sub) {
+           return sub == needle ? WalkResult::interrupt()
+                                : WalkResult::advance();
+         }).wasInterrupted();
 }
 
 // Rewrite `ty` by the cited equality premises: each premise's lhs endpoint

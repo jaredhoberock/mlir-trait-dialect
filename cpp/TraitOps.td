@@ -1127,9 +1127,8 @@ def CoerceOp : TraitDialectOp<"coerce", [
     spelling.
 
     Operands: the value, plus N equality-claim operands, N >= 0. There is no
-    application-claim operand; the demand chain the old cast's claim operand
-    carried moves to the demand-walk accessor, which exposes each cited
-    equality's endpoints to walks that classify theory content.
+    application-claim operand; walks that classify projections and claims reach
+    each cited equality's endpoints through walkTypesDeep (TraitTypes.hpp).
 
     The verdict is a pure function of op, operands, and attributes:
       1. application-claim proofs are stripped uniformly from the input and
