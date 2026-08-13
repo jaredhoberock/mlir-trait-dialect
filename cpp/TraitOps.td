@@ -1206,8 +1206,8 @@ def CoerceOp : TraitDialectOp<"coerce", [
 
     The `unproven` marker names a coerce standing in a projection-convergence
     obligation whose evidence is not available at emission: the reconciling
-    equalities cannot be cited yet because the impl that supplies them is minted
-    only at monomorphization (a compiler auto-rule head). A marked coerce cites
+    equalities cannot be cited yet because the impl that supplies them is an
+    ImplGenerator's, minted only at monomorphization. A marked coerce cites
     nothing -- `equalities` must be empty -- and stands in a pending judgment:
     with the proofs stripped and the no-proof-swap clause enforced exactly as
     above, the endpoints must unify where every `!trait.proj` term is a shared
