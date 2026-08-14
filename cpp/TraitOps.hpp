@@ -73,6 +73,37 @@ LogicalResult verifyPendingProjectionUnification(
     Type input, Type result,
     llvm::function_ref<InFlightDiagnostic()> emitError = nullptr);
 
+/// A type's term decomposition for ground reasoning: an exact constructor
+/// identity together with the positional type children the constructor is
+/// applied to. Two types denote the same constructor exactly when their keys are
+/// equal; the key carries every part of a type that is not a child -- a function
+/// type's arity split, a vector's or memref's shape, a memref's layout and memory
+/// space, a trait or associated-type name -- so distinct constructors never share
+/// a key and congruence over the children is sound.
+struct TermShape {
+  Attribute key;
+  SmallVector<Type, 4> children;
+};
+
+/// Decompose a type into its constructor key and positional type children.
+/// Claims, projections, and equality endpoints carry their type arguments inside
+/// hand-written attribute storage the generic sub-element walk cannot see, so
+/// each is enumerated explicitly. Every other type derives its key by rebuilding
+/// itself with its immediate sub-element types replaced by numbered placeholders:
+/// the resulting shell holds the full non-child storage by construction and
+/// compares by exact type equality, so two containers share a key exactly when
+/// they differ only in their children. A constructor that declines the
+/// placeholder arguments yields no shell; that type is keyed atomically instead
+/// (see the guard in the definition).
+TermShape decomposeTerm(Type t);
+
+/// Whether `lhs` and `rhs` are equal under the ground congruence closure of the
+/// premise equalities -- the one entailment decision the witness composition arm
+/// and trait.coerce's proven arm share. Defined beside the closure; declared here
+/// for the composition arm's verifier.
+bool entailedByGroundCongruence(Type lhs, Type rhs,
+                                ArrayRef<TypeEqualityAttr> premises);
+
 } // end mlir::trait
 
 namespace mlir::OpTrait {
