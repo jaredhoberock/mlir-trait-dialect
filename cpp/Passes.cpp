@@ -1652,26 +1652,50 @@ mintProjectionResolutionWitness(ProjectionType proj,
   return std::make_pair(witness, *binding);
 }
 
-/// Walk a projection endpoint to its ground spelling, appending one witness
-/// per hop since a resolved binding may itself spell a projection. A concrete
-/// endpoint contributes no hop. A chain that outruns the hop bound fails and is
-/// reported like an unresolvable one.
+/// Walk a projection endpoint to its ground spelling, appending one witness for
+/// every ground projection resolved along the way. The walk descends composites
+/// exactly as the settlement decision does, so a projection nested inside one --
+/// the resolved side of `type Out = Vec<Self::Item>`, where the projection sits
+/// inside the vector -- yields its evidence just as a top-level projection does;
+/// resolution runs to a fixed point because a resolved binding may itself spell
+/// a projection. A concrete endpoint contributes no witness. A projection with
+/// no obligation-holding impl fails; a chain that outruns the hop bound with a
+/// projection still standing fails too, and is reported like an unresolvable one.
 static LogicalResult
 mintProjectionResolveChain(Type endpoint,
                            const ProjectionResolveMintContext &ctx,
                            SmallVector<Value> &witnesses) {
+  Type previous;
   Type current = endpoint;
-  for (unsigned hop = 0; hop != maxProjectionResolutionHops; ++hop) {
-    auto proj = dyn_cast<ProjectionType>(current);
-    if (!proj || isPolymorphicType(proj))
-      return success();
-    auto witness = mintProjectionResolutionWitness(proj, ctx);
-    if (failed(witness))
+  for (unsigned hop = 0;
+       hop != maxProjectionResolutionHops && current != previous; ++hop) {
+    previous = current;
+    LogicalResult mintOutcome = success();
+    AttrTypeReplacer replacer;
+    replacer.addReplacement([&](Type t) -> std::optional<Type> {
+      auto proj = dyn_cast<ProjectionType>(t);
+      if (!proj || isPolymorphicType(proj))
+        return std::nullopt;
+      auto witness = mintProjectionResolutionWitness(proj, ctx);
+      if (failed(witness)) {
+        mintOutcome = failure();
+        return std::nullopt;
+      }
+      witnesses.push_back(witness->first);
+      return witness->second;
+    });
+    current = replacer.replace(current);
+    if (failed(mintOutcome))
       return failure();
-    witnesses.push_back(witness->first);
-    current = witness->second;
   }
-  return failure();
+  // A ground projection still standing never resolved within the hop bound.
+  bool unresolved = false;
+  current.walk([&](Type sub) {
+    if (auto proj = dyn_cast<ProjectionType>(sub))
+      if (!isPolymorphicType(proj))
+        unresolved = true;
+  });
+  return failure(unresolved);
 }
 
 /// Replace a ground-resolvable equality `trait.assume` with the witness that
@@ -1687,8 +1711,9 @@ mintProjectionResolveChain(Type endpoint,
 /// legalization removes. Now that the equality ground-resolves, this mints the
 /// evidence that proves it, exactly as codegen mints where the equality is
 /// first established: a refl marker for identical endpoints, or one proj-resolve
-/// witness per hop of each projection endpoint's resolution chain -- since a
-/// resolved binding may itself spell a projection -- each citing the impl that
+/// witness per hop of each projection an endpoint carries -- nested in a
+/// composite or standing alone, since a resolved binding may itself spell a
+/// projection -- each citing the impl that
 /// binds one hop, with application-arm premises discharging a conditional impl's
 /// own assumptions so the witness passes verification. A lone witness
 /// that already proves the result equality outright is that witness when the
