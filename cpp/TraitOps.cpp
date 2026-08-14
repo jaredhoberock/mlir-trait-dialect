@@ -2048,46 +2048,6 @@ TraitOp AssumeOp::getTrait() {
 // CoerceOp
 //===----------------------------------------------------------------------===//
 
-ParseResult CoerceOp::parse(OpAsmParser &p, OperationState &st) {
-  OpAsmParser::UnresolvedOperand input;
-  Type inputType, resultType;
-  if (p.parseOperand(input) || p.parseColon() || p.parseType(inputType) ||
-      p.parseKeyword("to") || p.parseType(resultType))
-    return failure();
-
-  SmallVector<OpAsmParser::UnresolvedOperand> equalities;
-  SmallVector<Type> equalityTypes;
-  if (succeeded(p.parseOptionalKeyword("via"))) {
-    if (parseTypedOperandList(p, equalities, equalityTypes))
-      return failure();
-  }
-
-  // The `unproven` marker is a trailing keyword: the printer emits no attribute
-  // dictionary, so a declared, explicitly printed attribute is the only spelling
-  // that survives a round trip.
-  if (succeeded(p.parseOptionalKeyword("unproven")))
-    st.addAttribute("unproven", p.getBuilder().getUnitAttr());
-
-  st.addTypes(resultType);
-  if (p.resolveOperand(input, inputType, st.operands))
-    return failure();
-  if (p.resolveOperands(equalities, equalityTypes, p.getCurrentLocation(),
-                        st.operands))
-    return failure();
-  return success();
-}
-
-void CoerceOp::print(OpAsmPrinter &p) {
-  p << " " << getInput() << " : " << getInput().getType() << " to "
-    << getResult().getType();
-  if (!getEqualities().empty()) {
-    p << " via ";
-    printTypedOperandList(p, getEqualities());
-  }
-  if (getUnproven())
-    p << " unproven";
-}
-
 LogicalResult CoerceOp::verify() {
   // A verdict that is a pure function of op, operands, and attributes.
 

@@ -1235,7 +1235,11 @@ def CoerceOp : TraitDialectOp<"coerce", [
                    UnitAttr:$unproven);
   let results = (outs AnyType:$result);
 
-  let hasCustomAssemblyFormat = 1;
+  // Prints `%v : In to Out`, then an optional `via (%eqs) : (types)` citing the
+  // equalities, then the optional `unproven` marker. The explicit space literal
+  // before `(` restores the space the declarative printer drops ahead of an
+  // opening paren, preserving the `via (` spelling.
+  let assemblyFormat = "$input `:` type($input) `to` type($result) (`via` ` ` `(` $equalities^ `)` `:` `(` type($equalities) `)`)? (`unproven` $unproven^)? attr-dict";
   let hasVerifier = 1;
   let hasFolder = 1;
 }

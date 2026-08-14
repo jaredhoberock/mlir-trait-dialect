@@ -114,7 +114,10 @@ def TypeEqualityAttr : AttrDef<TraitDialect, "TypeEquality", []> {
   let genStorageClass = 0;
   let genVerifyDecl = 1;
 
-  let hasCustomAssemblyFormat = 1;
+  // Prints `lhs = rhs`. The leading empty literal drops the space the
+  // declarative printer emits before a leading parameter, so an equality
+  // printed directly into an enclosing `<...>` reads with no gap after the `<`.
+  let assemblyFormat = "`` $lhs `=` $rhs";
 }
 
 // A predicate and the impl that witnesses it. One shape serves two roles, read

@@ -89,19 +89,6 @@ LogicalResult TypeEqualityAttr::verify(
 Type TypeEqualityAttr::getLhs() const { return getImpl()->lhs; }
 Type TypeEqualityAttr::getRhs() const { return getImpl()->rhs; }
 
-Attribute TypeEqualityAttr::parse(AsmParser &parser, Type) {
-  Type lhs, rhs;
-  if (parser.parseType(lhs) || parser.parseEqual() || parser.parseType(rhs))
-    return {};
-  return TypeEqualityAttr::getChecked(
-      [&]() { return parser.emitError(parser.getNameLoc()); },
-      parser.getContext(), lhs, rhs);
-}
-
-void TypeEqualityAttr::print(AsmPrinter &printer) const {
-  printer << getLhs() << " = " << getRhs();
-}
-
 // Structural well-formedness of a witness: the predicate is one of the two arms
 // and an impl is named. An equality predicate's own invariant -- it contains no
 // proven claim -- is enforced when the `TypeEqualityAttr` is constructed, so
