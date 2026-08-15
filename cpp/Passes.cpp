@@ -13,6 +13,7 @@
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/Dialect/Func/Transforms/FuncConversions.h>
 #include <mlir/IR/PatternMatch.h>
+#include <mlir/IR/Verifier.h>
 #include <mlir/Interfaces/InferTypeOpInterface.h>
 #include <mlir/Pass/Pass.h>
 #include <mlir/Transforms/DialectConversion.h>
@@ -2322,9 +2323,12 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
   if (failed(reconcileDerivedAssumptions(module, reading, *resolver)))
     return failure();
 
-  // The module verifies. This runs CoerceOp::verify on each marked coerce, whose
-  // pending judgment catches a coerce the rounds grounded to inconsistent
-  // endpoints at its own op.
+  // ModuleOp's own verifier hook runs here over the module shell -- it does not
+  // recurse into the body, which is not guaranteed to verify recursively in
+  // general: a marked coerce whose two projections grounded to different types
+  // can stand here, and this shallow tail does not judge it. The bonded erase
+  // pass refuses such a coerce at its barrier, where endpoints that stand apart
+  // cannot be discharged and cannot cross.
   DemandRecordingSuspension verifying;
   return module.verify();
 }
@@ -2515,7 +2519,11 @@ static LogicalResult erasePolymorphs(ModuleOp module) {
                                          /*replaceAttrs=*/true,
                                          /*replaceLocs=*/false,
                                          /*replaceTypes=*/true);
-  return module.verify();
+  // Erasure leaves a theory-free module -- no claims, projections, coerces, or
+  // polymorphic templates -- final for the stage. The recursive verifier confirms
+  // every nested op, not the module shell alone, so the stage's exit is a fully
+  // verified module.
+  return mlir::verify(module);
 }
 
 }
