@@ -63,6 +63,25 @@ inline std::optional<Type> respellEqualityEndpoints(
   return Type(ClaimType::getEquality(claim.getContext(), newLhs, newRhs));
 }
 
+/// Visit `root` and every type nested inside it, including the endpoints of any
+/// equality claim. `Type::walk` descends only through storages that expose their
+/// nested types to the walker; an equality claim seals its endpoints against that
+/// walk (see TraitAttributes.td), so a plain walk never reaches a type that lives
+/// only inside an endpoint. This reads endpoints through the same dedicated
+/// accessors respellEqualityEndpoints rewrites through, so a scan over a type sees
+/// exactly the universe a rewrite over that type would touch.
+inline void walkIncludingEqualityEndpoints(
+    Type root, llvm::function_ref<void(Type)> visit) {
+  root.walk([&](Type sub) {
+    visit(sub);
+    if (auto claim = dyn_cast<ClaimType>(sub))
+      if (auto eq = claim.getEqualityAttr()) {
+        walkIncludingEqualityEndpoints(eq.getLhs(), visit);
+        walkIncludingEqualityEndpoints(eq.getRhs(), visit);
+      }
+  });
+}
+
 inline bool isPolymorphicType(Type root);
 inline Type applySubstitutionOnce(const llvm::DenseMap<Type,Type> &subst,
                                   Type root);
@@ -1209,7 +1228,9 @@ enum class LookupScope {
   /// every instance of its variables, so the two spellings denote one type
   /// whatever inference goes on to choose. A projection whose spelling would
   /// have to be narrowed to fit an impl determines nothing (inference may narrow
-  /// it another way) and is left as written.
+  /// it another way) and is left as written. A resolution under this scope is
+  /// read to compare a spelling, never to serve it: it feeds a comparison, not a
+  /// position that stamps the resolved type into IR.
   Determined
 };
 

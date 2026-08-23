@@ -1633,12 +1633,12 @@ static LogicalResult unifyProjectionAsSpelled(
 /// A projection's spelling is not its identity: resolving it substitutes the
 /// selected impl's associated-type binding, and an impl that forwards its
 /// associated type through its own type parameter (`type Element = B::Element`)
-/// binds a fresh projection, so one type is spelled `Tensor[Cyclic<V>]::Element`
-/// in the position that reaches it through the view and `Tensor[V]::Element` in
+/// binds a fresh projection, so one type is spelled `Ten[tuple<V>]::Element`
+/// in the position that reaches it through the view and `Ten[V]::Element` in
 /// the position that reaches it through the base. Comparing those two as
 /// written finds a head mismatch, or -- when the heads agree -- recurses into
 /// arguments that do not, and a comparer recursing into arguments equates
-/// `Cyclic<V>` with `V`, which is an infinite type the occurs check refuses.
+/// `tuple<V>` with `V`, which is an infinite type the occurs check refuses.
 /// Neither answer is about the program; both are about the spellings.
 ///
 /// So the comparison is made against normal forms: compare as written first,
@@ -1806,10 +1806,16 @@ Type instantiate(Type root, InstantiationMap &inst, uint64_t &idCounter) {
 /// specialization is built over types an enclosing specialization already
 /// instantiated: this build's first fresh variable would alias the enclosing
 /// build's first. Starting past every id in hand is what makes fresh mean fresh.
+///
+/// A variable spelled only inside an equality claim's endpoint is walk-opaque,
+/// so the scan reaches endpoints through walkIncludingEqualityEndpoints -- the
+/// same universe respellEqualityEndpoints rewrites. Otherwise the mint would
+/// start past every id but those, and a fresh variable would alias one an
+/// endpoint holds.
 static uint64_t firstUnusedInferenceId(ArrayRef<Type> types) {
   uint64_t next = 0;
   for (Type ty : types)
-    ty.walk([&](Type sub) {
+    walkIncludingEqualityEndpoints(ty, [&](Type sub) {
       if (auto var = dyn_cast<InferenceType>(sub))
         next = std::max(next, var.getUniqueId() + 1);
     });
