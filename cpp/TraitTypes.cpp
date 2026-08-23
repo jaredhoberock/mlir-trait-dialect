@@ -155,6 +155,28 @@ namespace {
 
 } // namespace
 
+Type normalizeProjectionsToFixedPoint(Type ty, ModuleOp module,
+                                      llvm::function_ref<Type(Type)> step) {
+  constexpr unsigned maxIterations = 64;
+  Type previous;
+  for (unsigned i = 0; i != maxIterations && ty != previous; ++i) {
+    previous = ty;
+    ty = step(ty);
+  }
+
+  // Reaching the iteration cap while the type is still changing means the
+  // rewrite has no fixed point (a cyclic or oscillating resolution). What the
+  // loop reached is a partial normal form, and every caller either compares a
+  // spelling against it or stamps it into a specialized instance, so handing it
+  // back would turn a resolution that does not terminate into a spelling
+  // mismatch or a mis-specialized monomorph somewhere else entirely. The
+  // compilation stops at the demand that would not normalize instead.
+  if (ty != previous)
+    reportUnnormalizableGroundProjection(ty, maxIterations, module);
+
+  return ty;
+}
+
 Type resolveGroundProjectionsByLookup(Type ty, ModuleOp module,
                                       DemandOrigin origin,
                                       unsigned *topLevelMissReasons) {
@@ -237,22 +259,8 @@ Type resolveGroundProjectionsByLookup(Type ty, ModuleOp module,
 
   // A resolved binding may itself expose a ground projection, so run to a
   // fixed point.
-  constexpr unsigned maxIterations = 64;
-  Type previous;
-  for (unsigned i = 0; i != maxIterations && ty != previous; ++i) {
-    previous = ty;
-    ty = replacer.replace(ty);
-  }
-
-  // Reaching the iteration cap while the type is still changing means the
-  // lookup rewrite has no fixed point (a cyclic or oscillating resolution).
-  // What the loop reached is a partial normal form, and every caller either
-  // compares a spelling against it or stamps it into a specialized instance, so
-  // handing it back would turn a resolution that does not terminate into a
-  // spelling mismatch or a mis-specialized monomorph somewhere else entirely.
-  // The compilation stops at the demand that would not normalize instead.
-  if (ty != previous)
-    reportUnnormalizableGroundProjection(ty, maxIterations, module);
+  ty = normalizeProjectionsToFixedPoint(
+      ty, module, [&](Type t) { return replacer.replace(t); });
 
   // Every monomorphic projection this call leaves standing is a demand no impl
   // served, so a recording site must have observed it. A survivor with no

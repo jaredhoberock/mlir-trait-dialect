@@ -318,7 +318,8 @@ Type ImplResolver::resolveProjectionsIn(Type ty, OpBuilder &builder) {
     }
     return *resolved;
   });
-  return replacer.replace(ty);
+  return normalizeProjectionsToFixedPoint(
+      ty, module, [&](Type t) { return replacer.replace(t); });
 }
 
 AttrTypeReplacer ImplResolver::makeProvenClaimReplacer() const {
@@ -756,7 +757,8 @@ Type ReadOnlyImplResolver::resolveProjectionsIn(Type ty) const {
       return std::nullopt;
     return byLookup;
   });
-  return replacer.replace(ty);
+  return normalizeProjectionsToFixedPoint(
+      ty, resolver.module, [&](Type t) { return replacer.replace(t); });
 }
 
 FailureOr<FlatSymbolRefAttr>

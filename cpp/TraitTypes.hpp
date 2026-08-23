@@ -1219,6 +1219,21 @@ Type resolveGroundProjectionsByLookup(Type ty, ModuleOp module,
                                       DemandOrigin origin,
                                       unsigned *topLevelMissReasons = nullptr);
 
+/// Rewrites `ty` with `step` until its spelling stops changing, and stops the
+/// compilation at a rewrite that never does.
+///
+/// Resolving a projection substitutes the selected impl's associated-type
+/// binding, and that binding may itself be spelled as a projection -- an impl
+/// whose associated type forwards through its own type parameter (`type Element
+/// = B::Element`) binds one. One rewrite leaves such a spelling standing a
+/// second would resolve, so a projection normal form is a fixed point of `step`
+/// and never the result of a single pass. Every normalizer reaches it here, so
+/// the spelling one hands back is the spelling all of them do -- which is what
+/// lets a demand and an impl's self application be compared for equality at
+/// all.
+Type normalizeProjectionsToFixedPoint(Type ty, ModuleOp module,
+                                      llvm::function_ref<Type(Type)> step);
+
 /// How many irreducible projection crossings the residual tolerance has
 /// accepted in this process, and how those accepts split by the tolerance
 /// site's own taxonomy. The four class counts partition the total. Reported
