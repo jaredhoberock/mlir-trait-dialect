@@ -11,7 +11,7 @@
 // @Gen[i64]'s candidate set. The witness self-claim match therefore resolves
 // @Gen[i64]::A to i32 through the one head-matching candidate, without evaluating
 // its premise and without consulting the peer, and matches @T_i32 -- the same
-// candidate set resolveGroundProjectionsByLookup reads wherever it runs, so the
+// candidate set resolveProjectionsByLookup reads wherever it runs, so the
 // outcome does not depend on whether a verifier or a pass drives it.
 
 trait.trait @Needs[!trait.poly<0>] {}

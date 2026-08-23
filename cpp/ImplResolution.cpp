@@ -751,8 +751,9 @@ Type ReadOnlyImplResolver::resolveProjectionsIn(Type ty) const {
     // settle the same way, so the module answers it here; where no impl or
     // several bind it, the lookup declines and says which, and the projection
     // stays spelled as written for the step that can make selection answer it.
-    Type byLookup = resolveGroundProjectionsByLookup(
-        Type(proj), resolver.module, DemandOrigin::RecordedFactRead);
+    Type byLookup = resolveProjectionsByLookup(
+        Type(proj), resolver.module, DemandOrigin::RecordedFactRead,
+        LookupScope::Ground);
     if (byLookup == Type(proj))
       return std::nullopt;
     return byLookup;

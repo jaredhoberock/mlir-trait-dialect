@@ -1194,17 +1194,36 @@ LogicalResult bindProofsIn(Type ty,
                                     ProofDerivationMemo *memo,
                                     llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
-/// Resolve every ground projection in `ty` by module-visible impl
-/// lookup, leaving non-ground and unresolvable projections spelled as written.
+/// Which projections a lookup is licensed to resolve.
+enum class LookupScope {
+  /// Only a projection whose arguments are all concrete. Its resolution is a
+  /// fact about the program: the spelling names one type, and rewriting it into
+  /// that type is sound in any position, including one whose result is stamped
+  /// into IR.
+  Ground,
+
+  /// Also a projection whose arguments still carry variables, when the
+  /// projection's own spelling determines which impl serves it: exactly one impl
+  /// matches, and the match binds only that impl's type parameters -- never a
+  /// variable the projection spells. Such a projection resolves the same way for
+  /// every instance of its variables, so the two spellings denote one type
+  /// whatever inference goes on to choose. A projection whose spelling would
+  /// have to be narrowed to fit an impl determines nothing (inference may narrow
+  /// it another way) and is left as written.
+  Determined
+};
+
+/// Resolve every projection in `ty` that `scope` licenses by module-visible impl
+/// lookup, leaving the rest spelled as written.
 ///
 /// This is a read-only lookup: it selects the unique existing impl whose self
-/// application matches a ground projection's trait application, reads that
-/// impl's associated-type binding, and substitutes. Exactly one matching impl
-/// is required; two or more decline. A conditional impl (nonempty assumptions)
-/// may be that one match -- selecting it is mechanical name resolution, and a
-/// legal program has already discharged the projection's head claim, which is
-/// what its premise witnesses. It never mints proofs, generates impls, or
-/// mutates IR, so it is safe to run inside a verifier.
+/// application matches a projection's trait application, reads that impl's
+/// associated-type binding, and substitutes. Exactly one matching impl is
+/// required; two or more decline. A conditional impl (nonempty assumptions) may
+/// be that one match -- selecting it is mechanical name resolution, and a legal
+/// program has already discharged the projection's head claim, which is what its
+/// premise witnesses. It never mints proofs, generates impls, or mutates IR, so
+/// it is safe to run inside a verifier.
 ///
 /// `origin` names the caller, which the signature otherwise says nothing about.
 /// It classifies the demand this call raises: a verifier's demand is counted,
@@ -1215,9 +1234,9 @@ LogicalResult bindProofsIn(Type ty,
 /// which a projection of `ty` itself (not one reached inside a candidate probe)
 /// declined. A caller that goes on to accept the unresolved type reads it to
 /// say which class of the residual tolerance the accept fell in.
-Type resolveGroundProjectionsByLookup(Type ty, ModuleOp module,
-                                      DemandOrigin origin,
-                                      unsigned *topLevelMissReasons = nullptr);
+Type resolveProjectionsByLookup(Type ty, ModuleOp module, DemandOrigin origin,
+                                LookupScope scope,
+                                unsigned *topLevelMissReasons = nullptr);
 
 /// Rewrites `ty` with `step` until its spelling stops changing, and stops the
 /// compilation at a rewrite that never does.

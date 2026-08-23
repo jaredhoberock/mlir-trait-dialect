@@ -106,8 +106,9 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &sub
   replacer.addReplacement([=](Type t) -> std::optional<Type> {
     Type result = applySubstitutionToFixedPoint(subst, t);
     if (module)
-      result = resolveGroundProjectionsByLookup(result, module,
-                                                DemandOrigin::MonomorphStampOut);
+      result = resolveProjectionsByLookup(result, module,
+                                          DemandOrigin::MonomorphStampOut,
+                                          LookupScope::Ground);
 
     // check that the result changed
     return (result != t) ? std::optional<Type>(result) : std::nullopt;

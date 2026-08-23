@@ -177,9 +177,33 @@ Type normalizeProjectionsToFixedPoint(Type ty, ModuleOp module,
   return ty;
 }
 
-Type resolveGroundProjectionsByLookup(Type ty, ModuleOp module,
-                                      DemandOrigin origin,
-                                      unsigned *topLevelMissReasons) {
+/// Whether `impl`'s self application matches `claim` one-way: the impl's own
+/// type parameters bind to fit the claim, and nothing the claim spells is
+/// narrowed to fit the impl.
+///
+/// `subst` is the match unification's answer, which binds the impl's parameters
+/// but says nothing about a variable the claim spells -- a claim-side narrowing
+/// leaves no key behind, it leaves the impl's self application spelled more
+/// specifically than the claim. So substituting the impl's own parameters back
+/// into its self application and comparing spellings is the one-way test: the
+/// two agree exactly when the impl's pattern already covers the claim as
+/// written.
+///
+/// The test reads spellings, so it also disagrees when the match resolved a
+/// projection one of them carries. That answer is conservative in the safe
+/// direction -- an impl the claim does determine is declined, and the claim
+/// stays spelled as written -- so the caller runs it only where the law it
+/// stands for has content.
+static bool matchesClaimOneWay(ImplOp impl, ClaimType claim,
+                               const SpecializationMap &subst) {
+  Type specializedSelf =
+      applySubstitutionToFixedPoint(subst.toTypeMap(), Type(impl.getSelfClaim()));
+  return specializedSelf == Type(claim);
+}
+
+Type resolveProjectionsByLookup(Type ty, ModuleOp module, DemandOrigin origin,
+                                LookupScope scope,
+                                unsigned *topLevelMissReasons) {
   if (!module)
     return ty;
 
@@ -204,7 +228,16 @@ Type resolveGroundProjectionsByLookup(Type ty, ModuleOp module,
     // the demand this call was asked about.
     LookupProbeScope probe;
 
+    const bool polymorphic = isPolymorphicType(proj);
+
     auto declineWith = [&](LookupMissReason reason) {
+      // A demand is a question put to the impl engine about one type, and only a
+      // ground projection asks one: a spelling that still carries variables
+      // stands for as many types as its variables have instances, so no engine
+      // owes it an answer and the ledger has nothing to record. The scope below
+      // reads such a spelling to compare it, never to serve it.
+      if (polymorphic)
+        return std::optional<Type>(std::nullopt);
       recordLookupMiss(Type(proj), reason, origin, probe.getEnclosingDepth());
       if (checkRecordingCoverage)
         recordedDemands.insert(Type(proj));
@@ -217,10 +250,10 @@ Type resolveGroundProjectionsByLookup(Type ty, ModuleOp module,
       return std::optional<Type>(std::nullopt);
     };
 
-    // Only a projection whose arguments are all concrete has a determined
-    // resolution. A projection over a still-symbolic base stays spelled as
-    // written.
-    if (isPolymorphicType(proj))
+    // A projection whose arguments still carry variables resolves only under the
+    // determined scope, and then only if its own spelling picks the impl (the
+    // one-way match below).
+    if (polymorphic && scope == LookupScope::Ground)
       return std::nullopt;
 
     ClaimType claim = proj.asClaim();
@@ -254,6 +287,17 @@ Type resolveGroundProjectionsByLookup(Type ty, ModuleOp module,
     auto subst = impl.buildSubstitutionForSelfClaim(claim);
     if (failed(subst))
       return declineWith(LookupMissReason::SelfClaimSubstitutionFailed);
+
+    // A projection carrying variables selects only when the match narrowed none
+    // of them: an impl reached by narrowing the projection is one of several the
+    // projection could still be instantiated into, so the binding it supplies is
+    // a guess about inference rather than this spelling's meaning. A ground
+    // projection spells no variable to narrow, so the law has nothing to say
+    // about it and the spelling test that stands in for the law -- which also
+    // declines a match that resolved a projection along the way -- is not run.
+    if (polymorphic && !matchesClaimOneWay(impl, claim, *subst))
+      return std::nullopt;
+
     return applySubstitutionToFixedPoint(subst->toTypeMap(), *binding);
   });
 
@@ -810,11 +854,13 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
   // instead of reconciling two equivalent spellings.
   {
     Type normalizedProven =
-        resolveGroundProjectionsByLookup(proven, module, origin);
+        resolveProjectionsByLookup(proven, module, origin,
+                                   LookupScope::Ground);
     proven = cast<ClaimType>(normalizedProven);
 
     Type normalizedUnproven =
-        resolveGroundProjectionsByLookup(unproven, module, origin);
+        resolveProjectionsByLookup(unproven, module, origin,
+                                   LookupScope::Ground);
     unproven = cast<ClaimType>(normalizedUnproven);
   }
 
@@ -1348,11 +1394,10 @@ static LogicalResult unifyChildwise(Type formal,
 /// the resolution probe is an answer computed only to decide whether a rebuild
 /// changes anything, so it runs as a cross-check and records nothing.
 ///
-/// This terminates. resolveGroundProjectionsByLookup returns a fixed point of
-/// its own rewrite, so a rebuilt type carries no resolvable ground projection
-/// left for this step to change; the re-unification either settles the two types
-/// or falls to `unifyChildwise`, which recurses only on strictly smaller
-/// children.
+/// This terminates. resolveProjectionsByLookup returns a fixed point of its own
+/// rewrite, so a rebuilt type carries no resolvable ground projection left for
+/// this step to change; the re-unification either settles the two types or falls
+/// to `unifyChildwise`, which recurses only on strictly smaller children.
 static LogicalResult unifyStructurally(Type formal,
                                        Type actual,
                                        ModuleOp module,
@@ -1377,10 +1422,10 @@ static LogicalResult unifyStructurally(Type formal,
   Type resolvedFormal, resolvedActual;
   {
     DemandCrossCheckScope quiet;
-    resolvedFormal = resolveGroundProjectionsByLookup(
-        formal, module, DemandOrigin::Unification);
-    resolvedActual = resolveGroundProjectionsByLookup(
-        actual, module, DemandOrigin::Unification);
+    resolvedFormal = resolveProjectionsByLookup(
+        formal, module, DemandOrigin::Unification, LookupScope::Ground);
+    resolvedActual = resolveProjectionsByLookup(
+        actual, module, DemandOrigin::Unification, LookupScope::Ground);
   }
   if (resolvedFormal != formal || resolvedActual != actual)
     return unify(resolvedFormal, resolvedActual, module, subst, err);
@@ -1419,10 +1464,10 @@ static void observeUnifierAcceptance(Type ty, ModuleOp module) {
                                      : DemandOrigin::ModuleFreeComparison);
 }
 
-/// Unify a projection type with another type. Two entries reach here: a
-/// module-free comparison (a verifier passes no module) and a module-capable
-/// resolution (a pass or a committed-fact substitution build passes the
-/// module).
+/// Unify a projection with another type by their spellings as written. Two
+/// entries reach here: a module-free comparison (a verifier passes no module)
+/// and a module-capable resolution (a pass or a committed-fact substitution
+/// build passes the module).
 ///
 ///  - Projection vs projection: require the same symbolic projection head, then
 ///    recurse through trait application and associated-type arguments. This
@@ -1434,7 +1479,12 @@ static void observeUnifierAcceptance(Type ty, ModuleOp module) {
 ///    module-free entry, an unresolved crossing is a strict mismatch and is
 ///    rejected. Only the module-capable entry, on an irreducible crossing no
 ///    committed fact determines, tolerates it (see the residual note below).
-LogicalResult ProjectionType::unify(
+///
+/// Two spellings that agree here denote one type, since the head and every
+/// argument agree. Two that disagree may still denote one type -- the caller
+/// below settles that by normalizing both and asking again.
+static LogicalResult unifyProjectionAsSpelled(
+    ProjectionType self,
     Type other,
     ModuleOp module,
     UnificationMap &subst,
@@ -1443,21 +1493,21 @@ LogicalResult ProjectionType::unify(
   // so structural attribute equality is too strict. Compare the symbolic
   // projection head, then recurse through the type arguments.
   if (auto otherProj = mlir::dyn_cast<ProjectionType>(other)) {
-    auto formalApp = getTraitApplication();
+    auto formalApp = self.getTraitApplication();
     auto actualApp = otherProj.getTraitApplication();
     if (formalApp.getTraitName() != actualApp.getTraitName() ||
-        getAssocName() != otherProj.getAssocName()) {
+        self.getAssocName() != otherProj.getAssocName()) {
       if (err)
-        err() << "projection mismatch: expected " << *this << " but found "
+        err() << "projection mismatch: expected " << self << " but found "
               << otherProj;
       return failure();
     }
 
-    observeUnifierAcceptance(*this, module);
+    observeUnifierAcceptance(self, module);
     if (failed(unifyTypeRange(formalApp.getTypeArgs(), actualApp.getTypeArgs(),
                               module, subst, err)))
       return failure();
-    return unifyTypeRange(getAssocTypeArgs(), otherProj.getAssocTypeArgs(),
+    return unifyTypeRange(self.getAssocTypeArgs(), otherProj.getAssocTypeArgs(),
                           module, subst, err);
   }
 
@@ -1474,12 +1524,12 @@ LogicalResult ProjectionType::unify(
   // the module-capable resolution below rather than binding.
   if (auto otherVar = mlir::dyn_cast<InferenceType>(other)) {
     bool occurs = false;
-    Type(*this).walk([&](Type t) {
+    Type(self).walk([&](Type t) {
       if (t == other) occurs = true;
     });
     if (!occurs) {
-      observeUnifierAcceptance(*this, module);
-      return otherVar.unify(*this, module, subst, err);
+      observeUnifierAcceptance(self, module);
+      return otherVar.unify(self, module, subst, err);
     }
   }
 
@@ -1495,10 +1545,11 @@ LogicalResult ProjectionType::unify(
   // mismatch below.
   // The arms a ground base declined on, kept so an accept below can be classed.
   unsigned groundMissReasons = 0;
-  if (isMonomorphicType(*this) && module) {
-    Type resolved = resolveGroundProjectionsByLookup(
-        *this, module, DemandOrigin::Unification, &groundMissReasons);
-    if (resolved != Type(*this))
+  if (isMonomorphicType(self) && module) {
+    Type resolved = resolveProjectionsByLookup(
+        self, module, DemandOrigin::Unification, LookupScope::Ground,
+        &groundMissReasons);
+    if (resolved != Type(self))
       return trait::unify(resolved, other, module, subst, err);
   }
 
@@ -1514,7 +1565,7 @@ LogicalResult ProjectionType::unify(
   if (!module) {
     countModuleFreeProjectionRejection();
     if (err)
-      err() << "projection mismatch: expected " << *this << " but found "
+      err() << "projection mismatch: expected " << self << " but found "
             << other;
     return failure();
   }
@@ -1562,7 +1613,7 @@ LogicalResult ProjectionType::unify(
     // and a single headline arm names its class; several arms at once, or an arm
     // that is neither headline case, is neither generator-pending nor
     // multi-candidate and goes to the mixed-or-other class.
-    if (!isMonomorphicType(*this)) {
+    if (!isMonomorphicType(self)) {
       ++numResidualToleranceAcceptsHypothesis;
     } else if (groundMissReasons ==
                (1u << unsigned(LookupMissReason::NoCandidateImpl))) {
@@ -1575,6 +1626,71 @@ LogicalResult ProjectionType::unify(
     }
   }
   return success();
+}
+
+/// Unify a projection type with another type.
+///
+/// A projection's spelling is not its identity: resolving it substitutes the
+/// selected impl's associated-type binding, and an impl that forwards its
+/// associated type through its own type parameter (`type Element = B::Element`)
+/// binds a fresh projection, so one type is spelled `Tensor[Cyclic<V>]::Element`
+/// in the position that reaches it through the view and `Tensor[V]::Element` in
+/// the position that reaches it through the base. Comparing those two as
+/// written finds a head mismatch, or -- when the heads agree -- recurses into
+/// arguments that do not, and a comparer recursing into arguments equates
+/// `Cyclic<V>` with `V`, which is an infinite type the occurs check refuses.
+/// Neither answer is about the program; both are about the spellings.
+///
+/// So the comparison is made against normal forms: compare as written first,
+/// and where that fails, normalize both sides to a fixed point and ask again.
+/// Normalizing only after a failure keeps the answer the same and the lookups
+/// off the path that already agreed -- an agreement on spellings is an
+/// agreement on types.
+///
+/// This terminates. The normalization returns a fixed point of its own rewrite,
+/// so the re-comparison it hands on carries no spelling left for a second
+/// normalization to change: that entry finds both sides already normal and falls
+/// through to the spelled comparison, which recurses only into strictly smaller
+/// arguments.
+LogicalResult ProjectionType::unify(
+    Type other,
+    ModuleOp module,
+    UnificationMap &subst,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  // The spelled comparison runs on a saved substitution with its diagnostic
+  // held back: an attempt that succeeds is the answer and has recorded exactly
+  // what a direct comparison would, while one that fails must leave no binding
+  // and no diagnostic behind so the normalized comparison below runs cleanly.
+  UnificationMap saved = subst;
+  if (succeeded(unifyProjectionAsSpelled(*this, other, module, subst,
+                                         /*err=*/{})))
+    return success();
+  subst = saved;
+
+  // The module is what makes a normal form reachable: it holds the impls whose
+  // bindings the resolution substitutes. A comparer holding none has no way to
+  // tell a forwarding spelling from a different type, so it compares as written
+  // and rejects, which is the module-free comparator's own strictness.
+  if (module) {
+    // The normalization is an answer computed only to decide whether the two
+    // sides meet once resolved, so it runs as a cross-check and records nothing.
+    Type normalizedSelf, normalizedOther;
+    {
+      DemandCrossCheckScope quiet;
+      normalizedSelf = resolveProjectionsByLookup(
+          *this, module, DemandOrigin::Unification, LookupScope::Determined);
+      normalizedOther = resolveProjectionsByLookup(
+          other, module, DemandOrigin::Unification, LookupScope::Determined);
+    }
+    if (normalizedSelf != Type(*this) || normalizedOther != other)
+      return trait::unify(normalizedSelf, normalizedOther, module, subst, err);
+  }
+
+  // Normalizing changed nothing, so the spelled comparison's failure is the
+  // answer. Re-run it only to surface the diagnostic; its recording repeats the
+  // held-back attempt above, so keep it silent.
+  DemandCrossCheckScope quiet;
+  return unifyProjectionAsSpelled(*this, other, module, subst, err);
 }
 
 /// Attempt to unify `formal` with `actual`, extending `subst` with any
@@ -1682,6 +1798,24 @@ Type instantiate(Type root, InstantiationMap &inst, uint64_t &idCounter) {
 }
 
 
+/// The first inference id no variable spelled in `types` already uses.
+///
+/// An inference variable's identity is its id, so a mint that starts over at
+/// zero hands back a variable a type in hand may already spell -- and the two,
+/// being one type, then unify as one variable. That happens whenever a
+/// specialization is built over types an enclosing specialization already
+/// instantiated: this build's first fresh variable would alias the enclosing
+/// build's first. Starting past every id in hand is what makes fresh mean fresh.
+static uint64_t firstUnusedInferenceId(ArrayRef<Type> types) {
+  uint64_t next = 0;
+  for (Type ty : types)
+    ty.walk([&](Type sub) {
+      if (auto var = dyn_cast<InferenceType>(sub))
+        next = std::max(next, var.getUniqueId() + 1);
+    });
+  return next;
+}
+
 FailureOr<SpecializationMap> buildSpecialization(
     Type formal,
     Type actual,
@@ -1689,7 +1823,7 @@ FailureOr<SpecializationMap> buildSpecialization(
     llvm::function_ref<InFlightDiagnostic()> err) {
   // instantiate generics on both sides with the same instantiation map
   InstantiationMap genToInfer;
-  uint64_t idCounter = 0;
+  uint64_t idCounter = firstUnusedInferenceId({formal, actual});
   Type iformal = instantiate(formal, genToInfer, idCounter);
   Type iactual = instantiate(actual, genToInfer, idCounter);
 

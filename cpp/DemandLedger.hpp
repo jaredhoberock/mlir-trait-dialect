@@ -140,7 +140,7 @@ inline constexpr unsigned numLookupMissReasons = 5;
 
 /// The component whose decision an observation records.
 enum class DemandEngine : uint8_t {
-  /// resolveGroundProjectionsByLookup declined; carries a LookupMissReason.
+  /// resolveProjectionsByLookup declined; carries a LookupMissReason.
   GroundProjectionLookup,
   /// The unifier accepted a monomorphic projection without resolving it.
   UnifierAcceptance,

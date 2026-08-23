@@ -637,8 +637,9 @@ void CallSubstitution::discoverProjectionBindings(
       // the module binds it with no impl or with several, the lookup declines
       // and records which, and the call closes over a projection it still
       // cannot spell concretely -- so it lowers in the round that serves it.
-      Type byLookup = resolveGroundProjectionsByLookup(
-          Type(proj), module, DemandOrigin::CallSiteSpecialization);
+      Type byLookup = resolveProjectionsByLookup(
+          Type(proj), module, DemandOrigin::CallSiteSpecialization,
+          LookupScope::Ground);
       if (byLookup == Type(proj)) {
         declined = true;
         return;
@@ -675,8 +676,9 @@ static void countCallSiteProofAsks(Type ty, ModuleOp module,
       // do, so nothing counts it.
       DemandCrossCheckScope measuring;
       auto normalized = [&](ClaimType spelling) {
-        return cast<ClaimType>(resolveGroundProjectionsByLookup(
-            Type(spelling), module, DemandOrigin::ProofRecording));
+        return cast<ClaimType>(resolveProjectionsByLookup(
+            Type(spelling), module, DemandOrigin::ProofRecording,
+            LookupScope::Ground));
       };
       answered = closures.lookup(normalized(claim.asUnproven()),
                                  normalized(claim)) != nullptr;
@@ -1496,20 +1498,18 @@ static void checkResolutionBoundary(const ImplResolver &resolver) {
          "name a proof the module defines");
 }
 
-/// A monomorphic projection's resolution runs to a fixed point through a
-/// bounded chain of hops, one binding spelling the next. This single bound cuts
-/// a chain that never grounds out, reporting it as unresolvable rather than
-/// following it without end.
-constexpr unsigned maxProjectionResolutionHops = 64;
-
-/// The resolvers and module-body builder every projection-settlement helper
-/// reads but never varies as it descends. Recorded facts and obligation-holding
-/// selection come from `reading` and `resolver`; the impls a resolution chain
-/// drives selection to generate insert at the module body through `proofBuilder`.
+/// The resolvers, module-body builder, and module every projection-settlement
+/// helper reads but never varies as it descends. Recorded facts and
+/// obligation-holding selection come from `reading` and `resolver`; the impls a
+/// resolution chain drives selection to generate insert at the module body
+/// through `proofBuilder`; `module` anchors the shared fixed-point normalization
+/// every resolution walk here runs, which owns the bound that cuts a chain that
+/// never grounds out.
 struct ProjectionSettleContext {
   const ReadOnlyImplResolver &reading;
   ImplResolver &resolver;
   OpBuilder &proofBuilder;
+  ModuleOp module;
 };
 
 /// Resolve one hop of a monomorphic projection through an obligation-holding
@@ -1535,15 +1535,13 @@ resolveProjectionHop(ProjectionType proj, const ProjectionSettleContext &settle)
 /// Resolve to a fixed point every ground projection standing anywhere in `type`,
 /// descending composites, through `hop`. A projection `hop` declines and any
 /// polymorphic projection are left standing. Resolution runs to a fixed point
-/// because one hop's binding may spell the next; a chain that outruns the bound
-/// is left spelled and reported as unresolved downstream.
+/// because one hop's binding may spell the next; the shared normalizer owns the
+/// bound and stops the compilation at a chain that never grounds out, the same
+/// refusal every ground resolver makes.
 static Type resolveGroundProjections(
-    Type type, llvm::function_ref<std::optional<Type>(ProjectionType)> hop) {
-  Type previous;
-  Type current = type;
-  for (unsigned i = 0;
-       i != maxProjectionResolutionHops && current != previous; ++i) {
-    previous = current;
+    Type type, ModuleOp module,
+    llvm::function_ref<std::optional<Type>(ProjectionType)> hop) {
+  return normalizeProjectionsToFixedPoint(type, module, [&](Type current) {
     AttrTypeReplacer replacer;
     replacer.addReplacement([&](Type t) -> std::optional<Type> {
       auto proj = dyn_cast<ProjectionType>(t);
@@ -1551,9 +1549,8 @@ static Type resolveGroundProjections(
         return std::nullopt;
       return hop(proj);
     });
-    current = replacer.replace(current);
-  }
-  return current;
+    return replacer.replace(current);
+  });
 }
 
 /// Whether a monomorphic equality claim is settled at the leftover check: its
@@ -1581,10 +1578,12 @@ static bool equalityClaimGroundResolvesToOneSpelling(
   auto eq = claim.getEqualityAttr();
   if (!eq)
     return false;
-  // Resolve each endpoint's ground projections to the shared hop bound
-  // (recorded facts first, then impl selection -- see the helpers).
+  // Resolve each endpoint's ground projections to a fixed point through the
+  // shared normalizer (recorded facts first, then impl selection -- see the
+  // helpers).
   auto resolveEndpoint = [&](Type endpoint) -> Type {
-    return resolveGroundProjections(endpoint, [&](ProjectionType proj) {
+    return resolveGroundProjections(endpoint, settle.module,
+                                    [&](ProjectionType proj) {
       return resolveProjectionHop(proj, settle);
     });
   };
@@ -1660,36 +1659,34 @@ mintProjectionResolutionWitness(ProjectionType proj,
 /// inside the vector -- yields its evidence just as a top-level projection does;
 /// resolution runs to a fixed point because a resolved binding may itself spell
 /// a projection. A concrete endpoint contributes no witness. A projection with
-/// no obligation-holding impl fails; a chain that outruns the hop bound with a
-/// projection still standing fails too, and is reported like an unresolvable one.
+/// no obligation-holding impl fails; a chain that never grounds out stops the
+/// compilation at the shared normalizer, the same refusal every ground resolver
+/// makes.
 static LogicalResult
 mintProjectionResolveChain(Type endpoint,
                            const ProjectionResolveMintContext &ctx,
                            SmallVector<Value> &witnesses) {
-  Type previous;
-  Type current = endpoint;
-  for (unsigned hop = 0;
-       hop != maxProjectionResolutionHops && current != previous; ++hop) {
-    previous = current;
-    LogicalResult mintOutcome = success();
-    AttrTypeReplacer replacer;
-    replacer.addReplacement([&](Type t) -> std::optional<Type> {
-      auto proj = dyn_cast<ProjectionType>(t);
-      if (!proj || isPolymorphicType(proj))
-        return std::nullopt;
-      auto witness = mintProjectionResolutionWitness(proj, ctx);
-      if (failed(witness)) {
-        mintOutcome = failure();
-        return std::nullopt;
-      }
-      witnesses.push_back(witness->first);
-      return witness->second;
-    });
-    current = replacer.replace(current);
-    if (failed(mintOutcome))
-      return failure();
-  }
-  // A ground projection still standing never resolved within the hop bound.
+  LogicalResult mintOutcome = success();
+  Type current = normalizeProjectionsToFixedPoint(
+      endpoint, ctx.settle.module, [&](Type ty) {
+        AttrTypeReplacer replacer;
+        replacer.addReplacement([&](Type t) -> std::optional<Type> {
+          auto proj = dyn_cast<ProjectionType>(t);
+          if (!proj || isPolymorphicType(proj))
+            return std::nullopt;
+          auto witness = mintProjectionResolutionWitness(proj, ctx);
+          if (failed(witness)) {
+            mintOutcome = failure();
+            return std::nullopt;
+          }
+          witnesses.push_back(witness->first);
+          return witness->second;
+        });
+        return replacer.replace(ty);
+      });
+  if (failed(mintOutcome))
+    return failure();
+  // A ground projection still standing at the fixed point never resolved.
   bool unresolved = false;
   current.walk([&](Type sub) {
     if (auto proj = dyn_cast<ProjectionType>(sub))
@@ -1722,8 +1719,8 @@ mintProjectionResolveChain(Type endpoint,
 /// equality, whose ground congruence closure carries the endpoints together
 /// across every hop and is direction-blind. Settlement gates this reduction on
 /// the same fixed-point resolution reaching one ground spelling within the hop
-/// bound, so the walk here terminates; a chain that outruns the bound fails and
-/// is reported like an unresolvable one. Proofs the premises need are minted
+/// bound, so the walk here terminates; a chain that never grounds out stops the
+/// compilation at the shared normalizer. Proofs the premises need are minted
 /// through `settle.proofBuilder` at the module body; the witnesses themselves
 /// are inserted at the assume.
 static LogicalResult reduceGroundEqualityAssume(
@@ -1774,9 +1771,9 @@ static LogicalResult reduceGroundEqualityAssume(
 /// the facts impl selection has recorded, leaving polymorphic projections and
 /// any projection nothing recorded untouched. This is the read-only counterpart
 /// of the hop chain above: it never drives impl selection.
-static Type resolveGroundProjectionsRecorded(Type type,
+static Type resolveGroundProjectionsRecorded(Type type, ModuleOp module,
                                              const ReadOnlyImplResolver &reading) {
-  return resolveGroundProjections(type, [&](ProjectionType proj) -> std::optional<Type> {
+  return resolveGroundProjections(type, module, [&](ProjectionType proj) -> std::optional<Type> {
     if (auto recorded = reading.resolveProjectionType(proj); succeeded(recorded))
       return *recorded;
     return std::nullopt;
@@ -1832,7 +1829,7 @@ static LogicalResult reconcileDerivedAssumptions(
   OpBuilder proofBuilder(module.getContext());
   proofBuilder.setListener(&reconcileInsertions);
   proofBuilder.setInsertionPointToEnd(module.getBody());
-  ProjectionSettleContext settle{reading, resolver, proofBuilder};
+  ProjectionSettleContext settle{reading, resolver, proofBuilder, module};
 
   bool sawUnbridgeableDrift = false;
   for (DeriveOp derive : derives) {
@@ -1858,7 +1855,7 @@ static LogicalResult reconcileDerivedAssumptions(
       // spells resolving to the ground the operand now carries. Confirm the
       // resolution meets the operand before minting anything.
       auto resolved = dyn_cast<ClaimType>(
-          resolveGroundProjectionsRecorded(Type(exp), reading));
+          resolveGroundProjectionsRecorded(Type(exp), module, reading));
       if (!resolved ||
           resolved.getTraitApplication() != operandClaim.getTraitApplication()) {
         derive.emitOpError()
@@ -2236,7 +2233,7 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
   OpBuilder settleBuilder(ctx);
   settleBuilder.setListener(&settleInsertions);
   settleBuilder.setInsertionPointToEnd(module.getBody());
-  ProjectionSettleContext settle{reading, *resolver, settleBuilder};
+  ProjectionSettleContext settle{reading, *resolver, settleBuilder, module};
   for (auto [op, claim] : monomorphicClaims) {
     // An equality claim has no proof to await; it is settled when its endpoints
     // ground-resolve to one spelling through impls whose obligations hold. A

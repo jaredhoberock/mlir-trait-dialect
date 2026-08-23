@@ -2345,9 +2345,11 @@ FailureOr<SpecializationMap> MethodCallOp::buildParameterSpecialization(ModuleOp
   DemandOrigin origin = unifyModule ? DemandOrigin::CallSiteSpecialization
                                     : DemandOrigin::CallSignatureVerification;
   if (callClaimHasEvidence) {
-    formal = resolveGroundProjectionsByLookup(formal, *module, origin);
+    formal = resolveProjectionsByLookup(formal, *module, origin,
+                                        LookupScope::Ground);
     actual = cast<FunctionType>(
-        resolveGroundProjectionsByLookup(actual, *module, origin));
+        resolveProjectionsByLookup(actual, *module, origin,
+                                   LookupScope::Ground));
   } else {
     // No evidence, no license: this call never asked what its ground projections
     // resolve to, so those demands reach no engine at all. Nothing records
