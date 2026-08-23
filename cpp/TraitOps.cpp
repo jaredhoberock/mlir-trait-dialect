@@ -123,8 +123,11 @@ private:
 FailureOr<Type> NormalizationContext::normalize(
     Type ty,
     llvm::function_ref<InFlightDiagnostic()> err) {
-  constexpr unsigned maxIterations = 64;
-
+  // The step resolves projections from this context's local rules alone, never
+  // through module lookup, so an impl body normalizes against exactly the
+  // evidence its own where-clause supplies. The shared fallible driver spends
+  // the rewrite budget; on nonconvergence this reports through the op-attached
+  // diagnostic rather than the driver's fatal module-level reporter.
   auto normalizeOnce = [&](Type root) {
     AttrTypeReplacer replacer;
     replacer.addReplacement([&](ProjectionType proj) -> std::optional<Type> {
@@ -143,18 +146,14 @@ FailureOr<Type> NormalizationContext::normalize(
     return replacer.replace(root);
   };
 
-  Type previous;
-  for (unsigned i = 0; i != maxIterations; ++i) {
-    previous = ty;
-    ty = normalizeOnce(ty);
-    if (ty == previous)
-      return ty;
+  Type out;
+  if (failed(tryNormalizeProjectionsToFixedPoint(ty, normalizeOnce, out))) {
+    if (err)
+      err() << "projection normalization did not converge; check for cyclic "
+               "associated type bindings";
+    return failure();
   }
-
-  if (err)
-    err() << "projection normalization did not converge; check for cyclic "
-             "associated type bindings";
-  return failure();
+  return out;
 }
 
 FailureOr<FunctionType> NormalizationContext::normalize(

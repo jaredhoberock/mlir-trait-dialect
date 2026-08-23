@@ -64,11 +64,16 @@ Type stripClaimProofs(Type type);
 /// `!trait.proj` term a shared variable keyed by the projection itself: the same
 /// projection is one variable, every other position is rigid, and a whole
 /// projection is opaque (its arguments are not descended). A projection may
-/// resolve to a projection-free position or to another bare projection (a direct
-/// alias, both owed a grounding at discharge); a binding that resolves to a
-/// composite still carrying a projection, or that closes a cycle, is refused.
-/// Endpoints arrive with proofs already stripped. `err`, when non-null, receives
-/// the diagnostic on refusal.
+/// resolve to any type the unification reaches -- a projection-free position,
+/// itself, another bare projection, or a composite that still carries
+/// projections -- since every projection standing in a binding is itself a
+/// variable still owed a grounding at discharge, so a terminal that still
+/// carries one is the weaker assertion. The one binding refused is one that
+/// closes a cycle (an unfoundable infinite type), caught by an occurs check.
+/// Ground truth is arbitrated later: the bonded erase pass judges the op once
+/// monomorphization grounds every projection, refusing a coerce whose ground
+/// endpoints stand apart. Endpoints arrive with proofs already stripped. `err`,
+/// when non-null, receives the diagnostic on refusal.
 LogicalResult verifyPendingProjectionUnification(
     Type input, Type result,
     llvm::function_ref<InFlightDiagnostic()> emitError = nullptr);

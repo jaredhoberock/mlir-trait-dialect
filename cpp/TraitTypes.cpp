@@ -122,8 +122,14 @@ std::string applySubstitutionAndGenerateMangledNameSuffix(
 
 namespace {
 
-/// Stops the compilation at a ground projection whose resolution does not
-/// terminate, naming the demand it arose under.
+/// The rewrite budget the fixed-point driver spends before declaring a
+/// projection resolution nonterminating. One projection resolution exposes at
+/// most one more, so a chain that has not settled within this many passes is
+/// cyclic or oscillating.
+constexpr unsigned kProjectionFixedPointMaxIterations = 64;
+
+/// Stops the compilation at a projection whose resolution does not terminate,
+/// naming the demand it arose under.
 ///
 /// The rewrite this reports has no normal form, so there is no spelling to
 /// return and no diagnostic a later stage could attach to a spelling it never
@@ -139,12 +145,12 @@ namespace {
 /// it runs out of stack, or oscillates without growing and is caught by the
 /// rewrite budget of the driver that keeps re-deriving it. This stands behind
 /// all three.
-[[noreturn]] void reportUnnormalizableGroundProjection(Type ty,
-                                                       unsigned iterations,
-                                                       ModuleOp module) {
+[[noreturn]] void reportUnnormalizableProjection(Type ty,
+                                                 unsigned iterations,
+                                                 ModuleOp module) {
   std::string message;
   llvm::raw_string_ostream stream(message);
-  stream << "ground projection normalization did not converge within "
+  stream << "projection normalization did not converge within "
          << iterations << " iterations for type " << ty << ", demanded at ";
   if (std::optional<Location> anchor = currentDemandAnchor())
     stream << *anchor;
@@ -155,26 +161,36 @@ namespace {
 
 } // namespace
 
-Type normalizeProjectionsToFixedPoint(Type ty, ModuleOp module,
-                                      llvm::function_ref<Type(Type)> step) {
-  constexpr unsigned maxIterations = 64;
+LogicalResult tryNormalizeProjectionsToFixedPoint(
+    Type ty, llvm::function_ref<Type(Type)> step, Type &out) {
   Type previous;
-  for (unsigned i = 0; i != maxIterations && ty != previous; ++i) {
+  for (unsigned i = 0;
+       i != kProjectionFixedPointMaxIterations && ty != previous; ++i) {
     previous = ty;
     ty = step(ty);
   }
+  // `out` carries what the loop reached either way: the fixed point on success,
+  // the still-changing partial normal form on failure. A caller reporting the
+  // nonconvergence reads the partial to name the type that would not settle.
+  out = ty;
+  return success(ty == previous);
+}
 
+Type normalizeProjectionsToFixedPoint(Type ty, ModuleOp module,
+                                      llvm::function_ref<Type(Type)> step) {
   // Reaching the iteration cap while the type is still changing means the
   // rewrite has no fixed point (a cyclic or oscillating resolution). What the
-  // loop reached is a partial normal form, and every caller either compares a
-  // spelling against it or stamps it into a specialized instance, so handing it
-  // back would turn a resolution that does not terminate into a spelling
-  // mismatch or a mis-specialized monomorph somewhere else entirely. The
-  // compilation stops at the demand that would not normalize instead.
-  if (ty != previous)
-    reportUnnormalizableGroundProjection(ty, maxIterations, module);
-
-  return ty;
+  // loop reached is a partial normal form, and every caller of this fatal
+  // entry either compares a spelling against it or stamps it into a specialized
+  // instance, so handing it back would turn a resolution that does not
+  // terminate into a spelling mismatch or a mis-specialized monomorph somewhere
+  // else entirely. The compilation stops at the demand that would not normalize
+  // instead.
+  Type out;
+  if (failed(tryNormalizeProjectionsToFixedPoint(ty, step, out)))
+    reportUnnormalizableProjection(out, kProjectionFixedPointMaxIterations,
+                                   module);
+  return out;
 }
 
 /// Whether `impl`'s self application matches `claim` one-way: the impl's own
@@ -1808,16 +1824,16 @@ Type instantiate(Type root, InstantiationMap &inst, uint64_t &idCounter) {
 /// build's first. Starting past every id in hand is what makes fresh mean fresh.
 ///
 /// A variable spelled only inside an equality claim's endpoint is walk-opaque,
-/// so the scan reaches endpoints through walkIncludingEqualityEndpoints -- the
-/// same universe respellEqualityEndpoints rewrites. Otherwise the mint would
-/// start past every id but those, and a fresh variable would alias one an
-/// endpoint holds.
+/// so the scan reaches endpoints through walkTypesDeep -- the same universe
+/// respellEqualityEndpoints rewrites. Otherwise the mint would start past every
+/// id but those, and a fresh variable would alias one an endpoint holds.
 static uint64_t firstUnusedInferenceId(ArrayRef<Type> types) {
   uint64_t next = 0;
   for (Type ty : types)
-    walkIncludingEqualityEndpoints(ty, [&](Type sub) {
+    walkTypesDeep(ty, [&](Type sub) {
       if (auto var = dyn_cast<InferenceType>(sub))
         next = std::max(next, var.getUniqueId() + 1);
+      return WalkResult::advance();
     });
   return next;
 }

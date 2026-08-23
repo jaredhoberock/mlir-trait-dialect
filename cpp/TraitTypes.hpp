@@ -63,25 +63,6 @@ inline std::optional<Type> respellEqualityEndpoints(
   return Type(ClaimType::getEquality(claim.getContext(), newLhs, newRhs));
 }
 
-/// Visit `root` and every type nested inside it, including the endpoints of any
-/// equality claim. `Type::walk` descends only through storages that expose their
-/// nested types to the walker; an equality claim seals its endpoints against that
-/// walk (see TraitAttributes.td), so a plain walk never reaches a type that lives
-/// only inside an endpoint. This reads endpoints through the same dedicated
-/// accessors respellEqualityEndpoints rewrites through, so a scan over a type sees
-/// exactly the universe a rewrite over that type would touch.
-inline void walkIncludingEqualityEndpoints(
-    Type root, llvm::function_ref<void(Type)> visit) {
-  root.walk([&](Type sub) {
-    visit(sub);
-    if (auto claim = dyn_cast<ClaimType>(sub))
-      if (auto eq = claim.getEqualityAttr()) {
-        walkIncludingEqualityEndpoints(eq.getLhs(), visit);
-        walkIncludingEqualityEndpoints(eq.getRhs(), visit);
-      }
-  });
-}
-
 inline bool isPolymorphicType(Type root);
 inline Type applySubstitutionOnce(const llvm::DenseMap<Type,Type> &subst,
                                   Type root);
@@ -1273,6 +1254,16 @@ Type resolveProjectionsByLookup(Type ty, ModuleOp module, DemandOrigin origin,
 /// all.
 Type normalizeProjectionsToFixedPoint(Type ty, ModuleOp module,
                                       llvm::function_ref<Type(Type)> step);
+
+/// The fallible driver `normalizeProjectionsToFixedPoint` wraps: rewrites `ty`
+/// with `step` until its spelling stops changing and reports success, or reports
+/// failure at a rewrite that never settles instead of stopping the compilation.
+/// `out` receives the fixed point on success and the still-changing partial
+/// normal form on failure, so a caller owning its own diagnostic -- an op-
+/// attached error over an impl-local rule step that must not reach the fatal
+/// module-level reporter -- names the type that would not converge.
+LogicalResult tryNormalizeProjectionsToFixedPoint(
+    Type ty, llvm::function_ref<Type(Type)> step, Type &out);
 
 /// How many irreducible projection crossings the residual tolerance has
 /// accepted in this process, and how those accepts split by the tolerance

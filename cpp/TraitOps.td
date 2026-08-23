@@ -1210,22 +1210,17 @@ def CoerceOp : TraitDialectOp<"coerce", [
     ImplGenerator's, minted only at monomorphization. A marked coerce cites
     nothing -- `equalities` must be empty -- and stands in a pending judgment:
     with the proofs stripped and the no-proof-swap clause enforced exactly as
-    above, the endpoints must unify where every `!trait.proj` term is a shared
-    unification variable keyed by the projection itself (the same projection is
-    one variable and cannot stand for two types) and every other position is
-    rigid, descending a claim's predicate arguments the generic walkers are
-    opaque to (a whole projection is one opaque variable -- its own arguments are
-    not descended). A projection may resolve to a projection-free position, or
-    stand for itself, or alias another bare projection -- two lookups asserted to
-    denote one type, each still owed a projection-free grounding at discharge.
-    What it may not resolve to is a composite still carrying a projection (which
-    would equate two distinct projections inside a rigid constructor), nor a type
-    that contains the projection itself (an unfoundable infinite type); both are
-    refused. The marked form mints nothing consumable: monomorphization respells
-    its projections to ground, discharging the obligation to the reflexive form
-    the folder collapses -- or, if the two lookups ground to different types,
+    above, the endpoints must unify under the rule `verifyPendingProjectionUnification`
+    owns, where every `!trait.proj` term is a shared unification variable keyed by
+    the projection itself and every other position is rigid. That rule, not this
+    description, is the authoritative statement of what a projection may resolve
+    to; it accepts any type the unification reaches and refuses only a binding
+    that closes a cycle. The marked form mints nothing consumable: monomorphization
+    respells its projections to ground, discharging the obligation to the reflexive
+    form the folder collapses -- or, if the two lookups ground to different types,
     failing the build. A marked coerce surviving past monomorphization is a hard
-    error (the erase barrier refuses it), never a tolerated residual.
+    error (the erase barrier refuses it), never a tolerated residual; the erase
+    barrier is where ground truth is arbitrated.
 
     Example, marked:
       %u = trait.coerce %x : !trait.proj<@Fold[i64], "Item"> to i64 unproven

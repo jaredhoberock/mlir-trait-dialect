@@ -1666,23 +1666,20 @@ static LogicalResult
 mintProjectionResolveChain(Type endpoint,
                            const ProjectionResolveMintContext &ctx,
                            SmallVector<Value> &witnesses) {
+  // A hop that cannot mint its witness fails the whole chain, but the shared
+  // resolver only leaves such a projection standing; this side channel carries
+  // that failure out past the fixed point so the outer result short-circuits
+  // rather than falling through to the unresolved-projection check below.
   LogicalResult mintOutcome = success();
-  Type current = normalizeProjectionsToFixedPoint(
-      endpoint, ctx.settle.module, [&](Type ty) {
-        AttrTypeReplacer replacer;
-        replacer.addReplacement([&](Type t) -> std::optional<Type> {
-          auto proj = dyn_cast<ProjectionType>(t);
-          if (!proj || isPolymorphicType(proj))
-            return std::nullopt;
-          auto witness = mintProjectionResolutionWitness(proj, ctx);
-          if (failed(witness)) {
-            mintOutcome = failure();
-            return std::nullopt;
-          }
-          witnesses.push_back(witness->first);
-          return witness->second;
-        });
-        return replacer.replace(ty);
+  Type current = resolveGroundProjections(
+      endpoint, ctx.settle.module, [&](ProjectionType proj) -> std::optional<Type> {
+        auto witness = mintProjectionResolutionWitness(proj, ctx);
+        if (failed(witness)) {
+          mintOutcome = failure();
+          return std::nullopt;
+        }
+        witnesses.push_back(witness->first);
+        return witness->second;
       });
   if (failed(mintOutcome))
     return failure();
