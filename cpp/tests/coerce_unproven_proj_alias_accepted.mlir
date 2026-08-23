@@ -3,13 +3,14 @@
 
 // RUN: mlir-opt -split-input-file %s | mlir-opt -split-input-file | FileCheck %s
 
-// A marked coerce may relate two distinct BARE projections: they alias into one
+// A marked coerce may relate two distinct projections: they alias into one
 // equivalence class, two lookups asserted to denote one type, each still owed a
-// projection-free grounding the minted impl supplies at discharge. This is the
-// direct-alias form the pending judgment admits alongside a projection standing
-// for a concrete type; a projection-bearing composite is still refused (see
-// invalid_coerce_unproven_distinct_projections). These forms verify and survive
-// a round trip with the `unproven` marker intact.
+// projection-free grounding the minted impl supplies at discharge. The
+// projections may stand bare on both sides, or one may stand for a composite
+// that still carries projections -- every projection in that composite is
+// itself owed a grounding, so the assertion is weaker than a ground terminal,
+// not stronger. These forms verify and survive a round trip with the `unproven`
+// marker intact.
 
 trait.trait @Fold[!trait.poly<0>] {
   trait.assoc_type @A
@@ -63,4 +64,24 @@ func.func @nested_in_application(
   %y = trait.coerce %x : !trait.claim<@Conv[!trait.proj<@Fold[i64], "A">, i32]>
     to !trait.claim<@Conv[!trait.proj<@Fold[i64], "B">, i32]> unproven
   return %y : !trait.claim<@Conv[!trait.proj<@Fold[i64], "B">, i32]>
+}
+
+// -----
+
+trait.trait @Fold[!trait.poly<0>] {
+  trait.assoc_type @A
+  trait.assoc_type @B
+}
+
+// A bare projection may stand for a COMPOSITE that still carries a projection.
+// This is the shape a cooperative launch result presents: the block's result
+// type is one whole lookup, and the tensor spelling it denotes carries the
+// element lookup, which grounds at the same monomorphization.
+// CHECK-LABEL: func.func @projection_bearing_composite
+// CHECK: trait.coerce %{{.*}} : !trait.proj<@Fold[i64], "A"> to tuple<!trait.proj<@Fold[i64], "B">> unproven
+func.func @projection_bearing_composite(%x: !trait.proj<@Fold[i64], "A">)
+    -> tuple<!trait.proj<@Fold[i64], "B">> {
+  %y = trait.coerce %x : !trait.proj<@Fold[i64], "A">
+    to tuple<!trait.proj<@Fold[i64], "B">> unproven
+  return %y : tuple<!trait.proj<@Fold[i64], "B">>
 }

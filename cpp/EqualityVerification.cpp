@@ -596,17 +596,18 @@ Type mlir::trait::stripClaimProofs(Type type) {
 // arguments are NOT descended during reconciliation, so two projections meet as
 // whole variables -- the same variable, or a pair aliased and owed one grounding
 // at discharge -- never unified by matching their arguments. Reflexive endpoints
-// pass. A projection may resolve to a projection-free position (the ground type
-// the minted impl supplies), or stand for itself, or alias another bare
-// projection --
-// two lookups asserted to denote one type, each still owed a projection-free
-// grounding at discharge. What it may NOT resolve to is a composite still
-// carrying a projection: that would equate two distinct projections inside a
-// rigid constructor, a shape this form never licensed. Binding a projection to a
-// type that contains the projection itself is an unfoundable infinite type; it is
-// refused by an occurs check that also keeps the binding acyclic so the
-// resolution walks below terminate. Endpoints arrive with proofs already
-// stripped.
+// pass. A projection may resolve to any type the unification reaches: a
+// projection-free position (the ground type the minted impl supplies), itself,
+// another bare projection, or a composite that still carries projections. Every
+// projection standing in a binding's terminal is itself a variable still owed a
+// projection-free grounding at discharge, so a terminal that still carries one
+// is a weaker assertion than a ground terminal, not a stronger one; the
+// instantiate epilogue re-judges the op once monomorphization grounds every
+// projection, and a terminal that grounds to a lie fails there. Binding a
+// projection to a type that contains the projection itself is an unfoundable
+// infinite type; it is refused by an occurs check that also keeps the binding
+// acyclic so the resolution walks below terminate. Endpoints arrive with proofs
+// already stripped.
 LogicalResult mlir::trait::verifyPendingProjectionUnification(
     Type input, Type result,
     llvm::function_ref<InFlightDiagnostic()> emitError) {
@@ -628,7 +629,7 @@ LogicalResult mlir::trait::verifyPendingProjectionUnification(
   // Whether the projection `p` occurs anywhere in `t` once bindings resolve to a
   // fixed point. Binding `p` to such a `t` would close a cycle (an infinite
   // type), so it is refused before the binding is made; the acyclic invariant
-  // this preserves is what bounds the recursion here and in `carriesProjection`.
+  // this preserves is what bounds the recursion here.
   std::function<bool(ProjectionType, Type)> occursIn =
       [&](ProjectionType p, Type t) -> bool {
     t = resolve(t);
@@ -636,18 +637,6 @@ LogicalResult mlir::trait::verifyPendingProjectionUnification(
       return pt == p;
     for (Type child : decomposeTerm(t).children)
       if (occursIn(p, child))
-        return true;
-    return false;
-  };
-
-  // Whether a type still carries a projection once its bindings resolve to a
-  // fixed point. A bound projection must reach a projection-free type.
-  std::function<bool(Type)> carriesProjection = [&](Type t) -> bool {
-    t = resolve(t);
-    if (isa<ProjectionType>(t))
-      return true;
-    for (Type child : decomposeTerm(t).children)
-      if (carriesProjection(child))
         return true;
     return false;
   };
@@ -690,24 +679,5 @@ LogicalResult mlir::trait::verifyPendingProjectionUnification(
     return success();
   };
 
-  if (failed(unifyPending(input, result)))
-    return failure();
-
-  // Final licensing check (the header states the rule): a bare-projection
-  // terminal is a direct alias, still owed a grounding at discharge, and stays
-  // pending; a terminal still carrying a projection would equate two distinct
-  // projections in a rigid constructor and is refused.
-  for (auto &[proj, bound] : binding) {
-    Type terminal = resolve(bound);
-    if (isa<ProjectionType>(terminal))
-      continue;
-    if (carriesProjection(terminal)) {
-      if (emitError) emitError() << "input type " << input << " and result type "
-                                 << result
-                                 << " equate distinct projections in a pending coerce";
-      return failure();
-    }
-  }
-
-  return success();
+  return unifyPending(input, result);
 }
