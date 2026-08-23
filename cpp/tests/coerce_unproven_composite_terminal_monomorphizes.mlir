@@ -7,9 +7,9 @@
 // like any other: monomorphization grounds BOTH lookups at once. @Base[i64]::A
 // is bound to tuple<i1>, and @Base[i64]::B grounds to i1 in the same step, so
 // the two endpoints respell to tuple<i1>, the coerce becomes reflexive, and the
-// folder collapses it. This is the launch-result shape -- one whole lookup for
-// the block's result standing for the tensor spelling that carries the element
-// lookup.
+// folder collapses it. This is a bare projection aliased to a composite that
+// still carries a projection -- one whole lookup standing for a spelling that
+// carries a second lookup, both grounding at one monomorphization.
 
 trait.trait @Base[!trait.poly<0>] {
   trait.assoc_type @A

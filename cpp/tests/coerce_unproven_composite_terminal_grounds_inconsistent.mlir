@@ -6,9 +6,11 @@
 // A binding terminal that still carries a projection is a promise like any
 // other: the two spellings will denote one type once every lookup in them
 // grounds. When monomorphization grounds them apart -- @Base[i64]::A to i32
-// while tuple<@Base[i64]::B> grounds to tuple<i1> -- the coerce verifier reports
-// the falsified obligation at the op. Admitting the shape at birth costs no
-// tolerance at discharge.
+// while tuple<@Base[i64]::B> grounds to tuple<i1> -- the coerce's ground
+// endpoints stand apart and cannot cross the erase barrier every marked coerce
+// must pass before LLVM; under mlir-opt's default verify-each the op verifier
+// reports that same inconsistency the moment the pass grounds it. Admitting the
+// shape at birth costs no tolerance at discharge.
 
 trait.trait @Base[!trait.poly<0>] {
   trait.assoc_type @A

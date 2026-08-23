@@ -74,9 +74,8 @@ trait.trait @Fold[!trait.poly<0>] {
 }
 
 // A bare projection may stand for a COMPOSITE that still carries a projection.
-// This is the shape a cooperative launch result presents: the block's result
-// type is one whole lookup, and the tensor spelling it denotes carries the
-// element lookup, which grounds at the same monomorphization.
+// This is one whole lookup standing for a spelling that carries a second
+// lookup; both ground at the same monomorphization.
 // CHECK-LABEL: func.func @projection_bearing_composite
 // CHECK: trait.coerce %{{.*}} : !trait.proj<@Fold[i64], "A"> to tuple<!trait.proj<@Fold[i64], "B">> unproven
 func.func @projection_bearing_composite(%x: !trait.proj<@Fold[i64], "A">)

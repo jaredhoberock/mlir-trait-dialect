@@ -601,9 +601,10 @@ Type mlir::trait::stripClaimProofs(Type type) {
 // another bare projection, or a composite that still carries projections. Every
 // projection standing in a binding's terminal is itself a variable still owed a
 // projection-free grounding at discharge, so a terminal that still carries one
-// is a weaker assertion than a ground terminal, not a stronger one; the
-// instantiate epilogue re-judges the op once monomorphization grounds every
-// projection, and a terminal that grounds to a lie fails there. Binding a
+// is a weaker assertion than a ground terminal, not a stronger one; the bonded
+// erase pass judges the op once monomorphization grounds every projection,
+// refusing such a coerce at its barrier when its ground endpoints stand apart --
+// they cannot be discharged and cannot cross. Binding a
 // projection to a type that contains the projection itself is an unfoundable
 // infinite type; it is refused by an occurs check that also keeps the binding
 // acyclic so the resolution walks below terminate. Endpoints arrive with proofs
