@@ -124,7 +124,8 @@ def TypeEqualityAttr : AttrDef<TraitDialect, "TypeEquality", []> {
 // off the predicate arm: an equality `projection = resolved` the impl's
 // associated-type binding resolves (a projection-resolution witness), or a
 // trait application the impl discharges (an obligation discharge).
-def WitnessAttr : AttrDef<TraitDialect, "Witness", []> {
+def WitnessAttr : AttrDef<TraitDialect, "Witness",
+    [DeclareAttrInterfaceMethods<SymbolUserAttrInterface>]> {
   let mnemonic = "witness";
   let summary = "A predicate and the impl that witnesses it";
   let description = [{

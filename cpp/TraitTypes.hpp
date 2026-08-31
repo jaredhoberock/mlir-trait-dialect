@@ -906,17 +906,34 @@ inline Type applySubstitutionOnce(const llvm::DenseMap<Type,Type> &subst,
   return replacer.replace(root);
 }
 
+/// The pass budget the substitution fixed point spends before it gives up. A
+/// well-formed substitution settles in at most as many passes as the longest
+/// chain of keys it binds through -- a small number, since unification's occurs
+/// check keeps a variable out of its own binding. A substitution that violates
+/// that (a key reachable inside its own value) grows the spelling one level per
+/// pass without ever settling; this bound stops that growth well before it
+/// exhausts the stack in the structural rewrite, and the depth it reaches stays
+/// walkable. The headroom over any real chain length is wide enough that no
+/// well-formed substitution is clipped.
+constexpr unsigned kSubstitutionFixedPointMaxPasses = 256;
+
 /// Applies `subst` repeatedly until it reaches a fixed point, so the returned
 /// type carries no component that `subst` would still rewrite. The fixed
 /// point is over `subst` alone; a projection whose base grounds under the
 /// substitution stays a (now-resolvable) projection for the resolution
 /// patterns.
+///
+/// A substitution whose occurs check was bypassed on hostile input would grow
+/// without settling; the pass budget bounds it and hands back the partial
+/// spelled as written, which every comparison downstream declines on -- a
+/// decline in the safe direction rather than an unbounded rewrite.
 inline Type applySubstitutionToFixedPoint(const llvm::DenseMap<Type,Type> &subst,
                                           Type ty) {
   Type cur = ty;
-  while (true) {
+  for (unsigned pass = 0; pass != kSubstitutionFixedPointMaxPasses; ++pass) {
     Type next = applySubstitutionOnce(subst, cur);
-    if (!next || next == cur) break;
+    if (!next || next == cur)
+      break;
     cur = next;
   }
   return cur;
@@ -1236,12 +1253,32 @@ enum class LookupScope {
 /// which a projection of `ty` itself (not one reached inside a candidate probe)
 /// declined. A caller that goes on to accept the unresolved type reads it to
 /// say which class of the residual tolerance the accept fell in.
+/// The module that anchors symbol lookups for `anchor`: the operation itself
+/// when it is the module, otherwise its enclosing module (null if it has none).
+/// A symbol-use verifier reached through an attribute or type interface recovers
+/// its lookup scope this way.
+ModuleOp getAnchorModule(Operation *anchor);
+
 Type resolveProjectionsByLookup(Type ty, ModuleOp module, DemandOrigin origin,
                                 LookupScope scope,
                                 unsigned *topLevelMissReasons = nullptr);
 
-/// Rewrites `ty` with `step` until its spelling stops changing, and stops the
-/// compilation at a rewrite that never does.
+/// The fallible sibling of the resolver above, for a caller reached from
+/// untrusted IR that must refuse a nonconverging projection rather than decline
+/// on it. A projection whose resolution never grounds -- a cyclic
+/// associated-type binding across impls -- yields failure here (surfaced through
+/// `emitError` for a live demand, silent under a cross-check) instead of the
+/// infallible entry's spelled-as-written partial. The proof and call-signature
+/// verifiers thread it so a hostile cycle fails verification cleanly, never
+/// aborting the process. Success returns the ground normal form exactly as the
+/// infallible entry would.
+FailureOr<Type> resolveProjectionsByLookup(
+    Type ty, ModuleOp module, DemandOrigin origin, LookupScope scope,
+    llvm::function_ref<InFlightDiagnostic()> emitError,
+    unsigned *topLevelMissReasons = nullptr);
+
+/// Rewrites `ty` with `step` until its spelling stops changing, handing back the
+/// driver's partial at a rewrite that never does.
 ///
 /// Resolving a projection substitutes the selected impl's associated-type
 /// binding, and that binding may itself be spelled as a projection -- an impl

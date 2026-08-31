@@ -217,6 +217,14 @@ MlirOperation traitAssocTypeOpCreate(MlirLocation loc,
 /// types found.
 intptr_t traitGetGenericTypesIn(MlirType type, MlirType *results, intptr_t maxResults);
 
+/// Run the structural acyclicity screen on `module` and report whether it is
+/// free of `where`-clause cycles and dangling trait references. Reads trait
+/// symbols by name and refuses a dangling reference cleanly, so it is safe on
+/// unverified IR: a launch runs it ahead of the full verifier to screen a frozen
+/// blob. Diagnostics reach the context's handler; the return value is the
+/// verdict alone. Returns true when the screen holds.
+bool traitVerifyAcyclicTraitsStructure(MlirModule module);
+
 #ifdef __cplusplus
 }
 #endif

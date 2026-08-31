@@ -680,12 +680,19 @@ ImplGenerationFreeze::~ImplGenerationFreeze() {
 FailureOr<ImplOp> ImplGenerationFreeze::generateImpl(TraitOp trait,
                                                      ClaimType wanted,
                                                      OpBuilder &builder) const {
-  std::string message;
-  llvm::raw_string_ostream stream(message);
-  stream << "impl generation is frozen for " << span
-         << ", but impl selection demanded an impl of @" << trait.getSymName()
-         << " for " << wanted;
-  llvm::report_fatal_error(Twine(message));
+  // Being asked to generate at all is the fault this reports: the stage
+  // standing over the driver reads recorded facts and puts nothing to
+  // selection, so an ask from under it reached past the record it must read.
+  // Reported as a failure rather than a process abort so a demand raised on
+  // hostile IR refuses cleanly at the point selection asked. The span's owner
+  // reads `wasAsked` after its driver to fail the stage, since a greedy driver
+  // swallows this failure as a non-applied pattern.
+  generationAsked = true;
+  emitError(trait.getLoc())
+      << "impl generation is frozen for " << span
+      << ", but impl selection demanded an impl of @" << trait.getSymName()
+      << " for " << wanted;
+  return failure();
 }
 
 //===----------------------------------------------------------------------===//

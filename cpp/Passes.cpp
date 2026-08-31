@@ -194,7 +194,12 @@ LogicalResult verifyDeclaredClaimProofs(ModuleOp module) {
 // VerifyAcyclicTraitsPass
 //===----------------------------------------------------------------------===//
 
-LogicalResult verifyAcyclicTraits(ModuleOp module) {
+// The structural half of the acyclicity check, split from the full verify tail
+// so it is safe on unverified IR: it reads trait symbols by name and refuses a
+// dangling `where`-clause reference through a diagnostic rather than reaching the
+// aborting trait accessor. The trait-to-trait edges it walks form the
+// `where`-clause dependency graph; a back-edge is a cycle.
+LogicalResult verifyAcyclicTraitsStructure(ModuleOp module) {
   enum class Status : uint8_t { NotSeen = 0, InPath, Done };
   DenseMap<TraitOp, Status> status;
   SmallVector<TraitOp, 16> stack;
@@ -216,21 +221,44 @@ LogicalResult verifyAcyclicTraits(ModuleOp module) {
     s = Status::InPath;
     stack.push_back(u);
 
-    for (Attribute pred : u.getRequirements()) {
+    // The `where` clause is a mandatory property, so verifier-valid IR always
+    // carries at least an empty predicate array (a no-`where` trait prints
+    // `requirements = #trait<predicate_array[]>`). A null here is malformed
+    // input the screen faces before the full verifier -- refuse it rather than
+    // dereference the null attribute in the range below.
+    PredicateArrayAttr requirements = u.getRequirements();
+    if (!requirements)
+      return u.emitError("trait carries no `where`-clause requirements array");
+
+    for (Attribute pred : requirements) {
       // Only application requirements form trait-to-trait edges; an equality
       // requirement has no trait head and cannot close a `where`-clause cycle.
       auto app = dyn_cast<TraitApplicationAttr>(pred);
       if (!app)
         continue;
-      auto v = app.getTraitOrAbort(module, "verifyAcyclicTraits");
+      // Resolve the edge's target by name. A `where` clause naming a trait the
+      // module does not define is refused here -- a hostile blob reaches this
+      // screen before the full verifier, so this must not reach the aborting
+      // accessor.
+      FailureOr<TraitOp> v = app.getTrait(module, /*errFn=*/nullptr);
+      if (failed(v))
+        return u.emitError("trait `where` clause references undefined trait '")
+               << app.getTraitName().getValue() << "'";
       // A requirement like @Trait[!trait.proj<@Trait[!S], "Assoc">] is a
       // syntactic self-reference, but not a real cycle: the projection resolves
       // to a concrete type during monomorphization, breaking the edge. Skip it
       // so that traits with bounded associated types (e.g. `type Assoc: Trait`)
-      // don't falsely trigger the acyclicity check.
-      if (v == u && containsType<ProjectionType>(app.getTypeArgs().front()))
+      // don't falsely trigger the acyclicity check. A TraitApplicationAttr has
+      // no verifier, so its type-argument list can be empty on bytecode input
+      // (the text parser requires at least one, but no gate stands before this
+      // screen); an empty self-edge carries no projection to break the cycle, so
+      // it falls through to the back-edge check below rather than the `.front()`
+      // dereference.
+      ArrayRef<Type> typeArgs = app.getTypeArgs();
+      if (*v == u && !typeArgs.empty() &&
+          containsType<ProjectionType>(typeArgs.front()))
         continue;
-      if (failed(dfs(v))) return failure();
+      if (failed(dfs(*v))) return failure();
     }
 
     stack.pop_back();
@@ -244,6 +272,13 @@ LogicalResult verifyAcyclicTraits(ModuleOp module) {
       return failure();
     }
   }
+
+  return success();
+}
+
+LogicalResult verifyAcyclicTraits(ModuleOp module) {
+  if (failed(verifyAcyclicTraitsStructure(module)))
+    return failure();
 
   DemandRecordingSuspension verifying;
   return module.verify();
@@ -2142,6 +2177,11 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
             module, std::move(patterns), config, "instantiate-monomorphs", round,
             &work.instantiated);
         work.instantiateMinted = resolver->getFactEpoch() - epochAtInstantiate;
+        // A generation ask under the freeze already emitted its report; fail the
+        // stage rather than converge over the broken contract (the greedy driver
+        // treats the ask's failure as a pattern that did not apply).
+        if (freeze.wasAsked())
+          return failure();
         if (failed(instantiated))
           return module.emitError(
               "instantiate-monomorphs did not converge: rewrite budget exceeded, "

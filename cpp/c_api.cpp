@@ -555,4 +555,8 @@ intptr_t traitGetGenericTypesIn(MlirType type, MlirType *results, intptr_t maxRe
   return count;
 }
 
+bool traitVerifyAcyclicTraitsStructure(MlirModule module) {
+  return succeeded(verifyAcyclicTraitsStructure(unwrap(module)));
+}
+
 } // end extern "C"

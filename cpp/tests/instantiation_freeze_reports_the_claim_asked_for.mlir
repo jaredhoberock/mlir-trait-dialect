@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 
-// RUN: not --crash mlir-opt %s -pass-pipeline='builtin.module(ask-impl-selection-during-instantiation-trait)' 2>&1 | FileCheck %s
+// RUN: not mlir-opt %s -pass-pipeline='builtin.module(ask-impl-selection-during-instantiation-trait)' 2>&1 | FileCheck %s
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' -verify-diagnostics
 
 // A freeze stands over the instantiation driver on every compile, and the
@@ -20,6 +20,10 @@
 // ever put to selection, which is the only kind that can still reach a generator
 // from under the driver.
 //
+// The freeze reports through a diagnostic and fails the stage rather than
+// aborting the process, so the ask refuses cleanly: `not mlir-opt` observes the
+// non-zero exit, and the message names the claim and the span.
+//
 // The second line is the same module through the compiler's own pipeline, where
 // no pattern asks, so the freeze is silent and the stage completes.
 
@@ -34,4 +38,4 @@ func.func @main() -> i64 {
   return %x : i64
 }
 
-// CHECK: impl generation is frozen for the instantiation driver, but impl selection demanded an impl of @Gen for !trait.claim<@Gen[i64]>
+// CHECK: impl generation is frozen for the instantiation driver, but impl selection demanded an impl of @Gen for '!trait.claim<@Gen[i64]>'

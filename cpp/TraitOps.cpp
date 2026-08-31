@@ -296,7 +296,12 @@ FailureOr<SmallVector<ClaimType>> TraitOp::specializeRequirementsAsClaimsFor(
   if (failed(spec)) return failure();
   auto subst = spec->toTypeMap();
 
-  // apply the substitution to each requirement
+  // apply the substitution to each requirement. A substitution rewrites the
+  // type arguments a claim carries, never the claim wrapper itself: its keys
+  // are polymorphic and inference variables, never a whole ClaimType, so the
+  // outer constructor is preserved and the result is always a claim. This holds
+  // structurally, independent of whether the module's symbols resolve, so it is
+  // safe on unverified IR -- the cast never fails.
   return llvm::map_to_vector(getRequirementsAsClaims(), [&](ClaimType req) {
     ClaimType specializedReq = dyn_cast_or_null<ClaimType>(applySubstitutionToFixedPoint(subst, req));
     if (!specializedReq)
@@ -1080,6 +1085,11 @@ std::string ImplOp::generateSymName(TraitApplicationAttr selfApp,
 }
 
 std::string ImplOp::generateMangledName(ClaimType claim) {
+  // The name is minted for a claim impl selection already matched to this impl,
+  // so the self-claim substitution it rebuilds cannot fail: selection built the
+  // same match to choose this impl. Instantiation runs post-selection on a
+  // verified module, so a hostile blob never reaches here with an unmatched
+  // claim.
   auto subst = buildSubstitutionForSelfClaim(claim);
   if (failed(subst))
     llvm_unreachable("ImplOp::generateMangledName: specializedSelfClaimAgainst failed");
@@ -1110,7 +1120,10 @@ FailureOr<SmallVector<ClaimType>> ImplOp::specializeAssumptionsAsClaimsFor(
   if (failed(spec)) return failure();
   auto subst = spec->toTypeMap();
 
-  // apply the substitution to each assumption
+  // apply the substitution to each assumption. As with a trait's requirements,
+  // a substitution rewrites the type arguments a claim carries and never the
+  // claim wrapper (its keys are never a whole ClaimType), so the result is
+  // always a claim; the cast holds structurally even on unverified IR.
   return llvm::map_to_vector(getAssumptionsAsClaims(), [&](ClaimType assumption) {
     ClaimType specializedAssumption = dyn_cast_or_null<ClaimType>(applySubstitutionToFixedPoint(subst, assumption));
     if (!specializedAssumption)
@@ -1738,6 +1751,16 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     return emitError() << "not inside a module";
 
   auto errFn = [&] { return emitOpError(); };
+
+  // The result claim's own symbols must resolve, including any sealed in an
+  // equality endpoint (a projection over a trait). The endpoints are opaque to
+  // the framework's sub-element walk, so the type-symbol verification the module
+  // runs skips this claim; the refl and composition arms below cite nothing
+  // further, so without this a dangling endpoint symbol on a refl or composition
+  // witness reaches no check. This bridges into the endpoints through the claim
+  // accessor, the way every equality-arm symbol use is verified.
+  if (failed(getResultClaim().verifySymbolUses(getOperation(), symbolTable)))
+    return failure();
 
   // Equality proj-resolve arm: verify the citation where its symbol uses are
   // checked. The cited impl must bind the associated type the witness's
@@ -2434,6 +2457,11 @@ ImplOp MethodCallOp::getProvenImpl() {
   ClaimType claimTy = cast<ClaimType>(getClaim().getType());
   assert(claimTy.isProven());
 
+  // This reads a proven claim's impl during lowering, which runs on a verified
+  // module: the op is nested in it (so `getModule` finds it), and the proof the
+  // claim carries was checked by `ProofOp::verifySymbolUses` (so its impl
+  // symbol resolves). Neither guard fires on a module that reached lowering; a
+  // hostile blob is refused at the verify rung before any pass reads a proof.
   auto module = getModule();
   if (failed(module))
     llvm_unreachable("MethodCallOp::getProvenImpl: not in a module");

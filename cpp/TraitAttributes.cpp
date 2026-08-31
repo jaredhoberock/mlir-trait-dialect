@@ -107,6 +107,29 @@ LogicalResult WitnessAttr::verify(
   return success();
 }
 
+// Reach every symbol a witness names so a symbol-user walk covers it wherever
+// the attribute rides, not only when an owning op delegates. The impl reference
+// is a plain symbol; the predicate carries more -- an application names a trait,
+// and an equality seals its symbols in walk-opaque endpoints (TypeEqualityAttr's
+// hand-written storage exposes no getAsKey), which the generic sub-element walk
+// cannot read. The equality arm is checked through the claim accessor exactly as
+// a `where`-clause equality is, closing the gap where a symbol sealed in a bare
+// witness would otherwise go unreached.
+LogicalResult WitnessAttr::verifySymbolUses(
+    Operation *op, SymbolTableCollection &symbolTable) const {
+  Operation *impl = symbolTable.lookupNearestSymbolFrom(op, getImplRef());
+  if (!isa_and_nonnull<ImplOp>(impl))
+    return op->emitError() << "witness names '" << getImplRef()
+                           << "', which does not resolve to an impl";
+
+  Attribute predicate = getPredicate();
+  if (auto app = dyn_cast<TraitApplicationAttr>(predicate))
+    return app.verifySymbolUses(op, symbolTable);
+  auto eq = cast<TypeEqualityAttr>(predicate);
+  ClaimType claim = ClaimType::getEquality(op->getContext(), eq);
+  return claim.verifySymbolUses(op, symbolTable);
+}
+
 Attribute WitnessAttr::parse(AsmParser &parser, Type) {
   FailureOr<Attribute> predicate = parseApplicationOrEqualityPredicate(parser);
   if (failed(predicate))
@@ -157,16 +180,6 @@ TraitOp TraitApplicationAttr::getTraitOrAbort(
     const char* msg
 ) const {
   return cantFail(getTrait(module), msg);
-}
-
-// Recover the module that anchors symbol lookups: the operation verification
-// reached, or that operation itself when it is the anchoring symbol table.
-static ModuleOp getAnchorModule(Operation *anchor) {
-  if (!anchor)
-    return {};
-  if (auto module = dyn_cast<ModuleOp>(anchor))
-    return module;
-  return anchor->getParentOfType<ModuleOp>();
 }
 
 // A trait application references a trait symbol applied to a fixed number of

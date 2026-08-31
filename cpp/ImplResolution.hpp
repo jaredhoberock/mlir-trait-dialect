@@ -512,15 +512,24 @@ public:
   ImplGenerationFreeze(const ImplGenerationFreeze &) = delete;
   ImplGenerationFreeze &operator=(const ImplGenerationFreeze &) = delete;
 
-  /// Never returns: being asked to generate at all is the fault this reports.
+  /// Always fails: being asked to generate at all is the fault this reports,
+  /// through a diagnostic at the demanded trait rather than a process abort.
   FailureOr<ImplOp> generateImpl(TraitOp trait,
                                  ClaimType wanted,
                                  OpBuilder &builder) const override;
+
+  /// Whether generation was demanded across this freeze's span. A greedy driver
+  /// treats the failure the ask returns as a pattern that did not apply and
+  /// keeps converging, so the span's owner reads this after the driver and
+  /// fails the stage: the ask emitted its diagnostic, and the stage must not
+  /// report success over a span whose contract was broken.
+  bool wasAsked() const { return generationAsked; }
 
 private:
   ImplResolver &resolver;
   std::string span;
   const ImplGenerator *displaced;
+  mutable bool generationAsked = false;
 };
 
 /// A read of one resolver's recorded facts, for a caller that must serve from

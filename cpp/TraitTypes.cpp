@@ -13,6 +13,7 @@
 #include <llvm/Support/Format.h>
 #include <llvm/Support/xxhash.h>
 #include <mlir/IR/Builders.h>
+#include <mlir/IR/Diagnostics.h>
 #include <mlir/IR/DialectImplementation.h>
 
 #include <TraitTypeInterfaces.cpp.inc>
@@ -128,35 +129,40 @@ namespace {
 /// cyclic or oscillating.
 constexpr unsigned kProjectionFixedPointMaxIterations = 64;
 
-/// Stops the compilation at a projection whose resolution does not terminate,
-/// naming the demand it arose under.
+/// Reports a projection whose resolution does not terminate as a diagnostic at
+/// the demand it arose under, and returns without ending the process.
 ///
-/// The rewrite this reports has no normal form, so there is no spelling to
-/// return and no diagnostic a later stage could attach to a spelling it never
-/// received. The enclosing demand is what names where the projection was asked
-/// about; outside a stage span there is no enclosing demand and the module is
-/// all there is to name.
+/// The rewrite this reports has no normal form. The infallible normalizer hands
+/// the driver's partial back spelled as written, so every spelling comparison
+/// downstream treats the projection as unresolved -- a decline in the safe
+/// direction. A caller that must refuse rather than decline threads the failure
+/// through `tryNormalizeProjectionsToFixedPoint` instead of this reporter; this
+/// entry only surfaces the diagnostic for the infallible normalizer's users.
 ///
-/// No in-tree program reaches this, and the checks in front of it are why. An
-/// impl whose own associated-type binding projects back through itself
-/// resolves to a spelling equal to the demand, so the lookup makes no progress
-/// and the leftover walk reports the projection as unresolved; a binding cycle
-/// across two impls either grows the type until the substitution that stamps
-/// it runs out of stack, or oscillates without growing and is caught by the
-/// rewrite budget of the driver that keeps re-deriving it. This stands behind
-/// all three.
-[[noreturn]] void reportUnnormalizableProjection(Type ty,
-                                                 unsigned iterations,
-                                                 ModuleOp module) {
+/// [invariant] A speculative cross-check raises no diagnostic. Under a
+/// `DemandCrossCheckScope` the caller resolves only to compare the spelling and
+/// then discards it, so a non-terminating projection there is a silent decline,
+/// not a user-facing error; `isCrossChecking()` enforces the suppression.
+///
+/// The enclosing demand names where the projection was asked about; outside a
+/// stage span there is no enclosing demand and the module location is all there
+/// is to name. No in-tree program reaches this, and the checks in front of it
+/// are why: an impl whose own associated-type binding projects back through
+/// itself resolves to a spelling equal to the demand, so the lookup makes no
+/// progress and the leftover walk reports the projection as unresolved; a
+/// binding cycle across two impls either grows the type until the bounded
+/// substitution driver refuses it, or oscillates without growing and is caught
+/// by the rewrite budget of the driver that keeps re-deriving it.
+void reportUnnormalizableProjection(Type ty, unsigned iterations,
+                                    ModuleOp module) {
+  if (isCrossChecking())
+    return;
+  Location anchor = currentDemandAnchor().value_or(module.getLoc());
   std::string message;
   llvm::raw_string_ostream stream(message);
-  stream << "projection normalization did not converge within "
-         << iterations << " iterations for type " << ty << ", demanded at ";
-  if (std::optional<Location> anchor = currentDemandAnchor())
-    stream << *anchor;
-  else
-    stream << module.getLoc();
-  llvm::report_fatal_error(Twine(message));
+  stream << "projection normalization did not converge within " << iterations
+         << " iterations for type " << ty;
+  emitError(anchor) << message;
 }
 
 } // namespace
@@ -180,12 +186,13 @@ Type normalizeProjectionsToFixedPoint(Type ty, ModuleOp module,
                                       llvm::function_ref<Type(Type)> step) {
   // Reaching the iteration cap while the type is still changing means the
   // rewrite has no fixed point (a cyclic or oscillating resolution). What the
-  // loop reached is a partial normal form, and every caller of this fatal
-  // entry either compares a spelling against it or stamps it into a specialized
-  // instance, so handing it back would turn a resolution that does not
-  // terminate into a spelling mismatch or a mis-specialized monomorph somewhere
-  // else entirely. The compilation stops at the demand that would not normalize
-  // instead.
+  // loop reached is a partial normal form; this infallible entry surfaces the
+  // nonconvergence as a diagnostic and hands the partial back spelled as
+  // written. Every caller here compares that spelling against another or stamps
+  // it, and an unresolved projection declines in the safe direction at each --
+  // a spelling mismatch, never a silent accept. A caller that must refuse the
+  // cycle rather than decline threads the failure through
+  // `tryNormalizeProjectionsToFixedPoint` instead.
   Type out;
   if (failed(tryNormalizeProjectionsToFixedPoint(ty, step, out)))
     reportUnnormalizableProjection(out, kProjectionFixedPointMaxIterations,
@@ -217,9 +224,17 @@ static bool matchesClaimOneWay(ImplOp impl, ClaimType claim,
   return specializedSelf == Type(claim);
 }
 
-Type resolveProjectionsByLookup(Type ty, ModuleOp module, DemandOrigin origin,
-                                LookupScope scope,
-                                unsigned *topLevelMissReasons) {
+// Shared body of both projection-resolution entry points. `converged` reports
+// whether the fixed-point driver reached a normal form: on false, `ty` carries
+// the driver's partial (the still-unresolved projection spelled as written),
+// and the two public overloads decide how to surface the nonconvergence -- the
+// infallible one declines on the partial after a diagnostic, the fallible one
+// refuses.
+static Type resolveProjectionsByLookupCore(Type ty, ModuleOp module,
+                                           DemandOrigin origin, LookupScope scope,
+                                           unsigned *topLevelMissReasons,
+                                           bool &converged) {
+  converged = true;
   if (!module)
     return ty;
 
@@ -318,9 +333,14 @@ Type resolveProjectionsByLookup(Type ty, ModuleOp module, DemandOrigin origin,
   });
 
   // A resolved binding may itself expose a ground projection, so run to a
-  // fixed point.
-  ty = normalizeProjectionsToFixedPoint(
-      ty, module, [&](Type t) { return replacer.replace(t); });
+  // fixed point. A chain that never grounds leaves `ty` at the driver's partial
+  // and reports nonconvergence up; the census walk below is skipped on that
+  // partial because an unresolved survivor there is the nonconvergence itself,
+  // not a ledger gap.
+  converged = succeeded(tryNormalizeProjectionsToFixedPoint(
+      ty, [&](Type t) { return replacer.replace(t); }, ty));
+  if (!converged)
+    return ty;
 
   // Every monomorphic projection this call leaves standing is a demand no impl
   // served, so a recording site must have observed it. A survivor with no
@@ -345,6 +365,42 @@ Type resolveProjectionsByLookup(Type ty, ModuleOp module, DemandOrigin origin,
     });
 
   return ty;
+}
+
+Type resolveProjectionsByLookup(Type ty, ModuleOp module, DemandOrigin origin,
+                                LookupScope scope,
+                                unsigned *topLevelMissReasons) {
+  bool converged;
+  Type out = resolveProjectionsByLookupCore(ty, module, origin, scope,
+                                            topLevelMissReasons, converged);
+  // The infallible entry cannot refuse. A projection that will not ground stays
+  // spelled as written in `out`, so every spelling comparison downstream
+  // declines on it in the safe direction; the reporter surfaces the diagnostic
+  // for a live demand and stays silent under a cross-check.
+  if (!converged)
+    reportUnnormalizableProjection(out, kProjectionFixedPointMaxIterations,
+                                   module);
+  return out;
+}
+
+FailureOr<Type> resolveProjectionsByLookup(
+    Type ty, ModuleOp module, DemandOrigin origin, LookupScope scope,
+    llvm::function_ref<InFlightDiagnostic()> emitError,
+    unsigned *topLevelMissReasons) {
+  bool converged;
+  Type out = resolveProjectionsByLookupCore(ty, module, origin, scope,
+                                            topLevelMissReasons, converged);
+  // The fallible entry refuses a projection that will not ground so a verifier
+  // reached from untrusted IR fails cleanly rather than admitting the cycle. A
+  // speculative cross-check discards the spelling, so it declines silently.
+  if (!converged) {
+    if (emitError && !isCrossChecking())
+      emitError() << "projection normalization did not converge within "
+                  << kProjectionFixedPointMaxIterations
+                  << " iterations for type " << out;
+    return failure();
+  }
+  return out;
 }
 
 //===----------------------------------------------------------------------===//
@@ -473,7 +529,7 @@ LogicalResult InferenceType::unify(
 
 // Recover the module that anchors symbol lookups: the operation verification
 // reached, or that operation itself when it is the anchoring symbol table.
-static ModuleOp getAnchorModule(Operation *anchor) {
+ModuleOp getAnchorModule(Operation *anchor) {
   if (!anchor)
     return {};
   if (auto module = dyn_cast<ModuleOp>(anchor))
@@ -869,15 +925,23 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
   // proven spelling, so a second observation matches the first literally
   // instead of reconciling two equivalent spellings.
   {
-    Type normalizedProven =
+    // A cyclic associated-type binding leaves these ground projections without
+    // a normal form. The fallible resolver refuses it here so proof
+    // verification fails cleanly on hostile IR rather than the resolution
+    // running the process out of its budget deeper down.
+    FailureOr<Type> normalizedProven =
         resolveProjectionsByLookup(proven, module, origin,
-                                   LookupScope::Ground);
-    proven = cast<ClaimType>(normalizedProven);
+                                   LookupScope::Ground, err);
+    if (failed(normalizedProven))
+      return failure();
+    proven = cast<ClaimType>(*normalizedProven);
 
-    Type normalizedUnproven =
+    FailureOr<Type> normalizedUnproven =
         resolveProjectionsByLookup(unproven, module, origin,
-                                   LookupScope::Ground);
-    unproven = cast<ClaimType>(normalizedUnproven);
+                                   LookupScope::Ground, err);
+    if (failed(normalizedUnproven))
+      return failure();
+    unproven = cast<ClaimType>(*normalizedUnproven);
   }
 
   // What deriving one settled pair produces is a fact about the proof standing

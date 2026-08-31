@@ -95,6 +95,18 @@ struct ResolveImplsPass : PassWrapper<ResolveImplsPass, OperationPass<ModuleOp>>
   void runOnOperation() override;
 };
 
+/// The structural acyclicity screen, split from the full check's verify tail.
+/// Walks the trait-to-trait `where`-clause edges and reports a cycle, resolving
+/// each edge's target trait by name and refusing a dangling reference through a
+/// diagnostic rather than the aborting trait accessor. It is safe to run on
+/// unverified IR ahead of the full verifier -- a launch screening a frozen blob
+/// runs it before `module.verify()`.
+LogicalResult verifyAcyclicTraitsStructure(ModuleOp module);
+
+/// The full acyclicity check: the structural screen above followed by a full
+/// module verify. `verify-acyclic-traits` and the monomorphize pass run this.
+LogicalResult verifyAcyclicTraits(ModuleOp module);
+
 struct VerifyAcyclicTraitsPass : PassWrapper<VerifyAcyclicTraitsPass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(VerifyAcyclicTraitsPass);
 
