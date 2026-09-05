@@ -15,16 +15,16 @@
 // is its net: a source spelling whose binding-resolved form disagrees is a
 // located hard failure, never a tolerated crossing.
 
-// CHECK-LABEL: trait @Container
+// CHECK-LABEL: trait private @Container
 !S = !trait.poly<0>
-trait.trait @Container[!S] {
+trait.trait private @Container[!S] {
   trait.assoc_type @Elem
   func.func private @id(!S, !trait.proj<@Container[!S], "Elem">) -> !trait.proj<@Container[!S], "Elem">
 }
 
-// CHECK-LABEL: trait.impl for @Container[i32]
+// CHECK-LABEL: trait.impl private for @Container[i32]
 // CHECK: func.func @id(%{{.*}}: i32, %{{.*}}: !trait.proj<@Container[i32], "Elem">) -> !trait.proj<@Container[i32], "Elem">
-trait.impl for @Container[i32] {
+trait.impl private for @Container[i32] {
   trait.assoc_type @Elem = i64
   // The method signature keeps the projection spelling instead of i64.
   func.func @id(%self: i32, %e: !trait.proj<@Container[i32], "Elem">) -> !trait.proj<@Container[i32], "Elem"> {

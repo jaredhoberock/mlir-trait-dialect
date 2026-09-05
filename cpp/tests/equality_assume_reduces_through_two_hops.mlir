@@ -30,7 +30,7 @@ trait.trait private @Run[!S] {
 // The callee's monomorphic instance keeps the equality-claim parameter on its
 // ABI even though the body ignores it: the parameter carries the evidence
 // across the call boundary.
-func.func @need(%v: i64, %e: !trait.claim<!trait.proj<@Wrap[!S], "Item"> = i64>) -> i64 {
+func.func private @need(%v: i64, %e: !trait.claim<!trait.proj<@Wrap[!S], "Item"> = i64>) -> i64 {
   return %v : i64
 }
 
@@ -56,6 +56,6 @@ func.func @main() -> i64 {
 // The two-hop chain settles clean: the assume becomes the composed witness that
 // proves <@Wrap[i64]::Item = i64>, the callee keeps the equality parameter, and
 // no axiomatic assume survives.
-// CHECK: func.func @need
+// CHECK: func.func private @need
 // CHECK-NOT: trait.assume
 // CHECK: func.func @main

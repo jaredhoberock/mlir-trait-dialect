@@ -14,24 +14,24 @@
 
 !S = !trait.poly<0>
 
-trait.trait @Y[!S] {}
+trait.trait private @Y[!S] {}
 
-trait.impl @Y_i64 for @Y[i64] {}
+trait.impl private @Y_i64 for @Y[i64] {}
 
-trait.trait @Sib[!S] {
+trait.trait private @Sib[!S] {
   trait.assoc_type @Elem
 }
 
-trait.impl @Sib_i64_cond for @Sib[i64] where [@Y[i64]] {
+trait.impl private @Sib_i64_cond for @Sib[i64] where [@Y[i64]] {
   trait.assoc_type @Elem = i32
 }
 
-trait.trait @Host[!S] {
+trait.trait private @Host[!S] {
   func.func private @make(!S) -> !trait.proj<@Sib[!S], "Elem">
 }
 
-// CHECK: trait.impl @Host_i64 for @Host[i64]witnesses [#trait<witness!trait.proj<@Sib[i64], "Elem"> = i32 by @Sib_i64_cond>, #trait<witness@Y[i64] by @Y_i64>]
-trait.impl @Host_i64 for @Host[i64]
+// CHECK: trait.impl private @Host_i64 for @Host[i64]witnesses [#trait<witness!trait.proj<@Sib[i64], "Elem"> = i32 by @Sib_i64_cond>, #trait<witness@Y[i64] by @Y_i64>]
+trait.impl private @Host_i64 for @Host[i64]
     witnesses [#trait<witness !trait.proj<@Sib[i64], "Elem"> = i32 by @Sib_i64_cond>,
                #trait<witness @Y[i64] by @Y_i64>] {
   func.func @make(%x: i64) -> i32 {

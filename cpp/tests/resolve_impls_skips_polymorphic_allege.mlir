@@ -8,12 +8,12 @@
 
 !T = !trait.poly<0>
 
-// CHECK: trait.trait @Safe
-trait.trait @Safe [!T] {
+// CHECK: trait.trait private @Safe
+trait.trait private @Safe [!T] {
   func.func private @check(!T) -> i32
 }
 
-trait.impl for @Safe[i32] {
+trait.impl private for @Safe[i32] {
   func.func @check(%x: i32) -> i32 {
     return %x : i32
   }

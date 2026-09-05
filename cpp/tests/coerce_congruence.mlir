@@ -11,13 +11,13 @@
 
 !S = !trait.poly<0>
 
-trait.trait @Trait[!S] {
+trait.trait private @Trait[!S] {
   trait.assoc_type @Output
 }
 
-trait.trait @Bound[!S] {}
+trait.trait private @Bound[!S] {}
 
-trait.impl @Trait_impl for @Trait[i64] {
+trait.impl private @Trait_impl for @Trait[i64] {
   trait.assoc_type @Output = i64
 }
 

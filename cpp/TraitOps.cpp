@@ -50,6 +50,21 @@ namespace mlir::trait { std::string hashToSuffix(StringRef input); }
 
 namespace {
 
+/// A trait, impl or proof is a template: monomorphization cuts its instances
+/// and the collector after erase takes what nothing names. Collection may only
+/// take a symbol nothing outside its table may name, so a template is private
+/// from birth at its birth site and a public one is refused where it is
+/// written, not discovered at erase. The upstream twin is the rule that a
+/// declaration cannot be public.
+LogicalResult verifyTemplateIsNotPublic(Operation *op) {
+  if (SymbolTable::getSymbolVisibility(op) != SymbolTable::Visibility::Public)
+    return success();
+  return op->emitOpError()
+         << "must not be public: it is a template monomorphization "
+            "instantiates and collection then takes, so it is private from "
+            "birth";
+}
+
 /// Verifies that a function's result generics are determined by its inputs.
 ///
 /// Generics supplied by the caller, such as trait-level parameters on
@@ -150,7 +165,7 @@ FailureOr<Type> NormalizationContext::normalize(
   // the rewrite budget; on nonconvergence this reports through the op-attached
   // diagnostic rather than the driver's fatal module-level reporter.
   auto normalizeOnce = [&](Type root) {
-    AttrTypeReplacer replacer;
+    AttrTypeReplacer replacer = makeEndpointSealedReplacer();
     replacer.addReplacement([&](ProjectionType proj) -> std::optional<Type> {
       for (LocalProjectionRule &rule : localProjectionRules) {
         if (!rule.impl || proj.getTraitApplication() != rule.app)
@@ -192,6 +207,9 @@ FailureOr<FunctionType> NormalizationContext::normalize(
 //===----------------------------------------------------------------------===//
 
 LogicalResult TraitOp::verify() {
+  if (failed(verifyTemplateIsNotPublic(getOperation())))
+    return failure();
+
   auto typeParams = getTypeParams().getAsValueRange<TypeAttr>();
 
   // types must be unique GenericTypeParameters
@@ -220,7 +238,8 @@ LogicalResult TraitOp::verify() {
 
   // An endpoint mentions a type parameter when any generic hiding inside it is
   // one of the trait's parameters or a GAT parameter; getGenericTypesIn descends
-  // projections (and opaque equality endpoints) that a plain walk would miss.
+  // the attributes -- a trait application's arguments, an equality's endpoints --
+  // that its own walk over immediate type sub-elements does not reach.
   auto endpointMentionsParam = [&](Type endpoint) {
     for (GenericTypeInterface g : getGenericTypesIn(endpoint))
       if (uniqueParams.contains(Type(g)) || gatParams.contains(Type(g)))
@@ -591,6 +610,10 @@ static LogicalResult verifyEqualityObligations(
     ImplOp impl, TraitOp traitOp, ArrayRef<ImplWitnessRule> witnessRules,
     llvm::function_ref<InFlightDiagnostic()> errFn);
 
+LogicalResult ImplOp::verify() {
+  return verifyTemplateIsNotPublic(getOperation());
+}
+
 LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   auto errFn = [&]{ return emitOpError(); };
 
@@ -893,9 +916,9 @@ SmallVector<GenericTypeInterface, 4> ImplOp::getTypeParams() {
   for (ClaimType a : getAssumptionsAsClaims()) {
     allOurTypes.push_back(a);
   }
-  // An equality assumption's endpoints are opaque to the generic walk, so push
-  // them directly: a generic that appears only in an assumed equality (e.g. the
-  // accumulator in `F::Output = Acc`) is still one of this impl's parameters.
+  // An assumed equality's endpoints are pushed directly, so a generic that
+  // appears only there (e.g. the accumulator in `F::Output = Acc`) is one of
+  // this impl's parameters and takes its position from where it is pushed.
   for (Attribute pred : getAssumptions()) {
     if (auto eq = dyn_cast<TypeEqualityAttr>(pred)) {
       allOurTypes.push_back(eq.getLhs());
@@ -1447,6 +1470,9 @@ void ImplOp::print(OpAsmPrinter &printer) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult ProofOp::verify() {
+  if (failed(verifyTemplateIsNotPublic(getOperation())))
+    return failure();
+
   // check that every name is a FlatSymbolRefAttr
   for (Attribute name : getSubproofNames()) {
     if (!isa<FlatSymbolRefAttr>(name)) {
@@ -1906,16 +1932,6 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     return emitError() << "not inside a module";
 
   auto errFn = [&] { return emitOpError(); };
-
-  // The result claim's own symbols must resolve, including any sealed in an
-  // equality endpoint (a projection over a trait). The endpoints are opaque to
-  // the framework's sub-element walk, so the type-symbol verification the module
-  // runs skips this claim; the refl and composition arms below cite nothing
-  // further, so without this a dangling endpoint symbol on a refl or composition
-  // witness reaches no check. This bridges into the endpoints through the claim
-  // accessor, the way every equality-arm symbol use is verified.
-  if (failed(getResultClaim().verifySymbolUses(getOperation(), symbolTable)))
-    return failure();
 
   // Equality proj-resolve arm: verify the citation where its symbol uses are
   // checked. The cited impl must bind the associated type the witness's

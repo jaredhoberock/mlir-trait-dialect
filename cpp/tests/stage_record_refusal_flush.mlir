@@ -59,7 +59,7 @@ trait.trait private @Absent[!T] {
   trait.assoc_type @B
 }
 
-func.func @wrap(%x: !T) -> !trait.proj<@Absent[!T], "B"> {
+func.func private @wrap(%x: !T) -> !trait.proj<@Absent[!T], "B"> {
   %r = ub.poison : !trait.proj<@Absent[!T], "B">
   return %r : !trait.proj<@Absent[!T], "B">
 }

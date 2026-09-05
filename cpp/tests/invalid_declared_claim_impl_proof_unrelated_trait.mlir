@@ -10,13 +10,13 @@
 // impl is not proving the claim, so the mismatch must be refused where the
 // proof is declared rather than trusted through to a leaf binding.
 
-trait.trait @HasPart[!trait.poly<0>] {
+trait.trait private @HasPart[!trait.poly<0>] {
   trait.assoc_type @Part
 }
-trait.impl @HasPart_i64 for @HasPart[i64] {
+trait.impl private @HasPart_i64 for @HasPart[i64] {
   trait.assoc_type @Part = f32
 }
-trait.trait @Other[!trait.poly<0>] {}
+trait.trait private @Other[!trait.poly<0>] {}
 
 // expected-error @below {{declared claim in signature has an invalid proof: trait mismatch: expected @HasPart, but found @Other}}
 func.func private @takes_forged(

@@ -27,7 +27,7 @@ trait.impl private @Doubled_narrow for @Doubled[i64] {}
 
 !P = !trait.poly<1>
 
-func.func @hold(%absent: !trait.claim<@Absent[!P]>,
+func.func private @hold(%absent: !trait.claim<@Absent[!P]>,
                 %doubled: !trait.claim<@Doubled[!P]>) {
   return
 }

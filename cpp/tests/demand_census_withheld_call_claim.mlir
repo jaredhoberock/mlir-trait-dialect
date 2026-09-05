@@ -8,7 +8,8 @@
 // call's verifier compares its formal and actual with the module-free comparator
 // and reads nothing. The demand this raises is a verifier's -- counted by the
 // statistic, never entered in the ledger: no stage raises it, and no ledger
-// engine hears it, so the census summary is empty while the statistic is one.
+// engine hears it, so the census summary is empty while the statistic stands at
+// one per verification the call is standing for.
 
 !T = !trait.poly<0>
 
@@ -25,4 +26,4 @@ func.func private @caller(%claim: !trait.claim<@Unwrap[!T]>, %value: !T) -> !T {
 
 // CHECK-NOT: trait-demand-census engine withheld-call-claim
 // CHECK: trait-demand-census summary keys=0 observations=0 drainable-keys=0
-// CHECK: 1 trait-demand - calls whose claim withheld the license to consult module facts
+// CHECK: {{[1-9][0-9]*}} trait-demand - calls whose claim withheld the license to consult module facts

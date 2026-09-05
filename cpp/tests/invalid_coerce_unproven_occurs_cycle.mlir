@@ -8,7 +8,7 @@
 // An occurs check refuses it before the binding is made, so the verifier stays a
 // total function rather than diverging on the resolution walk.
 
-trait.trait @Fold[!trait.poly<0>] {
+trait.trait private @Fold[!trait.poly<0>] {
   trait.assoc_type @Item
 }
 
@@ -23,7 +23,7 @@ func.func @self_wrap(%x: !trait.proj<@Fold[i64], "Item">)
 
 // -----
 
-trait.trait @Fold[!trait.poly<0>] {
+trait.trait private @Fold[!trait.poly<0>] {
   trait.assoc_type @I
   trait.assoc_type @J
 }
@@ -42,7 +42,7 @@ func.func @swap_wrap(
 
 // -----
 
-trait.trait @Fold[!trait.poly<0>] {
+trait.trait private @Fold[!trait.poly<0>] {
   trait.assoc_type @A
   trait.assoc_type @B
   trait.assoc_type @C

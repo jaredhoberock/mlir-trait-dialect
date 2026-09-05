@@ -28,7 +28,7 @@ trait.trait private @Run[!S] {
   func.func private @go(!S) -> i64
 }
 
-func.func @need(%v: i64, %e: !trait.claim<!trait.proj<@Wrap[!S], "Item"> = i64>) -> i64 {
+func.func private @need(%v: i64, %e: !trait.claim<!trait.proj<@Wrap[!S], "Item"> = i64>) -> i64 {
   return %v : i64
 }
 

@@ -9,7 +9,7 @@
 // loud diagnostic ahead of the legalization failure the leftover projection
 // triggers downstream, rather than surfacing only as that opaque failure.
 
-trait.trait @T[!trait.poly<0>] {
+trait.trait private @T[!trait.poly<0>] {
   trait.assoc_type @A
 }
 

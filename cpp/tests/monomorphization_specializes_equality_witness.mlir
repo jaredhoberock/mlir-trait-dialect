@@ -25,7 +25,7 @@ trait.impl private @Trait_impl for @Trait[!U] {
 
 trait.proof private @Trait_i64_p proves @Trait_impl for @Trait[i64] given []
 
-func.func @gen(%p: !trait.proj<@Trait[!S], "Output">, %c: !trait.claim<@Trait[!S]>) -> !S {
+func.func private @gen(%p: !trait.proj<@Trait[!S], "Output">, %c: !trait.claim<@Trait[!S]>) -> !S {
   %e = trait.witness proj_resolve !trait.proj<@Trait[!S], "Output"> resolves !S by @Trait_impl
     : !trait.claim<!trait.proj<@Trait[!S], "Output"> = !S>
   %v = trait.coerce %p : !trait.proj<@Trait[!S], "Output"> to !S via (%e) : (!trait.claim<!trait.proj<@Trait[!S], "Output"> = !S>)

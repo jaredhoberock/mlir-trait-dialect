@@ -2,14 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // erase-polymorphs-trait is the second half of monomorphization: it erases the
-// trait and impl templates, the claim and projection types, the coerces, and
-// the witnesses that instantiate-monomorphs left standing over the monomorphs it
-// proved. The two run as a pipeline with per-pass verification off, since the
-// state between them is not guaranteed to verify in general. This row pins that
-// the erase step removes the trait and impl templates instantiation leaves
-// standing — the two CHECK-NOTs just below.
+// claim and projection types, the coerces, and the witnesses that
+// instantiate-monomorphs left standing over the monomorphs it proved, and holds
+// what stands outside a template theory-free. It deletes no template; the
+// collector it runs after those erasures takes the trait and impl templates
+// nothing names — the two CHECK-NOTs just below.
 
-// RUN: mlir-opt -pass-pipeline='builtin.module(instantiate-monomorphs-trait,erase-polymorphs-trait)' --verify-each=false %s | FileCheck %s
+// RUN: mlir-opt -pass-pipeline='builtin.module(instantiate-monomorphs-trait,erase-polymorphs-trait)' %s | FileCheck %s
 
 // Concrete -> projection -> concrete roundtrip, monomorphized in two steps.
 

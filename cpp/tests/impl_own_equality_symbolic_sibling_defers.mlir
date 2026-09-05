@@ -14,18 +14,18 @@
 
 !S = !trait.poly<0>
 
-trait.trait @X[!S] {}
+trait.trait private @X[!S] {}
 
-trait.trait @Sib[!S] {
+trait.trait private @Sib[!S] {
   trait.assoc_type @Elem
 }
 
-trait.impl @Sib_i8 for @Sib[i8] where [@X[i8]] {
+trait.impl private @Sib_i8 for @Sib[i8] where [@X[i8]] {
   trait.assoc_type @Elem = i64
 }
 
-trait.trait @Host[!S] {}
+trait.trait private @Host[!S] {}
 
-// CHECK: trait.impl @Host_i8
-trait.impl @Host_i8 for @Host[i8] where [!trait.proj<@Sib[i8], "Elem"> = f32] {
+// CHECK: trait.impl private @Host_i8
+trait.impl private @Host_i8 for @Host[i8] where [!trait.proj<@Sib[i8], "Elem"> = f32] {
 }

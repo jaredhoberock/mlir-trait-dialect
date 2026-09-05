@@ -27,9 +27,9 @@ trait.impl private @Get_impl_claim for @Get[!trait.claim<@Assumption[i32]>] wher
 }
 
 // this polymorphic function calls get and returns its result
-// CHECK-LABEL: func.func @call_get_{{.*}}
+// CHECK-LABEL: func.func private @call_get_{{.*}}
 // CHECK-NOT: builtin.unrealized_conversion_cast
-func.func @call_get(%c: !trait.claim<@Get[!R]>) -> !R {
+func.func private @call_get(%c: !trait.claim<@Get[!R]>) -> !R {
   %res = trait.method.call %c @Get[!R]::@get()
     : () -> !R
   return %res : !R

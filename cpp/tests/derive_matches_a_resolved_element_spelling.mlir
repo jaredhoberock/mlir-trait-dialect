@@ -17,29 +17,29 @@
 // lookup that contains it and find no candidate impl at all.
 
 !A = !trait.poly<0>
-trait.trait @Elem[!A] {
+trait.trait private @Elem[!A] {
   trait.assoc_type @E
 }
 
 !P = !trait.poly<1>
-trait.trait @Ten[!P] {
+trait.trait private @Ten[!P] {
   trait.assoc_type @Element
 }
 
 // The container's element is the second half of the pair it is built from.
 !S = !trait.poly<2>
 !X = !trait.poly<3>
-trait.impl @Ten_pair for @Ten[tuple<!S, !X>] {
+trait.impl private @Ten_pair for @Ten[tuple<!S, !X>] {
   trait.assoc_type @Element = !X
 }
 
 !C = !trait.poly<4>
 !E = !trait.poly<5>
-trait.trait @Get[!C, !E] {
+trait.trait private @Get[!C, !E] {
 }
 
 !T = !trait.poly<6>
-trait.impl @Get_blanket for @Get[!T, !trait.proj<@Ten[!T], "Element">]
+trait.impl private @Get_blanket for @Get[!T, !trait.proj<@Ten[!T], "Element">]
     where [@Ten[!T]] {
 }
 

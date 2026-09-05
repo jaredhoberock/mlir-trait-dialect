@@ -12,7 +12,7 @@
 // closure entails, @Has[tuple<i32>]::Out = @Has[tuple<i32, i32>]::Out. The
 // equality crosses the call to the generic callee and survives to the leftover
 // check, where the rounds recorded no outcome for any of the three impls,
-// because an equality's endpoints are opaque to them. Settlement puts the
+// because they hold an equality's endpoints as a leaf. Settlement puts the
 // endpoint projections to impl selection itself: each unique unconditional impl
 // is selected, the chain resolves to i64 on both sides, the endpoints meet, and
 // the whole module lowers clean.
@@ -27,7 +27,7 @@ trait.impl private @Has_w1  for @Has[tuple<!U>]     { trait.assoc_type @Out = !t
 trait.impl private @Has_w2  for @Has[tuple<!U, !U>] { trait.assoc_type @Out = !trait.proj<@Has[!U], "Out"> }
 trait.impl private @Has_mid for @Has[i32]           { trait.assoc_type @Out = i64 }
 
-func.func @gen(%c: !trait.claim<!trait.proj<@Has[tuple<!U>], "Out"> = !trait.proj<@Has[tuple<!U, !U>], "Out">>) -> () {
+func.func private @gen(%c: !trait.claim<!trait.proj<@Has[tuple<!U>], "Out"> = !trait.proj<@Has[tuple<!U, !U>], "Out">>) -> () {
   return
 }
 

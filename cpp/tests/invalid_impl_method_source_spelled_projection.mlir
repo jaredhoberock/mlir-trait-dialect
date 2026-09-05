@@ -14,14 +14,14 @@
 
 !S = !trait.poly<0>
 
-trait.trait @Container[!S] {
+trait.trait private @Container[!S] {
   trait.assoc_type @Elem
   func.func private @id(!S, !S) -> !S
 }
 
 // CHECK: op type mismatch: expected 'i32' but found 'i64'
 // CHECK: method 'id' has incompatible signature
-trait.impl for @Container[i32] {
+trait.impl private for @Container[i32] {
   trait.assoc_type @Elem = i64
   func.func @id(%self: i32, %e: !trait.proj<@Container[i32], "Elem">) -> i32 {
     return %self : i32

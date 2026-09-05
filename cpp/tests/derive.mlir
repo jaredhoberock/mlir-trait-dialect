@@ -7,14 +7,14 @@
 
 !T0 = !trait.poly<0>
 
-// CHECK: trait.trait @Trait
-trait.trait @Trait [!T0] {
+// CHECK: trait.trait private @Trait
+trait.trait private @Trait [!T0] {
   func.func private @method(!T0) -> i32
 }
 
 // An unconditional base impl for i32
-// CHECK: trait.impl @Trait_impl_i32 for @Trait[i32]
-trait.impl @Trait_impl_i32 for @Trait[i32] {
+// CHECK: trait.impl private @Trait_impl_i32 for @Trait[i32]
+trait.impl private @Trait_impl_i32 for @Trait[i32] {
   func.func @method(%self: i32) -> i32 {
     %res = arith.constant 42 : i32
     return %res : i32
@@ -23,8 +23,8 @@ trait.impl @Trait_impl_i32 for @Trait[i32] {
 
 // A conditional impl: for any U where Trait[U], Trait holds for tuple<U>
 !T1 = !trait.poly<1>
-// CHECK: trait.impl @Trait_impl_tuple for @Trait[tuple<!trait.poly<1>>]where [@Trait[!trait.poly<1>]]
-trait.impl @Trait_impl_tuple for @Trait[tuple<!T1>] where [@Trait[!T1]] {
+// CHECK: trait.impl private @Trait_impl_tuple for @Trait[tuple<!trait.poly<1>>]where [@Trait[!trait.poly<1>]]
+trait.impl private @Trait_impl_tuple for @Trait[tuple<!T1>] where [@Trait[!T1]] {
   func.func @method(%self: tuple<!T1>) -> i32 {
     %a = trait.assume @Trait[!T1]
     %res = arith.constant 1 : i32

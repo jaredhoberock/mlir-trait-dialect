@@ -36,7 +36,7 @@ trait.impl private @Hold_claim for @Hold[!trait.claim<@Ground[i32]>] where [
   }
 }
 
-func.func @take(%h: !trait.claim<@Hold[!T]>) -> !T {
+func.func private @take(%h: !trait.claim<@Hold[!T]>) -> !T {
   %v = trait.method.call %h @Hold[!T]::@held() : () -> !T
   return %v : !T
 }

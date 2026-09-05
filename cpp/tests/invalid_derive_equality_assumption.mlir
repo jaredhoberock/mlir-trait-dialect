@@ -10,9 +10,9 @@
 // the design law rather than asserting inside the arm-asserting accessor.
 
 !T0 = !trait.poly<0>
-trait.trait @Trait[!T0] {}
-trait.impl @Trait_impl_i32 for @Trait[i32] {}
-trait.impl @Trait_impl_tuple for @Trait[tuple<!T0>] where [@Trait[!T0]] {}
+trait.trait private @Trait[!T0] {}
+trait.impl private @Trait_impl_i32 for @Trait[i32] {}
+trait.impl private @Trait_impl_tuple for @Trait[tuple<!T0>] where [@Trait[!T0]] {}
 
 func.func @f(%e: !trait.claim<i32 = i32>) -> !trait.claim<@Trait[tuple<i32>]> {
   // expected-error @below {{assumption operand #0 ('!trait.claim<i32 = i32>') must be a trait-application claim; an equality claim is not a legal trait.derive operand}}

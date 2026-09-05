@@ -15,21 +15,21 @@
 !X = !trait.poly<1>
 !T7 = !trait.poly<7>
 
-trait.trait @HasPart[!S] {
+trait.trait private @HasPart[!S] {
   trait.assoc_type @Part
 }
 
-trait.impl @HasPart_i64 for @HasPart[i64] {
+trait.impl private @HasPart_i64 for @HasPart[i64] {
   trait.assoc_type @Part = f32
 }
 
-trait.trait @Other[!S] {}
+trait.trait private @Other[!S] {}
 
-trait.impl @Other_f32 for @Other[f32] {}
+trait.impl private @Other_f32 for @Other[f32] {}
 
-trait.trait @Tr[!S] {}
+trait.trait private @Tr[!S] {}
 
-trait.impl @CondImpl for @Tr[!X] where [@Other[!trait.proj<@HasPart[i64], "Part">]] {}
+trait.impl private @CondImpl for @Tr[!X] where [@Other[!trait.proj<@HasPart[i64], "Part">]] {}
 
 func.func private @template(
   %op: !trait.claim<@Other[f32]>

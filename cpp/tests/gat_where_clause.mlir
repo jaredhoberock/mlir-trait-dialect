@@ -10,19 +10,19 @@
 !S = !trait.poly<0>
 !T = !trait.poly<1>
 
-// CHECK-LABEL: trait @Printable
-trait.trait @Printable[!S] {}
+// CHECK-LABEL: trait private @Printable
+trait.trait private @Printable[!S] {}
 
-// CHECK-LABEL: trait @Container
+// CHECK-LABEL: trait private @Container
 // CHECK: trait.assoc_type @Item<[!trait.poly<1>]>
-trait.trait @Container[!S] where [@Printable[!T]] {
+trait.trait private @Container[!S] where [@Printable[!T]] {
   trait.assoc_type @Item<[!T]>
 }
 
 // A where clause that bounds a non-GAT associated type via a projection:
 // where Self::Item : Printable
-// CHECK-LABEL: trait @Iterable
+// CHECK-LABEL: trait private @Iterable
 // CHECK: trait.assoc_type @Item
-trait.trait @Iterable[!S] where [@Printable[!trait.proj<@Iterable[!S], "Item">]] {
+trait.trait private @Iterable[!S] where [@Printable[!trait.proj<@Iterable[!S], "Item">]] {
   trait.assoc_type @Item
 }

@@ -85,6 +85,9 @@ fn test_jit() {
                     block.argument(1).unwrap().into(), // other
                 ],
                 &[i1_ty],
+                // the method binds no type variables of its own
+                &[],
+                &[],
             ));
             let true_ = block.append_operation(arith::constant(
                 &context,
@@ -195,13 +198,19 @@ fn test_jit() {
     ).into();
 
     let foo = {
+        // a polymorphic function is a template, and a template is private from
+        // birth so that nothing outside its own symbol table may name it once
+        // its instances are cut
+        let vis_id = Identifier::new(&context, "sym_visibility");
+        let private_attr = StringAttribute::new(&context, "private").into();
+
         let foo_ty = FunctionType::new(&context, &[claim_ty, poly_ty, poly_ty], &[i1_ty]).into();
         let foo = func::func(
             &context,
             StringAttribute::new(&context, "foo"),
             TypeAttribute::new(foo_ty),
             Region::new(),
-            &[],
+            &[(vis_id, private_attr)],
             loc,
         );
 
@@ -216,6 +225,9 @@ fn test_jit() {
                 block.argument(2).unwrap().into(), // %y
             ],
             &[i1_ty],
+            // the method binds no type variables of its own
+            &[],
+            &[],
         ));
         block.append_operation(func::r#return(
             &[result.result(0).unwrap().into()],
@@ -268,6 +280,9 @@ fn test_jit() {
                 block.argument(1).unwrap().into(),
             ],
             &[i1_ty],
+            // the callee's type parameters are read from its signature
+            &[],
+            &[],
         ));
         block.append_operation(func::r#return(
             &[result.result(0).unwrap().into()],
@@ -306,13 +321,19 @@ fn test_jit() {
     ).into();
 
     let baz = {
+        // a polymorphic function is a template, and a template is private from
+        // birth so that nothing outside its own symbol table may name it once
+        // its instances are cut
+        let vis_id = Identifier::new(&context, "sym_visibility");
+        let private_attr = StringAttribute::new(&context, "private").into();
+
         let baz_ty = FunctionType::new(&context, &[claim_ty, poly_ty, poly_ty], &[i1_ty]).into();
         let baz = func::func(
             &context,
             StringAttribute::new(&context, "baz"),
             TypeAttribute::new(baz_ty),
             Region::new(),
-            &[],
+            &[(vis_id, private_attr)],
             loc,
         );
 
@@ -327,6 +348,9 @@ fn test_jit() {
                 block.argument(2).unwrap().into(), // y
             ],
             &[i1_ty],
+            // the method binds no type variables of its own
+            &[],
+            &[],
         ));
         let neq = block.append_operation(trait_::method_call(
             loc,
@@ -338,6 +362,9 @@ fn test_jit() {
                 block.argument(2).unwrap().into(), // y
             ],
             &[i1_ty],
+            // the method binds no type variables of its own
+            &[],
+            &[],
         ));
         let result = block.append_operation(arith::ori(
             eq.result(0).unwrap().into(),
@@ -395,6 +422,9 @@ fn test_jit() {
                 block.argument(1).unwrap().into(), // y
             ],
             &[i1_ty],
+            // the callee's type parameters are read from its signature
+            &[],
+            &[],
         ));
         block.append_operation(func::r#return(
             &[result.result(0).unwrap().into()],
@@ -413,8 +443,12 @@ fn test_jit() {
     assert!(module.as_operation().verify(), "MLIR module verification failed");
 
     // Lower to LLVM
+    // monomorphization is two passes: instantiate the monomorphs the calls need,
+    // then erase the residual polymorphism and collect the templates nothing
+    // names.
     let pass_manager = PassManager::new(&context);
-    pass_manager.add_pass(trait_::create_monomorphize_pass());
+    pass_manager.add_pass(trait_::create_instantiate_monomorphs_pass());
+    pass_manager.add_pass(trait_::create_erase_polymorphs_pass());
     pass_manager.add_pass(pass::conversion::create_to_llvm());
     assert!(pass_manager.run(&mut module).is_ok());
 
@@ -545,7 +579,7 @@ fn the_projection_query_and_the_project_verifier_share_one_verdict() {
     let module = Module::parse(
         &context,
         "!S = !trait.poly<0>\n\
-         trait.trait @Has[!S] where [!trait.proj<@Has[!S], \"Out\"> = i64] { trait.assoc_type @Out }\n",
+         trait.trait private @Has[!S] where [!trait.proj<@Has[!S], \"Out\"> = i64] { trait.assoc_type @Out }\n",
     )
     .expect("the fixture module parses");
 
@@ -586,9 +620,9 @@ fn the_obligation_aware_verification_demands_the_cited_impl_s_assumptions() {
     let module = Module::parse(
         &context,
         "!U = !trait.poly<0>\n\
-         trait.trait @X[!U] {}\n\
-         trait.trait @Has[!U] { trait.assoc_type @Out }\n\
-         trait.impl @Has_tuple for @Has[tuple<!U>] where [@X[!U]] { trait.assoc_type @Out = i64 }\n",
+         trait.trait private @X[!U] {}\n\
+         trait.trait private @Has[!U] { trait.assoc_type @Out }\n\
+         trait.impl private @Has_tuple for @Has[tuple<!U>] where [@X[!U]] { trait.assoc_type @Out = i64 }\n",
     )
     .expect("the fixture module parses");
 

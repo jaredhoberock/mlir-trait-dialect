@@ -15,20 +15,20 @@
 
 !S = !trait.poly<0>
 
-trait.trait @Sib[!S] {
+trait.trait private @Sib[!S] {
   trait.assoc_type @Elem
 }
 
-trait.impl @Sib_i64 for @Sib[i64] {
+trait.impl private @Sib_i64 for @Sib[i64] {
   trait.assoc_type @Elem = i64
 }
 
-trait.trait @T[!S] where [!trait.proj<@Sib[!S], "Elem"> = f32] {
+trait.trait private @T[!S] where [!trait.proj<@Sib[!S], "Elem"> = f32] {
   func.func private @id(!S) -> !S
 }
 
-// CHECK: trait.impl @T_i64
-trait.impl @T_i64 for @T[i64] {
+// CHECK: trait.impl private @T_i64
+trait.impl private @T_i64 for @T[i64] {
   func.func @id(%x: i64) -> i64 {
     return %x : i64
   }

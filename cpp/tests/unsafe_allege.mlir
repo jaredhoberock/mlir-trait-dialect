@@ -8,9 +8,9 @@
 
 !T = !trait.poly<0>
 
-trait.trait @Safe [!T] {}
+trait.trait private @Safe [!T] {}
 
-trait.impl for @Safe[i32] {}
+trait.impl private for @Safe[i32] {}
 
 // Polymorphic allege with unsafe passes verification
 // CHECK: func.func @test_unsafe_allege

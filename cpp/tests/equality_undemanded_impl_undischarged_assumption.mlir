@@ -26,7 +26,7 @@ trait.impl private @Has_w1  for @Has[tuple<!U>]     { trait.assoc_type @Out = !t
 trait.impl private @Has_w2  for @Has[tuple<!U, !U>] { trait.assoc_type @Out = !trait.proj<@Has[!U], "Out"> }
 trait.impl private @Has_mid for @Has[i32] where [@X[i32]] { trait.assoc_type @Out = i64 }
 
-func.func @gen(%c: !trait.claim<!trait.proj<@Has[tuple<!U>], "Out"> = !trait.proj<@Has[tuple<!U, !U>], "Out">>) -> () {
+func.func private @gen(%c: !trait.claim<!trait.proj<@Has[tuple<!U>], "Out"> = !trait.proj<@Has[tuple<!U, !U>], "Out">>) -> () {
   return
 }
 

@@ -19,10 +19,6 @@ void traitRegisterDialect(MlirContext context) {
   unwrap(context)->loadDialect<TraitDialect>();
 }
 
-MlirPass traitCreateMonomorphizePass() {
-  return wrap(createMonomorphizePass().release());
-}
-
 MlirPass traitCreateInstantiateMonomorphsPass() {
   return wrap(createInstantiateMonomorphsPass().release());
 }

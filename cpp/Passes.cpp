@@ -13,11 +13,12 @@
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/Dialect/Func/Transforms/FuncConversions.h>
 #include <mlir/IR/PatternMatch.h>
-#include <mlir/IR/Verifier.h>
 #include <mlir/Interfaces/InferTypeOpInterface.h>
 #include <mlir/Pass/Pass.h>
+#include <mlir/Pass/PassManager.h>
 #include <mlir/Transforms/DialectConversion.h>
 #include <mlir/Transforms/GreedyPatternRewriteDriver.h>
+#include <mlir/Transforms/Passes.h>
 #include <cinttypes>
 
 namespace mlir::trait {
@@ -527,8 +528,8 @@ static uint64_t respellProvenClaimsInPlace(const ImplResolver &resolver,
   // Beside the proofs it respells, the sweep resolves recorded ground
   // projections, so an interior op stays consistent with an outside value a
   // pattern retyped -- a tuple.make or arith.select whose result the outside
-  // spells resolved. Equality endpoints are opaque to the structural walk, so a
-  // projection sealed in one is left untouched.
+  // spells resolved. An equality's endpoints are a leaf to this replacer, so a
+  // projection standing in one is left untouched.
   ReadOnlyImplResolver reading(resolver);
   replacer.addReplacement([&reading](Type t) -> std::optional<Type> {
     auto proj = dyn_cast<ProjectionType>(t);
@@ -968,6 +969,24 @@ FailureOr<CallSubstitution> CallSubstitution::forCall(
   return subst;
 }
 
+/// Visits the sites of `root` at which instantiation can owe work: every
+/// sub-type except the endpoints of an equality claim.
+///
+/// An equality claim's endpoints hold a proposition, not work. What stands in
+/// one is a term the equation relates, discharged when the equality settles, so
+/// a scan that judges obligations sees the equality claim itself and never what
+/// it relates. Every such scan reads this walk, so the rule is stated once.
+static void walkObligationSites(Type root,
+                                llvm::function_ref<void(Type)> visit) {
+  root.walk<WalkOrder::PreOrder>([&](Type sub) -> WalkResult {
+    visit(sub);
+    if (auto claim = dyn_cast<ClaimType>(sub))
+      if (claim.isEquality())
+        return WalkResult::skip();
+    return WalkResult::advance();
+  });
+}
+
 /// True when `root` carries an obligation instantiation has not yet discharged:
 /// an unproven monomorphic application claim, or a ground projection (one whose
 /// base is concrete and so resolves in place). These are exactly the demands the
@@ -976,7 +995,7 @@ FailureOr<CallSubstitution> CallSubstitution::forCall(
 /// instantiation pending for the erase gate.
 static bool typeCarriesStandingObligation(Type root) {
   bool found = false;
-  root.walk([&](Type sub) {
+  walkObligationSites(root, [&](Type sub) {
     if (auto claim = dyn_cast<ClaimType>(sub)) {
       if (claim.isApplication() && claim.isMonomorphic() && !claim.isProven())
         found = true;
@@ -1267,10 +1286,8 @@ struct ResolveProjectionsPattern : public RewritePattern {
 
     DemandFrame frame(op->getLoc());
 
-    AttrTypeReplacer replacer;
-    replacer.addReplacement([&](Type t) -> std::optional<Type> {
-      auto proj = dyn_cast<ProjectionType>(t);
-      if (!proj || isPolymorphicType(proj)) return std::nullopt;
+    AttrTypeReplacer replacer = makeGroundProjectionReplacer(
+        [&](ProjectionType proj) -> std::optional<Type> {
       auto resolved = reading.resolveProjectionType(proj);
       if (failed(resolved)) {
         (void)reading.decline(proj);
@@ -1724,13 +1741,7 @@ static Type resolveGroundProjections(
     Type type, ModuleOp module,
     llvm::function_ref<std::optional<Type>(ProjectionType)> hop) {
   return normalizeProjectionsToFixedPoint(type, module, [&](Type current) {
-    AttrTypeReplacer replacer;
-    replacer.addReplacement([&](Type t) -> std::optional<Type> {
-      auto proj = dyn_cast<ProjectionType>(t);
-      if (!proj || isPolymorphicType(proj))
-        return std::nullopt;
-      return hop(proj);
-    });
+    AttrTypeReplacer replacer = makeGroundProjectionReplacer(hop);
     return replacer.replace(current);
   });
 }
@@ -1744,8 +1755,8 @@ static Type resolveGroundProjections(
 /// discharged instead when the projections in its endpoints resolve and the two
 /// endpoints meet at one ground type. Each projection resolves first from what
 /// impl selection has recorded, the spelling every projection some round put to
-/// selection already carries. The rounds treat an equality's endpoints as
-/// opaque and never put the projections inside them to selection, so a
+/// selection already carries. The rounds hold an equality's endpoints as a leaf
+/// and never put the projections inside them to selection, so a
 /// projection whose resolution chain runs through an impl nothing else demanded
 /// has no recorded outcome; such a projection is put to selection here instead.
 /// Selection resolves a projection only through an impl whose assumptions are
@@ -1753,8 +1764,8 @@ static Type resolveGroundProjections(
 /// impl is conditional with an undischarged assumption stays spelled and the
 /// endpoints do not meet -- the settlement never resolves through an impl whose
 /// where-bounds do not hold. Resolution runs to a fixed point because one hop's
-/// binding may spell the next. The endpoints are read through the accessor
-/// because the generic walker treats them as opaque.
+/// binding may spell the next. The endpoints are read through the accessor and
+/// rebuilt atomically, the one sanctioned way to move one.
 static bool equalityClaimGroundResolvesToOneSpelling(
     ClaimType claim, const ProjectionSettleContext &settle) {
   auto eq = claim.getEqualityAttr();
@@ -2261,11 +2272,10 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
     if (isTemplate(op))
       return WalkResult::skip();
     for (Value result : op->getResults()) {
-      result.getType().walk([&](Type sub) {
+      walkObligationSites(result.getType(), [&](Type sub) {
         auto claim = dyn_cast<ClaimType>(sub);
-        if (!claim || claim.isProven() || !claim.isMonomorphic())
-          return;
-        monomorphicClaims.emplace_back(op, claim);
+        if (claim && !claim.isProven() && claim.isMonomorphic())
+          monomorphicClaims.emplace_back(op, claim);
       });
     }
     return WalkResult::advance();
@@ -2322,13 +2332,15 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
   // templates and are left alone; a still-polymorphic template function is not
   // yet instantiated, so its ground projections (over a concrete base nested in
   // an otherwise generic body) resolve when it is cloned for a concrete instance
-  // and its whole subtree is skipped.
+  // and its whole subtree is skipped. The scan reads the obligation sites of a
+  // type, so a projection standing in an equality's endpoints is the equality
+  // settling's to discharge and is not reported here.
   bool sawUnresolvedProjection = false;
   module.walk<WalkOrder::PreOrder>([&](Operation *op) {
     if (isTemplate(op))
       return WalkResult::skip();
     auto report = [&](Type root) {
-      root.walk([&](Type sub) {
+      walkObligationSites(root, [&](Type sub) {
         auto proj = dyn_cast<ProjectionType>(sub);
         if (!proj || isPolymorphicType(proj))
           return;
@@ -2402,7 +2414,7 @@ void AskImplSelectionDuringInstantiationPass::runOnOperation() {
 
 
 //===----------------------------------------------------------------------===//
-// MonomorphizePass
+// ErasePolymorphsPass
 //===----------------------------------------------------------------------===//
 
 namespace {
@@ -2472,10 +2484,128 @@ struct EraseCoerceOp : public OpConversionPattern<CoerceOp> {
 };
 
 
+/// The first type of the trait dialect reachable in `root` that `admitted` does
+/// not accept, or a null type when every one it finds is admitted. `root` is a
+/// type or an attribute: one walk reads either, since a sub-element walk reaches
+/// every type held below the root whichever kind the root is.
+template <typename RootT>
+static Type findRefusedTraitType(RootT root,
+                                 llvm::function_ref<bool(Type)> admitted) {
+  Type refused;
+  root.walk([&](Type sub) -> WalkResult {
+    if (sub.getDialect().getNamespace() == TraitDialect::getDialectNamespace() &&
+        !admitted(sub)) {
+      refused = sub;
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+  return refused;
+}
+
+/// The erase step's exit check, run with every template still standing.
+///
+/// Erase deletes nothing for being a template; the collector the pass runs
+/// after this check takes what nothing names. What this judges is therefore
+/// everything standing *outside* a template, which is final for the stage: it
+/// carries no claim, no projection, and no trait type in a value position, and
+/// it names no template. A generic type inside an attribute is the one residue
+/// -- the class the following conversion takes with the attributes holding it
+/// -- so it is admitted there and nowhere else.
+///
+/// Reading the module while the templates stand is stricter than reading what
+/// survives collection: a mention of a template from outside one is the defect
+/// whoever mentions it, and after collection there would be nothing left to
+/// name. Every refusal is a diagnosis at the op that carries it; nothing here
+/// answers a defect by deleting what exhibits it.
+static LogicalResult checkNothingOutsideATemplateCarriesTheory(ModuleOp module) {
+  bool clean = true;
+
+  // The names a symbol use spelled in the module body can resolve to through
+  // its root reference, which is what the last clause reads for.
+  DenseSet<StringAttr> templateNames;
+  for (Operation &op : *module.getBody())
+    if (isTemplate(&op))
+      templateNames.insert(SymbolTable::getSymbolName(&op));
+
+  auto admitGenerics = [](Type ty) { return isa<GenericTypeInterface>(ty); };
+  auto admitNothing = [](Type) { return false; };
+
+  module.walk<WalkOrder::PreOrder>([&](Operation *op) -> WalkResult {
+    if (isTemplate(op)) {
+      // A template is private from birth, so a public one is a template
+      // collection may not take. Only a function is judged here: a trait, impl
+      // or proof declaration answers the same law in its own verifier, wherever
+      // it is written. Judging it where the walk meets a template reaches one
+      // standing inside a nested symbol table too.
+      if (isa<func::FuncOp>(op) && SymbolTable::getSymbolVisibility(op) ==
+                                       SymbolTable::Visibility::Public) {
+        op->emitOpError()
+            << "is a public template: a template is private from birth, so "
+               "that nothing outside its own symbol table may name it once "
+               "its instances are cut";
+        clean = false;
+      }
+      return WalkResult::skip();
+    }
+
+    Type refused;
+    auto scan = [&](Type ty) {
+      if (!refused)
+        refused = findRefusedTraitType(ty, admitNothing);
+    };
+    for (Type ty : op->getOperandTypes())
+      scan(ty);
+    for (Type ty : op->getResultTypes())
+      scan(ty);
+    for (Region &region : op->getRegions())
+      for (Block &block : region)
+        for (BlockArgument argument : block.getArguments())
+          scan(argument.getType());
+    if (!refused)
+      refused = findRefusedTraitType(op->getAttrDictionary(), admitGenerics);
+    if (refused) {
+      op->emitOpError() << "still carries " << refused
+                        << " after erasure: nothing standing outside a "
+                           "template may carry the trait type system";
+      clean = false;
+    }
+    return WalkResult::advance();
+  });
+
+  // A symbol use naming a template from outside one keeps that template alive
+  // through collection, so it is refused at the op that spells it. Reading the
+  // body region walks every use the module's own scope holds without entering a
+  // nested symbol table, so an impl's own interior is out of the universe; a
+  // use standing in a template that is not a symbol table -- a proof, a
+  // polymorphic function -- is reached and dropped by the isForeign filter
+  // below.
+  std::optional<SymbolTable::UseRange> uses =
+      SymbolTable::getSymbolUses(&module.getBodyRegion());
+  if (!uses) {
+    module.emitOpError() << "carries an operation whose symbol uses cannot be "
+                            "read, so no template can be shown unnamed";
+    return failure();
+  }
+  for (const SymbolTable::SymbolUse &use : *uses) {
+    if (!templateNames.contains(use.getSymbolRef().getRootReference()))
+      continue;
+    if (isForeign(use.getUser()))
+      continue;
+    use.getUser()->emitOpError()
+        << "names the template " << use.getSymbolRef()
+        << " from outside a template, which no monomorphic program may do";
+    clean = false;
+  }
+
+  return success(clean);
+}
+
 /// Erases all residual polymorphism from the module.
 ///
-/// This runs in two phases because no single MLIR mechanism can handle
-/// both kinds of work:
+/// Three phases run in sequence, and none of them deletes an operation for
+/// being a template: the collector the pass runs after them takes what nothing
+/// names.
 ///
 /// Phase 1 (applyPartialConversion): Structural op rewrites that erase
 ///   SSA values.  Claim types map to zero results (1:0 erasure), so ops
@@ -2483,30 +2613,25 @@ struct EraseCoerceOp : public OpConversionPattern<CoerceOp> {
 ///   rewritten.  Only applyPartialConversion can do this — it manages
 ///   the value-level bookkeeping (dropping operands, remapping uses).
 ///   The tuple dialect adjusts tuple.get indices and tuple.make operands;
-///   the func dialect rewrites function signatures and call sites.
+///   the func dialect rewrites function signatures and call sites.  Every
+///   template is legal and recursively legal, so the driver never enters
+///   one: an unused template is neither converted nor asked to legalize.
 ///
-/// Phase 2 (recursivelyReplaceElementsIn): Bulk type rewriting.
+/// Phase 2 (the type sweep): Bulk type rewriting.
 ///   applyPartialConversion only touches operand/result types on ops
 ///   matched by patterns.  Types inside attributes (e.g. the body
 ///   TypeAttr on nominal.def) are invisible to it.  This sweep rewrites
-///   all remaining types everywhere.  The nominal dialect registers its
-///   NominalType name mangling here.
+///   the remaining types of every op outside a template; nothing writes
+///   into a template, whose spelling is resolved when it is cloned for a
+///   concrete instance.  The nominal dialect registers its NominalType
+///   name mangling here.
 ///
-/// Each dialect contributes to both phases via populateErasePolymorphsPatterns.
+/// Phase 3 (the exit check): everything standing outside a template is
+///   theory-free and names no template.
+///
+/// Each dialect contributes to phases 1 and 2 via populateErasePolymorphsPatterns.
 static LogicalResult erasePolymorphs(ModuleOp module) {
   MLIRContext* ctx = module.getContext();
-
-  // Delete trait symbol infrastructure upfront — these are templates that
-  // have already been instantiated, and their regions contain polymorphic
-  // types that would trip the legality check if left for
-  // applyPartialConversion.
-  for (Operation &op : llvm::make_early_inc_range(*module.getBody())) {
-    if (isa<ProofOp, ImplOp, TraitOp>(op))
-      op.erase();
-    else if (auto f = dyn_cast<func::FuncOp>(op))
-      if (isPolymorphicType(f.getFunctionType()))
-        f.erase();
-  }
 
   // Materialize the monomorphic symbol definitions the type sweep below will
   // reference.  This runs while the generic templates and concrete type
@@ -2526,7 +2651,10 @@ static LogicalResult erasePolymorphs(ModuleOp module) {
     return success();
   });
 
-  AttrTypeReplacer typeSweep;
+  // The sweep respells types wherever it reaches them, so it carries the seal:
+  // an equality's endpoints are a leaf to it, as they are to every replacer the
+  // dialect builds.
+  AttrTypeReplacer typeSweep = makeEndpointSealedReplacer();
 
   // Collect from participating dialects
   RewritePatternSet patterns(ctx);
@@ -2546,15 +2674,31 @@ static LogicalResult erasePolymorphs(ModuleOp module) {
   // Mark !trait.claim and !trait.proj as illegal
   ConversionTarget target(*ctx);
   target.addIllegalOp<AllegeOp, DeriveOp, ProjectOp, WitnessOp, CoerceOp>();
+  // A template leaves with monomorphization, so nothing converts it or its
+  // interior: the three declarations are legal and recursively legal, and a
+  // function is a template exactly while its signature stays polymorphic. A
+  // recursively legal op's interior is never enqueued, so an unused template
+  // neither converts nor has to legalize; a monomorphic function answers the
+  // same law every other op does.
+  target.addLegalOp<TraitOp, ImplOp, ProofOp>();
+  target.markOpRecursivelyLegal<TraitOp, ImplOp, ProofOp>();
+  target.addDynamicallyLegalOp<func::FuncOp>([](func::FuncOp func) {
+    return isPolymorphicType(Type(func.getFunctionType())) ||
+           (!opMentionsType<ClaimType>(func) &&
+            !opMentionsType<ProjectionType>(func));
+  });
+  target.markOpRecursivelyLegal<func::FuncOp>([](Operation *op) {
+    return isPolymorphicType(Type(cast<func::FuncOp>(op).getFunctionType()));
+  });
   target.markUnknownOpDynamicallyLegal([&](Operation *op) {
     return !opMentionsType<ClaimType>(op) && !opMentionsType<ProjectionType>(op);
   });
 
-  // Apply Phase 2
+  // Apply Phase 1
   if (failed(applyPartialConversion(module, target, std::move(patterns))))
     return failure();
 
-  // Phase 2: bulk type rewriting via recursivelyReplaceElementsIn.
+  // Phase 2: bulk type rewriting.
   // The typeSweep replacer was already populated by dialects above
   // (e.g. nominal registered NominalType mangling).  Also forward
   // the opConverter's conversions so ClaimType gets swept out of
@@ -2566,15 +2710,23 @@ static LogicalResult erasePolymorphs(ModuleOp module) {
     return converted;
   });
 
-  typeSweep.recursivelyReplaceElementsIn(module,
-                                         /*replaceAttrs=*/true,
-                                         /*replaceLocs=*/false,
-                                         /*replaceTypes=*/true);
-  // Erasure leaves a theory-free module -- no claims, projections, coerces, or
-  // polymorphic templates -- final for the stage. The recursive verifier confirms
-  // every nested op, not the module shell alone, so the stage's exit is a fully
-  // verified module.
-  return mlir::verify(module);
+  // Nothing writes into a template: its spelling is resolved when it is cloned
+  // for a concrete instance, not by this sweep, so the walk skips a template
+  // whole -- its shell and its interior.
+  module->walk<WalkOrder::PreOrder>([&](Operation *op) -> WalkResult {
+    if (isTemplate(op))
+      return WalkResult::skip();
+    typeSweep.replaceElementsIn(op,
+                                /*replaceAttrs=*/true,
+                                /*replaceLocs=*/false,
+                                /*replaceTypes=*/true);
+    return WalkResult::advance();
+  });
+
+  // Phase 3: the exit check. Everything standing outside a template is
+  // theory-free -- no claims, projections, or coerces -- and names no template,
+  // so the collector the pass runs next takes every template whole.
+  return checkNothingOutsideATemplateCarriesTheory(module);
 }
 
 }
@@ -2643,29 +2795,21 @@ bool isPendingExpansion(ModuleOp module) {
   return pending;
 }
 
-LogicalResult monomorphize(ModuleOp module) {
-  if (failed(instantiateMonomorphs(module,
-                                   /*askImplSelectionForImpls=*/false)))
-    return failure();
-
-  // Erase is not gated inside this fused step: it deletes every template and
-  // impl eagerly. A readiness gate on erase arrives when the driver runs it as
-  // its own step, once the split lands (Trait.cpp).
-  return erasePolymorphs(module);
-}
-
-void MonomorphizePass::runOnOperation() {
-  if (failed(monomorphize(getOperation())))
-    signalPassFailure();
-}
-
-std::unique_ptr<Pass> createMonomorphizePass() {
-  return std::make_unique<MonomorphizePass>();
-}
-
 void ErasePolymorphsPass::runOnOperation() {
   if (failed(erasePolymorphs(getOperation())))
-    signalPassFailure();
+    return signalPassFailure();
+
+  // Retiring the templates is one transformation whose interior is not a
+  // program: while a template stands beside the definitions the type sweep
+  // respelled, it names a generic definition another dialect's erasure took and
+  // keeps a spelling the sweep gave the module, so the module between the two
+  // halves does not verify. Collection is therefore run here rather than from a
+  // slot of its own, and this pass's exit -- with every template nothing names
+  // taken -- is the verifiable boundary.
+  OpPassManager collect(ModuleOp::getOperationName());
+  collect.addPass(createSymbolDCEPass());
+  if (failed(runPipeline(collect, getOperation())))
+    return signalPassFailure();
 }
 
 std::unique_ptr<Pass> createErasePolymorphsPass() {

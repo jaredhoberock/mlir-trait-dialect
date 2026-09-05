@@ -24,7 +24,7 @@ trait.trait private @Gen[!T] {
   trait.assoc_type @A
 }
 
-func.func @wrap(%x: !T) -> !trait.proj<@Gen[!T], "A"> {
+func.func private @wrap(%x: !T) -> !trait.proj<@Gen[!T], "A"> {
   %r = ub.poison : !trait.proj<@Gen[!T], "A">
   return %r : !trait.proj<@Gen[!T], "A">
 }

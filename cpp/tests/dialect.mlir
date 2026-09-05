@@ -5,10 +5,10 @@
 
 // ---- Test 1: test everything
 
-// CHECK-LABEL: trait @PartialEq[!trait.poly<0>, !trait.poly<1>]
+// CHECK-LABEL: trait private @PartialEq[!trait.poly<0>, !trait.poly<1>]
 !PartialEqS = !trait.poly<0>
 !PartialEqO = !trait.poly<1>
-trait.trait @PartialEq[!PartialEqS,!PartialEqO] {
+trait.trait private @PartialEq[!PartialEqS,!PartialEqO] {
   // CHECK-LABEL: func.func private @eq
   func.func private @eq(!PartialEqS, !PartialEqO) -> i1
   
@@ -23,8 +23,8 @@ trait.trait @PartialEq[!PartialEqS,!PartialEqO] {
   }
 }
 
-// CHECK-LABEL: trait.impl @PartialEq_impl_i32_i32 for @PartialEq[i32, i32]
-trait.impl @PartialEq_impl_i32_i32 for @PartialEq[i32,i32] {
+// CHECK-LABEL: trait.impl private @PartialEq_impl_i32_i32 for @PartialEq[i32, i32]
+trait.impl private @PartialEq_impl_i32_i32 for @PartialEq[i32,i32] {
   // CHECK-LABEL: func @eq
   func.func @eq(%self: i32, %other: i32) -> i1 {
     %equal = arith.cmpi eq, %self, %other : i32
@@ -53,16 +53,16 @@ func.func @bar(%x: i32, %y: i32) -> i1 {
   return %res : i1
 }
 
-// CHECK-LABEL: trait @Eq[!trait.poly<2>]
+// CHECK-LABEL: trait private @Eq[!trait.poly<2>]
 !EqS = !trait.poly<2>
-trait.trait @Eq[!EqS] where [
+trait.trait private @Eq[!EqS] where [
   @PartialEq[!EqS,!EqS]
 ]
 {
 }
 
-// CHECK-LABEL: impl @Eq_impl_i32 for @Eq[i32]
-trait.impl @Eq_impl_i32 for @Eq[i32] {}
+// CHECK-LABEL: impl private @Eq_impl_i32 for @Eq[i32]
+trait.impl private @Eq_impl_i32 for @Eq[i32] {}
 
 // model Option<Ordering>
 // 0: Less
@@ -71,10 +71,10 @@ trait.impl @Eq_impl_i32 for @Eq[i32] {}
 // 3: None
 !opt_ord = i2
 
-// CHECK-LABEL: trait @PartialOrd[!trait.poly<3>, !trait.poly<4>] where [@PartialEq
+// CHECK-LABEL: trait private @PartialOrd[!trait.poly<3>, !trait.poly<4>] where [@PartialEq
 !PartialOrdS = !trait.poly<3>
 !PartialOrdO = !trait.poly<4>
-trait.trait @PartialOrd[!PartialOrdS,!PartialOrdO] where [
+trait.trait private @PartialOrd[!PartialOrdS,!PartialOrdO] where [
   @PartialEq[!PartialOrdS,!PartialOrdO]
 ]
 {
@@ -142,8 +142,8 @@ trait.trait @PartialOrd[!PartialOrdS,!PartialOrdO] where [
   }
 }
 
-// CHECK-LABEL: trait.impl @PartialOrd_impl_i32_i32 for @PartialOrd[i32, i32]
-trait.impl @PartialOrd_impl_i32_i32 for @PartialOrd[i32,i32] {
+// CHECK-LABEL: trait.impl private @PartialOrd_impl_i32_i32 for @PartialOrd[i32, i32]
+trait.impl private @PartialOrd_impl_i32_i32 for @PartialOrd[i32,i32] {
   // CHECK-LABEL: func.func @partial_cmp
   func.func @partial_cmp(%a: i32, %b: i32) -> !opt_ord {
     %c_lt = arith.constant 0 : !opt_ord
@@ -164,9 +164,9 @@ trait.impl @PartialOrd_impl_i32_i32 for @PartialOrd[i32,i32] {
 // 2: Greater
 !ord = i2
 
-// CHECK-LABEL: trait @Ord[!trait.poly<5>] where [@Eq[!trait.poly<5>], @PartialOrd[!trait.poly<5>, !trait.poly<5>]
+// CHECK-LABEL: trait private @Ord[!trait.poly<5>] where [@Eq[!trait.poly<5>], @PartialOrd[!trait.poly<5>, !trait.poly<5>]
 !OrdS = !trait.poly<5>
-trait.trait @Ord[!OrdS] where [
+trait.trait private @Ord[!OrdS] where [
   @Eq[!OrdS],
   @PartialOrd[!OrdS,!OrdS]
 ]
@@ -213,8 +213,8 @@ trait.trait @Ord[!OrdS] where [
   }
 }
 
-// CHECK-LABEL: trait.impl @Ord_impl_i32 for @Ord[i32]
-trait.impl @Ord_impl_i32 for @Ord[i32] {
+// CHECK-LABEL: trait.impl private @Ord_impl_i32 for @Ord[i32]
+trait.impl private @Ord_impl_i32 for @Ord[i32] {
   // CHECK-LABEL: func.func @cmp
   func.func @cmp(%a: i32, %b: i32) -> !ord {
     %lt = arith.cmpi slt, %a, %b : i32
@@ -230,18 +230,18 @@ trait.impl @Ord_impl_i32 for @Ord[i32] {
   }
 }
 
-// CHECK-LABEL: trait.proof @PartialOrd_impl_i32_i32_p
-trait.proof @PartialOrd_impl_i32_i32_p proves @PartialOrd_impl_i32_i32 for @PartialOrd[i32,i32] given [
+// CHECK-LABEL: trait.proof private @PartialOrd_impl_i32_i32_p
+trait.proof private @PartialOrd_impl_i32_i32_p proves @PartialOrd_impl_i32_i32 for @PartialOrd[i32,i32] given [
   @PartialEq_impl_i32_i32
 ]
 
-// CHECK-LABEL: trait.proof @Eq_impl_i32_p
-trait.proof @Eq_impl_i32_p proves @Eq_impl_i32 for @Eq[i32] given [
+// CHECK-LABEL: trait.proof private @Eq_impl_i32_p
+trait.proof private @Eq_impl_i32_p proves @Eq_impl_i32 for @Eq[i32] given [
   @PartialEq_impl_i32_i32
 ]
 
-// CHECK-LABEL: trait.proof @Ord_impl_i32_p
-trait.proof @Ord_impl_i32_p proves @Ord_impl_i32 for @Ord[i32] given [
+// CHECK-LABEL: trait.proof private @Ord_impl_i32_p
+trait.proof private @Ord_impl_i32_p proves @Ord_impl_i32 for @Ord[i32] given [
   @Eq_impl_i32_p,
   @PartialOrd_impl_i32_i32_p
 ]

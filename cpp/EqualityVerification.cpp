@@ -18,14 +18,13 @@
 using namespace mlir;
 using namespace mlir::trait;
 
-// Does `needle` occur as a subterm of `haystack`? Equality-claim endpoints are
-// sealed from Type::walk, so this classifies through the deep walk: a needle
-// reachable only inside an endpoint is still found.
+// Does `needle` occur as a subterm of `haystack`? An equality claim's endpoints
+// are ordinary sub-elements, so a needle standing inside one is found.
 static bool typeOccursIn(Type needle, Type haystack) {
-  return walkTypesDeep(haystack, [&](Type sub) {
-           return sub == needle ? WalkResult::interrupt()
-                                : WalkResult::advance();
-         }).wasInterrupted();
+  return haystack.walk([&](Type sub) {
+             return sub == needle ? WalkResult::interrupt()
+                                  : WalkResult::advance();
+           }).wasInterrupted();
 }
 
 // Rewrite `ty` by the cited equality premises: each premise's lhs endpoint
@@ -454,8 +453,8 @@ namespace {
 // united with the normal form its own constructor yields when a united class
 // member is substituted into it, so an equality a constructor establishes by
 // normalizing its arguments is not missed. Child enumeration and constructor
-// identity both come from decomposeTerm, which reads through the type-bearing
-// trait attributes the generic walkers are opaque to.
+// identity both come from decomposeTerm, which reads the type-bearing trait
+// attributes directly rather than through a generic walk.
 class GroundCongruence {
 public:
   // Seed an equality between two endpoints (and intern their subterms).
@@ -640,7 +639,9 @@ bool mlir::trait::entailedByGroundCongruence(Type lhs, Type rhs,
 }
 
 Type mlir::trait::stripClaimProofs(Type type) {
-  AttrTypeReplacer strip;
+  // An endpoint carries no proven claim by construction, so this rewrite finds
+  // nothing to strip inside one; the seal states that rather than relying on it.
+  AttrTypeReplacer strip = makeEndpointSealedReplacer();
   strip.addReplacement([](ClaimType claim) -> std::optional<Type> {
     if (claim.isProven())
       return Type(claim.asUnproven());
@@ -656,8 +657,8 @@ Type mlir::trait::stripClaimProofs(Type type) {
 // unification variable keyed by the projection itself: the same projection is
 // one variable and cannot stand for two types, every other constructor position
 // is rigid, and a claim's (or any other composite's) predicate arguments are
-// descended through decomposeTerm, whose enumeration reaches the hand-written
-// attribute storage the generic type walkers are opaque to. A whole projection
+// descended through decomposeTerm, whose enumeration reads the attributes
+// holding them directly rather than through a generic walk. A whole projection
 // is one opaque variable: its own trait-application and associated-type
 // arguments are NOT descended during reconciliation, so two projections meet as
 // whole variables -- the same variable, or a pair aliased and owed one grounding

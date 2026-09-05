@@ -9,7 +9,7 @@
 // swallowed failures of the read the instantiation driver holds reach that
 // channel.
 
-trait.trait @T[!trait.poly<0>] {
+trait.trait private @T[!trait.poly<0>] {
   trait.assoc_type @A
 }
 

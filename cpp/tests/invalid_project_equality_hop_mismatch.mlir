@@ -9,11 +9,11 @@
 
 !S = !trait.poly<0>
 
-trait.trait @Has[!S] where [!trait.proj<@Has[!S], "Out"> = i64] {
+trait.trait private @Has[!S] where [!trait.proj<@Has[!S], "Out"> = i64] {
   trait.assoc_type @Out
 }
 
-trait.impl @Has_i32 for @Has[i32] {
+trait.impl private @Has_i32 for @Has[i32] {
   trait.assoc_type @Out = i64
 }
 

@@ -13,18 +13,18 @@
 // The resolution is module-capable and premise-blind: it reads @Gen's one impl
 // binding, nothing more.
 
-trait.trait @Gen[!trait.poly<0>] {
+trait.trait private @Gen[!trait.poly<0>] {
   trait.assoc_type @A
 }
 
-trait.impl @Gen_i64 for @Gen[i64] {
+trait.impl private @Gen_i64 for @Gen[i64] {
   trait.assoc_type @A = i32
 }
 
-trait.trait @T[!trait.poly<1>] {}
+trait.trait private @T[!trait.poly<1>] {}
 
-trait.impl @T_i32 for @T[i32] {}
-trait.impl @T_f32 for @T[f32] {}
+trait.impl private @T_i32 for @T[i32] {}
+trait.impl private @T_f32 for @T[f32] {}
 
 func.func @resolves_and_matches() {
   %w = trait.witness @T_i32 for @T[!trait.proj<@Gen[i64], "A">]

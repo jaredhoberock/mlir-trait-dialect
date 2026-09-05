@@ -13,11 +13,11 @@
 !S = !trait.poly<0>
 !U = !trait.poly<1>
 
-trait.trait @Trait[!S] {
+trait.trait private @Trait[!S] {
   trait.assoc_type @Output
 }
 
-trait.impl @Trait_impl for @Trait[!U] {
+trait.impl private @Trait_impl for @Trait[!U] {
   trait.assoc_type @Output = !U
 }
 

@@ -4,6 +4,7 @@
 #include "Trait.hpp"
 #include "TraitOps.hpp"
 #include <mlir/Pass/PassManager.h>
+#include <mlir/Pass/PassRegistry.h>
 #include <mlir/Tools/Plugins/DialectPlugin.h>
 #include <mlir/Tools/Plugins/PassPlugin.h>
 
@@ -52,7 +53,18 @@ static void registerPlugin(mlir::DialectRegistry* registry) {
   ::mlir::PassRegistration<::mlir::trait::ResolveImplsPass>();
   ::mlir::PassRegistration<::mlir::trait::InstantiateMonomorphsPass>();
   ::mlir::PassRegistration<::mlir::trait::ErasePolymorphsPass>();
-  ::mlir::PassRegistration<::mlir::trait::MonomorphizePass>();
+  // Monomorphization as a whole is a pipeline, not a pass: instantiate the
+  // monomorphs each trait call needs, then erase the residual polymorphism and
+  // collect the templates nothing names. A registered pipeline name resolves
+  // before a pass name, so a row spelling `monomorphize-trait` runs both.
+  ::mlir::PassPipelineRegistration<>(
+      "monomorphize-trait",
+      "Instantiate monomorphs for trait calls, then erase all polymorphs and "
+      "collect the templates nothing names.",
+      [](::mlir::OpPassManager &pm) {
+        pm.addPass(::mlir::trait::createInstantiateMonomorphsPass());
+        pm.addPass(::mlir::trait::createErasePolymorphsPass());
+      });
   // The freeze over the instantiation driver has nothing in a compilation that
   // asks it anything, so the pass that plants an ask is registered here and
   // nowhere the compiler builds from.

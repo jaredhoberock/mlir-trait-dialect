@@ -13,13 +13,13 @@
 
 // CHECK: trait-residual-tolerance
 
-trait.trait @Gen[!trait.poly<0>] {
+trait.trait private @Gen[!trait.poly<0>] {
   trait.assoc_type @A
 }
 
-trait.trait @Box[!trait.poly<1>] {}
+trait.trait private @Box[!trait.poly<1>] {}
 
-trait.impl @Box_i64 for @Box[i64] {}
+trait.impl private @Box_i64 for @Box[i64] {}
 
 func.func @main() {
   %w = trait.witness @Box_i64 for @Box[!trait.proj<@Gen[i64], "A">]

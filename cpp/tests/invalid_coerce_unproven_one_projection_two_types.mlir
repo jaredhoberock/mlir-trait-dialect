@@ -8,7 +8,7 @@
 // different rigid types at once is the inconsistency the pending judgment
 // refuses.
 
-trait.trait @Fold[!trait.poly<0>] {
+trait.trait private @Fold[!trait.poly<0>] {
   trait.assoc_type @Item
 }
 
@@ -26,7 +26,7 @@ func.func @one_projection_two_types(
 
 // -----
 
-trait.trait @Fold[!trait.poly<0>] {
+trait.trait private @Fold[!trait.poly<0>] {
   trait.assoc_type @A
   trait.assoc_type @B
 }

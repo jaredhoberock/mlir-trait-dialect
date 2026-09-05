@@ -570,12 +570,12 @@ llvm::SetVector<Type> demandsSpelledIn(ModuleOp module, bool inAttributes,
     if (spelled.insert(demand) && origins && spellingOp)
       origins->try_emplace(demand, spellingOp->getLoc());
   };
-  // Note every monomorphic projection reachable in a type, descending through
-  // equality-claim endpoints -- sealed from Type::walk -- so a projection nested
-  // only inside an endpoint, even one itself inside a further equality claim, is
-  // still demanded and its impl generated. `root` may be a Type or an Attribute.
+  // Note every monomorphic projection reachable in a type. An equality claim's
+  // endpoints are ordinary sub-elements, so a projection standing inside one --
+  // even one itself inside a further equality claim -- is still demanded and its
+  // impl generated. `root` may be a Type or an Attribute.
   auto collect = [&](auto root) {
-    walkTypesDeep(root, [&](Type sub) {
+    root.walk([&](Type sub) {
       if (isa<ProjectionType>(sub) && isMonomorphicType(sub))
         note(sub);
       return WalkResult::advance();

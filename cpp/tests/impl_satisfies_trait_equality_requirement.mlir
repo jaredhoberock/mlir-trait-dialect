@@ -9,11 +9,11 @@
 
 !S = !trait.poly<0>
 
-trait.trait @FoldFn[!S] where [!trait.proj<@FoldFn[!S], "Output"> = !S] {
+trait.trait private @FoldFn[!S] where [!trait.proj<@FoldFn[!S], "Output"> = !S] {
   trait.assoc_type @Output
 }
 
-// CHECK: trait.impl @FoldFn_i32 for @FoldFn[i32]
-trait.impl @FoldFn_i32 for @FoldFn[i32] {
+// CHECK: trait.impl private @FoldFn_i32 for @FoldFn[i32]
+trait.impl private @FoldFn_i32 for @FoldFn[i32] {
   trait.assoc_type @Output = i32
 }

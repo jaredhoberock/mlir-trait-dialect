@@ -7,42 +7,6 @@
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/DialectImplementation.h>
 
-namespace mlir::trait::detail {
-
-// Hand-written storage for TypeEqualityAttr. The uniquing key retains both
-// endpoints, so distinct equalities are distinct attributes; getAsKey() returns
-// no sub-elements, so MLIR's sub-element walkers and the generic
-// AttrTypeReplacer never see or rewrite the endpoints. Endpoints move only
-// through the sanctioned clone rule, and readers reach them through the
-// dedicated endpoint accessors.
-struct TypeEqualityAttrStorage : public ::mlir::AttributeStorage {
-  using KeyTy = std::tuple<::mlir::Type, ::mlir::Type>;
-
-  TypeEqualityAttrStorage(::mlir::Type lhs, ::mlir::Type rhs)
-      : lhs(lhs), rhs(rhs) {}
-
-  // Uniquing compares and hashes both endpoints; walk-opacity is the storage
-  // doc above (this storage defines no getAsKey()).
-  bool operator==(const KeyTy &key) const {
-    return lhs == std::get<0>(key) && rhs == std::get<1>(key);
-  }
-
-  static ::llvm::hash_code hashKey(const KeyTy &key) {
-    return ::llvm::hash_combine(std::get<0>(key), std::get<1>(key));
-  }
-
-  static TypeEqualityAttrStorage *
-  construct(::mlir::AttributeStorageAllocator &allocator, KeyTy &&key) {
-    return new (allocator.allocate<TypeEqualityAttrStorage>())
-        TypeEqualityAttrStorage(std::get<0>(key), std::get<1>(key));
-  }
-
-  ::mlir::Type lhs;
-  ::mlir::Type rhs;
-};
-
-} // namespace mlir::trait::detail
-
 #define GET_ATTRDEF_CLASSES
 #include <TraitAttributes.cpp.inc>
 
@@ -84,11 +48,6 @@ LogicalResult TypeEqualityAttr::verify(
   return success();
 }
 
-// Endpoint accessors read the hand-written storage directly; the generated
-// class declares them but leaves them to the custom storage owner.
-Type TypeEqualityAttr::getLhs() const { return getImpl()->lhs; }
-Type TypeEqualityAttr::getRhs() const { return getImpl()->rhs; }
-
 // Structural well-formedness of a witness: the predicate is one of the two arms
 // and an impl is named. An equality predicate's own invariant -- it contains no
 // proven claim -- is enforced when the `TypeEqualityAttr` is constructed, so
@@ -107,14 +66,11 @@ LogicalResult WitnessAttr::verify(
   return success();
 }
 
-// Reach every symbol a witness names so a symbol-user walk covers it wherever
-// the attribute rides, not only when an owning op delegates. The impl reference
-// is a plain symbol; the predicate carries more -- an application names a trait,
-// and an equality seals its symbols in walk-opaque endpoints (TypeEqualityAttr's
-// hand-written storage exposes no getAsKey), which the generic sub-element walk
-// cannot read. The equality arm is checked through the claim accessor exactly as
-// a `where`-clause equality is, closing the gap where a symbol sealed in a bare
-// witness would otherwise go unreached.
+// Reach every symbol a witness names as a symbol reference, which no type walk
+// reaches: the impl the witness cites, and the trait an application predicate
+// names. An equality predicate names symbols only through the types in its
+// endpoints, and those are ordinary sub-elements the framework's own type walk
+// reaches wherever this attribute rides.
 LogicalResult WitnessAttr::verifySymbolUses(
     Operation *op, SymbolTableCollection &symbolTable) const {
   Operation *impl = symbolTable.lookupNearestSymbolFrom(op, getImplRef());
@@ -122,12 +78,9 @@ LogicalResult WitnessAttr::verifySymbolUses(
     return op->emitError() << "witness names '" << getImplRef()
                            << "', which does not resolve to an impl";
 
-  Attribute predicate = getPredicate();
-  if (auto app = dyn_cast<TraitApplicationAttr>(predicate))
+  if (auto app = dyn_cast<TraitApplicationAttr>(getPredicate()))
     return app.verifySymbolUses(op, symbolTable);
-  auto eq = cast<TypeEqualityAttr>(predicate);
-  ClaimType claim = ClaimType::getEquality(op->getContext(), eq);
-  return claim.verifySymbolUses(op, symbolTable);
+  return success();
 }
 
 Attribute WitnessAttr::parse(AsmParser &parser, Type) {
@@ -269,22 +222,17 @@ LogicalResult PredicateArrayAttr::verify(
   return success();
 }
 
-// Verify each predicate: application entries name a trait symbol, equality
-// entries carry their symbol users nested (opaque) in the endpoints. The
-// equality arm defers to the claim verifier, which reaches the endpoints
-// through the accessor.
+// Verify each predicate. An application entry names a trait as a symbol
+// reference, which no type walk reaches, so it is checked here. An equality
+// entry names symbols only through the types in its endpoints, and the
+// framework's own type walk over the owning operation's attributes reaches
+// those, so there is nothing left for this entry point to check.
 LogicalResult PredicateArrayAttr::verifySymbolUses(
     Operation *op, SymbolTableCollection &symbolTable) const {
-  for (Attribute p : getPredicates()) {
-    if (auto app = mlir::dyn_cast<TraitApplicationAttr>(p)) {
+  for (Attribute p : getPredicates())
+    if (auto app = mlir::dyn_cast<TraitApplicationAttr>(p))
       if (failed(app.verifySymbolUses(op, symbolTable)))
         return failure();
-    } else if (auto eq = mlir::dyn_cast<TypeEqualityAttr>(p)) {
-      auto claim = ClaimType::getEquality(op->getContext(), eq);
-      if (failed(claim.verifySymbolUses(op, symbolTable)))
-        return failure();
-    }
-  }
   return success();
 }
 

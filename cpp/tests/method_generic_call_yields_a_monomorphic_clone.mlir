@@ -13,11 +13,11 @@
 !S = !trait.poly<0>
 !V = !trait.poly<9>
 
-trait.trait @Store[!S] {
+trait.trait private @Store[!S] {
   func.func private @keep(!S, !V) -> !V
 }
 
-trait.impl @Store_impl_i64 for @Store[i64] {
+trait.impl private @Store_impl_i64 for @Store[i64] {
   func.func @keep(%self: i64, %v: !trait.poly<5>) -> !trait.poly<5> {
     return %v : !trait.poly<5>
   }

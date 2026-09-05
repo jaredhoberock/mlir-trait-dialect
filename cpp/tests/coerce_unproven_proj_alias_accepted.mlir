@@ -12,7 +12,7 @@
 // not stronger. These forms verify and survive a round trip with the `unproven`
 // marker intact.
 
-trait.trait @Fold[!trait.poly<0>] {
+trait.trait private @Fold[!trait.poly<0>] {
   trait.assoc_type @A
   trait.assoc_type @B
 }
@@ -29,7 +29,7 @@ func.func @bare_alias(%x: !trait.proj<@Fold[i64], "A">)
 
 // -----
 
-trait.trait @Fold[!trait.poly<0>] {
+trait.trait private @Fold[!trait.poly<0>] {
   trait.assoc_type @A
   trait.assoc_type @B
 }
@@ -46,16 +46,16 @@ func.func @bare_alias_reversed(%x: !trait.proj<@Fold[i64], "B">)
 
 // -----
 
-trait.trait @Conv[!trait.poly<0>, !trait.poly<1>] {}
-trait.trait @Fold[!trait.poly<0>] {
+trait.trait private @Conv[!trait.poly<0>, !trait.poly<1>] {}
+trait.trait private @Fold[!trait.poly<0>] {
   trait.assoc_type @A
   trait.assoc_type @B
 }
 
 // The aliased projections may sit nested inside an application claim's
-// arguments -- decomposeTerm reaches the hand-written attribute storage the
-// generic walkers are opaque to, and the rigid position (i32) still matches
-// literally. This is the shape a convergence respell presents.
+// arguments -- decomposeTerm reads the attribute holding them directly, and the
+// rigid position (i32) still matches literally. This is the shape a convergence
+// respell presents.
 // CHECK-LABEL: func.func @nested_in_application
 // CHECK: trait.coerce %{{.*}} unproven
 func.func @nested_in_application(
@@ -68,7 +68,7 @@ func.func @nested_in_application(
 
 // -----
 
-trait.trait @Fold[!trait.poly<0>] {
+trait.trait private @Fold[!trait.poly<0>] {
   trait.assoc_type @A
   trait.assoc_type @B
 }

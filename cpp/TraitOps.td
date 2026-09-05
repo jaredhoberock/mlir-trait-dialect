@@ -396,13 +396,13 @@ def ImplOp : TraitDialectOp<"impl", [
     its cited impl and replays it as a local resolution rule while comparing this
     impl's method signatures and its equality endpoints, so a projection a sibling
     impl resolves is reduced without the verifier enumerating candidate impls; the
-    replayed rules ride the same associated-type replacer the own bindings use, so
-    they are blind inside a walk-opaque equality endpoint and cure no
-    equality-claim-parameter mismatch. When such a witness cites a CONDITIONAL
-    sibling impl, its own assumptions must be discharged for the citation to be
-    legal: an application-armed witness names, per obligation, the impl that
-    supplies it, and the discharge recursion resolves every discharger by symbol
-    without scanning the module.
+    replayed rules ride the same associated-type replacer the own bindings use,
+    which holds an equality's endpoints as a leaf, so they are blind inside one
+    and cure no equality-claim-parameter mismatch. When such a witness cites a
+    CONDITIONAL sibling impl, its own assumptions must be discharged for the
+    citation to be legal: an application-armed witness names, per obligation,
+    the impl that supplies it, and the discharge recursion resolves every
+    discharger by symbol without scanning the module.
 
     Example of the mixed `where` clause and the `witnesses` array:
 
@@ -630,6 +630,7 @@ def ImplOp : TraitDialectOp<"impl", [
   ];
 
   let hasCustomAssemblyFormat = 1;
+  let hasVerifier = 1;
 }
 
 
@@ -1179,8 +1180,9 @@ def CoerceOp : TraitDialectOp<"coerce", [
     spelling.
 
     Operands: the value, plus N equality-claim operands, N >= 0. There is no
-    application-claim operand; walks that classify projections and claims reach
-    each cited equality's endpoints through walkTypesDeep (TraitTypes.hpp).
+    application-claim operand; a cited equality's endpoints are leaves of the
+    claim type holding them, so an ordinary sub-element walk reaches them and
+    walks that classify projections and claims see them.
 
     The verdict is a pure function of op, operands, and attributes:
       1. application-claim proofs are stripped uniformly from the input and

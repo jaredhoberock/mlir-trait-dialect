@@ -17,9 +17,6 @@ extern "C" {
 /// Manually register the trait dialect with a context.
 void traitRegisterDialect(MlirContext ctx);
 
-/// Create a monomorphize-trait pass
-MlirPass traitCreateMonomorphizePass();
-
 /// Create an instantiate-monomorphs-trait pass, the first half of
 /// monomorphization
 MlirPass traitCreateInstantiateMonomorphsPass();

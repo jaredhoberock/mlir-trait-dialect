@@ -10,10 +10,10 @@
 // exist for @T[i64], so the proof symbol -- not the application -- is what makes
 // a recording coherent.
 
-trait.trait @T[!trait.poly<0>] {}
+trait.trait private @T[!trait.poly<0>] {}
 
-trait.impl @T_a for @T[i64] {}
-trait.impl @T_b for @T[i64] {}
+trait.impl private @T_a for @T[i64] {}
+trait.impl private @T_b for @T[i64] {}
 
 func.func private @callee(!trait.claim<@T[i64]>, !trait.claim<@T[i64]>)
 

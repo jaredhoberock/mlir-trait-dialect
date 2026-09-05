@@ -13,20 +13,20 @@
 
 !S = !trait.poly<0>
 
-trait.trait @Sib[!S] {
+trait.trait private @Sib[!S] {
   trait.assoc_type @Elem
 }
 
-trait.impl @Sib_i64 for @Sib[i64] {
+trait.impl private @Sib_i64 for @Sib[i64] {
   trait.assoc_type @Elem = i32
 }
 
-trait.trait @Host[!S] {
+trait.trait private @Host[!S] {
   func.func private @make(!S) -> !trait.proj<@Sib[!S], "Elem">
 }
 
 // expected-error @below {{witness projection '!trait.proj<@Sib[!trait.poly<0>], "Elem">' is not ground; a witness resolves only a ground sibling projection}}
-trait.impl @Host_T for @Host[!S]
+trait.impl private @Host_T for @Host[!S]
     witnesses [#trait<witness !trait.proj<@Sib[!S], "Elem"> = i32 by @Sib_i64>] {
   func.func @make(%x: !S) -> i32 {
     %r = ub.poison : i32

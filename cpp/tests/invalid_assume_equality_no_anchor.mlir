@@ -10,7 +10,7 @@
 
 !S = !trait.poly<0>
 
-trait.trait @FoldFn[!S] {
+trait.trait private @FoldFn[!S] {
   trait.assoc_type @Output
   func.func @fold(%x: !S) -> !S {
     // CHECK: assumed equality {{.*}} is not assumable in this context

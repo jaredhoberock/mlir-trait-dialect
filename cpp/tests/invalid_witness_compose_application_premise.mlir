@@ -7,7 +7,7 @@
 // not equality evidence and carries no endpoints for the closure to seed, so
 // passing one as a premise is refused at the arm.
 
-trait.trait @T[!trait.poly<0>] {}
+trait.trait private @T[!trait.poly<0>] {}
 
 func.func @application_premise(%p: !trait.claim<@T[i32]>) -> !trait.claim<i32 = i32> {
   // expected-error @+1 {{a composition witness premise must be an equality claim}}

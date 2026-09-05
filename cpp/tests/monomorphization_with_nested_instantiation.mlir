@@ -31,14 +31,14 @@ trait.impl private @Tr_i32 for @Tr[i32] {
 
 // Takes a claim, calls method through it
 !F = !trait.poly<2>
-func.func @inner(%x: !F, %c: !trait.claim<@Tr[!F]>) -> i32 {
+func.func private @inner(%x: !F, %c: !trait.claim<@Tr[!F]>) -> i32 {
   %r = trait.method.call %c @Tr[!F]::@method(%x) : (!F) -> i32
   return %r : i32
 }
 
 // Derives Tr[!G] (unconditional impl), passes claim to @inner
 !G = !trait.poly<3>
-func.func @outer(%x: !G) -> i32 {
+func.func private @outer(%x: !G) -> i32 {
   %c = trait.derive @Tr[!G] from @Tr_i32 given()
   %r = trait.func.call @inner(%x, %c)
     : (!G, !trait.claim<@Tr[!G]>) -> i32

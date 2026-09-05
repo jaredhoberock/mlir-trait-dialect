@@ -13,22 +13,22 @@
 
 !T = !trait.poly<0>
 
-trait.trait @Loop[!T] {
+trait.trait private @Loop[!T] {
   trait.assoc_type @Output
 }
 
-trait.impl @Loop_i32 for @Loop[i32] {
+trait.impl private @Loop_i32 for @Loop[i32] {
   trait.assoc_type @Output = !trait.proj<@Loop[i64], "Output">
 }
 
-trait.impl @Loop_i64 for @Loop[i64] {
+trait.impl private @Loop_i64 for @Loop[i64] {
   trait.assoc_type @Output = !trait.proj<@Loop[i32], "Output">
 }
 
 !W = !trait.poly<1>
-trait.trait @Wants[!W] {}
+trait.trait private @Wants[!W] {}
 
-trait.impl @Wants_impl for @Wants[!trait.proj<@Loop[i32], "Output">] {}
+trait.impl private @Wants_impl for @Wants[!trait.proj<@Loop[i32], "Output">] {}
 
 // expected-error @+1 {{projection normalization did not converge within 64 iterations}}
-trait.proof @p proves @Wants_impl for @Wants[!trait.proj<@Loop[i32], "Output">] given []
+trait.proof private @p proves @Wants_impl for @Wants[!trait.proj<@Loop[i32], "Output">] given []

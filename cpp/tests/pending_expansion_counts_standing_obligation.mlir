@@ -9,10 +9,10 @@
 
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(report-expansion-readiness-trait)' 2>&1 | FileCheck %s
 
-trait.trait @T[!trait.poly<0>] {
+trait.trait private @T[!trait.poly<0>] {
   func.func private @m(!trait.poly<0>) -> i32
 }
-trait.impl @T_i32 for @T[i32] {
+trait.impl private @T_i32 for @T[i32] {
   func.func @m(%a: i32) -> i32 {
     %c = arith.constant 1 : i32
     return %c : i32

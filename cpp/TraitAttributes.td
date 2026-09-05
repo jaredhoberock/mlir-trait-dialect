@@ -90,28 +90,22 @@ def TypeEqualityAttr : AttrDef<TraitDialect, "TypeEquality", []> {
     The endpoints are ordered; orientation is recorded for provenance
     only. Replay is direction-blind, so no symmetry construct exists.
 
-    The endpoints are opaque to sub-element walking: the generic
-    `AttrTypeReplacer` cannot visit or rewrite them. This carries the previous
-    rule through the pipeline. Global type rewrites — proof stamping foremost —
-    rewrite claim types wherever they can see them; a walkable endpoint would
-    receive a stamped proof and become exactly the state the constructor
-    forbids, so two individually-correct passes would kill a legal program.
-    Sealing the endpoints puts that impossibility in the attribute itself
-    rather than in an exclusion every present and future rewrite would have to
-    remember. Endpoints move only through the sanctioned clone rule (one
-    substitution applied to both endpoints atomically, rebuilt through this
-    constructor, re-checked); readers reach them through the dedicated
-    accessors, never the walk.
+    The endpoints are ordinary sub-elements: every walk reaches them, so a
+    symbol sealed in one is reached by the framework's own symbol-user driver
+    and by any walk that classifies content. What no rewrite may do is move
+    one. Global type rewrites — proof stamping foremost — rewrite claim types
+    wherever they can see them; an endpoint that received a stamped proof would
+    be exactly the state the constructor forbids, so two individually-correct
+    passes would kill a legal program. Every `AttrTypeReplacer` the dialect
+    builds therefore carries one attribute-level rule that returns this
+    attribute unchanged and skips its interior (`makeEndpointSealedReplacer`,
+    TraitTypes.hpp): endpoints are a leaf to a rewrite and reachable to a read.
+    The one sanctioned mover is the clone rule — one substitution applied to
+    both endpoints atomically, rebuilt through this constructor, re-checked.
   }];
 
   let parameters = (ins "::mlir::Type":$lhs, "::mlir::Type":$rhs);
 
-  // Walk-opacity is a property of the storage: MLIR's walkers descend only
-  // into storages exposing getAsKey(), and generated storage always exposes
-  // it. Hand-writing the storage (no getAsKey; the uniquing key still retains
-  // both endpoints) is the only way to seal the endpoints -- there is no
-  // declarative opt-out. See TraitAttributes.cpp.
-  let genStorageClass = 0;
   let genVerifyDecl = 1;
 
   // Prints `lhs = rhs`. The leading empty literal drops the space the
@@ -149,16 +143,15 @@ def WitnessAttr : AttrDef<TraitDialect, "Witness",
     content and produces the value. See `trait.impl` for a printed `witnesses [...]`
     array carrying both arms.
 
-    An equality predicate keeps the walk-opacity of its own `TypeEqualityAttr`
-    storage: no generic replacer reaches its endpoints, and readers use
-    `getProjection`/`getResolved`, never the walk. An application predicate stays
-    walk-visible. The witness's own storage is generated, so its immutability
-    under substitution is not structural: it rests on no pass registering an
-    attribute-level replacement rule for `TypeEqualityAttr` and no symbol-rename
-    pass over this attribute (neither exists today). The only mover that
-    preserves an immutable equality witness is the clone rule's rebuild of the
-    whole witness: one substitution applied to both endpoints atomically, rebuilt
-    through the checked constructor.
+    Both predicate arms are walk-visible, so every symbol either names is
+    reached by the framework's own symbol-user driver wherever this attribute
+    rides. An equality predicate is immutable under rewriting for the reason
+    `TypeEqualityAttr` states: every replacer the dialect builds carries the
+    attribute-level rule that returns an equality unchanged and skips its
+    interior, and a bare witness's equality stands in exactly such an attribute
+    position. The only mover that preserves an immutable equality witness is
+    the clone rule's rebuild of the whole witness: one substitution applied to
+    both endpoints atomically, rebuilt through the checked constructor.
   }];
 
   let parameters = (ins

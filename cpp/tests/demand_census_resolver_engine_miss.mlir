@@ -25,7 +25,7 @@ trait.trait private @Box[!T] {}
 
 trait.impl private @Box_any for @Box[!T] {}
 
-func.func @callee(%c: !trait.claim<@Box[!trait.proj<@T[i64], "A">]>,
+func.func private @callee(%c: !trait.claim<@Box[!trait.proj<@T[i64], "A">]>,
                   %x: !T) -> !T {
   return %x : !T
 }

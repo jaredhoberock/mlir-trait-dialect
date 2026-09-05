@@ -13,27 +13,27 @@
 // the derive as a recursive substitution.
 
 !V = !trait.poly<0>
-trait.trait @Ten[!V] {
+trait.trait private @Ten[!V] {
   trait.assoc_type @Element
 }
 
-trait.impl @Ten_base for @Ten[i64] {
+trait.impl private @Ten_base for @Ten[i64] {
   trait.assoc_type @Element = i32
 }
 
 // The view's element forwards to its base's.
 !B = !trait.poly<1>
-trait.impl @Ten_view for @Ten[tuple<!B>] where [@Ten[!B]] {
+trait.impl private @Ten_view for @Ten[tuple<!B>] where [@Ten[!B]] {
   trait.assoc_type @Element = !trait.proj<@Ten[!B], "Element">
 }
 
 !S = !trait.poly<2>
 !E = !trait.poly<3>
-trait.trait @Get[!S, !E] {
+trait.trait private @Get[!S, !E] {
 }
 
 !T = !trait.poly<4>
-trait.impl @Get_blanket for @Get[!T, !trait.proj<@Ten[!T], "Element">]
+trait.impl private @Get_blanket for @Get[!T, !trait.proj<@Ten[!T], "Element">]
     where [@Ten[!T]] {
 }
 

@@ -102,7 +102,11 @@ static void cloneRegionWithTypeReplacement(
 // be resolved once evidence exists.
 AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &subst,
                                                   ModuleOp module) {
-  AttrTypeReplacer replacer;
+  // The seal keeps a bare equality -- a witness's stored evidence, a
+  // where-clause predicate -- immutable under this rewrite; the clone rule
+  // below is the one mover, and it reaches an equality only through the claim
+  // that wraps it.
+  AttrTypeReplacer replacer = makeEndpointSealedReplacer();
   replacer.addReplacement([=](Type t) -> std::optional<Type> {
     Type result = applySubstitutionToFixedPoint(subst, t);
     if (module)
@@ -124,7 +128,9 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &sub
   for (auto [key, value] : subst)
     if (isa<GenericTypeInterface>(key))
       variableBindings.try_emplace(key, value);
-  replacer.addReplacement([variableBindings](ClaimType claim) -> std::optional<Type> {
+  replacer.addReplacement(
+      [variableBindings](ClaimType claim)
+          -> std::optional<std::pair<Type, WalkResult>> {
     return respellEqualityEndpoints(claim, [&](Type t) {
       return applySubstitutionToFixedPoint(variableBindings, t);
     });

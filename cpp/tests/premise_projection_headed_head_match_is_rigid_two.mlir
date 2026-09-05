@@ -14,29 +14,29 @@
 
 !S = !trait.poly<0>
 
-trait.trait @Other[!S] {
+trait.trait private @Other[!S] {
   trait.assoc_type @X
 }
-trait.impl @Other_i64 for @Other[i64] {
+trait.impl private @Other_i64 for @Other[i64] {
   trait.assoc_type @X = i64
 }
-trait.impl @Other_T for @Other[!S] {
+trait.impl private @Other_T for @Other[!S] {
   trait.assoc_type @X = i64
 }
 
-trait.trait @Sib[!S] {
+trait.trait private @Sib[!S] {
   trait.assoc_type @Elem
 }
-trait.impl @Sib_i32 for @Sib[i32] {
+trait.impl private @Sib_i32 for @Sib[i32] {
   trait.assoc_type @Elem = f32
 }
 
-trait.trait @Host[!S] {
+trait.trait private @Host[!S] {
   func.func private @make(!S) -> !trait.proj<@Sib[!S], "Elem">
 }
 
 // expected-error @below {{projection mismatch: expected '!trait.proj<@Other[i64], "X">' but found 'i32'}}
-trait.impl @Host_p for @Host[!trait.proj<@Other[i64], "X">]
+trait.impl private @Host_p for @Host[!trait.proj<@Other[i64], "X">]
     witnesses [#trait<witness !trait.proj<@Sib[!trait.proj<@Other[i64], "X">], "Elem"> = f32 by @Sib_i32>] {
   func.func @make(%x: !trait.proj<@Other[i64], "X">) -> f32 {
     %r = ub.poison : f32

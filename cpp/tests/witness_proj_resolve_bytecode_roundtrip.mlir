@@ -3,19 +3,17 @@
 
 // RUN: mlir-opt %s --emit-bytecode | mlir-opt | FileCheck %s
 
-// The witness's endpoints are opaque to sub-element walking, so
-// bytecode cannot recover them from the generic walk; the attribute's own
-// print/parse carries them. This pins that a proj-resolve witness -- its
-// attribute and its equality-claim result together -- survives a bytecode
-// round-trip unchanged.
+// A proj-resolve witness carries an equality whose endpoints are types, in the
+// attribute and in the equality-claim result alike. This pins that the two
+// survive a bytecode round-trip unchanged and still agree.
 
 !S = !trait.poly<0>
 
-trait.trait @Trait[!S] {
+trait.trait private @Trait[!S] {
   trait.assoc_type @Output
 }
 
-trait.impl @Trait_impl for @Trait[i64] {
+trait.impl private @Trait_impl for @Trait[i64] {
   trait.assoc_type @Output = i64
 }
 

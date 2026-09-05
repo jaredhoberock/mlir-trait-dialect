@@ -10,7 +10,7 @@
 // `unproven` keyword prints so the marker survives a round trip (the printer
 // emits no attribute dictionary).
 
-trait.trait @Fold[!trait.poly<0>] {
+trait.trait private @Fold[!trait.poly<0>] {
   trait.assoc_type @Item
 }
 
@@ -24,7 +24,7 @@ func.func @proj_to_concrete(%x: !trait.proj<@Fold[i64], "Item">) -> i64 {
 
 // -----
 
-trait.trait @Fold[!trait.poly<0>] {
+trait.trait private @Fold[!trait.poly<0>] {
   trait.assoc_type @Item
 }
 
@@ -41,7 +41,7 @@ func.func @absorb_one_position(%x: tuple<!trait.proj<@Fold[i64], "Item">, i64>)
 
 // -----
 
-trait.trait @Fold[!trait.poly<0>] {
+trait.trait private @Fold[!trait.poly<0>] {
   trait.assoc_type @Item
 }
 

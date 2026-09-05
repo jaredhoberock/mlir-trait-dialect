@@ -10,9 +10,9 @@
 
 !S = !trait.poly<0>
 
-trait.trait @Host[!S] {}
+trait.trait private @Host[!S] {}
 
 // expected-error @below {{attribute 'witnesses' failed to satisfy constraint: array of impl witnesses}}
-trait.impl @Host_i64 for @Host[i64]
+trait.impl private @Host_i64 for @Host[i64]
     witnesses ["not a witness"] {
 }

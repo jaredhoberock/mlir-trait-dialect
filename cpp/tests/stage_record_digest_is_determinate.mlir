@@ -28,11 +28,11 @@ trait.impl private @Two_i32 for @Two[i32] {}
 
 !P = !trait.poly<1>
 
-func.func @hold_zero(%zero: !trait.claim<@Zero[!P]>) {
+func.func private @hold_zero(%zero: !trait.claim<@Zero[!P]>) {
   return
 }
 
-func.func @hold_two(%two: !trait.claim<@Two[!P]>) {
+func.func private @hold_two(%two: !trait.claim<@Two[!P]>) {
   return
 }
 

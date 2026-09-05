@@ -7,7 +7,7 @@
 
 !T = !trait.poly<0>
 
-trait.trait @Marker [!T] {}
+trait.trait private @Marker [!T] {}
 
 func.func @test_invalid(%x: i32) -> i32 {
   // CHECK: expected monomorphic claim

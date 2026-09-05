@@ -28,7 +28,7 @@ module {
 
   trait.proof private @T2_i64_p proves @T2_i64 for @T2[i64] given [@T1_i64]
 
-  func.func @f(
+  func.func private @f(
     %x: !trait.poly<3>,
     %t2: !trait.claim<@T2[!trait.poly<3>]>,
     %t1: !trait.claim<@T1[!trait.proj<@T0[!trait.poly<3>], "A">]>

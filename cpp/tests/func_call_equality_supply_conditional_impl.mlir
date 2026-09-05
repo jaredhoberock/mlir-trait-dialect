@@ -31,15 +31,15 @@ trait.impl private @Has_tuple for @Has[tuple<!U>] where [@X[!U]] {
   trait.assoc_type @Out = i64
 }
 
-// CHECK-LABEL: func.func @gen
+// CHECK-LABEL: func.func private @gen
 // CHECK: trait.coerce
-func.func @gen(%v: !trait.proj<@Has[!S], "Out">, %c: !trait.claim<!trait.proj<@Has[!S], "Out"> = !T>) -> !T {
+func.func private @gen(%v: !trait.proj<@Has[!S], "Out">, %c: !trait.claim<!trait.proj<@Has[!S], "Out"> = !T>) -> !T {
   %r = trait.coerce %v : !trait.proj<@Has[!S], "Out"> to !T via (%c)
     : (!trait.claim<!trait.proj<@Has[!S], "Out"> = !T>)
   return %r : !T
 }
 
-// LOWER: func.func @gen{{.*}}(%arg0: i64) -> i64
+// LOWER: func.func private @gen{{.*}}(%arg0: i64) -> i64
 // LOWER-NOT: trait.claim
 // LOWER: return %arg0 : i64
 func.func @main(%pv: !trait.proj<@Has[tuple<i32>], "Out">) -> i64 {

@@ -16,12 +16,12 @@
 // invalid_coerce_missing_sibling_equality.mlir.
 
 module {
-  trait.trait @D[!trait.poly<0>, !trait.poly<1>] {}
-  trait.trait @A[!trait.poly<2>] { trait.assoc_type @Out }
-  trait.impl @D_impl for @D[!trait.poly<3>, !trait.poly<3>] {}
-  trait.impl @A_i32 for @A[i32] { trait.assoc_type @Out = i64 }
-  trait.impl @A_f32 for @A[f32] { trait.assoc_type @Out = i64 }
-  trait.proof @D_p proves @D_impl for @D[i64, i64] given []
+  trait.trait private @D[!trait.poly<0>, !trait.poly<1>] {}
+  trait.trait private @A[!trait.poly<2>] { trait.assoc_type @Out }
+  trait.impl private @D_impl for @D[!trait.poly<3>, !trait.poly<3>] {}
+  trait.impl private @A_i32 for @A[i32] { trait.assoc_type @Out = i64 }
+  trait.impl private @A_f32 for @A[f32] { trait.assoc_type @Out = i64 }
+  trait.proof private @D_p proves @D_impl for @D[i64, i64] given []
 
   func.func nested @f(%x: !trait.poly<4>, %y: !trait.poly<5>,
     %d: !trait.claim<@D[!trait.proj<@A[!trait.poly<4>], "Out">, !trait.proj<@A[!trait.poly<5>], "Out">]>

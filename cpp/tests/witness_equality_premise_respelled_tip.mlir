@@ -13,23 +13,23 @@
 
 !U = !trait.poly<0>
 
-trait.trait @X[!U] {}
+trait.trait private @X[!U] {}
 
-trait.trait @Other[!U] {
+trait.trait private @Other[!U] {
   trait.assoc_type @A
 }
 
-trait.trait @Has[!U] {
+trait.trait private @Has[!U] {
   trait.assoc_type @Out
 }
 
-trait.impl @X_i32 for @X[i32] {}
+trait.impl private @X_i32 for @X[i32] {}
 
-trait.impl @Other_i32 for @Other[i32] {
+trait.impl private @Other_i32 for @Other[i32] {
   trait.assoc_type @A = i32
 }
 
-trait.impl @Has_tuple for @Has[tuple<!U>] where [@X[!U]] {
+trait.impl private @Has_tuple for @Has[tuple<!U>] where [@X[!U]] {
   trait.assoc_type @Out = i64
 }
 

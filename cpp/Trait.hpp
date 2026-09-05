@@ -45,17 +45,20 @@ struct MonomorphizationInterface : DialectInterface {
   ///   - May assume proven claims / witnesses exist.
   virtual void populateInstantiateMonomorphsPatterns(RewritePatternSet& patterns) const = 0;
 
-  /// Called during erasePolymorphs.  Two phases run in sequence:
+  /// Called during erasePolymorphs, whose three phases run in sequence.  The
+  /// two a dialect contributes to are the first two; the third, the exit check,
+  /// reads the module and takes no contribution.
   ///
   /// Phase 1 — applyPartialConversion:
   ///   opConverter handles op-level structural changes (e.g. dropping
   ///   claim operands from tuple.make, adjusting tuple.get indices).
-  ///   Register OpConversionPatterns and 1:0 type erasures here.
+  ///   Register OpConversionPatterns and 1:0 type erasures here.  A template
+  ///   is legal and recursively legal, so no pattern is offered one.
   ///
   /// Phase 2 — greedy type sweep:
-  ///   typeSweep rewrites types everywhere (operands, results, and
-  ///   inside attributes like nominal.def body).  Register type-to-type
-  ///   replacements here (e.g. NominalType name mangling).
+  ///   typeSweep rewrites types on every op outside a template (operands,
+  ///   results, and inside attributes like nominal.def body).  Register
+  ///   type-to-type replacements here (e.g. NominalType name mangling).
   ///
   /// patterns feeds Phase 1 (applyPartialConversion).
   virtual void populateErasePolymorphsPatterns(

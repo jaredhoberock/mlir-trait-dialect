@@ -47,11 +47,13 @@ namespace mlir::trait {
 /// endpoints are ill-formed.
 FailureOr<Attribute> parseApplicationOrEqualityPredicate(AsmParser &p);
 
-/// Rebuild an equality claim with `respell` applied to each endpoint, or nullopt
-/// when `claim` is not an equality claim or neither endpoint changes. An equality
-/// claim's endpoints live in hand-written storage the generic type replacer
-/// cannot see.
-inline std::optional<Type> respellEqualityEndpoints(
+/// The clone rule for equality evidence: rebuild an equality claim with
+/// `respell` applied to each endpoint, atomically, through the checked
+/// constructor. Answers nullopt when `claim` is not an equality claim, and
+/// otherwise always skips the result's interior -- an endpoint moves through
+/// this rule or not at all, so a replacer registering it must not let its own
+/// walk reach the endpoints afterwards.
+inline std::optional<std::pair<Type, WalkResult>> respellEqualityEndpoints(
     ClaimType claim, llvm::function_ref<Type(Type)> respell) {
   auto eq = claim.getEqualityAttr();
   if (!eq)
@@ -59,9 +61,35 @@ inline std::optional<Type> respellEqualityEndpoints(
   Type newLhs = respell(eq.getLhs());
   Type newRhs = respell(eq.getRhs());
   if (newLhs == eq.getLhs() && newRhs == eq.getRhs())
-    return std::nullopt;
-  return Type(ClaimType::getEquality(claim.getContext(), newLhs, newRhs));
+    return std::make_pair(Type(claim), WalkResult::skip());
+  return std::make_pair(
+      Type(ClaimType::getEquality(claim.getContext(), newLhs, newRhs)),
+      WalkResult::skip());
 }
+
+/// A replacer whose equality endpoints are a leaf.
+///
+/// An equality's endpoints are ordinary sub-elements, so every walk reaches
+/// them -- which is what lets the framework's symbol-user driver see a
+/// reference standing in one. What no replacer may do is move one: an endpoint
+/// that received a stamped proof would be exactly the state
+/// `TypeEqualityAttr::get` refuses, so two individually-correct rewrites would
+/// kill a legal program. The one attribute-level rule this registers returns
+/// the equality unchanged and skips its interior, which makes every replacer
+/// built from it a reader of endpoints and never a writer. The rule sits on the
+/// attribute rather than on the claim because a bare `TypeEqualityAttr` stands
+/// in attribute positions with no claim around it: the witness attribute of an
+/// equality-arm `trait.witness`, and the `assumptions` and `witnesses` arrays of
+/// `trait.impl`. The one sanctioned mover is `respellEqualityEndpoints`.
+AttrTypeReplacer makeEndpointSealedReplacer();
+
+/// The sealed replacer above plus the one rule every ground-projection rewrite
+/// registers: a polymorphic projection is left standing -- it stands for as many
+/// types as its variables have instances, so no resolver owes it an answer --
+/// and a ground one is resolved through `hop`, which declines by answering
+/// nullopt.
+AttrTypeReplacer makeGroundProjectionReplacer(
+    std::function<std::optional<Type>(ProjectionType)> hop);
 
 inline bool isPolymorphicType(Type root);
 inline Type applySubstitutionOnce(const llvm::DenseMap<Type,Type> &subst,
@@ -670,42 +698,14 @@ private:
   EvidenceBindings evidenceBindings;
 };
 
-// A deep walk over the types reachable in `root`, descending through the
-// endpoints of every equality claim. An equality claim seals its two endpoints
-// from Type::walk, so a walk that classifies content nested only inside an
-// endpoint -- a projection or claim -- uses this instead: it applies `callback`
-// to every reachable type, follows each equality claim's endpoints
-// transitively, and honours WalkResult interruption the way Type::walk does.
-// `root` may be a Type or an Attribute, matching Type::walk / Attribute::walk.
-template <class Root>
-WalkResult walkTypesDeep(Root root,
-                         llvm::function_ref<WalkResult(Type)> callback) {
-  auto visit = [&](Type sub, auto &visitRef) -> WalkResult {
-    if (callback(sub).wasInterrupted())
-      return WalkResult::interrupt();
-    if (auto claim = dyn_cast<ClaimType>(sub))
-      if (auto eq = claim.getEqualityAttr()) {
-        auto descend = [&](Type endpoint) {
-          return visitRef(endpoint, visitRef);
-        };
-        if (eq.getLhs().walk(descend).wasInterrupted())
-          return WalkResult::interrupt();
-        if (eq.getRhs().walk(descend).wasInterrupted())
-          return WalkResult::interrupt();
-      }
-    return WalkResult::advance();
-  };
-  return root.walk([&](Type sub) { return visit(sub, visit); });
-}
-
-// Whether any occurrence of NeedleType is reachable in `ty`. Equality-claim
-// endpoints are sealed from Type::walk, so this classifies through the deep
-// walk: a needle reachable only inside an endpoint is still found.
+// Whether any occurrence of NeedleType is reachable in `ty`. An equality
+// claim's endpoints are ordinary sub-elements, so the structural walk reaches a
+// needle standing inside one.
 template<class NeedleType> bool containsType(Type ty) {
-  return walkTypesDeep(ty, [](Type sub) {
-           return isa<NeedleType>(sub) ? WalkResult::interrupt()
-                                       : WalkResult::advance();
-         }).wasInterrupted();
+  return ty.walk([](Type sub) {
+             return isa<NeedleType>(sub) ? WalkResult::interrupt()
+                                         : WalkResult::advance();
+           }).wasInterrupted();
 }
 
 inline bool isPolymorphicType(Type root) {
@@ -877,7 +877,7 @@ inline Type applySubstitutionOnce(const llvm::DenseMap<Type,Type> &subst,
     if (auto generic = dyn_cast<GenericTypeInterface>(key))
       specialization.bind(generic, value);
 
-  AttrTypeReplacer replacer;
+  AttrTypeReplacer replacer = makeEndpointSealedReplacer();
   replacer.addReplacement([&](Type t) -> std::optional<std::pair<Type, WalkResult>> {
     if (auto generic = dyn_cast<GenericTypeInterface>(t)) {
       // GenericTypeInterface types own generic specialization entirely;
@@ -901,12 +901,14 @@ inline Type applySubstitutionOnce(const llvm::DenseMap<Type,Type> &subst,
     return std::nullopt;
   });
 
-  // Reach the equality endpoints the generic rule above cannot, applying the
+  // Move the equality endpoints the seal above holds as a leaf, applying the
   // generic-keyed part of the map alone: an endpoint receives variable
   // bindings, never a projection or evidence binding resolved inside it, which
   // a witness verifier's single-substitution instance check would break.
   llvm::DenseMap<Type, Type> genericKeyed = specialization.toTypeMap();
-  replacer.addReplacement([genericKeyed](ClaimType claim) -> std::optional<Type> {
+  replacer.addReplacement(
+      [genericKeyed](ClaimType claim)
+          -> std::optional<std::pair<Type, WalkResult>> {
     return respellEqualityEndpoints(claim, [&](Type t) {
       return applySubstitutionOnce(genericKeyed, t);
     });
@@ -1128,8 +1130,9 @@ inline SmallVector<GenericTypeInterface,4> getGenericTypesIn(Type ty) {
 
     if (auto claim = dyn_cast<ClaimType>(ty)) {
       if (auto eq = claim.getEqualityAttr()) {
-        // The equality arm's endpoints are opaque to the structural walk, so
-        // descend them explicitly to collect any generic hiding inside.
+        // This walk ignores attributes, so the endpoints an equality holds in
+        // its own attribute are descended explicitly to collect any generic
+        // standing inside.
         collectRef(eq.getLhs(), collectRef);
         collectRef(eq.getRhs(), collectRef);
       } else {

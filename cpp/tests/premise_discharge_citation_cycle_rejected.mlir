@@ -14,26 +14,26 @@
 
 !S = !trait.poly<0>
 
-trait.trait @A[!S] {}
-trait.trait @B[!S] {}
+trait.trait private @A[!S] {}
+trait.trait private @B[!S] {}
 
-trait.impl @A_cond for @A[i64] where [@B[i64]] {}
-trait.impl @B_cond for @B[i64] where [@A[i64]] {}
+trait.impl private @A_cond for @A[i64] where [@B[i64]] {}
+trait.impl private @B_cond for @B[i64] where [@A[i64]] {}
 
-trait.trait @Sib[!S] {
+trait.trait private @Sib[!S] {
   trait.assoc_type @Elem
 }
 
-trait.impl @Sib_i64_cond for @Sib[i64] where [@A[i64]] {
+trait.impl private @Sib_i64_cond for @Sib[i64] where [@A[i64]] {
   trait.assoc_type @Elem = i32
 }
 
-trait.trait @Host[!S] {
+trait.trait private @Host[!S] {
   func.func private @make(!S) -> !trait.proj<@Sib[!S], "Elem">
 }
 
 // expected-error @below {{cited impl '@Sib_i64_cond' has an undischarged assumption '!trait.claim<@A[i64]>'; the witness premises do not supply it}}
-trait.impl @Host_i64 for @Host[i64]
+trait.impl private @Host_i64 for @Host[i64]
     witnesses [#trait<witness !trait.proj<@Sib[i64], "Elem"> = i32 by @Sib_i64_cond>,
                #trait<witness @A[i64] by @A_cond>,
                #trait<witness @B[i64] by @B_cond>] {

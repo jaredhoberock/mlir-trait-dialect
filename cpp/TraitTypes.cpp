@@ -51,6 +51,29 @@ STATISTIC(numResidualToleranceAcceptsMixedOrOther,
 
 namespace mlir::trait {
 
+AttrTypeReplacer makeEndpointSealedReplacer() {
+  AttrTypeReplacer replacer;
+  replacer.addReplacement(
+      [](TypeEqualityAttr eq)
+          -> std::optional<std::pair<Attribute, WalkResult>> {
+        return std::make_pair(Attribute(eq), WalkResult::skip());
+      });
+  return replacer;
+}
+
+AttrTypeReplacer makeGroundProjectionReplacer(
+    std::function<std::optional<Type>(ProjectionType)> hop) {
+  AttrTypeReplacer replacer = makeEndpointSealedReplacer();
+  replacer.addReplacement(
+      [hop = std::move(hop)](Type t) -> std::optional<Type> {
+        auto projection = dyn_cast<ProjectionType>(t);
+        if (!projection || isPolymorphicType(projection))
+          return std::nullopt;
+        return hop(projection);
+      });
+  return replacer;
+}
+
 uint64_t residualToleranceAcceptCount() {
   return numResidualToleranceAccepts.getValue();
 }
@@ -251,7 +274,7 @@ static Type resolveProjectionsByLookupCore(Type ty, ModuleOp module,
                                       recordsToLedger(origin);
   DenseSet<Type> recordedDemands;
 
-  AttrTypeReplacer replacer;
+  AttrTypeReplacer replacer = makeEndpointSealedReplacer();
   replacer.addReplacement([&](ProjectionType proj) -> std::optional<Type> {
     // Impl enumeration below builds each candidate's self-claim substitution,
     // which unifies, which re-enters this callback. The guard makes that
@@ -552,21 +575,6 @@ LogicalResult ClaimType::verify(llvm::function_ref<InFlightDiagnostic()> emitErr
                         "equality, found " << predicate;
 }
 
-// Verify the symbol-using types reachable inside an equality endpoint. The
-// endpoints are opaque to the framework's sub-element walk, so the equality
-// arm bridges into them explicitly here; a nested equality claim is reached as
-// a SymbolUserTypeInterface node and recurses through this same entry point.
-static LogicalResult verifyEqualityEndpointSymbols(Type endpoint, Operation *op,
-                                                   SymbolTableCollection &st) {
-  LogicalResult result = success();
-  endpoint.walk([&](Type sub) {
-    if (auto user = dyn_cast<SymbolUserTypeInterface>(sub))
-      if (failed(user.verifySymbolUses(op, st)))
-        result = failure();
-  });
-  return result;
-}
-
 // Entry point for the upstream SymbolUserTypeInterface: symbol-table
 // verification invokes this for every claim reachable from an operation, and an
 // owning op may call it directly. The module is recovered from the anchoring
@@ -579,13 +587,14 @@ LogicalResult ClaimType::verifySymbolUses(Operation *op,
                            << ": anchor operation is not nested in a module";
   auto err = [&] { return op->emitError(); };
 
-  // Equality arm: no trait symbol and no proof; verify the symbols nested in
-  // the endpoints through the accessor.
-  if (auto eq = getEqualityAttr()) {
-    if (failed(verifyEqualityEndpointSymbols(eq.getLhs(), op, symbolTable)))
-      return failure();
-    return verifyEqualityEndpointSymbols(eq.getRhs(), op, symbolTable);
-  }
+  // Equality arm: no trait symbol and no proof of its own, and the endpoints
+  // are ordinary sub-elements the framework's own walk descends into, so it
+  // reaches every symbol-using type nested in one and this entry point has
+  // nothing left to check. The guard stands because the framework still calls
+  // this on the outer equality claim, where reading the application would
+  // assert.
+  if (getEqualityAttr())
+    return success();
 
   // Application arm: verify the trait application.
   if (failed(getTraitApplication().verifySymbolUses(op, symbolTable)))
@@ -1890,7 +1899,7 @@ LogicalResult unify(
 //===----------------------------------------------------------------------===//
 
 Type instantiate(Type root, InstantiationMap &inst, uint64_t &idCounter) {
-  AttrTypeReplacer r;
+  AttrTypeReplacer r = makeEndpointSealedReplacer();
   r.addReplacement([&](Type t) -> std::optional<Type> {
     if (auto generic = dyn_cast<GenericTypeInterface>(t)) {
       return generic.instantiate(inst, idCounter);
@@ -1898,11 +1907,12 @@ Type instantiate(Type root, InstantiationMap &inst, uint64_t &idCounter) {
     return std::nullopt;
   });
 
-  // Instantiate the equality endpoints the generic rule above cannot reach:
-  // otherwise a formal claim<!poly = T> would keep a rigid poly and never share
-  // the inference variable the rest of the formal instantiates to, so a claim
+  // Instantiate the equality endpoints the seal holds as a leaf: otherwise a
+  // formal claim<!poly = T> would keep a rigid poly and never share the
+  // inference variable the rest of the formal instantiates to, so a claim
   // endpoint variable unifies across a call boundary like any other.
-  r.addReplacement([&](ClaimType claim) -> std::optional<Type> {
+  r.addReplacement(
+      [&](ClaimType claim) -> std::optional<std::pair<Type, WalkResult>> {
     return respellEqualityEndpoints(claim, [&](Type t) {
       return instantiate(t, inst, idCounter);
     });
@@ -1923,14 +1933,14 @@ Type instantiate(Type root, InstantiationMap &inst, uint64_t &idCounter) {
 /// instantiated: this build's first fresh variable would alias the enclosing
 /// build's first. Starting past every id in hand is what makes fresh mean fresh.
 ///
-/// A variable spelled only inside an equality claim's endpoint is walk-opaque,
-/// so the scan reaches endpoints through walkTypesDeep -- the same universe
+/// An equality claim's endpoints are ordinary sub-elements, so the structural
+/// walk reaches a variable spelled only inside one -- the same universe
 /// respellEqualityEndpoints rewrites. Otherwise the mint would start past every
 /// id but those, and a fresh variable would alias one an endpoint holds.
 static uint64_t firstUnusedInferenceId(ArrayRef<Type> types) {
   uint64_t next = 0;
   for (Type ty : types)
-    walkTypesDeep(ty, [&](Type sub) {
+    ty.walk([&](Type sub) {
       if (auto var = dyn_cast<InferenceType>(sub))
         next = std::max(next, var.getUniqueId() + 1);
       return WalkResult::advance();

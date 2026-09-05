@@ -55,7 +55,7 @@ trait.impl private @Trait_impl_tuple for @Trait[tuple<!T1>] where [@Trait[!T1]] 
 
 !T2 = !trait.poly<2>
 
-func.func @poly_fn(%arg: tuple<!T2>, %t_claim: !trait.claim<@Trait[!T2]>) -> i32 {
+func.func private @poly_fn(%arg: tuple<!T2>, %t_claim: !trait.claim<@Trait[!T2]>) -> i32 {
   %d = trait.derive @Trait[tuple<!T2>] from @Trait_impl_tuple given(%t_claim) : (!trait.claim<@Trait[!T2]>)
   %res = trait.method.call %d @Trait[tuple<!T2>]::@method(%arg)
     : (tuple<!T2>) -> i32
@@ -77,7 +77,7 @@ func.func @test_basic_derive(%arg: tuple<i32>) -> i32 {
 
 !T3 = !trait.poly<3>
 
-func.func @double_wrap(%arg: tuple<tuple<!T3>>, %t_claim: !trait.claim<@Trait[!T3]>) -> i32 {
+func.func private @double_wrap(%arg: tuple<tuple<!T3>>, %t_claim: !trait.claim<@Trait[!T3]>) -> i32 {
   %d1 = trait.derive @Trait[tuple<!T3>] from @Trait_impl_tuple given(%t_claim) : (!trait.claim<@Trait[!T3]>)
   %d2 = trait.derive @Trait[tuple<tuple<!T3>>] from @Trait_impl_tuple given(%d1) : (!trait.claim<@Trait[tuple<!T3>]>)
   %res = trait.method.call %d2 @Trait[tuple<tuple<!T3>>]::@method(%arg)
@@ -130,7 +130,7 @@ trait.impl private @TraitB_from_TraitA for @TraitB[!T6] where [@TraitA[!T6]] {
 
 !T7 = !trait.poly<7>
 
-func.func @cross_trait(%arg: !T7, %a_claim: !trait.claim<@TraitA[!T7]>) -> i32 {
+func.func private @cross_trait(%arg: !T7, %a_claim: !trait.claim<@TraitA[!T7]>) -> i32 {
   %b = trait.derive @TraitB[!T7] from @TraitB_from_TraitA given(%a_claim) : (!trait.claim<@TraitA[!T7]>)
   %res = trait.method.call %b @TraitB[!T7]::@method_b(%arg)
     : (!T7) -> i32
@@ -176,7 +176,7 @@ trait.impl private @TraitC_impl_tuple for @TraitC[tuple<!T9>] where [@TraitA[!T9
 
 !T10 = !trait.poly<10>
 
-func.func @multi_assumption(%arg: tuple<!T10>,
+func.func private @multi_assumption(%arg: tuple<!T10>,
                              %a_claim: !trait.claim<@TraitA[!T10]>,
                              %c_claim: !trait.claim<@TraitC[!T10]>) -> i32 {
   %d = trait.derive @TraitC[tuple<!T10>] from @TraitC_impl_tuple given(%a_claim, %c_claim)

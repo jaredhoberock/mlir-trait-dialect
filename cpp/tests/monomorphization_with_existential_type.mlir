@@ -20,7 +20,7 @@ trait.impl private for @Get[i32] {
 // Monomorphization must unify and ground !R := i32.
 !A = !trait.poly<1>
 !R = !trait.poly<2>
-func.func @return_existential_type(%claim: !trait.claim<@Get[!A]>) -> !R {
+func.func private @return_existential_type(%claim: !trait.claim<@Get[!A]>) -> !R {
   %res = trait.method.call %claim @Get[!A]::@get()
     : () -> !R
   return %res : !R

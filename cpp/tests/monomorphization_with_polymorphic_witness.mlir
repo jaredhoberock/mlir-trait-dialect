@@ -23,9 +23,9 @@ trait.impl private @Trait_impl for @Trait[i64, !T2] {
 !T3 = !trait.poly<3>
 trait.proof private @Trait_proof proves @Trait_impl for @Trait[i64, tuple<!T3>] given []
 
-// CHECK-LABEL: func.func @test_
+// CHECK-LABEL: func.func private @test_
 // CHECK: call @Trait_impl_{{.*}}_method
-func.func @test(%c: !trait.claim<@Trait[i64, tuple<!T3>]>, %arg0: tuple<!T3>) -> i64 {
+func.func private @test(%c: !trait.claim<@Trait[i64, tuple<!T3>]>, %arg0: tuple<!T3>) -> i64 {
   %c0 = arith.constant 0 : i64
   %1 = trait.method.call %c @Trait[i64, tuple<!T3>]::@method(%c0, %arg0)
     : (i64, tuple<!T3>) -> i64

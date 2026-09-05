@@ -6,24 +6,24 @@
 // symbols and must be rejected.
 
 module {
-  trait.trait @T0[!trait.poly<0>] {
+  trait.trait private @T0[!trait.poly<0>] {
     trait.assoc_type @A
   }
 
-  trait.trait @T1[!trait.poly<1>] {}
+  trait.trait private @T1[!trait.poly<1>] {}
 
-  trait.trait @T2[!trait.poly<2>] where [@T1[!trait.proj<@T0[!trait.poly<2>], "A">]] {}
+  trait.trait private @T2[!trait.poly<2>] where [@T1[!trait.proj<@T0[!trait.poly<2>], "A">]] {}
 
-  trait.impl @T1_i64_a for @T1[i64] {}
-  trait.impl @T1_i64_b for @T1[i64] {}
+  trait.impl private @T1_i64_a for @T1[i64] {}
+  trait.impl private @T1_i64_b for @T1[i64] {}
 
-  trait.impl @T0_i64 for @T0[i64] {
+  trait.impl private @T0_i64 for @T0[i64] {
     trait.assoc_type @A = i64
   }
 
-  trait.impl @T2_i64 for @T2[i64] {}
+  trait.impl private @T2_i64 for @T2[i64] {}
 
-  trait.proof @T2_i64_p proves @T2_i64 for @T2[i64] given [@T1_i64_a]
+  trait.proof private @T2_i64_p proves @T2_i64 for @T2[i64] given [@T1_i64_a]
 
   func.func @f(
     %x: !trait.poly<3>,

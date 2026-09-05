@@ -22,7 +22,7 @@ trait.trait private @Sink[!T] {}
 
 trait.impl private @Sink_any for @Sink[!T] {}
 
-func.func @callee(%c: !trait.claim<@Sink[!trait.proj<@Outer[i64], "Item">]>,
+func.func private @callee(%c: !trait.claim<@Sink[!trait.proj<@Outer[i64], "Item">]>,
                   %x: !T) -> !T {
   return %x : !T
 }

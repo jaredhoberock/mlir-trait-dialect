@@ -2,7 +2,7 @@
 
 !T = !trait.poly<0>
 
-trait.trait @Trait[!T] {
+trait.trait private @Trait[!T] {
   trait.assoc_type @Output
   func.func private @method(
     !T,
@@ -11,7 +11,7 @@ trait.trait @Trait[!T] {
 }
 
 // expected-error @below {{projection normalization did not converge}}
-trait.impl @Trait_i32 for @Trait[i32] {
+trait.impl private @Trait_i32 for @Trait[i32] {
   trait.assoc_type @Output = tuple<!trait.proj<@Trait[i32], "Output">>
   func.func @method(
       %self: i32,

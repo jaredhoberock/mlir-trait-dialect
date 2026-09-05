@@ -36,7 +36,7 @@ func.func private @probes(%c: !trait.claim<@Box[!trait.proj<@Gen[i64], "B">] by 
   return %x : !T
 }
 
-func.func @wrap(%x: !T) -> !trait.proj<@Gen[!T], "B"> {
+func.func private @wrap(%x: !T) -> !trait.proj<@Gen[!T], "B"> {
   %r = ub.poison : !trait.proj<@Gen[!T], "B">
   return %r : !trait.proj<@Gen[!T], "B">
 }

@@ -13,23 +13,23 @@
 
 !S = !trait.poly<0>
 
-trait.trait @Needs[!S] {}
+trait.trait private @Needs[!S] {}
 
-trait.trait @Sibling[!S] {
+trait.trait private @Sibling[!S] {
   trait.assoc_type @Elem
 }
 
-trait.impl @Sibling_i64 for @Sibling[i64] where [@Needs[i64]] {
+trait.impl private @Sibling_i64 for @Sibling[i64] where [@Needs[i64]] {
   trait.assoc_type @Elem = i64
 }
 
-trait.trait @Host[!S] {
+trait.trait private @Host[!S] {
   trait.assoc_type @Out
   func.func private @make(!S) -> !trait.proj<@Sibling[!S], "Elem">
 }
 
-// CHECK: trait.impl @Host_i64
-trait.impl @Host_i64 for @Host[i64] where [@Needs[i64]]
+// CHECK: trait.impl private @Host_i64
+trait.impl private @Host_i64 for @Host[i64] where [@Needs[i64]]
     witnesses [#trait<witness !trait.proj<@Sibling[i64], "Elem"> = i64 by @Sibling_i64>] {
   trait.assoc_type @Out = i64
   func.func @make(%x: i64) -> i64 {

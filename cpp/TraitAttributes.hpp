@@ -10,13 +10,6 @@
 namespace mlir::trait {
   // forward declaration of TraitOp for Attributes.td/Attributes.hpp.inc
   class TraitOp;
-
-  // TypeEqualityAttr uses hand-written storage (defined in TraitAttributes.cpp)
-  // so its endpoint types are opaque to sub-element walking; the generated
-  // attribute class names the storage, so declare it first.
-  namespace detail {
-    struct TypeEqualityAttrStorage;
-  }
 }
 
 #define GET_ATTRDEF_CLASSES
@@ -35,17 +28,5 @@ namespace mlir::trait {
 /// argument list.
 FailureOr<TraitApplicationAttr>
 parseTraitApplicationBody(AsmParser &parser, FlatSymbolRefAttr traitName);
-
-inline Attribute applySubstitutionOnce(const llvm::DenseMap<Type,Type> &substitution,
-                                   Attribute attr) {
-  // set up type replacer
-  AttrTypeReplacer replacer;
-  replacer.addReplacement([&](Type t) -> std::optional<Type> {
-    auto it = substitution.find(t);
-    return (it != substitution.end()) ? std::optional<Type>(it->second) : std::nullopt;
-  });
-
-  return replacer.replace(attr);
-}
 
 } // end mlir::trait

@@ -15,18 +15,18 @@
 !F = !trait.poly<1>
 !R = !trait.poly<2>
 
-trait.trait @Base[!S] {
+trait.trait private @Base[!S] {
   trait.assoc_type @Assoc
 }
 
-trait.trait @Fn[!F, !R] {
+trait.trait private @Fn[!F, !R] {
   trait.assoc_type @Output
 }
 
-trait.trait @SameAs[!S, !R] {
+trait.trait private @SameAs[!S, !R] {
 }
 
-trait.trait @Trait[!S] where [@Base[!S]] {
+trait.trait private @Trait[!S] where [@Base[!S]] {
   func.func private @method(
     !S,
     !F,
@@ -38,11 +38,11 @@ trait.trait @Trait[!S] where [@Base[!S]] {
   ) -> i32
 }
 
-trait.impl @Base_i32 for @Base[i32] {
+trait.impl private @Base_i32 for @Base[i32] {
   trait.assoc_type @Assoc = i64
 }
 
-trait.impl @Trait_i32 for @Trait[i32]
+trait.impl private @Trait_i32 for @Trait[i32]
     witnesses [#trait<witness !trait.proj<@Base[i32], "Assoc"> = i64 by @Base_i32>] {
   func.func @method(
     %self: i32,
@@ -58,5 +58,5 @@ trait.impl @Trait_i32 for @Trait[i32]
   }
 }
 
-// CHECK-LABEL: trait.impl @Trait_i32
+// CHECK-LABEL: trait.impl private @Trait_i32
 // CHECK: func.func @method

@@ -9,9 +9,9 @@
 // parameter keeps the function polymorphic so the monomorph-claim ban does not
 // mask the real defect.
 
-trait.trait @T[!trait.poly<0>] {}
-trait.impl @T_i32 for @T[i32] {}
-trait.proof @T_i32_p proves @T_i32 for @T[i32] given []
+trait.trait private @T[!trait.poly<0>] {}
+trait.impl private @T_i32 for @T[i32] {}
+trait.proof private @T_i32_p proves @T_i32 for @T[i32] given []
 
 // expected-error @below {{declared claim in signature has an invalid proof}}
 func.func private @f(%x: !trait.poly<9>, %c: !trait.claim<@T[i64] by @T_i32_p>) {

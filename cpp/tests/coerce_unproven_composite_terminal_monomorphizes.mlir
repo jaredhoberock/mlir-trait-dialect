@@ -11,12 +11,12 @@
 // still carries a projection -- one whole lookup standing for a spelling that
 // carries a second lookup, both grounding at one monomorphization.
 
-trait.trait @Base[!trait.poly<0>] {
+trait.trait private @Base[!trait.poly<0>] {
   trait.assoc_type @A
   trait.assoc_type @B
 }
 
-trait.impl @Base_i64 for @Base[i64] {
+trait.impl private @Base_i64 for @Base[i64] {
   trait.assoc_type @A = tuple<i1>
   trait.assoc_type @B = i1
 }

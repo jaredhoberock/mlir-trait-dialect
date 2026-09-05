@@ -17,7 +17,6 @@ use mlir_sys::{
 
 unsafe extern "C" {
     fn traitRegisterDialect(ctx: MlirContext);
-    fn traitCreateMonomorphizePass() -> MlirPass;
     fn traitCreateInstantiateMonomorphsPass() -> MlirPass;
     fn traitCreateErasePolymorphsPass() -> MlirPass;
 
@@ -188,10 +187,6 @@ pub fn register(ctx: &Context) {
     unsafe { traitRegisterDialect(ctx.to_raw()) }
 }
 
-pub fn create_monomorphize_pass() -> Pass {
-    unsafe { Pass::from_raw(traitCreateMonomorphizePass()) }
-}
-
 /// The first half of monomorphization: instantiate the monomorphs every trait
 /// call needs and prove the monomorphic claims, leaving the polymorphic
 /// templates standing.
@@ -199,8 +194,10 @@ pub fn create_instantiate_monomorphs_pass() -> Pass {
     unsafe { Pass::from_raw(traitCreateInstantiateMonomorphsPass()) }
 }
 
-/// The second half of monomorphization: erase the polymorphic templates, the
-/// claims and projections, and the polymorphic function signatures.
+/// The second half of monomorphization: erase the claims, projections and the
+/// polymorphic function signatures they stood on, and hold what stands outside a
+/// template theory-free. It deletes no template; a `symbol-dce` after it
+/// collects the ones nothing names.
 pub fn create_erase_polymorphs_pass() -> Pass {
     unsafe { Pass::from_raw(traitCreateErasePolymorphsPass()) }
 }

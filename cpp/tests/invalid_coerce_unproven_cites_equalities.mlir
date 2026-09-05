@@ -7,7 +7,7 @@
 // monomorphization; its reconciling equalities are not yet citable, so citing
 // any equality is a contradiction the verifier refuses.
 
-trait.trait @Fold[!trait.poly<0>] {
+trait.trait private @Fold[!trait.poly<0>] {
   trait.assoc_type @Item
 }
 

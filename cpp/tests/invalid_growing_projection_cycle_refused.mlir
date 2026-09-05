@@ -12,18 +12,18 @@
 
 !T = !trait.poly<0>
 
-trait.trait @Grow[!T] {
+trait.trait private @Grow[!T] {
   trait.assoc_type @Output
 }
 
-trait.impl @Grow_i32 for @Grow[i32] {
+trait.impl private @Grow_i32 for @Grow[i32] {
   trait.assoc_type @Output = tuple<!trait.proj<@Grow[i32], "Output">, i32>
 }
 
 !W = !trait.poly<1>
-trait.trait @Wants[!W] {}
+trait.trait private @Wants[!W] {}
 
-trait.impl @Wants_impl for @Wants[!trait.proj<@Grow[i32], "Output">] {}
+trait.impl private @Wants_impl for @Wants[!trait.proj<@Grow[i32], "Output">] {}
 
 // expected-error @+1 {{projection normalization did not converge within 64 iterations}}
-trait.proof @p proves @Wants_impl for @Wants[!trait.proj<@Grow[i32], "Output">] given []
+trait.proof private @p proves @Wants_impl for @Wants[!trait.proj<@Grow[i32], "Output">] given []

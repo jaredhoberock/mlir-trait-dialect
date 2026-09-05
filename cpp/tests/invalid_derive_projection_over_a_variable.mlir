@@ -14,26 +14,26 @@
 // the way.
 
 !A = !trait.poly<0>
-trait.trait @Other[!A] {
+trait.trait private @Other[!A] {
   trait.assoc_type @X
 }
 
 !P = !trait.poly<1>
-trait.trait @Ten[!P] {
+trait.trait private @Ten[!P] {
   trait.assoc_type @Element
 }
 
-trait.impl @Ten_i64 for @Ten[i64] {
+trait.impl private @Ten_i64 for @Ten[i64] {
   trait.assoc_type @Element = !trait.proj<@Other[i64], "X">
 }
 
 !C = !trait.poly<2>
 !E = !trait.poly<3>
-trait.trait @Get[!C, !E] {
+trait.trait private @Get[!C, !E] {
 }
 
 !T = !trait.poly<4>
-trait.impl @Get_blanket for @Get[!T, !trait.proj<@Ten[!T], "Element">]
+trait.impl private @Get_blanket for @Get[!T, !trait.proj<@Ten[!T], "Element">]
     where [@Ten[!T]] {
 }
 

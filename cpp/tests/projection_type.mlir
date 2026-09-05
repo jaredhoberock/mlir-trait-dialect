@@ -3,12 +3,12 @@
 
 // RUN: mlir-opt %s | FileCheck %s
 
-// CHECK-LABEL: trait @Get
+// CHECK-LABEL: trait private @Get
 // CHECK: trait.assoc_type @Output
 // CHECK: func.func private @get(!trait.poly<0>) -> !trait.proj<@Get[!trait.poly<0>], "Output">
 
 !T = !trait.poly<0>
-trait.trait @Get[!T] {
+trait.trait private @Get[!T] {
   trait.assoc_type @Output
   func.func private @get(!T) -> !trait.proj<@Get[!T], "Output">
 }

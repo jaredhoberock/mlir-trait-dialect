@@ -302,10 +302,8 @@ ImplResolver::serveDemand(ClaimType demand, OpBuilder &builder) {
 }
 
 Type ImplResolver::resolveProjectionsIn(Type ty, OpBuilder &builder) {
-  AttrTypeReplacer replacer;
-  replacer.addReplacement([this, &builder](Type t) -> std::optional<Type> {
-    auto proj = dyn_cast<ProjectionType>(t);
-    if (!proj || isPolymorphicType(proj)) return std::nullopt;
+  AttrTypeReplacer replacer = makeGroundProjectionReplacer(
+      [this, &builder](ProjectionType proj) -> std::optional<Type> {
     auto resolved = resolveProjectionType(proj, builder);
     if (failed(resolved)) {
       // The failure is swallowed here -- the projection stays spelled as
@@ -324,7 +322,7 @@ Type ImplResolver::resolveProjectionsIn(Type ty, OpBuilder &builder) {
 
 AttrTypeReplacer ImplResolver::makeProvenClaimReplacer() const {
   MLIRContext *ctx = module.getContext();
-  AttrTypeReplacer replacer;
+  AttrTypeReplacer replacer = makeEndpointSealedReplacer();
   replacer.addReplacement(
       [this, ctx, recorded = memo.proofMemo.size()](ClaimType claim)
           -> std::optional<std::pair<Type, WalkResult>> {
@@ -339,9 +337,11 @@ AttrTypeReplacer ImplResolver::makeProvenClaimReplacer() const {
         // carries one. An equality-arm claim holds a type equality, never an
         // impl-resolution proof, so it is never respelled here; the arm is
         // dispatched before the application is read, which would otherwise
-        // assert.
+        // assert. It stands unchanged with its interior skipped: an endpoint
+        // that received a stamped proof is the state the equality constructor
+        // refuses.
         if (!claim.isApplication())
-          return std::nullopt;
+          return std::make_pair(Type(claim), WalkResult::skip());
         auto it = memo.proofMemo.find(claim.getTraitApplication());
         if (it == memo.proofMemo.end())
           return std::nullopt;
@@ -745,10 +745,8 @@ ReadOnlyImplResolver::resolveProjectionType(ProjectionType proj) const {
 }
 
 Type ReadOnlyImplResolver::resolveProjectionsIn(Type ty) const {
-  AttrTypeReplacer replacer;
-  replacer.addReplacement([this](Type t) -> std::optional<Type> {
-    auto proj = dyn_cast<ProjectionType>(t);
-    if (!proj || isPolymorphicType(proj)) return std::nullopt;
+  AttrTypeReplacer replacer = makeGroundProjectionReplacer(
+      [this](ProjectionType proj) -> std::optional<Type> {
     auto resolved = resolveProjectionType(proj);
     if (succeeded(resolved))
       return *resolved;

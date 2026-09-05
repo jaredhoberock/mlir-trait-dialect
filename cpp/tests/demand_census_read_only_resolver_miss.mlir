@@ -9,7 +9,7 @@
 // visible, in its own engine and under no arm: naming which way an application
 // missed is selection's, and this read never ran it.
 
-trait.trait @T[!trait.poly<0>] {
+trait.trait private @T[!trait.poly<0>] {
   trait.assoc_type @A
 }
 

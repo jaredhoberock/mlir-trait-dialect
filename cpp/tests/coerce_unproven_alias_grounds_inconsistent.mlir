@@ -9,12 +9,12 @@
 // reports the falsified obligation at the op once the module verifies. The
 // marker never tolerates a survivor that ground to a lie.
 
-trait.trait @Base[!trait.poly<0>] {
+trait.trait private @Base[!trait.poly<0>] {
   trait.assoc_type @A
   trait.assoc_type @B
 }
 
-trait.impl @Base_i64 for @Base[i64] {
+trait.impl private @Base_i64 for @Base[i64] {
   trait.assoc_type @A = i1
   trait.assoc_type @B = i32
 }

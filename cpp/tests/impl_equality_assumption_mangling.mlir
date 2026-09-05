@@ -13,26 +13,26 @@
 
 !S = !trait.poly<0>
 
-trait.trait @Eq[!S] {}
+trait.trait private @Eq[!S] {}
 
-trait.trait @FoldFn[!S] {
+trait.trait private @FoldFn[!S] {
   trait.assoc_type @Output
 }
 
-// CHECK: trait.impl for @FoldFn[!trait.poly<0>]where [@Eq[!trait.poly<0>], !trait.proj<@FoldFn[!trait.poly<0>], "Output"> = !trait.poly<0>]
-trait.impl for @FoldFn[!S] where [@Eq[!S], !trait.proj<@FoldFn[!S], "Output"> = !S] {
+// CHECK: trait.impl private for @FoldFn[!trait.poly<0>]where [@Eq[!trait.poly<0>], !trait.proj<@FoldFn[!trait.poly<0>], "Output"> = !trait.poly<0>]
+trait.impl private for @FoldFn[!S] where [@Eq[!S], !trait.proj<@FoldFn[!S], "Output"> = !S] {
   trait.assoc_type @Output = !S
 }
 
-// CHECK: trait.impl for @FoldFn[!trait.poly<0>]where [@Eq[!trait.poly<0>]] {
-trait.impl for @FoldFn[!S] where [@Eq[!S]] {
+// CHECK: trait.impl private for @FoldFn[!trait.poly<0>]where [@Eq[!trait.poly<0>]] {
+trait.impl private for @FoldFn[!S] where [@Eq[!S]] {
   trait.assoc_type @Output = !S
 }
 
 // The name below is exactly what generateSymName synthesizes from this impl's
 // self application and its single application assumption. That it is elided on
 // print proves the equality arm never perturbs an application-only impl's name.
-// CHECK: trait.impl for @FoldFn[i32]where [@Eq[i32]] {
-trait.impl @FoldFn_impl_h5097411fec491d52 for @FoldFn[i32] where [@Eq[i32]] {
+// CHECK: trait.impl private for @FoldFn[i32]where [@Eq[i32]] {
+trait.impl private @FoldFn_impl_h5097411fec491d52 for @FoldFn[i32] where [@Eq[i32]] {
   trait.assoc_type @Output = i32
 }

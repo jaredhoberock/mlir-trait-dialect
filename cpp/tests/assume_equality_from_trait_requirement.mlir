@@ -10,7 +10,7 @@
 
 !S = !trait.poly<0>
 
-trait.trait @FoldFn[!S] where [!trait.proj<@FoldFn[!S], "Output"> = !S] {
+trait.trait private @FoldFn[!S] where [!trait.proj<@FoldFn[!S], "Output"> = !S] {
   trait.assoc_type @Output
   func.func @fold(%x: !S) -> !S {
     %e = trait.assume !trait.proj<@FoldFn[!S], "Output"> = !S
@@ -18,5 +18,5 @@ trait.trait @FoldFn[!S] where [!trait.proj<@FoldFn[!S], "Output"> = !S] {
   }
 }
 
-// CHECK: trait.trait @FoldFn[!trait.poly<0>] where [!trait.proj<@FoldFn[!trait.poly<0>], "Output"> = !trait.poly<0>]
+// CHECK: trait.trait private @FoldFn[!trait.poly<0>] where [!trait.proj<@FoldFn[!trait.poly<0>], "Output"> = !trait.poly<0>]
 // CHECK: trait.assume !trait.proj<@FoldFn[!trait.poly<0>], "Output"> = !trait.poly<0>

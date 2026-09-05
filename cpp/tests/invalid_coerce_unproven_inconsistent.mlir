@@ -18,7 +18,7 @@ func.func @cross_group_collapse(%x: tuple<i64, i64>) -> i64 {
 
 // -----
 
-trait.trait @Fold[!trait.poly<0>] {
+trait.trait private @Fold[!trait.poly<0>] {
   trait.assoc_type @Item
 }
 
@@ -34,7 +34,7 @@ func.func @unabsorbable_delta(%x: tuple<!trait.proj<@Fold[i64], "Item">, i64>)
 
 // -----
 
-trait.trait @Fold[!trait.poly<0>] {
+trait.trait private @Fold[!trait.poly<0>] {
   trait.assoc_type @A
   trait.assoc_type @B
 }

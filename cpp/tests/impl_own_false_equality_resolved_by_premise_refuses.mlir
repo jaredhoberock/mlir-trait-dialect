@@ -13,22 +13,22 @@
 
 !S = !trait.poly<0>
 
-trait.trait @X[!S] {}
-trait.impl @X_i64 for @X[i64] {}
+trait.trait private @X[!S] {}
+trait.impl private @X_i64 for @X[i64] {}
 
-trait.trait @Sib[!S] {
+trait.trait private @Sib[!S] {
   trait.assoc_type @Elem
 }
-trait.impl @Sib_cond for @Sib[i64] where [@X[i64]] {
+trait.impl private @Sib_cond for @Sib[i64] where [@X[i64]] {
   trait.assoc_type @Elem = i64
 }
 
-trait.trait @T2[!S] {
+trait.trait private @T2[!S] {
   func.func private @id(!S) -> !S
 }
 
 // expected-error @below {{does not satisfy its own equality predicate #trait<equality!trait.proj<@Sib[i64], "Elem"> = i1>: 'i64' and 'i1' are not the same type}}
-trait.impl @T2_i64 for @T2[i64] where [!trait.proj<@Sib[i64], "Elem"> = i1]
+trait.impl private @T2_i64 for @T2[i64] where [!trait.proj<@Sib[i64], "Elem"> = i1]
     witnesses [#trait<witness !trait.proj<@Sib[i64], "Elem"> = i64 by @Sib_cond>,
                #trait<witness @X[i64] by @X_i64>] {
   func.func @id(%x: i64) -> i64 {

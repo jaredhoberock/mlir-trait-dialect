@@ -9,7 +9,7 @@
 // arm is refused by the verifier with a located diagnostic rather than asserting
 // inside the arm-asserting accessor.
 
-trait.trait @Trait[!trait.poly<0>] {
+trait.trait private @Trait[!trait.poly<0>] {
   func.func private @m(!trait.poly<0>) -> i1
 }
 

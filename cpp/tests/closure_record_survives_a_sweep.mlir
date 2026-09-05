@@ -35,17 +35,17 @@ trait.trait private @Q[!trait.poly<2>] {}
 trait.impl private @Q_impl for @Q[!trait.poly<3>] {}
 
 !T = !trait.poly<4>
-func.func @g(%c: !trait.claim<@P[!T]>, %x: !T) -> !T {
+func.func private @g(%c: !trait.claim<@P[!T]>, %x: !T) -> !T {
   return %x : !T
 }
 
 !U = !trait.poly<5>
-func.func @g2(%q: !trait.claim<@Q[!U]>, %c: !trait.claim<@P[!U]>, %x: !U) -> !U {
+func.func private @g2(%q: !trait.claim<@Q[!U]>, %c: !trait.claim<@P[!U]>, %x: !U) -> !U {
   return %x : !U
 }
 
 !V = !trait.poly<6>
-func.func @h(%c: !trait.claim<@P[!V]>, %x: !V) -> !V {
+func.func private @h(%c: !trait.claim<@P[!V]>, %x: !V) -> !V {
   %q = trait.derive @Q[!V] from @Q_impl given()
   %r = trait.func.call @g2(%q, %c, %x)
     : (!trait.claim<@Q[!V]>, !trait.claim<@P[!V]>, !V) -> !V

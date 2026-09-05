@@ -4,21 +4,21 @@
 !U = !trait.poly<1>
 !Output = !trait.proj<@Value[i64], "Output">
 
-trait.trait @Value[!T] {
+trait.trait private @Value[!T] {
   trait.assoc_type @Output
 }
 
-trait.impl @Value_i64 for @Value[i64] {
+trait.impl private @Value_i64 for @Value[i64] {
   trait.assoc_type @Output = i64
 }
 
-trait.trait @Trait[!T] {
+trait.trait private @Trait[!T] {
   trait.assoc_type @First
   trait.assoc_type @Second
   func.func private @get(!T) -> !trait.proj<@Trait[!T], "First">
 }
 
-trait.impl @Trait_impl for @Trait[!T] {
+trait.impl private @Trait_impl for @Trait[!T] {
   trait.assoc_type @First = !trait.proj<@Trait[!T], "Second">
   trait.assoc_type @Second = !Output
   func.func @get(%self: !T) -> !Output {
@@ -27,14 +27,14 @@ trait.impl @Trait_impl for @Trait[!T] {
   }
 }
 
-trait.trait @Fn[!T, !U] {
+trait.trait private @Fn[!T, !U] {
   trait.assoc_type @Output
 }
 
-trait.trait @FnUni[!T, !U] {
+trait.trait private @FnUni[!T, !U] {
 }
 
-trait.trait @Map[!T] {
+trait.trait private @Map[!T] {
   func.func private @map(
     !T,
     !U,
@@ -42,11 +42,11 @@ trait.trait @Map[!T] {
   ) -> !trait.proj<@Fn[!U, !T], "Output">
 }
 
-trait.impl @Fn_i1_i64 for @Fn[i1, i64] {
+trait.impl private @Fn_i1_i64 for @Fn[i1, i64] {
   trait.assoc_type @Output = !Output
 }
 
-trait.impl @FnUni_i1_i64 for @FnUni[i1, i64] where [@Fn[i1, i64]] {
+trait.impl private @FnUni_i1_i64 for @FnUni[i1, i64] where [@Fn[i1, i64]] {
 }
 
 // CHECK-LABEL: func.func @method_result_normalizes_chained_bindings

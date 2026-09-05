@@ -4,24 +4,24 @@
 // RUN: mlir-opt -pass-pipeline='builtin.module(resolve-impls-trait)' %s | FileCheck %s
 
 !A = !trait.poly<0>
-// CHECK: trait.trait @
-trait.trait @A[!A] {}
+// CHECK: trait.trait private @
+trait.trait private @A[!A] {}
 
 !Ai = !trait.poly<1>
-// CHECK: trait.impl @A_impl
-trait.impl @A_impl for @A[!Ai] {}
+// CHECK: trait.impl private @A_impl
+trait.impl private @A_impl for @A[!Ai] {}
 
 !B = !trait.poly<2>
-// CHECK: trait.trait @B
-trait.trait @B[!B] {}
+// CHECK: trait.trait private @B
+trait.trait private @B[!B] {}
 
 !Bi = !trait.poly<3>
-// CHECK: trait.impl @B_impl
-trait.impl @B_impl for @B[!Bi] {}
+// CHECK: trait.impl private @B_impl
+trait.impl private @B_impl for @B[!Bi] {}
 
 !C = !trait.poly<4>
-// CHECK: trait.trait @C
-trait.trait @C[!C] where [
+// CHECK: trait.trait private @C
+trait.trait private @C[!C] where [
   @A[!C]
 ] {
   func.func @method(%self: !C) -> i1 {
@@ -31,8 +31,8 @@ trait.trait @C[!C] where [
 }
 
 !Ci = !trait.poly<5>
-// CHECK: trait.impl @C_impl
-trait.impl @C_impl for @C[!Ci] where [
+// CHECK: trait.impl private @C_impl
+trait.impl private @C_impl for @C[!Ci] where [
   @B[!Ci]
 ] {}
 

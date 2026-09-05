@@ -51,7 +51,7 @@ trait.trait private @Run[!S] {
 // the call boundary, so the assume that supplies it has no other consumer and
 // survives to the leftover check as a monomorphic equality whose endpoint is a
 // composite carrying a projection.
-func.func @need(%v: i64, %e: !trait.claim<tuple<!trait.proj<@Inner[!S], "Item">> = tuple<i64>>) -> i64 {
+func.func private @need(%v: i64, %e: !trait.claim<tuple<!trait.proj<@Inner[!S], "Item">> = tuple<i64>>) -> i64 {
   return %v : i64
 }
 

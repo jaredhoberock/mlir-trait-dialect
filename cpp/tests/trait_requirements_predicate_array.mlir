@@ -12,9 +12,9 @@
 
 !S = !trait.poly<0>
 
-trait.trait @Eq[!S] {}
+trait.trait private @Eq[!S] {}
 
-// CHECK: trait.trait @FoldFn[!trait.poly<0>] where [@Eq[!trait.poly<0>], !trait.proj<@FoldFn[!trait.poly<0>], "Output"> = !trait.poly<0>]
-trait.trait @FoldFn[!S] where [@Eq[!S], !trait.proj<@FoldFn[!S], "Output"> = !S] {
+// CHECK: trait.trait private @FoldFn[!trait.poly<0>] where [@Eq[!trait.poly<0>], !trait.proj<@FoldFn[!trait.poly<0>], "Output"> = !trait.poly<0>]
+trait.trait private @FoldFn[!S] where [@Eq[!S], !trait.proj<@FoldFn[!S], "Output"> = !S] {
   trait.assoc_type @Output
 }

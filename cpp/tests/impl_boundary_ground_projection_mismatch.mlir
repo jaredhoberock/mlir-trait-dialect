@@ -13,22 +13,22 @@
 
 !S = !trait.poly<0>
 
-trait.trait @Sibling[!S] {
+trait.trait private @Sibling[!S] {
   trait.assoc_type @Elem
 }
 
-trait.impl @Sibling_i64 for @Sibling[i64] {
+trait.impl private @Sibling_i64 for @Sibling[i64] {
   trait.assoc_type @Elem = i32
 }
 
-trait.trait @Host[!S] {
+trait.trait private @Host[!S] {
   trait.assoc_type @Out
   func.func private @make(!S) -> !trait.proj<@Sibling[!S], "Elem">
 }
 
 // expected-error @below {{type mismatch: expected 'i32' but found 'i64'}}
 // expected-error @below {{has incompatible signature}}
-trait.impl @Host_i64 for @Host[i64]
+trait.impl private @Host_i64 for @Host[i64]
     witnesses [#trait<witness !trait.proj<@Sibling[i64], "Elem"> = i32 by @Sibling_i64>] {
   trait.assoc_type @Out = i64
   // The sibling projection resolves to i32, but this method returns i64.
