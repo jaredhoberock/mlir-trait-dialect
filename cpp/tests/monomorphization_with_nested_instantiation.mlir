@@ -19,11 +19,11 @@
 
 !T0 = !trait.poly<0>
 
-trait.trait @Tr [!T0] {
+trait.trait private @Tr [!T0] {
   func.func private @method(!T0) -> i32
 }
 
-trait.impl @Tr_i32 for @Tr[i32] {
+trait.impl private @Tr_i32 for @Tr[i32] {
   func.func @method(%self: i32) -> i32 {
     return %self : i32
   }

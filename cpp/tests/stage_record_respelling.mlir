@@ -15,21 +15,21 @@
 !T = !trait.poly<0>
 !U = !trait.poly<1>
 
-trait.trait @Convert[!T, !U] {
+trait.trait private @Convert[!T, !U] {
   func.func nested @convert(!U) -> !T
 }
 
-trait.impl @Convert_i32 for @Convert[i32, i32] {
+trait.impl private @Convert_i32 for @Convert[i32, i32] {
   func.func nested @convert(%x: i32) -> i32 {
     return %x : i32
   }
 }
 
-trait.trait @Choose[!T] {
+trait.trait private @Choose[!T] {
   func.func nested @choose(!T, !trait.claim<@Convert[!T, !T]>) -> !T
 }
 
-trait.impl @Choose_i32 for @Choose[i32] {
+trait.impl private @Choose_i32 for @Choose[i32] {
   func.func nested @choose(%a: i32, %same: !trait.claim<@Convert[i32, i32]>) -> i32 {
     %converted = trait.method.call %same @Convert[i32, i32]::@convert(%a)
       : (i32) -> i32
@@ -45,4 +45,4 @@ func.func @test(%x: i32) -> i32 {
   return %res : i32
 }
 
-// CHECK: trait-stage-record respelling round=0 bindings=2 ops=1 positions=2
+// CHECK: trait-stage-record respelling round=0 bindings=2 projections=2 ops=0 positions=0

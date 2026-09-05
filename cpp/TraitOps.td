@@ -73,7 +73,6 @@ def TraitOp : TraitDialectOp<"trait", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
   HasChildren<["func::FuncOp", "trait::AssocTypeOp"]>,
   HasGetModule,
-  HasParent<"ModuleOp">,
   IsolatedFromAbove,
   SingleBlock,
   Symbol,
@@ -150,7 +149,8 @@ def TraitOp : TraitDialectOp<"trait", [
   let arguments = (ins
     SymbolNameAttr:$sym_name,
     TypeArrayAttr:$type_params,
-    PredicateArrayAttr:$requirements
+    PredicateArrayAttr:$requirements,
+    OptionalAttr<StrAttr>:$sym_visibility
   );
 
   let regions = (region SizedRegion<1>:$body);
@@ -262,6 +262,9 @@ def TraitOp : TraitDialectOp<"trait", [
       $_state.addAttribute("sym_name", sym_name);
       $_state.addAttribute("type_params", type_params);
       $_state.addAttribute("requirements", requirements);
+      // A trait is a template that dies with monomorphization, so it is private
+      // from birth: erase collects it by liveness, never by kind.
+      $_state.addAttribute("sym_visibility", $_builder.getStringAttr("private"));
       ::mlir::Region *region = $_state.addRegion();
       region->emplaceBlock();
     }]>,
@@ -299,7 +302,6 @@ def ImplOp : TraitDialectOp<"impl", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
   HasChildren<["func::FuncOp", "trait::AssocTypeOp"]>,
   HasGetModule,
-  HasParent<"ModuleOp">,
   IsolatedFromAbove,
   SingleBlock,
   Symbol,
@@ -421,7 +423,8 @@ def ImplOp : TraitDialectOp<"impl", [
     TraitApplicationAttr:$self_application,
     PredicateArrayAttr:$assumptions,
     OptionalAttr<TypedArrayAttrBase<WitnessAttr,
-        "array of impl witnesses">>:$witnesses
+        "array of impl witnesses">>:$witnesses,
+    OptionalAttr<StrAttr>:$sym_visibility
   );
   let regions = (region SizedRegion<1>:$body);
 
@@ -591,6 +594,9 @@ def ImplOp : TraitDialectOp<"impl", [
       $_state.addAttribute("sym_name", $_builder.getStringAttr(sym_name));
       $_state.addAttribute("self_application", self_application);
       $_state.addAttribute("assumptions", assumptions);
+      // An impl is a template that dies with monomorphization, so it is private
+      // from birth: erase collects it by liveness, never by kind.
+      $_state.addAttribute("sym_visibility", $_builder.getStringAttr("private"));
       ::mlir::Region *region = $_state.addRegion();
       region->emplaceBlock();
     }]>,
@@ -1280,7 +1286,14 @@ def MethodCallOp : TraitDialectOp<"method.call", [
     // through it -- and the verifier checks the arm so an equality receiver is
     // diagnosed at its operand.
     Claim:$claim,
-    Variadic<AnyType>:$arguments
+    Variadic<AnyType>:$arguments,
+    // The method's own type variables and the arguments they take at this call
+    // (the trait's arguments already ride in the receiver claim's application),
+    // spelled explicitly so a sweep that normalizes the argument and result
+    // types cannot erase them. Absent on a call whose bindings are inferred from
+    // its signature (hand-written IR).
+    OptionalAttr<TypeArrayAttr>:$type_params,
+    OptionalAttr<TypeArrayAttr>:$type_args
   );
 
   // custom builders
@@ -1301,8 +1314,12 @@ def MethodCallOp : TraitDialectOp<"method.call", [
           methodRef
         );
 
-        // build the operation with the created nested reference
-        return build($_builder, $_state, results, qualifiedRef, claim, arguments);
+        // build the operation with the created nested reference. A call built
+        // this way infers its bindings from its signature, so the sweep-proof
+        // type_params/type_args arrays stay absent.
+        return build($_builder, $_state, results, qualifiedRef, claim, arguments,
+                     /*type_params=*/::mlir::ArrayAttr(),
+                     /*type_args=*/::mlir::ArrayAttr());
     }]>,
 
     // builder that takes trait and method names separately
@@ -1423,10 +1440,37 @@ def FuncCallOp : TraitDialectOp<"func.call", [
 
   let arguments = (ins
       FlatSymbolRefAttr:$callee_name,
-      Variadic<AnyType>:$operands
+      Variadic<AnyType>:$operands,
+      // The callee's own type variables and the arguments they take at this
+      // call, spelled explicitly so a sweep that normalizes the operand and
+      // result types cannot erase them: the two parallel arrays record the
+      // substitution a generic call names, which its spelled types once only
+      // implied. Absent on a call whose bindings are inferred from its
+      // signature (hand-written IR).
+      OptionalAttr<TypeArrayAttr>:$type_params,
+      OptionalAttr<TypeArrayAttr>:$type_args
   );
 
   let results = (outs Variadic<AnyType>);
+
+  // Construct a call whose bindings are inferred from its signature; the
+  // sweep-proof type_params/type_args arrays stay absent.
+  let builders = [
+    OpBuilder<(ins "::mlir::TypeRange":$resultTypes,
+                   "::mlir::FlatSymbolRefAttr":$calleeName,
+                   "::mlir::ValueRange":$operands), [{
+      build($_builder, $_state, resultTypes, calleeName, operands,
+            /*type_params=*/::mlir::ArrayAttr(), /*type_args=*/::mlir::ArrayAttr());
+    }]>,
+    OpBuilder<(ins "::mlir::TypeRange":$resultTypes,
+                   "::llvm::StringRef":$calleeName,
+                   "::mlir::ValueRange":$operands), [{
+      build($_builder, $_state, resultTypes,
+            ::mlir::FlatSymbolRefAttr::get($_builder.getContext(), calleeName),
+            operands, /*type_params=*/::mlir::ArrayAttr(),
+            /*type_args=*/::mlir::ArrayAttr());
+    }]>,
+  ];
 
   let extraClassDeclaration = [{
     FailureOr<func::FuncOp> getCallee(llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
@@ -1483,7 +1527,6 @@ def FuncCallOp : TraitDialectOp<"func.call", [
 
 def ProofOp : TraitDialectOp<"proof", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
-  HasParent<"ModuleOp">,
   IsolatedFromAbove,
   Symbol,
   Pure
@@ -1501,7 +1544,8 @@ def ProofOp : TraitDialectOp<"proof", [
     SymbolNameAttr:$sym_name,                // the name of this proof
     FlatSymbolRefAttr:$impl_name,            // the name of the impl being proven
     TraitApplicationAttr:$trait_application, // must match the impl's trait application
-    ArrayAttr:$subproof_names                // the names of prerequisite proofs
+    ArrayAttr:$subproof_names,               // the names of prerequisite proofs
+    OptionalAttr<StrAttr>:$sym_visibility
   );
 
   let extraClassDeclaration = [{
@@ -1553,7 +1597,23 @@ def ProofOp : TraitDialectOp<"proof", [
       llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
   }];
 
+  let skipDefaultBuilders = 1;
   let builders = [
+    // low-level builder mirroring the generated default's signature, so every
+    // mint site (ImplResolution.cpp, the convenience builder below) reaches it.
+    // A proof is a template that dies with monomorphization, so it is private
+    // from birth: erase collects it by liveness, never by kind.
+    OpBuilder<(ins "::mlir::StringAttr":$sym_name,
+                   "::mlir::FlatSymbolRefAttr":$impl_name,
+                   "::mlir::trait::TraitApplicationAttr":$trait_application,
+                   "::mlir::ArrayAttr":$subproof_names), [{
+      $_state.addAttribute("sym_name", sym_name);
+      $_state.addAttribute("impl_name", impl_name);
+      $_state.addAttribute("trait_application", trait_application);
+      $_state.addAttribute("subproof_names", subproof_names);
+      $_state.addAttribute("sym_visibility", $_builder.getStringAttr("private"));
+    }]>,
+
     // convenience: StringRef + ArrayRef<FlatSymbolRefAttr>
     OpBuilder<(ins "::mlir::StringRef":$sym_name,
                    "::mlir::FlatSymbolRefAttr":$impl_name,
@@ -1568,7 +1628,7 @@ def ProofOp : TraitDialectOp<"proof", [
     }]>
   ];
 
-  let assemblyFormat = "$sym_name `proves` $impl_name `for` $trait_application `given` $subproof_names attr-dict";
+  let assemblyFormat = "custom<VisibilityKeyword>($sym_visibility) $sym_name `proves` $impl_name `for` $trait_application `given` $subproof_names attr-dict";
   let hasVerifier = 1;
 }
 

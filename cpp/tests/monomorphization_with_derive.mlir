@@ -27,12 +27,12 @@
 
 !T0 = !trait.poly<0>
 
-trait.trait @Trait [!T0] {
+trait.trait private @Trait [!T0] {
   func.func private @method(!T0) -> i32
 }
 
 // Unconditional base impl for i32
-trait.impl @Trait_impl_i32 for @Trait[i32] {
+trait.impl private @Trait_impl_i32 for @Trait[i32] {
   func.func @method(%self: i32) -> i32 {
     %res = arith.constant 42 : i32
     return %res : i32
@@ -41,7 +41,7 @@ trait.impl @Trait_impl_i32 for @Trait[i32] {
 
 // Conditional impl: Trait[tuple<U>] given Trait[U]
 !T1 = !trait.poly<1>
-trait.impl @Trait_impl_tuple for @Trait[tuple<!T1>] where [@Trait[!T1]] {
+trait.impl private @Trait_impl_tuple for @Trait[tuple<!T1>] where [@Trait[!T1]] {
   func.func @method(%self: tuple<!T1>) -> i32 {
     %a = trait.assume @Trait[!T1]
     %res = arith.constant 1 : i32
@@ -100,17 +100,17 @@ func.func @test_chained_derive(%arg: tuple<tuple<i32>>) -> i32 {
 
 !T4 = !trait.poly<4>
 
-trait.trait @TraitA [!T4] {
+trait.trait private @TraitA [!T4] {
   func.func private @method_a(!T4) -> i32
 }
 
 !T5 = !trait.poly<5>
 
-trait.trait @TraitB [!T5] {
+trait.trait private @TraitB [!T5] {
   func.func private @method_b(!T5) -> i32
 }
 
-trait.impl @TraitA_impl_i32 for @TraitA[i32] {
+trait.impl private @TraitA_impl_i32 for @TraitA[i32] {
   func.func @method_a(%self: i32) -> i32 {
     %res = arith.constant 10 : i32
     return %res : i32
@@ -119,7 +119,7 @@ trait.impl @TraitA_impl_i32 for @TraitA[i32] {
 
 // TraitB[U] holds whenever TraitA[U] holds
 !T6 = !trait.poly<6>
-trait.impl @TraitB_from_TraitA for @TraitB[!T6] where [@TraitA[!T6]] {
+trait.impl private @TraitB_from_TraitA for @TraitB[!T6] where [@TraitA[!T6]] {
   func.func @method_b(%self: !T6) -> i32 {
     %a = trait.assume @TraitA[!T6]
     %res = trait.method.call %a @TraitA[!T6]::@method_a(%self)
@@ -152,11 +152,11 @@ func.func @test_cross_trait_derive(%arg: i32) -> i32 {
 
 !T8 = !trait.poly<8>
 
-trait.trait @TraitC [!T8] {
+trait.trait private @TraitC [!T8] {
   func.func private @method_c(!T8) -> i32
 }
 
-trait.impl @TraitC_impl_i32 for @TraitC[i32] {
+trait.impl private @TraitC_impl_i32 for @TraitC[i32] {
   func.func @method_c(%self: i32) -> i32 {
     %res = arith.constant 20 : i32
     return %res : i32
@@ -165,7 +165,7 @@ trait.impl @TraitC_impl_i32 for @TraitC[i32] {
 
 // TraitC[tuple<U>] holds whenever both TraitA[U] and TraitC[U] hold
 !T9 = !trait.poly<9>
-trait.impl @TraitC_impl_tuple for @TraitC[tuple<!T9>] where [@TraitA[!T9], @TraitC[!T9]] {
+trait.impl private @TraitC_impl_tuple for @TraitC[tuple<!T9>] where [@TraitA[!T9], @TraitC[!T9]] {
   func.func @method_c(%self: tuple<!T9>) -> i32 {
     %a = trait.assume @TraitA[!T9]
     %c = trait.assume @TraitC[!T9]

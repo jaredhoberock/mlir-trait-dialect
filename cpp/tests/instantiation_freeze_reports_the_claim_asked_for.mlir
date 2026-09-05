@@ -29,9 +29,9 @@
 
 !T = !trait.poly<0>
 
-trait.trait @Gen[!T] {}
+trait.trait private @Gen[!T] {}
 
-func.func private @declares(!trait.claim<@Gen[i64]>, !T) -> !T
+func.func private @declares(!trait.claim<@Gen[i64]>, i64) -> i64
 
 func.func @main() -> i64 {
   %x = arith.constant 1 : i64

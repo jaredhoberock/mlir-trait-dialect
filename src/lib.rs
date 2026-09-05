@@ -42,11 +42,15 @@ unsafe extern "C" {
                                method_name: MlirStringRef,
                                claim: MlirValue,
                                arguments: *const MlirValue, num_arguments: isize,
-                               result_types: *const MlirType, num_results: isize) -> MlirOperation;
+                               result_types: *const MlirType, num_results: isize,
+                               type_params: *const MlirType, type_args: *const MlirType,
+                               num_type_args: isize) -> MlirOperation;
     fn traitFuncCallOpCreate(loc: MlirLocation,
                              callee: MlirStringRef,
                              arguments: *const MlirValue, num_arguments: isize,
-                             result_types: *const MlirType, num_results: isize) -> MlirOperation;
+                             result_types: *const MlirType, num_results: isize,
+                             type_params: *const MlirType, type_args: *const MlirType,
+                             num_type_args: isize) -> MlirOperation;
     fn traitAllegeOpCreate(loc: MlirLocation,
                            trait_app: MlirAttribute) -> MlirOperation;
     fn traitAllegeUnsafeOpCreate(loc: MlirLocation,
@@ -371,7 +375,10 @@ pub fn method_call<'c>(loc: Location<'c>,
                        claim: Value<'c,'_>,
                        arguments: &[Value<'c,'_>],
                        result_types: &[Type<'c>],
+                       type_params: &[Type<'c>],
+                       type_args: &[Type<'c>],
 ) -> Operation<'c> {
+    debug_assert_eq!(type_params.len(), type_args.len());
     unsafe { Operation::from_raw(traitMethodCallOpCreate(
         loc.to_raw(),
         StringRef::new(trait_name).to_raw(),
@@ -381,6 +388,9 @@ pub fn method_call<'c>(loc: Location<'c>,
         arguments.len() as isize,
         result_types.as_ptr() as *const _,
         result_types.len() as isize,
+        type_params.as_ptr() as *const _,
+        type_args.as_ptr() as *const _,
+        type_params.len() as isize,
     ))}
 }
 
@@ -388,7 +398,10 @@ pub fn func_call<'c>(loc: Location<'c>,
                      callee: &str,
                      arguments: &[Value<'c,'_>],
                      result_types: &[Type<'c>],
+                     type_params: &[Type<'c>],
+                     type_args: &[Type<'c>],
 ) -> Operation<'c> {
+    debug_assert_eq!(type_params.len(), type_args.len());
     unsafe { Operation::from_raw(traitFuncCallOpCreate(
         loc.to_raw(),
         StringRef::new(callee).to_raw(),
@@ -396,6 +409,9 @@ pub fn func_call<'c>(loc: Location<'c>,
         arguments.len() as isize,
         result_types.as_ptr() as *const _,
         result_types.len() as isize,
+        type_params.as_ptr() as *const _,
+        type_args.as_ptr() as *const _,
+        type_params.len() as isize,
     ))}
 }
 

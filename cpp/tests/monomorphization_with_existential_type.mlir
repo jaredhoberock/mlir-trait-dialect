@@ -4,12 +4,12 @@
 // RUN: mlir-opt -pass-pipeline='builtin.module(monomorphize-trait)' %s | FileCheck %s
 
 !T = !trait.poly<0>
-trait.trait @Get[!T] {
+trait.trait private @Get[!T] {
   // method returns the trait's type parameter
   func.func private @get() -> !T
 }
 
-trait.impl for @Get[i32] {
+trait.impl private for @Get[i32] {
   func.func @get() -> i32 {
     %c = arith.constant 0 : i32
     return %c : i32

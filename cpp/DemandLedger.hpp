@@ -374,10 +374,10 @@ enum class DemandSkip : uint8_t {
   /// trait's own requirements, an impl's assumptions, the projections in either
   /// header -- stands for good and is nothing to serve.
   Infrastructure,
-  /// Those, and a still-polymorphic template function besides. What it spells is
-  /// resolved when the template is cloned for a concrete instance, not by a
-  /// round.
-  InfrastructureAndTemplates,
+  /// Those and a still-polymorphic template function besides. A template's
+  /// spelling is resolved when it is cloned for a concrete instance, not by a
+  /// round. This is the foreign code no round of this compilation serves.
+  Foreign,
 };
 
 /// The demands `module` spells: its monomorphic projections, and the unproven

@@ -49,8 +49,8 @@ func.func @main() {
   return
 }
 
-// CHECK: trait.proof @A_polymorphic_impl_{{.*}}_p
-// CHECK: trait.proof @B_tuple_impl_arity_1_{{.*}}_p
-// CHECK: trait.proof @A_polymorphic_impl_{{.*}}_p
-// CHECK: trait.proof @B_tuple_impl_arity_2_{{.*}}_p
-// CHECK: trait.proof @A_polymorphic_impl_{{.*}}_p
+// CHECK: trait.proof private @A_polymorphic_impl_{{.*}}_p
+// CHECK: trait.proof private @B_tuple_impl_arity_1_{{.*}}_p
+// CHECK: trait.proof private @A_polymorphic_impl_{{.*}}_p
+// CHECK: trait.proof private @B_tuple_impl_arity_2_{{.*}}_p
+// CHECK: trait.proof private @A_polymorphic_impl_{{.*}}_p

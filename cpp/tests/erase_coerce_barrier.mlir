@@ -29,4 +29,4 @@ func.func @dead_reflexive_respell(%b: !trait.claim<@Bound[i64]>) {
   return
 }
 
-trait.trait @Bound[!trait.poly<0>] {}
+trait.trait private @Bound[!trait.poly<0>] {}

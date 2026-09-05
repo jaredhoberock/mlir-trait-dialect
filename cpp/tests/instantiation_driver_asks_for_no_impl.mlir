@@ -14,7 +14,7 @@
 
 !T = !trait.poly<0>
 
-trait.trait @Gen[!T] {
+trait.trait private @Gen[!T] {
   trait.assoc_type @A
 }
 

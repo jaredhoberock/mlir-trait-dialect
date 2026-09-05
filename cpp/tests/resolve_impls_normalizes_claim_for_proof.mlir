@@ -11,31 +11,31 @@
 
 !L = !trait.poly<0>
 !R = !trait.poly<1>
-trait.trait @Eq[!L, !R] {
+trait.trait private @Eq[!L, !R] {
   func.func nested @use()
 }
 
-trait.trait @Ord[!trait.poly<4>] {}
+trait.trait private @Ord[!trait.poly<4>] {}
 
-trait.impl @Ord_i64 for @Ord[i64] {}
+trait.impl private @Ord_i64 for @Ord[i64] {}
 
 !T = !trait.poly<2>
-trait.impl @Eq_same for @Eq[!T, !T] where [@Ord[!T]] {
+trait.impl private @Eq_same for @Eq[!T, !T] where [@Ord[!T]] {
   func.func nested @use() {
     return
   }
 }
 
 !A = !trait.poly<3>
-trait.trait @Has[!A] {
+trait.trait private @Has[!A] {
   trait.assoc_type @Shape
 }
 
-trait.impl @Has_i32 for @Has[i32] {
+trait.impl private @Has_i32 for @Has[i32] {
   trait.assoc_type @Shape = i64
 }
 
-trait.impl @Has_f32 for @Has[f32] {
+trait.impl private @Has_f32 for @Has[f32] {
   trait.assoc_type @Shape = i64
 }
 

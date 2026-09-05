@@ -11,27 +11,27 @@
 // impl is spelled against, and head matching would find no candidate.
 
 !T = !trait.poly<0>
-trait.trait @Ten[!T] {
+trait.trait private @Ten[!T] {
   trait.assoc_type @Element
 }
 
-trait.impl @Ten_base for @Ten[i64] {
+trait.impl private @Ten_base for @Ten[i64] {
   trait.assoc_type @Element = i32
 }
 
 // The view forwards its element through its base.
-trait.impl @Ten_view for @Ten[f32] {
+trait.impl private @Ten_view for @Ten[f32] {
   trait.assoc_type @Element = !trait.proj<@Ten[i64], "Element">
 }
 
 !S = !trait.poly<1>
 !O = !trait.poly<2>
-trait.trait @Get[!S, !O] {
+trait.trait private @Get[!S, !O] {
   func.func nested @use()
 }
 
 !U = !trait.poly<3>
-trait.impl @Get_blanket for @Get[!U, !trait.proj<@Ten[!U], "Element">] where [@Ten[!U]] {
+trait.impl private @Get_blanket for @Get[!U, !trait.proj<@Ten[!U], "Element">] where [@Ten[!U]] {
   func.func nested @use() {
     return
   }

@@ -38,15 +38,57 @@ namespace {
 struct RewriteEventCounts : public RewriterBase::Listener {
   using RewriterBase::Listener::notifyOperationReplaced;
 
-  void notifyOperationInserted(Operation *, OpBuilder::InsertPoint) override {
+  void notifyOperationInserted(Operation *op, OpBuilder::InsertPoint) override {
     ++inserted;
+    noteWritten(op);
   }
-  void notifyOperationModified(Operation *) override { ++modified; }
-  void notifyOperationReplaced(Operation *, ValueRange) override { ++replaced; }
-  void notifyOperationErased(Operation *) override { ++erased; }
+  void notifyOperationModified(Operation *op) override {
+    ++modified;
+    noteWritten(op);
+  }
+  void notifyOperationReplaced(Operation *op, ValueRange) override {
+    ++replaced;
+    noteWritten(op);
+  }
+  void notifyOperationErased(Operation *op) override {
+    ++erased;
+    liveWritten.erase(op);
+  }
+
   void notifyPatternEnd(const Pattern &, LogicalResult status) override {
     if (succeeded(status))
       ++applications;
+  }
+
+  /// Says where a driver may record what it writes. Without it nothing is
+  /// recorded, which is what a caller that reads no record wants.
+  void recordWritesUnder(Block *body) { moduleBody = body; }
+
+  /// The module-level ops a rewrite reached since the last drain and that still
+  /// stand, in the module's own order. Draining starts a fresh record.
+  ///
+  /// A rewrite is recorded against the module-level op containing it because
+  /// that is the unit a further pass over the module must reconsider: a value
+  /// the rewrite produced is read by its neighbours, and under `ExistingOps`
+  /// strictness a neighbour is reconsidered only if it is handed to the driver.
+  /// An op erased since is not here -- the erase notification drops it -- so no
+  /// address this answers with has been freed.
+  SmallVector<Operation *> takeWrittenModuleLevelOps(Block *body) {
+    DenseMap<Operation *, unsigned> position;
+    unsigned index = 0;
+    for (Operation &op : *body)
+      position[&op] = index++;
+    SmallVector<Operation *> standing;
+    for (Operation *op : writtenOrder)
+      if (liveWritten.contains(op) && position.count(op))
+        standing.push_back(op);
+    llvm::sort(standing, [&](Operation *a, Operation *b) {
+      return position[a] < position[b];
+    });
+    standing.erase(llvm::unique(standing), standing.end());
+    writtenOrder.clear();
+    liveWritten.clear();
+    return standing;
   }
 
   /// Writes this run's line, naming the driver that raised the events and the
@@ -71,32 +113,26 @@ struct RewriteEventCounts : public RewriterBase::Listener {
   uint64_t replaced = 0;
   uint64_t erased = 0;
   uint64_t applications = 0;
+
+private:
+  /// Records `op`'s module-level ancestor, the op standing directly in the
+  /// module's body that contains it.
+  void noteWritten(Operation *op) {
+    if (!moduleBody)
+      return;
+    Operation *current = op;
+    while (current && current->getBlock() != moduleBody)
+      current = current->getParentOp();
+    if (!current)
+      return;
+    if (liveWritten.insert(current).second)
+      writtenOrder.push_back(current);
+  }
+
+  Block *moduleBody = nullptr;
+  SmallVector<Operation *> writtenOrder;
+  DenseSet<Operation *> liveWritten;
 };
-
-/// Runs one greedy pattern driver over `root` in `round`, reporting the rewrite
-/// events it raised under the name `driver` and saying through `changed`
-/// whether it rewrote anything at all.
-///
-/// No listener is installed unless the counts will be reported, so a run that
-/// nobody is counting costs exactly what it did before; the driver answers
-/// whether it changed the IR on its own.
-LogicalResult applyPatternsGreedilyAndReport(Operation *root,
-                                             RewritePatternSet &&patterns,
-                                             GreedyRewriteConfig config,
-                                             StringRef driver, unsigned round,
-                                             bool *changed = nullptr) {
-  RewriteEventCounts events;
-  bool reporting = DemandLedger::isRecordingEnabled();
-  if (reporting)
-    config.setListener(&events);
-
-  LogicalResult result =
-      applyPatternsGreedily(root, std::move(patterns), config, changed);
-
-  if (reporting)
-    events.report(driver, round, config.getMaxNumRewrites());
-  return result;
-}
 
 /// The rewrite budget a driver over `module` runs under.
 ///
@@ -112,7 +148,126 @@ int64_t rewriteBudgetFor(ModuleOp module) {
   return opCount * 1024 + 4096;
 }
 
+/// True when `op` is itself a generic template: a trait, impl, or proof
+/// declaration, or a still-polymorphic function. Instantiation carries a
+/// template to no target; it dies when its concrete instances are cloned. The
+/// shell op is a template too, so this answers true for the declaration
+/// itself, not only for code nested inside one.
+static bool isTemplate(Operation *op) {
+  if (isa<TraitOp, ImplOp, ProofOp>(op))
+    return true;
+  if (auto func = dyn_cast<func::FuncOp>(op))
+    return isPolymorphicType(Type(func.getFunctionType()));
+  return false;
+}
+
+/// Appends to `ops` the ops of `root`'s subtree a rewrite driver may reach,
+/// `root` itself included: every op outside a template. One pre-order walk skips
+/// a template whole -- its shell and its interior. With `includeTemplateShells`
+/// a template's shell op is kept while its interior is still skipped, for the
+/// one bridge pattern that anchors on a trait declaration.
+static void collectRewritableOpsIn(Operation *root, bool includeTemplateShells,
+                                   SmallVectorImpl<Operation *> &ops) {
+  root->walk<WalkOrder::PreOrder>([&](Operation *op) {
+    if (isTemplate(op)) {
+      if (includeTemplateShells)
+        ops.push_back(op);
+      return WalkResult::skip();
+    }
+    ops.push_back(op);
+    return WalkResult::advance();
+  });
+}
+
+/// The ops in `module` a rewrite driver may reach, in the module's own order.
+static SmallVector<Operation *>
+collectRewritableOps(ModuleOp module, bool includeTemplateShells) {
+  SmallVector<Operation *> ops;
+  for (Operation &op : *module.getBody())
+    collectRewritableOpsIn(&op, includeTemplateShells, ops);
+  return ops;
+}
+
+/// Runs `patterns` greedily over the ops `module` reaches (collectRewritableOps),
+/// then over the module-level ops each iteration wrote to, until an iteration
+/// writes to none. `ExistingOps` strictness admits nothing a run creates, so a
+/// clone is invisible to the iteration that made it and the iteration after is
+/// what reaches it; the default strictness would follow a rewritten producer
+/// into a region, and `ExistingAndNewOps` would enqueue every op a clone's
+/// construction creates. A function no iteration wrote to stands where a
+/// previous iteration drove it to a fixed point, and what a pattern reads
+/// besides the op itself is the recorded facts, whose movement the round loop
+/// outside answers by running the driver again over the whole module; so
+/// carrying only the written functions forward is the same fixed point reached
+/// proportionally to the work rather than to the module. The rewrite budget
+/// spans the whole run: the listener counts applications across iterations, each
+/// iteration receives the remainder, and an exhausted remainder or a
+/// non-converged iteration fails as one whole-module run does.
+static LogicalResult applyPatternsOverReachableOps(ModuleOp module,
+                                                   RewritePatternSet &&patterns,
+                                                   GreedyRewriteConfig config,
+                                                   StringRef driver,
+                                                   unsigned round, bool *changed,
+                                                   bool includeTemplateShells) {
+  FrozenRewritePatternSet frozen(std::move(patterns));
+  RewriteEventCounts events;
+  events.recordWritesUnder(module.getBody());
+  config.setListener(&events);
+  config.setStrictness(GreedyRewriteStrictness::ExistingOps);
+  config.setScope(&module.getBodyRegion());
+  int64_t budget = config.getMaxNumRewrites();
+
+  bool anyChange = false;
+  LogicalResult result = success();
+  bool firstIteration = true;
+  while (succeeded(result)) {
+    SmallVector<Operation *> ops;
+    if (firstIteration) {
+      ops = collectRewritableOps(module, includeTemplateShells);
+    } else {
+      // The module-level ops the previous iteration wrote to are the whole of
+      // the work left for this one: a clone it minted, and every function a
+      // rewrite landed in, whose neighbouring ops read what that rewrite
+      // produced.
+      for (Operation *op : events.takeWrittenModuleLevelOps(module.getBody()))
+        collectRewritableOpsIn(op, includeTemplateShells, ops);
+    }
+    firstIteration = false;
+    if (ops.empty())
+      break;
+    if (budget >= 0) {
+      int64_t remaining = budget - int64_t(events.applications);
+      if (remaining < 0) {
+        result = failure();
+        break;
+      }
+      config.setMaxNumRewrites(remaining);
+    }
+    bool iterationChanged = false;
+    result = applyOpPatternsGreedily(ops, frozen, config, &iterationChanged);
+    anyChange |= iterationChanged;
+    if (!iterationChanged)
+      break;
+  }
+
+  if (changed)
+    *changed = anyChange;
+  if (DemandLedger::isRecordingEnabled())
+    events.report(driver, round, budget);
+  return result;
+}
+
 } // namespace
+
+bool isForeign(Operation *op) {
+  if (isTemplate(op))
+    return true;
+  for (Operation *ancestor = op->getParentOp(); ancestor;
+       ancestor = ancestor->getParentOp())
+    if (isTemplate(ancestor))
+      return true;
+  return false;
+}
 
 LogicalResult convertToTrait(ModuleOp module, unsigned round,
                              bool *changed = nullptr) {
@@ -129,29 +284,15 @@ LogicalResult convertToTrait(ModuleOp module, unsigned round,
   GreedyRewriteConfig config;
   config.setMaxNumRewrites(rewriteBudgetFor(module));
 
-  // apply patterns
-  if (failed(applyPatternsGreedilyAndReport(module, std::move(patterns), config,
-                                            "convert-to-trait", round, changed)))
+  // apply patterns. Shells are included: tuple's mapper-trait bridge anchors on
+  // a trait declaration, the one place a pattern is handed a template shell.
+  if (failed(applyPatternsOverReachableOps(module, std::move(patterns), config,
+                                           "convert-to-trait", round, changed,
+                                           /*includeTemplateShells=*/true)))
     return module.emitError(
         "convert-to-trait did not converge: rewrite budget exceeded, which "
         "indicates a non-confluent pattern pair cycling on a type spelling");
 
-  return success();
-}
-
-//===----------------------------------------------------------------------===//
-// verifyMonomorphs
-//===----------------------------------------------------------------------===//
-
-LogicalResult verifyMonomorphs(ModuleOp module) {
-  // forbid monomorphic functions from mentioning !trait.claim in their signatures
-  for (auto f : module.getOps<func::FuncOp>()) {
-    auto fnTy = f.getFunctionType();
-    if (isMonomorphicType(fnTy)) {
-      if (containsType<ClaimType>(fnTy))
-        return f.emitOpError() << "free function monomorphs may not contain !trait.claim types";
-    }
-  }
   return success();
 }
 
@@ -380,15 +521,36 @@ static uint64_t respellProvenClaimsInPlace(const ImplResolver &resolver,
                                            Operation *root, unsigned round,
                                            std::optional<Location> *anchor = nullptr) {
   size_t recordedProofs = resolver.getRecordedProofCount();
-  if (recordedProofs == 0) return 0;
+  size_t recordedImpls = resolver.getRecordedImplCount();
+  if (recordedProofs == 0 && recordedImpls == 0) return 0;
   AttrTypeReplacer replacer = resolver.makeProvenClaimReplacer();
+  // Beside the proofs it respells, the sweep resolves recorded ground
+  // projections, so an interior op stays consistent with an outside value a
+  // pattern retyped -- a tuple.make or arith.select whose result the outside
+  // spells resolved. Equality endpoints are opaque to the structural walk, so a
+  // projection sealed in one is left untouched.
+  ReadOnlyImplResolver reading(resolver);
+  replacer.addReplacement([&reading](Type t) -> std::optional<Type> {
+    auto proj = dyn_cast<ProjectionType>(t);
+    if (!proj || isPolymorphicType(proj))
+      return std::nullopt;
+    auto resolved = reading.resolveProjectionType(proj);
+    if (succeeded(resolved))
+      return *resolved;
+    return std::nullopt;
+  });
   std::optional<AttrTypeReplacer> substituted =
       makeSubstitutionCheckReplacer(resolver);
 
   uint64_t opsRespelled = 0;
   uint64_t positionsRespelled = 0;
 
-  root->walk([&](Operation *op) {
+  root->walk<WalkOrder::PreOrder>([&](Operation *op) -> WalkResult {
+    // Nothing writes into a template: its spelling is resolved when it is
+    // cloned for a concrete instance, not by this sweep.
+    if (isTemplate(op))
+      return WalkResult::skip();
+
     DemandFrame frame(op->getLoc());
 
     if (substituted)
@@ -423,6 +585,7 @@ static uint64_t respellProvenClaimsInPlace(const ImplResolver &resolver,
       if (anchor)
         *anchor = op->getLoc();
     }
+    return WalkResult::advance();
   });
 
   // A sweep records no proof, so the count of facts does not move for it; what
@@ -436,6 +599,7 @@ static uint64_t respellProvenClaimsInPlace(const ImplResolver &resolver,
     llvm::errs() << stageRecordRespellingPrefix
                  << " round=" << round
                  << " bindings=" << recordedProofs
+                 << " projections=" << recordedImpls
                  << " ops=" << opsRespelled
                  << " positions=" << positionsRespelled << "\n";
   return positionsRespelled;
@@ -565,10 +729,6 @@ FailureOr<ImplResolver> resolveImpls(ModuleOp module) {
   if (failed(convertToTrait(module, /*round=*/0)))
     return failure();
 
-  // verify that monomorphs are legal
-  if (failed(verifyMonomorphs(module)))
-    return failure();
-
   // verify traits are acyclic
   if (failed(verifyAcyclicTraits(module)))
     return failure();
@@ -598,17 +758,23 @@ FailureOr<ImplResolver> resolveImpls(ModuleOp module) {
     RewritePatternSet patterns(ctx);
     patterns.add<ProveClaimResultPattern>(ctx, resolver);
 
-    // rewrite trait.allege -> trait.witness
-    if (failed(applyPatternsGreedilyAndReport(module, std::move(patterns),
-                                              GreedyRewriteConfig(),
-                                              "resolve-impls", /*round=*/0)))
+    // rewrite trait.allege -> trait.witness. Shells are excluded: an allege
+    // inside a polymorphic function is resolved when that function is cloned
+    // for a concrete instance, so this driver never turns one into a witness.
+    if (failed(applyPatternsOverReachableOps(module, std::move(patterns),
+                                             GreedyRewriteConfig(),
+                                             "resolve-impls", /*round=*/0,
+                                             /*changed=*/nullptr,
+                                             /*includeTemplateShells=*/false)))
       return failure();
   }
 
-  // assert that no monomorphic trait.allege remain
+  // assert that no monomorphic trait.allege remain outside a template. A
+  // template's allege is resolved when the template is cloned for a concrete
+  // instance.
   bool hasLeftovers = false;
   module.walk([&](AllegeOp op) {
-    if (!op.getClaim().isMonomorphic()) return;
+    if (!op.getClaim().isMonomorphic() || isForeign(op)) return;
     hasLeftovers = true;
     op.emitError() << "unresolved monomorphic trait.allege after resolve-impls";
   });
@@ -802,6 +968,44 @@ FailureOr<CallSubstitution> CallSubstitution::forCall(
   return subst;
 }
 
+/// True when `root` carries an obligation instantiation has not yet discharged:
+/// an unproven monomorphic application claim, or a ground projection (one whose
+/// base is concrete and so resolves in place). These are exactly the demands the
+/// two leftover checks refuse if one still stands on a result or block-argument
+/// type at instantiate's exit, and, standing outside a template, what keeps
+/// instantiation pending for the erase gate.
+static bool typeCarriesStandingObligation(Type root) {
+  bool found = false;
+  root.walk([&](Type sub) {
+    if (auto claim = dyn_cast<ClaimType>(sub)) {
+      if (claim.isApplication() && claim.isMonomorphic() && !claim.isProven())
+        found = true;
+    } else if (auto proj = dyn_cast<ProjectionType>(sub)) {
+      if (!isPolymorphicType(Type(proj)))
+        found = true;
+    }
+  });
+  return found;
+}
+
+/// True when `op` stands outside a template and one of its result or
+/// block-argument types carries a standing obligation. This is one op's share of
+/// the two leftover checks' scan, reused so the pending-expansion predicate reads
+/// the same demand they refuse.
+static bool opCarriesStandingObligation(Operation *op) {
+  if (isForeign(op))
+    return false;
+  for (Type t : op->getResultTypes())
+    if (typeCarriesStandingObligation(t))
+      return true;
+  for (Region &region : op->getRegions())
+    for (Block &block : region)
+      for (BlockArgument arg : block.getArguments())
+        if (typeCarriesStandingObligation(arg.getType()))
+          return true;
+  return false;
+}
+
 namespace {
 
 /// The common product of lowering either kind of trait call site: the callee
@@ -811,52 +1015,6 @@ struct SpecializedCallTarget {
   func::FuncOp callee;
   SmallVector<Type> resultTypes;
 };
-
-/// Checks the operand precondition shared by trait function and method calls.
-static LogicalResult requireMonomorphicOperands(Operation *op,
-                                                ValueRange operands,
-                                                PatternRewriter &rewriter) {
-  for (Value operand : operands)
-    if (isPolymorphicType(operand.getType()))
-      return rewriter.notifyMatchFailure(op, "operands are still polymorphic");
-  return success();
-}
-
-/// Defers call lowering while any operand is a monomorphic application claim
-/// that is not yet proven.
-///
-/// Lowering a call specializes its callee against the call's argument claims,
-/// and the callee body may discharge those claims through their proofs. If the
-/// callee is specialized while an argument claim is still unproven, the clone
-/// bakes in an unprovable parameter and any method call the body makes through
-/// it cannot be resolved. An argument claim's proof can land after the call
-/// first becomes eligible -- a later round resolves the impl backing it -- so
-/// waiting for every monomorphic operand claim to be proven makes callee
-/// specialization independent of the order in which operand proofs settle. This
-/// mirrors the
-/// existing requirement that a method call's self claim be proven before it
-/// lowers. An operand claim that never becomes proven is caught downstream: the
-/// leftover check keys on op results, so an unprovable claim that is an op
-/// result is diagnosed there, while a claim that exists only as the block
-/// argument of a still-polymorphic template is pruned by full monomorphization
-/// instead.
-///
-/// This gate governs the application arm only. An equality-arm claim carries no
-/// proof: its evidence is the value itself, established at the witness
-/// or contractually assumed at the parameter. There is nothing to await, so an
-/// equality operand is settled the moment the call is otherwise eligible, and
-/// the callee specializes against it directly. A monomorphic equality whose
-/// endpoints never ground-resolve to one spelling is caught by the leftover
-/// check downstream, exactly as an unprovable application claim is.
-static LogicalResult requireProvenClaimOperands(Operation *op,
-                                                ValueRange operands,
-                                                PatternRewriter &rewriter) {
-  for (Value operand : operands)
-    if (auto claim = dyn_cast<ClaimType>(operand.getType()))
-      if (claim.isApplication() && claim.isMonomorphic() && !claim.isProven())
-        return rewriter.notifyMatchFailure(op, "operand claim is still unproven");
-  return success();
-}
 
 /// Builds and closes the call-site substitution, uses it to specialize the
 /// callee against `formalTy`, and computes the concrete result types for the
@@ -923,20 +1081,14 @@ struct FuncCallOpLowering : public OpRewritePattern<FuncCallOp> {
     : OpRewritePattern(ctx), reading(reading) {}
 
   LogicalResult matchAndRewrite(FuncCallOp callOp, PatternRewriter &rewriter) const override {
-    if (failed(requireMonomorphicOperands(callOp, callOp.getOperands(), rewriter)))
-      return failure();
-    if (failed(requireProvenClaimOperands(callOp, callOp.getOperands(), rewriter)))
-      return failure();
+    // The one readiness law, checked before any demand is raised: monomorphic
+    // operands, proven operand claims, a callee at module scope with a
+    // signature.
+    if (!isRewritableGenericCall(callOp))
+      return rewriter.notifyMatchFailure(callOp, "not a rewritable generic call");
 
-    // func.call requires the call and callee to be in the same scope;
-    // specialized callees are emitted at module scope, so only lower calls
-    // already in the module's symbol table.
-    Operation *nearestTable = SymbolTable::getNearestSymbolTable(callOp);
-    if (!nearestTable || !isa<ModuleOp>(nearestTable))
-      return rewriter.notifyMatchFailure(callOp, "call is still nested in a method");
-
-    // Read ahead of the substitution, which reads it again: a call whose callee
-    // has no signature to specialize against raises no demand either way.
+    // The predicate confirmed the callee's signature exists; read it again to
+    // specialize against, as the substitution below reads it.
     auto formalTy = callOp.getCalleeFunctionType();
     if (failed(formalTy))
       return rewriter.notifyMatchFailure(callOp, "couldn't get callee function type");
@@ -948,10 +1100,10 @@ struct FuncCallOpLowering : public OpRewritePattern<FuncCallOp> {
       return failure();
 
     // Operands pass through untouched (as in MethodCallOpLowering). The
-    // requireProvenClaimOperands guard above has already established that every
-    // operand claim is proven, so specialization never bakes an unprovable
-    // claim parameter into the callee: an operand application claim reaches this
-    // point only after the impl backing it resolved and its proof settled.
+    // readiness law above established that every operand claim is proven, so
+    // specialization never bakes an unprovable claim parameter into the callee:
+    // an operand application claim reaches this point only after the impl backing
+    // it resolved and its proof settled.
     rewriter.replaceOpWithNewOp<func::CallOp>(
       callOp,
       target->callee.getSymName(),
@@ -970,15 +1122,14 @@ struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
     : OpRewritePattern(ctx), reading(reading) {}
 
   LogicalResult matchAndRewrite(MethodCallOp op, PatternRewriter &rewriter) const override {
-    if (failed(requireMonomorphicOperands(op, op.getOperands(), rewriter)))
-      return failure();
-    if (!op.getClaimType().isProven())
-      return rewriter.notifyMatchFailure(op, "claim is still unproven");
-    if (failed(requireProvenClaimOperands(op, op.getArguments(), rewriter)))
-      return failure();
+    // The one readiness law, checked before any demand is raised: monomorphic
+    // operands, a proven receiver claim, proven argument claims, a method with a
+    // signature.
+    if (!isRewritableGenericCall(op))
+      return rewriter.notifyMatchFailure(op, "not a rewritable generic call");
 
-    // Read ahead of the substitution, which reads it again: a call whose method
-    // has no signature to specialize against raises no demand either way.
+    // The predicate confirmed the method's signature exists; read it again to
+    // specialize against, as the substitution below reads it.
     auto formalTy = op.getMethodFunctionType();
     if (failed(formalTy))
       return rewriter.notifyMatchFailure(op, "couldn't get method function type");
@@ -1108,13 +1259,9 @@ struct ResolveProjectionsPattern : public RewritePattern {
 
   LogicalResult matchAndRewrite(Operation *op,
                                 PatternRewriter &rewriter) const override {
-    // Skip trait infrastructure ops and their children -
-    // they may legitimately contain projections
-    if (isa<TraitOp, ImplOp, ProofOp>(op))
-      return failure();
-    if (op->getParentOfType<TraitOp>() || op->getParentOfType<ImplOp>())
-      return failure();
-
+    // A template's projections are resolved when the template is cloned for a
+    // concrete instance, not here; the worklist never collects a template's
+    // interior, so this pattern sees only code carried to a target.
     if (!opMentionsType<ProjectionType>(op))
       return failure();
 
@@ -1799,141 +1946,6 @@ static LogicalResult reduceGroundEqualityAssume(
   return success();
 }
 
-/// Resolve to a fixed point every ground projection standing in `type` through
-/// the facts impl selection has recorded, leaving polymorphic projections and
-/// any projection nothing recorded untouched. This is the read-only counterpart
-/// of the hop chain above: it never drives impl selection.
-static Type resolveGroundProjectionsRecorded(Type type, ModuleOp module,
-                                             const ReadOnlyImplResolver &reading) {
-  return resolveGroundProjections(type, module, [&](ProjectionType proj) -> std::optional<Type> {
-    if (auto recorded = reading.resolveProjectionType(proj); succeeded(recorded))
-      return *recorded;
-    return std::nullopt;
-  });
-}
-
-/// Bridge each standing derive operand that projection resolution drifted from
-/// the specialized assumption its cited impl requires.
-///
-/// A trait.derive discharges its impl's application-arm assumptions by exact
-/// spelling: each operand claim must equal the assumption the impl requires
-/// under the derived claim's specialization. The rounds above resolve a
-/// where-clause projection over impl variables to its ground spelling on the
-/// operand value: `ResolveProjectionsPattern` drifts the application,
-/// provenness-blind, and `respellProvenClaimsInPlace` then stamps a proof onto
-/// that drifted claim exactly when the resolver's memo proves its resolved form,
-/// leaving an unprovable one unproven. Meanwhile the derive verifier recomputes
-/// the assumption by pure substitution and leaves the projection symbolic -- so
-/// an operand the rounds touched drifts from the expectation with no proof at
-/// stake, only resolution grade. This mints the coerce that carries the operand
-/// back to the expected spelling, citing the same per-hop proj-resolve
-/// witnesses the equality-assume reduction mints, so the verifier's exact
-/// compare holds with no verifier change.
-///
-/// Runs once at the instantiate epilogue, after the leftover-claim and
-/// projection walks: the coerce result carries the unresolved projection the
-/// expectation spells, which those walks would otherwise reject, and the
-/// witnesses it cites carry claims those walks would judge. Every standing
-/// derive is a candidate, template-hosted or not -- the exact-spelling check is
-/// armed for all of them, unlike the leftover-claim and projection checks the
-/// sibling walks suppress inside templates. The derives are gathered before any
-/// is bridged, because minting a witness's premises may generate an impl and
-/// insert it at the module body.
-///
-/// Only a proven operand is bridged, because provenness is exactly the
-/// resolver's verdict on the drift. Projection resolution drifts the application
-/// provenness-blind; the proof-stamping sweep then marks a drifted claim
-/// proven exactly when its resolved form is provable, so a proven drift is one
-/// the resolver proved and is sound to bridge. A bare unproven operand is a
-/// drift the resolver could not prove, and is left for the verifier to refuse:
-/// provable drift is bridged, unprovable drift is left to the verifier. A proven
-/// drift whose resolution does not reach the operand's spelling is a genuine
-/// mismatch, reported here with a located diagnostic rather than bridged.
-static LogicalResult reconcileDerivedAssumptions(
-    ModuleOp module, const ReadOnlyImplResolver &reading, ImplResolver &resolver) {
-  SmallVector<DeriveOp> derives;
-  module.walk([&](DeriveOp derive) { derives.push_back(derive); });
-
-  // Premise proofs and any impl a witness generates go to the module body,
-  // through a builder whose insertions are observed -- impl generation requires
-  // one. The tally is not read; the listener's presence is the precondition.
-  RoundInsertionCounts reconcileInsertions;
-  OpBuilder proofBuilder(module.getContext());
-  proofBuilder.setListener(&reconcileInsertions);
-  proofBuilder.setInsertionPointToEnd(module.getBody());
-  ProjectionSettleContext settle{reading, resolver, proofBuilder, module};
-
-  bool sawUnbridgeableDrift = false;
-  for (DeriveOp derive : derives) {
-    ImplOp impl = derive.getImplOp();
-    if (!impl)
-      continue; // an unresolved impl reference is the verifier's to report
-    auto expected =
-        impl.specializeAssumptionsAsClaimsFor(derive.getDerivedClaim());
-    if (failed(expected) || expected->size() != derive.getAssumptions().size())
-      continue; // an ill-formed specialization or arity is the verifier's
-
-    // Witnesses and the coerce insert at the derive, so they dominate it.
-    OpBuilder witnessBuilder(derive);
-    for (auto [i, exp] : llvm::enumerate(*expected)) {
-      Value operand = derive.getAssumptions()[i];
-      auto operandClaim = cast<ClaimType>(operand.getType());
-      if (operandClaim.getTraitApplication() == exp.getTraitApplication())
-        continue; // the operand already carries exactly the expected spelling
-      if (!operandClaim.isProven())
-        continue; // not a respell-produced drift; the verifier refuses it
-
-      // The reconcilable drift is exactly a projection the expectation still
-      // spells resolving to the ground the operand now carries. Confirm the
-      // resolution meets the operand before minting anything.
-      auto resolved = dyn_cast<ClaimType>(
-          resolveGroundProjectionsRecorded(Type(exp), module, reading));
-      if (!resolved ||
-          resolved.getTraitApplication() != operandClaim.getTraitApplication()) {
-        derive.emitOpError()
-            << "assumption operand #" << i << " drifted to " << operandClaim
-            << " from the specialized assumption " << exp
-            << ": resolving that "
-               "assumption's projections does not reach the operand's spelling";
-        sawUnbridgeableDrift = true;
-        continue;
-      }
-
-      // Mint one proj-resolve witness chain per projection the expectation
-      // spells, then bridge the operand to the expectation citing them.
-      SmallVector<ProjectionType> projections;
-      Type(exp).walk([&](Type sub) {
-        if (auto proj = dyn_cast<ProjectionType>(sub))
-          if (!isPolymorphicType(proj))
-            projections.push_back(proj);
-      });
-      ProjectionResolveMintContext mintCtx{settle, derive.getLoc(),
-                                           witnessBuilder};
-      SmallVector<Value> witnesses;
-      bool minted = true;
-      for (ProjectionType proj : projections)
-        if (failed(
-                mintProjectionResolveChain(Type(proj), mintCtx, witnesses))) {
-          minted = false;
-          break;
-        }
-      if (!minted || witnesses.empty()) {
-        derive.emitOpError()
-            << "assumption operand #" << i << " drifted to " << operandClaim
-            << " from the specialized assumption " << exp
-            << ": no obligation-holding "
-               "impl resolves its projections";
-        sawUnbridgeableDrift = true;
-        continue;
-      }
-      Value bridged = CoerceOp::create(witnessBuilder, derive.getLoc(),
-                                       Type(exp), operand, witnesses)
-                          .getResult();
-      derive->setOperand(i, bridged);
-    }
-  }
-  return success(!sawUnbridgeableDrift);
-}
 
 } // end namespace
 
@@ -2173,9 +2185,9 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
         // nothing to impl selection, so nothing under this reaches the generator
         // arm; the freeze is what says so.
         ImplGenerationFreeze freeze(*resolver, "the instantiation driver");
-        LogicalResult instantiated = applyPatternsGreedilyAndReport(
+        LogicalResult instantiated = applyPatternsOverReachableOps(
             module, std::move(patterns), config, "instantiate-monomorphs", round,
-            &work.instantiated);
+            &work.instantiated, /*includeTemplateShells=*/false);
         work.instantiateMinted = resolver->getFactEpoch() - epochAtInstantiate;
         // A generation ask under the freeze already emitted its report; fail the
         // stage rather than converge over the broken contract (the greedy driver
@@ -2246,7 +2258,7 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
   // walk holds the module open.
   SmallVector<std::pair<Operation *, ClaimType>> monomorphicClaims;
   module.walk<WalkOrder::PreOrder>([&](Operation *op) {
-    if (isa<TraitOp, ImplOp, ProofOp>(op))
+    if (isTemplate(op))
       return WalkResult::skip();
     for (Value result : op->getResults()) {
       result.getType().walk([&](Type sub) {
@@ -2313,11 +2325,8 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
   // and its whole subtree is skipped.
   bool sawUnresolvedProjection = false;
   module.walk<WalkOrder::PreOrder>([&](Operation *op) {
-    if (isa<TraitOp, ImplOp, ProofOp>(op))
+    if (isTemplate(op))
       return WalkResult::skip();
-    if (auto func = dyn_cast<func::FuncOp>(op))
-      if (isPolymorphicType(Type(func.getFunctionType())))
-        return WalkResult::skip();
     auto report = [&](Type root) {
       root.walk([&](Type sub) {
         auto proj = dyn_cast<ProjectionType>(sub);
@@ -2339,6 +2348,21 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
   if (sawUnresolvedProjection)
     return failure();
 
+  // A generic call the rounds could still rewrite but did not is a call whose
+  // callee specialization fail-closed -- an external polymorphic declaration has
+  // no body to clone. Standing outside every template, it is named here rather
+  // than left for a later step to meet a call it cannot lower.
+  bool sawSurvivingCall = false;
+  module.walk([&](Operation *op) {
+    if (isForeign(op) || !isRewritableGenericCall(op))
+      return;
+    op->emitOpError()
+        << "rewritable generic call survived instantiate-monomorphs";
+    sawSurvivingCall = true;
+  });
+  if (sawSurvivingCall)
+    return failure();
+
   // The two walks above reject a demand still spelled on an op result or block
   // argument. A demand can also stand at a place they do not reach -- a claim on
   // a block argument the leftover-claim walk passes over, or a projection stored
@@ -2348,13 +2372,6 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
   // demand the stage undertook to serve and did not.
   if (failed(resolver->getDemandLedger().checkStandingDemandsServed(module,
                                                                     served)))
-    return failure();
-
-  // With every demand settled and every projection resolved, bridge each derive
-  // operand the respell rounds drifted from the assumption its impl requires.
-  // This runs last because the bridges it mints carry the unresolved projection
-  // spelling the two walks above reject; the module verifies with them in place.
-  if (failed(reconcileDerivedAssumptions(module, reading, *resolver)))
     return failure();
 
   // ModuleOp's own verifier hook runs here over the module shell -- it does not
@@ -2562,11 +2579,78 @@ static LogicalResult erasePolymorphs(ModuleOp module) {
 
 }
 
+bool isRewritableGenericCall(Operation *op) {
+  // The single readiness law the two call-lowering patterns gate on, so the
+  // patterns and the instantiate step's discharge read one spelling. A
+  // trait.func.call is rewritable when its operands are monomorphic, its operand
+  // claims proven, it stands at module scope (func.call requires the callee in
+  // the same symbol table), and its callee has a signature to specialize
+  // against. A trait.method.call is rewritable when its operands are
+  // monomorphic, its receiver claim proven, its argument claims proven, and its
+  // method has a signature; it lowers in place to a trait.func.call and needs no
+  // scope of its own. None of these reads raises a demand. The
+  // substitution the patterns then run may still find a callee whose result
+  // stays polymorphic -- a call whose instantiation the arguments do not
+  // determine -- and refuse it fail-closed; that is the rewrite discovering
+  // non-instantiability, not a readiness the program well-formed enough to
+  // reach here can fail.
+  auto operandsMonomorphic = [](ValueRange operands) {
+    for (Value operand : operands)
+      if (isPolymorphicType(operand.getType()))
+        return false;
+    return true;
+  };
+  auto operandClaimsProven = [](ValueRange operands) {
+    for (Value operand : operands)
+      if (auto claim = dyn_cast<ClaimType>(operand.getType()))
+        if (claim.isApplication() && claim.isMonomorphic() && !claim.isProven())
+          return false;
+    return true;
+  };
+  auto atModuleScope = [](Operation *op) {
+    Operation *nearestTable = SymbolTable::getNearestSymbolTable(op);
+    return nearestTable && isa<ModuleOp>(nearestTable);
+  };
+  if (auto call = dyn_cast<FuncCallOp>(op))
+    return operandsMonomorphic(call.getOperands()) &&
+           operandClaimsProven(call.getOperands()) && atModuleScope(op) &&
+           succeeded(call.getCalleeFunctionType());
+  if (auto call = dyn_cast<MethodCallOp>(op))
+    return operandsMonomorphic(call.getOperands()) &&
+           call.getClaimType().isProven() &&
+           operandClaimsProven(call.getArguments()) &&
+           succeeded(call.getMethodFunctionType());
+  return false;
+}
+
+bool isPendingExpansion(ModuleOp module) {
+  // Instantiation is pending while some non-foreign op is a generic call it can
+  // rewrite, or carries a standing obligation: an unproven monomorphic
+  // application claim or an unresolved ground projection it has not yet
+  // discharged (the demands the two leftover checks refuse). A foreign op is a
+  // template or code inside one -- neither of which instantiation carries to a
+  // target.
+  bool pending = false;
+  module.walk([&](Operation *op) {
+    if (isForeign(op))
+      return WalkResult::advance();
+    if (isRewritableGenericCall(op) || opCarriesStandingObligation(op)) {
+      pending = true;
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+  return pending;
+}
+
 LogicalResult monomorphize(ModuleOp module) {
   if (failed(instantiateMonomorphs(module,
                                    /*askImplSelectionForImpls=*/false)))
     return failure();
 
+  // Erase is not gated inside this fused step: it deletes every template and
+  // impl eagerly. A readiness gate on erase arrives when the driver runs it as
+  // its own step, once the split lands (Trait.cpp).
   return erasePolymorphs(module);
 }
 

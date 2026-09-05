@@ -30,8 +30,8 @@ func.func @dead_divergent(%v: i32, %e: !trait.claim<i32 = i16>) {
 
 // -----
 
-trait.trait @Bound[!trait.poly<0>] {}
-trait.trait @Assoc[!trait.poly<0>] { trait.assoc_type @Output }
+trait.trait private @Bound[!trait.poly<0>] {}
+trait.trait private @Assoc[!trait.poly<0>] { trait.assoc_type @Output }
 
 // A marked claim-to-claim respell, valid when the coerce verifies (its projection could
 // converge), that reaches the barrier with the projection unresolved: its

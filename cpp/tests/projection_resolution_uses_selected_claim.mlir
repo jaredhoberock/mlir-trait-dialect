@@ -9,19 +9,19 @@
 // the original source spelling would leave the inner projection behind.
 
 !T = !trait.poly<0>
-trait.trait @Id[!T] {
+trait.trait private @Id[!T] {
   trait.assoc_type @Out
 }
 
-trait.impl @Id_i32 for @Id[i32] {
+trait.impl private @Id_i32 for @Id[i32] {
   trait.assoc_type @Out = i64
 }
 
-trait.trait @Has[!T] {
+trait.trait private @Has[!T] {
   trait.assoc_type @Shape
 }
 
-trait.impl @Has_blanket for @Has[!T] {
+trait.impl private @Has_blanket for @Has[!T] {
   trait.assoc_type @Shape = !T
 }
 
@@ -35,11 +35,11 @@ func.func @nested_projection(
 }
 
 !U = !trait.poly<1>
-trait.trait @Wrap[!T] {
+trait.trait private @Wrap[!T] {
   trait.assoc_type @Out<[!U]>
 }
 
-trait.impl @Wrap_i1 for @Wrap[i1] {
+trait.impl private @Wrap_i1 for @Wrap[i1] {
   trait.assoc_type @Out<[!U]> = !U
 }
 

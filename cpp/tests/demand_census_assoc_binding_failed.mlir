@@ -19,17 +19,17 @@
 
 !T = !trait.poly<0>
 
-trait.trait @Gen[!T] {
+trait.trait private @Gen[!T] {
   trait.assoc_type @A
 }
 
-trait.impl @Gen_i64 for @Gen[i64] {
+trait.impl private @Gen_i64 for @Gen[i64] {
   trait.assoc_type @A = i32
 }
 
-trait.trait @Box[!T] {}
+trait.trait private @Box[!T] {}
 
-trait.impl @Box_i32 for @Box[i32] {}
+trait.impl private @Box_i32 for @Box[i32] {}
 
 func.func private @probes(%c: !trait.claim<@Box[!trait.proj<@Gen[i64], "B">] by @Box_i32>,
                           %x: !T) -> !T {
@@ -51,11 +51,11 @@ func.func @main() -> !trait.proj<@Gen[i64], "B"> {
 // CHECK: trait-stage-record round index=1
 // CHECK-SAME: collected=1 no-candidate-impl=0 multiple-candidate-impls=0 other-arms=1 without-arm=0
 // CHECK-SAME: served=0 declined=1 deferred=1
-// CHECK: trait-demand-census demand flags=real drainable=yes observations=9 depth=0
+// CHECK: trait-demand-census demand flags=real drainable=yes observations=8 depth=0
 // CHECK-SAME: kinds=lookup-miss,unifier-acceptance,read-only-resolver arms=assoc-binding-failed
 // CHECK-SAME: type=!trait.proj<@Gen[i64], "B">
 // CHECK: trait-demand-census engine lookup-miss keys=1 observations=5 real=5 speculative=0 probe-internal=0
-// CHECK: trait-demand-census engine read-only-resolver keys=1 observations=3 real=3 speculative=0 probe-internal=0
+// CHECK: trait-demand-census engine read-only-resolver keys=1 observations=2 real=2 speculative=0 probe-internal=0
 // CHECK: trait-demand-census arm assoc-binding-failed keys=1 observations=5 real=5 speculative=0 probe-internal=0
-// CHECK: trait-demand-census summary keys=1 observations=9 drainable-keys=1
+// CHECK: trait-demand-census summary keys=1 observations=8 drainable-keys=1
 // CHECK: trait-stage-record digest value={{.*}} selected-impls=1 refusals-no-candidate=0 refusals-ambiguous=0

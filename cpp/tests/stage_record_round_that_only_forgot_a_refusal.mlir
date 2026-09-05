@@ -19,21 +19,21 @@
 
 !T = !trait.poly<0>
 
-trait.trait @Other[!T] {
+trait.trait private @Other[!T] {
   trait.assoc_type @X
 }
 
-trait.trait @Gen[!T] {
+trait.trait private @Gen[!T] {
   trait.assoc_type @A
 }
 
-trait.impl @Gen_via for @Gen[!trait.proj<@Other[i64], "X">] {
+trait.impl private @Gen_via for @Gen[!trait.proj<@Other[i64], "X">] {
   trait.assoc_type @A = i32
 }
 
-trait.trait @Box[!T] {}
+trait.trait private @Box[!T] {}
 
-trait.impl @Box_i32 for @Box[i32] {}
+trait.impl private @Box_i32 for @Box[i32] {}
 
 func.func private @reads(%c: !trait.claim<@Box[!trait.proj<@Gen[i64], "A">] by @Box_i32>,
                          %x: !T) -> !T {
@@ -48,7 +48,7 @@ func.func @asks() -> !trait.proj<@Other[i64], "X"> {
 
 // CHECK: trait-stage-record round index=1
 // CHECK-SAME: served=1
-// CHECK-SAME: instantiated=yes
+// CHECK-SAME: instantiated=no
 // CHECK-NOT: trait-stage-record rewrites driver=instantiate-monomorphs round=2
 // CHECK: trait-stage-record round index=2
 // CHECK-SAME: collected=0

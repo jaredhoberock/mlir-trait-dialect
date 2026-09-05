@@ -27,11 +27,11 @@
 
 !T = !trait.poly<0>
 
-trait.trait @Greet[!T] {
+trait.trait private @Greet[!T] {
   func.func private @greet(!T) -> i32
 }
 
-trait.impl @Greet_i32 for @Greet[i32] {
+trait.impl private @Greet_i32 for @Greet[i32] {
   func.func @greet(%x: i32) -> i32 {
     return %x : i32
   }
@@ -45,14 +45,14 @@ func.func @main(%x: i32) -> i32 {
 
 // CHECK: trait-stage-record rewrites driver=convert-to-trait round=0 inserted=0 modified=0 replaced=0 erased=0 applications=0 budget=14336 headroom=14336
 // CHECK: trait-stage-record rewrites driver=resolve-impls round=0 inserted=1 modified=1 replaced=1 erased=1 applications=1 budget=unbounded headroom=unbounded
-// CHECK: trait-stage-record respelling round=0 bindings=1 ops=0 positions=0
+// CHECK: trait-stage-record respelling round=0 bindings=1 projections=1 ops=0 positions=0
 // CHECK: trait-stage-record rewrites driver=convert-to-trait round=1 inserted=0 modified=0 replaced=0 erased=0 applications=0 budget=14336 headroom=14336
 // CHECK-NOT: trait-stage-record respelling round=1
 // CHECK: trait-stage-record rewrites driver=instantiate-monomorphs round=1 inserted=4 modified=3 replaced=2 erased=2 applications=2 budget=14336 headroom=14334
 // CHECK: trait-stage-record round index=1 bridged=no collected=0
 // CHECK-SAME: served=0 declined=0 deferred=0
 // CHECK-SAME: instantiated=yes
-// CHECK: trait-stage-record respelling round=2 bindings=1 ops=0 positions=0
+// CHECK: trait-stage-record respelling round=2 bindings=1 projections=1 ops=0 positions=0
 // CHECK-NOT: trait-stage-record rewrites driver=instantiate-monomorphs round=2
 // CHECK: trait-stage-record round index=2 bridged=no collected=0
 // CHECK-SAME: ambiguous-arms=0 served=0 declined=0 deferred=0 inserted-serving-demands=0

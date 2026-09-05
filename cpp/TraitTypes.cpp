@@ -1170,12 +1170,48 @@ void ClaimType::getProjections(
   if (succeeded(specRequirements))
     result.append(*specRequirements);
 
-  // proven impl assumptions
+  // A proven source additionally projects to each of its obligations spelled
+  // proven by the subproof discharging it, and to the impl's equality
+  // where-clauses. An unproven source keeps only the unproven candidates above:
+  // proofness parity refuses a proven application result projected from it.
   if (isProven()) {
     if (auto proof = SymbolTable::lookupNearestSymbolFrom<ProofOp>(module, getProof())) {
-      auto specAssumptions = proof.getImpl().specializeAssumptionsAsClaimsFor(*this);
-      if (succeeded(specAssumptions))
-        result.append(*specAssumptions);
+      ImplOp impl = proof.getImpl();
+      if (impl) {
+        // Unproven impl assumptions, kept so the candidate query does not lose
+        // a candidate; the proven spelling below supersedes them.
+        auto specAssumptions = impl.specializeAssumptionsAsClaimsFor(*this);
+        if (succeeded(specAssumptions))
+          result.append(*specAssumptions);
+
+        // The impl's obligations in the order the proof's subproof names align
+        // with (the trait's requirements then the impl's assumptions), each
+        // spelled proven by its subproof. This runs in a verifier, so it reads
+        // the proof structure at a non-recording origin.
+        auto obligations = impl.specializeObligationsAsClaimsFor(
+            *this, DemandOrigin::ProofVerification, /*errFn=*/nullptr);
+        ArrayAttr subproofNames = proof.getSubproofNames();
+        if (succeeded(obligations) &&
+            subproofNames.size() == obligations->size())
+          for (auto [ob, name] : llvm::zip(*obligations, subproofNames))
+            if (auto ref = dyn_cast<FlatSymbolRefAttr>(name))
+              result.push_back(
+                  ClaimType::get(getContext(), ob.getTraitApplication(), ref));
+
+        // The impl's equality where-clauses, specialized for this source. An
+        // equality claim never carries a proof, so it is a parity-exempt
+        // candidate an equality projection resolves to.
+        auto eqSubst = impl.buildSubstitutionForSelfClaim(*this);
+        if (succeeded(eqSubst)) {
+          auto substMap = eqSubst->toTypeMap();
+          for (Attribute pred : impl.getAssumptions())
+            if (auto eq = dyn_cast<TypeEqualityAttr>(pred))
+              result.push_back(ClaimType::getEquality(
+                  getContext(),
+                  applySubstitutionToFixedPoint(substMap, eq.getLhs()),
+                  applySubstitutionToFixedPoint(substMap, eq.getRhs())));
+        }
+      }
     }
   }
 }

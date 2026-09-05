@@ -17,14 +17,14 @@
 
 !S = !trait.poly<0>
 
-trait.trait @X[!trait.poly<9>] {}
-trait.trait @Mid[!S] { trait.assoc_type @Out }
-trait.impl @Mid_i64 for @Mid[i64] where [@X[i64]] { trait.assoc_type @Out = i64 }
+trait.trait private @X[!trait.poly<9>] {}
+trait.trait private @Mid[!S] { trait.assoc_type @Out }
+trait.impl private @Mid_i64 for @Mid[i64] where [@X[i64]] { trait.assoc_type @Out = i64 }
 
-trait.trait @Wrap[!S] { trait.assoc_type @Item }
-trait.impl @Wrap_i64 for @Wrap[i64] { trait.assoc_type @Item = !trait.proj<@Mid[i64], "Out"> }
+trait.trait private @Wrap[!S] { trait.assoc_type @Item }
+trait.impl private @Wrap_i64 for @Wrap[i64] { trait.assoc_type @Item = !trait.proj<@Mid[i64], "Out"> }
 
-trait.trait @Run[!S] {
+trait.trait private @Run[!S] {
   func.func private @go(!S) -> i64
 }
 
@@ -32,7 +32,7 @@ func.func @need(%v: i64, %e: !trait.claim<!trait.proj<@Wrap[!S], "Item"> = i64>)
   return %v : i64
 }
 
-trait.impl @Run_gen for @Run[!S] where [@Wrap[!S], !trait.proj<@Wrap[!S], "Item"> = i64] {
+trait.impl private @Run_gen for @Run[!S] where [@Wrap[!S], !trait.proj<@Wrap[!S], "Item"> = i64] {
   func.func @go(%x: !S) -> i64 {
     %e = trait.assume !trait.proj<@Wrap[!S], "Item"> = i64
     %v = arith.constant 7 : i64

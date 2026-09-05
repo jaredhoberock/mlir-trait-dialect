@@ -19,15 +19,15 @@
 !T = !trait.poly<1>
 !U = !trait.poly<2>
 
-trait.trait @X[!U] {}
+trait.trait private @X[!U] {}
 
-trait.trait @Has[!S] {
+trait.trait private @Has[!S] {
   trait.assoc_type @Out
 }
 
-trait.impl @X_i32 for @X[i32] {}
+trait.impl private @X_i32 for @X[i32] {}
 
-trait.impl @Has_tuple for @Has[tuple<!U>] where [@X[!U]] {
+trait.impl private @Has_tuple for @Has[tuple<!U>] where [@X[!U]] {
   trait.assoc_type @Out = i64
 }
 

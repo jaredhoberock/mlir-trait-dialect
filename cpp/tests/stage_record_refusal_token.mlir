@@ -17,13 +17,13 @@
 
 !T = !trait.poly<0>
 
-trait.trait @Absent[!T] {}
+trait.trait private @Absent[!T] {}
 
-trait.trait @Doubled[!T] {}
+trait.trait private @Doubled[!T] {}
 
-trait.impl @Doubled_wide for @Doubled[i64] {}
+trait.impl private @Doubled_wide for @Doubled[i64] {}
 
-trait.impl @Doubled_narrow for @Doubled[i64] {}
+trait.impl private @Doubled_narrow for @Doubled[i64] {}
 
 !P = !trait.poly<1>
 

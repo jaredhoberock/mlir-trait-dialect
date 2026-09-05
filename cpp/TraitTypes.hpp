@@ -639,6 +639,13 @@ public:
     for (auto [key, value] : evidenceBindings.toTypeMap())
       result[key] = value;
     normalizeSubstitutionInPlace(result);
+    // A variable's value must keep its own spelling for an equality endpoint
+    // reading it, so restore each generic key's directly bound value rather than
+    // the one path compression chased through a projection or evidence key.
+    // Readers apply this map to a fixed point, so a variable-to-variable chain
+    // still resolves; only a projection resolution is kept out of an endpoint.
+    for (auto [key, value] : specialization.toTypeMap())
+      result[key] = value;
     return result;
   }
 
@@ -895,11 +902,13 @@ inline Type applySubstitutionOnce(const llvm::DenseMap<Type,Type> &subst,
   });
 
   // Reach the equality endpoints the generic rule above cannot, applying the
-  // same one-step substitution so a nested equality claim keeps no endpoint the
-  // substitution still binds.
-  replacer.addReplacement([&](ClaimType claim) -> std::optional<Type> {
+  // generic-keyed part of the map alone: an endpoint receives variable
+  // bindings, never a projection or evidence binding resolved inside it, which
+  // a witness verifier's single-substitution instance check would break.
+  llvm::DenseMap<Type, Type> genericKeyed = specialization.toTypeMap();
+  replacer.addReplacement([genericKeyed](ClaimType claim) -> std::optional<Type> {
     return respellEqualityEndpoints(claim, [&](Type t) {
-      return applySubstitutionOnce(subst, t);
+      return applySubstitutionOnce(genericKeyed, t);
     });
   });
 

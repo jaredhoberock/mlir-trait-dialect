@@ -8,11 +8,11 @@
 
 !T = !trait.poly<0>
 
-trait.trait @Foo[!T] {
+trait.trait private @Foo[!T] {
   func.func private @foo(!T) -> !T
 }
 
-trait.impl @Foo_impl_i64 for @Foo[i64] {
+trait.impl private @Foo_impl_i64 for @Foo[i64] {
   func.func @foo(%x: i64) -> i64 {
     return %x : i64
   }

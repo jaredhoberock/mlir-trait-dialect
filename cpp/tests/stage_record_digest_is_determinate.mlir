@@ -14,17 +14,17 @@
 
 !T = !trait.poly<0>
 
-trait.trait @Zero[!T] {}
-trait.trait @One[!T] {}
-trait.trait @Two[!T] where [
+trait.trait private @Zero[!T] {}
+trait.trait private @One[!T] {}
+trait.trait private @Two[!T] where [
   @Zero[!T],
   @One[!T]
 ] {}
 
-trait.impl @Zero_i32 for @Zero[i32] {}
-trait.impl @Zero_i64 for @Zero[i64] {}
-trait.impl @One_i32 for @One[i32] {}
-trait.impl @Two_i32 for @Two[i32] {}
+trait.impl private @Zero_i32 for @Zero[i32] {}
+trait.impl private @Zero_i64 for @Zero[i64] {}
+trait.impl private @One_i32 for @One[i32] {}
+trait.impl private @Two_i32 for @Two[i32] {}
 
 !P = !trait.poly<1>
 

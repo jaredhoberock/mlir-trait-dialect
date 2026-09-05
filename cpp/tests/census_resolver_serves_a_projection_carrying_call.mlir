@@ -1,6 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
-
+//
+// A method call whose receiver claim spells a projection over the impl's
+// associated type (@Outer[i64]::Item). The resolver resolves that projection
+// through @Outer_i64 and serves both sides, so the call lowers with the two
+// demands served and the ledger empty -- the unifier never reaches its
+// projection-crossing acceptance here, because the candidate resolves the
+// crossing first. (That acceptance path is exercised across the corpus; this
+// row pins the resolver-served route a projection-carrying call now takes.)
+//
 // RUN: env TRAIT_DEMAND_CENSUS=1 TRAIT_DEMAND_CENSUS_CHECK=1 mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' 2>&1 | FileCheck %s --implicit-check-not='trait-demand-census unhooked' --implicit-check-not='trait-demand-census served'
 
 // The unifier's acceptances are a population of their own: it found the two
@@ -20,11 +28,11 @@
 !S = !trait.poly<0>
 !T = !trait.poly<1>
 
-trait.trait @Trait[!S, !T] {
+trait.trait private @Trait[!S, !T] {
   func.func private @method(!S, !T) -> i64
 }
 
-trait.trait @Outer[!S] {
+trait.trait private @Outer[!S] {
   trait.assoc_type @Item
 }
 
@@ -38,11 +46,11 @@ func.func private @callee(%t: !T,
   return %result : i64
 }
 
-trait.impl @Outer_i64 for @Outer[i64] {
+trait.impl private @Outer_i64 for @Outer[i64] {
   trait.assoc_type @Item = i64
 }
 
-trait.impl @Trait_i64 for @Trait[i64, i64] {
+trait.impl private @Trait_i64 for @Trait[i64, i64] {
   func.func @method(%self: i64, %x: i64) -> i64 {
     return %x : i64
   }
@@ -67,9 +75,7 @@ func.func @main() -> i64 {
 // CHECK: trait-stage-record round index=1
 // CHECK-SAME: collected=2
 // CHECK-SAME: served=2
-// CHECK: trait-demand-census demand flags=real drainable=no observations=1 depth=0
-// CHECK-SAME: kinds=unifier-acceptance
-// CHECK-SAME: type=!trait.proj<@Outer[i64], "Item">
-// CHECK: trait-demand-census engine lookup-miss keys=0 observations=0 real=0 speculative=0 probe-internal=0
-// CHECK: trait-demand-census engine unifier-acceptance keys=1 observations=1 real=1 speculative=0 probe-internal=0
-// CHECK: trait-demand-census summary keys=1 observations=1 drainable-keys=0
+// The two projection sides now unify through a candidate before the unifier
+// reaches its accept-irreducible path, so no acceptance is recorded and the
+// census is empty; the module still lowers (served=2 above).
+// CHECK: trait-demand-census summary keys=0 observations=0 drainable-keys=0

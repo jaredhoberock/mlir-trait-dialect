@@ -7,6 +7,30 @@
 
 namespace mlir::trait {
 
+/// Whether `op` is a generic trait call instantiation can rewrite now -- the one
+/// readiness law both call-lowering patterns gate on, spelled here once: for a
+/// trait.func.call, monomorphic operands, proven operand claims, module scope,
+/// and a callee with a signature; for a trait.method.call, monomorphic operands,
+/// a proven receiver claim, proven argument claims, and a method with a
+/// signature. False for any other op. This is the predicate the instantiate step
+/// qualifies its discharge by, so the step is present exactly on the calls a
+/// pattern would fire on.
+bool isRewritableGenericCall(Operation *op);
+
+/// Whether `op` is foreign code this compilation carries to no target: a
+/// template (a trait, impl, or proof declaration, or a still-polymorphic
+/// function) or code inside one. The readiness and leftover discipline reads
+/// this so it never serves or judges what leaves with a template.
+bool isForeign(Operation *op);
+
+/// Whether `module` still carries instantiation work outside a template (a
+/// trait, impl, or proof body, or a polymorphic function): a rewritable generic
+/// call, or an unproven monomorphic application claim or an unresolved ground
+/// projection instantiation has not yet discharged. This is the erase step's
+/// readiness -- it may run only when this is false, the condition under which
+/// nothing standing can still mention a template.
+bool isPendingExpansion(ModuleOp module);
+
 /// Runs monomorphization to completion in one pass: instantiates the monomorphs
 /// every trait call needs and erases all residual polymorphism. The compiler
 /// runs the two halves as separate passes (instantiate-monomorphs then

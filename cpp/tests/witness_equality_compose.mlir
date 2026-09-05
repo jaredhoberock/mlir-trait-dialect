@@ -17,11 +17,11 @@
 !S = !trait.poly<0>
 !U = !trait.poly<1>
 
-trait.trait @A[!S] { trait.assoc_type @Item }
-trait.trait @B[!S] { trait.assoc_type @Item }
+trait.trait private @A[!S] { trait.assoc_type @Item }
+trait.trait private @B[!S] { trait.assoc_type @Item }
 
-trait.impl @A_impl for @A[!U] { trait.assoc_type @Item = !U }
-trait.impl @B_impl for @B[!U] { trait.assoc_type @Item = !U }
+trait.impl private @A_impl for @A[!U] { trait.assoc_type @Item = !U }
+trait.impl private @B_impl for @B[!U] { trait.assoc_type @Item = !U }
 
 func.func @use(%pa: !trait.proj<@A[i64], "Item">) -> !trait.proj<@B[i64], "Item"> {
   %w1 = trait.witness proj_resolve !trait.proj<@A[i64], "Item"> resolves i64 by @A_impl

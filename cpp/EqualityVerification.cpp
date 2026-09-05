@@ -108,7 +108,34 @@ struct ObligationDischargeContext {
   ArrayRef<TraitApplicationAttr> obligationPremises;
   ArrayRef<WitnessAttr> dischargeWitnesses;
   llvm::function_ref<InFlightDiagnostic()> err;
+  // Whether a premise spelled as a ground projection's resolution discharges an
+  // obligation spelled as the projection (and the reverse). Set only by the
+  // use-site entry, which already resolves the actual side by module lookup; the
+  // impl-verification entry keeps its rigid, module-free comparison so an impl's
+  // verdict cannot turn on the unrelated impls the module carries.
+  bool resolveGround;
 };
+
+// Whether two ground applications, already read modulo the context's equality
+// premises, denote the same claim: their spellings match, or -- at the use-site
+// entry -- their ground normal forms do. This is the equivalence the clone rule
+// and the commit sweep apply, local to the witness's own operands and citation;
+// a non-converging projection chain refuses.
+static bool groundApplicationsMatch(const ObligationDischargeContext &ctx,
+                                    Type have, Type want) {
+  if (have == want)
+    return true;
+  if (!ctx.resolveGround)
+    return false;
+  auto haveGround = resolveProjectionsByLookup(
+      have, ctx.module, DemandOrigin::ProofVerification, LookupScope::Ground,
+      ctx.err);
+  auto wantGround = resolveProjectionsByLookup(
+      want, ctx.module, DemandOrigin::ProofVerification, LookupScope::Ground,
+      ctx.err);
+  return succeeded(haveGround) && succeeded(wantGround) &&
+         *haveGround == *wantGround;
+}
 
 // Whether `want` -- a ground application obligation, already read modulo the
 // context's equality premises -- is discharged. Arm (i): a hypothetical cover
@@ -136,7 +163,7 @@ static bool dischargeApplicationObligation(
     ClaimType premiseClaim = ClaimType::get(mlirCtx, premiseApp);
     auto haveOr =
         applyEqualityPremises(Type(premiseClaim), ctx.premises, ctx.err);
-    if (succeeded(haveOr) && *haveOr == want)
+    if (succeeded(haveOr) && groundApplicationsMatch(ctx, *haveOr, want))
       return true;
   }
 
@@ -146,7 +173,7 @@ static bool dischargeApplicationObligation(
     ClaimType citedApp = ClaimType::get(mlirCtx, citation.getApplication());
     auto citedOr =
         applyEqualityPremises(Type(citedApp), ctx.premises, ctx.err);
-    if (failed(citedOr) || *citedOr != want)
+    if (failed(citedOr) || !groundApplicationsMatch(ctx, *citedOr, want))
       continue;
     if (llvm::is_contained(inProgress, citation.getApplication()))
       continue; // cycle: this path grounds nothing
@@ -195,7 +222,8 @@ static FailureOr<SpecializationMap> verifyProjectionResolutionCore(
     ArrayRef<TraitApplicationAttr> obligationPremises,
     ArrayRef<WitnessAttr> dischargeWitnesses,
     bool rigidHeadMatch,
-    llvm::function_ref<InFlightDiagnostic()> err) {
+    llvm::function_ref<InFlightDiagnostic()> err,
+    TypeEqualityAttr currentEquality = {}) {
   assert(isa<TypeEqualityAttr>(witness.getPredicate()) &&
          "projection-resolution verification requires an equality-armed witness");
   Type projection = witness.getProjection();
@@ -259,18 +287,54 @@ static FailureOr<SpecializationMap> verifyProjectionResolutionCore(
     return failure();
   }
 
+  // The op's current endpoints may be a substitution instance of the witness's
+  // stored ones -- a clone specializes the stored projection and resolved into
+  // its own equality. The assumptions to discharge are the stored impl's
+  // assumptions carried to that instance, so the premises a clone supplies at
+  // its own spelling match. Without a current equality the stored endpoints
+  // stand in and the instance substitution is the identity.
+  llvm::DenseMap<Type, Type> instanceSubst;
+  if (currentEquality) {
+    Type stored = TupleType::get(
+        module.getContext(), {witness.getProjection(), witness.getResolved()});
+    Type current = TupleType::get(
+        module.getContext(),
+        {currentEquality.getLhs(), currentEquality.getRhs()});
+    auto match = buildSpecialization(stored, current, ModuleOp());
+    if (succeeded(match))
+      instanceSubst = match->toTypeMap();
+  }
+
   // Obligation-discharge check. The cited impl's own assumptions -- specialized
-  // through the same rigid head-match substitution -- must each be discharged,
-  // proof-stripped and modulo the cited equality premises, by a hypothetical
-  // cover (arm i) or a declared discharge citation (arm ii). The impl's trait
-  // requirements are deliberately not reached here (they may quantify over GAT
-  // variables with no ground instance at the witness).
-  ObligationDischargeContext dischargeCtx{module, premises, obligationPremises,
-                                          dischargeWitnesses, err};
+  // through the same rigid head-match substitution, then carried to the op's
+  // current endpoints -- must each be discharged, proof-stripped and modulo the
+  // cited equality premises, by a hypothetical cover (arm i) or a declared
+  // discharge citation (arm ii). The impl's trait requirements are deliberately
+  // not reached here (they may quantify over GAT variables with no ground
+  // instance at the witness).
+  ObligationDischargeContext dischargeCtx{module,
+                                          premises,
+                                          obligationPremises,
+                                          dischargeWitnesses,
+                                          err,
+                                          /*resolveGround=*/!rigidHeadMatch};
   for (ClaimType assumption :
        specializeAssumptionsThroughSubst(implOp, *subst)) {
-    auto wantOr =
-        applyEqualityPremises(Type(assumption.asUnproven()), premises, err);
+    Type want = Type(assumption.asUnproven());
+    if (!instanceSubst.empty())
+      want = applySubstitutionToFixedPoint(instanceSubst, want);
+    // At the use-site entry, read the obligation modulo the module's ground
+    // impls, so an assumption spelling a ground projection is compared as its
+    // resolution -- a non-converging chain refuses.
+    if (dischargeCtx.resolveGround) {
+      auto wantGround = resolveProjectionsByLookup(
+          want, module, DemandOrigin::ProofVerification, LookupScope::Ground,
+          err);
+      if (failed(wantGround))
+        return failure();
+      want = *wantGround;
+    }
+    auto wantOr = applyEqualityPremises(want, premises, err);
     if (failed(wantOr))
       return failure();
     SmallVector<TraitApplicationAttr> inProgress;
@@ -288,11 +352,13 @@ LogicalResult mlir::trait::verifyProjectionResolutionAtUse(
     ModuleOp module, WitnessAttr witness,
     ArrayRef<TypeEqualityAttr> premises,
     ArrayRef<TraitApplicationAttr> obligationPremises,
-    llvm::function_ref<InFlightDiagnostic()> err) {
+    llvm::function_ref<InFlightDiagnostic()> err,
+    TypeEqualityAttr currentEquality) {
   if (failed(verifyProjectionResolutionCore(module, witness, premises,
                                             obligationPremises,
                                             /*dischargeWitnesses=*/{},
-                                            /*rigidHeadMatch=*/false, err)))
+                                            /*rigidHeadMatch=*/false, err,
+                                            currentEquality)))
     return failure();
   return success();
 }

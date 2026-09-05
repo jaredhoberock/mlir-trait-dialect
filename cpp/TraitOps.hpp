@@ -40,7 +40,8 @@ LogicalResult verifyProjectionResolutionAtUse(
     ModuleOp module, WitnessAttr witness,
     ArrayRef<TypeEqualityAttr> premises,
     ArrayRef<TraitApplicationAttr> obligationPremises,
-    llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+    llvm::function_ref<InFlightDiagnostic()> err = nullptr,
+    TypeEqualityAttr currentEquality = {});
 
 /// The ImplOp-verification companion to `verifyProjectionResolutionAtUse`, running the
 /// same binding check and assumption discharge, differing in three ways. Its

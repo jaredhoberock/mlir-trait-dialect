@@ -198,7 +198,8 @@ def ClaimType : TypeDef<TraitDialect, "Claim", [
 
     /// Return the set of claims that can be legally projected from this
     /// claim: the identity projection, the trait's requirements, and, when
-    /// the claim is proven, its impl's proven assumptions.
+    /// the claim is proven, its obligations spelled proven by the subproof
+    /// discharging each and the impl's equality where-clauses.
     void getProjections(ModuleOp module,
                         SmallVectorImpl<ClaimType>& result);
 

@@ -10,17 +10,17 @@
 
 !T = !trait.poly<0>
 
-trait.trait @Outer[!T] {
+trait.trait private @Outer[!T] {
   trait.assoc_type @Item
 }
 
-trait.impl @Outer_i64 for @Outer[i64] {
+trait.impl private @Outer_i64 for @Outer[i64] {
   trait.assoc_type @Item = i64
 }
 
-trait.trait @Sink[!T] {}
+trait.trait private @Sink[!T] {}
 
-trait.impl @Sink_any for @Sink[!T] {}
+trait.impl private @Sink_any for @Sink[!T] {}
 
 func.func @callee(%c: !trait.claim<@Sink[!trait.proj<@Outer[i64], "Item">]>,
                   %x: !T) -> !T {

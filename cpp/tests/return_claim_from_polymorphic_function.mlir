@@ -5,19 +5,19 @@
 
 // this trait returns some type from get
 !R = !trait.poly<0>
-trait.trait @Get[!R] {
+trait.trait private @Get[!R] {
   func.func private @get() -> !R
 }
 
 // this trait will be used in an impl where below
 !A = !trait.poly<1>
-trait.trait @Assumption[!A] {}
+trait.trait private @Assumption[!A] {}
 
 // a blanket impl for @Assumption for all types
-trait.impl @Assumption_impl for @Assumption[!A] {}
+trait.impl private @Assumption_impl for @Assumption[!A] {}
 
 // this impl returns an assumption claim from @get
-trait.impl @Get_impl_claim for @Get[!trait.claim<@Assumption[i32]>] where [
+trait.impl private @Get_impl_claim for @Get[!trait.claim<@Assumption[i32]>] where [
   @Assumption[i32]
 ] {
   func.func @get() -> !trait.claim<@Assumption[i32]> {

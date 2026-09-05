@@ -5,8 +5,8 @@
 
 !S = !trait.poly<0>
 !O = !trait.poly<1>
-// CHECK-NOT: trait.trait @PartialEq
-trait.trait @PartialEq [!S,!O] {
+// CHECK-NOT: trait.trait private @PartialEq
+trait.trait private @PartialEq [!S,!O] {
   func.func private @eq(!S, !O) -> i1
 
   func.func @neq(%self: !S, %other: !O) -> i1 {
@@ -19,8 +19,8 @@ trait.trait @PartialEq [!S,!O] {
   }
 }
 
-// CHECK-NOT: trait.impl @PartialEq
-trait.impl @PartialEq_impl_i32_i32 for @PartialEq[i32,i32] {
+// CHECK-NOT: trait.impl private @PartialEq
+trait.impl private @PartialEq_impl_i32_i32 for @PartialEq[i32,i32] {
   func.func @eq(%self: i32, %other: i32) -> i1 {
     %res = arith.cmpi eq, %self, %other : i32
     return %res : i1

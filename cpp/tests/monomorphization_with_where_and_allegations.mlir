@@ -5,8 +5,8 @@
 
 !PartialEqS = !trait.poly<0>
 !PartialEqO = !trait.poly<1>
-// CHECK-NOT: trait.trait @PartialEq
-trait.trait @PartialEq[!PartialEqS,!PartialEqO] {
+// CHECK-NOT: trait.trait private @PartialEq
+trait.trait private @PartialEq[!PartialEqS,!PartialEqO] {
   func.func private @eq(!PartialEqS, !PartialEqO) -> i1
   
   func.func @ne(%self: !PartialEqS, %other: !PartialEqO) -> i1 {
@@ -21,8 +21,8 @@ trait.trait @PartialEq[!PartialEqS,!PartialEqO] {
   }
 }
 
-// CHECK-NOT: trait.impl @PartialEq
-trait.impl @PartialEq_impl_i32_i32 for @PartialEq[i32,i32] {
+// CHECK-NOT: trait.impl private @PartialEq
+trait.impl private @PartialEq_impl_i32_i32 for @PartialEq[i32,i32] {
   func.func @eq(%self: i32, %other: i32) -> i1 {
     %equal = arith.cmpi eq, %self, %other : i32
     return %equal : i1
@@ -53,14 +53,14 @@ func.func @bar(%x: i32, %y: i32) -> i1 {
 
 !EqS = !trait.poly<2>
 // CHECK-NOT: @Eq
-trait.trait @Eq[!EqS] where [
+trait.trait private @Eq[!EqS] where [
   @PartialEq[!EqS,!EqS]
 ]
 {
 }
 
-// CHECK-NOT: trait.impl @Eq
-trait.impl @Eq_impl_i32 for @Eq[i32] {}
+// CHECK-NOT: trait.impl private @Eq
+trait.impl private @Eq_impl_i32 for @Eq[i32] {}
 
 // model Option<Ordering>
 // 0: Less
@@ -72,8 +72,8 @@ trait.impl @Eq_impl_i32 for @Eq[i32] {}
 !PartialOrdS = !trait.poly<3>
 !PartialOrdO = !trait.poly<4>
 
-// CHECK-NOT: trait.trait @PartialOrd
-trait.trait @PartialOrd[!PartialOrdS,!PartialOrdO] where [
+// CHECK-NOT: trait.trait private @PartialOrd
+trait.trait private @PartialOrd[!PartialOrdS,!PartialOrdO] where [
   @PartialEq[!PartialOrdS,!PartialOrdO]
 ]
 {
@@ -136,8 +136,8 @@ trait.trait @PartialOrd[!PartialOrdS,!PartialOrdO] where [
   }
 }
 
-// CHECK-NOT: trait.impl @PartialOrd
-trait.impl @PartialOrd_impl_i32_i32 for @PartialOrd[i32,i32] {
+// CHECK-NOT: trait.impl private @PartialOrd
+trait.impl private @PartialOrd_impl_i32_i32 for @PartialOrd[i32,i32] {
   func.func @partial_cmp(%a: i32, %b: i32) -> !opt_ord {
     %c_lt = arith.constant 0 : !opt_ord
     %c_eq = arith.constant 1 : !opt_ord
@@ -158,8 +158,8 @@ trait.impl @PartialOrd_impl_i32_i32 for @PartialOrd[i32,i32] {
 !ord = i2
 
 !OrdS = !trait.poly<5>
-// CHECK-NOT: trait.trait @Ord
-trait.trait @Ord[!OrdS] where [
+// CHECK-NOT: trait.trait private @Ord
+trait.trait private @Ord[!OrdS] where [
   @Eq[!OrdS],
   @PartialOrd[!OrdS,!OrdS]
 ]
@@ -203,8 +203,8 @@ trait.trait @Ord[!OrdS] where [
   }
 }
 
-// CHECK-NOT: trait.impl @Ord
-trait.impl @Ord_impl_i32 for @Ord[i32] {
+// CHECK-NOT: trait.impl private @Ord
+trait.impl private @Ord_impl_i32 for @Ord[i32] {
   func.func @cmp(%a: i32, %b: i32) -> !ord {
     %lt = arith.cmpi slt, %a, %b : i32
     %eq = arith.cmpi eq,  %a, %b : i32

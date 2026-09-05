@@ -3,38 +3,26 @@
 
 // RUN: env TRAIT_DEMAND_CENSUS=1 TRAIT_DEMAND_CENSUS_CHECK=1 mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' -stats -verify-diagnostics 2>&1 | FileCheck %s --implicit-check-not='trait-demand-census unhooked' --implicit-check-not='trait-demand-census served'
 
-// A call claim that carries no evidence withholds the license to consult module
-// facts, so the ground projections the call's specialization mints are never asked
-// about at all. @caller's claim parameter is an ordinary unproven claim and the
-// method's signature specializes to @Broad[i64]::Output on both sides, so the
-// call's comparison is a spelling match that reads nothing.
-//
-// The statistic is where this is visible, and it is the only place it can be.
-// A call op's verifier reaches this branch wherever the op is, and a verifier's
-// demand is counted rather than entered in a ledger; method-call lowering, the
-// only in-stage caller of the specialization, defers until the call's claim is
-// proven, and a proven claim carries the license. So no stage ever raises this
-// and there is no ledger engine for it -- the statistic says what happened and
-// the summary below says the ledger heard nothing about it.
+// A method call whose claim carries no evidence withholds the license to consult
+// module facts. @caller's claim parameter is an ordinary unproven claim, so the
+// call's verifier compares its formal and actual with the module-free comparator
+// and reads nothing. The demand this raises is a verifier's -- counted by the
+// statistic, never entered in the ledger: no stage raises it, and no ledger
+// engine hears it, so the census summary is empty while the statistic is one.
 
 !T = !trait.poly<0>
-!X = !trait.proj<@Broad[i64], "Output">
 
-trait.trait @Broad[!T] {
-  trait.assoc_type @Output
-}
-
-trait.trait @Unwrap[!T] {
+trait.trait private @Unwrap[!T] {
   func.func private @unwrap(!T) -> !T
 }
 
 // Kept polymorphic so the call op survives to the end of the stage: a monomorph
 // carrying an unproven claim is rejected before the method call is reached.
-func.func private @caller(%claim: !trait.claim<@Unwrap[!X]>, %value: !X, %spare: !T) -> !X {
-  %result = trait.method.call %claim @Unwrap[!X]::@unwrap(%value) : (!X) -> !X
-  return %result : !X
+func.func private @caller(%claim: !trait.claim<@Unwrap[!T]>, %value: !T) -> !T {
+  %result = trait.method.call %claim @Unwrap[!T]::@unwrap(%value) : (!T) -> !T
+  return %result : !T
 }
 
 // CHECK-NOT: trait-demand-census engine withheld-call-claim
-// CHECK: trait-demand-census summary keys=1 observations=3 drainable-keys=1
+// CHECK: trait-demand-census summary keys=0 observations=0 drainable-keys=0
 // CHECK: 1 trait-demand - calls whose claim withheld the license to consult module facts

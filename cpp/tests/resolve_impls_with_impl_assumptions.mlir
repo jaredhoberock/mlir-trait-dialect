@@ -62,5 +62,5 @@ func.func @test() -> i32 {
   return %res : i32
 }
 
-// CHECK: trait.proof @A_impl_poly_{{.*}}_p proves @A_impl_poly for @A[i8] given [@B_impl_i8]
-// CHECK: trait.proof @A_impl_poly_{{.*}}_p proves @A_impl_poly for @A[i32] given [@B_impl_i32]
+// CHECK: trait.proof private @A_impl_poly_{{.*}}_p proves @A_impl_poly for @A[i8] given [@B_impl_i8]
+// CHECK: trait.proof private @A_impl_poly_{{.*}}_p proves @A_impl_poly for @A[i32] given [@B_impl_i32]

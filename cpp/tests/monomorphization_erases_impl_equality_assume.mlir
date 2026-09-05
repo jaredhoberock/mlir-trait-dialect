@@ -14,12 +14,12 @@
 
 !S = !trait.poly<0>
 
-trait.trait @FoldFn[!S] {
+trait.trait private @FoldFn[!S] {
   trait.assoc_type @Output
   func.func nested @run(!trait.proj<@FoldFn[!S], "Output">) -> !S
 }
 
-trait.impl @FoldFn_gen for @FoldFn[!S] where [!trait.proj<@FoldFn[!S], "Output"> = !S] {
+trait.impl private @FoldFn_gen for @FoldFn[!S] where [!trait.proj<@FoldFn[!S], "Output"> = !S] {
   trait.assoc_type @Output = !S
   func.func nested @run(%p: !trait.proj<@FoldFn[!S], "Output">) -> !S {
     %e = trait.assume !trait.proj<@FoldFn[!S], "Output"> = !S

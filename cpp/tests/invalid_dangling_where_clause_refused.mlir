@@ -14,4 +14,4 @@
 !T = !trait.poly<0>
 
 // expected-error @+1 {{trait `where` clause references undefined trait 'Undefined'}}
-trait.trait @A[!T] where [@Undefined[!T]] {}
+trait.trait private @A[!T] where [@Undefined[!T]] {}

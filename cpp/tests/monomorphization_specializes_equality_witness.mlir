@@ -15,15 +15,15 @@
 !S = !trait.poly<0>
 !U = !trait.poly<1>
 
-trait.trait @Trait[!S] {
+trait.trait private @Trait[!S] {
   trait.assoc_type @Output
 }
 
-trait.impl @Trait_impl for @Trait[!U] {
+trait.impl private @Trait_impl for @Trait[!U] {
   trait.assoc_type @Output = !U
 }
 
-trait.proof @Trait_i64_p proves @Trait_impl for @Trait[i64] given []
+trait.proof private @Trait_i64_p proves @Trait_impl for @Trait[i64] given []
 
 func.func @gen(%p: !trait.proj<@Trait[!S], "Output">, %c: !trait.claim<@Trait[!S]>) -> !S {
   %e = trait.witness proj_resolve !trait.proj<@Trait[!S], "Output"> resolves !S by @Trait_impl

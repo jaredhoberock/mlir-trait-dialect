@@ -342,6 +342,12 @@ class ImplResolver {
     /// How many trait applications this resolver has recorded a proof for.
     size_t getRecordedProofCount() const { return memo.proofMemo.size(); }
 
+    /// How many trait applications this resolver has recorded an impl selection
+    /// for, the record a ground projection resolves through.
+    size_t getRecordedImplCount() const {
+      return memo.resolutionMemo.chosen.size();
+    }
+
     /// The proof derivations completed over this resolver's span.
     ///
     /// Derivation is a computation over the module's facts and not a fact of

@@ -28,11 +28,11 @@
 // a derivation reaching a pair the record holds writes the closure the record
 // holds and stops there.
 
-trait.trait @P[!trait.poly<0>] {}
-trait.impl @P_impl for @P[!trait.poly<1>] {}
+trait.trait private @P[!trait.poly<0>] {}
+trait.impl private @P_impl for @P[!trait.poly<1>] {}
 
-trait.trait @Q[!trait.poly<2>] {}
-trait.impl @Q_impl for @Q[!trait.poly<3>] {}
+trait.trait private @Q[!trait.poly<2>] {}
+trait.impl private @Q_impl for @Q[!trait.poly<3>] {}
 
 !T = !trait.poly<4>
 func.func @g(%c: !trait.claim<@P[!T]>, %x: !T) -> !T {

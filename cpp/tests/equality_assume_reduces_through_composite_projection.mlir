@@ -24,8 +24,8 @@
 
 !S = !trait.poly<0>
 
-trait.trait @Inner[!S] { trait.assoc_type @Item }
-trait.impl @Inner_i64 for @Inner[i64] { trait.assoc_type @Item = i64 }
+trait.trait private @Inner[!S] { trait.assoc_type @Item }
+trait.impl private @Inner_i64 for @Inner[i64] { trait.assoc_type @Item = i64 }
 
 // The composition witness the reduction mints, written out by hand so its shape
 // and the verifier's acceptance of a projection nested in a composite endpoint
@@ -42,7 +42,7 @@ func.func @evidence(%p: tuple<!trait.proj<@Inner[i64], "Item">>) -> tuple<i64> {
   return %v : tuple<i64>
 }
 
-trait.trait @Run[!S] {
+trait.trait private @Run[!S] {
   func.func private @go(!S) -> i64
 }
 
@@ -57,7 +57,7 @@ func.func @need(%v: i64, %e: !trait.claim<tuple<!trait.proj<@Inner[!S], "Item">>
 
 // The closure-like impl: its where-clause carries the inherited equality; the
 // method re-establishes it as an assume and forwards it as the call operand.
-trait.impl @Run_gen for @Run[!S] where [@Inner[!S], tuple<!trait.proj<@Inner[!S], "Item">> = tuple<i64>] {
+trait.impl private @Run_gen for @Run[!S] where [@Inner[!S], tuple<!trait.proj<@Inner[!S], "Item">> = tuple<i64>] {
   func.func @go(%x: !S) -> i64 {
     %e = trait.assume tuple<!trait.proj<@Inner[!S], "Item">> = tuple<i64>
     %v = arith.constant 7 : i64

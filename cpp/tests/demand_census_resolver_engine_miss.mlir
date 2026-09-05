@@ -17,13 +17,13 @@
 
 !T = !trait.poly<0>
 
-trait.trait @T[!T] {
+trait.trait private @T[!T] {
   trait.assoc_type @A
 }
 
-trait.trait @Box[!T] {}
+trait.trait private @Box[!T] {}
 
-trait.impl @Box_any for @Box[!T] {}
+trait.impl private @Box_any for @Box[!T] {}
 
 func.func @callee(%c: !trait.claim<@Box[!trait.proj<@T[i64], "A">]>,
                   %x: !T) -> !T {
@@ -39,11 +39,12 @@ func.func @main() -> i64 {
   return %r : i64
 }
 
-// CHECK: trait-demand-census demand flags=real drainable=yes observations=8 depth=0
-// CHECK-SAME: kinds=lookup-miss,resolver-engine-miss,read-only-resolver arms=no-candidate-impl
+// CHECK: trait-demand-census demand flags=real drainable=yes observations=9 depth=0
+// CHECK-SAME: kinds=lookup-miss,unifier-acceptance,resolver-engine-miss,read-only-resolver arms=no-candidate-impl
 // CHECK-SAME: type=!trait.proj<@T[i64], "A">
 // CHECK: trait-demand-census engine lookup-miss keys=1 observations=4 real=4 speculative=0 probe-internal=0
-// CHECK: trait-demand-census engine resolver-engine-miss keys=1 observations=2 real=2 speculative=0 probe-internal=0
-// CHECK: trait-demand-census engine read-only-resolver keys=1 observations=2 real=2 speculative=0 probe-internal=0
-// CHECK: trait-demand-census summary keys=1 observations=8 drainable-keys=1
-// CHECK: trait-demand-census counter total residual-tolerance-accepts=0 residual-tolerance-accepts-generator-pending=0 residual-tolerance-accepts-multi-candidate=0 residual-tolerance-accepts-hypothesis=0 residual-tolerance-accepts-mixed-or-other=0 resolver-engine-misses=2
+// CHECK: trait-demand-census engine unifier-acceptance keys=1 observations=1 real=1 speculative=0 probe-internal=0
+// CHECK: trait-demand-census engine resolver-engine-miss keys=1 observations=3 real=3 speculative=0 probe-internal=0
+// CHECK: trait-demand-census engine read-only-resolver keys=1 observations=1 real=1 speculative=0 probe-internal=0
+// CHECK: trait-demand-census summary keys=1 observations=9 drainable-keys=1
+// CHECK: trait-demand-census counter total residual-tolerance-accepts=0 residual-tolerance-accepts-generator-pending=0 residual-tolerance-accepts-multi-candidate=0 residual-tolerance-accepts-hypothesis=0 residual-tolerance-accepts-mixed-or-other=0 resolver-engine-misses=3

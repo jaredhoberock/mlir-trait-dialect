@@ -19,12 +19,12 @@
 
 !U = !trait.poly<1>
 
-trait.trait @X[!trait.poly<9>] {}
-trait.trait @Has[!trait.poly<0>] { trait.assoc_type @Out }
+trait.trait private @X[!trait.poly<9>] {}
+trait.trait private @Has[!trait.poly<0>] { trait.assoc_type @Out }
 
-trait.impl @Has_w1  for @Has[tuple<!U>]     { trait.assoc_type @Out = !trait.proj<@Has[!U], "Out"> }
-trait.impl @Has_w2  for @Has[tuple<!U, !U>] { trait.assoc_type @Out = !trait.proj<@Has[!U], "Out"> }
-trait.impl @Has_mid for @Has[i32] where [@X[i32]] { trait.assoc_type @Out = i64 }
+trait.impl private @Has_w1  for @Has[tuple<!U>]     { trait.assoc_type @Out = !trait.proj<@Has[!U], "Out"> }
+trait.impl private @Has_w2  for @Has[tuple<!U, !U>] { trait.assoc_type @Out = !trait.proj<@Has[!U], "Out"> }
+trait.impl private @Has_mid for @Has[i32] where [@X[i32]] { trait.assoc_type @Out = i64 }
 
 func.func @gen(%c: !trait.claim<!trait.proj<@Has[tuple<!U>], "Out"> = !trait.proj<@Has[tuple<!U, !U>], "Out">>) -> () {
   return

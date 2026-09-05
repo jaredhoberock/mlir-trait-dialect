@@ -19,15 +19,15 @@
 
 !T = !trait.poly<0>
 
-trait.trait @Ground[!T] {}
+trait.trait private @Ground[!T] {}
 
-trait.impl @Ground_all for @Ground[!T] {}
+trait.impl private @Ground_all for @Ground[!T] {}
 
-trait.trait @Hold[!T] {
+trait.trait private @Hold[!T] {
   func.func private @held() -> !T
 }
 
-trait.impl @Hold_claim for @Hold[!trait.claim<@Ground[i32]>] where [
+trait.impl private @Hold_claim for @Hold[!trait.claim<@Ground[i32]>] where [
   @Ground[i32]
 ] {
   func.func @held() -> !trait.claim<@Ground[i32]> {
@@ -50,7 +50,7 @@ func.func @test() {
 
 // Both claims are proved before the sweep runs, so both are available to
 // respell with.
-// CHECK: trait-stage-record respelling round=0 bindings=2 ops=6 positions=7
+// CHECK: trait-stage-record respelling round=0 bindings=2 projections=2 ops=2 positions=3
 
 // The module the stage leaves behind spells no claim at all, so nothing was
 // left holding a spelling respelling failed to reach.

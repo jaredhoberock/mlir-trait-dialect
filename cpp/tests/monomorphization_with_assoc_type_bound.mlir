@@ -14,23 +14,23 @@
 
 !S = !trait.poly<0>
 
-trait.trait @Printable[!S] {
+trait.trait private @Printable[!S] {
   func.func private @print(!S) -> i32
 }
 
-trait.impl @Printable_impl_i64 for @Printable[i64] {
+trait.impl private @Printable_impl_i64 for @Printable[i64] {
   func.func @print(%self: i64) -> i32 {
     %c = arith.trunci %self : i64 to i32
     return %c : i32
   }
 }
 
-trait.trait @Container[!S] where [@Printable[!trait.proj<@Container[!S], "Elem">]] {
+trait.trait private @Container[!S] where [@Printable[!trait.proj<@Container[!S], "Elem">]] {
   trait.assoc_type @Elem
   func.func private @first(!S) -> !trait.proj<@Container[!S], "Elem">
 }
 
-trait.impl @Container_impl_i32 for @Container[i32] {
+trait.impl private @Container_impl_i32 for @Container[i32] {
   trait.assoc_type @Elem = i64
   func.func @first(%self: i32) -> i64 {
     %c = arith.extsi %self : i32 to i64
@@ -39,12 +39,12 @@ trait.impl @Container_impl_i32 for @Container[i32] {
 }
 
 // Wraps @Container: @Wrapper[T] requires @Container[T]
-trait.trait @Wrapper[!S] {
+trait.trait private @Wrapper[!S] {
   func.func private @get(!S) -> i32
 }
 
 !Wi = !trait.poly<1>
-trait.impl @Wrapper_impl for @Wrapper[!Wi] where [
+trait.impl private @Wrapper_impl for @Wrapper[!Wi] where [
   @Container[!Wi]
 ] {
   func.func @get(%self: !Wi) -> i32 {

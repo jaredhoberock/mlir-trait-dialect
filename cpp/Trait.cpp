@@ -20,6 +20,21 @@ namespace {
 /// which the nominal conversion takes with those attributes and which the step
 /// therefore leaves for it. The step requests the cleanup interlude that runs
 /// after it, so it is that interlude's requester.
+///
+/// XXX TODO: split this into two contributed steps once the driver exposes the
+/// contractVersion-4 readiness verbs. `instantiate-monomorphs` would discharge
+/// trait.func.call and trait.method.call qualified by isRewritableGenericCall
+/// (Passes.hpp) with its verifier off; `erase-polymorphs` would discharge the
+/// trait and coord dialects, gated ineligible while isPendingExpansion holds,
+/// with its verifier on and the cleanup interlude requested. That lets another
+/// dialect's step run between the two without either meeting a body the trait
+/// dialect has already sealed. The verbs it needs — a discharge qualified by a
+/// per-instance predicate, a gate that is a predicate rather than one operation
+/// name, and a per-step verifier policy — are not on the driver's current
+/// contract (v3), and the archive's consumer transcribes a single `monomorphize`
+/// step into the two passes today; the fused step stays until both land. The
+/// predicates the split will use are already implemented and exported
+/// (Passes.hpp, c_api).
 struct LoweringContribution : lowering::LoweringContributionInterface {
   using lowering::LoweringContributionInterface::LoweringContributionInterface;
   void contributeSteps(lowering::LoweringStepSink &sink) const override {

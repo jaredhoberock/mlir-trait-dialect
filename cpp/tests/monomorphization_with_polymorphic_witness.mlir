@@ -8,12 +8,12 @@
 !T0 = !trait.poly<0>
 !T1 = !trait.poly<1>
 
-trait.trait @Trait [!T0, !T1] {
+trait.trait private @Trait [!T0, !T1] {
   func.func private @method(!T0, !T1) -> i64
 }
 
 !T2 = !trait.poly<2>
-trait.impl @Trait_impl for @Trait[i64, !T2] {
+trait.impl private @Trait_impl for @Trait[i64, !T2] {
   func.func @method(%self: i64, %arg: !T2) -> i64 {
     %0 = trait.assume @Trait[i64, !T2]
     return %self : i64
@@ -21,7 +21,7 @@ trait.impl @Trait_impl for @Trait[i64, !T2] {
 }
 
 !T3 = !trait.poly<3>
-trait.proof @Trait_proof proves @Trait_impl for @Trait[i64, tuple<!T3>] given []
+trait.proof private @Trait_proof proves @Trait_impl for @Trait[i64, tuple<!T3>] given []
 
 // CHECK-LABEL: func.func @test_
 // CHECK: call @Trait_impl_{{.*}}_method

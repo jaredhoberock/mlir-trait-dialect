@@ -114,20 +114,42 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &sub
     return (result != t) ? std::optional<Type>(result) : std::nullopt;
   });
 
-  // The clone rule for equality evidence: the endpoints are pure substitution,
-  // no ground projection resolved inside them, matching what the witness
-  // verifier enforces: the current endpoints must be a single-substitution
-  // instance of the witness's own equality, which a resolution would break.
-  // A witness's stored equality is likewise NOT rewritten -- it is
-  // immutable evidence -- so resolution stays outside the immutable-evidence
-  // path entirely.
-  replacer.addReplacement([=](ClaimType claim) -> std::optional<Type> {
+  // The clone rule for equality evidence: the endpoints receive the variable
+  // bindings alone, to a fixed point -- no projection or evidence binding, and
+  // no module lookup, resolved inside them -- matching what the witness verifier
+  // enforces: the current endpoints must be a single-substitution instance of
+  // the witness's own equality, which a resolution would break. A witness's
+  // stored equality is likewise NOT rewritten -- it is immutable evidence.
+  llvm::DenseMap<Type, Type> variableBindings;
+  for (auto [key, value] : subst)
+    if (isa<GenericTypeInterface>(key))
+      variableBindings.try_emplace(key, value);
+  replacer.addReplacement([variableBindings](ClaimType claim) -> std::optional<Type> {
     return respellEqualityEndpoints(claim, [&](Type t) {
-      return applySubstitutionToFixedPoint(subst, t);
+      return applySubstitutionToFixedPoint(variableBindings, t);
     });
   });
 
   return replacer;
+}
+
+/// Whether the block a builder inserts into stands inside a trait, impl, or
+/// proof, or a still-polymorphic function -- a template, whose clone carries no
+/// projection binding, no evidence binding, and no module lookup, because its
+/// spelling is resolved when the template is itself cloned for a concrete
+/// instance.
+static bool insertionStandsInsideTemplate(OpBuilder &builder) {
+  Block *block = builder.getInsertionBlock();
+  if (!block)
+    return false;
+  for (Operation *op = block->getParentOp(); op; op = op->getParentOp()) {
+    if (isa<TraitOp, ImplOp, ProofOp>(op))
+      return true;
+    if (auto func = dyn_cast<func::FuncOp>(op))
+      if (isPolymorphicType(Type(func.getFunctionType())))
+        return true;
+  }
+  return false;
 }
 
 func::FuncOp specializePolymorph(OpBuilder& builder,
@@ -141,14 +163,34 @@ func::FuncOp specializePolymorph(OpBuilder& builder,
 
   Location loc = polymorph.getLoc();
 
-  // make a type replacer that also resolves the ground projections this
-  // substitution mints, so the specialized instance is stamped in normal form
-  AttrTypeReplacer replacer = makeTypeReplacerFromSubstitution(
-      substitution, polymorph->getParentOfType<ModuleOp>());
+  // A clone whose signature still spells a type variable under the generic-keyed
+  // bindings alone, or that is inserted inside a trait, impl, or proof, is a
+  // template: it is stamped under those bindings with no projection or evidence
+  // binding and no module lookup, so a substitution-invariant verifier accepts
+  // it as it accepts the source, and its spelling resolves when it is cloned for
+  // a concrete instance. A monomorphic clone receives the full call substitution
+  // and ground-projection normalization by module lookup.
+  llvm::DenseMap<Type, Type> variableBindings;
+  for (auto [key, value] : substitution)
+    if (isa<GenericTypeInterface>(key))
+      variableBindings.try_emplace(key, value);
+  AttrTypeReplacer variableReplacer =
+      makeTypeReplacerFromSubstitution(variableBindings, ModuleOp());
 
-  // replace the polymorphic function type
   auto oldFunctionType = polymorph.getFunctionType();
-  auto newFunctionType = llvm::cast<FunctionType>(replacer.replace(oldFunctionType));
+  auto substitutedType =
+      llvm::cast<FunctionType>(variableReplacer.replace(oldFunctionType));
+
+  bool cloneIsTemplate = isPolymorphicType(Type(substitutedType)) ||
+                         insertionStandsInsideTemplate(builder);
+  AttrTypeReplacer fullReplacer = makeTypeReplacerFromSubstitution(
+      substitution, polymorph->getParentOfType<ModuleOp>());
+  AttrTypeReplacer &replacer = cloneIsTemplate ? variableReplacer : fullReplacer;
+
+  auto newFunctionType =
+      cloneIsTemplate
+          ? substitutedType
+          : llvm::cast<FunctionType>(replacer.replace(oldFunctionType));
 
   // create the instance with the new type and instance name
   func::FuncOp instance = func::FuncOp::create(builder, loc, instanceName, newFunctionType);
@@ -182,11 +224,17 @@ void specializePolymorphicRegion(OpBuilder& builder,
                                   const DenseMap<Type,Type> &subst) {
   assert(monomorph.empty() && "Region is not empty");
 
-  // make a type replacer that also resolves the ground projections this
-  // substitution mints, so the specialized region is stamped in normal form
+  // A region cloned into a template carries no module lookup: its projections
+  // resolve when the template is cloned for a concrete instance, not here. A
+  // region cloned into monomorphic code resolves its ground projections by
+  // module-visible impl lookup, so the specialized region is stamped in normal
+  // form.
   ModuleOp module =
-      polymorph.getParentOp() ? polymorph.getParentOp()->getParentOfType<ModuleOp>()
-                              : ModuleOp();
+      insertionStandsInsideTemplate(builder)
+          ? ModuleOp()
+          : (polymorph.getParentOp()
+                 ? polymorph.getParentOp()->getParentOfType<ModuleOp>()
+                 : ModuleOp());
   AttrTypeReplacer replacer = makeTypeReplacerFromSubstitution(subst, module);
 
   IRMapping mapping;
@@ -195,38 +243,6 @@ void specializePolymorphicRegion(OpBuilder& builder,
                                  monomorph,
                                  mapping,
                                  replacer);
-
-  // A detached region has no module, so the replacer above had no lookup to
-  // resolve with. Whether that matters is a question about the clone, not about
-  // the source: substituting a concrete argument into a symbolic projection is
-  // what makes it monomorphic, so a projection invisible in the polymorph can
-  // be a ground projection here. Count them, over the same result and block-argument
-  // types the stage's own leftover-projection sweep walks.
-  //
-  // No caller reaches this today: every one of them passes a region whose
-  // parent op is in a module. The walk is a whole-region traversal, so it is
-  // guarded rather than paid for on a path a detached-region caller would make
-  // hot on the day one appears.
-  if (!module && DemandLedger::areObservationsEnabled()) {
-    auto count = [](Type root) {
-      root.walk([](Type sub) {
-        auto proj = dyn_cast<ProjectionType>(sub);
-        if (proj && isMonomorphicType(proj))
-          countModulelessRegionProjection();
-      });
-    };
-    for (Block &block : monomorph)
-      for (BlockArgument arg : block.getArguments())
-        count(arg.getType());
-    monomorph.walk([&](Operation *op) {
-      for (Type t : op->getResultTypes())
-        count(t);
-      for (Region &r : op->getRegions())
-        for (Block &b : r)
-          for (BlockArgument arg : b.getArguments())
-            count(arg.getType());
-    });
-  }
 }
 
 } // end mlir::trait

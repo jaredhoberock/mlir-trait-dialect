@@ -57,19 +57,27 @@ MlirOperation traitImplOpCreateNamed(MlirLocation loc,
                                      MlirAttribute selfTraitApp,
                                      MlirAttribute* predicates, intptr_t numPredicates);
 
-/// Create a trait.method.call operation
+/// Create a trait.method.call operation. `typeParams`/`typeArgs` are the
+/// parallel type-argument arrays (the method's own type variables and the types
+/// they take); pass numTypeArgs = 0 to leave the call's bindings inferred.
 MlirOperation traitMethodCallOpCreate(MlirLocation loc,
                                       MlirStringRef traitName,
                                       MlirStringRef methodName,
                                       MlirValue claim,
                                       MlirValue* arguments, intptr_t numArguments,
-                                      MlirType* resultTypes, intptr_t numResults);
+                                      MlirType* resultTypes, intptr_t numResults,
+                                      MlirType* typeParams, MlirType* typeArgs,
+                                      intptr_t numTypeArgs);
 
-/// Create a trait.func.call operation
+/// Create a trait.func.call operation. `typeParams`/`typeArgs` are the parallel
+/// type-argument arrays (the callee's own type variables and the types they
+/// take); pass numTypeArgs = 0 to leave the call's bindings inferred.
 MlirOperation traitFuncCallOpCreate(MlirLocation loc,
                                     MlirStringRef callee,
                                     MlirValue* arguments, intptr_t numArguments,
-                                    MlirType* resultTypes, intptr_t numResults);
+                                    MlirType* resultTypes, intptr_t numResults,
+                                    MlirType* typeParams, MlirType* typeArgs,
+                                    intptr_t numTypeArgs);
 
 /// Create a trait.allege operation
 MlirOperation traitAllegeOpCreate(MlirLocation loc,
@@ -224,6 +232,18 @@ intptr_t traitGetGenericTypesIn(MlirType type, MlirType *results, intptr_t maxRe
 /// blob. Diagnostics reach the context's handler; the return value is the
 /// verdict alone. Returns true when the screen holds.
 bool traitVerifyAcyclicTraitsStructure(MlirModule module);
+
+/// Whether `op` is a generic trait call instantiation can rewrite now -- a
+/// trait.func.call or trait.method.call whose every precondition the instantiate
+/// patterns check holds. This is the predicate the instantiate step qualifies
+/// its discharge by. Any other op answers false.
+bool traitIsRewritableGenericCall(MlirOperation op);
+
+/// Whether `module` still carries instantiation work outside a template: a
+/// rewritable generic call, or an unproven monomorphic application claim or an
+/// unresolved ground projection not yet discharged. This is the erase step's
+/// readiness -- it may run only when this answers false.
+bool traitIsPendingExpansion(MlirModule module);
 
 #ifdef __cplusplus
 }

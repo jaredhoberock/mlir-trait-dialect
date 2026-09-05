@@ -10,20 +10,20 @@
 // coerces and their cited equalities reduce to nothing and the surviving call is
 // the concrete method. The respell sweep does not trip.
 
-trait.trait @Bound[!trait.poly<0>] {
+trait.trait private @Bound[!trait.poly<0>] {
   func.func private @use(!trait.poly<0>) -> i1
 }
-trait.impl @Bound_impl for @Bound[i64] {
+trait.impl private @Bound_impl for @Bound[i64] {
   func.func @use(%self: i64) -> i1 {
     %t = arith.constant 1 : i1
     return %t : i1
   }
 }
 
-trait.trait @Assoc[!trait.poly<0>] {
+trait.trait private @Assoc[!trait.poly<0>] {
   trait.assoc_type @Output
 }
-trait.impl @Assoc_impl for @Assoc[i64] {
+trait.impl private @Assoc_impl for @Assoc[i64] {
   trait.assoc_type @Output = i64
 }
 

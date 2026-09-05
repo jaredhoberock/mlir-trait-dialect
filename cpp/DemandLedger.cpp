@@ -558,7 +558,7 @@ llvm::SetVector<Type> demandsSpelledIn(ModuleOp module, bool inAttributes,
       return false;
     if (isa<TraitOp, ImplOp, ProofOp>(op))
       return true;
-    if (discipline != DemandSkip::InfrastructureAndTemplates)
+    if (discipline != DemandSkip::Foreign)
       return false;
     if (auto func = dyn_cast<func::FuncOp>(op))
       return isPolymorphicType(Type(func.getFunctionType()));
@@ -633,7 +633,7 @@ void DemandLedger::reportServedDrainableKeys(ModuleOp module,
   // a round would have looked.
   llvm::SetVector<Type> standing = demandsSpelledIn(
       module, /*inAttributes=*/false, DemandSkip::Nothing,
-      DemandSkip::InfrastructureAndTemplates);
+      DemandSkip::Foreign);
 
   for (Type key : getKeys()) {
     const DemandRecord *record = lookup(key);
@@ -677,7 +677,7 @@ DemandLedger::checkDrainedKeysSettled(ModuleOp module,
 
   llvm::SetVector<Type> spelled =
       demandsSpelledIn(module, /*inAttributes=*/true, DemandSkip::Nothing,
-                       DemandSkip::InfrastructureAndTemplates);
+                       DemandSkip::Foreign);
 
   bool dropped = false;
   for (Type key : drained) {
@@ -716,8 +716,8 @@ DemandLedger::checkStandingDemandsServed(ModuleOp module,
   // demand this check is owed -- the leftover-projection sweep passes those over
   // for the same reason, and this backstops that sweep.
   llvm::SetVector<Type> spelled = demandsSpelledIn(
-      module, /*inAttributes=*/true, DemandSkip::InfrastructureAndTemplates,
-      DemandSkip::InfrastructureAndTemplates);
+      module, /*inAttributes=*/true, DemandSkip::Foreign,
+      DemandSkip::Foreign);
 
   bool standing = false;
   for (Type key : getDrainableDemands()) {

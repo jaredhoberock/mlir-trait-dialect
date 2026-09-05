@@ -28,12 +28,12 @@
 // the module-capable entry a pass or committed-fact build uses resolves it if a
 // unique impl binds it, and tolerates only an irreducible crossing.)
 
-trait.trait @Callable[!trait.poly<0>] {
+trait.trait private @Callable[!trait.poly<0>] {
   trait.assoc_type @Output
   func.func private @call(!trait.poly<0>) -> !trait.proj<@Callable[!trait.poly<0>], "Output">
 }
 
-trait.impl @Callable_i64 for @Callable[i64] {
+trait.impl private @Callable_i64 for @Callable[i64] {
   trait.assoc_type @Output = i64
   func.func @call(%self: i64) -> i64 {
     return %self : i64
@@ -41,7 +41,7 @@ trait.impl @Callable_i64 for @Callable[i64] {
 }
 
 // fn apply<F: Callable>(f: F, claim) -> Callable[F]::Output
-func.func @apply(%f: !trait.poly<10>,
+func.func private @apply(%f: !trait.poly<10>,
                  %claim: !trait.claim<@Callable[!trait.poly<10>]>)
     -> !trait.proj<@Callable[!trait.poly<10>], "Output"> {
   %r = trait.method.call %claim @Callable[!trait.poly<10>]::@call(%f)
@@ -50,7 +50,7 @@ func.func @apply(%f: !trait.poly<10>,
 }
 
 // fn wrap_and_apply<T: Callable>(x: T, claim) -> Callable[T]::Output
-func.func @wrap_and_apply(%x: !trait.poly<20>,
+func.func private @wrap_and_apply(%x: !trait.poly<20>,
                           %claim: !trait.claim<@Callable[!trait.poly<20>]>)
     -> !trait.proj<@Callable[!trait.poly<20>], "Output"> {
   %r = trait.func.call @apply(%x, %claim)

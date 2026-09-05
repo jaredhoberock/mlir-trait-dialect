@@ -44,6 +44,6 @@ func.func @foo(%x: i8) -> i1 {
   return %res : i1
 }
 
-// CHECK: trait.proof @A_impl_{{.*}}_p proves @A_impl for @A[i8] given []
-// CHECK: trait.proof @B_impl_{{.*}}_p proves @B_impl for @B[i8] given []
-// CHECK: trait.proof @C_impl_{{.*}}_p proves @C_impl for @C[i8] given [@A_impl_{{.*}}_p, @B_impl_{{.*}}_p]
+// CHECK: trait.proof private @A_impl_{{.*}}_p proves @A_impl for @A[i8] given []
+// CHECK: trait.proof private @B_impl_{{.*}}_p proves @B_impl for @B[i8] given []
+// CHECK: trait.proof private @C_impl_{{.*}}_p proves @C_impl for @C[i8] given [@A_impl_{{.*}}_p, @B_impl_{{.*}}_p]

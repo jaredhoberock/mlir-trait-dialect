@@ -17,23 +17,23 @@
 
 !T = !trait.poly<0>
 
-trait.trait @Gen[!T] {
+trait.trait private @Gen[!T] {
   trait.assoc_type @A
 }
 
-trait.impl @Gen_wide for @Gen[i64] {
+trait.impl private @Gen_wide for @Gen[i64] {
   trait.assoc_type @A = i32
 }
 
-trait.impl @Gen_narrow for @Gen[i64] {
+trait.impl private @Gen_narrow for @Gen[i64] {
   trait.assoc_type @A = i16
 }
 
-trait.trait @Res[!T] {
+trait.trait private @Res[!T] {
   trait.assoc_type @X
 }
 
-trait.impl @Res_i64 for @Res[i64] {
+trait.impl private @Res_i64 for @Res[i64] {
   trait.assoc_type @X = i32
 }
 

@@ -18,12 +18,12 @@
 !S = !trait.poly<0>
 !T = !trait.poly<1>
 
-trait.trait @ConstMapper[!S] {
+trait.trait private @ConstMapper[!S] {
   trait.assoc_type @Result<[!T]>
   func.func private @map(!S, !T) -> !trait.proj<@ConstMapper[!S], "Result", [!T]>
 }
 
-trait.impl for @ConstMapper[i32] {
+trait.impl private for @ConstMapper[i32] {
   trait.assoc_type @Result<[!T]> = i64
   func.func @map(%self: i32, %x: !T) -> i64 {
     %c = arith.extsi %self : i32 to i64

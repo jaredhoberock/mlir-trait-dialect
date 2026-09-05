@@ -18,9 +18,9 @@
 
 !T = !trait.poly<0>
 
-trait.trait @P[!T] {}
+trait.trait private @P[!T] {}
 
-trait.impl @P_i64 for @P[i64] {}
+trait.impl private @P_i64 for @P[i64] {}
 
 func.func nested @holds(%c: !trait.claim<@P[i64]>, %x: !T) -> !T {
   return %x : !T

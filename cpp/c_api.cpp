@@ -148,12 +148,26 @@ MlirOperation traitImplOpCreateNamed(MlirLocation loc,
   return wrap(op.getOperation());
 }
 
+// Build a TypeArrayAttr from a C array of types, or a null attribute when the
+// count is zero (an inferred call carries no type-argument arrays).
+static ArrayAttr typeArrayAttrOrNull(MLIRContext* ctx, MlirType* types,
+                                     intptr_t count) {
+  if (count <= 0)
+    return {};
+  SmallVector<Attribute> elements;
+  for (intptr_t i = 0; i < count; ++i)
+    elements.push_back(TypeAttr::get(unwrap(types[i])));
+  return ArrayAttr::get(ctx, elements);
+}
+
 MlirOperation traitMethodCallOpCreate(MlirLocation loc,
                                       MlirStringRef traitName,
                                       MlirStringRef methodName,
                                       MlirValue claim,
                                       MlirValue* arguments, intptr_t numArguments,
-                                      MlirType* resultTypes, intptr_t numResults) {
+                                      MlirType* resultTypes, intptr_t numResults,
+                                      MlirType* typeParams, MlirType* typeArgs,
+                                      intptr_t numTypeArgs) {
   MLIRContext* ctx = unwrap(loc)->getContext();
   OpBuilder builder(ctx);
 
@@ -176,13 +190,20 @@ MlirOperation traitMethodCallOpCreate(MlirLocation loc,
     args
   );
 
+  if (auto params = typeArrayAttrOrNull(ctx, typeParams, numTypeArgs)) {
+    op.setTypeParamsAttr(params);
+    op.setTypeArgsAttr(typeArrayAttrOrNull(ctx, typeArgs, numTypeArgs));
+  }
+
   return wrap(op.getOperation());
 }
 
 MlirOperation traitFuncCallOpCreate(MlirLocation loc,
                                     MlirStringRef callee,
                                     MlirValue* arguments, intptr_t numArguments,
-                                    MlirType* resultTypes, intptr_t numResults) {
+                                    MlirType* resultTypes, intptr_t numResults,
+                                    MlirType* typeParams, MlirType* typeArgs,
+                                    intptr_t numTypeArgs) {
   MLIRContext* ctx = unwrap(loc)->getContext();
   OpBuilder builder(ctx);
 
@@ -202,6 +223,11 @@ MlirOperation traitFuncCallOpCreate(MlirLocation loc,
     FlatSymbolRefAttr::get(ctx, StringRef(callee.data, callee.length)),
     args
   );
+
+  if (auto params = typeArrayAttrOrNull(ctx, typeParams, numTypeArgs)) {
+    op.setTypeParamsAttr(params);
+    op.setTypeArgsAttr(typeArrayAttrOrNull(ctx, typeArgs, numTypeArgs));
+  }
 
   return wrap(op.getOperation());
 }
@@ -557,6 +583,14 @@ intptr_t traitGetGenericTypesIn(MlirType type, MlirType *results, intptr_t maxRe
 
 bool traitVerifyAcyclicTraitsStructure(MlirModule module) {
   return succeeded(verifyAcyclicTraitsStructure(unwrap(module)));
+}
+
+bool traitIsRewritableGenericCall(MlirOperation op) {
+  return isRewritableGenericCall(unwrap(op));
+}
+
+bool traitIsPendingExpansion(MlirModule module) {
+  return isPendingExpansion(unwrap(module));
 }
 
 } // end extern "C"

@@ -18,6 +18,27 @@
 #include <optional>
 #include <variant>
 
+namespace mlir::trait {
+/// Parse and print the optional `private`/`nested` keyword a template op leads
+/// with, so `trait.proof private @p ...` reads and prints as `func.func` does.
+/// A public template elides the keyword.
+static ::mlir::ParseResult parseVisibilityKeyword(::mlir::OpAsmParser &parser,
+                                                  ::mlir::StringAttr &visibility) {
+  ::mlir::NamedAttrList attrs;
+  // A missing keyword is not an error: the op is public. The helper reports
+  // failure when it finds none and consumes nothing, so the outcome is ignored.
+  (void)::mlir::impl::parseOptionalVisibilityKeyword(parser, attrs);
+  visibility = ::llvm::dyn_cast_or_null<::mlir::StringAttr>(
+      attrs.get("sym_visibility"));
+  return ::mlir::success();
+}
+
+static void printVisibilityKeyword(::mlir::OpAsmPrinter &printer,
+                                   ::mlir::Operation *, ::mlir::StringAttr visibility) {
+  if (visibility && visibility.getValue() != "public")
+    printer << visibility.getValue();
+}
+} // namespace mlir::trait
 
 #define GET_OP_CLASSES
 #include <TraitOps.cpp.inc>
@@ -346,7 +367,11 @@ SmallVector<ImplOp> TraitOp::getCandidateImplsFor(ClaimType wanted) {
 ParseResult TraitOp::parse(OpAsmParser &p, OperationState &s) {
   MLIRContext *ctx = p.getContext();
 
-  // sym_name 
+  // optional `private`/`nested` keyword before the name, as func.func reads it;
+  // a missing keyword is not an error (the op is public) and consumes nothing.
+  (void)mlir::impl::parseOptionalVisibilityKeyword(p, s.attributes);
+
+  // sym_name
   StringAttr symName;
   if (p.parseSymbolName(symName, "sym_name", s.attributes))
     return failure();
@@ -391,6 +416,11 @@ ParseResult TraitOp::parse(OpAsmParser &p, OperationState &s) {
 }
 
 void TraitOp::print(OpAsmPrinter &p) {
+  // optional `private`/`nested` keyword before the name; public is elided
+  if (auto vis = getSymVisibilityAttr())
+    if (vis.getValue() != "public")
+      p << ' ' << vis.getValue();
+
   // `@sym_name`
   p << ' ';
   p.printSymbolName(getSymNameAttr());
@@ -410,7 +440,7 @@ void TraitOp::print(OpAsmPrinter &p) {
 
   // print any trailing attributes
   p.printOptionalAttrDictWithKeyword((*this)->getAttrs(),
-                                     /*elided=*/{"sym_name","type_params","requirements"});
+                                     /*elided=*/{"sym_name","type_params","requirements","sym_visibility"});
 
   // region body
   p << ' ';
@@ -488,6 +518,75 @@ static FailureOr<SmallVector<ImplWitnessRule>> collectImplWitnessRules(
   return rules;
 }
 
+/// The correspondence carrying a trait method's own type variables onto the
+/// impl method's: the trait method's signature, specialized for `impl`'s self
+/// claim and normalized under its bindings and `witnessRules`, unified with the
+/// impl method's signature. Its keys are the trait method's variables and its
+/// values the impl's, because only the trait method's variables are still free
+/// on the specialized side.
+///
+/// This is the impl's signature check and the rekeying a call lowering needs,
+/// which are the same unification: the check is that it succeeds, and a binding
+/// a call names -- keyed by the trait's spelling, since a method call reads the
+/// trait's declaration for the formal signature it unifies against -- rekeys
+/// through it to the copy of the method that is actually cloned.
+static FailureOr<SpecializationMap> buildTraitMethodVariableCorrespondence(
+    ImplOp impl, TraitOp traitOp, func::FuncOp implMethod,
+    ArrayRef<ImplWitnessRule> witnessRules,
+    llvm::function_ref<InFlightDiagnostic()> errFn) {
+  StringRef name = implMethod.getSymName();
+  auto traitMethod = traitOp.getMethod(name, errFn);
+  if (failed(traitMethod)) return failure();
+
+  // Build substitution from trait type params to impl type args
+  auto traitSubst =
+      traitOp.buildSubstitutionForSelfClaim(impl.getSelfClaim(), errFn);
+  if (failed(traitSubst)) return failure();
+
+  // Specialize the trait method's signature
+  FunctionType traitMethodTy = traitMethod->getFunctionType();
+  Type specializedTraitMethodTy = applySubstitutionToFixedPoint(traitSubst->toTypeMap(), traitMethodTy);
+
+  NormalizationContext normalization;
+  normalization.addLocalProjectionRule(
+      impl, impl.getSelfApplication(), *traitSubst);
+  for (const ImplWitnessRule &r : witnessRules)
+    normalization.addLocalProjectionRule(r.impl, r.app, r.subst);
+
+  // Check that the impl method's signature can specialize to the expected
+  // signature. Only projections naming this impl's exact trait application
+  // may use its associated type bindings; unrelated projections with the
+  // same associated type name remain symbolic.
+  FunctionType implMethodTy = implMethod.getFunctionType();
+  auto expectedMethodTy = normalization.normalize(
+      specializedTraitMethodTy, errFn);
+  if (failed(expectedMethodTy))
+    return failure();
+  auto actualMethodTy = normalization.normalize(implMethodTy, errFn);
+  if (failed(actualMethodTy))
+    return failure();
+
+  // Substituting this impl's self application into the trait method
+  // signature can mint a ground projection the impl's own bindings do
+  // not resolve -- a sibling impl's application, e.g. Group[coop.block]::
+  // Shape. A declared premise, verified and replayed above, reduces exactly
+  // those projections, so both signatures reach this comparison at the same
+  // grade. Compare their spellings with the module-free comparator: the
+  // verifier enumerates no candidate impls. Any projection still standing is
+  // not ground (the front end quotes an unresolved projection symbolically),
+  // so it must match literally.
+  auto correspondence = buildSpecialization(
+      Type(*expectedMethodTy), Type(*actualMethodTy), ModuleOp(), errFn);
+  if (failed(correspondence)) {
+    if (errFn)
+      errFn() << "method '" << name << "' has incompatible signature: "
+              << "expected " << *expectedMethodTy
+              << " but found " << *actualMethodTy;
+    return failure();
+  }
+  return correspondence;
+}
+
 static LogicalResult verifyEqualityObligations(
     ImplOp impl, TraitOp traitOp, ArrayRef<ImplWitnessRule> witnessRules,
     llvm::function_ref<InFlightDiagnostic()> errFn);
@@ -522,10 +621,6 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   auto premiseRules = collectImplWitnessRules(*this, *module, errFn);
   if (failed(premiseRules))
     return failure();
-  auto addPremiseRules = [&](NormalizationContext &ctx) {
-    for (const ImplWitnessRule &r : *premiseRules)
-      ctx.addLocalProjectionRule(r.impl, r.app, r.subst);
-  };
 
   // Get the trait
   auto traitOp = getTrait();
@@ -555,51 +650,11 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
         return emitOpError() << "implements method '" << name << "' multiple times";
       }
 
-      // Verify that the impl method's signature matches the trait method's signature
-      auto traitMethod = traitOp.getMethod(name, errFn);
-      if (failed(traitMethod)) return failure();
-
-      // Build substitution from trait type params to impl type args
-      auto traitSubst = traitOp.buildSubstitutionForSelfClaim(getSelfClaim(), errFn);
-      if (failed(traitSubst)) return failure();
-
-      // Specialize the trait method's signature
-      FunctionType traitMethodTy = traitMethod->getFunctionType();
-      Type specializedTraitMethodTy = applySubstitutionToFixedPoint(traitSubst->toTypeMap(), traitMethodTy);
-
-      NormalizationContext normalization;
-      normalization.addLocalProjectionRule(
-          *this, getSelfApplication(), *traitSubst);
-      addPremiseRules(normalization);
-
-      // Check that the impl method's signature can specialize to the expected
-      // signature. Only projections naming this impl's exact trait application
-      // may use its associated type bindings; unrelated projections with the
-      // same associated type name remain symbolic.
-      FunctionType implMethodTy = implMethod.getFunctionType();
-      auto expectedMethodTy = normalization.normalize(
-          specializedTraitMethodTy, errFn);
-      if (failed(expectedMethodTy))
+      // Verify that the impl method's signature matches the trait method's
+      // signature: the two correspond exactly when they unify.
+      if (failed(buildTraitMethodVariableCorrespondence(
+              *this, traitOp, implMethod, *premiseRules, errFn)))
         return failure();
-      auto actualMethodTy = normalization.normalize(implMethodTy, errFn);
-      if (failed(actualMethodTy))
-        return failure();
-
-      // Substituting this impl's self application into the trait method
-      // signature can mint a ground projection the impl's own bindings do
-      // not resolve -- a sibling impl's application, e.g. Group[coop.block]::
-      // Shape. A declared premise, verified and replayed above, reduces exactly
-      // those projections, so both signatures reach this comparison at the same
-      // grade. Compare their spellings with the module-free comparator: the
-      // verifier enumerates no candidate impls. Any projection still standing is
-      // not ground (the front end quotes an unresolved projection symbolically),
-      // so it must match literally.
-      if (failed(buildSpecialization(Type(*expectedMethodTy),
-                                     Type(*actualMethodTy), ModuleOp(), errFn))) {
-        return emitOpError() << "method '" << name << "' has incompatible signature: "
-                             << "expected " << *expectedMethodTy
-                             << " but found " << *actualMethodTy;
-      }
     } else if (auto assocType = dyn_cast<AssocTypeOp>(op)) {
       StringRef name = assocType.getSymName();
       if (!definedAssocTypes.insert(name).second)
@@ -756,7 +811,7 @@ LogicalResult ImplOp::verifyIsUnconditional(llvm::function_ref<InFlightDiagnosti
 }
 
 TraitOp ImplOp::getTrait() {
-  ModuleOp module = getParentOp<ModuleOp>();
+  ModuleOp module = (*this)->getParentOfType<ModuleOp>();
   if (!module)
     llvm_unreachable("ImplOp::getTrait: not inside of a module");
   return getSelfApplication().getTraitOrAbort(module, "ImplOp::getTrait: couldn't find trait");
@@ -875,15 +930,27 @@ FailureOr<func::FuncOp> ImplOp::getOrSpecializeMethod(OpBuilder& builder, String
 
   PatternRewriter::InsertionGuard guard(builder);
   builder.setInsertionPointToEnd(&getBody().front());
-  return specializePolymorph(builder, *traitMethod, methodName, subst->toTypeMap());
+  auto specialized =
+      specializePolymorph(builder, *traitMethod, methodName, subst->toTypeMap());
+  // A default method with no body to clone is refused where the clone was
+  // attempted; there is no method here to answer with.
+  if (!specialized)
+    return failure();
+  return specialized;
 }
 
 /// Specialize a polymorphic function and replace any AssumeOps whose
 /// trait application matches a claim-typed function parameter.
+///
+/// Null when the callee has no body to clone -- an external declaration --
+/// which specialization has already refused with a diagnostic. Every caller
+/// turns that into a failure rather than reading the instance.
 static func::FuncOp specializeAndReplaceAssumes(
     PatternRewriter &rewriter, func::FuncOp callee,
     StringRef name, const DenseMap<Type,Type> &subst) {
   auto funcOp = specializePolymorph(rewriter, callee, name, subst);
+  if (!funcOp)
+    return nullptr;
 
   // A trait.assume materializes a hypothesis whose evidence, once the function
   // is specialized, is carried by a claim-typed parameter of the same arm: an
@@ -930,7 +997,8 @@ static func::FuncOp specializeMethodAsFreeFuncWithLeadingSelfProof(
     func::FuncOp method,
     StringRef functionName,
     ClaimType selfProofTy,
-    const DenseMap<Type,Type>& subst) {
+    const DenseMap<Type,Type>& subst,
+    const DenseMap<Type,Type>& implSubst) {
 
   // specialize the method into the grandparent with a mangled name
   PatternRewriter::InsertionGuard guard(rewriter);
@@ -940,9 +1008,16 @@ static func::FuncOp specializeMethodAsFreeFuncWithLeadingSelfProof(
 
   // specialize the function and replace assumes matching claim-typed parameters
   auto funcOp = specializeAndReplaceAssumes(rewriter, method, functionName, subst);
+  if (!funcOp)
+    return nullptr;
 
-  // prepend the self proof as the first parameter of the function and
-  // set visibility to private
+  // The clone leads with the proven self claim the call carries: the self is
+  // ground and the impl's proof names it, in a template clone (a method with its
+  // own free generic) as in a monomorphic one. The clone's projections from that
+  // self to the impl's own obligations are spelled proven by the impl's proof --
+  // a fact of the impl fixed once the self is ground, not a call-site evidence
+  // binding -- and its assumed equalities project to the impl's equality
+  // where-clauses, so no assumption rides as a lifted claim parameter.
   rewriter.modifyOpInPlace(funcOp, [&] {
     (void)funcOp.insertArgument(/*idx=*/0, selfProofTy,
                                /*argAttrs=*/mlir::DictionaryAttr(),
@@ -951,25 +1026,38 @@ static func::FuncOp specializeMethodAsFreeFuncWithLeadingSelfProof(
   });
   BlockArgument selfProofArg = funcOp.getArgument(0);
 
-  // replace remaining application AssumeOps with projections from selfProofArg.
-  // A projection derives an application consequence of the self proof; an
-  // equality is not a projection consequence (it is established by
-  // trait.witness/coerce, not projected -- see ClaimType::getProjections), so an
-  // equality assume is never rewritten to a projection here. Any equality assume
-  // whose evidence is a claim-typed parameter was already discharged in
-  // specializeAndReplaceAssumes above.
+  // Read a proven claim spelling from the IMPL's own specialization: its
+  // evidence bindings map each of the impl's obligations (an unproven claim) to
+  // the proven claim discharging it, a fact of the impl fixed once the self is
+  // ground, so an application assume projects to the proven obligation. The call
+  // site's evidence bindings are deliberately not read here: a template clone is
+  // the template under variable bindings alone, and stamping one call's evidence
+  // over it would bind the clone to that call. An equality assume and any
+  // obligation the impl's specialization does not record fall back to the
+  // assume's own claim -- an equality never carries a proof, and a monomorphic
+  // clone's body already carries the proven spelling from full substitution.
+  auto provenOrSame = [&](ClaimType claim) -> ClaimType {
+    auto it = implSubst.find(claim);
+    if (it != implSubst.end())
+      if (auto proven = dyn_cast<ClaimType>(it->second))
+        return proven;
+    return claim;
+  };
+
+  // Replace every remaining AssumeOp with a projection from the self proof: an
+  // application assume to the proven obligation, an equality assume to the
+  // impl's equality where-clause. Both are candidate projections of the proven
+  // self, so the clone holds no trait.assume an AssumeOp verifier would refuse
+  // at module scope.
   SmallVector<AssumeOp> toErase;
   funcOp.walk([&](AssumeOp a) {
-    if (a.getClaim().isEquality())
-      return;
-
     PatternRewriter::InsertionGuard guard(rewriter);
     rewriter.setInsertionPoint(a);
 
     Value replacement = ProjectOp::create(
       rewriter,
       a.getLoc(),
-      a.getClaim(),
+      provenOrSame(a.getClaim()),
       selfProofArg
     );
 
@@ -980,6 +1068,30 @@ static func::FuncOp specializeMethodAsFreeFuncWithLeadingSelfProof(
   // erase the AssumeOps
   for (auto a : toErase)
     rewriter.eraseOp(a);
+
+  // A template clone (one whose method generics are still free) is stamped under
+  // the variable bindings alone, so a ground claim its body derives from the
+  // proven self -- one hop past the projections replaced above, e.g. a
+  // requirement of an assumed application -- stays spelled unproven. A projection
+  // from the now-proven source to that unproven claim fails proofness parity. The
+  // impl's proof settles every such ground claim once the self is ground, so
+  // respell them here from the IMPL's evidence bindings alone -- the same fact
+  // of the impl, never a call site's -- over the whole body at once. A
+  // monomorphic clone already carries the proven spelling from full
+  // substitution, so this is an identity there.
+  llvm::DenseMap<Type, Type> evidenceRespell;
+  for (auto [key, value] : implSubst)
+    if (isa<ClaimType>(key))
+      if (auto proven = dyn_cast<ClaimType>(value))
+        if (proven.isProven())
+          evidenceRespell.try_emplace(key, value);
+  if (!evidenceRespell.empty()) {
+    AttrTypeReplacer replacer =
+        makeTypeReplacerFromSubstitution(evidenceRespell, ModuleOp());
+    replacer.recursivelyReplaceElementsIn(funcOp, /*replaceAttrs=*/true,
+                                          /*replaceLocs=*/false,
+                                          /*replaceTypes=*/true);
+  }
 
   return funcOp;
 }
@@ -993,6 +1105,10 @@ FailureOr<func::FuncOp> ImplOp::getOrSpecializeFreeFunctionFromMethod(
   // check that methodName names a valid trait method
   if (!getTrait().hasMethod(methodName)) return failure();
 
+  // The enclosing module: where a clone of the method is cut and where an
+  // existing clone is looked up.
+  ModuleOp module = (*this)->getParentOfType<ModuleOp>();
+
   auto method = getOrSpecializeMethod(rewriter, methodName);
   if (failed(method)) return failure();
 
@@ -1003,9 +1119,36 @@ FailureOr<func::FuncOp> ImplOp::getOrSpecializeFreeFunctionFromMethod(
 
   // Build the same substitution that will be used to clone the method body:
   // first the enclosing impl substitution, then method-generic bindings from
-  // this call site.
-  DenseMap<Type,Type> subst = implSpec->toTypeMap();
-  for (const auto &[k, v] : callSubst.toTypeMap())
+  // this call site. The impl's own half is kept apart: the proven spellings a
+  // clone receives are facts of the impl, so they are read from it and never
+  // from the call.
+  DenseMap<Type,Type> implSubst = implSpec->toTypeMap();
+  DenseMap<Type,Type> subst = implSubst;
+
+  // A call names its method-generic bindings under the trait method's own type
+  // variables, while the method cloned below is the impl's copy, which carries
+  // its own. Rekey each binding through the correspondence between the two, so
+  // the clone is monomorphic in the method's variables as well as the impl's and
+  // no partly substituted template stands between the call and its instance.
+  auto errFn = [&] { return emitOpError(); };
+  auto witnessRules = collectImplWitnessRules(*this, module, errFn);
+  if (failed(witnessRules)) return failure();
+  auto correspondence = buildTraitMethodVariableCorrespondence(
+      *this, getTrait(), *method, *witnessRules, errFn);
+  if (failed(correspondence)) return failure();
+
+  DenseMap<Type,Type> callBindings = callSubst.toTypeMap();
+  for (auto [traitVariable, implVariable] : correspondence->toTypeMap()) {
+    // A trait method variable the impl pins to a concrete type is not a variable
+    // of the clone, so only a variable-to-variable entry rekeys a binding.
+    if (!isa<GenericTypeInterface>(implVariable))
+      continue;
+    auto binding = callBindings.find(traitVariable);
+    if (binding != callBindings.end())
+      subst.try_emplace(implVariable, binding->second);
+  }
+
+  for (const auto &[k, v] : callBindings)
     subst.try_emplace(k, v);
 
   // The extracted function name must include every substitution used to clone
@@ -1017,7 +1160,7 @@ FailureOr<func::FuncOp> ImplOp::getOrSpecializeFreeFunctionFromMethod(
 
   // look for an existing function
   auto funcOp = mlir::SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(
-    getParentOp(),
+    module,
     FlatSymbolRefAttr::get(ctx, functionName)
   );
 
@@ -1026,12 +1169,17 @@ FailureOr<func::FuncOp> ImplOp::getOrSpecializeFreeFunctionFromMethod(
     // specialize into grandparent with mangled name
     funcOp = specializeMethodAsFreeFuncWithLeadingSelfProof(
       rewriter,
-      getParentOp(),
+      module,
       *method,
       functionName,
       provenSelfClaim,
-      subst
+      subst,
+      implSubst
     );
+    // A method with no body to clone is refused where the clone was attempted;
+    // this call has no instance to name.
+    if (!funcOp)
+      return failure();
   }
 
   return funcOp;
@@ -1189,6 +1337,10 @@ FailureOr<SmallVector<ClaimType>> ImplOp::specializeObligationsAsClaimsFor(
 }
 
 ParseResult ImplOp::parse(OpAsmParser &p, OperationState &result) {
+  // optional `private`/`nested` keyword before the name, as func.func reads it;
+  // a missing keyword is not an error (the op is public) and consumes nothing.
+  (void)mlir::impl::parseOptionalVisibilityKeyword(p, result.attributes);
+
   // parse optional symbolic name: trait.impl @Sym
   StringAttr parsedSymName;
   (void)p.parseOptionalSymbolName(parsedSymName);
@@ -1254,7 +1406,10 @@ void ImplOp::print(OpAsmPrinter &printer) {
   std::string synthesized = generateSymName(getSelfApplication(), getAssumptions());
   bool printExplicitSymName = symNameAttr && symNameAttr.getValue() != synthesized;
 
-  // Print: trait.impl [@SymName] for @TraitName [types...] assumptions { ... }
+  // Print: trait.impl [private] [@SymName] for @TraitName [types...] assumptions { ... }
+  if (auto vis = getSymVisibilityAttr())
+    if (vis.getValue() != "public")
+      printer << ' ' << vis.getValue();
   printer << " ";
   if (printExplicitSymName) {
     printer.printSymbolName(symNameAttr);
@@ -1280,7 +1435,7 @@ void ImplOp::print(OpAsmPrinter &printer) {
 
   printer.printOptionalAttrDictWithKeyword(
     (*this)->getAttrs(),
-    /*elidedAttrs=*/{"sym_name", "self_application", "assumptions", "witnesses"}
+    /*elidedAttrs=*/{"sym_name", "self_application", "assumptions", "witnesses", "sym_visibility"}
   );
   printer << " ";
   printer.printRegion(getBody());
@@ -1302,7 +1457,7 @@ LogicalResult ProofOp::verify() {
 }
 
 LogicalResult ProofOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  auto module = getParentOp<ModuleOp>();
+  auto module = (*this)->getParentOfType<ModuleOp>();
   auto errFn = [&] { return emitOpError(); };
 
   // The proven claim is synthesized from the inherent trait_application
@@ -1334,7 +1489,7 @@ LogicalResult ProofOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 }
 
 TraitOp ProofOp::getTrait() {
-  auto module = getParentOp<ModuleOp>();
+  auto module = (*this)->getParentOfType<ModuleOp>();
   if (!module)
     llvm_unreachable("ProofOp::getTrait: not inside a module");
   return getTraitApplication().getTraitOrAbort(module, "ProofOp::getTrait: couldn't find trait");
@@ -1344,7 +1499,7 @@ FailureOr<SmallVector<ClaimType>> ProofOp::verifyAndGetSubproofClaims(
     DemandOrigin origin, llvm::function_ref<InFlightDiagnostic()> err) {
   SmallVector<ClaimType> result;
 
-  ModuleOp module = getParentOp<ModuleOp>();
+  ModuleOp module = (*this)->getParentOfType<ModuleOp>();
   if (!module) {
     if (err) err() << "not in a module";
     return failure();
@@ -1782,8 +1937,12 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
         else if (claim.isApplication())
           applicationPremises.push_back(claim.getTraitApplication());
       }
+    // The op's current result equality is the instance the discharge check
+    // carries the stored evidence's assumptions to, so a clone's premises match
+    // at the clone's spelling rather than the stored one.
     return verifyProjectionResolutionAtUse(module, witness, equalityPremises,
-                                           applicationPremises, errFn);
+                                           applicationPremises, errFn,
+                                           getResultClaim().getEqualityAttr());
   }
 
   // Refl arm: nothing to verify here.
@@ -2197,6 +2356,36 @@ FailureOr<func::FuncOp> MethodCallOp::getMethod(llvm::function_ref<InFlightDiagn
   return func;
 }
 
+// Read the substitution a generic call names explicitly from its parallel
+// type_params/type_args arrays. Each key must be one of `calleeGenerics` -- a
+// type variable of the callee (a method's own generics, or a free function's) --
+// so a foreign spelling that names no such variable is refused rather than
+// stamped into a clone name. The caller has already checked the arrays are
+// present.
+static FailureOr<DenseMap<Type, Type>> readDeclaredTypeArguments(
+    ArrayAttr typeParams, ArrayAttr typeArgs,
+    ArrayRef<GenericTypeInterface> calleeGenerics,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  if (!typeArgs || typeParams.size() != typeArgs.size()) {
+    if (err) err() << "type_params and type_args must be parallel arrays";
+    return failure();
+  }
+  DenseSet<Type> allowed;
+  for (GenericTypeInterface g : calleeGenerics)
+    allowed.insert(Type(g));
+  DenseMap<Type, Type> declared;
+  for (auto [param, arg] : llvm::zip(typeParams.getAsValueRange<TypeAttr>(),
+                                     typeArgs.getAsValueRange<TypeAttr>())) {
+    if (!allowed.contains(param)) {
+      if (err) err() << "type parameter " << param
+                     << " is not a type variable of the callee";
+      return failure();
+    }
+    declared[param] = arg;
+  }
+  return declared;
+}
+
 LogicalResult MethodCallOp::verify() {
   // the claim's type must be an ClaimType
   ClaimType claim = dyn_cast_or_null<ClaimType>(getClaim().getType());
@@ -2329,6 +2518,19 @@ FailureOr<SpecializationMap> MethodCallOp::buildParameterSpecialization(ModuleOp
   if (failed(traitSubst)) return failure();
   Type formal = applySubstitutionToFixedPoint(traitSubst->toTypeMap(), *methodFormalTy);
 
+  // When the call names the method's own type arguments explicitly, bind them
+  // into the formal here (the trait's arguments already rode in the claim's
+  // application), so what the machinery below checks is that the actuals are an
+  // instance of the declared substitution rather than a re-inference of it.
+  DenseMap<Type, Type> declared;
+  if (ArrayAttr declaredParams = getTypeParamsAttr()) {
+    auto read = readDeclaredTypeArguments(declaredParams, getTypeArgsAttr(),
+                                          getGenericTypesIn(*methodFormalTy), err);
+    if (failed(read)) return failure();
+    declared = std::move(*read);
+    formal = applySubstitutionToFixedPoint(declared, formal);
+  }
+
   // solve the *call-site* specialization: unify the specialized formal type with the
   // actual call type to get any remaining bindings (including generics in args/results)
   FunctionType actual = getActualFunctionType();
@@ -2436,6 +2638,10 @@ FailureOr<SpecializationMap> MethodCallOp::buildParameterSpecialization(ModuleOp
     }
     merged[key] = value;
   }
+  // Fold in the explicitly declared method-generic bindings (disjoint from the
+  // inferred keys, which were already substituted out of the formal above).
+  for (auto [key, value] : declared)
+    merged[key] = value;
   normalizeSubstitutionInPlace(merged);
 
   // The proofs this call's actual signature spells are bound where the call is
@@ -2625,30 +2831,52 @@ FailureOr<SpecializationMap> FuncCallOp::buildParameterSpecialization(ModuleOp u
   FunctionType formal = *maybeFormal;
   FunctionType actual = getActualFunctionType();
 
-  // build a substitution unifying formal & actual. `unifyModule` selects the
-  // comparator: a verifier passes none (strict); a pass passes the module so a
-  // ground projection minted by binding a generic mid-solve resolves.
-  auto spec = buildSpecialization(formal, actual, unifyModule, err);
-  if (failed(spec)) return failure();
-
   // `unifyModule` says which caller this is, the same discriminator the
-  // boundary resolution above reads: a verifier passes none, a pass passes the
-  // module.
+  // boundary resolution reads: a verifier passes none, a pass passes the module.
   DemandOrigin origin = unifyModule
                             ? DemandOrigin::CallSiteSpecialization
                             : DemandOrigin::CallSignatureVerification;
+
   // The proofs this call's actual signature spells are bound where the call is
   // lowered: the factory that closes the substitution walks the same spellings
   // and reads them off the record. A verifier has no lowering behind it, so it
   // checks them here or nowhere, and it runs on a worker thread with no memo of
   // its own to serve them from.
-  if (!unifyModule) {
+  auto bindActualProofs = [&]() -> LogicalResult {
+    if (unifyModule)
+      return success();
     EvidenceBindings evidence;
-    if (failed(bindProofsIn(actual, *module, evidence, origin,
-                                     /*memo=*/nullptr, err)))
-      return failure();
+    return bindProofsIn(actual, *module, evidence, origin, /*memo=*/nullptr, err);
+  };
+
+  // When the call names its callee's type arguments explicitly, take that
+  // substitution and check the actuals are an instance of it, rather than
+  // re-inferring the bindings from spellings a sweep may have normalized.
+  if (ArrayAttr declaredParams = getTypeParamsAttr()) {
+    auto declared = readDeclaredTypeArguments(declaredParams, getTypeArgsAttr(),
+                                              getCalleeTypeParams(), err);
+    if (failed(declared)) return failure();
+    auto specializedFormal = cast<FunctionType>(
+        applySubstitutionToFixedPoint(*declared, Type(formal)));
+    auto residual =
+        buildSpecialization(specializedFormal, actual, unifyModule, err);
+    if (failed(residual)) return failure();
+    if (failed(bindActualProofs())) return failure();
+
+    // The declared bindings, plus any the check discovered (disjoint: the
+    // declared keys are already substituted out of the specialized formal).
+    DenseMap<Type, Type> merged = *declared;
+    for (auto [key, value] : residual->toTypeMap())
+      merged[key] = value;
+    return SpecializationMap::fromTypeMap(merged);
   }
 
+  // Otherwise infer the bindings by unifying formal & actual. `unifyModule`
+  // selects the comparator: a verifier passes none (strict); a pass passes the
+  // module so a ground projection minted by binding a generic mid-solve resolves.
+  auto spec = buildSpecialization(formal, actual, unifyModule, err);
+  if (failed(spec)) return failure();
+  if (failed(bindActualProofs())) return failure();
   return *spec;
 }
 
@@ -2687,7 +2915,13 @@ FailureOr<func::FuncOp> FuncCallOp::getOrSpecializeCallee(
   countCalleeSpecialization(/*cloned=*/true);
   PatternRewriter::InsertionGuard guard(rewriter);
   rewriter.setInsertionPointAfter(*callee);
-  return specializeAndReplaceAssumes(rewriter, *callee, instanceName, subst.toTypeMap());
+  auto instance =
+      specializeAndReplaceAssumes(rewriter, *callee, instanceName, subst.toTypeMap());
+  // An external polymorphic declaration has no body to clone; specialization
+  // has refused it, so this call has no instance to name.
+  if (!instance)
+    return failure();
+  return instance;
 }
 
 

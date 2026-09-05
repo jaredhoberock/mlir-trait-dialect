@@ -42,5 +42,5 @@ func.func @test_coinductive_unit(%x: tuple<>) -> tuple<> {
 
 // The coinductive obligation resolves back to the same claim, so the proof
 // references itself as the subproof.
-// CHECK: trait.proof @Rec_unit_p proves @Rec_unit for @Rec[tuple<>] given [@Rec_unit_p]
-// CHECK: trait.proof @Rec_i64_p proves @Rec_i64 for @Rec[i64] given [@Rec_i64_p]
+// CHECK: trait.proof private @Rec_unit_p proves @Rec_unit for @Rec[tuple<>] given [@Rec_unit_p]
+// CHECK: trait.proof private @Rec_i64_p proves @Rec_i64 for @Rec[i64] given [@Rec_i64_p]

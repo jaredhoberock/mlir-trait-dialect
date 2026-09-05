@@ -17,21 +17,21 @@
 
 !T = !trait.poly<0>
 
-trait.trait @Other[!T] {
+trait.trait private @Other[!T] {
   trait.assoc_type @X
 }
 
-trait.trait @Gen[!T] {
+trait.trait private @Gen[!T] {
   trait.assoc_type @A
 }
 
-trait.impl @Gen_via for @Gen[!trait.proj<@Other[i64], "X">] {
+trait.impl private @Gen_via for @Gen[!trait.proj<@Other[i64], "X">] {
   trait.assoc_type @A = i32
 }
 
-trait.trait @Box[!T] {}
+trait.trait private @Box[!T] {}
 
-trait.impl @Box_i32 for @Box[i32] {}
+trait.impl private @Box_i32 for @Box[i32] {}
 
 func.func private @f(%c: !trait.claim<@Box[!trait.proj<@Gen[i64], "A">] by @Box_i32>,
                      %x: !T) -> !T {
@@ -48,11 +48,11 @@ func.func private @f(%c: !trait.claim<@Box[!trait.proj<@Gen[i64], "A">] by @Box_
 // CHECK-SAME: without-arm=1
 // CHECK-SAME: served=1
 
-// CHECK: trait-demand-census demand flags=real,speculative,probe-internal drainable=yes observations=8 depth=0
+// CHECK: trait-demand-census demand flags=real,speculative,probe-internal drainable=yes observations=7 depth=0
 // CHECK-SAME: arms=no-candidate-impl
 // CHECK-SAME: parent=!trait.proj<@Gen[i64], "A">
 // CHECK-SAME: type=!trait.proj<@Other[i64], "X">
-// CHECK: trait-demand-census engine lookup-miss keys=1 observations=8 real=2 speculative=2 probe-internal=4
+// CHECK: trait-demand-census engine lookup-miss keys=1 observations=7 real=1 speculative=2 probe-internal=4
 // CHECK: trait-demand-census engine read-only-resolver keys=0 observations=0 real=0 speculative=0 probe-internal=0
-// CHECK: trait-demand-census arm no-candidate-impl keys=1 observations=8 real=2 speculative=2 probe-internal=4
-// CHECK: trait-demand-census summary keys=1 observations=8 drainable-keys=1 unattributed-keys=0
+// CHECK: trait-demand-census arm no-candidate-impl keys=1 observations=7 real=1 speculative=2 probe-internal=4
+// CHECK: trait-demand-census summary keys=1 observations=7 drainable-keys=1 unattributed-keys=0
