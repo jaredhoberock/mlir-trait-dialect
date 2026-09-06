@@ -1007,24 +1007,6 @@ static bool typeCarriesStandingObligation(Type root) {
   return found;
 }
 
-/// True when `op` stands outside a template and one of its result or
-/// block-argument types carries a standing obligation. This is one op's share of
-/// the two leftover checks' scan, reused so the pending-expansion predicate reads
-/// the same demand they refuse.
-static bool opCarriesStandingObligation(Operation *op) {
-  if (isForeign(op))
-    return false;
-  for (Type t : op->getResultTypes())
-    if (typeCarriesStandingObligation(t))
-      return true;
-  for (Region &region : op->getRegions())
-    for (Block &block : region)
-      for (BlockArgument arg : block.getArguments())
-        if (typeCarriesStandingObligation(arg.getType()))
-          return true;
-  return false;
-}
-
 namespace {
 
 /// The common product of lowering either kind of trait call site: the callee
@@ -2775,18 +2757,53 @@ bool isRewritableGenericCall(Operation *op) {
   return false;
 }
 
+// One op's share of the two leftover checks' scan: an op one of whose result or
+// block-argument types carries a standing obligation -- an unproven monomorphic
+// application claim or an unresolved ground projection the leftover checks refuse --
+// and that stands outside a template. Reused so the pending-op predicate reads the
+// same demand they do. The type shape is tested before the template-ancestor walk,
+// so an op carrying no such type never pays for the walk. File-local: only isPendingOp
+// reads it.
+static bool opCarriesStandingObligation(Operation *op) {
+  auto carriesObligation = [&] {
+    for (Type t : op->getResultTypes())
+      if (typeCarriesStandingObligation(t))
+        return true;
+    for (Region &region : op->getRegions())
+      for (Block &block : region)
+        for (BlockArgument arg : block.getArguments())
+          if (typeCarriesStandingObligation(arg.getType()))
+            return true;
+    return false;
+  };
+  return carriesObligation() && !isForeign(op);
+}
+
+bool isPendingOp(Operation *op) {
+  // One op's share of isPendingExpansion, spelled once: an op outside a template is
+  // pending instantiation when it is a generic call a pattern can rewrite or it
+  // carries a standing obligation -- an unproven monomorphic application claim or an
+  // unresolved ground projection the two leftover checks refuse. The op and type shape
+  // is tested before the template-ancestor walk: an op that could never be pending pays
+  // for no walk, and one that could pays for it once. The instantiate step's qualified
+  // discharge reads this to count an operation exactly where a lowering pattern would
+  // fire on it, and the erase step's gate reads it to hold while any such op stands, so
+  // the two steps share one definition of pending work.
+  if (isRewritableGenericCall(op))
+    return !isForeign(op);
+  return opCarriesStandingObligation(op);
+}
+
 bool isPendingExpansion(ModuleOp module) {
-  // Instantiation is pending while some non-foreign op is a generic call it can
-  // rewrite, or carries a standing obligation: an unproven monomorphic
-  // application claim or an unresolved ground projection it has not yet
-  // discharged (the demands the two leftover checks refuse). A foreign op is a
-  // template or code inside one -- neither of which instantiation carries to a
-  // target.
+  // Instantiation is pending while some op outside a template is pending: a
+  // generic call the patterns can rewrite, or an op carrying a standing obligation
+  // -- an unproven monomorphic application claim or an unresolved ground
+  // projection it has not yet discharged (the demands the two leftover checks
+  // refuse). A foreign op is a template or code inside one, which instantiation
+  // carries to no target.
   bool pending = false;
   module.walk([&](Operation *op) {
-    if (isForeign(op))
-      return WalkResult::advance();
-    if (isRewritableGenericCall(op) || opCarriesStandingObligation(op)) {
+    if (isPendingOp(op)) {
       pending = true;
       return WalkResult::interrupt();
     }

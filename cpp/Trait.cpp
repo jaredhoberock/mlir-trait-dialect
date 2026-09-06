@@ -1,46 +1,82 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 #include "LoweringContribution.hpp"
+#include "Passes.hpp"
 #include "Trait.hpp"
 #include "TraitAttributes.hpp"
 #include "TraitOps.hpp"
 #include "TraitTypes.hpp"
+
+#include <mlir/CAPI/IR.h>
+#include <mlir/CAPI/Pass.h>
 
 #include <Trait.cpp.inc>
 
 namespace mlir::trait {
 
 namespace {
-/// Monomorphization is the trait dialect's lowering: one step spanning two
-/// passes. The first instantiates the monomorphs each trait call needs and
-/// leaves the polymorphic templates standing; the second erases those templates
-/// and the claims and projections resolved against them. The step discharges
-/// the coordinate types the type system carried and the trait dialect's
-/// vocabulary — all but the generic types standing inside nominal attributes,
-/// which the nominal conversion takes with those attributes and which the step
-/// therefore leaves for it. The step requests the cleanup interlude that runs
-/// after it, so it is that interlude's requester.
-///
-/// XXX TODO: split this into two contributed steps once the driver exposes the
-/// contractVersion-4 readiness verbs. `instantiate-monomorphs` would discharge
-/// trait.func.call and trait.method.call qualified by isRewritableGenericCall
-/// (Passes.hpp) with its verifier off; `erase-polymorphs` would discharge the
-/// trait and coord dialects, gated ineligible while isPendingExpansion holds,
-/// with its verifier on and the cleanup interlude requested. That lets another
-/// dialect's step run between the two without either meeting a body the trait
-/// dialect has already sealed. The verbs it needs — a discharge qualified by a
-/// per-instance predicate, a gate that is a predicate rather than one operation
-/// name, and a per-step verifier policy — are not on the driver's current
-/// contract (v3), and the archive's consumer transcribes a single `monomorphize`
-/// step into the two passes today; the fused step stays until both land. The
-/// predicates the split will use are already implemented and exported
-/// (Passes.hpp, c_api).
+/// Add the instantiate-monomorphs pass to `pm`. It reads no per-invocation
+/// options.
+void addInstantiateMonomorphs(MlirOpPassManager pm, void *) {
+  mlirOpPassManagerAddOwnedPass(pm, wrap(createInstantiateMonomorphsPass().release()));
+}
+
+/// Add the erase-polymorphs pass to `pm`. It reads no per-invocation options.
+void addErasePolymorphs(MlirOpPassManager pm, void *) {
+  mlirOpPassManagerAddOwnedPass(pm, wrap(createErasePolymorphsPass().release()));
+}
+
+/// Whether `op` outside a template is still pending instantiation: a generic call a
+/// pattern would rewrite, or an operation carrying a standing obligation the pass must
+/// reach. Both monomorphization steps read it. The instantiate step qualifies each of
+/// its operation discharges by it, so a step is present exactly on the operations a
+/// pattern fires on and an operation standing inside a template -- which this half
+/// carries through untouched -- counts toward neither its presence nor its progress;
+/// the erase step gates on it, ineligible while any such operation stands, so nothing
+/// standing can still mention a template when it runs.
+bool pendingOutsideTemplate(MlirOperation op, void *) {
+  return isPendingOp(unwrap(op));
+}
+
+/// Monomorphization is the trait dialect's lowering, contributed as two steps so
+/// another dialect's step may run between them without meeting a body this dialect
+/// has already sealed. instantiate-monomorphs instantiates the monomorphs each
+/// trait call needs and proves the monomorphic claims, leaving the polymorphic
+/// templates standing; it discharges each trait call and each claim-producing
+/// operation (allege, derive, project) qualified by pendingOutsideTemplate, so it is
+/// present exactly on the operations a pattern fires on and leaves a template-interior
+/// one for erase to take whole. Its verifier is off: the boundary between the two
+/// halves does not verify.
+/// erase-polymorphs then erases the claims and projections resolved against those
+/// templates, respells the remaining types, and collects the templates nothing
+/// names; it discharges the coordinate types the type system carried and the
+/// trait dialect's vocabulary -- all but the generic types standing inside nominal
+/// attributes, which the nominal conversion takes with those attributes and which
+/// the step therefore leaves for it. erase is ineligible while any op outside a
+/// template is still pending instantiation, and it requests the cleanup interlude
+/// that runs after it.
 struct LoweringContribution : lowering::LoweringContributionInterface {
   using lowering::LoweringContributionInterface::LoweringContributionInterface;
   void contributeSteps(lowering::LoweringStepSink &sink) const override {
-    sink.beginStep("monomorphize", /*wantsCleanup=*/true, "", false);
-    sink.dischargeDialect("coord");
+    sink.beginStep("instantiate-monomorphs");
+    sink.passConstructor(&addInstantiateMonomorphs);
+    sink.dischargeOperation("trait.func.call", &pendingOutsideTemplate, nullptr);
+    sink.dischargeOperation("trait.method.call", &pendingOutsideTemplate, nullptr);
+    sink.dischargeOperation("trait.allege", &pendingOutsideTemplate, nullptr);
+    sink.dischargeOperation("trait.derive", &pendingOutsideTemplate, nullptr);
+    sink.dischargeOperation("trait.project", &pendingOutsideTemplate, nullptr);
+    // XXX TODO: instantiate runs with the pass-manager verifier off. A recursive
+    // verification of this boundary holds over a well-formed program, but it
+    // refuses a clone whose method signature no longer unifies with its trait
+    // method's under substitution ("recursive substitution: '!trait.infer<2>'
+    // occurs in ..."). The flag goes on when that clone is well-formed.
+    sink.verifierPolicy(false);
+
+    sink.beginStep("erase-polymorphs", /*wantsCleanup=*/true);
+    sink.passConstructor(&addErasePolymorphs);
     sink.dischargeDialect("trait");
+    sink.dischargeDialect("coord");
+    sink.requiresAbsent(&pendingOutsideTemplate, nullptr);
   }
 };
 } // namespace

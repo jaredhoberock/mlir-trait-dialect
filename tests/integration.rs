@@ -645,3 +645,203 @@ fn the_obligation_aware_verification_demands_the_cited_impl_s_assumptions() {
         &module, projection, i64_ty, "Has_tuple", &[x_i32_claim]
     ));
 }
+
+#[test]
+fn the_two_monomorphization_steps_render_through_discovery() {
+    // The trait dialect contributes its lowering as two steps; the driver
+    // discovers them over a context the dialect is registered in. instantiate
+    // discharges each trait call kind qualified by its readiness predicate, with
+    // its verifier off and no cleanup; erase discharges the trait and coord
+    // dialects behind a predicate gate, with its verifier on and the cleanup
+    // interlude requested. Neither names the other's vocabulary to order the two:
+    // the gate on erase is what holds it behind instantiate.
+    let registry = DialectRegistry::new();
+    register_all_dialects(&registry);
+    let context = Context::new();
+    context.append_dialect_registry(&registry);
+    trait_::register(&context);
+    context.load_all_available_dialects();
+
+    let roster = lowering_driver::discover_roster(context.to_raw());
+    assert_eq!(roster.step_count(), 2, "the trait dialect contributes exactly two steps");
+
+    let labels: Vec<String> = (0..roster.step_count()).map(|s| roster.step_label(s)).collect();
+    let instantiate = labels
+        .iter()
+        .position(|label| label == "instantiate-monomorphs")
+        .expect("instantiate-monomorphs is contributed");
+    let erase = labels
+        .iter()
+        .position(|label| label == "erase-polymorphs")
+        .expect("erase-polymorphs is contributed");
+
+    use lowering_driver::StepClass;
+
+    let instantiate_discharges = roster.step_discharges(instantiate);
+    assert_eq!(instantiate_discharges.len(), 5);
+    assert!(instantiate_discharges.contains(&StepClass::Operation("trait.func.call".to_string())));
+    assert!(instantiate_discharges.contains(&StepClass::Operation("trait.method.call".to_string())));
+    assert!(instantiate_discharges.contains(&StepClass::Operation("trait.allege".to_string())));
+    assert!(instantiate_discharges.contains(&StepClass::Operation("trait.derive".to_string())));
+    assert!(instantiate_discharges.contains(&StepClass::Operation("trait.project".to_string())));
+    assert!(!roster.step_verifier_policy(instantiate), "instantiate leaves the boundary mid-transformation");
+    assert!(!roster.step_wants_cleanup(instantiate));
+    assert!(
+        roster.step_requires_absent(instantiate).is_empty(),
+        "instantiate declares no named-operation gate"
+    );
+    assert!(roster.step_seals(instantiate).is_empty());
+
+    let erase_discharges = roster.step_discharges(erase);
+    assert_eq!(erase_discharges.len(), 2);
+    assert!(erase_discharges.contains(&StepClass::Dialect("trait".to_string())));
+    assert!(erase_discharges.contains(&StepClass::Dialect("coord".to_string())));
+    assert!(roster.step_verifier_policy(erase));
+    assert!(roster.step_wants_cleanup(erase));
+    assert!(
+        roster.step_requires_absent(erase).is_empty(),
+        "erase's gate is a predicate, not a named operation"
+    );
+    assert!(roster.step_seals(erase).is_empty());
+
+    // the rendered roster shows the qualification on each call discharge and the
+    // predicate gate erase carries, the readiness neither step spells as a named op
+    let render = roster.render();
+    assert!(render.contains("op:trait.func.call (qualified)"), "{render}");
+    assert!(render.contains("op:trait.method.call (qualified)"), "{render}");
+    assert!(render.contains("op:trait.allege (qualified)"), "{render}");
+    assert!(render.contains("op:trait.derive (qualified)"), "{render}");
+    assert!(render.contains("op:trait.project (qualified)"), "{render}");
+    assert!(render.contains("requires-absent-predicate=1"), "{render}");
+}
+
+#[test]
+fn instantiate_accepts_only_the_rewritable_call() {
+    // The instantiate step's discharge is qualified by rewritableOutsideTemplate,
+    // so the walk's accepted tally counts a trait call exactly where a lowering
+    // pattern would fire on it. Over a module with one rewritable method call at
+    // module scope and one standing inside a template, the tally counts the
+    // module-scope call alone -- the template-interior call the predicate refuses
+    // stands for erase to take with the dialect. After the pass has instantiated
+    // the rewritable call, no accepted instance remains, so the step is no longer
+    // present on it.
+    let registry = DialectRegistry::new();
+    register_all_dialects(&registry);
+    let context = Context::new();
+    context.append_dialect_registry(&registry);
+    trait_::register(&context);
+    context.load_all_available_dialects();
+
+    let source = "\
+!S = !trait.poly<0>\n\
+!V = !trait.poly<9>\n\
+trait.trait private @Store[!S] {\n\
+  func.func private @keep(!S, !V) -> !V\n\
+}\n\
+trait.impl private @Store_impl_i64 for @Store[i64] {\n\
+  func.func @keep(%self: i64, %v: !trait.poly<5>) -> !trait.poly<5> {\n\
+    return %v : !trait.poly<5>\n\
+  }\n\
+}\n\
+func.func private @tpl(%p: !trait.claim<@Store[i64]>, %x: i64, %v: !trait.poly<7>) -> !trait.poly<7> {\n\
+  %r = trait.method.call %p @Store[i64]::@keep(%x, %v) : (i64, !trait.poly<7>) -> !trait.poly<7>\n\
+  return %r : !trait.poly<7>\n\
+}\n\
+func.func @host(%x: i64, %v: i32) -> i32 {\n\
+  %p = trait.witness @Store_impl_i64 for @Store[i64]\n\
+  %r = trait.method.call %p @Store[i64]::@keep(%x, %v) : (i64, i32) -> i32 by @Store_impl_i64\n\
+  return %r : i32\n\
+}\n";
+    let mut module = Module::parse(&context, source).expect("the fixture module parses");
+    assert!(module.as_operation().verify(), "the fixture module verifies");
+
+    let roster = lowering_driver::discover_roster(context.to_raw());
+    let mut builder = lowering_driver::TargetBuilder::new("under test");
+    builder.legal("builtin");
+    let target = builder.build().expect("the target is well-formed");
+    let classifier = lowering_driver::Classifier::new();
+
+    let before =
+        lowering_driver::walk_qualified(module.as_operation(), &target, &classifier, &roster);
+    assert!(
+        before
+            .qualified_accepted()
+            .contains("instantiate-monomorphs|op:trait.method.call=1"),
+        "the module-scope call is the one accepted instance: {}",
+        before.qualified_accepted()
+    );
+
+    let pass_manager = PassManager::new(&context);
+    pass_manager.add_pass(trait_::create_instantiate_monomorphs_pass());
+    assert!(pass_manager.run(&mut module).is_ok(), "instantiate runs");
+
+    let after =
+        lowering_driver::walk_qualified(module.as_operation(), &target, &classifier, &roster);
+    assert!(
+        after.qualified_accepted().is_empty(),
+        "the rewritable call is instantiated, so no accepted instance remains: {}",
+        after.qualified_accepted()
+    );
+}
+
+#[test]
+fn instantiate_is_present_on_a_standing_claim_obligation() {
+    // instantiate discharges each claim-producing operation, not only the calls, so a
+    // program whose only pending trait work is a standing unproven monomorphic claim
+    // makes the step present and selectable rather than stranding the run at a boundary
+    // no step owns. Here the method call's receiver claim is an unproven allege, so the
+    // call is not yet rewritable; the standing allege carries the obligation, and the
+    // walk's accepted tally counts it under the allege discharge. After the pass proves
+    // the claim and instantiates the call, no accepted instance remains.
+    let registry = DialectRegistry::new();
+    register_all_dialects(&registry);
+    let context = Context::new();
+    context.append_dialect_registry(&registry);
+    trait_::register(&context);
+    context.load_all_available_dialects();
+
+    let source = "\
+trait.trait private @T[!trait.poly<0>] {\n\
+  func.func private @m(!trait.poly<0>) -> i32\n\
+}\n\
+trait.impl private @T_i32 for @T[i32] {\n\
+  func.func @m(%a: i32) -> i32 {\n\
+    %c = arith.constant 1 : i32\n\
+    return %c : i32\n\
+  }\n\
+}\n\
+func.func @host(%x: i32) -> i32 {\n\
+  %ev = trait.allege @T[i32]\n\
+  %r = trait.method.call %ev @T[i32]::@m(%x) : (i32) -> i32\n\
+  return %r : i32\n\
+}\n";
+    let mut module = Module::parse(&context, source).expect("the fixture module parses");
+
+    let roster = lowering_driver::discover_roster(context.to_raw());
+    let mut builder = lowering_driver::TargetBuilder::new("under test");
+    builder.legal("builtin");
+    let target = builder.build().expect("the target is well-formed");
+    let classifier = lowering_driver::Classifier::new();
+
+    let before =
+        lowering_driver::walk_qualified(module.as_operation(), &target, &classifier, &roster);
+    assert!(
+        before
+            .qualified_accepted()
+            .contains("instantiate-monomorphs|op:trait.allege=1"),
+        "the standing allege is the one accepted instance before the pass runs: {}",
+        before.qualified_accepted()
+    );
+
+    let pass_manager = PassManager::new(&context);
+    pass_manager.add_pass(trait_::create_instantiate_monomorphs_pass());
+    assert!(pass_manager.run(&mut module).is_ok(), "instantiate runs");
+
+    let after =
+        lowering_driver::walk_qualified(module.as_operation(), &target, &classifier, &roster);
+    assert!(
+        after.qualified_accepted().is_empty(),
+        "instantiate proved the claim and lowered the call, so no accepted instance remains: {}",
+        after.qualified_accepted()
+    );
+}

@@ -23,6 +23,14 @@ bool isRewritableGenericCall(Operation *op);
 /// this so it never serves or judges what leaves with a template.
 bool isForeign(Operation *op);
 
+/// Whether `op` outside a template is still pending instantiation: a rewritable
+/// generic call, or an op carrying a standing obligation. This is one op's share
+/// of `isPendingExpansion`, spelled once so the instantiate step's qualified
+/// discharge and the erase step's gate read one definition of pending work -- the
+/// discharge counts a call exactly where a lowering pattern would fire on it, the
+/// gate holds erase ineligible while any such op stands.
+bool isPendingOp(Operation *op);
+
 /// Whether `module` still carries instantiation work outside a template (a
 /// trait, impl, or proof body, or a polymorphic function): a rewritable generic
 /// call, or an unproven monomorphic application claim or an unresolved ground
