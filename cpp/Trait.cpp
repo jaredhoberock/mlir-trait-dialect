@@ -45,8 +45,9 @@ bool pendingOutsideTemplate(MlirOperation op, void *) {
 /// templates standing; it discharges each trait call and each claim-producing
 /// operation (allege, derive, project) qualified by pendingOutsideTemplate, so it is
 /// present exactly on the operations a pattern fires on and leaves a template-interior
-/// one for erase to take whole. Its verifier is off: the boundary between the two
-/// halves does not verify.
+/// one for erase to take whole. Its verifier is on: with the monomorphs
+/// instantiated and the polymorphic templates left standing, the module verifies
+/// at the boundary between the two halves.
 /// erase-polymorphs then erases the claims and projections resolved against those
 /// templates, respells the remaining types, and collects the templates nothing
 /// names; it discharges the coordinate types the type system carried and the
@@ -65,12 +66,7 @@ struct LoweringContribution : lowering::LoweringContributionInterface {
     sink.dischargeOperation("trait.allege", &pendingOutsideTemplate, nullptr);
     sink.dischargeOperation("trait.derive", &pendingOutsideTemplate, nullptr);
     sink.dischargeOperation("trait.project", &pendingOutsideTemplate, nullptr);
-    // XXX TODO: instantiate runs with the pass-manager verifier off. A recursive
-    // verification of this boundary holds over a well-formed program, but it
-    // refuses a clone whose method signature no longer unifies with its trait
-    // method's under substitution ("recursive substitution: '!trait.infer<2>'
-    // occurs in ..."). The flag goes on when that clone is well-formed.
-    sink.verifierPolicy(false);
+    sink.verifierPolicy(true);
 
     sink.beginStep("erase-polymorphs", /*wantsCleanup=*/true);
     sink.passConstructor(&addErasePolymorphs);
