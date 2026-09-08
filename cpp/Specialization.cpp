@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 #include "Specialization.hpp"
+#include "TraitOps.hpp"
 #include "TraitTypes.hpp"
 #include <mlir/IR/IRMapping.h>
 #include <mlir/IR/PatternMatch.h>
@@ -14,6 +15,23 @@ static void cloneRegionWithTypeReplacement(
     Region &newRegion,
     IRMapping &mapping,
     AttrTypeReplacer &typeReplacer);
+
+/// Whether `attr` is a generic call's type_params array: the callee's own type
+/// variables, named by identity. A substitution over the enclosing template binds
+/// the template's variables, and the callee's variables are the same variables
+/// only when the callee is a template the clone is cut from -- the enclosing
+/// function calling itself, or an impl's method forwarding the same trait method
+/// to another impl, whose call names the trait method's variables the outer
+/// call's bindings are keyed by. Either way the array must name the callee's
+/// variables after the clone as before it; the parallel type_args array is what
+/// takes the substitution.
+static bool namesCalleeTypeVariables(Operation &op, NamedAttribute attr) {
+  if (auto call = dyn_cast<FuncCallOp>(&op))
+    return attr.getName() == call.getTypeParamsAttrName();
+  if (auto call = dyn_cast<MethodCallOp>(&op))
+    return attr.getName() == call.getTypeParamsAttrName();
+  return false;
+}
 
 static Operation *cloneOpWithTypeReplacement(
     OpBuilder &builder,
@@ -32,9 +50,11 @@ static Operation *cloneOpWithTypeReplacement(
   for (Type t : oldOp.getResultTypes())
     state.addTypes(typeReplacer.replace(t));
 
-  // replace attributes
+  // replace attributes, except a call's naming of its callee's type variables
   for (NamedAttribute attr : oldOp.getAttrs()) {
-    Attribute rewritten = typeReplacer.replace(attr.getValue());
+    Attribute rewritten = namesCalleeTypeVariables(oldOp, attr)
+                              ? attr.getValue()
+                              : typeReplacer.replace(attr.getValue());
     state.addAttribute(attr.getName(), rewritten);
   }
 
