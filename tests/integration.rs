@@ -651,7 +651,7 @@ fn the_two_monomorphization_steps_render_through_discovery() {
     // The trait dialect contributes its lowering as two steps; the driver
     // discovers them over a context the dialect is registered in. instantiate
     // discharges each trait call kind qualified by its readiness predicate, with
-    // its verifier off and no cleanup; erase discharges the trait and coord
+    // its verifier on and no cleanup; erase discharges the trait and coord
     // dialects behind a predicate gate, with its verifier on and the cleanup
     // interlude requested. Neither names the other's vocabulary to order the two:
     // the gate on erase is what holds it behind instantiate.
@@ -684,7 +684,7 @@ fn the_two_monomorphization_steps_render_through_discovery() {
     assert!(instantiate_discharges.contains(&StepClass::Operation("trait.allege".to_string())));
     assert!(instantiate_discharges.contains(&StepClass::Operation("trait.derive".to_string())));
     assert!(instantiate_discharges.contains(&StepClass::Operation("trait.project".to_string())));
-    assert!(!roster.step_verifier_policy(instantiate), "instantiate leaves the boundary mid-transformation");
+    assert!(roster.step_verifier_policy(instantiate), "instantiate verifies its boundary");
     assert!(!roster.step_wants_cleanup(instantiate));
     assert!(
         roster.step_requires_absent(instantiate).is_empty(),
