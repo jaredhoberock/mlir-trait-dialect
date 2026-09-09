@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
-// Every entry in this API is a pure query: attribute and type getters intern
-// canonical values (a null return answers "not well-formed"), the boolean
-// entries consult the dialect's own judgments, and nothing here mutates IR.
+// Builders return unattached operations. Attribute and type getters intern
+// canonical values; boolean queries use the dialect's own judgments. These
+// entry points do not mutate existing operations.
 
 #include "mlir-c/IR.h"
 #include "mlir-c/Pass.h"

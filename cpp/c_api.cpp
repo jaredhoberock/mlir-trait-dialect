@@ -8,10 +8,57 @@
 #include "TraitTypes.hpp"
 #include <mlir/CAPI/IR.h>
 #include <mlir/CAPI/Pass.h>
+#include <mlir/CAPI/Wrap.h>
 #include <mlir/IR/Builders.h>
 
 using namespace mlir;
 using namespace mlir::trait;
+
+/// Unwrap an array into owned storage for a builder. Empty arrays may be null.
+template <typename T>
+static auto unwrapArray(T *elements, intptr_t count) {
+  SmallVector<decltype(unwrap(*elements))> storage;
+  if (count > 0)
+    (void)unwrapList(count, elements, storage);
+  return storage;
+}
+
+/// Check a mixed where-clause before a builder can attach it to an operation.
+static PredicateArrayAttr checkedPredicates(MLIRContext *ctx,
+                                             MlirAttribute *predicates,
+                                             intptr_t count) {
+  return PredicateArrayAttr::getChecked(
+      [&] { return emitError(UnknownLoc::get(ctx)); }, ctx,
+      ArrayRef<Attribute>(unwrapArray(predicates, count)));
+}
+
+/// Empty parameter arrays are absent, preserving the omitted-argument spelling.
+static ArrayAttr typeArrayAttrOrNull(MLIRContext *ctx, MlirType *types,
+                                     intptr_t count) {
+  return count > 0 ? Builder(ctx).getTypeArrayAttr(unwrapArray(types, count))
+                   : ArrayAttr();
+}
+
+/// Attach both halves of an explicit generic call's parallel type arrays.
+template <typename CallOp>
+static void setCallTypeArguments(CallOp op, MlirType *params, MlirType *args,
+                                 intptr_t count) {
+  if (auto attr = typeArrayAttrOrNull(op.getContext(), params, count)) {
+    op.setTypeParamsAttr(attr);
+    op.setTypeArgsAttr(typeArrayAttrOrNull(op.getContext(), args, count));
+  }
+}
+
+/// Build an allegation only when its attribute names a trait application.
+static MlirOperation createAllegation(MlirLocation loc, MlirAttribute app,
+                                      bool isUnsafe) {
+  auto traitApp = dyn_cast<TraitApplicationAttr>(unwrap(app));
+  if (!traitApp)
+    return {};
+  OpBuilder builder(unwrap(loc)->getContext());
+  return wrap(AllegeOp::create(builder, unwrap(loc), traitApp, isUnsafe)
+                  .getOperation());
+}
 
 extern "C" {
 
@@ -33,15 +80,11 @@ MlirAttribute traitTraitApplicationAttrGet(MlirContext wrappedCtx,
   MLIRContext *ctx = unwrap(wrappedCtx);
   OpBuilder builder(ctx);
 
-  SmallVector<Attribute> typeAttrs;
-  typeAttrs.reserve(numTypeArgs);
-  for (intptr_t i = 0; i < numTypeArgs; ++i)
-    typeAttrs.push_back(TypeAttr::get(unwrap(typeArgs[i])));
+  auto typeArgsAttr = builder.getTypeArrayAttr(unwrapArray(typeArgs, numTypeArgs));
 
   auto traitRef = FlatSymbolRefAttr::get(
     ctx, StringRef(traitName.data, traitName.length)
   );
-  auto typeArgsAttr = builder.getArrayAttr(typeAttrs);
 
   return wrap(TraitApplicationAttr::get(ctx, traitRef, typeArgsAttr));
 }
@@ -56,22 +99,12 @@ MlirOperation traitTraitOpCreate(MlirLocation loc, MlirStringRef name,
   MLIRContext* ctx = unwrap(loc)->getContext();
   OpBuilder builder(ctx);
 
-  SmallVector<Type> typeParams;
-  typeParams.reserve(numTypeParams);
-  for (intptr_t i = 0; i < numTypeParams; ++i) {
-    typeParams.push_back(unwrap(wrappedTypeParams[i]));
-  }
+  auto typeParams = unwrapArray(wrappedTypeParams, numTypeParams);
 
   // The mixed where-clause: each predicate is a trait application or a type
   // equality. The array's own verifier judges the arm of every entry; a
   // non-predicate attribute is rejected by returning a null op.
-  SmallVector<Attribute> preds;
-  preds.reserve(numPredicates);
-  for (intptr_t i = 0; i < numPredicates; ++i)
-    preds.push_back(unwrap(predicates[i]));
-  auto predsAttr = PredicateArrayAttr::getChecked(
-      [&] { return emitError(UnknownLoc::get(ctx)); }, ctx,
-      ArrayRef<Attribute>(preds));
+  auto predsAttr = checkedPredicates(ctx, predicates, numPredicates);
   if (!predsAttr)
     return {};
 
@@ -124,13 +157,7 @@ MlirOperation traitImplOpCreateNamed(MlirLocation loc,
   // equality entries assert the impl's own bindings. The array's own verifier
   // judges the arm of every entry; a non-predicate attribute is rejected by
   // returning a null op.
-  SmallVector<Attribute> preds;
-  preds.reserve(numPredicates);
-  for (intptr_t i = 0; i < numPredicates; ++i)
-    preds.push_back(unwrap(predicates[i]));
-  auto predsAttr = PredicateArrayAttr::getChecked(
-      [&] { return emitError(UnknownLoc::get(ctx)); }, ctx,
-      ArrayRef<Attribute>(preds));
+  auto predsAttr = checkedPredicates(ctx, predicates, numPredicates);
   if (!predsAttr)
     return {};
 
@@ -144,18 +171,6 @@ MlirOperation traitImplOpCreateNamed(MlirLocation loc,
   return wrap(op.getOperation());
 }
 
-// Build a TypeArrayAttr from a C array of types, or a null attribute when the
-// count is zero (an inferred call carries no type-argument arrays).
-static ArrayAttr typeArrayAttrOrNull(MLIRContext* ctx, MlirType* types,
-                                     intptr_t count) {
-  if (count <= 0)
-    return {};
-  SmallVector<Attribute> elements;
-  for (intptr_t i = 0; i < count; ++i)
-    elements.push_back(TypeAttr::get(unwrap(types[i])));
-  return ArrayAttr::get(ctx, elements);
-}
-
 MlirOperation traitMethodCallOpCreate(MlirLocation loc,
                                       MlirStringRef traitName,
                                       MlirStringRef methodName,
@@ -167,15 +182,9 @@ MlirOperation traitMethodCallOpCreate(MlirLocation loc,
   MLIRContext* ctx = unwrap(loc)->getContext();
   OpBuilder builder(ctx);
 
-  SmallVector<Value> args;
-  for (intptr_t i = 0; i < numArguments; ++i) {
-    args.push_back(unwrap(arguments[i]));
-  }
+  auto args = unwrapArray(arguments, numArguments);
 
-  SmallVector<Type> results;
-  for (intptr_t i = 0; i < numResults; ++i) {
-    results.push_back(unwrap(resultTypes[i]));
-  }
+  auto results = unwrapArray(resultTypes, numResults);
 
   auto op = MethodCallOp::create(builder,
     unwrap(loc),
@@ -186,10 +195,7 @@ MlirOperation traitMethodCallOpCreate(MlirLocation loc,
     args
   );
 
-  if (auto params = typeArrayAttrOrNull(ctx, typeParams, numTypeArgs)) {
-    op.setTypeParamsAttr(params);
-    op.setTypeArgsAttr(typeArrayAttrOrNull(ctx, typeArgs, numTypeArgs));
-  }
+  setCallTypeArguments(op, typeParams, typeArgs, numTypeArgs);
 
   return wrap(op.getOperation());
 }
@@ -203,15 +209,9 @@ MlirOperation traitFuncCallOpCreate(MlirLocation loc,
   MLIRContext* ctx = unwrap(loc)->getContext();
   OpBuilder builder(ctx);
 
-  SmallVector<Value> args;
-  for (intptr_t i = 0; i < numArguments; ++i) {
-    args.push_back(unwrap(arguments[i]));
-  }
+  auto args = unwrapArray(arguments, numArguments);
 
-  SmallVector<Type> results;
-  for (intptr_t i = 0; i < numResults; ++i) {
-    results.push_back(unwrap(resultTypes[i]));
-  }
+  auto results = unwrapArray(resultTypes, numResults);
 
   auto op = FuncCallOp::create(builder,
     unwrap(loc),
@@ -220,45 +220,19 @@ MlirOperation traitFuncCallOpCreate(MlirLocation loc,
     args
   );
 
-  if (auto params = typeArrayAttrOrNull(ctx, typeParams, numTypeArgs)) {
-    op.setTypeParamsAttr(params);
-    op.setTypeArgsAttr(typeArrayAttrOrNull(ctx, typeArgs, numTypeArgs));
-  }
+  setCallTypeArguments(op, typeParams, typeArgs, numTypeArgs);
 
   return wrap(op.getOperation());
 }
 
 MlirOperation traitAllegeOpCreate(MlirLocation loc,
                                   MlirAttribute wrappedTraitApp) {
-  MLIRContext* ctx = unwrap(loc)->getContext();
-
-  TraitApplicationAttr traitApp = dyn_cast<TraitApplicationAttr>(unwrap(wrappedTraitApp));
-  if (!traitApp) return {}; // invalid attribute type
-
-  OpBuilder builder(ctx);
-  auto op = AllegeOp::create(builder,
-    unwrap(loc),
-    traitApp
-  );
-
-  return wrap(op.getOperation());
+  return createAllegation(loc, wrappedTraitApp, /*isUnsafe=*/false);
 }
 
 MlirOperation traitAllegeUnsafeOpCreate(MlirLocation loc,
                                         MlirAttribute wrappedTraitApp) {
-  MLIRContext* ctx = unwrap(loc)->getContext();
-
-  TraitApplicationAttr traitApp = dyn_cast<TraitApplicationAttr>(unwrap(wrappedTraitApp));
-  if (!traitApp) return {}; // invalid attribute type
-
-  OpBuilder builder(ctx);
-  auto op = AllegeOp::create(builder,
-    unwrap(loc),
-    traitApp,
-    /*isUnsafe=*/true
-  );
-
-  return wrap(op.getOperation());
+  return createAllegation(loc, wrappedTraitApp, /*isUnsafe=*/true);
 }
 
 MlirOperation traitWitnessOpCreate(MlirLocation loc,
@@ -321,10 +295,7 @@ MlirOperation traitDeriveOpCreate(MlirLocation loc,
 
   FlatSymbolRefAttr implRef = FlatSymbolRefAttr::get(ctx, StringRef(implName.data, implName.length));
 
-  SmallVector<Value> args;
-  args.reserve(numAssumptions);
-  for (intptr_t i = 0; i < numAssumptions; ++i)
-    args.push_back(unwrap(assumptions[i]));
+  auto args = unwrapArray(assumptions, numAssumptions);
 
   OpBuilder builder(ctx);
   auto op = DeriveOp::create(builder,
@@ -377,10 +348,7 @@ MlirType traitProjectionTypeGet(MlirContext wrappedCtx,
   TraitApplicationAttr traitApp = dyn_cast<TraitApplicationAttr>(unwrap(wrappedTraitApp));
   if (!traitApp) return {};
   StringAttr nameAttr = StringAttr::get(ctx, StringRef(assocName.data, assocName.length));
-  SmallVector<Type> args;
-  args.reserve(numAssocTypeArgs);
-  for (intptr_t i = 0; i < numAssocTypeArgs; ++i)
-    args.push_back(unwrap(assocTypeArgs[i]));
+  auto args = unwrapArray(assocTypeArgs, numAssocTypeArgs);
   return wrap(ProjectionType::get(ctx, traitApp, nameAttr, args));
 }
 
@@ -537,14 +505,7 @@ MlirOperation traitAssocTypeOpCreate(MlirLocation loc,
   OpBuilder builder(ctx);
   TypeAttr typeAttr = boundType.ptr ? TypeAttr::get(unwrap(boundType))
                                     : TypeAttr();
-  ArrayAttr typeParamsAttr;
-  if (numTypeParams > 0) {
-    SmallVector<Attribute, 4> attrs;
-    attrs.reserve(numTypeParams);
-    for (intptr_t i = 0; i < numTypeParams; ++i)
-      attrs.push_back(TypeAttr::get(unwrap(typeParams[i])));
-    typeParamsAttr = ArrayAttr::get(ctx, attrs);
-  }
+  auto typeParamsAttr = typeArrayAttrOrNull(ctx, typeParams, numTypeParams);
   auto op = AssocTypeOp::create(builder,
     unwrap(loc),
     builder.getStringAttr(StringRef(name.data, name.length)),
