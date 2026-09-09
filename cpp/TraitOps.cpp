@@ -380,6 +380,21 @@ SmallVector<ImplOp> TraitOp::getCandidateImplsFor(ClaimType wanted) {
   return result;
 }
 
+// Parse the bracketed parameter list shared by trait and associated type
+// declarations. Keep the explicit square delimiter, including the empty list.
+static ParseResult parseTypeParameters(OpAsmParser &p, ArrayAttr &parameters) {
+  SmallVector<Type> types;
+  if (p.parseCommaSeparatedList(OpAsmParser::Delimiter::Square, [&] {
+        Type type;
+        if (p.parseType(type)) return failure();
+        types.push_back(type);
+        return success();
+      }))
+    return failure();
+  parameters = p.getBuilder().getTypeArrayAttr(types);
+  return success();
+}
+
 ParseResult TraitOp::parse(OpAsmParser &p, OperationState &s) {
   MLIRContext *ctx = p.getContext();
 
@@ -393,22 +408,9 @@ ParseResult TraitOp::parse(OpAsmParser &p, OperationState &s) {
     return failure();
 
   // [ type_params ]
-  SmallVector<Type> typeParams;
-  if (failed(p.parseCommaSeparatedList(OpAsmParser::Delimiter::Square, [&] {
-        Type ty;
-        if (p.parseType(ty)) return failure();
-        typeParams.push_back(ty);
-        return success();
-      })))
-    return failure();
-
-  // build TypeArrayAttr
-  SmallVector<Attribute,4> typeAttrs;
-  typeAttrs.reserve(typeParams.size());
-  for (auto ty : typeParams) {
-    typeAttrs.push_back(TypeAttr::get(ty));
-  }
-  s.addAttribute("type_params", ArrayAttr::get(ctx, typeAttrs));
+  ArrayAttr typeParams;
+  if (parseTypeParameters(p, typeParams)) return failure();
+  s.addAttribute("type_params", typeParams);
 
   // requirements
   auto requirements = PredicateArrayAttr::get(ctx, ArrayRef<Attribute>());
@@ -1669,6 +1671,20 @@ static void printTypedOperandList(OpAsmPrinter &p, ValueRange operands) {
 ParseResult WitnessOp::parse(OpAsmParser &p, OperationState& result) {
   MLIRContext *ctx = p.getContext();
 
+  auto parseResultType = [&]() -> ParseResult {
+    Type resultType;
+    if (p.parseColon() || p.parseType(resultType)) return failure();
+    result.addTypes(resultType);
+    return success();
+  };
+  auto parsePremises = [&]() -> ParseResult {
+    SmallVector<OpAsmParser::UnresolvedOperand> premises;
+    SmallVector<Type> premiseTypes;
+    if (parseTypedOperandList(p, premises, premiseTypes)) return failure();
+    return p.resolveOperands(premises, premiseTypes, p.getCurrentLocation(),
+                             result.operands);
+  };
+
   // Equality proj-resolve arm: `proj_resolve !projection resolves !resolved
   // by @impl [given(%premises...) : (types...)] : <result-type>`.
   if (succeeded(p.parseOptionalKeyword("proj_resolve"))) {
@@ -1687,31 +1703,16 @@ ParseResult WitnessOp::parse(OpAsmParser &p, OperationState& result) {
       return failure();
     result.addAttribute("witness", witness);
 
-    if (succeeded(p.parseOptionalKeyword("given"))) {
-      SmallVector<OpAsmParser::UnresolvedOperand> premises;
-      SmallVector<Type> premiseTypes;
-      if (parseTypedOperandList(p, premises, premiseTypes))
-        return failure();
-      if (p.resolveOperands(premises, premiseTypes, p.getCurrentLocation(),
-                            result.operands))
-        return failure();
-    }
-
-    Type resultType;
-    if (p.parseColon() || p.parseType(resultType))
+    if (succeeded(p.parseOptionalKeyword("given")) && parsePremises())
       return failure();
-    result.addTypes(resultType);
-    return success();
+
+    return parseResultType();
   }
 
   // Equality refl arm: `refl : <result-type>`.
   if (succeeded(p.parseOptionalKeyword("refl"))) {
     result.addAttribute("refl", UnitAttr::get(ctx));
-    Type resultType;
-    if (p.parseColon() || p.parseType(resultType))
-      return failure();
-    result.addTypes(resultType);
-    return success();
+    return parseResultType();
   }
 
   // Equality composition arm: `compose(%premises...) : (types...) :
@@ -1719,18 +1720,8 @@ ParseResult WitnessOp::parse(OpAsmParser &p, OperationState& result) {
   // against written types -- and the result equality is spelled too, since it is
   // derived from the premises and not inferable from them.
   if (succeeded(p.parseOptionalKeyword("compose"))) {
-    SmallVector<OpAsmParser::UnresolvedOperand> premises;
-    SmallVector<Type> premiseTypes;
-    if (parseTypedOperandList(p, premises, premiseTypes))
-      return failure();
-    if (p.resolveOperands(premises, premiseTypes, p.getCurrentLocation(),
-                          result.operands))
-      return failure();
-    Type resultType;
-    if (p.parseColon() || p.parseType(resultType))
-      return failure();
-    result.addTypes(resultType);
-    return success();
+    if (parsePremises()) return failure();
+    return parseResultType();
   }
 
   // parse @Symbol
@@ -3053,8 +3044,6 @@ LogicalResult ProjectOp::verifySymbolUses(SymbolTableCollection &/*symbolTable*/
 //===----------------------------------------------------------------------===//
 
 ParseResult AssocTypeOp::parse(OpAsmParser &p, OperationState &st) {
-  MLIRContext *ctx = p.getContext();
-
   // parse @Name
   StringAttr symName;
   if (p.parseSymbolName(symName, "sym_name", st.attributes))
@@ -3062,23 +3051,10 @@ ParseResult AssocTypeOp::parse(OpAsmParser &p, OperationState &st) {
 
   // parse optional <[type_params...]>
   if (succeeded(p.parseOptionalLess())) {
-    SmallVector<Type> typeParams;
-    if (failed(p.parseCommaSeparatedList(OpAsmParser::Delimiter::Square, [&] {
-          Type ty;
-          if (p.parseType(ty)) return failure();
-          typeParams.push_back(ty);
-          return success();
-        })))
+    ArrayAttr typeParams;
+    if (parseTypeParameters(p, typeParams) || p.parseGreater())
       return failure();
-
-    if (p.parseGreater())
-      return failure();
-
-    SmallVector<Attribute, 4> typeAttrs;
-    typeAttrs.reserve(typeParams.size());
-    for (Type ty : typeParams)
-      typeAttrs.push_back(TypeAttr::get(ty));
-    st.addAttribute("type_params", ArrayAttr::get(ctx, typeAttrs));
+    st.addAttribute("type_params", typeParams);
   }
 
   // parse optional = bound_type
