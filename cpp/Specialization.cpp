@@ -9,13 +9,6 @@
 
 namespace mlir::trait {
 
-static void cloneRegionWithTypeReplacement(
-    OpBuilder& builder,
-    Region &oldRegion,
-    Region &newRegion,
-    IRMapping &mapping,
-    AttrTypeReplacer &typeReplacer);
-
 /// Whether `attr` is a generic call's type_params array: the callee's own type
 /// variables, named by identity. A substitution over the enclosing template binds
 /// the template's variables, and the callee's variables are the same variables
@@ -33,81 +26,35 @@ static bool namesCalleeTypeVariables(Operation &op, NamedAttribute attr) {
   return false;
 }
 
-static Operation *cloneOpWithTypeReplacement(
-    OpBuilder &builder,
-    Operation &oldOp,
-    IRMapping &mapping,
-    AttrTypeReplacer &typeReplacer) {
-  PatternRewriter::InsertionGuard guard(builder);
-
-  OperationState state(oldOp.getLoc(), oldOp.getName());
-
-  // remap operands
-  for (Value operand : oldOp.getOperands())
-    state.addOperands(mapping.lookupOrDefault(operand));
-
-  // replace result types
-  for (Type t : oldOp.getResultTypes())
-    state.addTypes(typeReplacer.replace(t));
-
-  // replace attributes, except a call's naming of its callee's type variables
-  for (NamedAttribute attr : oldOp.getAttrs()) {
-    Attribute rewritten = namesCalleeTypeVariables(oldOp, attr)
-                              ? attr.getValue()
-                              : typeReplacer.replace(attr.getValue());
-    state.addAttribute(attr.getName(), rewritten);
-  }
-
-  // create empty regions in the new op
-  for ([[maybe_unused]] Region &oldRegion : oldOp.getRegions()) {
-    state.addRegion();
-  }
-
-  // create the operation *before* recursing into the old op's regions
-  Operation *newOp = builder.create(state);
-
-  // recursively clone regions
-  for (auto [oldRegion, newRegion] : llvm::zip(oldOp.getRegions(), newOp->getRegions())) {
-    cloneRegionWithTypeReplacement(builder, oldRegion, newRegion,
-                                   mapping, typeReplacer);
-  }
-
-  // remap results
-  for (auto [oldRes, newRes] : llvm::zip(oldOp.getResults(), newOp->getResults()))
-    mapping.map(oldRes, newRes);
-
-  return newOp;
-}
-
+/// Clone block and successor mappings, then substitute in region order.
+/// Builder notifications admit the copied operations to rewrite listeners;
+/// visiting block arguments first preserves transient projection demand order.
 static void cloneRegionWithTypeReplacement(
     OpBuilder& builder,
     Region &oldRegion,
     Region &newRegion,
     IRMapping &mapping,
     AttrTypeReplacer &typeReplacer) {
-  PatternRewriter::InsertionGuard guard(builder);
-
-  // create blocks with replaced argument types
-  for (Block &oldBlock : oldRegion.getBlocks()) {
-    Block *newBlock = builder.createBlock(&newRegion);
-    for (BlockArgument oldArg : oldBlock.getArguments()) {
-      Type newType = typeReplacer.replace(oldArg.getType());
-      BlockArgument newArg = newBlock->addArgument(newType, oldArg.getLoc());
-      mapping.map(oldArg, newArg);
+  if (oldRegion.empty())
+    return;
+  builder.cloneRegionBefore(oldRegion, newRegion, newRegion.end(), mapping);
+  auto substituteRegion = [&](Region &region, auto &recurse) -> void {
+    for (Block &block : region)
+      for (BlockArgument arg : block.getArguments())
+        arg.setType(typeReplacer.replace(arg.getType()));
+    for (Block &block : region) {
+      for (Operation &op : block) {
+        for (Value result : op.getResults())
+          result.setType(typeReplacer.replace(result.getType()));
+        for (NamedAttribute attr : op.getAttrs())
+          if (!namesCalleeTypeVariables(op, attr))
+            op.setAttr(attr.getName(), typeReplacer.replace(attr.getValue()));
+        for (Region &nested : op.getRegions())
+          recurse(nested, recurse);
+      }
     }
-  }
-
-  // clone each operation in each new block
-  auto& oldBlocks = oldRegion.getBlocks();
-  auto& newBlocks = newRegion.getBlocks();
-  for (auto [oldBlock, newBlock] : llvm::zip(oldBlocks, newBlocks)) {
-    PatternRewriter::InsertionGuard guard(builder);
-    builder.setInsertionPointToEnd(&newBlock);
-
-    for (Operation &op : oldBlock) {
-      cloneOpWithTypeReplacement(builder, op, mapping, typeReplacer);
-    }
-  }
+  };
+  substituteRegion(newRegion, substituteRegion);
 }
 
 // Every type this replacer stamps into a specialized clone is chased to the
