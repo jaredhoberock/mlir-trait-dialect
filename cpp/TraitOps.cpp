@@ -2481,9 +2481,6 @@ static FailureOr<NormalizationContext> buildLocalClaimNormalizationContext(
 LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   auto errFn = [&]{ return emitOpError(); };
 
-  auto module = getModule(errFn);
-  if (failed(module)) return failure();
-
   // check that we can build a consistent substitution for this method call.
   // The verifier compares spellings with the module-free comparator: no
   // ground-projection resolution, so an unresolved crossing is a strict mismatch.
@@ -2791,9 +2788,6 @@ LogicalResult FuncCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     return emitOpError() << "requires a 'callee_name' symbol reference attribute";
 
   auto errFn = [&] { return emitOpError(); };
-
-  auto callee = getCallee(errFn);
-  if (failed(callee)) return failure();
 
   // check that we can build a substitution. The verifier compares spellings
   // with the module-free comparator (no ground-projection resolution).
