@@ -1734,7 +1734,7 @@ ParseResult WitnessOp::parse(OpAsmParser &p, OperationState& result) {
     return failure();
 
   // parse @Trait[Types...]
-  TraitApplicationAttr traitApp = dyn_cast<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
+  TraitApplicationAttr traitApp = dyn_cast_or_null<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
   if (!traitApp)
     return p.emitError(p.getCurrentLocation(), "expected a TraitApplicationAttr");
   result.addAttribute("trait_application", traitApp);
