@@ -1,21 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 
-// RUN: env TRAIT_DEMAND_CENSUS=1 TRAIT_DEMAND_CENSUS_CHECK=1 mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' -verify-diagnostics 2>&1 | FileCheck %s --implicit-check-not='trait-demand-census unhooked' --implicit-check-not='trait-demand-census served'
+// RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' -verify-diagnostics
 
-// One impl binds @Gen[i64], but the projection names an associated type the
-// trait never declared, so the impl has no binding to read. The census keeps
-// this apart from the candidate-count arms: the impl was found, and the demand
-// still went unserved.
-//
-// @probes carries a proven claim spelled through that projection, so the
-// declared-proof check normalizes it through the read-only lookup, which is the
-// one engine that names the arm it missed on, and then verifies the proof's
-// cited impl against the claim, driving that same ground projection through one
-// more lookup that misses. The round then takes the demand off the drain and
-// puts it to impl selection, which settles on @Gen_i64 and still has no binding
-// to answer with, so the demand is deferred with an impl selected and no refusal
-// recorded.
+// Selecting @Gen_i64 cannot resolve the undeclared associated type B.
+// The surviving @Gen[i64]::B projection must be diagnosed even though the
+// trait application itself has a unique implementation.
 
 !T = !trait.poly<0>
 
@@ -47,15 +37,3 @@ func.func @main() -> !trait.proj<@Gen[i64], "B"> {
   %r = trait.func.call @wrap(%x) : (i64) -> !trait.proj<@Gen[i64], "B">
   return %r : !trait.proj<@Gen[i64], "B">
 }
-
-// CHECK: trait-stage-record round index=1
-// CHECK-SAME: collected=1 no-candidate-impl=0 multiple-candidate-impls=0 other-arms=1 without-arm=0
-// CHECK-SAME: served=0 declined=1 deferred=1
-// CHECK: trait-demand-census demand flags=real drainable=yes observations=8 depth=0
-// CHECK-SAME: kinds=lookup-miss,unifier-acceptance,read-only-resolver arms=assoc-binding-failed
-// CHECK-SAME: type=!trait.proj<@Gen[i64], "B">
-// CHECK: trait-demand-census engine lookup-miss keys=1 observations=5 real=5 speculative=0 probe-internal=0
-// CHECK: trait-demand-census engine read-only-resolver keys=1 observations=2 real=2 speculative=0 probe-internal=0
-// CHECK: trait-demand-census arm assoc-binding-failed keys=1 observations=5 real=5 speculative=0 probe-internal=0
-// CHECK: trait-demand-census summary keys=1 observations=8 drainable-keys=1
-// CHECK: trait-stage-record digest value={{.*}} selected-impls=1 refusals-no-candidate=0 refusals-ambiguous=0

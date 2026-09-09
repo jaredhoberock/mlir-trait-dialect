@@ -87,9 +87,6 @@ enum class RefutationArm : uint8_t {
   MultipleSatisfiableCandidates,
 };
 
-/// The number of refutation arms, for reporting the partition.
-inline constexpr unsigned numRefutationArms = 2;
-
 /// What impl selection settled on for one trait application: the impl it chose,
 /// or the arm on which it refused.
 ///
@@ -220,22 +217,6 @@ class ImplResolver {
 
     /// The demands this resolver's stage declined to serve.
     DemandLedger &getDemandLedger() const { return *ledger; }
-
-    /// Writes the facts this resolver has recorded to the stage-record channel:
-    /// a digest over the canonical rendering of all of them, and the counts
-    /// behind it.
-    ///
-    /// The facts live in pointer-keyed maps, whose iteration order is the
-    /// allocator's, so the rendering is sorted before it is digested and one
-    /// run's digest is comparable with another's. Refusals render as one token
-    /// whichever arm they carry: which arm a refusal is refused on decides
-    /// whether a later round may retry it, and a digest that moved with that
-    /// could not tell a change of retry policy apart from a change of fact.
-    void reportRecordedFacts() const;
-
-    /// A digest over the canonical rendering of those same facts, for a reader
-    /// comparing what one span of resolution settled against another.
-    uint64_t getRecordedFactsDigest() const;
 
     /// Ensures canonical proof for a fully-concrete trait application `claim`.
     /// Resolution proceeds as follows:
@@ -372,21 +353,7 @@ class ImplResolver {
       ++recordEpoch;
     }
 
-    /// How many refusals of each kind `forgetRetriableRefusals` found, and what
-    /// became of the refusals the call before it forgot.
-    struct RefusalCounts {
-      /// Refusals dropped, on the arm a later resolution can overturn.
-      uint64_t forgotten = 0;
-      /// Refusals kept, on the arm no later resolution can overturn.
-      uint64_t kept = 0;
-      /// Of the refusals the previous call dropped: how many selection has
-      /// since answered with an impl, and how many it has refused again.
-      uint64_t overturned = 0;
-      uint64_t reEarned = 0;
-    };
-
-    /// Forgets every refusal a later resolution could answer differently, and
-    /// says what became of the ones the call before this one forgot.
+    /// Forgets every refusal a later resolution could answer differently.
     ///
     /// Selection refuses on two arms and only one of them can move. A refusal
     /// for want of a satisfiable candidate is one an impl generated since can
@@ -397,46 +364,10 @@ class ImplResolver {
     /// overturned: candidates are only ever appended, so a partition that
     /// already had two of them keeps at least two, and re-deriving it would
     /// refuse again at the price of the whole partition.
-    ///
-    /// Dropping a negative only pays where a later resolution answers
-    /// differently, so the counts say how much of the last drop was re-earned
-    /// and how much was overturned.
-    RefusalCounts forgetRetriableRefusals();
+    void forgetRetriableRefusals();
 
     /// Whether impl selection is part-way through no application.
     bool isQuiescent() const { return memo.resolutionMemo.visiting.empty(); }
-
-    /// Whether every proof this resolver has recorded names an op of the module
-    /// that can prove an application: a `trait.proof`, or an unconditional
-    /// `trait.impl`, which proves its own self claim.
-    ///
-    /// Proof creation enters its symbol in the memo before recursing into the
-    /// obligations, so that an obligation coming back round to the claim being
-    /// proven meets the memo instead of diverging, and takes the entry back out
-    /// if that recursion fails. Where no creation is part-way through, every
-    /// entry therefore names a proof that exists.
-    ///
-    /// Answering costs a symbol table over the whole module, which every round
-    /// invalidates by rewriting it, so callers ask where the cross-checks are
-    /// armed rather than on every compile.
-    bool recordsOnlyRealizedProofs() const;
-
-    /// The proof memo as a substitution: every trait application it has a proof
-    /// for, mapped from its unproven claim spelling to its proven one.
-    ///
-    /// Applying this substitution to a type is the same rewrite as asking the
-    /// memo about the claims that type spells, at the cost of a copy of the
-    /// whole memo whatever is being respelled.
-    inline EvidenceBindings buildClaimSubstitutionFromMemo() const {
-      MLIRContext* ctx = module.getContext();
-      EvidenceBindings subst;
-      for (auto [app, proof] : memo.proofMemo) {
-        ClaimType unproven = ClaimType::get(ctx, app, nullptr);
-        ClaimType proven = ClaimType::get(ctx, app, proof);
-        subst.bind(unproven, proven);
-      }
-      return subst;
-    }
 
   private:
     friend class ImplGenerationFreeze;
@@ -490,9 +421,6 @@ class ImplResolver {
     const ImplGenerator *installedOverride = nullptr;
     uint64_t factEpoch = 0;
     mutable uint64_t recordEpoch = 0;
-    /// The applications the last `forgetRetriableRefusals` dropped, so that the
-    /// next one can say what became of them.
-    SmallVector<TraitApplicationAttr> lastForgotten;
 };
 
 /// Stands in for a resolver's impl generators over a span in which no impl may

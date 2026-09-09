@@ -1,16 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 
-// RUN: (env TRAIT_DEMAND_CENSUS=1 mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' -o /dev/null; env TRAIT_DEMAND_CENSUS=1 mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' -o /dev/null) 2>&1 | FileCheck %s
+// RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' -o %t.first
+// RUN: FileCheck %s < %t.first
+// RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' -o %t.second
+// RUN: diff %t.first %t.second
 
-// The recorded facts live in maps keyed by pointer, so the order they come out
-// in is the order the allocator happened to hand out addresses -- which differs
-// between two runs of the same compilation. The module is compiled twice below
-// and the two runs must agree on the digest, which is what makes the digest
-// usable to compare one version of the stage against another.
-//
-// The module resolves several applications so that there is an order to get
-// wrong: three traits, four impls, and a proof for each application resolved.
+// Resolving several applications and their premises must produce deterministic
+// IR. Compiling this module twice must give byte-identical emitted modules.
 
 !T = !trait.poly<0>
 
@@ -46,5 +43,10 @@ func.func @main() {
   return
 }
 
-// CHECK: trait-stage-record digest value=[[DIGEST:0x[0-9a-f]+]] selected-impls=4 refusals-no-candidate=0 refusals-ambiguous=0 assumption-facts=4 proofs=4
-// CHECK: trait-stage-record digest value=[[DIGEST]] selected-impls=4 refusals-no-candidate=0 refusals-ambiguous=0 assumption-facts=4 proofs=4
+// CHECK: func.func private @hold_zero_[[FIRST:h[0-9a-f]+]]()
+// CHECK: func.func private @hold_zero_[[SECOND:h[0-9a-f]+]]()
+// CHECK: func.func private @hold_two_[[THIRD:h[0-9a-f]+]]()
+// CHECK-LABEL: func.func @main()
+// CHECK: call @hold_zero_[[FIRST]]() : () -> ()
+// CHECK: call @hold_zero_[[SECOND]]() : () -> ()
+// CHECK: call @hold_two_[[THIRD]]() : () -> ()

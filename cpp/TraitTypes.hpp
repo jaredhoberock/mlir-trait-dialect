@@ -259,12 +259,7 @@ public:
     assert(proven.isProven() && "evidence values must be proven claims");
     assert((!bindings.count(unproven) || bindings.lookup(unproven) == proven) &&
            "evidence bindings must not be replaced with a different proof");
-    size_t before = bindings.size();
     bindings[unproven] = proven;
-    // Re-binding the same key to the same proof writes no new entry, so the
-    // count is of the closure this map holds rather than of the calls it took.
-    if (bindings.size() != before)
-      countEvidenceBinding(bindings.size());
   }
 
   // Used by recursive proof verification to roll back an optimistic binding
@@ -381,12 +376,7 @@ public:
     switch (place(entries, std::make_pair(unproven, proven),
                   std::move(closure))) {
     case Placement::Held:
-      return true;
     case Placement::Agreed:
-      // The pair was derived again and reached the answer already held. Nothing
-      // needed deriving: this is the work a reader serving from the record is
-      // meant to have stopped doing, so it is counted rather than passed over.
-      countRecordedPairRederived();
       return true;
     case Placement::Withdrawn:
     case Placement::Refused:
@@ -394,10 +384,6 @@ public:
     }
     llvm_unreachable("a closure is placed, agreed with, withdrawn or refused");
   }
-
-  /// How many pairs two closures disagreed over, which this therefore answers
-  /// for no longer.
-  size_t disputedCount() const { return disputed.size(); }
 
   /// Respells every key and every binding this holds through `replacer`, which
   /// is the same rewrite the sweep applies to the module.
@@ -450,16 +436,11 @@ public:
         if (!llvm::is_contained(closure, respelledBinding))
           closure.push_back(respelledBinding);
       }
-      // Nothing derived anything here, so the re-derivation the recording site
-      // counts has no counterpart: two closures that agree leave the pair
-      // answered and file nothing.
       place(respelled, respellPair(entry.first), std::move(closure));
     }
     entries = std::move(respelled);
     assert(gradesHold() && "transcribing must leave every position its grade");
   }
-
-  size_t size() const { return entries.size(); }
 
 private:
   /// An obligation and the claim proving it, which is what every key and every
@@ -496,7 +477,6 @@ private:
       return Placement::Agreed;
     into.erase(entry);
     disputed.insert(key);
-    countProofClosureWithdrawn();
     return Placement::Withdrawn;
   }
 
@@ -1223,6 +1203,12 @@ LogicalResult bindProofsIn(Type ty,
                                     ProofDerivationMemo *memo,
                                     llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
+/// The module that anchors symbol lookups for `anchor`: the operation itself
+/// when it is the module, otherwise its enclosing module (null if it has none).
+/// A symbol-use verifier reached through an attribute or type interface recovers
+/// its lookup scope this way.
+ModuleOp getAnchorModule(Operation *anchor);
+
 /// Which projections a lookup is licensed to resolve.
 enum class LookupScope {
   /// Only a projection whose arguments are all concrete. Its resolution is a
@@ -1257,23 +1243,11 @@ enum class LookupScope {
 /// it is safe to run inside a verifier.
 ///
 /// `origin` names the caller, which the signature otherwise says nothing about.
-/// It classifies the demand this call raises: a verifier's demand is counted,
-/// a stage's is recorded. It has no default, so a new caller states which it
-/// is rather than inheriting an answer.
+/// A verifier's demand stays local; a stage demand enters the preparation queue.
+/// It has no default, so each caller states which applies.
 ///
-/// `topLevelMissReasons`, when given, receives one bit per LookupMissReason on
-/// which a projection of `ty` itself (not one reached inside a candidate probe)
-/// declined. A caller that goes on to accept the unresolved type reads it to
-/// say which class of the residual tolerance the accept fell in.
-/// The module that anchors symbol lookups for `anchor`: the operation itself
-/// when it is the module, otherwise its enclosing module (null if it has none).
-/// A symbol-use verifier reached through an attribute or type interface recovers
-/// its lookup scope this way.
-ModuleOp getAnchorModule(Operation *anchor);
-
 Type resolveProjectionsByLookup(Type ty, ModuleOp module, DemandOrigin origin,
-                                LookupScope scope,
-                                unsigned *topLevelMissReasons = nullptr);
+                                LookupScope scope);
 
 /// The fallible sibling of the resolver above, for a caller reached from
 /// untrusted IR that must refuse a nonconverging projection rather than decline
@@ -1286,8 +1260,7 @@ Type resolveProjectionsByLookup(Type ty, ModuleOp module, DemandOrigin origin,
 /// infallible entry would.
 FailureOr<Type> resolveProjectionsByLookup(
     Type ty, ModuleOp module, DemandOrigin origin, LookupScope scope,
-    llvm::function_ref<InFlightDiagnostic()> emitError,
-    unsigned *topLevelMissReasons = nullptr);
+    llvm::function_ref<InFlightDiagnostic()> emitError);
 
 /// Rewrites `ty` with `step` until its spelling stops changing, handing back the
 /// driver's partial at a rewrite that never does.
@@ -1313,17 +1286,6 @@ Type normalizeProjectionsToFixedPoint(Type ty, ModuleOp module,
 /// module-level reporter -- names the type that would not converge.
 LogicalResult tryNormalizeProjectionsToFixedPoint(
     Type ty, llvm::function_ref<Type(Type)> step, Type &out);
-
-/// How many irreducible projection crossings the residual tolerance has
-/// accepted in this process, and how those accepts split by the tolerance
-/// site's own taxonomy. The four class counts partition the total. Reported
-/// beside the demand census, whose population it overlaps but does not belong
-/// to.
-uint64_t residualToleranceAcceptCount();
-uint64_t residualToleranceAcceptsGeneratorPendingCount();
-uint64_t residualToleranceAcceptsMultiCandidateCount();
-uint64_t residualToleranceAcceptsHypothesisCount();
-uint64_t residualToleranceAcceptsMixedOrOtherCount();
 
 std::string generateMangledNameSuffixFor(TypeRange typeArgs);
 

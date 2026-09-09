@@ -3,10 +3,6 @@
 #include "ImplResolution.hpp"
 #include <llvm/ADT/ScopeExit.h>
 #include <llvm/Support/ErrorHandling.h>
-#include <llvm/Support/Format.h>
-#include <llvm/Support/xxhash.h>
-#include <cinttypes>
-#include <cstdlib>
 
 namespace mlir::trait {
 
@@ -209,16 +205,12 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
 // find an existing trait.proof that *explicitly* proves impl by name
 // and proves the same application app
 static ProofOp findExistingProofFor(ModuleOp module, ImplOp impl, TraitApplicationAttr app) {
-  size_t scanned = 0;
   for (ProofOp proof : module.getOps<ProofOp>()) {
-    ++scanned;
     if (proof.getImplName() == impl.getSymName() &&
         proof.getTraitApplication() == app) {
-      countProofScan(scanned);
       return proof;
     }
   }
-  countProofScan(scanned);
   return nullptr;
 }
 
@@ -306,11 +298,8 @@ Type ImplResolver::resolveProjectionsIn(Type ty, OpBuilder &builder) {
       [this, &builder](ProjectionType proj) -> std::optional<Type> {
     auto resolved = resolveProjectionType(proj, builder);
     if (failed(resolved)) {
-      // The failure is swallowed here -- the projection stays spelled as
-      // written and the walk goes on -- so this is where the second engine's
-      // unserved demand becomes visible. Its count is a lower bound: an
-      // application the negative resolution memo already refuted never reaches
-      // this engine a second time.
+      // Preserve the unresolved demand for a later preparation boundary even
+      // though this walk leaves its projection spelled as written.
       recordResolverProjectionMiss(Type(proj));
       return std::nullopt;
     }
@@ -405,11 +394,7 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
   // Compute the proof name early so we can use it as the coinductive memo entry.
   std::string proofName = impl.generateMangledName(monomorphicWanted) + "_p";
   auto proofSym = FlatSymbolRefAttr::get(ctx, proofName);
-  size_t collisionsScanned = 0;
-  auto countCollisionScan =
-      llvm::scope_exit([&] { countProofCollisionScan(collisionsScanned); });
   for (ProofOp proof : module.getOps<ProofOp>()) {
-    ++collisionsScanned;
     if (proof.getSymName() != proofName)
       continue;
 
@@ -473,188 +458,22 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
 }
 
 //===----------------------------------------------------------------------===//
-// Reporting the recorded facts
-//===----------------------------------------------------------------------===//
-
-namespace {
-
-/// What a refused application renders as, whichever arm refused it.
-constexpr const char *refusalToken = "refused";
-
-/// Collects the renderings of a resolver's facts, one line each, so that facts
-/// held in pointer-keyed maps can be put in a determinate order before they are
-/// digested.
-class FactRendering {
-public:
-  /// Opens a line. The caller writes the fact and closes it with `end`.
-  llvm::raw_ostream &begin() {
-    pending.clear();
-    return stream;
-  }
-  void end() { lines.push_back(pending); }
-
-  /// The renderings in an order that does not depend on where the maps holding
-  /// the facts happened to put them.
-  ArrayRef<std::string> sorted() {
-    llvm::sort(lines);
-    return lines;
-  }
-
-private:
-  SmallVector<std::string> lines;
-  std::string pending;
-  llvm::raw_string_ostream stream{pending};
-};
-
-/// How many recorded selections were of each kind, for the line that reports
-/// the digest.
-struct RecordedFactCounts {
-  uint64_t selections = 0;
-  uint64_t refusalsByArm[numRefutationArms] = {};
-};
-
-/// Renders everything `memo` holds, one fact per line.
-void renderRecordedFacts(const ProofResolutionMemo &memo, FactRendering &facts,
-                         RecordedFactCounts &counts) {
-  const ResolutionMemo &resolution = memo.resolutionMemo;
-
-  for (const auto &entry : resolution.chosen) {
-    const ResolutionOutcome &outcome = entry.second;
-    llvm::raw_ostream &os = facts.begin();
-    os << "impl " << entry.first << " = ";
-    if (outcome.isRefusal()) {
-      ++counts.refusalsByArm[static_cast<unsigned>(outcome.getRefutationArm())];
-      os << refusalToken;
-    } else {
-      ++counts.selections;
-      os << outcome.getImpl().getSymName();
-    }
-    facts.end();
-  }
-
-  for (const auto &entry : resolution.assumptionsKnownSatisfiable) {
-    ImplOp impl = entry.first;
-    facts.begin() << "assumptions " << impl.getSymName() << " for "
-                  << entry.second;
-    facts.end();
-  }
-
-  for (const auto &entry : memo.proofMemo) {
-    facts.begin() << "proof " << entry.first << " = " << entry.second;
-    facts.end();
-  }
-}
-
-} // namespace
-
-uint64_t ImplResolver::getRecordedFactsDigest() const {
-  FactRendering facts;
-  RecordedFactCounts counts;
-  renderRecordedFacts(memo, facts, counts);
-
-  std::string rendered;
-  for (const std::string &fact : facts.sorted()) {
-    rendered += fact;
-    rendered += '\n';
-  }
-  return llvm::xxh3_64bits(rendered);
-}
-
-void ImplResolver::reportRecordedFacts() const {
-  const ResolutionMemo &resolution = memo.resolutionMemo;
-
-  // Every application selection opened it has closed, so nothing is part-way
-  // resolved here and the facts below are the whole of what this resolver knows.
-  assert(resolution.visiting.empty() &&
-         "impl selection must not be part-way through an application when its "
-         "facts are read");
-
-  FactRendering facts;
-  RecordedFactCounts counts;
-  renderRecordedFacts(memo, facts, counts);
-
-  std::string rendered;
-  for (const std::string &fact : facts.sorted()) {
-    llvm::errs() << stageRecordFactPrefix << " " << fact << "\n";
-    rendered += fact;
-    rendered += '\n';
-  }
-
-  llvm::errs() << stageRecordDigestPrefix
-               << llvm::format(" value=0x%016" PRIx64,
-                               llvm::xxh3_64bits(rendered))
-               << " selected-impls=" << counts.selections
-               << " refusals-no-candidate="
-               << counts.refusalsByArm[static_cast<unsigned>(
-                      RefutationArm::NoSatisfiableCandidate)]
-               << " refusals-ambiguous="
-               << counts.refusalsByArm[static_cast<unsigned>(
-                      RefutationArm::MultipleSatisfiableCandidates)]
-               << " assumption-facts="
-               << resolution.assumptionsKnownSatisfiable.size()
-               << " proofs=" << memo.proofMemo.size() << "\n";
-}
-
-//===----------------------------------------------------------------------===//
 // Forgetting what a later resolution can answer differently
 //===----------------------------------------------------------------------===//
 
-ImplResolver::RefusalCounts ImplResolver::forgetRetriableRefusals() {
-  DenseMap<TraitApplicationAttr, ResolutionOutcome> &chosen =
-      memo.resolutionMemo.chosen;
-  RefusalCounts counts;
-
-  // What became of the refusals the last call dropped. An application selection
-  // has not been asked about since is neither, and is the remainder.
-  for (TraitApplicationAttr app : lastForgotten) {
-    auto it = chosen.find(app);
-    if (it == chosen.end())
-      continue;
-    if (it->second.isRefusal())
-      ++counts.reEarned;
-    else
-      ++counts.overturned;
-  }
-
-  lastForgotten.clear();
-  for (const auto &entry : chosen) {
-    if (!entry.second.isRefusal())
-      continue;
-    if (entry.second.getRefutationArm() ==
-        RefutationArm::NoSatisfiableCandidate) {
-      lastForgotten.push_back(entry.first);
-      ++counts.forgotten;
-    } else {
-      ++counts.kept;
-    }
-  }
+void ImplResolver::forgetRetriableRefusals() {
+  auto &chosen = memo.resolutionMemo.chosen;
+  SmallVector<TraitApplicationAttr> retriable;
+  for (const auto &entry : chosen)
+    if (entry.second.isRefusal() &&
+        entry.second.getRefutationArm() ==
+            RefutationArm::NoSatisfiableCandidate)
+      retriable.push_back(entry.first);
   // The drops move no record epoch, for the same reason writing the refusal
   // did not: what is erased here is a question impl selection will have to
   // answer again, never an answer a read of the record was given.
-  for (TraitApplicationAttr app : lastForgotten)
+  for (TraitApplicationAttr app : retriable)
     chosen.erase(app);
-  return counts;
-}
-
-bool ImplResolver::recordsOnlyRealizedProofs() const {
-  SymbolTable symbols(module);
-  for (const auto &entry : memo.proofMemo) {
-    Operation *defining = symbols.lookup(entry.second.getValue());
-    if (!defining)
-      return false;
-    // The two shapes a recorded proof takes: a trait.proof, or the impl that
-    // proves an application with no obligations of its own. Which application
-    // the named op spells is not compared, because the memo is keyed by the
-    // spelling selection recorded and the commit respells the module's copy of
-    // it -- the two are the same application under different spellings from the
-    // first commit that reaches the proof onwards.
-    if (isa<ProofOp>(defining))
-      continue;
-    auto impl = dyn_cast<ImplOp>(defining);
-    if (!impl || !impl.isUnconditional())
-      return false;
-  }
-  return true;
 }
 
 //===----------------------------------------------------------------------===//
@@ -740,7 +559,6 @@ ReadOnlyImplResolver::resolveProjectionType(ProjectionType proj) const {
   auto subst = impl.buildSubstitutionForSelfClaim(resolvedImpl->selectedClaim);
   if (failed(subst)) return failure();
 
-  countReadOnlyResolverServe();
   return applySubstitutionToFixedPoint(subst->toTypeMap(), *binding);
 }
 
@@ -785,7 +603,6 @@ ReadOnlyImplResolver::getRecordedProofFor(ClaimType claim) const {
 
   auto proof = getRecordedProof(monomorphic.getTraitApplication());
   if (!proof) return failure();
-  countReadOnlyResolverServe();
   return *proof;
 }
 

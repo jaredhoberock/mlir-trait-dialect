@@ -1,12 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 
-// RUN: env TRAIT_DEMAND_CENSUS=1 TRAIT_DEMAND_CENSUS_CHECK=1 mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' 2>&1 | FileCheck %s --implicit-check-not='trait-demand-census unhooked' --implicit-check-not='trait-demand-census served'
+// RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' 2>&1 | FileCheck %s
 
-// Every projection here is served where it is raised, so the stage finishes
-// with an empty population. This is the negative pin the other rows are read
-// against: a census that reports demand on this module is reporting something
-// the stage did not have.
+// The Outer associated type resolves before specializing the Sink call.
+// The resulting concrete callee and call site must both use i64.
 
 !T = !trait.poly<0>
 
@@ -35,6 +33,8 @@ func.func @main() -> i64 {
   return %r : i64
 }
 
-// CHECK-NOT: trait-demand-census demand
-// CHECK: trait-demand-census engine lookup-miss keys=0 observations=0 real=0 speculative=0 probe-internal=0
-// CHECK: trait-demand-census summary keys=0 observations=0 drainable-keys=0
+// CHECK-LABEL: func.func private @callee_
+// CHECK: return %arg0 : i64
+// CHECK-LABEL: func.func @main() -> i64
+// CHECK: call @callee_
+// CHECK: return {{.*}} : i64

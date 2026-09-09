@@ -1,16 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 
-// RUN: env TRAIT_DEMAND_CENSUS=1 mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' 2>&1 | FileCheck %s
+// RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' 2>&1 | FileCheck %s
 
-// Proving a claim leaves every other spelling of it stale, so the stage sweeps
-// the module and respells them from what it has recorded. The sweep reports how
-// much of the module it touched: how many bindings it applied, how many ops
-// carried a spelling it moved, and how many positions on those ops moved.
-//
-// Here @Choose_i32's method takes the @Convert claim as a parameter, so proving
-// @Convert[i32, i32] moves that method's block-argument type and the function
-// type beside it -- two positions on the one op that carries them.
+// The selected Choose method takes a Convert claim as a parameter. Propagating
+// its proof must keep the function signature and body consistent and let the
+// nested convert call lower.
 
 !T = !trait.poly<0>
 !U = !trait.poly<1>
@@ -45,4 +40,9 @@ func.func @test(%x: i32) -> i32 {
   return %res : i32
 }
 
-// CHECK: trait-stage-record respelling round=0 bindings=2 projections=2 ops=0 positions=0
+// CHECK-LABEL: func.func private @Convert_i32_convert
+// CHECK: return %arg0 : i32
+// CHECK-LABEL: func.func private @Choose_i32_choose
+// CHECK: call @Convert_i32_convert
+// CHECK-LABEL: func.func @test
+// CHECK: call @Choose_i32_choose

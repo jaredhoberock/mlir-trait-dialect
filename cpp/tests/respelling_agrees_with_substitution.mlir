@@ -1,21 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 
-// RUN: env TRAIT_DEMAND_CENSUS=1 TRAIT_DEMAND_CENSUS_CHECK=1 mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' 2>&1 | FileCheck %s --implicit-check-not='trait-demand-census respelling-disagreement'
+// RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' 2>&1 | FileCheck %s
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' | FileCheck %s --check-prefix=IR
 
-// Respelling a type asks the proof memo about the claims that type spells.
-// Building a substitution over the whole memo and applying it is the same
-// rewrite, and under the census check the stage performs both and reports every
-// position they spell differently.
-//
-// The two walk a type differently, so this module puts what separates them in
-// one place. @take's parameter is a function type spelling a generic type
-// beside a claim: a substitution hands the generic type its own specialization
-// step and stops the walk there, while the lookup walks the type structurally
-// and answers only for the claim. And @Hold's application argument is itself a
-// claim, which respelling reaches only by walking into the claim it has just
-// proved rather than stopping at it.
+// A claim nested inside another claim must receive its proof throughout
+// specialization. The concrete Hold method and its generic caller must lower
+// with no claim types or unrealized conversion casts left behind.
 
 !T = !trait.poly<0>
 
@@ -48,11 +39,12 @@ func.func @test() {
   return
 }
 
-// Both claims are proved before the sweep runs, so both are available to
-// respell with.
-// CHECK: trait-stage-record respelling round=0 bindings=2 projections=2 ops=2 positions=3
-
-// The module the stage leaves behind spells no claim at all, so nothing was
-// left holding a spelling respelling failed to reach.
 // IR-NOT: trait.claim
 // IR-NOT: builtin.unrealized_conversion_cast
+
+// CHECK-LABEL: func.func private @Hold_claim_held()
+// CHECK: return
+// CHECK-LABEL: func.func private @take_
+// CHECK: call @Hold_claim_held() : () -> ()
+// CHECK-LABEL: func.func @test()
+// CHECK: call @take_

@@ -1,19 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 
-// RUN: env TRAIT_DEMAND_CENSUS=1 TRAIT_DEMAND_CENSUS_CHECK=1 mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' 2>&1 | FileCheck %s --implicit-check-not='trait-demand-census unhooked' --implicit-check-not='trait-demand-census served'
+// RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' 2>&1 | FileCheck %s
 
-// The only impl of @Gen spells its own self application with a projection, so
-// matching a candidate against @Gen[i64] resolves @Other[i64]::X on the way --
-// and @Other has no impl. That nested lookup runs inside the outer lookup's
-// replacement callback, which is what makes it a candidate probe rather than a
-// demand of its own.
-//
-// One key collects all three flag classes here, which is the point of the row:
-// the same demanded type is raised really, speculatively while the resolver
-// partitions candidates, and inside a probe. Only the unflagged observation
-// makes the key drainable, and the parent it names is the demand under
-// resolution rather than the candidate the probe was about.
+// Matching @Gen_via probes a projection for which @Other has no impl. The
+// unused polymorphic declaration must still compile and disappear during erasure.
 
 !T = !trait.poly<0>
 
@@ -38,21 +29,5 @@ func.func private @f(%c: !trait.claim<@Box[!trait.proj<@Gen[i64], "A">] by @Box_
   return %x : !T
 }
 
-// The outer projection is the round's, not the read's. A round collects what the
-// module spells, so @Gen[i64]::A is put to impl selection in round one and
-// served there -- the probe below runs inside that serve. The read the driver
-// holds never meets it, so it declines nothing and the probe key is the only key
-// this census has.
-// CHECK: trait-stage-record round index=1
-// CHECK-SAME: collected=1
-// CHECK-SAME: without-arm=1
-// CHECK-SAME: served=1
-
-// CHECK: trait-demand-census demand flags=real,speculative,probe-internal drainable=yes observations=7 depth=0
-// CHECK-SAME: arms=no-candidate-impl
-// CHECK-SAME: parent=!trait.proj<@Gen[i64], "A">
-// CHECK-SAME: type=!trait.proj<@Other[i64], "X">
-// CHECK: trait-demand-census engine lookup-miss keys=1 observations=7 real=1 speculative=2 probe-internal=4
-// CHECK: trait-demand-census engine read-only-resolver keys=0 observations=0 real=0 speculative=0 probe-internal=0
-// CHECK: trait-demand-census arm no-candidate-impl keys=1 observations=7 real=1 speculative=2 probe-internal=4
-// CHECK: trait-demand-census summary keys=1 observations=7 drainable-keys=1 unattributed-keys=0
+// CHECK: module {
+// CHECK-NEXT: }

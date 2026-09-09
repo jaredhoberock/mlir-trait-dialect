@@ -7,7 +7,6 @@
 #include <atomic>
 #include <cstdint>
 #include <string>
-#include <llvm/ADT/Statistic.h>
 #include <llvm/ADT/TypeSwitch.h>
 #include <llvm/Support/ErrorHandling.h>
 #include <llvm/Support/Format.h>
@@ -20,34 +19,6 @@
 
 #define GET_TYPEDEF_CLASSES
 #include <TraitTypes.cpp.inc>
-
-#define DEBUG_TYPE "trait-residual-tolerance"
-
-// Counts each irreducible projection-vs-rigid crossing the module-capable
-// unify entry accepts without a binding (the residual tolerance). Licensed
-// behavior, so it is a statistic rather than an error; a nonzero value under
-// -stats makes regrowth of that population visible in-tree.
-STATISTIC(numResidualToleranceAccepts,
-          "irreducible projection crossings accepted by the residual tolerance");
-
-// The same population split by which class of the tolerance site's own taxonomy
-// each accept fell in, so that a zero in one class can be read as a discharged
-// clause rather than lost in the aggregate. A generator-pending accept is a
-// ground base no impl binds yet; a multi-candidate accept is a ground base
-// several impls bind; a hypothesis accept is a still-symbolic base resolvable
-// only through a frame hypothesis; a mixed-or-other accept is a ground base
-// whose projections declined on several arms at once, or on an arm that is
-// neither headline case. The four partition the aggregate: each accept bumps
-// exactly one of them beside it.
-STATISTIC(numResidualToleranceAcceptsGeneratorPending,
-          "residual-tolerance accepts on a ground base no impl binds yet");
-STATISTIC(numResidualToleranceAcceptsMultiCandidate,
-          "residual-tolerance accepts on a ground base several impls bind");
-STATISTIC(numResidualToleranceAcceptsHypothesis,
-          "residual-tolerance accepts on a still-symbolic base");
-STATISTIC(numResidualToleranceAcceptsMixedOrOther,
-          "residual-tolerance accepts on a ground base declining on several or "
-          "non-headline arms");
 
 namespace mlir::trait {
 
@@ -72,26 +43,6 @@ AttrTypeReplacer makeGroundProjectionReplacer(
         return hop(projection);
       });
   return replacer;
-}
-
-uint64_t residualToleranceAcceptCount() {
-  return numResidualToleranceAccepts.getValue();
-}
-
-uint64_t residualToleranceAcceptsGeneratorPendingCount() {
-  return numResidualToleranceAcceptsGeneratorPending.getValue();
-}
-
-uint64_t residualToleranceAcceptsMultiCandidateCount() {
-  return numResidualToleranceAcceptsMultiCandidate.getValue();
-}
-
-uint64_t residualToleranceAcceptsHypothesisCount() {
-  return numResidualToleranceAcceptsHypothesis.getValue();
-}
-
-uint64_t residualToleranceAcceptsMixedOrOtherCount() {
-  return numResidualToleranceAcceptsMixedOrOther.getValue();
 }
 
 void TraitDialect::registerTypes() {
@@ -255,7 +206,6 @@ static bool matchesClaimOneWay(ImplOp impl, ClaimType claim,
 // refuses.
 static Type resolveProjectionsByLookupCore(Type ty, ModuleOp module,
                                            DemandOrigin origin, LookupScope scope,
-                                           unsigned *topLevelMissReasons,
                                            bool &converged) {
   converged = true;
   if (!module)
@@ -266,13 +216,6 @@ static Type resolveProjectionsByLookupCore(Type ty, ModuleOp module,
   // iterations below, and it is scoped to this call so nothing outside observes
   // it -- repeated projections over the same application skip the module scan.
   DenseMap<TraitApplicationAttr, SmallVector<ImplOp>> candidateCache;
-
-  // The demands this call recorded. Established only when the postcondition
-  // below is armed, so an ordinary call carries no per-call state at all.
-  const bool checkRecordingCoverage = DemandLedger::isPostconditionEnabled() &&
-                                      isDemandRecordingActive() &&
-                                      recordsToLedger(origin);
-  DenseSet<Type> recordedDemands;
 
   AttrTypeReplacer replacer = makeEndpointSealedReplacer();
   replacer.addReplacement([&](ProjectionType proj) -> std::optional<Type> {
@@ -293,14 +236,6 @@ static Type resolveProjectionsByLookupCore(Type ty, ModuleOp module,
       if (polymorphic)
         return std::optional<Type>(std::nullopt);
       recordLookupMiss(Type(proj), reason, origin, probe.getEnclosingDepth());
-      if (checkRecordingCoverage)
-        recordedDemands.insert(Type(proj));
-      // A caller classifying an accept wants the arms the projections of `ty`
-      // itself declined on, so only the outermost walk contributes. A decline
-      // inside a candidate probe (a nonzero enclosing depth) is about a
-      // candidate the partition may discard, not about `ty`.
-      if (topLevelMissReasons && probe.getEnclosingDepth() == 0)
-        *topLevelMissReasons |= 1u << static_cast<unsigned>(reason);
       return std::optional<Type>(std::nullopt);
     };
 
@@ -357,45 +292,17 @@ static Type resolveProjectionsByLookupCore(Type ty, ModuleOp module,
 
   // A resolved binding may itself expose a ground projection, so run to a
   // fixed point. A chain that never grounds leaves `ty` at the driver's partial
-  // and reports nonconvergence up; the census walk below is skipped on that
-  // partial because an unresolved survivor there is the nonconvergence itself,
-  // not a ledger gap.
+  // normal form and reports nonconvergence to the caller.
   converged = succeeded(tryNormalizeProjectionsToFixedPoint(
       ty, [&](Type t) { return replacer.replace(t); }, ty));
-  if (!converged)
-    return ty;
-
-  // Every monomorphic projection this call leaves standing is a demand no impl
-  // served, so a recording site must have observed it. A survivor with no
-  // record is a gap in the ledger's wiring, not a fault in the program, so it
-  // goes to the census channel: an error here would fail a correct compile.
-  //
-  // No in-tree program makes this fire, and none is written to: the two halves
-  // are complementary by construction. Every exit that leaves a projection
-  // spelled as written goes through declineWith, which records and then adds to
-  // the set this walk consults, so a survivor the callback visited is in the
-  // set. What remains is a projection the callback never visited -- one the
-  // replacer does not reach -- which is the gap the check exists to find and
-  // which no module can be written to produce today. Deleting an arm's record,
-  // or the set, makes it fire: the census lit rows carry an implicit negative
-  // pin over their whole output, so they fail on the first unhooked line.
-  if (checkRecordingCoverage)
-    ty.walk([&](Type sub) {
-      auto proj = dyn_cast<ProjectionType>(sub);
-      if (!proj || isPolymorphicType(proj) || recordedDemands.contains(sub))
-        return;
-      reportUnhookedMint(sub);
-    });
-
   return ty;
 }
 
 Type resolveProjectionsByLookup(Type ty, ModuleOp module, DemandOrigin origin,
-                                LookupScope scope,
-                                unsigned *topLevelMissReasons) {
+                                LookupScope scope) {
   bool converged;
   Type out = resolveProjectionsByLookupCore(ty, module, origin, scope,
-                                            topLevelMissReasons, converged);
+                                            converged);
   // The infallible entry cannot refuse. A projection that will not ground stays
   // spelled as written in `out`, so every spelling comparison downstream
   // declines on it in the safe direction; the reporter surfaces the diagnostic
@@ -408,11 +315,10 @@ Type resolveProjectionsByLookup(Type ty, ModuleOp module, DemandOrigin origin,
 
 FailureOr<Type> resolveProjectionsByLookup(
     Type ty, ModuleOp module, DemandOrigin origin, LookupScope scope,
-    llvm::function_ref<InFlightDiagnostic()> emitError,
-    unsigned *topLevelMissReasons) {
+    llvm::function_ref<InFlightDiagnostic()> emitError) {
   bool converged;
   Type out = resolveProjectionsByLookupCore(ty, module, origin, scope,
-                                            topLevelMissReasons, converged);
+                                            converged);
   // The fallible entry refuses a projection that will not ground so a verifier
   // reached from untrusted IR fails cleanly rather than admitting the cycle. A
   // speculative cross-check discards the spelling, so it declines silently.
@@ -548,7 +454,6 @@ LogicalResult InferenceType::unify(
 //===----------------------------------------------------------------------===//
 // ClaimType
 //===----------------------------------------------------------------------===//
-
 
 // Recover the module that anchors symbol lookups: the operation verification
 // reached, or that operation itself when it is the anchoring symbol table.
@@ -803,7 +708,6 @@ public:
     ProofClosureRecord &closures = memo.getClosures();
     for (const Held &node : held) {
       memo.record(node.keyUnproven, node.keyProven, node.closure);
-      countProofDerivationRecorded();
       (void)closures.record(node.normalizedUnproven, node.normalizedProven,
                             node.closure);
     }
@@ -853,38 +757,6 @@ static LogicalResult replayClosure(const ProofDerivationMemo::Closure &closure,
   return success();
 }
 
-/// Reports where the closure held for `(unproven, proven)` and the closure
-/// deriving that pair again produces differ.
-///
-/// The held closure is what the replay writes in place of a derivation, so
-/// deriving the pair again is the statement being tested. That re-derivation is
-/// work the compilation does not do, so it runs as a cross-check and is counted
-/// nowhere. A disagreement is a gap in this dialect's own reasoning and never a
-/// fault in the program being compiled, so it goes to the census channel.
-static void checkHeldClosureAgrees(ClaimType unproven, ClaimType proven,
-                                   ModuleOp module, DemandOrigin origin,
-                                   const ProofDerivationMemo::Closure &held) {
-  if (!DemandLedger::isPostconditionEnabled())
-    return;
-
-  auto report = [&](const Twine &derived) {
-    llvm::errs() << demandCensusProofDerivationDisagreementPrefix
-                 << " unproven=" << unproven << " proven=" << proven
-                 << " held=" << held.size() << " derived=" << derived << "\n";
-  };
-
-  DemandCrossCheckScope checking;
-  EvidenceBindings scratch;
-  DerivationStaging staging;
-  DerivedNode derived;
-  if (failed(deriveProof(unproven, proven, module, scratch, origin,
-                         /*memo=*/nullptr, staging, derived, /*err=*/nullptr)))
-    return report("<no derivation>");
-
-  if (derived.closure != held)
-    report(Twine(derived.closure.size()) + " entries, differing");
-}
-
 /// Derives one node of a proof, extending `bindings` with everything the node's
 /// own claim and its obligations bind.
 static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
@@ -894,8 +766,6 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
                                  DerivationStaging &staging,
                                  DerivedNode &derived,
                                  llvm::function_ref<InFlightDiagnostic()> err) {
-  countProofVerification();
-
   // the proven side must carry a proof
   if (!proven.isProven()) {
     if (err) err() << "expected proven claim, but found " << proven;
@@ -918,13 +788,9 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
   ClaimType askedProven = proven;
   if (memo) {
     if (const auto *closure = memo->lookup(askedUnproven, askedProven)) {
-      countProofDerivationMemoHit();
-      checkHeldClosureAgrees(askedUnproven, askedProven, module, origin,
-                             *closure);
       derived.take(*closure);
       return replayClosure(*closure, bindings, err);
     }
-    countProofDerivationMemoMiss();
   }
 
   // Normalize both the demanded obligation (the recording key) and the proven
@@ -963,8 +829,6 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
   // would write, including the pair's own, so nothing below needs to run.
   if (memo) {
     if (const auto *closure = memo->getClosures().lookup(unproven, proven)) {
-      countProofClosureReplayed();
-      checkHeldClosureAgrees(unproven, proven, module, origin, *closure);
       derived.take(*closure);
       return replayClosure(*closure, bindings, err);
     }
@@ -974,7 +838,6 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
   // be observed through multiple equivalent claim spellings, so validate proof
   // coherence instead of requiring syntactic claim equality.
   if (auto existing = bindings.lookup(unproven)) {
-    countProofVerificationEarlyExit();
     if (failed(verifyEquivalentRecordedProof(unproven, *existing, proven, err)))
       return failure();
     // What this node would have written is already written. When this
@@ -989,7 +852,6 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
     } else if (const auto *recorded =
                    memo ? memo->getClosures().lookup(unproven, proven)
                         : nullptr) {
-      countProofDerivationRecovered();
       derived.take(*recorded);
     } else {
       derived.complete = false;
@@ -1077,7 +939,6 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
     staging.hold(askedUnproven, askedProven, unproven, proven, derived.closure);
   } else {
     derived.take({});
-    countProofDerivationNotRecorded();
   }
   return success();
 }
@@ -1111,7 +972,6 @@ bool mentionsMonomorphicProjection(Type ty) {
   visit(ty, visit);
   return found;
 }
-
 
 LogicalResult verifyAndRecordProof(
     ClaimType unproven,
@@ -1578,17 +1438,6 @@ static LogicalResult unifyStructurally(Type formal,
 /// the module-free comparator is what a verifier holding no module reaches,
 /// while a caller carrying one is the stage or a committed-fact match inside a
 /// verifier, which the stage's suspension brackets cover.
-static void observeUnifierAcceptance(Type ty, ModuleOp module) {
-  // Cheapest test first: with both switches off there is no observer at all,
-  // which is what keeps this off the unifier's equality path.
-  if (!DemandLedger::areObservationsEnabled())
-    return;
-  if (!isa<ProjectionType>(ty) || isPolymorphicType(ty))
-    return;
-  recordUnifierAcceptance(ty, module ? DemandOrigin::Unification
-                                     : DemandOrigin::ModuleFreeComparison);
-}
-
 /// Unify a projection with another type by their spellings as written. Two
 /// entries reach here: a module-free comparison (a verifier passes no module)
 /// and a module-capable resolution (a pass or a committed-fact substitution
@@ -1628,7 +1477,6 @@ static LogicalResult unifyProjectionAsSpelled(
       return failure();
     }
 
-    observeUnifierAcceptance(self, module);
     if (failed(unifyTypeRange(formalApp.getTypeArgs(), actualApp.getTypeArgs(),
                               module, subst, err)))
       return failure();
@@ -1652,10 +1500,8 @@ static LogicalResult unifyProjectionAsSpelled(
     Type(self).walk([&](Type t) {
       if (t == other) occurs = true;
     });
-    if (!occurs) {
-      observeUnifierAcceptance(self, module);
+    if (!occurs)
       return otherVar.unify(self, module, subst, err);
-    }
   }
 
   // A projection all of whose arguments are concrete and whose trait application
@@ -1668,12 +1514,9 @@ static LogicalResult unifyProjectionAsSpelled(
   // no module (the module-free comparator); an equality check performs no module
   // lookup, so this step is skipped and an unresolved crossing is a strict
   // mismatch below.
-  // The arms a ground base declined on, kept so an accept below can be classed.
-  unsigned groundMissReasons = 0;
   if (isMonomorphicType(self) && module) {
     Type resolved = resolveProjectionsByLookup(
-        self, module, DemandOrigin::Unification, LookupScope::Ground,
-        &groundMissReasons);
+        self, module, DemandOrigin::Unification, LookupScope::Ground);
     if (resolved != Type(self))
       return trait::unify(resolved, other, module, subst, err);
   }
@@ -1681,14 +1524,7 @@ static LogicalResult unifyProjectionAsSpelled(
   // The projection did not resolve and meets a rigid non-projection type. The
   // module-free comparator (a verifier) holds no evidence for the equality:
   // spellings must be identical after substitution, so reject the crossing.
-  // Counted rather than recorded: this is a demand raised where there is no
-  // module to read facts from, which is outside any stage population by
-  // construction, and it is the exact crossing the tolerance below accepts when
-  // a module is in hand -- the two counts read against each other. Holding no
-  // module, the comparator enumerates no impl, so a projection still standing is
-  // not ground and must match the other side literally.
   if (!module) {
-    countModuleFreeProjectionRejection();
     if (err)
       err() << "projection mismatch: expected " << self << " but found "
             << other;
@@ -1703,53 +1539,7 @@ static LogicalResult unifyProjectionAsSpelled(
   // the proof on the claim -- and one whose equality is false is refused where
   // that evidence is consumed (a false equality's coerce fails the erase
   // barrier). The entry runs at pass time and inside verifiers on committed-fact
-  // matches, so this acceptance is not pass-exclusive. Each class it serves
-  // states its own end condition or its permanence:
-  //   - Generator-pending grounds: a concrete base whose impl a downstream
-  //     generator has not yet synthesized (the prelude's Convergence machinery).
-  //     Empty on the stage by construction -- generation precedes the lowering
-  //     that runs the ground lookup, so a base reaching it there has every impl
-  //     it will get -- and nonzero on the comparisons a verifier raises against
-  //     committed facts before the stage begins, which generation has not
-  //     reached. Acceptance ends when that second population reaches zero. The
-  //     census reads the two apart in its
-  //     residual-tolerance-accepts-generator-pending and
-  //     residual-tolerance-accepts-before-the-stage-generator-pending columns.
-  //   - Hypothesis-resolvable projections: a still-symbolic base resolvable only
-  //     through a frame hypothesis (a where-clause equality). A hypothesis with
-  //     a recordable provider -- a declared equality claim carried as a
-  //     parameter, or a trait or impl where-clause equality -- is witnessed by a
-  //     coerce citing that claim and settled when its projections ground, never
-  //     reaching this arm. A hypothesis with no recordable provider (a
-  //     discarded-result generic closure output records none) has no fact to
-  //     witness; a front end discharges its crossing strictly at the receiving
-  //     boundary, reading the committed impl's own binding before a strict
-  //     compare, so a committed build never routes it here. What remains is
-  //     hand-written IR that supplies neither.
-  //   - Ground multi-candidate crossings: a ground base several impls bind.
-  //     Resolution is premise-partitioned and belongs to the resolver alone,
-  //     never to this comparison -- permanent here.
-  if (!isCrossChecking()) {
-    ++numResidualToleranceAccepts;
-    // Split the accept by the tolerance site's taxonomy so law 5's zero clause
-    // can be read against one class. A still-symbolic base never reached the
-    // ground lookup (the block above skips a non-monomorphic type), so it is the
-    // hypothesis class by itself. A ground base declined on the lookup's arms,
-    // and a single headline arm names its class; several arms at once, or an arm
-    // that is neither headline case, is neither generator-pending nor
-    // multi-candidate and goes to the mixed-or-other class.
-    if (!isMonomorphicType(self)) {
-      ++numResidualToleranceAcceptsHypothesis;
-    } else if (groundMissReasons ==
-               (1u << unsigned(LookupMissReason::NoCandidateImpl))) {
-      ++numResidualToleranceAcceptsGeneratorPending;
-    } else if (groundMissReasons ==
-               (1u << unsigned(LookupMissReason::MultipleCandidateImpls))) {
-      ++numResidualToleranceAcceptsMultiCandidate;
-    } else {
-      ++numResidualToleranceAcceptsMixedOrOther;
-    }
-  }
+  // matches, so this acceptance is not pass-exclusive.
   return success();
 }
 
@@ -1850,10 +1640,8 @@ LogicalResult unify(
   actual = applySubstitutionToFixedPoint(subst.toTypeMap(), actual);
 
   // if the normalized types are equal, unification succeeds
-  if (formal == actual) {
-    observeUnifierAcceptance(formal, module);
+  if (formal == actual)
     return success();
-  }
 
   // formal-side unifier takes priority
   if (auto formalUnifier = dyn_cast<UnificationTypeInterface>(formal))

@@ -359,9 +359,7 @@ SmallVector<ImplOp> TraitOp::getImpls() {
   // symbol-use walk, which materializes every operation's attribute dictionary.
   StringRef traitName = getSymName();
   SmallVector<ImplOp> result;
-  size_t scanned = 0;
   for (Operation &op : *module->getBody()) {
-    ++scanned;
     auto impl = dyn_cast<ImplOp>(op);
     if (!impl)
       continue;
@@ -369,7 +367,6 @@ SmallVector<ImplOp> TraitOp::getImpls() {
     if (selfApp && selfApp.getTraitName().getValue() == traitName)
       result.push_back(impl);
   }
-  countCandidateScan(scanned);
 
   return result;
 }
@@ -897,8 +894,6 @@ FailureOr<ImplSpecialization> ImplOp::buildImplSpecialization(
   // Bind the same self claim without a proof to the proven self claim. This
   // recursively records claim -> proven-claim evidence bindings.
   ClaimType unprovenSelfClaim = provenSelfClaim.asUnproven();
-  if (recordsToLedger(origin))
-    countDerivationEntry(DerivationEntry::ImplSelfProof);
   if (failed(verifyAndRecordProof(unprovenSelfClaim, provenSelfClaim, *module,
                                   evidence, origin, memo, err)))
     return failure();
@@ -1187,7 +1182,6 @@ FailureOr<func::FuncOp> ImplOp::getOrSpecializeFreeFunctionFromMethod(
     FlatSymbolRefAttr::get(ctx, functionName)
   );
 
-  countCalleeSpecialization(/*cloned=*/!funcOp);
   if (!funcOp) {
     // specialize into grandparent with mangled name
     funcOp = specializeMethodAsFreeFuncWithLeadingSelfProof(
@@ -1334,18 +1328,6 @@ FailureOr<SmallVector<ClaimType>> ImplOp::specializeObligationsAsClaimsFor(
     auto resolved = normalization.normalize(req, errFn);
     if (failed(resolved)) return failure();
     req = cast<ClaimType>(*resolved);
-    countObligationNormalization();
-
-    // Normalization reads this impl's own bindings and nothing else, so a
-    // projection over a sibling application survives it. The obligation goes on
-    // to resolution spelled with that projection still standing, which is a
-    // demand this normalization did not serve.
-    if (DemandLedger::areObservationsEnabled())
-      Type(req).walk([&](Type sub) {
-        auto proj = dyn_cast<ProjectionType>(sub);
-        if (proj && isMonomorphicType(proj))
-          recordObligationNormalizationMiss(sub, origin);
-      });
   }
 
   // specialize assumptions of the impl
@@ -2590,15 +2572,6 @@ FailureOr<SpecializationMap> MethodCallOp::buildParameterSpecialization(ModuleOp
     actual = cast<FunctionType>(
         resolveProjectionsByLookup(actual, *module, origin,
                                    LookupScope::Ground));
-  } else {
-    // No evidence, no license: this call never asked what its ground projections
-    // resolve to, so those demands reach no engine at all. Nothing records
-    // them either: method-call lowering, the only in-stage caller of this
-    // specialization, defers until the call's claim is proven, and a proven
-    // claim carries the license -- so every withheld call is a verifier's, and
-    // a verifier's demand is counted rather than entered in a ledger. The
-    // statistic is the whole of what this site can say.
-    countWithheldCallClaim();
   }
 
   SmallVector<Value> localClaims;
@@ -2921,14 +2894,12 @@ FailureOr<func::FuncOp> FuncCallOp::getOrSpecializeCallee(
   auto *symOp = SymbolTable::lookupSymbolIn(*module, rewriter.getStringAttr(instanceName));
   func::FuncOp existing = dyn_cast_or_null<func::FuncOp>(symOp);
   if (existing) {
-    countCalleeSpecialization(/*cloned=*/false);
     return existing;
   }
 
   auto callee = getCallee();
   if (failed(callee)) return failure();
 
-  countCalleeSpecialization(/*cloned=*/true);
   PatternRewriter::InsertionGuard guard(rewriter);
   rewriter.setInsertionPointAfter(*callee);
   auto instance =

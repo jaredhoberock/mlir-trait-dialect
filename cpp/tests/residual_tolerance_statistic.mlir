@@ -1,17 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 
-// RUN: mlir-opt %s -stats 2>&1 | FileCheck %s
+// RUN: mlir-opt %s | FileCheck %s
 
 // A witness for @Box[@Gen[i64]::A] backed by a proof of @Box[i64] verifies only
 // through the residual tolerance: the committed-build match crosses
 // @Gen[i64]::A -- which no impl resolves, since @Gen has none -- against the
 // rigid i64, and the module-capable comparison accepts it without a binding.
-// The `trait-residual-tolerance` statistic counts each such acceptance, so this
-// pins that the counter exists and fires; -stats over the corpus makes any
-// regrowth of that population visible.
+// Verification succeeds and leaves the witness's unresolved projection spelled
+// as written.
 
-// CHECK: trait-residual-tolerance
+// CHECK-LABEL: func.func @main()
+// CHECK: trait.witness @Box_i64 for @Box[!trait.proj<@Gen[i64], "A">]
+// CHECK-NEXT: return
 
 trait.trait private @Gen[!trait.poly<0>] {
   trait.assoc_type @A
