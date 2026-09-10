@@ -67,12 +67,17 @@ struct LoweringContribution : lowering::LoweringContributionInterface {
     sink.dischargeOperation("trait.derive", &pendingOutsideTemplate, nullptr);
     sink.dischargeOperation("trait.project", &pendingOutsideTemplate, nullptr);
     sink.verifierPolicy(true);
+    // monomorphization is the type system's own step: it runs while polymorphic
+    // templates and unsettled claim, projection, and generic types stand, so it is
+    // exempt from the non-final-type hold every conversion carries.
+    sink.operatesOnNonFinalTypes();
 
     sink.beginStep("erase-polymorphs", /*wantsCleanup=*/true);
     sink.passConstructor(&addErasePolymorphs);
     sink.dischargeDialect("trait");
     sink.dischargeDialect("coord");
     sink.requiresAbsent(&pendingOutsideTemplate, nullptr);
+    sink.operatesOnNonFinalTypes();
   }
 };
 } // namespace
