@@ -384,18 +384,6 @@ MlirType traitProjectionTypeGet(MlirContext wrappedCtx,
   return wrap(ProjectionType::get(ctx, traitApp, nameAttr, args));
 }
 
-bool traitTypeIsAProjection(MlirType type) {
-  return isa<ProjectionType>(unwrap(type));
-}
-
-bool traitTypeIsGeneric(MlirType type) {
-  return isa<GenericTypeInterface>(unwrap(type));
-}
-
-bool traitTypeCarriesPolymorphism(MlirType type) {
-  return isa<PolymorphicTypeInterface>(unwrap(type));
-}
-
 MlirAttribute traitTypeEqualityAttrGet(MlirContext wrappedCtx,
                                        MlirType lhs, MlirType rhs) {
   MLIRContext *ctx = unwrap(wrappedCtx);

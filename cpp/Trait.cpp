@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 #include "LoweringContribution.hpp"
+#include "NonFinalTypeInterface.hpp"
 #include "Passes.hpp"
 #include "Trait.hpp"
 #include "TraitAttributes.hpp"
@@ -82,6 +83,28 @@ struct LoweringContribution : lowering::LoweringContributionInterface {
 };
 } // namespace
 
+// Each of the trait dialect's own types is a spelling the type system settles
+// before the conversions run -- a polymorphic variable, a claim, a projection,
+// or an inference variable -- so each declares its spelling not yet final under
+// the family the driver names in the residual token and holds a conversion
+// behind.
+struct PolyNonFinal
+    : public lowering::NonFinalTypeInterface::ExternalModel<PolyNonFinal, PolyType> {
+  llvm::StringRef nonFinalFamily(Type) const { return "generic"; }
+};
+struct ClaimNonFinal
+    : public lowering::NonFinalTypeInterface::ExternalModel<ClaimNonFinal, ClaimType> {
+  llvm::StringRef nonFinalFamily(Type) const { return "claim"; }
+};
+struct ProjectionNonFinal
+    : public lowering::NonFinalTypeInterface::ExternalModel<ProjectionNonFinal, ProjectionType> {
+  llvm::StringRef nonFinalFamily(Type) const { return "projection"; }
+};
+struct InferenceNonFinal
+    : public lowering::NonFinalTypeInterface::ExternalModel<InferenceNonFinal, InferenceType> {
+  llvm::StringRef nonFinalFamily(Type) const { return "inference"; }
+};
+
 void TraitDialect::initialize() {
   registerAttributes();
 
@@ -93,6 +116,11 @@ void TraitDialect::initialize() {
   >();
 
   addInterfaces<LoweringContribution>();
+
+  PolyType::attachInterface<PolyNonFinal>(*getContext());
+  ClaimType::attachInterface<ClaimNonFinal>(*getContext());
+  ProjectionType::attachInterface<ProjectionNonFinal>(*getContext());
+  InferenceType::attachInterface<InferenceNonFinal>(*getContext());
 }
 
 }

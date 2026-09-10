@@ -149,17 +149,38 @@ int64_t rewriteBudgetFor(ModuleOp module) {
   return opCount * 1024 + 4096;
 }
 
+/// Whether `op` is a symbol declaration whose own spelling still carries a
+/// generic type: a template another dialect owns, specialized per concrete use
+/// and cut once its instances are cloned. The generic is read off the
+/// declaration's attributes -- its type parameters and the body they parameterize
+/// -- so this dialect recognizes such a symbol without naming the dialect that
+/// declares it.
+static bool isGenericSymbolDeclaration(Operation *op) {
+  if (!isa<SymbolOpInterface>(op))
+    return false;
+  bool generic = false;
+  op->getAttrDictionary().walk([&](Type ty) {
+    if (isa<GenericTypeInterface>(ty)) {
+      generic = true;
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+  return generic;
+}
+
 /// True when `op` is itself a generic template: a trait, impl, or proof
-/// declaration, or a still-polymorphic function. Instantiation carries a
-/// template to no target; it dies when its concrete instances are cloned. The
-/// shell op is a template too, so this answers true for the declaration
-/// itself, not only for code nested inside one.
+/// declaration, a still-polymorphic function, or any other symbol declaration
+/// whose spelling still carries a generic type. Instantiation carries a template
+/// to no target; it dies when its concrete instances are cloned. The shell op is
+/// a template too, so this answers true for the declaration itself, not only for
+/// code nested inside one.
 static bool isTemplate(Operation *op) {
   if (isa<TraitOp, ImplOp, ProofOp>(op))
     return true;
   if (auto func = dyn_cast<func::FuncOp>(op))
     return isPolymorphicType(Type(func.getFunctionType()));
-  return false;
+  return isGenericSymbolDeclaration(op);
 }
 
 /// Appends to `ops` the ops of `root`'s subtree a rewrite driver may reach,
@@ -2490,10 +2511,9 @@ static Type findRefusedTraitType(RootT root,
 /// Erase deletes nothing for being a template; the collector the pass runs
 /// after this check takes what nothing names. What this judges is therefore
 /// everything standing *outside* a template, which is final for the stage: it
-/// carries no claim, no projection, and no trait type in a value position, and
-/// it names no template. A generic type inside an attribute is the one residue
-/// -- the class the following conversion takes with the attributes holding it
-/// -- so it is admitted there and nowhere else.
+/// carries no claim, no projection, no generic, and no trait type in a value
+/// position, and it names no template. A declaration whose spelling still carries
+/// a generic is itself a template, skipped here and collected with the rest.
 ///
 /// Reading the module while the templates stand is stricter than reading what
 /// survives collection: a mention of a template from outside one is the defect
@@ -2510,18 +2530,18 @@ static LogicalResult checkNothingOutsideATemplateCarriesTheory(ModuleOp module) 
     if (isTemplate(&op))
       templateNames.insert(SymbolTable::getSymbolName(&op));
 
-  auto admitGenerics = [](Type ty) { return isa<GenericTypeInterface>(ty); };
   auto admitNothing = [](Type) { return false; };
 
   module.walk<WalkOrder::PreOrder>([&](Operation *op) -> WalkResult {
     if (isTemplate(op)) {
       // A template is private from birth, so a public one is a template
-      // collection may not take. Only a function is judged here: a trait, impl
-      // or proof declaration answers the same law in its own verifier, wherever
-      // it is written. Judging it where the walk meets a template reaches one
-      // standing inside a nested symbol table too.
-      if (isa<func::FuncOp>(op) && SymbolTable::getSymbolVisibility(op) ==
-                                       SymbolTable::Visibility::Public) {
+      // collection may not take. The trait, impl, and proof declarations answer
+      // the same law in their own verifiers; every other template is a plain
+      // symbol declaration -- a polymorphic function, or a generic definition of
+      // a dialect this one does not name -- and is judged here, where the walk
+      // meets it, reaching one standing inside a nested symbol table too.
+      if (!isa<TraitOp, ImplOp, ProofOp>(op) &&
+          SymbolTable::getSymbolVisibility(op) == SymbolTable::Visibility::Public) {
         op->emitOpError()
             << "is a public template: a template is private from birth, so "
                "that nothing outside its own symbol table may name it once "
@@ -2545,7 +2565,7 @@ static LogicalResult checkNothingOutsideATemplateCarriesTheory(ModuleOp module) 
         for (BlockArgument argument : block.getArguments())
           scan(argument.getType());
     if (!refused)
-      refused = findRefusedTraitType(op->getAttrDictionary(), admitGenerics);
+      refused = findRefusedTraitType(op->getAttrDictionary(), admitNothing);
     if (refused) {
       op->emitOpError() << "still carries " << refused
                         << " after erasure: nothing standing outside a "
@@ -2673,6 +2693,13 @@ static LogicalResult erasePolymorphs(ModuleOp module) {
     return isPolymorphicType(Type(cast<func::FuncOp>(op).getFunctionType()));
   });
   target.markUnknownOpDynamicallyLegal([&](Operation *op) {
+    // A template -- including a generic symbol declaration another dialect owns,
+    // whose body may still name a claim or projection -- is carried to no target
+    // by erasure and cut by the collector, so it is legal here whatever theory
+    // its spelling still names; every other op is legal once it carries no claim
+    // or projection.
+    if (isTemplate(op))
+      return true;
     return !opMentionsType<ClaimType>(op) && !opMentionsType<ProjectionType>(op);
   });
 
