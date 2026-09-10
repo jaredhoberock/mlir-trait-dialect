@@ -4,6 +4,7 @@
 
 #include <mlir/IR/BuiltinOps.h>
 #include <mlir/Pass/Pass.h>
+#include <mlir/Transforms/DialectConversion.h>
 
 namespace mlir::trait {
 
@@ -38,6 +39,22 @@ bool isPendingOp(Operation *op);
 /// readiness -- it may run only when this is false, the condition under which
 /// nothing standing can still mention a template.
 bool isPendingExpansion(ModuleOp module);
+
+/// Builds the type converter erase-polymorphs applies in its phase-1 partial
+/// conversion: every type converts to itself, except `!trait.claim`, which
+/// converts to no types -- the SSA value carrying an erased proof disappears.
+/// Built by one function so a second caller can build the identical converter.
+TypeConverter makeErasePolymorphsConverter();
+
+/// Configures the ConversionTarget erase-polymorphs applies in its phase-1
+/// partial conversion: the evidence ops (allege, derive, project, witness,
+/// coerce) are illegal; the trait, impl, and proof declarations are legal and
+/// recursively legal; a func.func is legal (and recursively legal) while its
+/// signature stays polymorphic, and legal once it mentions no claim or
+/// projection; every other op is legal once it is a template or mentions no
+/// claim or projection. Built by one function so a second caller can build the
+/// identical target.
+void populateErasePolymorphsLegality(ConversionTarget &target);
 
 /// The first half of monomorphization: instantiates the monomorphs every trait
 /// call needs and proves the monomorphic claims, leaving the polymorphic

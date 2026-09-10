@@ -2646,12 +2646,7 @@ static LogicalResult erasePolymorphs(ModuleOp module) {
       iface->materializeMonomorphs(module);
 
   // Phase 1: structural op rewrites via applyPartialConversion.
-  // ClaimType maps to zero results (the SSA value disappears).
-  TypeConverter opConverter;
-  opConverter.addConversion([](Type ty) { return ty; });
-  opConverter.addConversion([](ClaimType ty, SmallVectorImpl<Type> &out) {
-    return success();
-  });
+  TypeConverter opConverter = makeErasePolymorphsConverter();
 
   // The sweep respells types wherever it reaches them, so it carries the seal:
   // an equality's endpoints are a leaf to it, as they are to every replacer the
@@ -2673,35 +2668,8 @@ static LogicalResult erasePolymorphs(ModuleOp module) {
   populateCallOpTypeConversionPattern(patterns, opConverter);
   populateReturnOpTypeConversionPattern(patterns, opConverter);
 
-  // Mark !trait.claim and !trait.proj as illegal
   ConversionTarget target(*ctx);
-  target.addIllegalOp<AllegeOp, DeriveOp, ProjectOp, WitnessOp, CoerceOp>();
-  // A template leaves with monomorphization, so nothing converts it or its
-  // interior: the three declarations are legal and recursively legal, and a
-  // function is a template exactly while its signature stays polymorphic. A
-  // recursively legal op's interior is never enqueued, so an unused template
-  // neither converts nor has to legalize; a monomorphic function answers the
-  // same law every other op does.
-  target.addLegalOp<TraitOp, ImplOp, ProofOp>();
-  target.markOpRecursivelyLegal<TraitOp, ImplOp, ProofOp>();
-  target.addDynamicallyLegalOp<func::FuncOp>([](func::FuncOp func) {
-    return isPolymorphicType(Type(func.getFunctionType())) ||
-           (!opMentionsType<ClaimType>(func) &&
-            !opMentionsType<ProjectionType>(func));
-  });
-  target.markOpRecursivelyLegal<func::FuncOp>([](Operation *op) {
-    return isPolymorphicType(Type(cast<func::FuncOp>(op).getFunctionType()));
-  });
-  target.markUnknownOpDynamicallyLegal([&](Operation *op) {
-    // A template -- including a generic symbol declaration another dialect owns,
-    // whose body may still name a claim or projection -- is carried to no target
-    // by erasure and cut by the collector, so it is legal here whatever theory
-    // its spelling still names; every other op is legal once it carries no claim
-    // or projection.
-    if (isTemplate(op))
-      return true;
-    return !opMentionsType<ClaimType>(op) && !opMentionsType<ProjectionType>(op);
-  });
+  populateErasePolymorphsLegality(target);
 
   // Apply Phase 1
   if (failed(applyPartialConversion(module, target, std::move(patterns))))
@@ -2738,6 +2706,48 @@ static LogicalResult erasePolymorphs(ModuleOp module) {
   return checkNothingOutsideATemplateCarriesTheory(module);
 }
 
+}
+
+TypeConverter makeErasePolymorphsConverter() {
+  // ClaimType maps to zero results (the SSA value carrying the erased proof
+  // disappears); every other type converts to itself.
+  TypeConverter opConverter;
+  opConverter.addConversion([](Type ty) { return ty; });
+  opConverter.addConversion([](ClaimType ty, SmallVectorImpl<Type> &out) {
+    return success();
+  });
+  return opConverter;
+}
+
+void populateErasePolymorphsLegality(ConversionTarget &target) {
+  // Mark !trait.claim and !trait.proj as illegal
+  target.addIllegalOp<AllegeOp, DeriveOp, ProjectOp, WitnessOp, CoerceOp>();
+  // A template leaves with monomorphization, so nothing converts it or its
+  // interior: the three declarations are legal and recursively legal, and a
+  // function is a template exactly while its signature stays polymorphic. A
+  // recursively legal op's interior is never enqueued, so an unused template
+  // neither converts nor has to legalize; a monomorphic function answers the
+  // same law every other op does.
+  target.addLegalOp<TraitOp, ImplOp, ProofOp>();
+  target.markOpRecursivelyLegal<TraitOp, ImplOp, ProofOp>();
+  target.addDynamicallyLegalOp<func::FuncOp>([](func::FuncOp func) {
+    return isPolymorphicType(Type(func.getFunctionType())) ||
+           (!opMentionsType<ClaimType>(func) &&
+            !opMentionsType<ProjectionType>(func));
+  });
+  target.markOpRecursivelyLegal<func::FuncOp>([](Operation *op) {
+    return isPolymorphicType(Type(cast<func::FuncOp>(op).getFunctionType()));
+  });
+  target.markUnknownOpDynamicallyLegal([](Operation *op) {
+    // A template -- including a generic symbol declaration another dialect owns,
+    // whose body may still name a claim or projection -- is carried to no target
+    // by erasure and cut by the collector, so it is legal here whatever theory
+    // its spelling still names; every other op is legal once it carries no claim
+    // or projection.
+    if (isTemplate(op))
+      return true;
+    return !opMentionsType<ClaimType>(op) && !opMentionsType<ProjectionType>(op);
+  });
 }
 
 bool isRewritableGenericCall(Operation *op) {
