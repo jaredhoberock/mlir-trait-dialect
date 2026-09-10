@@ -54,7 +54,14 @@ TypeConverter makeErasePolymorphsConverter();
 /// projection; every other op is legal once it is a template or mentions no
 /// claim or projection. Built by one function so a second caller can build the
 /// identical target.
-void populateErasePolymorphsLegality(ConversionTarget &target);
+///
+/// `templatesIllegal` flips the treatment of a template for the readiness target
+/// the driver walks: a template becomes illegal, so the step is present while one
+/// stands and runs to cut it, where the pass's own target keeps it legal and
+/// recursively legal so the pass carries it to no target and the collector removes
+/// it. The two targets differ only in that.
+void populateErasePolymorphsLegality(ConversionTarget &target,
+                                     bool templatesIllegal = false);
 
 /// The first half of monomorphization: instantiates the monomorphs every trait
 /// call needs and proves the monomorphic claims, leaving the polymorphic

@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 #include "LoweringContribution.hpp"
-#include "NonFinalTypeInterface.hpp"
 #include "Passes.hpp"
 #include "Trait.hpp"
 #include "TraitAttributes.hpp"
@@ -27,83 +26,61 @@ void addErasePolymorphs(MlirOpPassManager pm, void *) {
   mlirOpPassManagerAddOwnedPass(pm, wrap(createErasePolymorphsPass().release()));
 }
 
-/// Whether `op` outside a template is still pending instantiation: a generic call a
-/// pattern would rewrite, or an operation carrying a standing obligation the pass must
-/// reach. Both monomorphization steps read it. The instantiate step qualifies each of
-/// its operation discharges by it, so a step is present exactly on the operations a
-/// pattern fires on and an operation standing inside a template -- which this half
-/// carries through untouched -- counts toward neither its presence nor its progress;
-/// the erase step gates on it, ineligible while any such operation stands, so nothing
-/// standing can still mention a template when it runs.
-bool pendingOutsideTemplate(MlirOperation op, void *) {
-  return isPendingOp(unwrap(op));
+/// The legality instantiate-monomorphs hands the driver: every operation is legal
+/// unless it is still pending instantiation, so instantiate is present exactly on
+/// the operations a pattern would fire on and has an opinion on every other one.
+/// It rewrites no type, so it hands back no converter.
+void *instantiateLegality(MlirOperation, void *targetPtr, void *) {
+  auto &target = *static_cast<ConversionTarget *>(targetPtr);
+  target.markUnknownOpDynamicallyLegal(
+      [](Operation *op) -> std::optional<bool> { return !isPendingOp(op); });
+  return nullptr;
+}
+
+/// The legality erase-polymorphs hands the driver: the phase-1 target its pass
+/// applies with a template marked illegal, and a converter that maps every
+/// polymorphic type to none. Erase is therefore present while a template stands,
+/// or a poly, claim, or projection type does, and runs to cut the template; the
+/// readiness walk reads what erase collects off the same interface the type system
+/// already speaks.
+void *eraseLegality(MlirOperation, void *targetPtr, void *) {
+  auto &target = *static_cast<ConversionTarget *>(targetPtr);
+  populateErasePolymorphsLegality(target, /*templatesIllegal=*/true);
+  auto *converter = new TypeConverter();
+  converter->addConversion([](Type type) { return type; });
+  converter->addConversion(
+      [](Type type, SmallVectorImpl<Type> &) -> std::optional<LogicalResult> {
+        if (isPolymorphicType(type))
+          return success();
+        return std::nullopt;
+      });
+  return converter;
 }
 
 /// Monomorphization is the trait dialect's lowering, contributed as two steps so
-/// another dialect's step may run between them without meeting a body this dialect
-/// has already sealed. instantiate-monomorphs instantiates the monomorphs each
-/// trait call needs and proves the monomorphic claims, leaving the polymorphic
-/// templates standing; it discharges each trait call and each claim-producing
-/// operation (allege, derive, project) qualified by pendingOutsideTemplate, so it is
-/// present exactly on the operations a pattern fires on and leaves a template-interior
-/// one for erase to take whole. Its verifier is on: with the monomorphs
-/// instantiated and the polymorphic templates left standing, the module verifies
-/// at the boundary between the two halves.
-/// erase-polymorphs then erases the claims and projections resolved against those
-/// templates, respells the remaining types, and collects the templates nothing
-/// names; it discharges the coordinate types the type system carried and the
-/// trait dialect's vocabulary -- all but the generic types standing inside nominal
-/// attributes, which the nominal conversion takes with those attributes and which
-/// the step therefore leaves for it. erase is ineligible while any op outside a
-/// template is still pending instantiation, and it requests the cleanup interlude
-/// that runs after it.
+/// another dialect's step may run between them. instantiate-monomorphs instantiates
+/// the monomorphs each trait call needs and proves the monomorphic claims, leaving
+/// the polymorphic templates standing; its target has an opinion on every operation
+/// and marks a pending one illegal, so the readiness walk runs it exactly while a
+/// pending operation stands. erase-polymorphs then erases the resolved claims and
+/// projections, respells the remaining types, and collects the templates nothing
+/// names; its target holds it behind instantiate (it has no opinion on a pending
+/// operation) and its converter refuses every polymorphic type, so it runs once the
+/// type system has settled, and it requests the cleanup interlude after it.
 struct LoweringContribution : lowering::LoweringContributionInterface {
   using lowering::LoweringContributionInterface::LoweringContributionInterface;
   void contributeSteps(lowering::LoweringStepSink &sink) const override {
     sink.beginStep("instantiate-monomorphs");
     sink.passConstructor(&addInstantiateMonomorphs);
-    sink.dischargeOperation("trait.func.call", &pendingOutsideTemplate, nullptr);
-    sink.dischargeOperation("trait.method.call", &pendingOutsideTemplate, nullptr);
-    sink.dischargeOperation("trait.allege", &pendingOutsideTemplate, nullptr);
-    sink.dischargeOperation("trait.derive", &pendingOutsideTemplate, nullptr);
-    sink.dischargeOperation("trait.project", &pendingOutsideTemplate, nullptr);
     sink.verifierPolicy(true);
-    // monomorphization is the type system's own step: it runs while polymorphic
-    // templates and unsettled claim, projection, and generic types stand, so it is
-    // exempt from the non-final-type hold every conversion carries.
-    sink.operatesOnNonFinalTypes();
+    sink.legality(&instantiateLegality, nullptr);
 
     sink.beginStep("erase-polymorphs", /*wantsCleanup=*/true);
     sink.passConstructor(&addErasePolymorphs);
-    sink.dischargeDialect("trait");
-    sink.dischargeDialect("coord");
-    sink.requiresAbsent(&pendingOutsideTemplate, nullptr);
-    sink.operatesOnNonFinalTypes();
+    sink.legality(&eraseLegality, nullptr);
   }
 };
 } // namespace
-
-// Each of the trait dialect's own types is a spelling the type system settles
-// before the conversions run -- a polymorphic variable, a claim, a projection,
-// or an inference variable -- so each declares its spelling not yet final under
-// the family the driver names in the residual token and holds a conversion
-// behind.
-struct PolyNonFinal
-    : public lowering::NonFinalTypeInterface::ExternalModel<PolyNonFinal, PolyType> {
-  llvm::StringRef nonFinalFamily(Type) const { return "generic"; }
-};
-struct ClaimNonFinal
-    : public lowering::NonFinalTypeInterface::ExternalModel<ClaimNonFinal, ClaimType> {
-  llvm::StringRef nonFinalFamily(Type) const { return "claim"; }
-};
-struct ProjectionNonFinal
-    : public lowering::NonFinalTypeInterface::ExternalModel<ProjectionNonFinal, ProjectionType> {
-  llvm::StringRef nonFinalFamily(Type) const { return "projection"; }
-};
-struct InferenceNonFinal
-    : public lowering::NonFinalTypeInterface::ExternalModel<InferenceNonFinal, InferenceType> {
-  llvm::StringRef nonFinalFamily(Type) const { return "inference"; }
-};
 
 void TraitDialect::initialize() {
   registerAttributes();
@@ -116,11 +93,6 @@ void TraitDialect::initialize() {
   >();
 
   addInterfaces<LoweringContribution>();
-
-  PolyType::attachInterface<PolyNonFinal>(*getContext());
-  ClaimType::attachInterface<ClaimNonFinal>(*getContext());
-  ProjectionType::attachInterface<ProjectionNonFinal>(*getContext());
-  InferenceType::attachInterface<InferenceNonFinal>(*getContext());
 }
 
 }

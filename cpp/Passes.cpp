@@ -158,6 +158,11 @@ int64_t rewriteBudgetFor(ModuleOp module) {
 static bool isGenericSymbolDeclaration(Operation *op) {
   if (!isa<SymbolOpInterface>(op))
     return false;
+  // A region-less declaration parameterizes its body through its attributes; a
+  // symbol-table op (one that holds regions) is not one, so its interior is not
+  // hidden behind a template shell here.
+  if (op->getNumRegions() != 0)
+    return false;
   bool generic = false;
   op->getAttrDictionary().walk([&](Type ty) {
     if (isa<GenericTypeInterface>(ty)) {
@@ -2719,35 +2724,58 @@ TypeConverter makeErasePolymorphsConverter() {
   return opConverter;
 }
 
-void populateErasePolymorphsLegality(ConversionTarget &target) {
+void populateErasePolymorphsLegality(ConversionTarget &target,
+                                     bool templatesIllegal) {
   // Mark !trait.claim and !trait.proj as illegal
   target.addIllegalOp<AllegeOp, DeriveOp, ProjectOp, WitnessOp, CoerceOp>();
-  // A template leaves with monomorphization, so nothing converts it or its
-  // interior: the three declarations are legal and recursively legal, and a
-  // function is a template exactly while its signature stays polymorphic. A
-  // recursively legal op's interior is never enqueued, so an unused template
-  // neither converts nor has to legalize; a monomorphic function answers the
-  // same law every other op does.
-  target.addLegalOp<TraitOp, ImplOp, ProofOp>();
-  target.markOpRecursivelyLegal<TraitOp, ImplOp, ProofOp>();
-  target.addDynamicallyLegalOp<func::FuncOp>([](func::FuncOp func) {
-    return isPolymorphicType(Type(func.getFunctionType())) ||
-           (!opMentionsType<ClaimType>(func) &&
-            !opMentionsType<ProjectionType>(func));
+  // A template leaves with monomorphization, so the pass's own target converts
+  // neither it nor its interior: the three declarations are legal and recursively
+  // legal, and a function is a template exactly while its signature stays
+  // polymorphic. A recursively legal op's interior is never enqueued, so an unused
+  // template neither converts nor has to legalize; a monomorphic function answers
+  // the same law every other op does. The readiness target instead marks a
+  // template illegal, so the step is present while one stands rather than absent
+  // while a template holds another step's type standing.
+  if (templatesIllegal) {
+    target.addIllegalOp<TraitOp, ImplOp, ProofOp>();
+  } else {
+    target.addLegalOp<TraitOp, ImplOp, ProofOp>();
+    target.markOpRecursivelyLegal<TraitOp, ImplOp, ProofOp>();
+  }
+  target.addDynamicallyLegalOp<func::FuncOp>([templatesIllegal](func::FuncOp func) {
+    bool isTemplateFunc = isPolymorphicType(Type(func.getFunctionType()));
+    bool clean = !opMentionsType<ClaimType>(func) &&
+                 !opMentionsType<ProjectionType>(func);
+    // a template function is illegal in the readiness target, legal (and
+    // recursively legal, below) in the pass's own
+    if (templatesIllegal)
+      return !isTemplateFunc && clean;
+    return isTemplateFunc || clean;
   });
-  target.markOpRecursivelyLegal<func::FuncOp>([](Operation *op) {
-    return isPolymorphicType(Type(cast<func::FuncOp>(op).getFunctionType()));
-  });
-  target.markUnknownOpDynamicallyLegal([](Operation *op) {
-    // A template -- including a generic symbol declaration another dialect owns,
-    // whose body may still name a claim or projection -- is carried to no target
-    // by erasure and cut by the collector, so it is legal here whatever theory
-    // its spelling still names; every other op is legal once it carries no claim
-    // or projection.
-    if (isTemplate(op))
-      return true;
-    return !opMentionsType<ClaimType>(op) && !opMentionsType<ProjectionType>(op);
-  });
+  if (!templatesIllegal)
+    target.markOpRecursivelyLegal<func::FuncOp>([](Operation *op) {
+      return isPolymorphicType(Type(cast<func::FuncOp>(op).getFunctionType()));
+    });
+  target.markUnknownOpDynamicallyLegal(
+      [templatesIllegal](Operation *op) -> std::optional<bool> {
+        // An operation still pending instantiation is not erase's yet: it has no
+        // opinion on it, so the readiness walk holds erase behind instantiate and
+        // the partial conversion leaves it for a later pass. By the time erase
+        // runs, instantiation has resolved every pending op, so this never leaves
+        // one standing.
+        if (isPendingOp(op))
+          return std::nullopt;
+        // A template -- including a generic symbol declaration another dialect
+        // owns, whose body may still name a claim or projection -- is carried to
+        // no target by erasure and cut by the collector. The pass's target leaves
+        // it legal whatever theory its spelling still names; the readiness target
+        // marks it illegal so the step is present while it stands. Every other op
+        // is legal once it carries no claim or projection.
+        if (isTemplate(op))
+          return templatesIllegal ? std::optional<bool>(false)
+                                  : std::optional<bool>(true);
+        return !opMentionsType<ClaimType>(op) && !opMentionsType<ProjectionType>(op);
+      });
 }
 
 bool isRewritableGenericCall(Operation *op) {
