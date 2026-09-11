@@ -70,14 +70,10 @@ void *eraseLegality(MlirOperation, void *targetPtr, void *) {
 struct LoweringContribution : lowering::LoweringContributionInterface {
   using lowering::LoweringContributionInterface::LoweringContributionInterface;
   void contributeSteps(lowering::LoweringStepSink &sink) const override {
-    sink.beginStep("instantiate-monomorphs");
-    sink.passConstructor(&addInstantiateMonomorphs);
-    sink.verifierPolicy(true);
-    sink.legality(&instantiateLegality, nullptr);
-
-    sink.beginStep("erase-polymorphs", /*wantsCleanup=*/true);
-    sink.passConstructor(&addErasePolymorphs);
-    sink.legality(&eraseLegality, nullptr);
+    sink.beginStep("instantiate-monomorphs", &addInstantiateMonomorphs,
+                   &instantiateLegality, nullptr);
+    sink.beginStep("erase-polymorphs", &addErasePolymorphs, &eraseLegality, nullptr,
+                   /*wantsCleanup=*/true);
   }
 };
 } // namespace
