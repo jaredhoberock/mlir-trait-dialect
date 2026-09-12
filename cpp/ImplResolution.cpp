@@ -509,11 +509,22 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
     return sym;
   }
 
-  // check for an existing proof in the module
+  // A proof already standing for this impl at this application answers for it
+  // only when deriving it succeeds. Naming the impl and the application is
+  // where a proof stands, not evidence that the subproofs it cites discharge
+  // the impl's obligations, and selection must not hand back a proof it has not
+  // seen derive. One that does not derive leaves selection to build its own
+  // below, and the standing proof is refused where it is written.
   if (ProofOp proof = findExistingProofFor(module, impl, app)) {
     auto sym = FlatSymbolRefAttr::get(ctx, proof.getSymNameAttr());
-    recordProof(app, sym);
-    return sym;
+    ClaimType standing = ClaimType::get(ctx, app, sym);
+    EvidenceBindings bindings;
+    if (succeeded(verifyAndRecordProof(standing.asUnproven(), standing, module,
+                                       bindings, DemandOrigin::ProofRecording,
+                                       &derivations, /*err=*/nullptr))) {
+      recordProof(app, sym);
+      return sym;
+    }
   }
 
   // Compute the proof name early so we can use it as the coinductive memo entry.

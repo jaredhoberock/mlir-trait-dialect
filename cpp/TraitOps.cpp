@@ -2053,30 +2053,17 @@ FailureOr<SmallVector<ClaimType>> ProofOp::verifyAndGetSubproofClaims(
     return failure();
   }
 
-  for (auto [obligation, name] : llvm::zip(*obligations, subproofNames)) {
+  for (Attribute name : subproofNames) {
     auto subproofRef = dyn_cast<FlatSymbolRefAttr>(name);
     if (!subproofRef) {
       if (err) err() << "expected FlatSymbolRefAttr";
       return failure();
     }
 
-    // Coinductive self-reference: valid only when the obligation is for
-    // the same trait as the proof itself.
-    if (subproofRef.getValue() == getSymName()) {
-      if (obligation.getTraitApplication().getTraitName() !=
-              getTraitApplication().getTraitName()) {
-        if (err) err() << "sub-proof '@" << subproofRef.getValue()
-                       << "' must not reference the proof itself"
-                       << " (proves " << getTraitApplication().getTraitName()
-                       << " but obligation requires "
-                       << obligation.getTraitApplication().getTraitName() << ")";
-        return failure();
-      }
-
-      result.push_back(ClaimType::get(getContext(), getTraitApplication(), subproofRef));
-      continue;
-    }
-
+    // A coinductive self-citation needs no arm of its own: looking the name up
+    // finds this proof, whose claim is the one a self-citation stands for, and
+    // whether that claim discharges the obligation is the same comparison every
+    // other citation answers.
     auto subproof = getProofOpOrUnconditionalImplOp(module, subproofRef, err);
     if (failed(subproof))
       return failure();

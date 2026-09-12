@@ -798,6 +798,20 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
     unproven = cast<ClaimType>(*normalizedUnproven);
   }
 
+  // An obligation is discharged only by evidence for that same application.
+  // Both sides stand normalized at the same grade now, so the whole of that
+  // judgment is one comparison on interned identity: the claim the evidence
+  // stands over, read unproven, is the obligation it is cited for. Everything
+  // below reads the evidence's own header and its own subproofs, so without
+  // this a citation of an impl or a proof of some other application would be
+  // checked against itself and pass.
+  if (proven.asUnproven() != unproven) {
+    if (err) err() << "proof " << proven.getProof() << " proves "
+                   << proven.asUnproven()
+                   << ", which does not discharge the obligation " << unproven;
+    return failure();
+  }
+
   // What deriving one settled pair produces is a fact about the proof standing
   // over it and not about the caller that reached it, so a pair the record
   // already holds is replayed here instead of derived a second time. This is
