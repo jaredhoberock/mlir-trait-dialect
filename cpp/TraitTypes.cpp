@@ -679,16 +679,17 @@ public:
   }
 
   /// Publishes every node into the memo of spelling pairs, and every node's
-  /// closure into the record of what deriving its pair produces.
+  /// closure into the record of what deriving its pair produces. One derivation
+  /// reads one module, which both are keyed by along with the pair.
   ///
   /// The record decides for itself what it can keep: an unsettled derivation and
   /// a pair two derivations disagree over are both refused there.
-  void publishInto(ProofDerivationMemo &memo) const {
+  void publishInto(ProofDerivationMemo &memo, ModuleOp module) const {
     ProofClosureRecord &closures = memo.getClosures();
     for (const Held &node : held) {
-      memo.record(node.keyUnproven, node.keyProven, node.closure);
-      (void)closures.record(node.normalizedUnproven, node.normalizedProven,
-                            node.closure);
+      memo.record(module, node.keyUnproven, node.keyProven, node.closure);
+      (void)closures.record(module, node.normalizedUnproven,
+                            node.normalizedProven, node.closure);
     }
   }
 
@@ -766,7 +767,7 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
   ClaimType askedUnproven = unproven;
   ClaimType askedProven = proven;
   if (memo) {
-    if (const auto *closure = memo->lookup(askedUnproven, askedProven)) {
+    if (const auto *closure = memo->lookup(module, askedUnproven, askedProven)) {
       derived.take(*closure);
       return replayClosure(*closure, bindings, err);
     }
@@ -821,7 +822,8 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
   // that ran first wrote. Replaying it writes exactly the bindings deriving
   // would write, including the pair's own, so nothing below needs to run.
   if (memo) {
-    if (const auto *closure = memo->getClosures().lookup(unproven, proven)) {
+    if (const auto *closure =
+            memo->getClosures().lookup(module, unproven, proven)) {
       derived.take(*closure);
       return replayClosure(*closure, bindings, err);
     }
@@ -843,7 +845,7 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
     if (const auto *closure = staging.lookupDerived(unproven)) {
       derived.take(*closure);
     } else if (const auto *recorded =
-                   memo ? memo->getClosures().lookup(unproven, proven)
+                   memo ? memo->getClosures().lookup(module, unproven, proven)
                         : nullptr) {
       derived.take(*recorded);
     } else {
@@ -988,7 +990,7 @@ LogicalResult verifyAndRecordProof(
   // Everything this derivation completed goes into the memo together, now that
   // the derivation it was completed under has returned success.
   if (memo)
-    staging.publishInto(*memo);
+    staging.publishInto(*memo, module);
   return success();
 }
 

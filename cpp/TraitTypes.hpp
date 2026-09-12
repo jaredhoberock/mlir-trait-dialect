@@ -238,10 +238,13 @@ private:
 /// value with their ground projections resolved -- rather than the pair as some
 /// caller happened to spell it. Two callers reaching one obligation through
 /// different projection spellings key it identically that way, which is what
-/// lets one record answer both. The obligation is part of the key and not
-/// derivable from the proven value: an obligation and the claim proving it need
-/// not name the same application, and the closure's first binding is between
-/// exactly those two.
+/// lets one record answer both.
+///
+/// The module the derivation read is part of the key as well. A spelling names
+/// its symbols in one symbol table, and two modules can spell one claim
+/// identically and mean two different proofs of it, so what a derivation
+/// answers for is that claim under the module it was read from and not the
+/// spelling alone.
 ///
 /// The spellings inside a closure are the module's, and a sweep respells those,
 /// so the record is transcribed with the module by the sweep that moves them --
@@ -256,11 +259,12 @@ public:
   /// The evidence bindings one derivation wrote, in the order it wrote them.
   using Closure = SmallVector<std::pair<ClaimType, ClaimType>, 4>;
 
-  /// What deriving `proven` for `unproven` produced, or nothing when no
-  /// derivation of that pair has been recorded. Both sides are the normalized
-  /// spellings.
-  const Closure *lookup(ClaimType unproven, ClaimType proven) const {
-    auto it = entries.find(std::make_pair(unproven, proven));
+  /// What deriving `proven` for `unproven` under `anchor` produced, or nothing
+  /// when no derivation of that pair has been recorded. Both sides are the
+  /// normalized spellings, and `anchor` is the module they were read from.
+  const Closure *lookup(Operation *anchor, ClaimType unproven,
+                        ClaimType proven) const {
+    auto it = entries.find(Key{anchor, unproven, proven});
     return it == entries.end() ? nullptr : &it->second;
   }
 
@@ -308,13 +312,13 @@ public:
   /// pair this answers for no longer: the entry is withdrawn and the pair is
   /// refused from then on, so that what this holds is only ever what deriving
   /// would have produced.
-  bool record(ClaimType unproven, ClaimType proven, Closure closure) {
+  bool record(Operation *anchor, ClaimType unproven, ClaimType proven,
+              Closure closure) {
     assert(isWellGraded(unproven, proven) &&
            "a recorded pair is an obligation and the claim proving it");
     if (!isSettled(unproven, proven, closure))
       return false;
-    switch (place(entries, std::make_pair(unproven, proven),
-                  std::move(closure))) {
+    switch (place(entries, Key{anchor, unproven, proven}, std::move(closure))) {
     case Placement::Held:
     case Placement::Agreed:
       return true;
@@ -352,9 +356,15 @@ public:
     auto respellProof = [&](ClaimType claim) {
       return cast<ClaimType>(replacer.replace(Type(claim)));
     };
-    auto respellPair = [&](const std::pair<ClaimType, ClaimType> &pair) {
-      return std::make_pair(respellObligation(pair.first),
-                            respellProof(pair.second));
+    auto respellBinding = [&](const std::pair<ClaimType, ClaimType> &binding) {
+      return std::make_pair(respellObligation(binding.first),
+                            respellProof(binding.second));
+    };
+    // A key's module is the symbol table its spellings name, which a sweep
+    // rewriting types does not move.
+    auto respellKey = [&](const Key &key) {
+      return Key{std::get<0>(key), respellObligation(std::get<1>(key)),
+                 respellProof(std::get<2>(key))};
     };
     // The disputes are transcribed first, because a disputed pair is one no
     // closure answers for again: an entry whose key respells onto a disputed
@@ -362,7 +372,7 @@ public:
     llvm::DenseSet<Key> respelledDisputes;
     respelledDisputes.reserve(disputed.size());
     for (auto &key : disputed)
-      respelledDisputes.insert(respellPair(key));
+      respelledDisputes.insert(respellKey(key));
     disputed = std::move(respelledDisputes);
     for (auto &entry : entries) {
       Closure closure;
@@ -372,20 +382,22 @@ public:
         // bindings that were distinct can respell alike. Keeping both would
         // make comparing closures stricter than comparing the bindings they
         // write, so a binding already in hand is not written again.
-        Key respelledBinding = respellPair(binding);
-        if (!llvm::is_contained(closure, respelledBinding))
-          closure.push_back(respelledBinding);
+        std::pair<ClaimType, ClaimType> transcribed = respellBinding(binding);
+        if (!llvm::is_contained(closure, transcribed))
+          closure.push_back(transcribed);
       }
-      place(respelled, respellPair(entry.first), std::move(closure));
+      place(respelled, respellKey(entry.first), std::move(closure));
     }
     entries = std::move(respelled);
     assert(gradesHold() && "transcribing must leave every position its grade");
   }
 
 private:
-  /// An obligation and the claim proving it, which is what every key and every
-  /// binding this holds is.
-  using Key = std::pair<ClaimType, ClaimType>;
+  /// A module, an obligation read under it, and the claim proving that
+  /// obligation, which is what every key this holds is. A binding inside a
+  /// closure is the obligation and the claim alone: every binding a derivation
+  /// wrote was read under the key's own module.
+  using Key = std::tuple<Operation *, ClaimType, ClaimType>;
   using EntryMap = llvm::DenseMap<Key, Closure>;
 
   /// What placing a closure under a key left this holding.
@@ -429,14 +441,14 @@ private:
   /// Whether every position this holds carries the grade its place demands.
   bool gradesHold() const {
     for (auto &entry : entries) {
-      if (!isWellGraded(entry.first.first, entry.first.second))
+      if (!isWellGraded(std::get<1>(entry.first), std::get<2>(entry.first)))
         return false;
       for (auto [unproven, proven] : entry.second)
         if (!isWellGraded(unproven, proven))
           return false;
     }
     for (auto &key : disputed)
-      if (!isWellGraded(key.first, key.second))
+      if (!isWellGraded(std::get<1>(key), std::get<2>(key)))
         return false;
     return true;
   }
@@ -483,20 +495,24 @@ public:
   ProofClosureRecord &getClosures() { return closures; }
   const ProofClosureRecord &getClosures() const { return closures; }
 
-  /// The closure deriving `proven` for `unproven` produced, or nothing when no
-  /// derivation of that pair is held against the fact base as it stands.
-  const Closure *lookup(ClaimType unproven, ClaimType proven) const {
-    auto it = entries.find(std::make_pair(unproven, proven));
+  /// The closure deriving `proven` for `unproven` under `anchor` produced, or
+  /// nothing when no derivation of that pair is held against the fact base as it
+  /// stands. A spelling names its symbols in one symbol table, so the module the
+  /// derivation read is part of what it answers for.
+  const Closure *lookup(Operation *anchor, ClaimType unproven,
+                        ClaimType proven) const {
+    auto it = entries.find(Key{anchor, unproven, proven});
     if (it == entries.end() || it->second.factBase != factBase)
       return nullptr;
     return &it->second.closure;
   }
 
-  /// Holds `closure` as what deriving `proven` for `unproven` produced, against
-  /// the fact base as it stands.
-  void record(ClaimType unproven, ClaimType proven, Closure closure) {
-    entries[std::make_pair(unproven, proven)] = Entry{std::move(closure),
-                                                      factBase};
+  /// Holds `closure` as what deriving `proven` for `unproven` under `anchor`
+  /// produced, against the fact base as it stands.
+  void record(Operation *anchor, ClaimType unproven, ClaimType proven,
+              Closure closure) {
+    entries[Key{anchor, unproven, proven}] = Entry{std::move(closure),
+                                                   factBase};
   }
 
   /// Says impl selection has minted a fact, so nothing derived before now was
@@ -507,12 +523,15 @@ public:
   void noteRespelling() { ++factBase; }
 
 private:
+  /// A module and the pair a caller asked about under it.
+  using Key = std::tuple<Operation *, ClaimType, ClaimType>;
+
   struct Entry {
     Closure closure;
     uint64_t factBase = 0;
   };
 
-  llvm::DenseMap<std::pair<ClaimType, ClaimType>, Entry> entries;
+  llvm::DenseMap<Key, Entry> entries;
   ProofClosureRecord closures;
   uint64_t factBase = 0;
 };
