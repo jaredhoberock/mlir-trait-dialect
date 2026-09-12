@@ -751,9 +751,9 @@ struct ImplWitnessRule {
 /// verifies with an EMPTY equality modulus: sibling witnesses never serve as
 /// each other's modulus, because an attribute array has no dominance and
 /// mutual justification could ground a false equality on nothing. A witness
-/// must name a GROUND projection -- resolving a poly-carrying projection by
-/// unifying its variable with one cited impl's concrete head would accept a
-/// generic impl on the strength of one instance.
+/// must name a GROUND projection -- reading a poly-carrying projection's
+/// variable off one cited impl's concrete head would accept a generic impl on
+/// the strength of one instance.
 static FailureOr<SmallVector<ImplWitnessRule>> collectImplWitnessRules(
     ImplOp impl, ModuleOp module,
     llvm::function_ref<InFlightDiagnostic()> errFn) {
@@ -800,14 +800,35 @@ static FailureOr<SmallVector<ImplWitnessRule>> collectImplWitnessRules(
   return rules;
 }
 
-/// Adds an impl's own where-clause equalities to `ctx` as hypotheses. They are
-/// in scope wherever the impl's own obligations are checked: a trait-header
-/// equality requirement and the impl's own method signature are both judged
-/// under the clause the impl declares.
-static void addImplEqualityPremises(NormalizationContext &ctx, ImplOp impl) {
+/// The context an impl's own obligations are judged under.
+///
+/// Three rules and no more: the impl's own associated type bindings, for a
+/// projection over its self application; the sibling bindings its declared
+/// witnesses certify, verified above and passed in as `witnessRules`; and its
+/// where clause's equalities as hypotheses, which are in scope wherever the
+/// impl's own obligations are checked -- a trait-header equality requirement
+/// and the impl's own method signature are both judged under the clause the
+/// impl declares. The verifier enumerates no candidate impls, so a projection
+/// none of these three reduces is equal to itself alone.
+///
+/// The impl's own bindings are spelled over the impl's own parameters, so the
+/// substitution the first rule carries is what the impl's self claim says its
+/// parameters take, which is those parameters themselves.
+static FailureOr<NormalizationContext> buildImplOwnNormalizationContext(
+    ImplOp impl, ArrayRef<ImplWitnessRule> witnessRules,
+    llvm::function_ref<InFlightDiagnostic()> errFn) {
+  auto ownArguments = impl.buildSubstitutionForSelfClaim(impl.getSelfClaim(), errFn);
+  if (failed(ownArguments))
+    return failure();
+
+  NormalizationContext ctx;
+  ctx.addLocalProjectionRule(impl, impl.getSelfApplication(), *ownArguments);
+  for (const ImplWitnessRule &rule : witnessRules)
+    ctx.addLocalProjectionRule(rule.impl, rule.app, rule.subst);
   for (Attribute predicate : impl.getAssumptions())
     if (auto equality = dyn_cast<TypeEqualityAttr>(predicate))
       ctx.assumeEqual(equality.getLhs(), equality.getRhs());
+  return ctx;
 }
 
 /// The pairing carrying a trait's declaration of a method onto the impl's copy
@@ -932,18 +953,13 @@ static FailureOr<TraitMethodCorrespondence> buildTraitMethodCorrespondence(
   // Substituting this impl's self application into the trait's declaration can
   // mint a ground projection the impl's own bindings do not resolve -- a
   // sibling impl's application, e.g. Group[coop.block]::Shape. A declared
-  // witness, verified above, reduces exactly those, so both declarations reach
-  // the comparison at the same grade. Nothing else is consulted: the verifier
-  // enumerates no candidate impls, so a projection neither the impl's own
-  // bindings nor a declared witness reduces is equal to itself alone.
-  NormalizationContext normalization;
-  normalization.addLocalProjectionRule(
-      impl, impl.getSelfApplication(), *traitSubst);
-  for (const ImplWitnessRule &r : witnessRules)
-    normalization.addLocalProjectionRule(r.impl, r.app, r.subst);
-  addImplEqualityPremises(normalization, impl);
+  // witness reduces exactly those, so both declarations reach the comparison at
+  // the same grade.
+  auto normalization = buildImplOwnNormalizationContext(impl, witnessRules, errFn);
+  if (failed(normalization))
+    return failure();
   auto normalize = [&](Type ty) -> FailureOr<Type> {
-    return normalization.normalize(ty, errFn);
+    return normalization->normalize(ty, errFn);
   };
 
   auto expected = normalize(instantiate(traitMethodTy,
@@ -1174,20 +1190,15 @@ static LogicalResult verifyEqualityObligations(
       traitOp.specializeRequirementsAsClaimsFor(impl.getSelfClaim(), errFn);
   if (failed(specReqs)) return failure();
 
-  NormalizationContext eqNorm;
-  auto subst = impl.buildSubstitutionForSelfClaim(impl.getSelfClaim(), errFn);
-  if (failed(subst)) return failure();
-  eqNorm.addLocalProjectionRule(impl, impl.getSelfApplication(), *subst);
-  for (const ImplWitnessRule &r : witnessRules)
-    eqNorm.addLocalProjectionRule(r.impl, r.app, r.subst);
-  addImplEqualityPremises(eqNorm, impl);
+  auto eqNorm = buildImplOwnNormalizationContext(impl, witnessRules, errFn);
+  if (failed(eqNorm)) return failure();
 
   for (ClaimType req : *specReqs) {
     auto eq = req.getEqualityAttr();
     if (!eq) continue;
-    auto lhsN = eqNorm.normalize(eq.getLhs(), errFn);
+    auto lhsN = eqNorm->normalize(eq.getLhs(), errFn);
     if (failed(lhsN)) return failure();
-    auto rhsN = eqNorm.normalize(eq.getRhs(), errFn);
+    auto rhsN = eqNorm->normalize(eq.getRhs(), errFn);
     if (failed(rhsN)) return failure();
     if (*lhsN != *rhsN)
       return impl.emitOpError()

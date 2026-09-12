@@ -117,10 +117,10 @@ public:
   // substitution pass is enough.
   //
   // Applying a substitution resolves nothing. Stamping a concrete argument into
-  // a projection spelling can turn a symbolic projection into a ground one,
-  // and the result carries that projection still spelled as written: it reaches an
-  // engine that could resolve it only if this caller goes on to unify with a
-  // module or to stamp through the module-capable replacer.
+  // a projection spelling can turn a symbolic projection into a ground one, and
+  // the result carries that projection still spelled as written: what resolves
+  // it is a later reading through the caller's established context, or a stamp
+  // through the module-capable replacer.
   Type apply(Type ty) const { return applySubstitutionOnce(toTypeMap(), ty); }
 
   llvm::DenseMap<Type, Type> toTypeMap() const {
@@ -584,7 +584,7 @@ class CallSubstitution {
 public:
   /// The closed substitution that lowers a call whose operands and results are
   /// `operandTypes` and `resultTypes` and whose callee signature is `formalTy`,
-  /// starting from the parameter specialization the call's unification produced.
+  /// starting from the arguments the call supplies for the callee's parameters.
   ///
   /// The components expose bindings for one another -- a projection binding can
   /// rewrite a spelling into one that names a proof, and a proof binding can

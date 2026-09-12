@@ -927,7 +927,7 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
   // Use the proof's concrete claim (projections resolved) rather than the
   // unproven claim (which may still contain projections). Example:
   // unproven = @D[A[i32]::Out, A[f32]::Out], concrete = @D[i64, i64].
-  // An impl like @D[poly, poly] can unify with @D[i64, i64] but not with
+  // An impl like @D[poly, poly] rebuilds @D[i64, i64] but not
   // @D[A[i32]::Out, A[f32]::Out] (the two projections are structurally
   // different even though both resolve to i64).
   auto obligations = proof.getImpl().specializeObligationsAsClaimsFor(
@@ -1017,10 +1017,9 @@ LogicalResult verifyAndRecordProof(
 }
 
 /// Walk `root` and record substitution entries for every proven claim
-/// found within it.  This maps the unproven claim to the proven claim.
-/// These entries are used during unification so that
-/// `applySubstitutionToFixedPoint` can normalize claims before
-/// per-type unification dispatch.
+/// found within it. This maps the unproven claim to the proven claim, which is
+/// what lets a call substitution respell a claim a spelling names to the
+/// spelling that carries its evidence.
 LogicalResult bindProofsIn(
     Type root,
     ModuleOp module,

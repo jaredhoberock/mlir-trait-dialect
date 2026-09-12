@@ -4,7 +4,7 @@
 // The judgments shared across the trait dialect's equality-evidence checkers:
 // projection resolution with its obligation discharge, the ground-congruence
 // entailment a witness composition and a proven coerce both appeal to, and the
-// pending unification a marked coerce stands in.
+// consistency a marked coerce is held to while its endpoints are still open.
 
 #include "Trait.hpp"
 #include "TraitOps.hpp"

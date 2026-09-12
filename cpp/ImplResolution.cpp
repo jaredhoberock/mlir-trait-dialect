@@ -62,9 +62,7 @@ unsigned InstantiationChain::note(Operation *instance, Operation *parent,
   if (instance == parent || frames.count(instance))
     return depthAt(instance, templateKey);
   frames.insert({instance, Frame{parent, templateKey}});
-  unsigned depth = depthAt(instance, templateKey);
-  maxDepth = std::max(maxDepth, depth);
-  return depth;
+  return depthAt(instance, templateKey);
 }
 
 SmallVector<std::pair<Operation *, Attribute>>

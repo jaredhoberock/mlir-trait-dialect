@@ -14,8 +14,8 @@ struct ImplGenerator {
   virtual ~ImplGenerator() = default;
 
   // Creates exactly one new ImplOp for the wanted claim, or fails.
-  // Upon success, returns the newly created ImplOp whose self claim
-  // must unify with wanted.
+  // Upon success, returns the newly created ImplOp whose self claim, read for
+  // the arguments its own parameters take, must rebuild wanted.
   //
   // A generator only builds IR, so an OpBuilder suffices. The caller places
   // the builder where a generated impl belongs before calling: a generator
@@ -228,10 +228,6 @@ public:
   SmallVector<std::pair<Operation *, Attribute>>
   chainTo(Operation *instance) const;
 
-  /// The deepest per-template count any instance reached, which is the
-  /// quantity the depth limit stands over.
-  unsigned getMaxDepth() const { return maxDepth; }
-
   /// Says a call refused to instantiate because the chain reached the limit.
   void noteLimitReached() { limitReached = true; }
 
@@ -247,7 +243,6 @@ private:
   };
 
   DenseMap<Operation *, Frame> frames;
-  unsigned maxDepth = 0;
   bool limitReached = false;
 };
 

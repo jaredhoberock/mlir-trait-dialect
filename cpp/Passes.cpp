@@ -1614,17 +1614,6 @@ static LogicalResult reduceGroundEqualityAssume(
 /// is exactly what the stage carries to no target, so nothing downstream reads
 /// its interior, and a stray parameter inside one rides into every clone made
 /// from it. Each function reports on its own, so one run names them all.
-/// Reports the deepest per-template instantiation chain one stage run cut, for
-/// a reader measuring how much headroom the depth limit leaves over a body of
-/// real programs. Silent unless `TRAIT_INSTANTIATION_DEPTH_STATS` is set in the
-/// environment, because a stage run says nothing about depth otherwise.
-void reportInstantiationDepth(const InstantiationChain &chain) {
-  if (!::getenv("TRAIT_INSTANTIATION_DEPTH_STATS"))
-    return;
-  llvm::errs() << "trait: maximum per-template instantiation depth "
-               << chain.getMaxDepth() << "\n";
-}
-
 LogicalResult verifyFunctionBodiesAreWellScoped(ModuleOp module) {
   bool wellScoped = true;
   module.walk([&](func::FuncOp function) {
@@ -1885,8 +1874,6 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
 
     wrote = work.wrote();
   }
-
-  reportInstantiationDepth(resolver->getInstantiationChain());
 
   // A call refused on the instantiation depth limit has already reported
   // itself, and the greedy driver took that refusal for a pattern that did not
