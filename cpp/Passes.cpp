@@ -1569,6 +1569,22 @@ static LogicalResult reduceGroundEqualityAssume(
 }
 
 
+/// Every function `module` holds mentions only the type parameters its own
+/// declaration binds.
+///
+/// The walk reaches every function, template or not, called or not: a template
+/// is exactly what the stage carries to no target, so nothing downstream reads
+/// its interior, and a stray parameter inside one rides into every clone made
+/// from it. Each function reports on its own, so one run names them all.
+LogicalResult verifyFunctionBodiesAreWellScoped(ModuleOp module) {
+  bool wellScoped = true;
+  module.walk([&](func::FuncOp function) {
+    if (failed(verifyFunctionBodyIsWellScoped(function)))
+      wellScoped = false;
+  });
+  return success(wellScoped);
+}
+
 } // end namespace
 
 /// `askImplSelectionForImpls` adds the pattern that puts a declared claim to
@@ -1576,6 +1592,14 @@ static LogicalResult reduceGroundEqualityAssume(
 /// over that driver is exercised. Only the dialect's plugin passes it.
 LogicalResult instantiateMonomorphs(ModuleOp module,
                                     bool askImplSelectionForImpls) {
+  // Well-scopedness leads, before anything is read, folded, collected or
+  // cloned: a body that mentions a type parameter its declaration does not bind
+  // has no source for that parameter, and every step after this one either skips
+  // the body (a template's interior) or rewrites it, at which point the stray
+  // parameter has become a clone's or has folded away unseen.
+  if (failed(verifyFunctionBodiesAreWellScoped(module)))
+    return failure();
+
   // Round zero: resolve the impls the module already spells and respell the
   // claims they prove, before any round asks for an impl that is missing.
   auto resolver = resolveImpls(module);

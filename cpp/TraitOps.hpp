@@ -110,6 +110,24 @@ TermShape decomposeTerm(Type t);
 bool entailedByGroundCongruence(Type lhs, Type rhs,
                                 ArrayRef<TypeEqualityAttr> premises);
 
+/// Refuses every type parameter `function`'s body mentions that its declaration
+/// does not bind, reporting at the function with a note at the first mention.
+///
+/// A declaration binds the generics of its own signature, and, for a method, the
+/// generics of the trait or impl header it is written in. Its body may mention
+/// no others: a substitution is built from the declaration's parameters, so a
+/// parameter the declaration does not bind has no source for its argument and
+/// survives into whatever the body is cloned into. A nested declaration with a
+/// scope of its own -- a nested function, a trait, an impl, a proof -- is left
+/// for its own check, while a runtime region (an `scf.if`, a `cf` block, a
+/// cooperative body) is interior to this function and stands in this scope. The
+/// type parameters a generic call spells for its callee are read as the callee's
+/// and not as a mention here.
+///
+/// This is a whole-function judgment, not an op verifier: a step that reads or
+/// clones a body asks it at its entry.
+LogicalResult verifyFunctionBodyIsWellScoped(func::FuncOp function);
+
 } // end mlir::trait
 
 namespace mlir::OpTrait {

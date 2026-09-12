@@ -5,6 +5,7 @@
 #include "TraitOps.hpp"
 #include "TraitTypes.hpp"
 #include <llvm/ADT/DenseMap.h>
+#include <llvm/ADT/SetVector.h>
 #include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/ADT/SmallSet.h>
 #include <llvm/ADT/STLForwardCompat.h>
@@ -65,6 +66,26 @@ LogicalResult verifyTemplateIsNotPublic(Operation *op) {
             "birth";
 }
 
+/// The function type of a child `func.func` a parent's verifier is about to
+/// read.
+///
+/// A child's own invariants are verified after its parent's, so the type is read
+/// through the attribute dictionary rather than through the getter that casts:
+/// a malformed one is refused where it stands instead of aborting the cast.
+static FailureOr<FunctionType> readChildFunctionType(func::FuncOp function) {
+  auto typeAttr =
+      function->getAttrOfType<TypeAttr>(function.getFunctionTypeAttrName());
+  auto functionType =
+      typeAttr ? dyn_cast<FunctionType>(typeAttr.getValue()) : FunctionType();
+  if (!functionType) {
+    function.emitOpError()
+        << "requires a function type in its '"
+        << function.getFunctionTypeAttrName().getValue() << "' attribute";
+    return failure();
+  }
+  return functionType;
+}
+
 /// Verifies that a function's result generics are determined by its inputs.
 ///
 /// Generics supplied by the caller, such as trait-level parameters on
@@ -75,10 +96,8 @@ LogicalResult verifyTemplateIsNotPublic(Operation *op) {
 /// syntactic check: the verifier does not try to invert equality predicates or
 /// associated-type bindings to recover missing result generics.
 static LogicalResult verifyFunctionResultGenericsAreDetermined(
-    func::FuncOp function,
+    func::FuncOp function, FunctionType functionType,
     const DenseSet<Type> &providedGenerics) {
-  FunctionType functionType = function.getFunctionType();
-
   DenseSet<Type> inputGenerics;
   for (Type input : functionType.getInputs()) {
     auto generics = getGenericTypesIn(input);
@@ -203,6 +222,124 @@ FailureOr<FunctionType> NormalizationContext::normalize(
 
 
 //===----------------------------------------------------------------------===//
+// Type parameter scope
+//===----------------------------------------------------------------------===//
+
+namespace {
+
+/// Whether `op` declares a type parameter scope of its own, so that the code it
+/// holds is judged against that declaration rather than against the function a
+/// walk started at. A region an op runs at run time -- a conditional, a loop, a
+/// cooperative body -- declares nothing and stands in the scope around it.
+bool ownsATypeParameterScope(Operation *op) {
+  return isa<TraitOp, ImplOp, ProofOp, func::FuncOp>(op);
+}
+
+/// Collects into `generics` every generic type `root` mentions, `root` being a
+/// type or an attribute: one walk reads either, and each type the walk meets is
+/// read with `getGenericTypesIn`, so a generic standing in a claim's application
+/// or an equality's endpoints is collected wherever a spelling holds it.
+template <typename RootT>
+void collectGenericsIn(RootT root, SetVector<Type> &generics) {
+  root.walk([&](Type sub) {
+    for (GenericTypeInterface generic : getGenericTypesIn(sub))
+      generics.insert(Type(generic));
+  });
+}
+
+/// Whether `generic` is a type parameter in its own right -- a label a
+/// substitution binds -- rather than a generic type built out of other generics,
+/// which is determined once its parts are. `getGenericTypesIn` reports a
+/// composite together with the generics inside it, so a label is the one that
+/// carries no other.
+bool isTypeParameterLabel(Type generic) {
+  return getGenericTypesIn(generic).size() == 1;
+}
+
+/// The type parameters `function`'s declaration binds: the generics its own
+/// signature spells, and, for a method, the generics of the trait or impl header
+/// it is written in, which a use of that header supplies.
+SetVector<Type> getDeclaredTypeParams(func::FuncOp function) {
+  SetVector<Type> declared;
+  collectGenericsIn(Type(function.getFunctionType()), declared);
+
+  if (auto impl = function->getParentOfType<ImplOp>()) {
+    for (GenericTypeInterface generic : impl.getTypeParams())
+      declared.insert(Type(generic));
+  } else if (auto trait = function->getParentOfType<TraitOp>()) {
+    for (Attribute param : trait.getTypeParams())
+      if (auto typeAttr = dyn_cast<TypeAttr>(param))
+        declared.insert(typeAttr.getValue());
+  }
+  return declared;
+}
+
+/// Whether `name` is the attribute a generic call spells its CALLEE's type
+/// parameters in. Those labels stand in the callee's scope -- the call supplies
+/// a type argument for each of them -- so a body spelling one there names none
+/// of its own.
+bool namesCalleeTypeParameters(Operation *op, StringAttr name) {
+  if (auto call = dyn_cast<FuncCallOp>(op))
+    return name == call.getTypeParamsAttrName();
+  if (auto call = dyn_cast<MethodCallOp>(op))
+    return name == call.getTypeParamsAttrName();
+  return false;
+}
+
+} // namespace
+
+LogicalResult mlir::trait::verifyFunctionBodyIsWellScoped(func::FuncOp function) {
+  SetVector<Type> declared = getDeclaredTypeParams(function);
+
+  // The first mention of each parameter the declaration does not bind, in the
+  // order the walk meets them, so each label is refused once and at a site.
+  SmallVector<std::pair<Type, Operation *>> outOfScope;
+  DenseSet<Type> seen;
+  auto read = [&](auto root, Operation *at) {
+    root.walk([&](Type sub) {
+      for (GenericTypeInterface generic : getGenericTypesIn(sub)) {
+        Type label(generic);
+        if (declared.contains(label) || !isTypeParameterLabel(label))
+          continue;
+        if (seen.insert(label).second)
+          outOfScope.emplace_back(label, at);
+      }
+    });
+  };
+
+  Operation *root = function.getOperation();
+  root->walk<WalkOrder::PreOrder>([&](Operation *op) {
+    if (op != root && ownsATypeParameterScope(op))
+      return WalkResult::skip();
+
+    for (Type type : op->getOperandTypes())
+      read(type, op);
+    for (Type type : op->getResultTypes())
+      read(type, op);
+    for (Region &region : op->getRegions())
+      for (Block &block : region)
+        for (BlockArgument argument : block.getArguments())
+          read(argument.getType(), op);
+    // The function's own attributes are its declaration, read above.
+    if (op != root)
+      for (NamedAttribute attribute : op->getAttrDictionary())
+        if (!namesCalleeTypeParameters(op, attribute.getName()))
+          read(attribute.getValue(), op);
+    return WalkResult::advance();
+  });
+
+  for (auto [generic, at] : outOfScope) {
+    InFlightDiagnostic diagnostic =
+        function.emitError()
+        << "type parameter " << generic
+        << " is outside the signature scope of @" << function.getSymName();
+    diagnostic.attachNote(at->getLoc()) << "mentioned here";
+  }
+  return success(outOfScope.empty());
+}
+
+
+//===----------------------------------------------------------------------===//
 // TraitOp
 //===----------------------------------------------------------------------===//
 
@@ -225,14 +362,35 @@ LogicalResult TraitOp::verify() {
   if (uniqueParams.size() < 1)
     return emitOpError() << "requires at least one type parameter";
 
-  // collect GAT poly vars from AssocTypeOp type_params
+  // Collect the GAT parameters from the AssocTypeOp type_params, each of which
+  // is a parameter of its own declaration: a projection through the associated
+  // type supplies an argument for it, while the trait's own parameters come from
+  // the application. A GAT that repeats one of the trait's parameters would have
+  // the projection's argument overwrite the application's, so the two lists must
+  // stand apart.
+  //
+  // A child's own invariants are verified after its parent's, so each entry is
+  // read as an attribute that may be anything and refused where it stands rather
+  // than cast.
   DenseSet<Type> gatParams;
   for (Operation &op : getBody().front()) {
-    if (auto assoc = dyn_cast<AssocTypeOp>(op)) {
-      if (auto tp = assoc.getTypeParams()) {
-        for (Attribute tyAttr : *tp)
-          gatParams.insert(cast<TypeAttr>(tyAttr).getValue());
-      }
+    auto assoc = dyn_cast<AssocTypeOp>(op);
+    if (!assoc)
+      continue;
+    ArrayAttr declaredParams = assoc.getTypeParamsAttr();
+    if (!declaredParams)
+      continue;
+    for (Attribute tyAttr : declaredParams) {
+      auto typeAttr = dyn_cast<TypeAttr>(tyAttr);
+      if (!typeAttr)
+        return assoc.emitOpError()
+               << "type parameter list holds " << tyAttr << ", which is not a type";
+      Type param = typeAttr.getValue();
+      if (uniqueParams.contains(param))
+        return assoc.emitOpError()
+               << "type parameter " << param << " is already a parameter of trait '@"
+               << getSymName() << "'";
+      gatParams.insert(param);
     }
   }
 
@@ -290,7 +448,11 @@ LogicalResult TraitOp::verify() {
   // check trait method result generics
   for (Operation &op : getBody().front()) {
     if (auto method = dyn_cast<func::FuncOp>(op)) {
-      if (failed(verifyFunctionResultGenericsAreDetermined(method, uniqueParams)))
+      auto methodType = readChildFunctionType(method);
+      if (failed(methodType))
+        return failure();
+      if (failed(verifyFunctionResultGenericsAreDetermined(method, *methodType,
+                                                           uniqueParams)))
         return failure();
     }
   }
@@ -609,8 +771,65 @@ static LogicalResult verifyEqualityObligations(
     ImplOp impl, TraitOp traitOp, ArrayRef<ImplWitnessRule> witnessRules,
     llvm::function_ref<InFlightDiagnostic()> errFn);
 
+/// Verifies each associated type binding against the two lists a use of it
+/// supplies arguments for: the impl header's parameters, bound where the impl is
+/// selected, and the binding's own parameters, bound by a projection's
+/// associated type arguments. A binding whose own parameter repeats a header
+/// parameter would have the projection's argument overwrite the header's, and a
+/// bound type mentioning a parameter from neither list has nothing to supply it,
+/// so the resolved type would carry a parameter no substitution reaches.
+///
+/// A child's own invariants are verified after its parent's, so each entry is
+/// read as an attribute that may be anything and refused where it stands rather
+/// than cast.
+static LogicalResult verifyAssociatedTypeBindingScopes(ImplOp impl) {
+  DenseSet<Type> headerParams;
+  for (GenericTypeInterface generic : impl.getTypeParams())
+    headerParams.insert(Type(generic));
+
+  for (Operation &op : impl.getBody().front()) {
+    auto assoc = dyn_cast<AssocTypeOp>(op);
+    if (!assoc)
+      continue;
+
+    DenseSet<Type> ownParams;
+    if (ArrayAttr declaredParams = assoc.getTypeParamsAttr()) {
+      for (Attribute tyAttr : declaredParams) {
+        auto typeAttr = dyn_cast<TypeAttr>(tyAttr);
+        if (!typeAttr)
+          return assoc.emitOpError()
+                 << "type parameter list holds " << tyAttr << ", which is not a type";
+        Type param = typeAttr.getValue();
+        if (headerParams.contains(param))
+          return assoc.emitOpError()
+                 << "type parameter " << param << " is already a parameter of impl '@"
+                 << impl.getSymName() << "'";
+        // A parameter may be a generic type another dialect wraps around a
+        // label (a coordinate parameter carries the label it stands for), and
+        // declaring it declares what it carries.
+        for (GenericTypeInterface inside : getGenericTypesIn(param))
+          ownParams.insert(Type(inside));
+      }
+    }
+
+    TypeAttr boundAttr = assoc.getBoundTypeAttr();
+    if (!boundAttr)
+      continue;
+    for (GenericTypeInterface generic : getGenericTypesIn(boundAttr.getValue()))
+      if (isTypeParameterLabel(Type(generic)) &&
+          !headerParams.contains(Type(generic)) && !ownParams.contains(Type(generic)))
+        return assoc.emitOpError()
+               << "bound type mentions type parameter " << generic
+               << ", which neither impl '@" << impl.getSymName()
+               << "' nor this associated type declares";
+  }
+  return success();
+}
+
 LogicalResult ImplOp::verify() {
-  return verifyTemplateIsNotPublic(getOperation());
+  if (failed(verifyTemplateIsNotPublic(getOperation())))
+    return failure();
+  return verifyAssociatedTypeBindingScopes(*this);
 }
 
 LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
