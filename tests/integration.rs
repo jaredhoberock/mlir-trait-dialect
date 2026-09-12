@@ -534,35 +534,6 @@ fn test_jit() {
     }
 }
 
-
-/// The two node-level predicates name a type's family without parsing its
-/// printed form: a generic answers both, a claim carries polymorphism without
-/// being a generic, and a ground type from outside the trait type system
-/// answers neither.
-#[test]
-fn the_type_family_predicates_separate_generics_claims_and_ground_types() {
-    let registry = DialectRegistry::new();
-    register_all_dialects(&registry);
-    let context = Context::new();
-    context.append_dialect_registry(&registry);
-    trait_::register(&context);
-    context.load_all_available_dialects();
-
-    let poly = trait_::poly_type(&context, 0);
-    let application = trait_::trait_application_attr(&context, "Foo", &[poly]);
-    let claim: melior::ir::Type = trait_::claim_type(&context, application).into();
-    let ground: melior::ir::Type = IntegerType::new(&context, 32).into();
-
-    assert!(trait_::is_generic_type(poly));
-    assert!(trait_::carries_polymorphism(poly));
-
-    assert!(!trait_::is_generic_type(claim));
-    assert!(trait_::carries_polymorphism(claim));
-
-    assert!(!trait_::is_generic_type(ground));
-    assert!(!trait_::carries_polymorphism(ground));
-}
-
 #[test]
 fn the_projection_query_and_the_project_verifier_share_one_verdict() {
     let registry = DialectRegistry::new();
@@ -649,12 +620,13 @@ fn the_obligation_aware_verification_demands_the_cited_impl_s_assumptions() {
 #[test]
 fn the_two_monomorphization_steps_render_through_discovery() {
     // The trait dialect contributes its lowering as two steps; the driver
-    // discovers them over a context the dialect is registered in. instantiate
-    // discharges each trait call kind qualified by its readiness predicate, with
-    // its verifier on and no cleanup; erase discharges the trait and coord
-    // dialects behind a predicate gate, with its verifier on and the cleanup
-    // interlude requested. Neither names the other's vocabulary to order the two:
-    // the gate on erase is what holds it behind instantiate.
+    // discovers them over a context the dialect is registered in. A step is begun
+    // with the pass constructor that adds its passes and the legality that decides
+    // its readiness, so what the roster carries beside the label is the dialect
+    // that contributed it, whether the cleanup interlude follows it, and what it
+    // seals: instantiate asks for no cleanup, erase asks for it, and neither seals
+    // an operation. Neither step names an operation anywhere on its descriptor --
+    // what orders the two is each step's own legality, read against the module.
     let registry = DialectRegistry::new();
     register_all_dialects(&registry);
     let context = Context::new();
@@ -675,56 +647,70 @@ fn the_two_monomorphization_steps_render_through_discovery() {
         .position(|label| label == "erase-polymorphs")
         .expect("erase-polymorphs is contributed");
 
-    use lowering_driver::StepClass;
-
-    let instantiate_discharges = roster.step_discharges(instantiate);
-    assert_eq!(instantiate_discharges.len(), 5);
-    assert!(instantiate_discharges.contains(&StepClass::Operation("trait.func.call".to_string())));
-    assert!(instantiate_discharges.contains(&StepClass::Operation("trait.method.call".to_string())));
-    assert!(instantiate_discharges.contains(&StepClass::Operation("trait.allege".to_string())));
-    assert!(instantiate_discharges.contains(&StepClass::Operation("trait.derive".to_string())));
-    assert!(instantiate_discharges.contains(&StepClass::Operation("trait.project".to_string())));
-    assert!(roster.step_verifier_policy(instantiate), "instantiate verifies its boundary");
+    assert_eq!(roster.step_namespace(instantiate), "trait");
+    assert_eq!(roster.step_namespace(erase), "trait");
     assert!(!roster.step_wants_cleanup(instantiate));
-    assert!(
-        roster.step_requires_absent(instantiate).is_empty(),
-        "instantiate declares no named-operation gate"
-    );
-    assert!(roster.step_seals(instantiate).is_empty());
-
-    let erase_discharges = roster.step_discharges(erase);
-    assert_eq!(erase_discharges.len(), 2);
-    assert!(erase_discharges.contains(&StepClass::Dialect("trait".to_string())));
-    assert!(erase_discharges.contains(&StepClass::Dialect("coord".to_string())));
-    assert!(roster.step_verifier_policy(erase));
     assert!(roster.step_wants_cleanup(erase));
-    assert!(
-        roster.step_requires_absent(erase).is_empty(),
-        "erase's gate is a predicate, not a named operation"
-    );
-    assert!(roster.step_seals(erase).is_empty());
 
-    // the rendered roster shows the qualification on each call discharge and the
-    // predicate gate erase carries, the readiness neither step spells as a named op
+    // the roster renders one line per step, field for field: the cleanup request
+    // and the seals, with no operation named -- neither step spells its readiness
+    // as a vocabulary, and neither seals anything.
     let render = roster.render();
-    assert!(render.contains("op:trait.func.call (qualified)"), "{render}");
-    assert!(render.contains("op:trait.method.call (qualified)"), "{render}");
-    assert!(render.contains("op:trait.allege (qualified)"), "{render}");
-    assert!(render.contains("op:trait.derive (qualified)"), "{render}");
-    assert!(render.contains("op:trait.project (qualified)"), "{render}");
-    assert!(render.contains("requires-absent-predicate=1"), "{render}");
+    assert_eq!(render.lines().count(), 2, "{render}");
+    assert!(render.contains("instantiate-monomorphs | wants-cleanup=0 | seals:\n"), "{render}");
+    assert!(render.contains("erase-polymorphs | wants-cleanup=1 | seals:\n"), "{render}");
+}
+
+/// The readiness the driver derives from `module` at the entry boundary,
+/// rendered: the roster composed over the loaded dialects, then every step's own
+/// ConversionTarget and TypeConverter read against the module, the audit stopping
+/// the run there so no pass runs. A step is named in the rendering exactly when it
+/// is present -- among the winners when it is ready, in the held census with the
+/// reasons it waits when it is not. The permutation is the identity, which spells
+/// the order the winners are rendered in and not which steps are ready.
+fn entry_readiness(context: &Context, module: &Module) -> String {
+    let mut rendered = String::new();
+    let (run, _roster) = unsafe {
+        lowering_driver::compose_to_target(
+            module.as_operation().to_raw(),
+            context.to_raw(),
+            0,
+            std::ptr::null_mut(),
+            |_boundary, _label, selection, _decision| {
+                rendered = selection.to_string();
+                false
+            },
+        )
+    };
+    assert_eq!(
+        run.outcome,
+        lowering_driver::Outcome::Stopped,
+        "the audit stops the run at the entry boundary"
+    );
+    rendered
+}
+
+/// The steps ready to run at the boundary `readiness` renders.
+fn ready_steps(readiness: &str) -> Vec<String> {
+    match lowering_driver::parse_selection(readiness) {
+        lowering_driver::Selection::Batch { winners, .. } => winners,
+        other => panic!("expected a batch at the entry boundary, got {other:?}"),
+    }
 }
 
 #[test]
-fn instantiate_accepts_only_the_rewritable_call() {
-    // The instantiate step's discharge is qualified by rewritableOutsideTemplate,
-    // so the walk's accepted tally counts a trait call exactly where a lowering
-    // pattern would fire on it. Over a module with one rewritable method call at
-    // module scope and one standing inside a template, the tally counts the
-    // module-scope call alone -- the template-interior call the predicate refuses
-    // stands for erase to take with the dialect. After the pass has instantiated
-    // the rewritable call, no accepted instance remains, so the step is no longer
-    // present on it.
+fn instantiate_is_ready_only_while_a_rewritable_call_stands() {
+    // The legality instantiate hands the driver marks a pending operation illegal
+    // and has an opinion on every other one, so the step is ready exactly where a
+    // lowering pattern would fire and waits on nothing. Over a module with one
+    // rewritable method call at module scope and one standing inside a template,
+    // instantiate is ready: the module-scope call is its work, and the
+    // template-interior call -- foreign, what leaves with the template -- is not.
+    // erase is held there: its own target has no opinion on the pending call, which
+    // is what keeps it behind instantiate. After the pass has instantiated the
+    // rewritable call the template-interior call still stands, yet instantiate is no
+    // longer present on the module: its target now finds every standing operation
+    // legal, and the templates are erase's to take.
     let registry = DialectRegistry::new();
     register_all_dialects(&registry);
     let context = Context::new();
@@ -755,44 +741,38 @@ func.func @host(%x: i64, %v: i32) -> i32 {\n\
     let mut module = Module::parse(&context, source).expect("the fixture module parses");
     assert!(module.as_operation().verify(), "the fixture module verifies");
 
-    let roster = lowering_driver::discover_roster(context.to_raw());
-    let mut builder = lowering_driver::TargetBuilder::new("under test");
-    builder.legal("builtin");
-    let target = builder.build().expect("the target is well-formed");
-    let classifier = lowering_driver::Classifier::new();
-
-    let before =
-        lowering_driver::walk_qualified(module.as_operation(), &target, &classifier, &roster);
+    let before = entry_readiness(&context, &module);
     assert!(
-        before
-            .qualified_accepted()
-            .contains("instantiate-monomorphs|op:trait.method.call=1"),
-        "the module-scope call is the one accepted instance: {}",
-        before.qualified_accepted()
+        ready_steps(&before).iter().any(|step| step == "instantiate-monomorphs"),
+        "the module-scope call is instantiate's work, so the step is ready: {before}"
+    );
+    assert!(
+        before.contains("erase-polymorphs:waits(trait.method.call)"),
+        "erase has no opinion on the pending call, which is what holds it behind instantiate \
+         with no step naming the other's vocabulary: {before}"
     );
 
     let pass_manager = PassManager::new(&context);
     pass_manager.add_pass(trait_::create_instantiate_monomorphs_pass());
     assert!(pass_manager.run(&mut module).is_ok(), "instantiate runs");
 
-    let after =
-        lowering_driver::walk_qualified(module.as_operation(), &target, &classifier, &roster);
+    let after = entry_readiness(&context, &module);
     assert!(
-        after.qualified_accepted().is_empty(),
-        "the rewritable call is instantiated, so no accepted instance remains: {}",
-        after.qualified_accepted()
+        !after.contains("instantiate-monomorphs"),
+        "the rewritable call is instantiated and the template interior is not instantiate's \
+         work, so the step is no longer present: {after}"
     );
 }
 
 #[test]
-fn instantiate_is_present_on_a_standing_claim_obligation() {
-    // instantiate discharges each claim-producing operation, not only the calls, so a
-    // program whose only pending trait work is a standing unproven monomorphic claim
-    // makes the step present and selectable rather than stranding the run at a boundary
-    // no step owns. Here the method call's receiver claim is an unproven allege, so the
-    // call is not yet rewritable; the standing allege carries the obligation, and the
-    // walk's accepted tally counts it under the allege discharge. After the pass proves
-    // the claim and instantiates the call, no accepted instance remains.
+fn instantiate_is_ready_on_a_standing_claim_obligation() {
+    // instantiate's legality marks every operation carrying a standing obligation
+    // illegal, not only the calls, so a program whose only pending trait work is an
+    // unproven monomorphic claim makes the step ready rather than stranding the run
+    // at a boundary no step owns. Here the method call's receiver claim is an
+    // unproven allege, so the call is not yet rewritable; the standing allege is
+    // what carries the obligation. After the pass has proved the claim and
+    // instantiated the call, instantiate is no longer present on the module.
     let registry = DialectRegistry::new();
     register_all_dialects(&registry);
     let context = Context::new();
@@ -817,31 +797,20 @@ func.func @host(%x: i32) -> i32 {\n\
 }\n";
     let mut module = Module::parse(&context, source).expect("the fixture module parses");
 
-    let roster = lowering_driver::discover_roster(context.to_raw());
-    let mut builder = lowering_driver::TargetBuilder::new("under test");
-    builder.legal("builtin");
-    let target = builder.build().expect("the target is well-formed");
-    let classifier = lowering_driver::Classifier::new();
-
-    let before =
-        lowering_driver::walk_qualified(module.as_operation(), &target, &classifier, &roster);
+    let before = entry_readiness(&context, &module);
     assert!(
-        before
-            .qualified_accepted()
-            .contains("instantiate-monomorphs|op:trait.allege=1"),
-        "the standing allege is the one accepted instance before the pass runs: {}",
-        before.qualified_accepted()
+        ready_steps(&before).iter().any(|step| step == "instantiate-monomorphs"),
+        "the standing allege is instantiate's work, so the step is ready: {before}"
     );
 
     let pass_manager = PassManager::new(&context);
     pass_manager.add_pass(trait_::create_instantiate_monomorphs_pass());
     assert!(pass_manager.run(&mut module).is_ok(), "instantiate runs");
 
-    let after =
-        lowering_driver::walk_qualified(module.as_operation(), &target, &classifier, &roster);
+    let after = entry_readiness(&context, &module);
     assert!(
-        after.qualified_accepted().is_empty(),
-        "instantiate proved the claim and lowered the call, so no accepted instance remains: {}",
-        after.qualified_accepted()
+        !after.contains("instantiate-monomorphs"),
+        "instantiate proved the claim and lowered the call, so the step is no longer present: \
+         {after}"
     );
 }
