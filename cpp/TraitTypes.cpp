@@ -312,6 +312,88 @@ FailureOr<Type> resolveProjectionsByLookup(
 }
 
 //===----------------------------------------------------------------------===//
+// TypeEquivalence
+//===----------------------------------------------------------------------===//
+
+unsigned TypeEquivalence::intern(Type t) {
+  auto it = ids.find(t);
+  if (it != ids.end())
+    return it->second;
+  unsigned id = terms.size();
+  ids[t] = id;
+  terms.push_back(t);
+  parent.push_back(id);
+  orderKeys.emplace_back();
+  return id;
+}
+
+unsigned TypeEquivalence::findCanonical(unsigned id) {
+  while (parent[id] != id) {
+    parent[id] = parent[parent[id]];
+    id = parent[id];
+  }
+  return id;
+}
+
+void TypeEquivalence::unite(unsigned a, unsigned b) {
+  a = findCanonical(a);
+  b = findCanonical(b);
+  if (a == b)
+    return;
+  // The joined class keeps the lesser of the two canonical members, so a class
+  // is headed by its least member however its equalities were oriented and in
+  // whatever order they arrived.
+  if (precedes(b, a))
+    std::swap(a, b);
+  parent[b] = a;
+}
+
+llvm::DenseMap<Type, Type> TypeEquivalence::substitutionToCanonicalMembers() {
+  llvm::DenseMap<Type, Type> subst;
+  for (unsigned id = 0, n = terms.size(); id != n; ++id) {
+    unsigned canonical = findCanonical(id);
+    if (canonical != id)
+      subst[terms[id]] = terms[canonical];
+  }
+  return subst;
+}
+
+TypeEquivalence::OrderKey &TypeEquivalence::orderKeyOf(unsigned id) {
+  if (orderKeys[id])
+    return *orderKeys[id];
+  OrderKey key{/*projections=*/0, /*types=*/0,
+               isPolymorphicType(terms[id]), std::string()};
+  terms[id].walk([&](Type sub) {
+    ++key.types;
+    if (isa<ProjectionType>(sub))
+      ++key.projections;
+  });
+  orderKeys[id] = std::move(key);
+  return *orderKeys[id];
+}
+
+bool TypeEquivalence::precedes(unsigned a, unsigned b) {
+  OrderKey &first = orderKeyOf(a);
+  OrderKey &second = orderKeyOf(b);
+  if (first.projections != second.projections)
+    return first.projections < second.projections;
+  if (first.types != second.types)
+    return first.types < second.types;
+  if (first.mentionsVariable != second.mentionsVariable)
+    return !first.mentionsVariable;
+  // Two types of the same shape are told apart by their spellings, which is the
+  // one key that must print and so is printed only here.
+  auto spell = [&](OrderKey &key, Type ty) -> const std::string & {
+    if (key.spelling.empty()) {
+      llvm::raw_string_ostream stream(key.spelling);
+      stream << ty;
+    }
+    return key.spelling;
+  };
+  return spell(first, terms[a]) < spell(second, terms[b]);
+}
+
+//===----------------------------------------------------------------------===//
 // PolyType
 //===----------------------------------------------------------------------===//
 

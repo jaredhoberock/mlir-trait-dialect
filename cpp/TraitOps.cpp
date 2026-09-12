@@ -177,6 +177,12 @@ FailureOr<Type> NormalizationContext::normalize(
   // which is the one report of it; the driver below then stops without adding a
   // second.
   bool lookupRefused = false;
+  // The hypotheses read as classes, not as directed rules: every member of a
+  // class rewrites to the one member the class stands for. Two hypotheses of
+  // opposite orientation therefore settle, where a pair of directed rules would
+  // trade the spelling back and forth until the budget below ran out.
+  llvm::DenseMap<Type, Type> toCanonicalMembers =
+      equalities.substitutionToCanonicalMembers();
   auto normalizeOnce = [&](Type root) {
     AttrTypeReplacer replacer = makeEndpointSealedReplacer();
     replacer.addReplacement([&](ProjectionType proj) -> std::optional<Type> {
@@ -193,8 +199,8 @@ FailureOr<Type> NormalizationContext::normalize(
       return std::nullopt;
     });
     root = replacer.replace(root);
-    if (!equalityRules.empty())
-      root = applySubstitutionOnce(equalityRules, root);
+    if (!toCanonicalMembers.empty())
+      root = applySubstitutionOnce(toCanonicalMembers, root);
     // The recorded facts are read after the local rules, so a projection this
     // op's own evidence answers is answered from that evidence and only what it
     // leaves standing reaches the record. Each pass runs both, and the driver
@@ -802,7 +808,7 @@ static FailureOr<SmallVector<ImplWitnessRule>> collectImplWitnessRules(
 static void addImplEqualityPremises(NormalizationContext &ctx, ImplOp impl) {
   for (Attribute predicate : impl.getAssumptions())
     if (auto equality = dyn_cast<TypeEqualityAttr>(predicate))
-      ctx.addEqualityRule(equality.getLhs(), equality.getRhs());
+      ctx.assumeEqual(equality.getLhs(), equality.getRhs());
 }
 
 /// The pairing carrying a trait's declaration of a method onto the impl's copy
@@ -2978,10 +2984,10 @@ static Operation *getScopeOwner(Operation *op) {
 
 /// Adds the rules one hypothesis in scope licenses.
 ///
-/// An equality hypothesis is a rewrite rule wherever it stands. An application
-/// hypothesis says its trait holds of those arguments, and a trait holds only
-/// where its own requirements do, so each requirement instantiated at that
-/// application is a hypothesis in turn -- the same reading `trait.project`
+/// An equality hypothesis says its two types are one wherever it stands. An
+/// application hypothesis says its trait holds of those arguments, and a trait
+/// holds only where its own requirements do, so each requirement instantiated at
+/// that application is a hypothesis in turn -- the same reading `trait.project`
 /// performs on a claim value. No impl is consulted: a hypothesis names none,
 /// and what it licenses is what its trait declares.
 ///
@@ -2993,7 +2999,7 @@ static void addScopeHypothesis(NormalizationContext &ctx, ClaimType claim,
                                DenseSet<TraitApplicationAttr> &visited,
                                unsigned depth) {
   if (auto equality = claim.getEqualityAttr()) {
-    ctx.addEqualityRule(equality.getLhs(), equality.getRhs());
+    ctx.assumeEqual(equality.getLhs(), equality.getRhs());
     return;
   }
 
@@ -3108,7 +3114,7 @@ static void addLocalProjectionRulesFromClaim(
   // An equality claim IS evidence of its own equality, so an op holding one may
   // read either endpoint as the other.
   if (auto equality = claim.getEqualityAttr()) {
-    ctx.addEqualityRule(equality.getLhs(), equality.getRhs());
+    ctx.assumeEqual(equality.getLhs(), equality.getRhs());
     return;
   }
 

@@ -947,6 +947,72 @@ inline Type applySubstitutionToFixedPoint(const llvm::DenseMap<Type,Type> &subst
   return cur;
 }
 
+/// The classes a set of type equalities carves out of the types they mention.
+///
+/// An equality is not a directed rule: `A = B` and `B = A` say one thing, and a
+/// set of equalities relates types symmetrically and transitively. Each class
+/// has one canonical member -- the least under the structural order below -- and
+/// a normalizer reads the equalities by rewriting every member of a class to
+/// that one member. The rewrite settles because the member it lands on is fixed
+/// for the class, where a directed rule carries `A` to `B` and back forever as
+/// soon as both orientations stand.
+///
+/// The canonical member of a class is its least under this order, in this
+/// sequence: fewer projections first, then fewer types named, then a type
+/// mentioning no type variable before one that does, then the spelling itself.
+/// Each key reads only the types' own structure, so the member a class is
+/// headed by is the same in every process and under every allocation. Fewer
+/// projections first is what makes the rewrite resolve projections rather than
+/// introduce them, and fewer types next is what keeps a rewrite from growing
+/// what it rewrites.
+class TypeEquivalence {
+public:
+  /// Records that `a` and `b` are the same type, interning both.
+  void assumeEqual(Type a, Type b) { unite(intern(a), intern(b)); }
+
+  unsigned size() const { return terms.size(); }
+
+  /// The index this structure knows `t` by, interning it if it is new.
+  unsigned intern(Type t);
+
+  /// The index of the canonical member of the class `id` falls in.
+  unsigned findCanonical(unsigned id);
+
+  /// Joins the classes of `a` and `b`.
+  void unite(unsigned a, unsigned b);
+
+  Type termAt(unsigned id) const { return terms[id]; }
+
+  /// Every member that is not its class's canonical one, mapped to that one:
+  /// the substitution a normalizer applies to rewrite a spelling to the one
+  /// spelling its class stands for.
+  llvm::DenseMap<Type, Type> substitutionToCanonicalMembers();
+
+private:
+  /// Whether `a` precedes `b` under the order the class doc states. The keys
+  /// are computed on demand and kept, because a union asks for them at most
+  /// once per member and the spelling key is the expensive one.
+  bool precedes(unsigned a, unsigned b);
+
+  /// How a member orders against the others: how many projections it spells,
+  /// how many types its spelling names, whether it mentions a type variable,
+  /// and the spelling itself. A type prints as something, so an empty
+  /// `spelling` is one not yet printed -- the three keys before it decide every
+  /// comparison but the one between two types of the same shape.
+  struct OrderKey {
+    unsigned projections;
+    unsigned types;
+    bool mentionsVariable;
+    std::string spelling;
+  };
+  OrderKey &orderKeyOf(unsigned id);
+
+  llvm::DenseMap<Type, unsigned> ids;
+  SmallVector<Type> terms;
+  SmallVector<unsigned> parent;
+  SmallVector<std::optional<OrderKey>> orderKeys;
+};
+
 /// Applies a GAT substitution: maps each type in `typeParams` to the
 /// corresponding type in `assocTypeArgs`, then substitutes into `boundType`.
 /// Returns the original `boundType` unchanged if `typeParams` is empty.

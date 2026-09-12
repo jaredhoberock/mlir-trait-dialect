@@ -184,13 +184,18 @@ public:
     localProjectionRules.push_back({impl, app, subst});
   }
 
-  /// A hypothesis in scope: wherever `from` stands, `to` stands. An impl's own
+  /// A hypothesis in scope: `a` and `b` are the same type. An impl's own
   /// where-clause equalities are exactly these while its own obligations are
   /// checked -- an impl whose clause says `F::Output = Acc` satisfies a
   /// trait-header requirement spelled `F::Output = Acc` by that hypothesis and
   /// by nothing else, and a projection no hypothesis and no binding reduces is
   /// equal to itself alone.
-  void addEqualityRule(Type from, Type to) { equalityRules[from] = to; }
+  ///
+  /// A hypothesis relates its two types; it does not rewrite the one into the
+  /// other. Hypotheses spelled in opposite orientations put their endpoints in
+  /// one class, and normalizing rewrites every member of a class to the one
+  /// member the class stands for.
+  void assumeEqual(Type a, Type b) { equalities.assumeEqual(a, b); }
 
   /// Also reads what impl selection has settled, which is the context the stage
   /// holds on top of the evidence an op carries. A verifier sets none: what it
@@ -229,7 +234,7 @@ public:
 
 private:
   SmallVector<LocalProjectionRule, 4> localProjectionRules;
-  llvm::DenseMap<Type, Type> equalityRules;
+  TypeEquivalence equalities;
   const ReadOnlyImplResolver *recordedFacts = nullptr;
   ModuleOp moduleLookup;
   LookupScope moduleLookupScope = LookupScope::Ground;

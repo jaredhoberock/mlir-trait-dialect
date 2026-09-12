@@ -18,64 +18,26 @@
 using namespace mlir;
 using namespace mlir::trait;
 
-// Does `needle` occur as a subterm of `haystack`? An equality claim's endpoints
-// are ordinary sub-elements, so a needle standing inside one is found.
-static bool typeOccursIn(Type needle, Type haystack) {
-  return haystack.walk([&](Type sub) {
-             return sub == needle ? WalkResult::interrupt()
-                                  : WalkResult::advance();
-           }).wasInterrupted();
-}
-
-// Rewrite `ty` by the cited equality premises: each premise's lhs endpoint
-// rewrites to its rhs. When a projection-headed impl self-application cannot be
-// aligned by structural matching, verification matches modulo these equalities.
+// Rewrite `ty` modulo the cited equality premises: the premises relate the types
+// they mention, and every member of one class rewrites to the one member the
+// class stands for. When a projection-headed impl self-application cannot be
+// aligned by structural matching, verification matches modulo these equalities;
+// both sides of every such comparison are rewritten here, so the verdict does
+// not turn on how any premise was oriented.
 //
-// A premise set whose rewrite relation cycles has no finite solution and its
-// fixed point would not terminate, so it is refused. The relation orders key a
-// before key b when b occurs in the value bound to a; a self-referential premise
-// such as !S = tuple<!S> is the degenerate self-loop. Refusing here keeps the
-// verifier total on spellable IR.
-static FailureOr<Type> applyEqualityPremises(
-    Type ty, ArrayRef<TypeEqualityAttr> premises,
-    llvm::function_ref<InFlightDiagnostic()> err) {
-  DenseMap<Type, Type> subst;
-  for (TypeEqualityAttr eq : premises)
-    subst[eq.getLhs()] = eq.getRhs();
-  if (subst.empty())
+// The rewrite settles because the member it lands on is fixed for the class and
+// no greater than the member it replaces, so two premises of opposite
+// orientation, and a premise whose one endpoint stands inside the other
+// (!S = tuple<!S>), each reach a normal form rather than growing the spelling.
+static Type applyEqualityPremises(Type ty,
+                                  ArrayRef<TypeEqualityAttr> premises) {
+  if (premises.empty())
     return ty;
-
-  SmallVector<Type> keys;
-  for (auto &kv : subst)
-    keys.push_back(kv.first);
-  // A depth-first walk of the rewrite relation reporting a back edge. The color
-  // marks are unvisited, on the current path, and finished.
-  DenseMap<Type, unsigned> color;
-  std::function<Type(Type)> findCycle = [&](Type key) -> Type {
-    color[key] = 1;
-    Type value = subst.lookup(key);
-    for (Type other : keys)
-      if (typeOccursIn(other, value)) {
-        unsigned c = color.lookup(other);
-        if (c == 1)
-          return other;
-        if (c == 0)
-          if (Type hit = findCycle(other))
-            return hit;
-      }
-    color[key] = 2;
-    return Type();
-  };
-  for (Type key : keys)
-    if (color.lookup(key) == 0)
-      if (Type cyclic = findCycle(key)) {
-        if (err)
-          err() << "a self-referential equality premise (" << cyclic
-                << " occurs in its own rewrite) has no finite solution";
-        return failure();
-      }
-
-  return applySubstitutionToFixedPoint(subst, ty);
+  TypeEquivalence classes;
+  for (TypeEqualityAttr eq : premises)
+    classes.assumeEqual(eq.getLhs(), eq.getRhs());
+  return applySubstitutionToFixedPoint(classes.substitutionToCanonicalMembers(),
+                                       ty);
 }
 
 // verifyProjectionResolutionAtUse and verifyProjectionResolutionAtImpl share
@@ -154,15 +116,11 @@ static bool dischargeApplicationObligation(
   ModuleOp module = ctx.module;
   MLIRContext *mlirCtx = module.getContext();
 
-  // Arm (i): the citing impl's own where clause covers the obligation. The
-  // equality premises are already known non-cyclic here (verification rewrote its
-  // endpoints through them before reaching this check), so the rewrite cannot
-  // fail on a well-formed premise set.
+  // Arm (i): the citing impl's own where clause covers the obligation.
   for (TraitApplicationAttr premiseApp : ctx.obligationPremises) {
     ClaimType premiseClaim = ClaimType::get(mlirCtx, premiseApp);
-    auto haveOr =
-        applyEqualityPremises(Type(premiseClaim), ctx.premises, ctx.err);
-    if (succeeded(haveOr) && groundApplicationsMatch(ctx, *haveOr, want))
+    Type have = applyEqualityPremises(Type(premiseClaim), ctx.premises);
+    if (groundApplicationsMatch(ctx, have, want))
       return true;
   }
 
@@ -170,9 +128,8 @@ static bool dischargeApplicationObligation(
   // that supplies it.
   for (WitnessAttr citation : ctx.dischargeWitnesses) {
     ClaimType citedApp = ClaimType::get(mlirCtx, citation.getApplication());
-    auto citedOr =
-        applyEqualityPremises(Type(citedApp), ctx.premises, ctx.err);
-    if (failed(citedOr) || !groundApplicationsMatch(ctx, *citedOr, want))
+    Type cited = applyEqualityPremises(Type(citedApp), ctx.premises);
+    if (!groundApplicationsMatch(ctx, cited, want))
       continue;
     if (llvm::is_contained(inProgress, citation.getApplication()))
       continue; // cycle: this path grounds nothing
@@ -196,10 +153,9 @@ static bool dischargeApplicationObligation(
     bool allDischarged = true;
     for (ClaimType assumption :
          specializeAssumptionsThroughSubst(dischargerOp, *subst)) {
-      auto subWantOr = applyEqualityPremises(Type(assumption.asUnproven()),
-                                             ctx.premises, ctx.err);
-      if (failed(subWantOr) ||
-          !dischargeApplicationObligation(ctx, *subWantOr, inProgress)) {
+      Type subWant =
+          applyEqualityPremises(Type(assumption.asUnproven()), ctx.premises);
+      if (!dischargeApplicationObligation(ctx, subWant, inProgress)) {
         allDischarged = false;
         break;
       }
@@ -273,14 +229,8 @@ static FailureOr<SpecializationMap> verifyProjectionResolutionCore(
   // cannot be aligned by structural matching, the comparison runs modulo the
   // cited equality premises, applied to both the impl's binding and the certified
   // resolution before comparison.
-  auto actualOr = applyEqualityPremises(actual, premises, err);
-  if (failed(actualOr))
-    return failure();
-  actual = *actualOr;
-  auto resolvedOr = applyEqualityPremises(resolved, premises, err);
-  if (failed(resolvedOr))
-    return failure();
-  if (actual != *resolvedOr) {
+  actual = applyEqualityPremises(actual, premises);
+  if (actual != applyEqualityPremises(resolved, premises)) {
     if (err) err() << "impl '" << citedImpl << "' binds the projection to "
                    << actual << ", not the certified resolution " << resolved;
     return failure();
@@ -334,11 +284,9 @@ static FailureOr<SpecializationMap> verifyProjectionResolutionCore(
         return failure();
       want = *wantGround;
     }
-    auto wantOr = applyEqualityPremises(want, premises, err);
-    if (failed(wantOr))
-      return failure();
+    want = applyEqualityPremises(want, premises);
     SmallVector<TraitApplicationAttr> inProgress;
-    if (!dischargeApplicationObligation(dischargeCtx, *wantOr, inProgress)) {
+    if (!dischargeApplicationObligation(dischargeCtx, want, inProgress)) {
       if (err) err() << "cited impl '" << citedImpl
                      << "' has an undischarged assumption " << assumption
                      << "; the witness premises do not supply it";
@@ -446,9 +394,9 @@ TermShape mlir::trait::decomposeTerm(Type t) {
 namespace {
 
 // Ground congruence closure over the subterm DAG of a coerce's endpoints and
-// its cited equalities. It seeds the union-find with the equalities, then
-// closes under congruence: two terms with the same constructor and pairwise
-// equal children are united. It only unites -- it never decomposes, so
+// its cited equalities. It seeds the classes with the equalities, then closes
+// under congruence: two terms with the same constructor and pairwise equal
+// children are united. It only unites -- it never decomposes, so
 // f(a) = f(b) is not read backwards to a = b at projection heads or anywhere
 // else. It also closes across normalizing type constructors: a composite is
 // united with the normal form its own constructor yields when a united class
@@ -459,19 +407,19 @@ namespace {
 class GroundCongruence {
 public:
   // Seed an equality between two endpoints (and intern their subterms).
-  void seed(Type a, Type b) { unite(intern(a), intern(b)); }
+  void seed(Type a, Type b) { classes.unite(intern(a), intern(b)); }
 
   // Intern a type and all its subterms; returns its term id.
+  //
+  // The classes hand out the ids, and a term's constructor key and children sit
+  // at its own id here, so an id already carrying a key is one already
+  // decomposed.
   unsigned intern(Type t) {
-    auto it = ids.find(t);
-    if (it != ids.end())
-      return it->second;
-    unsigned id = terms.size();
-    ids[t] = id;
-    terms.push_back(t);
-    parent.push_back(id);
-    ctorKey.push_back(Attribute());
-    children.emplace_back();
+    unsigned id = classes.intern(t);
+    if (id < ctorKey.size())
+      return id;
+    ctorKey.resize(id + 1);
+    children.resize(id + 1);
 
     TermShape shape = decomposeTerm(t);
     ctorKey[id] = shape.key;
@@ -490,25 +438,25 @@ public:
     // that normalized without a fixed point could mint without bound; the
     // assert below then aborts a build that compiles asserts rather than
     // looping forever. It is generous and never bears on a verdict.
-    const size_t mintCeiling = terms.size() * 8 + 256;
+    const size_t mintCeiling = classes.size() * 8 + 256;
     bool changed = true;
     while (changed) {
       changed = false;
-      for (unsigned i = 0, n = terms.size(); i != n; ++i)
+      for (unsigned i = 0, n = classes.size(); i != n; ++i)
         for (unsigned j = i + 1; j != n; ++j) {
-          if (find(i) == find(j))
+          if (classes.findCanonical(i) == classes.findCanonical(j))
             continue;
           if (ctorKey[i] != ctorKey[j] ||
               children[i].size() != children[j].size())
             continue;
           bool allEqual = true;
           for (auto [ci, cj] : llvm::zip(children[i], children[j]))
-            if (find(ci) != find(cj)) {
+            if (classes.findCanonical(ci) != classes.findCanonical(cj)) {
               allEqual = false;
               break;
             }
           if (allEqual) {
-            unite(i, j);
+            classes.unite(i, j);
             changed = true;
           }
         }
@@ -517,23 +465,11 @@ public:
     }
   }
 
-  bool equal(Type a, Type b) { return find(intern(a)) == find(intern(b)); }
+  bool equal(Type a, Type b) {
+    return classes.findCanonical(intern(a)) == classes.findCanonical(intern(b));
+  }
 
 private:
-  unsigned find(unsigned x) {
-    while (parent[x] != x) {
-      parent[x] = parent[parent[x]];
-      x = parent[x];
-    }
-    return x;
-  }
-  void unite(unsigned a, unsigned b) {
-    a = find(a);
-    b = find(b);
-    if (a != b)
-      parent[a] = b;
-  }
-
   // Extend the closure across type constructors that normalize their arguments
   // when a type is built. Each parent a type constructor built is rebuilt
   // through that same constructor with a united class member substituted for one
@@ -557,8 +493,8 @@ private:
   bool rebuildNormalizedParents([[maybe_unused]] size_t mintCeiling) {
     bool changed = false;
     // Terms minted below join the next pass, so the parent set rebuilt this pass
-    // is fixed and the loop bounds stay valid as terms grows.
-    unsigned n = terms.size();
+    // is fixed and the loop bounds stay valid as the classes grow.
+    unsigned n = classes.size();
     for (unsigned i = 0; i != n; ++i) {
       if (children[i].empty())
         continue;
@@ -568,21 +504,22 @@ private:
         continue;
       SmallVector<Attribute> subAttrs;
       SmallVector<Type> subTypes;
-      terms[i].walkImmediateSubElements(
+      classes.termAt(i).walkImmediateSubElements(
           [&](Attribute a) { subAttrs.push_back(a); },
           [&](Type t) { subTypes.push_back(t); });
       for (unsigned pos = 0; pos != subTypes.size(); ++pos) {
         unsigned childId = children[i][pos];
         for (unsigned m = 0; m != n; ++m) {
-          if (m == childId || find(m) != find(childId))
+          if (m == childId ||
+              classes.findCanonical(m) != classes.findCanonical(childId))
             continue;
           SmallVector<Type> repl(subTypes.begin(), subTypes.end());
-          repl[pos] = terms[m];
+          repl[pos] = classes.termAt(m);
           // Rebuild through the real constructor: get() applies whatever
           // normalization the type defines. A partial constructor returns null
           // and an unchanged rebuild carries nothing new -- skip both.
-          Type r = terms[i].replaceImmediateSubElements(subAttrs, repl);
-          if (!r || r == terms[i])
+          Type r = classes.termAt(i).replaceImmediateSubElements(subAttrs, repl);
+          if (!r || r == classes.termAt(i))
             continue;
           TermShape rs = decomposeTerm(r);
           bool freeReapplication =
@@ -593,11 +530,11 @@ private:
           if (freeReapplication)
             continue;
           unsigned rid = intern(r);
-          assert(terms.size() <= mintCeiling &&
+          assert(classes.size() <= mintCeiling &&
                  "ground congruence rebuild minted past its budget: a "
                  "constructor is normalizing without a fixed point");
-          if (find(i) != find(rid)) {
-            unite(i, rid);
+          if (classes.findCanonical(i) != classes.findCanonical(rid)) {
+            classes.unite(i, rid);
             changed = true;
           }
         }
@@ -606,9 +543,7 @@ private:
     return changed;
   }
 
-  DenseMap<Type, unsigned> ids;
-  SmallVector<Type> terms;
-  SmallVector<unsigned> parent;
+  TypeEquivalence classes;
   SmallVector<Attribute> ctorKey;
   SmallVector<SmallVector<unsigned>> children;
 };
