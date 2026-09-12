@@ -1955,6 +1955,17 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
       continue;
     }
     hasLeftovers = true;
+    // A derive names the impl it stands on, so where its claim went unproven
+    // the op itself can say why: a premise that impl applies under, deferred
+    // while the template stood over its own variables and false at the instance
+    // this clone was cut at, is refused by the derive's own citation check and
+    // named there. The report below names the claim and not the premise, so it
+    // is what stands where the citation has nothing to add.
+    if (auto derive = dyn_cast<DeriveOp>(op)) {
+      SymbolTableCollection symbolTable;
+      if (failed(derive.verifySymbolUses(symbolTable)))
+        continue;
+    }
     op->emitError() << "unproven monomorphic claim " << claim
                     << " after instantiate-monomorphs";
   }
