@@ -8,8 +8,13 @@
 // on. Every step is a new application, so the same-application cycle guard
 // never fires; the count of obligations naming one trait along the chain is
 // what stops it, and the chain's ends say where the growth came from.
+//
+// The refusal stands at the demand. Every impl on the chain was asked about
+// because something wanted the application in hand; naming one of them would
+// name an impl with nothing wrong with it.
 
 // CHECK: error: overflow evaluating the requirement {{.*}}: 128 obligations of @Foo stand on the chain that reaches it
+// CHECK-NEXT: trait.allege @Foo[i32]
 // CHECK: note: required by {{.*}}@Foo[i32]
 // CHECK: note: required by {{.*}}@Foo[tuple<i32>]
 // CHECK: note: {{.*}} more frame(s) elided

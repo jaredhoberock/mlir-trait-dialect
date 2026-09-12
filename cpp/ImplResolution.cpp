@@ -24,8 +24,11 @@ LogicalResult checkObligationChainDepth(
   if (depth < kInstantiationDepthLimit)
     return success();
 
+  // At the demand, not at the impl: every impl on the chain is asked about
+  // because something wanted the application in hand, and the last one asked is
+  // no more at fault than the first. The demand is what a reader can act on.
   InFlightDiagnostic diagnostic =
-      emitError(impl.getLoc())
+      emitError(currentDemandAnchor().value_or(impl.getLoc()))
       << "overflow evaluating the requirement '" << app << "': "
       << depth << " obligations of @" << trait.getValue()
       << " stand on the chain that reaches it";

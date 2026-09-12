@@ -107,6 +107,10 @@ bool entailedByGroundCongruence(Type lhs, Type rhs,
 /// Refuses every type parameter `function`'s body mentions that its declaration
 /// does not bind, reporting at the function with a note at the first mention.
 ///
+/// Every function, whichever dialect declares it: a body's source for a type
+/// argument is the declaration standing over it, and a kernel declared as a
+/// `gpu.func` has exactly the same one.
+///
 /// A declaration binds the generics of its own signature, and, for a method, the
 /// generics of the trait or impl header it is written in. Its body may mention
 /// no others: a substitution is built from the declaration's parameters, so a
@@ -122,7 +126,7 @@ bool entailedByGroundCongruence(Type lhs, Type rhs,
 ///
 /// This is a whole-function judgment, not an op verifier: a step that reads or
 /// clones a body asks it at its entry.
-LogicalResult verifyFunctionBodyIsWellScoped(func::FuncOp function);
+LogicalResult verifyFunctionBodyIsWellScoped(FunctionOpInterface function);
 
 } // end mlir::trait
 

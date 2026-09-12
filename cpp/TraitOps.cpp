@@ -287,7 +287,7 @@ SetVector<Type> getSignatureTypeParams(CallableOpInterface callable) {
 /// signature spells, read as any callable's are, and, for a method, the generics
 /// of the trait or impl header it is written in, which a use of that header
 /// supplies.
-SetVector<Type> getDeclaredTypeParams(func::FuncOp function) {
+SetVector<Type> getDeclaredTypeParams(FunctionOpInterface function) {
   SetVector<Type> declared =
       getSignatureTypeParams(cast<CallableOpInterface>(function.getOperation()));
 
@@ -386,7 +386,8 @@ void judgeInterior(Operation *op, const SetVector<Type> &inside,
 
 } // namespace
 
-LogicalResult mlir::trait::verifyFunctionBodyIsWellScoped(func::FuncOp function) {
+LogicalResult mlir::trait::verifyFunctionBodyIsWellScoped(
+    FunctionOpInterface function) {
   SetVector<Type> declared = getDeclaredTypeParams(function);
 
   // The function's own attributes are its declaration, read above: the judgment
@@ -404,7 +405,8 @@ LogicalResult mlir::trait::verifyFunctionBodyIsWellScoped(func::FuncOp function)
     InFlightDiagnostic diagnostic =
         function.emitError()
         << "type parameter " << generic
-        << " is outside the signature scope of @" << function.getSymName();
+        << " is outside the signature scope of @"
+        << SymbolTable::getSymbolName(function).getValue();
     diagnostic.attachNote(at->getLoc()) << "mentioned here";
   }
   return success(mentions.inOrder.empty());

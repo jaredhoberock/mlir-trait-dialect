@@ -1610,13 +1610,16 @@ static LogicalResult reduceGroundEqualityAssume(
 /// Every function `module` holds mentions only the type parameters its own
 /// declaration binds.
 ///
-/// The walk reaches every function, template or not, called or not: a template
-/// is exactly what the stage carries to no target, so nothing downstream reads
-/// its interior, and a stray parameter inside one rides into every clone made
-/// from it. Each function reports on its own, so one run names them all.
+/// The walk reaches every function, template or not, called or not, and
+/// whichever dialect declares it: a template is exactly what the stage carries
+/// to no target, so nothing downstream reads its interior, and a stray parameter
+/// inside one rides into every clone made from it. A kernel body is reached the
+/// same way -- a `gpu.func` is a declaration with a signature, and the folder
+/// would otherwise carry away a cast through a parameter nothing binds. Each
+/// function reports on its own, so one run names them all.
 LogicalResult verifyFunctionBodiesAreWellScoped(ModuleOp module) {
   bool wellScoped = true;
-  module.walk([&](func::FuncOp function) {
+  module.walk([&](FunctionOpInterface function) {
     if (failed(verifyFunctionBodyIsWellScoped(function)))
       wellScoped = false;
   });
