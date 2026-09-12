@@ -896,13 +896,18 @@ static FailureOr<TraitMethodCorrespondence> buildTraitMethodCorrespondence(
   }
 
   // What the impl's copy spells for each of the trait's own variables, read off
-  // the position it stands in. The spelling may constrain the variable's kind
-  // where the trait's leaves it bare, so it is the occurrence and not the bare
-  // parameter that carries over.
+  // the position it stands in. The copy may rename a variable and may constrain
+  // its kind -- so it is the occurrence and not the bare parameter that carries
+  // over -- but it may not instantiate one: a caller supplies an argument for
+  // every variable the trait declares, and a copy standing only at some of them
+  // is a method no call to the trait's declaration can reach. Each spelling is
+  // therefore one parameter occurrence, and distinct ones, which makes the
+  // pairing a renaming the clone below can rekey a call's bindings through.
   correspondence.substitution = *traitSubst;
   TypeArguments ownArguments(correspondence.traitOwn);
   extractTypeArguments(instantiate(traitMethodTy, *traitSubst), implMethodTy,
                        ownArguments);
+  DenseSet<Type> spelled;
   for (GenericTypeInterface traitVariable : correspondence.traitOwn) {
     std::optional<Type> spelling = ownArguments.lookup(traitVariable);
     if (!spelling) {
@@ -911,8 +916,18 @@ static FailureOr<TraitMethodCorrespondence> buildTraitMethodCorrespondence(
                 << Type(traitVariable) << " is";
       return failure();
     }
+    GenericTypeInterface implVariable = getParameterOccurrence(*spelling);
+    if (!implVariable || !spelled.insert(Type(implVariable)).second) {
+      if (errFn)
+        errFn() << "method '" << name << "' spells " << *spelling
+                << " where trait '@" << traitOp.getSymName()
+                << "' declares the type parameter " << Type(traitVariable)
+                << ": an impl's copy of a method renames the trait's type"
+                   " parameters, one for one";
+      return failure();
+    }
     correspondence.substitution.bind(traitVariable, *spelling);
-    correspondence.implOwn.push_back(getParameterOccurrence(*spelling));
+    correspondence.implOwn.push_back(implVariable);
   }
 
   // Substituting this impl's self application into the trait's declaration can
@@ -1656,10 +1671,6 @@ FailureOr<func::FuncOp> ImplOp::getOrSpecializeFreeFunctionFromMethod(
   DenseMap<Type,Type> callBindings = callSubst.toTypeMap();
   for (auto [traitVariable, implVariable] :
        llvm::zip(correspondence->traitOwn, correspondence->implOwn)) {
-    // A trait method variable the impl's copy pinned to a concrete type is not
-    // a variable of the clone, so it takes no binding from the call.
-    if (!implVariable)
-      continue;
     auto binding = callBindings.find(Type(traitVariable));
     if (binding != callBindings.end())
       subst.try_emplace(Type(implVariable), binding->second);
