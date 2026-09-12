@@ -7,6 +7,14 @@ namespace mlir::trait {
 
 /// A symbol table operation and a name it was asked about, paired with what it
 /// answered.
+///
+/// XXX TODO: this is what MLIR's `SymbolTableCollection` already is, kept true
+/// across writes by `SymbolTable::insert`, `erase` and `invalidateSymbolTable`.
+/// It goes when every site that mints a symbol inserts through one such
+/// collection instead of appending to a module body: the consumer dialects'
+/// generators, `ProofOp::create` in ImplResolution.cpp and `func::FuncOp`
+/// specialization in Specialization.cpp. That is the same change as the
+/// resolver publishing the impls it generates.
 struct HeldSymbolAnswers {
   llvm::DenseMap<std::pair<Operation *, StringAttr>, Operation *> answers;
 
