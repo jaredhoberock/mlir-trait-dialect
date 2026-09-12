@@ -223,6 +223,26 @@ private:
   llvm::DenseMap<ClaimType, ClaimType> bindings;
 };
 
+/// Whether a spelling is one nothing but a respelling can move.
+///
+/// Two things leave a spelling open. A ground projection is one the impls
+/// standing when it was read could not resolve, so an impl generated since may
+/// resolve it and reach a different type. A type variable is one the template it
+/// belongs to binds differently for each instance, so what it spells is a
+/// coincidence of the instance being read rather than a fact. A spelling with
+/// neither has no open question in it, and a comparison of two such spellings is
+/// a verdict nothing later revises.
+inline bool spellingIsSettled(Type ty) {
+  if (isPolymorphicType(ty))
+    return false;
+  bool open = false;
+  ty.walk([&](Type sub) {
+    if (isa<ProjectionType>(sub))
+      open = true;
+  });
+  return !open;
+}
+
 /// What deriving each proven obligation produced, kept for as long as the proof
 /// stands.
 ///
@@ -268,25 +288,12 @@ public:
     return it == entries.end() ? nullptr : &it->second;
   }
 
-  /// Whether a spelling is one nothing but a respelling can move.
-  ///
-  /// Two things leave a spelling open. A ground projection is one the impls
-  /// standing when it was normalized could not resolve, so an impl generated
-  /// since may resolve it and reach a different closure. A type variable is one
-  /// the template it belongs to binds differently for each instance, so a pair
-  /// carrying one is a coincidence of the instance being derived rather than a
-  /// fact about the proof. A spelling with neither has no open question in it:
-  /// the proof it names is settled, and the only thing that moves it afterwards
-  /// is the sweep, which this record is transcribed by.
+  /// Whether a claim is one nothing but a respelling can move, which is the
+  /// condition on holding what deriving it produced: an open spelling is one an
+  /// impl generated since, or the instance a template is cut at, can move to
+  /// another type, and the derivation would reach another closure there.
   static bool isSettled(ClaimType claim) {
-    if (isPolymorphicType(Type(claim)))
-      return false;
-    bool open = false;
-    Type(claim).walk([&](Type sub) {
-      if (isa<ProjectionType>(sub))
-        open = true;
-    });
-    return !open;
+    return spellingIsSettled(Type(claim));
   }
 
   /// Whether the pair and every binding in `closure` are settled, which is the

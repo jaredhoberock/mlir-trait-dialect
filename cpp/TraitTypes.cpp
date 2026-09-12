@@ -806,7 +806,14 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
   // below reads the evidence's own header and its own subproofs, so without
   // this a citation of an impl or a proof of some other application would be
   // checked against itself and pass.
-  if (proven.asUnproven() != unproven) {
+  //
+  // The two are compared where both spellings are settled. An obligation still
+  // spelling a projection the impls standing here do not resolve is one impl
+  // selection may yet respell -- selection resolves a projection through the
+  // candidate it settled on, which a reader holding no record cannot -- and the
+  // respelled pair is what this decides.
+  if (spellingIsSettled(Type(unproven)) && spellingIsSettled(Type(proven)) &&
+      proven.asUnproven() != unproven) {
     if (err) err() << "proof " << proven.getProof() << " proves "
                    << proven.asUnproven()
                    << ", which does not discharge the obligation " << unproven;
