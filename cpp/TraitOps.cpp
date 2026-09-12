@@ -2522,6 +2522,25 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   auto throughEvidence = [&](Type ty) -> FailureOr<Type> {
     return reading.normalize(ty, errFn);
   };
+  // A witness carries the claim the evidence it names stands over. A proof
+  // stands over one claim and its parameters take the arguments a use supplies,
+  // so the proof's claim is the declaration and this one is the use -- the
+  // comparison every citation of a proof is read by. Reading the impl's header
+  // alone would accept a witness for an application the proof does not prove,
+  // because a blanket impl's header carries to every application of its trait.
+  if (auto proof = SymbolTable::lookupNearestSymbolFrom<ProofOp>(
+          module, getProofAttr())) {
+    auto citationErr = [&] {
+      return errFn() << "the proof " << getProofAttr()
+                     << " this witness cites stands over another claim: ";
+    };
+    Type proofClaim = Type(proof.getProvenClaim());
+    if (failed(matchDeclaration(getTypeParametersIn(proofClaim), proofClaim,
+                                Type(getProvenClaim()), throughEvidence,
+                                citationErr)))
+      return failure();
+  }
+
   auto subst = impl->buildSubstitutionForSelfClaim(getProvenClaim(),
                                                    throughEvidence, errFn);
   return failed(subst) ? failure() : success();
