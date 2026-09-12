@@ -132,9 +132,8 @@ static LogicalResult verifyFunctionResultGenericsAreDetermined(
 /// The projections the evidence `values` carry justify reducing: for a proven
 /// claim the impls its proof tree names, by index; for a derived claim the impl
 /// it commits to and whatever its given operands carry in turn.
-static FailureOr<NormalizationContext> buildLocalClaimNormalizationContext(
-    ValueRange values, ModuleOp module,
-    llvm::function_ref<InFlightDiagnostic()> err);
+static NormalizationContext buildLocalClaimNormalizationContext(
+    ValueRange values, ModuleOp module);
 
 
 //===----------------------------------------------------------------------===//
@@ -2561,17 +2560,15 @@ LogicalResult DeriveOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // by index through their own impls and proof trees. An impl whose header
   // forwards an associated type spells a projection the derive's demand spells
   // through the base, and this is what reduces the two to one grade.
-  auto normalization =
-      buildLocalClaimNormalizationContext(getAssumptions(), module, errFn);
-  if (failed(normalization))
-    return failure();
+  NormalizationContext normalization =
+      buildLocalClaimNormalizationContext(getAssumptions(), module);
   // XXX TODO A claim operand that is neither proven nor derived carries no
   // impl, so an impl whose header forwards through such an operand's own
   // application has nothing here to reduce it. The module's impls stand in
   // until such an operand carries the impl serving it; see setModuleLookup.
-  normalization->setModuleLookup(module, LookupScope::Determined);
+  normalization.setModuleLookup(module, LookupScope::Determined);
   auto normalize = [&](Type ty) -> FailureOr<Type> {
-    return normalization->normalize(ty, errFn);
+    return normalization.normalize(ty, errFn);
   };
 
   // build substitution: impl's self claim -> derived claim
@@ -2916,8 +2913,10 @@ LogicalResult MethodCallOp::verify() {
 /// the subproof at the same index, so the impls those subproofs name are
 /// evidence at this site exactly as the impl the proof itself names is -- the
 /// same reading by index a derive gets from its given operands. The children go
-/// in first, so the fixed-point walk reduces an inner application before the
-/// outer one that reaches it.
+/// in first, and the head is read through the rules they contributed: an impl
+/// header that forwards an associated type spells a projection over an inner
+/// application, and only that inner application's rule carries the two
+/// spellings to one grade.
 ///
 /// A claim whose own rule cannot be built contributes none: this reads the
 /// evidence an op holds, and a proof that does not check is refused where it is
@@ -2948,7 +2947,10 @@ static void addLocalProjectionRulesFromProvenClaim(
   // Store rules against the unproven application because projection heads do
   // not include proof symbols; proof only explains why the application holds.
   ClaimType unproven = claim.asUnproven();
-  auto subst = implOr->buildSubstitutionForSelfClaim(unproven,
+  auto throughRulesSoFar = [&](Type ty) -> FailureOr<Type> {
+    return ctx.normalize(ty, /*err=*/nullptr);
+  };
+  auto subst = implOr->buildSubstitutionForSelfClaim(unproven, throughRulesSoFar,
                                                      /*errFn=*/nullptr);
   if (failed(subst))
     return;
@@ -2960,21 +2962,23 @@ static void addLocalProjectionRulesFromProvenClaim(
 ///
 /// A rule records that projections for a specific trait application may use a
 /// specific impl's associated type bindings while checking this operation.
-static LogicalResult addLocalProjectionRulesFromClaim(
+///
+/// Reading evidence never refuses: a claim whose rule cannot be built is
+/// refused where it is verified, not at the op that holds it.
+static void addLocalProjectionRulesFromClaim(
     NormalizationContext &ctx, Value claimValue, ModuleOp module,
-    llvm::SmallPtrSetImpl<Operation *> &visited,
-    llvm::function_ref<InFlightDiagnostic()> err) {
+    llvm::SmallPtrSetImpl<Operation *> &visited) {
   // Only claim-typed operands can carry trait evidence relevant to projection
   // normalization. Ordinary method arguments do not contribute rules.
   auto claim = dyn_cast<ClaimType>(claimValue.getType());
   if (!claim)
-    return success();
+    return;
 
   // An equality claim IS evidence of its own equality, so an op holding one may
   // read either endpoint as the other.
   if (auto equality = claim.getEqualityAttr()) {
     ctx.addEqualityRule(equality.getLhs(), equality.getRhs());
-    return success();
+    return;
   }
 
   // A coerce respells the claim it forwards, and what licenses the respelling
@@ -2984,12 +2988,8 @@ static LogicalResult addLocalProjectionRulesFromClaim(
   if (auto coerce = claimValue.getDefiningOp<CoerceOp>()) {
     if (visited.insert(coerce.getOperation()).second) {
       for (Value equality : coerce.getEqualities())
-        if (failed(addLocalProjectionRulesFromClaim(ctx, equality, module,
-                                                    visited, err)))
-          return failure();
-      if (failed(addLocalProjectionRulesFromClaim(ctx, coerce.getInput(),
-                                                  module, visited, err)))
-        return failure();
+        addLocalProjectionRulesFromClaim(ctx, equality, module, visited);
+      addLocalProjectionRulesFromClaim(ctx, coerce.getInput(), module, visited);
     }
   }
 
@@ -2999,7 +2999,7 @@ static LogicalResult addLocalProjectionRulesFromClaim(
   // obligations.
   if (claim.isProven()) {
     addLocalProjectionRulesFromProvenClaim(ctx, claim, module, visited);
-    return success();
+    return;
   }
 
   // A derive op also commits to one impl, but the evidence may be nested in its
@@ -3009,45 +3009,40 @@ static LogicalResult addLocalProjectionRulesFromClaim(
     // Derived claims can refer to other derived claims through assumptions; the
     // visited set keeps malformed or cyclic IR from recursing forever.
     if (!visited.insert(derive.getOperation()).second)
-      return success();
+      return;
+
+    // The given operands are part of the local evidence package used to derive
+    // this claim, and they go in first: an impl header that forwards an
+    // associated type spells a projection over an application one of them
+    // carries, so the header below is read at the grade their rules reach.
+    for (Value assumption : derive.getAssumptions())
+      addLocalProjectionRulesFromClaim(ctx, assumption, module, visited);
 
     ImplOp impl = derive.getImplOp();
-    if (!impl) {
-      if (err)
-        err() << "cannot find trait.impl '" << derive.getImplAttr() << "'";
-      return failure();
-    }
+    if (!impl)
+      return;
 
     ClaimType derived = derive.getDerivedClaim();
-    auto subst = impl.buildSubstitutionForSelfClaim(derived, err);
+    auto throughRulesSoFar = [&](Type ty) -> FailureOr<Type> {
+      return ctx.normalize(ty, /*err=*/nullptr);
+    };
+    auto subst = impl.buildSubstitutionForSelfClaim(derived, throughRulesSoFar,
+                                                    /*errFn=*/nullptr);
     if (failed(subst))
-      return failure();
+      return;
 
     ctx.addLocalProjectionRule(impl, derived.getTraitApplication(), *subst);
-
-    // Assumptions are part of the local evidence package used to derive this
-    // claim, so their associated type bindings are visible to the same method
-    // call comparison.
-    for (Value assumption : derive.getAssumptions())
-      if (failed(addLocalProjectionRulesFromClaim(
-              ctx, assumption, module, visited, err)))
-        return failure();
   }
-
-  return success();
 }
 
-FailureOr<NormalizationContext> buildLocalClaimNormalizationContext(
-    ValueRange values, ModuleOp module,
-    llvm::function_ref<InFlightDiagnostic()> err) {
+NormalizationContext buildLocalClaimNormalizationContext(ValueRange values,
+                                                         ModuleOp module) {
   NormalizationContext ctx;
   // The derives and proofs already read, so cyclic or self-referencing evidence
   // is read once.
   llvm::SmallPtrSet<Operation *, 8> visited;
   for (Value value : values)
-    if (failed(addLocalProjectionRulesFromClaim(
-            ctx, value, module, visited, err)))
-      return failure();
+    addLocalProjectionRulesFromClaim(ctx, value, module, visited);
   return ctx;
 }
 
@@ -3145,11 +3140,9 @@ FailureOr<SpecializationMap> MethodCallOp::buildParameterSpecialization(
   for (Value argument : getArguments())
     if (isa<ClaimType>(argument.getType()))
       localClaims.push_back(argument);
-  auto normalization =
-      buildLocalClaimNormalizationContext(localClaims, *module, err);
-  if (failed(normalization))
-    return failure();
-  normalization->setRecordedFacts(reading);
+  NormalizationContext normalization =
+      buildLocalClaimNormalizationContext(localClaims, *module);
+  normalization.setRecordedFacts(reading);
   // XXX TODO A claim this call's own arguments spell can carry a ground
   // projection no evidence at this site reduces, because the impl serving it is
   // named nowhere the call can read. The module's impls stand in, and only
@@ -3157,9 +3150,9 @@ FailureOr<SpecializationMap> MethodCallOp::buildParameterSpecialization(
   // grants nothing. Deleted once the claim a call commits to carries the impls
   // serving the projections its arguments spell; see setModuleLookup.
   if (getClaimType().isProven() || getClaim().getDefiningOp<DeriveOp>())
-    normalization->setModuleLookup(*module, LookupScope::Ground);
+    normalization.setModuleLookup(*module, LookupScope::Ground);
   auto normalize = [&](Type ty) -> FailureOr<Type> {
-    return normalization->normalize(ty, err);
+    return normalization.normalize(ty, err);
   };
 
   // One identity: the method's declaration instantiated at the arguments above
@@ -3365,11 +3358,9 @@ FailureOr<SpecializationMap> FuncCallOp::buildParameterSpecialization(
   for (Value operand : getOperands())
     if (isa<ClaimType>(operand.getType()))
       localClaims.push_back(operand);
-  auto normalization =
-      buildLocalClaimNormalizationContext(localClaims, *module, err);
-  if (failed(normalization))
-    return failure();
-  normalization->setRecordedFacts(reading);
+  NormalizationContext normalization =
+      buildLocalClaimNormalizationContext(localClaims, *module);
+  normalization.setRecordedFacts(reading);
   // XXX TODO As at a method call: a ground projection an operand claim spells
   // and no evidence here reduces is read through the module's impls, and only
   // where an operand claim commits to evidence. Deleted on the same trigger;
@@ -3378,9 +3369,9 @@ FailureOr<SpecializationMap> FuncCallOp::buildParameterSpecialization(
         return cast<ClaimType>(claim.getType()).isProven() ||
                claim.getDefiningOp<DeriveOp>();
       }))
-    normalization->setModuleLookup(*module, LookupScope::Ground);
+    normalization.setModuleLookup(*module, LookupScope::Ground);
   auto normalize = [&](Type ty) -> FailureOr<Type> {
-    return normalization->normalize(ty, err);
+    return normalization.normalize(ty, err);
   };
 
   // One identity: the callee's declaration instantiated at those arguments is
