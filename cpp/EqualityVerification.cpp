@@ -25,10 +25,13 @@ using namespace mlir::trait;
 // both sides of every such comparison are rewritten here, so the verdict does
 // not turn on how any premise was oriented.
 //
-// The rewrite settles because the member it lands on is fixed for the class and
-// no greater than the member it replaces, so two premises of opposite
-// orientation, and a premise whose one endpoint stands inside the other
-// (!S = tuple<!S>), each reach a normal form rather than growing the spelling.
+// One rewrite is the whole reading. The member a class is headed by spells no
+// more projections and no more types than any other member, so it cannot have
+// another member of its own class standing inside it; rewriting a member to it
+// therefore mints nothing this reading would rewrite again. Two premises of
+// opposite orientation, and a premise whose one endpoint stands inside the other
+// (!S = tuple<!S>), each reach the member their class is headed by in that one
+// rewrite rather than growing the spelling.
 static Type applyEqualityPremises(Type ty,
                                   ArrayRef<TypeEqualityAttr> premises) {
   if (premises.empty())
@@ -36,8 +39,7 @@ static Type applyEqualityPremises(Type ty,
   TypeEquivalence classes;
   for (TypeEqualityAttr eq : premises)
     classes.assumeEqual(eq.getLhs(), eq.getRhs());
-  return applySubstitutionToFixedPoint(classes.substitutionToCanonicalMembers(),
-                                       ty);
+  return applySubstitutionOnce(classes.substitutionToCanonicalMembers(), ty);
 }
 
 // verifyProjectionResolutionAtUse and verifyProjectionResolutionAtImpl share
@@ -51,9 +53,8 @@ static Type applyEqualityPremises(Type ty,
 // agree with the head the match produced.
 static SmallVector<ClaimType> specializeAssumptionsThroughSubst(
     ImplOp impl, const SpecializationMap &subst) {
-  auto typeMap = subst.toTypeMap();
   return llvm::map_to_vector(impl.getAssumptionsAsClaims(), [&](ClaimType a) {
-    return cast<ClaimType>(applySubstitutionToFixedPoint(typeMap, a));
+    return cast<ClaimType>(instantiate(a, subst));
   });
 }
 
@@ -242,7 +243,7 @@ static FailureOr<SpecializationMap> verifyProjectionResolutionCore(
   // assumptions carried to that instance, so the premises a clone supplies at
   // its own spelling match. Without a current equality the stored endpoints
   // stand in and the instance substitution is the identity.
-  llvm::DenseMap<Type, Type> instanceSubst;
+  SpecializationMap instanceSubst;
   if (currentEquality) {
     Type stored = TupleType::get(
         module.getContext(), {witness.getProjection(), witness.getResolved()});
@@ -252,7 +253,7 @@ static FailureOr<SpecializationMap> verifyProjectionResolutionCore(
     auto match = matchDeclaration(getTypeParametersIn(stored), stored, current,
                                   /*normalize=*/Normalizer(), /*err=*/nullptr);
     if (succeeded(match))
-      instanceSubst = match->toTypeMap();
+      instanceSubst = *match;
   }
 
   // Obligation-discharge check. The cited impl's own assumptions -- specialized
@@ -271,8 +272,7 @@ static FailureOr<SpecializationMap> verifyProjectionResolutionCore(
   for (ClaimType assumption :
        specializeAssumptionsThroughSubst(implOp, *subst)) {
     Type want = Type(assumption.asUnproven());
-    if (!instanceSubst.empty())
-      want = applySubstitutionToFixedPoint(instanceSubst, want);
+    want = instantiate(want, instanceSubst);
     // At the use-site entry, read the obligation modulo the module's ground
     // impls, so an assumption spelling a ground projection is compared as its
     // resolution -- a non-converging chain refuses.

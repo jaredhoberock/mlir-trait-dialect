@@ -57,14 +57,18 @@ static void cloneRegionWithTypeReplacement(
   substituteRegion(newRegion, substituteRegion);
 }
 
-// Every type this replacer stamps into a specialized clone is chased to the
-// substitution's fixed point, so a specialized monomorph never carries a type
-// that some remaining substitution entry would still rewrite. Substituting a
-// concrete argument into a projection spelling can mint a ground projection the
-// fixed point alone does not close; when `module` is supplied the replacer
-// resolves those projections by module-visible impl lookup, so a specialized
-// monomorph carries no ground projection that a unique module-visible impl
-// resolves. Projections whose impl is generator-pending or
+// A template clone -- one stamped with no module -- receives the bindings of a
+// declaration's parameters alone, and each is stamped once: what a parameter
+// stands for is a term of whoever supplied it, so reading that term again as
+// though it were the declaration's own spelling would mistake a shared label for
+// the same variable and grow a parameter bound over itself one level per pass.
+// A monomorphic clone receives the closed call substitution, whose projection
+// and evidence bindings expose one another, so those are chased until they
+// settle. Substituting a concrete argument into a projection spelling can mint a
+// ground projection no substitution entry closes; when `module` is supplied the
+// replacer resolves those projections by module-visible impl lookup, so a
+// specialized monomorph carries no ground projection that a unique
+// module-visible impl resolves. Projections whose impl is generator-pending or
 // whose application matches several candidates survive stamp-out unchanged, to
 // be resolved once evidence exists.
 AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &subst,
@@ -76,11 +80,19 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &sub
   AttrTypeReplacer replacer = makeEndpointSealedReplacer();
   replacer.addReplacement(
       [=](Type t) -> std::optional<std::pair<Type, WalkResult>> {
+    // A template's clone: the substitution is a structural rewrite of the whole
+    // type already, so what it stamped in is the answer and the walk does not
+    // re-enter it. Re-entering is what reads a parameter's argument as though it
+    // were the declaration's own spelling again, which grows a parameter bound
+    // over itself one level per visit.
+    if (!module)
+      return std::make_pair(applySubstitutionOnce(subst, t),
+                            WalkResult::skip());
+
     Type result = applySubstitutionToFixedPoint(subst, t);
-    if (module)
-      result = resolveProjectionsByLookup(result, module,
-                                          DemandOrigin::MonomorphStampOut,
-                                          LookupScope::Ground);
+    result = resolveProjectionsByLookup(result, module,
+                                        DemandOrigin::MonomorphStampOut,
+                                        LookupScope::Ground);
 
     // A generic type owns its specialization entirely, so the substitution
     // reaches the parameter it stands for through `specializeWith` and never
@@ -99,8 +111,8 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &sub
   });
 
   // The clone rule for equality evidence: the endpoints receive the variable
-  // bindings alone, to a fixed point -- no projection or evidence binding, and
-  // no module lookup, resolved inside them -- matching what the witness verifier
+  // bindings alone, stamped once -- no projection or evidence binding, and no
+  // module lookup, resolved inside them -- matching what the witness verifier
   // enforces: the current endpoints must be a single-substitution instance of
   // the witness's own equality, which a resolution would break. A witness's
   // stored equality is likewise NOT rewritten -- it is immutable evidence.
@@ -112,7 +124,7 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &sub
       [variableBindings](ClaimType claim)
           -> std::optional<std::pair<Type, WalkResult>> {
     return respellEqualityEndpoints(claim, [&](Type t) {
-      return applySubstitutionToFixedPoint(variableBindings, t);
+      return applySubstitutionOnce(variableBindings, t);
     });
   });
 

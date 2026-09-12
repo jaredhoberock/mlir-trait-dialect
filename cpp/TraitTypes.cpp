@@ -77,7 +77,7 @@ std::string applySubstitutionAndGenerateMangledNameSuffix(
     ArrayRef<GenericTypeInterface> typeParams) {
   SmallVector<Type> concreteTypes;
   for (auto ty : typeParams)
-    concreteTypes.push_back(applySubstitutionToFixedPoint(subst, ty));
+    concreteTypes.push_back(applySubstitutionOnce(subst, ty));
   return generateMangledNameSuffixFor(concreteTypes);
 }
 
@@ -1084,13 +1084,11 @@ void ClaimType::getProjections(
         auto eqSubst = impl.buildSubstitutionForSelfClaim(
             *this, byGroundLookup, /*errFn=*/nullptr);
         if (succeeded(eqSubst)) {
-          auto substMap = eqSubst->toTypeMap();
           for (Attribute pred : impl.getAssumptions())
             if (auto eq = dyn_cast<TypeEqualityAttr>(pred))
               result.push_back(ClaimType::getEquality(
-                  getContext(),
-                  applySubstitutionToFixedPoint(substMap, eq.getLhs()),
-                  applySubstitutionToFixedPoint(substMap, eq.getRhs())));
+                  getContext(), instantiate(eq.getLhs(), *eqSubst),
+                  instantiate(eq.getRhs(), *eqSubst)));
         }
       }
     }

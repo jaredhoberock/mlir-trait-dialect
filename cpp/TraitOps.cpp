@@ -597,16 +597,15 @@ FailureOr<SmallVector<ClaimType>> TraitOp::specializeRequirementsAsClaimsFor(
   // build a specialized substitution for actualSelfClaim
   auto spec = buildSubstitutionForSelfClaim(actualSelfClaim, errFn);
   if (failed(spec)) return failure();
-  auto subst = spec->toTypeMap();
 
   // apply the substitution to each requirement. A substitution rewrites the
   // type arguments a claim carries, never the claim wrapper itself: its keys
-  // are polymorphic and inference variables, never a whole ClaimType, so the
-  // outer constructor is preserved and the result is always a claim. This holds
+  // are this trait's type parameters, never a whole ClaimType, so the outer
+  // constructor is preserved and the result is always a claim. This holds
   // structurally, independent of whether the module's symbols resolve, so it is
   // safe on unverified IR -- the cast never fails.
   return llvm::map_to_vector(getRequirementsAsClaims(), [&](ClaimType req) {
-    ClaimType specializedReq = dyn_cast_or_null<ClaimType>(applySubstitutionToFixedPoint(subst, req));
+    ClaimType specializedReq = dyn_cast_or_null<ClaimType>(instantiate(req, *spec));
     if (!specializedReq)
       llvm_unreachable("TraitOp::specializeRequirementsAsClaimsFor: expected ClaimType");
     return specializedReq;
@@ -1789,15 +1788,15 @@ FailureOr<SmallVector<ClaimType>> ImplOp::specializeAssumptionsAsClaimsFor(
   // claim is settled where the impl was matched to it -- at selection, or at the
   // verifier of the proof or derive citing it -- and remaking that verdict here
   // would remake it under whatever context stands at the reading instead.
-  auto subst =
-      readTypeArgumentsFor(actualSelfClaim, normalize).toSpecialization().toTypeMap();
+  SpecializationMap subst =
+      readTypeArgumentsFor(actualSelfClaim, normalize).toSpecialization();
 
   // apply the substitution to each assumption. As with a trait's requirements,
   // a substitution rewrites the type arguments a claim carries and never the
   // claim wrapper (its keys are never a whole ClaimType), so the result is
   // always a claim; the cast holds structurally even on unverified IR.
   return llvm::map_to_vector(getAssumptionsAsClaims(), [&](ClaimType assumption) {
-    ClaimType specializedAssumption = dyn_cast_or_null<ClaimType>(applySubstitutionToFixedPoint(subst, assumption));
+    ClaimType specializedAssumption = dyn_cast_or_null<ClaimType>(instantiate(assumption, subst));
     if (!specializedAssumption)
       llvm_unreachable("ImplOp::specializeAssumptionsAsClaimsFor: expected ClaimType");
     return specializedAssumption;

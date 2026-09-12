@@ -604,8 +604,11 @@ public:
 
   const SpecializationMap &getSpecialization() const { return specialization; }
 
-  // The components can expose bindings for one another, so call substitutions
-  // must chase to a fixed point.
+  // A projection binding can rewrite a spelling into one that names a proof and
+  // a proof binding can expose a projection, so the ground half of this map is
+  // chased until it settles. Both kinds of key name a ground spelling, so no
+  // chain through them reaches a key from its own value; the parameter bindings
+  // ride along under keys nothing the chase mints spells again.
   Type apply(Type ty) const {
     return applySubstitutionToFixedPoint(toTypeMap(), ty);
   }
@@ -811,15 +814,17 @@ inline Type applySubstitutionOnce(const llvm::DenseMap<Type,Type> &subst,
   return replacer.replace(root);
 }
 
-/// The pass budget the substitution fixed point spends before it gives up. A
-/// well-formed substitution settles in at most as many passes as the longest
-/// chain of keys it binds through -- a small number, since unification's occurs
-/// check keeps a variable out of its own binding. A substitution that violates
-/// that (a key reachable inside its own value) grows the spelling one level per
-/// pass without ever settling; this bound stops that growth well before it
-/// exhausts the stack in the structural rewrite, and the depth it reaches stays
-/// walkable. The headroom over any real chain length is wide enough that no
-/// well-formed substitution is clipped.
+/// The pass budget the substitution fixed point spends before it gives up.
+///
+/// The chase settles in as many passes as the longest chain of keys it binds
+/// through -- a small number, because the keys it is for are ground spellings: a
+/// resolved projection and a proven claim each name a type, and naming one can
+/// expose another, but nothing along such a chain is reached from its own value.
+/// A key that is (a type variable bound to a spelling mentioning that same
+/// variable) grows one level per pass and never settles, which is why parameter
+/// bindings are stamped once instead of chased; this bound stops any growth a
+/// caller still lets through well before it exhausts the stack in the structural
+/// rewrite, and the depth it reaches stays walkable.
 constexpr unsigned kSubstitutionFixedPointMaxPasses = 256;
 
 /// How many times one declaration may occur on the chain of instantiations or
@@ -841,10 +846,13 @@ constexpr unsigned kInstantiationDepthLimit = 128;
 /// substitution stays a (now-resolvable) projection for the resolution
 /// patterns.
 ///
-/// A substitution whose occurs check was bypassed on hostile input would grow
-/// without settling; the pass budget bounds it and hands back the partial
-/// spelled as written, which every comparison downstream declines on -- a
-/// decline in the safe direction rather than an unbounded rewrite.
+/// For ground keys alone -- a resolved projection, a proven claim -- where one
+/// rewrite exposes another. A map keyed by a declaration's parameters is
+/// stamped with `instantiate` instead: chasing one re-reads what a parameter
+/// stood for as though it were the declaration's own spelling, so a parameter
+/// whose argument mentions that parameter grows one level per pass. What such a
+/// map hands back here is the partial the budget stopped at, spelled as
+/// written, which every comparison downstream declines on.
 inline Type applySubstitutionToFixedPoint(const llvm::DenseMap<Type,Type> &subst,
                                           Type ty) {
   Type cur = ty;
@@ -926,6 +934,10 @@ private:
 /// Applies a GAT substitution: maps each type in `typeParams` to the
 /// corresponding type in `assocTypeArgs`, then substitutes into `boundType`.
 /// Returns the original `boundType` unchanged if `typeParams` is empty.
+///
+/// The associated type's parameters are stamped once. An argument is a term of
+/// whoever spelled the projection, so a label it shares with one of these
+/// parameters names that caller's variable and not this declaration's.
 inline Type applyGATSubstitution(ArrayAttr typeParams,
                                  ArrayRef<Type> assocTypeArgs,
                                  Type boundType) {
@@ -936,7 +948,7 @@ inline Type applyGATSubstitution(ArrayAttr typeParams,
   DenseMap<Type,Type> gatSubst;
   for (auto [param, arg] : llvm::zip(typeParams, assocTypeArgs))
     gatSubst[cast<TypeAttr>(param).getValue()] = arg;
-  return applySubstitutionToFixedPoint(gatSubst, boundType);
+  return applySubstitutionOnce(gatSubst, boundType);
 }
 
 // this walks an Attribute and looks for any occurrence of the given NeedleType
