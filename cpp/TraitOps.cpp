@@ -136,6 +136,30 @@ static LogicalResult verifyFunctionResultGenericsAreDetermined(
 static NormalizationContext buildLocalClaimNormalizationContext(
     Operation *op, ValueRange values, ModuleOp module);
 
+/// Whether `ty` spells a projection anywhere.
+///
+/// A declaration that spells none is rebuilt by substitution alone, so there is
+/// nothing for evidence to reduce in it and the evidence is not gathered.
+static bool spellsAProjection(Type ty) {
+  bool found = false;
+  ty.walk([&](Type sub) {
+    if (isa<ProjectionType>(sub))
+      found = true;
+  });
+  return found;
+}
+
+/// What a proven claim may be read through: the impl its proof names and, by
+/// index, the impls the subproofs discharging that impl's obligations name.
+static NormalizationContext buildProofNormalizationContext(ClaimType provenClaim,
+                                                           ModuleOp module);
+
+/// What the obligations of the impl `proof` stands on may be read through: the
+/// impls the proofs discharging them name, by index. A proof justifies nothing
+/// about itself, so its own rule is not among these.
+static NormalizationContext buildSubproofNormalizationContext(ProofOp proof,
+                                                              ModuleOp module);
+
 
 //===----------------------------------------------------------------------===//
 // NormalizationContext
@@ -149,6 +173,10 @@ FailureOr<Type> NormalizationContext::normalize(
   // fallible driver spends the rewrite budget; on nonconvergence this reports
   // through the op-attached diagnostic rather than the driver's fatal
   // module-level reporter.
+  // A lookup that will not ground refuses through the caller's own diagnostic,
+  // which is the one report of it; the driver below then stops without adding a
+  // second.
+  bool lookupRefused = false;
   auto normalizeOnce = [&](Type root) {
     AttrTypeReplacer replacer = makeEndpointSealedReplacer();
     replacer.addReplacement([&](ProjectionType proj) -> std::optional<Type> {
@@ -173,15 +201,24 @@ FailureOr<Type> NormalizationContext::normalize(
     // below repeats them until the spelling settles.
     if (recordedFacts)
       root = recordedFacts->resolveProjectionsIn(root);
-    if (moduleLookup)
-      root = resolveProjectionsByLookup(root, moduleLookup,
-                                        DemandOrigin::DeclarationMatch,
-                                        moduleLookupScope);
+    if (moduleLookup && !lookupRefused) {
+      FailureOr<Type> byLookup =
+          resolveProjectionsByLookup(root, moduleLookup, moduleLookupOrigin,
+                                     moduleLookupScope, err);
+      if (failed(byLookup))
+        lookupRefused = true;
+      else
+        root = *byLookup;
+    }
     return root;
   };
 
   Type out;
-  if (failed(tryNormalizeProjectionsToFixedPoint(ty, normalizeOnce, out))) {
+  bool converged = succeeded(tryNormalizeProjectionsToFixedPoint(
+      ty, normalizeOnce, out));
+  if (lookupRefused)
+    return failure();
+  if (!converged) {
     if (err)
       err() << "projection normalization did not converge; check for cyclic "
                "associated type bindings";
@@ -1339,12 +1376,19 @@ FailureOr<ImplSpecialization> ImplOp::buildImplSpecialization(
                                   evidence, origin, memo, err)))
     return failure();
 
-  // This runs where the proof already stands, so the impls the module holds are
-  // what a projection this impl's header spells reduces through; `origin` names
-  // the reading.
-  GroundProjectionLookup byGroundLookup(*module, origin);
+  // The self claim names the proof standing over this impl's obligations, so a
+  // projection the header spells over one of them reduces through the impl that
+  // obligation's subproof names -- the reading by index. Where the header spells
+  // an application no subproof answers, the impls the module holds stand in.
+  NormalizationContext throughProof;
+  if (spellsAProjection(Type(getSelfClaim())))
+    throughProof = buildProofNormalizationContext(provenSelfClaim, *module);
+  throughProof.setModuleLookup(*module, LookupScope::Ground, origin);
+  auto normalize = [&](Type ty) -> FailureOr<Type> {
+    return throughProof.normalize(ty, err);
+  };
   auto specialization =
-      buildSubstitutionForSelfClaim(provenSelfClaim, byGroundLookup, err);
+      buildSubstitutionForSelfClaim(provenSelfClaim, normalize, err);
   if (failed(specialization)) return failure();
 
   return ImplSpecialization(*specialization, evidence);
@@ -1620,7 +1664,8 @@ FailureOr<func::FuncOp> ImplOp::getOrSpecializeFreeFunctionFromMethod(
 
   // The extracted function name must include every substitution used to clone
   // the method body; otherwise different method-generic calls share a symbol.
-  auto functionName = generateMangledName(provenSelfClaim) + "_" + methodName.str() +
+  auto functionName = generateMangledName(implSpec->getSpecialization()) + "_" +
+    methodName.str() +
     applySubstitutionAndGenerateMangledNameSuffix(subst, getTypeParametersIn((*method).getFunctionType()));
 
   MLIRContext* ctx = getContext();
@@ -1698,20 +1743,10 @@ std::string ImplOp::generateSymName(TraitApplicationAttr selfApp,
   return selfApp.getTraitName().getValue().str() + "_impl" + hashToSuffix(signature);
 }
 
-std::string ImplOp::generateMangledName(ClaimType claim) {
-  // The name is minted for a claim impl selection already matched to this impl,
-  // so the arguments it rebuilds cannot fail to read: selection built the same
-  // match, through the same module-visible impls, to choose this impl.
-  // Instantiation runs post-selection on a verified module, so a hostile blob
-  // never reaches here with an unmatched claim.
-  ModuleOp module = (*this)->getParentOfType<ModuleOp>();
-  GroundProjectionLookup byGroundLookup(module, DemandOrigin::DeclarationMatch);
-  auto subst = buildSubstitutionForSelfClaim(claim, byGroundLookup,
-                                             /*errFn=*/nullptr);
-  if (failed(subst))
-    llvm_unreachable("ImplOp::generateMangledName: the impl's header does not match the claim");
-
-  return getSymName().str() + applySubstitutionAndGenerateMangledNameSuffix(*subst, getTypeParams());
+std::string ImplOp::generateMangledName(const SpecializationMap &arguments) {
+  return getSymName().str() +
+         applySubstitutionAndGenerateMangledNameSuffix(arguments,
+                                                       getTypeParams());
 }
 
 SmallVector<ClaimType> ImplOp::getAssumptionsAsClaims() {
@@ -1730,12 +1765,15 @@ FailureOr<SmallVector<ClaimType>> ImplOp::specializeAssumptionsAsClaimsFor(
     ClaimType actualSelfClaim,
     Normalizer normalize,
     llvm::function_ref<InFlightDiagnostic()> errFn) {
-  // The arguments carrying this impl's header to actualSelfClaim. A header
-  // spelling a projection reproduces a claim spelling its resolution only
-  // through `normalize`, which is the caller's established context.
-  auto spec = buildSubstitutionForSelfClaim(actualSelfClaim, normalize, errFn);
-  if (failed(spec)) return failure();
-  auto subst = spec->toTypeMap();
+  // The arguments actualSelfClaim supplies for this impl's parameters, read off
+  // it by position; `normalize` is the caller's established context, which is
+  // what a parameter the header leaves open and the where clause determines is
+  // read through. Reading is all this does: whether the header carries to the
+  // claim is settled where the impl was matched to it -- at selection, or at the
+  // verifier of the proof or derive citing it -- and remaking that verdict here
+  // would remake it under whatever context stands at the reading instead.
+  auto subst =
+      readTypeArgumentsFor(actualSelfClaim, normalize).toSpecialization().toTypeMap();
 
   // apply the substitution to each assumption. As with a trait's requirements,
   // a substitution rewrites the type arguments a claim carries and never the
@@ -1756,9 +1794,8 @@ FailureOr<SmallVector<ClaimType>> ImplOp::specializeObligationsAsClaimsFor(
   auto module = getModule(errFn);
   if (failed(module)) return failure();
 
-  // This reads committed facts -- `origin` is what names the reading -- so the
-  // impls the module holds are what a projection either the header or an
-  // obligation spells reduces through.
+  // A parameter the header leaves open and the where clause determines is read
+  // through the impls the module holds; `origin` names that reading.
   GroundProjectionLookup byGroundLookup(*module, origin);
 
   // specialize requirements of the trait
@@ -1778,13 +1815,16 @@ FailureOr<SmallVector<ClaimType>> ImplOp::specializeObligationsAsClaimsFor(
   // Only projections over this impl's own (actual) trait application resolve
   // through its bindings; a projection over a different trait application that
   // merely shares an associated-type name stays symbolic.
-  auto subst =
-      buildSubstitutionForSelfClaim(actualSelfClaim, byGroundLookup, errFn);
-  if (failed(subst)) return failure();
+  //
+  // The arguments are read off the claim by position, as the assumptions'
+  // are: whether the header carries to the claim is settled where the impl was
+  // matched to it, not here.
+  SpecializationMap subst =
+      readTypeArgumentsFor(actualSelfClaim, byGroundLookup).toSpecialization();
 
   NormalizationContext normalization;
   normalization.addLocalProjectionRule(
-      *this, actualSelfClaim.getTraitApplication(), *subst);
+      *this, actualSelfClaim.getTraitApplication(), subst);
   for (ClaimType &req : *requirements) {
     auto resolved = normalization.normalize(req, errFn);
     if (failed(resolved)) return failure();
@@ -1941,14 +1981,21 @@ LogicalResult ProofOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (!implOp)
     return emitOpError() << "cannot find impl '" << getImplNameAttr() << "'";
 
-  // The impl's header must carry to the claim this proof stands over. A proof
-  // names committed facts -- the obligations it declares are normalized through
-  // the module's impls just below -- so a projection its header spells reduces
-  // through those same impls here.
-  GroundProjectionLookup byGroundLookup(module, DemandOrigin::ProofVerification,
-                                        errFn);
+  // The impl's header must carry to the claim this proof stands over. What a
+  // projection that header spells reduces through is the evidence this proof
+  // holds: the proofs discharging the impl's own obligations, by index, and
+  // then the impls the module holds. The proof's own rule is not among them --
+  // nothing here is justified by what it is checking.
+  NormalizationContext reading;
+  if (spellsAProjection(Type(implOp.getSelfClaim())))
+    reading = buildSubproofNormalizationContext(*this, module);
+  reading.setModuleLookup(module, LookupScope::Ground,
+                          DemandOrigin::ProofVerification);
+  auto throughEvidence = [&](Type ty) -> FailureOr<Type> {
+    return reading.normalize(ty, errFn);
+  };
   if (failed(implOp.buildSubstitutionForSelfClaim(getProvenClaim(),
-                                                  byGroundLookup, errFn)))
+                                                  throughEvidence, errFn)))
     return failure();
 
   // recursively verify proof structure and that proof bindings can be recorded.
@@ -2419,11 +2466,19 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
                                         /*requireUnconditionalDirectImpl=*/true);
   if (failed(impl)) return failure();
 
-  // As at a proof: the witnessed claim names a committed fact, so a projection
-  // the impl's header spells reduces through the module's impls.
-  GroundProjectionLookup byGroundLookup(module, DemandOrigin::ProofVerification);
+  // As at a proof: a projection the impl's header spells reduces through the
+  // evidence the witnessed claim names -- the proof tree it carries, by index
+  // -- and then through the impls the module holds.
+  NormalizationContext reading;
+  if (spellsAProjection(Type(impl->getSelfClaim())))
+    reading = buildProofNormalizationContext(getProvenClaim(), module);
+  reading.setModuleLookup(module, LookupScope::Ground,
+                          DemandOrigin::ProofVerification);
+  auto throughEvidence = [&](Type ty) -> FailureOr<Type> {
+    return reading.normalize(ty, errFn);
+  };
   auto subst = impl->buildSubstitutionForSelfClaim(getProvenClaim(),
-                                                   byGroundLookup, errFn);
+                                                   throughEvidence, errFn);
   return failed(subst) ? failure() : success();
 }
 
@@ -2989,9 +3044,10 @@ static void addScopeHypotheses(NormalizationContext &ctx, Operation *op,
 /// evidence at this site exactly as the impl the proof itself names is -- the
 /// same reading by index a derive gets from its given operands. The children go
 /// in first, and the head is read through the rules they contributed: an impl
-/// header that forwards an associated type spells a projection over an inner
-/// application, and only that inner application's rule carries the two
-/// spellings to one grade.
+/// header that spells a projection over one of its own obligations reduces it
+/// through the rule that obligation's proof already contributed, and where a
+/// trait has two impls whose headers could each bind that application, that rule
+/// is the only thing that answers.
 ///
 /// A claim whose own rule cannot be built contributes none: this reads the
 /// evidence an op holds, and a proof that does not check is refused where it is
@@ -3108,6 +3164,30 @@ static void addLocalProjectionRulesFromClaim(
 
     ctx.addLocalProjectionRule(impl, derived.getTraitApplication(), *subst);
   }
+}
+
+NormalizationContext buildProofNormalizationContext(ClaimType provenClaim,
+                                                    ModuleOp module) {
+  NormalizationContext ctx;
+  llvm::SmallPtrSet<Operation *, 8> visited;
+  addLocalProjectionRulesFromProvenClaim(ctx, provenClaim, module, visited);
+  return ctx;
+}
+
+NormalizationContext buildSubproofNormalizationContext(ProofOp proof,
+                                                       ModuleOp module) {
+  NormalizationContext ctx;
+  llvm::SmallPtrSet<Operation *, 8> visited;
+  // The proof itself is marked read before the walk starts, so the tree it
+  // stands over contributes and it does not.
+  visited.insert(proof.getOperation());
+  auto subproofs = proof.verifyAndGetSubproofClaims(
+      DemandOrigin::ProofVerification, /*err=*/nullptr);
+  if (succeeded(subproofs))
+    for (ClaimType subproof : *subproofs)
+      if (subproof.isProven())
+        addLocalProjectionRulesFromProvenClaim(ctx, subproof, module, visited);
+  return ctx;
 }
 
 NormalizationContext buildLocalClaimNormalizationContext(Operation *op,

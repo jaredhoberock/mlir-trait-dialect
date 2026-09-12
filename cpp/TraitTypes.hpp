@@ -596,6 +596,10 @@ public:
     return result;
   }
 
+  /// The arguments the impl's own parameters took, without the proven spellings
+  /// its evidence carries. What names an instance is read from this alone.
+  const SpecializationMap &getSpecialization() const { return specialization; }
+
 private:
   SpecializationMap specialization;
   EvidenceBindings evidenceBindings;

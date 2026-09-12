@@ -207,9 +207,11 @@ public:
   /// neither proven nor derived carries the impl serving it; for a call,
   /// once the claim the call commits to carries the impls serving the
   /// projections its own arguments spell.
-  void setModuleLookup(ModuleOp module, LookupScope scope) {
+  void setModuleLookup(ModuleOp module, LookupScope scope,
+                       DemandOrigin origin = DemandOrigin::DeclarationMatch) {
     moduleLookup = module;
     moduleLookupScope = scope;
+    moduleLookupOrigin = origin;
   }
 
   /// Resolves projections in `ty` using this context's local rules.
@@ -231,6 +233,7 @@ private:
   const ReadOnlyImplResolver *recordedFacts = nullptr;
   ModuleOp moduleLookup;
   LookupScope moduleLookupScope = LookupScope::Ground;
+  DemandOrigin moduleLookupOrigin = DemandOrigin::DeclarationMatch;
 };
 
 } // end mlir::trait

@@ -530,9 +530,12 @@ def ImplOp : TraitDialectOp<"impl", [
     // Helper to generate unique symbol name for an ImplOp
     static std::string generateSymName(TraitApplicationAttr selfApp, PredicateArrayAttr assumptions);
 
-    // Helper to generate a unique symbol prefix for polymophic ImplOps
-    // getSelfClaim() will be substituted with claim
-    std::string generateMangledName(ClaimType claim);
+    // The name of the instance this impl serves one claim with: its own symbol
+    // plus the arguments that claim supplied for its parameters. The caller
+    // hands the arguments it already built matching this impl to that claim,
+    // since remaking the match here would remake it under whatever context
+    // stands at the naming rather than the one the match was made under.
+    std::string generateMangledName(const SpecializationMap &arguments);
 
     bool isUnconditional();
 

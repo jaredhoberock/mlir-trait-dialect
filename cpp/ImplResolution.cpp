@@ -252,15 +252,17 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
   //
   // The partition probes candidates it may then discard, so the demands its
   // sub-resolutions raise are marked speculative for as long as it runs.
-  // The context a candidate's header is read through: the impls the module
-  // already binds, read only. A header spelling a projection reproduces a
-  // demand spelling the resolution through this, and it mints nothing.
-  GroundProjectionLookup byGroundLookup(module, DemandOrigin::DeclarationMatch);
+  //
+  // The context a candidate's header is read through: what selection has
+  // settled, and then the impls the module binds where exactly one does. A
+  // header spelling a projection reproduces a demand spelling the resolution
+  // through this, and it mints nothing.
+  RecordedProjectionLookup byRecord(*this);
 
   SmallVector<ImplOp> good, bad;
   {
     SpeculationScope speculation;
-    for (ImplOp impl : trait.getCandidateImplsFor(selected, byGroundLookup)) {
+    for (ImplOp impl : trait.getCandidateImplsFor(selected, byRecord)) {
       if (succeeded(assumptionsSatisfiableFor(impl, selected, builder)))
         good.push_back(impl);
       else
@@ -364,9 +366,11 @@ FailureOr<Type> ImplResolver::resolveProjectionType(
   auto binding = impl.specializeAssociatedTypeBinding(assocName, assocTypeArgs, err);
   if (failed(binding)) return failure();
 
-  GroundProjectionLookup byGroundLookup(module, DemandOrigin::DeclarationMatch);
+  // The arguments carrying this impl's header to the claim selection chose it
+  // for, read through the same context selection chose it under.
+  RecordedProjectionLookup byRecord(*this);
   auto subst = impl.buildSubstitutionForSelfClaim(resolvedImpl->selectedClaim,
-                                                  byGroundLookup, err);
+                                                  byRecord, err);
   if (failed(subst)) return failure();
 
   return instantiate(*binding, *subst);
@@ -477,9 +481,10 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
   ImplOp impl = resolvedImpl->impl;
   ClaimType selected = resolvedImpl->selectedClaim;
 
-  // the arguments carrying this impl's header to the selected claim
-  GroundProjectionLookup byGroundLookup(module, DemandOrigin::DeclarationMatch);
-  auto subst = impl.buildSubstitutionForSelfClaim(selected, byGroundLookup, err);
+  // the arguments carrying this impl's header to the selected claim, read
+  // through the same context selection chose it under
+  RecordedProjectionLookup byRecord(*this);
+  auto subst = impl.buildSubstitutionForSelfClaim(selected, byRecord, err);
   if (failed(subst)) return failure();
 
   // monomorphize the selected claim with that substitution
@@ -512,7 +517,7 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
   }
 
   // Compute the proof name early so we can use it as the coinductive memo entry.
-  std::string proofName = impl.generateMangledName(monomorphicWanted) + "_p";
+  std::string proofName = impl.generateMangledName(*subst) + "_p";
   auto proofSym = FlatSymbolRefAttr::get(ctx, proofName);
   for (ProofOp proof : module.getOps<ProofOp>()) {
     if (proof.getSymName() != proofName)
@@ -676,10 +681,11 @@ ReadOnlyImplResolver::resolveProjectionType(ProjectionType proj) const {
       proj.getAssocName().getValue(), assocTypeArgs);
   if (failed(binding)) return failure();
 
-  GroundProjectionLookup byGroundLookup(resolver.module,
-                                        DemandOrigin::RecordedFactRead);
+  // The arguments carrying this impl's header to the claim selection chose it
+  // for, read through the same context selection chose it under.
+  RecordedProjectionLookup byRecord(*this);
   auto subst = impl.buildSubstitutionForSelfClaim(resolvedImpl->selectedClaim,
-                                                  byGroundLookup,
+                                                  byRecord,
                                                   /*errFn=*/nullptr);
   if (failed(subst)) return failure();
 
@@ -716,10 +722,11 @@ ReadOnlyImplResolver::getRecordedProofFor(ClaimType claim) const {
   auto resolvedImpl = getRecordedImplFor(claim);
   if (failed(resolvedImpl)) return failure();
 
-  GroundProjectionLookup byGroundLookup(resolver.module,
-                                        DemandOrigin::RecordedFactRead);
+  // The arguments carrying this impl's header to the claim selection chose it
+  // for, read through the same context selection chose it under.
+  RecordedProjectionLookup byRecord(*this);
   auto subst = resolvedImpl->impl.buildSubstitutionForSelfClaim(
-      resolvedImpl->selectedClaim, byGroundLookup, /*errFn=*/nullptr);
+      resolvedImpl->selectedClaim, byRecord, /*errFn=*/nullptr);
   if (failed(subst)) return failure();
 
   auto monomorphic = dyn_cast_or_null<ClaimType>(

@@ -654,4 +654,29 @@ private:
   const ImplResolver &resolver;
 };
 
+/// A normalizer over what impl selection has settled, and then over the impls
+/// the module holds: `ReadOnlyImplResolver::resolveProjectionsIn` as a callable.
+///
+/// This is the reading every step that rebuilds an impl's header runs. A trait
+/// with two impls whose headers could each bind one application is a trait the
+/// module alone answers nothing about -- only the record says which of them
+/// selection chose -- so a header spelling a projection over such an
+/// application reaches the claim it was chosen for through this and through
+/// nothing weaker. A read takes no generator arm, so nothing is minted on its
+/// account.
+class RecordedProjectionLookup {
+public:
+  explicit RecordedProjectionLookup(const ImplResolver &resolver)
+      : reading(resolver) {}
+  explicit RecordedProjectionLookup(const ReadOnlyImplResolver &reading)
+      : reading(reading) {}
+
+  FailureOr<Type> operator()(Type ty) const {
+    return reading.resolveProjectionsIn(ty);
+  }
+
+private:
+  ReadOnlyImplResolver reading;
+};
+
 } // end mlir::trait
