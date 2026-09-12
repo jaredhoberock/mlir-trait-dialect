@@ -1630,19 +1630,13 @@ def ProofOp : TraitDialectOp<"proof", [
       return *maybeResult;
     }
 
-    /// Look up a proof symbol and return the underlying ImplOp.
-    /// The symbol may name a ProofOp (which forwards to its impl) or
-    /// an unconditional ImplOp directly.
-    // Resolve a proof symbol to the impl it is backed by: a trait.proof yields
-    // its impl, a directly-named trait.impl yields itself. When
-    // requireUnconditionalDirectImpl is set, a directly-named impl must be
-    // unconditional (a proof is trusted to discharge a conditional impl's
-    // assumptions, so this rule applies only to the direct-impl case).
+    /// Resolve a proof symbol to the impl it is backed by: a trait.proof yields
+    /// its impl, a directly-named trait.impl yields itself. Whether the symbol
+    /// is one this citation may name is the citing op's own check.
     static FailureOr<ImplOp> getImplFromProof(
       ModuleOp module,
       FlatSymbolRefAttr name,
-      llvm::function_ref<InFlightDiagnostic()> errFn = nullptr,
-      bool requireUnconditionalDirectImpl = false);
+      llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
 
     // look up a proof by name. It must be either a ProofOp or an unconditional impl
     static FailureOr<Operation*> getProofOpOrUnconditionalImplOp(

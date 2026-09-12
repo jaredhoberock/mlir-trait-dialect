@@ -2174,17 +2174,12 @@ static FailureOr<Operation*> lookupProofSymbol(
 FailureOr<ImplOp> ProofOp::getImplFromProof(
     ModuleOp module,
     FlatSymbolRefAttr name,
-    llvm::function_ref<InFlightDiagnostic()> errFn,
-    bool requireUnconditionalDirectImpl) {
+    llvm::function_ref<InFlightDiagnostic()> errFn) {
   auto symOp = lookupProofSymbol(module, name, errFn);
   if (failed(symOp)) return failure();
 
-  if (auto implOp = dyn_cast<ImplOp>(*symOp)) {
-    if (requireUnconditionalDirectImpl &&
-        failed(implOp.verifyIsUnconditional(errFn)))
-      return failure();
+  if (auto implOp = dyn_cast<ImplOp>(*symOp))
     return implOp;
-  }
 
   auto proofOp = cast<ProofOp>(*symOp);
   ImplOp impl = proofOp.getImpl();
@@ -2523,18 +2518,22 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (getResultClaim().isEquality())
     return success();
 
-  // Application arm: resolve the proof to its impl in one lookup; a
-  // directly-named impl must be unconditional. The impl must then build a
-  // substitution for our claim.
-  auto impl = ProofOp::getImplFromProof(module, getProofAttr(), errFn,
-                                        /*requireUnconditionalDirectImpl=*/true);
-  if (failed(impl)) return failure();
+  // Application arm: one lookup of the cited symbol; a directly-named impl must
+  // be unconditional, and a proof names the impl it stands over.
+  auto cited = ProofOp::getProofOpOrUnconditionalImplOp(module, getProofAttr(),
+                                                        errFn);
+  if (failed(cited)) return failure();
+  auto proof = dyn_cast<ProofOp>(*cited);
+  ImplOp impl = proof ? proof.getImpl() : cast<ImplOp>(*cited);
+  if (!impl)
+    return emitOpError() << "proof '" << getProofAttr()
+                         << "' does not resolve to an impl";
 
   // As at a proof: a projection the impl's header spells reduces through the
   // evidence the witnessed claim names -- the proof tree it carries, by index
   // -- and then through the impls the module holds.
   NormalizationContext reading;
-  if (spellsAProjection(Type(impl->getSelfClaim())))
+  if (spellsAProjection(Type(impl.getSelfClaim())))
     reading = buildProofNormalizationContext(getProvenClaim(), module);
   reading.setModuleLookup(module, LookupScope::Ground,
                           DemandOrigin::ProofVerification);
@@ -2547,8 +2546,7 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // comparison every citation of a proof is read by. Reading the impl's header
   // alone would accept a witness for an application the proof does not prove,
   // because a blanket impl's header carries to every application of its trait.
-  if (auto proof = SymbolTable::lookupNearestSymbolFrom<ProofOp>(
-          module, getProofAttr())) {
+  if (proof) {
     auto citationErr = [&] {
       return errFn() << "the proof " << getProofAttr()
                      << " this witness cites stands over another claim: ";
@@ -2560,8 +2558,8 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
       return failure();
   }
 
-  auto subst = impl->buildSubstitutionForSelfClaim(getProvenClaim(),
-                                                   throughEvidence, errFn);
+  auto subst = impl.buildSubstitutionForSelfClaim(getProvenClaim(),
+                                                  throughEvidence, errFn);
   return failed(subst) ? failure() : success();
 }
 
