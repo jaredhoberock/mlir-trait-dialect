@@ -205,7 +205,11 @@ public:
   /// spelling it must reduce: for `trait.derive`, once a claim operand that is
   /// neither proven nor derived carries the impl serving it; for a call,
   /// once the claim the call commits to carries the impls serving the
-  /// projections its own arguments spell.
+  /// projections its own arguments spell; and for a proof and a witness, once a
+  /// projection a declaration spells must be over its own self application, a
+  /// where-clause application, a trait requirement or a declared witness
+  /// (Rust's projection well-formedness rule), which puts evidence for every
+  /// projection at a known index.
   void setModuleLookup(ModuleOp module, LookupScope scope,
                        DemandOrigin origin = DemandOrigin::DeclarationMatch) {
     moduleLookup = module;

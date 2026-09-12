@@ -784,6 +784,11 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
     // a normal form. The fallible resolver refuses it here so proof
     // verification fails cleanly on hostile IR rather than the resolution
     // running the process out of its budget deeper down.
+    // XXX TODO a projection a declaration spells must be over its own self
+    // application, a where-clause application, a trait requirement or a declared
+    // witness (Rust's projection well-formedness rule), so every projection has
+    // evidence at a known index and this module read deletes with LookupScope and
+    // the verifier DemandOrigins.
     FailureOr<Type> normalizedProven =
         resolveProjectionsByLookup(proven, module, origin,
                                    LookupScope::Ground, err);
@@ -882,6 +887,11 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
     // Match the impl's own header against the proven claim -- the same citation
     // check that verifying a witness runs -- so a proof whose impl cannot be
     // carried to its claim is refused here rather than trusted to a leaf.
+    // XXX TODO a projection a declaration spells must be over its own self
+    // application, a where-clause application, a trait requirement or a declared
+    // witness (Rust's projection well-formedness rule), so every projection has
+    // evidence at a known index and this module read deletes with LookupScope and
+    // the verifier DemandOrigins.
     GroundProjectionLookup byGroundLookup(module, origin);
     if (failed(impl.buildSubstitutionForSelfClaim(proven, byGroundLookup, err)))
       return failure();
@@ -903,6 +913,11 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
   // supplies and the claim it rebuilds must be that citation.
   {
     Type proofClaim = Type(proof.getProvenClaim());
+    // XXX TODO a projection a declaration spells must be over its own self
+    // application, a where-clause application, a trait requirement or a declared
+    // witness (Rust's projection well-formedness rule), so every projection has
+    // evidence at a known index and this module read deletes with LookupScope and
+    // the verifier DemandOrigins.
     GroundProjectionLookup byGroundLookup(module, origin);
     if (failed(matchDeclaration(getTypeParametersIn(proofClaim), proofClaim,
                                 Type(proven), byGroundLookup, err)))
@@ -1054,6 +1069,11 @@ void ClaimType::getProjections(
     if (auto proof = SymbolTable::lookupNearestSymbolFrom<ProofOp>(module, getProof())) {
       ImplOp impl = proof.getImpl();
       if (impl) {
+        // XXX TODO a projection a declaration spells must be over its own self
+        // application, a where-clause application, a trait requirement or a
+        // declared witness (Rust's projection well-formedness rule), so every
+        // projection has evidence at a known index and this module read deletes
+        // with LookupScope and the verifier DemandOrigins.
         GroundProjectionLookup byGroundLookup(
             module, DemandOrigin::ProofVerification);
 

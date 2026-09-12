@@ -89,6 +89,11 @@ static bool groundApplicationsMatch(const ObligationDischargeContext &ctx,
     return true;
   if (!ctx.resolveGround)
     return false;
+  // XXX TODO a projection a declaration spells must be over its own self
+  // application, a where-clause application, a trait requirement or a declared
+  // witness (Rust's projection well-formedness rule), so every projection has
+  // evidence at a known index and this module read deletes with LookupScope and
+  // the verifier DemandOrigins.
   auto haveGround = resolveProjectionsByLookup(
       have, ctx.module, DemandOrigin::ProofVerification, LookupScope::Ground,
       ctx.err);
@@ -209,6 +214,11 @@ static FailureOr<SpecializationMap> verifyProjectionResolutionCore(
   // projections by module lookup.
   ClaimType selfClaim =
       ClaimType::get(module.getContext(), projectionTy.getTraitApplication());
+  // XXX TODO a projection a declaration spells must be over its own self
+  // application, a where-clause application, a trait requirement or a declared
+  // witness (Rust's projection well-formedness rule), so every projection has
+  // evidence at a known index and this module read deletes with LookupScope and
+  // the verifier DemandOrigins.
   GroundProjectionLookup byGroundLookup(module, DemandOrigin::ProofVerification);
   auto subst = implOp.buildSubstitutionForSelfClaim(
       selfClaim, rigidHeadMatch ? Normalizer() : Normalizer(byGroundLookup),
@@ -277,6 +287,11 @@ static FailureOr<SpecializationMap> verifyProjectionResolutionCore(
     // impls, so an assumption spelling a ground projection is compared as its
     // resolution -- a non-converging chain refuses.
     if (dischargeCtx.resolveGround) {
+      // XXX TODO a projection a declaration spells must be over its own self
+      // application, a where-clause application, a trait requirement or a
+      // declared witness (Rust's projection well-formedness rule), so every
+      // projection has evidence at a known index and this module read deletes
+      // with LookupScope and the verifier DemandOrigins.
       auto wantGround = resolveProjectionsByLookup(
           want, module, DemandOrigin::ProofVerification, LookupScope::Ground,
           err);

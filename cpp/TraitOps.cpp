@@ -1812,6 +1812,11 @@ FailureOr<SmallVector<ClaimType>> ImplOp::specializeObligationsAsClaimsFor(
 
   // A parameter the header leaves open and the where clause determines is read
   // through the impls the module holds; `origin` names that reading.
+  // XXX TODO a projection a declaration spells must be over its own self
+  // application, a where-clause application, a trait requirement or a declared
+  // witness (Rust's projection well-formedness rule), so every projection has
+  // evidence at a known index and this module read deletes with LookupScope and
+  // the verifier DemandOrigins.
   GroundProjectionLookup byGroundLookup(*module, origin);
 
   // specialize requirements of the trait
@@ -2056,6 +2061,11 @@ LogicalResult ProofOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (spellsAProjection(Type(implOp.getSelfClaim())) ||
       !implOp.getAssumptions().getEqualities().empty())
     reading = buildSubproofNormalizationContext(*this, module);
+  // XXX TODO a projection a declaration spells must be over its own self
+  // application, a where-clause application, a trait requirement or a declared
+  // witness (Rust's projection well-formedness rule), so every projection has
+  // evidence at a known index and this module read deletes with LookupScope and
+  // the verifier DemandOrigins.
   reading.setModuleLookup(module, LookupScope::Ground,
                           DemandOrigin::ProofVerification);
   auto throughEvidence = [&](Type ty) -> FailureOr<Type> {
@@ -2534,6 +2544,11 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   NormalizationContext reading;
   if (spellsAProjection(Type(impl.getSelfClaim())))
     reading = buildProofNormalizationContext(getProvenClaim(), module);
+  // XXX TODO a projection a declaration spells must be over its own self
+  // application, a where-clause application, a trait requirement or a declared
+  // witness (Rust's projection well-formedness rule), so every projection has
+  // evidence at a known index and this module read deletes with LookupScope and
+  // the verifier DemandOrigins.
   reading.setModuleLookup(module, LookupScope::Ground,
                           DemandOrigin::ProofVerification);
   auto throughEvidence = [&](Type ty) -> FailureOr<Type> {
