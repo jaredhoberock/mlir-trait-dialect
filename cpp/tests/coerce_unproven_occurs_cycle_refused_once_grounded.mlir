@@ -5,8 +5,8 @@
 // RUN: not mlir-opt %s -split-input-file -pass-pipeline='builtin.module(monomorphize-trait)' 2>&1 | FileCheck %s
 
 // A marked coerce whose endpoints still spell a projection stands: what each
-// projection denotes is settled by the impls monomorphization mints, not by the
-// verifier, and the erase barrier is where the two ground spellings are compared.
+// projection denotes is settled by the impls monomorphization mints, and the
+// two spellings are compared where that has grounded them.
 // These three are the shapes a spelling-level unifier used to refuse for closing
 // a cycle -- a question about the spellings rather than about the program, since
 // each projection resolves to whatever its impl binds and no infinite type is
