@@ -6,6 +6,7 @@
 #include "TraitOps.hpp"
 #include "Trait.hpp"
 #include "TraitTypes.hpp"
+#include <cstdlib>
 #include <mlir/Dialect/Arith/IR/Arith.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/Dialect/Func/Transforms/FuncConversions.h>
@@ -838,15 +839,52 @@ struct SpecializedCallTarget {
   SmallVector<Type> resultTypes;
 };
 
+/// The template a call instantiates, named by the symbol its callee is reached
+/// through: a free function's own symbol, a method's trait-qualified name. Two
+/// instances of one template answer alike here whatever type arguments their
+/// instance names were mangled from, which is what makes a chain of them
+/// countable.
+static Attribute instantiationTemplateKey(FuncCallOp op) {
+  return op.getCalleeNameAttr();
+}
+static Attribute instantiationTemplateKey(MethodCallOp op) {
+  return op.getMethodRefAttr();
+}
+
 /// Builds and closes the call-site substitution, uses it to specialize the
 /// callee against `formalTy`, and computes the concrete result types for the
 /// replacement call.
+///
+/// Refuses before cutting an instance whose chain already carries the depth
+/// limit's worth of instances of the same template: a template that
+/// instantiates itself at a larger type makes progress at every step, so the
+/// chain is what says it never ends.
 template <typename CallOpT>
 static FailureOr<SpecializedCallTarget>
 specializeCallTarget(CallOpT op, PatternRewriter &rewriter,
                      const ReadOnlyImplResolver &reading,
                      FunctionType formalTy) {
   ModuleOp module = op.getOperation()->template getParentOfType<ModuleOp>();
+
+  Operation *caller =
+      op.getOperation()->template getParentOfType<func::FuncOp>();
+  Attribute templateKey = instantiationTemplateKey(op);
+  InstantiationChain &chain = reading.getInstantiationChain();
+  if (chain.depthAt(caller, templateKey) >= kInstantiationDepthLimit) {
+    chain.noteLimitReached();
+    InFlightDiagnostic diagnostic =
+        op.emitOpError()
+        << "reached the instantiation limit while instantiating "
+        << templateKey << ": " << kInstantiationDepthLimit
+        << " instances of it stand on the chain that reaches this call";
+    nameChainEnds<std::pair<Operation *, Attribute>>(
+        diagnostic, chain.chainTo(caller),
+        [](InFlightDiagnostic &d, std::pair<Operation *, Attribute> frame) {
+          d.attachNote(frame.first->getLoc())
+              << "instantiated from " << frame.second;
+        });
+    return failure();
+  }
 
   // Pass time: pass the module so binding a generic mid-solve resolves the
   // ground projection it mints (the module-capable comparator, not the verifier's
@@ -882,6 +920,7 @@ specializeCallTarget(CallOpT op, PatternRewriter &rewriter,
     return failure();
   }
   target.callee = *callee;
+  chain.note(target.callee.getOperation(), caller, templateKey);
   return target;
 }
 
@@ -1576,6 +1615,17 @@ static LogicalResult reduceGroundEqualityAssume(
 /// is exactly what the stage carries to no target, so nothing downstream reads
 /// its interior, and a stray parameter inside one rides into every clone made
 /// from it. Each function reports on its own, so one run names them all.
+/// Reports the deepest per-template instantiation chain one stage run cut, for
+/// a reader measuring how much headroom the depth limit leaves over a body of
+/// real programs. Silent unless `TRAIT_INSTANTIATION_DEPTH_STATS` is set in the
+/// environment, because a stage run says nothing about depth otherwise.
+void reportInstantiationDepth(const InstantiationChain &chain) {
+  if (!::getenv("TRAIT_INSTANTIATION_DEPTH_STATS"))
+    return;
+  llvm::errs() << "trait: maximum per-template instantiation depth "
+               << chain.getMaxDepth() << "\n";
+}
+
 LogicalResult verifyFunctionBodiesAreWellScoped(ModuleOp module) {
   bool wellScoped = true;
   module.walk([&](func::FuncOp function) {
@@ -1836,6 +1886,14 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
 
     wrote = work.wrote();
   }
+
+  reportInstantiationDepth(resolver->getInstantiationChain());
+
+  // A call refused on the instantiation depth limit has already reported
+  // itself, and the greedy driver took that refusal for a pattern that did not
+  // apply. The stage fails here rather than converging over a chain it stopped.
+  if (resolver->getInstantiationChain().wasLimitReached())
+    return failure();
 
   // Every demand a round took off the drain was one it undertook to settle, so
   // at the end of the stage each is served or left for the walks below to

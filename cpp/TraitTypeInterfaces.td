@@ -36,6 +36,19 @@ def GenericTypeInterface : TypeInterface<"GenericTypeInterface"> {
       /*defaultImplementation=*/[{
         return $_type;
       }]
+    >,
+    InterfaceMethod<
+      "The parameter this type is an occurrence of. A parameter is an "
+      "occurrence of itself; a type that constrains the kind of a parameter "
+      "(e.g. `!tuple.poly<!trait.poly<1>>`, which admits only a tuple) is an "
+      "occurrence of the parameter it wraps, because a declaration binds the "
+      "parameter and a substitution keys it.",
+      "mlir::Type", "getParameterAtom",
+      (ins),
+      /*methodBody=*/"",
+      /*defaultImplementation=*/[{
+        return $_type;
+      }]
     >
   ];
 }

@@ -908,6 +908,19 @@ inline Type applySubstitutionOnce(const llvm::DenseMap<Type,Type> &subst,
 /// well-formed substitution is clipped.
 constexpr unsigned kSubstitutionFixedPointMaxPasses = 256;
 
+/// How many times one declaration may occur on the chain of instantiations or
+/// obligations that reaches the work in hand.
+///
+/// A template that instantiates itself at a larger type, and an impl whose
+/// where-clause demands its own trait at a larger type, both make progress at
+/// every step: each step is a new declaration instance or a new application, so
+/// no cycle guard sees a repeat and the recursion runs until the machine stops
+/// it. Counting occurrences of ONE declaration along the chain is what tells
+/// such a chain from a deep but finite one, which nests distinct declarations.
+/// Rust bounds the same two recursions the same way, at the same default
+/// (`recursion_limit`, 128).
+constexpr unsigned kInstantiationDepthLimit = 128;
+
 /// Applies `subst` repeatedly until it reaches a fixed point, so the returned
 /// type carries no component that `subst` would still rewrite. The fixed
 /// point is over `subst` alone; a projection whose base grounds under the
@@ -1136,6 +1149,157 @@ inline SmallVector<GenericTypeInterface,4> getGenericTypesIn(Type ty) {
   collect(ty, collect);
   return result;
 }
+
+/// The declaration parameter `ty` is an occurrence of, or null when it is none.
+///
+/// A type answers for itself through `getParameterAtom`; the parameter is the
+/// one label that answer carries. A label carries only itself; a kind-
+/// constraining wrapper carries the label it constrains; a computed type such
+/// as `!coord.weak_product<A,B>` carries two, which makes it a composite the
+/// caller decomposes rather than a parameter it binds.
+inline GenericTypeInterface getParameterOccurrence(Type ty) {
+  auto generic = dyn_cast<GenericTypeInterface>(ty);
+  if (!generic)
+    return {};
+  Type atom = generic.getParameterAtom();
+  GenericTypeInterface label;
+  for (GenericTypeInterface inside : getGenericTypesIn(atom)) {
+    if (getGenericTypesIn(Type(inside)).size() != 1)
+      continue;
+    if (label)
+      return {};
+    label = inside;
+  }
+  return label;
+}
+
+/// The type parameters `ty` binds, in first-occurrence order.
+///
+/// This is the reader every declaration's parameter list comes from: the
+/// distinct parameters the generics `ty` spells are occurrences of, each
+/// counted once at the position it first appears.
+inline SmallVector<GenericTypeInterface, 4> getTypeParametersIn(Type ty) {
+  SmallVector<GenericTypeInterface, 4> result;
+  DenseSet<Type> seen;
+  for (GenericTypeInterface generic : getGenericTypesIn(ty)) {
+    GenericTypeInterface parameter = getParameterOccurrence(Type(generic));
+    if (parameter && seen.insert(Type(parameter)).second)
+      result.push_back(parameter);
+  }
+  return result;
+}
+
+/// The established context a comparison reads both sides through: an impl's own
+/// bindings and premises inside a verifier, the recorded facts inside the
+/// stage. A caller with no context passes none, which leaves both sides spelled
+/// as written. Failure means the rewrite has no normal form.
+using Normalizer = llvm::function_ref<FailureOr<Type>(Type)>;
+
+/// One optional type argument per parameter of a declaration, dense by the
+/// declaration's own parameter order.
+///
+/// A slot is filled at the first position that determines it and compared for
+/// identity at every later one, so a parameter occurring twice admits only an
+/// actual spelling one type at both. Nothing here decides a match: filling a
+/// slot wrongly can only make the rebuilt declaration differ from the actual,
+/// which the comparison refuses.
+class TypeArguments {
+public:
+  explicit TypeArguments(ArrayRef<GenericTypeInterface> parameters)
+      : parameters(parameters.begin(), parameters.end()),
+        slots(parameters.size()) {}
+
+  ArrayRef<GenericTypeInterface> getParameters() const { return parameters; }
+
+  /// Whether the declaration binds `parameter`.
+  bool binds(GenericTypeInterface parameter) const {
+    return indexOf(parameter).has_value();
+  }
+
+  /// Fills `parameter`'s slot with `value`, or checks that it already holds
+  /// exactly that. Fails on a parameter this declaration does not bind and on a
+  /// second, differing value.
+  LogicalResult assign(GenericTypeInterface parameter, Type value,
+                       llvm::function_ref<InFlightDiagnostic()> err);
+
+  /// The argument `parameter` took, or nothing when it took none or when the
+  /// declaration does not bind it.
+  std::optional<Type> lookup(GenericTypeInterface parameter) const {
+    auto index = indexOf(parameter);
+    return index ? slots[*index] : std::nullopt;
+  }
+
+  /// Whether every parameter has an argument.
+  bool complete() const {
+    return llvm::all_of(slots, [](const std::optional<Type> &slot) {
+      return slot.has_value();
+    });
+  }
+
+  /// The substitution these arguments spell: each filled slot keyed by its
+  /// parameter. An empty slot leaves its parameter standing.
+  SpecializationMap toSpecialization() const {
+    SpecializationMap result;
+    for (auto [index, parameter] : llvm::enumerate(parameters))
+      if (slots[index])
+        result.bind(parameter, *slots[index]);
+    return result;
+  }
+
+private:
+  std::optional<size_t> indexOf(GenericTypeInterface parameter) const {
+    for (auto [index, declared] : llvm::enumerate(parameters))
+      if (declared == parameter)
+        return index;
+    return std::nullopt;
+  }
+
+  SmallVector<GenericTypeInterface, 4> parameters;
+  SmallVector<std::optional<Type>, 4> slots;
+};
+
+/// `declared` with its parameters replaced by `args`, in one pass.
+///
+/// A term substituted in is never revisited, so a callee's parameter and a
+/// caller's that happen to share a spelling stay apart and a substitution that
+/// maps a parameter into a type mentioning it terminates instead of growing.
+inline Type instantiate(Type declared, const SpecializationMap &args) {
+  return args.apply(declared);
+}
+
+/// Reads `actual` for the arguments `formal`'s parameters take, filling `args`.
+///
+/// The walk runs in lockstep. A formal parameter occurrence takes the actual
+/// subterm standing opposite it; the actual side is never read as a pattern, so
+/// nothing it spells is narrowed to fit. A formal projection is skipped --
+/// projections are not injective, so the subterms under one determine nothing
+/// -- and a formal claim recurses through its predicate by position, blind to
+/// the proof either side carries. Every other node requires the same
+/// constructor, the same attributes and the same child count before recursing.
+///
+/// Success says only that the reading found no contradiction: what decides the
+/// match is `verifyEqualAfterInstantiation`.
+LogicalResult extractTypeArguments(Type formal, Type actual,
+                                   TypeArguments &args,
+                                   llvm::function_ref<InFlightDiagnostic()> err);
+
+/// Whether `formal` instantiated at `args` is `actual`.
+///
+/// Both sides are stripped of the proofs their claims carry -- comparison is
+/// modulo the proof, permanently -- and read through `normalize`, so two
+/// spellings the caller's established context makes one compare equal. The
+/// verdict is then identity on interned types: a parameter no argument filled
+/// stands, and a projection the context cannot reduce is equal to itself alone.
+LogicalResult verifyEqualAfterInstantiation(
+    Type formal, const SpecializationMap &args, Type actual,
+    Normalizer normalize, llvm::function_ref<InFlightDiagnostic()> err);
+
+/// The arguments carrying `formal` to `actual`, where `parameters` are the
+/// parameters the declaration `formal` comes from binds: read them off the
+/// actual, then check the instantiated declaration is the actual.
+FailureOr<SpecializationMap> matchDeclaration(
+    ArrayRef<GenericTypeInterface> parameters, Type formal, Type actual,
+    Normalizer normalize, llvm::function_ref<InFlightDiagnostic()> err);
 
 /// Whether `ty` spells a projection whose resolution is determined but not yet
 /// written: a `ProjectionType` with no type variable left inside it.

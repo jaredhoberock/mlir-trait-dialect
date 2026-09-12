@@ -2676,13 +2676,60 @@ LogicalResult MethodCallOp::verify() {
   return success();
 }
 
+/// Adds the projection normalization rules a proven claim's proof tree
+/// justifies: the rules of its subproofs first, then its own.
+///
+/// A proof stands over the obligations of the impl it names, each discharged by
+/// the subproof at the same index, so the impls those subproofs name are
+/// evidence at this site exactly as the impl the proof itself names is -- the
+/// same reading by index a derive gets from its given operands. The children go
+/// in first, so the fixed-point walk reduces an inner application before the
+/// outer one that reaches it.
+///
+/// A subproof whose own rule cannot be built contributes none: this reads the
+/// evidence an op holds, and a proof that does not check is refused where it is
+/// verified rather than reported from here. Contributing fewer rules leaves
+/// more projections standing, which the comparison refuses on.
+static LogicalResult addLocalProjectionRulesFromProvenClaim(
+    NormalizationContext &ctx, ClaimType claim, ModuleOp module,
+    llvm::SmallPtrSetImpl<Operation *> &visited,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  auto implOr = ProofOp::getImplFromProof(module, claim.getProof(), err);
+  if (failed(implOr))
+    return failure();
+
+  // The proof's own subtree. A coinductive proof names itself among its
+  // subproofs, so a proof already read contributes nothing a second time.
+  if (auto proof = SymbolTable::lookupNearestSymbolFrom<ProofOp>(
+          module, claim.getProof()))
+    if (visited.insert(proof.getOperation()).second) {
+      auto subproofs = proof.verifyAndGetSubproofClaims(
+          DemandOrigin::ProofVerification, /*err=*/nullptr);
+      if (succeeded(subproofs))
+        for (ClaimType subproof : *subproofs)
+          if (subproof.isProven())
+            (void)addLocalProjectionRulesFromProvenClaim(
+                ctx, subproof, module, visited, /*err=*/nullptr);
+    }
+
+  // Store rules against the unproven application because projection heads do
+  // not include proof symbols; proof only explains why the application holds.
+  ClaimType unproven = claim.asUnproven();
+  auto subst = implOr->buildSubstitutionForSelfClaim(unproven, err);
+  if (failed(subst))
+    return failure();
+
+  ctx.addLocalProjectionRule(*implOr, unproven.getTraitApplication(), *subst);
+  return success();
+}
+
 /// Adds projection normalization rules justified by one claim SSA value.
 ///
 /// A rule records that projections for a specific trait application may use a
 /// specific impl's associated type bindings while checking this operation.
 static LogicalResult addLocalProjectionRulesFromClaim(
     NormalizationContext &ctx, Value claimValue, ModuleOp module,
-    llvm::SmallPtrSetImpl<Operation *> &visitedDerives,
+    llvm::SmallPtrSetImpl<Operation *> &visited,
     llvm::function_ref<InFlightDiagnostic()> err) {
   // Only claim-typed operands can carry trait evidence relevant to projection
   // normalization. Ordinary method arguments do not contribute rules.
@@ -2692,22 +2739,11 @@ static LogicalResult addLocalProjectionRulesFromClaim(
 
   // A proven claim names a proof symbol. That proof identifies the impl whose
   // associated type bindings justify reducing projections with this exact
-  // trait application.
-  if (claim.isProven()) {
-    auto implOr = ProofOp::getImplFromProof(module, claim.getProof(), err);
-    if (failed(implOr))
-      return failure();
-
-    // Store rules against the unproven application because projection heads do
-    // not include proof symbols; proof only explains why the application holds.
-    ClaimType unproven = claim.asUnproven();
-    auto subst = implOr->buildSubstitutionForSelfClaim(unproven, err);
-    if (failed(subst))
-      return failure();
-
-    ctx.addLocalProjectionRule(*implOr, unproven.getTraitApplication(), *subst);
-    return success();
-  }
+  // trait application, and stands over the subproofs discharging that impl's
+  // obligations.
+  if (claim.isProven())
+    return addLocalProjectionRulesFromProvenClaim(ctx, claim, module, visited,
+                                                  err);
 
   // A derive op also commits to one impl, but the evidence may be nested in its
   // assumptions. For example, a FnUni derive can carry the Fn claim that
@@ -2715,7 +2751,7 @@ static LogicalResult addLocalProjectionRulesFromClaim(
   if (auto derive = claimValue.getDefiningOp<DeriveOp>()) {
     // Derived claims can refer to other derived claims through assumptions; the
     // visited set keeps malformed or cyclic IR from recursing forever.
-    if (!visitedDerives.insert(derive.getOperation()).second)
+    if (!visited.insert(derive.getOperation()).second)
       return success();
 
     ImplOp impl = derive.getImplOp();
@@ -2737,7 +2773,7 @@ static LogicalResult addLocalProjectionRulesFromClaim(
     // call comparison.
     for (Value assumption : derive.getAssumptions())
       if (failed(addLocalProjectionRulesFromClaim(
-              ctx, assumption, module, visitedDerives, err)))
+              ctx, assumption, module, visited, err)))
         return failure();
   }
 
@@ -2748,10 +2784,12 @@ static FailureOr<NormalizationContext> buildLocalClaimNormalizationContext(
     ValueRange values, ModuleOp module,
     llvm::function_ref<InFlightDiagnostic()> err) {
   NormalizationContext ctx;
-  llvm::SmallPtrSet<Operation *, 8> visitedDerives;
+  // The derives and proofs already read, so cyclic or self-referencing evidence
+  // is read once.
+  llvm::SmallPtrSet<Operation *, 8> visited;
   for (Value value : values)
     if (failed(addLocalProjectionRulesFromClaim(
-            ctx, value, module, visitedDerives, err)))
+            ctx, value, module, visited, err)))
       return failure();
   return ctx;
 }

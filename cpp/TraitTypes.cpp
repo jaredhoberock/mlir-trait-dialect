@@ -1770,4 +1770,103 @@ FailureOr<SpecializationMap> buildSpecialization(
   return SpecializationMap::fromTypeMap(*result);
 }
 
+
+//===----------------------------------------------------------------------===//
+// Declaration matching
+//===----------------------------------------------------------------------===//
+
+LogicalResult TypeArguments::assign(
+    GenericTypeInterface parameter, Type value,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  auto index = indexOf(parameter);
+  if (!index) {
+    if (err)
+      err() << "type parameter " << Type(parameter)
+            << " is not bound by this declaration";
+    return failure();
+  }
+  std::optional<Type> &slot = slots[*index];
+  if (!slot) {
+    slot = value;
+    return success();
+  }
+  if (*slot == value)
+    return success();
+  if (err)
+    err() << "conflicting type arguments for " << Type(parameter) << ": "
+          << *slot << " versus " << value;
+  return failure();
+}
+
+LogicalResult extractTypeArguments(
+    Type formal, Type actual, TypeArguments &args,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  // A parameter of this declaration takes whatever stands opposite it. This
+  // comes first so that a parameter matched against itself is still recorded.
+  if (GenericTypeInterface parameter = getParameterOccurrence(formal))
+    if (args.binds(parameter))
+      return args.assign(parameter, actual, err);
+
+  // A projection is not injective: two spellings can name one type and one
+  // spelling can name types the arguments underneath do not determine, so
+  // nothing is read out of the position it stands in. Whether the two sides
+  // agree there is the comparison's question, not the reading's.
+  if (isa<ProjectionType>(formal))
+    return success();
+
+  // Every other node is read by its shape: the same constructor, the same
+  // attributes and the same child count, then the children by position. A
+  // claim's predicate and a projection's arguments are enumerated here as
+  // children, and an application claim's key ignores its proof, so the reading
+  // is blind to the evidence either side carries.
+  TermShape formalShape = decomposeTerm(formal);
+  TermShape actualShape = decomposeTerm(actual);
+  if (formalShape.key != actualShape.key ||
+      formalShape.children.size() != actualShape.children.size()) {
+    if (err)
+      err() << "type mismatch: expected " << formal << " but found " << actual;
+    return failure();
+  }
+  for (auto [formalChild, actualChild] :
+       llvm::zip(formalShape.children, actualShape.children))
+    if (failed(extractTypeArguments(formalChild, actualChild, args, err)))
+      return failure();
+  return success();
+}
+
+LogicalResult verifyEqualAfterInstantiation(
+    Type formal, const SpecializationMap &args, Type actual,
+    Normalizer normalize, llvm::function_ref<InFlightDiagnostic()> err) {
+  Type rebuilt = stripClaimProofs(instantiate(formal, args));
+  Type wanted = stripClaimProofs(actual);
+  if (normalize) {
+    FailureOr<Type> normalizedRebuilt = normalize(rebuilt);
+    if (failed(normalizedRebuilt))
+      return failure();
+    FailureOr<Type> normalizedWanted = normalize(wanted);
+    if (failed(normalizedWanted))
+      return failure();
+    rebuilt = *normalizedRebuilt;
+    wanted = *normalizedWanted;
+  }
+  if (rebuilt == wanted)
+    return success();
+  if (err)
+    err() << "type mismatch: expected " << rebuilt << " but found " << wanted;
+  return failure();
+}
+
+FailureOr<SpecializationMap> matchDeclaration(
+    ArrayRef<GenericTypeInterface> parameters, Type formal, Type actual,
+    Normalizer normalize, llvm::function_ref<InFlightDiagnostic()> err) {
+  TypeArguments args(parameters);
+  if (failed(extractTypeArguments(formal, actual, args, err)))
+    return failure();
+  SpecializationMap specialization = args.toSpecialization();
+  if (failed(verifyEqualAfterInstantiation(formal, specialization, actual,
+                                           normalize, err)))
+    return failure();
+  return specialization;
+}
+
 } // end mlir::trait

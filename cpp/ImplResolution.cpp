@@ -6,6 +6,80 @@
 
 namespace mlir::trait {
 
+namespace {
+
+/// Refuses an obligation chain that has reached the depth limit for one trait.
+///
+/// Every frame on the chain is a distinct application, so the cycle guard never
+/// fires on a chain whose obligations keep growing the type they ask about.
+/// This is what stops it, and the chain is what says where the growth came
+/// from.
+LogicalResult checkObligationChainDepth(
+    ArrayRef<TraitApplicationAttr> chain, TraitApplicationAttr app,
+    ImplOp impl) {
+  StringAttr trait = app.getTraitName().getAttr();
+  unsigned depth = llvm::count_if(chain, [&](TraitApplicationAttr frame) {
+    return frame.getTraitName().getAttr() == trait;
+  });
+  if (depth < kInstantiationDepthLimit)
+    return success();
+
+  InFlightDiagnostic diagnostic =
+      emitError(impl.getLoc())
+      << "overflow evaluating the requirement '" << app << "': "
+      << depth << " obligations of @" << trait.getValue()
+      << " stand on the chain that reaches it";
+  nameChainEnds<TraitApplicationAttr>(
+      diagnostic, chain,
+      [](InFlightDiagnostic &d, TraitApplicationAttr frame) {
+        d.attachNote() << "required by " << frame;
+      });
+  return failure();
+}
+
+} // namespace
+
+unsigned InstantiationChain::depthAt(Operation *instance,
+                                    Attribute templateKey) const {
+  unsigned depth = 0;
+  for (Operation *current = instance; current;) {
+    auto it = frames.find(current);
+    if (it == frames.end())
+      break;
+    if (it->second.templateKey == templateKey)
+      ++depth;
+    current = it->second.parent;
+  }
+  return depth;
+}
+
+unsigned InstantiationChain::note(Operation *instance, Operation *parent,
+                                  Attribute templateKey) {
+  // An instance reached twice keeps the chain it was first cut on: the depth it
+  // stands at is a property of the instance, not of whichever call asked for it
+  // again. An instance that is its own parent is a call that reached the
+  // function it stands in, which adds no frame.
+  if (instance == parent || frames.count(instance))
+    return depthAt(instance, templateKey);
+  frames.insert({instance, Frame{parent, templateKey}});
+  unsigned depth = depthAt(instance, templateKey);
+  maxDepth = std::max(maxDepth, depth);
+  return depth;
+}
+
+SmallVector<std::pair<Operation *, Attribute>>
+InstantiationChain::chainTo(Operation *instance) const {
+  SmallVector<std::pair<Operation *, Attribute>> reversed;
+  for (Operation *current = instance; current;) {
+    auto it = frames.find(current);
+    if (it == frames.end())
+      break;
+    reversed.emplace_back(current, it->second.templateKey);
+    current = it->second.parent;
+  }
+  return SmallVector<std::pair<Operation *, Attribute>>(llvm::reverse(reversed));
+}
+
 LogicalResult
 ImplResolver::assumptionsSatisfiableFor(ImplOp impl,
                                         ClaimType concreteSelf,
@@ -19,9 +93,16 @@ ImplResolver::assumptionsSatisfiableFor(ImplOp impl,
     return success();
 
   // cycle guard: A(app) -> ... -> A(app) means unsatisfiable
-  if (!memo.visiting.insert(app).second)
+  if (llvm::is_contained(memo.visiting, app))
     return failure();
-  auto guard = llvm::scope_exit([&]{ memo.visiting.erase(app); });
+
+  // growth bound: a chain whose every step asks about a bigger application
+  // repeats no frame, so only the depth stops it.
+  if (failed(checkObligationChainDepth(memo.visiting, app, impl)))
+    return failure();
+
+  memo.visiting.push_back(app);
+  auto guard = llvm::scope_exit([&]{ memo.visiting.pop_back(); });
 
   // specialize the impl's assumptions to our concrete claim
   auto assumptions = impl.specializeAssumptionsAsClaimsFor(concreteSelf);

@@ -147,8 +147,11 @@ struct ResolutionMemo {
   // the arm on which selection was refused when no unique impl exists.
   DenseMap<TraitApplicationAttr, ResolutionOutcome> chosen;
 
-  // Tracks applications currently being resolved to detect resolution cycles.
-  DenseSet<TraitApplicationAttr> visiting;
+  // The applications impl selection is part-way through, outermost first. A
+  // repeat is a resolution cycle; the count of frames naming one trait is how
+  // far the obligation chain has recursed through that trait, which is what
+  // bounds a chain whose every step is a new application.
+  SmallVector<TraitApplicationAttr> visiting;
 
   // A memo for assumptionsSatisfiableFor
   // For every (ImplOp, TraitApplicationAttr) in this set, the ImplOp's
@@ -167,6 +170,85 @@ struct ResolutionMemo {
 struct ResolvedImpl {
   ImplOp impl;
   ClaimType selectedClaim;
+};
+
+/// How many frames from each end of a chain a refusal names. A chain at the
+/// depth limit is a hundred-odd frames of the same shape; its ends say where it
+/// started and what it grew into, and the frames between them say nothing more.
+constexpr size_t kChainEndsNamed = 3;
+
+/// Attaches the ends of `chain` to `diagnostic`, one note per frame through
+/// `name`, with a note standing in for the frames between them.
+template <typename FrameT>
+void nameChainEnds(InFlightDiagnostic &diagnostic, ArrayRef<FrameT> chain,
+                   llvm::function_ref<void(InFlightDiagnostic &, FrameT)> name) {
+  if (chain.size() <= 2 * kChainEndsNamed) {
+    for (const FrameT &frame : chain)
+      name(diagnostic, frame);
+    return;
+  }
+  for (const FrameT &frame : chain.take_front(kChainEndsNamed))
+    name(diagnostic, frame);
+  diagnostic.attachNote() << "... " << chain.size() - 2 * kChainEndsNamed
+                          << " more frame(s) elided";
+  for (const FrameT &frame : chain.take_back(kChainEndsNamed))
+    name(diagnostic, frame);
+}
+
+/// The template instantiations one stage run has cut.
+///
+/// Each instance is cut for a template at a call standing inside another
+/// function, so the instances form a forest and what matters about one is how
+/// many instances of the SAME template stand on the path that reaches it. A
+/// template that instantiates itself at a larger type mints a distinct instance
+/// at every step, so no cycle guard sees a repeat; that count is what tells
+/// such a chain from a deep but finite nest of distinct templates.
+///
+/// An instance is named by the function it was cut into. Nothing erases a
+/// function while the stage runs, so a recorded name stands for as long as the
+/// chain does.
+class InstantiationChain {
+public:
+  /// How many instances of `templateKey` stand on the chain reaching
+  /// `instance`, counting `instance` itself. A function this has never
+  /// recorded is a root and stands at zero.
+  unsigned depthAt(Operation *instance, Attribute templateKey) const;
+
+  /// Records that `instance` was cut for `templateKey` at a call inside
+  /// `parent`, and answers the depth it now stands at.
+  ///
+  /// An instance already recorded keeps the chain it was first cut on, and an
+  /// instance that is its own parent -- a call whose specialization reached the
+  /// very function it stands in -- records nothing, so the chain stays a
+  /// forest.
+  unsigned note(Operation *instance, Operation *parent, Attribute templateKey);
+
+  /// The frames from the root down to `instance`, each a function and the
+  /// template it was cut for. This is what a refusal at the depth limit names.
+  SmallVector<std::pair<Operation *, Attribute>>
+  chainTo(Operation *instance) const;
+
+  /// The deepest per-template count any instance reached, which is the
+  /// quantity the depth limit stands over.
+  unsigned getMaxDepth() const { return maxDepth; }
+
+  /// Says a call refused to instantiate because the chain reached the limit.
+  void noteLimitReached() { limitReached = true; }
+
+  /// Whether any call refused on the depth limit. A greedy driver treats that
+  /// refusal as a pattern that did not apply, so the stage reads this after its
+  /// driver and fails rather than converging over the refusal.
+  bool wasLimitReached() const { return limitReached; }
+
+private:
+  struct Frame {
+    Operation *parent;
+    Attribute templateKey;
+  };
+
+  DenseMap<Operation *, Frame> frames;
+  unsigned maxDepth = 0;
+  bool limitReached = false;
 };
 
 // Aggregates memoization for both impl resolution and proof creation.
@@ -337,6 +419,12 @@ class ImplResolver {
     /// serve from it and still hold what it derives.
     ProofDerivationMemo &getDerivationMemo() const { return derivations; }
 
+    /// The template instantiations cut over this resolver's span, which is one
+    /// stage run. Like the derivation memo this is a computation over the
+    /// module rather than a fact of its own, so a reader holding this resolver
+    /// through a handle that may not resolve still records into it.
+    InstantiationChain &getInstantiationChain() const { return instantiations; }
+
     /// Says a sweep has respelled the module's copy of the recorded facts,
     /// `replacer` being the rewrite it applied.
     ///
@@ -417,6 +505,7 @@ class ImplResolver {
     std::shared_ptr<DemandLedger> ledger;
     ProofResolutionMemo memo;
     mutable ProofDerivationMemo derivations;
+    mutable InstantiationChain instantiations;
     ImplGeneratorSet generators;
     const ImplGenerator *installedOverride = nullptr;
     uint64_t factEpoch = 0;
@@ -498,6 +587,12 @@ public:
   /// them and holding what is derived through them takes no generator arm.
   ProofDerivationMemo &getDerivationMemo() const {
     return resolver.getDerivationMemo();
+  }
+
+  /// The template instantiations cut over the resolver's span. Cutting one
+  /// takes no generator arm either: the template is already in the module.
+  InstantiationChain &getInstantiationChain() const {
+    return resolver.getInstantiationChain();
   }
 
   /// How many times what this reads from has changed. Every answer here is read
