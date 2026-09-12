@@ -19,6 +19,16 @@ namespace {
 /// The answers reads on this thread go through, null where no scope is
 /// installed and every read is a scan.
 thread_local HeldSymbolAnswers *installed = nullptr;
+
+/// Whether `answer` is what `table` binds `leaf` to: the operation still stands
+/// in `table` and still carries that name. An answer held from before its
+/// operation moved or was renamed fails this, so what a name once bound is
+/// never given back as what it binds.
+bool stillBinds(Operation *answer, Operation *table, StringAttr leaf) {
+  return answer->getParentOp() == table &&
+         answer->getAttrOfType<StringAttr>(SymbolTable::getSymbolAttrName()) ==
+             leaf;
+}
 } // namespace
 
 SymbolLookupScope::SymbolLookupScope() {
@@ -50,27 +60,26 @@ Operation *lookupSymbolFrom(ModuleOp module, FlatSymbolRefAttr name) {
   if (!module || !name)
     return nullptr;
 
-  if (installed && installed->tables)
-    return installed->tables->lookupNearestSymbolFrom(module.getOperation(),
-                                                      name);
-
+  Operation *table = module.getOperation();
   StringAttr leaf = name.getAttr();
-  std::pair<Operation *, StringAttr> asked{module.getOperation(), leaf};
+
+  if (installed && installed->tables)
+    return installed->tables->lookupSymbolIn(table, leaf);
+
+  std::pair<Operation *, StringAttr> asked{table, leaf};
   if (installed) {
     auto held = installed->answers.find(asked);
-    if (held != installed->answers.end())
-      return held->second;
+    if (held != installed->answers.end()) {
+      if (stillBinds(held->second, table, leaf))
+        return held->second;
+      installed->answers.erase(held);
+    }
   }
 
-  if (Operation *here =
-          SymbolTable::lookupSymbolIn(module.getOperation(), leaf)) {
-    if (installed)
-      installed->answers.insert({asked, here});
-    return here;
-  }
-
-  Operation *around = module->getParentWithTrait<OpTrait::SymbolTable>();
-  return around ? SymbolTable::lookupNearestSymbolFrom(around, name) : nullptr;
+  Operation *here = SymbolTable::lookupSymbolIn(table, leaf);
+  if (here && installed)
+    installed->answers.insert({asked, here});
+  return here;
 }
 
 } // namespace mlir::trait

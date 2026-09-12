@@ -8,9 +8,11 @@
 
 namespace mlir::trait {
 
-/// The operation `name` names, read from `module` outward: `module`'s own
-/// symbol table first and then the tables around it, which is what
-/// `SymbolTable::lookupNearestSymbolFrom` answers.
+/// The operation `name` names in `module`'s own symbol table, which is what
+/// `SymbolTable::lookupSymbolIn` answers. A table around `module` is never
+/// asked: a name is answered in the module it was read in, so a nested module
+/// that spells a name the module around it also spells means its own, and a
+/// name `module` does not bind is unresolved here.
 ///
 /// A symbol table holds no index of its names, so each read is a scan of the
 /// whole module, and reading the evidence at one site resolves the same handful
@@ -40,14 +42,15 @@ void forgetHeldSymbols();
 /// Holds the name-to-operation answers taken over a span of reads.
 ///
 /// A symbol table's names are unique, so the operation a name binds there is
-/// what it binds until something erases that operation or renames it.
-/// Appending a symbol moves no answer: a name a table already binds keeps
-/// binding what it bound. That is what lets a scope span a stage that writes,
-/// and it is why only the answers `module`'s own table gives are held -- an
-/// answer a table around it gives is taken again each time, because a symbol
-/// appended to `module` would bind the name there instead and a held answer
-/// could not say so. A stage takes a symbol back out only through a rewrite
-/// driver, which reports the erasure to `forgetHeldSymbols`.
+/// what it binds until something erases that operation, renames it, or moves it
+/// elsewhere. Appending a symbol moves no answer: a name a table already binds
+/// keeps binding what it bound, and a read that found nothing is held by
+/// nothing, so a symbol appended under a name nothing bound is found by the
+/// read after it. That is what lets a scope span a stage that writes. A held
+/// answer is given back only while the operation it names still stands in that
+/// module under that name, which is read off the operation itself; a stage
+/// takes a symbol back out only through a rewrite driver, which reports the
+/// erasure to `forgetHeldSymbols`.
 ///
 /// Scopes nest, and one entered under another reads and writes the answers
 /// already installed, so what a caller took serves the reads its callees make.

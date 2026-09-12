@@ -3730,8 +3730,8 @@ FailureOr<func::FuncOp> FuncCallOp::getOrSpecializeCallee(
   if (failed(module)) return failure();
 
   std::string instanceName = calleeInstanceName(*this, subst);
-  auto *symOp = SymbolTable::lookupSymbolIn(*module, rewriter.getStringAttr(instanceName));
-  func::FuncOp existing = dyn_cast_or_null<func::FuncOp>(symOp);
+  auto existing = lookupSymbolFrom<func::FuncOp>(
+      *module, FlatSymbolRefAttr::get(rewriter.getStringAttr(instanceName)));
   if (existing) {
     return existing;
   }
