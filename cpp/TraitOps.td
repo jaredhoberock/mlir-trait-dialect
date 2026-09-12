@@ -1526,7 +1526,7 @@ def FuncCallOp : TraitDialectOp<"func.call", [
       auto module = getModule(err);
       if (failed(module)) return failure();
 
-      auto callee = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(*module, name);
+      auto callee = lookupSymbolFrom<func::FuncOp>(*module, name);
       if (!callee) {
         if (err) err() << "'" << name.getValue()
                        << "' does not refer to a valid func.func";
