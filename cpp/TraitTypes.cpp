@@ -4,7 +4,6 @@
 #include "Trait.hpp"
 #include "TraitOps.hpp"
 #include "TraitTypes.hpp"
-#include <atomic>
 #include <cstdint>
 #include <string>
 #include <llvm/ADT/TypeSwitch.h>
@@ -113,11 +112,6 @@ constexpr unsigned kProjectionFixedPointMaxIterations = 64;
 /// through `tryNormalizeProjectionsToFixedPoint` instead of this reporter; this
 /// entry only surfaces the diagnostic for the infallible normalizer's users.
 ///
-/// [invariant] A speculative cross-check raises no diagnostic. Under a
-/// `DemandCrossCheckScope` the caller resolves only to compare the spelling and
-/// then discards it, so a non-terminating projection there is a silent decline,
-/// not a user-facing error; `isCrossChecking()` enforces the suppression.
-///
 /// The enclosing demand names where the projection was asked about; outside a
 /// stage span there is no enclosing demand and the module location is all there
 /// is to name. No in-tree program reaches this, and the checks in front of it
@@ -129,8 +123,6 @@ constexpr unsigned kProjectionFixedPointMaxIterations = 64;
 /// by the rewrite budget of the driver that keeps re-deriving it.
 void reportUnnormalizableProjection(Type ty, unsigned iterations,
                                     ModuleOp module) {
-  if (isCrossChecking())
-    return;
   Location anchor = currentDemandAnchor().value_or(module.getLoc());
   std::string message;
   llvm::raw_string_ostream stream(message);
@@ -284,8 +276,7 @@ Type resolveProjectionsByLookup(Type ty, ModuleOp module, DemandOrigin origin,
                                             converged);
   // The infallible entry cannot refuse. A projection that will not ground stays
   // spelled as written in `out`, so every spelling comparison downstream
-  // declines on it in the safe direction; the reporter surfaces the diagnostic
-  // for a live demand and stays silent under a cross-check.
+  // declines on it in the safe direction; the reporter surfaces the diagnostic.
   if (!converged)
     reportUnnormalizableProjection(out, kProjectionFixedPointMaxIterations,
                                    module);
@@ -299,10 +290,9 @@ FailureOr<Type> resolveProjectionsByLookup(
   Type out = resolveProjectionsByLookupCore(ty, module, origin, scope,
                                             converged);
   // The fallible entry refuses a projection that will not ground so a verifier
-  // reached from untrusted IR fails cleanly rather than admitting the cycle. A
-  // speculative cross-check discards the spelling, so it declines silently.
+  // reached from untrusted IR fails cleanly rather than admitting the cycle.
   if (!converged) {
-    if (emitError && !isCrossChecking())
+    if (emitError)
       emitError() << "projection normalization did not converge within "
                   << kProjectionFixedPointMaxIterations
                   << " iterations for type " << out;
@@ -397,28 +387,6 @@ bool TypeEquivalence::precedes(unsigned a, unsigned b) {
 // PolyType
 //===----------------------------------------------------------------------===//
 
-int nextPolyTypeId() {
-  static std::atomic<int> counter{-1};
-  return counter.fetch_sub(1, std::memory_order_relaxed);
-}
-
-PolyType PolyType::getUnique(MLIRContext* ctx) {
-  return PolyType::get(ctx, nextPolyTypeId());
-}
-
-Type PolyType::instantiate(InstantiationMap &inst, uint64_t &idCounter) {
-  auto self = cast<GenericTypeInterface>(*this);
-
-  // check memo first - if we've already instantiated this PolyType, return it
-  if (auto existing = inst.lookup(self))
-    return *existing;
-
-  // create and remember a fresh inference var for this poly
-  auto fresh = InferenceType::get(getContext(), idCounter++);
-  inst.bind(self, cast<UnificationTypeInterface>(fresh));
-  return fresh;
-}
-
 Type PolyType::specializeWith(const SpecializationMap &subst) const {
   auto self = cast<GenericTypeInterface>(*this);
   if (auto replacement = subst.lookup(self))
@@ -428,25 +396,25 @@ Type PolyType::specializeWith(const SpecializationMap &subst) const {
 
 Type PolyType::parse(AsmParser &parser) {
   MLIRContext *ctx = parser.getContext();
-  int uniqueId = 0;
-
-  // parse this:
-  // <unique> or
-  // <int>
+  int label = 0;
 
   if (parser.parseLess()) {
     parser.emitError(parser.getNameLoc(), "expected '<'");
     return Type();
   }
 
-  if (succeeded(parser.parseOptionalKeyword("unique"))) {
-    uniqueId = nextPolyTypeId();
-  } else {
-    if (parser.parseInteger(uniqueId)) {
-      parser.emitError(parser.getNameLoc(), "expected integer or 'unique'");
-      return Type();
-    }
-    
+  llvm::SMLoc labelLoc = parser.getCurrentLocation();
+  if (parser.parseInteger(label)) {
+    parser.emitError(parser.getNameLoc(), "expected integer");
+    return Type();
+  }
+
+  // A label names a position in the declaration that binds it, so it is
+  // non-negative. A negative one names no position.
+  if (label < 0) {
+    parser.emitError(labelLoc, "a !trait.poly label is non-negative; found ")
+        << label;
+    return Type();
   }
 
   if (parser.parseGreater()) {
@@ -454,61 +422,11 @@ Type PolyType::parse(AsmParser &parser) {
     return Type();
   }
 
-  return PolyType::get(ctx, uniqueId);
+  return PolyType::get(ctx, label);
 }
 
 void PolyType::print(AsmPrinter &printer) const {
-  printer << "<" << getUniqueId() << ">";
-}
-
-
-//===----------------------------------------------------------------------===//
-// InferenceType
-//===----------------------------------------------------------------------===//
-
-LogicalResult InferenceType::unify(
-  Type other,
-  ModuleOp /*module*/,
-  UnificationMap &subst,
-  llvm::function_ref<InFlightDiagnostic()> err) {
-  Type self = *this;
-  auto selfKey = cast<UnificationTypeInterface>(self);
-
-  // normalize
-  other = applySubstitutionOnce(subst.toTypeMap(), other);
-
-  // first check for trivial equality
-  if (self == other) return success();
-
-  // if self is already bound, check consistency
-  if (auto existing = subst.lookup(selfKey)) {
-    if (*existing != other) {
-      if (err) return err() << "inference variable " << self
-                            << " already bound to " << *existing
-                            << ", cannot bind to " << other;
-      return failure();
-    }
-    return success();
-  }
-
-  // occurs check: forbid T := f(..., T, ...) to avoid cycles
-  auto occursIn = [](Type needle, Type haystack) {
-    bool hit = false;
-    haystack.walk([&](Type t) {
-      if (!hit && t == needle) hit = true;
-    });
-    return hit;
-  };
-
-  if (occursIn(self, other)) {
-    if (err) err() << "recursive substitution: " << self
-                   << " occurs in " << other;
-    return failure();
-  }
-
-  // bind the variable
-  subst.bind(selfKey, other);
-  return success();
+  printer << "<" << getLabel() << ">";
 }
 
 
@@ -1165,87 +1083,6 @@ bool ClaimType::projectsTo(ModuleOp module, ClaimType dst) {
   return false;
 }
 
-static LogicalResult unifyTypeRange(ArrayRef<Type> formalTypes,
-                                    ArrayRef<Type> actualTypes,
-                                    ModuleOp module,
-                                    UnificationMap &subst,
-                                    llvm::function_ref<InFlightDiagnostic()> err);
-
-LogicalResult ClaimType::unify(
-    Type other,
-    ModuleOp module,
-    UnificationMap& subst,
-    llvm::function_ref<InFlightDiagnostic()> err) {
-  // normalize formal first
-  Type formalNormTy = applySubstitutionOnce(subst.toTypeMap(), *this);
-  ClaimType formal = mlir::dyn_cast<ClaimType>(formalNormTy);
-
-  // if formal is no longer a ClaimType, delegate to generic path
-  if (!formal)
-    return trait::unify(formalNormTy, other, module, subst, err);
-
-  // normalize actual second
-  Type normActualTy = applySubstitutionOnce(subst.toTypeMap(), other);
-  ClaimType actual = mlir::dyn_cast<ClaimType>(normActualTy);
-
-  // if actual isn't a claim, it's an immediate mismatch
-  if (!actual) {
-    if (err) {
-      err() << "expected !trait.claim, but found " << normActualTy;
-    }
-    return failure();
-  }
-
-  // do claim-specific checks below
-
-  // Arm dispatch. A claim of one arm never unifies with the other.
-  if (auto formalEq = formal.getEqualityAttr()) {
-    auto actualEq = actual.getEqualityAttr();
-    if (!actualEq) {
-      if (err) err() << "expected an equality claim, but found " << actual;
-      return failure();
-    }
-    // Endpoint-wise unification through the ordinary substitution machinery:
-    // variable binding, no leniency, no projection tolerance, no proof
-    // sensitivity (the equality arm carries none). Orientation is fixed, so
-    // lhs matches lhs and rhs matches rhs.
-    if (failed(trait::unify(formalEq.getLhs(), actualEq.getLhs(), module, subst, err)))
-      return failure();
-    return trait::unify(formalEq.getRhs(), actualEq.getRhs(), module, subst, err);
-  }
-  if (actual.getEqualityAttr()) {
-    if (err) err() << "expected a trait-application claim, but found " << actual;
-    return failure();
-  }
-
-  auto formalApp = formal.getTraitApplication();
-  auto actualApp = actual.getTraitApplication();
-
-  // same trait?
-  if (formalApp.getTraitName() != actualApp.getTraitName()) {
-    if (err) err() << "trait mismatch: expected " << formalApp.getTraitName()
-                   << ", but found " << actualApp.getTraitName();
-    return failure();
-  }
-
-  // check proofs
-  auto formalProof = formal.getProof();
-  auto actualProof = actual.getProof();
-  if (formalProof && actualProof && formalProof != actualProof) {
-    if (err) err() << "proof mismatch: expected " << formalProof
-                   << ", but found " << actualProof;
-    return failure();
-  }
-  if (formalProof && !actualProof) {
-    if (err) err() << "cannot unify proven claim with unproven claim";
-    return failure();
-  }
-
-  return unifyTypeRange(formalApp.getTypeArgs(), actualApp.getTypeArgs(), module,
-                        subst, err);
-}
-
-
 //===----------------------------------------------------------------------===//
 // ProjectionType
 //===----------------------------------------------------------------------===//
@@ -1317,534 +1154,43 @@ LogicalResult ProjectionType::verifySymbolUses(Operation *op,
 }
 
 //===----------------------------------------------------------------------===//
-// unify
-//===----------------------------------------------------------------------===//
-
-static LogicalResult unifyTypeRange(ArrayRef<Type> formalTypes,
-                                    ArrayRef<Type> actualTypes,
-                                    ModuleOp module,
-                                    UnificationMap &subst,
-                                    llvm::function_ref<InFlightDiagnostic()> err) {
-  if (formalTypes.size() != actualTypes.size()) {
-    if (err)
-      err() << "type arity mismatch: expected " << formalTypes.size()
-            << " type arguments, but found " << actualTypes.size();
-    return failure();
-  }
-
-  for (auto [formal, actual] : llvm::zip(formalTypes, actualTypes)) {
-    if (failed(trait::unify(formal, actual, module, subst, err)))
-      return failure();
-  }
-
-  return success();
-}
-
-/// Collect exactly the immediate child Types and Attributes of `ty`. If `ty` has no sub‐elements,
-/// returns empty vectors.
-static std::pair<SmallVector<Type, 4>, SmallVector<Attribute, 4>> getImmediateSubElements(Type ty) {
-  SmallVector<Type, 4> childTypes;
-  SmallVector<Attribute, 4> childAttrs;
-  ty.walkImmediateSubElements(
-      /*walkAttrsFn=*/[&](Attribute subAttr) {
-        childAttrs.push_back(subAttr);
-      },
-      /*walkTypesFn=*/[&](Type subTy) {
-        childTypes.push_back(subTy);
-      });
-  return std::pair(childTypes, childAttrs);
-}
-
-/// Whether `ty` carries a projection all of whose arguments are concrete, i.e.
-/// one a unique module-visible impl could resolve. Only such a projection lets
-/// the resolve-then-rebuild step in `unifyStructurally` change a type, so its
-/// presence gates that step.
-static bool carriesResolvableProjection(Type ty) {
-  bool found = false;
-  ty.walk([&](Type sub) -> WalkResult {
-    if (auto proj = dyn_cast<ProjectionType>(sub);
-        proj && !isPolymorphicType(proj)) {
-      found = true;
-      return WalkResult::interrupt();
-    }
-    return WalkResult::advance();
-  });
-  return found;
-}
-
-/// Equate two types by equating their children: same constructor, same arity,
-/// equal attributes, then unify corresponding child types. This is exact only
-/// for injective constructors; a constructor that normalizes its arguments when
-/// a type is built can make two types equal whose children are not, which
-/// `unifyStructurally` reconciles before reaching here.
-static LogicalResult unifyChildwise(Type formal,
-                                    Type actual,
-                                    ModuleOp module,
-                                    UnificationMap &subst,
-                                    llvm::function_ref<InFlightDiagnostic()> err) {
-  if (formal == actual) return success();
-
-  // check for same
-  // 1. type constructor
-  // 2. subelement arity
-  // 3. attribute equality
-  // and then recurse on children, if there are any
-  auto [formalSubTys, formalSubAttrs] = getImmediateSubElements(formal);
-  auto [actualSubTys, actualSubAttrs] = getImmediateSubElements(actual);
-
-  bool formalHasSubs = !formalSubTys.empty() || !formalSubAttrs.empty();
-  bool actualHasSubs = !actualSubTys.empty() || !actualSubAttrs.empty();
-
-  // if neither side is decomposable, they're unequal leaves -> mismatch
-  // if only one side is decomposable, constructors differ in structure -> mismatch
-  if (!formalHasSubs || !actualHasSubs) {
-    if (err) err() << "type mismatch: expected " << formal
-                   << " but found " << actual;
-    return failure();
-  }
-
-  // the constructor and arity of subelements of both types must match before recursing
-  if (formal.getTypeID() != actual.getTypeID() ||
-      formalSubTys.size() != actualSubTys.size() ||
-      formalSubAttrs.size() != actualSubAttrs.size()) {
-    if (err) err() << "type mismatch: expected " << formal
-                   << " but found " << actual;
-    return failure();
-  }
-
-  // The attributes of both types must match exactly before recursing on
-  // child types. XXX: this treats attributes as opaque, so it will not find
-  // and unify types stored inside type-bearing attributes.
-  for (auto [f, a] : llvm::zip(formalSubAttrs, actualSubAttrs)) {
-    if (f != a) {
-      if (err) err() << "attribute mismatch: expected " << f
-                     << " but found " << a;
-      return failure();
-    }
-  }
-
-  // Recurse on each sub type pair
-  for (auto [f, a] : llvm::zip(formalSubTys, actualSubTys)) {
-    if (failed(unify(f, a, module, subst, err)))
-      return failure();
-  }
-
-  return success();
-}
-
-/// Unify two types that neither side drove through UnificationTypeInterface.
-///
-/// The child-wise decomposition in `unifyChildwise` assumes each type
-/// constructor is injective. A constructor that normalizes its arguments when a
-/// type is built is not injective: two types it makes equal can decompose into
-/// children that are not, so equating the children misses the equality the
-/// constructor establishes. When either side carries a ground projection the
-/// module can resolve, resolve it and let each enclosing type rebuild through
-/// that type's own constructor -- the same construction-time normalization then
-/// applies to the resolved form -- and unify the rebuilt types.
-///
-/// The rebuild is attempted only when the direct decomposition cannot already
-/// equate the two, so a decomposition that succeeds keeps its exact result and
-/// its exact demand record. The failed decomposition runs on a saved
-/// substitution with its diagnostic held back so it leaves no binding behind;
-/// the resolution probe is an answer computed only to decide whether a rebuild
-/// changes anything, so it runs as a cross-check and records nothing.
-///
-/// This terminates. resolveProjectionsByLookup returns a fixed point of its own
-/// rewrite, so a rebuilt type carries no resolvable ground projection left for
-/// this step to change; the re-unification either settles the two types or falls
-/// to `unifyChildwise`, which recurses only on strictly smaller children.
-static LogicalResult unifyStructurally(Type formal,
-                                       Type actual,
-                                       ModuleOp module,
-                                       UnificationMap &subst,
-                                       llvm::function_ref<InFlightDiagnostic()> err) {
-  if (formal == actual) return success();
-
-  // With no resolvable projection to rebuild, the decomposition is exact.
-  if (!module || !(carriesResolvableProjection(formal) ||
-                   carriesResolvableProjection(actual)))
-    return unifyChildwise(formal, actual, module, subst, err);
-
-  // Try the decomposition once, on a saved substitution and with the diagnostic
-  // held back. A decomposition that succeeds is the answer and has recorded
-  // exactly what a direct decomposition would; a failure must leave no binding
-  // and no diagnostic behind so the rebuild below runs cleanly.
-  UnificationMap saved = subst;
-  if (succeeded(unifyChildwise(formal, actual, module, subst, /*err=*/{})))
-    return success();
-  subst = saved;
-
-  Type resolvedFormal, resolvedActual;
-  {
-    DemandCrossCheckScope quiet;
-    resolvedFormal = resolveProjectionsByLookup(
-        formal, module, DemandOrigin::DeclarationMatch, LookupScope::Ground);
-    resolvedActual = resolveProjectionsByLookup(
-        actual, module, DemandOrigin::DeclarationMatch, LookupScope::Ground);
-  }
-  if (resolvedFormal != formal || resolvedActual != actual)
-    return unify(resolvedFormal, resolvedActual, module, subst, err);
-
-  // Nothing resolved: the decomposition's failure is the answer. Re-run it only
-  // to surface the diagnostic; its recording repeats the held-back attempt
-  // above, so keep it silent.
-  DemandCrossCheckScope quiet;
-  return unifyChildwise(formal, actual, module, subst, err);
-}
-
-/// Records a monomorphic projection the unifier let stand: it equated the two
-/// sides, or bound a variable to the projection, without asking any impl what
-/// the projection resolves to. These sit apart from the lookup's miss arms --
-/// nothing here consulted the lookup at all.
-///
-/// The test is a root test on purpose. A projection nested inside two
-/// aggregates the unifier found literally equal goes unobserved, because
-/// walking every equality would put a type traversal on the unifier's hottest
-/// path; such a projection is observed here anyway whenever the two sides are
-/// not already equal, since the structural recursion then brings it to this
-/// entry on its own.
-///
-/// The unifier's signature names no caller, so `module` classifies the demand:
-/// the module-free comparator is what a verifier holding no module reaches,
-/// while a caller carrying one is the stage or a committed-fact match inside a
-/// verifier, which the stage's suspension brackets cover.
-/// Unify a projection with another type by their spellings as written. Two
-/// entries reach here: a module-free comparison (a verifier passes no module)
-/// and a module-capable resolution (a pass or a committed-fact substitution
-/// build passes the module).
-///
-///  - Projection vs projection: require the same symbolic projection head, then
-///    recurse through trait application and associated-type arguments. This
-///    allows nested projections to justify equivalent spellings.
-///  - Projection vs a free inference variable it does not occur in: bind the
-///    variable to the projection.
-///  - Projection vs any other type: under the module-capable entry, resolve the
-///    projection if a unique impl binds it and unify the result; under the
-///    module-free entry, an unresolved crossing is a strict mismatch and is
-///    rejected. Only the module-capable entry, on an irreducible crossing no
-///    committed fact determines, tolerates it (see the residual note below).
-///
-/// Two spellings that agree here denote one type, since the head and every
-/// argument agree. Two that disagree may still denote one type -- the caller
-/// below settles that by normalizing both and asking again.
-static LogicalResult unifyProjectionAsSpelled(
-    ProjectionType self,
-    Type other,
-    ModuleOp module,
-    UnificationMap &subst,
-    llvm::function_ref<InFlightDiagnostic()> err) {
-  // Projection trait applications carry type arguments inside an attribute,
-  // so structural attribute equality is too strict. Compare the symbolic
-  // projection head, then recurse through the type arguments.
-  if (auto otherProj = mlir::dyn_cast<ProjectionType>(other)) {
-    auto formalApp = self.getTraitApplication();
-    auto actualApp = otherProj.getTraitApplication();
-    if (formalApp.getTraitName() != actualApp.getTraitName() ||
-        self.getAssocName() != otherProj.getAssocName()) {
-      if (err)
-        err() << "projection mismatch: expected " << self << " but found "
-              << otherProj;
-      return failure();
-    }
-
-    if (failed(unifyTypeRange(formalApp.getTypeArgs(), actualApp.getTypeArgs(),
-                              module, subst, err)))
-      return failure();
-    return unifyTypeRange(self.getAssocTypeArgs(), otherProj.getAssocTypeArgs(),
-                          module, subst, err);
-  }
-
-  // projection vs non-projection.
-  //
-  // A projection is an opaque type function whose value is fixed only by claim
-  // evidence, not by unification. Against a free inference variable that does
-  // not occur inside this projection there is a sound choice -- bind the
-  // variable to the projection -- so delegate to the variable's own unifier. A
-  // variable that DOES occur inside is NOT bound here: a projection is a
-  // resolvable function, so `V = proj<...V...>` is a forwarding equation (V is a
-  // fixpoint of the resolution), not an infinite type, and must not trip the
-  // variable unifier's occurs check. It falls to the module-free rejection or
-  // the module-capable resolution below rather than binding.
-  if (auto otherVar = mlir::dyn_cast<InferenceType>(other)) {
-    bool occurs = false;
-    Type(self).walk([&](Type t) {
-      if (t == other) occurs = true;
-    });
-    if (!occurs)
-      return otherVar.unify(self, module, subst, err);
-  }
-
-  // A projection all of whose arguments are concrete and whose trait application
-  // a unique module-visible impl binds has one determined resolution. Binding a
-  // variable mid-solve mints such ground projections (binding V:=i64 turns
-  // proj<@Prod[V]> into the ground proj<@Prod[i64]>), so a caller carrying a
-  // module -- a pass, or a committed-fact substitution build -- resolves them
-  // here and unifies the resolved type against `other`, catching a real mismatch
-  // against the resolved concrete spelling. A verifier compares spellings with
-  // no module (the module-free comparator); an equality check performs no module
-  // lookup, so this step is skipped and an unresolved crossing is a strict
-  // mismatch below.
-  if (isMonomorphicType(self) && module) {
-    Type resolved = resolveProjectionsByLookup(
-        self, module, DemandOrigin::DeclarationMatch, LookupScope::Ground);
-    if (resolved != Type(self))
-      return trait::unify(resolved, other, module, subst, err);
-  }
-
-  // The projection did not resolve and meets a rigid non-projection type. The
-  // module-free comparator (a verifier) holds no evidence for the equality:
-  // spellings must be identical after substitution, so reject the crossing.
-  if (!module) {
-    if (err)
-      err() << "projection mismatch: expected " << self << " but found "
-            << other;
-    return failure();
-  }
-
-  // The module-capable entry reached an irreducible crossing that no committed
-  // fact determines here and accepts it without a binding. The IR is
-  // authoritative: a claim carries its own proof, and this comparison's caches
-  // are acceleration, not the record. So a crossing accepted here whose equality
-  // is real is witnessed elsewhere in the IR -- a coerce citing the equality, or
-  // the proof on the claim -- and one whose equality is false is refused where
-  // that evidence is consumed (a false equality's coerce fails the erase
-  // barrier). The entry runs at pass time and inside verifiers on committed-fact
-  // matches, so this acceptance is not pass-exclusive.
-  return success();
-}
-
-/// Unify a projection type with another type.
-///
-/// A projection's spelling is not its identity: resolving it substitutes the
-/// selected impl's associated-type binding, and an impl that forwards its
-/// associated type through its own type parameter (`type Element = B::Element`)
-/// binds a fresh projection, so one type is spelled `Ten[tuple<V>]::Element`
-/// in the position that reaches it through the view and `Ten[V]::Element` in
-/// the position that reaches it through the base. Comparing those two as
-/// written finds a head mismatch, or -- when the heads agree -- recurses into
-/// arguments that do not, and a comparer recursing into arguments equates
-/// `tuple<V>` with `V`, which is an infinite type the occurs check refuses.
-/// Neither answer is about the program; both are about the spellings.
-///
-/// So the comparison is made against normal forms: compare as written first,
-/// and where that fails, normalize both sides to a fixed point and ask again.
-/// Normalizing only after a failure keeps the answer the same and the lookups
-/// off the path that already agreed -- an agreement on spellings is an
-/// agreement on types.
-///
-/// This terminates. The normalization returns a fixed point of its own rewrite,
-/// so the re-comparison it hands on carries no spelling left for a second
-/// normalization to change: that entry finds both sides already normal and falls
-/// through to the spelled comparison, which recurses only into strictly smaller
-/// arguments.
-LogicalResult ProjectionType::unify(
-    Type other,
-    ModuleOp module,
-    UnificationMap &subst,
-    llvm::function_ref<InFlightDiagnostic()> err) {
-  // The spelled comparison runs on a saved substitution with its diagnostic
-  // held back: an attempt that succeeds is the answer and has recorded exactly
-  // what a direct comparison would, while one that fails must leave no binding
-  // and no diagnostic behind so the normalized comparison below runs cleanly.
-  UnificationMap saved = subst;
-  if (succeeded(unifyProjectionAsSpelled(*this, other, module, subst,
-                                         /*err=*/{})))
-    return success();
-  subst = saved;
-
-  // The module is what makes a normal form reachable: it holds the impls whose
-  // bindings the resolution substitutes. A comparer holding none has no way to
-  // tell a forwarding spelling from a different type, so it compares as written
-  // and rejects, which is the module-free comparator's own strictness.
-  if (module) {
-    // The normalization is an answer computed only to decide whether the two
-    // sides meet once resolved, so it runs as a cross-check and records nothing.
-    Type normalizedSelf, normalizedOther;
-    {
-      DemandCrossCheckScope quiet;
-      normalizedSelf = resolveProjectionsByLookup(
-          *this, module, DemandOrigin::DeclarationMatch, LookupScope::Determined);
-      normalizedOther = resolveProjectionsByLookup(
-          other, module, DemandOrigin::DeclarationMatch, LookupScope::Determined);
-    }
-    if (normalizedSelf != Type(*this) || normalizedOther != other)
-      return trait::unify(normalizedSelf, normalizedOther, module, subst, err);
-  }
-
-  // Normalizing changed nothing, so the spelled comparison's failure is the
-  // answer. Re-run it only to surface the diagnostic; its recording repeats the
-  // held-back attempt above, so keep it silent.
-  DemandCrossCheckScope quiet;
-  return unifyProjectionAsSpelled(*this, other, module, subst, err);
-}
-
-/// Attempt to unify `formal` with `actual`, extending `subst` with any
-/// new bindings that make them equal under substitution.
-///
-/// Both sides are first normalized by applying `subst` to a fixed point.
-/// After that we check for trivial equality and then choose how to drive
-/// unification:
-///
-/// Priority of unifiers:
-///  1. **Formal first** — If the formal side implements
-///     `UnificationTypeInterface`, we let it drive unification. This gives
-///     formal-side types (inference variables, projections, claims) first
-///     refusal to decide how to handle the match.
-///  2. **Actual second** — If the actual side implements
-///     `UnificationTypeInterface`, we let it drive. This handles the
-///     symmetric case (e.g., inference variable on the actual side).
-///  3. **Structural fallback** — Otherwise we fall back to generic
-///     shape-by-shape unification for non-unifiable types.
-///
-/// Returns success if the two types can be made equal under an extended `subst`.
-/// On failure, nothing is recorded and `err` (if provided) will be invoked to
-/// emit a diagnostic.
-LogicalResult unify(
-    Type formal,
-    Type actual,
-    ModuleOp module,
-    UnificationMap &subst,
-    llvm::function_ref<InFlightDiagnostic()> err) {
-  // normalize both types by applying the current substitution
-  formal = applySubstitutionToFixedPoint(subst.toTypeMap(), formal);
-  actual = applySubstitutionToFixedPoint(subst.toTypeMap(), actual);
-
-  // if the normalized types are equal, unification succeeds
-  if (formal == actual)
-    return success();
-
-  // formal-side unifier takes priority
-  if (auto formalUnifier = dyn_cast<UnificationTypeInterface>(formal))
-    return formalUnifier.unify(actual, module, subst, err);
-
-  // actual-side unifier
-  if (auto actualUnifier = dyn_cast<UnificationTypeInterface>(actual))
-    return actualUnifier.unify(formal, module, subst, err);
-
-  // structural fallback
-  return unifyStructurally(formal, actual, module, subst, err);
-}
-
-LogicalResult unify(
-    Type formal,
-    Type actual,
-    ModuleOp module,
-    UnificationMap &subst) {
-  auto errFn = llvm::function_ref<InFlightDiagnostic()>{};
-  return unify(formal, actual, module, subst, errFn);
-}
-
-LogicalResult unify(
-    Type formal,
-    Type actual,
-    ModuleOp module,
-    llvm::function_ref<InFlightDiagnostic()> err) {
-  UnificationMap discardedSubst;
-  return unify(formal, actual, module, discardedSubst, err);
-}
-
-LogicalResult unify(
-    Type formal,
-    Type actual,
-    ModuleOp module) {
-  UnificationMap discardedSubst;
-  return unify(formal, actual, module, discardedSubst);
-}
-
-
-//===----------------------------------------------------------------------===//
-// instantiate
-//===----------------------------------------------------------------------===//
-
-Type instantiate(Type root, InstantiationMap &inst, uint64_t &idCounter) {
-  AttrTypeReplacer r = makeEndpointSealedReplacer();
-  r.addReplacement([&](Type t) -> std::optional<Type> {
-    if (auto generic = dyn_cast<GenericTypeInterface>(t)) {
-      return generic.instantiate(inst, idCounter);
-    }
-    return std::nullopt;
-  });
-
-  // Instantiate the equality endpoints the seal holds as a leaf: otherwise a
-  // formal claim<!poly = T> would keep a rigid poly and never share the
-  // inference variable the rest of the formal instantiates to, so a claim
-  // endpoint variable unifies across a call boundary like any other.
-  r.addReplacement(
-      [&](ClaimType claim) -> std::optional<std::pair<Type, WalkResult>> {
-    return respellEqualityEndpoints(claim, [&](Type t) {
-      return instantiate(t, inst, idCounter);
-    });
-  });
-
-  // this walks into types nested inside attributes (e.g., trait applications)
-  // and replaces all GenericTypeInterface types according to (and extending) inst
-  return r.replace(root);
-}
-
-
-/// The first inference id no variable spelled in `types` already uses.
-///
-/// An inference variable's identity is its id, so a mint that starts over at
-/// zero hands back a variable a type in hand may already spell -- and the two,
-/// being one type, then unify as one variable. That happens whenever a
-/// specialization is built over types an enclosing specialization already
-/// instantiated: this build's first fresh variable would alias the enclosing
-/// build's first. Starting past every id in hand is what makes fresh mean fresh.
-///
-/// An equality claim's endpoints are ordinary sub-elements, so the structural
-/// walk reaches a variable spelled only inside one -- the same universe
-/// respellEqualityEndpoints rewrites. Otherwise the mint would start past every
-/// id but those, and a fresh variable would alias one an endpoint holds.
-static uint64_t firstUnusedInferenceId(ArrayRef<Type> types) {
-  uint64_t next = 0;
-  for (Type ty : types)
-    ty.walk([&](Type sub) {
-      if (auto var = dyn_cast<InferenceType>(sub))
-        next = std::max(next, var.getUniqueId() + 1);
-      return WalkResult::advance();
-    });
-  return next;
-}
-
-FailureOr<SpecializationMap> buildSpecialization(
-    Type formal,
-    Type actual,
-    ModuleOp module,
-    llvm::function_ref<InFlightDiagnostic()> err) {
-  // instantiate generics on both sides with the same instantiation map
-  InstantiationMap genToInfer;
-  uint64_t idCounter = firstUnusedInferenceId({formal, actual});
-  Type iformal = instantiate(formal, genToInfer, idCounter);
-  Type iactual = instantiate(actual, genToInfer, idCounter);
-
-  // get the inverse instantiation map as well
-  auto inferToGen = invertSubstitution(genToInfer.toTypeMap(), err);
-  if (failed(inferToGen)) return failure();
-
-  // unify the instantiated formal and actual types
-  UnificationMap inferToType;
-  if (failed(unify(iformal, iactual, module, inferToType, err)))
-    return failure();
-
-  // compose (gen -> infer) o (infer -> type)
-  auto composed = composeSubstitutions(genToInfer.toTypeMap(), inferToType.toTypeMap(), err);
-  if (failed(composed)) return failure();
-
-  // compose again with inferToGen to map any remaining unsolved
-  // inference variables originating from actual back to their
-  // original generics
-  auto result = composeSubstitutions(*composed, *inferToGen, err);
-  if (failed(result)) return failure();
-
-  normalizeSubstitutionInPlace(*result);
-  return SpecializationMap::fromTypeMap(*result);
-}
-
-
-//===----------------------------------------------------------------------===//
 // Declaration matching
 //===----------------------------------------------------------------------===//
+
+unsigned firstUnusedPolyLabel(Operation *op) {
+  // The declaration `op` stands in: the outermost operation below the module,
+  // which is what a substitution over this code is keyed by.
+  Operation *scope = op;
+  for (Operation *parent = op->getParentOp();
+       parent && !isa<ModuleOp>(parent); parent = parent->getParentOp())
+    scope = parent;
+
+  unsigned next = 0;
+  auto readType = [&](Type ty) {
+    // Claims and projections hold their type arguments in an attribute, so the
+    // reader that descends through those is the one that sees every label.
+    for (GenericTypeInterface generic : getGenericTypesIn(ty))
+      if (auto poly = dyn_cast<PolyType>(generic.getParameterAtom()))
+        next = std::max(next, static_cast<unsigned>(poly.getLabel()) + 1);
+  };
+  auto readAttribute = [&](Attribute attr) {
+    attr.walk([&](Attribute sub) {
+      if (auto typeAttr = dyn_cast<TypeAttr>(sub))
+        readType(typeAttr.getValue());
+    });
+  };
+  scope->walk([&](Operation *op) {
+    for (Type ty : op->getResultTypes())
+      readType(ty);
+    for (NamedAttribute attr : op->getAttrs())
+      readAttribute(attr.getValue());
+    for (Region &region : op->getRegions())
+      for (Block &block : region)
+        for (BlockArgument arg : block.getArguments())
+          readType(arg.getType());
+  });
+  return next;
+}
 
 LogicalResult TypeArguments::assign(
     GenericTypeInterface parameter, Type value,

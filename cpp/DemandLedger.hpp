@@ -41,9 +41,6 @@ enum class DemandOrigin : uint8_t {
   CallSignatureVerification,
   /// A proof op's verifier walking the proof structure it declares.
   ProofVerification,
-  /// The unifier's module-free comparator, which a verifier reaches when it has
-  /// no module to read facts from.
-  ModuleFreeComparison,
 };
 
 /// Whether this origin can add a pending stage obligation.
@@ -60,7 +57,6 @@ inline bool recordsToLedger(DemandOrigin origin) {
     return true;
   case DemandOrigin::CallSignatureVerification:
   case DemandOrigin::ProofVerification:
-  case DemandOrigin::ModuleFreeComparison:
     return false;
   }
   return false;
@@ -148,7 +144,6 @@ private:
 };
 
 std::optional<Location> currentDemandAnchor();
-bool isCrossChecking();
 
 /// Installs one stage demand context on this thread.
 class DemandLedgerScope {
@@ -174,20 +169,6 @@ public:
 
 private:
   DemandLedger *previous;
-};
-
-/// Excludes diagnostic cross-check work without disturbing open frames.
-class DemandCrossCheckScope {
-public:
-  DemandCrossCheckScope();
-  ~DemandCrossCheckScope();
-
-  DemandCrossCheckScope(const DemandCrossCheckScope &) = delete;
-  DemandCrossCheckScope &operator=(const DemandCrossCheckScope &) = delete;
-
-private:
-  DemandLedger *previousLedger;
-  bool previousChecking;
 };
 
 /// Carries the enclosing demand and its source through nested resolution.

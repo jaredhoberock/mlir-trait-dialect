@@ -10,11 +10,10 @@ namespace {
 thread_local DemandLedger *ambientLedger = nullptr;
 thread_local unsigned ambientLookupDepth = 0;
 thread_local bool ambientSpeculating = false;
-thread_local bool ambientCrossChecking = false;
 
 /// Only a real unresolved obligation can cause later preparation work.
 void recordPending(Type demand, unsigned missArms, unsigned depth) {
-  if (!ambientLedger || ambientCrossChecking || ambientSpeculating || depth)
+  if (!ambientLedger || ambientSpeculating || depth)
     return;
   ambientLedger->record(demand, missArms);
 }
@@ -191,8 +190,6 @@ DemandLedger::checkStandingDemandsServed(ModuleOp module,
   return failure(standing);
 }
 
-bool isCrossChecking() { return ambientCrossChecking; }
-
 std::optional<Location> currentDemandAnchor() {
   if (!ambientLedger)
     return std::nullopt;
@@ -216,17 +213,6 @@ DemandRecordingSuspension::DemandRecordingSuspension()
   assert((!ambientLedger || ambientLedger->getFrameDepth() == 0) &&
          "a demand frame must not span a suspension");
   ambientLedger = nullptr;
-}
-
-DemandCrossCheckScope::DemandCrossCheckScope()
-    : previousLedger(ambientLedger), previousChecking(ambientCrossChecking) {
-  ambientLedger = nullptr;
-  ambientCrossChecking = true;
-}
-
-DemandCrossCheckScope::~DemandCrossCheckScope() {
-  ambientLedger = previousLedger;
-  ambientCrossChecking = previousChecking;
 }
 
 DemandRecordingSuspension::~DemandRecordingSuspension() {

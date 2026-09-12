@@ -588,100 +588,30 @@ Type mlir::trait::stripClaimProofs(Type type) {
 
 // The pending judgment a marked (unproven) coerce carries. Its reconciling
 // equalities are not yet citable -- the impl that supplies them is minted at
-// monomorphization -- so instead of ground congruence over cited leaves the
-// endpoints must UNIFY, with every !trait.proj term treated as a shared
-// unification variable keyed by the projection itself: the same projection is
-// one variable and cannot stand for two types, every other constructor position
-// is rigid, and a claim's (or any other composite's) predicate arguments are
-// descended through decomposeTerm, whose enumeration reads the attributes
-// holding them directly rather than through a generic walk. A whole projection
-// is one opaque variable: its own trait-application and associated-type
-// arguments are NOT descended during reconciliation, so two projections meet as
-// whole variables -- the same variable, or a pair aliased and owed one grounding
-// at discharge -- never unified by matching their arguments. Reflexive endpoints
-// pass. A projection may resolve to any type the unification reaches: a
-// projection-free position (the ground type the minted impl supplies), itself,
-// another bare projection, or a composite that still carries projections. Every
-// projection standing in a binding's terminal is itself a variable still owed a
-// projection-free grounding at discharge, so a terminal that still carries one
-// is a weaker assertion than a ground terminal, not a stronger one; the bonded
-// erase pass judges the op once monomorphization grounds every projection,
-// refusing such a coerce at its barrier when its ground endpoints stand apart --
-// they cannot be discharged and cannot cross. Binding a
-// projection to a type that contains the projection itself is an unfoundable
-// infinite type; it is refused by an occurs check that also keeps the binding
-// acyclic so the resolution walks below terminate. Endpoints arrive with proofs
-// already stripped.
-LogicalResult mlir::trait::verifyPendingProjectionUnification(
+// monomorphization -- so the endpoints are judged twice: here, where the
+// spellings may still be open, and again at the erase barrier, where they are
+// not. Endpoints identical after proof stripping are already reconciled.
+// Endpoints where either side still spells a projection or a type variable are
+// open: what each denotes is settled by instantiation and by the impls
+// monomorphization mints, so this verifier has nothing to decide and leaves the
+// judgment to the barrier, which refuses a coerce whose ground endpoints stand
+// apart. Two ground endpoints that differ are settled here and now: no later
+// step can bring them together, so they are refused. Endpoints arrive with
+// proofs already stripped.
+LogicalResult mlir::trait::verifyPendingCoerceEndpoints(
     Type input, Type result,
     llvm::function_ref<InFlightDiagnostic()> emitError) {
-  // Each projection stands for at most one type; a projection absent from the
-  // map is unbound and stands for itself. The occurs check below keeps the map
-  // acyclic, so `resolve` and the descent walks always terminate.
-  DenseMap<ProjectionType, Type> binding;
-
-  std::function<Type(Type)> resolve = [&](Type t) -> Type {
-    while (auto proj = dyn_cast<ProjectionType>(t)) {
-      auto it = binding.find(proj);
-      if (it == binding.end() || it->second == t)
-        return t;
-      t = it->second;
-    }
-    return t;
-  };
-
-  // Whether the projection `p` occurs anywhere in `t` once bindings resolve to a
-  // fixed point. Binding `p` to such a `t` would close a cycle (an infinite
-  // type), so it is refused before the binding is made; the acyclic invariant
-  // this preserves is what bounds the recursion here.
-  std::function<bool(ProjectionType, Type)> occursIn =
-      [&](ProjectionType p, Type t) -> bool {
-    t = resolve(t);
-    if (auto pt = dyn_cast<ProjectionType>(t))
-      return pt == p;
-    for (Type child : decomposeTerm(t).children)
-      if (occursIn(p, child))
-        return true;
-    return false;
-  };
-
-  std::function<LogicalResult(Type, Type)> unifyPending =
-      [&](Type a, Type b) -> LogicalResult {
-    a = resolve(a);
-    b = resolve(b);
-    if (a == b)
-      return success();
-    if (auto pa = dyn_cast<ProjectionType>(a)) {
-      if (occursIn(pa, b)) {
-        if (emitError) emitError() << "input type " << input << " and result type "
-                                   << result << " are not consistent as a pending coerce";
-        return failure();
-      }
-      binding[pa] = b;
-      return success();
-    }
-    if (auto pb = dyn_cast<ProjectionType>(b)) {
-      if (occursIn(pb, a)) {
-        if (emitError) emitError() << "input type " << input << " and result type "
-                                   << result << " are not consistent as a pending coerce";
-        return failure();
-      }
-      binding[pb] = a;
-      return success();
-    }
-    // Both sides are rigid here: same constructor identity, children paired.
-    TermShape sa = decomposeTerm(a);
-    TermShape sb = decomposeTerm(b);
-    if (sa.key != sb.key || sa.children.size() != sb.children.size()) {
-      if (emitError) emitError() << "input type " << input << " and result type "
-                                 << result << " are not consistent as a pending coerce";
-      return failure();
-    }
-    for (auto [ca, cb] : llvm::zip(sa.children, sb.children))
-      if (failed(unifyPending(ca, cb)))
-        return failure();
+  if (input == result)
     return success();
-  };
 
-  return unifyPending(input, result);
+  auto stillOpen = [](Type ty) {
+    return containsType<ProjectionType>(ty) || containsType<PolyType>(ty);
+  };
+  if (stillOpen(input) || stillOpen(result))
+    return success();
+
+  if (emitError)
+    emitError() << "input type " << input << " and result type " << result
+                << " are not consistent as a pending coerce";
+  return failure();
 }

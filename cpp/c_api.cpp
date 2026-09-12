@@ -308,9 +308,8 @@ MlirOperation traitDeriveOpCreate(MlirLocation loc,
   return wrap(op.getOperation());
 }
 
-MlirType traitPolyTypeGet(MlirContext wrappedCtx,
-                          unsigned int uniqueId) {
-  return wrap(PolyType::get(unwrap(wrappedCtx), uniqueId));
+MlirType traitPolyTypeGet(MlirContext wrappedCtx, unsigned int label) {
+  return wrap(PolyType::get(unwrap(wrappedCtx), label));
 }
 
 MlirType traitClaimTypeGet(MlirContext wrappedCtx,
@@ -374,13 +373,13 @@ MlirAttribute traitWitnessAttrGet(MlirContext wrappedCtx,
 
 bool traitCoercePendingAccepts(MlirType input, MlirType result) {
   // The consult runs the verifier's own marked arm: strip proofs, then the
-  // shared projection-unification judgment. Sharing the function keeps the
-  // classifier's verdict and the codegen-exit verifier's from ever disagreeing.
+  // shared pending judgment. Sharing the function keeps the classifier's verdict
+  // and the codegen-exit verifier's from ever disagreeing.
   Type in = stripClaimProofs(unwrap(input));
   Type out = stripClaimProofs(unwrap(result));
   // A refused pending judgment is a classification answer, not a compile error,
   // so this consult passes no diagnostic sink and the judgment stays silent.
-  return succeeded(verifyPendingProjectionUnification(in, out));
+  return succeeded(verifyPendingCoerceEndpoints(in, out));
 }
 
 // The shared body of the two projection-resolution consults. It splits the

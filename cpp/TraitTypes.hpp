@@ -18,8 +18,6 @@ namespace mlir::trait {
 // Generated interface declarations below mention these types before the
 // concrete helper classes are defined in this header.
 class TraitOp;
-class InstantiationMap;
-class UnificationMap;
 class SpecializationMap;
 class ProjectionBindings;
 class EvidenceBindings;
@@ -96,64 +94,6 @@ inline Type applySubstitutionOnce(const llvm::DenseMap<Type,Type> &subst,
                                   Type root);
 inline Type applySubstitutionToFixedPoint(const llvm::DenseMap<Type,Type> &subst,
                                           Type ty);
-inline void normalizeSubstitutionInPlace(llvm::DenseMap<Type,Type> &subst);
-
-/// InstantiationMap: GenericTypeInterface -> UnificationTypeInterface.
-///
-/// Maps each generic type parameter encountered during instantiation to the
-/// fresh unification variable allocated for that parameter. Reusing the mapping
-/// preserves identity: repeated occurrences of the same generic instantiate to
-/// the same fresh variable.
-class InstantiationMap {
-public:
-  std::optional<UnificationTypeInterface> lookup(GenericTypeInterface key) const {
-    auto it = bindings.find(key);
-    if (it == bindings.end())
-      return std::nullopt;
-    return it->second;
-  }
-
-  void bind(GenericTypeInterface key, UnificationTypeInterface value) {
-    bindings[key] = value;
-  }
-
-  llvm::DenseMap<Type, Type> toTypeMap() const {
-    llvm::DenseMap<Type, Type> result;
-    for (auto [key, value] : bindings)
-      result[key] = value;
-    return result;
-  }
-
-private:
-  llvm::DenseMap<GenericTypeInterface, UnificationTypeInterface> bindings;
-};
-
-/// UnificationMap: UnificationTypeInterface -> Type.
-///
-/// Bindings accumulated while unifying two types. Keys are types that actively
-/// participate in unification, such as inference variables and projections; the
-/// values are the types they are known to equal.
-class UnificationMap {
-public:
-  std::optional<Type> lookup(UnificationTypeInterface key) const {
-    auto it = bindings.find(key);
-    if (it == bindings.end())
-      return std::nullopt;
-    return it->second;
-  }
-
-  void bind(UnificationTypeInterface key, Type value) { bindings[key] = value; }
-
-  llvm::DenseMap<Type, Type> toTypeMap() const {
-    llvm::DenseMap<Type, Type> result;
-    for (auto [key, value] : bindings)
-      result[key] = value;
-    return result;
-  }
-
-private:
-  llvm::DenseMap<UnificationTypeInterface, Type> bindings;
-};
 
 /// SpecializationMap: GenericTypeInterface -> Type.
 ///
@@ -644,19 +584,17 @@ public:
     return applySubstitutionToFixedPoint(toTypeMap(), ty);
   }
 
+  // The three components key disjoint kinds of type -- a parameter, a
+  // projection, a claim -- so the union holds every binding each one made under
+  // the key it was made for. A variable therefore keeps the value bound to it,
+  // which is what an equality endpoint reading it must see; a chain through a
+  // projection or evidence key resolves because readers apply this map to a
+  // fixed point.
   llvm::DenseMap<Type, Type> toTypeMap() const {
     llvm::DenseMap<Type, Type> result = specialization.toTypeMap();
     for (auto [key, value] : projectionBindings.toTypeMap())
       result[key] = value;
     for (auto [key, value] : evidenceBindings.toTypeMap())
-      result[key] = value;
-    normalizeSubstitutionInPlace(result);
-    // A variable's value must keep its own spelling for an equality endpoint
-    // reading it, so restore each generic key's directly bound value rather than
-    // the one path compression chased through a projection or evidence key.
-    // Readers apply this map to a fixed point, so a variable-to-variable chain
-    // still resolves; only a projection resolution is kept out of an endpoint.
-    for (auto [key, value] : specialization.toTypeMap())
       result[key] = value;
     return result;
   }
@@ -798,60 +736,6 @@ inline bool isPurelyPolymorphicType(Type root) {
 
   // must have seen at least one one polymorphic participant, and none that are monomorphic
   return allParticipatingArePoly && sawPoly;
-}
-
-/// Instantiate a type with fresh inference variables.
-///
-/// For each GenericTypeInterface encountered in `t`, creates a fresh instance and
-/// records the mapping in `inst`. The `idCounter` is used to generate unique IDs
-/// for inference variables (should start at 0 for each instantiation context).
-///
-/// For structural types (e.g., FunctionType, TupleType), recursively instantiates
-/// sub-elements and rebuilds the type.
-///
-/// For atomic types (e.g., i32, f64), returns the type unchanged.
-///
-/// This function is memoized via `inst` - if a GenericTypeInterface is encountered multiple
-/// times within the same type structure, it maps to the same InferenceType.
-Type instantiate(Type t, InstantiationMap& inst, uint64_t& idCounter);
-
-inline void normalizeSubstitutionInPlace(llvm::DenseMap<Type,Type> &subst) {
-  // Snapshot keys so we can mutate the map safely.
-  llvm::SmallVector<Type, 8> keys;
-  keys.reserve(subst.size());
-  for (auto &kv : subst) keys.push_back(kv.first);
-
-  // Path-compressed chase with simple cycle guard + memo.
-  llvm::DenseMap<Type, Type> memo;
-  llvm::SmallPtrSet<Type, 8> inStack;
-
-  auto chase = [&](Type t, auto &chase_ref) -> Type {
-    // If t doesn’t map anywhere, it’s a fixed point.
-    auto it = subst.find(t);
-    if (it == subst.end()) return t;
-
-    // Already memoized?
-    if (auto mit = memo.find(t); mit != memo.end()) return mit->second;
-
-    // Cycle guard: if we re-enter t, bail by treating t as fixed.
-    if (!inStack.insert(t).second) return t;
-
-    Type to = chase_ref(it->second, chase_ref);  // recurse
-    memo[t] = to;                                // path compression
-    inStack.erase(t);
-    return to;
-  };
-
-  for (Type k : keys) {
-    Type v = chase(k, chase);
-    if (v == k) {
-      // Drop trivial self-map.
-      subst.erase(k);
-    } else {
-      subst[k] = v; // Collapse k directly to its fixed point.
-    }
-  }
-
 }
 
 inline Type applySubstitutionOnce(const llvm::DenseMap<Type,Type> &subst,
@@ -1029,115 +913,6 @@ inline Type applyGATSubstitution(ArrayAttr typeParams,
   return applySubstitutionToFixedPoint(gatSubst, boundType);
 }
 
-inline FailureOr<DenseMap<Type,Type>> composeSubstitutions(const DenseMap<Type,Type> &f,
-                                                           const DenseMap<Type,Type> &g,
-                                                           llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
-  DenseMap<Type,Type> fog;
-
-  for (const auto &[k, v] : f) {
-    // rewrite v by g to a fixed point
-    auto rewritten = applySubstitutionToFixedPoint(g, v);
-
-    auto [it, inserted] = fog.try_emplace(k, rewritten);
-    if (!inserted && it->second != rewritten) {
-      if (err) err() << "conflicting substitution for " << k
-                     << ": " << it->second << " vs " << rewritten;
-      return failure();
-    }
-  }
-  return fog;
-}
-
-/// Attempts to update `subst` so that the parameter type `formal`
-/// is unified with the argument type `actual`.
-///
-/// This function applies the current substitution mapping to both `formal`
-/// and `actual` before comparison. If the normalized types are identical,
-/// the substitution is unchanged and the call succeeds.
-///
-/// Otherwise, `formal` is examined to determine how `actual` can serve as
-/// its substitute:
-///   - If `formal` implements `UnficationTypeInterface`, its
-///     `unify` logic is invoked to extend `subst`.
-///   - If `formal` and `actual` have the same type constructor and arity,
-///     substitution recurses on their immediate subtypes.
-///   - Otherwise, the types are considered incompatible and an error is
-///     reported via `emitError`, if provided.
-LogicalResult unify(
-    Type formal,
-    Type actual,
-    ModuleOp module,
-    UnificationMap &subst,
-    llvm::function_ref<InFlightDiagnostic()> emitError);
-
-/// As above, but discards diagnostics
-LogicalResult unify(
-    Type formal,
-    Type actual,
-    ModuleOp module,
-    UnificationMap &subst);
-
-/// As above, but discards the resulting substitution
-LogicalResult unify(
-    Type formal,
-    Type actual,
-    ModuleOp module,
-    llvm::function_ref<InFlightDiagnostic()> emitError);
-
-/// As above, but discards diagnostics *and* the resulting substitution
-LogicalResult unify(
-    Type formal,
-    Type actual,
-    ModuleOp module);
-
-/// Attempts to build a substitution which is the inverse of subst by mapping values in subst to keys
-inline FailureOr<DenseMap<Type,Type>> invertSubstitution(
-    const DenseMap<Type,Type> &subst,
-    llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
-  DenseMap<Type,Type> inverted;
-  for (const auto &[k, v] : subst) {
-    auto [it, inserted] = inverted.try_emplace(v, k);
-    if (!inserted && it->second != k) {
-      if (err) err() << "substitution is not injective: conflicting inverse for "
-                     << v << ": " << it->second << " vs " << k;
-      return failure();
-    }
-  }
-  return inverted;
-}
-
-/// Compute the substitution that specializes a possibly polymorphic `formal`
-/// type so it unifies with an `actual` type.
-///
-/// This is the main helper for checking uses of polymorphic functions or values
-/// against a concrete call site or expected signature:
-///
-///  * **Instantiation.** Replace every generic parameter found in both `formal`
-///    and `actual` with fresh inference variables, so unification works even if
-///    `actual` itself contains generics.
-///  * **Unification.** Solve constraints so the instantiated `formal` and
-///    instantiated `actual` become equal, producing a mapping from inference
-///    variables to concrete types.
-///  * **Back-projection.** Compose the inference solution back through the
-///    instantiation map to yield a map from the original generics in `formal`
-///    to fully resolved types. Any generics that came from `actual` remain as
-///    generics; no inference variables remain.
-///  * **Normalization.** Chase and collapse substitution chains so the map is
-///    stable (no trivial self-maps, no stale inference variables).
-///
-/// The returned map always has keys that are the generic placeholders occurring
-/// in `formal`. Values are “ground” relative to inference (no `!trait.infer`
-/// left), though they may still mention generics if the `actual` side was also
-/// generic.
-///
-/// Returns `failure()` if the two types cannot be unified. If `err` is supplied,
-/// a diagnostic is emitted on failure.
-FailureOr<SpecializationMap> buildSpecialization(
-    Type formal,
-    Type actual,
-    ModuleOp module,
-    llvm::function_ref<InFlightDiagnostic()> err = nullptr);
-
 // this walks an Attribute and looks for any occurrence of the given NeedleType
 template<class NeedleType> bool containsType(Attribute attr) {
   bool found = false;
@@ -1258,6 +1033,25 @@ inline SmallVector<GenericTypeInterface, 4> getTypeParametersIn(Type ty) {
   }
   return result;
 }
+
+/// The first `!trait.poly` label no type standing in `op`'s declaration spells.
+///
+/// A label names a position in the declaration that binds it, so a rewrite that
+/// introduces a variable into a declaration already written -- the state of a
+/// fold body, the intermediate tuple a flat map is cut into -- must not spell a
+/// label that declaration, or any body already inside it, binds: a substitution
+/// over either is keyed by those labels and would rewrite the new variable along
+/// with them. Reading the labels standing in the declaration and taking the next
+/// one is what keeps the new variable the rewrite's own.
+///
+/// The declaration is the outermost operation below the enclosing module that
+/// `op` stands in -- the function, trait or impl whose parameters a substitution
+/// is keyed by -- or `op` itself when it stands in none.
+///
+/// A declaration built from nothing needs none of this: its own parameters are
+/// labelled 0, 1, ... by their position in its header, and its body is read
+/// against that header alone.
+unsigned firstUnusedPolyLabel(Operation *op);
 
 /// The established context a comparison reads both sides through: an impl's own
 /// bindings and premises inside a verifier, the recorded facts inside the

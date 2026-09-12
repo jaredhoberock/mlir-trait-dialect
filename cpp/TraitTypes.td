@@ -18,50 +18,35 @@ def PolyType : TypeDef<TraitDialect, "Poly", [
   let summary = "A polymorphic type variable";
 
   let description = [{
-    The `!trait.poly` type represents a *polymorphic type variable*.
+    The `!trait.poly` type represents a *polymorphic type variable*: a type
+    parameter some declaration binds, and the key a substitution over that
+    declaration carries an argument under.
 
-    ### Position-dependent semantics
+    ### Identity
 
-    Semantics depend on its *position* in a type unification.
-
-    * Formal position (universally quantified):
-      When a `!trait.poly` appears on the *formal* side of `unify` (e.g., in trait headers,
-      impl/self applications, polymorphic function signatures, or trait-defined methods,
-      it stands for a universally quantified type parameter. During unification, the callee
-      may bind the universal variable to the caller's actual type, subject to an occurs check.
-
-    * Actual position (existential):
-      When a `!trait.poly` appears on the *actual* side of `unify` (e.g., in a caller's `where`
-      clause or as an associated type placeholder), it acts as an existential variable.
-      Unification may bind this existential to whatever the formal side demands.
+    A `!trait.poly` carries a non-negative integer label. Labels are
+    declaration-local: a declaration's parameters are read off its own header in
+    position order, so a callee's `!trait.poly<0>` is its own first parameter
+    and never the caller's, and two declarations may spell the same label
+    without relating their parameters. A negative label is refused.
 
     ### Interfaces
 
     `!trait.poly` implements:
     - `PolymorphicTypeInterface` - always reports itself as polymorphic.
-    - `GenericTypeInterface` - supports instantiation into a fresh `InferenceType`
-      when building an instantiation map.
-    ### Identity
-    
-    Each `trait.poly` carries a unique integer `unique_id` to identify it within a module.
-    `unique` can be used to request a new `!trait.poly` with an automatically
-    generated `unique_id` (allocated in monotonically decreasing order starting at `-1`).
+    - `GenericTypeInterface` - answers with the argument a substitution binds to
+      the parameter it stands for.
   }];
 
   let extraClassDeclaration = [{
-    // create a PolyType with an unused unique_id
-    static PolyType getUnique(MLIRContext* ctx);
-
     // for GenericTypeInterface
-    Type instantiate(::mlir::trait::InstantiationMap &inst, uint64_t &idCounter);
-
     Type specializeWith(const ::mlir::trait::SpecializationMap &subst) const;
 
     // for PolymorphicTypeInterface
     bool isPolymorphic() const { return true; }
   }];
 
-  let parameters = (ins "int":$unique_id);
+  let parameters = (ins "int":$label);
 
   let hasCustomAssemblyFormat = 1;
 }
@@ -69,7 +54,6 @@ def PolyType : TypeDef<TraitDialect, "Poly", [
 // Represents a claim, possibly with direct proof, that a trait application is satisfied by some implementation
 def ClaimType : TypeDef<TraitDialect, "Claim", [
   PolymorphicTypeInterface,
-  UnificationTypeInterface,
   DeclareTypeInterfaceMethods<SymbolUserTypeInterface>
 ]> {
   let mnemonic = "claim";
@@ -210,12 +194,6 @@ def ClaimType : TypeDef<TraitDialect, "Claim", [
 
     // for PolymorphicTypeInterface
     bool isPolymorphic() const;
-
-    // for UnificationTypeInterface
-    LogicalResult unify(Type other,
-                        ModuleOp module,
-                        ::mlir::trait::UnificationMap &subst,
-                        llvm::function_ref<InFlightDiagnostic()> emitError);
   }];
 
   let hasCustomAssemblyFormat = 1;
@@ -224,7 +202,6 @@ def ClaimType : TypeDef<TraitDialect, "Claim", [
 // Represents a projection of an associated type from a trait application
 def ProjectionType : TypeDef<TraitDialect, "Projection", [
   PolymorphicTypeInterface,
-  UnificationTypeInterface,
   DeclareTypeInterfaceMethods<SymbolUserTypeInterface>
 ]> {
   let mnemonic = "proj";
@@ -255,51 +232,9 @@ def ProjectionType : TypeDef<TraitDialect, "Projection", [
 
     // for PolymorphicTypeInterface
     bool isPolymorphic() const;
-
-    // for UnificationTypeInterface
-    LogicalResult unify(Type other,
-                        ModuleOp module,
-                        ::mlir::trait::UnificationMap &subst,
-                        llvm::function_ref<InFlightDiagnostic()> emitError);
   }];
 
   let hasCustomAssemblyFormat = 1;
-}
-
-
-// Represents an inference variable used during type inference
-def InferenceType : TypeDef<TraitDialect, "Inference", [
-  PolymorphicTypeInterface,
-  UnificationTypeInterface
-]> {
-  let mnemonic = "infer";
-  let summary = "INTERNAL: Type inference variable (should not appear in final IR)";
-
-  let description = [{
-    The `!trait.infer` type represents a *type inference variable* created during
-    impl resolution and type checking. Each inference variable is created fresh when
-    instantiating a polymorphic impl, ensuring that multiple uses of the same
-    polymorphic impl get independent sets of type variables.
-
-    Inference variables should NEVER appear in final IR - they are purely internal
-    to the type checking process and should be eliminated by substitution before
-    any IR is serialized or passed to subsequent compilation stages.
-  }];
-
-  let extraClassDeclaration = [{
-    // for PolymorphicTypeInterface
-    bool isPolymorphic() const { return true; }
-
-    // for UnificationTypeInterface
-    LogicalResult unify(Type other,
-                        ModuleOp module,
-                        ::mlir::trait::UnificationMap &subst,
-                        llvm::function_ref<InFlightDiagnostic()> emitError);
-  }];
-
-  let parameters = (ins "uint64_t":$unique_id);
-
-  let assemblyFormat = "`<` $unique_id `>`";
 }
 
 #endif // TRAIT_TYPES_TD

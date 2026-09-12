@@ -67,7 +67,7 @@ unsafe extern "C" {
                            impl_name: MlirStringRef,
                            assumptions: *const MlirValue, num_assumptions: isize) -> MlirOperation;
 
-    fn traitPolyTypeGet(ctx: MlirContext, unique_id: u32) -> MlirType;
+    fn traitPolyTypeGet(ctx: MlirContext, label: u32) -> MlirType;
 
     fn traitClaimTypeGet(ctx: MlirContext,
                          predicate: MlirAttribute) -> MlirType;
@@ -418,13 +418,15 @@ pub fn assume<'c>(loc: Location<'c>,
         .add_results(&[claim]))
 }
 
+/// The `!trait.poly<label>` type. A label names a position in the declaration
+/// that binds it, so it is non-negative and local to that declaration.
 pub fn poly_type<'c>(
     ctx: &'c Context,
-    unique_id: u32,
+    label: u32,
 ) -> Type<'c> {
     unsafe { Type::from_raw(traitPolyTypeGet(
         ctx.to_raw(),
-        unique_id,
+        label,
     ))}
 }
 

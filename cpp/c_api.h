@@ -102,8 +102,9 @@ MlirOperation traitDeriveOpCreate(MlirLocation loc,
                                   MlirStringRef implName,
                                   MlirValue* assumptions, intptr_t numAssumptions);
 
-/// Return the !trait.poly<uniqueId> type
-MlirType traitPolyTypeGet(MlirContext ctx, unsigned int uniqueId);
+/// Return the !trait.poly<label> type. A label names a position in the
+/// declaration that binds it, so it is non-negative.
+MlirType traitPolyTypeGet(MlirContext ctx, unsigned int label);
 
 /// Return the unproven !trait.claim over `predicate`: a #trait.application
 /// yields an application claim, a #trait.equality an equality claim. Any other
@@ -142,10 +143,10 @@ MlirAttribute traitWitnessAttrGet(MlirContext ctx,
                                   MlirAttribute predicate,
                                   MlirStringRef implName);
 
-/// Answer whether `input` and `result` converge under the pending judgment a
-/// marked coerce carries, running verifyPendingProjectionUnification
-/// (TraitOps.hpp). Diagnostics are suppressed; a refusal is a classification
-/// answer, not a compile error.
+/// Answer whether `input` and `result` stand under the pending judgment a
+/// marked coerce carries, running verifyPendingCoerceEndpoints (TraitOps.hpp).
+/// Diagnostics are suppressed; a refusal is a classification answer, not a
+/// compile error.
 bool traitCoercePendingAccepts(MlirType input, MlirType result);
 
 /// Answer whether a projection-resolution witness cited to `implName` in

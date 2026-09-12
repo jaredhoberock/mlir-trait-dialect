@@ -61,21 +61,15 @@ FailureOr<SpecializationMap> verifyProjectionResolutionAtImpl(
 Type stripClaimProofs(Type type);
 
 /// The pending judgment a marked (unproven) coerce carries; one judgment serves
-/// every checker of this evidence. The endpoints must unify, giving every
-/// `!trait.proj` term a shared variable keyed by the projection itself: the same
-/// projection is one variable, every other position is rigid, and a whole
-/// projection is opaque (its arguments are not descended). A projection may
-/// resolve to any type the unification reaches -- a projection-free position,
-/// itself, another bare projection, or a composite that still carries
-/// projections -- since every projection standing in a binding is itself a
-/// variable still owed a grounding at discharge, so a terminal that still
-/// carries one is the weaker assertion. The one binding refused is one that
-/// closes a cycle (an unfoundable infinite type), caught by an occurs check.
-/// Ground truth is arbitrated later: the bonded erase pass judges the op once
-/// monomorphization grounds every projection, refusing a coerce whose ground
-/// endpoints stand apart. Endpoints arrive with proofs already stripped. `err`,
-/// when non-null, receives the diagnostic on refusal.
-LogicalResult verifyPendingProjectionUnification(
+/// every checker of this evidence. Endpoints identical after proof stripping are
+/// reconciled. Endpoints where either side still spells a projection or a type
+/// variable are open -- instantiation and the impls monomorphization mints
+/// settle what each denotes -- so they stand, and the bonded erase pass judges
+/// the op once every projection is ground, refusing a coerce whose ground
+/// endpoints stand apart. Two ground endpoints that differ are refused here: no
+/// later step brings them together. Endpoints arrive with proofs already
+/// stripped. `emitError`, when non-null, receives the diagnostic on refusal.
+LogicalResult verifyPendingCoerceEndpoints(
     Type input, Type result,
     llvm::function_ref<InFlightDiagnostic()> emitError = nullptr);
 

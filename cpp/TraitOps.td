@@ -1259,12 +1259,12 @@ def CoerceOp : TraitDialectOp<"coerce", [
     ImplGenerator's, minted only at monomorphization. A marked coerce cites
     nothing -- `equalities` must be empty -- and stands in a pending judgment:
     with the proofs stripped and the no-proof-swap clause enforced exactly as
-    above, the endpoints must unify under the rule `verifyPendingProjectionUnification`
-    owns, where every `!trait.proj` term is a shared unification variable keyed by
-    the projection itself and every other position is rigid. That rule, not this
-    description, is the authoritative statement of what a projection may resolve
-    to; it accepts any type the unification reaches and refuses only a binding
-    that closes a cycle. The marked form mints nothing consumable: monomorphization
+    above, the endpoints stand under the rule `verifyPendingCoerceEndpoints`
+    owns, which lets an endpoint still spelling a projection or a type variable
+    stand and refuses two ground endpoints that differ. That rule, not this
+    description, is the authoritative statement of what stands; what an open
+    endpoint denotes is settled by instantiation and by the impls
+    monomorphization mints. The marked form mints nothing consumable: monomorphization
     respells its projections to ground, discharging the obligation to the reflexive
     form the folder collapses -- or, if the two lookups ground to different types,
     failing the build. A marked coerce surviving past monomorphization is a hard

@@ -2788,7 +2788,7 @@ LogicalResult CoerceOp::verify() {
       return emitOpError()
              << "an unproven coerce may not cite equalities; it stands in a "
                 "pending judgment discharged at monomorphization";
-    if (failed(verifyPendingProjectionUnification(
+    if (failed(verifyPendingCoerceEndpoints(
             input, result, [&]() -> InFlightDiagnostic { return emitOpError(); })))
       return failure();
   } else {

@@ -3,21 +3,20 @@
 
 // RUN: mlir-opt %s -split-input-file -verify-diagnostics
 
-// A projection is a shared unification variable keyed by the projection itself,
-// so it stands for at most one type. Forcing one projection to equal two
-// different rigid types at once is the inconsistency the pending judgment
-// refuses.
+// One projection standing opposite two different types is a claim about what
+// the impls monomorphization mints will bind, and the verifier holds none of
+// them. So a marked coerce whose endpoints still spell a projection stands here
+// and is judged at the erase barrier, where both spellings are ground and an
+// undischarged coerce is refused.
 
 trait.trait private @Fold[!trait.poly<0>] {
   trait.assoc_type @Item
 }
 
-// One projection standing for two concrete types: @Fold[i64]::Item is one
-// variable, forced to equal i32 in the first position and i64 in the second.
+// @Fold[i64]::Item opposite i32 in one position and i64 in the other.
 func.func @one_projection_two_types(
     %x: tuple<!trait.proj<@Fold[i64], "Item">, !trait.proj<@Fold[i64], "Item">>)
     -> tuple<i32, i64> {
-  // expected-error @below {{are not consistent as a pending coerce}}
   %y = trait.coerce %x
     : tuple<!trait.proj<@Fold[i64], "Item">, !trait.proj<@Fold[i64], "Item">>
     to tuple<i32, i64> unproven
@@ -31,14 +30,10 @@ trait.trait private @Fold[!trait.poly<0>] {
   trait.assoc_type @B
 }
 
-// The same inconsistency reached through a projection-bearing composite: @A is
-// bound to tuple<@B> in the first position, so the second position forces @B to
-// be both i32 and, transitively through @A's binding, the rigid i64 -- the
-// tuple constructor cannot match i64.
+// The same shape reached through a projection-bearing composite.
 func.func @composite_binding_then_rigid_mismatch(
     %x: tuple<!trait.proj<@Fold[i64], "A">, !trait.proj<@Fold[i64], "A">>)
     -> tuple<tuple<!trait.proj<@Fold[i64], "B">>, i64> {
-  // expected-error @below {{are not consistent as a pending coerce}}
   %y = trait.coerce %x
     : tuple<!trait.proj<@Fold[i64], "A">, !trait.proj<@Fold[i64], "A">>
     to tuple<tuple<!trait.proj<@Fold[i64], "B">>, i64> unproven

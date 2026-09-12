@@ -13,18 +13,11 @@ def GenericTypeInterface : TypeInterface<"GenericTypeInterface"> {
   let cppNamespace = "::mlir::trait";
   let description = [{
     Types implementing this interface represent universally-quantified generics
-    (e.g., `!trait.poly`) and participate in instantiation. They know how to
-    instantiate themselves into a fresh type variable and memoize that choice
-    into an instantiation map.
+    (e.g., `!trait.poly`). A declaration binds them, a substitution keys them,
+    and each answers for the argument its parameter takes.
   }];
 
   let methods = [
-    InterfaceMethod<
-      "Instantiate `*this` to a fresh type variable (memoized in `inst`).",
-      "mlir::Type", "instantiate",
-      (ins "::mlir::trait::InstantiationMap&":$inst,
-           "uint64_t&":$idCounter)
-    >,
     InterfaceMethod<
       "Specialize this type using generic-type bindings. Returns the "
       "specialized type, or this type unchanged if no specialization applies. "
@@ -74,46 +67,6 @@ def PolymorphicTypeInterface : TypeInterface<"PolymorphicTypeInterface"> {
     // convenience negates the result of isPolymorphic
     bool isMonomorphic() const {
       return !isPolymorphic();
-    }
-  }];
-}
-
-// Interface for types that actively participate in type unification
-def UnificationTypeInterface : TypeInterface<"UnificationTypeInterface"> {
-  let cppNamespace = "::mlir::trait";
-  let description = [{
-    Types implementing this interface participate in type unification.
-    An implementation defines how `*this` (the *formal* type on the left)
-    unifies with an arbitrary right-hand side type, updating a caller-provided
-    `UnificationMap` with *type-only* bindings.
-
-    Guidelines:
-    * Respect existing substitutions: implementations should assume the caller
-      has normalized both sides via the current `subst` and may normalize again
-      internally as needed.
-    * Variable-like types (e.g., inference variables) should perform
-      an occurs check before binding to prevent infinite types.
-  }];
-
-  let methods = [
-    InterfaceMethod<
-      "Attempt to unify `*this` with `actual`, extending `subst`.",
-      "llvm::LogicalResult", "unify",
-      (ins "Type":$actual,
-           "mlir::ModuleOp":$module,
-           "::mlir::trait::UnificationMap&":$subst,
-           "llvm::function_ref<mlir::InFlightDiagnostic()>":$emitError)
-    >
-  ];
-
-  let extraClassDeclaration = [{
-    // Convenience overload that discards diagnostics
-    llvm::LogicalResult unify(
-        Type actual,
-        ModuleOp module,
-        ::mlir::trait::UnificationMap &subst) const {
-      auto errFn = llvm::function_ref<InFlightDiagnostic()>{};
-      return this->unify(actual, module, subst, errFn);
     }
   }];
 }
