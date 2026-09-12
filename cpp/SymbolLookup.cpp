@@ -9,6 +9,10 @@ namespace mlir::trait {
 /// answered.
 struct HeldSymbolAnswers {
   llvm::DenseMap<std::pair<Operation *, StringAttr>, Operation *> answers;
+
+  /// The symbol tables a caller handed this scope, which answer in place of
+  /// `answers` and answer a name no table binds as well.
+  SymbolTableCollection *tables = nullptr;
 };
 
 namespace {
@@ -21,6 +25,14 @@ SymbolLookupScope::SymbolLookupScope() {
   if (installed)
     return;
   held = std::make_unique<HeldSymbolAnswers>();
+  installed = held.get();
+}
+
+SymbolLookupScope::SymbolLookupScope(SymbolTableCollection &tables) {
+  if (installed)
+    return;
+  held = std::make_unique<HeldSymbolAnswers>();
+  held->tables = &tables;
   installed = held.get();
 }
 
@@ -37,6 +49,10 @@ void forgetHeldSymbols() {
 Operation *lookupSymbolFrom(ModuleOp module, FlatSymbolRefAttr name) {
   if (!module || !name)
     return nullptr;
+
+  if (installed && installed->tables)
+    return installed->tables->lookupNearestSymbolFrom(module.getOperation(),
+                                                      name);
 
   StringAttr leaf = name.getAttr();
   std::pair<Operation *, StringAttr> asked{module.getOperation(), leaf};

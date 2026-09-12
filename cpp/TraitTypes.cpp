@@ -465,6 +465,10 @@ LogicalResult ClaimType::verify(llvm::function_ref<InFlightDiagnostic()> emitErr
 // operation and diagnostics are anchored there.
 LogicalResult ClaimType::verifySymbolUses(Operation *op,
                                           SymbolTableCollection &symbolTable) const {
+  // Verification writes nothing, so every name read under it resolves through
+  // the symbol tables the walk this is one step of has already built.
+  SymbolLookupScope symbolAnswers(symbolTable);
+
   ModuleOp module = getAnchorModule(op);
   if (!module)
     return op->emitError() << "cannot verify " << *this
@@ -1214,6 +1218,10 @@ void ProjectionType::print(AsmPrinter &p) const {
 // same trait application as its claim, so verification delegates to that claim.
 LogicalResult ProjectionType::verifySymbolUses(Operation *op,
                                                SymbolTableCollection &symbolTable) const {
+  // Verification writes nothing, so every name read under it resolves through
+  // the symbol tables the walk this is one step of has already built.
+  SymbolLookupScope symbolAnswers(symbolTable);
+
   return asClaim().verifySymbolUses(op, symbolTable);
 }
 

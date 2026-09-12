@@ -73,6 +73,10 @@ LogicalResult WitnessAttr::verify(
 // reaches wherever this attribute rides.
 LogicalResult WitnessAttr::verifySymbolUses(
     Operation *op, SymbolTableCollection &symbolTable) const {
+  // Verification writes nothing, so every name read under it resolves through
+  // the symbol tables the walk this is one step of has already built.
+  SymbolLookupScope symbolAnswers(symbolTable);
+
   Operation *impl = symbolTable.lookupNearestSymbolFrom(op, getImplRef());
   if (!isa_and_nonnull<ImplOp>(impl))
     return op->emitError() << "witness names '" << getImplRef()
@@ -143,7 +147,11 @@ TraitOp TraitApplicationAttr::getTraitOrAbort(
 // is adopted for uniformity with symbol-using types; the same method would also
 // verify a trait application encountered in a discardable position.
 LogicalResult TraitApplicationAttr::verifySymbolUses(
-    Operation *op, SymbolTableCollection &) const {
+    Operation *op, SymbolTableCollection &symbolTable) const {
+  // Verification writes nothing, so every name read under it resolves through
+  // the symbol tables the walk this is one step of has already built.
+  SymbolLookupScope symbolAnswers(symbolTable);
+
   ModuleOp module = getAnchorModule(op);
   if (!module)
     return op->emitError()
@@ -229,6 +237,10 @@ LogicalResult PredicateArrayAttr::verify(
 // those, so there is nothing left for this entry point to check.
 LogicalResult PredicateArrayAttr::verifySymbolUses(
     Operation *op, SymbolTableCollection &symbolTable) const {
+  // Verification writes nothing, so every name read under it resolves through
+  // the symbol tables the walk this is one step of has already built.
+  SymbolLookupScope symbolAnswers(symbolTable);
+
   for (Attribute p : getPredicates())
     if (auto app = mlir::dyn_cast<TraitApplicationAttr>(p))
       if (failed(app.verifySymbolUses(op, symbolTable)))

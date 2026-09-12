@@ -55,7 +55,15 @@ void forgetHeldSymbols();
 /// its own and shares none.
 class SymbolLookupScope {
 public:
+  /// A scope that holds what it reads, for a span that may append symbols.
   SymbolLookupScope();
+
+  /// A scope that reads through `tables`, for a span in which nothing at all is
+  /// written. A verifier is handed the tables its driver built for the walk it
+  /// is one step of, so what an earlier step resolved serves this one, and what
+  /// this one resolves serves the steps after it.
+  explicit SymbolLookupScope(SymbolTableCollection &tables);
+
   ~SymbolLookupScope();
 
   SymbolLookupScope(const SymbolLookupScope &) = delete;

@@ -535,6 +535,10 @@ LogicalResult TraitOp::verify() {
 }
 
 LogicalResult TraitOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  // Verification writes nothing, so every name read under it resolves through
+  // the symbol tables the walk this is one step of has already built.
+  SymbolLookupScope symbolAnswers(symbolTable);
+
   // verify obligations
   return getRequirements().verifySymbolUses(getOperation(), symbolTable);
 }
@@ -1052,6 +1056,10 @@ LogicalResult ImplOp::verify() {
 }
 
 LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  // Verification writes nothing, so every name read under it resolves through
+  // the symbol tables the walk this is one step of has already built.
+  SymbolLookupScope symbolAnswers(symbolTable);
+
   auto errFn = [&]{ return emitOpError(); };
 
   auto module = getModule(errFn);
@@ -2050,10 +2058,9 @@ LogicalResult ProofOp::verify() {
 }
 
 LogicalResult ProofOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  // A verifier runs on whatever thread verification was handed to, so it holds
-  // its own answers for the names its proof tree resolves. Verification writes
-  // nothing, so every answer taken under it stands for the whole span.
-  SymbolLookupScope symbolAnswers;
+  // Verification writes nothing, so every name read under it resolves through
+  // the symbol tables the walk this is one step of has already built.
+  SymbolLookupScope symbolAnswers(symbolTable);
 
   auto module = (*this)->getParentOfType<ModuleOp>();
   auto errFn = [&] { return emitOpError(); };
@@ -2500,6 +2507,10 @@ LogicalResult WitnessOp::verify() {
 }
 
 LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  // Verification writes nothing, so every name read under it resolves through
+  // the symbol tables the walk this is one step of has already built.
+  SymbolLookupScope symbolAnswers(symbolTable);
+
   ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
   if (!module)
     return emitError() << "not inside a module";
@@ -2702,6 +2713,10 @@ ImplOp DeriveOp::getImplOp() {
 ///     assumption (so the caller is providing exactly the evidence the impl
 ///     requires under this specialization).
 LogicalResult DeriveOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  // Verification writes nothing, so every name read under it resolves through
+  // the symbol tables the walk this is one step of has already built.
+  SymbolLookupScope symbolAnswers(symbolTable);
+
   auto errFn = [&] { return emitOpError(); };
 
   // A trait.derive discharges the cited impl's application-arm assumptions, so
@@ -3365,6 +3380,10 @@ static LogicalResult verifyProofsAtCall(Operation *call, ValueRange operands,
 }
 
 LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  // Verification writes nothing, so every name read under it resolves through
+  // the symbol tables the walk this is one step of has already built.
+  SymbolLookupScope symbolAnswers(symbolTable);
+
   auto errFn = [&]{ return emitOpError(); };
 
   // A verifier holds no record of what impl selection has settled, so the
@@ -3611,6 +3630,10 @@ void MethodCallOp::print(OpAsmPrinter& p) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult FuncCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  // Verification writes nothing, so every name read under it resolves through
+  // the symbol tables the walk this is one step of has already built.
+  SymbolLookupScope symbolAnswers(symbolTable);
+
   auto calleeName = getCalleeNameAttr();
   if (!calleeName)
     return emitOpError() << "requires a 'callee_name' symbol reference attribute";
@@ -3832,7 +3855,11 @@ void ProjectOp::print(OpAsmPrinter& p) {
   }
 }
 
-LogicalResult ProjectOp::verifySymbolUses(SymbolTableCollection &/*symbolTable*/) {
+LogicalResult ProjectOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  // Verification writes nothing, so every name read under it resolves through
+  // the symbol tables the walk this is one step of has already built.
+  SymbolLookupScope symbolAnswers(symbolTable);
+
   ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
   if (!module)
     return emitOpError() << "not in a module";
