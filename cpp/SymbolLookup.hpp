@@ -62,10 +62,17 @@ public:
   SymbolLookupScope();
 
   /// A scope that reads through `tables`, for a span in which nothing at all is
-  /// written. A verifier is handed the tables its driver built for the walk it
-  /// is one step of, so what an earlier step resolved serves this one, and what
-  /// this one resolves serves the steps after it.
-  explicit SymbolLookupScope(SymbolTableCollection &tables);
+  /// written. A verifier is handed `op` and the tables its driver built for the
+  /// walk it is one step of, so what an earlier step resolved serves this one,
+  /// and what this one resolves serves the steps after it.
+  ///
+  /// That walk is over the symbol table enclosing `op`, and `tables` is asked
+  /// about that one table alone. A name read in a module standing above it is
+  /// scanned for instead: the verifier reaches an enclosed symbol table before
+  /// the one around it, so the module above has not had its own names checked
+  /// yet, and a table built over it would abort on the duplicate the verifier
+  /// is about to diagnose.
+  SymbolLookupScope(Operation *op, SymbolTableCollection &tables);
 
   ~SymbolLookupScope();
 

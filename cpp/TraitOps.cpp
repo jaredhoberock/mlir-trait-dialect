@@ -537,7 +537,7 @@ LogicalResult TraitOp::verify() {
 LogicalResult TraitOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // Verification writes nothing, so every name read under it resolves through
   // the symbol tables the walk this is one step of has already built.
-  SymbolLookupScope symbolAnswers(symbolTable);
+  SymbolLookupScope symbolAnswers(getOperation(), symbolTable);
 
   // verify obligations
   return getRequirements().verifySymbolUses(getOperation(), symbolTable);
@@ -1058,7 +1058,7 @@ LogicalResult ImplOp::verify() {
 LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // Verification writes nothing, so every name read under it resolves through
   // the symbol tables the walk this is one step of has already built.
-  SymbolLookupScope symbolAnswers(symbolTable);
+  SymbolLookupScope symbolAnswers(getOperation(), symbolTable);
 
   auto errFn = [&]{ return emitOpError(); };
 
@@ -2060,7 +2060,7 @@ LogicalResult ProofOp::verify() {
 LogicalResult ProofOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // Verification writes nothing, so every name read under it resolves through
   // the symbol tables the walk this is one step of has already built.
-  SymbolLookupScope symbolAnswers(symbolTable);
+  SymbolLookupScope symbolAnswers(getOperation(), symbolTable);
 
   auto module = (*this)->getParentOfType<ModuleOp>();
   auto errFn = [&] { return emitOpError(); };
@@ -2509,7 +2509,7 @@ LogicalResult WitnessOp::verify() {
 LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // Verification writes nothing, so every name read under it resolves through
   // the symbol tables the walk this is one step of has already built.
-  SymbolLookupScope symbolAnswers(symbolTable);
+  SymbolLookupScope symbolAnswers(getOperation(), symbolTable);
 
   ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
   if (!module)
@@ -2715,7 +2715,7 @@ ImplOp DeriveOp::getImplOp() {
 LogicalResult DeriveOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // Verification writes nothing, so every name read under it resolves through
   // the symbol tables the walk this is one step of has already built.
-  SymbolLookupScope symbolAnswers(symbolTable);
+  SymbolLookupScope symbolAnswers(getOperation(), symbolTable);
 
   auto errFn = [&] { return emitOpError(); };
 
@@ -3382,7 +3382,7 @@ static LogicalResult verifyProofsAtCall(Operation *call, ValueRange operands,
 LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // Verification writes nothing, so every name read under it resolves through
   // the symbol tables the walk this is one step of has already built.
-  SymbolLookupScope symbolAnswers(symbolTable);
+  SymbolLookupScope symbolAnswers(getOperation(), symbolTable);
 
   auto errFn = [&]{ return emitOpError(); };
 
@@ -3632,7 +3632,7 @@ void MethodCallOp::print(OpAsmPrinter& p) {
 LogicalResult FuncCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // Verification writes nothing, so every name read under it resolves through
   // the symbol tables the walk this is one step of has already built.
-  SymbolLookupScope symbolAnswers(symbolTable);
+  SymbolLookupScope symbolAnswers(getOperation(), symbolTable);
 
   auto calleeName = getCalleeNameAttr();
   if (!calleeName)
@@ -3858,7 +3858,7 @@ void ProjectOp::print(OpAsmPrinter& p) {
 LogicalResult ProjectOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // Verification writes nothing, so every name read under it resolves through
   // the symbol tables the walk this is one step of has already built.
-  SymbolLookupScope symbolAnswers(symbolTable);
+  SymbolLookupScope symbolAnswers(getOperation(), symbolTable);
 
   ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
   if (!module)

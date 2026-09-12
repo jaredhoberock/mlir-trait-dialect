@@ -75,7 +75,7 @@ LogicalResult WitnessAttr::verifySymbolUses(
     Operation *op, SymbolTableCollection &symbolTable) const {
   // Verification writes nothing, so every name read under it resolves through
   // the symbol tables the walk this is one step of has already built.
-  SymbolLookupScope symbolAnswers(symbolTable);
+  SymbolLookupScope symbolAnswers(op, symbolTable);
 
   Operation *impl = symbolTable.lookupNearestSymbolFrom(op, getImplRef());
   if (!isa_and_nonnull<ImplOp>(impl))
@@ -150,7 +150,7 @@ LogicalResult TraitApplicationAttr::verifySymbolUses(
     Operation *op, SymbolTableCollection &symbolTable) const {
   // Verification writes nothing, so every name read under it resolves through
   // the symbol tables the walk this is one step of has already built.
-  SymbolLookupScope symbolAnswers(symbolTable);
+  SymbolLookupScope symbolAnswers(op, symbolTable);
 
   ModuleOp module = getAnchorModule(op);
   if (!module)
@@ -239,7 +239,7 @@ LogicalResult PredicateArrayAttr::verifySymbolUses(
     Operation *op, SymbolTableCollection &symbolTable) const {
   // Verification writes nothing, so every name read under it resolves through
   // the symbol tables the walk this is one step of has already built.
-  SymbolLookupScope symbolAnswers(symbolTable);
+  SymbolLookupScope symbolAnswers(op, symbolTable);
 
   for (Attribute p : getPredicates())
     if (auto app = mlir::dyn_cast<TraitApplicationAttr>(p))

@@ -10,9 +10,14 @@ namespace mlir::trait {
 struct HeldSymbolAnswers {
   llvm::DenseMap<std::pair<Operation *, StringAttr>, Operation *> answers;
 
-  /// The symbol tables a caller handed this scope, which answer in place of
-  /// `answers` and answer a name no table binds as well.
+  /// The symbol tables a caller handed this scope, which are indexed and so
+  /// answer in place of a scan, a name no table binds included.
   SymbolTableCollection *tables = nullptr;
+
+  /// The one symbol table `tables` is asked about: the table the verifier's
+  /// walk is over, whose names it checked to be unique before walking it. A
+  /// read anchored anywhere else is a scan.
+  Operation *checkedTable = nullptr;
 };
 
 namespace {
@@ -38,11 +43,14 @@ SymbolLookupScope::SymbolLookupScope() {
   installed = held.get();
 }
 
-SymbolLookupScope::SymbolLookupScope(SymbolTableCollection &tables) {
+SymbolLookupScope::SymbolLookupScope(Operation *op,
+                                     SymbolTableCollection &tables) {
   if (installed)
     return;
   held = std::make_unique<HeldSymbolAnswers>();
   held->tables = &tables;
+  if (Operation *around = op ? op->getParentOp() : nullptr)
+    held->checkedTable = SymbolTable::getNearestSymbolTable(around);
   installed = held.get();
 }
 
@@ -63,7 +71,7 @@ Operation *lookupSymbolFrom(ModuleOp module, FlatSymbolRefAttr name) {
   Operation *table = module.getOperation();
   StringAttr leaf = name.getAttr();
 
-  if (installed && installed->tables)
+  if (installed && installed->tables && installed->checkedTable == table)
     return installed->tables->lookupSymbolIn(table, leaf);
 
   std::pair<Operation *, StringAttr> asked{table, leaf};

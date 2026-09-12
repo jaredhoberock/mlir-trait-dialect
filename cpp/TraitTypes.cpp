@@ -467,7 +467,7 @@ LogicalResult ClaimType::verifySymbolUses(Operation *op,
                                           SymbolTableCollection &symbolTable) const {
   // Verification writes nothing, so every name read under it resolves through
   // the symbol tables the walk this is one step of has already built.
-  SymbolLookupScope symbolAnswers(symbolTable);
+  SymbolLookupScope symbolAnswers(op, symbolTable);
 
   ModuleOp module = getAnchorModule(op);
   if (!module)
@@ -1220,7 +1220,7 @@ LogicalResult ProjectionType::verifySymbolUses(Operation *op,
                                                SymbolTableCollection &symbolTable) const {
   // Verification writes nothing, so every name read under it resolves through
   // the symbol tables the walk this is one step of has already built.
-  SymbolLookupScope symbolAnswers(symbolTable);
+  SymbolLookupScope symbolAnswers(op, symbolTable);
 
   return asClaim().verifySymbolUses(op, symbolTable);
 }
