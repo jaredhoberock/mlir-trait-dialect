@@ -1955,6 +1955,48 @@ void ImplOp::print(OpAsmPrinter &printer) {
 }
 
 
+/// Refuses a citation of `impl` at `cited` whose equality premises do not hold
+/// there.
+///
+/// An equality premise restricts where the impl applies, and only the
+/// application being cited says whether it holds. Each side is read through the
+/// arguments that application supplies, then through the impl's own
+/// associated-type bindings for it -- a premise may project through the very
+/// application being cited -- and then through `evidence`, the citation's own
+/// context. Identity after that reading is the whole judgment, and it is the
+/// one impl selection makes over a candidate: the impl's application-arm
+/// premises travel as subproofs, its equality premises are decided here.
+static LogicalResult verifyEqualityPremisesHoldAt(
+    ImplOp impl, ClaimType cited, const SpecializationMap &arguments,
+    NormalizationContext evidence,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  SmallVector<TypeEqualityAttr> equalities =
+      impl.getAssumptions().getEqualities();
+  if (equalities.empty())
+    return success();
+
+  evidence.addLocalProjectionRule(impl, cited.getTraitApplication(), arguments);
+  for (TypeEqualityAttr equality : equalities) {
+    auto reduce = [&](Type side) -> FailureOr<Type> {
+      return evidence.normalize(instantiate(side, arguments), err);
+    };
+    FailureOr<Type> lhs = reduce(equality.getLhs());
+    if (failed(lhs))
+      return failure();
+    FailureOr<Type> rhs = reduce(equality.getRhs());
+    if (failed(rhs))
+      return failure();
+    if (*lhs != *rhs) {
+      if (err) err() << "impl '@" << impl.getSymName() << "' applies where "
+                     << equality.getLhs() << " = " << equality.getRhs()
+                     << ", which at " << cited << " reads " << *lhs << " = "
+                     << *rhs;
+      return failure();
+    }
+  }
+  return success();
+}
+
 //===----------------------------------------------------------------------===//
 // ProofOp
 //===----------------------------------------------------------------------===//
@@ -1993,15 +2035,25 @@ LogicalResult ProofOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // then the impls the module holds. The proof's own rule is not among them --
   // nothing here is justified by what it is checking.
   NormalizationContext reading;
-  if (spellsAProjection(Type(implOp.getSelfClaim())))
+  if (spellsAProjection(Type(implOp.getSelfClaim())) ||
+      !implOp.getAssumptions().getEqualities().empty())
     reading = buildSubproofNormalizationContext(*this, module);
   reading.setModuleLookup(module, LookupScope::Ground,
                           DemandOrigin::ProofVerification);
   auto throughEvidence = [&](Type ty) -> FailureOr<Type> {
     return reading.normalize(ty, errFn);
   };
-  if (failed(implOp.buildSubstitutionForSelfClaim(getProvenClaim(),
-                                                  throughEvidence, errFn)))
+  auto arguments = implOp.buildSubstitutionForSelfClaim(getProvenClaim(),
+                                                        throughEvidence, errFn);
+  if (failed(arguments))
+    return failure();
+
+  // The impl's equality premises stand over this claim too. They take no
+  // subproof -- the given list is indexed by the impl's application-arm
+  // obligations -- so a proof that did not read them stood over an impl that
+  // does not apply, and only a use of the claim far downstream said so.
+  if (failed(verifyEqualityPremisesHoldAt(implOp, getProvenClaim(), *arguments,
+                                          reading, errFn)))
     return failure();
 
   // recursively verify proof structure and that proof bindings can be recorded.

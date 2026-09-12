@@ -229,6 +229,15 @@ def PredicateArrayAttr : AttrDef<TraitDialect, "PredicateArray",
       return apps;
     }
 
+    // The equality-arm entries only, in declaration order.
+    llvm::SmallVector<TypeEqualityAttr> getEqualities() const {
+      llvm::SmallVector<TypeEqualityAttr> equalities;
+      for (::mlir::Attribute p : getPredicates())
+        if (auto equality = mlir::dyn_cast<TypeEqualityAttr>(p))
+          equalities.push_back(equality);
+      return equalities;
+    }
+
     // Whether any entry is an application requirement.
     bool hasApplications() const {
       return llvm::any_of(getPredicates(), [](::mlir::Attribute p) {
