@@ -129,11 +129,12 @@ static LogicalResult verifyFunctionResultGenericsAreDetermined(
 
 } // namespace
 
-/// The projections the evidence `values` carry justify reducing: for a proven
-/// claim the impls its proof tree names, by index; for a derived claim the impl
-/// it commits to and whatever its given operands carry in turn.
+/// What `op` may read a spelling through: the hypotheses the scope it stands in
+/// holds, and then the projections the evidence `values` carry justify reducing
+/// -- for a proven claim the impls its proof tree names, by index; for a derived
+/// claim the impl it commits to and whatever its given operands carry in turn.
 static NormalizationContext buildLocalClaimNormalizationContext(
-    ValueRange values, ModuleOp module);
+    Operation *op, ValueRange values, ModuleOp module);
 
 
 //===----------------------------------------------------------------------===//
@@ -2561,7 +2562,8 @@ LogicalResult DeriveOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // forwards an associated type spells a projection the derive's demand spells
   // through the base, and this is what reduces the two to one grade.
   NormalizationContext normalization =
-      buildLocalClaimNormalizationContext(getAssumptions(), module);
+      buildLocalClaimNormalizationContext(getOperation(), getAssumptions(),
+                                          module);
   // XXX TODO A claim operand that is neither proven nor derived carries no
   // impl, so an impl whose header forwards through such an operand's own
   // application has nothing here to reduce it. The module's impls stand in
@@ -2906,6 +2908,79 @@ LogicalResult MethodCallOp::verify() {
   return success();
 }
 
+/// The declaration `op` stands in: the innermost ancestor judged on its own.
+///
+/// A region an op runs at run time -- a conditional, a loop, a cooperative body
+/// -- is interior to the scope around it, so the walk passes through it and
+/// stops at the callable, trait, impl or proof that binds what `op` may name.
+static Operation *getScopeOwner(Operation *op) {
+  for (Operation *parent = op->getParentOp(); parent;
+       parent = parent->getParentOp())
+    if (isJudgedOnItsOwn(parent))
+      return parent;
+  return nullptr;
+}
+
+/// Adds the rules one hypothesis in scope licenses.
+///
+/// An equality hypothesis is a rewrite rule wherever it stands. An application
+/// hypothesis says its trait holds of those arguments, and a trait holds only
+/// where its own requirements do, so each requirement instantiated at that
+/// application is a hypothesis in turn -- the same reading `trait.project`
+/// performs on a claim value. No impl is consulted: a hypothesis names none,
+/// and what it licenses is what its trait declares.
+///
+/// Each application is read once. A requirement chain that reaches one trait at
+/// ever larger arguments makes progress at every step, so it stops at the
+/// instantiation limit, the bound every such chain meets.
+static void addScopeHypothesis(NormalizationContext &ctx, ClaimType claim,
+                               ModuleOp module,
+                               DenseSet<TraitApplicationAttr> &visited,
+                               unsigned depth) {
+  if (auto equality = claim.getEqualityAttr()) {
+    ctx.addEqualityRule(equality.getLhs(), equality.getRhs());
+    return;
+  }
+
+  TraitApplicationAttr application = claim.getTraitApplication();
+  if (!application || depth == kInstantiationDepthLimit ||
+      !visited.insert(application).second)
+    return;
+
+  auto trait = application.getTrait(module, /*err=*/nullptr);
+  if (failed(trait))
+    return;
+  auto requirements = trait->specializeRequirementsAsClaimsFor(
+      claim.asUnproven(), /*errFn=*/nullptr);
+  if (failed(requirements))
+    return;
+  for (ClaimType requirement : *requirements)
+    addScopeHypothesis(ctx, requirement, module, visited, depth + 1);
+}
+
+/// Adds the hypotheses the scope `op` stands in holds.
+///
+/// A declaration's claim parameters are its where clause, and a where clause is
+/// the parameter environment of everything its body holds: the caller discharged
+/// each one, so inside the body each is an axiom -- an equality parameter is a
+/// rewrite rule there and an application parameter carries its trait's
+/// requirements. They are read off the block arguments the scope owner binds,
+/// which is a parent read and not a search.
+static void addScopeHypotheses(NormalizationContext &ctx, Operation *op,
+                               ModuleOp module) {
+  Operation *scope = getScopeOwner(op);
+  if (!scope || scope->getNumRegions() == 0)
+    return;
+  Region &body = scope->getRegion(0);
+  if (body.empty())
+    return;
+
+  DenseSet<TraitApplicationAttr> visited;
+  for (BlockArgument parameter : body.front().getArguments())
+    if (auto claim = dyn_cast<ClaimType>(parameter.getType()))
+      addScopeHypothesis(ctx, claim, module, visited, /*depth=*/0);
+}
+
 /// Adds the projection normalization rules a proven claim's proof tree
 /// justifies: the rules of its subproofs first, then its own.
 ///
@@ -3035,9 +3110,13 @@ static void addLocalProjectionRulesFromClaim(
   }
 }
 
-NormalizationContext buildLocalClaimNormalizationContext(ValueRange values,
+NormalizationContext buildLocalClaimNormalizationContext(Operation *op,
+                                                         ValueRange values,
                                                          ModuleOp module) {
   NormalizationContext ctx;
+  // The hypotheses of the scope go in first: they hold throughout the body, so
+  // the evidence read next is read at the grade they already reach.
+  addScopeHypotheses(ctx, op, module);
   // The derives and proofs already read, so cyclic or self-referencing evidence
   // is read once.
   llvm::SmallPtrSet<Operation *, 8> visited;
@@ -3141,7 +3220,7 @@ FailureOr<SpecializationMap> MethodCallOp::buildParameterSpecialization(
     if (isa<ClaimType>(argument.getType()))
       localClaims.push_back(argument);
   NormalizationContext normalization =
-      buildLocalClaimNormalizationContext(localClaims, *module);
+      buildLocalClaimNormalizationContext(getOperation(), localClaims, *module);
   normalization.setRecordedFacts(reading);
   // XXX TODO A claim this call's own arguments spell can carry a ground
   // projection no evidence at this site reduces, because the impl serving it is
@@ -3359,7 +3438,7 @@ FailureOr<SpecializationMap> FuncCallOp::buildParameterSpecialization(
     if (isa<ClaimType>(operand.getType()))
       localClaims.push_back(operand);
   NormalizationContext normalization =
-      buildLocalClaimNormalizationContext(localClaims, *module);
+      buildLocalClaimNormalizationContext(getOperation(), localClaims, *module);
   normalization.setRecordedFacts(reading);
   // XXX TODO As at a method call: a ground projection an operand claim spells
   // and no evidence here reduces is read through the module's impls, and only
