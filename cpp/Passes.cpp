@@ -451,22 +451,36 @@ static uint64_t respellProvenClaimsInPlace(const ImplResolver &resolver,
   size_t recordedProofs = resolver.getRecordedProofCount();
   size_t recordedImpls = resolver.getRecordedImplCount();
   if (recordedProofs == 0 && recordedImpls == 0) return 0;
-  AttrTypeReplacer replacer = resolver.makeProvenClaimReplacer();
+  // A replacer respells the ops of one module: what it writes into a claim is a
+  // proof symbol that module resolves, and the record answers per module. So
+  // the sweep holds one replacer per module it reaches, built when it first
+  // reaches an op standing there, and each is read only by the ops it serves.
+  //
   // Beside the proofs it respells, the sweep resolves recorded ground
   // projections, so an interior op stays consistent with an outside value a
   // pattern retyped -- a tuple.make or arith.select whose result the outside
   // spells resolved. An equality's endpoints are a leaf to this replacer, so a
   // projection standing in one is left untouched.
-  ReadOnlyImplResolver reading(resolver);
-  replacer.addReplacement([&reading](Type t) -> std::optional<Type> {
-    auto proj = dyn_cast<ProjectionType>(t);
-    if (!proj || isPolymorphicType(proj))
-      return std::nullopt;
-    auto resolved = reading.resolveProjectionType(proj);
-    if (succeeded(resolved))
-      return *resolved;
-    return std::nullopt;
-  });
+  llvm::MapVector<Operation *, std::unique_ptr<AttrTypeReplacer>> replacers;
+  auto replacerFor = [&](ModuleOp scope) -> AttrTypeReplacer & {
+    std::unique_ptr<AttrTypeReplacer> &held = replacers[scope.getOperation()];
+    if (held)
+      return *held;
+    held = std::make_unique<AttrTypeReplacer>(
+        resolver.makeProvenClaimReplacer(scope));
+    held->addReplacement(
+        [reading = ReadOnlyImplResolver(resolver, scope)](Type t)
+            -> std::optional<Type> {
+          auto proj = dyn_cast<ProjectionType>(t);
+          if (!proj || isPolymorphicType(proj))
+            return std::nullopt;
+          auto resolved = reading.resolveProjectionType(proj);
+          if (succeeded(resolved))
+            return *resolved;
+          return std::nullopt;
+        });
+    return *held;
+  };
 
   uint64_t positionsRespelled = 0;
 
@@ -490,10 +504,11 @@ static uint64_t respellProvenClaimsInPlace(const ImplResolver &resolver,
     eachTypePosition([&](Type type) { before.push_back(type); });
     DictionaryAttr attributesBefore = op->getAttrDictionary();
 
-    replacer.replaceElementsIn(op,
-                               /*replaceAttrs=*/true,
-                               /*replaceLocs=*/false,
-                               /*replaceTypes=*/true);
+    replacerFor(getAnchorModule(op))
+        .replaceElementsIn(op,
+                           /*replaceAttrs=*/true,
+                           /*replaceLocs=*/false,
+                           /*replaceTypes=*/true);
 
     uint64_t movedHere = op->getAttrDictionary() == attributesBefore ? 0 : 1;
     size_t position = 0;
@@ -510,9 +525,12 @@ static uint64_t respellProvenClaimsInPlace(const ImplResolver &resolver,
   // A sweep records no proof, so the count of facts does not move for it; what
   // it moves is the module's spelling of them, which is what proof derivation
   // reads. A sweep that respelled nothing leaves every derivation reading the
-  // module it read.
+  // module it read. Each module's derivations are transcribed by the replacer
+  // that respelled that module, because a spelling means what the symbol table
+  // holding it says.
   if (positionsRespelled != 0)
-    resolver.noteRespelling(replacer);
+    for (auto &[scope, replacer] : replacers)
+      resolver.noteRespelling(*replacer, cast<ModuleOp>(scope));
 
   return positionsRespelled;
 }
@@ -584,13 +602,19 @@ struct ProveClaimResultPattern : public RewritePattern {
 
     auto errFn = [&] { return op->emitOpError(); };
 
+    // The claim is demanded where it stands: the proof this op will name is a
+    // symbol its own module resolves, and the impls that may serve it are the
+    // ones standing there.
+    ModuleOp scope = getAnchorModule(op);
+    ReadOnlyImplResolver here = reading.in(scope);
+
     // build or reuse canonical evidence for this claim
     FailureOr<FlatSymbolRefAttr> sym =
-        minting ? minting->resolveAndEnsureProofFor(claim, rewriter, errFn)
-                : reading.getRecordedProofFor(claim);
+        minting ? minting->resolveAndEnsureProofFor(claim, scope, rewriter, errFn)
+                : here.getRecordedProofFor(claim);
     if (failed(sym)) {
       if (!minting)
-        (void)reading.decline(claim);
+        (void)here.decline(claim);
       return rewriter.notifyMatchFailure(op, "couldn't find proof of this claim");
     }
 
@@ -603,8 +627,8 @@ struct ProveClaimResultPattern : public RewritePattern {
     // lookup (the impls are already in the module) and is idempotent with the
     // resolution resolveAndEnsureProofFor just performed.
     auto recorded = cast<ClaimType>(
-        minting ? minting->resolveProjectionsIn(claim, rewriter)
-                : reading.resolveProjectionsIn(claim));
+        minting ? minting->resolveProjectionsIn(claim, scope, rewriter)
+                : here.resolveProjectionsIn(claim));
     rewriter.replaceOpWithNewOp<WitnessOp>(
       op,
       *sym,
@@ -887,8 +911,10 @@ specializeCallTarget(CallOpT op, PatternRewriter &rewriter,
   }
 
   // Pass time: the comparison reads both signatures through the record of what
-  // impl selection has settled, on top of the evidence the call itself carries.
-  auto specialization = op.buildParameterSpecialization(&reading);
+  // impl selection has settled in the module the call stands in, on top of the
+  // evidence the call itself carries.
+  ReadOnlyImplResolver here = reading.in(module);
+  auto specialization = op.buildParameterSpecialization(&here);
   if (failed(specialization)) {
     (void)rewriter.notifyMatchFailure(op, "couldn't build substitution");
     return failure();
@@ -898,7 +924,7 @@ specializeCallTarget(CallOpT op, PatternRewriter &rewriter,
   auto subst = CallSubstitution::forCall(std::move(*specialization),
                                         op.getOperandTypes(),
                                         op.getResultTypes(), formalTy, module,
-                                        reading, errFn);
+                                        here, errFn);
   if (failed(subst))
     return failure();
 
@@ -1116,11 +1142,14 @@ struct ResolveProjectionsPattern : public RewritePattern {
 
     DemandFrame frame(op->getLoc());
 
+    // What a projection resolves to is read in the module the op stands in,
+    // whose impls are what selection settled it from.
+    ReadOnlyImplResolver here = reading.in(getAnchorModule(op));
     AttrTypeReplacer replacer = makeGroundProjectionReplacer(
         [&](ProjectionType proj) -> std::optional<Type> {
-      auto resolved = reading.resolveProjectionType(proj);
+      auto resolved = here.resolveProjectionType(proj);
       if (failed(resolved)) {
-        (void)reading.decline(proj);
+        (void)here.decline(proj);
         return std::nullopt;
       }
       return *resolved;
@@ -1168,7 +1197,8 @@ struct AskImplSelectionForADeclaredClaimPattern
       auto claim = dyn_cast<ClaimType>(input);
       if (!claim || claim.isProven() || !claim.isMonomorphic())
         continue;
-      (void)resolver.resolveAndEnsureProofFor(claim, rewriter);
+      (void)resolver.resolveAndEnsureProofFor(claim, getAnchorModule(op),
+                                              rewriter);
     }
     // Asking is all this does, so it rewrites nothing and the driver moves on.
     return failure();
@@ -1284,7 +1314,14 @@ collectUndrainedDemands(ModuleOp module, const DemandLedger &ledger,
 ///
 /// A demand selection resolved or refused for good leaves the drain; one it
 /// could not serve yet stays, against the epoch it was asked at.
+///
+/// The drain holds spellings and not the ops that spelled them -- one spelling
+/// standing in two modules is one demand here -- so these are put to selection
+/// as demands of `module`, the root the stage runs over. What an op of a nested
+/// module spells is demanded again where that op stands, by the pattern that
+/// rewrites it, and answered from that module's own record.
 static void serveCollectedDemands(ImplResolver &resolver,
+                                  ModuleOp module,
                                   ArrayRef<Type> collected,
                                   const DenseMap<Type, Location> &origins,
                                   OpBuilder &builder,
@@ -1311,9 +1348,9 @@ static void serveCollectedDemands(ImplResolver &resolver,
     // total over what the drain holds.
     ImplResolver::DemandDisposition disposition;
     if (auto projection = dyn_cast<ProjectionType>(demand))
-      disposition = resolver.serveDemand(projection, builder);
+      disposition = resolver.serveDemand(projection, module, builder);
     else if (auto claim = dyn_cast<ClaimType>(demand))
-      disposition = resolver.serveDemand(claim, builder);
+      disposition = resolver.serveDemand(claim, module, builder);
     else
       llvm_unreachable("a drainable demand is a projection or a claim an "
                        "engine left spelled");
@@ -1373,8 +1410,8 @@ resolveProjectionHop(ProjectionType proj, const ProjectionSettleContext &settle)
       succeeded(recorded))
     return *recorded;
   SpeculationScope speculation;
-  if (auto selected =
-          settle.resolver.resolveProjectionType(proj, settle.proofBuilder);
+  if (auto selected = settle.resolver.resolveProjectionType(
+          proj, settle.module, settle.proofBuilder);
       succeeded(selected))
     return *selected;
   return std::nullopt;
@@ -1474,7 +1511,7 @@ mintProjectionResolutionWitness(ProjectionType proj,
       return failure();
     for (ClaimType assumption : *assumptions) {
       auto proof = ctx.settle.resolver.resolveAndEnsureProofFor(
-          assumption, ctx.settle.proofBuilder);
+          assumption, ctx.settle.module, ctx.settle.proofBuilder);
       if (failed(proof))
         return failure();
       obligationPremises.push_back(
@@ -1754,8 +1791,8 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
       OpBuilder builder(ctx);
       builder.setListener(&insertions);
       builder.setInsertionPointToEnd(module.getBody());
-      serveCollectedDemands(*resolver, collected, spelledAt, builder, drained,
-                            served,
+      serveCollectedDemands(*resolver, module, collected, spelledAt, builder,
+                            drained, served,
                             attempted, work);
       work.insertedServingDemands = insertions.inserted;
     }
@@ -1930,8 +1967,12 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
   OpBuilder settleBuilder(ctx);
   settleBuilder.setListener(&settleInsertions);
   settleBuilder.setInsertionPointToEnd(module.getBody());
-  ProjectionSettleContext settle{reading, *resolver, settleBuilder, module};
   for (auto [op, claim] : monomorphicClaims) {
+    // What settles a claim is read in the module the op carrying it stands in,
+    // whose impls are what an endpoint resolves through.
+    ReadOnlyImplResolver here = reading.in(getAnchorModule(op));
+    ProjectionSettleContext settle{here, *resolver, settleBuilder,
+                                   getAnchorModule(op)};
     // An equality claim has no proof to await; it is settled when its endpoints
     // ground-resolve to one spelling through impls whose obligations hold. A
     // monomorphic equality that resolves is not a leftover; one whose projection

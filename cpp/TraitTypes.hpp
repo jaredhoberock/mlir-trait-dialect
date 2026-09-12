@@ -350,8 +350,12 @@ public:
     llvm_unreachable("a closure is placed, agreed with, withdrawn or refused");
   }
 
-  /// Respells every key and every binding this holds through `replacer`, which
-  /// is the same rewrite the sweep applies to the module.
+  /// Respells every key and every binding this holds under `anchor` through
+  /// `replacer`, which is the same rewrite the sweep applies to that module.
+  ///
+  /// A derivation read under another module keeps its spellings: the rewrite
+  /// names proof symbols one symbol table resolves, and what another module
+  /// spells the same way it proves its own way.
   ///
   /// Two pairs can respell to one -- an unproven claim among the type arguments
   /// of both gains the same proof -- and the closures they carry are then two
@@ -360,7 +364,7 @@ public:
   /// ones withdraw it, and a pair already disputed takes neither. So what this
   /// holds after a transcription is still only what deriving would have
   /// produced.
-  void respellWith(AttrTypeReplacer &replacer) {
+  void respellWith(AttrTypeReplacer &replacer, Operation *anchor) {
     EntryMap respelled;
     respelled.reserve(entries.size());
     // The sweep's rewrite is the one that gives an unproven claim its proof, so
@@ -393,9 +397,14 @@ public:
     llvm::DenseSet<Key> respelledDisputes;
     respelledDisputes.reserve(disputed.size());
     for (auto &key : disputed)
-      respelledDisputes.insert(respellKey(key));
+      respelledDisputes.insert(std::get<0>(key) == anchor ? respellKey(key)
+                                                          : key);
     disputed = std::move(respelledDisputes);
     for (auto &entry : entries) {
+      if (std::get<0>(entry.first) != anchor) {
+        place(respelled, entry.first, entry.second);
+        continue;
+      }
       Closure closure;
       closure.reserve(entry.second.size());
       for (auto &binding : entry.second) {

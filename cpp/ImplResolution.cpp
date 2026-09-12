@@ -84,6 +84,7 @@ InstantiationChain::chainTo(Operation *instance) const {
 LogicalResult
 ImplResolver::assumptionsSatisfiableFor(ImplOp impl,
                                         ClaimType concreteSelf,
+                                        ModuleOp scope,
                                         OpBuilder &builder) {
   ResolutionMemo &memo = this->memo.resolutionMemo;
   TraitApplicationAttr app = concreteSelf.getTraitApplication();
@@ -108,7 +109,7 @@ ImplResolver::assumptionsSatisfiableFor(ImplOp impl,
   // The candidate's arguments as the demanded application and its own where
   // clause determine them, read through what selection has settled so far.
   auto byResolver = [&](Type ty) -> FailureOr<Type> {
-    return resolveProjectionsIn(ty, builder);
+    return resolveProjectionsIn(ty, scope, builder);
   };
   TypeArguments args = impl.readTypeArgumentsFor(concreteSelf, byResolver);
   SpecializationMap known = args.toSpecialization();
@@ -120,11 +121,12 @@ ImplResolver::assumptionsSatisfiableFor(ImplOp impl,
     if (auto application = dyn_cast<TraitApplicationAttr>(premise)) {
       auto assume = cast<ClaimType>(
           instantiate(Type(ClaimType::get(ctx, application)), known));
-      auto subImpl = resolveImplFor(assume, builder);
+      auto subImpl = resolveImplFor(assume, scope, builder);
       if (failed(subImpl))
         return failure();
       if (failed(assumptionsSatisfiableFor(subImpl->impl,
-                                           subImpl->selectedClaim, builder)))
+                                           subImpl->selectedClaim, scope,
+                                           builder)))
         return failure();
       continue;
     }
@@ -144,7 +146,7 @@ ImplResolver::assumptionsSatisfiableFor(ImplOp impl,
       Type instantiated = instantiate(ty, known);
       auto reduced = ownBindings.normalize(instantiated, /*err=*/nullptr);
       return resolveProjectionsIn(succeeded(reduced) ? *reduced : instantiated,
-                                  builder);
+                                  scope, builder);
     };
     Type lhs = reduce(equality.getLhs());
     Type rhs = reduce(equality.getRhs());
@@ -217,6 +219,7 @@ static LogicalResult diagnoseImplResolutionFailure(
 
 FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
     ClaimType wanted,
+    ModuleOp scope,
     OpBuilder &builder,
     llvm::function_ref<InFlightDiagnostic()> err,
     std::optional<RefutationArm> *refusedOn) {
@@ -236,13 +239,14 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
   // and the proven value's spelling before recording, so coherent spellings of
   // one obligation record identically; recorded-proof equivalence then fires
   // only to reject genuinely incoherent proofs, not to reconcile spellings.)
-  ClaimType selected = cast<ClaimType>(resolveProjectionsIn(wanted, builder));
+  ClaimType selected =
+      cast<ClaimType>(resolveProjectionsIn(wanted, scope, builder));
 
   ResolutionMemo &memo = this->memo.resolutionMemo;
   TraitApplicationAttr app = selected.getTraitApplication();
 
   // first check the memo
-  if (auto it = memo.chosen.find(app); it != memo.chosen.end()) {
+  if (auto it = memo.chosen.find({scope, app}); it != memo.chosen.end()) {
     if (it->second.isRefusal()) {
       if (refusedOn)
         *refusedOn = it->second.getRefutationArm();
@@ -251,8 +255,10 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
     return ResolvedImpl{it->second.getImpl(), selected};
   }
 
-  // get the trait
-  TraitOp trait = app.getTraitOrAbort(module, "resolveImplFor: cannot find trait");
+  // get the trait. The demand's spelling names it in the module the demand was
+  // read in, and the impls that trait holds are that module's, so a demand
+  // raised inside a nested module is served by the impls standing there.
+  TraitOp trait = app.getTraitOrAbort(scope, "resolveImplFor: cannot find trait");
 
   // collect candidates for wanted from the trait and
   // partition them into good/bad by satisfiable assumptions
@@ -264,13 +270,13 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
   // settled, and then the impls the module binds where exactly one does. A
   // header spelling a projection reproduces a demand spelling the resolution
   // through this, and it mints nothing.
-  RecordedProjectionLookup byRecord(*this);
+  RecordedProjectionLookup byRecord(*this, scope);
 
   SmallVector<ImplOp> good, bad;
   {
     SpeculationScope speculation;
     for (ImplOp impl : trait.getCandidateImplsFor(selected, byRecord)) {
-      if (succeeded(assumptionsSatisfiableFor(impl, selected, builder)))
+      if (succeeded(assumptionsSatisfiableFor(impl, selected, scope, builder)))
         good.push_back(impl);
       else
         bad.push_back(impl);
@@ -288,12 +294,12 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
            "impl generation requires a builder whose insertions someone "
            "observes");
     OpBuilder::InsertionGuard guard(builder);
-    builder.setInsertionPointToEnd(module.getBody());
+    builder.setInsertionPointToEnd(scope.getBody());
     if (auto impl = getImplGenerators().generateImpl(trait, selected, builder);
         succeeded(impl)) {
       noteFactWritten();
       SpeculationScope speculation;
-      if (succeeded(assumptionsSatisfiableFor(*impl, selected, builder)))
+      if (succeeded(assumptionsSatisfiableFor(*impl, selected, scope, builder)))
         good.push_back(*impl);
       else
         bad.push_back(*impl);
@@ -307,7 +313,7 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
   // call resolved it without that guard in the way, so its outcome replaces
   // whatever the nested one left.
   if (good.size() == 1) {
-    memo.chosen.insert_or_assign(app,
+    memo.chosen.insert_or_assign({scope, app},
                                  ResolutionOutcome::selected(good.front()));
     noteRecordWritten();
     return ResolvedImpl{good.front(), selected};
@@ -323,18 +329,23 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
   RefutationArm arm = good.empty()
                           ? RefutationArm::NoSatisfiableCandidate
                           : RefutationArm::MultipleSatisfiableCandidates;
-  memo.chosen.insert_or_assign(app, ResolutionOutcome::refused(arm));
+  memo.chosen.insert_or_assign({scope, app}, ResolutionOutcome::refused(arm));
   if (refusedOn)
     *refusedOn = arm;
   return diagnoseImplResolutionFailure(trait, originalWanted, good, bad, err);
 }
 
-// find an existing trait.proof that *explicitly* proves impl by name
-// and proves the same application app
+// The trait.proof in `module` standing over `impl` at `app`, if one is written
+// there.
+//
+// The impl is matched by identity rather than by name: a name is resolved in
+// one symbol table, and two modules can each hold an impl of that name meaning
+// two different impls, so a proof naming the other module's is no proof of this
+// one. The proof this hands back is a symbol `module` resolves, because that is
+// where it was found.
 static ProofOp findExistingProofFor(ModuleOp module, ImplOp impl, TraitApplicationAttr app) {
   for (ProofOp proof : module.getOps<ProofOp>()) {
-    if (proof.getImplName() == impl.getSymName() &&
-        proof.getTraitApplication() == app) {
+    if (proof.getImpl() == impl && proof.getTraitApplication() == app) {
       return proof;
     }
   }
@@ -353,6 +364,7 @@ ImplResolver::ImplResolver(ModuleOp m, std::shared_ptr<DemandLedger> ledger)
 
 FailureOr<Type> ImplResolver::resolveProjectionType(
     ProjectionType proj,
+    ModuleOp scope,
     OpBuilder &builder,
     llvm::function_ref<InFlightDiagnostic()> err,
     std::optional<RefutationArm> *refusedOn) {
@@ -362,20 +374,20 @@ FailureOr<Type> ImplResolver::resolveProjectionType(
   StringRef assocName = proj.getAssocName().getValue();
 
   ClaimType claim = ClaimType::get(proj.getContext(), traitApp);
-  auto resolvedImpl = resolveImplFor(claim, builder, err, refusedOn);
+  auto resolvedImpl = resolveImplFor(claim, scope, builder, err, refusedOn);
   if (failed(resolvedImpl)) return failure();
   ImplOp impl = resolvedImpl->impl;
 
   SmallVector<Type> assocTypeArgs;
   for (Type arg : proj.getAssocTypeArgs())
-    assocTypeArgs.push_back(resolveProjectionsIn(arg, builder));
+    assocTypeArgs.push_back(resolveProjectionsIn(arg, scope, builder));
 
   auto binding = impl.specializeAssociatedTypeBinding(assocName, assocTypeArgs, err);
   if (failed(binding)) return failure();
 
   // The arguments carrying this impl's header to the claim selection chose it
   // for, read through the same context selection chose it under.
-  RecordedProjectionLookup byRecord(*this);
+  RecordedProjectionLookup byRecord(*this, scope);
   auto subst = impl.buildSubstitutionForSelfClaim(resolvedImpl->selectedClaim,
                                                   byRecord, err);
   if (failed(subst)) return failure();
@@ -384,14 +396,15 @@ FailureOr<Type> ImplResolver::resolveProjectionType(
 }
 
 ImplResolver::DemandDisposition
-ImplResolver::serveDemand(ProjectionType demand, OpBuilder &builder) {
+ImplResolver::serveDemand(ProjectionType demand, ModuleOp scope,
+                          OpBuilder &builder) {
   DemandFrame frame{Type(demand)};
 
   // What selection settles is recorded by selection itself, so the resolved
   // type is not wanted here -- the answer this call is for is whether asking
   // again could settle it differently.
   std::optional<RefutationArm> refusedOn;
-  if (succeeded(resolveProjectionType(demand, builder, /*err=*/nullptr,
+  if (succeeded(resolveProjectionType(demand, scope, builder, /*err=*/nullptr,
                                       &refusedOn)))
     return DemandDisposition::Served;
 
@@ -405,14 +418,15 @@ ImplResolver::serveDemand(ProjectionType demand, OpBuilder &builder) {
 }
 
 ImplResolver::DemandDisposition
-ImplResolver::serveDemand(ClaimType demand, OpBuilder &builder) {
+ImplResolver::serveDemand(ClaimType demand, ModuleOp scope,
+                          OpBuilder &builder) {
   DemandFrame frame{Type(demand)};
 
   // Proving the claim is what serves it: the demander could read the record
   // and not write it, so what it was waiting for is the proof this mints.
   std::optional<RefutationArm> refusedOn;
-  if (succeeded(resolveAndEnsureProofFor(demand, builder, /*err=*/nullptr,
-                                         &refusedOn)))
+  if (succeeded(resolveAndEnsureProofFor(demand, scope, builder,
+                                         /*err=*/nullptr, &refusedOn)))
     return DemandDisposition::Served;
 
   // The same reading as for a projection: two or more satisfiable candidates is
@@ -423,10 +437,11 @@ ImplResolver::serveDemand(ClaimType demand, OpBuilder &builder) {
              : DemandDisposition::Deferred;
 }
 
-Type ImplResolver::resolveProjectionsIn(Type ty, OpBuilder &builder) {
+Type ImplResolver::resolveProjectionsIn(Type ty, ModuleOp scope,
+                                        OpBuilder &builder) {
   AttrTypeReplacer replacer = makeGroundProjectionReplacer(
-      [this, &builder](ProjectionType proj) -> std::optional<Type> {
-    auto resolved = resolveProjectionType(proj, builder);
+      [this, scope, &builder](ProjectionType proj) -> std::optional<Type> {
+    auto resolved = resolveProjectionType(proj, scope, builder);
     if (failed(resolved)) {
       // Preserve the unresolved demand for a later preparation boundary even
       // though this walk leaves its projection spelled as written.
@@ -436,14 +451,14 @@ Type ImplResolver::resolveProjectionsIn(Type ty, OpBuilder &builder) {
     return *resolved;
   });
   return normalizeProjectionsToFixedPoint(
-      ty, module, [&](Type t) { return replacer.replace(t); });
+      ty, scope, [&](Type t) { return replacer.replace(t); });
 }
 
-AttrTypeReplacer ImplResolver::makeProvenClaimReplacer() const {
-  MLIRContext *ctx = module.getContext();
+AttrTypeReplacer ImplResolver::makeProvenClaimReplacer(ModuleOp scope) const {
+  MLIRContext *ctx = scope.getContext();
   AttrTypeReplacer replacer = makeEndpointSealedReplacer();
   replacer.addReplacement(
-      [this, ctx, recorded = memo.proofMemo.size()](ClaimType claim)
+      [this, ctx, scope, recorded = memo.proofMemo.size()](ClaimType claim)
           -> std::optional<std::pair<Type, WalkResult>> {
         assert(memo.proofMemo.size() == recorded &&
                "a proof was recorded while a replacer reading the memo was in "
@@ -461,20 +476,22 @@ AttrTypeReplacer ImplResolver::makeProvenClaimReplacer() const {
         // refuses.
         if (!claim.isApplication())
           return std::make_pair(Type(claim), WalkResult::skip());
-        auto it = memo.proofMemo.find(claim.getTraitApplication());
+        auto it = memo.proofMemo.find({scope, claim.getTraitApplication()});
         if (it == memo.proofMemo.end())
           return std::nullopt;
         // The proven spelling names the same application, whose type arguments
         // can spell claims of their own, so the walk continues into the result
         // instead of stopping at it.
-        return std::make_pair(Type(ClaimType::get(ctx, it->first, it->second)),
-                              WalkResult::advance());
+        return std::make_pair(
+            Type(ClaimType::get(ctx, it->first.second, it->second)),
+            WalkResult::advance());
       });
   return replacer;
 }
 
 FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
     ClaimType wanted,
+    ModuleOp scope,
     OpBuilder &builder,
     llvm::function_ref<InFlightDiagnostic()> err,
     std::optional<RefutationArm> *refusedOn) {
@@ -483,14 +500,14 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
   ClaimType originalWanted = wanted;
 
   // resolve an impl for wanted first
-  auto resolvedImpl = resolveImplFor(wanted, builder, err, refusedOn);
+  auto resolvedImpl = resolveImplFor(wanted, scope, builder, err, refusedOn);
   if (failed(resolvedImpl)) return failure();
   ImplOp impl = resolvedImpl->impl;
   ClaimType selected = resolvedImpl->selectedClaim;
 
   // the arguments carrying this impl's header to the selected claim, read
   // through the same context selection chose it under
-  RecordedProjectionLookup byRecord(*this);
+  RecordedProjectionLookup byRecord(*this, scope);
   auto subst = impl.buildSubstitutionForSelfClaim(selected, byRecord, err);
   if (failed(subst)) return failure();
 
@@ -503,16 +520,16 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
 
   TraitApplicationAttr app = monomorphicWanted.getTraitApplication();
 
-  // check the proof memo for this monomorphic app
-  if (auto it = memo.proofMemo.find(app); it != memo.proofMemo.end())
+  // check the proof memo for this monomorphic app, as read here
+  if (auto it = memo.proofMemo.find({scope, app}); it != memo.proofMemo.end())
     return it->second;
 
-  MLIRContext *ctx = module.getContext();
+  MLIRContext *ctx = scope.getContext();
 
   // check for an unconditional impl
   if (impl.isUnconditional()) {
     auto sym = FlatSymbolRefAttr::get(ctx, impl.getSymName());
-    recordProof(app, sym);
+    recordProof(scope, app, sym);
     return sym;
   }
 
@@ -522,14 +539,14 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
   // the impl's obligations, and selection must not hand back a proof it has not
   // seen derive. One that does not derive leaves selection to build its own
   // below, and the standing proof is refused where it is written.
-  if (ProofOp proof = findExistingProofFor(module, impl, app)) {
+  if (ProofOp proof = findExistingProofFor(scope, impl, app)) {
     auto sym = FlatSymbolRefAttr::get(ctx, proof.getSymNameAttr());
     ClaimType standing = ClaimType::get(ctx, app, sym);
     EvidenceBindings bindings;
-    if (succeeded(verifyAndRecordProof(standing.asUnproven(), standing, module,
+    if (succeeded(verifyAndRecordProof(standing.asUnproven(), standing, scope,
                                        bindings, DemandOrigin::ProofRecording,
                                        &derivations, /*err=*/nullptr))) {
-      recordProof(app, sym);
+      recordProof(scope, app, sym);
       return sym;
     }
   }
@@ -537,17 +554,17 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
   // Compute the proof name early so we can use it as the coinductive memo entry.
   std::string proofName = impl.generateMangledName(*subst) + "_p";
   auto proofSym = FlatSymbolRefAttr::get(ctx, proofName);
-  for (ProofOp proof : module.getOps<ProofOp>()) {
+  for (ProofOp proof : scope.getOps<ProofOp>()) {
     if (proof.getSymName() != proofName)
       continue;
 
     ClaimType candidate = ClaimType::get(ctx, app, proofSym);
     EvidenceBindings bindings;
     if (succeeded(verifyAndRecordProof(candidate.asUnproven(), candidate,
-                                       module, bindings,
+                                       scope, bindings,
                                        DemandOrigin::ProofRecording,
                                        &derivations, err))) {
-      recordProof(app, proofSym);
+      recordProof(scope, app, proofSym);
       return proofSym;
     }
 
@@ -560,8 +577,9 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
   // proof symbol before recursing into obligations.  If an obligation (after
   // projection resolution) turns out to be the same claim we are currently
   // proving, the recursive call will hit the memo instead of diverging.
-  recordProof(app, proofSym);
-  auto rollback = llvm::scope_exit([&]{ memo.proofMemo.erase(app); });
+  recordProof(scope, app, proofSym);
+  auto rollback =
+      llvm::scope_exit([&] { memo.proofMemo.erase({scope, app}); });
 
   // specialize all obligations against the claim selected during resolution
   auto obligations = impl.specializeObligationsAsClaimsFor(
@@ -571,7 +589,7 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
   // recursively prove monomorphic obligations
   SmallVector<Attribute> subproofSymbols;
   for (ClaimType ob : *obligations) {
-    auto sym = resolveAndEnsureProofFor(ob, builder, err);
+    auto sym = resolveAndEnsureProofFor(ob, scope, builder, err);
     if (failed(sym)) return failure();
     subproofSymbols.push_back(*sym);
   }
@@ -584,7 +602,7 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
          "proof creation requires a builder whose insertions someone observes");
   rollback.release();
   OpBuilder::InsertionGuard guard(builder);
-  builder.setInsertionPointToEnd(module.getBody());
+  builder.setInsertionPointToEnd(scope.getBody());
 
   ProofOp proof = ProofOp::create(
     builder,
@@ -596,7 +614,7 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
   );
 
   FlatSymbolRefAttr sym = FlatSymbolRefAttr::get(ctx, proof.getSymNameAttr());
-  recordProof(app, sym);
+  recordProof(scope, app, sym);
   return sym;
 }
 
@@ -606,7 +624,7 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
 
 void ImplResolver::forgetRetriableRefusals() {
   auto &chosen = memo.resolutionMemo.chosen;
-  SmallVector<TraitApplicationAttr> retriable;
+  SmallVector<ScopedApplication> retriable;
   for (const auto &entry : chosen)
     if (entry.second.isRefusal() &&
         entry.second.getRefutationArm() ==
@@ -615,8 +633,8 @@ void ImplResolver::forgetRetriableRefusals() {
   // The drops move no record epoch, for the same reason writing the refusal
   // did not: what is erased here is a question impl selection will have to
   // answer again, never an answer a read of the record was given.
-  for (TraitApplicationAttr app : retriable)
-    chosen.erase(app);
+  for (const ScopedApplication &application : retriable)
+    chosen.erase(application);
 }
 
 //===----------------------------------------------------------------------===//
@@ -723,14 +741,14 @@ Type ReadOnlyImplResolver::resolveProjectionsIn(Type ty) const {
     // several bind it, the lookup declines and says which, and the projection
     // stays spelled as written for the step that can make selection answer it.
     Type byLookup = resolveProjectionsByLookup(
-        Type(proj), resolver.module, DemandOrigin::RecordedFactRead,
+        Type(proj), scope, DemandOrigin::RecordedFactRead,
         LookupScope::Ground);
     if (byLookup == Type(proj))
       return std::nullopt;
     return byLookup;
   });
   return normalizeProjectionsToFixedPoint(
-      ty, resolver.module, [&](Type t) { return replacer.replace(t); });
+      ty, scope, [&](Type t) { return replacer.replace(t); });
 }
 
 FailureOr<FlatSymbolRefAttr>

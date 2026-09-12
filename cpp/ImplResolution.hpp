@@ -141,11 +141,21 @@ private:
   std::optional<RefutationArm> arm;
 };
 
+/// A trait application as read in one module.
+///
+/// A spelling names its symbols in one symbol table, and two modules can spell
+/// one application and mean two different impls of it, so what selection
+/// settles is settled for that application under the module it was demanded in
+/// and not for the spelling alone. This is the key the proof derivations are
+/// held under as well.
+using ScopedApplication = std::pair<Operation *, TraitApplicationAttr>;
+
 // Memoization state for pure impl resolution (no IR mutations).
 struct ResolutionMemo {
-  // Maps a fully-concrete trait application to the impl selected for it, or to
-  // the arm on which selection was refused when no unique impl exists.
-  DenseMap<TraitApplicationAttr, ResolutionOutcome> chosen;
+  // Maps a fully-concrete trait application, as read in one module, to the impl
+  // selected for it, or to the arm on which selection was refused when no
+  // unique impl exists.
+  DenseMap<ScopedApplication, ResolutionOutcome> chosen;
 
   // The applications impl selection is part-way through, outermost first. A
   // repeat is a resolution cycle; the count of frames naming one trait is how
@@ -248,9 +258,11 @@ private:
 
 // Aggregates memoization for both impl resolution and proof creation.
 struct ProofResolutionMemo {
-  // Maps a concrete trait application to the canonical proof symbol
-  // (either an ImplOp's symbol for self-proofs, or a ProofOp symbol).
-  llvm::DenseMap<TraitApplicationAttr, FlatSymbolRefAttr> proofMemo;
+  // Maps a concrete trait application, as read in one module, to the canonical
+  // proof symbol there (either an ImplOp's symbol for self-proofs, or a ProofOp
+  // symbol). The symbol is one that module's symbol table resolves, which is
+  // why the module is part of the key.
+  llvm::DenseMap<ScopedApplication, FlatSymbolRefAttr> proofMemo;
 
   // Tracks impl resolution results to avoid redundant analysis.
   ResolutionMemo resolutionMemo;
@@ -280,6 +292,13 @@ struct ProofResolutionMemo {
 /// a greedy pattern driver must still hand down that driver's active
 /// `PatternRewriter`, whose listener enqueues the inserted ops for the driver
 /// to revisit.
+///
+/// Every ask names the module the demand was read in. That module is the symbol
+/// table the demand's spelling names its trait and impls in, the one whose
+/// proofs an answer may cite, and the one a generated impl or a created proof
+/// belongs in; it is what the records are keyed under, so a demand raised
+/// inside a nested module is never answered with a symbol only the module
+/// around it resolves. A pass root asking about its own ops names itself.
 class ImplResolver {
   public:
     /// Creates a new `ImplResolver` for the given `module`, recording the
@@ -310,6 +329,7 @@ class ImplResolver {
     /// claim's application on, and is left alone where selection did not
     /// refuse -- a proof that fails downstream of a selected impl names no arm.
     FailureOr<FlatSymbolRefAttr> resolveAndEnsureProofFor(ClaimType claim,
+                                                          ModuleOp scope,
                                                           OpBuilder &builder,
                                                           llvm::function_ref<InFlightDiagnostic()> err = nullptr,
                                                           std::optional<RefutationArm> *refusedOn = nullptr);
@@ -323,6 +343,7 @@ class ImplResolver {
     /// refuse -- a resolution that fails downstream of a selected impl names no
     /// arm.
     FailureOr<Type> resolveProjectionType(ProjectionType proj,
+                                          ModuleOp scope,
                                           OpBuilder &builder,
                                           llvm::function_ref<InFlightDiagnostic()> err = nullptr,
                                           std::optional<RefutationArm> *refusedOn = nullptr);
@@ -346,8 +367,10 @@ class ImplResolver {
     /// A claim is served by proving it, which mints the proof its demander
     /// could only read; the two dispositions are read off the same refutation
     /// arm.
-    DemandDisposition serveDemand(ProjectionType demand, OpBuilder &builder);
-    DemandDisposition serveDemand(ClaimType demand, OpBuilder &builder);
+    DemandDisposition serveDemand(ProjectionType demand, ModuleOp scope,
+                                  OpBuilder &builder);
+    DemandDisposition serveDemand(ClaimType demand, ModuleOp scope,
+                                  OpBuilder &builder);
 
     /// How many facts impl selection has minted: one for each impl it generated
     /// and one for each proof it recorded.
@@ -384,10 +407,14 @@ class ImplResolver {
     /// Walks `ty` and replaces every concrete (monomorphic) ProjectionType
     /// with its resolved type via full impl lookup.  Polymorphic projections
     /// are left untouched.  Returns the rewritten type.
-    Type resolveProjectionsIn(Type ty, OpBuilder &builder);
+    Type resolveProjectionsIn(Type ty, ModuleOp scope, OpBuilder &builder);
 
     /// A replacer that respells every unproven claim whose trait application
-    /// this resolver has recorded a proof for.
+    /// this resolver has recorded a proof for in `scope`.
+    ///
+    /// The proof a claim names is a symbol `scope` resolves, so a replacer
+    /// serves the ops of one module and a sweep over a module holding others
+    /// takes one replacer per module it visits.
     ///
     /// The replacer reads the memo rather than copying it, so it answers for
     /// the memo as it stands each time it is asked. A caller must therefore not
@@ -395,7 +422,7 @@ class ImplResolver {
     /// it has already given, so a memo that grew mid-sweep would respell some
     /// occurrences of a claim and leave others alone. The replacer asserts that
     /// precondition on every answer.
-    AttrTypeReplacer makeProvenClaimReplacer() const;
+    AttrTypeReplacer makeProvenClaimReplacer(ModuleOp scope) const;
 
     /// How many trait applications this resolver has recorded a proof for.
     size_t getRecordedProofCount() const { return memo.proofMemo.size(); }
@@ -420,8 +447,8 @@ class ImplResolver {
     /// through a handle that may not resolve still records into it.
     InstantiationChain &getInstantiationChain() const { return instantiations; }
 
-    /// Says a sweep has respelled the module's copy of the recorded facts,
-    /// `replacer` being the rewrite it applied.
+    /// Says a sweep has respelled `scope`'s copy of the recorded facts,
+    /// `replacer` being the rewrite it applied there.
     ///
     /// A sweep records no proof, so the fact count does not move for it; what
     /// a derivation reads are spellings, so what was derived before the sweep
@@ -429,9 +456,11 @@ class ImplResolver {
     /// pairs answers that by holding nothing across the sweep; the record of
     /// per-application closures is transcribed instead, because it is what a
     /// reader that must not derive serves from and dropping it would leave that
-    /// reader with nothing.
-    void noteRespelling(AttrTypeReplacer &replacer) const {
-      derivations.getClosures().respellWith(replacer);
+    /// reader with nothing. Only what was derived under `scope` is transcribed:
+    /// the rewrite names symbols that module's symbol table resolves, and a
+    /// derivation read under another one is not spelled in them.
+    void noteRespelling(AttrTypeReplacer &replacer, ModuleOp scope) const {
+      derivations.getClosures().respellWith(replacer, scope);
       derivations.noteRespelling();
       ++recordEpoch;
     }
@@ -461,13 +490,15 @@ class ImplResolver {
     /// receives the arm a refusal was refused on.
     FailureOr<ResolvedImpl> resolveImplFor(
         ClaimType wanted,
+        ModuleOp scope,
         OpBuilder &builder,
         llvm::function_ref<InFlightDiagnostic()> err = nullptr,
         std::optional<RefutationArm> *refusedOn = nullptr);
 
-    /// Records `sym` as what proves `app`, counting the fact.
-    void recordProof(TraitApplicationAttr app, FlatSymbolRefAttr sym) {
-      memo.proofMemo[app] = sym;
+    /// Records `sym` as what proves `app` in `scope`, counting the fact.
+    void recordProof(ModuleOp scope, TraitApplicationAttr app,
+                     FlatSymbolRefAttr sym) {
+      memo.proofMemo[{scope, app}] = sym;
       noteFactWritten();
     }
 
@@ -484,9 +515,10 @@ class ImplResolver {
     void noteRecordWritten() { ++recordEpoch; }
 
     /// Checks whether all of `impl`'s where-clause assumptions are satisfiable
-    /// when specialized for `concreteSelf`.
+    /// when specialized for `concreteSelf`, read in `scope`.
     LogicalResult assumptionsSatisfiableFor(ImplOp impl,
                                             ClaimType concreteSelf,
+                                            ModuleOp scope,
                                             OpBuilder &builder);
 
     /// The generators impl selection asks when no candidate impl satisfies a
@@ -562,17 +594,32 @@ private:
 /// Impl selection keys its memo by the claim whose projections it resolved, so
 /// an application asked about here is one spelled as selection recorded it: a
 /// caller holding a source spelling with a projection still in it misses.
+///
+/// A read is a read in one module: what selection settled is settled for an
+/// application under the module it was demanded in, and the symbol an answer
+/// names is one that module's symbol table resolves. A reader built from a
+/// resolver alone reads in the module that resolver was built for; a caller
+/// holding an op reads in the op's own module, which `in` hands it.
 class ReadOnlyImplResolver {
 public:
   explicit ReadOnlyImplResolver(const ImplResolver &resolver)
-      : resolver(resolver) {}
+      : resolver(resolver), scope(resolver.module) {}
 
-  /// What impl selection settled on for `app`: the impl it chose, or the arm it
-  /// refused on. Nothing when selection has not been asked about `app`.
+  ReadOnlyImplResolver(const ImplResolver &resolver, ModuleOp scope)
+      : resolver(resolver), scope(scope) {}
+
+  /// This read taken in `scope` instead.
+  ReadOnlyImplResolver in(ModuleOp scope) const {
+    return ReadOnlyImplResolver(resolver, scope);
+  }
+
+  /// What impl selection settled on for `app` here: the impl it chose, or the
+  /// arm it refused on. Nothing when selection has not been asked about `app`
+  /// in this module.
   inline std::optional<ResolutionOutcome>
   getRecordedOutcome(TraitApplicationAttr app) const {
     const auto &chosen = resolver.memo.resolutionMemo.chosen;
-    auto it = chosen.find(app);
+    auto it = chosen.find({scope, app});
     if (it == chosen.end())
       return std::nullopt;
     return it->second;
@@ -595,12 +642,13 @@ public:
   /// answer alike.
   uint64_t getRecordEpoch() const { return resolver.getRecordEpoch(); }
 
-  /// The symbol proving `app` -- an impl's own for a self-proof, a
-  /// `trait.proof`'s otherwise. Nothing when no proof of `app` is recorded.
+  /// The symbol proving `app` here -- an impl's own for a self-proof, a
+  /// `trait.proof`'s otherwise. Nothing when no proof of `app` is recorded in
+  /// this module.
   inline std::optional<FlatSymbolRefAttr>
   getRecordedProof(TraitApplicationAttr app) const {
     const auto &proofs = resolver.memo.proofMemo;
-    auto it = proofs.find(app);
+    auto it = proofs.find({scope, app});
     if (it == proofs.end())
       return std::nullopt;
     return it->second;
@@ -647,6 +695,7 @@ public:
 
 private:
   const ImplResolver &resolver;
+  ModuleOp scope;
 };
 
 /// A normalizer over what impl selection has settled, and then over the impls
@@ -661,8 +710,8 @@ private:
 /// account.
 class RecordedProjectionLookup {
 public:
-  explicit RecordedProjectionLookup(const ImplResolver &resolver)
-      : reading(resolver) {}
+  RecordedProjectionLookup(const ImplResolver &resolver, ModuleOp scope)
+      : reading(resolver, scope) {}
   explicit RecordedProjectionLookup(const ReadOnlyImplResolver &reading)
       : reading(reading) {}
 
