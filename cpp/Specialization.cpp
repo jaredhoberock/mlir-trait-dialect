@@ -74,15 +74,28 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &sub
   // below is the one mover, and it reaches an equality only through the claim
   // that wraps it.
   AttrTypeReplacer replacer = makeEndpointSealedReplacer();
-  replacer.addReplacement([=](Type t) -> std::optional<Type> {
+  replacer.addReplacement(
+      [=](Type t) -> std::optional<std::pair<Type, WalkResult>> {
     Type result = applySubstitutionToFixedPoint(subst, t);
     if (module)
       result = resolveProjectionsByLookup(result, module,
                                           DemandOrigin::MonomorphStampOut,
                                           LookupScope::Ground);
 
+    // A generic type owns its specialization entirely, so the substitution
+    // reaches the parameter it stands for through `specializeWith` and never
+    // through its sub-elements. A kinded occurrence such as `!tuple.poly<P>`
+    // whose argument is not a tuple answers with no type, which leaves it
+    // spelled as written; descending into it would rebuild the occurrence
+    // around the argument, which is not a parameter at all.
+    if (isa<GenericTypeInterface>(t))
+      return std::make_pair(result, WalkResult::skip());
+
     // check that the result changed
-    return (result != t) ? std::optional<Type>(result) : std::nullopt;
+    return (result != t)
+               ? std::optional<std::pair<Type, WalkResult>>(
+                     std::make_pair(result, WalkResult::advance()))
+               : std::nullopt;
   });
 
   // The clone rule for equality evidence: the endpoints receive the variable
