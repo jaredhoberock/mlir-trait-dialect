@@ -1989,8 +1989,8 @@ static LogicalResult verifyEqualityPremisesHoldAt(
     if (*lhs != *rhs) {
       if (err) err() << "impl '@" << impl.getSymName() << "' applies where "
                      << equality.getLhs() << " = " << equality.getRhs()
-                     << ", which at " << cited << " reads " << *lhs << " = "
-                     << *rhs;
+                     << ", and nothing here makes " << *lhs << " and " << *rhs
+                     << " one type at " << cited;
       return failure();
     }
   }
@@ -2719,6 +2719,15 @@ LogicalResult DeriveOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
                            << " has claim " << operandClaim
                            << " but expected " << expected;
   }
+
+  // The impl's equality premises take no operand -- the operand list is indexed
+  // by its application-arm assumptions -- so they are read here, through the
+  // same context: the hypotheses the scope holds and the evidence the operands
+  // carry. A premise neither settles is a premise this derive does not meet,
+  // the judgment selection makes over the same impl.
+  if (failed(verifyEqualityPremisesHoldAt(implOp, derivedClaim, *subst,
+                                          normalization, errFn)))
+    return failure();
 
   return success();
 }
