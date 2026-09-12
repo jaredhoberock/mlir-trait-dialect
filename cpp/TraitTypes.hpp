@@ -243,6 +243,20 @@ inline bool spellingIsSettled(Type ty) {
   return !open;
 }
 
+/// Whether an equality premise read at a citation is one that citation cannot
+/// decide, so the instances made of it decide it instead.
+///
+/// A reading carrying a type variable is a template's: the variable stands for
+/// whatever each instance binds it to, and the instance is where the premise is
+/// read. A reading with no variable in it is decided here even where it spells a
+/// projection nothing resolves -- no instance moves that spelling either, so a
+/// premise it leaves unequal is a premise that does not hold, and the impl
+/// stating it does not apply. This is the one judgment impl selection, a proof
+/// and a derive all read their premises by.
+inline bool premiseDefersToInstances(Type lhs, Type rhs) {
+  return isPolymorphicType(lhs) || isPolymorphicType(rhs);
+}
+
 /// What deriving each proven obligation produced, kept for as long as the proof
 /// stands.
 ///

@@ -1995,11 +1995,11 @@ void ImplOp::print(OpAsmPrinter &printer) {
 /// one impl selection makes over a candidate: the impl's application-arm
 /// premises travel as subproofs, its equality premises are decided here.
 ///
-/// A reading that is not settled is a premise this citation cannot decide: a
-/// template's variables stand for the instances made of it, and the instance is
-/// where the premise is read. A symbolic equality defers here for the reason it
-/// defers at the impl that states it, and what it defers to is the clone, which
-/// reads it at the arguments the instance supplies.
+/// A reading carrying a type variable is a premise this citation cannot decide:
+/// a template's variables stand for the instances made of it, and the instance
+/// is where the premise is read. A symbolic equality defers here for the reason
+/// it defers at the impl that states it, and what it defers to is the clone,
+/// which reads it at the arguments the instance supplies.
 static LogicalResult verifyEqualityPremisesHoldAt(
     ImplOp impl, ClaimType cited, const SpecializationMap &arguments,
     NormalizationContext evidence,
@@ -2020,7 +2020,7 @@ static LogicalResult verifyEqualityPremisesHoldAt(
     FailureOr<Type> rhs = reduce(equality.getRhs());
     if (failed(rhs))
       return failure();
-    if (!spellingIsSettled(*lhs) || !spellingIsSettled(*rhs))
+    if (premiseDefersToInstances(*lhs, *rhs))
       continue;
     if (*lhs != *rhs) {
       if (err) err() << "impl '@" << impl.getSymName() << "' applies where "

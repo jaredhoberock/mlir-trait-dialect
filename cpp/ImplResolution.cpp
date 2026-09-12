@@ -134,7 +134,9 @@ ImplResolver::assumptionsSatisfiableFor(ImplOp impl,
     // whether it holds. Each side is read through the candidate's own
     // associated-type bindings first -- a premise may project through the very
     // application being selected, which selection cannot ask itself about --
-    // and then through what selection has settled elsewhere.
+    // and then through what selection has settled elsewhere. A reading carrying
+    // a type variable is left to the instances that fill it, the same judgment
+    // a proof and a derive read their premises by.
     auto equality = cast<TypeEqualityAttr>(premise);
     NormalizationContext ownBindings;
     ownBindings.addLocalProjectionRule(impl, app, known);
@@ -144,7 +146,11 @@ ImplResolver::assumptionsSatisfiableFor(ImplOp impl,
       return resolveProjectionsIn(succeeded(reduced) ? *reduced : instantiated,
                                   builder);
     };
-    if (reduce(equality.getLhs()) != reduce(equality.getRhs()))
+    Type lhs = reduce(equality.getLhs());
+    Type rhs = reduce(equality.getRhs());
+    if (premiseDefersToInstances(lhs, rhs))
+      continue;
+    if (lhs != rhs)
       return failure();
   }
 
