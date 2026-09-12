@@ -117,12 +117,14 @@ bool entailedByGroundCongruence(Type lhs, Type rhs,
 /// generics of the trait or impl header it is written in. Its body may mention
 /// no others: a substitution is built from the declaration's parameters, so a
 /// parameter the declaration does not bind has no source for its argument and
-/// survives into whatever the body is cloned into. A nested declaration with a
-/// scope of its own -- a nested function, a trait, an impl, a proof -- is left
-/// for its own check, while a runtime region (an `scf.if`, a `cf` block, a
-/// cooperative body) is interior to this function and stands in this scope. The
-/// type parameters a generic call spells for its callee are read as the callee's
-/// and not as a mention here.
+/// survives into whatever the body is cloned into. A nested declaration isolated
+/// from above -- a nested function, a trait, an impl, a proof -- is left for its
+/// own check. A region an op runs at run time (an `scf.if`, a `cf` block, a
+/// cooperative body) stands in this scope, and a callable region the scope
+/// reaches into -- a lambda a dialect specializes per use, such as a `tuple.map`
+/// body -- binds the generics of its own argument and result types on top of the
+/// ones already in scope. The type parameters a generic call spells for its
+/// callee are read as the callee's and not as a mention here.
 ///
 /// This is a whole-function judgment, not an op verifier: a step that reads or
 /// clones a body asks it at its entry.

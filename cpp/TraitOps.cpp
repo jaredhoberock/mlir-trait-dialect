@@ -12,6 +12,7 @@
 #include <llvm/Support/xxhash.h>
 #include <llvm/Support/Error.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
+#include <mlir/Interfaces/CallInterfaces.h>
 #include <mlir/Interfaces/FunctionImplementation.h>
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/IRMapping.h>
@@ -227,12 +228,14 @@ FailureOr<FunctionType> NormalizationContext::normalize(
 
 namespace {
 
-/// Whether `op` declares a type parameter scope of its own, so that the code it
-/// holds is judged against that declaration rather than against the function a
-/// walk started at. A region an op runs at run time -- a conditional, a loop, a
-/// cooperative body -- declares nothing and stands in the scope around it.
-bool ownsATypeParameterScope(Operation *op) {
-  return isa<TraitOp, ImplOp, ProofOp, func::FuncOp>(op);
+/// Whether the code `op` holds is judged on its own rather than in the scope
+/// `op` stands in. An operation isolated from above sees nothing of that scope,
+/// so a nested function, a trait, an impl and a proof each answer for what they
+/// hold where they are declared; a region an op runs at run time -- a
+/// conditional, a loop, a cooperative body -- is interior to the scope around
+/// it.
+bool isJudgedOnItsOwn(Operation *op) {
+  return op->hasTrait<OpTrait::IsIsolatedFromAbove>();
 }
 
 /// Collects into `generics` every generic type `root` mentions, `root` being a
@@ -256,12 +259,24 @@ bool isTypeParameterLabel(Type generic) {
   return getGenericTypesIn(generic).size() == 1;
 }
 
+/// The type parameters `callable`'s signature binds: the generics its argument
+/// and result types spell, in first-occurrence order.
+SetVector<Type> getSignatureTypeParams(CallableOpInterface callable) {
+  SetVector<Type> params;
+  for (Type type : callable.getArgumentTypes())
+    collectGenericsIn(type, params);
+  for (Type type : callable.getResultTypes())
+    collectGenericsIn(type, params);
+  return params;
+}
+
 /// The type parameters `function`'s declaration binds: the generics its own
-/// signature spells, and, for a method, the generics of the trait or impl header
-/// it is written in, which a use of that header supplies.
+/// signature spells, read as any callable's are, and, for a method, the generics
+/// of the trait or impl header it is written in, which a use of that header
+/// supplies.
 SetVector<Type> getDeclaredTypeParams(func::FuncOp function) {
-  SetVector<Type> declared;
-  collectGenericsIn(Type(function.getFunctionType()), declared);
+  SetVector<Type> declared =
+      getSignatureTypeParams(cast<CallableOpInterface>(function.getOperation()));
 
   if (auto impl = function->getParentOfType<ImplOp>()) {
     for (GenericTypeInterface generic : impl.getTypeParams())
@@ -286,56 +301,100 @@ bool namesCalleeTypeParameters(Operation *op, StringAttr name) {
   return false;
 }
 
-} // namespace
-
-LogicalResult mlir::trait::verifyFunctionBodyIsWellScoped(func::FuncOp function) {
-  SetVector<Type> declared = getDeclaredTypeParams(function);
-
-  // The first mention of each parameter the declaration does not bind, in the
-  // order the walk meets them, so each label is refused once and at a site.
-  SmallVector<std::pair<Type, Operation *>> outOfScope;
+/// The first mention of each type parameter no declaration in scope binds, in
+/// the order a walk meets them, so each parameter is refused once and at a site.
+struct StrayMentions {
+  SmallVector<std::pair<Type, Operation *>> inOrder;
   DenseSet<Type> seen;
-  auto read = [&](auto root, Operation *at) {
+
+  /// Reads `root`, a type or an attribute, for the parameters `declared` does
+  /// not bind, recording a first mention at `at`.
+  template <typename RootT>
+  void read(RootT root, const SetVector<Type> &declared, Operation *at) {
     root.walk([&](Type sub) {
       for (GenericTypeInterface generic : getGenericTypesIn(sub)) {
         Type label(generic);
         if (declared.contains(label) || !isTypeParameterLabel(label))
           continue;
         if (seen.insert(label).second)
-          outOfScope.emplace_back(label, at);
+          inOrder.emplace_back(label, at);
       }
     });
-  };
+  }
+};
 
-  Operation *root = function.getOperation();
-  root->walk<WalkOrder::PreOrder>([&](Operation *op) {
-    if (op != root && ownsATypeParameterScope(op))
-      return WalkResult::skip();
+void judgeInterior(Operation *op, const SetVector<Type> &inside,
+                   StrayMentions &mentions);
 
-    for (Type type : op->getOperandTypes())
-      read(type, op);
-    for (Type type : op->getResultTypes())
-      read(type, op);
-    for (Region &region : op->getRegions())
-      for (Block &block : region)
-        for (BlockArgument argument : block.getArguments())
-          read(argument.getType(), op);
-    // The function's own attributes are its declaration, read above.
-    if (op != root)
-      for (NamedAttribute attribute : op->getAttrDictionary())
-        if (!namesCalleeTypeParameters(op, attribute.getName()))
-          read(attribute.getValue(), op);
-    return WalkResult::advance();
-  });
+/// Judges `op`, and whatever it holds, against `declared`: the type parameters
+/// the scope `op` stands in binds.
+void judge(Operation *op, const SetVector<Type> &declared,
+           StrayMentions &mentions) {
+  // An operand and a result are values of the scope `op` stands in, whatever
+  // `op` holds.
+  for (Type type : op->getOperandTypes())
+    mentions.read(type, declared, op);
+  for (Type type : op->getResultTypes())
+    mentions.read(type, declared, op);
 
-  for (auto [generic, at] : outOfScope) {
+  if (isJudgedOnItsOwn(op))
+    return;
+
+  // A callable the scope around it reaches into is a lambda a dialect
+  // specializes per use -- a `tuple.map` body, once per element type -- so its
+  // signature binds parameters of its own for what it holds, on top of the ones
+  // already in scope. A callable holds one region, so that signature governs the
+  // whole interior.
+  if (auto callable = dyn_cast<CallableOpInterface>(op)) {
+    SetVector<Type> inside = declared;
+    inside.set_union(getSignatureTypeParams(callable));
+    judgeInterior(op, inside, mentions);
+    return;
+  }
+  judgeInterior(op, declared, mentions);
+}
+
+/// Reads the attributes, block arguments and operations `op` holds against
+/// `inside`, the type parameters in scope within `op`.
+void judgeInterior(Operation *op, const SetVector<Type> &inside,
+                   StrayMentions &mentions) {
+  for (NamedAttribute attribute : op->getAttrDictionary())
+    if (!namesCalleeTypeParameters(op, attribute.getName()))
+      mentions.read(attribute.getValue(), inside, op);
+
+  for (Region &region : op->getRegions())
+    for (Block &block : region) {
+      for (BlockArgument argument : block.getArguments())
+        mentions.read(argument.getType(), inside, op);
+      for (Operation &inner : block)
+        judge(&inner, inside, mentions);
+    }
+}
+
+} // namespace
+
+LogicalResult mlir::trait::verifyFunctionBodyIsWellScoped(func::FuncOp function) {
+  SetVector<Type> declared = getDeclaredTypeParams(function);
+
+  // The function's own attributes are its declaration, read above: the judgment
+  // is about its body.
+  StrayMentions mentions;
+  for (Region &region : function->getRegions())
+    for (Block &block : region) {
+      for (BlockArgument argument : block.getArguments())
+        mentions.read(argument.getType(), declared, function.getOperation());
+      for (Operation &op : block)
+        judge(&op, declared, mentions);
+    }
+
+  for (auto [generic, at] : mentions.inOrder) {
     InFlightDiagnostic diagnostic =
         function.emitError()
         << "type parameter " << generic
         << " is outside the signature scope of @" << function.getSymName();
     diagnostic.attachNote(at->getLoc()) << "mentioned here";
   }
-  return success(outOfScope.empty());
+  return success(mentions.inOrder.empty());
 }
 
 
