@@ -794,8 +794,7 @@ static FailureOr<SmallVector<ImplWitnessRule>> collectImplWitnessRules(
         dischargeWitnesses, errFn);
     if (failed(subst))
       return failure();
-    auto citedImpl = mlir::SymbolTable::lookupNearestSymbolFrom<ImplOp>(
-        module, witness.getImplRef());
+    auto citedImpl = lookupSymbolFrom<ImplOp>(module, witness.getImplRef());
     rules.push_back(
         {citedImpl, projectionTy.getTraitApplication(), std::move(*subst)});
   }
@@ -1700,7 +1699,7 @@ FailureOr<func::FuncOp> ImplOp::getOrSpecializeFreeFunctionFromMethod(
   MLIRContext* ctx = getContext();
 
   // look for an existing function
-  auto funcOp = mlir::SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(
+  auto funcOp = lookupSymbolFrom<func::FuncOp>(
     module,
     FlatSymbolRefAttr::get(ctx, functionName)
   );
@@ -2051,6 +2050,11 @@ LogicalResult ProofOp::verify() {
 }
 
 LogicalResult ProofOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  // A verifier runs on whatever thread verification was handed to, so it holds
+  // its own answers for the names its proof tree resolves. Verification writes
+  // nothing, so every answer taken under it stands for the whole span.
+  SymbolLookupScope symbolAnswers;
+
   auto module = (*this)->getParentOfType<ModuleOp>();
   auto errFn = [&] { return emitOpError(); };
 
@@ -2180,7 +2184,7 @@ static FailureOr<Operation*> lookupProofSymbol(
     ModuleOp module,
     FlatSymbolRefAttr name,
     llvm::function_ref<InFlightDiagnostic()> errFn) {
-  Operation* symOp = SymbolTable::lookupNearestSymbolFrom(module, name);
+  Operation* symOp = lookupSymbolFrom(module, name);
   if (!symOp) {
     if (errFn) errFn() << "cannot find proof symbol '" << name << "'";
     return failure();
@@ -2684,7 +2688,7 @@ ImplOp DeriveOp::getImplOp() {
   ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
   if (!module)
     return nullptr;
-  return mlir::SymbolTable::lookupNearestSymbolFrom<ImplOp>(module, getImplAttr());
+  return lookupSymbolFrom<ImplOp>(module, getImplAttr());
 }
 
 /// Verifies that a trait.derive op is well-formed with respect to its symbols:
@@ -3173,15 +3177,18 @@ static void addScopeHypotheses(NormalizationContext &ctx, Operation *op,
 static void addLocalProjectionRulesFromProvenClaim(
     NormalizationContext &ctx, ClaimType claim, ModuleOp module,
     llvm::SmallPtrSetImpl<Operation *> &visited) {
-  auto implOr = ProofOp::getImplFromProof(module, claim.getProof(),
-                                          /*errFn=*/nullptr);
-  if (failed(implOr))
+  // The symbol this claim cites, read once: it is the proof whose subtree
+  // contributes first and it names the impl whose bindings justify the rule
+  // below, or it is that impl itself where the citation is a leaf.
+  Operation *cited = lookupSymbolFrom(module, claim.getProof());
+  auto proof = dyn_cast_or_null<ProofOp>(cited);
+  ImplOp impl = proof ? proof.getImpl() : dyn_cast_or_null<ImplOp>(cited);
+  if (!impl)
     return;
 
   // The proof's own subtree. A coinductive proof names itself among its
   // subproofs, so a proof already read contributes nothing a second time.
-  if (auto proof = SymbolTable::lookupNearestSymbolFrom<ProofOp>(
-          module, claim.getProof()))
+  if (proof)
     if (visited.insert(proof.getOperation()).second) {
       auto subproofs = proof.verifyAndGetSubproofClaims(
           DemandOrigin::ProofVerification, /*err=*/nullptr);
@@ -3198,12 +3205,12 @@ static void addLocalProjectionRulesFromProvenClaim(
   auto throughRulesSoFar = [&](Type ty) -> FailureOr<Type> {
     return ctx.normalize(ty, /*err=*/nullptr);
   };
-  auto subst = implOr->buildSubstitutionForSelfClaim(unproven, throughRulesSoFar,
-                                                     /*errFn=*/nullptr);
+  auto subst = impl.buildSubstitutionForSelfClaim(unproven, throughRulesSoFar,
+                                                 /*errFn=*/nullptr);
   if (failed(subst))
     return;
 
-  ctx.addLocalProjectionRule(*implOr, unproven.getTraitApplication(), *subst);
+  ctx.addLocalProjectionRule(impl, unproven.getTraitApplication(), *subst);
 }
 
 /// Adds projection normalization rules justified by one claim SSA value.
@@ -3369,6 +3376,11 @@ LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable)
 FailureOr<SpecializationMap> MethodCallOp::buildParameterSpecialization(
     const ReadOnlyImplResolver *reading,
     llvm::function_ref<InFlightDiagnostic()> err) {
+  // Reading the evidence at this call resolves symbol names and writes nothing,
+  // so what a name answers is held for the read. Under a stage already holding
+  // answers this reads through those.
+  SymbolLookupScope symbolAnswers;
+
   auto module = getModule(err);
   if (failed(module)) return failure();
 
@@ -3614,6 +3626,9 @@ LogicalResult FuncCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 FailureOr<SpecializationMap> FuncCallOp::buildParameterSpecialization(
     const ReadOnlyImplResolver *reading,
     llvm::function_ref<InFlightDiagnostic()> err) {
+  // As at a method call: the read resolves symbol names and writes nothing.
+  SymbolLookupScope symbolAnswers;
+
   auto module = getModule(err);
   if (failed(module)) return failure();
 

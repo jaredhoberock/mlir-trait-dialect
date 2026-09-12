@@ -1613,7 +1613,7 @@ def ProofOp : TraitDialectOp<"proof", [
       ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
       if (!module)
         return nullptr;
-      return mlir::SymbolTable::lookupNearestSymbolFrom<ImplOp>(module, getImplNameAttr());
+      return lookupSymbolFrom<ImplOp>(module, getImplNameAttr());
     }
 
     TraitOp getTrait();

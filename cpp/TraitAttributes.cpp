@@ -120,7 +120,7 @@ FailureOr<TraitOp> TraitApplicationAttr::getTrait(
     ModuleOp module,
     llvm::function_ref<InFlightDiagnostic()> emitError
 ) const {
-  TraitOp traitOp = mlir::SymbolTable::lookupNearestSymbolFrom<TraitOp>(module, getTraitName());
+  TraitOp traitOp = lookupSymbolFrom<TraitOp>(module, getTraitName());
   if (!traitOp) {
     if (emitError) emitError() << "cannot find trait '" << getTraitName() << "'";
     return failure();

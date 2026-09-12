@@ -41,6 +41,10 @@ struct RewriteEventCounts : public RewriterBase::Listener {
   }
   void notifyOperationErased(Operation *op) override {
     liveWritten.erase(op);
+    // A symbol lookup scope holds what a symbol table answered, so taking a
+    // symbol out of the IR is what takes those answers back.
+    if (op->hasAttrOfType<StringAttr>(SymbolTable::getSymbolAttrName()))
+      forgetHeldSymbols();
   }
 
   void notifyPatternEnd(const Pattern &, LogicalResult status) override {
@@ -1670,6 +1674,13 @@ LogicalResult verifyFunctionBodiesAreWellScoped(ModuleOp module) {
 /// over that driver is exercised. Only the dialect's plugin passes it.
 LogicalResult instantiateMonomorphs(ModuleOp module,
                                     bool askImplSelectionForImpls) {
+  // A symbol name this stage resolves is scanned for once and answered from
+  // what was held after that. The stage appends symbols -- the impls it
+  // generates, the proofs it records, the instances it cuts -- which leaves
+  // what a table already answered standing, and it takes none away except
+  // through a rewrite driver, whose listener reports the erasure.
+  SymbolLookupScope symbolAnswers;
+
   // Well-scopedness leads, before anything is read, folded, collected or
   // cloned: a body that mentions a type parameter its declaration does not bind
   // has no source for that parameter, and every step after this one either skips

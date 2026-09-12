@@ -8,6 +8,7 @@
 #include <mlir/IR/Dialect.h>
 #include <mlir/IR/OpDefinition.h>
 #include <mlir/IR/PatternMatch.h>
+#include "SymbolLookup.hpp"
 #include "TraitTypes.hpp"
 
 namespace mlir::trait {

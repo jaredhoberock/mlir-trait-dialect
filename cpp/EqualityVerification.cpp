@@ -140,8 +140,8 @@ static bool dischargeApplicationObligation(
     if (llvm::is_contained(inProgress, citation.getApplication()))
       continue; // cycle: this path grounds nothing
 
-    auto dischargerOp = SymbolTable::lookupNearestSymbolFrom<ImplOp>(
-        module, citation.getImplRef());
+    auto dischargerOp =
+        lookupSymbolFrom<ImplOp>(module, citation.getImplRef());
     if (!dischargerOp)
       continue;
 
@@ -198,8 +198,7 @@ static FailureOr<SpecializationMap> verifyProjectionResolutionCore(
     return failure();
   }
 
-  auto implOp =
-      SymbolTable::lookupNearestSymbolFrom<ImplOp>(module, citedImpl);
+  auto implOp = lookupSymbolFrom<ImplOp>(module, citedImpl);
   if (!implOp) {
     if (err) err() << "cannot find trait.impl '" << citedImpl << "' cited by the witness";
     return failure();

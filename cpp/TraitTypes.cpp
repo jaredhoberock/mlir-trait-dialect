@@ -1089,7 +1089,7 @@ void ClaimType::getProjections(
   // where-clauses. An unproven source keeps only the unproven candidates above:
   // proofness parity refuses a proven application result projected from it.
   if (isProven()) {
-    if (auto proof = SymbolTable::lookupNearestSymbolFrom<ProofOp>(module, getProof())) {
+    if (auto proof = lookupSymbolFrom<ProofOp>(module, getProof())) {
       ImplOp impl = proof.getImpl();
       if (impl) {
         // XXX TODO a projection a declaration spells must be over its own self
