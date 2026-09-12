@@ -1271,17 +1271,21 @@ inline Type instantiate(Type declared, const SpecializationMap &args) {
 ///
 /// The walk runs in lockstep. A formal parameter occurrence takes the actual
 /// subterm standing opposite it; the actual side is never read as a pattern, so
-/// nothing it spells is narrowed to fit. A formal projection is skipped --
-/// projections are not injective, so the subterms under one determine nothing
-/// -- and a formal claim recurses through its predicate by position, blind to
-/// the proof either side carries. Every other node requires the same
-/// constructor, the same attributes and the same child count before recursing.
+/// nothing it spells is narrowed to fit. A formal claim recurses through its
+/// predicate by position, blind to the proof either side carries. Every other
+/// node recurses only where the two sides carry the same constructor, the same
+/// attributes and the same child count; where they diverge the reading stops,
+/// because it runs before either side is normalized and has nothing to learn
+/// there.
 ///
-/// Success says only that the reading found no contradiction: what decides the
-/// match is `verifyEqualAfterInstantiation`.
-LogicalResult extractTypeArguments(Type formal, Type actual,
-                                   TypeArguments &args,
-                                   llvm::function_ref<InFlightDiagnostic()> err);
+/// A projection is not injective, so nothing is read out of the position it
+/// stands in; its arguments are read only against the same projection on the
+/// actual side, and only once every position outside a projection has had its
+/// say. A parameter read twice at two spellings keeps the first, for the same
+/// reason both readings are safe: the two may yet be one type. So this cannot
+/// refuse anything, which is what makes `verifyEqualAfterInstantiation` the
+/// only verdict.
+void extractTypeArguments(Type formal, Type actual, TypeArguments &args);
 
 /// Whether `formal` instantiated at `args` is `actual`.
 ///
@@ -1450,6 +1454,30 @@ Type normalizeProjectionsToFixedPoint(Type ty, ModuleOp module,
 /// module-level reporter -- names the type that would not converge.
 LogicalResult tryNormalizeProjectionsToFixedPoint(
     Type ty, llvm::function_ref<Type(Type)> step, Type &out);
+
+/// A normalizer over the impls a module holds: a ground projection exactly one
+/// of them binds reduces to what it binds, which is the same answer in every
+/// position that spells it. This is a reading of committed facts and not of the
+/// evidence an operation carries, so a caller that may only read the latter
+/// does not build one.
+class GroundProjectionLookup {
+public:
+  /// `err`, when given, receives the diagnostic for a resolution chain with no
+  /// normal form, which is the one way this reading fails.
+  GroundProjectionLookup(ModuleOp module, DemandOrigin origin,
+                         llvm::function_ref<InFlightDiagnostic()> err = nullptr)
+      : module(module), origin(origin), err(err) {}
+
+  FailureOr<Type> operator()(Type ty) const {
+    return resolveProjectionsByLookup(ty, module, origin, LookupScope::Ground,
+                                      err);
+  }
+
+private:
+  ModuleOp module;
+  DemandOrigin origin;
+  llvm::function_ref<InFlightDiagnostic()> err;
+};
 
 std::string generateMangledNameSuffixFor(TypeRange typeArgs);
 

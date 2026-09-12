@@ -40,5 +40,6 @@ func.func @caller() -> !trait.proj<@Test[i1], "Wrapper", [i32]> {
   %x = arith.constant 42 : i32
   %r = trait.method.call %a @Test[i1]::@test(%self, %x)
     : (i1, i32) -> !trait.proj<@Test[i1], "Wrapper", [i32]>
+    attributes {type_params = [!trait.poly<1>], type_args = [i32]}
   return %r : !trait.proj<@Test[i1], "Wrapper", [i32]>
 }

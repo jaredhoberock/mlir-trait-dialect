@@ -16,6 +16,6 @@ func.func private @foo(!trait.poly<0>) -> !trait.poly<1>
 // expected-error@+1 {{type parameter '!trait.poly<9>' is outside the signature scope of @main}}
 func.func @main(%x: i64) {
   // expected-note@+1 {{mentioned here}}
-  %r = trait.func.call @foo(%x) : (i64) -> !trait.poly<9>
+  %r = trait.func.call @foo(%x) {type_params = [!trait.poly<0>, !trait.poly<1>], type_args = [i64, !trait.poly<9>]} : (i64) -> !trait.poly<9>
   return
 }

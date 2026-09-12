@@ -43,14 +43,17 @@ func.func @main() -> i32 attributes {provenance = @poly} {
 // -----
 
 // A generic call left standing names its callee, so the callee cannot be
-// collected and the call is what the check refuses.
+// collected and the call is what the check refuses. Its type arguments name the
+// callee's parameters, so the same call is refused for carrying the trait type
+// system outside a template as well.
 func.func private @poly(%x: !trait.poly<0>) -> !trait.poly<0> {
   return %x : !trait.poly<0>
 }
 
 func.func @main() -> i32 {
   %c = arith.constant 0 : i32
-  // expected-error @below {{'trait.func.call' op names the template @poly from outside a template}}
-  %r = trait.func.call @poly(%c) : (i32) -> i32
+  // expected-error @+2 {{'trait.func.call' op still carries '!trait.poly<0>' after erasure}}
+  // expected-error @+1 {{'trait.func.call' op names the template @poly from outside a template}}
+  %r = trait.func.call @poly(%c) {type_params = [!trait.poly<0>], type_args = [i32]} : (i32) -> i32
   return %r : i32
 }

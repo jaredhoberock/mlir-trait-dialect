@@ -20,8 +20,8 @@ func.func @gen(%c: !trait.claim<!S = i32>) -> !S {
 }
 
 // CHECK-LABEL: func.func @caller
-// CHECK: trait.func.call @gen(%{{.*}}) : (!trait.claim<i64 = i32>) -> i64
+// CHECK: trait.func.call @gen(%{{.*}}) {{.*}} : (!trait.claim<i64 = i32>) -> i64
 func.func @caller(%e: !trait.claim<i64 = i32>) -> i64 {
-  %r = trait.func.call @gen(%e) : (!trait.claim<i64 = i32>) -> i64
+  %r = trait.func.call @gen(%e) {type_params = [!trait.poly<0>], type_args = [i64]} : (!trait.claim<i64 = i32>) -> i64
   return %r : i64
 }

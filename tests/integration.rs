@@ -280,9 +280,10 @@ fn test_jit() {
                 block.argument(1).unwrap().into(),
             ],
             &[i1_ty],
-            // the callee's type parameters are read from its signature
-            &[],
-            &[],
+            // the callee's own type parameter, and the argument this call
+            // supplies for it
+            &[trait_::poly_type(&context, 2)],
+            &[i32_ty],
         ));
         block.append_operation(func::r#return(
             &[result.result(0).unwrap().into()],
@@ -422,9 +423,10 @@ fn test_jit() {
                 block.argument(1).unwrap().into(), // y
             ],
             &[i1_ty],
-            // the callee's type parameters are read from its signature
-            &[],
-            &[],
+            // the callee's own type parameter, and the argument this call
+            // supplies for it
+            &[trait_::poly_type(&context, 2)],
+            &[i32_ty],
         ));
         block.append_operation(func::r#return(
             &[result.result(0).unwrap().into()],
@@ -730,12 +732,12 @@ trait.impl private @Store_impl_i64 for @Store[i64] {\n\
   }\n\
 }\n\
 func.func private @tpl(%p: !trait.claim<@Store[i64]>, %x: i64, %v: !trait.poly<7>) -> !trait.poly<7> {\n\
-  %r = trait.method.call %p @Store[i64]::@keep(%x, %v) : (i64, !trait.poly<7>) -> !trait.poly<7>\n\
+  %r = trait.method.call %p @Store[i64]::@keep(%x, %v) : (i64, !trait.poly<7>) -> !trait.poly<7> attributes {type_params = [!trait.poly<9>], type_args = [!trait.poly<7>]}\n\
   return %r : !trait.poly<7>\n\
 }\n\
 func.func @host(%x: i64, %v: i32) -> i32 {\n\
   %p = trait.witness @Store_impl_i64 for @Store[i64]\n\
-  %r = trait.method.call %p @Store[i64]::@keep(%x, %v) : (i64, i32) -> i32 by @Store_impl_i64\n\
+  %r = trait.method.call %p @Store[i64]::@keep(%x, %v) : (i64, i32) -> i32 by @Store_impl_i64 attributes {type_params = [!trait.poly<9>], type_args = [i32]}\n\
   return %r : i32\n\
 }\n";
     let mut module = Module::parse(&context, source).expect("the fixture module parses");

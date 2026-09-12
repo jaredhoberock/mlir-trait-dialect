@@ -13,7 +13,7 @@ func.func private @foo(%x: !trait.poly<0>) -> !trait.poly<0> {
 func.func @a(%x: i32) -> i32 {
   // The declared binding poly<0> := i64 makes the callee (i64) -> i64, which the
   // (i32) -> i32 actuals are not an instance of.
-  // expected-error@+1 {{type mismatch: expected 'i64' but found 'i32'}}
+  // expected-error@+1 {{type mismatch: expected '(i64) -> i64' but found '(i32) -> i32'}}
   %r = trait.func.call @foo(%x) {type_params = [!trait.poly<0>], type_args = [i64]} : (i32) -> i32
   return %r : i32
 }

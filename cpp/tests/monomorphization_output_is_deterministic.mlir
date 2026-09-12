@@ -37,9 +37,9 @@ func.func @main() {
   %zero64 = trait.allege @Zero[i64]
   %zero32 = trait.allege @Zero[i32]
   %two = trait.allege @Two[i32]
-  trait.func.call @hold_zero(%zero32) : (!trait.claim<@Zero[i32]>) -> ()
-  trait.func.call @hold_zero(%zero64) : (!trait.claim<@Zero[i64]>) -> ()
-  trait.func.call @hold_two(%two) : (!trait.claim<@Two[i32]>) -> ()
+  trait.func.call @hold_zero(%zero32) {type_params = [!trait.poly<1>], type_args = [i32]} : (!trait.claim<@Zero[i32]>) -> ()
+  trait.func.call @hold_zero(%zero64) {type_params = [!trait.poly<1>], type_args = [i64]} : (!trait.claim<@Zero[i64]>) -> ()
+  trait.func.call @hold_two(%two) {type_params = [!trait.poly<1>], type_args = [i32]} : (!trait.claim<@Two[i32]>) -> ()
   return
 }
 

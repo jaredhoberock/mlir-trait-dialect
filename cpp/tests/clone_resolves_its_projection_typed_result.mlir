@@ -31,7 +31,7 @@ func.func private @tpl(%claim: !trait.claim<@Producer[!trait.poly<0>]>, %v: !tra
 
 func.func @main(%v: i64) -> !trait.proj<@Producer[i64], "Item"> {
   %c = trait.witness @Producer_i64 for @Producer[i64]
-  %r = trait.func.call @tpl(%c, %v)
+  %r = trait.func.call @tpl(%c, %v) {type_params = [!trait.poly<0>], type_args = [i64]}
     : (!trait.claim<@Producer[i64] by @Producer_i64>, i64) -> !trait.proj<@Producer[i64], "Item">
   return %r : !trait.proj<@Producer[i64], "Item">
 }

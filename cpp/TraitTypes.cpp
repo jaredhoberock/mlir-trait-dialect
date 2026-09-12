@@ -174,30 +174,6 @@ Type normalizeProjectionsToFixedPoint(Type ty, ModuleOp module,
   return out;
 }
 
-/// Whether `impl`'s self application matches `claim` one-way: the impl's own
-/// type parameters bind to fit the claim, and nothing the claim spells is
-/// narrowed to fit the impl.
-///
-/// `subst` is the match unification's answer, which binds the impl's parameters
-/// but says nothing about a variable the claim spells -- a claim-side narrowing
-/// leaves no key behind, it leaves the impl's self application spelled more
-/// specifically than the claim. So substituting the impl's own parameters back
-/// into its self application and comparing spellings is the one-way test: the
-/// two agree exactly when the impl's pattern already covers the claim as
-/// written.
-///
-/// The test reads spellings, so it also disagrees when the match resolved a
-/// projection one of them carries. That answer is conservative in the safe
-/// direction -- an impl the claim does determine is declined, and the claim
-/// stays spelled as written -- so the caller runs it only where the law it
-/// stands for has content.
-static bool matchesClaimOneWay(ImplOp impl, ClaimType claim,
-                               const SpecializationMap &subst) {
-  Type specializedSelf =
-      applySubstitutionToFixedPoint(subst.toTypeMap(), Type(impl.getSelfClaim()));
-  return specializedSelf == Type(claim);
-}
-
 // Shared body of both projection-resolution entry points. `converged` reports
 // whether the fixed-point driver reached a normal form: on false, `ty` carries
 // the driver's partial (the still-unresolved projection spelled as written),
@@ -217,12 +193,17 @@ static Type resolveProjectionsByLookupCore(Type ty, ModuleOp module,
   // it -- repeated projections over the same application skip the module scan.
   DenseMap<TraitApplicationAttr, SmallVector<ImplOp>> candidateCache;
 
+  // The context a candidate's header is read through here: this lookup itself,
+  // so a header spelling a projection (`impl<T> Index<T::Shape, T::Element> for
+  // T`) reproduces a demand spelling the resolution.
+  GroundProjectionLookup byGroundLookup(module, origin);
+
   AttrTypeReplacer replacer = makeEndpointSealedReplacer();
   replacer.addReplacement([&](ProjectionType proj) -> std::optional<Type> {
-    // Impl enumeration below builds each candidate's self-claim substitution,
-    // which unifies, which re-enters this callback. The guard makes that
-    // re-entry visible, so a demand raised about a candidate is told apart from
-    // the demand this call was asked about.
+    // Impl enumeration below matches each candidate's header, which normalizes,
+    // which re-enters this callback. The guard makes that re-entry visible, so
+    // a demand raised about a candidate is told apart from the demand this call
+    // was asked about.
     LookupProbeScope probe;
 
     const bool polymorphic = isPolymorphicType(proj);
@@ -259,7 +240,9 @@ static Type resolveProjectionsByLookupCore(Type ty, ModuleOp module,
       auto trait = app.getTrait(module, nullptr);
       if (failed(trait))
         return declineWith(LookupMissReason::TraitSymbolNotFound);
-      it = candidateCache.insert({app, trait->getCandidateImplsFor(claim)}).first;
+      it = candidateCache
+               .insert({app, trait->getCandidateImplsFor(claim, byGroundLookup)})
+               .first;
     }
     const SmallVector<ImplOp> &candidates = it->second;
     if (candidates.size() != 1)
@@ -273,21 +256,17 @@ static Type resolveProjectionsByLookupCore(Type ty, ModuleOp module,
         proj.getAssocName().getValue(), assocTypeArgs);
     if (failed(binding))
       return declineWith(LookupMissReason::AssociatedTypeBindingFailed);
-    auto subst = impl.buildSubstitutionForSelfClaim(claim);
+    // Nothing the projection spells is narrowed to fit the impl: the impl's own
+    // parameters take the arguments standing opposite them and the header
+    // rebuilt at those must be the projection's application. So an impl the
+    // projection could only reach by narrowing one of its variables is refused
+    // here, and no separate one-way test stands over this one.
+    auto subst = impl.buildSubstitutionForSelfClaim(claim, byGroundLookup,
+                                                    /*errFn=*/nullptr);
     if (failed(subst))
       return declineWith(LookupMissReason::SelfClaimSubstitutionFailed);
 
-    // A projection carrying variables selects only when the match narrowed none
-    // of them: an impl reached by narrowing the projection is one of several the
-    // projection could still be instantiated into, so the binding it supplies is
-    // a guess about inference rather than this spelling's meaning. A ground
-    // projection spells no variable to narrow, so the law has nothing to say
-    // about it and the spelling test that stands in for the law -- which also
-    // declines a match that resolved a projection along the way -- is not run.
-    if (polymorphic && !matchesClaimOneWay(impl, claim, *subst))
-      return std::nullopt;
-
-    return applySubstitutionToFixedPoint(subst->toTypeMap(), *binding);
+    return instantiate(*binding, *subst);
   });
 
   // A resolved binding may itself expose a ground projection, so run to a
@@ -877,10 +856,11 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
     // Naming an unconditional impl is not the same as proving this claim: the
     // proof could cite an impl of a different trait, or of this trait at
     // arguments the claim does not meet, and nothing above has compared the two.
-    // Specialize the impl's own self claim to the proven claim -- the same
-    // citation check that verifying a witness runs -- so a proof whose impl cannot
-    // specialize to its claim is refused here rather than trusted to a leaf.
-    if (failed(impl.buildSubstitutionForSelfClaim(proven, err)))
+    // Match the impl's own header against the proven claim -- the same citation
+    // check that verifying a witness runs -- so a proof whose impl cannot be
+    // carried to its claim is refused here rather than trusted to a leaf.
+    GroundProjectionLookup byGroundLookup(module, origin);
+    if (failed(impl.buildSubstitutionForSelfClaim(proven, byGroundLookup, err)))
       return failure();
 
     // success: bind the whole claim so that later normalization keeps the proof
@@ -894,13 +874,17 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
   // otherwise the symbol must be a ProofOp
   auto proof = dyn_cast<ProofOp>(*symOp);
 
-  // check that the proof's claim can specialize to match proven. Both name this
-  // one committed proof, so reducing ground projections its spellings mint is a
-  // computation over the proof's own facts, not a spelling comparison -- the
-  // recorder is a ratified minting point that reads module facts (the real
-  // module drives the ground-projection resolution inside unification).
-  if (failed(buildSpecialization(proof.getProvenClaim(), proven, module, err)))
-    return failure();
+  // The proof's own claim is the declaration and the claim it is cited for is
+  // the use: a proof op may be written over type variables and stand for every
+  // instance of them, so its parameters take the arguments the cited claim
+  // supplies and the claim it rebuilds must be that citation.
+  {
+    Type proofClaim = Type(proof.getProvenClaim());
+    GroundProjectionLookup byGroundLookup(module, origin);
+    if (failed(matchDeclaration(getTypeParametersIn(proofClaim), proofClaim,
+                                Type(proven), byGroundLookup, err)))
+      return failure();
+  }
 
   // Use the proof's concrete claim (projections resolved) rather than the
   // unproven claim (which may still contain projections). Example:
@@ -1047,9 +1031,13 @@ void ClaimType::getProjections(
     if (auto proof = SymbolTable::lookupNearestSymbolFrom<ProofOp>(module, getProof())) {
       ImplOp impl = proof.getImpl();
       if (impl) {
+        GroundProjectionLookup byGroundLookup(
+            module, DemandOrigin::ProofVerification);
+
         // Unproven impl assumptions, kept so the candidate query does not lose
         // a candidate; the proven spelling below supersedes them.
-        auto specAssumptions = impl.specializeAssumptionsAsClaimsFor(*this);
+        auto specAssumptions = impl.specializeAssumptionsAsClaimsFor(
+            *this, byGroundLookup, /*errFn=*/nullptr);
         if (succeeded(specAssumptions))
           result.append(*specAssumptions);
 
@@ -1070,7 +1058,8 @@ void ClaimType::getProjections(
         // The impl's equality where-clauses, specialized for this source. An
         // equality claim never carries a proof, so it is a parity-exempt
         // candidate an equality projection resolves to.
-        auto eqSubst = impl.buildSubstitutionForSelfClaim(*this);
+        auto eqSubst = impl.buildSubstitutionForSelfClaim(
+            *this, byGroundLookup, /*errFn=*/nullptr);
         if (succeeded(eqSubst)) {
           auto substMap = eqSubst->toTypeMap();
           for (Attribute pred : impl.getAssumptions())
@@ -1408,9 +1397,9 @@ static LogicalResult unifyStructurally(Type formal,
   {
     DemandCrossCheckScope quiet;
     resolvedFormal = resolveProjectionsByLookup(
-        formal, module, DemandOrigin::Unification, LookupScope::Ground);
+        formal, module, DemandOrigin::DeclarationMatch, LookupScope::Ground);
     resolvedActual = resolveProjectionsByLookup(
-        actual, module, DemandOrigin::Unification, LookupScope::Ground);
+        actual, module, DemandOrigin::DeclarationMatch, LookupScope::Ground);
   }
   if (resolvedFormal != formal || resolvedActual != actual)
     return unify(resolvedFormal, resolvedActual, module, subst, err);
@@ -1516,7 +1505,7 @@ static LogicalResult unifyProjectionAsSpelled(
   // mismatch below.
   if (isMonomorphicType(self) && module) {
     Type resolved = resolveProjectionsByLookup(
-        self, module, DemandOrigin::Unification, LookupScope::Ground);
+        self, module, DemandOrigin::DeclarationMatch, LookupScope::Ground);
     if (resolved != Type(self))
       return trait::unify(resolved, other, module, subst, err);
   }
@@ -1593,9 +1582,9 @@ LogicalResult ProjectionType::unify(
     {
       DemandCrossCheckScope quiet;
       normalizedSelf = resolveProjectionsByLookup(
-          *this, module, DemandOrigin::Unification, LookupScope::Determined);
+          *this, module, DemandOrigin::DeclarationMatch, LookupScope::Determined);
       normalizedOther = resolveProjectionsByLookup(
-          other, module, DemandOrigin::Unification, LookupScope::Determined);
+          other, module, DemandOrigin::DeclarationMatch, LookupScope::Determined);
     }
     if (normalizedSelf != Type(*this) || normalizedOther != other)
       return trait::unify(normalizedSelf, normalizedOther, module, subst, err);
@@ -1798,40 +1787,61 @@ LogicalResult TypeArguments::assign(
   return failure();
 }
 
-LogicalResult extractTypeArguments(
-    Type formal, Type actual, TypeArguments &args,
-    llvm::function_ref<InFlightDiagnostic()> err) {
+namespace {
+
+/// One pass of the reading. `throughProjections` says whether a formal
+/// projection may be read: a parameter standing only inside one is determined
+/// by the position the projection itself stands in, so the first pass leaves
+/// projections alone and the second reads what the first did not fill.
+void extractInto(Type formal, Type actual, TypeArguments &args,
+                 bool throughProjections) {
   // A parameter of this declaration takes whatever stands opposite it. This
   // comes first so that a parameter matched against itself is still recorded.
-  if (GenericTypeInterface parameter = getParameterOccurrence(formal))
+  // A second, differing reading of one parameter keeps the first: the reading
+  // runs before either side is normalized, so two spellings that differ here
+  // may yet be one type.
+  if (GenericTypeInterface parameter = getParameterOccurrence(formal)) {
+    // A parameter this declaration does not bind is rigid, and so is whatever
+    // spelling carries it: nothing under one is read, and whether the two sides
+    // agree there is the comparison's question.
     if (args.binds(parameter))
-      return args.assign(parameter, actual, err);
+      (void)args.assign(parameter, actual, /*err=*/nullptr);
+    return;
+  }
 
-  // A projection is not injective: two spellings can name one type and one
-  // spelling can name types the arguments underneath do not determine, so
-  // nothing is read out of the position it stands in. Whether the two sides
-  // agree there is the comparison's question, not the reading's.
-  if (isa<ProjectionType>(formal))
-    return success();
+  // A projection is not injective, so nothing is read out of the position it
+  // stands in. Its arguments are read only where the actual side spells the
+  // same projection, and only after every position outside a projection has had
+  // its say -- what a projection's arguments confirm, a position outside one
+  // determines.
+  if (isa<ProjectionType>(formal) && !throughProjections)
+    return;
 
   // Every other node is read by its shape: the same constructor, the same
   // attributes and the same child count, then the children by position. A
   // claim's predicate and a projection's arguments are enumerated here as
   // children, and an application claim's key ignores its proof, so the reading
   // is blind to the evidence either side carries.
+  //
+  // Two shapes that differ are not a refusal either: a position where they
+  // diverge is one this has nothing to learn from -- the actual may yet
+  // normalize into the formal's shape. Whatever the reading leaves unfilled
+  // stands in the rebuilt declaration, and the comparison is what refuses.
   TermShape formalShape = decomposeTerm(formal);
   TermShape actualShape = decomposeTerm(actual);
   if (formalShape.key != actualShape.key ||
-      formalShape.children.size() != actualShape.children.size()) {
-    if (err)
-      err() << "type mismatch: expected " << formal << " but found " << actual;
-    return failure();
-  }
+      formalShape.children.size() != actualShape.children.size())
+    return;
   for (auto [formalChild, actualChild] :
        llvm::zip(formalShape.children, actualShape.children))
-    if (failed(extractTypeArguments(formalChild, actualChild, args, err)))
-      return failure();
-  return success();
+    extractInto(formalChild, actualChild, args, throughProjections);
+}
+
+} // namespace
+
+void extractTypeArguments(Type formal, Type actual, TypeArguments &args) {
+  extractInto(formal, actual, args, /*throughProjections=*/false);
+  extractInto(formal, actual, args, /*throughProjections=*/true);
 }
 
 LogicalResult verifyEqualAfterInstantiation(
@@ -1860,8 +1870,7 @@ FailureOr<SpecializationMap> matchDeclaration(
     ArrayRef<GenericTypeInterface> parameters, Type formal, Type actual,
     Normalizer normalize, llvm::function_ref<InFlightDiagnostic()> err) {
   TypeArguments args(parameters);
-  if (failed(extractTypeArguments(formal, actual, args, err)))
-    return failure();
+  extractTypeArguments(formal, actual, args);
   SpecializationMap specialization = args.toSpecialization();
   if (failed(verifyEqualAfterInstantiation(formal, specialization, actual,
                                            normalize, err)))

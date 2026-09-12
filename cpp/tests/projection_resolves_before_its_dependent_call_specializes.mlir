@@ -28,7 +28,7 @@ func.func private @callee(%c: !trait.claim<@Sink[!trait.proj<@Outer[i64], "Item"
 func.func @main() -> i64 {
   %c = trait.allege @Sink[!trait.proj<@Outer[i64], "Item">]
   %x = arith.constant 0 : i64
-  %r = trait.func.call @callee(%c, %x)
+  %r = trait.func.call @callee(%c, %x) {type_params = [!trait.poly<0>], type_args = [i64]}
     : (!trait.claim<@Sink[!trait.proj<@Outer[i64], "Item">]>, i64) -> i64
   return %r : i64
 }

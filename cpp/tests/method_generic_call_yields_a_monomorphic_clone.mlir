@@ -28,6 +28,7 @@ func.func @main(%x: i64, %v: i32) -> i32 {
   %r = trait.method.call %p @Store[i64]::@keep(%x, %v)
     : (i64, i32) -> i32
     by @Store_impl_i64
+    attributes {type_params = [!trait.poly<9>], type_args = [i32]}
   return %r : i32
 }
 

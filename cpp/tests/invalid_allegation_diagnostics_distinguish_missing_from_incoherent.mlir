@@ -27,7 +27,7 @@ func.func private @hold(%absent: !trait.claim<@Absent[!P]>,
 func.func @main() {
   %absent = trait.allege @Absent[i64]
   %doubled = trait.allege @Doubled[i64]
-  trait.func.call @hold(%absent, %doubled)
+  trait.func.call @hold(%absent, %doubled) {type_params = [!trait.poly<1>], type_args = [i64]}
     : (!trait.claim<@Absent[i64]>, !trait.claim<@Doubled[i64]>) -> ()
   return
 }

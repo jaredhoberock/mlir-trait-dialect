@@ -47,7 +47,7 @@ module {
       : !trait.claim<@D[!trait.proj<@A[i32], "Out">, i64] by @D_p>
       to !trait.claim<@D[!trait.proj<@A[i32], "Out">, !trait.proj<@A[f32], "Out">] by @D_p>
       via (%eq_f32) : (!trait.claim<!trait.proj<@A[f32], "Out"> = i64>)
-    %r = trait.func.call @f(%x, %y, %d2)
+    %r = trait.func.call @f(%x, %y, %d2) {type_params = [!trait.poly<4>, !trait.poly<5>], type_args = [i32, f32]}
       : (i32, f32, !trait.claim<@D[!trait.proj<@A[i32], "Out">, !trait.proj<@A[f32], "Out">] by @D_p>)
       -> i32
     return %r : i32

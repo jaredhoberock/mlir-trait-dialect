@@ -42,5 +42,6 @@ func.func @caller() -> !trait.proj<@ConstMapper[i32], "Result", [i1]> {
   %x = arith.constant 1 : i1
   %r = trait.method.call %a @ConstMapper[i32]::@map(%self, %x)
     : (i32, i1) -> !trait.proj<@ConstMapper[i32], "Result", [i1]>
+    attributes {type_params = [!trait.poly<1>], type_args = [i1]}
   return %r : !trait.proj<@ConstMapper[i32], "Result", [i1]>
 }

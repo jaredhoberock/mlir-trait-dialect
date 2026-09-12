@@ -45,7 +45,7 @@ module {
       to !trait.claim<@T1[!trait.proj<@T0[i64], "A">] by @T1_i64_b>
       via (%eq) : (!trait.claim<!trait.proj<@T0[i64], "A"> = i64>)
     // expected-error @below {{inconsistent proof mapping}}
-    %r = trait.func.call @f(%x, %t2, %t1_projected)
+    %r = trait.func.call @f(%x, %t2, %t1_projected) {type_params = [!trait.poly<3>], type_args = [i64]}
       : (i64,
          !trait.claim<@T2[i64] by @T2_i64_p>,
          !trait.claim<@T1[!trait.proj<@T0[i64], "A">] by @T1_i64_b>)

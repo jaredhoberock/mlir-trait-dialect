@@ -886,10 +886,9 @@ specializeCallTarget(CallOpT op, PatternRewriter &rewriter,
     return failure();
   }
 
-  // Pass time: pass the module so binding a generic mid-solve resolves the
-  // ground projection it mints (the module-capable comparator, not the verifier's
-  // module-free one).
-  auto specialization = op.buildParameterSpecialization(module);
+  // Pass time: the comparison reads both signatures through the record of what
+  // impl selection has settled, on top of the evidence the call itself carries.
+  auto specialization = op.buildParameterSpecialization(&reading);
   if (failed(specialization)) {
     (void)rewriter.notifyMatchFailure(op, "couldn't build substitution");
     return failure();

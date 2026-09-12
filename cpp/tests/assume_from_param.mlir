@@ -31,7 +31,7 @@ func.func nested @standalone_poly(%c: !trait.claim<@Foo[!T]>, %x: !T) -> !T {
 func.func @main() -> i64 {
   %c42 = arith.constant 42 : i64
   %claim = trait.allege @Foo[i64]
-  %result = trait.func.call @standalone_poly(%claim, %c42)
+  %result = trait.func.call @standalone_poly(%claim, %c42) {type_params = [!trait.poly<0>], type_args = [i64]}
     : (!trait.claim<@Foo[i64]>, i64) -> i64
   return %result : i64
 }

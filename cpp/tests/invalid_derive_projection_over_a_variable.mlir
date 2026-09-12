@@ -39,7 +39,7 @@ trait.impl private @Get_blanket for @Get[!T, !trait.proj<@Ten[!T], "Element">]
 
 !W = !trait.poly<5>
 func.func @not_determined(%ten: !trait.claim<@Ten[!W]>) {
-  // expected-error @below {{projection mismatch}}
+  // expected-error @below {{type mismatch: expected '!trait.claim<@Get[!trait.poly<5>, !trait.proj<@Ten[!trait.poly<5>], "Element">]>' but found '!trait.claim<@Get[!trait.poly<5>, !trait.proj<@Other[!trait.poly<5>], "X">]>'}}
   %get = trait.derive @Get[!W, !trait.proj<@Other[!W], "X">]
     from @Get_blanket given(%ten) : (!trait.claim<@Ten[!W]>)
   return

@@ -37,7 +37,7 @@ trait.trait private @Box[!T] {}
 
 trait.impl private @Box_i32 for @Box[i32] {}
 
-func.func private @f(%c: !trait.claim<@Box[!trait.proj<@Gen[i64], "A">] by @Box_i32>,
+func.func private @f(%c: !trait.claim<@Box[!trait.proj<@Gen[i64], "A">]>,
                      %x: !T) -> !T {
   return %x : !T
 }
@@ -54,6 +54,6 @@ func.func private @wrap(%x: !T) -> !trait.proj<@Absent[!T], "B"> {
 func.func @main() -> !trait.proj<@Absent[i64], "B"> {
   %x = arith.constant 1 : i64
   // expected-error @below {{unresolved projection '!trait.proj<@Absent[i64], "B">' after instantiate-monomorphs}}
-  %r = trait.func.call @wrap(%x) : (i64) -> !trait.proj<@Absent[i64], "B">
+  %r = trait.func.call @wrap(%x) {type_params = [!trait.poly<0>], type_args = [i64]} : (i64) -> !trait.proj<@Absent[i64], "B">
   return %r : !trait.proj<@Absent[i64], "B">
 }

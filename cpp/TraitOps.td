@@ -249,7 +249,11 @@ def TraitOp : TraitDialectOp<"trait", [
 
     /// Return a list of ImplOps of this TraitOp whose self claim types
     /// can be specialized against wanted
-    SmallVector<ImplOp> getCandidateImplsFor(ClaimType wanted);
+    /// The impls whose headers match `wanted`, read through the established
+    /// context `normalize`: a header spelling a projection reproduces a demand
+    /// spelling its resolution only where the caller's context can reduce it.
+    SmallVector<ImplOp> getCandidateImplsFor(ClaimType wanted,
+                                             Normalizer normalize = Normalizer());
   }];
 
   // builders create one empty block in the body region
@@ -479,10 +483,36 @@ def ImplOp : TraitDialectOp<"impl", [
                                                                    const CallSubstitution &callSubst,
                                                                    ProofDerivationMemo *memo);
 
-    /// Builds the specialization that maps this impl's generic parameters to
-    /// the corresponding types in `actualSelfClaim`.
+    /// The arguments carrying this impl's header to `actualSelfClaim`: read
+    /// them off the demanded application by position, rebuild the header at
+    /// them, and require the rebuilt header to be the demand after both are
+    /// read through `normalize`.
+    ///
+    /// `normalize` is the established context the caller holds -- a verifier's
+    /// evidence, the stage's recorded facts -- and is what lets a header
+    /// spelling a projection (`impl<T> Index<T::Shape, T::Element> for T`)
+    /// reproduce a demand spelling the resolution. A caller with no context
+    /// passes none, and then a projection is equal to itself alone.
     FailureOr<SpecializationMap> buildSubstitutionForSelfClaim(ClaimType actualSelfClaim,
-                                                            llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
+                                                            Normalizer normalize,
+                                                            llvm::function_ref<InFlightDiagnostic()> errFn);
+
+    /// As above, with no established context.
+    FailureOr<SpecializationMap> buildSubstitutionForSelfClaim(ClaimType actualSelfClaim,
+                                                            llvm::function_ref<InFlightDiagnostic()> errFn = nullptr) {
+      return buildSubstitutionForSelfClaim(actualSelfClaim, Normalizer(), errFn);
+    }
+
+    /// The arguments this impl takes for `actualSelfClaim`, without judging
+    /// them: read off the demanded application by position, then filled out
+    /// from the where clause's equalities, each of which says what the
+    /// parameter standing bare on one of its sides is once the other side is
+    /// read through `normalize`. A parameter neither settles is left open, and
+    /// what that means is the caller's: at impl selection an open parameter is
+    /// an impl that does not apply, at a comparison it stands in the rebuilt
+    /// header.
+    TypeArguments readTypeArgumentsFor(ClaimType actualSelfClaim,
+                                       Normalizer normalize);
 
     /// Builds the impl specialization needed for a proven self claim.
     ///
@@ -512,7 +542,15 @@ def ImplOp : TraitDialectOp<"impl", [
 
     FailureOr<SmallVector<ClaimType>> specializeAssumptionsAsClaimsFor(
         ClaimType actualSelfClaim,
-        llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
+        Normalizer normalize,
+        llvm::function_ref<InFlightDiagnostic()> errFn);
+
+    FailureOr<SmallVector<ClaimType>> specializeAssumptionsAsClaimsFor(
+        ClaimType actualSelfClaim,
+        llvm::function_ref<InFlightDiagnostic()> errFn = nullptr) {
+      return specializeAssumptionsAsClaimsFor(actualSelfClaim, Normalizer(),
+                                              errFn);
+    }
 
     /// Specializes this impl's requirements and assumptions for `actualSelfClaim`.
     ///
@@ -1360,11 +1398,16 @@ def MethodCallOp : TraitDialectOp<"method.call", [
       return FunctionType::get(getContext(), getArguments().getTypes(), getResultTypes());
     }
 
-    /// Builds this call site's parameter specialization by unifying the
-    /// callee's formal function type with the actual argument and result types
-    /// spelled here. The projection and proof bindings that close it are read
-    /// off the record when the call is lowered.
-    FailureOr<SpecializationMap> buildParameterSpecialization(ModuleOp unifyModule, llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+    /// The type arguments this call supplies for its callee's parameters, once
+    /// the callee's signature instantiated at them is the signature spelled
+    /// here. The projection and proof bindings that close it are read off the
+    /// record when the call is lowered.
+    ///
+    /// `reading` is the stage's record of what impl selection has settled,
+    /// which the comparison reads both signatures through on top of the
+    /// evidence this call holds. A verifier passes none and compares through
+    /// that evidence alone.
+    FailureOr<SpecializationMap> buildParameterSpecialization(const ReadOnlyImplResolver *reading, llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     /// Specializes the callee as a free function using a pre-built substitution.
     FailureOr<func::FuncOp> getOrSpecializeCallee(PatternRewriter &rewriter,
@@ -1505,15 +1548,21 @@ def FuncCallOp : TraitDialectOp<"func.call", [
                                                   const CallSubstitution &subst,
                                                   ProofDerivationMemo *memo);
 
-    /// Builds this call site's parameter specialization by unifying the
-    /// callee's formal function type with the actual argument and result types
-    /// spelled here. The projection and proof bindings that close it are read
-    /// off the record when the call is lowered.
-    FailureOr<SpecializationMap> buildParameterSpecialization(ModuleOp unifyModule, llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+    /// The type arguments this call supplies for its callee's parameters, once
+    /// the callee's signature instantiated at them is the signature spelled
+    /// here. The projection and proof bindings that close it are read off the
+    /// record when the call is lowered.
+    ///
+    /// `reading` is the stage's record of what impl selection has settled,
+    /// which the comparison reads both signatures through on top of the
+    /// evidence this call holds. A verifier passes none and compares through
+    /// that evidence alone.
+    FailureOr<SpecializationMap> buildParameterSpecialization(const ReadOnlyImplResolver *reading, llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
-    // returns all distinct generic types that occur in the FunctionType of this FuncOp's callee
+    // The type parameters the callee's signature binds, in first-occurrence
+    // order, which is the order this call's type_args are read in.
     SmallVector<GenericTypeInterface, 4> getCalleeTypeParams() {
-      return getGenericTypesIn(*getCalleeFunctionType());
+      return getTypeParametersIn(*getCalleeFunctionType());
     }
 
   }];

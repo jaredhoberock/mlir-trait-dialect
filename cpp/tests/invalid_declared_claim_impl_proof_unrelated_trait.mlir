@@ -18,7 +18,7 @@ trait.impl private @HasPart_i64 for @HasPart[i64] {
 }
 trait.trait private @Other[!trait.poly<0>] {}
 
-// expected-error @below {{declared claim in signature has an invalid proof: trait mismatch: expected @HasPart, but found @Other}}
+// expected-error @below {{declared claim in signature has an invalid proof: type mismatch: expected '!trait.claim<@HasPart[i64]>' but found '!trait.claim<@Other[f32]>'}}
 func.func private @takes_forged(
     %op: !trait.claim<@Other[!trait.proj<@HasPart[i64], "Part">] by @HasPart_i64>,
     %x: !trait.poly<7>

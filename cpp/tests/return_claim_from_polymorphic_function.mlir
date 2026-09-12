@@ -43,7 +43,7 @@ func.func @test() {
   %a = trait.allege @Get[!trait.claim<@Assumption[i32]>]
 
   // call a polymorphic function that returns the !trait.claim
-  trait.func.call @call_get(%a)
+  trait.func.call @call_get(%a) {type_params = [!trait.poly<0>], type_args = [!trait.claim<@Assumption[i32]>]}
     : (!trait.claim<@Get[!trait.claim<@Assumption[i32]>]>) -> !trait.claim<@Assumption[i32]>
 
   return

@@ -57,7 +57,7 @@ func.func nested @f(%arg0: !trait.poly<3>, %arg1: !trait.claim<@Has[!trait.poly<
 func.func @main() -> i32 {
   %cst = arith.constant 0.0 : f64
   %0 = trait.witness @Has_impl_p for @Has[f64]
-  %1 = trait.func.call @f(%cst, %0) : (f64, !trait.claim<@Has[f64] by @Has_impl_p>) -> i1
+  %1 = trait.func.call @f(%cst, %0) {type_params = [!trait.poly<3>], type_args = [f64]} : (f64, !trait.claim<@Has[f64] by @Has_impl_p>) -> i1
   %c0_i32 = arith.constant 0 : i32
   return %c0_i32 : i32
 }

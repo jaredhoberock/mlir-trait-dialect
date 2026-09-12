@@ -19,11 +19,14 @@ trait.impl private @SameAs_i32_i32 for @SameAs[i32, i32] {
 trait.trait private @Chooser[!T] {
   func.func nested @choose(!T, !U, !trait.claim<@SameAs[!T, !U]>) -> !T
 }
+// The impl's copy of @choose binds a variable of its own for each the trait's
+// declaration of it binds: a copy with fewer would be a different declaration.
+!V = !trait.poly<4>
 trait.impl private @Chooser_i32 for @Chooser[i32] {
-  func.func nested @choose(%a: i32, %b: i32, %same: !trait.claim<@SameAs[i32, i32]>) -> i32 {
+  func.func nested @choose(%a: i32, %b: !V, %same: !trait.claim<@SameAs[i32, !V]>) -> i32 {
     // inner method call uses the where-clause claim
-    %converted = trait.method.call %same @SameAs[i32, i32]::@convert(%b)
-      : (i32) -> i32
+    %converted = trait.method.call %same @SameAs[i32, !V]::@convert(%b)
+      : (!V) -> i32
     return %converted : i32
   }
 }
@@ -33,6 +36,7 @@ func.func @test(%x: i32, %y: i32) -> i32 {
   %same = trait.allege @SameAs[i32, i32]
   %res = trait.method.call %chooser @Chooser[i32]::@choose(%x, %y, %same)
     : (i32, i32, !trait.claim<@SameAs[i32, i32]>) -> i32
+    attributes {type_params = [!trait.poly<3>], type_args = [i32]}
   return %res : i32
 }
 
@@ -40,7 +44,7 @@ func.func @test(%x: i32, %y: i32) -> i32 {
 // CHECK: func.func private @SameAs_i32_i32_convert(
 
 // The instantiated choose should call SameAs_i32_i32_convert
-// CHECK: func.func private @Chooser_i32_choose(
+// CHECK: func.func private @Chooser_i32_choose
 // CHECK: call @SameAs_i32_i32_convert
 
 // Top-level test calls Chooser_i32_choose

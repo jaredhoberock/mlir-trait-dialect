@@ -62,5 +62,6 @@ func.func @caller() -> !trait.proj<@Outer[i1], "Wrap", [!trait.proj<@Inner[i32],
   %self = arith.constant 1 : i1
   %r = trait.method.call %b @Outer[i1]::@wrap(%self, %item)
     : (i1, !trait.proj<@Inner[i32], "Item">) -> !trait.proj<@Outer[i1], "Wrap", [!trait.proj<@Inner[i32], "Item">]>
+    attributes {type_params = [!trait.poly<1>], type_args = [!trait.proj<@Inner[i32], "Item">]}
   return %r : !trait.proj<@Outer[i1], "Wrap", [!trait.proj<@Inner[i32], "Item">]>
 }

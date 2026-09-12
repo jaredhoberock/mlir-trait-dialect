@@ -53,7 +53,7 @@ func.func private @apply(%f: !trait.poly<10>,
 func.func private @wrap_and_apply(%x: !trait.poly<20>,
                           %claim: !trait.claim<@Callable[!trait.poly<20>]>)
     -> !trait.proj<@Callable[!trait.poly<20>], "Output"> {
-  %r = trait.func.call @apply(%x, %claim)
+  %r = trait.func.call @apply(%x, %claim) {type_params = [!trait.poly<10>], type_args = [!trait.poly<20>]}
       : (!trait.poly<20>,
          !trait.claim<@Callable[!trait.poly<20>]>)
       -> !trait.proj<@Callable[!trait.poly<20>], "Output">
@@ -68,7 +68,7 @@ func.func private @wrap_and_apply(%x: !trait.poly<20>,
 func.func @caller() -> !trait.proj<@Callable[i64], "Output"> {
   %x = arith.constant 42 : i64
   %w = trait.witness @Callable_i64 for @Callable[i64]
-  %r = trait.func.call @wrap_and_apply(%x, %w)
+  %r = trait.func.call @wrap_and_apply(%x, %w) {type_params = [!trait.poly<20>], type_args = [i64]}
       : (i64, !trait.claim<@Callable[i64] by @Callable_i64>)
       -> !trait.proj<@Callable[i64], "Output">
   return %r : !trait.proj<@Callable[i64], "Output">

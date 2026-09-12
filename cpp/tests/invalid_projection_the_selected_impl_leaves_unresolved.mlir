@@ -24,7 +24,7 @@ trait.trait private @Box[!T] {}
 
 trait.impl private @Box_i32 for @Box[i32] {}
 
-func.func private @reads(%c: !trait.claim<@Box[!trait.proj<@Gen[i64], "A">] by @Box_i32>,
+func.func private @reads(%c: !trait.claim<@Box[!trait.proj<@Gen[i64], "A">]>,
                          %x: !T) -> !T {
   return %x : !T
 }

@@ -34,7 +34,7 @@ func.func private @take(%h: !trait.claim<@Hold[!T]>) -> !T {
 
 func.func @test() {
   %h = trait.allege @Hold[!trait.claim<@Ground[i32]>]
-  trait.func.call @take(%h)
+  trait.func.call @take(%h) {type_params = [!trait.poly<0>], type_args = [!trait.claim<@Ground[i32]>]}
     : (!trait.claim<@Hold[!trait.claim<@Ground[i32]>]>) -> !trait.claim<@Ground[i32]>
   return
 }

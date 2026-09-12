@@ -28,6 +28,6 @@ func.func private @wrap(%x: !T) -> !trait.proj<@Gen[!T], "A"> {
 func.func @main() -> !trait.proj<@Gen[i64], "A"> {
   %x = arith.constant 1 : i64
   // expected-error @below {{unresolved projection '!trait.proj<@Gen[i64], "A">' after instantiate-monomorphs}}
-  %r = trait.func.call @wrap(%x) : (i64) -> !trait.proj<@Gen[i64], "A">
+  %r = trait.func.call @wrap(%x) {type_params = [!trait.poly<0>], type_args = [i64]} : (i64) -> !trait.proj<@Gen[i64], "A">
   return %r : !trait.proj<@Gen[i64], "A">
 }

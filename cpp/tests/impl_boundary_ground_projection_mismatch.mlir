@@ -26,8 +26,7 @@ trait.trait private @Host[!S] {
   func.func private @make(!S) -> !trait.proj<@Sibling[!S], "Elem">
 }
 
-// expected-error @below {{type mismatch: expected 'i32' but found 'i64'}}
-// expected-error @below {{has incompatible signature}}
+// expected-error @below {{method 'make' has incompatible signature: expected '(i64) -> i32' but found '(i64) -> i64'}}
 trait.impl private @Host_i64 for @Host[i64]
     witnesses [#trait<witness !trait.proj<@Sibling[i64], "Elem"> = i32 by @Sibling_i64>] {
   trait.assoc_type @Out = i64

@@ -35,7 +35,7 @@ trait.trait private @Host[!S] {
   func.func private @make(!S) -> !trait.proj<@Sib[!S], "Elem">
 }
 
-// expected-error @below {{projection mismatch: expected '!trait.proj<@Other[i64], "X">' but found 'i32'}}
+// expected-error @below {{type mismatch: expected '!trait.claim<@Sib[i32]>' but found '!trait.claim<@Sib[!trait.proj<@Other[i64], "X">]>'}}
 trait.impl private @Host_p for @Host[!trait.proj<@Other[i64], "X">]
     witnesses [#trait<witness !trait.proj<@Sib[!trait.proj<@Other[i64], "X">], "Elem"> = f32 by @Sib_i32>] {
   func.func @make(%x: !trait.proj<@Other[i64], "X">) -> f32 {

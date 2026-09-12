@@ -156,3 +156,81 @@ struct HasOnlyChildOps {
 
 #define GET_OP_CLASSES
 #include <TraitOps.hpp.inc>
+
+namespace mlir::trait {
+
+/// One local associated-type resolution rule available while normalizing a type.
+///
+/// The rule says that projections whose trait application is exactly `app` may
+/// be resolved through `impl` after applying `subst` to the impl's associated
+/// type binding. It represents evidence already present at the current IR
+/// boundary; it does not perform global impl lookup.
+struct LocalProjectionRule {
+  ImplOp impl;
+  TraitApplicationAttr app;
+  SpecializationMap subst;
+};
+
+/// Context controlling how far `normalize` may resolve projection types.
+///
+/// The small core of normalization is deliberately local: callers add explicit
+/// evidence-derived rules, and projection heads not justified by those rules are
+/// preserved. Global resolver-backed normalization remains a separate lowering
+/// concern.
+class NormalizationContext {
+public:
+  void addLocalProjectionRule(ImplOp impl, TraitApplicationAttr app,
+                              const SpecializationMap &subst) {
+    localProjectionRules.push_back({impl, app, subst});
+  }
+
+  /// A hypothesis in scope: wherever `from` stands, `to` stands. An impl's own
+  /// where-clause equalities are exactly these while its own obligations are
+  /// checked -- an impl whose clause says `F::Output = Acc` satisfies a
+  /// trait-header requirement spelled `F::Output = Acc` by that hypothesis and
+  /// by nothing else, and a projection no hypothesis and no binding reduces is
+  /// equal to itself alone.
+  void addEqualityRule(Type from, Type to) { equalityRules[from] = to; }
+
+  /// Also reads what impl selection has settled, which is the context the stage
+  /// holds on top of the evidence an op carries. A verifier sets none: what it
+  /// may reduce a projection through is the evidence in front of it.
+  void setRecordedFacts(const ReadOnlyImplResolver *reading) {
+    recordedFacts = reading;
+  }
+
+  /// XXX TODO Also reads the impls `module` holds, under `scope`. A verifier
+  /// that sets this decides by the impls standing around it rather than by the
+  /// evidence in front of it, which is what makes one verifier's verdict depend
+  /// on an unrelated impl. Deleted once the evidence an op carries covers every
+  /// spelling it must reduce: for `trait.derive`, once a claim operand that is
+  /// neither proven nor derived carries the impl serving it; for a call,
+  /// once the claim the call commits to carries the impls serving the
+  /// projections its own arguments spell.
+  void setModuleLookup(ModuleOp module, LookupScope scope) {
+    moduleLookup = module;
+    moduleLookupScope = scope;
+  }
+
+  /// Resolves projections in `ty` using this context's local rules.
+  ///
+  /// The walk runs to a fixed point so a resolved associated type can expose
+  /// another projection resolvable by the same local evidence.
+  FailureOr<Type> normalize(
+      Type ty,
+      llvm::function_ref<InFlightDiagnostic()> err);
+
+  /// Resolves projections in each input and result type of `functionType`.
+  FailureOr<FunctionType> normalize(
+      FunctionType functionType,
+      llvm::function_ref<InFlightDiagnostic()> err);
+
+private:
+  SmallVector<LocalProjectionRule, 4> localProjectionRules;
+  llvm::DenseMap<Type, Type> equalityRules;
+  const ReadOnlyImplResolver *recordedFacts = nullptr;
+  ModuleOp moduleLookup;
+  LookupScope moduleLookupScope = LookupScope::Ground;
+};
+
+} // end mlir::trait

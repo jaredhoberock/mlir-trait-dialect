@@ -52,6 +52,7 @@ func.func @call_left() -> !trait.proj<@BiMap[i1], "Left", [i32, i64]> {
   %y = arith.constant 7 : i64
   %r = trait.method.call %a @BiMap[i1]::@left(%self, %x, %y)
     : (i1, i32, i64) -> !trait.proj<@BiMap[i1], "Left", [i32, i64]>
+    attributes {type_params = [!trait.poly<1>, !trait.poly<2>], type_args = [i32, i64]}
   return %r : !trait.proj<@BiMap[i1], "Left", [i32, i64]>
 }
 
@@ -67,5 +68,6 @@ func.func @call_right() -> !trait.proj<@BiMap[i1], "Right", [i32, i64]> {
   %y = arith.constant 7 : i64
   %r = trait.method.call %a @BiMap[i1]::@right(%self, %x, %y)
     : (i1, i32, i64) -> !trait.proj<@BiMap[i1], "Right", [i32, i64]>
+    attributes {type_params = [!trait.poly<1>, !trait.poly<2>], type_args = [i32, i64]}
   return %r : !trait.proj<@BiMap[i1], "Right", [i32, i64]>
 }

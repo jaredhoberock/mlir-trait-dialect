@@ -23,9 +23,14 @@ trait.trait private @Tr [!T0] {
   func.func private @method(!T0) -> i32
 }
 
-trait.impl private @Tr_i32 for @Tr[i32] {
-  func.func @method(%self: i32) -> i32 {
-    return %self : i32
+// A blanket impl: @outer derives its claim at its own type variable, so the
+// impl's header must be spelled over one too -- an impl for a single concrete
+// type justifies nothing about a variable.
+!B = !trait.poly<9>
+trait.impl private @Tr_any for @Tr[!B] {
+  func.func @method(%self: !B) -> i32 {
+    %c = arith.constant 0 : i32
+    return %c : i32
   }
 }
 
@@ -39,14 +44,14 @@ func.func private @inner(%x: !F, %c: !trait.claim<@Tr[!F]>) -> i32 {
 // Derives Tr[!G] (unconditional impl), passes claim to @inner
 !G = !trait.poly<3>
 func.func private @outer(%x: !G) -> i32 {
-  %c = trait.derive @Tr[!G] from @Tr_i32 given()
-  %r = trait.func.call @inner(%x, %c)
+  %c = trait.derive @Tr[!G] from @Tr_any given()
+  %r = trait.func.call @inner(%x, %c) {type_params = [!trait.poly<2>], type_args = [!G]}
     : (!G, !trait.claim<@Tr[!G]>) -> i32
   return %r : i32
 }
 
 // CHECK-LABEL: func.func @test
 func.func @test(%x: i32) -> i32 {
-  %r = trait.func.call @outer(%x) : (i32) -> i32
+  %r = trait.func.call @outer(%x) {type_params = [!trait.poly<3>], type_args = [i32]} : (i32) -> i32
   return %r : i32
 }

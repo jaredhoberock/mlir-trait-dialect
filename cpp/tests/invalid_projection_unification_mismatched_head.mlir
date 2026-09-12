@@ -20,7 +20,6 @@ trait.trait private @Trait[!S] {
   ) -> i32
 }
 
-// expected-error @below {{projection mismatch}}
 // expected-error @below {{method 'method' has incompatible signature}}
 trait.impl private @Trait_i32 for @Trait[i32] {
   func.func @method(

@@ -104,22 +104,54 @@ ImplResolver::assumptionsSatisfiableFor(ImplOp impl,
   memo.visiting.push_back(app);
   auto guard = llvm::scope_exit([&]{ memo.visiting.pop_back(); });
 
-  // specialize the impl's assumptions to our concrete claim
-  auto assumptions = impl.specializeAssumptionsAsClaimsFor(concreteSelf);
-  if (failed(assumptions))
-    return failure();
+  // The candidate's arguments as the demanded application and its own where
+  // clause determine them, read through what selection has settled so far.
+  auto byResolver = [&](Type ty) -> FailureOr<Type> {
+    return resolveProjectionsIn(ty, builder);
+  };
+  TypeArguments args = impl.readTypeArgumentsFor(concreteSelf, byResolver);
+  SpecializationMap known = args.toSpecialization();
 
-  for (ClaimType assume : *assumptions) {
-    // find an impl for the assumption
-    auto subImpl = resolveImplFor(assume, builder);
-    if (failed(subImpl))
-      return failure();
+  MLIRContext *ctx = impl.getContext();
+  for (Attribute premise : impl.getAssumptions()) {
+    // An application premise is discharged by proving it: a unique impl whose
+    // own premises hold in turn.
+    if (auto application = dyn_cast<TraitApplicationAttr>(premise)) {
+      auto assume = cast<ClaimType>(
+          instantiate(Type(ClaimType::get(ctx, application)), known));
+      auto subImpl = resolveImplFor(assume, builder);
+      if (failed(subImpl))
+        return failure();
+      if (failed(assumptionsSatisfiableFor(subImpl->impl,
+                                           subImpl->selectedClaim, builder)))
+        return failure();
+      continue;
+    }
 
-    // that impl's own assumptions must be satisfiable too
-    if (failed(assumptionsSatisfiableFor(subImpl->impl, subImpl->selectedClaim,
-                                         builder)))
+    // An equality premise is discharged here rather than at the impl: it
+    // restricts when the impl applies, and only the demanded application says
+    // whether it holds. Each side is read through the candidate's own
+    // associated-type bindings first -- a premise may project through the very
+    // application being selected, which selection cannot ask itself about --
+    // and then through what selection has settled elsewhere.
+    auto equality = cast<TypeEqualityAttr>(premise);
+    NormalizationContext ownBindings;
+    ownBindings.addLocalProjectionRule(impl, app, known);
+    auto reduce = [&](Type ty) {
+      Type instantiated = instantiate(ty, known);
+      auto reduced = ownBindings.normalize(instantiated, /*err=*/nullptr);
+      return resolveProjectionsIn(succeeded(reduced) ? *reduced : instantiated,
+                                  builder);
+    };
+    if (reduce(equality.getLhs()) != reduce(equality.getRhs()))
       return failure();
   }
+
+  // An impl whose arguments the header and the where clause together leave
+  // open is no candidate: selection would have nothing to specialize its
+  // methods and associated-type bindings with.
+  if (!args.complete())
+    return failure();
 
   // record a positive result
   memo.assumptionsKnownSatisfiable.insert(key);
@@ -220,10 +252,15 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
   //
   // The partition probes candidates it may then discard, so the demands its
   // sub-resolutions raise are marked speculative for as long as it runs.
+  // The context a candidate's header is read through: the impls the module
+  // already binds, read only. A header spelling a projection reproduces a
+  // demand spelling the resolution through this, and it mints nothing.
+  GroundProjectionLookup byGroundLookup(module, DemandOrigin::DeclarationMatch);
+
   SmallVector<ImplOp> good, bad;
   {
     SpeculationScope speculation;
-    for (ImplOp impl : trait.getCandidateImplsFor(selected)) {
+    for (ImplOp impl : trait.getCandidateImplsFor(selected, byGroundLookup)) {
       if (succeeded(assumptionsSatisfiableFor(impl, selected, builder)))
         good.push_back(impl);
       else
@@ -327,11 +364,12 @@ FailureOr<Type> ImplResolver::resolveProjectionType(
   auto binding = impl.specializeAssociatedTypeBinding(assocName, assocTypeArgs, err);
   if (failed(binding)) return failure();
 
-  auto subst =
-      impl.buildSubstitutionForSelfClaim(resolvedImpl->selectedClaim, err);
+  GroundProjectionLookup byGroundLookup(module, DemandOrigin::DeclarationMatch);
+  auto subst = impl.buildSubstitutionForSelfClaim(resolvedImpl->selectedClaim,
+                                                  byGroundLookup, err);
   if (failed(subst)) return failure();
 
-  return applySubstitutionToFixedPoint(subst->toTypeMap(), *binding);
+  return instantiate(*binding, *subst);
 }
 
 ImplResolver::DemandDisposition
@@ -439,12 +477,13 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
   ImplOp impl = resolvedImpl->impl;
   ClaimType selected = resolvedImpl->selectedClaim;
 
-  // build a PolyType -> Type map for this impl's self claim against selected
-  auto subst = impl.buildSubstitutionForSelfClaim(selected, err);
+  // the arguments carrying this impl's header to the selected claim
+  GroundProjectionLookup byGroundLookup(module, DemandOrigin::DeclarationMatch);
+  auto subst = impl.buildSubstitutionForSelfClaim(selected, byGroundLookup, err);
   if (failed(subst)) return failure();
 
   // monomorphize the selected claim with that substitution
-  ClaimType monomorphicWanted = dyn_cast_or_null<ClaimType>(applySubstitutionToFixedPoint(subst->toTypeMap(), selected));
+  ClaimType monomorphicWanted = dyn_cast_or_null<ClaimType>(instantiate(Type(selected), *subst));
   if (!monomorphicWanted || !monomorphicWanted.isMonomorphic()) {
     if (err) err() << "could not monomorphize claim: " << originalWanted;
     return failure();
@@ -637,10 +676,14 @@ ReadOnlyImplResolver::resolveProjectionType(ProjectionType proj) const {
       proj.getAssocName().getValue(), assocTypeArgs);
   if (failed(binding)) return failure();
 
-  auto subst = impl.buildSubstitutionForSelfClaim(resolvedImpl->selectedClaim);
+  GroundProjectionLookup byGroundLookup(resolver.module,
+                                        DemandOrigin::RecordedFactRead);
+  auto subst = impl.buildSubstitutionForSelfClaim(resolvedImpl->selectedClaim,
+                                                  byGroundLookup,
+                                                  /*errFn=*/nullptr);
   if (failed(subst)) return failure();
 
-  return applySubstitutionToFixedPoint(subst->toTypeMap(), *binding);
+  return instantiate(*binding, *subst);
 }
 
 Type ReadOnlyImplResolver::resolveProjectionsIn(Type ty) const {
@@ -673,12 +716,14 @@ ReadOnlyImplResolver::getRecordedProofFor(ClaimType claim) const {
   auto resolvedImpl = getRecordedImplFor(claim);
   if (failed(resolvedImpl)) return failure();
 
-  auto subst =
-      resolvedImpl->impl.buildSubstitutionForSelfClaim(resolvedImpl->selectedClaim);
+  GroundProjectionLookup byGroundLookup(resolver.module,
+                                        DemandOrigin::RecordedFactRead);
+  auto subst = resolvedImpl->impl.buildSubstitutionForSelfClaim(
+      resolvedImpl->selectedClaim, byGroundLookup, /*errFn=*/nullptr);
   if (failed(subst)) return failure();
 
-  auto monomorphic = dyn_cast_or_null<ClaimType>(applySubstitutionToFixedPoint(
-      subst->toTypeMap(), resolvedImpl->selectedClaim));
+  auto monomorphic = dyn_cast_or_null<ClaimType>(
+      instantiate(Type(resolvedImpl->selectedClaim), *subst));
   if (!monomorphic || !monomorphic.isMonomorphic())
     return failure();
 

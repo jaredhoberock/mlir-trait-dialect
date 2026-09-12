@@ -19,7 +19,7 @@ func.func @callee(%p: !trait.proj<@T[i64], "Out">) -> !trait.proj<@T[i64], "Out"
 }
 
 func.func @caller(%x: i32) -> !trait.proj<@T[i64], "Out"> {
-  // expected-error @below {{projection mismatch: expected '!trait.proj<@T[i64], "Out">' but found 'i32'}}
+  // expected-error @below {{type mismatch: expected '(!trait.proj<@T[i64], "Out">) -> !trait.proj<@T[i64], "Out">' but found '(i32) -> !trait.proj<@T[i64], "Out">'}}
   %r = trait.func.call @callee(%x) : (i32) -> !trait.proj<@T[i64], "Out">
   return %r : !trait.proj<@T[i64], "Out">
 }

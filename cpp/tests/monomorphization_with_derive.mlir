@@ -66,7 +66,7 @@ func.func private @poly_fn(%arg: tuple<!T2>, %t_claim: !trait.claim<@Trait[!T2]>
 // CHECK: call @poly_fn
 func.func @test_basic_derive(%arg: tuple<i32>) -> i32 {
   %a = trait.allege @Trait[i32]
-  %res = trait.func.call @poly_fn(%arg, %a)
+  %res = trait.func.call @poly_fn(%arg, %a) {type_params = [!trait.poly<2>], type_args = [i32]}
     : (tuple<i32>, !trait.claim<@Trait[i32]>) -> i32
   return %res : i32
 }
@@ -89,7 +89,7 @@ func.func private @double_wrap(%arg: tuple<tuple<!T3>>, %t_claim: !trait.claim<@
 // CHECK: call @double_wrap
 func.func @test_chained_derive(%arg: tuple<tuple<i32>>) -> i32 {
   %a = trait.allege @Trait[i32]
-  %res = trait.func.call @double_wrap(%arg, %a)
+  %res = trait.func.call @double_wrap(%arg, %a) {type_params = [!trait.poly<3>], type_args = [i32]}
     : (tuple<tuple<i32>>, !trait.claim<@Trait[i32]>) -> i32
   return %res : i32
 }
@@ -141,7 +141,7 @@ func.func private @cross_trait(%arg: !T7, %a_claim: !trait.claim<@TraitA[!T7]>) 
 // CHECK: call @cross_trait
 func.func @test_cross_trait_derive(%arg: i32) -> i32 {
   %a = trait.allege @TraitA[i32]
-  %res = trait.func.call @cross_trait(%arg, %a)
+  %res = trait.func.call @cross_trait(%arg, %a) {type_params = [!trait.poly<7>], type_args = [i32]}
     : (i32, !trait.claim<@TraitA[i32]>) -> i32
   return %res : i32
 }
@@ -191,7 +191,7 @@ func.func private @multi_assumption(%arg: tuple<!T10>,
 func.func @test_multi_assumption_derive(%arg: tuple<i32>) -> i32 {
   %a = trait.allege @TraitA[i32]
   %c = trait.allege @TraitC[i32]
-  %res = trait.func.call @multi_assumption(%arg, %a, %c)
+  %res = trait.func.call @multi_assumption(%arg, %a, %c) {type_params = [!trait.poly<10>], type_args = [i32]}
     : (tuple<i32>, !trait.claim<@TraitA[i32]>, !trait.claim<@TraitC[i32]>) -> i32
   return %res : i32
 }

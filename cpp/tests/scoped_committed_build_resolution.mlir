@@ -32,7 +32,7 @@ func.func @resolves_and_matches() {
 }
 
 func.func @resolves_and_rejects() {
-  // expected-error @below {{type mismatch: expected 'i32' but found 'f32'}}
+  // expected-error @below {{type mismatch: expected '!trait.claim<@T[f32]>' but found '!trait.claim<@T[i32]>'}}
   %w = trait.witness @T_f32 for @T[!trait.proj<@Gen[i64], "A">]
   return
 }

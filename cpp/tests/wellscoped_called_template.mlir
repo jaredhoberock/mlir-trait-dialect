@@ -18,6 +18,6 @@ func.func private @called(%x: !trait.poly<0>) -> !trait.poly<0> {
 }
 
 func.func @host(%v: i64) -> i64 {
-  %r = trait.func.call @called(%v) : (i64) -> i64
+  %r = trait.func.call @called(%v) {type_params = [!trait.poly<0>], type_args = [i64]} : (i64) -> i64
   return %r : i64
 }

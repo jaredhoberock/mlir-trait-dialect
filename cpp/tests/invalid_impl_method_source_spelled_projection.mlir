@@ -19,8 +19,7 @@ trait.trait private @Container[!S] {
   func.func private @id(!S, !S) -> !S
 }
 
-// CHECK: op type mismatch: expected 'i32' but found 'i64'
-// CHECK: method 'id' has incompatible signature
+// CHECK: method 'id' has incompatible signature: expected '(i32, i32) -> i32' but found '(i32, i64) -> i32'
 trait.impl private for @Container[i32] {
   trait.assoc_type @Elem = i64
   func.func @id(%self: i32, %e: !trait.proj<@Container[i32], "Elem">) -> i32 {

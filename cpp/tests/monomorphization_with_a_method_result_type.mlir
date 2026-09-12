@@ -16,19 +16,20 @@ trait.impl private for @Get[i32] {
   }
 }
 
-// The method's formal return is !T, but the call site writes its actual result as !R.
-// Monomorphization must unify and ground !R := i32.
+// The method's declared result is the trait's parameter, so a call writes its
+// own result at the spelling that declaration gives it: @get through a claim
+// for @Get[!A] returns !A, and nothing else. Monomorphization grounds !A := i32
+// where the caller supplies it.
 !A = !trait.poly<1>
-!R = !trait.poly<2>
-func.func private @return_existential_type(%claim: !trait.claim<@Get[!A]>) -> !R {
+func.func private @return_method_result(%claim: !trait.claim<@Get[!A]>) -> !A {
   %res = trait.method.call %claim @Get[!A]::@get()
-    : () -> !R
-  return %res : !R
+    : () -> !A
+  return %res : !A
 }
 
 func.func @bar() -> i32 {
   %a = trait.allege @Get[i32]
-  %res = trait.func.call @return_existential_type(%a)
+  %res = trait.func.call @return_method_result(%a) {type_params = [!trait.poly<1>], type_args = [i32]}
     : (!trait.claim<@Get[i32]>) -> i32
   return %res : i32
 }

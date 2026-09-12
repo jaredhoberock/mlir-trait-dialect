@@ -127,49 +127,14 @@ static LogicalResult verifyFunctionResultGenericsAreDetermined(
   return success();
 }
 
-/// One local associated-type resolution rule available while normalizing a type.
-///
-/// The rule says that projections whose trait application is exactly `app` may
-/// be resolved through `impl` after applying `subst` to the impl's associated
-/// type binding. It represents evidence already present at the current IR
-/// boundary; it does not perform global impl lookup.
-struct LocalProjectionRule {
-  ImplOp impl;
-  TraitApplicationAttr app;
-  SpecializationMap subst;
-};
-
-/// Context controlling how far `normalize` may resolve projection types.
-///
-/// The small core of normalization is deliberately local: callers add explicit
-/// evidence-derived rules, and projection heads not justified by those rules are
-/// preserved. Global resolver-backed normalization remains a separate lowering
-/// concern.
-class NormalizationContext {
-public:
-  void addLocalProjectionRule(ImplOp impl, TraitApplicationAttr app,
-                              const SpecializationMap &subst) {
-    localProjectionRules.push_back({impl, app, subst});
-  }
-
-  /// Resolves projections in `ty` using this context's local rules.
-  ///
-  /// The walk runs to a fixed point so a resolved associated type can expose
-  /// another projection resolvable by the same local evidence.
-  FailureOr<Type> normalize(
-      Type ty,
-      llvm::function_ref<InFlightDiagnostic()> err);
-
-  /// Resolves projections in each input and result type of `functionType`.
-  FailureOr<FunctionType> normalize(
-      FunctionType functionType,
-      llvm::function_ref<InFlightDiagnostic()> err);
-
-private:
-  SmallVector<LocalProjectionRule, 4> localProjectionRules;
-};
-
 } // namespace
+
+/// The projections the evidence `values` carry justify reducing: for a proven
+/// claim the impls its proof tree names, by index; for a derived claim the impl
+/// it commits to and whatever its given operands carry in turn.
+static FailureOr<NormalizationContext> buildLocalClaimNormalizationContext(
+    ValueRange values, ModuleOp module,
+    llvm::function_ref<InFlightDiagnostic()> err);
 
 
 //===----------------------------------------------------------------------===//
@@ -179,11 +144,11 @@ private:
 FailureOr<Type> NormalizationContext::normalize(
     Type ty,
     llvm::function_ref<InFlightDiagnostic()> err) {
-  // The step resolves projections from this context's local rules alone, never
-  // through module lookup, so an impl body normalizes against exactly the
-  // evidence its own where-clause supplies. The shared fallible driver spends
-  // the rewrite budget; on nonconvergence this reports through the op-attached
-  // diagnostic rather than the driver's fatal module-level reporter.
+  // The step resolves projections from this context's own rules first, so a
+  // caller normalizes against exactly the evidence it holds. The shared
+  // fallible driver spends the rewrite budget; on nonconvergence this reports
+  // through the op-attached diagnostic rather than the driver's fatal
+  // module-level reporter.
   auto normalizeOnce = [&](Type root) {
     AttrTypeReplacer replacer = makeEndpointSealedReplacer();
     replacer.addReplacement([&](ProjectionType proj) -> std::optional<Type> {
@@ -199,7 +164,20 @@ FailureOr<Type> NormalizationContext::normalize(
       }
       return std::nullopt;
     });
-    return replacer.replace(root);
+    root = replacer.replace(root);
+    if (!equalityRules.empty())
+      root = applySubstitutionOnce(equalityRules, root);
+    // The recorded facts are read after the local rules, so a projection this
+    // op's own evidence answers is answered from that evidence and only what it
+    // leaves standing reaches the record. Each pass runs both, and the driver
+    // below repeats them until the spelling settles.
+    if (recordedFacts)
+      root = recordedFacts->resolveProjectionsIn(root);
+    if (moduleLookup)
+      root = resolveProjectionsByLookup(root, moduleLookup,
+                                        DemandOrigin::DeclarationMatch,
+                                        moduleLookupScope);
+    return root;
   };
 
   Type out;
@@ -238,35 +216,27 @@ bool isJudgedOnItsOwn(Operation *op) {
   return op->hasTrait<OpTrait::IsIsolatedFromAbove>();
 }
 
-/// Collects into `generics` every generic type `root` mentions, `root` being a
+/// Collects into `parameters` every type parameter `root` binds, `root` being a
 /// type or an attribute: one walk reads either, and each type the walk meets is
-/// read with `getGenericTypesIn`, so a generic standing in a claim's application
-/// or an equality's endpoints is collected wherever a spelling holds it.
+/// read with `getTypeParametersIn`, so a parameter standing in a claim's
+/// application or an equality's endpoints is collected wherever a spelling
+/// holds it.
 template <typename RootT>
-void collectGenericsIn(RootT root, SetVector<Type> &generics) {
+void collectTypeParametersIn(RootT root, SetVector<Type> &parameters) {
   root.walk([&](Type sub) {
-    for (GenericTypeInterface generic : getGenericTypesIn(sub))
-      generics.insert(Type(generic));
+    for (GenericTypeInterface parameter : getTypeParametersIn(sub))
+      parameters.insert(Type(parameter));
   });
 }
 
-/// Whether `generic` is a type parameter in its own right -- a label a
-/// substitution binds -- rather than a generic type built out of other generics,
-/// which is determined once its parts are. `getGenericTypesIn` reports a
-/// composite together with the generics inside it, so a label is the one that
-/// carries no other.
-bool isTypeParameterLabel(Type generic) {
-  return getGenericTypesIn(generic).size() == 1;
-}
-
-/// The type parameters `callable`'s signature binds: the generics its argument
-/// and result types spell, in first-occurrence order.
+/// The type parameters `callable`'s signature binds: the parameters its
+/// argument and result types spell, in first-occurrence order.
 SetVector<Type> getSignatureTypeParams(CallableOpInterface callable) {
   SetVector<Type> params;
   for (Type type : callable.getArgumentTypes())
-    collectGenericsIn(type, params);
+    collectTypeParametersIn(type, params);
   for (Type type : callable.getResultTypes())
-    collectGenericsIn(type, params);
+    collectTypeParametersIn(type, params);
   return params;
 }
 
@@ -279,12 +249,12 @@ SetVector<Type> getDeclaredTypeParams(func::FuncOp function) {
       getSignatureTypeParams(cast<CallableOpInterface>(function.getOperation()));
 
   if (auto impl = function->getParentOfType<ImplOp>()) {
-    for (GenericTypeInterface generic : impl.getTypeParams())
-      declared.insert(Type(generic));
+    for (GenericTypeInterface parameter : impl.getTypeParams())
+      declared.insert(Type(parameter));
   } else if (auto trait = function->getParentOfType<TraitOp>()) {
     for (Attribute param : trait.getTypeParams())
       if (auto typeAttr = dyn_cast<TypeAttr>(param))
-        declared.insert(typeAttr.getValue());
+        collectTypeParametersIn(typeAttr.getValue(), declared);
   }
   return declared;
 }
@@ -312,9 +282,9 @@ struct StrayMentions {
   template <typename RootT>
   void read(RootT root, const SetVector<Type> &declared, Operation *at) {
     root.walk([&](Type sub) {
-      for (GenericTypeInterface generic : getGenericTypesIn(sub)) {
-        Type label(generic);
-        if (declared.contains(label) || !isTypeParameterLabel(label))
+      for (GenericTypeInterface parameter : getTypeParametersIn(sub)) {
+        Type label(parameter);
+        if (declared.contains(label))
           continue;
         if (seen.insert(label).second)
           inOrder.emplace_back(label, at);
@@ -526,9 +496,41 @@ LogicalResult TraitOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
 FailureOr<SpecializationMap> TraitOp::buildSubstitutionForSelfClaim(ClaimType actualSelfClaim,
                                                                       llvm::function_ref<InFlightDiagnostic()> errFn) {
-  auto module = getModule(errFn);
-  if (failed(module)) return failure();
-  return buildSpecialization(getSelfClaim(), actualSelfClaim, *module, errFn);
+  // A trait header's parameters are its type_params in array order, and its
+  // self application spells exactly those, in that order. So an application of
+  // this trait at the right arity determines every parameter by position:
+  // nothing is read out of the arguments and nothing is compared afterwards.
+  TraitApplicationAttr application = actualSelfClaim.getTraitApplication();
+  if (application.getTraitName().getValue() != getSymName()) {
+    if (errFn)
+      errFn() << "trait mismatch: expected @" << getSymName() << ", but found "
+              << application.getTraitName();
+    return failure();
+  }
+
+  ArrayAttr parameters = getTypeParams();
+  ArrayRef<Type> arguments = application.getTypeArgs();
+  if (parameters.size() != arguments.size()) {
+    if (errFn)
+      errFn() << "trait '@" << getSymName() << "' takes " << parameters.size()
+              << " type arguments, but " << application << " supplies "
+              << arguments.size();
+    return failure();
+  }
+
+  SpecializationMap result;
+  for (auto [parameter, argument] : llvm::zip(parameters, arguments)) {
+    auto generic = dyn_cast<GenericTypeInterface>(
+        cast<TypeAttr>(parameter).getValue());
+    if (!generic) {
+      if (errFn)
+        errFn() << "trait '@" << getSymName()
+                << "' declares a type parameter that is not a type variable";
+      return failure();
+    }
+    result.bind(generic, argument);
+  }
+  return result;
 }
 
 
@@ -549,11 +551,8 @@ SmallVector<ClaimType> TraitOp::getRequirementsAsClaims() {
 FailureOr<SmallVector<ClaimType>> TraitOp::specializeRequirementsAsClaimsFor(
     ClaimType actualSelfClaim,
     llvm::function_ref<InFlightDiagnostic()> errFn) {
-  auto module = getModule(errFn);
-  if (failed(module)) return failure();
-
   // build a specialized substitution for actualSelfClaim
-  auto spec = buildSpecialization(getSelfClaim(), actualSelfClaim, *module, errFn);
+  auto spec = buildSubstitutionForSelfClaim(actualSelfClaim, errFn);
   if (failed(spec)) return failure();
   auto subst = spec->toTypeMap();
 
@@ -592,10 +591,12 @@ SmallVector<ImplOp> TraitOp::getImpls() {
   return result;
 }
 
-SmallVector<ImplOp> TraitOp::getCandidateImplsFor(ClaimType wanted) {
+SmallVector<ImplOp> TraitOp::getCandidateImplsFor(ClaimType wanted,
+                                                  Normalizer normalize) {
   SmallVector<ImplOp> result;
   for (auto impl : getImpls()) {
-    if (succeeded(impl.buildSubstitutionForSelfClaim(wanted)))
+    if (succeeded(impl.buildSubstitutionForSelfClaim(wanted, normalize,
+                                                     /*errFn=*/nullptr)))
       result.push_back(impl);
   }
   return result;
@@ -757,19 +758,67 @@ static FailureOr<SmallVector<ImplWitnessRule>> collectImplWitnessRules(
   return rules;
 }
 
-/// The correspondence carrying a trait method's own type variables onto the
-/// impl method's: the trait method's signature, specialized for `impl`'s self
-/// claim and normalized under its bindings and `witnessRules`, unified with the
-/// impl method's signature. Its keys are the trait method's variables and its
-/// values the impl's, because only the trait method's variables are still free
-/// on the specialized side.
+/// Adds an impl's own where-clause equalities to `ctx` as hypotheses. They are
+/// in scope wherever the impl's own obligations are checked: a trait-header
+/// equality requirement and the impl's own method signature are both judged
+/// under the clause the impl declares.
+static void addImplEqualityPremises(NormalizationContext &ctx, ImplOp impl) {
+  for (Attribute predicate : impl.getAssumptions())
+    if (auto equality = dyn_cast<TypeEqualityAttr>(predicate))
+      ctx.addEqualityRule(equality.getLhs(), equality.getRhs());
+}
+
+/// The pairing carrying a trait's declaration of a method onto the impl's copy
+/// of it.
 ///
-/// This is the impl's signature check and the rekeying a call lowering needs,
-/// which are the same unification: the check is that it succeeds, and a binding
-/// a call names -- keyed by the trait's spelling, since a method call reads the
-/// trait's declaration for the formal signature it unifies against -- rekeys
-/// through it to the copy of the method that is actually cloned.
-static FailureOr<SpecializationMap> buildTraitMethodVariableCorrespondence(
+/// A method's declaration binds its header's parameters and then its own, in
+/// that order, and the two declarations of one method must bind equally many of
+/// their own: the trait states how many a caller supplies, and an impl copy
+/// with a different count is a different declaration. So the correspondence is
+/// positional -- the trait's j-th own variable is the impl's j-th -- and the
+/// check is the one identity it makes true.
+struct TraitMethodCorrespondence {
+  /// The trait method's own type variables, in first-occurrence order. A call
+  /// names its type arguments under these.
+  SmallVector<GenericTypeInterface, 4> traitOwn;
+  /// The impl method's own type variables, paired with `traitOwn` by position.
+  /// The clone a call is lowered to binds these.
+  SmallVector<GenericTypeInterface, 4> implOwn;
+  /// The whole substitution carrying the trait's declaration to the impl's: the
+  /// impl's self arguments for the trait's parameters, then the pairing above.
+  SpecializationMap substitution;
+};
+
+/// The type parameters `signature` binds beyond `headerParams`, in
+/// first-occurrence order: a method's own variables, as against the ones the
+/// declaration it is written in supplies.
+static SmallVector<GenericTypeInterface, 4> getOwnTypeParameters(
+    Type signature, const DenseSet<Type> &headerParams) {
+  SmallVector<GenericTypeInterface, 4> own;
+  for (GenericTypeInterface parameter : getTypeParametersIn(signature))
+    if (!headerParams.contains(Type(parameter)))
+      own.push_back(parameter);
+  return own;
+}
+
+/// The type parameters a trait header supplies to the methods written in it.
+static DenseSet<Type> getTraitHeaderParameters(TraitOp traitOp) {
+  DenseSet<Type> params;
+  for (Attribute declared : traitOp.getTypeParams())
+    if (auto typeAttr = dyn_cast<TypeAttr>(declared))
+      for (GenericTypeInterface parameter :
+           getTypeParametersIn(typeAttr.getValue()))
+        params.insert(Type(parameter));
+  return params;
+}
+
+/// Builds the correspondence above and checks it: this is the impl's signature
+/// check and the rekeying a call lowering needs, which are one pairing. The
+/// check is that the trait's declaration instantiated through it is the impl's,
+/// and a binding a call names -- keyed by the trait's spelling, since a method
+/// call reads the trait's declaration -- rekeys through the same pairing to the
+/// copy of the method that is actually cloned.
+static FailureOr<TraitMethodCorrespondence> buildTraitMethodCorrespondence(
     ImplOp impl, TraitOp traitOp, func::FuncOp implMethod,
     ArrayRef<ImplWitnessRule> witnessRules,
     llvm::function_ref<InFlightDiagnostic()> errFn) {
@@ -777,50 +826,80 @@ static FailureOr<SpecializationMap> buildTraitMethodVariableCorrespondence(
   auto traitMethod = traitOp.getMethod(name, errFn);
   if (failed(traitMethod)) return failure();
 
-  // Build substitution from trait type params to impl type args
+  // The prefix: the trait's parameters take this impl's self arguments, by
+  // position.
   auto traitSubst =
       traitOp.buildSubstitutionForSelfClaim(impl.getSelfClaim(), errFn);
   if (failed(traitSubst)) return failure();
 
-  // Specialize the trait method's signature
-  FunctionType traitMethodTy = traitMethod->getFunctionType();
-  Type specializedTraitMethodTy = applySubstitutionToFixedPoint(traitSubst->toTypeMap(), traitMethodTy);
+  DenseSet<Type> implHeaderParams;
+  for (GenericTypeInterface parameter : impl.getTypeParams())
+    implHeaderParams.insert(Type(parameter));
 
+  TraitMethodCorrespondence correspondence;
+  Type traitMethodTy = Type(traitMethod->getFunctionType());
+  Type implMethodTy = Type(implMethod.getFunctionType());
+  correspondence.traitOwn =
+      getOwnTypeParameters(traitMethodTy, getTraitHeaderParameters(traitOp));
+  SmallVector<GenericTypeInterface, 4> implOwn =
+      getOwnTypeParameters(implMethodTy, implHeaderParams);
+  if (correspondence.traitOwn.size() != implOwn.size()) {
+    if (errFn)
+      errFn() << "method '" << name << "' binds " << implOwn.size()
+              << " type parameter(s) of its own, but trait '"
+              << traitOp.getSymNameAttr() << "' declares it with "
+              << correspondence.traitOwn.size();
+    return failure();
+  }
+
+  // What the impl's copy spells for each of the trait's own variables, read off
+  // the position it stands in. The spelling may constrain the variable's kind
+  // where the trait's leaves it bare, so it is the occurrence and not the bare
+  // parameter that carries over.
+  correspondence.substitution = *traitSubst;
+  TypeArguments ownArguments(correspondence.traitOwn);
+  extractTypeArguments(instantiate(traitMethodTy, *traitSubst), implMethodTy,
+                       ownArguments);
+  for (GenericTypeInterface traitVariable : correspondence.traitOwn) {
+    std::optional<Type> spelling = ownArguments.lookup(traitVariable);
+    if (!spelling) {
+      if (errFn)
+        errFn() << "method '" << name << "' does not say what its copy of "
+                << Type(traitVariable) << " is";
+      return failure();
+    }
+    correspondence.substitution.bind(traitVariable, *spelling);
+    correspondence.implOwn.push_back(getParameterOccurrence(*spelling));
+  }
+
+  // Substituting this impl's self application into the trait's declaration can
+  // mint a ground projection the impl's own bindings do not resolve -- a
+  // sibling impl's application, e.g. Group[coop.block]::Shape. A declared
+  // witness, verified above, reduces exactly those, so both declarations reach
+  // the comparison at the same grade. Nothing else is consulted: the verifier
+  // enumerates no candidate impls, so a projection neither the impl's own
+  // bindings nor a declared witness reduces is equal to itself alone.
   NormalizationContext normalization;
   normalization.addLocalProjectionRule(
       impl, impl.getSelfApplication(), *traitSubst);
   for (const ImplWitnessRule &r : witnessRules)
     normalization.addLocalProjectionRule(r.impl, r.app, r.subst);
+  addImplEqualityPremises(normalization, impl);
+  auto normalize = [&](Type ty) -> FailureOr<Type> {
+    return normalization.normalize(ty, errFn);
+  };
 
-  // Check that the impl method's signature can specialize to the expected
-  // signature. Only projections naming this impl's exact trait application
-  // may use its associated type bindings; unrelated projections with the
-  // same associated type name remain symbolic.
-  FunctionType implMethodTy = implMethod.getFunctionType();
-  auto expectedMethodTy = normalization.normalize(
-      specializedTraitMethodTy, errFn);
-  if (failed(expectedMethodTy))
+  auto expected = normalize(instantiate(traitMethodTy,
+                                        correspondence.substitution));
+  if (failed(expected))
     return failure();
-  auto actualMethodTy = normalization.normalize(implMethodTy, errFn);
-  if (failed(actualMethodTy))
+  auto actual = normalize(implMethodTy);
+  if (failed(actual))
     return failure();
-
-  // Substituting this impl's self application into the trait method
-  // signature can mint a ground projection the impl's own bindings do
-  // not resolve -- a sibling impl's application, e.g. Group[coop.block]::
-  // Shape. A declared premise, verified and replayed above, reduces exactly
-  // those projections, so both signatures reach this comparison at the same
-  // grade. Compare their spellings with the module-free comparator: the
-  // verifier enumerates no candidate impls. Any projection still standing is
-  // not ground (the front end quotes an unresolved projection symbolically),
-  // so it must match literally.
-  auto correspondence = buildSpecialization(
-      Type(*expectedMethodTy), Type(*actualMethodTy), ModuleOp(), errFn);
-  if (failed(correspondence)) {
+  if (stripClaimProofs(*expected) != stripClaimProofs(*actual)) {
     if (errFn)
       errFn() << "method '" << name << "' has incompatible signature: "
-              << "expected " << *expectedMethodTy
-              << " but found " << *actualMethodTy;
+              << "expected " << *expected << " but found " << *actual;
     return failure();
   }
   return correspondence;
@@ -829,6 +908,8 @@ static FailureOr<SpecializationMap> buildTraitMethodVariableCorrespondence(
 static LogicalResult verifyEqualityObligations(
     ImplOp impl, TraitOp traitOp, ArrayRef<ImplWitnessRule> witnessRules,
     llvm::function_ref<InFlightDiagnostic()> errFn);
+
+static LogicalResult verifyImplParametersAreConstrained(ImplOp impl);
 
 /// Verifies each associated type binding against the two lists a use of it
 /// supplies arguments for: the impl header's parameters, bound where the impl is
@@ -843,8 +924,8 @@ static LogicalResult verifyEqualityObligations(
 /// than cast.
 static LogicalResult verifyAssociatedTypeBindingScopes(ImplOp impl) {
   DenseSet<Type> headerParams;
-  for (GenericTypeInterface generic : impl.getTypeParams())
-    headerParams.insert(Type(generic));
+  for (GenericTypeInterface parameter : impl.getTypeParams())
+    headerParams.insert(Type(parameter));
 
   for (Operation &op : impl.getBody().front()) {
     auto assoc = dyn_cast<AssocTypeOp>(op);
@@ -859,26 +940,29 @@ static LogicalResult verifyAssociatedTypeBindingScopes(ImplOp impl) {
           return assoc.emitOpError()
                  << "type parameter list holds " << tyAttr << ", which is not a type";
         Type param = typeAttr.getValue();
-        if (headerParams.contains(param))
-          return assoc.emitOpError()
-                 << "type parameter " << param << " is already a parameter of impl '@"
-                 << impl.getSymName() << "'";
-        // A parameter may be a generic type another dialect wraps around a
-        // label (a coordinate parameter carries the label it stands for), and
-        // declaring it declares what it carries.
-        for (GenericTypeInterface inside : getGenericTypesIn(param))
+        // A declared parameter may be a generic type another dialect wraps
+        // around a label (a coordinate parameter carries the label it stands
+        // for), and declaring it declares the label it carries.
+        for (GenericTypeInterface inside : getTypeParametersIn(param)) {
+          if (headerParams.contains(Type(inside)))
+            return assoc.emitOpError()
+                   << "type parameter " << param
+                   << " is already a parameter of impl '@"
+                   << impl.getSymName() << "'";
           ownParams.insert(Type(inside));
+        }
       }
     }
 
     TypeAttr boundAttr = assoc.getBoundTypeAttr();
     if (!boundAttr)
       continue;
-    for (GenericTypeInterface generic : getGenericTypesIn(boundAttr.getValue()))
-      if (isTypeParameterLabel(Type(generic)) &&
-          !headerParams.contains(Type(generic)) && !ownParams.contains(Type(generic)))
+    for (GenericTypeInterface parameter :
+         getTypeParametersIn(boundAttr.getValue()))
+      if (!headerParams.contains(Type(parameter)) &&
+          !ownParams.contains(Type(parameter)))
         return assoc.emitOpError()
-               << "bound type mentions type parameter " << generic
+               << "bound type mentions type parameter " << parameter
                << ", which neither impl '@" << impl.getSymName()
                << "' nor this associated type declares";
   }
@@ -887,6 +971,8 @@ static LogicalResult verifyAssociatedTypeBindingScopes(ImplOp impl) {
 
 LogicalResult ImplOp::verify() {
   if (failed(verifyTemplateIsNotPublic(getOperation())))
+    return failure();
+  if (failed(verifyImplParametersAreConstrained(*this)))
     return failure();
   return verifyAssociatedTypeBindingScopes(*this);
 }
@@ -950,9 +1036,9 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
         return emitOpError() << "implements method '" << name << "' multiple times";
       }
 
-      // Verify that the impl method's signature matches the trait method's
-      // signature: the two correspond exactly when they unify.
-      if (failed(buildTraitMethodVariableCorrespondence(
+      // Verify that the impl method's declaration is the trait's declaration
+      // of it, carried through the positional correspondence between them.
+      if (failed(buildTraitMethodCorrespondence(
               *this, traitOp, implMethod, *premiseRules, errFn)))
         return failure();
     } else if (auto assocType = dyn_cast<AssocTypeOp>(op)) {
@@ -1006,82 +1092,111 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   return success();
 }
 
-/// Verifies each equality this impl must satisfy: the trait-header equality
-/// requirements specialized for the impl's self arguments (e.g. Self::Output =
-/// Self), and the equality entries of the impl's own where clause (e.g.
-/// F::Output = Acc). Both endpoints normalize -- through the impl's own
-/// bindings for its own application, or a declared witness rule for a sibling
-/// -- and only a GROUND mismatch refuses. An endpoint that stays symbolic
-/// cannot be decided here and is accepted; its correctness is established
-/// where the impl is selected and, for evidence that is consumed, at the use
-/// site (a false equality's coerce fails the erase barrier). Once a witness
-/// rule reduces an endpoint to a ground value, a false equality refuses here
-/// whether or not its evidence is ever consumed. Application requirements are
-/// proved at impl selection, not here.
+/// Verifies the equality requirements the trait header states, specialized for
+/// this impl's self arguments (e.g. Self::Output = Self).
+///
+/// A requirement is an obligation the impl owes, so the two endpoints must be
+/// the same type: both are read through the impl's own bindings and its
+/// declared witness rules, and whatever stays standing after that is equal to
+/// itself alone. The impl's OWN where-clause equalities are not checked here --
+/// they are premises restricting when the impl applies, discharged where it is
+/// selected -- and application requirements are proved at selection too.
 static LogicalResult verifyEqualityObligations(
     ImplOp impl, TraitOp traitOp, ArrayRef<ImplWitnessRule> witnessRules,
     llvm::function_ref<InFlightDiagnostic()> errFn) {
-  auto selfEqNorm = [&](NormalizationContext &eqNorm) -> LogicalResult {
-    auto subst = impl.buildSubstitutionForSelfClaim(impl.getSelfClaim(), errFn);
-    if (failed(subst)) return failure();
-    eqNorm.addLocalProjectionRule(impl, impl.getSelfApplication(), *subst);
-    for (const ImplWitnessRule &r : witnessRules)
-      eqNorm.addLocalProjectionRule(r.impl, r.app, r.subst);
-    return success();
-  };
-  auto checkEquality =
-      [&](NormalizationContext &eqNorm, TypeEqualityAttr eq,
-          llvm::function_ref<InFlightDiagnostic()> mismatch) -> LogicalResult {
-    auto lhsN = eqNorm.normalize(eq.getLhs(), errFn);
-    if (failed(lhsN)) return failure();
-    auto rhsN = eqNorm.normalize(eq.getRhs(), errFn);
-    if (failed(rhsN)) return failure();
-    if (isGroundType(*lhsN) && isGroundType(*rhsN) && *lhsN != *rhsN)
-      return mismatch() << *lhsN << " and " << *rhsN << " are not the same type";
-    return success();
-  };
-
-  // Each guard keeps the self-claim specialization off an impl with nothing of
-  // that kind to check.
+  // The guard keeps the self-claim specialization off an impl with nothing of
+  // the kind to check.
   bool hasEqualityRequirement = llvm::any_of(
       traitOp.getRequirements(), [](Attribute pred) {
         return mlir::isa<TypeEqualityAttr>(pred);
       });
-  if (hasEqualityRequirement) {
-    auto specReqs =
-        traitOp.specializeRequirementsAsClaimsFor(impl.getSelfClaim(), errFn);
-    if (failed(specReqs)) return failure();
-    NormalizationContext eqNorm;
-    if (failed(selfEqNorm(eqNorm))) return failure();
-    for (ClaimType req : *specReqs) {
-      auto eq = req.getEqualityAttr();
-      if (!eq) continue;
-      if (failed(checkEquality(eqNorm, eq, [&] {
-            return impl.emitOpError()
-                   << "does not satisfy trait-header equality requirement " << req
-                   << ": ";
-          })))
-        return failure();
+  if (!hasEqualityRequirement)
+    return success();
+
+  auto specReqs =
+      traitOp.specializeRequirementsAsClaimsFor(impl.getSelfClaim(), errFn);
+  if (failed(specReqs)) return failure();
+
+  NormalizationContext eqNorm;
+  auto subst = impl.buildSubstitutionForSelfClaim(impl.getSelfClaim(), errFn);
+  if (failed(subst)) return failure();
+  eqNorm.addLocalProjectionRule(impl, impl.getSelfApplication(), *subst);
+  for (const ImplWitnessRule &r : witnessRules)
+    eqNorm.addLocalProjectionRule(r.impl, r.app, r.subst);
+  addImplEqualityPremises(eqNorm, impl);
+
+  for (ClaimType req : *specReqs) {
+    auto eq = req.getEqualityAttr();
+    if (!eq) continue;
+    auto lhsN = eqNorm.normalize(eq.getLhs(), errFn);
+    if (failed(lhsN)) return failure();
+    auto rhsN = eqNorm.normalize(eq.getRhs(), errFn);
+    if (failed(rhsN)) return failure();
+    if (*lhsN != *rhsN)
+      return impl.emitOpError()
+             << "does not satisfy trait-header equality requirement " << req
+             << ": " << *lhsN << " and " << *rhsN << " are not the same type";
+  }
+  return success();
+}
+
+/// Rust's constrained-parameter rule (E0207): every parameter an impl binds
+/// must be determined by the application the impl is selected for.
+///
+/// A parameter standing only inside a projection is not determined -- a
+/// projection is not injective, so two arguments can reach one resolution --
+/// and a parameter standing nowhere in the self application is determined only
+/// by a where-clause equality that pins it: bare on one side, with the other
+/// side's parameters determined in turn. A parameter nothing determines would
+/// leave the impl's methods and associated-type bindings spelling a variable
+/// selection never assigns.
+static LogicalResult verifyImplParametersAreConstrained(ImplOp impl) {
+  // The parameters the self application determines: those standing somewhere in
+  // it outside a projection.
+  DenseSet<Type> constrained;
+  std::function<void(Type)> readOutsideProjections = [&](Type ty) {
+    if (isa<ProjectionType>(ty))
+      return;
+    if (GenericTypeInterface parameter = getParameterOccurrence(ty)) {
+      constrained.insert(Type(parameter));
+      return;
+    }
+    for (Type child : decomposeTerm(ty).children)
+      readOutsideProjections(child);
+  };
+  for (Type argument : impl.getSelfApplication().getTypeArgs())
+    readOutsideProjections(argument);
+
+  // Then close over the where clause's equalities: a bare parameter on one side
+  // is determined once every parameter on the other side is.
+  SmallVector<TypeEqualityAttr> premises;
+  for (Attribute pred : impl.getAssumptions())
+    if (auto eq = dyn_cast<TypeEqualityAttr>(pred))
+      premises.push_back(eq);
+  for (bool grew = true; grew;) {
+    grew = false;
+    auto determines = [&](Type bare, Type other) {
+      GenericTypeInterface parameter = getParameterOccurrence(bare);
+      if (!parameter || constrained.contains(Type(parameter)))
+        return;
+      for (GenericTypeInterface inside : getTypeParametersIn(other))
+        if (!constrained.contains(Type(inside)))
+          return;
+      constrained.insert(Type(parameter));
+      grew = true;
+    };
+    for (TypeEqualityAttr eq : premises) {
+      determines(eq.getLhs(), eq.getRhs());
+      determines(eq.getRhs(), eq.getLhs());
     }
   }
 
-  bool assumesEquality = llvm::any_of(impl.getAssumptions(), [](Attribute pred) {
-    return mlir::isa<TypeEqualityAttr>(pred);
-  });
-  if (assumesEquality) {
-    NormalizationContext eqNorm;
-    if (failed(selfEqNorm(eqNorm))) return failure();
-    for (Attribute pred : impl.getAssumptions()) {
-      auto eq = dyn_cast<TypeEqualityAttr>(pred);
-      if (!eq) continue;
-      if (failed(checkEquality(eqNorm, eq, [&] {
-            return impl.emitOpError()
-                   << "does not satisfy its own equality predicate " << eq << ": ";
-          })))
-        return failure();
-    }
-  }
-
+  for (GenericTypeInterface parameter : impl.getTypeParams())
+    if (!constrained.contains(Type(parameter)))
+      return impl.emitOpError()
+             << "type parameter " << Type(parameter)
+             << " is not constrained by the impl's trait application, so impl "
+                "selection cannot determine it";
   return success();
 }
 
@@ -1117,21 +1232,67 @@ TraitOp ImplOp::getTrait() {
   return getSelfApplication().getTraitOrAbort(module, "ImplOp::getTrait: couldn't find trait");
 }
 
+TypeArguments ImplOp::readTypeArgumentsFor(ClaimType actualSelfClaim,
+                                           Normalizer normalize) {
+  TypeArguments args(getTypeParams());
+  extractTypeArguments(Type(getSelfClaim()), Type(actualSelfClaim), args);
+
+  // A parameter the header leaves open is one the where clause determines: an
+  // equality with that parameter bare on one side says what it is, once the
+  // other side is instantiated at what is known and read through `normalize`.
+  // Determining one can determine another, so the reading runs until it stops
+  // growing.
+  for (bool grew = true; grew;) {
+    grew = false;
+    for (Attribute predicate : getAssumptions()) {
+      auto equality = dyn_cast<TypeEqualityAttr>(predicate);
+      if (!equality)
+        continue;
+      SpecializationMap known = args.toSpecialization();
+      auto determines = [&](Type bare, Type other) {
+        GenericTypeInterface parameter = getParameterOccurrence(bare);
+        if (!parameter || !args.binds(parameter) || args.lookup(parameter))
+          return false;
+        Type value = instantiate(other, known);
+        if (normalize) {
+          FailureOr<Type> normalized = normalize(value);
+          if (failed(normalized))
+            return false;
+          value = *normalized;
+        }
+        // A value still mentioning a parameter this reading has not settled
+        // says nothing yet; the round that settles that one settles this.
+        for (GenericTypeInterface inside : getTypeParametersIn(value))
+          if (args.binds(inside) && !args.lookup(inside))
+            return false;
+        if (failed(args.assign(parameter, value, /*err=*/nullptr)))
+          return false;
+        grew = true;
+        return true;
+      };
+      if (!determines(equality.getLhs(), equality.getRhs()))
+        determines(equality.getRhs(), equality.getLhs());
+    }
+  }
+  return args;
+}
+
 FailureOr<SpecializationMap> ImplOp::buildSubstitutionForSelfClaim(ClaimType actualSelfClaim,
+                                                                     Normalizer normalize,
                                                                      llvm::function_ref<InFlightDiagnostic()> errFn) {
-  auto module = getModule(errFn);
-  if (failed(module)) return failure();
-  // Building this candidate impl's self-claim substitution is a computation
-  // over its own committed facts, not the verifier's spelling comparison -- and
-  // getCandidateImplsFor runs it as a per-candidate match probe before any impl
-  // is chosen. Passing the module drives ground-projection resolution inside
-  // unification, so the ground projections the match mints -- the actual
-  // claim's arguments (a caller cast a witness to a projection spelling) and this
-  // impl's own self application (a blanket impl spells `Trait[T]::A`, ground once
-  // `T` binds) -- reduce to their determined values and the two meet at one
-  // spelling. That settles only this candidate's own match; the rigid side is
-  // never resolved, so a non-projection mismatch still fails.
-  return buildSpecialization(getSelfClaim(), actualSelfClaim, *module, errFn);
+  // The impl's header is the declaration and the demanded application is the
+  // use. Its parameters take the arguments standing opposite them, and the
+  // header rebuilt at those arguments must be the demand: a position the header
+  // spells as a projection determines nothing, so what carries such a header to
+  // a demand spelling the resolution is the caller's context, never a narrowing
+  // of the demand.
+  SpecializationMap arguments =
+      readTypeArgumentsFor(actualSelfClaim, normalize).toSpecialization();
+  if (failed(verifyEqualAfterInstantiation(Type(getSelfClaim()), arguments,
+                                           Type(actualSelfClaim), normalize,
+                                           errFn)))
+    return failure();
+  return arguments;
 }
 
 FailureOr<Type> ImplOp::specializeAssociatedTypeBinding(
@@ -1178,7 +1339,12 @@ FailureOr<ImplSpecialization> ImplOp::buildImplSpecialization(
                                   evidence, origin, memo, err)))
     return failure();
 
-  auto specialization = buildSubstitutionForSelfClaim(provenSelfClaim, err);
+  // This runs where the proof already stands, so the impls the module holds are
+  // what a projection this impl's header spells reduces through; `origin` names
+  // the reading.
+  GroundProjectionLookup byGroundLookup(*module, origin);
+  auto specialization =
+      buildSubstitutionForSelfClaim(provenSelfClaim, byGroundLookup, err);
   if (failed(specialization)) return failure();
 
   return ImplSpecialization(*specialization, evidence);
@@ -1204,8 +1370,10 @@ SmallVector<GenericTypeInterface, 4> ImplOp::getTypeParams() {
   // tuple the types
   TupleType tupled = TupleType::get(getContext(), allOurTypes);
 
-  // get all the generic types in the tuple
-  return getGenericTypesIn(tupled);
+  // The parameters those spellings bind, in first-occurrence order: a kind-
+  // constraining wrapper is an occurrence of the parameter it wraps, not a
+  // parameter of its own.
+  return getTypeParametersIn(tupled);
 }
 
 FailureOr<func::FuncOp> ImplOp::getOrSpecializeMethod(OpBuilder& builder, StringRef methodName) {
@@ -1431,19 +1599,20 @@ FailureOr<func::FuncOp> ImplOp::getOrSpecializeFreeFunctionFromMethod(
   auto errFn = [&] { return emitOpError(); };
   auto witnessRules = collectImplWitnessRules(*this, module, errFn);
   if (failed(witnessRules)) return failure();
-  auto correspondence = buildTraitMethodVariableCorrespondence(
+  auto correspondence = buildTraitMethodCorrespondence(
       *this, getTrait(), *method, *witnessRules, errFn);
   if (failed(correspondence)) return failure();
 
   DenseMap<Type,Type> callBindings = callSubst.toTypeMap();
-  for (auto [traitVariable, implVariable] : correspondence->toTypeMap()) {
-    // A trait method variable the impl pins to a concrete type is not a variable
-    // of the clone, so only a variable-to-variable entry rekeys a binding.
-    if (!isa<GenericTypeInterface>(implVariable))
+  for (auto [traitVariable, implVariable] :
+       llvm::zip(correspondence->traitOwn, correspondence->implOwn)) {
+    // A trait method variable the impl's copy pinned to a concrete type is not
+    // a variable of the clone, so it takes no binding from the call.
+    if (!implVariable)
       continue;
-    auto binding = callBindings.find(traitVariable);
+    auto binding = callBindings.find(Type(traitVariable));
     if (binding != callBindings.end())
-      subst.try_emplace(implVariable, binding->second);
+      subst.try_emplace(Type(implVariable), binding->second);
   }
 
   for (const auto &[k, v] : callBindings)
@@ -1452,7 +1621,7 @@ FailureOr<func::FuncOp> ImplOp::getOrSpecializeFreeFunctionFromMethod(
   // The extracted function name must include every substitution used to clone
   // the method body; otherwise different method-generic calls share a symbol.
   auto functionName = generateMangledName(provenSelfClaim) + "_" + methodName.str() +
-    applySubstitutionAndGenerateMangledNameSuffix(subst, getGenericTypesIn((*method).getFunctionType()));
+    applySubstitutionAndGenerateMangledNameSuffix(subst, getTypeParametersIn((*method).getFunctionType()));
 
   MLIRContext* ctx = getContext();
 
@@ -1531,13 +1700,16 @@ std::string ImplOp::generateSymName(TraitApplicationAttr selfApp,
 
 std::string ImplOp::generateMangledName(ClaimType claim) {
   // The name is minted for a claim impl selection already matched to this impl,
-  // so the self-claim substitution it rebuilds cannot fail: selection built the
-  // same match to choose this impl. Instantiation runs post-selection on a
-  // verified module, so a hostile blob never reaches here with an unmatched
-  // claim.
-  auto subst = buildSubstitutionForSelfClaim(claim);
+  // so the arguments it rebuilds cannot fail to read: selection built the same
+  // match, through the same module-visible impls, to choose this impl.
+  // Instantiation runs post-selection on a verified module, so a hostile blob
+  // never reaches here with an unmatched claim.
+  ModuleOp module = (*this)->getParentOfType<ModuleOp>();
+  GroundProjectionLookup byGroundLookup(module, DemandOrigin::DeclarationMatch);
+  auto subst = buildSubstitutionForSelfClaim(claim, byGroundLookup,
+                                             /*errFn=*/nullptr);
   if (failed(subst))
-    llvm_unreachable("ImplOp::generateMangledName: specializedSelfClaimAgainst failed");
+    llvm_unreachable("ImplOp::generateMangledName: the impl's header does not match the claim");
 
   return getSymName().str() + applySubstitutionAndGenerateMangledNameSuffix(*subst, getTypeParams());
 }
@@ -1556,12 +1728,12 @@ SmallVector<ClaimType> ImplOp::getAssumptionsAsClaims() {
 
 FailureOr<SmallVector<ClaimType>> ImplOp::specializeAssumptionsAsClaimsFor(
     ClaimType actualSelfClaim,
+    Normalizer normalize,
     llvm::function_ref<InFlightDiagnostic()> errFn) {
-  // build a specialized substitution for actualSelfClaim. This runs while
-  // partitioning candidates by their assumptions, before any impl is chosen, so
-  // it settles only this one candidate's own match -- the self-claim build
-  // reduces the ground projections it mints rather than crossing the tail.
-  auto spec = buildSubstitutionForSelfClaim(actualSelfClaim, errFn);
+  // The arguments carrying this impl's header to actualSelfClaim. A header
+  // spelling a projection reproduces a claim spelling its resolution only
+  // through `normalize`, which is the caller's established context.
+  auto spec = buildSubstitutionForSelfClaim(actualSelfClaim, normalize, errFn);
   if (failed(spec)) return failure();
   auto subst = spec->toTypeMap();
 
@@ -1581,6 +1753,14 @@ FailureOr<SmallVector<ClaimType>> ImplOp::specializeObligationsAsClaimsFor(
     ClaimType actualSelfClaim,
     DemandOrigin origin,
     llvm::function_ref<InFlightDiagnostic()> errFn) {
+  auto module = getModule(errFn);
+  if (failed(module)) return failure();
+
+  // This reads committed facts -- `origin` is what names the reading -- so the
+  // impls the module holds are what a projection either the header or an
+  // obligation spells reduces through.
+  GroundProjectionLookup byGroundLookup(*module, origin);
+
   // specialize requirements of the trait
   auto requirements = getTrait().specializeRequirementsAsClaimsFor(actualSelfClaim, errFn);
   if (failed(requirements)) return failure();
@@ -1598,7 +1778,8 @@ FailureOr<SmallVector<ClaimType>> ImplOp::specializeObligationsAsClaimsFor(
   // Only projections over this impl's own (actual) trait application resolve
   // through its bindings; a projection over a different trait application that
   // merely shares an associated-type name stays symbolic.
-  auto subst = buildSubstitutionForSelfClaim(actualSelfClaim, errFn);
+  auto subst =
+      buildSubstitutionForSelfClaim(actualSelfClaim, byGroundLookup, errFn);
   if (failed(subst)) return failure();
 
   NormalizationContext normalization;
@@ -1611,7 +1792,8 @@ FailureOr<SmallVector<ClaimType>> ImplOp::specializeObligationsAsClaimsFor(
   }
 
   // specialize assumptions of the impl
-  auto assumptions = specializeAssumptionsAsClaimsFor(actualSelfClaim, errFn);
+  auto assumptions =
+      specializeAssumptionsAsClaimsFor(actualSelfClaim, byGroundLookup, errFn);
   if (failed(assumptions)) return failure();
 
   // obligations = requirements + assumptions
@@ -1759,8 +1941,14 @@ LogicalResult ProofOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (!implOp)
     return emitOpError() << "cannot find impl '" << getImplNameAttr() << "'";
 
-  // check that we are able to substitute the impl's self claim against our proven claim
-  if (failed(implOp.buildSubstitutionForSelfClaim(getProvenClaim(), errFn)))
+  // The impl's header must carry to the claim this proof stands over. A proof
+  // names committed facts -- the obligations it declares are normalized through
+  // the module's impls just below -- so a projection its header spells reduces
+  // through those same impls here.
+  GroundProjectionLookup byGroundLookup(module, DemandOrigin::ProofVerification,
+                                        errFn);
+  if (failed(implOp.buildSubstitutionForSelfClaim(getProvenClaim(),
+                                                  byGroundLookup, errFn)))
     return failure();
 
   // recursively verify proof structure and that proof bindings can be recorded.
@@ -2116,7 +2304,9 @@ LogicalResult WitnessOp::verify() {
       MLIRContext *ctx = getContext();
       Type witnessPair = TupleType::get(ctx, {witness.getProjection(), witness.getResolved()});
       Type currentPair = TupleType::get(ctx, {eq.getLhs(), eq.getRhs()});
-      if (failed(buildSpecialization(witnessPair, currentPair, ModuleOp())))
+      if (failed(matchDeclaration(getTypeParametersIn(witnessPair), witnessPair,
+                                  currentPair, /*normalize=*/Normalizer(),
+                                  /*err=*/nullptr)))
         return emitOpError() << "result endpoints " << eq.getLhs() << " = "
                              << eq.getRhs()
                              << " are not an instance of the witness "
@@ -2229,7 +2419,11 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
                                         /*requireUnconditionalDirectImpl=*/true);
   if (failed(impl)) return failure();
 
-  auto subst = impl->buildSubstitutionForSelfClaim(getProvenClaim(), errFn);
+  // As at a proof: the witnessed claim names a committed fact, so a projection
+  // the impl's header spells reduces through the module's impls.
+  GroundProjectionLookup byGroundLookup(module, DemandOrigin::ProofVerification);
+  auto subst = impl->buildSubstitutionForSelfClaim(getProvenClaim(),
+                                                   byGroundLookup, errFn);
   return failed(subst) ? failure() : success();
 }
 
@@ -2359,24 +2553,47 @@ LogicalResult DeriveOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (!implOp)
     return emitOpError() << "cannot find trait.impl '" << getImplAttr() << "'";
 
+  ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
+  if (!module)
+    return emitOpError() << "not in a module";
+
+  // The evidence this derive holds: the claims its given operands carry, read
+  // by index through their own impls and proof trees. An impl whose header
+  // forwards an associated type spells a projection the derive's demand spells
+  // through the base, and this is what reduces the two to one grade.
+  auto normalization =
+      buildLocalClaimNormalizationContext(getAssumptions(), module, errFn);
+  if (failed(normalization))
+    return failure();
+  // XXX TODO A claim operand that is neither proven nor derived carries no
+  // impl, so an impl whose header forwards through such an operand's own
+  // application has nothing here to reduce it. The module's impls stand in
+  // until such an operand carries the impl serving it; see setModuleLookup.
+  normalization->setModuleLookup(module, LookupScope::Determined);
+  auto normalize = [&](Type ty) -> FailureOr<Type> {
+    return normalization->normalize(ty, errFn);
+  };
+
   // build substitution: impl's self claim -> derived claim
   ClaimType derivedClaim = getDerivedClaim();
-  auto subst = implOp.buildSubstitutionForSelfClaim(derivedClaim, errFn);
+  auto subst =
+      implOp.buildSubstitutionForSelfClaim(derivedClaim, normalize, errFn);
   if (failed(subst))
     return failure();
 
   // specialize impl's assumptions for the derived claim
-  auto specializedAssumptions = implOp.specializeAssumptionsAsClaimsFor(derivedClaim, errFn);
-  if (failed(specializedAssumptions))
-    return failure();
+  SmallVector<ClaimType> specializedAssumptions =
+      llvm::map_to_vector(implOp.getAssumptionsAsClaims(), [&](ClaimType a) {
+        return cast<ClaimType>(instantiate(Type(a), *subst));
+      });
 
   // check operand count matches assumption count
-  if (getAssumptions().size() != specializedAssumptions->size())
-    return emitOpError() << "expected " << specializedAssumptions->size()
+  if (getAssumptions().size() != specializedAssumptions.size())
+    return emitOpError() << "expected " << specializedAssumptions.size()
                          << " assumption operands, got " << getAssumptions().size();
 
   // check each operand's claim type matches the corresponding specialized assumption
-  for (auto [i, pair] : llvm::enumerate(llvm::zip(getAssumptions(), *specializedAssumptions))) {
+  for (auto [i, pair] : llvm::enumerate(llvm::zip(getAssumptions(), specializedAssumptions))) {
     auto [operand, expected] = pair;
     ClaimType operandClaim = cast<ClaimType>(operand.getType());
     if (operandClaim.getTraitApplication() != expected.getTraitApplication())
@@ -2623,35 +2840,51 @@ FailureOr<func::FuncOp> MethodCallOp::getMethod(llvm::function_ref<InFlightDiagn
   return func;
 }
 
-// Read the substitution a generic call names explicitly from its parallel
-// type_params/type_args arrays. Each key must be one of `calleeGenerics` -- a
-// type variable of the callee (a method's own generics, or a free function's) --
-// so a foreign spelling that names no such variable is refused rather than
-// stamped into a clone name. The caller has already checked the arrays are
-// present.
-static FailureOr<DenseMap<Type, Type>> readDeclaredTypeArguments(
+/// The type arguments a generic call supplies for `parameters`, read off its
+/// parallel type_params/type_args arrays.
+///
+/// A declaration's parameters are what a use supplies arguments for, so the
+/// call must name each of them exactly once: a spelling that names no parameter
+/// of the callee is refused rather than stamped into a clone name, and a
+/// generic callee called with no arguments at all is refused too -- the call
+/// says nothing about the instance it wants, and re-inferring it from spellings
+/// a sweep has normalized is guessing.
+static FailureOr<SpecializationMap> readDeclaredTypeArguments(
     ArrayAttr typeParams, ArrayAttr typeArgs,
-    ArrayRef<GenericTypeInterface> calleeGenerics,
+    ArrayRef<GenericTypeInterface> parameters, StringRef callee,
     llvm::function_ref<InFlightDiagnostic()> err) {
-  if (!typeArgs || typeParams.size() != typeArgs.size()) {
-    if (err) err() << "type_params and type_args must be parallel arrays";
-    return failure();
-  }
-  DenseSet<Type> allowed;
-  for (GenericTypeInterface g : calleeGenerics)
-    allowed.insert(Type(g));
-  DenseMap<Type, Type> declared;
-  for (auto [param, arg] : llvm::zip(typeParams.getAsValueRange<TypeAttr>(),
-                                     typeArgs.getAsValueRange<TypeAttr>())) {
-    if (!allowed.contains(param)) {
-      if (err) err() << "type parameter " << param
-                     << " is not a type variable of the callee";
+  TypeArguments args(parameters);
+  if (typeParams) {
+    if (!typeArgs || typeParams.size() != typeArgs.size()) {
+      if (err) err() << "type_params and type_args must be parallel arrays";
       return failure();
     }
-    declared[param] = arg;
+    for (auto [param, arg] : llvm::zip(typeParams.getAsValueRange<TypeAttr>(),
+                                       typeArgs.getAsValueRange<TypeAttr>())) {
+      GenericTypeInterface parameter = getParameterOccurrence(param);
+      if (!parameter || !args.binds(parameter)) {
+        if (err) err() << "type parameter " << param
+                       << " is not a type variable of the callee";
+        return failure();
+      }
+      if (failed(args.assign(parameter, arg, err)))
+        return failure();
+    }
   }
-  return declared;
+  if (!args.complete()) {
+    if (err) {
+      unsigned supplied = 0;
+      for (GenericTypeInterface parameter : parameters)
+        if (args.lookup(parameter))
+          ++supplied;
+      err() << "call to @" << callee << " supplies " << supplied << " of its "
+            << parameters.size() << " type arguments";
+    }
+    return failure();
+  }
+  return args.toSpecialization();
 }
+
 
 LogicalResult MethodCallOp::verify() {
   // the claim's type must be an ClaimType
@@ -2686,17 +2919,17 @@ LogicalResult MethodCallOp::verify() {
 /// in first, so the fixed-point walk reduces an inner application before the
 /// outer one that reaches it.
 ///
-/// A subproof whose own rule cannot be built contributes none: this reads the
+/// A claim whose own rule cannot be built contributes none: this reads the
 /// evidence an op holds, and a proof that does not check is refused where it is
 /// verified rather than reported from here. Contributing fewer rules leaves
 /// more projections standing, which the comparison refuses on.
-static LogicalResult addLocalProjectionRulesFromProvenClaim(
+static void addLocalProjectionRulesFromProvenClaim(
     NormalizationContext &ctx, ClaimType claim, ModuleOp module,
-    llvm::SmallPtrSetImpl<Operation *> &visited,
-    llvm::function_ref<InFlightDiagnostic()> err) {
-  auto implOr = ProofOp::getImplFromProof(module, claim.getProof(), err);
+    llvm::SmallPtrSetImpl<Operation *> &visited) {
+  auto implOr = ProofOp::getImplFromProof(module, claim.getProof(),
+                                          /*errFn=*/nullptr);
   if (failed(implOr))
-    return failure();
+    return;
 
   // The proof's own subtree. A coinductive proof names itself among its
   // subproofs, so a proof already read contributes nothing a second time.
@@ -2708,19 +2941,19 @@ static LogicalResult addLocalProjectionRulesFromProvenClaim(
       if (succeeded(subproofs))
         for (ClaimType subproof : *subproofs)
           if (subproof.isProven())
-            (void)addLocalProjectionRulesFromProvenClaim(
-                ctx, subproof, module, visited, /*err=*/nullptr);
+            addLocalProjectionRulesFromProvenClaim(ctx, subproof, module,
+                                                   visited);
     }
 
   // Store rules against the unproven application because projection heads do
   // not include proof symbols; proof only explains why the application holds.
   ClaimType unproven = claim.asUnproven();
-  auto subst = implOr->buildSubstitutionForSelfClaim(unproven, err);
+  auto subst = implOr->buildSubstitutionForSelfClaim(unproven,
+                                                     /*errFn=*/nullptr);
   if (failed(subst))
-    return failure();
+    return;
 
   ctx.addLocalProjectionRule(*implOr, unproven.getTraitApplication(), *subst);
-  return success();
 }
 
 /// Adds projection normalization rules justified by one claim SSA value.
@@ -2737,13 +2970,37 @@ static LogicalResult addLocalProjectionRulesFromClaim(
   if (!claim)
     return success();
 
+  // An equality claim IS evidence of its own equality, so an op holding one may
+  // read either endpoint as the other.
+  if (auto equality = claim.getEqualityAttr()) {
+    ctx.addEqualityRule(equality.getLhs(), equality.getRhs());
+    return success();
+  }
+
+  // A coerce respells the claim it forwards, and what licenses the respelling
+  // are the equalities it cites -- checked at the coerce itself. An op holding
+  // the result holds those equalities too, and the claim the coerce read them
+  // onto in turn.
+  if (auto coerce = claimValue.getDefiningOp<CoerceOp>()) {
+    if (visited.insert(coerce.getOperation()).second) {
+      for (Value equality : coerce.getEqualities())
+        if (failed(addLocalProjectionRulesFromClaim(ctx, equality, module,
+                                                    visited, err)))
+          return failure();
+      if (failed(addLocalProjectionRulesFromClaim(ctx, coerce.getInput(),
+                                                  module, visited, err)))
+        return failure();
+    }
+  }
+
   // A proven claim names a proof symbol. That proof identifies the impl whose
   // associated type bindings justify reducing projections with this exact
   // trait application, and stands over the subproofs discharging that impl's
   // obligations.
-  if (claim.isProven())
-    return addLocalProjectionRulesFromProvenClaim(ctx, claim, module, visited,
-                                                  err);
+  if (claim.isProven()) {
+    addLocalProjectionRulesFromProvenClaim(ctx, claim, module, visited);
+    return success();
+  }
 
   // A derive op also commits to one impl, but the evidence may be nested in its
   // assumptions. For example, a FnUni derive can carry the Fn claim that
@@ -2780,7 +3037,7 @@ static LogicalResult addLocalProjectionRulesFromClaim(
   return success();
 }
 
-static FailureOr<NormalizationContext> buildLocalClaimNormalizationContext(
+FailureOr<NormalizationContext> buildLocalClaimNormalizationContext(
     ValueRange values, ModuleOp module,
     llvm::function_ref<InFlightDiagnostic()> err) {
   NormalizationContext ctx;
@@ -2794,16 +3051,53 @@ static FailureOr<NormalizationContext> buildLocalClaimNormalizationContext(
   return ctx;
 }
 
+/// Checks every proof the claims a call carries name.
+///
+/// Each spelling is read through the call's own context first: a coerce
+/// respells a claim through an equality it cites, and the proof standing on the
+/// respelled claim is the proof of the spelling that equality carries it back
+/// to. A value a MARKED coerce produced is skipped: its reconciling equality is
+/// minted only at monomorphization, so nothing here can carry its spelling
+/// back, and the bonded erase pass judges it once every projection grounds.
+static LogicalResult verifyProofsAtCall(Operation *call, ValueRange operands,
+                                        Normalizer normalize, ModuleOp module,
+                                        llvm::function_ref<InFlightDiagnostic()> err) {
+  SmallVector<Type> spellings;
+  for (Value operand : operands) {
+    auto coerce = operand.getDefiningOp<CoerceOp>();
+    if (coerce && coerce.getUnproven())
+      continue;
+    spellings.push_back(operand.getType());
+  }
+  llvm::append_range(spellings, call->getResultTypes());
+
+  // One binding set across every spelling: an obligation two of them prove by
+  // different symbols is the incoherent proof mapping this reports.
+  EvidenceBindings evidence;
+  for (Type spelling : spellings) {
+    FailureOr<Type> read = normalize(spelling);
+    if (failed(read))
+      return failure();
+    if (failed(bindProofsIn(*read, module, evidence,
+                            DemandOrigin::CallSignatureVerification,
+                            /*memo=*/nullptr, err)))
+      return failure();
+  }
+  return success();
+}
+
 LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   auto errFn = [&]{ return emitOpError(); };
 
-  // check that we can build a consistent substitution for this method call.
-  // The verifier compares spellings with the module-free comparator: no
-  // ground-projection resolution, so an unresolved crossing is a strict mismatch.
-  return buildParameterSpecialization(/*unifyModule=*/ModuleOp(), errFn);
+  // A verifier holds no record of what impl selection has settled, so the
+  // comparison reads both signatures through the evidence this call carries and
+  // nothing else.
+  return buildParameterSpecialization(/*reading=*/nullptr, errFn);
 }
 
-FailureOr<SpecializationMap> MethodCallOp::buildParameterSpecialization(ModuleOp unifyModule, llvm::function_ref<InFlightDiagnostic()> err) {
+FailureOr<SpecializationMap> MethodCallOp::buildParameterSpecialization(
+    const ReadOnlyImplResolver *reading,
+    llvm::function_ref<InFlightDiagnostic()> err) {
   auto module = getModule(err);
   if (failed(module)) return failure();
 
@@ -2813,143 +3107,80 @@ FailureOr<SpecializationMap> MethodCallOp::buildParameterSpecialization(ModuleOp
   auto methodFormalTy = getMethodFunctionType(err);
   if (failed(methodFormalTy)) return failure();
 
-  // specialize the method's formal function type by the call's claim
-  // this yields the callee's *trait-level* substitution (poly -> type) and
-  // applies it to the method signature so that any trait-level generics match our claim
+  // A method's declaration binds the trait header's parameters and then its
+  // own. The prefix comes from the receiver claim by position -- the trait's
+  // arguments ride in the application -- and the suffix from this call's own
+  // arrays, restricted to the method's own variables, so a trait parameter
+  // named there is refused.
   auto traitSubst = trait->buildSubstitutionForSelfClaim(getClaimType(), err);
   if (failed(traitSubst)) return failure();
-  Type formal = applySubstitutionToFixedPoint(traitSubst->toTypeMap(), *methodFormalTy);
 
-  // When the call names the method's own type arguments explicitly, bind them
-  // into the formal here (the trait's arguments already rode in the claim's
-  // application), so what the machinery below checks is that the actuals are an
-  // instance of the declared substitution rather than a re-inference of it.
-  DenseMap<Type, Type> declared;
-  if (ArrayAttr declaredParams = getTypeParamsAttr()) {
-    auto read = readDeclaredTypeArguments(declaredParams, getTypeArgsAttr(),
-                                          getGenericTypesIn(*methodFormalTy), err);
-    if (failed(read)) return failure();
-    declared = std::move(*read);
-    formal = applySubstitutionToFixedPoint(declared, formal);
-  }
+  DenseSet<Type> headerParams;
+  for (Attribute declared : trait->getTypeParams())
+    if (auto typeAttr = dyn_cast<TypeAttr>(declared))
+      for (GenericTypeInterface parameter :
+           getTypeParametersIn(typeAttr.getValue()))
+        headerParams.insert(Type(parameter));
+  SmallVector<GenericTypeInterface, 4> ownParams;
+  for (GenericTypeInterface parameter :
+       getTypeParametersIn(Type(*methodFormalTy)))
+    if (!headerParams.contains(Type(parameter)))
+      ownParams.push_back(parameter);
 
-  // solve the *call-site* specialization: unify the specialized formal type with the
-  // actual call type to get any remaining bindings (including generics in args/results)
-  FunctionType actual = getActualFunctionType();
-  FunctionType originalActual = actual;
+  auto ownArgs = readDeclaredTypeArguments(getTypeParamsAttr(),
+                                           getTypeArgsAttr(), ownParams,
+                                           getMethodName(), err);
+  if (failed(ownArgs)) return failure();
 
-  // Specializing the method signature by the call claim can mint a ground
-  // projection -- an argument or result that becomes a ground projection
-  // meeting the caller's concrete spelling. Resolve every such projection on BOTH
-  // sides BEFORE the input specialization, so the strict comparison meets two
-  // spellings reduced to one grade rather than tolerating the crossing (the
-  // input unification below runs before the local-claim normalization, so a
-  // projection left here reaches the tail there).
-  //
-  // The call claim's evidence is a LOCALITY LICENSE, not a filter: it grants
-  // permission to consult module facts at this call. Once granted, resolution
-  // is claim-INDEPENDENT -- every ground projection whose application a unique
-  // module impl binds is read to its determined value, whether or not this claim
-  // covers it. So the gate does not itself prevent laundering; safety for a
-  // projection the evidence does not cover rests on the trusted-producer boundary:
-  // the front end discharges a ground projection's head claim where it spells
-  // the projection, before this op sees it. An ordinary unproven claim withholds
-  // the license entirely -- with no committing evidence at the site this op
-  // reads no module facts, so its ground projections stay spelled and the strict
-  // comparison rejects a head mismatch (the
-  // invalid_method_call_unproven_projection_mismatch pin). Projections over the
-  // method's own generics stay spelled (still polymorphic) for the local-claim
-  // normalization; originalActual keeps the pre-resolution spelling for the
-  // proof-binding recording below.
-  //
-  // `unifyModule` says which caller this is: a verifier passes none, a pass
-  // passes the module. The boundary resolution below reads module facts either
-  // way, so the demand it raises is classified by that same discriminator.
-  ClaimType callClaim = getClaimType();
-  bool callClaimHasEvidence =
-      callClaim.isProven() || getClaim().getDefiningOp<DeriveOp>();
-  DemandOrigin origin = unifyModule ? DemandOrigin::CallSiteSpecialization
-                                    : DemandOrigin::CallSignatureVerification;
-  if (callClaimHasEvidence) {
-    formal = resolveProjectionsByLookup(formal, *module, origin,
-                                        LookupScope::Ground);
-    actual = cast<FunctionType>(
-        resolveProjectionsByLookup(actual, *module, origin,
-                                   LookupScope::Ground));
-  }
+  SpecializationMap arguments = *traitSubst;
+  for (GenericTypeInterface parameter : ownParams)
+    if (auto argument = ownArgs->lookup(parameter))
+      arguments.bind(parameter, *argument);
 
+  // The evidence this call holds: the receiver claim's proof tree and the
+  // claims its arguments carry, read by index. At pass time the record of what
+  // impl selection has settled is read on top of that; a verifier has none.
   SmallVector<Value> localClaims;
   localClaims.push_back(getClaim());
   for (Value argument : getArguments())
     if (isa<ClaimType>(argument.getType()))
       localClaims.push_back(argument);
-
-  auto normalization = buildLocalClaimNormalizationContext(localClaims, *module, err);
+  auto normalization =
+      buildLocalClaimNormalizationContext(localClaims, *module, err);
   if (failed(normalization))
     return failure();
+  normalization->setRecordedFacts(reading);
+  // XXX TODO A claim this call's own arguments spell can carry a ground
+  // projection no evidence at this site reduces, because the impl serving it is
+  // named nowhere the call can read. The module's impls stand in, and only
+  // where the receiver claim commits to evidence -- an ordinary unproven claim
+  // grants nothing. Deleted once the claim a call commits to carries the impls
+  // serving the projections its arguments spell; see setModuleLookup.
+  if (getClaimType().isProven() || getClaim().getDefiningOp<DeriveOp>())
+    normalization->setModuleLookup(*module, LookupScope::Ground);
+  auto normalize = [&](Type ty) -> FailureOr<Type> {
+    return normalization->normalize(ty, err);
+  };
 
-  // The input and result specializations compare spellings that the boundary
-  // resolution and the local-claim normalization above have already reduced.
-  // `unifyModule` selects the comparator: a verifier passes none (strict), a
-  // pass passes the module so binding a generic mid-solve resolves the ground
-  // projection it mints.
-  FunctionType formalFunction = cast<FunctionType>(formal);
-  auto inputSpec = buildSpecialization(
-      FunctionType::get(getContext(), formalFunction.getInputs(), TypeRange{}),
-      FunctionType::get(getContext(), actual.getInputs(), TypeRange{}),
-      unifyModule, err);
-  if (failed(inputSpec)) return failure();
-
-  // Input arguments determine method generics such as the closure type `F`.
-  // Normalize only after those bindings are applied, so projections like
-  // `Fn[F, Args]::Output` can match local evidence for the actual closure.
-  auto inputMap = inputSpec->toTypeMap();
-  auto normalizedFormal = normalization->normalize(
-      cast<FunctionType>(applySubstitutionToFixedPoint(inputMap, formal)),
-      err);
-  if (failed(normalizedFormal))
+  // One identity: the method's declaration instantiated at the arguments above
+  // is the signature spelled here. There is nothing left to infer -- every
+  // argument was supplied -- so there is no second, input-only pass either.
+  FunctionType actual = getActualFunctionType();
+  if (failed(verifyEqualAfterInstantiation(Type(*methodFormalTy), arguments,
+                                           Type(actual), normalize, err)))
     return failure();
-  auto normalizedActual = normalization->normalize(
-      cast<FunctionType>(applySubstitutionToFixedPoint(inputMap, actual)),
-      err);
-  if (failed(normalizedActual))
+
+  // The proofs this call's claims name are checked where the call is lowered:
+  // the factory that closes the substitution walks the same spellings and reads
+  // them off the record. A verifier has no lowering behind it, so it checks
+  // them here or nowhere, and it runs on a worker thread with no memo of its
+  // own to serve them from.
+  if (!reading &&
+      failed(verifyProofsAtCall(getOperation(), getOperands(), normalize,
+                                *module, err)))
     return failure();
-  formal = *normalizedFormal;
-  actual = *normalizedActual;
 
-  auto resultSpec = buildSpecialization(formal, actual, unifyModule, err);
-  if (failed(resultSpec)) return failure();
-
-  auto merged = inputMap;
-  for (auto [key, value] : resultSpec->toTypeMap()) {
-    auto existing = merged.find(key);
-    if (existing != merged.end() && existing->second != value) {
-      if (err)
-        err() << "inconsistent method-call specialization for " << key
-              << ": " << existing->second << " versus " << value;
-      return failure();
-    }
-    merged[key] = value;
-  }
-  // Fold in the explicitly declared method-generic bindings (disjoint from the
-  // inferred keys, which were already substituted out of the formal above).
-  for (auto [key, value] : declared)
-    merged[key] = value;
-  normalizeSubstitutionInPlace(merged);
-
-  // The proofs this call's actual signature spells are bound where the call is
-  // lowered: the factory that closes the substitution walks the same spellings
-  // and reads them off the record. A verifier has no lowering behind it, so it
-  // checks them here or nowhere, and it runs on a worker thread with no memo of
-  // its own to serve them from.
-  if (!unifyModule) {
-    EvidenceBindings evidence;
-    if (failed(bindProofsIn(originalActual, *module, evidence, origin,
-                                     /*memo=*/nullptr, err)))
-      return failure();
-  }
-
-  return SpecializationMap::fromTypeMap(merged);
+  return arguments;
 }
 
 ImplOp MethodCallOp::getProvenImpl() {
@@ -3105,69 +3336,71 @@ LogicalResult FuncCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
   auto errFn = [&] { return emitOpError(); };
 
-  // check that we can build a substitution. The verifier compares spellings
-  // with the module-free comparator (no ground-projection resolution).
-  return buildParameterSpecialization(/*unifyModule=*/ModuleOp(), errFn);
+  // A verifier holds no record of what impl selection has settled, so the
+  // comparison reads both signatures through the evidence this call carries and
+  // nothing else.
+  return buildParameterSpecialization(/*reading=*/nullptr, errFn);
 }
 
-FailureOr<SpecializationMap> FuncCallOp::buildParameterSpecialization(ModuleOp unifyModule, llvm::function_ref<InFlightDiagnostic()> err) {
+FailureOr<SpecializationMap> FuncCallOp::buildParameterSpecialization(
+    const ReadOnlyImplResolver *reading,
+    llvm::function_ref<InFlightDiagnostic()> err) {
   auto module = getModule(err);
   if (failed(module)) return failure();
 
-  // get formal and actual function types
   auto maybeFormal = getCalleeFunctionType(err);
   if (failed(maybeFormal)) return failure();
 
-  FunctionType formal = *maybeFormal;
-  FunctionType actual = getActualFunctionType();
+  // The callee's declaration binds the parameters its signature spells, and
+  // this call supplies an argument for each of them.
+  auto arguments = readDeclaredTypeArguments(
+      getTypeParamsAttr(), getTypeArgsAttr(), getCalleeTypeParams(),
+      getCalleeName(), err);
+  if (failed(arguments)) return failure();
 
-  // `unifyModule` says which caller this is, the same discriminator the
-  // boundary resolution reads: a verifier passes none, a pass passes the module.
-  DemandOrigin origin = unifyModule
-                            ? DemandOrigin::CallSiteSpecialization
-                            : DemandOrigin::CallSignatureVerification;
-
-  // The proofs this call's actual signature spells are bound where the call is
-  // lowered: the factory that closes the substitution walks the same spellings
-  // and reads them off the record. A verifier has no lowering behind it, so it
-  // checks them here or nowhere, and it runs on a worker thread with no memo of
-  // its own to serve them from.
-  auto bindActualProofs = [&]() -> LogicalResult {
-    if (unifyModule)
-      return success();
-    EvidenceBindings evidence;
-    return bindProofsIn(actual, *module, evidence, origin, /*memo=*/nullptr, err);
+  // The evidence this call holds: the claims its operands carry, read by index
+  // through their proof trees. At pass time the record of what impl selection
+  // has settled is read on top of that; a verifier has none.
+  SmallVector<Value> localClaims;
+  for (Value operand : getOperands())
+    if (isa<ClaimType>(operand.getType()))
+      localClaims.push_back(operand);
+  auto normalization =
+      buildLocalClaimNormalizationContext(localClaims, *module, err);
+  if (failed(normalization))
+    return failure();
+  normalization->setRecordedFacts(reading);
+  // XXX TODO As at a method call: a ground projection an operand claim spells
+  // and no evidence here reduces is read through the module's impls, and only
+  // where an operand claim commits to evidence. Deleted on the same trigger;
+  // see setModuleLookup.
+  if (llvm::any_of(localClaims, [](Value claim) {
+        return cast<ClaimType>(claim.getType()).isProven() ||
+               claim.getDefiningOp<DeriveOp>();
+      }))
+    normalization->setModuleLookup(*module, LookupScope::Ground);
+  auto normalize = [&](Type ty) -> FailureOr<Type> {
+    return normalization->normalize(ty, err);
   };
 
-  // When the call names its callee's type arguments explicitly, take that
-  // substitution and check the actuals are an instance of it, rather than
-  // re-inferring the bindings from spellings a sweep may have normalized.
-  if (ArrayAttr declaredParams = getTypeParamsAttr()) {
-    auto declared = readDeclaredTypeArguments(declaredParams, getTypeArgsAttr(),
-                                              getCalleeTypeParams(), err);
-    if (failed(declared)) return failure();
-    auto specializedFormal = cast<FunctionType>(
-        applySubstitutionToFixedPoint(*declared, Type(formal)));
-    auto residual =
-        buildSpecialization(specializedFormal, actual, unifyModule, err);
-    if (failed(residual)) return failure();
-    if (failed(bindActualProofs())) return failure();
+  // One identity: the callee's declaration instantiated at those arguments is
+  // the signature spelled here.
+  FunctionType actual = getActualFunctionType();
+  if (failed(verifyEqualAfterInstantiation(Type(*maybeFormal), *arguments,
+                                           Type(actual), normalize, err)))
+    return failure();
 
-    // The declared bindings, plus any the check discovered (disjoint: the
-    // declared keys are already substituted out of the specialized formal).
-    DenseMap<Type, Type> merged = *declared;
-    for (auto [key, value] : residual->toTypeMap())
-      merged[key] = value;
-    return SpecializationMap::fromTypeMap(merged);
-  }
+  // The proofs this call's claims name are checked where the call is lowered:
+  // the factory that closes the substitution walks the same spellings and reads
+  // them off the record. A verifier has no lowering behind it, so it checks
+  // them here or nowhere, and it runs on a worker thread with no memo of its
+  // own to serve them from.
+  if (!reading &&
+      failed(verifyProofsAtCall(getOperation(), getOperands(), normalize,
+                                *module, err)))
+    return failure();
 
-  // Otherwise infer the bindings by unifying formal & actual. `unifyModule`
-  // selects the comparator: a verifier passes none (strict); a pass passes the
-  // module so a ground projection minted by binding a generic mid-solve resolves.
-  auto spec = buildSpecialization(formal, actual, unifyModule, err);
-  if (failed(spec)) return failure();
-  if (failed(bindActualProofs())) return failure();
-  return *spec;
+  return *arguments;
 }
 
 /// The name the instance of `op`'s callee carries, given the substitution that

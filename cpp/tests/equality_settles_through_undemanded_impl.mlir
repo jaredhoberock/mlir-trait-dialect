@@ -43,6 +43,6 @@ func.func @main() -> () {
   %c = trait.witness compose(%p1, %p2)
     : (!trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = !trait.proj<@Has[i32], "Out">>, !trait.claim<!trait.proj<@Has[tuple<i32, i32>], "Out"> = !trait.proj<@Has[i32], "Out">>)
     : !trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = !trait.proj<@Has[tuple<i32, i32>], "Out">>
-  trait.func.call @gen(%c) : (!trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = !trait.proj<@Has[tuple<i32, i32>], "Out">>) -> ()
+  trait.func.call @gen(%c) {type_params = [!trait.poly<1>], type_args = [i32]} : (!trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = !trait.proj<@Has[tuple<i32, i32>], "Out">>) -> ()
   return
 }

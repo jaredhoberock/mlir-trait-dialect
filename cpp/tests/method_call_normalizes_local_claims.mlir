@@ -68,5 +68,6 @@ func.func @method_result_normalizes_after_binding_input_generics(%value: i64) ->
   %f = arith.constant false
   %result = trait.method.call %map @Map[i64]::@map(%value, %f, %fn_uni)
     : (i64, i1, !trait.claim<@FnUni[i1, i64]>) -> !Output
+    attributes {type_params = [!trait.poly<1>], type_args = [i1]}
   return %result : !Output
 }

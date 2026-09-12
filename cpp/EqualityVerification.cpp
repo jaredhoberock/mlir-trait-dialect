@@ -182,11 +182,11 @@ static bool dischargeApplicationObligation(
     if (!dischargerOp)
       continue;
 
-    // The named impl must genuinely supply the application: instantiate only
-    // its own generics for the application (rigid actual side, no module scan).
+    // The named impl must genuinely supply the application: read its own
+    // parameters off the application and require its header rebuilt at them to
+    // be that application (rigid actual side, no established context).
     ClaimType appClaim = ClaimType::get(mlirCtx, citation.getApplication());
-    auto subst = buildSpecialization(dischargerOp.getSelfClaim(), Type(appClaim),
-                                     ModuleOp());
+    auto subst = dischargerOp.buildSubstitutionForSelfClaim(appClaim);
     if (failed(subst))
       continue;
 
@@ -252,10 +252,10 @@ static FailureOr<SpecializationMap> verifyProjectionResolutionCore(
   // projections by module lookup.
   ClaimType selfClaim =
       ClaimType::get(module.getContext(), projectionTy.getTraitApplication());
-  auto subst = rigidHeadMatch
-                   ? buildSpecialization(implOp.getSelfClaim(), Type(selfClaim),
-                                         ModuleOp(), err)
-                   : implOp.buildSubstitutionForSelfClaim(selfClaim, err);
+  GroundProjectionLookup byGroundLookup(module, DemandOrigin::ProofVerification);
+  auto subst = implOp.buildSubstitutionForSelfClaim(
+      selfClaim, rigidHeadMatch ? Normalizer() : Normalizer(byGroundLookup),
+      err);
   if (failed(subst))
     return failure();
 
@@ -299,7 +299,8 @@ static FailureOr<SpecializationMap> verifyProjectionResolutionCore(
     Type current = TupleType::get(
         module.getContext(),
         {currentEquality.getLhs(), currentEquality.getRhs()});
-    auto match = buildSpecialization(stored, current, ModuleOp());
+    auto match = matchDeclaration(getTypeParametersIn(stored), stored, current,
+                                  /*normalize=*/Normalizer(), /*err=*/nullptr);
     if (succeeded(match))
       instanceSubst = match->toTypeMap();
   }

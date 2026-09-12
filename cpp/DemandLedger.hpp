@@ -29,8 +29,9 @@ enum class DemandOrigin : uint8_t {
   MonomorphStampOut,
   /// The obligation recorder normalizing both sides before recording a proof.
   ProofRecording,
-  /// The unifier reducing a ground projection a mid-solve binding minted.
-  Unification,
+  /// Matching a declaration against a use, reducing a ground projection either
+  /// side spells so the two meet at one grade.
+  DeclarationMatch,
   /// A call site specializing its callee at pass time.
   CallSiteSpecialization,
   /// A read of the recorded facts falling back to the module's impls for a
@@ -53,7 +54,7 @@ inline bool recordsToLedger(DemandOrigin origin) {
   switch (origin) {
   case DemandOrigin::MonomorphStampOut:
   case DemandOrigin::ProofRecording:
-  case DemandOrigin::Unification:
+  case DemandOrigin::DeclarationMatch:
   case DemandOrigin::CallSiteSpecialization:
   case DemandOrigin::RecordedFactRead:
     return true;

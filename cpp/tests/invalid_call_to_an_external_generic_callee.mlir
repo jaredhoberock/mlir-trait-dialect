@@ -13,6 +13,6 @@
 func.func private @external(%x: !trait.poly<0>) -> !trait.poly<0>
 
 func.func @main(%y: i64) -> i64 {
-  %z = trait.func.call @external(%y) : (i64) -> i64
+  %z = trait.func.call @external(%y) {type_params = [!trait.poly<0>], type_args = [i64]} : (i64) -> i64
   return %z : i64
 }

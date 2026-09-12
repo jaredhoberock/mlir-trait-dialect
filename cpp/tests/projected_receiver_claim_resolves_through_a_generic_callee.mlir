@@ -47,7 +47,7 @@ func.func @main() -> i64 {
     to !trait.claim<@Trait[i64, !trait.proj<@Outer[i64], "Item">] by @Trait_i64>
     via (%eq) : (!trait.claim<!trait.proj<@Outer[i64], "Item"> = i64>)
   %x = arith.constant 0 : i64
-  %result = trait.func.call @callee(%x, %outer, %projected)
+  %result = trait.func.call @callee(%x, %outer, %projected) {type_params = [!trait.poly<1>], type_args = [i64]}
     : (i64, !trait.claim<@Outer[i64] by @Outer_i64>,
        !trait.claim<@Trait[i64, !trait.proj<@Outer[i64], "Item">] by @Trait_i64>) -> i64
   return %result : i64
