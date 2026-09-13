@@ -10,7 +10,8 @@ use mlir_sys::{
     MlirAttribute, MlirContext, MlirLocation, MlirModule,
     MlirOperation, MlirPass, MlirStringRef,
     MlirType, MlirValue,
-    mlirArrayAttrGet, mlirIdentifierGet, mlirLocationGetContext,
+    mlirArrayAttrGet, mlirIdentifierGet, mlirIntegerAttrGet, mlirIntegerTypeGet,
+    mlirLocationGetContext,
     mlirOperationGetContext,
     mlirOperationSetAttributeByName, mlirUnitAttrGet,
 };
@@ -96,8 +97,6 @@ unsafe extern "C" {
                                     impl_name: MlirStringRef,
                                     premises: *const MlirType, num_premises: isize,
                                     discharges: *const MlirAttribute, num_discharges: isize) -> bool;
-    fn traitClaimProjectsTo(module: MlirModule,
-                            src_claim: MlirType, dst_claim: MlirType) -> bool;
     fn traitAssocTypeOpCreate(loc: MlirLocation,
                               name: MlirStringRef,
                               bound_type: MlirType,
@@ -139,6 +138,17 @@ fn identifier<'c>(loc: Location<'c>, name: &str) -> Identifier<'c> {
     unsafe {
         let ctx = mlirLocationGetContext(loc.to_raw());
         Identifier::from_raw(mlirIdentifierGet(ctx, StringRef::new(name).to_raw()))
+    }
+}
+
+/// A signless 64-bit integer attribute in the location's context, as a
+/// positional selector carries (a `trait.project` hop's requirement index).
+/// The context is read as a raw handle for the same reason `identifier` reads
+/// it that way.
+fn index_attr<'c>(loc: Location<'c>, value: usize) -> Attribute<'c> {
+    unsafe {
+        let ctx = mlirLocationGetContext(loc.to_raw());
+        Attribute::from_raw(mlirIntegerAttrGet(mlirIntegerTypeGet(ctx, 64), value as i64))
     }
 }
 
@@ -382,16 +392,18 @@ pub fn proof<'c>(loc: Location<'c>,
     ))}
 }
 
-/// Create a `trait.project` op whose result claim is given directly: either the
-/// destination trait application's claim or a projection's equality hop --
-/// `result_claim` an equality claim over one of the source trait's requirement
-/// endpoints, specialized at the source application.
+/// Create a `trait.project` op selecting requirement `index` of `src_claim`:
+/// its trait's `where` predicates in declaration order, then, when the claim is
+/// proven, the assumptions of the impl its proof cites. `result_claim` spells
+/// the claim that selection derives, which verification checks.
 pub fn project<'c>(loc: Location<'c>,
                    src_claim: Value<'c,'_>,
+                   index: usize,
                    result_claim: Type<'c>,
 ) -> Operation<'c> {
     build_op(OperationBuilder::new("trait.project", loc)
         .add_operands(&[src_claim])
+        .add_attributes(&[(identifier(loc, "index"), index_attr(loc, index))])
         .add_results(&[result_claim]))
 }
 
@@ -670,14 +682,6 @@ pub fn projection_resolution_verifies_at_impl<'c>(
             raw_discharges.len() as isize,
         )
     }
-}
-
-/// Whether `src_claim` projects to `dst_claim`: `dst_claim` exactly matches one
-/// of the source's candidate projections. This is the exact membership a
-/// `trait.project` hop must satisfy. Both arguments are claim types; a non-claim
-/// argument answers `false`.
-pub fn claim_projects_to(module: &Module, src_claim: Type, dst_claim: Type) -> bool {
-    unsafe { traitClaimProjectsTo(module.to_raw(), src_claim.to_raw(), dst_claim.to_raw()) }
 }
 
 /// Create a `trait.assoc_type` op. Pass `None` for a bare declaration (inside a

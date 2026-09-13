@@ -23,7 +23,7 @@ trait.impl private @Has_i32 for @Has[i32] {
 // CHECK-NEXT: return %arg0 : i64
 func.func @m(%v: !trait.proj<@Has[i32], "Out">) -> i64 {
   %w = trait.witness @Has_i32 for @Has[i32]
-  %e = trait.project %w : @Has[i32] by @Has_i32 to !trait.proj<@Has[i32], "Out"> = i64
+  %e = trait.project %w[0] : !trait.claim<@Has[i32] by @Has_i32> -> !trait.claim<!trait.proj<@Has[i32], "Out"> = i64>
   %c = trait.coerce %v : !trait.proj<@Has[i32], "Out"> to i64 via (%e)
     : (!trait.claim<!trait.proj<@Has[i32], "Out"> = i64>)
   return %c : i64

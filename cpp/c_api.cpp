@@ -486,16 +486,6 @@ bool traitProjectionResolutionVerifiesAtImpl(MlirModule module,
       });
 }
 
-bool traitClaimProjectsTo(MlirModule wrappedModule, MlirType srcClaim,
-                          MlirType dstClaim) {
-  ModuleOp module = unwrap(wrappedModule);
-  auto src = dyn_cast<ClaimType>(unwrap(srcClaim));
-  auto dst = dyn_cast<ClaimType>(unwrap(dstClaim));
-  if (!src || !dst)
-    return false;
-  return src.projectsTo(module, dst);
-}
-
 MlirOperation traitAssocTypeOpCreate(MlirLocation loc,
                                      MlirStringRef name,
                                      MlirType boundType,

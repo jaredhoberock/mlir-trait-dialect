@@ -180,18 +180,6 @@ def ClaimType : TypeDef<TraitDialect, "Claim", [
       return ClaimType::get(getContext(), getTraitApplication());
     }
 
-    /// Return the set of claims that can be legally projected from this
-    /// claim: the identity projection, the trait's requirements, and, when
-    /// the claim is proven, its obligations spelled proven by the subproof
-    /// discharging each and the impl's equality where-clauses.
-    void getProjections(ModuleOp module,
-                        SmallVectorImpl<ClaimType>& result);
-
-    /// Whether this claim projects to `dst`: `dst` exactly matches one of the
-    /// candidate projections `getProjections` enumerates. This is the one
-    /// membership that defines a well-formed projection hop.
-    bool projectsTo(ModuleOp module, ClaimType dst);
-
     // for PolymorphicTypeInterface
     bool isPolymorphic() const;
   }];

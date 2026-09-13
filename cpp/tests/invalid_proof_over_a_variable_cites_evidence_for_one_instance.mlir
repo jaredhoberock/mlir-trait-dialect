@@ -28,7 +28,7 @@ trait.impl private @A_i64 for @A[i64] {
 trait.impl private @B_blanket for @B[!trait.poly<0>] {
   func.func @b(%x: !trait.poly<0>) -> i64 {
     %s = trait.assume @B[!trait.poly<0>]
-    %a = trait.project %s : @B[!trait.poly<0>] to @A[!trait.poly<0>]
+    %a = trait.project %s[0] : !trait.claim<@B[!trait.poly<0>]> -> !trait.claim<@A[!trait.poly<0>]>
     %r = trait.method.call %a @A[!trait.poly<0>]::@a() : () -> i64
     return %r : i64
   }
@@ -55,7 +55,7 @@ trait.impl private @A_blanket for @A[!trait.poly<1>] {
 trait.impl private @B_blanket for @B[!trait.poly<0>] {
   func.func @b(%x: !trait.poly<0>) -> i64 {
     %s = trait.assume @B[!trait.poly<0>]
-    %a = trait.project %s : @B[!trait.poly<0>] to @A[!trait.poly<0>]
+    %a = trait.project %s[0] : !trait.claim<@B[!trait.poly<0>]> -> !trait.claim<@A[!trait.poly<0>]>
     %r = trait.method.call %a @A[!trait.poly<0>]::@a() : () -> i64
     return %r : i64
   }

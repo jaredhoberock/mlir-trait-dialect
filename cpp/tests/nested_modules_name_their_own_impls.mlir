@@ -66,7 +66,7 @@ trait.impl private @A_top for @A[i32] {
 trait.impl private @B_impl for @B[i32] {
   func.func @b() -> i64 {
     %s = trait.assume @B[i32]
-    %a = trait.project %s : @B[i32] to @A[i32]
+    %a = trait.project %s[0] : !trait.claim<@B[i32]> -> !trait.claim<@A[i32]>
     %r = trait.method.call %a @A[i32]::@a() : () -> i64
     return %r : i64
   }
@@ -94,7 +94,7 @@ module @inner {
   trait.impl private @B_impl for @B[i32] {
     func.func @b() -> i64 {
       %s = trait.assume @B[i32]
-      %a = trait.project %s : @B[i32] to @A[i32]
+      %a = trait.project %s[0] : !trait.claim<@B[i32]> -> !trait.claim<@A[i32]>
       %r = trait.method.call %a @A[i32]::@a() : () -> i64
       return %r : i64
     }

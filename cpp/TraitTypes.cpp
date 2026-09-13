@@ -1072,83 +1072,220 @@ LogicalResult bindProofsIn(
   return status;
 }
 
-void ClaimType::getProjections(
-    ModuleOp module,
-    SmallVectorImpl<ClaimType>& result) {
-  // Equality claims are not projected from; they are consumed by trait.coerce.
-  if (isEquality())
-    return;
+namespace {
 
-  // identity
-  result.push_back(*this);
+/// The declarations one claim's requirements are read out of. A claim requires
+/// what its trait's `where` clause requires, in declaration order, followed --
+/// when the claim is proven -- by the assumptions of the impl its proof cites,
+/// which is the order that proof already names its subproofs in. `proof` is
+/// null when an unconditional impl stands as the evidence directly: such an
+/// impl discharges nothing, so it names no subproof.
+struct RequirementDeclarations {
+  TraitOp trait;
+  ProofOp proof;
+  ImplOp impl;
 
-  // trait requirements
-  auto trait = getTraitApplication().getTraitOrAbort(module, "ClaimType::getProjections: couldn't find trait");
-  auto specRequirements = trait.specializeRequirementsAsClaimsFor(*this);
-  if (succeeded(specRequirements))
-    result.append(*specRequirements);
+  PredicateArrayAttr traitRequirements() { return trait.getRequirements(); }
 
-  // A proven source additionally projects to each of its obligations spelled
-  // proven by the subproof discharging it, and to the impl's equality
-  // where-clauses. An unproven source keeps only the unproven candidates above:
-  // proofness parity refuses a proven application result projected from it.
-  if (isProven()) {
-    if (auto proof = lookupSymbolFrom<ProofOp>(module, getProof())) {
-      ImplOp impl = proof.getImpl();
-      if (impl) {
-        // XXX TODO a projection a declaration spells must be over its own self
-        // application, a where-clause application, a trait requirement or a
-        // declared witness (Rust's projection well-formedness rule), so every
-        // projection has evidence at a known index and this module read deletes
-        // with LookupScope and the verifier DemandOrigins.
-        GroundProjectionLookup byGroundLookup(
-            module, DemandOrigin::ProofVerification);
-
-        // Unproven impl assumptions, kept so the candidate query does not lose
-        // a candidate; the proven spelling below supersedes them.
-        auto specAssumptions = impl.specializeAssumptionsAsClaimsFor(
-            *this, byGroundLookup, /*errFn=*/nullptr);
-        if (succeeded(specAssumptions))
-          result.append(*specAssumptions);
-
-        // The impl's obligations in the order the proof's subproof names align
-        // with (the trait's requirements then the impl's assumptions), each
-        // spelled proven by its subproof. This runs in a verifier, so it reads
-        // the proof structure at a non-recording origin.
-        auto obligations = impl.specializeObligationsAsClaimsFor(
-            *this, DemandOrigin::ProofVerification, /*errFn=*/nullptr);
-        ArrayAttr subproofNames = proof.getSubproofNames();
-        if (succeeded(obligations) &&
-            subproofNames.size() == obligations->size())
-          for (auto [ob, name] : llvm::zip(*obligations, subproofNames))
-            if (auto ref = dyn_cast<FlatSymbolRefAttr>(name))
-              result.push_back(
-                  ClaimType::get(getContext(), ob.getTraitApplication(), ref));
-
-        // The impl's equality where-clauses, specialized for this source. An
-        // equality claim never carries a proof, so it is a parity-exempt
-        // candidate an equality projection resolves to.
-        auto eqSubst = impl.buildSubstitutionForSelfClaim(
-            *this, byGroundLookup, /*errFn=*/nullptr);
-        if (succeeded(eqSubst)) {
-          for (Attribute pred : impl.getAssumptions())
-            if (auto eq = dyn_cast<TypeEqualityAttr>(pred))
-              result.push_back(ClaimType::getEquality(
-                  getContext(), instantiate(eq.getLhs(), *eqSubst),
-                  instantiate(eq.getRhs(), *eqSubst)));
-        }
-      }
-    }
+  PredicateArrayAttr implAssumptions() {
+    return impl ? impl.getAssumptions() : PredicateArrayAttr();
   }
+
+  unsigned count() {
+    PredicateArrayAttr assumptions = implAssumptions();
+    return traitRequirements().size() + (assumptions ? assumptions.size() : 0);
+  }
+};
+
+} // namespace
+
+/// Read the declarations `claim`'s requirements come from, failing when a
+/// symbol the claim names is absent.
+static FailureOr<RequirementDeclarations> readRequirementDeclarations(
+    ClaimType claim,
+    ModuleOp module,
+    llvm::function_ref<InFlightDiagnostic()> errFn) {
+  auto trait = claim.getTraitApplication().getTrait(module, errFn);
+  if (failed(trait))
+    return failure();
+
+  RequirementDeclarations declarations;
+  declarations.trait = *trait;
+  if (!claim.isProven())
+    return declarations;
+
+  auto cited =
+      ProofOp::getProofOpOrUnconditionalImplOp(module, claim.getProof(), errFn);
+  if (failed(cited))
+    return failure();
+  declarations.proof = dyn_cast<ProofOp>(*cited);
+  declarations.impl = declarations.proof ? declarations.proof.getImpl()
+                                         : dyn_cast<ImplOp>(*cited);
+  if (!declarations.impl) {
+    if (errFn)
+      errFn() << "proof '" << claim.getProof() << "' cites no impl";
+    return failure();
+  }
+  return declarations;
 }
 
-bool ClaimType::projectsTo(ModuleOp module, ClaimType dst) {
-  SmallVector<ClaimType> candidates;
-  getProjections(module, candidates);
-  for (ClaimType cand : candidates)
-    if (cand == dst)
-      return true;
-  return false;
+/// How many of the first `stop` entries of `predicates` are applications --
+/// the position the entry at `stop` stands at in the obligation stream, which
+/// carries the application entries alone.
+static unsigned applicationsBefore(PredicateArrayAttr predicates, unsigned stop) {
+  unsigned applications = 0;
+  for (Attribute predicate : predicates.getPredicates().take_front(stop))
+    if (isa<TraitApplicationAttr>(predicate))
+      ++applications;
+  return applications;
+}
+
+/// The substitution requirement `index` is instantiated through: a trait-header
+/// requirement speaks the trait's parameters, one of the impl's own assumptions
+/// speaks the impl's.
+static FailureOr<SpecializationMap> requirementSubstitution(
+    ClaimType claim,
+    RequirementDeclarations &declarations,
+    bool fromTrait,
+    ModuleOp module,
+    llvm::function_ref<InFlightDiagnostic()> errFn) {
+  if (fromTrait)
+    return declarations.trait.buildSubstitutionForSelfClaim(claim, errFn);
+
+  // A parameter the impl's header leaves open and its where clause determines is
+  // read through the impls the module holds.
+  // XXX TODO a projection a declaration spells must be over its own self
+  // application, a where-clause application, a trait requirement or a declared
+  // witness (Rust's projection well-formedness rule), so every projection has
+  // evidence at a known index and this module read deletes with LookupScope and
+  // the verifier DemandOrigins.
+  GroundProjectionLookup byGroundLookup(module, DemandOrigin::ProofVerification);
+  return declarations.impl.readTypeArgumentsFor(claim, byGroundLookup)
+      .toSpecialization();
+}
+
+/// Requirement `index` of `claim`, which is in range: the declared predicate
+/// instantiated at the claim's arguments. An application requirement of a
+/// proven claim carries the provider of the subproof discharging it, read from
+/// the proof by position; every other requirement is unproven, an equality
+/// never carrying a provider at all.
+static FailureOr<ClaimType> readRequirement(
+    ClaimType claim,
+    RequirementDeclarations &declarations,
+    unsigned index,
+    ModuleOp module,
+    llvm::function_ref<InFlightDiagnostic()> errFn) {
+  MLIRContext *ctx = claim.getContext();
+  PredicateArrayAttr traitRequirements = declarations.traitRequirements();
+  unsigned traitCount = traitRequirements.size();
+  bool fromTrait = index < traitCount;
+  Attribute predicate =
+      fromTrait ? traitRequirements.getPredicates()[index]
+                : declarations.implAssumptions().getPredicates()[index - traitCount];
+
+  auto subst =
+      requirementSubstitution(claim, declarations, fromTrait, module, errFn);
+  if (failed(subst))
+    return failure();
+
+  // An equality requirement is instantiated and stops there: an equality claim
+  // never carries a proof, so a proven claim reaches one exactly as an unproven
+  // claim does.
+  if (auto equality = dyn_cast<TypeEqualityAttr>(predicate))
+    return ClaimType::getEquality(ctx, instantiate(equality.getLhs(), *subst),
+                                  instantiate(equality.getRhs(), *subst));
+
+  auto application = dyn_cast<TraitApplicationAttr>(predicate);
+  if (!application) {
+    if (errFn)
+      errFn() << "requirement " << index << " is neither an application nor an "
+                 "equality predicate";
+    return failure();
+  }
+
+  // An unproven claim carries no evidence, so every application requirement it
+  // reaches is unproven too.
+  if (!claim.isProven()) {
+    auto requirement = ClaimType::get(ctx, application);
+    return cast<ClaimType>(instantiate(Type(requirement), *subst));
+  }
+
+  // A proven claim's application requirement carries the provider of the
+  // subproof discharging it. The proof names one subproof per obligation -- the
+  // trait's application requirements, then the impl's -- so this requirement's
+  // obligation is its position among the application entries standing before
+  // it, and both the application and its provider are read out of that
+  // obligation rather than instantiated a second time.
+  unsigned obligationIndex =
+      fromTrait ? applicationsBefore(traitRequirements, index)
+                : applicationsBefore(traitRequirements, traitCount) +
+                      applicationsBefore(declarations.implAssumptions(),
+                                         index - traitCount);
+
+  auto obligations = declarations.impl.specializeObligationsAsClaimsFor(
+      claim, DemandOrigin::ProofVerification, errFn);
+  if (failed(obligations))
+    return failure();
+  assert(obligationIndex < obligations->size() &&
+         "the obligation stream carries the application entries this position "
+         "was counted over");
+
+  ArrayAttr subproofNames =
+      declarations.proof ? declarations.proof.getSubproofNames() : ArrayAttr();
+  size_t namedSubproofs = subproofNames ? subproofNames.size() : 0;
+  if (namedSubproofs != obligations->size()) {
+    if (errFn)
+      errFn() << "proof '" << claim.getProof() << "' names " << namedSubproofs
+              << " subproofs for " << obligations->size() << " obligations";
+    return failure();
+  }
+
+  auto provider = dyn_cast<FlatSymbolRefAttr>(subproofNames[obligationIndex]);
+  if (!provider) {
+    if (errFn)
+      errFn() << "proof '" << claim.getProof() << "' names no symbol for "
+                 "obligation " << obligationIndex;
+    return failure();
+  }
+  return ClaimType::get(
+      ctx, (*obligations)[obligationIndex].getTraitApplication(), provider);
+}
+
+FailureOr<uint64_t> getClaimRequirementCount(
+    ClaimType claim,
+    ModuleOp module,
+    llvm::function_ref<InFlightDiagnostic()> errFn) {
+  // An equality claim states that two spellings name one type; it applies no
+  // trait, so it requires nothing.
+  if (claim.isEquality())
+    return 0;
+
+  auto declarations = readRequirementDeclarations(claim, module, errFn);
+  if (failed(declarations))
+    return failure();
+  return static_cast<uint64_t>(declarations->count());
+}
+
+FailureOr<ClaimType> getClaimRequirementAt(
+    ClaimType claim,
+    ModuleOp module,
+    uint64_t index,
+    llvm::function_ref<InFlightDiagnostic()> errFn) {
+  auto count = getClaimRequirementCount(claim, module, errFn);
+  if (failed(count))
+    return failure();
+
+  if (index >= *count) {
+    if (errFn)
+      errFn() << "requirement index " << index << " is out of range: " << claim
+              << " has " << *count << " requirements";
+    return failure();
+  }
+
+  auto declarations = readRequirementDeclarations(claim, module, errFn);
+  if (failed(declarations))
+    return failure();
+  return readRequirement(claim, *declarations, index, module, errFn);
 }
 
 //===----------------------------------------------------------------------===//

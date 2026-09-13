@@ -970,68 +970,64 @@ def ProjectOp : TraitDialectOp<"project", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
   Pure
 ]> {
-  let summary = "Derive a consequence from an existing claim";
+  let summary = "Select one of a claim's requirements by position";
   let description = [{
-    Given a claim, derive a **consequence** — a trait application or type equality
-    that follows from the source claim's trait requirements or impl assumptions.
-    While `trait.assume` introduces axioms, `trait.project` extracts their logical
-    consequences.
+    Given a claim, select one of the requirements it carries -- a trait
+    application or a type equality that follows from the claim -- by its
+    position in the claim's requirement list. While `trait.assume` introduces
+    axioms, `trait.project` reads a consequence off one.
 
-    Given a claim of `@Trait[Args...]`, produce a claim of either:
-      1. the **identity** projection `@Trait[Args...]` itself, or
-      2. a one-hop **trait requirement** `@Req[Args...]` declared in the
-         `where` clause of `trait.trait @Trait`, or
-      3. a one-hop **equality requirement** `!A = !B` declared in the `where`
-         clause of `trait.trait @Trait`, specialized at `Args...` -- an equality
-         claim reachable from a proven or an unproven source, or
-      4. (if the input claim is **proven**) an **impl assumption** declared in the
-         `where` clause of the referenced `trait.impl` (or discharged via
-         its `trait.proof`).
+    A claim's requirements are, in this order:
 
-    Substitution of `Args...` for `@Trait`'s type parameters is performed prior
-    to matching the requested projection target.
+      1. the `where` predicates of the `trait.trait` the claim applies, in
+         declaration order. Supertraits, where-clause applications,
+         associated-type bounds and header equalities all stand in that one
+         list, so all of them are reachable by position;
+      2. for a **proven** claim, the `where` assumptions of the `trait.impl`
+         its proof cites, in declaration order -- the same order that
+         `trait.proof` names its subproofs in.
+
+    The result claim is derived, never spelled: requirement `index`
+    instantiated at the source claim's arguments. An application requirement of
+    a proven source carries the provider of the subproof discharging it, read
+    out of the proof by position; every other requirement is unproven, and an
+    equality requirement never carries a provider at all (the equality arm
+    seals its endpoints). So a proven source projects to a proven application
+    and an unproven one to an unproven application, without a parity rule
+    saying so.
+
+    The printed result type is an annotation on that derivation: verification
+    compares it with the requirement the index selects and refuses a
+    disagreement.
 
     Notes:
-    * Only a **single hop** is performed; chain `trait.project` for transitive projections.
-    * Identity projection is always valid.
-    * If `@Trait` has no `where` requirements and any proven impl has no assumptions,
-      only the identity projection is possible.
+    * Only a **single hop** is performed; chain `trait.project` for transitive
+      consequences.
+    * A claim whose trait declares no `where` clause, and whose proof cites an
+      impl that assumes nothing, reaches no index at all.
 
     Examples:
 
     ```mlir
-    // identity projection
-    %id = trait.project %p : @A[i32] to @A[i32] // same claim as %p
-
-    // trait-level requirement (works for unproven or proven source claims)
-    // @Ord[!S] where [ @Eq[!S], @PartialOrd[!S,!S] ]
+    // a trait-level requirement (an unproven or a proven source claim)
+    // trait.trait @Ord[!S] where [@Eq[!S], @PartialOrd[!S,!S]]
     %p = trait.assume @Ord[!T]
-    %eq = trait.project %p : @Ord[!T] to @Eq[!T]
+    %eq = trait.project %p[0] : !trait.claim<@Ord[!T]> -> !trait.claim<@Eq[!T]>
 
-    // impl assumption (requires a proven source claim)
-    %wA = trait.witness @A_impl_i32 for @A[i32]
-    %wB = trait.project %wA : @A[i32] by @A_impl_i32 to @B[i32] by @B_impl_i32
+    // an impl assumption: the requirement list continues past the trait's two
+    // into the impl's own, and the result carries the subproof that discharged it
+    %wB = trait.project %wA[2]
+      : !trait.claim<@A[i32] by @A_proof> -> !trait.claim<@B[i32] by @B_impl>
 
-    // equality requirement (works for unproven or proven source claims)
-    // @Has[!S] where [ !trait.proj<@Has[!S], "Out"> = i64 ]
-    %he = trait.project %p : @Has[i32] by @Has_i32 to !trait.proj<@Has[i32], "Out"> = i64
+    // an equality requirement (an unproven or a proven source claim)
+    // trait.trait @Has[!S] where [!trait.proj<@Has[!S], "Out"> = i64]
+    %he = trait.project %p[0]
+      : !trait.claim<@Has[i32] by @Has_i32>
+      -> !trait.claim<!trait.proj<@Has[i32], "Out"> = i64>
     ```
-
-    Verification:
-    * For an **unproven** source claim (e.g., from `trait.assume` or `trait.allege`),
-      the target must match one of `@Trait`'s `where` requirements after substitution,
-      or be the identity. An **application** target of an unproven source claim must
-      also be unproven.
-    * For a **proven** source claim (e.g., from `trait.witness`), the target may match
-      the identity, a trait-level requirement, or an assumption of the referenced proof,
-      after substitution. An **application** target of a proven source claim must also
-      be proven.
-    * An **equality** target is exempt from proofness parity from either source: an
-      equality claim never carries a proof (the equality arm seals its endpoints), so
-      an equality requirement projected from a proven source is still unproven.
   }];
 
-  let arguments = (ins Claim:$source);
+  let arguments = (ins Claim:$source, I64Attr:$index);
   let results   = (outs Claim:$result);
 
   let extraClassDeclaration = [{
@@ -1044,7 +1040,8 @@ def ProjectOp : TraitDialectOp<"project", [
     }
   }];
 
-  let hasCustomAssemblyFormat = 1;
+  let assemblyFormat =
+    "$source `[` $index `]` attr-dict `:` type($source) `->` type($result)";
 }
 
 

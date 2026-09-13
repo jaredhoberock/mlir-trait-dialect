@@ -46,7 +46,7 @@ trait.impl private @Has_impl for @Has[f64] {
 func.func nested @f(%arg0: !trait.poly<3>, %arg1: !trait.claim<@Has[!trait.poly<3>]>) -> i1 {
   %0 = trait.method.call %arg1 @Has[!trait.poly<3>]::@get(%arg0)
     : (!trait.poly<3>) -> !trait.proj<@Has[!trait.poly<3>], "A">
-  %1 = trait.project %arg1: @Has[!trait.poly<3>] to @MyEq[!trait.proj<@Has[!trait.poly<3>], "A">, !trait.proj<@Has[!trait.poly<3>], "A">]
+  %1 = trait.project %arg1[0] : !trait.claim<@Has[!trait.poly<3>]> -> !trait.claim<@MyEq[!trait.proj<@Has[!trait.poly<3>], "A">, !trait.proj<@Has[!trait.poly<3>], "A">]>
   %2 = trait.method.call %1 @MyEq[!trait.proj<@Has[!trait.poly<3>], "A">, !trait.proj<@Has[!trait.poly<3>], "A">]::@eq(%0, %0)
     : (!trait.proj<@Has[!trait.poly<3>], "A">, !trait.proj<@Has[!trait.poly<3>], "A">) -> i1
   return %2 : i1

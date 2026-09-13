@@ -34,7 +34,7 @@ trait.impl private @B_i32 for @B[i32] {
   func.func @b(%x: i32) -> i64 {
     %s = trait.assume @B[i32]
     // expected-error@+1 {{unproven monomorphic claim '!trait.claim<@A[!trait.proj<@Foo[i32], "Out">]>' after instantiate-monomorphs}}
-    %a = trait.project %s : @B[i32] to @A[!trait.proj<@Foo[i32], "Out">]
+    %a = trait.project %s[0] : !trait.claim<@B[i32]> -> !trait.claim<@A[!trait.proj<@Foo[i32], "Out">]>
     %r = trait.method.call %a @A[!trait.proj<@Foo[i32], "Out">]::@a() : () -> i64
     return %r : i64
   }

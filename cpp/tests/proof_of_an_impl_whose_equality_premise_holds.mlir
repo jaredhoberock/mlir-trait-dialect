@@ -30,7 +30,7 @@ func.func @main(%x: i8) -> i64 {
   %w = trait.witness @p for @Vector[i8]
   %t = trait.witness @Tensor_i8 for @Tensor[i8]
   %s = trait.method.call %t @Tensor[i8]::@shape(%x) : (i8) -> !trait.proj<@Tensor[i8], "Shape"> by @Tensor_i8
-  %eq = trait.project %w : @Vector[i8] by @p to !trait.proj<@Tensor[i8], "Shape"> = i64
+  %eq = trait.project %w[1] : !trait.claim<@Vector[i8] by @p> -> !trait.claim<!trait.proj<@Tensor[i8], "Shape"> = i64>
   %n = trait.coerce %s : !trait.proj<@Tensor[i8], "Shape"> to i64 via (%eq) : (!trait.claim<!trait.proj<@Tensor[i8], "Shape"> = i64>)
   return %n : i64
 }

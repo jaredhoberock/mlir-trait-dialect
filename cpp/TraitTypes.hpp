@@ -1250,6 +1250,29 @@ FailureOr<SpecializationMap> matchDeclaration(
 /// the type identities this dialect's own library carries.
 bool mentionsMonomorphicProjection(Type ty);
 
+/// How many requirements `claim` carries: the `where` predicates of the trait
+/// it applies, plus -- when `claim` is proven -- the assumptions of the impl its
+/// proof cites. An equality claim applies no trait, so it requires nothing.
+FailureOr<uint64_t> getClaimRequirementCount(
+    ClaimType claim,
+    ModuleOp module,
+    llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
+
+/// The requirement `claim` carries at `index`, in the one order a projection
+/// indexes them by: the trait's `where` predicates in declaration order, then --
+/// when `claim` is proven -- the assumptions of the impl its proof cites, which
+/// is the order that proof already names its subproofs in. The requirement is
+/// instantiated at the claim's arguments; an application requirement of a proven
+/// claim carries the provider of the subproof discharging it, and an equality
+/// requirement never carries a provider. This is the one reading a
+/// `trait.project` hop is checked against. Refuses an index past the last
+/// requirement.
+FailureOr<ClaimType> getClaimRequirementAt(
+    ClaimType claim,
+    ModuleOp module,
+    uint64_t index,
+    llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
+
 /// Verify that a `proven` claim soundly proves the (possibly still polymorphic)
 /// `unproven` claim and extend `subst` with a mapping when appropriate.
 ///

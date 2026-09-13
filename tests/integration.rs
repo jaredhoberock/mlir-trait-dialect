@@ -537,7 +537,7 @@ fn test_jit() {
 }
 
 #[test]
-fn the_projection_query_and_the_project_verifier_share_one_verdict() {
+fn the_project_builder_selects_a_requirement_by_position() {
     let registry = DialectRegistry::new();
     register_all_dialects(&registry);
     let context = Context::new();
@@ -545,38 +545,64 @@ fn the_projection_query_and_the_project_verifier_share_one_verdict() {
     trait_::register(&context);
     context.load_all_available_dialects();
 
-    // @Has requires Self::Out = i64, so a claim of @Has[i32] projects to the
-    // equality hop !trait.proj<@Has[i32], "Out"> = i64 -- the requirement
-    // specialized at the source application, exactly what the trait.project
-    // verifier accepts as a candidate projection.
-    let module = Module::parse(
-        &context,
-        "!S = !trait.poly<0>\n\
-         trait.trait private @Has[!S] where [!trait.proj<@Has[!S], \"Out\"> = i64] { trait.assoc_type @Out }\n",
-    )
-    .expect("the fixture module parses");
+    let loc = Location::unknown(&context);
+    let module = Module::new(loc);
+    let self_ty = trait_::poly_type(&context, 0);
+    let i32_ty: melior::ir::Type = IntegerType::new(&context, 32).into();
+    let i64_ty: melior::ir::Type = IntegerType::new(&context, 64).into();
 
-    let src = melior::ir::Type::parse(&context, "!trait.claim<@Has[i32]>")
-        .expect("the source claim parses");
-    let hop = melior::ir::Type::parse(
-        &context,
-        "!trait.claim<!trait.proj<@Has[i32], \"Out\"> = i64>",
-    )
-    .expect("the equality hop claim parses");
-    let wrong_hop = melior::ir::Type::parse(
-        &context,
-        "!trait.claim<!trait.proj<@Has[i32], \"Out\"> = i32>",
-    )
-    .expect("the wrong hop claim parses");
-    let identity = melior::ir::Type::parse(&context, "!trait.claim<@Has[i32]>")
-        .expect("the identity claim parses");
+    // @Has requires @A[Self] at position 0 and Self::Out = i64 at position 1.
+    module
+        .body()
+        .append_operation(trait_::trait_(loc, "A", &[self_ty], &[]));
 
-    // The query accepts the true equality hop and the identity projection, and
-    // rejects a hop whose resolved type the requirement does not license -- the same
-    // membership the trait.project verifier checks when its symbol uses are verified.
-    assert!(trait_::claim_projects_to(&module, src, hop));
-    assert!(trait_::claim_projects_to(&module, src, identity));
-    assert!(!trait_::claim_projects_to(&module, src, wrong_hop));
+    let has_self = trait_::trait_application_attr(&context, "Has", &[self_ty]);
+    let a_self = trait_::trait_application_attr(&context, "A", &[self_ty]);
+    let out_of_self = trait_::projection_type(&context, has_self, "Out", &[]);
+    let out_is_i64 = trait_::type_equality_attr(&context, out_of_self, i64_ty)
+        .expect("the equality requirement constructs");
+    let has = trait_::trait_(loc, "Has", &[self_ty], &[a_self.into(), out_is_i64]);
+    has.region(0)
+        .unwrap()
+        .first_block()
+        .unwrap()
+        .append_operation(trait_::assoc_type(loc, "Out", None, &[]));
+    module.body().append_operation(has);
+
+    // A hop built at position 1 off a claim of @Has[i32] is that equality
+    // requirement instantiated at i32: the builder writes the index the
+    // verifier reads.
+    let has_i32 = trait_::trait_application_attr(&context, "Has", &[i32_ty]);
+    let claim_ty: melior::ir::Type = trait_::claim_type(&context, has_i32).into();
+    let out_of_i32 = trait_::projection_type(&context, has_i32, "Out", &[]);
+    let hop = trait_::equality_claim_type(&context, out_of_i32, i64_ty)
+        .expect("the hop claim constructs");
+
+    let block = Block::new(&[(claim_ty, loc)]);
+    block.append_operation(trait_::project(
+        loc,
+        block.argument(0).unwrap().into(),
+        1,
+        hop,
+    ));
+    block.append_operation(func::r#return(&[], loc));
+    let body = Region::new();
+    body.append_block(block);
+    module.body().append_operation(func::func(
+        &context,
+        StringAttribute::new(&context, "f"),
+        TypeAttribute::new(FunctionType::new(&context, &[claim_ty], &[]).into()),
+        body,
+        &[],
+        loc,
+    ));
+
+    assert!(module.as_operation().verify());
+    let rendered = module.as_operation().to_string();
+    assert!(
+        rendered.contains("trait.project %arg0[1]"),
+        "the hop selects requirement 1: {rendered}"
+    );
 }
 
 #[test]

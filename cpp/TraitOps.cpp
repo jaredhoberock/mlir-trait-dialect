@@ -1594,22 +1594,41 @@ static func::FuncOp specializeMethodAsFreeFuncWithLeadingSelfProof(
     return claim;
   };
 
-  // Replace every remaining AssumeOp with a projection from the self proof: an
-  // application assume to the proven obligation, an equality assume to the
-  // impl's equality where-clause. Both are candidate projections of the proven
-  // self, so the clone holds no trait.assume an AssumeOp verifier would refuse
-  // at module scope.
+  // The self proof's requirements by position, so an assume stating one selects
+  // it off the leading proof. An entry this clone cannot read is one no assume
+  // can select, so the reading is taken requirement by requirement.
+  llvm::DenseMap<Type, uint64_t> requirementIndex;
+  if (auto count = getClaimRequirementCount(selfProofTy, module); succeeded(count))
+    for (uint64_t index = 0; index < *count; ++index)
+      if (auto requirement = getClaimRequirementAt(selfProofTy, module, index);
+          succeeded(requirement))
+        requirementIndex.try_emplace(Type(*requirement), index);
+
+  // Replace every remaining AssumeOp with the evidence the leading self proof
+  // gives for what it states, so the clone holds no trait.assume an AssumeOp
+  // verifier would refuse at module scope. A proven claim already names the
+  // proof discharging it -- a fact of the impl, settled once the self is ground
+  // -- so the witness carrying that proof is minted directly. An unproven claim
+  // names none, and what stands for it is the requirement of the self proof it
+  // states: the impl's equality where-clause, selected by its position. An
+  // assume stating neither is left for its own verifier to refuse.
   SmallVector<AssumeOp> toErase;
   funcOp.walk([&](AssumeOp a) {
     PatternRewriter::InsertionGuard guard(rewriter);
     rewriter.setInsertionPoint(a);
 
-    Value replacement = ProjectOp::create(
-      rewriter,
-      a.getLoc(),
-      provenOrSame(a.getClaim()),
-      selfProofArg
-    );
+    ClaimType stated = provenOrSame(a.getClaim());
+    Value replacement;
+    if (stated.isProven()) {
+      replacement = WitnessOp::create(rewriter, a.getLoc(), stated.getProof(),
+                                      stated.getTraitApplication());
+    } else if (auto position = requirementIndex.find(Type(stated));
+               position != requirementIndex.end()) {
+      replacement = ProjectOp::create(rewriter, a.getLoc(), stated, selfProofArg,
+                                      position->second);
+    } else {
+      return;
+    }
 
     rewriter.replaceAllUsesWith(a.getResult(), replacement);
     toErase.push_back(a);
@@ -3755,106 +3774,6 @@ FailureOr<func::FuncOp> FuncCallOp::getOrSpecializeCallee(
 // ProjectOp
 //===----------------------------------------------------------------------===//
 
-ParseResult ProjectOp::parse(OpAsmParser &p, OperationState &st) {
-  // parse `%src : @SrcTrait[Types...] (by @SrcProof)? to @DstTrait[Types...] (by @DstProof)?`
-
-  // %src
-  OpAsmParser::UnresolvedOperand src;
-  if (p.parseOperand(src)) return failure();
-  if (p.parseColon()) return failure();
-
-  // @SrcTrait[...]
-  TraitApplicationAttr srcApp = dyn_cast_or_null<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
-  if (!srcApp) return p.emitError(p.getCurrentLocation(), "expected a TraitApplicationAttr");
-
-  // (by @SrcProof)?
-  FlatSymbolRefAttr srcProof;
-  if (succeeded(p.parseOptionalKeyword("by"))) {
-    if (p.parseAttribute(srcProof))
-      return failure();
-  }
-
-  // resolve %src with the appropriate claim type
-  ClaimType srcTy = srcProof
-    ? ClaimType::get(p.getContext(), srcApp, srcProof)
-    : ClaimType::get(p.getContext(), srcApp);
-
-  if (p.resolveOperand(src, srcTy, st.operands))
-    return failure();
-
-  // to
-  if (p.parseKeyword("to"))
-    return failure();
-
-  // The result is either an application projection (@DstTrait[...] (by
-  // @DstProof)?) or the equality hop to a trait's equality requirement
-  // (!A = !B), disambiguated by the leading `@`. The equality arm never carries
-  // a proof.
-  ClaimType dstTy;
-  FlatSymbolRefAttr dstTrait;
-  OptionalParseResult dstSym = p.parseOptionalAttribute(dstTrait);
-  if (dstSym.has_value()) {
-    if (failed(*dstSym))
-      return failure();
-    if (p.parseLSquare())
-      return failure();
-    SmallVector<Type> dstArgs;
-    do {
-      Type ty;
-      if (p.parseType(ty))
-        return failure();
-      dstArgs.push_back(ty);
-    } while (succeeded(p.parseOptionalComma()));
-    if (p.parseRSquare())
-      return failure();
-    auto dstApp = TraitApplicationAttr::get(p.getContext(), dstTrait,
-                                            ArrayRef<Type>(dstArgs));
-
-    // (by @DstProof)?
-    FlatSymbolRefAttr dstProof;
-    if (succeeded(p.parseOptionalKeyword("by"))) {
-      if (p.parseAttribute(dstProof))
-        return failure();
-    }
-    dstTy = dstProof ? ClaimType::get(p.getContext(), dstApp, dstProof)
-                     : ClaimType::get(p.getContext(), dstApp);
-  } else {
-    Type lhs, rhs;
-    if (p.parseType(lhs) || p.parseEqual() || p.parseType(rhs))
-      return failure();
-    dstTy = ClaimType::getEquality(p.getContext(), lhs, rhs);
-  }
-  st.addTypes(dstTy);
-
-  return success();
-}
-
-void ProjectOp::print(OpAsmPrinter& p) {
-  // print `%src: %Trait1[Types...] to @Trait2[Types...]1
-
-  p << " ";
-
-  // Source: %src: @SrcTrait[...] (by @SrcProof)?
-  p.printOperand(getSource());
-  p << ": ";
-  ClaimType srcTy = getSourceClaim();
-  srcTy.getTraitApplication().print(p);
-
-  if (srcTy.isProven())
-    p << " by " << srcTy.getProof();
-
-  // Destination: to @DstTrait[...] (by @DstProof)? or the equality hop to !A = !B
-  p << " to ";
-  ClaimType dstTy = getResultClaim();
-  if (auto eq = dstTy.getEqualityAttr()) {
-    eq.print(p);
-  } else {
-    dstTy.getTraitApplication().print(p);
-    if (dstTy.isProven())
-      p << " by " << dstTy.getProof();
-  }
-}
-
 LogicalResult ProjectOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // Verification writes nothing, so every name read under it resolves through
   // the symbol tables the walk this is one step of has already built.
@@ -3864,30 +3783,19 @@ LogicalResult ProjectOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (!module)
     return emitOpError() << "not in a module";
 
-  ClaimType src = getSourceClaim();
-  ClaimType dst = getResultClaim();
+  auto errFn = [&] { return emitOpError(); };
+  auto requirement =
+      getClaimRequirementAt(getSourceClaim(), module, getIndex(), errFn);
+  if (failed(requirement))
+    return failure();
 
-  // Verify proofness parity for an application result: a proven source projects
-  // to a proven result, an unproven to an unproven. An equality result is
-  // exempt -- an equality claim is never proven, so projecting one from a proven
-  // source does not force a proof it cannot carry.
-  if (!dst.isEquality()) {
-    bool srcProven = src.isProven();
-    bool dstProven = dst.isProven();
-    if (srcProven != dstProven) {
-      if (!srcProven)
-        return emitOpError() << "result cannot have 'by' when source has no 'by'";
-      return emitOpError() << "result must have 'by' when source has 'by'";
-    }
-  }
+  // The result type is an annotation on the selection: the index decides which
+  // claim this op produces, so the spelled one must be that claim.
+  if (*requirement != getResultClaim())
+    return emitOpError() << "type mismatch: expected " << *requirement
+                         << " but found " << getResultClaim();
 
-  // The result must be one of the source's candidate projections.
-  if (src.projectsTo(module, dst))
-    return success();
-
-  return emitOpError()
-         << "projected claim " << dst
-         << "is not a candidate projection of " << src;
+  return success();
 }
 
 

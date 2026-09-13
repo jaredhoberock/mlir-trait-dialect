@@ -3,13 +3,12 @@
 
 // RUN: mlir-opt %s | FileCheck %s
 
-// The equality hop, from a proven and from an unproven source. Proofness parity
-// would force a proven source to project to a proven result, but an equality
-// claim is never proven, so the equality arm is exempt: the proven claim of
-// @Has[i32] projects to !trait.proj<@Has[i32], "Out"> = i64 with no proof on
-// the result. The unproven source (@f) prints the same hop with no `by`, so the
-// candidate-set membership accepts the requirement specialized at the source
-// application from either source.
+// The equality hop, from a proven and from an unproven source. An equality
+// claim is never proven, so requirement 0 of the proven claim of @Has[i32] is
+// !trait.proj<@Has[i32], "Out"> = i64 with no proof on it, exactly as it is for
+// the unproven claim (@f): the requirement is instantiated at the source
+// application either way, and only an application requirement reads a provider
+// out of the source's evidence.
 
 !S = !trait.poly<0>
 
@@ -22,15 +21,15 @@ trait.impl private @Has_i32 for @Has[i32] {
 }
 
 // CHECK-LABEL: func.func @g
-// CHECK: trait.project %arg0: @Has[i32] by @Has_i32 to !trait.proj<@Has[i32], "Out"> = i64
+// CHECK: trait.project %arg0[0] : <@Has[i32] by @Has_i32> -> <!trait.proj<@Has[i32], "Out"> = i64>
 func.func @g(%p: !trait.claim<@Has[i32] by @Has_i32>) -> !trait.claim<!trait.proj<@Has[i32], "Out"> = i64> {
-  %e = trait.project %p : @Has[i32] by @Has_i32 to !trait.proj<@Has[i32], "Out"> = i64
+  %e = trait.project %p[0] : !trait.claim<@Has[i32] by @Has_i32> -> !trait.claim<!trait.proj<@Has[i32], "Out"> = i64>
   return %e : !trait.claim<!trait.proj<@Has[i32], "Out"> = i64>
 }
 
 // CHECK-LABEL: func.func @f
-// CHECK: trait.project %arg0: @Has[i32] to !trait.proj<@Has[i32], "Out"> = i64
+// CHECK: trait.project %arg0[0] : <@Has[i32]> -> <!trait.proj<@Has[i32], "Out"> = i64>
 func.func @f(%p: !trait.claim<@Has[i32]>) -> !trait.claim<!trait.proj<@Has[i32], "Out"> = i64> {
-  %e = trait.project %p : @Has[i32] to !trait.proj<@Has[i32], "Out"> = i64
+  %e = trait.project %p[0] : !trait.claim<@Has[i32]> -> !trait.claim<!trait.proj<@Has[i32], "Out"> = i64>
   return %e : !trait.claim<!trait.proj<@Has[i32], "Out"> = i64>
 }

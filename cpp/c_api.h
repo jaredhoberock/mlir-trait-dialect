@@ -174,13 +174,6 @@ bool traitProjectionResolutionVerifiesAtImpl(MlirModule module,
                                               MlirType *premises, intptr_t numPremises,
                                               MlirAttribute *discharges, intptr_t numDischarges);
 
-/// Whether `srcClaim` projects to `dstClaim`: `dstClaim` exactly matches one of
-/// the source's candidate projections (identity, a trait requirement specialized
-/// at the source, or a proven impl's assumption). This is the exact membership a
-/// projection hop must satisfy. Returns false if either argument is not a claim
-/// type.
-bool traitClaimProjectsTo(MlirModule module, MlirType srcClaim, MlirType dstClaim);
-
 /// Create a trait.assoc_type op. If boundType.ptr is non-null, the op gets a
 /// bound_type attribute (for use inside trait.impl); otherwise it is a bare
 /// declaration (for use inside trait.trait).

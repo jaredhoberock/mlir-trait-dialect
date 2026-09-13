@@ -29,7 +29,7 @@ trait.proof private @T_p proves @T_impl for @T[i64] given []
 // The bare projection parameter resolves to i32; the equality endpoint does not.
 // CHECK: func.func private @T_impl
 // CHECK-SAME: : i32) -> !trait.claim<!trait.proj<@Assoc[i64], "Out"> = i32>
-// CHECK: trait.project %{{.*}} to !trait.proj<@Assoc[i64], "Out"> = i32
+// CHECK: trait.project %{{.*}}[0] : <@T[i64] by @T_p> -> <!trait.proj<@Assoc[i64], "Out"> = i32>
 
 // CHECK-LABEL: func.func @main
 // CHECK: call @T_impl

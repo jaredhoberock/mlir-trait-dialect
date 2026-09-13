@@ -53,10 +53,10 @@ trait.impl private @Wrapper_impl for @Wrapper[!Wi] where [
     %elem = trait.method.call %container @Container[!Wi]::@first(%self)
       : (!Wi) -> !trait.proj<@Container[!Wi], "Elem">
 
-    // project the @Printable obligation from @Container
-    %printable = trait.project %container
-      : @Container[!Wi]
-      to @Printable[!trait.proj<@Container[!Wi], "Elem">]
+    // @Container's sole requirement is the @Printable obligation
+    %printable = trait.project %container[0]
+      : !trait.claim<@Container[!Wi]>
+      -> !trait.claim<@Printable[!trait.proj<@Container[!Wi], "Elem">]>
 
     %result = trait.method.call %printable @Printable[!trait.proj<@Container[!Wi], "Elem">]::@print(%elem)
       : (!trait.proj<@Container[!Wi], "Elem">) -> i32

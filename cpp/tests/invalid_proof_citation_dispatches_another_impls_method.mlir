@@ -30,7 +30,7 @@ trait.impl private @A_i64 for @A[i64] {
 trait.impl private @B_i32 for @B[i32] {
   func.func @b(%x: i32) -> i64 {
     %s = trait.assume @B[i32]
-    %a = trait.project %s : @B[i32] to @A[i32]
+    %a = trait.project %s[0] : !trait.claim<@B[i32]> -> !trait.claim<@A[i32]>
     %r = trait.method.call %a @A[i32]::@a() : () -> i64
     return %r : i64
   }

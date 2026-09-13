@@ -91,9 +91,9 @@ trait.trait private @PartialOrd[!PartialOrdS,!PartialOrdO] where [
   func.func @le(%self: !PartialOrdS, %other: !PartialOrdO) -> i1 {
     %partial_ord = trait.assume @PartialOrd[!PartialOrdS,!PartialOrdO]
 
-    %partial_eq = trait.project %partial_ord
-      : @PartialOrd[!PartialOrdS,!PartialOrdO]
-      to @PartialEq[!PartialOrdS,!PartialOrdO]
+    %partial_eq = trait.project %partial_ord[0]
+      : !trait.claim<@PartialOrd[!PartialOrdS,!PartialOrdO]>
+      -> !trait.claim<@PartialEq[!PartialOrdS,!PartialOrdO]>
 
     %lt = trait.method.call %partial_ord @PartialOrd[!PartialOrdS,!PartialOrdO]::@lt(%self, %other)
       : (!PartialOrdS,!PartialOrdO) -> i1
@@ -119,9 +119,9 @@ trait.trait private @PartialOrd[!PartialOrdS,!PartialOrdO] where [
   func.func @ge(%self: !PartialOrdS, %other: !PartialOrdO) -> i1 {
     %partial_ord = trait.assume @PartialOrd[!PartialOrdS,!PartialOrdO]
 
-    %partial_eq = trait.project %partial_ord
-      : @PartialOrd[!PartialOrdS,!PartialOrdO]
-      to @PartialEq[!PartialOrdS,!PartialOrdO]
+    %partial_eq = trait.project %partial_ord[0]
+      : !trait.claim<@PartialOrd[!PartialOrdS,!PartialOrdO]>
+      -> !trait.claim<@PartialEq[!PartialOrdS,!PartialOrdO]>
 
     %gt = trait.method.call %partial_ord @PartialOrd[!PartialOrdS,!PartialOrdO]::@gt(%self, %other)
       : (!PartialOrdS,!PartialOrdO) -> i1
@@ -166,9 +166,9 @@ trait.trait private @Ord[!OrdS] where [
 
   func.func @max(%self: !OrdS, %other: !OrdS) -> !OrdS {
     %ord = trait.assume @Ord[!OrdS]
-    %partial_ord = trait.project %ord
-      : @Ord[!OrdS]
-      to @PartialOrd[!OrdS,!OrdS]
+    %partial_ord = trait.project %ord[1]
+      : !trait.claim<@Ord[!OrdS]>
+      -> !trait.claim<@PartialOrd[!OrdS,!OrdS]>
 
     %cond = trait.method.call %partial_ord @PartialOrd[!OrdS,!OrdS]::@gt(%self, %other)
       : (!OrdS,!OrdS) -> i1
@@ -184,9 +184,9 @@ trait.trait private @Ord[!OrdS] where [
 
   func.func @min(%self: !OrdS, %other: !OrdS) -> !OrdS {
     %ord = trait.assume @Ord[!OrdS]
-    %partial_ord = trait.project %ord
-      : @Ord[!OrdS]
-      to @PartialOrd[!OrdS,!OrdS]
+    %partial_ord = trait.project %ord[1]
+      : !trait.claim<@Ord[!OrdS]>
+      -> !trait.claim<@PartialOrd[!OrdS,!OrdS]>
 
     %cond = trait.method.call %partial_ord @PartialOrd[!OrdS,!OrdS]::@le(%self, %other)
       : (!OrdS,!OrdS) -> i1
