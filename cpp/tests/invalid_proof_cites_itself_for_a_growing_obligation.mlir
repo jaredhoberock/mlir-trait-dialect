@@ -8,11 +8,10 @@
 // level deep the citation carries and the proof verifies. Followed down, the
 // derivation asks about @X[tuple<i32>], then @X[tuple<tuple<i32>>], and never
 // ends. Every node is a new application, so the early exit on a bound
-// obligation never fires; the count of obligations naming one trait along the
-// derivation is what stops it, exactly as it stops the same chain in impl
-// selection.
+// obligation never fires; the number of obligations standing on the derivation
+// is what stops it, exactly as it stops the same chain in impl selection.
 
-// CHECK: error: overflow evaluating the requirement {{.*}}: 128 obligations of @X stand on the chain that reaches it
+// CHECK: error: overflow evaluating the requirement {{.*}}: 128 obligations stand on the chain that reaches it
 // CHECK: note: required by {{.*}}@X[i32]
 // CHECK: note: required by {{.*}}@X[tuple<i32>]
 // CHECK: note: {{.*}} more frame(s) elided

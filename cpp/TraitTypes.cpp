@@ -137,11 +137,7 @@ void reportUnnormalizableProjection(Type ty, unsigned iterations,
 LogicalResult checkObligationChainDepth(ArrayRef<TraitApplicationAttr> chain,
                                         TraitApplicationAttr app,
                                         Location anchor) {
-  StringAttr trait = app.getTraitName().getAttr();
-  unsigned depth = llvm::count_if(chain, [&](TraitApplicationAttr frame) {
-    return frame.getTraitName().getAttr() == trait;
-  });
-  if (depth < kInstantiationDepthLimit)
+  if (chain.size() < kInstantiationDepthLimit)
     return success();
 
   // At the demand, not at the declaration the walk is reading: every frame on
@@ -151,8 +147,7 @@ LogicalResult checkObligationChainDepth(ArrayRef<TraitApplicationAttr> chain,
   InFlightDiagnostic diagnostic =
       emitError(currentDemandAnchor().value_or(anchor))
       << "overflow evaluating the requirement '" << app << "': "
-      << depth << " obligations of @" << trait.getValue()
-      << " stand on the chain that reaches it";
+      << chain.size() << " obligations stand on the chain that reaches it";
   nameChainEnds<TraitApplicationAttr>(
       diagnostic, chain,
       [](InFlightDiagnostic &d, TraitApplicationAttr frame) {
@@ -1000,7 +995,7 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
 
   // This node has obligations of its own, so it is a frame of the chain the
   // descent below stands on. A chain that keeps reaching a bigger application
-  // of one trait is refused here rather than followed until the stack is gone.
+  // is refused here rather than followed until the stack is gone.
   if (failed(checkObligationChainDepth(chain, unproven.getTraitApplication(),
                                        proof.getLoc())))
     return failure();

@@ -170,9 +170,9 @@ struct ResolutionMemo {
   DenseMap<ScopedApplication, ResolutionOutcome> chosen;
 
   // The applications impl selection is part-way through, outermost first. A
-  // repeat is a resolution cycle; the count of frames naming one trait is how
-  // far the obligation chain has recursed through that trait, which is what
-  // bounds a chain whose every step is a new application.
+  // repeat is a resolution cycle; the number of frames is how deep the
+  // obligation chain has recursed, which is what bounds a chain whose every
+  // step is a new application.
   SmallVector<TraitApplicationAttr> visiting;
 
   // A memo for assumptionsSatisfiableFor

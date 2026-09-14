@@ -7,11 +7,11 @@
 // @P1[T] out of @Q1[T], and @Q_all proves @Q1[T] out of @P1[tuple<T>]. Each
 // citation's declaration rebuilds the obligation it is read at, so both proofs
 // verify one level deep; the derivation underneath them alternates traits and
-// grows the type forever. What bounds it is the count of frames naming ONE
-// trait, so a derivation alternating two traits runs twice as far as one
-// repeating a single trait before it is refused.
+// grows the type forever. What bounds it is the number of frames standing on
+// the chain, whichever trait each names, so a derivation alternating two traits
+// is refused at the same depth as one repeating a single trait.
 
-// CHECK: error: overflow evaluating the requirement {{.*}}: 128 obligations of @P1 stand on the chain that reaches it
+// CHECK: error: overflow evaluating the requirement {{.*}}: 128 obligations stand on the chain that reaches it
 // CHECK: note: required by {{.*}}@P1[i32]
 // CHECK: note: required by {{.*}}@Q1[i32]
 // CHECK: note: required by {{.*}}@P1[tuple<i32>]

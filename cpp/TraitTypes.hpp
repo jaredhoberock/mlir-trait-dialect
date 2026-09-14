@@ -864,17 +864,16 @@ inline Type applySubstitutionOnce(const llvm::DenseMap<Type,Type> &subst,
 /// rewrite, and the depth it reaches stays walkable.
 constexpr unsigned kSubstitutionFixedPointMaxPasses = 256;
 
-/// How many times one declaration may occur on the chain of instantiations or
-/// obligations that reaches the work in hand.
+/// The depth limit on the chain of instantiations or obligations that reaches
+/// the work in hand.
 ///
 /// A template that instantiates itself at a larger type, and an impl whose
 /// where-clause demands its own trait at a larger type, both make progress at
 /// every step: each step is a new declaration instance or a new application, so
 /// no cycle guard sees a repeat and the recursion runs until the machine stops
-/// it. Counting occurrences of ONE declaration along the chain is what tells
-/// such a chain from a deep but finite one, which nests distinct declarations.
-/// Rust bounds the same two recursions the same way, at the same default
-/// (`recursion_limit`, 128).
+/// it. A bound on how deep the chain runs is what tells such a chain from a
+/// finite one. Rust bounds the same two recursions the same way, at the same
+/// default (`recursion_limit`, 128).
 constexpr unsigned kInstantiationDepthLimit = 128;
 
 /// How many frames from each end of a chain a refusal names. A chain at the
@@ -900,14 +899,18 @@ void nameChainEnds(InFlightDiagnostic &diagnostic, ArrayRef<FrameT> chain,
     name(diagnostic, frame);
 }
 
-/// Refuses an obligation chain that has reached the depth limit for one trait,
-/// naming the chain that reaches `app`.
+/// Refuses an obligation chain that has reached the depth limit, naming the
+/// chain that reaches `app`.
 ///
 /// Every frame on the chain can be a distinct application, so the cycle guard
 /// never fires on a chain whose obligations keep growing the type they ask
-/// about. This is what stops it, and the chain is what says where the growth
-/// came from. The refusal stands at the demand it was raised under, or at
-/// `anchor` where no demand names a place.
+/// about. The chain's length is what stops it, and the chain is what says where
+/// the growth came from. The refusal stands at the demand it was raised under,
+/// or at `anchor` where no demand names a place.
+///
+/// Every frame counts against the bound, whichever trait it names: a frame is a
+/// recursion the walk is standing in, and a chain that alternates traits stands
+/// as deep as one that repeats a single trait.
 ///
 /// The chain holds the applications an obligation walk is part-way through,
 /// outermost first, whichever walk it is: impl selection deriving a candidate's
