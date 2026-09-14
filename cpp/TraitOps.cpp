@@ -3871,6 +3871,26 @@ FailureOr<func::FuncOp> FuncCallOp::getOrSpecializeCallee(
   auto existing = lookupSymbolFrom<func::FuncOp>(
       *module, FlatSymbolRefAttr::get(rewriter.getStringAttr(instanceName)));
   if (existing) {
+    // An instance is named by the type arguments alone, so every call at those
+    // arguments reaches this one. Its parameters carry the evidence the call
+    // that cut it supplied: a claim naming another proof of the same
+    // application is a parameter this instance does not have, and the call
+    // cannot be dispatched to it.
+    TypeRange parameters = existing.getFunctionType().getInputs();
+    TypeRange operands = getOperandTypes();
+    if (parameters.size() != operands.size())
+      return emitOpError() << "passes " << operands.size()
+                           << " operand(s) to the instance '@" << instanceName
+                           << "' its type arguments name, which takes "
+                           << parameters.size();
+    for (auto [index, types] : llvm::enumerate(llvm::zip(parameters, operands))) {
+      auto [parameter, operand] = types;
+      if (parameter != operand)
+        return emitOpError()
+               << "passes " << operand << " as operand #" << index
+               << " to the instance '@" << instanceName
+               << "' its type arguments name, which takes " << parameter;
+    }
     return existing;
   }
 

@@ -4,12 +4,12 @@
 // RUN: not mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' 2>&1 | FileCheck %s
 
 // One callee, one type argument, two calls whose claim operands name different
-// proofs of @T[i64]. The callee is specialized once for i64, and its parameter
-// carries whichever proof the instance was cut with, so the other call passes a
-// claim the clone's signature does not take. The refusal stands at the call
-// that was rewritten.
+// proofs of @T[i64]. An instance is named by the type arguments alone, so both
+// calls reach one clone, whose parameter carries whichever proof the call that
+// cut it supplied. The other call is refused where that clone is looked up,
+// with both its operand and the clone's parameter in hand.
 
-// CHECK: error: 'func.call' op operand type mismatch: expected operand type '!trait.claim<@T[i64] by @pv2>', but provided '!trait.claim<@T[i64] by @pv1>' for operand number 0
+// CHECK: error: 'trait.func.call' op passes '!trait.claim<@T[i64] by @pv1>' as operand #0 to the instance '@{{.*}}' its type arguments name, which takes '!trait.claim<@T[i64] by @pv2>'
 // CHECK-NEXT: trait.func.call @g(%w1)
 
 trait.trait private @T[!trait.poly<0>] { func.func private @t() -> i64 }
