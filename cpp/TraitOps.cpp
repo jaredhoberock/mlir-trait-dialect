@@ -3471,7 +3471,10 @@ NormalizationContext buildLocalClaimNormalizationContext(Operation *op,
   return ctx;
 }
 
-/// Checks every proof the claims a call carries name.
+/// Checks every proof the claims a call carries name, each at its own claim:
+/// the declaration the named evidence holds must carry to the application the
+/// claim spells, and what that evidence proves underneath was decided at the
+/// proof op holding it.
 ///
 /// Each spelling is read through the call's own context first: a coerce
 /// respells a claim through an equality it cites, and the proof standing on the
@@ -3491,16 +3494,12 @@ static LogicalResult verifyProofsAtCall(Operation *call, ValueRange operands,
   }
   llvm::append_range(spellings, call->getResultTypes());
 
-  // One binding set across every spelling: an obligation two of them prove by
-  // different symbols is the incoherent proof mapping this reports.
-  EvidenceBindings evidence;
   for (Type spelling : spellings) {
     FailureOr<Type> read = normalize(spelling);
     if (failed(read))
       return failure();
-    if (failed(bindProofsIn(*read, module, evidence,
-                            DemandOrigin::CallSignatureVerification,
-                            /*memo=*/nullptr, err)))
+    if (failed(verifyCitationsIn(*read, module,
+                                 DemandOrigin::CallSignatureVerification, err)))
       return failure();
   }
   return success();

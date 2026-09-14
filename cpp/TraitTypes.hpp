@@ -1354,6 +1354,22 @@ LogicalResult verifyAndRecordProof(ClaimType unproven,
                                    ProofDerivationMemo *memo,
                                    llvm::function_ref<InFlightDiagnostic()> err);
 
+/// Refuses every citation the claims `ty` spells that does not discharge the
+/// obligation it stands on, each read at its own claim and no deeper.
+///
+/// A proven claim spells evidence for one application, and what the spelling
+/// asserts is that the declaration the evidence holds carries to that
+/// application. What the evidence proves underneath was decided at the proof op
+/// holding it. Two spellings proving one claim by different symbols are two
+/// names for one fact, so nothing is carried across the claims here.
+///
+/// A citation nothing standing now decides is left to the leftover walk, which
+/// refuses an obligation no round resolves.
+///
+/// `origin` names the caller: the readings raise demand.
+LogicalResult verifyCitationsIn(Type ty, ModuleOp module, DemandOrigin origin,
+                                llvm::function_ref<InFlightDiagnostic()> err);
+
 /// Walks `ty` and binds every proof the types it spells name.
 ///
 /// For every `ClaimType` node inside `ty` that carries a proof (i.e.

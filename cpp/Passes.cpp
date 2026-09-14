@@ -289,37 +289,27 @@ LogicalResult convertToTrait(ModuleOp module, bool *changed = nullptr) {
   return success();
 }
 
-/// Verify that every proven claim spelled in a top-level function signature is
-/// proven by the proof it names. A `by @proof` in a declared type is otherwise
-/// checked nowhere until a call reaches it, so a signature can name a proof that
-/// does not specialize to its claim and go undiagnosed. Only module-level
-/// `func.func` signatures are walked; signatures nested inside trait/impl
-/// method bodies are not yet covered.
+/// Verify that every proven claim spelled in a top-level function signature
+/// names evidence whose declaration carries to it. A `by @proof` in a declared
+/// type is otherwise checked nowhere until a call reaches it, so a signature can
+/// name a proof that does not specialize to its claim and go undiagnosed. What
+/// that proof cites underneath was decided at the proof op holding it. Only
+/// module-level `func.func` signatures are walked; signatures nested inside
+/// trait/impl method bodies are not yet covered.
 LogicalResult verifyDeclaredClaimProofs(ModuleOp module) {
   LogicalResult status = success();
   for (auto f : module.getOps<func::FuncOp>()) {
     auto errFn = [&] {
       return f.emitOpError() << "declared claim in signature has an invalid proof: ";
     };
-    // The obligation recorder below normalizes through the ground-projection
-    // lookup, so this check raises demand of its own. The frame gives that
-    // demand the signature it came from; without one it would be recorded
-    // unattributed even though this dialect knows exactly where it arose.
+    // The readings below normalize through the ground-projection lookup, so
+    // this check raises demand of its own. The frame gives that demand the
+    // signature it came from; without one it would be recorded unattributed
+    // even though this dialect knows exactly where it arose.
     DemandFrame frame(f.getLoc());
-    Type(f.getFunctionType()).walk([&](Type t) {
-      if (status.failed())
-        return;
-      auto claim = dyn_cast<ClaimType>(t);
-      if (!claim || !claim.isProven())
-        return;
-      EvidenceBindings bindings;
-      // This check runs before the stage builds a resolver, so it holds no
-      // memo and derives what it needs itself.
-      if (failed(verifyAndRecordProof(claim.asUnproven(), claim, module, bindings,
-                                      DemandOrigin::ProofRecording,
-                                      /*memo=*/nullptr, errFn)))
-        status = failure();
-    });
+    if (failed(verifyCitationsIn(Type(f.getFunctionType()), module,
+                                 DemandOrigin::ProofRecording, errFn)))
+      status = failure();
   }
   return status;
 }

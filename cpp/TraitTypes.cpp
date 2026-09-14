@@ -1070,6 +1070,25 @@ LogicalResult verifyAndRecordProof(
   return success();
 }
 
+LogicalResult verifyCitationsIn(Type ty, ModuleOp module, DemandOrigin origin,
+                                llvm::function_ref<InFlightDiagnostic()> err) {
+  LogicalResult status = success();
+
+  ty.walk([&](Type node) {
+    if (status.failed()) return;
+
+    auto claim = dyn_cast<ClaimType>(node);
+    if (!claim || !claim.isProven())
+      return;
+
+    if (verifyCitation(claim.asUnproven(), claim, module, origin, err) ==
+        Citation::Refused)
+      status = failure();
+  });
+
+  return status;
+}
+
 /// Walk `root` and record substitution entries for every proven claim
 /// found within it. This maps the unproven claim to the proven claim, which is
 /// what lets a call substitution respell a claim a spelling names to the
