@@ -6,10 +6,11 @@
 // @V_blanket applies where @Has[T]::Out is i64. Two conditional impls could
 // bind @Has[i8], and only @Has_m holds there, so the premise reads through the
 // subproof @pv cites for its @Has obligation. That subproof's claim is the
-// obligation at the application the citation names, @Has[i8], which is the key
-// the premise's projection is looked up by. Split 1 names the instance at a
-// witness; split 2 takes the proven claim through a function parameter, so the
-// premise is read on the method call's derivation path instead.
+// obligation at the application the citation names, which is the key the
+// premise's projection is looked up by: at @pv's own claim it reads i64 = i64,
+// and a proof whose premises are decided there stands at every instance of it.
+// Split 1 carries the proof to an instance at a witness; split 2 takes the
+// proven claim through a function parameter.
 
 trait.trait private @Marker[!trait.poly<0>] {}
 trait.trait private @Other[!trait.poly<0>] {}

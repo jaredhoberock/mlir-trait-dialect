@@ -4,11 +4,11 @@
 // RUN: mlir-opt %s -verify-diagnostics
 
 // @px cites @pu, which cites @pv, which stands over @OnlyI64 -- an impl
-// applying only where its parameter is i64. Each subproof's claim is the
-// obligation it discharges at the application the citation names, so
-// witnessing @px at i8 carries i8 to the bottom of the chain and the premise
-// is read there. Read at each proof's own declaration instead, the premise
-// stands over a variable at every level and defers all the way down.
+// applying only where its parameter is i64. @pv's claim leaves that premise
+// over its own variable, and nothing above it reads a premise of a proof it
+// cites, so the refusal lands at @pv. The two proofs above it and the witness
+// at i8 each name a declaration that carries to the claim they stand on, which
+// is the whole of what they assert.
 
 trait.trait private @V[!trait.poly<0>] { func.func private @v() -> i64 }
 trait.trait private @U[!trait.poly<0>] where [@V[!trait.poly<0>]] { func.func private @u() -> i64 }
@@ -35,12 +35,12 @@ trait.impl private @X_blanket for @X[!trait.poly<0>] {
     return %r : i64
   }
 }
+// expected-error @below {{a proof states its impl's premises at its own claim; one the claim leaves open is stated at the instance instead: '!trait.poly<0>' = 'i64' reads '!trait.poly<0>' = 'i64' at '!trait.claim<@V[!trait.poly<0>] by @pv>'}}
 trait.proof private @pv proves @OnlyI64 for @V[!trait.poly<0>] given []
 trait.proof private @pu proves @U_blanket for @U[!trait.poly<0>] given [@pv]
 trait.proof private @px proves @X_blanket for @X[!trait.poly<0>] given [@pu]
 func.func @main() -> i64 {
   %w = trait.witness @px for @X[i8]
-  // expected-error @below {{impl '@OnlyI64' applies where '!trait.poly<0>' = 'i64', and nothing here makes 'i8' and 'i64' one type at '!trait.claim<@V[i8]>'}}
   %r = trait.method.call %w @X[i8]::@x() : () -> i64 by @px
   return %r : i64
 }

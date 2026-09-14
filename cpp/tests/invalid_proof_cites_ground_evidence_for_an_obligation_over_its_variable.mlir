@@ -1,14 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 
-// RUN: mlir-opt %s -verify-diagnostics
+// RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' -verify-diagnostics
 
 // @B's requirement projects through @Foo, which @Foo_any binds to the trait's
 // own variable, so @B_blanket's obligation at an instance is @A of that
-// instance. @forged cites @A_i64 for it. At the declaration the obligation
-// still spells a projection over a variable and nothing decides it; the
-// witness names @B[i32], where the obligation reads as @A[i32] and the
-// citation is read there.
+// instance. @forged cites @A_i64 for it. At @forged's own claim the obligation
+// still spells a projection over a variable and nothing standing decides the
+// citation, so the obligation is left undischarged. Impl selection reads it at
+// the instance the witness names, where it is @A[i32], and the call through
+// @forged is refused rather than dispatched to @A_i64's method.
 
 trait.trait private @Foo[!trait.poly<0>] { trait.assoc_type @Out }
 trait.impl private @Foo_any for @Foo[!trait.poly<0>] { trait.assoc_type @Out = !trait.poly<0> }
@@ -38,6 +39,7 @@ trait.proof private @forged proves @B_blanket for @B[!trait.poly<0>] given [@A_i
 func.func @main() -> i64 {
   %w = trait.witness @forged for @B[i32]
   // expected-error @below {{proof @A_i64 proves '!trait.claim<@A[i64]>', which does not discharge the obligation '!trait.claim<@A[i32]>'}}
+  // expected-error @below {{rewritable generic call survived instantiate-monomorphs}}
   %r = trait.method.call %w @B[i32]::@b() : () -> i64 by @forged
   return %r : i64
 }
