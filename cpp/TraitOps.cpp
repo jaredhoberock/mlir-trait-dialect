@@ -445,6 +445,10 @@ LogicalResult TraitOp::verify() {
   // the projection's argument overwrite the application's, so the two lists must
   // stand apart.
   //
+  // A parameter is a type variable: it is the key a projection's argument is
+  // substituted for, so a ground type standing in the list would carry every
+  // occurrence of that same type in the binding away with it.
+  //
   // A child's own invariants are verified after its parent's, so each entry is
   // read as an attribute that may be anything and refused where it stands rather
   // than cast.
@@ -462,6 +466,10 @@ LogicalResult TraitOp::verify() {
         return assoc.emitOpError()
                << "type parameter list holds " << tyAttr << ", which is not a type";
       Type param = typeAttr.getValue();
+      if (!isa<GenericTypeInterface>(param))
+        return assoc.emitOpError()
+               << "type parameter list holds " << param
+               << ", which is not a type variable";
       if (uniqueParams.contains(param))
         return assoc.emitOpError()
                << "type parameter " << param << " is already a parameter of trait '@"
@@ -999,6 +1007,10 @@ static LogicalResult verifyImplParametersAreConstrained(ImplOp impl);
 /// bound type mentioning a parameter from neither list has nothing to supply it,
 /// so the resolved type would carry a parameter no substitution reaches.
 ///
+/// A binding's own parameter is a type variable: it is the key a projection's
+/// argument is substituted for, so a ground type standing in the list would
+/// carry every occurrence of that same type in the bound type away with it.
+///
 /// A child's own invariants are verified after its parent's, so each entry is
 /// read as an attribute that may be anything and refused where it stands rather
 /// than cast.
@@ -1020,6 +1032,10 @@ static LogicalResult verifyAssociatedTypeBindingScopes(ImplOp impl) {
           return assoc.emitOpError()
                  << "type parameter list holds " << tyAttr << ", which is not a type";
         Type param = typeAttr.getValue();
+        if (!isa<GenericTypeInterface>(param))
+          return assoc.emitOpError()
+                 << "type parameter list holds " << param
+                 << ", which is not a type variable";
         // A declared parameter may be a generic type another dialect wraps
         // around a label (a coordinate parameter carries the label it stands
         // for), and declaring it declares the label it carries.
