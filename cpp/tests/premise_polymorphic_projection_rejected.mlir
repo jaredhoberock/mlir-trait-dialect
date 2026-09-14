@@ -6,10 +6,10 @@
 // A premise resolves only a GROUND sibling projection. Here the host impl is
 // generic over !S and the premise projection proj<@Sib[!S],"Elem"> quantifies
 // over that parameter while citing the single-instance impl @Sib_i64. Were the
-// projection allowed, its poly variable would unify with the cited impl's
-// concrete head and this generic impl would be accepted at impl verification on the strength
-// of ONE instance. Verification refuses a non-ground projection outright,
-// mirroring the guard the retired candidate lookup applied.
+// projection allowed, its poly variable would bind to the cited impl's concrete
+// head and this generic impl would be accepted at impl verification on the
+// strength of ONE instance. Verification refuses a non-ground projection
+// outright.
 
 !S = !trait.poly<0>
 

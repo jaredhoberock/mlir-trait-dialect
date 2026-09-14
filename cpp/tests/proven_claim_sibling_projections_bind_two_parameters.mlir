@@ -6,8 +6,8 @@
 // A trait.func.call binds two type parameters independently through sibling
 // projections of the same associated type: @f expects
 // @D[@A[poly<4>]::Out, @A[poly<5>]::Out], and the argument is
-// @D[@A[i32]::Out, @A[f32]::Out], so the call verifier unifies poly<4>=i32 and
-// poly<5>=f32 by recursing through each projection.
+// @D[@A[i32]::Out, @A[f32]::Out], so the call binds poly<4> := i32 and
+// poly<5> := f32 by matching through each projection.
 //
 // The projected argument is built one coerce per application: the equality
 // @A[i32]::Out = i64 reconciles the first element, @A[f32]::Out = i64 the

@@ -13,7 +13,7 @@
 // The match that resolves the container runs inside the derive's own
 // specialization build, over types that build already instantiated, so it also
 // pins that the inner build's fresh variables are fresh with respect to them: an
-// inner variable that aliased `!W`'s would unify the container's element with a
+// inner variable that aliased `!W`'s would bind the container's element to a
 // lookup that contains it and find no candidate impl at all.
 
 !A = !trait.poly<0>

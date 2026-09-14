@@ -3,10 +3,10 @@
 
 // RUN: mlir-opt -pass-pipeline='builtin.module(monomorphize-trait)' %s | FileCheck %s
 
-// Pins how projection unification treats an inference variable that appears
-// inside a projection type's trait-application arguments: the variable binds
-// through the projection's structure, and the occurs check does not spuriously
-// reject it.
+// Pins how a projection over a type variable crosses a call: the formal and the
+// actual project one associated type over two different labels, and the
+// comparison recurses through the projection's trait-application arguments, so
+// the label the callee spells takes the one the caller supplies.
 //
 // This models:
 //   trait Callable { type Output; fn call(self) -> Self::Output; }
@@ -14,19 +14,14 @@
 //   fn apply<F: Callable>(f: F) -> F::Output { f.call() }
 //   fn wrap_and_apply<T: Callable>(x: T) -> T::Output { apply(x) }
 //
-// When verifying the call to `apply` inside `wrap_and_apply`, after
-// binding the type params, unification of the return types sees:
+// Verifying the call to `apply` inside `wrap_and_apply` compares:
 //   apply's return:          proj<@Callable[poly<10>], "Output">
 //   wrap_and_apply's return: proj<@Callable[poly<20>], "Output">
-// After instantiation, both poly vars map to inference vars, and recursing
-// through the trait application binds one to the other -- the proj-vs-proj
-// recursion this test exercises. (A projection meeting a free inference variable
-// it does not occur in binds that variable directly; that branch is exercised by
-// the marked-coerce proj-resolution forms in coerce_unproven_pending.mlir. A
-// projection meeting a rigid type it cannot
-// resolve is a strict mismatch under the module-free comparison a verifier uses;
-// the module-capable entry a pass or committed-fact build uses resolves it if a
-// unique impl binds it, and tolerates only an irreducible crossing.)
+// The call's type arguments substitute poly<20> for poly<10>, and the two
+// spellings then agree. (A projection meeting a rigid type it cannot resolve is
+// a strict mismatch under the module-free comparison a verifier uses; the
+// module-capable entry a pass or a committed-fact build uses resolves it where
+// a unique impl binds it.)
 
 trait.trait private @Callable[!trait.poly<0>] {
   trait.assoc_type @Output

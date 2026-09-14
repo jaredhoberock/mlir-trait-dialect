@@ -4,7 +4,7 @@
 // RUN: mlir-opt %s | mlir-opt | FileCheck %s
 
 // A generic callee whose formal is an equality claim over a type variable is
-// callable across a boundary: instantiating the call unifies the formal's
+// callable across a boundary: instantiating the call matches the formal's
 // endpoints against the actual's, so claim<!poly<0> = i32> against
 // claim<i64 = i32> binds !poly<0> := i64 and the callee's !poly<0> result is the
 // caller's i64. An equality claim's endpoints live in storage the generic

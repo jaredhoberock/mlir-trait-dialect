@@ -11,7 +11,7 @@
 // equalities and the coerce is refused. This is the shape a frontend produces
 // when it drops one of two required sibling equalities; the accept path that
 // cites both, one coerce per application, lives in
-// proven_claim_sibling_projection_unification.mlir.
+// proven_claim_sibling_projections_bind_two_parameters.mlir.
 
 module {
   trait.trait private @D[!trait.poly<0>, !trait.poly<1>] {}

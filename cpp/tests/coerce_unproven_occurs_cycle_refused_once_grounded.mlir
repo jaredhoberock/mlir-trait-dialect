@@ -7,10 +7,10 @@
 // A marked coerce whose endpoints still spell a projection stands: what each
 // projection denotes is settled by the impls monomorphization mints, and the
 // two spellings are compared where that has grounded them.
-// These three are the shapes a spelling-level unifier used to refuse for closing
-// a cycle -- a question about the spellings rather than about the program, since
-// each projection resolves to whatever its impl binds and no infinite type is
-// ever built.
+// These three are the shapes where one endpoint's projection stands inside the
+// type the other endpoint spells -- a question about the spellings rather than
+// about the program, since each projection resolves to whatever its impl binds
+// and no infinite type is ever built.
 //
 // Each section carries the impl that settles its projections, so the second run
 // is the other half of the verdict: once the spellings are settled all three

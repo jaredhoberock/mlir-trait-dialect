@@ -3,10 +3,10 @@
 
 // RUN: mlir-opt %s | FileCheck %s
 
-// Projection unification must recurse through trait-application type arguments.
-// The impl method below specializes @Base[i32]::Assoc to i64. Its where-clause
-// claim contains two projections of @Fn::Output whose @Fn argument lists differ
-// only by that nested spelling. @Base[i32]::Assoc is a sibling projection this
+// Matching a projection recurses through the trait-application type arguments
+// it spells. The impl method below specializes @Base[i32]::Assoc to i64. Its
+// where-clause claim contains two projections of @Fn::Output whose @Fn argument
+// lists differ only by that nested spelling. @Base[i32]::Assoc is a sibling projection this
 // impl's own bindings do not resolve, so the impl declares a premise citing
 // @Base_i32; the verifier replays it and accepts the two spellings as the same
 // signature.

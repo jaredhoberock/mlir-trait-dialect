@@ -4,11 +4,10 @@
 // RUN: mlir-opt -split-input-file %s | mlir-opt -split-input-file | FileCheck %s
 
 // A marked (unproven) trait.coerce cites nothing and stands in the pending
-// judgment: each !trait.proj term is a shared unification variable keyed by the
-// projection itself, so a projection reconciles against the ground type an impl
-// minted at monomorphization will supply. These forms verify, and the trailing
-// `unproven` keyword prints so the marker survives a round trip (the printer
-// emits no attribute dictionary).
+// judgment: an endpoint still spelling a !trait.proj is open, so it stands
+// against the ground type the impl minted at monomorphization will supply.
+// These forms verify, and the trailing `unproven` keyword prints so the marker
+// survives a round trip (the printer emits no attribute dictionary).
 
 trait.trait private @Fold[!trait.poly<0>] {
   trait.assoc_type @Item

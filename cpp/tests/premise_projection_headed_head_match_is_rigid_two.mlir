@@ -4,13 +4,10 @@
 // RUN: mlir-opt %s -verify-diagnostics
 
 // Byte-identical to ..._sole except for ONE added, unrelated impl of @Other.
-// With the rigid head match the projection in the projection's application is never
-// resolved through the module, so the added impl changes nothing: this impl
-// reaches the SAME refusal its sole companion does. Before the head match was
-// made rigid, the second impl made the inner projection two-candidate, the
-// rebuild's lookup declined, the module-capable unifier tolerated the unresolved
-// crossing, and the impl was accepted -- an unrelated impl flipping an impl-verification
-// verdict. An impl's verdict no longer turns on unrelated module impls.
+// A projection standing in the head of the premise's own application is matched
+// where it stands and never resolved through the module, so the added impl
+// changes nothing: this impl reaches the SAME refusal its sole companion does.
+// An impl's verdict does not turn on unrelated module impls.
 
 !S = !trait.poly<0>
 

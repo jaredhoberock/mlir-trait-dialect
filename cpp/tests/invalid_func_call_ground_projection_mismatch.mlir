@@ -4,7 +4,7 @@
 // RUN: mlir-opt %s -verify-diagnostics
 
 // A func.call verifies its signature with the module-free comparator: each
-// declared formal is unified against the actual with no module to resolve a
+// declared formal is matched against the actual with no module to resolve a
 // projection. A ground-projection formal meeting a mismatched concrete actual
 // has no spelling the comparator can equate, so the crossing is rejected.
 
