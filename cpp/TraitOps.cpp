@@ -721,7 +721,7 @@ void TraitOp::print(OpAsmPrinter &p) {
   p << ']';
 
   // print requirements if not empty
-  if (hasRequirements()) {
+  if (!getRequirements().empty()) {
     p << " where ";
     getRequirements().print(p);
   }

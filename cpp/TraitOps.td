@@ -217,10 +217,6 @@ def TraitOp : TraitDialectOp<"trait", [
     FailureOr<SpecializationMap> buildSubstitutionForSelfClaim(ClaimType actualSelfClaim,
                                                            llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
 
-    bool hasRequirements() {
-      return !getRequirements().empty();
-    }
-
     SmallVector<ClaimType> getRequirementsAsClaims();
 
     FailureOr<SmallVector<ClaimType>> specializeRequirementsAsClaimsFor(

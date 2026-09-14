@@ -895,9 +895,14 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
   auto symOp = ProofOp::getProofOpOrUnconditionalImplOp(module, proven.getProof(), err);
   if (failed(symOp)) return failure();
 
-  // if it's an impl op, check that the trait has no requirements
+  // If it's an impl op, it stands alone: a citation naming an impl carries no
+  // subproofs, so the trait may require no application. A trait-header equality
+  // requires none -- it is an obligation the impl discharges at its own
+  // verification -- which is the same predicate that decides whether an impl is
+  // unconditional, and impl selection records an impl as its own proof by that
+  // predicate.
   if (auto impl = dyn_cast<ImplOp>(*symOp)) {
-    if (trait->hasRequirements()) {
+    if (trait->getRequirements().hasApplications()) {
       if (err) err() << "impl provides no subproof for trait requirements";
       return failure();
     }
