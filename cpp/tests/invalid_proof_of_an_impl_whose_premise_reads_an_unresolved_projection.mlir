@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 
-// RUN: mlir-opt %s -split-input-file -verify-diagnostics
+// RUN: mlir-opt %s -split-input-file -pass-pipeline='builtin.module(monomorphize-trait)' -verify-diagnostics
 
-// A premise whose reading carries no type variable is decided here even where
-// it spells a projection nothing resolves: no instance of anything moves that
-// spelling, so an impl whose premise it leaves unequal does not apply. Nothing
-// implements @Foo, so @Foo[i8]::Out stands as written and is not i64.
+// A premise whose reading still spells a projection is one the proof cannot
+// decide: what that projection denotes is decided by the impl selection chose
+// for its application, which a verifier may not read. The stage reads it
+// through what selection settled and refuses the proof there. Nothing
+// implements @Foo, so @Foo[i8]::Out is settled by nothing and is not i64.
 
 trait.trait private @Foo[!trait.poly<0>] { trait.assoc_type @Out }
 trait.trait private @Tensor[!trait.poly<0>] {}
@@ -18,7 +19,7 @@ trait.impl private @Vector_blanket for @Vector[!trait.poly<0>] where [@Tensor[!t
   }
 }
 trait.impl private @Tensor_i8 for @Tensor[i8] {}
-// expected-error @below {{impl '@Vector_blanket' applies where '!trait.proj<@Foo[!trait.poly<0>], "Out">' = 'i64', and nothing here makes '!trait.proj<@Foo[i8], "Out">' and 'i64' one type at '!trait.claim<@Vector[i8] by @p>'}}
+// expected-error @below {{impl '@Vector_blanket' applies where '!trait.proj<@Foo[!trait.poly<0>], "Out">' = 'i64', and after instantiate-monomorphs nothing makes '!trait.proj<@Foo[i8], "Out">' and 'i64' one type at '!trait.claim<@Vector[i8] by @p>'}}
 trait.proof private @p proves @Vector_blanket for @Vector[i8] given [@Tensor_i8]
 
 // -----
@@ -46,5 +47,5 @@ trait.impl private @Vector_b for @Vector[!trait.poly<0>] where [@Tensor[!trait.p
   }
 }
 trait.impl private @Tensor_i8 for @Tensor[i8] {}
-// expected-error @below {{impl '@Vector_a' applies where '!trait.proj<@Foo[!trait.poly<0>], "Out">' = 'i64', and nothing here makes '!trait.proj<@Foo[i8], "Out">' and 'i64' one type at '!trait.claim<@Vector[i8] by @p>'}}
+// expected-error @below {{impl '@Vector_a' applies where '!trait.proj<@Foo[!trait.poly<0>], "Out">' = 'i64', and after instantiate-monomorphs nothing makes '!trait.proj<@Foo[i8], "Out">' and 'i64' one type at '!trait.claim<@Vector[i8] by @p>'}}
 trait.proof private @p proves @Vector_a for @Vector[i8] given [@Tensor_i8]

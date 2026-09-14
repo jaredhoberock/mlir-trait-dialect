@@ -1473,6 +1473,81 @@ static bool equalityClaimGroundResolvesToOneSpelling(
   return lhs == rhs && isGroundType(lhs);
 }
 
+/// Refuses `citation` where an equality premise of the impl it names does not
+/// hold at `cited`, read through what impl selection settled.
+///
+/// A premise says where the impl applies. A citation's own verifier decides one
+/// whose sides the impls the module holds settle, and leaves standing one
+/// projecting through an application those impls bind for nobody or for two
+/// candidates at once: the impls answer nothing about such an application, and
+/// only the impl selection chose for it says what the projection denotes. This
+/// is the reading that has that answer. Each side is carried to the citation
+/// and resolved through the record and then through selection, and the premise
+/// holds when the two meet at one type no projection stands in.
+///
+/// A premise still spelling a type variable belongs to a template, and the
+/// instances cut from it read it at the arguments they supply.
+static LogicalResult verifyCitedImplAppliesAt(
+    Operation *citation, ImplOp impl, ClaimType cited,
+    const ProjectionSettleContext &settle) {
+  if (!impl.getAssumptions().hasEqualities())
+    return success();
+
+  auto settled = [&](Type ty) -> Type {
+    return resolveGroundProjections(ty, settle.module, [&](ProjectionType proj) {
+      return resolveProjectionHop(proj, settle);
+    });
+  };
+  auto err = [&] { return citation->emitError(); };
+  auto normalize = [&](Type ty) -> FailureOr<Type> { return settled(ty); };
+  auto arguments = impl.buildSubstitutionForSelfClaim(cited, normalize, err);
+  if (failed(arguments))
+    return failure();
+
+  for (TypeEqualityAttr equality : impl.getAssumptions().getEqualities()) {
+    Type lhs = settled(instantiate(equality.getLhs(), *arguments));
+    Type rhs = settled(instantiate(equality.getRhs(), *arguments));
+    if (premiseDefersToInstances(lhs, rhs))
+      continue;
+    if (lhs == rhs && !containsType<ProjectionType>(lhs))
+      continue;
+    return err() << "impl '@" << impl.getSymName() << "' applies where "
+                 << equality.getLhs() << " = " << equality.getRhs()
+                 << ", and after instantiate-monomorphs nothing makes " << lhs
+                 << " and " << rhs << " one type at " << cited;
+  }
+  return success();
+}
+
+/// The impl a standing citation names and the claim it names it for, or nothing
+/// where the operation cites no impl at an application.
+///
+/// A witness of a proof cites the proof, which states its impl's premises at
+/// its own claim and is judged there; a refl or equality witness cites no impl
+/// at all.
+static std::optional<std::pair<ImplOp, ClaimType>>
+citedImplAndClaim(Operation *op) {
+  auto module = op->getParentOfType<ModuleOp>();
+  if (!module)
+    return std::nullopt;
+  if (auto proof = dyn_cast<ProofOp>(op)) {
+    if (ImplOp impl = proof.getImpl())
+      return std::make_pair(impl, proof.getProvenClaim());
+    return std::nullopt;
+  }
+  auto witness = dyn_cast<WitnessOp>(op);
+  if (!witness || witness.getRefl() || witness.getResultClaim().isEquality())
+    return std::nullopt;
+  auto cited = ProofOp::getProofOpOrUnconditionalImplOp(
+      module, witness.getProofAttr(), /*err=*/nullptr);
+  if (failed(cited))
+    return std::nullopt;
+  auto impl = dyn_cast<ImplOp>(*cited);
+  if (!impl)
+    return std::nullopt;
+  return std::make_pair(impl, witness.getProvenClaim());
+}
+
 /// The settlement resolvers, per-site builder, and location a projection-
 /// resolution witness mint reads but never varies as the chain walks hop to
 /// hop. Recorded facts, obligation-holding selection, and the module-body
@@ -2016,6 +2091,39 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
                     << " after instantiate-monomorphs";
   }
   if (hasLeftovers) return failure();
+
+  // Every citation standing here names an impl, and an impl's equality premises
+  // say where it applies. The citation's own verifier left standing any premise
+  // whose sides the impls alone do not settle, because what such a projection
+  // denotes is decided by the impl selection chose for it and by nothing a
+  // verifier may read. Read here through the record and through selection, so
+  // that a citation of an impl that does not apply is refused where it stands
+  // rather than lowered.
+  //
+  // The citations are gathered under the walk and judged after it closes, for
+  // the same reason the claims above are: settling a premise may put an
+  // undemanded impl to selection and generate one.
+  SmallVector<std::pair<Operation *, std::pair<ImplOp, ClaimType>>> citations;
+  module.walk<WalkOrder::PreOrder>([&](Operation *op) {
+    // A template's own citations stand over its variables; the clones cut from
+    // it carry them to the instances. A proof is a template by that rule and is
+    // visited anyway: its claim is where its impl's premises are decided, and
+    // no clone carries them anywhere else.
+    if (isTemplate(op) && !isa<ProofOp>(op))
+      return WalkResult::skip();
+    if (auto cited = citedImplAndClaim(op))
+      citations.emplace_back(op, *cited);
+    return WalkResult::advance();
+  });
+  bool citedImplDoesNotApply = false;
+  for (auto [op, cited] : citations) {
+    ReadOnlyImplResolver here = reading.in(getAnchorModule(op));
+    ProjectionSettleContext settle{here, *resolver, settleBuilder,
+                                   getAnchorModule(op)};
+    if (failed(verifyCitedImplAppliesAt(op, cited.first, cited.second, settle)))
+      citedImplDoesNotApply = true;
+  }
+  if (citedImplDoesNotApply) return failure();
 
   // Reject each concrete-base projection that survived resolution. Walking the
   // result and block-argument types of every non-infrastructure op (operand

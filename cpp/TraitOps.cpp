@@ -2073,6 +2073,16 @@ static LogicalResult verifyEqualityPremisesHoldAt(
                      << " reads " << *lhs << " = " << *rhs << " at " << cited;
       return failure();
     }
+    // A side still spelling a projection after the reading is one this citation
+    // cannot decide. The impls the reading saw bind that projection for nobody
+    // or for two candidates at once; what it denotes is decided by the impl
+    // selection chose for its application, which a reader holding no record may
+    // not consult. So the premise is neither true nor false here and
+    // is left standing, as a side spelling a type variable is. The stage reads
+    // every citation standing at its exit through what selection settled, and
+    // that is where a premise left standing here is decided.
+    if (spellsAProjection(*lhs) || spellsAProjection(*rhs))
+      continue;
     if (*lhs != *rhs) {
       if (err) err() << "impl '@" << impl.getSymName() << "' applies where "
                      << equality.getLhs() << " = " << equality.getRhs()
