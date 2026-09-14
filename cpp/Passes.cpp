@@ -1434,13 +1434,43 @@ static Type resolveGroundProjections(
   });
 }
 
-/// Resolves every ground projection standing anywhere in `ty` through the
-/// record of what impl selection settled and then through selection itself.
-/// A projection selection settles for nobody is left spelled as written.
-static Type settleGroundProjections(Type ty,
-                                    const ProjectionSettleContext &settle) {
-  return resolveGroundProjections(ty, settle.module, [&](ProjectionType proj) {
-    return resolveProjectionHop(proj, settle);
+/// Resolve one hop of a projection over a type variable through the impls the
+/// module holds.
+///
+/// Selection answers about one application, and a spelling carrying variables
+/// stands for as many applications as its variables have instances, so nothing
+/// selection settled says what it denotes. What does is an impl serving every
+/// one of those instances: a single unconditional impl of the trait whose header
+/// carries to the application as written. The read is a probe of the module and
+/// not a demand this stage undertook to serve. Nothing where no such impl
+/// stands.
+static std::optional<Type> resolveProjectionOverVariableHop(ProjectionType proj,
+                                                            ModuleOp module) {
+  SpeculationScope speculation;
+  Type resolved =
+      resolveProjectionsByLookup(Type(proj), module,
+                                 DemandOrigin::RecordedFactRead,
+                                 LookupScope::Determined);
+  if (resolved == Type(proj))
+    return std::nullopt;
+  return resolved;
+}
+
+/// Resolves to a fixed point every projection standing anywhere in `ty` that
+/// something settles: a ground one through the record of what impl selection
+/// settled and then through selection itself, one over a type variable through
+/// the impls the module holds. A projection neither settles is left spelled as
+/// written.
+static Type settleProjections(Type ty,
+                              const ProjectionSettleContext &settle) {
+  return normalizeProjectionsToFixedPoint(ty, settle.module, [&](Type current) {
+    AttrTypeReplacer replacer = makeEndpointSealedReplacer();
+    replacer.addReplacement([&](ProjectionType proj) -> std::optional<Type> {
+      if (isPolymorphicType(proj))
+        return resolveProjectionOverVariableHop(proj, settle.module);
+      return resolveProjectionHop(proj, settle);
+    });
+    return replacer.replace(current);
   });
 }
 
@@ -1469,8 +1499,8 @@ static bool equalityClaimGroundResolvesToOneSpelling(
   auto eq = claim.getEqualityAttr();
   if (!eq)
     return false;
-  Type lhs = settleGroundProjections(eq.getLhs(), settle);
-  Type rhs = settleGroundProjections(eq.getRhs(), settle);
+  Type lhs = settleProjections(eq.getLhs(), settle);
+  Type rhs = settleProjections(eq.getRhs(), settle);
   return lhs == rhs && isGroundType(lhs);
 }
 
@@ -1495,7 +1525,7 @@ static LogicalResult verifyCitedImplAppliesAt(
     return success();
 
   auto settled = [&](Type ty) -> Type {
-    return settleGroundProjections(ty, settle);
+    return settleProjections(ty, settle);
   };
   auto err = [&] { return citation->emitError(); };
   auto normalize = [&](Type ty) -> FailureOr<Type> { return settled(ty); };
@@ -1541,7 +1571,7 @@ verifyProofDischargesItsObligations(ProofOp proof,
     return failure();
 
   auto reading = [&](Type ty) -> FailureOr<Type> {
-    return settleGroundProjections(ty, settle);
+    return settleProjections(ty, settle);
   };
   for (ClaimType subproof : *subproofs) {
     switch (verifyCitation(subproof.asUnproven(), subproof, module,

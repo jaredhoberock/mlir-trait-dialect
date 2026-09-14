@@ -209,9 +209,13 @@ static Type resolveProjectionsByLookupCore(Type ty, ModuleOp module,
   DenseMap<TraitApplicationAttr, SmallVector<ImplOp>> candidateCache;
 
   // The context a candidate's header is read through here: this lookup itself,
-  // so a header spelling a projection (`impl<T> Index<T::Shape, T::Element> for
-  // T`) reproduces a demand spelling the resolution.
-  GroundProjectionLookup byGroundLookup(module, origin);
+  // at the same scope, so a header spelling a projection (`impl<T>
+  // Index<T::Shape, T::Element> for T`) reproduces a demand spelling the
+  // resolution and is read by the rule the demand is read by.
+  auto byLookup = [&](Type ty) -> FailureOr<Type> {
+    return resolveProjectionsByLookup(ty, module, origin, scope,
+                                      /*emitError=*/nullptr);
+  };
 
   AttrTypeReplacer replacer = makeEndpointSealedReplacer();
   replacer.addReplacement([&](ProjectionType proj) -> std::optional<Type> {
@@ -256,7 +260,7 @@ static Type resolveProjectionsByLookupCore(Type ty, ModuleOp module,
       if (failed(trait))
         return declineWith(LookupMissReason::TraitSymbolNotFound);
       it = candidateCache
-               .insert({app, trait->getCandidateImplsFor(claim, byGroundLookup)})
+               .insert({app, trait->getCandidateImplsFor(claim, byLookup)})
                .first;
     }
     const SmallVector<ImplOp> &candidates = it->second;
@@ -265,6 +269,16 @@ static Type resolveProjectionsByLookupCore(Type ty, ModuleOp module,
                              ? LookupMissReason::NoCandidateImpl
                              : LookupMissReason::MultipleCandidateImpls);
     ImplOp impl = candidates.front();
+
+    // A projection over a type variable denotes one type at every instance of
+    // that variable, so the impl serving it must serve every instance: it may
+    // carry no premise. An impl with a where clause serves the instances its
+    // premises admit and no others, and which those are is settled per
+    // instance, so it answers for none of them here. The head claim that
+    // licenses reading such an impl for a ground projection is discharged at an
+    // instance, not at this spelling.
+    if (polymorphic && !impl.getAssumptions().empty())
+      return std::nullopt;
 
     SmallVector<Type> assocTypeArgs(proj.getAssocTypeArgs());
     auto binding = impl.specializeAssociatedTypeBinding(
@@ -276,7 +290,7 @@ static Type resolveProjectionsByLookupCore(Type ty, ModuleOp module,
     // rebuilt at those must be the projection's application. So an impl the
     // projection could only reach by narrowing one of its variables is refused
     // here, and no separate one-way test stands over this one.
-    auto subst = impl.buildSubstitutionForSelfClaim(claim, byGroundLookup,
+    auto subst = impl.buildSubstitutionForSelfClaim(claim, byLookup,
                                                     /*errFn=*/nullptr);
     if (failed(subst))
       return declineWith(LookupMissReason::SelfClaimSubstitutionFailed);
@@ -762,8 +776,8 @@ Citation verifyCitation(ClaimType unproven, ClaimType proven, ModuleOp module,
     // witness (Rust's projection well-formedness rule), so every projection has
     // evidence at a known index and this module read deletes with LookupScope and
     // the verifier DemandOrigins.
-    GroundProjectionLookup byGroundLookup(module, origin);
-    Normalizer reading = normalize ? normalize : Normalizer(byGroundLookup);
+    ImplProjectionLookup byImplLookup(module, origin);
+    Normalizer reading = normalize ? normalize : Normalizer(byImplLookup);
     if (succeeded(matchDeclaration(getTypeParametersIn(declaration), declaration,
                                    Type(unproven), reading,
                                    /*err=*/nullptr)))
@@ -1247,8 +1261,8 @@ static FailureOr<SpecializationMap> requirementSubstitution(
   // witness (Rust's projection well-formedness rule), so every projection has
   // evidence at a known index and this module read deletes with LookupScope and
   // the verifier DemandOrigins.
-  GroundProjectionLookup byGroundLookup(module, DemandOrigin::ProofVerification);
-  return declarations.impl.readTypeArgumentsFor(claim, byGroundLookup)
+  ImplProjectionLookup byImplLookup(module, DemandOrigin::ProofVerification);
+  return declarations.impl.readTypeArgumentsFor(claim, byImplLookup)
       .toSpecialization();
 }
 

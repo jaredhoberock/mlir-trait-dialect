@@ -1873,7 +1873,7 @@ FailureOr<SmallVector<ClaimType>> ImplOp::specializeObligationsAsClaimsFor(
   // witness (Rust's projection well-formedness rule), so every projection has
   // evidence at a known index and this module read deletes with LookupScope and
   // the verifier DemandOrigins.
-  GroundProjectionLookup byGroundLookup(*module, origin);
+  ImplProjectionLookup byImplLookup(*module, origin);
 
   // specialize requirements of the trait
   auto requirements = getTrait().specializeRequirementsAsClaimsFor(actualSelfClaim, errFn);
@@ -1897,7 +1897,7 @@ FailureOr<SmallVector<ClaimType>> ImplOp::specializeObligationsAsClaimsFor(
   // are: whether the header carries to the claim is settled where the impl was
   // matched to it, not here.
   SpecializationMap subst =
-      readTypeArgumentsFor(actualSelfClaim, byGroundLookup).toSpecialization();
+      readTypeArgumentsFor(actualSelfClaim, byImplLookup).toSpecialization();
 
   NormalizationContext normalization;
   normalization.addLocalProjectionRule(
@@ -1910,7 +1910,7 @@ FailureOr<SmallVector<ClaimType>> ImplOp::specializeObligationsAsClaimsFor(
 
   // specialize assumptions of the impl
   auto assumptions =
-      specializeAssumptionsAsClaimsFor(actualSelfClaim, byGroundLookup, errFn);
+      specializeAssumptionsAsClaimsFor(actualSelfClaim, byImplLookup, errFn);
   if (failed(assumptions)) return failure();
 
   // obligations = requirements + assumptions

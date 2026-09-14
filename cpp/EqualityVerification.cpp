@@ -218,9 +218,9 @@ static FailureOr<SpecializationMap> verifyProjectionResolutionCore(
   // witness (Rust's projection well-formedness rule), so every projection has
   // evidence at a known index and this module read deletes with LookupScope and
   // the verifier DemandOrigins.
-  GroundProjectionLookup byGroundLookup(module, DemandOrigin::ProofVerification);
+  ImplProjectionLookup byImplLookup(module, DemandOrigin::ProofVerification);
   auto subst = implOp.buildSubstitutionForSelfClaim(
-      selfClaim, rigidHeadMatch ? Normalizer() : Normalizer(byGroundLookup),
+      selfClaim, rigidHeadMatch ? Normalizer() : Normalizer(byImplLookup),
       err);
   if (failed(subst))
     return failure();

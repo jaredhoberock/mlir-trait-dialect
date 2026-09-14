@@ -1456,14 +1456,17 @@ enum class LookupScope {
 
   /// Also a projection whose arguments still carry variables, when the
   /// projection's own spelling determines which impl serves it: exactly one impl
-  /// matches, and the match binds only that impl's type parameters -- never a
-  /// variable the projection spells. Such a projection resolves the same way for
-  /// every instance of its variables, so the two spellings denote one type
-  /// whatever inference goes on to choose. A projection whose spelling would
-  /// have to be narrowed to fit an impl determines nothing (inference may narrow
-  /// it another way) and is left as written. A resolution under this scope is
-  /// read to compare a spelling, never to serve it: it feeds a comparison, not a
-  /// position that stamps the resolved type into IR.
+  /// matches, that impl is unconditional, and the match binds only that impl's
+  /// type parameters -- never a variable the projection spells. Such a
+  /// projection resolves the same way for every instance of its variables, so
+  /// the two spellings denote one type whatever inference goes on to choose. A
+  /// projection whose spelling would have to be narrowed to fit an impl
+  /// determines nothing (inference may narrow it another way) and is left as
+  /// written; so is one whose impl is conditional, which serves the instances
+  /// its premises admit and leaves the rest to another impl nobody has written
+  /// yet. A resolution under this scope is read to compare a spelling, never to
+  /// serve it: it feeds a comparison, not a position that stamps the resolved
+  /// type into IR.
   Determined
 };
 
@@ -1524,22 +1527,24 @@ Type normalizeProjectionsToFixedPoint(Type ty, ModuleOp module,
 LogicalResult tryNormalizeProjectionsToFixedPoint(
     Type ty, llvm::function_ref<Type(Type)> step, Type &out);
 
-/// A normalizer over the impls a module holds: a ground projection exactly one
-/// of them binds reduces to what it binds, which is the same answer in every
-/// position that spells it. This is a reading of committed facts and not of the
-/// evidence an operation carries, so a caller that may only read the latter
-/// does not build one.
-class GroundProjectionLookup {
+/// A normalizer over the impls a module holds: a projection exactly one of them
+/// binds reduces to what it binds, which is the same answer in every position
+/// that spells it. A projection over a type variable reduces the same way, under
+/// the determined rule -- the impl serving it serves every instance of that
+/// variable, so the answer holds wherever the spelling stands. This is a reading
+/// of committed facts and not of the evidence an operation carries, so a caller
+/// that may only read the latter does not build one.
+class ImplProjectionLookup {
 public:
   /// `err`, when given, receives the diagnostic for a resolution chain with no
   /// normal form, which is the one way this reading fails.
-  GroundProjectionLookup(ModuleOp module, DemandOrigin origin,
-                         llvm::function_ref<InFlightDiagnostic()> err = nullptr)
+  ImplProjectionLookup(ModuleOp module, DemandOrigin origin,
+                       llvm::function_ref<InFlightDiagnostic()> err = nullptr)
       : module(module), origin(origin), err(err) {}
 
   FailureOr<Type> operator()(Type ty) const {
-    return resolveProjectionsByLookup(ty, module, origin, LookupScope::Ground,
-                                      err);
+    return resolveProjectionsByLookup(ty, module, origin,
+                                      LookupScope::Determined, err);
   }
 
 private:
