@@ -2207,7 +2207,7 @@ FailureOr<SmallVector<ClaimType>> ProofOp::verifyAndGetSubproofClaims(
     return failure();
   }
 
-  for (Attribute name : subproofNames) {
+  for (auto [obligation, name] : llvm::zip(*obligations, subproofNames)) {
     auto subproofRef = dyn_cast<FlatSymbolRefAttr>(name);
     if (!subproofRef) {
       if (err) err() << "expected FlatSymbolRefAttr";
@@ -2215,20 +2215,20 @@ FailureOr<SmallVector<ClaimType>> ProofOp::verifyAndGetSubproofClaims(
     }
 
     // A coinductive self-citation needs no arm of its own: looking the name up
-    // finds this proof, whose claim is the one a self-citation stands for, and
-    // whether that claim discharges the obligation is the same comparison every
-    // other citation answers.
-    auto subproof = getProofOpOrUnconditionalImplOp(module, subproofRef, err);
-    if (failed(subproof))
+    // finds this proof, and whether its claim discharges the obligation is the
+    // same comparison every other citation answers.
+    if (failed(getProofOpOrUnconditionalImplOp(module, subproofRef, err)))
       return failure();
 
-    TraitApplicationAttr subproofTraitApp;
-    if (auto proofOp = dyn_cast<ProofOp>(*subproof))
-      subproofTraitApp = proofOp.getTraitApplication();
-    else
-      subproofTraitApp = dyn_cast<ImplOp>(*subproof).getSelfApplication();
-
-    result.push_back(ClaimType::get(getContext(), subproofTraitApp, subproofRef));
+    // The claim a subproof stands over is the obligation the arity check paired
+    // it with, named by the symbol cited for it -- evidence built from the
+    // obligation by position. Reading the cited symbol's own declaration
+    // instead would hand back the variables a blanket proof stands over, and
+    // whatever binds the obligation to that spelling writes them into the body
+    // the citation is in.
+    result.push_back(ClaimType::get(getContext(),
+                                    obligation.getTraitApplication(),
+                                    subproofRef));
   }
 
   return result;

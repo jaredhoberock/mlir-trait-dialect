@@ -895,6 +895,47 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
   auto symOp = ProofOp::getProofOpOrUnconditionalImplOp(module, proven.getProof(), err);
   if (failed(symOp)) return failure();
 
+  // An obligation is discharged only by evidence for that same application, and
+  // the evidence is the DECLARATION the cited symbol holds -- a blanket impl
+  // and a proof written over type variables each stand for every instance of
+  // theirs. So the judgment is whether that declaration, read at the arguments
+  // this obligation supplies, rebuilds the obligation. The claim the citation
+  // is spelled with is built from the obligation, so it says nothing here; only
+  // the declaration does.
+  //
+  // A side still spelling a projection once the impls standing now have been
+  // read is one nothing here can decide: those impls resolve it for nobody, and
+  // impl selection resolves it through the candidate it settles on, which a
+  // reader holding no record cannot. Such an obligation is declined rather than
+  // discharged -- nothing is bound, and this node describes no closure -- so the
+  // claim stands unproven for selection to derive and for the leftover walk to
+  // refuse.
+  enum class Citation { Carries, Declined, Refused };
+  auto readCitation = [&](Type declaration) -> Citation {
+    // XXX TODO a projection a declaration spells must be over its own self
+    // application, a where-clause application, a trait requirement or a declared
+    // witness (Rust's projection well-formedness rule), so every projection has
+    // evidence at a known index and this module read deletes with LookupScope and
+    // the verifier DemandOrigins.
+    GroundProjectionLookup byGroundLookup(module, origin);
+    if (succeeded(matchDeclaration(getTypeParametersIn(declaration), declaration,
+                                   Type(unproven), byGroundLookup,
+                                   /*err=*/nullptr)))
+      return Citation::Carries;
+
+    FailureOr<Type> readObligation = byGroundLookup(Type(unproven));
+    FailureOr<Type> readDeclaration = byGroundLookup(declaration);
+    if (failed(readObligation) || failed(readDeclaration) ||
+        containsType<ProjectionType>(*readObligation) ||
+        containsType<ProjectionType>(*readDeclaration))
+      return Citation::Declined;
+
+    if (err) err() << "proof " << proven.getProof() << " proves " << declaration
+                   << ", which does not discharge the obligation "
+                   << *readObligation;
+    return Citation::Refused;
+  };
+
   // If it's an impl op, it stands alone: a citation naming an impl carries no
   // subproofs, so the trait may require no application. A trait-header equality
   // requires none -- it is an obligation the impl discharges at its own
@@ -908,19 +949,17 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
     }
 
     // Naming an unconditional impl is not the same as proving this claim: the
-    // proof could cite an impl of a different trait, or of this trait at
-    // arguments the claim does not meet, and nothing above has compared the two.
-    // Match the impl's own header against the proven claim -- the same citation
-    // check that verifying a witness runs -- so a proof whose impl cannot be
-    // carried to its claim is refused here rather than trusted to a leaf.
-    // XXX TODO a projection a declaration spells must be over its own self
-    // application, a where-clause application, a trait requirement or a declared
-    // witness (Rust's projection well-formedness rule), so every projection has
-    // evidence at a known index and this module read deletes with LookupScope and
-    // the verifier DemandOrigins.
-    GroundProjectionLookup byGroundLookup(module, origin);
-    if (failed(impl.buildSubstitutionForSelfClaim(proven, byGroundLookup, err)))
+    // impl could be of a different trait, or of this trait at arguments the
+    // obligation does not meet.
+    switch (readCitation(Type(impl.getSelfClaim()))) {
+    case Citation::Carries:
+      break;
+    case Citation::Declined:
+      derived.complete = false;
+      return success();
+    case Citation::Refused:
       return failure();
+    }
 
     // success: bind the whole claim so that later normalization keeps the proof
     bindings.bind(unproven, proven);
@@ -933,21 +972,18 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
   // otherwise the symbol must be a ProofOp
   auto proof = dyn_cast<ProofOp>(*symOp);
 
-  // The proof's own claim is the declaration and the claim it is cited for is
-  // the use: a proof op may be written over type variables and stand for every
-  // instance of them, so its parameters take the arguments the cited claim
-  // supplies and the claim it rebuilds must be that citation.
-  {
-    Type proofClaim = Type(proof.getProvenClaim());
-    // XXX TODO a projection a declaration spells must be over its own self
-    // application, a where-clause application, a trait requirement or a declared
-    // witness (Rust's projection well-formedness rule), so every projection has
-    // evidence at a known index and this module read deletes with LookupScope and
-    // the verifier DemandOrigins.
-    GroundProjectionLookup byGroundLookup(module, origin);
-    if (failed(matchDeclaration(getTypeParametersIn(proofClaim), proofClaim,
-                                Type(proven), byGroundLookup, err)))
-      return failure();
+  // The proof's own claim is the declaration and the obligation is the use: a
+  // proof op may be written over type variables and stand for every instance of
+  // them, so its parameters take the arguments the obligation supplies and the
+  // claim it rebuilds must be that obligation.
+  switch (readCitation(Type(proof.getProvenClaim().asUnproven()))) {
+  case Citation::Carries:
+    break;
+  case Citation::Declined:
+    derived.complete = false;
+    return success();
+  case Citation::Refused:
+    return failure();
   }
 
   // The impl's equality premises are read at the obligation this citation
