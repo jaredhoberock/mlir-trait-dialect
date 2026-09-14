@@ -1181,18 +1181,15 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 /// the same type: both are read through the impl's own bindings and its
 /// declared witness rules, and whatever stays standing after that is equal to
 /// itself alone. The impl's OWN where-clause equalities are not checked here --
-/// they are premises restricting when the impl applies, discharged where it is
-/// selected -- and application requirements are proved at selection too.
+/// they are premises restricting when the impl applies, read at every citation
+/// that carries the impl to an application -- and application requirements are
+/// proved at selection too.
 static LogicalResult verifyEqualityObligations(
     ImplOp impl, TraitOp traitOp, ArrayRef<ImplWitnessRule> witnessRules,
     llvm::function_ref<InFlightDiagnostic()> errFn) {
   // The guard keeps the self-claim specialization off an impl with nothing of
   // the kind to check.
-  bool hasEqualityRequirement = llvm::any_of(
-      traitOp.getRequirements(), [](Attribute pred) {
-        return mlir::isa<TypeEqualityAttr>(pred);
-      });
-  if (!hasEqualityRequirement)
+  if (!traitOp.getRequirements().hasEqualities())
     return success();
 
   auto specReqs =
@@ -1278,25 +1275,27 @@ static LogicalResult verifyImplParametersAreConstrained(ImplOp impl) {
 }
 
 bool ImplOp::isUnconditional() {
-  // an ImplOp is unconditional if:
-  // 1. it is monomorphic (no type parameters),
-  // 2. its TraitOp has no application requirements, and
-  // 3. it assumes no application predicates.
-  // An equality predicate -- whether a trait-header requirement or one of this
-  // impl's own assumptions -- does not make an impl conditional: it is settled at
-  // impl verification when its endpoints reduce to ground (through the impl's own bindings or
-  // a declared premise) and deferred to selection and use otherwise, never proved
-  // through impl selection. So only application predicates count against
-  // unconditionality.
+  // An impl is unconditional when nothing has to be decided to carry it to an
+  // application: it binds no type parameter, states no where clause of its own,
+  // and its trait requires no application. A citation may then name it
+  // directly, because there is nothing left for a proof to hold.
+  //
+  // A trait-HEADER equality is not counted. It is an obligation this impl
+  // discharges at its own verification (verifyEqualityObligations), the same
+  // for every application the impl covers. This impl's OWN where-clause
+  // equalities are counted: they restrict where the impl applies, only the
+  // application being cited says whether they hold, and the reading happens at
+  // a proof (verifyEqualityPremisesHoldAt), so an impl that states one must be
+  // cited through a proof.
   return getTypeParams().empty() &&
-         !getAssumptions().hasApplications() &&
+         getAssumptions().empty() &&
          !getTrait().getRequirements().hasApplications();
 }
 
 LogicalResult ImplOp::verifyIsUnconditional(llvm::function_ref<InFlightDiagnostic()> err) {
   if (!isUnconditional()) {
     if (err) err() << "impl '@" << getSymName()
-                   << "' is polymorphic (has type parameters) or has obligations (trait requirements or impl assumptions) and must be proven with a trait.proof";
+                   << "' binds type parameters, states its own where clause, or implements a trait requiring an application, so it must be cited through a trait.proof";
     return failure();
   }
   return success();
@@ -1807,9 +1806,9 @@ std::string ImplOp::generateMangledName(const SpecializationMap &arguments) {
 SmallVector<ClaimType> ImplOp::getAssumptionsAsClaims() {
   MLIRContext *ctx = getContext();
   // The proof/derive/satisfiability streams read application-arm assumptions
-  // only; equality entries are checked at impl verification against the impl's own bindings and
-  // never proved through impl selection, so they are filtered out here at the
-  // one place every obligation consumer flows through.
+  // only; an equality entry takes no subproof and is read at the application
+  // the citation names (verifyEqualityPremisesHoldAt), so equality entries are
+  // filtered out here at the one place every obligation consumer flows through.
   return llvm::map_to_vector(getAssumptions().getApplications(),
                              [ctx](TraitApplicationAttr app) {
     return ClaimType::get(ctx, app);
@@ -2063,6 +2062,42 @@ static LogicalResult verifyEqualityPremisesHoldAt(
 // ProofOp
 //===----------------------------------------------------------------------===//
 
+LogicalResult ProofOp::verifyEqualityPremisesAt(
+    ClaimType cited, DemandOrigin origin,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  ImplOp implOp = getImpl();
+  if (!implOp) {
+    if (err) err() << "cannot find impl '" << getImplNameAttr() << "'";
+    return failure();
+  }
+  if (!implOp.getAssumptions().hasEqualities())
+    return success();
+
+  auto module = (*this)->getParentOfType<ModuleOp>();
+  if (!module) {
+    if (err) err() << "not inside a module";
+    return failure();
+  }
+
+  NormalizationContext reading =
+      buildSubproofNormalizationContext(*this, module);
+  // XXX TODO a projection a declaration spells must be over its own self
+  // application, a where-clause application, a trait requirement or a declared
+  // witness (Rust's projection well-formedness rule), so every projection has
+  // evidence at a known index and this module read deletes with LookupScope and
+  // the verifier DemandOrigins.
+  reading.setModuleLookup(module, LookupScope::Ground, origin);
+  auto throughEvidence = [&](Type ty) -> FailureOr<Type> {
+    return reading.normalize(ty, err);
+  };
+  auto arguments =
+      implOp.buildSubstitutionForSelfClaim(cited, throughEvidence, err);
+  if (failed(arguments))
+    return failure();
+
+  return verifyEqualityPremisesHoldAt(implOp, cited, *arguments, reading, err);
+}
+
 LogicalResult ProofOp::verify() {
   if (failed(verifyTemplateIsNotPublic(getOperation())))
     return failure();
@@ -2102,7 +2137,7 @@ LogicalResult ProofOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // nothing here is justified by what it is checking.
   NormalizationContext reading;
   if (spellsAProjection(Type(implOp.getSelfClaim())) ||
-      !implOp.getAssumptions().getEqualities().empty())
+      implOp.getAssumptions().hasEqualities())
     reading = buildSubproofNormalizationContext(*this, module);
   // XXX TODO a projection a declaration spells must be over its own self
   // application, a where-clause application, a trait requirement or a declared
@@ -2114,17 +2149,13 @@ LogicalResult ProofOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   auto throughEvidence = [&](Type ty) -> FailureOr<Type> {
     return reading.normalize(ty, errFn);
   };
-  auto arguments = implOp.buildSubstitutionForSelfClaim(getProvenClaim(),
-                                                        throughEvidence, errFn);
-  if (failed(arguments))
+  if (failed(implOp.buildSubstitutionForSelfClaim(getProvenClaim(),
+                                                  throughEvidence, errFn)))
     return failure();
 
-  // The impl's equality premises stand over this claim too. They take no
-  // subproof -- the given list is indexed by the impl's application-arm
-  // obligations -- so a proof that did not read them stood over an impl that
-  // does not apply, and only a use of the claim far downstream said so.
-  if (failed(verifyEqualityPremisesHoldAt(implOp, getProvenClaim(), *arguments,
-                                          reading, errFn)))
+  // The impl's equality premises stand over this claim too.
+  if (failed(verifyEqualityPremisesAt(getProvenClaim(),
+                                      DemandOrigin::ProofVerification, errFn)))
     return failure();
 
   // recursively verify proof structure and that proof bindings can be recorded.
@@ -2589,7 +2620,8 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // evidence the witnessed claim names -- the proof tree it carries, by index
   // -- and then through the impls the module holds.
   NormalizationContext reading;
-  if (spellsAProjection(Type(impl.getSelfClaim())))
+  if (spellsAProjection(Type(impl.getSelfClaim())) ||
+      impl.getAssumptions().hasEqualities())
     reading = buildProofNormalizationContext(getProvenClaim(), module);
   // XXX TODO a projection a declaration spells must be over its own self
   // application, a where-clause application, a trait requirement or a declared
@@ -2621,7 +2653,16 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
   auto subst = impl.buildSubstitutionForSelfClaim(getProvenClaim(),
                                                   throughEvidence, errFn);
-  return failed(subst) ? failure() : success();
+  if (failed(subst))
+    return failure();
+
+  // The impl's equality premises are read at the claim this witness names, not
+  // at the declaration the match above carried there: a premise mentioning a
+  // variable the proof stands over is left standing at the proof and decided at
+  // each instance. No premise takes a subproof, so nothing the proof cites
+  // reads it.
+  return verifyEqualityPremisesHoldAt(impl, getProvenClaim(), *subst, reading,
+                                      errFn);
 }
 
 

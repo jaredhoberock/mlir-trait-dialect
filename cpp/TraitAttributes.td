@@ -245,6 +245,13 @@ def PredicateArrayAttr : AttrDef<TraitDialect, "PredicateArray",
       });
     }
 
+    // Whether any entry is an equality requirement.
+    bool hasEqualities() const {
+      return llvm::any_of(getPredicates(), [](::mlir::Attribute p) {
+        return mlir::isa<TypeEqualityAttr>(p);
+      });
+    }
+
     // Convenience: build from application entries alone (the common case).
     static PredicateArrayAttr get(MLIRContext *ctx,
                                   ArrayRef<TraitApplicationAttr> apps) {

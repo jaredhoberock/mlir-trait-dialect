@@ -13,5 +13,5 @@ trait.impl private @B_impl for @B[!trait.poly<3>] where [
   @A[!trait.poly<3>]
 ] {}
 
-// expected-error @+1 {{'@A_impl' is polymorphic (has type parameters) or has obligations (trait requirements or impl assumptions) and must be proven with a trait.proof}}
+// expected-error @+1 {{'@A_impl' binds type parameters, states its own where clause, or implements a trait requiring an application, so it must be cited through a trait.proof}}
 trait.proof private @B_impl_p proves @B_impl for @B[i8] given [@A_impl]

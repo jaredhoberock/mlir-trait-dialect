@@ -945,6 +945,15 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
       return failure();
   }
 
+  // The impl's equality premises are read at the obligation this citation
+  // discharges. They take no subproof, and a premise mentioning a variable the
+  // proof stands over is left standing where the proof is verified, so the
+  // instance a citation names is the only place it can be decided. A standing
+  // proof selection reuses and a polymorphic proof cited as a subproof both
+  // arrive here.
+  if (failed(proof.verifyEqualityPremisesAt(unproven, origin, err)))
+    return failure();
+
   // The impl's obligations are read at the claim this proof is cited for, which
   // the match above carried the proof's declaration to. A proof written over
   // type variables states its obligations over those same variables, and the
