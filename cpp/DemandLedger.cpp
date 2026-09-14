@@ -52,8 +52,6 @@ llvm::SetVector<Type> demandsSpelledIn(ModuleOp module, bool inAttributes,
                                        DenseMap<Type, Location> *origins) {
   llvm::SetVector<Type> spelled;
   auto skips = [](DemandSkip discipline, Operation *op) {
-    if (discipline == DemandSkip::Nothing)
-      return false;
     if (isa<TraitOp, ImplOp, ProofOp>(op))
       return true;
     if (discipline != DemandSkip::Foreign)

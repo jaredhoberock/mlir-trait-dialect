@@ -63,8 +63,6 @@ inline bool recordsToLedger(DemandOrigin origin) {
 }
 
 enum class DemandSkip : uint8_t {
-  /// Nothing: every op the module holds, trait and impl headers included.
-  Nothing,
   /// Trait, impl and proof ops and their whole subtrees. What they spell -- a
   /// trait's own requirements, an impl's assumptions, the projections in either
   /// header -- stands for good and is nothing to serve.
