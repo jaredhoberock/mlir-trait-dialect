@@ -808,44 +808,6 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
     unproven = cast<ClaimType>(*normalizedUnproven);
   }
 
-  // An obligation is discharged only by evidence for that same application.
-  // The evidence's claim is a declaration over the variables it spells -- a
-  // blanket impl and a proof written over type variables each stand for every
-  // instance of theirs -- so the judgment is whether that declaration, read at
-  // the arguments this obligation supplies, rebuilds the obligation. Everything
-  // below reads the evidence's own header and its own subproofs, so without
-  // this a citation of an impl or a proof of some other application would be
-  // checked against itself and pass, and an obligation spelling a variable
-  // would take evidence for one instance of it as evidence for all of them.
-  {
-    // XXX TODO a projection a declaration spells must be over its own self
-    // application, a where-clause application, a trait requirement or a declared
-    // witness (Rust's projection well-formedness rule), so every projection has
-    // evidence at a known index and this module read deletes with LookupScope and
-    // the verifier DemandOrigins.
-    GroundProjectionLookup byGroundLookup(module, origin);
-    if (failed(matchDeclaration(getTypeParametersIn(Type(proven)),
-                                Type(proven.asUnproven()), Type(unproven),
-                                byGroundLookup, /*err=*/nullptr))) {
-      // A side still spelling a projection is one nothing here can decide: the
-      // impls standing now resolve it for nobody, and impl selection resolves
-      // it through the candidate it settles on, which a reader holding no
-      // record cannot. The obligation is declined rather than discharged --
-      // nothing is bound, and this node describes no closure -- so the claim
-      // stands unproven for selection to derive and for the leftover walk to
-      // refuse.
-      if (containsType<ProjectionType>(Type(unproven)) ||
-          containsType<ProjectionType>(Type(proven))) {
-        derived.complete = false;
-        return success();
-      }
-      if (err) err() << "proof " << proven.getProof() << " proves "
-                     << proven.asUnproven()
-                     << ", which does not discharge the obligation " << unproven;
-      return failure();
-    }
-  }
-
   // What deriving one settled pair produces is a fact about the proof standing
   // over it and not about the caller that reached it, so a pair the record
   // already holds is replayed here instead of derived a second time. This is
@@ -939,9 +901,7 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
   // If it's an impl op, it stands alone: a citation naming an impl carries no
   // subproofs, so the trait may require no application. A trait-header equality
   // requires none -- it is an obligation the impl discharges at its own
-  // verification -- which is the same predicate that decides whether an impl is
-  // unconditional, and impl selection records an impl as its own proof by that
-  // predicate.
+  // verification.
   if (auto impl = dyn_cast<ImplOp>(*symOp)) {
     if (trait->getRequirements().hasApplications()) {
       if (err) err() << "impl provides no subproof for trait requirements";
@@ -1003,7 +963,7 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
     return failure();
 
   // The impl's obligations are read at the claim this proof is cited for, which
-  // the match above carried the proof's declaration to. A proof written over
+  // the reading above carried the proof's declaration to. A proof written over
   // type variables states its obligations over those same variables, and the
   // instance a citation supplies is what they stand at here: read at the
   // declaration instead, an obligation would be discharged by evidence for
@@ -1015,12 +975,12 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
   // @D[poly, poly] rebuilds @D[i64, i64] but not @D[A[i32]::Out, A[f32]::Out]
   // (the two projections are structurally different even though both resolve to
   // i64).
-  auto obligations = proof.getImpl().specializeObligationsAsClaimsFor(
-      proven.asUnproven(), origin, err);
-  if (failed(obligations)) return failure();
-
-  // get the subproof claims (also checks arity against obligations)
-  auto subproofs = proof.verifyAndGetSubproofClaims(origin, err);
+  //
+  // Each subproof claim is one of those obligations carrying the symbol cited
+  // for it, so the obligation a child is asked about and the evidence it is
+  // asked to read are one object here.
+  auto subproofs =
+      proof.verifyAndGetSubproofClaims(proven.asUnproven(), origin, err);
   if (failed(subproofs)) return failure();
 
   // Bind optimistically before recursing so that coinductive self-references
@@ -1030,10 +990,10 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
   derived.add(unproven, proven);
 
   // recurse over obligations
-  for (auto [ob, sub] : llvm::zip(*obligations, *subproofs)) {
+  for (ClaimType sub : *subproofs) {
     DerivedNode child;
-    if (failed(deriveProof(ob, sub, module, bindings, origin, memo, staging,
-                           child, err))) {
+    if (failed(deriveProof(sub.asUnproven(), sub, module, bindings, origin, memo,
+                           staging, child, err))) {
       bindings.erase(unproven);
       return failure();
     }

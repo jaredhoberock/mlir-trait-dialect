@@ -155,9 +155,11 @@ static NormalizationContext buildProofNormalizationContext(ClaimType provenClaim
                                                            ModuleOp module);
 
 /// What the obligations of the impl `proof` stands on may be read through: the
-/// impls the proofs discharging them name, by index. A proof justifies nothing
-/// about itself, so its own rule is not among these.
+/// impls the proofs discharging them name, by index, at the application `at`
+/// carries those obligations to. A proof justifies nothing about itself, so its
+/// own rule is not among these.
 static NormalizationContext buildSubproofNormalizationContext(ProofOp proof,
+                                                              ClaimType at,
                                                               ModuleOp module);
 
 
@@ -2123,8 +2125,8 @@ LogicalResult ProofOp::verifyEqualityPremisesAt(
   }
 
   return verifyEqualityPremisesOfImplAt(
-      implOp, cited, buildSubproofNormalizationContext(*this, module), module,
-      origin, err);
+      implOp, cited, buildSubproofNormalizationContext(*this, cited, module),
+      module, origin, err);
 }
 
 LogicalResult ProofOp::verify() {
@@ -2167,7 +2169,7 @@ LogicalResult ProofOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   NormalizationContext reading;
   if (spellsAProjection(Type(implOp.getSelfClaim())) ||
       implOp.getAssumptions().hasEqualities())
-    reading = buildSubproofNormalizationContext(*this, module);
+    reading = buildSubproofNormalizationContext(*this, getProvenClaim(), module);
   // XXX TODO a projection a declaration spells must be over its own self
   // application, a where-clause application, a trait requirement or a declared
   // witness (Rust's projection well-formedness rule), so every projection has
@@ -2208,7 +2210,8 @@ TraitOp ProofOp::getTrait() {
 }
 
 FailureOr<SmallVector<ClaimType>> ProofOp::verifyAndGetSubproofClaims(
-    DemandOrigin origin, llvm::function_ref<InFlightDiagnostic()> err) {
+    ClaimType at, DemandOrigin origin,
+    llvm::function_ref<InFlightDiagnostic()> err) {
   SmallVector<ClaimType> result;
 
   ModuleOp module = (*this)->getParentOfType<ModuleOp>();
@@ -2217,16 +2220,15 @@ FailureOr<SmallVector<ClaimType>> ProofOp::verifyAndGetSubproofClaims(
     return failure();
   }
 
-  // Compute obligations so we can validate coinductive self-references
-  // and check arity.
   auto implOp = getImpl();
   if (!implOp) {
     if (err) err() << "cannot find impl '" << getImplNameAttr() << "'";
     return failure();
   }
 
-  auto obligations =
-      implOp.specializeObligationsAsClaimsFor(getProvenClaim(), origin, err);
+  // The obligations at the application this proof is being carried to. The
+  // given list is indexed by them, so this is also the arity to check.
+  auto obligations = implOp.specializeObligationsAsClaimsFor(at, origin, err);
   if (failed(obligations)) return failure();
 
   ArrayAttr subproofNames = getSubproofNames();
@@ -2249,12 +2251,9 @@ FailureOr<SmallVector<ClaimType>> ProofOp::verifyAndGetSubproofClaims(
     if (failed(getProofOpOrUnconditionalImplOp(module, subproofRef, err)))
       return failure();
 
-    // The claim a subproof stands over is the obligation the arity check paired
-    // it with, named by the symbol cited for it -- evidence built from the
-    // obligation by position. Reading the cited symbol's own declaration
-    // instead would hand back the variables a blanket proof stands over, and
-    // whatever binds the obligation to that spelling writes them into the body
-    // the citation is in.
+    // A subproof's claim is the obligation it discharges, spelled at `at`,
+    // carrying the cited symbol: evidence built from the obligation by
+    // position.
     result.push_back(ClaimType::get(getContext(),
                                     obligation.getTraitApplication(),
                                     subproofRef));
@@ -3295,7 +3294,7 @@ static void addLocalProjectionRulesFromProvenClaim(
   if (proof)
     if (visited.insert(proof.getOperation()).second) {
       auto subproofs = proof.verifyAndGetSubproofClaims(
-          DemandOrigin::ProofVerification, /*err=*/nullptr);
+          claim, DemandOrigin::ProofVerification, /*err=*/nullptr);
       if (succeeded(subproofs))
         for (ClaimType subproof : *subproofs)
           if (subproof.isProven())
@@ -3403,6 +3402,7 @@ NormalizationContext buildProofNormalizationContext(ClaimType provenClaim,
 }
 
 NormalizationContext buildSubproofNormalizationContext(ProofOp proof,
+                                                       ClaimType at,
                                                        ModuleOp module) {
   NormalizationContext ctx;
   llvm::SmallPtrSet<Operation *, 8> visited;
@@ -3410,7 +3410,7 @@ NormalizationContext buildSubproofNormalizationContext(ProofOp proof,
   // stands over contributes and it does not.
   visited.insert(proof.getOperation());
   auto subproofs = proof.verifyAndGetSubproofClaims(
-      DemandOrigin::ProofVerification, /*err=*/nullptr);
+      at, DemandOrigin::ProofVerification, /*err=*/nullptr);
   if (succeeded(subproofs))
     for (ClaimType subproof : *subproofs)
       if (subproof.isProven())

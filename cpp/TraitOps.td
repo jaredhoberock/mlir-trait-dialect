@@ -1647,13 +1647,24 @@ def ProofOp : TraitDialectOp<"proof", [
     LogicalResult verifyEqualityPremisesAt(ClaimType cited, DemandOrigin origin,
                                            llvm::function_ref<InFlightDiagnostic()> err);
 
+    /// The claims this proof's subproofs stand over, at `at`.
+    ///
+    /// A subproof's claim is the obligation it discharges, spelled at the
+    /// application the citation names, carrying the cited symbol. The given
+    /// list is indexed by the impl's obligations, so the obligation at each
+    /// index is what the name at that index answers for, and `at` is where
+    /// those obligations are read: a proof written over type variables states
+    /// them over those same variables, and a citation supplies the instance.
+    ///
     /// `origin` names the caller, which the obligation specialization this
     /// performs raises its demand under.
-    FailureOr<SmallVector<ClaimType>> verifyAndGetSubproofClaims(DemandOrigin origin,
+    FailureOr<SmallVector<ClaimType>> verifyAndGetSubproofClaims(ClaimType at,
+                                                                 DemandOrigin origin,
                                                                  llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     SmallVector<ClaimType> getSubproofClaims() {
-      auto maybeResult = verifyAndGetSubproofClaims(DemandOrigin::ProofVerification);
+      auto maybeResult = verifyAndGetSubproofClaims(getProvenClaim(),
+                                                    DemandOrigin::ProofVerification);
       if (failed(maybeResult))
         llvm_unreachable("ProofOp::getSubproofClaims: verifyAndGetSubproofClaims failed");
       return *maybeResult;
