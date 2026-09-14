@@ -712,7 +712,7 @@ inline bool isMonomorphicType(Type ty) {
 }
 
 // A type is "ground" when it contains no PolymorphicTypeInterface nodes at all —
-// no poly vars, no inference vars, no projections, no claims. Unlike
+// no poly vars, no projections, no claims. Unlike
 // isMonomorphicType, which asks whether any participant *reports* as polymorphic,
 // isGroundType asks whether any participant *exists*. A monomorphic projection
 // like !trait.proj<@Foo[i64], "Bar"> is monomorphic (no poly vars) but not

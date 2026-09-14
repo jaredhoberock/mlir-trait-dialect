@@ -1052,8 +1052,7 @@ struct MonomorphizeResultTypesPattern
     // InferTypeOpInterface is implemented by ops well outside this
     // dialect's orbit (arith and friends), so participation is gated on
     // having something to refine: at least one current result type is
-    // non-ground (mentions a poly var, inference var, projection, or
-    // claim).
+    // non-ground (mentions a poly var, a projection, or a claim).
     if (llvm::all_of(iface->getResultTypes(), isGroundType))
       return rewriter.notifyMatchFailure(iface, "result types are already ground");
 

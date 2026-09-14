@@ -1023,7 +1023,8 @@ def ProjectOp : TraitDialectOp<"project", [
     ```
   }];
 
-  let arguments = (ins Claim:$source, I64Attr:$index);
+  let arguments = (ins Claim:$source,
+                       ConfinedAttr<I64Attr, [IntNonNegative]>:$index);
   let results   = (outs Claim:$result);
 
   let extraClassDeclaration = [{
@@ -1326,8 +1327,9 @@ def MethodCallOp : TraitDialectOp<"method.call", [
     // The method's own type variables and the arguments they take at this call
     // (the trait's arguments already ride in the receiver claim's application),
     // spelled explicitly so a sweep that normalizes the argument and result
-    // types cannot erase them. Absent on a call whose bindings are inferred from
-    // its signature (hand-written IR).
+    // types cannot erase them. Absent only where the method has no type
+    // variables of its own: a call supplying fewer arguments than its callee
+    // binds is refused.
     OptionalAttr<TypeArrayAttr>:$type_params,
     OptionalAttr<TypeArrayAttr>:$type_args
   );
@@ -1486,16 +1488,16 @@ def FuncCallOp : TraitDialectOp<"func.call", [
       // call, spelled explicitly so a sweep that normalizes the operand and
       // result types cannot erase them: the two parallel arrays record the
       // substitution a generic call names, which its spelled types once only
-      // implied. Absent on a call whose bindings are inferred from its
-      // signature (hand-written IR).
+      // implied. Absent only where the callee has no type variables: a call
+      // supplying fewer arguments than its callee binds is refused.
       OptionalAttr<TypeArrayAttr>:$type_params,
       OptionalAttr<TypeArrayAttr>:$type_args
   );
 
   let results = (outs Variadic<AnyType>);
 
-  // Construct a call whose bindings are inferred from its signature; the
-  // sweep-proof type_params/type_args arrays stay absent.
+  // Construct a call to a callee that binds no type variables; the
+  // type_params/type_args arrays stay absent.
   let builders = [
     OpBuilder<(ins "::mlir::TypeRange":$resultTypes,
                    "::mlir::FlatSymbolRefAttr":$calleeName,

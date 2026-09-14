@@ -56,7 +56,7 @@ MlirOperation traitImplOpCreateNamed(MlirLocation loc,
 
 /// Create a trait.method.call operation. `typeParams`/`typeArgs` are the
 /// parallel type-argument arrays (the method's own type variables and the types
-/// they take); pass numTypeArgs = 0 to leave the call's bindings inferred.
+/// they take); pass numTypeArgs = 0 only for a method that binds none.
 MlirOperation traitMethodCallOpCreate(MlirLocation loc,
                                       MlirStringRef traitName,
                                       MlirStringRef methodName,
@@ -68,7 +68,7 @@ MlirOperation traitMethodCallOpCreate(MlirLocation loc,
 
 /// Create a trait.func.call operation. `typeParams`/`typeArgs` are the parallel
 /// type-argument arrays (the callee's own type variables and the types they
-/// take); pass numTypeArgs = 0 to leave the call's bindings inferred.
+/// take); pass numTypeArgs = 0 only for a callee that binds none.
 MlirOperation traitFuncCallOpCreate(MlirLocation loc,
                                     MlirStringRef callee,
                                     MlirValue* arguments, intptr_t numArguments,
