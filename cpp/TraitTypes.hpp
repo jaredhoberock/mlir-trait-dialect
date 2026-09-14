@@ -899,6 +899,18 @@ void nameChainEnds(InFlightDiagnostic &diagnostic, ArrayRef<FrameT> chain,
     name(diagnostic, frame);
 }
 
+/// One step of an obligation chain: the application asked about, and the proof
+/// that states what stands below it where a proof states it.
+///
+/// Impl selection descends a candidate's where clause, which no proof mediates,
+/// and leaves `proof` null. A proof derivation descends the subproofs a given
+/// list names, and carries that symbol so a refusal can say which proof put the
+/// next step on the chain.
+struct ObligationFrame {
+  TraitApplicationAttr application;
+  SymbolRefAttr proof;
+};
+
 /// Refuses an obligation chain that has reached the depth limit, naming the
 /// chain that reaches `app`.
 ///
@@ -912,11 +924,11 @@ void nameChainEnds(InFlightDiagnostic &diagnostic, ArrayRef<FrameT> chain,
 /// recursion the walk is standing in, and a chain that alternates traits stands
 /// as deep as one that repeats a single trait.
 ///
-/// The chain holds the applications an obligation walk is part-way through,
-/// outermost first, whichever walk it is: impl selection deriving a candidate's
-/// where clause and a proof derivation descending its subproofs count frames the
-/// same way, so one obligation chain has one bound.
-LogicalResult checkObligationChainDepth(ArrayRef<TraitApplicationAttr> chain,
+/// The chain holds the frames an obligation walk is part-way through, outermost
+/// first, whichever walk it is: impl selection deriving a candidate's where
+/// clause and a proof derivation descending its subproofs count frames the same
+/// way, so one obligation chain has one bound.
+LogicalResult checkObligationChainDepth(ArrayRef<ObligationFrame> chain,
                                         TraitApplicationAttr app,
                                         Location anchor);
 

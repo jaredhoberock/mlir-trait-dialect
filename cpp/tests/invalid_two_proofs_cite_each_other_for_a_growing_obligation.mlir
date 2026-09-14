@@ -9,12 +9,14 @@
 // verify one level deep; the derivation underneath them alternates traits and
 // grows the type forever. What bounds it is the number of frames standing on
 // the chain, whichever trait each names, so a derivation alternating two traits
-// is refused at the same depth as one repeating a single trait.
+// is refused at the same depth as one repeating a single trait. Each frame
+// names the proof whose citation put the next one on the chain, which is how
+// the two alternating declarations are told apart.
 
 // CHECK: error: overflow evaluating the requirement {{.*}}: 128 obligations stand on the chain that reaches it
-// CHECK: note: required by {{.*}}@P1[i32]
-// CHECK: note: required by {{.*}}@Q1[i32]
-// CHECK: note: required by {{.*}}@P1[tuple<i32>]
+// CHECK: note: required by {{.*}}@P1[i32]{{.*}}, stated by proof @p
+// CHECK: note: required by {{.*}}@Q1[i32]{{.*}}, stated by proof @q
+// CHECK: note: required by {{.*}}@P1[tuple<i32>]{{.*}}, stated by proof @p
 // CHECK: note: {{.*}} more frame(s) elided
 
 trait.trait private @P1[!trait.poly<0>] { func.func private @p() -> i64 }

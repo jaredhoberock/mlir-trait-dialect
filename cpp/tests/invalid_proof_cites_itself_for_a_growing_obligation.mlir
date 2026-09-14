@@ -9,11 +9,13 @@
 // derivation asks about @X[tuple<i32>], then @X[tuple<tuple<i32>>], and never
 // ends. Every node is a new application, so the early exit on a bound
 // obligation never fires; the number of obligations standing on the derivation
-// is what stops it, exactly as it stops the same chain in impl selection.
+// is what stops it, exactly as it stops the same chain in impl selection. Each
+// frame names the proof whose citation put the next one on the chain, which is
+// the declaration to change.
 
 // CHECK: error: overflow evaluating the requirement {{.*}}: 128 obligations stand on the chain that reaches it
-// CHECK: note: required by {{.*}}@X[i32]
-// CHECK: note: required by {{.*}}@X[tuple<i32>]
+// CHECK: note: required by {{.*}}@X[i32]{{.*}}, stated by proof @p
+// CHECK: note: required by {{.*}}@X[tuple<i32>]{{.*}}, stated by proof @p
 // CHECK: note: {{.*}} more frame(s) elided
 
 trait.trait private @X[!trait.poly<0>] { func.func private @x() -> i64 }

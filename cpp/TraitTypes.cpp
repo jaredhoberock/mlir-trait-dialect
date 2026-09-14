@@ -134,7 +134,7 @@ void reportUnnormalizableProjection(Type ty, unsigned iterations,
 
 } // namespace
 
-LogicalResult checkObligationChainDepth(ArrayRef<TraitApplicationAttr> chain,
+LogicalResult checkObligationChainDepth(ArrayRef<ObligationFrame> chain,
                                         TraitApplicationAttr app,
                                         Location anchor) {
   if (chain.size() < kInstantiationDepthLimit)
@@ -148,10 +148,12 @@ LogicalResult checkObligationChainDepth(ArrayRef<TraitApplicationAttr> chain,
       emitError(currentDemandAnchor().value_or(anchor))
       << "overflow evaluating the requirement '" << app << "': "
       << chain.size() << " obligations stand on the chain that reaches it";
-  nameChainEnds<TraitApplicationAttr>(
-      diagnostic, chain,
-      [](InFlightDiagnostic &d, TraitApplicationAttr frame) {
-        d.attachNote() << "required by " << frame;
+  nameChainEnds<ObligationFrame>(
+      diagnostic, chain, [](InFlightDiagnostic &d, ObligationFrame frame) {
+        Diagnostic &note = d.attachNote();
+        note << "required by " << frame.application;
+        if (frame.proof)
+          note << ", stated by proof " << frame.proof;
       });
   return failure();
 }
@@ -838,7 +840,7 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
                                  ProofDerivationMemo *memo,
                                  DerivationStaging &staging,
                                  DerivedNode &derived,
-                                 SmallVectorImpl<TraitApplicationAttr> &chain,
+                                 SmallVectorImpl<ObligationFrame> &chain,
                                  llvm::function_ref<InFlightDiagnostic()> err);
 
 /// Writes a closure a derivation already produced into `bindings`.
@@ -876,7 +878,7 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
                                  ProofDerivationMemo *memo,
                                  DerivationStaging &staging,
                                  DerivedNode &derived,
-                                 SmallVectorImpl<TraitApplicationAttr> &chain,
+                                 SmallVectorImpl<ObligationFrame> &chain,
                                  llvm::function_ref<InFlightDiagnostic()> err) {
   // the proven side must carry a proof
   if (!proven.isProven()) {
@@ -1052,8 +1054,9 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
   bindings.bind(unproven, proven);
   derived.add(unproven, proven);
 
-  // recurse over obligations
-  chain.push_back(unproven.getTraitApplication());
+  // recurse over obligations. The frame carries the proof cited here, which is
+  // the declaration that states every obligation below it.
+  chain.push_back({unproven.getTraitApplication(), proven.getProof()});
   auto frame = llvm::scope_exit([&] { chain.pop_back(); });
   for (ClaimType sub : *subproofs) {
     DerivedNode child;
@@ -1115,7 +1118,7 @@ LogicalResult verifyAndRecordProof(
     llvm::function_ref<InFlightDiagnostic()> err) {
   DerivationStaging staging;
   DerivedNode derived;
-  SmallVector<TraitApplicationAttr> chain;
+  SmallVector<ObligationFrame> chain;
   if (failed(deriveProof(unproven, proven, module, bindings, origin, memo,
                          staging, derived, chain, err)))
     return failure();

@@ -59,7 +59,9 @@ ImplResolver::assumptionsSatisfiableFor(ImplOp impl,
     return success();
 
   // cycle guard: A(app) -> ... -> A(app) means unsatisfiable
-  if (llvm::is_contained(memo.visiting, app))
+  if (llvm::any_of(memo.visiting, [&](ObligationFrame frame) {
+        return frame.application == app;
+      }))
     return failure();
 
   // growth bound: a chain whose every step asks about a bigger application
@@ -67,7 +69,8 @@ ImplResolver::assumptionsSatisfiableFor(ImplOp impl,
   if (failed(checkObligationChainDepth(memo.visiting, app, impl.getLoc())))
     return failure();
 
-  memo.visiting.push_back(app);
+  // Selection descends the candidate's where clause, which no proof mediates.
+  memo.visiting.push_back({app, SymbolRefAttr()});
   auto guard = llvm::scope_exit([&]{ memo.visiting.pop_back(); });
 
   // The candidate's arguments as the demanded application and its own where

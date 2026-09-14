@@ -173,7 +173,7 @@ struct ResolutionMemo {
   // repeat is a resolution cycle; the number of frames is how deep the
   // obligation chain has recursed, which is what bounds a chain whose every
   // step is a new application.
-  SmallVector<TraitApplicationAttr> visiting;
+  SmallVector<ObligationFrame> visiting;
 
   // A memo for assumptionsSatisfiableFor
   // For every (ImplOp, TraitApplicationAttr) in this set, the ImplOp's

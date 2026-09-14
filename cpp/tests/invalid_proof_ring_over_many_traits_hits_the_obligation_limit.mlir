@@ -11,9 +11,9 @@
 // counts it.
 
 // CHECK: error: overflow evaluating the requirement {{.*}}: 128 obligations stand on the chain that reaches it
-// CHECK: note: required by {{.*}}@P1[i32]
-// CHECK: note: required by {{.*}}@P2[i32]
-// CHECK: note: required by {{.*}}@P3[i32]
+// CHECK: note: required by {{.*}}@P1[i32]{{.*}}, stated by proof @p1
+// CHECK: note: required by {{.*}}@P2[i32]{{.*}}, stated by proof @p2
+// CHECK: note: required by {{.*}}@P3[i32]{{.*}}, stated by proof @p3
 // CHECK: note: {{.*}} more frame(s) elided
 
 trait.trait private @P1[!trait.poly<0>] { func.func private @m() -> i64 }
