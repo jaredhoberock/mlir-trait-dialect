@@ -104,42 +104,51 @@ public:
   ArrayRef<Type> getDrainableDemands() const { return demands.getArrayRef(); }
   unsigned getDrainableArms(Type demand) const { return arms.lookup(demand); }
 
+  /// Where `demand` was first raised, when a frame named a place then.
+  ///
+  /// A demand is raised where an engine read a spelling it could not settle,
+  /// and that is where a refusal of it belongs. The rounds that put it to
+  /// selection later stand nowhere in the program, so the place is kept here or
+  /// nowhere.
+  std::optional<Location> getRaisedAt(Type demand) const {
+    auto it = raisedAt.find(demand);
+    if (it == raisedAt.end())
+      return std::nullopt;
+    return it->second;
+  }
+
   void pushFrame(Type demand);
   void pushFrame(Location origin);
   void popFrame();
   size_t getFrameDepth() const { return frames.size(); }
+
+  /// The place the innermost open frame names, when it names one.
+  ///
+  /// A frame opened for a demand carries whatever place its enclosing frame
+  /// named, so the outermost such frame names none: an unknown location tells a
+  /// reader less than the fallback each caller already carries.
   std::optional<Location> getInnermostFrameOrigin() const {
-    if (frames.empty())
+    if (frames.empty() || isa<UnknownLoc>(frames.back()))
       return std::nullopt;
     return frames.back();
   }
 
-  /// Reports every drained key the stage neither served nor left standing, and
-  /// fails when there is one.
-  ///
-  /// A round takes a key off the drain when nothing it could ask later would
-  /// settle it differently: impl selection resolved it, or refused it on the
-  /// arm no later resolution overturns and left its spelling for the stage's
-  /// leftover walks to report. A key that is neither served nor still spelled
-  /// was taken and dropped, and nothing downstream would say so.
-  LogicalResult checkDrainedKeysSettled(ModuleOp module,
-                                        const DenseSet<Type> &drained,
-                                        const DenseSet<Type> &served) const;
-
   /// Reports every drainable demand still spelled at stage exit that no round
   /// served, and fails when there is one.
   ///
-  /// checkDrainedKeysSettled covers the demands a round took off the drain and
-  /// then lost; this covers the complementary case, a drainable demand no round
-  /// settled -- one deferred to a round that never came, or one whose surviving
-  /// spelling the stage's leftover-op walks do not reach because it lives on a
-  /// block argument or in an attribute.
+  /// A demand a round took off the drain and could not serve was refused on the
+  /// arm no later resolution overturns, and selection named that refusal where
+  /// the demand stood. This covers the complementary case, a drainable demand
+  /// no round settled -- one deferred to a round that never came, or one whose
+  /// surviving spelling the stage's leftover-op walks do not reach because it
+  /// lives on a block argument or in an attribute.
   LogicalResult checkStandingDemandsServed(
       ModuleOp module, const DenseSet<Type> &served) const;
 
 private:
   llvm::SetVector<Type> demands;
   llvm::DenseMap<Type, unsigned> arms;
+  llvm::DenseMap<Type, Location> raisedAt;
   SmallVector<Location, 8> frames;
 };
 

@@ -1335,11 +1335,15 @@ static void serveCollectedDemands(ImplResolver &resolver,
   for (Type demand : collected) {
     // A demand found by walking the module is named while it is put to
     // selection, so what the ask raises underneath is attributed to the op
-    // carrying the spelling. A demand an engine recorded already carries where
-    // it was raised, and the frame it was raised under is gone by now.
+    // carrying the spelling. The frame a demand an engine recorded was raised
+    // under is gone by now, so the place that frame named is read back off the
+    // ledger: a demand spelled in no op has that place and no other.
     std::optional<DemandFrame> spelledAt;
     if (auto origin = origins.find(demand); origin != origins.end())
       spelledAt.emplace(origin->second);
+    else if (std::optional<Location> raised =
+                 resolver.getDemandLedger().getRaisedAt(demand))
+      spelledAt.emplace(*raised);
     // The epoch is read per demand rather than once per round: serving one
     // demand mints facts the demands after it in this batch are resolved
     // under, so a demand asked about before that is one the next round asks
@@ -1700,10 +1704,10 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
   // The demands the rounds below settled and the ones they served. A demand is
   // settled when nothing a later round could ask would answer differently, so
   // the served demands are a subset: a demand refused on the arm no later
-  // resolution overturns is settled and unserved. The stage-exit checks read
-  // both -- the served set tells a demand the stage answered from one the
-  // drainability rule over-admitted, and the difference is what must still be
-  // spelled for something to report.
+  // resolution overturns is settled and unserved, and selection named that
+  // refusal where the demand stood. The stage-exit check reads the served set,
+  // which tells a demand the stage answered from one the drainability rule
+  // over-admitted.
   DenseSet<Type> drained;
   DenseSet<Type> served;
   // The fact epoch each unsettled demand was last put to selection at, which is
@@ -1929,13 +1933,6 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
   // itself, and the greedy driver took that refusal for a pattern that did not
   // apply. The stage fails here rather than converging over a chain it stopped.
   if (resolver->getInstantiationChain().wasLimitReached())
-    return failure();
-
-  // Every demand a round took off the drain was one it undertook to settle, so
-  // at the end of the stage each is served or left for the walks below to
-  // report. A demand taken and dropped is one nothing downstream would mention.
-  if (failed(resolver->getDemandLedger().checkDrainedKeysSettled(module, drained,
-                                                                 served)))
     return failure();
 
   // Assert that no op produced an unproven monomorphic claim that escaped

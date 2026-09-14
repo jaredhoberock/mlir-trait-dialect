@@ -409,6 +409,19 @@ FailureOr<Type> ImplResolver::resolveProjectionType(
   return instantiate(*binding, *subst);
 }
 
+/// Names the ambiguity that refused `demand`, where the demand stands.
+///
+/// Two satisfiable impls of one ground application is the refusal no later
+/// resolution overturns, so it is decided here and nowhere else. It is also a
+/// refusal the demand's own spelling need not carry: an obligation read off a
+/// trait's where clause at a ground application is spelled in no operation, so
+/// the stage's leftover walks have nothing to find and the demand would go
+/// unreported.
+static void reportAmbiguousDemand(Type demand, ModuleOp scope) {
+  emitError(currentDemandAnchor().value_or(scope.getLoc()))
+      << "incoherent impls (multiple satisfiable) for " << demand;
+}
+
 ImplResolver::DemandDisposition
 ImplResolver::serveDemand(ProjectionType demand, ModuleOp scope,
                           OpBuilder &builder) {
@@ -426,9 +439,11 @@ ImplResolver::serveDemand(ProjectionType demand, ModuleOp scope,
   // later resolution overturns. Every other way of not serving -- no candidate
   // yet, or a binding whose own arguments have still to resolve -- is one the
   // facts can move under.
-  return refusedOn == RefutationArm::MultipleSatisfiableCandidates
-             ? DemandDisposition::Refused
-             : DemandDisposition::Deferred;
+  if (refusedOn != RefutationArm::MultipleSatisfiableCandidates)
+    return DemandDisposition::Deferred;
+
+  reportAmbiguousDemand(Type(demand), scope);
+  return DemandDisposition::Refused;
 }
 
 ImplResolver::DemandDisposition
@@ -446,9 +461,11 @@ ImplResolver::serveDemand(ClaimType demand, ModuleOp scope,
   // The same reading as for a projection: two or more satisfiable candidates is
   // the one refusal no later resolution overturns, and every other way of not
   // serving is one the facts can move under.
-  return refusedOn == RefutationArm::MultipleSatisfiableCandidates
-             ? DemandDisposition::Refused
-             : DemandDisposition::Deferred;
+  if (refusedOn != RefutationArm::MultipleSatisfiableCandidates)
+    return DemandDisposition::Deferred;
+
+  reportAmbiguousDemand(Type(demand), scope);
+  return DemandDisposition::Refused;
 }
 
 Type ImplResolver::resolveProjectionsIn(Type ty, ModuleOp scope,

@@ -23,6 +23,11 @@ void DemandLedger::record(Type demand, unsigned missArms) {
   assert(isMonomorphicType(demand) && "pending demands have a concrete type");
   demands.insert(demand);
   arms[demand] |= missArms;
+  // The first frame that names a place keeps it: a demand is raised where an
+  // engine first read a spelling it could not settle, and a later read of the
+  // same demand stands wherever that later reader does.
+  if (std::optional<Location> origin = getInnermostFrameOrigin())
+    raisedAt.try_emplace(demand, *origin);
 }
 
 void DemandLedger::pushFrame(Type demand) {
@@ -117,42 +122,6 @@ llvm::SetVector<Type> demandsSpelledIn(ModuleOp module, bool inAttributes,
 }
 
 LogicalResult
-DemandLedger::checkDrainedKeysSettled(ModuleOp module,
-                                      const DenseSet<Type> &drained,
-                                      const DenseSet<Type> &served) const {
-  // Served keys are settled by construction and every served key was drained,
-  // so a drained set no larger than the served one holds nothing else to check
-  // and the walk below is not worth taking.
-  assert(served.size() <= drained.size() &&
-         "a key the stage served is one it took off the drain");
-  if (drained.size() == served.size())
-    return success();
-
-  llvm::SetVector<Type> spelled =
-      demandsSpelledIn(module, /*inAttributes=*/true, DemandSkip::Nothing,
-                       DemandSkip::Foreign);
-
-  bool dropped = false;
-  for (Type key : drained) {
-    if (served.contains(key))
-      continue;
-    bool stillSpelled = false;
-    key.walk([&](Type sub) {
-      if (spelled.contains(sub))
-        stillSpelled = true;
-    });
-    if (stillSpelled)
-      continue;
-
-    dropped = true;
-    module.emitError()
-        << "instantiate-monomorphs took the demand " << key
-        << " to serve and neither served it nor left it to report";
-  }
-  return failure(dropped);
-}
-
-LogicalResult
 DemandLedger::checkStandingDemandsServed(ModuleOp module,
                                          const DenseSet<Type> &served) const {
   // A demand spelled only inside trait infrastructure or a still-polymorphic
@@ -167,9 +136,10 @@ DemandLedger::checkStandingDemandsServed(ModuleOp module,
     // Only real demands enter the queue; probes and speculation are excluded.
     if (served.contains(key))
       continue;
-    // The one refusal no later resolution overturns leaves its demand spelled
-    // on purpose; the ambiguity is reported elsewhere, so this walk passes it
-    // over. The failed lookup preserves that arm alongside its demand.
+    // The one refusal no later resolution overturns leaves its demand standing
+    // on purpose; selection named the ambiguity where the demand stood, so this
+    // walk passes it over. The failed lookup preserves that arm alongside its
+    // demand.
     if (getDrainableArms(key) &
         (1u << static_cast<unsigned>(LookupMissReason::MultipleCandidateImpls)))
       continue;

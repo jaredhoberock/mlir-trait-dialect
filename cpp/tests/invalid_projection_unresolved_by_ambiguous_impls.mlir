@@ -4,7 +4,8 @@
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' -verify-diagnostics
 
 // Two satisfiable impls for @Gen[i64] provide different associated types.
-// Neither may be chosen, so the surviving @Gen[i64]::A projection is diagnosed.
+// Neither may be chosen: selection names the ambiguity where the demand stood,
+// and the surviving @Gen[i64]::A projection is diagnosed where it is spelled.
 
 !T = !trait.poly<0>
 
@@ -25,6 +26,7 @@ func.func private @wrap(%x: !T) -> !trait.proj<@Gen[!T], "A"> {
   return %r : !trait.proj<@Gen[!T], "A">
 }
 
+// expected-error @below {{incoherent impls (multiple satisfiable) for '!trait.proj<@Gen[i64], "A">'}}
 func.func @main() -> !trait.proj<@Gen[i64], "A"> {
   %x = arith.constant 1 : i64
   // expected-error @below {{unresolved projection '!trait.proj<@Gen[i64], "A">' after instantiate-monomorphs}}
