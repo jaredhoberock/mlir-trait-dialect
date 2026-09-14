@@ -13,7 +13,9 @@
 // @A_i64's method.
 
 trait.trait private @Foo[!trait.poly<0>] { trait.assoc_type @Out }
+// expected-note@+1 {{candidate}}
 trait.impl private @Foo_any for @Foo[!trait.poly<0>] { trait.assoc_type @Out = i32 }
+// expected-note@+1 {{candidate}}
 trait.impl private @Foo_i32 for @Foo[i32] { trait.assoc_type @Out = i32 }
 trait.trait private @A[!trait.poly<0>] { func.func private @a() -> i64 }
 trait.trait private @B[!trait.poly<0>] where [@A[!trait.proj<@Foo[!trait.poly<0>], "Out">]] {

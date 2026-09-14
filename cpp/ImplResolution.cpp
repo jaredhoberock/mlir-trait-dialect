@@ -132,6 +132,23 @@ ImplResolver::assumptionsSatisfiableFor(ImplOp impl,
   return success();
 }
 
+/// How many candidates a refusal names one by one. Past this a reader learns
+/// nothing more from another impl of the same shape, so the rest are counted.
+constexpr unsigned kCandidatesNamed = 16;
+
+/// Attaches one note per impl in `candidates` to `diagnostic`, each reading
+/// `label`, with a note at `elidedAt` counting the ones past the limit.
+static void nameCandidates(InFlightDiagnostic &diagnostic,
+                           ArrayRef<ImplOp> candidates, Location elidedAt,
+                           StringRef label) {
+  for (ImplOp impl : candidates.take_front(kCandidatesNamed))
+    diagnostic.attachNote(impl.getLoc()) << label;
+  if (candidates.size() > kCandidatesNamed)
+    diagnostic.attachNote(elidedAt)
+        << candidates.size() - kCandidatesNamed << " more " << label
+        << "(s) elided";
+}
+
 static LogicalResult diagnoseImplResolutionFailure(
     TraitOp trait,
     ClaimType wanted,
@@ -144,40 +161,15 @@ static LogicalResult diagnoseImplResolutionFailure(
   if (goodCandidates.empty()) {
     InFlightDiagnostic diag = err() << "no impl with satisfiable assumptions for "
                                     << wanted;
-
-    unsigned maxNotes = 16;
-    unsigned emitted = 0;
-    for (ImplOp impl : badCandidates) {
-      if (emitted++ == maxNotes) {
-        unsigned remaining = badCandidates.size() - maxNotes;
-        diag.attachNote(trait.getLoc())
-          << remaining << " more unsatisfiable candidate(s) elided";
-        break;
-      }
-
-      diag.attachNote(impl.getLoc()) << "unsatisfiable candidate";
-    }
-
+    nameCandidates(diag, badCandidates, trait.getLoc(),
+                   "unsatisfiable candidate");
     return failure();
   }
 
   // there were multiple good candidates, note the good candidates that did match
   InFlightDiagnostic diag = err() << "incoherent impls (multiple satisfiable) for "
                                   << wanted;
-
-  unsigned maxNotes = 16;
-  unsigned emitted = 0;
-  for (ImplOp impl : goodCandidates) {
-    if (emitted++ == maxNotes) {
-      unsigned remaining = goodCandidates.size() - maxNotes;
-      diag.attachNote(trait.getLoc())
-        << remaining << " more candidate(s) elided";
-      break;
-    }
-
-    diag.attachNote(impl.getLoc()) << "candidate";
-  }
-
+  nameCandidates(diag, goodCandidates, trait.getLoc(), "candidate");
   return diag;
 }
 
@@ -186,7 +178,7 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
     ModuleOp scope,
     OpBuilder &builder,
     llvm::function_ref<InFlightDiagnostic()> err,
-    std::optional<RefutationArm> *refusedOn) {
+    std::optional<Refutation> *refusedOn) {
   DemandFrame frame{Type(wanted)};
 
   ClaimType originalWanted = wanted;
@@ -212,8 +204,11 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
   // first check the memo
   if (auto it = memo.chosen.find({scope, app}); it != memo.chosen.end()) {
     if (it->second.isRefusal()) {
+      // The record keeps the arm and not the candidates: an application
+      // selection has already refused is one nothing asks the trait about
+      // again.
       if (refusedOn)
-        *refusedOn = it->second.getRefutationArm();
+        *refusedOn = Refutation{it->second.getRefutationArm(), {}};
       return failure();
     }
     return ResolvedImpl{it->second.getImpl(), selected};
@@ -233,7 +228,7 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
         {scope, app},
         ResolutionOutcome::refused(RefutationArm::NoSatisfiableCandidate));
     if (refusedOn)
-      *refusedOn = RefutationArm::NoSatisfiableCandidate;
+      *refusedOn = Refutation{RefutationArm::NoSatisfiableCandidate, {}};
     return failure();
   }
   TraitOp trait = *declaredTrait;
@@ -309,7 +304,7 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
                           : RefutationArm::MultipleSatisfiableCandidates;
   memo.chosen.insert_or_assign({scope, app}, ResolutionOutcome::refused(arm));
   if (refusedOn)
-    *refusedOn = arm;
+    *refusedOn = Refutation{arm, good};
   return diagnoseImplResolutionFailure(trait, originalWanted, good, bad, err);
 }
 
@@ -345,7 +340,7 @@ FailureOr<Type> ImplResolver::resolveProjectionType(
     ModuleOp scope,
     OpBuilder &builder,
     llvm::function_ref<InFlightDiagnostic()> err,
-    std::optional<RefutationArm> *refusedOn) {
+    std::optional<Refutation> *refusedOn) {
   DemandFrame frame{Type(proj)};
 
   auto traitApp = proj.getTraitApplication();
@@ -381,9 +376,12 @@ FailureOr<Type> ImplResolver::resolveProjectionType(
 /// trait's where clause at a ground application is spelled in no operation, so
 /// the stage's leftover walks have nothing to find and the demand would go
 /// unreported.
-static void reportAmbiguousDemand(Type demand, ModuleOp scope) {
-  emitError(currentDemandAnchor().value_or(scope.getLoc()))
+static void reportAmbiguousDemand(Type demand, ModuleOp scope,
+                                  ArrayRef<ImplOp> satisfiable) {
+  InFlightDiagnostic diagnostic =
+      emitError(currentDemandAnchor().value_or(scope.getLoc()))
       << "incoherent impls (multiple satisfiable) for " << demand;
+  nameCandidates(diagnostic, satisfiable, scope.getLoc(), "candidate");
 }
 
 ImplResolver::DemandDisposition
@@ -394,7 +392,7 @@ ImplResolver::serveDemand(ProjectionType demand, ModuleOp scope,
   // What selection settles is recorded by selection itself, so the resolved
   // type is not wanted here -- the answer this call is for is whether asking
   // again could settle it differently.
-  std::optional<RefutationArm> refusedOn;
+  std::optional<Refutation> refusedOn;
   if (succeeded(resolveProjectionType(demand, scope, builder, /*err=*/nullptr,
                                       &refusedOn)))
     return DemandDisposition::Served;
@@ -403,10 +401,11 @@ ImplResolver::serveDemand(ProjectionType demand, ModuleOp scope,
   // later resolution overturns. Every other way of not serving -- no candidate
   // yet, or a binding whose own arguments have still to resolve -- is one the
   // facts can move under.
-  if (refusedOn != RefutationArm::MultipleSatisfiableCandidates)
+  if (!refusedOn ||
+      refusedOn->arm != RefutationArm::MultipleSatisfiableCandidates)
     return DemandDisposition::Deferred;
 
-  reportAmbiguousDemand(Type(demand), scope);
+  reportAmbiguousDemand(Type(demand), scope, refusedOn->satisfiable);
   return DemandDisposition::Refused;
 }
 
@@ -417,7 +416,7 @@ ImplResolver::serveDemand(ClaimType demand, ModuleOp scope,
 
   // Proving the claim is what serves it: the demander could read the record
   // and not write it, so what it was waiting for is the proof this mints.
-  std::optional<RefutationArm> refusedOn;
+  std::optional<Refutation> refusedOn;
   if (succeeded(resolveAndEnsureProofFor(demand, scope, builder,
                                          /*err=*/nullptr, &refusedOn)))
     return DemandDisposition::Served;
@@ -425,10 +424,11 @@ ImplResolver::serveDemand(ClaimType demand, ModuleOp scope,
   // The same reading as for a projection: two or more satisfiable candidates is
   // the one refusal no later resolution overturns, and every other way of not
   // serving is one the facts can move under.
-  if (refusedOn != RefutationArm::MultipleSatisfiableCandidates)
+  if (!refusedOn ||
+      refusedOn->arm != RefutationArm::MultipleSatisfiableCandidates)
     return DemandDisposition::Deferred;
 
-  reportAmbiguousDemand(Type(demand), scope);
+  reportAmbiguousDemand(Type(demand), scope, refusedOn->satisfiable);
   return DemandDisposition::Refused;
 }
 
@@ -489,7 +489,7 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
     ModuleOp scope,
     OpBuilder &builder,
     llvm::function_ref<InFlightDiagnostic()> err,
-    std::optional<RefutationArm> *refusedOn) {
+    std::optional<Refutation> *refusedOn) {
   DemandFrame frame{Type(wanted)};
 
   ClaimType originalWanted = wanted;

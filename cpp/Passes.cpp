@@ -1306,7 +1306,10 @@ collectUndrainedDemands(ModuleOp module, const DemandLedger &ledger,
 /// candidates when several do, and records what each attempt settled.
 ///
 /// A demand selection resolved or refused for good leaves the drain; one it
-/// could not serve yet stays, against the epoch it was asked at.
+/// could not serve yet stays, against the epoch it was asked at. A refusal is
+/// an error selection has already named, so `refused` records that the stage
+/// has one to fail on -- leaving the drain is what a refusal and a resolution
+/// have in common, and it is not what tells them apart.
 ///
 /// The drain holds spellings and not the ops that spelled them -- one spelling
 /// standing in two modules is one demand here -- so these are put to selection
@@ -1320,6 +1323,7 @@ static void serveCollectedDemands(ImplResolver &resolver,
                                   OpBuilder &builder,
                                   DenseSet<Type> &drained,
                                   DenseSet<Type> &served,
+                                  bool &refused,
                                   DenseMap<Type, uint64_t> &attempted,
                                   RoundWork &work) {
   for (Type demand : collected) {
@@ -1360,6 +1364,7 @@ static void serveCollectedDemands(ImplResolver &resolver,
       break;
     case ImplResolver::DemandDisposition::Refused:
       drained.insert(demand);
+      refused = true;
       break;
     case ImplResolver::DemandDisposition::Deferred:
       break;
@@ -1700,6 +1705,9 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
   // over-admitted.
   DenseSet<Type> drained;
   DenseSet<Type> served;
+  // Whether any round put a demand to selection and was told the application is
+  // proven by no unique impl.
+  bool refusedADemand = false;
   // The fact epoch each unsettled demand was last put to selection at, which is
   // what says whether asking again could answer differently.
   DenseMap<Type, uint64_t> attempted;
@@ -1796,7 +1804,7 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
       builder.setListener(&insertions);
       builder.setInsertionPointToEnd(module.getBody());
       serveCollectedDemands(*resolver, module, collected, spelledAt, builder,
-                            drained, served,
+                            drained, served, refusedADemand,
                             attempted, work);
       work.insertedServingDemands = insertions.inserted;
     }
@@ -2080,7 +2088,15 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
   // pass refuses such a coerce at its barrier, where endpoints that stand apart
   // cannot be discharged and cannot cross.
   DemandRecordingSuspension verifying;
-  return module.verify();
+  if (failed(module.verify()))
+    return failure();
+
+  // A demand impl selection refused was named where it stood, and the rounds
+  // and the walks above ran on so that everything else standing is named too.
+  // The stage fails on it here: a refusal no later resolution overturns is an
+  // error in the program, and a stage that reported one and then succeeded
+  // would let the steps after it run on a module nothing proved.
+  return success(!refusedADemand);
 }
 
 void InstantiateMonomorphsPass::runOnOperation() {

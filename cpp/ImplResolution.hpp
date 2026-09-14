@@ -87,6 +87,18 @@ enum class RefutationArm : uint8_t {
   MultipleSatisfiableCandidates,
 };
 
+/// Why impl selection refused an application, for a caller that reports the
+/// refusal somewhere other than where selection was asked.
+///
+/// The satisfiable candidates ARE the ambiguity, so a refusal on that arm names
+/// them; the other arm has none to name. They are what selection had in hand
+/// when it refused, so a caller handed an application selection had already
+/// refused is given the arm alone.
+struct Refutation {
+  RefutationArm arm;
+  SmallVector<ImplOp> satisfiable;
+};
+
 /// What impl selection settled on for one trait application: the impl it chose,
 /// or the arm on which it refused.
 ///
@@ -302,28 +314,29 @@ class ImplResolver {
     /// Returns the symbol (ImplOp or ProofOp) that proves `claim`, or failure if
     /// no unique and satisfiable impl can be found.
     ///
-    /// `refusedOn`, when given, receives the arm impl selection refused this
+    /// `refusedOn`, when given, receives what impl selection refused this
     /// claim's application on, and is left alone where selection did not
-    /// refuse -- a proof that fails downstream of a selected impl names no arm.
+    /// refuse -- a proof that fails downstream of a selected impl names no
+    /// refutation.
     FailureOr<FlatSymbolRefAttr> resolveAndEnsureProofFor(ClaimType claim,
                                                           ModuleOp scope,
                                                           OpBuilder &builder,
                                                           llvm::function_ref<InFlightDiagnostic()> err = nullptr,
-                                                          std::optional<RefutationArm> *refusedOn = nullptr);
+                                                          std::optional<Refutation> *refusedOn = nullptr);
 
     /// Resolves a concrete ProjectionType to the type it projects to.
     /// Uses the internal impl resolution pipeline to find the matching impl,
     /// then looks up the associated type binding and applies substitution.
     ///
-    /// `refusedOn`, when given, receives the arm impl selection refused this
+    /// `refusedOn`, when given, receives what impl selection refused this
     /// projection's application on, and is left alone when selection did not
     /// refuse -- a resolution that fails downstream of a selected impl names no
-    /// arm.
+    /// refutation.
     FailureOr<Type> resolveProjectionType(ProjectionType proj,
                                           ModuleOp scope,
                                           OpBuilder &builder,
                                           llvm::function_ref<InFlightDiagnostic()> err = nullptr,
-                                          std::optional<RefutationArm> *refusedOn = nullptr);
+                                          std::optional<Refutation> *refusedOn = nullptr);
 
     /// What putting one demand to impl selection settled.
     enum class DemandDisposition : uint8_t {
@@ -464,13 +477,13 @@ class ImplResolver {
 
     /// Finds the unique impl for the wanted claim and returns the normalized
     /// claim that was actually used for selection. `refusedOn`, when given,
-    /// receives the arm a refusal was refused on.
+    /// receives the refutation a refusal was refused on.
     FailureOr<ResolvedImpl> resolveImplFor(
         ClaimType wanted,
         ModuleOp scope,
         OpBuilder &builder,
         llvm::function_ref<InFlightDiagnostic()> err = nullptr,
-        std::optional<RefutationArm> *refusedOn = nullptr);
+        std::optional<Refutation> *refusedOn = nullptr);
 
     /// Records `sym` as what proves `app` in `scope`, counting the fact.
     void recordProof(ModuleOp scope, TraitApplicationAttr app,
