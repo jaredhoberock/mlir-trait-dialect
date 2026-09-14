@@ -182,29 +182,6 @@ struct ResolvedImpl {
   ClaimType selectedClaim;
 };
 
-/// How many frames from each end of a chain a refusal names. A chain at the
-/// depth limit is a hundred-odd frames of the same shape; its ends say where it
-/// started and what it grew into, and the frames between them say nothing more.
-constexpr size_t kChainEndsNamed = 3;
-
-/// Attaches the ends of `chain` to `diagnostic`, one note per frame through
-/// `name`, with a note standing in for the frames between them.
-template <typename FrameT>
-void nameChainEnds(InFlightDiagnostic &diagnostic, ArrayRef<FrameT> chain,
-                   llvm::function_ref<void(InFlightDiagnostic &, FrameT)> name) {
-  if (chain.size() <= 2 * kChainEndsNamed) {
-    for (const FrameT &frame : chain)
-      name(diagnostic, frame);
-    return;
-  }
-  for (const FrameT &frame : chain.take_front(kChainEndsNamed))
-    name(diagnostic, frame);
-  diagnostic.attachNote() << "... " << chain.size() - 2 * kChainEndsNamed
-                          << " more frame(s) elided";
-  for (const FrameT &frame : chain.take_back(kChainEndsNamed))
-    name(diagnostic, frame);
-}
-
 /// The template instantiations one stage run has cut.
 ///
 /// Each instance is cut for a template at a call standing inside another

@@ -6,6 +6,7 @@
 #include "TraitTypes.hpp"
 #include <cstdint>
 #include <string>
+#include <llvm/ADT/ScopeExit.h>
 #include <llvm/ADT/TypeSwitch.h>
 #include <llvm/Support/ErrorHandling.h>
 #include <llvm/Support/Format.h>
@@ -132,6 +133,33 @@ void reportUnnormalizableProjection(Type ty, unsigned iterations,
 }
 
 } // namespace
+
+LogicalResult checkObligationChainDepth(ArrayRef<TraitApplicationAttr> chain,
+                                        TraitApplicationAttr app,
+                                        Location anchor) {
+  StringAttr trait = app.getTraitName().getAttr();
+  unsigned depth = llvm::count_if(chain, [&](TraitApplicationAttr frame) {
+    return frame.getTraitName().getAttr() == trait;
+  });
+  if (depth < kInstantiationDepthLimit)
+    return success();
+
+  // At the demand, not at the declaration the walk is reading: every frame on
+  // the chain is asked about because something wanted the application in hand,
+  // and the last one asked is no more at fault than the first. The demand is
+  // what a reader can act on.
+  InFlightDiagnostic diagnostic =
+      emitError(currentDemandAnchor().value_or(anchor))
+      << "overflow evaluating the requirement '" << app << "': "
+      << depth << " obligations of @" << trait.getValue()
+      << " stand on the chain that reaches it";
+  nameChainEnds<TraitApplicationAttr>(
+      diagnostic, chain,
+      [](InFlightDiagnostic &d, TraitApplicationAttr frame) {
+        d.attachNote() << "required by " << frame;
+      });
+  return failure();
+}
 
 LogicalResult tryNormalizeProjectionsToFixedPoint(
     Type ty, llvm::function_ref<Type(Type)> step, Type &out) {
@@ -799,6 +827,7 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
                                  ProofDerivationMemo *memo,
                                  DerivationStaging &staging,
                                  DerivedNode &derived,
+                                 SmallVectorImpl<TraitApplicationAttr> &chain,
                                  llvm::function_ref<InFlightDiagnostic()> err);
 
 /// Writes a closure a derivation already produced into `bindings`.
@@ -824,12 +853,19 @@ static LogicalResult replayClosure(const ProofDerivationMemo::Closure &closure,
 
 /// Derives one node of a proof, extending `bindings` with everything the node's
 /// own claim and its obligations bind.
+///
+/// `chain` holds the applications the nodes above this one discharge, outermost
+/// first. A proof whose subproof is cited for a bigger application of its own
+/// trait mints a new node at every step, so no early exit sees a repeat; the
+/// count of frames naming one trait is what bounds such a descent, and it is
+/// the bound impl selection puts on the same obligation chain.
 static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
                                  ModuleOp module, EvidenceBindings &bindings,
                                  DemandOrigin origin,
                                  ProofDerivationMemo *memo,
                                  DerivationStaging &staging,
                                  DerivedNode &derived,
+                                 SmallVectorImpl<TraitApplicationAttr> &chain,
                                  llvm::function_ref<InFlightDiagnostic()> err) {
   // the proven side must carry a proof
   if (!proven.isProven()) {
@@ -960,6 +996,13 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
   // otherwise the symbol must be a ProofOp
   auto proof = cast<ProofOp>(*symOp);
 
+  // This node has obligations of its own, so it is a frame of the chain the
+  // descent below stands on. A chain that keeps reaching a bigger application
+  // of one trait is refused here rather than followed until the stack is gone.
+  if (failed(checkObligationChainDepth(chain, unproven.getTraitApplication(),
+                                       proof.getLoc())))
+    return failure();
+
   // The impl's equality premises are read at the obligation this citation
   // discharges. They take no subproof, and a premise mentioning a variable the
   // proof stands over is left standing where the proof is verified, so the
@@ -999,10 +1042,12 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
   derived.add(unproven, proven);
 
   // recurse over obligations
+  chain.push_back(unproven.getTraitApplication());
+  auto frame = llvm::scope_exit([&] { chain.pop_back(); });
   for (ClaimType sub : *subproofs) {
     DerivedNode child;
     if (failed(deriveProof(sub.asUnproven(), sub, module, bindings, origin, memo,
-                           staging, child, err))) {
+                           staging, child, chain, err))) {
       bindings.erase(unproven);
       return failure();
     }
@@ -1059,8 +1104,9 @@ LogicalResult verifyAndRecordProof(
     llvm::function_ref<InFlightDiagnostic()> err) {
   DerivationStaging staging;
   DerivedNode derived;
+  SmallVector<TraitApplicationAttr> chain;
   if (failed(deriveProof(unproven, proven, module, bindings, origin, memo,
-                         staging, derived, err)))
+                         staging, derived, chain, err)))
     return failure();
 
   // Everything this derivation completed goes into the memo together, now that

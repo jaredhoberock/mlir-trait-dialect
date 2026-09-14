@@ -877,6 +877,46 @@ constexpr unsigned kSubstitutionFixedPointMaxPasses = 256;
 /// (`recursion_limit`, 128).
 constexpr unsigned kInstantiationDepthLimit = 128;
 
+/// How many frames from each end of a chain a refusal names. A chain at the
+/// depth limit is a hundred-odd frames of the same shape; its ends say where it
+/// started and what it grew into, and the frames between them say nothing more.
+constexpr size_t kChainEndsNamed = 3;
+
+/// Attaches the ends of `chain` to `diagnostic`, one note per frame through
+/// `name`, with a note standing in for the frames between them.
+template <typename FrameT>
+void nameChainEnds(InFlightDiagnostic &diagnostic, ArrayRef<FrameT> chain,
+                   llvm::function_ref<void(InFlightDiagnostic &, FrameT)> name) {
+  if (chain.size() <= 2 * kChainEndsNamed) {
+    for (const FrameT &frame : chain)
+      name(diagnostic, frame);
+    return;
+  }
+  for (const FrameT &frame : chain.take_front(kChainEndsNamed))
+    name(diagnostic, frame);
+  diagnostic.attachNote() << "... " << chain.size() - 2 * kChainEndsNamed
+                          << " more frame(s) elided";
+  for (const FrameT &frame : chain.take_back(kChainEndsNamed))
+    name(diagnostic, frame);
+}
+
+/// Refuses an obligation chain that has reached the depth limit for one trait,
+/// naming the chain that reaches `app`.
+///
+/// Every frame on the chain can be a distinct application, so the cycle guard
+/// never fires on a chain whose obligations keep growing the type they ask
+/// about. This is what stops it, and the chain is what says where the growth
+/// came from. The refusal stands at the demand it was raised under, or at
+/// `anchor` where no demand names a place.
+///
+/// The chain holds the applications an obligation walk is part-way through,
+/// outermost first, whichever walk it is: impl selection deriving a candidate's
+/// where clause and a proof derivation descending its subproofs count frames the
+/// same way, so one obligation chain has one bound.
+LogicalResult checkObligationChainDepth(ArrayRef<TraitApplicationAttr> chain,
+                                        TraitApplicationAttr app,
+                                        Location anchor);
+
 /// Applies `subst` repeatedly until it reaches a fixed point, so the returned
 /// type carries no component that `subst` would still rewrite. The fixed
 /// point is over `subst` alone; a projection whose base grounds under the

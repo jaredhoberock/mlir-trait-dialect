@@ -6,42 +6,6 @@
 
 namespace mlir::trait {
 
-namespace {
-
-/// Refuses an obligation chain that has reached the depth limit for one trait.
-///
-/// Every frame on the chain is a distinct application, so the cycle guard never
-/// fires on a chain whose obligations keep growing the type they ask about.
-/// This is what stops it, and the chain is what says where the growth came
-/// from.
-LogicalResult checkObligationChainDepth(
-    ArrayRef<TraitApplicationAttr> chain, TraitApplicationAttr app,
-    ImplOp impl) {
-  StringAttr trait = app.getTraitName().getAttr();
-  unsigned depth = llvm::count_if(chain, [&](TraitApplicationAttr frame) {
-    return frame.getTraitName().getAttr() == trait;
-  });
-  if (depth < kInstantiationDepthLimit)
-    return success();
-
-  // At the demand, not at the impl: every impl on the chain is asked about
-  // because something wanted the application in hand, and the last one asked is
-  // no more at fault than the first. The demand is what a reader can act on.
-  InFlightDiagnostic diagnostic =
-      emitError(currentDemandAnchor().value_or(impl.getLoc()))
-      << "overflow evaluating the requirement '" << app << "': "
-      << depth << " obligations of @" << trait.getValue()
-      << " stand on the chain that reaches it";
-  nameChainEnds<TraitApplicationAttr>(
-      diagnostic, chain,
-      [](InFlightDiagnostic &d, TraitApplicationAttr frame) {
-        d.attachNote() << "required by " << frame;
-      });
-  return failure();
-}
-
-} // namespace
-
 unsigned InstantiationChain::depthAt(Operation *instance,
                                     Attribute templateKey) const {
   unsigned depth = 0;
@@ -100,7 +64,7 @@ ImplResolver::assumptionsSatisfiableFor(ImplOp impl,
 
   // growth bound: a chain whose every step asks about a bigger application
   // repeats no frame, so only the depth stops it.
-  if (failed(checkObligationChainDepth(memo.visiting, app, impl)))
+  if (failed(checkObligationChainDepth(memo.visiting, app, impl.getLoc())))
     return failure();
 
   memo.visiting.push_back(app);
