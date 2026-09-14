@@ -1302,10 +1302,9 @@ bool ImplOp::isUnconditional() {
   // an obligation this impl discharges at its own verification
   // (verifyEqualityObligations), the same for every application the impl
   // covers. This impl's OWN where-clause equality restricts where the impl
-  // applies, and every citation that carries it to an instance reads it there
-  // (verifyEqualityPremisesAt, reached from a witness, a proof, a derive, impl
-  // selection and the derivation of a cited proof), so naming the impl directly
-  // leaves no premise unread.
+  // applies, and every citation naming it reads that premise at the application
+  // it names -- a witness, a proof's or a call's citation, a derive, impl
+  // selection -- so naming the impl directly leaves no premise unread.
   return getTypeParams().empty() &&
          !getAssumptions().hasApplications() &&
          !getTrait().getRequirements().hasApplications();
@@ -3597,11 +3596,12 @@ FailureOr<SpecializationMap> MethodCallOp::buildParameterSpecialization(
                                            Type(actual), normalize, err)))
     return failure();
 
-  // The proofs this call's claims name are checked where the call is lowered:
-  // the factory that closes the substitution walks the same spellings and reads
-  // them off the record. A verifier has no lowering behind it, so it checks
-  // them here or nowhere, and it runs on a worker thread with no memo of its
-  // own to serve them from.
+  // The proofs this call's claims name are read at their own claims: each
+  // spells evidence for one application, and the declaration that evidence
+  // holds must carry to it. What the evidence proves underneath was decided at
+  // the proof op holding it. The factory that closes the substitution walks the
+  // same spellings where the call is lowered; a verifier has no lowering behind
+  // it, so it reads them here or nowhere.
   if (!reading &&
       failed(verifyProofsAtCall(getOperation(), getOperands(), normalize,
                                 *module, err)))
@@ -3822,11 +3822,12 @@ FailureOr<SpecializationMap> FuncCallOp::buildParameterSpecialization(
                                            Type(actual), normalize, err)))
     return failure();
 
-  // The proofs this call's claims name are checked where the call is lowered:
-  // the factory that closes the substitution walks the same spellings and reads
-  // them off the record. A verifier has no lowering behind it, so it checks
-  // them here or nowhere, and it runs on a worker thread with no memo of its
-  // own to serve them from.
+  // The proofs this call's claims name are read at their own claims: each
+  // spells evidence for one application, and the declaration that evidence
+  // holds must carry to it. What the evidence proves underneath was decided at
+  // the proof op holding it. The factory that closes the substitution walks the
+  // same spellings where the call is lowered; a verifier has no lowering behind
+  // it, so it reads them here or nowhere.
   if (!reading &&
       failed(verifyProofsAtCall(getOperation(), getOperands(), normalize,
                                 *module, err)))

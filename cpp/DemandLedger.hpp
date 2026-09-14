@@ -39,7 +39,8 @@ enum class DemandOrigin : uint8_t {
   RecordedFactRead,
   /// A call op's verifier comparing its formal and actual signatures.
   CallSignatureVerification,
-  /// A proof op's verifier walking the proof structure it declares.
+  /// A proof op's verifier reading the claim it stands over and the citations
+  /// its given list names.
   ProofVerification,
 };
 

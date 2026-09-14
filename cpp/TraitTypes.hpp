@@ -202,7 +202,7 @@ public:
     bindings[unproven] = proven;
   }
 
-  // Used by recursive proof verification to roll back an optimistic binding
+  // Used by the recursive proof derivation to roll back an optimistic binding
   // when a nested obligation fails.
   void erase(ClaimType key) { bindings.erase(key); }
 
@@ -251,8 +251,9 @@ inline bool spellingIsSettled(Type ty) {
 /// read. A reading with no variable in it is decided here even where it spells a
 /// projection nothing resolves -- no instance moves that spelling either, so a
 /// premise it leaves unequal is a premise that does not hold, and the impl
-/// stating it does not apply. This is the one judgment impl selection, a proof
-/// and a derive all read their premises by.
+/// stating it does not apply. This is the one judgment impl selection, a proof,
+/// a witness and a derive all read their premises by; `OpenPremise` says where
+/// a reading this leaves open is decided.
 inline bool premiseDefersToInstances(Type lhs, Type rhs) {
   return isPolymorphicType(lhs) || isPolymorphicType(rhs);
 }
@@ -1326,26 +1327,27 @@ Citation verifyCitation(ClaimType unproven, ClaimType proven, ModuleOp module,
                         DemandOrigin origin,
                         llvm::function_ref<InFlightDiagnostic()> err);
 
-/// Verify that a `proven` claim soundly proves the (possibly still polymorphic)
-/// `unproven` claim and extend `subst` with a mapping when appropriate.
+/// Derives the whole tree standing under `proven` and extends `bindings` with a
+/// mapping for every obligation it discharges, which is what a clone needs to
+/// respell the claims it carries. A verifier asks `verifyCitation` about one
+/// claim instead; this is the reader that goes underneath.
 ///
 /// Notes:
 /// - `unproven` must be an unproven obligation; a proven `unproven` is a caller
 ///   error and is rejected with a diagnostic.
 /// - Only records a mapping when converting an unproven form to its proven form;
 ///   no-op if `unproven == proven`.
-/// - Recursively checks trait requirements and impl assumptions, ensuring all
+/// - Recursively reads trait requirements and impl assumptions, ensuring all
 ///   subproofs are consistent and present.
 ///
 /// `origin` names the caller: this recorder normalizes both claims through the
 /// ground-projection lookup and normalizes the impl's obligations, so it raises
-/// demand, and it runs both inside the stage and inside a proof op's verifier.
-/// It has no default, so a new caller states which it is.
+/// demand. It has no default, so a new caller states which it is.
 ///
 /// `memo`, when given, is consulted for the pair before anything else is done
 /// with it and holds what this derivation produces. It is the stage's, and one
-/// thread's: a verifier runs on a worker thread and passes none. Like `origin`
-/// it has no default, so a new caller states whether it has one.
+/// thread's. Like `origin` it has no default, so a new caller states whether it
+/// has one.
 LogicalResult verifyAndRecordProof(ClaimType unproven,
                                    ClaimType proven,
                                    ModuleOp module,
@@ -1378,9 +1380,9 @@ LogicalResult verifyCitationsIn(Type ty, ModuleOp module, DemandOrigin origin,
 /// If a conflicting binding for the same unproven key already exists, returns
 /// failure and emits an error through `err`.
 ///
-/// `origin` names the caller, which every proof this walk verifies is verified
-/// under, and `memo` is what each of those verifications is served from and
-/// held in. Neither has a default, so a new caller states both.
+/// `origin` names the caller, which every proof this walk derives is derived
+/// under, and `memo` is what each of those derivations is served from and held
+/// in. Neither has a default, so a new caller states both.
 LogicalResult bindProofsIn(Type ty,
                                     ModuleOp module,
                                     EvidenceBindings &bindings,

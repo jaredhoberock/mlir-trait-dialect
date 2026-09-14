@@ -1632,12 +1632,11 @@ def ProofOp : TraitDialectOp<"proof", [
     /// where-clause equalities does not hold there.
     ///
     /// `cited` is the application this proof is being carried to: its own claim
-    /// where the proof is verified, and the instance a citation names where a
-    /// citation carries it there. A premise takes no subproof -- the given list
-    /// is indexed by the impl's application-arm obligations -- so it is read
-    /// here or nowhere. A premise mentioning a variable the proof stands over
-    /// is left standing at the declaration and decided at each instance, which
-    /// is why every citation asks again.
+    /// where the proof is verified, and the instance a clone is cut at where
+    /// the stage carries it there. A premise takes no subproof -- the given
+    /// list is indexed by the impl's application-arm obligations -- so it is
+    /// read here or nowhere, and the claim this proof stands over is where it
+    /// is decided.
     ///
     /// What a projection an endpoint spells reduces through is the evidence
     /// this proof holds: the proofs discharging the impl's obligations, by

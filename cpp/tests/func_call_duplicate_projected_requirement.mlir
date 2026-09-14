@@ -5,9 +5,8 @@
 //   * as a requirement of another proof
 //   * as an explicit where-clause argument whose type preserves a projection
 //
-// The verifier should reject genuinely incoherent proofs, but it must accept
-// equivalent proven claim spellings when the same proof symbol independently
-// specializes to both forms.
+// One proof symbol reaching that obligation both ways is one fact under two
+// spellings, and the substitution the clone is cut with reads it as one.
 
 module {
   trait.trait private @T0[!trait.poly<0>] {
