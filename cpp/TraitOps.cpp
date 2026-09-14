@@ -1275,27 +1275,28 @@ static LogicalResult verifyImplParametersAreConstrained(ImplOp impl) {
 }
 
 bool ImplOp::isUnconditional() {
-  // An impl is unconditional when nothing has to be decided to carry it to an
-  // application: it binds no type parameter, states no where clause of its own,
-  // and its trait requires no application. A citation may then name it
-  // directly, because there is nothing left for a proof to hold.
+  // An impl is unconditional when it stands for nothing a subproof would have
+  // to carry: it binds no type parameter, assumes no application, and its trait
+  // requires none. A citation may then name it directly, because the given list
+  // a proof would hold is empty.
   //
-  // A trait-HEADER equality is not counted. It is an obligation this impl
-  // discharges at its own verification (verifyEqualityObligations), the same
-  // for every application the impl covers. This impl's OWN where-clause
-  // equalities are counted: they restrict where the impl applies, only the
-  // application being cited says whether they hold, and the reading happens at
-  // a proof (verifyEqualityPremisesHoldAt), so an impl that states one must be
-  // cited through a proof.
+  // An equality predicate is not counted either way. A trait-HEADER equality is
+  // an obligation this impl discharges at its own verification
+  // (verifyEqualityObligations), the same for every application the impl
+  // covers. This impl's OWN where-clause equality restricts where the impl
+  // applies, and every citation that carries it to an instance reads it there
+  // (verifyEqualityPremisesAt, reached from a witness, a proof, a derive, impl
+  // selection and the derivation of a cited proof), so naming the impl directly
+  // leaves no premise unread.
   return getTypeParams().empty() &&
-         getAssumptions().empty() &&
+         !getAssumptions().hasApplications() &&
          !getTrait().getRequirements().hasApplications();
 }
 
 LogicalResult ImplOp::verifyIsUnconditional(llvm::function_ref<InFlightDiagnostic()> err) {
   if (!isUnconditional()) {
     if (err) err() << "impl '@" << getSymName()
-                   << "' binds type parameters, states its own where clause, or implements a trait requiring an application, so it must be cited through a trait.proof";
+                   << "' binds type parameters, assumes an application, or implements a trait requiring an application, so it must be cited through a trait.proof";
     return failure();
   }
   return success();
@@ -2058,6 +2059,48 @@ static LogicalResult verifyEqualityPremisesHoldAt(
   return success();
 }
 
+/// Reads `impl`'s equality premises at `cited`, through `evidence` and then the
+/// impls `module` holds under `origin`.
+///
+/// The arguments `cited` supplies for the impl's parameters are read through the
+/// same context the premises are, so a parameter the header leaves open and the
+/// where clause determines is read once, the way it is read.
+static LogicalResult verifyEqualityPremisesOfImplAt(
+    ImplOp impl, ClaimType cited, NormalizationContext evidence,
+    ModuleOp module, DemandOrigin origin,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  // XXX TODO a projection a declaration spells must be over its own self
+  // application, a where-clause application, a trait requirement or a declared
+  // witness (Rust's projection well-formedness rule), so every projection has
+  // evidence at a known index and this module read deletes with LookupScope and
+  // the verifier DemandOrigins.
+  evidence.setModuleLookup(module, LookupScope::Ground, origin);
+  auto throughEvidence = [&](Type ty) -> FailureOr<Type> {
+    return evidence.normalize(ty, err);
+  };
+  auto arguments = impl.buildSubstitutionForSelfClaim(cited, throughEvidence, err);
+  if (failed(arguments))
+    return failure();
+
+  return verifyEqualityPremisesHoldAt(impl, cited, *arguments, evidence, err);
+}
+
+LogicalResult ImplOp::verifyEqualityPremisesAt(
+    ClaimType cited, DemandOrigin origin,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  if (!getAssumptions().hasEqualities())
+    return success();
+
+  auto module = getModule(err);
+  if (failed(module))
+    return failure();
+
+  // A citation naming an impl carries no subproofs, so the impls the module
+  // holds are the whole of what a premise endpoint reads through.
+  return verifyEqualityPremisesOfImplAt(*this, cited, NormalizationContext(),
+                                        *module, origin, err);
+}
+
 //===----------------------------------------------------------------------===//
 // ProofOp
 //===----------------------------------------------------------------------===//
@@ -2079,23 +2122,9 @@ LogicalResult ProofOp::verifyEqualityPremisesAt(
     return failure();
   }
 
-  NormalizationContext reading =
-      buildSubproofNormalizationContext(*this, module);
-  // XXX TODO a projection a declaration spells must be over its own self
-  // application, a where-clause application, a trait requirement or a declared
-  // witness (Rust's projection well-formedness rule), so every projection has
-  // evidence at a known index and this module read deletes with LookupScope and
-  // the verifier DemandOrigins.
-  reading.setModuleLookup(module, LookupScope::Ground, origin);
-  auto throughEvidence = [&](Type ty) -> FailureOr<Type> {
-    return reading.normalize(ty, err);
-  };
-  auto arguments =
-      implOp.buildSubstitutionForSelfClaim(cited, throughEvidence, err);
-  if (failed(arguments))
-    return failure();
-
-  return verifyEqualityPremisesHoldAt(implOp, cited, *arguments, reading, err);
+  return verifyEqualityPremisesOfImplAt(
+      implOp, cited, buildSubproofNormalizationContext(*this, module), module,
+      origin, err);
 }
 
 LogicalResult ProofOp::verify() {

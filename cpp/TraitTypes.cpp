@@ -961,6 +961,13 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
       return failure();
     }
 
+    // The impl's equality premises are read at the obligation this citation
+    // discharges. They take no subproof, so a ground impl cited as a subproof,
+    // or reused as standing evidence at an instance its premise excludes, is
+    // read here or nowhere.
+    if (failed(impl.verifyEqualityPremisesAt(unproven, origin, err)))
+      return failure();
+
     // success: bind the whole claim so that later normalization keeps the proof
     bindings.bind(unproven, proven);
     // A leaf: the binding it wrote is the whole of what deriving it produces.

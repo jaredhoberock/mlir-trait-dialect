@@ -537,6 +537,21 @@ def ImplOp : TraitDialectOp<"impl", [
 
     LogicalResult verifyIsUnconditional(llvm::function_ref<InFlightDiagnostic()> errFn);
 
+    /// Refuses this impl at `cited` when one of its own where-clause equalities
+    /// does not hold there.
+    ///
+    /// `cited` is the application the citation names. A premise takes no
+    /// subproof -- the given list is indexed by the impl's application-arm
+    /// obligations -- so it is read at each citation or nowhere, and a premise
+    /// mentioning a variable the citation still spells is left standing for the
+    /// instances made of it.
+    ///
+    /// A citation naming an impl carries no evidence of its own, so what a
+    /// projection an endpoint spells reduces through is the impls the module
+    /// holds under `origin`.
+    LogicalResult verifyEqualityPremisesAt(ClaimType cited, DemandOrigin origin,
+                                           llvm::function_ref<InFlightDiagnostic()> err);
+
     SmallVector<ClaimType> getAssumptionsAsClaims();
 
     FailureOr<SmallVector<ClaimType>> specializeAssumptionsAsClaimsFor(
