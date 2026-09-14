@@ -1554,10 +1554,10 @@ static LogicalResult verifyCitedImplAppliesAt(
 /// The proof's own verifier judges each citation by the impls standing around
 /// it, and declines one whose obligation still spells a projection those impls
 /// leave unresolved -- the obligation stands unproven for selection to derive.
-/// Nothing read the pair again afterwards, so a proof whose obligation
-/// selection settles otherwise, or settles not at all, stood accepted and
-/// dispatched through. This is the reading that decides it: every obligation a
-/// proof states is discharged here, or the proof does not stand.
+/// What selection settled for it is known here and nowhere earlier, so this is
+/// where a declined pair is decided: every obligation a proof states is
+/// discharged by the citation standing opposite it, read through that
+/// settlement, or the proof does not stand.
 static LogicalResult
 verifyProofDischargesItsObligations(ProofOp proof,
                                     const ProjectionSettleContext &settle) {
