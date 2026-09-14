@@ -2720,11 +2720,12 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (failed(subst))
     return failure();
 
-  // The impl's equality premises are read at the claim this witness names, not
-  // at the declaration the match above carried there: a premise mentioning a
-  // variable the proof stands over is left standing at the proof and decided at
-  // each instance. No premise takes a subproof, so nothing the proof cites
-  // reads it.
+  // A proof states its impl's equality premises at the claim it stands over,
+  // and one that claim leaves open is refused there, so a witness of a proof
+  // reads none. An impl named directly stands over no claim of its own, and it
+  // takes no subproof, so its premises are read here or nowhere.
+  if (proof)
+    return success();
   return verifyEqualityPremisesHoldAt(impl, getProvenClaim(), *subst, reading,
                                       OpenPremise::DecidedAtInstances, errFn);
 }
