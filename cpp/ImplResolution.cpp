@@ -258,7 +258,21 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
   // get the trait. The demand's spelling names it in the module the demand was
   // read in, and the impls that trait holds are that module's, so a demand
   // raised inside a nested module is served by the impls standing there.
-  TraitOp trait = app.getTraitOrAbort(scope, "resolveImplFor: cannot find trait");
+  //
+  // A spelling this scope does not declare has no candidate here, the same
+  // standing a trait whose impls all miss has: an op in a nested module may
+  // name a trait only that module declares, and the demand it raises reaches
+  // this scope keyed by that spelling.
+  auto declaredTrait = app.getTrait(scope, err);
+  if (failed(declaredTrait)) {
+    memo.chosen.insert_or_assign(
+        {scope, app},
+        ResolutionOutcome::refused(RefutationArm::NoSatisfiableCandidate));
+    if (refusedOn)
+      *refusedOn = RefutationArm::NoSatisfiableCandidate;
+    return failure();
+  }
+  TraitOp trait = *declaredTrait;
 
   // collect candidates for wanted from the trait and
   // partition them into good/bad by satisfiable assumptions
