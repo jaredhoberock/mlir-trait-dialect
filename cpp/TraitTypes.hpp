@@ -257,6 +257,19 @@ inline bool premiseDefersToInstances(Type lhs, Type rhs) {
   return isPolymorphicType(lhs) || isPolymorphicType(rhs);
 }
 
+/// Where an equality premise a citation leaves open is decided.
+enum class OpenPremise {
+  /// The instances made of this template. The variable the reading carries
+  /// stands for whatever each instance binds it to, and the clone reads the
+  /// premise at the arguments that instance supplies.
+  DecidedAtInstances,
+
+  /// Here or nowhere. A proof op states its impl's premises at the claim it
+  /// stands over, and a citation of that proof reads nothing inside it, so a
+  /// premise the claim leaves open is one no later reading decides.
+  RefusedHere
+};
+
 /// What deriving each proven obligation produced, kept for as long as the proof
 /// stands.
 ///

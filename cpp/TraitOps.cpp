@@ -2039,14 +2039,14 @@ void ImplOp::print(OpAsmPrinter &printer) {
 /// one impl selection makes over a candidate: the impl's application-arm
 /// premises travel as subproofs, its equality premises are decided here.
 ///
-/// A reading carrying a type variable is a premise this citation cannot decide:
-/// a template's variables stand for the instances made of it, and the instance
-/// is where the premise is read. A symbolic equality defers here for the reason
-/// it defers at the impl that states it, and what it defers to is the clone,
-/// which reads it at the arguments the instance supplies.
+/// A reading carrying a type variable is a premise this citation cannot decide,
+/// and `openPremise` says where it is decided instead: at the instances made of
+/// this template, which read it at the arguments they supply, or nowhere -- a
+/// proof op states its impl's premises at the claim it stands over, and a
+/// citation of that proof reads nothing inside it.
 static LogicalResult verifyEqualityPremisesHoldAt(
     ImplOp impl, ClaimType cited, const SpecializationMap &arguments,
-    NormalizationContext evidence,
+    NormalizationContext evidence, OpenPremise openPremise,
     llvm::function_ref<InFlightDiagnostic()> err) {
   SmallVector<TypeEqualityAttr> equalities =
       impl.getAssumptions().getEqualities();
@@ -2064,8 +2064,16 @@ static LogicalResult verifyEqualityPremisesHoldAt(
     FailureOr<Type> rhs = reduce(equality.getRhs());
     if (failed(rhs))
       return failure();
-    if (premiseDefersToInstances(*lhs, *rhs))
-      continue;
+    if (premiseDefersToInstances(*lhs, *rhs)) {
+      if (openPremise == OpenPremise::DecidedAtInstances)
+        continue;
+      if (err) err() << "a proof states its impl's premises at its own claim; "
+                        "one the claim leaves open is stated at the instance "
+                        "instead: "
+                     << equality.getLhs() << " = " << equality.getRhs()
+                     << " reads " << *lhs << " = " << *rhs << " at " << cited;
+      return failure();
+    }
     if (*lhs != *rhs) {
       if (err) err() << "impl '@" << impl.getSymName() << "' applies where "
                      << equality.getLhs() << " = " << equality.getRhs()
@@ -2085,7 +2093,7 @@ static LogicalResult verifyEqualityPremisesHoldAt(
 /// where clause determines is read once, the way it is read.
 static LogicalResult verifyEqualityPremisesOfImplAt(
     ImplOp impl, ClaimType cited, NormalizationContext evidence,
-    ModuleOp module, DemandOrigin origin,
+    ModuleOp module, DemandOrigin origin, OpenPremise openPremise,
     llvm::function_ref<InFlightDiagnostic()> err) {
   // XXX TODO a projection a declaration spells must be over its own self
   // application, a where-clause application, a trait requirement or a declared
@@ -2100,7 +2108,8 @@ static LogicalResult verifyEqualityPremisesOfImplAt(
   if (failed(arguments))
     return failure();
 
-  return verifyEqualityPremisesHoldAt(impl, cited, *arguments, evidence, err);
+  return verifyEqualityPremisesHoldAt(impl, cited, *arguments, evidence,
+                                      openPremise, err);
 }
 
 LogicalResult ImplOp::verifyEqualityPremisesAt(
@@ -2116,7 +2125,8 @@ LogicalResult ImplOp::verifyEqualityPremisesAt(
   // A citation naming an impl carries no subproofs, so the impls the module
   // holds are the whole of what a premise endpoint reads through.
   return verifyEqualityPremisesOfImplAt(*this, cited, NormalizationContext(),
-                                        *module, origin, err);
+                                        *module, origin,
+                                        OpenPremise::DecidedAtInstances, err);
 }
 
 //===----------------------------------------------------------------------===//
@@ -2124,7 +2134,7 @@ LogicalResult ImplOp::verifyEqualityPremisesAt(
 //===----------------------------------------------------------------------===//
 
 LogicalResult ProofOp::verifyEqualityPremisesAt(
-    ClaimType cited, DemandOrigin origin,
+    ClaimType cited, DemandOrigin origin, OpenPremise openPremise,
     llvm::function_ref<InFlightDiagnostic()> err) {
   ImplOp implOp = getImpl();
   if (!implOp) {
@@ -2142,7 +2152,7 @@ LogicalResult ProofOp::verifyEqualityPremisesAt(
 
   return verifyEqualityPremisesOfImplAt(
       implOp, cited, buildSubproofNormalizationContext(*this, cited, module),
-      module, origin, err);
+      module, origin, openPremise, err);
 }
 
 LogicalResult ProofOp::verify() {
@@ -2200,20 +2210,30 @@ LogicalResult ProofOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
                                                   throughEvidence, errFn)))
     return failure();
 
-  // The impl's equality premises stand over this claim too.
+  // The impl's equality premises stand over this claim, and this claim is where
+  // they are decided: a citation of this proof reads nothing inside it, so a
+  // premise this claim leaves open is one no later reading decides.
   if (failed(verifyEqualityPremisesAt(getProvenClaim(),
-                                      DemandOrigin::ProofVerification, errFn)))
+                                      DemandOrigin::ProofVerification,
+                                      OpenPremise::RefusedHere, errFn)))
     return failure();
 
-  // recursively verify proof structure and that proof bindings can be recorded.
-  // A verifier runs on whatever thread the verification was handed to and holds
-  // no memo, so it derives what it needs itself.
-  EvidenceBindings evidence;
-  if (failed(verifyAndRecordProof(getProvenClaim().asUnproven(),
-                                  getProvenClaim(), module, evidence,
-                                  DemandOrigin::ProofVerification,
-                                  /*memo=*/nullptr, errFn)))
+  // One entry in the given list per obligation the impl states at this claim,
+  // each naming evidence that discharges the obligation at its index. What that
+  // evidence proves underneath is the business of its own verifier: a citation
+  // is read at the top level and no deeper.
+  auto subproofs = verifyAndGetSubproofClaims(
+      getProvenClaim(), DemandOrigin::ProofVerification, errFn);
+  if (failed(subproofs))
     return failure();
+
+  for (ClaimType subproof : *subproofs)
+    // A citation nothing standing now decides leaves its obligation unproven,
+    // which impl selection derives and the leftover walk refuses.
+    if (verifyCitation(subproof.asUnproven(), subproof, module,
+                       DemandOrigin::ProofVerification,
+                       errFn) == Citation::Refused)
+      return failure();
 
   return success();
 }
@@ -2706,7 +2726,7 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // each instance. No premise takes a subproof, so nothing the proof cites
   // reads it.
   return verifyEqualityPremisesHoldAt(impl, getProvenClaim(), *subst, reading,
-                                      errFn);
+                                      OpenPremise::DecidedAtInstances, errFn);
 }
 
 
@@ -2893,7 +2913,9 @@ LogicalResult DeriveOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // carry. A premise neither settles is a premise this derive does not meet,
   // the judgment selection makes over the same impl.
   if (failed(verifyEqualityPremisesHoldAt(implOp, derivedClaim, *subst,
-                                          normalization, errFn)))
+                                          normalization,
+                                          OpenPremise::DecidedAtInstances,
+                                          errFn)))
     return failure();
 
   return success();

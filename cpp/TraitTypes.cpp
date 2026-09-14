@@ -966,7 +966,9 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
   // instance a citation names is the only place it can be decided. A standing
   // proof selection reuses and a polymorphic proof cited as a subproof both
   // arrive here.
-  if (failed(proof.verifyEqualityPremisesAt(unproven, origin, err)))
+  if (failed(proof.verifyEqualityPremisesAt(unproven, origin,
+                                            OpenPremise::DecidedAtInstances,
+                                            err)))
     return failure();
 
   // The impl's obligations are read at the claim this proof is cited for, which

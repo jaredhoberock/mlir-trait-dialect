@@ -1644,7 +1644,13 @@ def ProofOp : TraitDialectOp<"proof", [
     /// index, and then the impls the module holds under `origin`. The proof's
     /// own rule is not among them -- nothing here is justified by what it is
     /// checking.
+    ///
+    /// `openPremise` says where a reading that still carries a type variable is
+    /// decided: this proof's own claim refuses one, since a citation of this
+    /// proof reads nothing inside it, and a citation at an instance leaves it
+    /// to the instances made of that one.
     LogicalResult verifyEqualityPremisesAt(ClaimType cited, DemandOrigin origin,
+                                           OpenPremise openPremise,
                                            llvm::function_ref<InFlightDiagnostic()> err);
 
     /// The claims this proof's subproofs stand over, at `at`.
