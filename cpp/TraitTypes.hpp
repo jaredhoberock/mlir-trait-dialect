@@ -1363,9 +1363,16 @@ enum class Citation {
 ///
 /// `origin` names the caller: the readings here normalize through the
 /// ground-projection lookup, so they raise demand.
+///
+/// `normalize`, when given, is read instead of that lookup. A verifier gives
+/// none -- what it may reduce a projection through is the impls standing around
+/// it -- while a reader holding what impl selection settled gives that, and a
+/// citation this declines under the weaker reading can carry under the
+/// stronger.
 Citation verifyCitation(ClaimType unproven, ClaimType proven, ModuleOp module,
                         DemandOrigin origin,
-                        llvm::function_ref<InFlightDiagnostic()> err);
+                        llvm::function_ref<InFlightDiagnostic()> err,
+                        Normalizer normalize = nullptr);
 
 /// Derives the whole tree standing under `proven` and extends `bindings` with a
 /// mapping for every obligation it discharges, which is what a clone needs to

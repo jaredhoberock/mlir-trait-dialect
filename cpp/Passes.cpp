@@ -1434,6 +1434,16 @@ static Type resolveGroundProjections(
   });
 }
 
+/// Resolves every ground projection standing anywhere in `ty` through the
+/// record of what impl selection settled and then through selection itself.
+/// A projection selection settles for nobody is left spelled as written.
+static Type settleGroundProjections(Type ty,
+                                    const ProjectionSettleContext &settle) {
+  return resolveGroundProjections(ty, settle.module, [&](ProjectionType proj) {
+    return resolveProjectionHop(proj, settle);
+  });
+}
+
 /// Whether a monomorphic equality claim is settled at the leftover check: its
 /// two endpoints ground-resolve to one spelling through impls whose obligations
 /// hold.
@@ -1459,17 +1469,8 @@ static bool equalityClaimGroundResolvesToOneSpelling(
   auto eq = claim.getEqualityAttr();
   if (!eq)
     return false;
-  // Resolve each endpoint's ground projections to a fixed point through the
-  // shared normalizer (recorded facts first, then impl selection -- see the
-  // helpers).
-  auto resolveEndpoint = [&](Type endpoint) -> Type {
-    return resolveGroundProjections(endpoint, settle.module,
-                                    [&](ProjectionType proj) {
-      return resolveProjectionHop(proj, settle);
-    });
-  };
-  Type lhs = resolveEndpoint(eq.getLhs());
-  Type rhs = resolveEndpoint(eq.getRhs());
+  Type lhs = settleGroundProjections(eq.getLhs(), settle);
+  Type rhs = settleGroundProjections(eq.getRhs(), settle);
   return lhs == rhs && isGroundType(lhs);
 }
 
@@ -1494,9 +1495,7 @@ static LogicalResult verifyCitedImplAppliesAt(
     return success();
 
   auto settled = [&](Type ty) -> Type {
-    return resolveGroundProjections(ty, settle.module, [&](ProjectionType proj) {
-      return resolveProjectionHop(proj, settle);
-    });
+    return settleGroundProjections(ty, settle);
   };
   auto err = [&] { return citation->emitError(); };
   auto normalize = [&](Type ty) -> FailureOr<Type> { return settled(ty); };
@@ -1515,6 +1514,46 @@ static LogicalResult verifyCitedImplAppliesAt(
                  << equality.getLhs() << " = " << equality.getRhs()
                  << ", and after instantiate-monomorphs nothing makes " << lhs
                  << " and " << rhs << " one type at " << cited;
+  }
+  return success();
+}
+
+/// Refuses `proof` where a citation in its given list discharges no obligation
+/// it states, read through what impl selection settled.
+///
+/// The proof's own verifier judges each citation by the impls standing around
+/// it, and declines one whose obligation still spells a projection those impls
+/// leave unresolved -- the obligation stands unproven for selection to derive.
+/// Nothing read the pair again afterwards, so a proof whose obligation
+/// selection settles otherwise, or settles not at all, stood accepted and
+/// dispatched through. This is the reading that decides it: every obligation a
+/// proof states is discharged here, or the proof does not stand.
+static LogicalResult
+verifyProofDischargesItsObligations(ProofOp proof,
+                                    const ProjectionSettleContext &settle) {
+  auto module = proof->getParentOfType<ModuleOp>();
+  if (!module)
+    return success();
+  auto err = [&] { return proof.emitError(); };
+  auto subproofs = proof.verifyAndGetSubproofClaims(
+      proof.getProvenClaim(), DemandOrigin::ProofVerification, err);
+  if (failed(subproofs))
+    return failure();
+
+  auto reading = [&](Type ty) -> FailureOr<Type> {
+    return settleGroundProjections(ty, settle);
+  };
+  for (ClaimType subproof : *subproofs) {
+    switch (verifyCitation(subproof.asUnproven(), subproof, module,
+                           DemandOrigin::ProofVerification, err, reading)) {
+    case Citation::Carries:
+      continue;
+    case Citation::Refused:
+      return failure();
+    case Citation::Declined:
+      return err() << "obligation " << subproof.asUnproven() << " of proof @"
+                   << proof.getSymName() << " is discharged by no evidence";
+    }
   }
   return success();
 }
@@ -2092,39 +2131,6 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
   }
   if (hasLeftovers) return failure();
 
-  // Every citation standing here names an impl, and an impl's equality premises
-  // say where it applies. The citation's own verifier left standing any premise
-  // whose sides the impls alone do not settle, because what such a projection
-  // denotes is decided by the impl selection chose for it and by nothing a
-  // verifier may read. Read here through the record and through selection, so
-  // that a citation of an impl that does not apply is refused where it stands
-  // rather than lowered.
-  //
-  // The citations are gathered under the walk and judged after it closes, for
-  // the same reason the claims above are: settling a premise may put an
-  // undemanded impl to selection and generate one.
-  SmallVector<std::pair<Operation *, std::pair<ImplOp, ClaimType>>> citations;
-  module.walk<WalkOrder::PreOrder>([&](Operation *op) {
-    // A template's own citations stand over its variables; the clones cut from
-    // it carry them to the instances. A proof is a template by that rule and is
-    // visited anyway: its claim is where its impl's premises are decided, and
-    // no clone carries them anywhere else.
-    if (isTemplate(op) && !isa<ProofOp>(op))
-      return WalkResult::skip();
-    if (auto cited = citedImplAndClaim(op))
-      citations.emplace_back(op, *cited);
-    return WalkResult::advance();
-  });
-  bool citedImplDoesNotApply = false;
-  for (auto [op, cited] : citations) {
-    ReadOnlyImplResolver here = reading.in(getAnchorModule(op));
-    ProjectionSettleContext settle{here, *resolver, settleBuilder,
-                                   getAnchorModule(op)};
-    if (failed(verifyCitedImplAppliesAt(op, cited.first, cited.second, settle)))
-      citedImplDoesNotApply = true;
-  }
-  if (citedImplDoesNotApply) return failure();
-
   // Reject each concrete-base projection that survived resolution. Walking the
   // result and block-argument types of every non-infrastructure op (operand
   // types are SSA-determined by their producers, so they are covered where those
@@ -2177,6 +2183,43 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
   });
   if (sawSurvivingCall)
     return failure();
+
+  // Every citation standing here is read once more, through the record of what
+  // impl selection settled and through selection itself. The citations' own
+  // verifiers decide what the impls standing around them settle and leave the
+  // rest standing, because what a projection over a contested application
+  // denotes is decided by the impl selection chose for it and by nothing a
+  // verifier may read. This is the reading that has that answer, so an impl
+  // that does not apply where it is cited, and an obligation no evidence
+  // discharges, are refused where they stand rather than lowered.
+  //
+  // The citations are gathered under the walk and judged after it closes, for
+  // the same reason the claims above are: settling a projection may put an
+  // undemanded impl to selection and generate one.
+  SmallVector<std::pair<Operation *, std::pair<ImplOp, ClaimType>>> citations;
+  module.walk<WalkOrder::PreOrder>([&](Operation *op) {
+    // A template's own citations stand over its variables; the clones cut from
+    // it carry them to the instances. A proof is a template by that rule and is
+    // visited anyway: its claim is where its impl's premises are decided, and
+    // no clone carries them anywhere else.
+    if (isTemplate(op) && !isa<ProofOp>(op))
+      return WalkResult::skip();
+    if (auto cited = citedImplAndClaim(op))
+      citations.emplace_back(op, *cited);
+    return WalkResult::advance();
+  });
+  bool citationDoesNotStand = false;
+  for (auto [op, cited] : citations) {
+    ReadOnlyImplResolver here = reading.in(getAnchorModule(op));
+    ProjectionSettleContext settle{here, *resolver, settleBuilder,
+                                   getAnchorModule(op)};
+    if (failed(verifyCitedImplAppliesAt(op, cited.first, cited.second, settle)))
+      citationDoesNotStand = true;
+    else if (auto proof = dyn_cast<ProofOp>(op);
+             proof && failed(verifyProofDischargesItsObligations(proof, settle)))
+      citationDoesNotStand = true;
+  }
+  if (citationDoesNotStand) return failure();
 
   // The two walks above reject a demand still spelled on an op result or block
   // argument. A demand can also stand at a place they do not reach -- a claim on

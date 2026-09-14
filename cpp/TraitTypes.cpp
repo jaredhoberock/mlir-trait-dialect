@@ -742,7 +742,8 @@ private:
 
 Citation verifyCitation(ClaimType unproven, ClaimType proven, ModuleOp module,
                         DemandOrigin origin,
-                        llvm::function_ref<InFlightDiagnostic()> err) {
+                        llvm::function_ref<InFlightDiagnostic()> err,
+                        Normalizer normalize) {
   // look up the trait and its requirements using the unproven claim
   auto trait = unproven.getTraitApplication().getTrait(module, err);
   if (failed(trait)) return Citation::Refused;
@@ -767,13 +768,14 @@ Citation verifyCitation(ClaimType unproven, ClaimType proven, ModuleOp module,
     // evidence at a known index and this module read deletes with LookupScope and
     // the verifier DemandOrigins.
     GroundProjectionLookup byGroundLookup(module, origin);
+    Normalizer reading = normalize ? normalize : Normalizer(byGroundLookup);
     if (succeeded(matchDeclaration(getTypeParametersIn(declaration), declaration,
-                                   Type(unproven), byGroundLookup,
+                                   Type(unproven), reading,
                                    /*err=*/nullptr)))
       return Citation::Carries;
 
-    FailureOr<Type> readObligation = byGroundLookup(Type(unproven));
-    FailureOr<Type> readDeclared = byGroundLookup(declaration);
+    FailureOr<Type> readObligation = reading(Type(unproven));
+    FailureOr<Type> readDeclared = reading(declaration);
     if (failed(readObligation) || failed(readDeclared) ||
         containsType<ProjectionType>(*readObligation) ||
         containsType<ProjectionType>(*readDeclared))

@@ -14,6 +14,10 @@
 // The stage fails on the refusal, so the steps after it never run on a module
 // nothing proved. The second run reads the exit status, which the diagnostic
 // verifier does not.
+//
+// @forged is refused in its own right: read at its claim, the obligation the
+// requirement states still spells a projection nothing settles, so its citation
+// of @A_i64 discharges nothing.
 
 // CHECK: error: incoherent impls (multiple satisfiable) for '!trait.proj<@Foo[i32], "Out">'
 // CHECK: note: candidate
@@ -35,6 +39,7 @@ trait.impl private @B_i32 for @B[i32] {
     return %c : i64
   }
 }
+// expected-error @below {{obligation '!trait.claim<@A[!trait.proj<@Foo[i32], "Out">]>' of proof @forged is discharged by no evidence}}
 trait.proof private @forged proves @B_i32 for @B[i32] given [@A_i64]
 func.func @main() -> i64 {
   %w = trait.witness @forged for @B[i32]
