@@ -712,6 +712,87 @@ private:
 
 } // namespace
 
+Citation verifyCitation(ClaimType unproven, ClaimType proven, ModuleOp module,
+                        DemandOrigin origin,
+                        llvm::function_ref<InFlightDiagnostic()> err) {
+  // look up the trait and its requirements using the unproven claim
+  auto trait = unproven.getTraitApplication().getTrait(module, err);
+  if (failed(trait)) return Citation::Refused;
+
+  // inspect the proof symbol on the proven side
+  auto symOp = ProofOp::getProofOpOrUnconditionalImplOp(module, proven.getProof(), err);
+  if (failed(symOp)) return Citation::Refused;
+
+  // Whether the declaration, read at the arguments this obligation supplies,
+  // rebuilds the obligation.
+  //
+  // A side still spelling a projection once the impls standing now have been
+  // read is one nothing here can decide: those impls resolve it for nobody, and
+  // impl selection resolves it through the candidate it settles on, which a
+  // reader holding no record cannot. Such an obligation is declined rather than
+  // discharged, so the claim stands unproven for selection to derive and for
+  // the leftover walk to refuse.
+  auto readDeclaration = [&](Type declaration) -> Citation {
+    // XXX TODO a projection a declaration spells must be over its own self
+    // application, a where-clause application, a trait requirement or a declared
+    // witness (Rust's projection well-formedness rule), so every projection has
+    // evidence at a known index and this module read deletes with LookupScope and
+    // the verifier DemandOrigins.
+    GroundProjectionLookup byGroundLookup(module, origin);
+    if (succeeded(matchDeclaration(getTypeParametersIn(declaration), declaration,
+                                   Type(unproven), byGroundLookup,
+                                   /*err=*/nullptr)))
+      return Citation::Carries;
+
+    FailureOr<Type> readObligation = byGroundLookup(Type(unproven));
+    FailureOr<Type> readDeclared = byGroundLookup(declaration);
+    if (failed(readObligation) || failed(readDeclared) ||
+        containsType<ProjectionType>(*readObligation) ||
+        containsType<ProjectionType>(*readDeclared))
+      return Citation::Declined;
+
+    if (err) err() << "proof " << proven.getProof() << " proves " << declaration
+                   << ", which does not discharge the obligation "
+                   << *readObligation;
+    return Citation::Refused;
+  };
+
+  // If it's an impl op, it stands alone: a citation naming an impl carries no
+  // subproofs, so the trait may require no application. A trait-header equality
+  // requires none -- it is an obligation the impl discharges at its own
+  // verification.
+  if (auto impl = dyn_cast<ImplOp>(*symOp)) {
+    if (trait->getRequirements().hasApplications()) {
+      if (err) err() << "impl provides no subproof for trait requirements";
+      return Citation::Refused;
+    }
+
+    // Naming an unconditional impl is not the same as proving this claim: the
+    // impl could be of a different trait, or of this trait at arguments the
+    // obligation does not meet.
+    Citation read = readDeclaration(Type(impl.getSelfClaim()));
+    if (read != Citation::Carries)
+      return read;
+
+    // The impl's equality premises are read at the obligation this citation
+    // discharges. They take no subproof, so a ground impl cited as a subproof,
+    // or reused as standing evidence at an instance its premise excludes, is
+    // read here or nowhere.
+    if (failed(impl.verifyEqualityPremisesAt(unproven, origin, err)))
+      return Citation::Refused;
+
+    return Citation::Carries;
+  }
+
+  // The proof's own claim is the declaration and the obligation is the use: a
+  // proof op may be written over type variables and stand for every instance of
+  // them, so its parameters take the arguments the obligation supplies and the
+  // claim it rebuilds must be that obligation. Its premises are decided at that
+  // claim, by its own verifier, so nothing here reads them.
+  auto proof = cast<ProofOp>(*symOp);
+  return readDeclaration(Type(proof.getProvenClaim().asUnproven()));
+}
+
 static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
                                  ModuleOp module, EvidenceBindings &bindings,
                                  DemandOrigin origin,
@@ -849,85 +930,25 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
     return success();
   }
 
-  // look up the trait and its requirements using the unproven claim
-  auto trait = unproven.getTraitApplication().getTrait(module, err);
-  if (failed(trait)) return failure();
+  // Whether the citation discharges this obligation at all is the one-level
+  // judgment, and it is the whole of what the evidence here has to say.
+  switch (verifyCitation(unproven, proven, module, origin, err)) {
+  case Citation::Carries:
+    break;
+  case Citation::Declined:
+    derived.complete = false;
+    return success();
+  case Citation::Refused:
+    return failure();
+  }
 
   // inspect the proof symbol on the proven side
   auto symOp = ProofOp::getProofOpOrUnconditionalImplOp(module, proven.getProof(), err);
   if (failed(symOp)) return failure();
 
-  // An obligation is discharged only by evidence for that same application, and
-  // the evidence is the DECLARATION the cited symbol holds -- a blanket impl
-  // and a proof written over type variables each stand for every instance of
-  // theirs. So the judgment is whether that declaration, read at the arguments
-  // this obligation supplies, rebuilds the obligation. The claim the citation
-  // is spelled with is built from the obligation, so it says nothing here; only
-  // the declaration does.
-  //
-  // A side still spelling a projection once the impls standing now have been
-  // read is one nothing here can decide: those impls resolve it for nobody, and
-  // impl selection resolves it through the candidate it settles on, which a
-  // reader holding no record cannot. Such an obligation is declined rather than
-  // discharged -- nothing is bound, and this node describes no closure -- so the
-  // claim stands unproven for selection to derive and for the leftover walk to
-  // refuse.
-  enum class Citation { Carries, Declined, Refused };
-  auto readCitation = [&](Type declaration) -> Citation {
-    // XXX TODO a projection a declaration spells must be over its own self
-    // application, a where-clause application, a trait requirement or a declared
-    // witness (Rust's projection well-formedness rule), so every projection has
-    // evidence at a known index and this module read deletes with LookupScope and
-    // the verifier DemandOrigins.
-    GroundProjectionLookup byGroundLookup(module, origin);
-    if (succeeded(matchDeclaration(getTypeParametersIn(declaration), declaration,
-                                   Type(unproven), byGroundLookup,
-                                   /*err=*/nullptr)))
-      return Citation::Carries;
-
-    FailureOr<Type> readObligation = byGroundLookup(Type(unproven));
-    FailureOr<Type> readDeclaration = byGroundLookup(declaration);
-    if (failed(readObligation) || failed(readDeclaration) ||
-        containsType<ProjectionType>(*readObligation) ||
-        containsType<ProjectionType>(*readDeclaration))
-      return Citation::Declined;
-
-    if (err) err() << "proof " << proven.getProof() << " proves " << declaration
-                   << ", which does not discharge the obligation "
-                   << *readObligation;
-    return Citation::Refused;
-  };
-
-  // If it's an impl op, it stands alone: a citation naming an impl carries no
-  // subproofs, so the trait may require no application. A trait-header equality
-  // requires none -- it is an obligation the impl discharges at its own
-  // verification.
-  if (auto impl = dyn_cast<ImplOp>(*symOp)) {
-    if (trait->getRequirements().hasApplications()) {
-      if (err) err() << "impl provides no subproof for trait requirements";
-      return failure();
-    }
-
-    // Naming an unconditional impl is not the same as proving this claim: the
-    // impl could be of a different trait, or of this trait at arguments the
-    // obligation does not meet.
-    switch (readCitation(Type(impl.getSelfClaim()))) {
-    case Citation::Carries:
-      break;
-    case Citation::Declined:
-      derived.complete = false;
-      return success();
-    case Citation::Refused:
-      return failure();
-    }
-
-    // The impl's equality premises are read at the obligation this citation
-    // discharges. They take no subproof, so a ground impl cited as a subproof,
-    // or reused as standing evidence at an instance its premise excludes, is
-    // read here or nowhere.
-    if (failed(impl.verifyEqualityPremisesAt(unproven, origin, err)))
-      return failure();
-
+  // An impl stands alone: a citation naming one carries no subproofs, so there
+  // is nothing below this node to derive.
+  if (isa<ImplOp>(*symOp)) {
     // success: bind the whole claim so that later normalization keeps the proof
     bindings.bind(unproven, proven);
     // A leaf: the binding it wrote is the whole of what deriving it produces.
@@ -937,21 +958,7 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
   }
 
   // otherwise the symbol must be a ProofOp
-  auto proof = dyn_cast<ProofOp>(*symOp);
-
-  // The proof's own claim is the declaration and the obligation is the use: a
-  // proof op may be written over type variables and stand for every instance of
-  // them, so its parameters take the arguments the obligation supplies and the
-  // claim it rebuilds must be that obligation.
-  switch (readCitation(Type(proof.getProvenClaim().asUnproven()))) {
-  case Citation::Carries:
-    break;
-  case Citation::Declined:
-    derived.complete = false;
-    return success();
-  case Citation::Refused:
-    return failure();
-  }
+  auto proof = cast<ProofOp>(*symOp);
 
   // The impl's equality premises are read at the obligation this citation
   // discharges. They take no subproof, and a premise mentioning a variable the

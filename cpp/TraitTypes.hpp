@@ -1273,6 +1273,46 @@ FailureOr<ClaimType> getClaimRequirementAt(
     uint64_t index,
     llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
 
+/// The verdict of reading one citation.
+enum class Citation {
+  /// The declaration the cited symbol holds, read at the arguments the
+  /// obligation supplies, rebuilds the obligation, and an impl named directly
+  /// applies there.
+  Carries,
+
+  /// A side still spells a projection the impls standing now leave unresolved,
+  /// so nothing decides this citation yet: the obligation stands unproven for
+  /// impl selection to derive and for the leftover walk to refuse.
+  Declined,
+
+  /// The declaration rebuilds some other application, or an impl named directly
+  /// does not apply at this one. `err` carries the reason.
+  Refused
+};
+
+/// Whether the evidence `proven` names discharges the obligation `unproven`,
+/// judged at that one claim and no deeper.
+///
+/// An obligation is discharged only by evidence for that same application, and
+/// the evidence is the DECLARATION the cited symbol holds -- a blanket impl and
+/// a proof written over type variables each stand for every instance of theirs.
+/// So the judgment is whether that declaration, read at the arguments this
+/// obligation supplies, rebuilds the obligation. The claim the citation is
+/// spelled with is built from the obligation, so it says nothing here; only the
+/// declaration does. An impl named directly must also apply where it is cited:
+/// it takes no subproof, so its equality premises are read here or nowhere.
+///
+/// Nothing is read inside a cited proof. A proof op decides its own premises
+/// and its own citations at the claim it stands over, and one whose premises
+/// are all decided there holds at every instance of it, so a citation of it
+/// needs this top-level match alone.
+///
+/// `origin` names the caller: the readings here normalize through the
+/// ground-projection lookup, so they raise demand.
+Citation verifyCitation(ClaimType unproven, ClaimType proven, ModuleOp module,
+                        DemandOrigin origin,
+                        llvm::function_ref<InFlightDiagnostic()> err);
+
 /// Verify that a `proven` claim soundly proves the (possibly still polymorphic)
 /// `unproven` claim and extend `subst` with a mapping when appropriate.
 ///
