@@ -1468,14 +1468,14 @@ enum class LookupScope {
 
   /// Also a projection whose arguments still carry variables, when the
   /// projection's own spelling determines which impl serves it: exactly one impl
-  /// matches, that impl is unconditional, and the match binds only that impl's
-  /// type parameters -- never a variable the projection spells. Such a
+  /// matches, that impl states no where clause, and the match binds only that
+  /// impl's type parameters -- never a variable the projection spells. Such a
   /// projection resolves the same way for every instance of its variables, so
   /// the two spellings denote one type whatever inference goes on to choose. A
   /// projection whose spelling would have to be narrowed to fit an impl
   /// determines nothing (inference may narrow it another way) and is left as
-  /// written; so is one whose impl is conditional, which serves the instances
-  /// its premises admit and leaves the rest to another impl nobody has written
+  /// written; so is one whose impl states premises, which serves the instances
+  /// those premises admit and leaves the rest to another impl nobody has written
   /// yet. A resolution under this scope is read to compare a spelling, never to
   /// serve it: it feeds a comparison, not a position that stamps the resolved
   /// type into IR.
@@ -1488,11 +1488,13 @@ enum class LookupScope {
 /// This is a read-only lookup: it selects the unique existing impl whose self
 /// application matches a projection's trait application, reads that impl's
 /// associated-type binding, and substitutes. Exactly one matching impl is
-/// required; two or more decline. A conditional impl (nonempty assumptions) may
-/// be that one match -- selecting it is mechanical name resolution, and a legal
-/// program has already discharged the projection's head claim, which is what its
-/// premise witnesses. It never mints proofs, generates impls, or mutates IR, so
-/// it is safe to run inside a verifier.
+/// required; two or more decline. For a ground projection an impl with premises
+/// may be that one match -- selecting it is mechanical name resolution, and a
+/// legal program has already discharged the projection's head claim, which is
+/// what its premise witnesses. A projection over a type variable resolves only
+/// through an impl that states no where clause, since only such an impl serves
+/// every instance of the variable. It never mints proofs, generates impls, or
+/// mutates IR, so it is safe to run inside a verifier.
 ///
 /// `origin` names the caller, which the signature otherwise says nothing about.
 /// A verifier's demand stays local; a stage demand enters the preparation queue.

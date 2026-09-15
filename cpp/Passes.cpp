@@ -1440,8 +1440,8 @@ static Type resolveGroundProjections(
 /// Selection answers about one application, and a spelling carrying variables
 /// stands for as many applications as its variables have instances, so nothing
 /// selection settled says what it denotes. What does is an impl serving every
-/// one of those instances: a single unconditional impl of the trait whose header
-/// carries to the application as written. The read is a probe of the module and
+/// one of those instances: a single impl of the trait that states no where clause
+/// and whose header carries to the application as written. The read is a probe of the module and
 /// not a demand this stage undertook to serve. Nothing where no such impl
 /// stands.
 static std::optional<Type> resolveProjectionOverVariableHop(ProjectionType proj,
