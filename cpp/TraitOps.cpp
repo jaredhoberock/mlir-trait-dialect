@@ -12,7 +12,6 @@
 #include <llvm/Support/xxhash.h>
 #include <llvm/Support/Error.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
-#include <mlir/Interfaces/CallInterfaces.h>
 #include <mlir/Interfaces/FunctionImplementation.h>
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/IRMapping.h>
