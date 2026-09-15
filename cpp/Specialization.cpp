@@ -3,11 +3,9 @@
 #include "Specialization.hpp"
 #include "TraitOps.hpp"
 #include "TraitTypes.hpp"
-#include <llvm/ADT/SetVector.h>
 #include <mlir/IR/IRMapping.h>
 #include <mlir/IR/PatternMatch.h>
 #include <mlir/IR/Verifier.h>
-#include <mlir/Interfaces/CallInterfaces.h>
 
 namespace mlir::trait {
 
@@ -152,113 +150,6 @@ static bool insertionStandsInsideTemplate(OpBuilder &builder) {
   return false;
 }
 
-namespace {
-
-/// The first mention of each type variable a substitution binds nothing for, in
-/// the order the reading meets them, so each is refused once and at a site.
-struct UnboundVariables {
-  SmallVector<std::pair<Type, Operation *>> inOrder;
-  DenseSet<Type> seen;
-
-  /// Reads `root`, a type or an attribute, for the variables `bound` does not
-  /// bind, recording a first mention at `at`.
-  template <typename RootT>
-  void read(RootT root, const SetVector<Type> &bound, Operation *at) {
-    root.walk([&](Type sub) {
-      for (GenericTypeInterface variable : getTypeParametersIn(sub)) {
-        Type label(variable);
-        if (bound.contains(label))
-          continue;
-        if (seen.insert(label).second)
-          inOrder.emplace_back(label, at);
-      }
-    });
-  }
-};
-
-void readRegion(Region &region, const SetVector<Type> &bound,
-                UnboundVariables &unbound);
-
-/// Reads `op` and whatever it holds against `bound`, the variables a
-/// substitution has an argument for where `op` stands.
-void readOp(Operation *op, const SetVector<Type> &bound,
-            UnboundVariables &unbound) {
-  for (Type type : op->getResultTypes())
-    unbound.read(type, bound, op);
-  for (NamedAttribute attribute : op->getAttrs())
-    if (!namesCalleeTypeVariables(*op, attribute))
-      unbound.read(attribute.getValue(), bound, op);
-
-  // A callable region a scope reaches into is a lambda a dialect specializes
-  // once per use -- a `tuple.map` body, once per element type -- so its own
-  // signature supplies arguments for what it holds, on top of the ones the
-  // substitution already binds. Every other region is interior to the scope
-  // around it and binds nothing of its own.
-  SetVector<Type> inside = bound;
-  if (auto callable = dyn_cast<CallableOpInterface>(op)) {
-    auto bindSignature = [&](ArrayRef<Type> types) {
-      for (Type type : types)
-        for (GenericTypeInterface variable : getTypeParametersIn(type))
-          inside.insert(Type(variable));
-    };
-    bindSignature(callable.getArgumentTypes());
-    bindSignature(callable.getResultTypes());
-  }
-
-  for (Region &region : op->getRegions())
-    readRegion(region, inside, unbound);
-}
-
-void readRegion(Region &region, const SetVector<Type> &bound,
-                UnboundVariables &unbound) {
-  for (Block &block : region) {
-    for (BlockArgument argument : block.getArguments())
-      unbound.read(argument.getType(), bound, region.getParentOp());
-    for (Operation &op : block)
-      readOp(&op, bound, unbound);
-  }
-}
-
-} // namespace
-
-/// Refuses every type variable `polymorph`'s body spells that `substitution`
-/// binds no argument for.
-///
-/// A clone is stamped out of a declaration under a substitution keyed by that
-/// declaration's parameters, so a variable the substitution does not bind has
-/// nothing to receive and rides into the clone spelled as written. The reading
-/// visits exactly what the clone's substitution visits -- block argument types,
-/// result types and attributes, region by region -- minus the array a generic
-/// call spells its CALLEE's parameters in, which stands in the callee's scope.
-static LogicalResult refuseUnboundVariables(
-    func::FuncOp polymorph, const DenseMap<Type,Type> &substitution) {
-  SetVector<Type> bound;
-  for (auto [key, value] : substitution)
-    if (isa<GenericTypeInterface>(key))
-      for (GenericTypeInterface variable : getTypeParametersIn(key))
-        bound.insert(Type(variable));
-
-  // The signature is the declaration the substitution is keyed by, and the
-  // clone's is monomorphic where this is asked: the judgment is about the body.
-  UnboundVariables unbound;
-  for (NamedAttribute attribute : polymorph->getAttrs())
-    if (attribute.getName() != polymorph.getFunctionTypeAttrName())
-      unbound.read(attribute.getValue(), bound, polymorph.getOperation());
-  for (Region &region : polymorph->getRegions())
-    readRegion(region, bound, unbound);
-
-  for (auto [variable, at] : unbound.inOrder) {
-    InFlightDiagnostic diagnostic =
-        polymorph.emitError()
-        << "type variable " << variable << " in the body of '@"
-        << polymorph.getSymName()
-        << "' is bound by no parameter of its declaration, so no instance can "
-           "replace it";
-    diagnostic.attachNote(at->getLoc()) << "mentioned here";
-  }
-  return success(unbound.inOrder.empty());
-}
-
 func::FuncOp specializePolymorph(OpBuilder& builder,
                                   func::FuncOp polymorph,
                                   StringRef instanceName,
@@ -290,16 +181,6 @@ func::FuncOp specializePolymorph(OpBuilder& builder,
 
   bool cloneIsTemplate = isPolymorphicType(Type(substitutedType)) ||
                          insertionStandsInsideTemplate(builder);
-
-  // A monomorphic clone receives an argument for every parameter its
-  // declaration binds, so nothing it copies may spell one the substitution does
-  // not bind: that spelling would stand in ground code as written, and the
-  // declaration is where the missing parameter belongs. A template clone keeps
-  // the parameters its own signature still spells, and receives its arguments
-  // when it is itself cloned for a concrete instance.
-  if (!cloneIsTemplate && failed(refuseUnboundVariables(polymorph, substitution)))
-    return nullptr;
-
   AttrTypeReplacer fullReplacer = makeTypeReplacerFromSubstitution(
       substitution, polymorph->getParentOfType<ModuleOp>());
   AttrTypeReplacer &replacer = cloneIsTemplate ? variableReplacer : fullReplacer;
