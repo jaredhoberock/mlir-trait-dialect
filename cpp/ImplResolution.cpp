@@ -358,9 +358,6 @@ FailureOr<Type> ImplResolver::resolveProjectionType(
   for (Type arg : proj.getAssocTypeArgs())
     assocTypeArgs.push_back(resolveProjectionsIn(arg, scope, builder));
 
-  auto binding = impl.specializeAssociatedTypeBinding(assocName, assocTypeArgs, err);
-  if (failed(binding)) return failure();
-
   // The arguments carrying this impl's header to the claim selection chose it
   // for, read through the same context selection chose it under.
   RecordedProjectionLookup byRecord(*this, scope);
@@ -368,7 +365,8 @@ FailureOr<Type> ImplResolver::resolveProjectionType(
                                                   byRecord, err);
   if (failed(subst)) return failure();
 
-  return instantiate(*binding, *subst);
+  return impl.specializeAssociatedTypeBinding(assocName, assocTypeArgs, *subst,
+                                              err);
 }
 
 /// Names the ambiguity that refused `demand`, where the demand stands.
@@ -711,10 +709,6 @@ ReadOnlyImplResolver::resolveProjectionType(ProjectionType proj) const {
   for (Type arg : proj.getAssocTypeArgs())
     assocTypeArgs.push_back(resolveProjectionsIn(arg));
 
-  auto binding = impl.specializeAssociatedTypeBinding(
-      proj.getAssocName().getValue(), assocTypeArgs);
-  if (failed(binding)) return failure();
-
   // The arguments carrying this impl's header to the claim selection chose it
   // for, read through the same context selection chose it under.
   RecordedProjectionLookup byRecord(*this);
@@ -723,7 +717,8 @@ ReadOnlyImplResolver::resolveProjectionType(ProjectionType proj) const {
                                                   /*errFn=*/nullptr);
   if (failed(subst)) return failure();
 
-  return instantiate(*binding, *subst);
+  return impl.specializeAssociatedTypeBinding(
+      proj.getAssocName().getValue(), assocTypeArgs, *subst);
 }
 
 Type ReadOnlyImplResolver::resolveProjectionsIn(Type ty) const {

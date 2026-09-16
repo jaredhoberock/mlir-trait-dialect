@@ -289,11 +289,6 @@ static Type resolveProjectionsByLookupCore(Type ty, ModuleOp module,
     if (polymorphicHead && !impl.getAssumptions().empty())
       return std::nullopt;
 
-    SmallVector<Type> assocTypeArgs(proj.getAssocTypeArgs());
-    auto binding = impl.specializeAssociatedTypeBinding(
-        proj.getAssocName().getValue(), assocTypeArgs);
-    if (failed(binding))
-      return declineWith(LookupMissReason::AssociatedTypeBindingFailed);
     // Nothing the projection spells is narrowed to fit the impl: the impl's own
     // parameters take the arguments standing opposite them and the header
     // rebuilt at those must be the projection's application. So an impl the
@@ -304,7 +299,12 @@ static Type resolveProjectionsByLookupCore(Type ty, ModuleOp module,
     if (failed(subst))
       return declineWith(LookupMissReason::SelfClaimSubstitutionFailed);
 
-    return instantiate(*binding, *subst);
+    auto binding = impl.specializeAssociatedTypeBinding(
+        proj.getAssocName().getValue(), proj.getAssocTypeArgs(), *subst);
+    if (failed(binding))
+      return declineWith(LookupMissReason::AssociatedTypeBindingFailed);
+
+    return *binding;
   });
 
   // A resolved binding may itself expose a ground projection, so run to a

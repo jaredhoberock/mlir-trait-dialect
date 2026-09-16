@@ -192,10 +192,11 @@ FailureOr<Type> NormalizationContext::normalize(
           continue;
 
         auto resolved = rule.impl.specializeAssociatedTypeBinding(
-            proj.getAssocName().getValue(), proj.getAssocTypeArgs());
+            proj.getAssocName().getValue(), proj.getAssocTypeArgs(),
+            rule.subst);
         if (failed(resolved))
           continue;
-        return rule.subst.apply(*resolved);
+        return *resolved;
       }
       return std::nullopt;
     });
@@ -832,9 +833,10 @@ static LogicalResult verifyImplParametersAreConstrained(ImplOp impl);
 /// supplies arguments for: the impl header's parameters, bound where the impl is
 /// selected, and the binding's own parameters, bound by a projection's
 /// associated type arguments. A binding whose own parameter repeats a header
-/// parameter would have the projection's argument overwrite the header's, and a
-/// bound type mentioning a parameter from neither list has nothing to supply it,
-/// so the resolved type would carry a parameter no substitution reaches.
+/// parameter would take the header's argument in a position the projection
+/// supplies, and a bound type mentioning a parameter from neither list has
+/// nothing to supply it, so the resolved type would carry a parameter no
+/// substitution reaches.
 ///
 /// A binding's own parameter is a type variable: it is the key a projection's
 /// argument is substituted for, so a ground type standing in the list would
@@ -1221,9 +1223,14 @@ FailureOr<SpecializationMap> ImplOp::buildSubstitutionForSelfClaim(ClaimType act
 FailureOr<Type> ImplOp::specializeAssociatedTypeBinding(
     StringRef name,
     ArrayRef<Type> assocTypeArgs,
+    const SpecializationMap &headerArguments,
     llvm::function_ref<InFlightDiagnostic()> err) {
   auto binding = getAssociatedTypeBinding(name, err);
   if (failed(binding)) return failure();
+
+  // The header's parameters take their arguments before the projection's are
+  // stamped in, so nothing the projection spells is read as this declaration's.
+  Type bound = instantiate(*binding, headerArguments);
 
   auto assoc = getAssociatedType(name);
   if (succeeded(assoc) && assoc->getTypeParams()) {
@@ -1234,10 +1241,10 @@ FailureOr<Type> ImplOp::specializeAssociatedTypeBinding(
                      << " type args but got " << assocTypeArgs.size();
       return failure();
     }
-    *binding = applyGATSubstitution(typeParams, assocTypeArgs, *binding);
+    bound = applyGATSubstitution(typeParams, assocTypeArgs, bound);
   }
 
-  return *binding;
+  return bound;
 }
 
 FailureOr<ImplSpecialization> ImplOp::buildImplSpecialization(

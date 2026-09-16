@@ -226,14 +226,15 @@ static FailureOr<SpecializationMap> verifyProjectionResolutionCore(
     return failure();
 
   auto bound = implOp.specializeAssociatedTypeBinding(
-      projectionTy.getAssocName().getValue(), projectionTy.getAssocTypeArgs());
+      projectionTy.getAssocName().getValue(), projectionTy.getAssocTypeArgs(),
+      *subst);
   if (failed(bound)) {
     if (err) err() << "impl '" << citedImpl
                    << "' does not bind associated type '"
                    << projectionTy.getAssocName().getValue() << "'";
     return failure();
   }
-  Type actual = subst->apply(*bound);
+  Type actual = *bound;
 
   // Proof-blind exact comparison. When a projection-headed impl self-application
   // cannot be aligned by structural matching, the comparison runs modulo the

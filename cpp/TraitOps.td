@@ -586,10 +586,10 @@ def ImplOp : TraitDialectOp<"impl", [
       return failure();
     }
 
-    /// Look up an associated type binding by name, without GAT substitution.
-    /// For GAT types, the result may reference the impl's own poly IDs
-    /// instead of concrete types. Use `specializeAssociatedTypeBinding`
-    /// to get a fully-substituted result.
+    /// Look up an associated type binding by name, with neither this impl's
+    /// header arguments nor a projection's associated-type arguments applied:
+    /// the result spells the impl's own parameters. Use
+    /// `specializeAssociatedTypeBinding` to read it at both argument lists.
     FailureOr<Type> getAssociatedTypeBinding(
         StringRef name,
         llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
@@ -609,19 +609,18 @@ def ImplOp : TraitDialectOp<"impl", [
       return failure();
     }
 
-    /// Look up an associated type binding and apply GAT substitution.
+    /// The type this impl binds for associated type `name`, read at the two
+    /// argument lists a use of it supplies: `headerArguments`, the arguments
+    /// this impl's header parameters take at the application selecting it chose
+    /// it for, and `assocTypeArgs`, the arguments a projection supplies for the
+    /// binding's own parameters. For a binding with no parameters of its own
+    /// `assocTypeArgs` is empty.
     ///
-    /// Given an associated type `name` (e.g., "Output") and concrete type
-    /// arguments `assocTypeArgs` for a GAT, returns the fully-resolved
-    /// concrete type that the impl binds to that associated type.
-    ///
-    /// For non-GAT associated types, `assocTypeArgs` should be empty and
-    /// the raw binding is returned directly.
-    ///
-    /// For GATs, the raw binding from the impl may reference the impl's own
-    /// poly IDs for the GAT's type parameters (which may differ from the
-    /// trait's). This method substitutes `assocTypeArgs` for those parameters
-    /// to produce the final resolved type.
+    /// The header's parameters take their arguments first and the projection's
+    /// arguments are stamped into that result, because an argument is a term of
+    /// whoever spelled the projection: a label it shares with one of this impl's
+    /// header parameters names that caller's variable, and a stamped term is
+    /// never revisited.
     ///
     /// Returns failure if:
     ///   - No associated type named `name` exists in this impl
@@ -630,6 +629,7 @@ def ImplOp : TraitDialectOp<"impl", [
     FailureOr<Type> specializeAssociatedTypeBinding(
         StringRef name,
         ArrayRef<Type> assocTypeArgs,
+        const SpecializationMap &headerArguments,
         llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
   }];
