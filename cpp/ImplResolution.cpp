@@ -722,7 +722,11 @@ ReadOnlyImplResolver::resolveProjectionType(ProjectionType proj) const {
 }
 
 Type ReadOnlyImplResolver::resolveProjectionsIn(Type ty) const {
-  AttrTypeReplacer replacer = makeGroundProjectionReplacer(
+  // A recorded fact answers a projection by its head: selection settled which
+  // impl serves that application, and what that impl binds is a function of the
+  // projection's own associated-type arguments. A head selection has settled is
+  // therefore read here whatever those arguments still spell.
+  AttrTypeReplacer replacer = makeGroundHeadProjectionReplacer(
       [this](ProjectionType proj) -> std::optional<Type> {
     auto resolved = resolveProjectionType(proj);
     if (succeeded(resolved))

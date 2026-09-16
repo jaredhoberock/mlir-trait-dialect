@@ -89,6 +89,15 @@ AttrTypeReplacer makeEndpointSealedReplacer();
 AttrTypeReplacer makeGroundProjectionReplacer(
     std::function<std::optional<Type>(ProjectionType)> hop);
 
+/// The sealed replacer plus the head-keyed projection rule: which impl serves a
+/// projection is settled by its head application, and what that impl binds is a
+/// function of the projection's own associated-type arguments, so a projection
+/// whose head is ground is resolved through `hop` whatever those arguments still
+/// spell. A head still carrying a variable stands for as many impls as that
+/// variable has instances and is left standing.
+AttrTypeReplacer makeGroundHeadProjectionReplacer(
+    std::function<std::optional<Type>(ProjectionType)> hop);
+
 inline bool isPolymorphicType(Type root);
 inline Type applySubstitutionOnce(const llvm::DenseMap<Type,Type> &subst,
                                   Type root);

@@ -32,17 +32,36 @@ AttrTypeReplacer makeEndpointSealedReplacer() {
   return replacer;
 }
 
-AttrTypeReplacer makeGroundProjectionReplacer(
+/// The sealed replacer plus one projection rule, over the spellings `reads`
+/// admits.
+static AttrTypeReplacer makeProjectionReplacer(
+    bool (*reads)(ProjectionType),
     std::function<std::optional<Type>(ProjectionType)> hop) {
   AttrTypeReplacer replacer = makeEndpointSealedReplacer();
   replacer.addReplacement(
-      [hop = std::move(hop)](Type t) -> std::optional<Type> {
+      [reads, hop = std::move(hop)](Type t) -> std::optional<Type> {
         auto projection = dyn_cast<ProjectionType>(t);
-        if (!projection || isPolymorphicType(projection))
+        if (!projection || !reads(projection))
           return std::nullopt;
         return hop(projection);
       });
   return replacer;
+}
+
+AttrTypeReplacer makeGroundProjectionReplacer(
+    std::function<std::optional<Type>(ProjectionType)> hop) {
+  return makeProjectionReplacer(
+      [](ProjectionType proj) { return !isPolymorphicType(Type(proj)); },
+      std::move(hop));
+}
+
+AttrTypeReplacer makeGroundHeadProjectionReplacer(
+    std::function<std::optional<Type>(ProjectionType)> hop) {
+  return makeProjectionReplacer(
+      [](ProjectionType proj) {
+        return !isPolymorphicType(Type(proj.asClaim()));
+      },
+      std::move(hop));
 }
 
 void TraitDialect::registerTypes() {
