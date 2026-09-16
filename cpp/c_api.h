@@ -54,27 +54,21 @@ MlirOperation traitImplOpCreateNamed(MlirLocation loc,
                                      MlirAttribute selfTraitApp,
                                      MlirAttribute* predicates, intptr_t numPredicates);
 
-/// Create a trait.method.call operation. `typeParams`/`typeArgs` are the
-/// parallel type-argument arrays (the method's own type variables and the types
-/// they take); pass numTypeArgs = 0 only for a method that binds none.
+/// Create a trait.method.call operation. The instance it wants is read off the
+/// claim, argument and result types against the method's declaration.
 MlirOperation traitMethodCallOpCreate(MlirLocation loc,
                                       MlirStringRef traitName,
                                       MlirStringRef methodName,
                                       MlirValue claim,
                                       MlirValue* arguments, intptr_t numArguments,
-                                      MlirType* resultTypes, intptr_t numResults,
-                                      MlirType* typeParams, MlirType* typeArgs,
-                                      intptr_t numTypeArgs);
+                                      MlirType* resultTypes, intptr_t numResults);
 
-/// Create a trait.func.call operation. `typeParams`/`typeArgs` are the parallel
-/// type-argument arrays (the callee's own type variables and the types they
-/// take); pass numTypeArgs = 0 only for a callee that binds none.
+/// Create a trait.func.call operation. The instance it wants is read off the
+/// operand and result types against the callee's declaration.
 MlirOperation traitFuncCallOpCreate(MlirLocation loc,
                                     MlirStringRef callee,
                                     MlirValue* arguments, intptr_t numArguments,
-                                    MlirType* resultTypes, intptr_t numResults,
-                                    MlirType* typeParams, MlirType* typeArgs,
-                                    intptr_t numTypeArgs);
+                                    MlirType* resultTypes, intptr_t numResults);
 
 /// Create a trait.allege operation
 MlirOperation traitAllegeOpCreate(MlirLocation loc,

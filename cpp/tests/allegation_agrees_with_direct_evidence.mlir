@@ -38,14 +38,14 @@ func.func private @g(%c: !trait.claim<@T[!S]>, %x: !S) -> !trait.proj<@T[!S], "O
 // CHECK: call @g_h[[H]]
 func.func @by_witness(%x: i32) -> !trait.proj<@T[i32], "Out"> {
   %e = trait.witness @T_i32 for @T[i32]
-  %r = trait.func.call @g(%e, %x) {type_params = [!trait.poly<0>], type_args = [i32]}
+  %r = trait.func.call @g(%e, %x)
     : (!trait.claim<@T[i32] by @T_i32>, i32) -> !trait.proj<@T[i32], "Out">
   return %r : !trait.proj<@T[i32], "Out">
 }
 
 func.func @by_allegation(%x: i32) -> !trait.proj<@T[i32], "Out"> {
   %e = trait.allege @T[i32]
-  %r = trait.func.call @g(%e, %x) {type_params = [!trait.poly<0>], type_args = [i32]}
+  %r = trait.func.call @g(%e, %x)
     : (!trait.claim<@T[i32]>, i32) -> !trait.proj<@T[i32], "Out">
   return %r : !trait.proj<@T[i32], "Out">
 }
@@ -93,21 +93,21 @@ func.func private @g(%c: !trait.claim<@T[!S]>, %x: !S) -> !trait.proj<@T[!S], "O
 // CHECK: call @g_h[[G64]]
 func.func @permuted_by_witness(%x: i32) -> !trait.proj<@T[i32], "Out"> {
   %e = trait.witness @T_i32 for @T[i32]
-  %r = trait.func.call @g(%e, %x) {type_params = [!trait.poly<0>], type_args = [i32]}
+  %r = trait.func.call @g(%e, %x)
     : (!trait.claim<@T[i32] by @T_i32>, i32) -> !trait.proj<@T[i32], "Out">
   return %r : !trait.proj<@T[i32], "Out">
 }
 
 func.func @permuted_by_allegation(%x: i32) -> !trait.proj<@T[i32], "Out"> {
   %e = trait.allege @T[i32]
-  %r = trait.func.call @g(%e, %x) {type_params = [!trait.poly<0>], type_args = [i32]}
+  %r = trait.func.call @g(%e, %x)
     : (!trait.claim<@T[i32]>, i32) -> !trait.proj<@T[i32], "Out">
   return %r : !trait.proj<@T[i32], "Out">
 }
 
 func.func @selects_by_type(%x: f64) -> !trait.proj<@T[f64], "Out"> {
   %e = trait.allege @T[f64]
-  %r = trait.func.call @g(%e, %x) {type_params = [!trait.poly<0>], type_args = [f64]}
+  %r = trait.func.call @g(%e, %x)
     : (!trait.claim<@T[f64]>, f64) -> !trait.proj<@T[f64], "Out">
   return %r : !trait.proj<@T[f64], "Out">
 }
@@ -144,14 +144,14 @@ func.func private @g(%c: !trait.claim<@T[!S]>, %x: !S) -> !trait.proj<@T[!S], "O
 // CHECK: call @g_h[[R]]
 func.func @renamed_by_witness(%x: i32) -> !trait.proj<@T[i32], "Out"> {
   %e = trait.witness @Chosen for @T[i32]
-  %r = trait.func.call @g(%e, %x) {type_params = [!trait.poly<0>], type_args = [i32]}
+  %r = trait.func.call @g(%e, %x)
     : (!trait.claim<@T[i32] by @Chosen>, i32) -> !trait.proj<@T[i32], "Out">
   return %r : !trait.proj<@T[i32], "Out">
 }
 
 func.func @renamed_by_allegation(%x: i32) -> !trait.proj<@T[i32], "Out"> {
   %e = trait.allege @T[i32]
-  %r = trait.func.call @g(%e, %x) {type_params = [!trait.poly<0>], type_args = [i32]}
+  %r = trait.func.call @g(%e, %x)
     : (!trait.claim<@T[i32]>, i32) -> !trait.proj<@T[i32], "Out">
   return %r : !trait.proj<@T[i32], "Out">
 }

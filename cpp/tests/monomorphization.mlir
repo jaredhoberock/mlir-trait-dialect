@@ -44,7 +44,7 @@ func.func private @foo(%c: !trait.claim<@PartialEq[!T,!T]>, %x: !T, %y: !T) -> i
 // CHECK: call @foo_{{.*}}
 func.func @bar(%x: i32, %y: i32) -> i1 {
   %p = trait.witness @PartialEq_impl_i32_i32 for @PartialEq[i32,i32]
-  %res = trait.func.call @foo(%p, %x, %y) {type_params = [!trait.poly<2>], type_args = [i32]}
+  %res = trait.func.call @foo(%p, %x, %y)
     : (!trait.claim<@PartialEq[i32,i32] by @PartialEq_impl_i32_i32>, i32, i32) -> i1
   return %res : i1
 }
@@ -69,7 +69,7 @@ func.func private @baz(%c: !trait.claim<@PartialEq[!T,!T]>, %x: !T, %y: !T) -> i
 // CHECK: call @baz_{{.*}}
 func.func @qux(%x: i32, %y: i32) -> i1 {
   %p = trait.witness @PartialEq_impl_i32_i32 for @PartialEq[i32,i32]
-  %result = trait.func.call @baz(%p, %x, %y) {type_params = [!trait.poly<2>], type_args = [i32]}
+  %result = trait.func.call @baz(%p, %x, %y)
     : (!trait.claim<@PartialEq[i32,i32] by @PartialEq_impl_i32_i32>, i32,i32) -> i1
   return %result : i1
 }

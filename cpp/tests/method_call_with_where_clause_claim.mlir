@@ -36,7 +36,6 @@ func.func @test(%x: i32, %y: i32) -> i32 {
   %same = trait.allege @SameAs[i32, i32]
   %res = trait.method.call %chooser @Chooser[i32]::@choose(%x, %y, %same)
     : (i32, i32, !trait.claim<@SameAs[i32, i32]>) -> i32
-    attributes {type_params = [!trait.poly<3>], type_args = [i32]}
   return %res : i32
 }
 

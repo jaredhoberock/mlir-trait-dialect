@@ -36,7 +36,7 @@ func.func private @test(%c: !trait.claim<@Trait[i64, tuple<!T3>]>, %arg0: tuple<
 // CHECK: call @test_
 func.func @main(%t: tuple<i32>) -> i64 {
   %p = trait.witness @Trait_proof for @Trait[i64, tuple<i32>]
-  %res = trait.func.call @test(%p, %t) {type_params = [!trait.poly<3>], type_args = [i32]}
+  %res = trait.func.call @test(%p, %t)
     : (!trait.claim<@Trait[i64, tuple<i32>] by @Trait_proof>, tuple<i32>) -> i64
   return %res : i64
 }

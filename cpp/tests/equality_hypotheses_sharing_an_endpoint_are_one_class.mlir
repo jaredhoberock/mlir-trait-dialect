@@ -35,7 +35,6 @@ func.func @caller(%x: !Y, %a: !trait.claim<@A[!Y]>,
     %toC: !trait.claim<!trait.proj<@B[!Y], "Item"> = !trait.proj<@C[!Y], "Item">>)
     -> !trait.proj<@C[!Y], "Item"> {
   %r = trait.func.call @callee(%x, %a)
-      {type_params = [!trait.poly<1>], type_args = [!trait.poly<2>]}
     : (!Y, !trait.claim<@A[!Y]>) -> !trait.proj<@C[!Y], "Item">
   return %r : !trait.proj<@C[!Y], "Item">
 }

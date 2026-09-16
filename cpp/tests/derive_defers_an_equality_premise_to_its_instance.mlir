@@ -24,7 +24,7 @@ func.func private @needs(%v: !trait.claim<@Vector[!trait.poly<0>]>) {
 
 func.func private @f(%t: !trait.claim<@Tensor[!trait.poly<0>]>) {
   %v = trait.derive @Vector[!trait.poly<0>] from @Vector_blanket given(%t) : (!trait.claim<@Tensor[!trait.poly<0>]>)
-  trait.func.call @needs(%v) {type_params = [!trait.poly<0>], type_args = [!trait.poly<0>]} : (!trait.claim<@Vector[!trait.poly<0>]>) -> ()
+  trait.func.call @needs(%v) : (!trait.claim<@Vector[!trait.poly<0>]>) -> ()
   return
 }
 
@@ -35,6 +35,6 @@ func.func private @f(%t: !trait.claim<@Tensor[!trait.poly<0>]>) {
 // CHECK: call @[[F]]
 func.func @main() {
   %t = trait.allege @Tensor[i8]
-  trait.func.call @f(%t) {type_params = [!trait.poly<0>], type_args = [i8]} : (!trait.claim<@Tensor[i8]>) -> ()
+  trait.func.call @f(%t) : (!trait.claim<@Tensor[i8]>) -> ()
   return
 }

@@ -42,6 +42,6 @@ func.func @caller() -> i64 {
   %e = trait.witness proj_resolve !trait.proj<@Trait[i64], "Output"> resolves i64 by @Trait_impl
     : !trait.claim<!trait.proj<@Trait[i64], "Output"> = i64>
   %pw = trait.coerce %x : i64 to !trait.proj<@Trait[i64], "Output"> via (%e) : (!trait.claim<!trait.proj<@Trait[i64], "Output"> = i64>)
-  %r = trait.func.call @gen(%pw, %w) {type_params = [!trait.poly<0>], type_args = [i64]} : (!trait.proj<@Trait[i64], "Output">, !trait.claim<@Trait[i64] by @Trait_i64_p>) -> i64
+  %r = trait.func.call @gen(%pw, %w) : (!trait.proj<@Trait[i64], "Output">, !trait.claim<@Trait[i64] by @Trait_i64_p>) -> i64
   return %r : i64
 }

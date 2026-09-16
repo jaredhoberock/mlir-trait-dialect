@@ -57,6 +57,5 @@ func.func @caller() -> !trait.proj<@Transform[i64], "Output", [i1]> {
   %x = arith.constant 1 : i1
   %r = trait.method.call %a @Transform[i64]::@apply(%self, %x)
     : (i64, i1) -> !trait.proj<@Transform[i64], "Output", [i1]>
-    attributes {type_params = [!trait.poly<1>], type_args = [i1]}
   return %r : !trait.proj<@Transform[i64], "Output", [i1]>
 }

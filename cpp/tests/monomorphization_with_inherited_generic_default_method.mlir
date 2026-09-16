@@ -19,7 +19,6 @@ func.func @main() -> i32 {
   %x = trait.method.call %self_claim0 @Trait[i64]::@method(%zero0, %one)
     : (i64, i64) -> i64
     by @Trait_impl_i64
-    attributes {type_params = [!trait.poly<1>], type_args = [i64]}
 
   %self_claim1 = trait.witness @Trait_impl_i64 for @Trait[i64]
   %zero1 = arith.constant 0 : i64
@@ -27,7 +26,6 @@ func.func @main() -> i32 {
   %y = trait.method.call %self_claim1 @Trait[i64]::@method(%zero1, %true)
     : (i64, i1) -> i1
     by @Trait_impl_i64
-    attributes {type_params = [!trait.poly<1>], type_args = [i1]}
 
   %result = arith.constant 0 : i32
   return %result : i32

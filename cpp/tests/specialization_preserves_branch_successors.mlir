@@ -12,8 +12,7 @@ func.func private @f(%x: !T) -> !T {
   return %y : !T
 }
 func.func @root(%x: i32) -> i32 {
-  %r = trait.func.call @f(%x)
-    {type_params = [!T], type_args = [i32]} : (i32) -> i32
+  %r = trait.func.call @f(%x) : (i32) -> i32
   return %r : i32
 }
 

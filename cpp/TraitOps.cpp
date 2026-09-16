@@ -2995,48 +2995,67 @@ FailureOr<func::FuncOp> MethodCallOp::getMethod(llvm::function_ref<InFlightDiagn
   return func;
 }
 
-/// The type arguments a generic call supplies for `parameters`, read off its
-/// parallel type_params/type_args arrays.
+/// The type arguments a generic call supplies for `parameters`, read off the
+/// call's own types.
 ///
-/// A declaration's parameters are what a use supplies arguments for, so the
-/// call must name each of them exactly once: a spelling that names no parameter
-/// of the callee is refused rather than stamped into a clone name, and a
-/// generic callee called with no arguments at all is refused too -- the call
-/// says nothing about the instance it wants, and re-inferring it from spellings
-/// a sweep has normalized is guessing.
-static FailureOr<SpecializationMap> readDeclaredTypeArguments(
-    ArrayAttr typeParams, ArrayAttr typeArgs,
-    ArrayRef<GenericTypeInterface> parameters, StringRef callee,
+/// A call spells its operand, claim and result types and the callee's
+/// declaration spells the same positions with its parameters standing in them,
+/// so the pairing is a reading of one against the other -- the same one-way
+/// reader impl selection runs (`extractTypeArguments`): every position outside
+/// a projection first, then a projection the actual side spells the same way,
+/// and a second differing reading keeps the first.
+///
+/// A parameter standing only inside a projection's associated-type arguments is
+/// determined by a later round: the declaration is rebuilt at what has been read
+/// and normalized through the evidence this call holds, which reduces a
+/// projection whose head the reading has grounded and exposes the positions its
+/// arguments stand in. Rounds stop when one fills nothing new, and a parameter
+/// no position determines is refused, named.
+///
+/// Nothing here decides the verdict: filling a slot wrongly can only make the
+/// rebuilt declaration differ from what the call spells, which
+/// `verifyEqualAfterInstantiation` refuses.
+static FailureOr<SpecializationMap> readTypeArguments(
+    ArrayRef<GenericTypeInterface> parameters, Type formal, Type actual,
+    Normalizer normalize, StringRef callee,
     llvm::function_ref<InFlightDiagnostic()> err) {
   TypeArguments args(parameters);
-  if (typeParams) {
-    if (!typeArgs || typeParams.size() != typeArgs.size()) {
-      if (err) err() << "type_params and type_args must be parallel arrays";
-      return failure();
-    }
-    for (auto [param, arg] : llvm::zip(typeParams.getAsValueRange<TypeAttr>(),
-                                       typeArgs.getAsValueRange<TypeAttr>())) {
-      GenericTypeInterface parameter = getParameterOccurrence(param);
-      if (!parameter || !args.binds(parameter)) {
-        if (err) err() << "type parameter " << param
-                       << " is not a type variable of the callee";
-        return failure();
-      }
-      if (failed(args.assign(parameter, arg, err)))
-        return failure();
-    }
+  auto filled = [&] {
+    unsigned count = 0;
+    for (GenericTypeInterface parameter : parameters)
+      if (args.lookup(parameter))
+        ++count;
+    return count;
+  };
+
+  extractTypeArguments(formal, actual, args);
+  for (unsigned before = filled(); !args.complete(); ) {
+    // A round that will not normalize has learned nothing, so it stops the
+    // reading rather than refusing the call: what it could not reduce is the
+    // spelling already read, and the comparison downstream owns the verdict.
+    FailureOr<Type> exposed =
+        normalize(instantiate(formal, args.toSpecialization()));
+    if (failed(exposed))
+      break;
+    extractTypeArguments(*exposed, actual, args);
+    unsigned after = filled();
+    if (after == before)
+      break;
+    before = after;
   }
+
   if (!args.complete()) {
     if (err) {
-      unsigned supplied = 0;
+      InFlightDiagnostic diagnostic = err();
+      diagnostic << "call to @" << callee
+                 << " determines no type argument for";
       for (GenericTypeInterface parameter : parameters)
-        if (args.lookup(parameter))
-          ++supplied;
-      err() << "call to @" << callee << " supplies " << supplied << " of its "
-            << parameters.size() << " type arguments";
+        if (!args.lookup(parameter))
+          diagnostic << " " << Type(parameter);
     }
     return failure();
   }
+
   return args.toSpecialization();
 }
 
@@ -3386,33 +3405,9 @@ FailureOr<SpecializationMap> MethodCallOp::buildParameterSpecialization(
 
   // A method's declaration binds the trait header's parameters and then its
   // own. The prefix comes from the receiver claim by position -- the trait's
-  // arguments ride in the application -- and the suffix from this call's own
-  // arrays, restricted to the method's own variables, so a trait parameter
-  // named there is refused.
+  // arguments ride in the application.
   auto traitSubst = trait->buildSubstitutionForSelfClaim(getClaimType(), err);
   if (failed(traitSubst)) return failure();
-
-  DenseSet<Type> headerParams;
-  for (Attribute declared : trait->getTypeParams())
-    if (auto typeAttr = dyn_cast<TypeAttr>(declared))
-      for (GenericTypeInterface parameter :
-           getTypeParametersIn(typeAttr.getValue()))
-        headerParams.insert(Type(parameter));
-  SmallVector<GenericTypeInterface, 4> ownParams;
-  for (GenericTypeInterface parameter :
-       getTypeParametersIn(Type(*methodFormalTy)))
-    if (!headerParams.contains(Type(parameter)))
-      ownParams.push_back(parameter);
-
-  auto ownArgs = readDeclaredTypeArguments(getTypeParamsAttr(),
-                                           getTypeArgsAttr(), ownParams,
-                                           getMethodName(), err);
-  if (failed(ownArgs)) return failure();
-
-  SpecializationMap arguments = *traitSubst;
-  for (GenericTypeInterface parameter : ownParams)
-    if (auto argument = ownArgs->lookup(parameter))
-      arguments.bind(parameter, *argument);
 
   // The evidence this call holds: the receiver claim's proof tree and the
   // claims its arguments carry, read by index. At pass time the record of what
@@ -3437,10 +3432,44 @@ FailureOr<SpecializationMap> MethodCallOp::buildParameterSpecialization(
     return normalization.normalize(ty, err);
   };
 
-  // One identity: the method's declaration instantiated at the arguments above
-  // is the signature spelled here. There is nothing left to infer -- every
-  // argument was supplied -- so there is no second, input-only pass either.
+  // The reading's own context, which differs from the comparison's in one way:
+  // it reduces a projection whose own spelling determines the impl serving it
+  // even where its associated-type arguments still hold a variable. A reading
+  // compares a spelling and never serves one, which is what that scope licenses.
+  NormalizationContext readingContext = normalization;
+  readingContext.setModuleLookup(*module, LookupScope::Determined);
+  auto normalizeForReading = [&](Type ty) -> FailureOr<Type> {
+    return readingContext.normalize(ty, err);
+  };
+
+  // The method's own variables are the ones its declaration binds beyond the
+  // trait header's, and this call's types determine each of them.
+  SmallVector<GenericTypeInterface, 4> ownParams = getOwnTypeParameters(
+      Type(*methodFormalTy), getTraitHeaderParameters(*trait));
+
+  // At pass time the comparison reads softly: a call whose evidence is not yet
+  // recorded waits for a later round. A call whose operands are already
+  // monomorphic says everything it will ever say about the instance it wants,
+  // so a parameter its types do not determine is refused here, named, rather
+  // than surfacing later as a type variable nothing bound.
+  auto reportHere = [&]() -> InFlightDiagnostic { return emitOpError(); };
+  llvm::function_ref<InFlightDiagnostic()> refusal = err;
+  if (!refusal && llvm::all_of(getOperandTypes(), isMonomorphicType))
+    refusal = reportHere;
+
   FunctionType actual = getActualFunctionType();
+  auto ownArgs = readTypeArguments(
+      ownParams, instantiate(Type(*methodFormalTy), *traitSubst), Type(actual),
+      normalizeForReading, getMethodName(), refusal);
+  if (failed(ownArgs)) return failure();
+
+  SpecializationMap arguments = *traitSubst;
+  for (GenericTypeInterface parameter : ownParams)
+    if (auto argument = ownArgs->lookup(parameter))
+      arguments.bind(parameter, *argument);
+
+  // One identity: the method's declaration instantiated at the arguments above
+  // is the signature spelled here.
   if (failed(verifyEqualAfterInstantiation(Type(*methodFormalTy), arguments,
                                            Type(actual), normalize, err)))
     return failure();
@@ -3634,13 +3663,6 @@ FailureOr<SpecializationMap> FuncCallOp::buildParameterSpecialization(
   auto maybeFormal = getCalleeFunctionType(err);
   if (failed(maybeFormal)) return failure();
 
-  // The callee's declaration binds the parameters its signature spells, and
-  // this call supplies an argument for each of them.
-  auto arguments = readDeclaredTypeArguments(
-      getTypeParamsAttr(), getTypeArgsAttr(), getCalleeTypeParams(),
-      getCalleeName(), err);
-  if (failed(arguments)) return failure();
-
   // The evidence this call holds: the claims its operands carry, read by index
   // through their proof trees. At pass time the record of what impl selection
   // has settled is read on top of that; a verifier has none.
@@ -3664,9 +3686,30 @@ FailureOr<SpecializationMap> FuncCallOp::buildParameterSpecialization(
     return normalization.normalize(ty, err);
   };
 
+  // As at a method call: the reading's own context reduces a projection whose
+  // own spelling determines the impl serving it even where its associated-type
+  // arguments still hold a variable.
+  NormalizationContext readingContext = normalization;
+  readingContext.setModuleLookup(*module, LookupScope::Determined);
+  auto normalizeForReading = [&](Type ty) -> FailureOr<Type> {
+    return readingContext.normalize(ty, err);
+  };
+
+  // The callee's declaration binds the parameters its signature spells, and
+  // this call's own types determine each of them.
+  auto reportHere = [&]() -> InFlightDiagnostic { return emitOpError(); };
+  llvm::function_ref<InFlightDiagnostic()> refusal = err;
+  if (!refusal && llvm::all_of(getOperandTypes(), isMonomorphicType))
+    refusal = reportHere;
+
+  FunctionType actual = getActualFunctionType();
+  auto arguments = readTypeArguments(getCalleeTypeParams(), Type(*maybeFormal),
+                                     Type(actual), normalizeForReading,
+                                     getCalleeName(), refusal);
+  if (failed(arguments)) return failure();
+
   // One identity: the callee's declaration instantiated at those arguments is
   // the signature spelled here.
-  FunctionType actual = getActualFunctionType();
   if (failed(verifyEqualAfterInstantiation(Type(*maybeFormal), *arguments,
                                            Type(actual), normalize, err)))
     return failure();

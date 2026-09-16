@@ -20,17 +20,17 @@
 
 func.func private @f(%x: !trait.poly<0>) -> i64 {
   %t = builtin.unrealized_conversion_cast %x : !trait.poly<0> to tuple<!trait.poly<0>>
-  %r = trait.func.call @g(%t) {type_params = [!trait.poly<1>], type_args = [tuple<!trait.poly<0>>]} : (tuple<!trait.poly<0>>) -> i64
+  %r = trait.func.call @g(%t) : (tuple<!trait.poly<0>>) -> i64
   return %r : i64
 }
 
 func.func private @g(%y: !trait.poly<1>) -> i64 {
-  %r = trait.func.call @f(%y) {type_params = [!trait.poly<0>], type_args = [!trait.poly<1>]} : (!trait.poly<1>) -> i64
+  %r = trait.func.call @f(%y) : (!trait.poly<1>) -> i64
   return %r : i64
 }
 
 func.func @main() -> i64 {
   %c = arith.constant 0 : i64
-  %r = trait.func.call @f(%c) {type_params = [!trait.poly<0>], type_args = [i64]} : (i64) -> i64
+  %r = trait.func.call @f(%c) : (i64) -> i64
   return %r : i64
 }

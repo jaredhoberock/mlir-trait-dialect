@@ -48,7 +48,7 @@ func.func @main(%pv: !trait.proj<@Has[tuple<i32>], "Out">) -> i64 {
     : (!trait.claim<@X[i32] by @X_i32>)
     : !trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = i64>
   // LOWER: call @gen{{.*}}(%arg0) : (i64) -> i64
-  %r = trait.func.call @gen(%pv, %eq) {type_params = [!trait.poly<0>, !trait.poly<1>], type_args = [tuple<i32>, i64]}
+  %r = trait.func.call @gen(%pv, %eq)
     : (!trait.proj<@Has[tuple<i32>], "Out">, !trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = i64>) -> i64
   return %r : i64
 }

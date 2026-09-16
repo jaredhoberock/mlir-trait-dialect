@@ -39,16 +39,6 @@ static ArrayAttr typeArrayAttrOrNull(MLIRContext *ctx, MlirType *types,
                    : ArrayAttr();
 }
 
-/// Attach both halves of an explicit generic call's parallel type arrays.
-template <typename CallOp>
-static void setCallTypeArguments(CallOp op, MlirType *params, MlirType *args,
-                                 intptr_t count) {
-  if (auto attr = typeArrayAttrOrNull(op.getContext(), params, count)) {
-    op.setTypeParamsAttr(attr);
-    op.setTypeArgsAttr(typeArrayAttrOrNull(op.getContext(), args, count));
-  }
-}
-
 /// Build an allegation only when its attribute names a trait application.
 static MlirOperation createAllegation(MlirLocation loc, MlirAttribute app,
                                       bool isUnsafe) {
@@ -176,9 +166,7 @@ MlirOperation traitMethodCallOpCreate(MlirLocation loc,
                                       MlirStringRef methodName,
                                       MlirValue claim,
                                       MlirValue* arguments, intptr_t numArguments,
-                                      MlirType* resultTypes, intptr_t numResults,
-                                      MlirType* typeParams, MlirType* typeArgs,
-                                      intptr_t numTypeArgs) {
+                                      MlirType* resultTypes, intptr_t numResults) {
   MLIRContext* ctx = unwrap(loc)->getContext();
   OpBuilder builder(ctx);
 
@@ -195,17 +183,13 @@ MlirOperation traitMethodCallOpCreate(MlirLocation loc,
     args
   );
 
-  setCallTypeArguments(op, typeParams, typeArgs, numTypeArgs);
-
   return wrap(op.getOperation());
 }
 
 MlirOperation traitFuncCallOpCreate(MlirLocation loc,
                                     MlirStringRef callee,
                                     MlirValue* arguments, intptr_t numArguments,
-                                    MlirType* resultTypes, intptr_t numResults,
-                                    MlirType* typeParams, MlirType* typeArgs,
-                                    intptr_t numTypeArgs) {
+                                    MlirType* resultTypes, intptr_t numResults) {
   MLIRContext* ctx = unwrap(loc)->getContext();
   OpBuilder builder(ctx);
 
@@ -219,8 +203,6 @@ MlirOperation traitFuncCallOpCreate(MlirLocation loc,
     FlatSymbolRefAttr::get(ctx, StringRef(callee.data, callee.length)),
     args
   );
-
-  setCallTypeArguments(op, typeParams, typeArgs, numTypeArgs);
 
   return wrap(op.getOperation());
 }

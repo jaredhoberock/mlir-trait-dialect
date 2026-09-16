@@ -9,23 +9,6 @@
 
 namespace mlir::trait {
 
-/// Whether `attr` is a generic call's type_params array: the callee's own type
-/// variables, named by identity. A substitution over the enclosing template binds
-/// the template's variables, and the callee's variables are the same variables
-/// only when the callee is a template the clone is cut from -- the enclosing
-/// function calling itself, or an impl's method forwarding the same trait method
-/// to another impl, whose call names the trait method's variables the outer
-/// call's bindings are keyed by. Either way the array must name the callee's
-/// variables after the clone as before it; the parallel type_args array is what
-/// takes the substitution.
-static bool namesCalleeTypeVariables(Operation &op, NamedAttribute attr) {
-  if (auto call = dyn_cast<FuncCallOp>(&op))
-    return attr.getName() == call.getTypeParamsAttrName();
-  if (auto call = dyn_cast<MethodCallOp>(&op))
-    return attr.getName() == call.getTypeParamsAttrName();
-  return false;
-}
-
 /// Clone block and successor mappings, then substitute in region order.
 /// Builder notifications admit the copied operations to rewrite listeners;
 /// visiting block arguments first preserves transient projection demand order.
@@ -47,8 +30,7 @@ static void cloneRegionWithTypeReplacement(
         for (Value result : op.getResults())
           result.setType(typeReplacer.replace(result.getType()));
         for (NamedAttribute attr : op.getAttrs())
-          if (!namesCalleeTypeVariables(op, attr))
-            op.setAttr(attr.getName(), typeReplacer.replace(attr.getValue()));
+          op.setAttr(attr.getName(), typeReplacer.replace(attr.getValue()));
         for (Region &nested : op.getRegions())
           recurse(nested, recurse);
       }

@@ -41,7 +41,7 @@ func.func private @f(%u: !trait.claim<@U[!trait.poly<0>]>, %v: !trait.claim<@V[!
 func.func @main() -> i64 {
   %wu = trait.witness @pu for @U[i8]
   %wv = trait.witness @pv for @V[i8]
-  %r = trait.func.call @f(%wu, %wv) {type_params = [!trait.poly<0>], type_args = [i8]} : (!trait.claim<@U[i8] by @pu>, !trait.claim<@V[i8] by @pv>) -> i64
+  %r = trait.func.call @f(%wu, %wv) : (!trait.claim<@U[i8] by @pu>, !trait.claim<@V[i8] by @pv>) -> i64
   return %r : i64
 }
 
@@ -78,6 +78,6 @@ func.func private @f(%v: !trait.claim<@V[!trait.poly<0>]>, %u: !trait.claim<@U[!
 func.func @main() -> i64 {
   %wu = trait.witness @pu for @U[i8]
   %wv = trait.witness @pv for @V[i8]
-  %r = trait.func.call @f(%wv, %wu) {type_params = [!trait.poly<0>], type_args = [i8]} : (!trait.claim<@V[i8] by @pv>, !trait.claim<@U[i8] by @pu>) -> i64
+  %r = trait.func.call @f(%wv, %wu) : (!trait.claim<@V[i8] by @pv>, !trait.claim<@U[i8] by @pu>) -> i64
   return %r : i64
 }

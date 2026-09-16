@@ -26,20 +26,20 @@ func.func private @g2(%q: !trait.claim<@Q[!U]>, %c: !trait.claim<@P[!U]>, %x: !U
 !V = !trait.poly<6>
 func.func private @h(%c: !trait.claim<@P[!V]>, %x: !V) -> !V {
   %q = trait.derive @Q[!V] from @Q_impl given()
-  %r = trait.func.call @g2(%q, %c, %x) {type_params = [!trait.poly<5>], type_args = [!trait.poly<6>]}
+  %r = trait.func.call @g2(%q, %c, %x)
     : (!trait.claim<@Q[!V]>, !trait.claim<@P[!V]>, !V) -> !V
   return %r : !V
 }
 
 func.func @user1(%x: i32) -> i32 {
   %p = trait.allege @P[i32]
-  %r = trait.func.call @g(%p, %x) {type_params = [!trait.poly<4>], type_args = [i32]} : (!trait.claim<@P[i32]>, i32) -> i32
+  %r = trait.func.call @g(%p, %x) : (!trait.claim<@P[i32]>, i32) -> i32
   return %r : i32
 }
 
 func.func @user2(%x: i32) -> i32 {
   %p = trait.allege @P[i32]
-  %r = trait.func.call @h(%p, %x) {type_params = [!trait.poly<6>], type_args = [i32]} : (!trait.claim<@P[i32]>, i32) -> i32
+  %r = trait.func.call @h(%p, %x) : (!trait.claim<@P[i32]>, i32) -> i32
   return %r : i32
 }
 

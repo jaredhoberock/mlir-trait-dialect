@@ -50,7 +50,7 @@ func.func @main() -> i32 {
     : !trait.claim<@T1[i64] by @T1_i64_b>
     to !trait.claim<@T1[!trait.proj<@T0[i64], "A">] by @T1_i64_b>
     via (%eq) : (!trait.claim<!trait.proj<@T0[i64], "A"> = i64>)
-  %r = trait.func.call @f(%x, %t2, %t1_projected) {type_params = [!trait.poly<3>], type_args = [i64]}
+  %r = trait.func.call @f(%x, %t2, %t1_projected)
     : (i64,
        !trait.claim<@T2[i64] by @T2_i64_p>,
        !trait.claim<@T1[!trait.proj<@T0[i64], "A">] by @T1_i64_b>)

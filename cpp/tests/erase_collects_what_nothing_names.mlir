@@ -117,6 +117,6 @@ trait.proof private @Ping_i64_p proves @Ping_i64 for @Ping[i64] given [@Ping_i32
 func.func @main() -> i32 {
   %x = arith.constant 7 : i32
   %e = trait.allege @Show[i32]
-  %r = trait.func.call @live_template(%e, %x) {type_params = [!trait.poly<0>], type_args = [i32]} : (!trait.claim<@Show[i32]>, i32) -> i32
+  %r = trait.func.call @live_template(%e, %x) : (!trait.claim<@Show[i32]>, i32) -> i32
   return %r : i32
 }

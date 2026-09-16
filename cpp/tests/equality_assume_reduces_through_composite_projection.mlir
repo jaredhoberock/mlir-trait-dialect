@@ -61,7 +61,7 @@ trait.impl private @Run_gen for @Run[!S] where [@Inner[!S], tuple<!trait.proj<@I
   func.func @go(%x: !S) -> i64 {
     %e = trait.assume tuple<!trait.proj<@Inner[!S], "Item">> = tuple<i64>
     %v = arith.constant 7 : i64
-    %r = trait.func.call @need(%v, %e) {type_params = [!S], type_args = [!S]}
+    %r = trait.func.call @need(%v, %e)
       : (i64, !trait.claim<tuple<!trait.proj<@Inner[!S], "Item">> = tuple<i64>>) -> i64
     return %r : i64
   }

@@ -24,7 +24,7 @@ func.func private @callee(%c: !trait.claim<@B[!trait.poly<0>]>) -> !trait.claim<
 // CHECK: call @[[OUTER]]
 func.func @main() -> !trait.claim<@A[i32] by @A_top> {
   %w = trait.witness @p for @B[i32]
-  %r = trait.func.call @callee(%w) {type_params = [!trait.poly<0>], type_args = [i32]} : (!trait.claim<@B[i32] by @p>) -> !trait.claim<@A[i32] by @A_top>
+  %r = trait.func.call @callee(%w) : (!trait.claim<@B[i32] by @p>) -> !trait.claim<@A[i32] by @A_top>
   return %r : !trait.claim<@A[i32] by @A_top>
 }
 
@@ -46,7 +46,7 @@ module @inner {
   // CHECK: call @[[INNER]]
   func.func @main() -> !trait.claim<@A[i32] by @A_inner> {
     %w = trait.witness @p for @B[i32]
-    %r = trait.func.call @callee(%w) {type_params = [!trait.poly<0>], type_args = [i32]} : (!trait.claim<@B[i32] by @p>) -> !trait.claim<@A[i32] by @A_inner>
+    %r = trait.func.call @callee(%w) : (!trait.claim<@B[i32] by @p>) -> !trait.claim<@A[i32] by @A_inner>
     return %r : !trait.claim<@A[i32] by @A_inner>
   }
 }

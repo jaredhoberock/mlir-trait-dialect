@@ -45,13 +45,13 @@ func.func private @inner(%x: !F, %c: !trait.claim<@Tr[!F]>) -> i32 {
 !G = !trait.poly<3>
 func.func private @outer(%x: !G) -> i32 {
   %c = trait.derive @Tr[!G] from @Tr_any given()
-  %r = trait.func.call @inner(%x, %c) {type_params = [!trait.poly<2>], type_args = [!G]}
+  %r = trait.func.call @inner(%x, %c)
     : (!G, !trait.claim<@Tr[!G]>) -> i32
   return %r : i32
 }
 
 // CHECK-LABEL: func.func @test
 func.func @test(%x: i32) -> i32 {
-  %r = trait.func.call @outer(%x) {type_params = [!trait.poly<3>], type_args = [i32]} : (i32) -> i32
+  %r = trait.func.call @outer(%x) : (i32) -> i32
   return %r : i32
 }

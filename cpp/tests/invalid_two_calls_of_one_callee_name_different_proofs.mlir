@@ -30,9 +30,9 @@ func.func private @g(%c: !trait.claim<@T[!trait.poly<3>]>) -> i64 {
 func.func @main() -> i64 {
   %w1 = trait.witness @pv1 for @T[i64]
   %w2 = trait.witness @pv2 for @T[i64]
-  %a = trait.func.call @g(%w1) {type_params = [!trait.poly<3>], type_args = [i64]}
+  %a = trait.func.call @g(%w1)
     : (!trait.claim<@T[i64] by @pv1>) -> i64
-  %b = trait.func.call @g(%w2) {type_params = [!trait.poly<3>], type_args = [i64]}
+  %b = trait.func.call @g(%w2)
     : (!trait.claim<@T[i64] by @pv2>) -> i64
   %s = arith.addi %a, %b : i64
   return %s : i64

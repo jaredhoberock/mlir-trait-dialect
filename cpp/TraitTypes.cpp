@@ -228,6 +228,13 @@ static Type resolveProjectionsByLookupCore(Type ty, ModuleOp module,
     LookupProbeScope probe;
 
     const bool polymorphic = isPolymorphicType(proj);
+    // Which impl serves a projection is decided by its head application alone:
+    // the associated-type binding the impl states is a function of the
+    // projection's own associated-type arguments, so a head naming one impl
+    // answers whatever those arguments still spell. A head still carrying a
+    // variable stands for as many impls as that variable has instances, and no
+    // one impl answers for it.
+    const bool polymorphicHead = isPolymorphicType(Type(proj.asClaim()));
 
     auto declineWith = [&](LookupMissReason reason) {
       // A demand is a question put to the impl engine about one type, and only a
@@ -241,10 +248,10 @@ static Type resolveProjectionsByLookupCore(Type ty, ModuleOp module,
       return std::optional<Type>(std::nullopt);
     };
 
-    // A projection whose arguments still carry variables resolves only under the
+    // A projection whose head still carries variables resolves only under the
     // determined scope, and then only if its own spelling picks the impl (the
     // one-way match below).
-    if (polymorphic && scope == LookupScope::Ground)
+    if (polymorphicHead && scope == LookupScope::Ground)
       return std::nullopt;
 
     ClaimType claim = proj.asClaim();
@@ -272,14 +279,14 @@ static Type resolveProjectionsByLookupCore(Type ty, ModuleOp module,
                              : LookupMissReason::MultipleCandidateImpls);
     ImplOp impl = candidates.front();
 
-    // A projection over a type variable denotes one type at every instance of
-    // that variable, so the impl serving it must serve every instance: it may
-    // carry no premise. An impl with a where clause serves the instances its
-    // premises admit and no others, and which those are is settled per
-    // instance, so it answers for none of them here. The head claim that
-    // licenses reading such an impl for a ground projection is discharged at an
+    // A projection over a type variable in its head denotes one type at every
+    // instance of that variable, so the impl serving it must serve every
+    // instance: it may carry no premise. An impl with a where clause serves the
+    // instances its premises admit and no others, and which those are is settled
+    // per instance, so it answers for none of them here. The head claim that
+    // licenses reading such an impl for a ground head is discharged at an
     // instance, not at this spelling.
-    if (polymorphic && !impl.getAssumptions().empty())
+    if (polymorphicHead && !impl.getAssumptions().empty())
       return std::nullopt;
 
     SmallVector<Type> assocTypeArgs(proj.getAssocTypeArgs());

@@ -27,6 +27,6 @@ func.func private @f(%t: !trait.claim<@Tensor[!trait.poly<0>]>) -> i64 {
 }
 func.func @main() -> i64 {
   %t = trait.allege @Tensor[i8]
-  %r = trait.func.call @f(%t) {type_params = [!trait.poly<0>], type_args = [i8]} : (!trait.claim<@Tensor[i8]>) -> i64
+  %r = trait.func.call @f(%t) : (!trait.claim<@Tensor[i8]>) -> i64
   return %r : i64
 }

@@ -1312,6 +1312,13 @@ def MethodCallOp : TraitDialectOp<"method.call", [
     Calls a method from a trait. This can appear in either polymorphic or monomorphic code.
     Resolution to an implementation is performed during monomorphization.
 
+    The call spells its method, its receiver claim, its arguments and its
+    results, and says nothing about the method's type variables: the instance it
+    wants is read off those types against the method's declaration. The trait's
+    arguments ride in the receiver claim's application, the method's own
+    variables stand in the argument and result positions, and a variable no
+    position determines is refused.
+
     Example:
       %x = ... : i32
       %y = ... : i32
@@ -1338,15 +1345,7 @@ def MethodCallOp : TraitDialectOp<"method.call", [
     // through it -- and the verifier checks the arm so an equality receiver is
     // diagnosed at its operand.
     Claim:$claim,
-    Variadic<AnyType>:$arguments,
-    // The method's own type variables and the arguments they take at this call
-    // (the trait's arguments already ride in the receiver claim's application),
-    // spelled explicitly so a sweep that normalizes the argument and result
-    // types cannot erase them. Absent only where the method has no type
-    // variables of its own: a call supplying fewer arguments than its callee
-    // binds is refused.
-    OptionalAttr<TypeArrayAttr>:$type_params,
-    OptionalAttr<TypeArrayAttr>:$type_args
+    Variadic<AnyType>:$arguments
   );
 
   // custom builders
@@ -1367,12 +1366,8 @@ def MethodCallOp : TraitDialectOp<"method.call", [
           methodRef
         );
 
-        // build the operation with the created nested reference. A call built
-        // this way infers its bindings from its signature, so the sweep-proof
-        // type_params/type_args arrays stay absent.
-        return build($_builder, $_state, results, qualifiedRef, claim, arguments,
-                     /*type_params=*/::mlir::ArrayAttr(),
-                     /*type_args=*/::mlir::ArrayAttr());
+        // build the operation with the created nested reference
+        return build($_builder, $_state, results, qualifiedRef, claim, arguments);
     }]>,
 
     // builder that takes trait and method names separately
@@ -1476,6 +1471,11 @@ def FuncCallOp : TraitDialectOp<"func.call", [
     These functions are typically declared using `func.func` and their signatures may involve
     polymorphic type variables.
 
+    The call spells its callee, its operands and its results, and says nothing
+    about the callee's type variables: the instance it wants is read off those
+    types against the callee's declaration, and a variable no position
+    determines is refused.
+
     Example:
       // a polymorphic function @foo
       !T = !trait.poly<2>
@@ -1498,37 +1498,11 @@ def FuncCallOp : TraitDialectOp<"func.call", [
 
   let arguments = (ins
       FlatSymbolRefAttr:$callee_name,
-      Variadic<AnyType>:$operands,
-      // The callee's own type variables and the arguments they take at this
-      // call, spelled explicitly so a sweep that normalizes the operand and
-      // result types cannot erase them: the two parallel arrays record the
-      // substitution a generic call names, which its spelled types once only
-      // implied. Absent only where the callee has no type variables: a call
-      // supplying fewer arguments than its callee binds is refused.
-      OptionalAttr<TypeArrayAttr>:$type_params,
-      OptionalAttr<TypeArrayAttr>:$type_args
+      Variadic<AnyType>:$operands
   );
 
   let results = (outs Variadic<AnyType>);
 
-  // Construct a call to a callee that binds no type variables; the
-  // type_params/type_args arrays stay absent.
-  let builders = [
-    OpBuilder<(ins "::mlir::TypeRange":$resultTypes,
-                   "::mlir::FlatSymbolRefAttr":$calleeName,
-                   "::mlir::ValueRange":$operands), [{
-      build($_builder, $_state, resultTypes, calleeName, operands,
-            /*type_params=*/::mlir::ArrayAttr(), /*type_args=*/::mlir::ArrayAttr());
-    }]>,
-    OpBuilder<(ins "::mlir::TypeRange":$resultTypes,
-                   "::llvm::StringRef":$calleeName,
-                   "::mlir::ValueRange":$operands), [{
-      build($_builder, $_state, resultTypes,
-            ::mlir::FlatSymbolRefAttr::get($_builder.getContext(), calleeName),
-            operands, /*type_params=*/::mlir::ArrayAttr(),
-            /*type_args=*/::mlir::ArrayAttr());
-    }]>,
-  ];
 
   let extraClassDeclaration = [{
     FailureOr<func::FuncOp> getCallee(llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
@@ -1573,7 +1547,7 @@ def FuncCallOp : TraitDialectOp<"func.call", [
     FailureOr<SpecializationMap> buildParameterSpecialization(const ReadOnlyImplResolver *reading, llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     // The type parameters the callee's signature binds, in first-occurrence
-    // order, which is the order this call's type_args are read in.
+    // order.
     SmallVector<GenericTypeInterface, 4> getCalleeTypeParams() {
       return getTypeParametersIn(*getCalleeFunctionType());
     }

@@ -37,7 +37,6 @@ func.func @outer(%x: !B, %t: !trait.claim<@Trait[!B]>, %o: !trait.claim<@Other[!
     : (!trait.claim<!trait.proj<@Trait[!B], "Item"> = !trait.proj<@Other[!B], "Item">>)
     : !trait.claim<!trait.proj<@Other[!B], "Item"> = !trait.proj<@Trait[!B], "Item">>
   %r = trait.func.call @inner(%x, %t, %o, %rev)
-      {type_params = [!trait.poly<2>], type_args = [!trait.poly<3>]}
     : (!B, !trait.claim<@Trait[!B]>, !trait.claim<@Other[!B]>,
        !trait.claim<!trait.proj<@Other[!B], "Item"> = !trait.proj<@Trait[!B], "Item">>)
     -> !trait.proj<@Other[!B], "Item">

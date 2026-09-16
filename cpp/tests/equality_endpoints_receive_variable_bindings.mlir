@@ -27,6 +27,6 @@ func.func private @tpl(%c: !trait.claim<!trait.proj<@Assoc[!S], "Out"> = i32>, %
 // CHECK-LABEL: func.func @main
 // CHECK: call @tpl_
 func.func @main(%x: i64, %e: !trait.claim<!trait.proj<@Assoc[i64], "Out"> = i32>) -> i64 {
-  %r = trait.func.call @tpl(%e, %x) {type_params = [!trait.poly<1>], type_args = [i64]} : (!trait.claim<!trait.proj<@Assoc[i64], "Out"> = i32>, i64) -> i64
+  %r = trait.func.call @tpl(%e, %x) : (!trait.claim<!trait.proj<@Assoc[i64], "Out"> = i32>, i64) -> i64
   return %r : i64
 }

@@ -38,7 +38,6 @@ func.func @caller(%eq: !trait.claim<!trait.proj<@Grow[!Y], "Out"> = !trait.proj<
   %l = trait.derive @Loop[!Y] from @Loop_any given()
   // expected-error @below {{projection normalization did not converge; check for cyclic associated type bindings}}
   %r = trait.func.call @callee(%g, %l)
-      {type_params = [!trait.poly<2>], type_args = [!trait.poly<3>]}
     : (!trait.claim<@Grow[!Y]>, !trait.claim<@Loop[!Y]>) -> !trait.proj<@Loop[!Y], "Out">
   return %r : !trait.proj<@Loop[!Y], "Out">
 }

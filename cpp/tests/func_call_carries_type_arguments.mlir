@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 //
-// A trait.func.call carries its callee's type arguments explicitly, so
-// instantiation reads the binding V := i1 -- which only the projection's GAT
-// argument records -- from the call rather than re-inferring it from spellings
-// the commit sweep may have normalized. The call lowers to a func.call to a
-// fully monomorphic clone.
+// A callee variable stands in no position of the call but the associated-type
+// argument of a projection, so the reading that pairs the declaration against
+// the call's types fills it only after rebuilding the declaration at what it has
+// read and reducing that projection: V := i1. The call lowers to a func.call to
+// a fully monomorphic clone.
 //
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(instantiate-monomorphs-trait)' | FileCheck %s
 
@@ -29,7 +29,7 @@ func.func @main() -> i1 {
   %5 = trait.witness proj_resolve !trait.proj<@Trait[i64], "Assoc", [i1]> resolves i1 by @Trait_impl : !trait.claim<!trait.proj<@Trait[i64], "Assoc", [i1]> = i1>
   %6 = trait.coerce %true : i1 to !trait.proj<@Trait[i64], "Assoc", [i1]> via (%5) : (!trait.claim<!trait.proj<@Trait[i64], "Assoc", [i1]> = i1>)
   %7 = trait.witness @Trait_impl for @Trait[i64]
-  %8 = trait.func.call @foo(%c0_i64, %6, %7) {type_params = [!trait.poly<182>, !trait.poly<183>], type_args = [i64, i1]} : (i64, !trait.proj<@Trait[i64], "Assoc", [i1]>, !trait.claim<@Trait[i64] by @Trait_impl>) -> !trait.proj<@Trait[i64], "Assoc", [i1]>
+  %8 = trait.func.call @foo(%c0_i64, %6, %7) : (i64, !trait.proj<@Trait[i64], "Assoc", [i1]>, !trait.claim<@Trait[i64] by @Trait_impl>) -> !trait.proj<@Trait[i64], "Assoc", [i1]>
   %9 = trait.witness proj_resolve !trait.proj<@Trait[i64], "Assoc", [i1]> resolves i1 by @Trait_impl : !trait.claim<!trait.proj<@Trait[i64], "Assoc", [i1]> = i1>
   %10 = trait.coerce %8 : !trait.proj<@Trait[i64], "Assoc", [i1]> to i1 via (%9) : (!trait.claim<!trait.proj<@Trait[i64], "Assoc", [i1]> = i1>)
   return %10 : i1

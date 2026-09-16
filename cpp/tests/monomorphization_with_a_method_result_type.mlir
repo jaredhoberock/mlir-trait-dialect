@@ -29,7 +29,7 @@ func.func private @return_method_result(%claim: !trait.claim<@Get[!A]>) -> !A {
 
 func.func @bar() -> i32 {
   %a = trait.allege @Get[i32]
-  %res = trait.func.call @return_method_result(%a) {type_params = [!trait.poly<1>], type_args = [i32]}
+  %res = trait.func.call @return_method_result(%a)
     : (!trait.claim<@Get[i32]>) -> i32
   return %res : i32
 }

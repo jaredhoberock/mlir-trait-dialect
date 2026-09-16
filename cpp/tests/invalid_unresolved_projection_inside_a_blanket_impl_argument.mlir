@@ -26,7 +26,7 @@ func.func @main() -> i64 {
   // expected-error @below {{unresolved projection '!trait.proj<@T[i64], "A">' after instantiate-monomorphs}}
   %c = trait.allege @Box[!trait.proj<@T[i64], "A">]
   %x = arith.constant 0 : i64
-  %r = trait.func.call @callee(%c, %x) {type_params = [!trait.poly<0>], type_args = [i64]}
+  %r = trait.func.call @callee(%c, %x)
     : (!trait.claim<@Box[!trait.proj<@T[i64], "A">]>, i64) -> i64
   return %r : i64
 }

@@ -23,6 +23,5 @@ trait.impl private @I for @T[i32] {
 func.func @main(%x: i32, %m: i64, %n: i8) -> i64 {
   %c = trait.allege @T[i32]
   %r = trait.method.call %c @T[i32]::@f(%x, %m, %n) : (i32, i64, i8) -> i64
-    attributes {type_params = [!trait.poly<1>, !trait.poly<2>], type_args = [i64, i8]}
   return %r : i64
 }
