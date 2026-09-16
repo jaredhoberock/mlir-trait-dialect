@@ -616,11 +616,11 @@ def ImplOp : TraitDialectOp<"impl", [
     /// binding's own parameters. For a binding with no parameters of its own
     /// `assocTypeArgs` is empty.
     ///
-    /// The header's parameters take their arguments first and the projection's
-    /// arguments are stamped into that result, because an argument is a term of
-    /// whoever spelled the projection: a label it shares with one of this impl's
-    /// header parameters names that caller's variable, and a stamped term is
-    /// never revisited.
+    /// Both lists stand in one substitution, applied in a single pass. An
+    /// argument is a term of whoever spelled the use, so a label it shares with
+    /// a parameter of either list names that caller's variable and not this
+    /// declaration's: one pass never revisits a term it stamped, so no argument
+    /// is read as a parameter the other list answers for.
     ///
     /// Returns failure if:
     ///   - No associated type named `name` exists in this impl

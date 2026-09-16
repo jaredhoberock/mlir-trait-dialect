@@ -4,10 +4,10 @@
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' | FileCheck %s
 
 // The callee's V and the impl's header parameter U carry the same label. An
-// associated-type argument is a term of whoever spelled the projection, so
-// reading the impl's binding takes the header's arguments first and stamps the
-// projection's in afterwards: V stays the caller's variable and the reading
-// fills it from the operand the call spells.
+// associated-type argument is a term of whoever spelled the projection, and the
+// header's parameters and the binding's own take their arguments in one
+// substitution, so V stays the caller's variable and the reading fills it from
+// the operand the call spells.
 
 !T = !trait.poly<10>
 !V = !trait.poly<2>

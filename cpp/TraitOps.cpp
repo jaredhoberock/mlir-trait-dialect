@@ -1228,9 +1228,12 @@ FailureOr<Type> ImplOp::specializeAssociatedTypeBinding(
   auto binding = getAssociatedTypeBinding(name, err);
   if (failed(binding)) return failure();
 
-  // The header's parameters take their arguments before the projection's are
-  // stamped in, so nothing the projection spells is read as this declaration's.
-  Type bound = instantiate(*binding, headerArguments);
+  // The header's parameters and the binding's own take their arguments in one
+  // substitution: `verifyAssociatedTypeBindingScopes` refuses a binding whose
+  // own parameter repeats a header parameter, so the union of the two lists is
+  // a function, and one pass never revisits a term it stamped -- neither
+  // argument list can be read as the parameters the other list answers for.
+  SpecializationMap arguments = headerArguments;
 
   auto assoc = getAssociatedType(name);
   if (succeeded(assoc) && assoc->getTypeParams()) {
@@ -1241,10 +1244,12 @@ FailureOr<Type> ImplOp::specializeAssociatedTypeBinding(
                      << " type args but got " << assocTypeArgs.size();
       return failure();
     }
-    bound = applyGATSubstitution(typeParams, assocTypeArgs, bound);
+    for (auto [param, arg] : llvm::zip(typeParams, assocTypeArgs))
+      arguments.bind(
+          cast<GenericTypeInterface>(cast<TypeAttr>(param).getValue()), arg);
   }
 
-  return bound;
+  return instantiate(*binding, arguments);
 }
 
 FailureOr<ImplSpecialization> ImplOp::buildImplSpecialization(

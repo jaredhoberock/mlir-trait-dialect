@@ -1032,26 +1032,6 @@ private:
   SmallVector<std::optional<OrderKey>> orderKeys;
 };
 
-/// Applies a GAT substitution: maps each type in `typeParams` to the
-/// corresponding type in `assocTypeArgs`, then substitutes into `boundType`.
-/// Returns the original `boundType` unchanged if `typeParams` is empty.
-///
-/// The associated type's parameters are stamped once. An argument is a term of
-/// whoever spelled the projection, so a label it shares with one of these
-/// parameters names that caller's variable and not this declaration's.
-inline Type applyGATSubstitution(ArrayAttr typeParams,
-                                 ArrayRef<Type> assocTypeArgs,
-                                 Type boundType) {
-  if (!typeParams || typeParams.empty())
-    return boundType;
-  assert(typeParams.size() == assocTypeArgs.size() &&
-         "GAT arity mismatch: typeParams and assocTypeArgs must have the same size");
-  DenseMap<Type,Type> gatSubst;
-  for (auto [param, arg] : llvm::zip(typeParams, assocTypeArgs))
-    gatSubst[cast<TypeAttr>(param).getValue()] = arg;
-  return applySubstitutionOnce(gatSubst, boundType);
-}
-
 // this walks an Attribute and looks for any occurrence of the given NeedleType
 template<class NeedleType> bool containsType(Attribute attr) {
   bool found = false;
