@@ -181,6 +181,16 @@ struct ResolutionMemo {
   // We only memoize satisfiable results because new proofs appear in the IR
   // as resolution unfolds
   DenseSet<std::pair<ImplOp,TraitApplicationAttr>> assumptionsKnownSatisfiable;
+
+  // The applications a generator has already supplied an impl for, in the
+  // module it was supplied into. Generation supplies an impl the module lacks,
+  // and a generated impl is a function of the application it was asked for, so
+  // asking twice would publish a second op under the name the first already
+  // holds. The impl supplied stands in the module, where the candidate scan
+  // reads it, so a later round judges it against the facts as they then stand
+  // without generation running again. Unlike a retriable refusal, this outlives
+  // the flush: what the module holds is not a question anything reopens.
+  DenseSet<ScopedApplication> generatedFor;
 };
 
 /// The impl selected for a claim, paired with the normalized claim used for

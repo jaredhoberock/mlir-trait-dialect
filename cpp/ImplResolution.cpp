@@ -259,8 +259,11 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
     }
   }
 
-  // if there aren't any good candidates, try to generate one
-  if (good.empty()) {
+  // if there aren't any good candidates, try to generate one. An application a
+  // generator has already supplied an impl for is not asked again: that impl
+  // stands in the module and the scan above has just judged it, so asking
+  // would only publish a second op under the name the first holds.
+  if (good.empty() && !memo.generatedFor.contains({scope, app})) {
     // Whoever hears about an inserted op is what decides whether anything
     // revisits it, and a generated impl that nothing revisits is IR the caller
     // never sees. What the listener has to do with the news is the caller's --
@@ -273,6 +276,7 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
     builder.setInsertionPointToEnd(scope.getBody());
     if (auto impl = getImplGenerators().generateImpl(trait, selected, builder);
         succeeded(impl)) {
+      memo.generatedFor.insert({scope, app});
       noteFactWritten();
       SpeculationScope speculation;
       if (succeeded(assumptionsSatisfiableFor(*impl, selected, scope, builder)))
