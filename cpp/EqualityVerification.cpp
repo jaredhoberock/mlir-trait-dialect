@@ -377,6 +377,16 @@ TermShape mlir::trait::decomposeTerm(Type t) {
     return s;
   }
 
+  // A parameter occurrence is a variable, a leaf for shape purposes, keyed by
+  // its own spelling. A kind-constraining wrapper (such as
+  // `!coord.poly<!trait.poly<0>>`) carries its label as an immediate
+  // sub-element whose reconstruction declines a position placeholder, so it
+  // must be keyed here rather than decomposed structurally below.
+  if (getParameterOccurrence(t)) {
+    s.key = TypeAttr::get(t);
+    return s;
+  }
+
   SmallVector<Attribute> subAttrs;
   SmallVector<Type> subTypes;
   t.walkImmediateSubElements([&](Attribute a) { subAttrs.push_back(a); },
