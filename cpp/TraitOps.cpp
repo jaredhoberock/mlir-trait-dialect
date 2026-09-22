@@ -590,16 +590,22 @@ struct ImplWitnessRule {
 };
 
 /// Verifies an impl's equality-armed witnesses and returns each as a local
-/// resolution rule. Such a witness certifies that a sibling impl binds a
-/// ground projection to a resolved type; a witness citing a conditional impl
-/// is legal exactly when the impl's own where clause covers the cited impl's
-/// assumptions or an application-armed witness supplies them. Each entry
-/// verifies with an EMPTY equality modulus: sibling witnesses never serve as
-/// each other's modulus, because an attribute array has no dominance and
-/// mutual justification could ground a false equality on nothing. A witness
-/// must name a GROUND projection -- reading a poly-carrying projection's
-/// variable off one cited impl's concrete head would accept a generic impl on
-/// the strength of one instance.
+/// resolution rule. Such a witness certifies that a sibling impl binds the
+/// witnessed projection to a resolved type; a witness citing a conditional
+/// impl is legal exactly when the impl's own where clause covers the cited
+/// impl's assumptions or an application-armed witness supplies them. Each
+/// entry verifies with an EMPTY equality modulus: sibling witnesses never
+/// serve as each other's modulus, because an attribute array has no dominance
+/// and mutual justification could ground a false equality on nothing.
+///
+/// A witness projection carrying the impl's own parameters is verified like
+/// any other: the head match is rigid, so a variable in the projection matches
+/// only a variable in the cited impl's head. A witness citing a
+/// single-instance impl for a projection quantified over the host impl's
+/// parameters fails that match -- it would accept a generic impl on the
+/// strength of one instance -- while one citing a blanket sibling whose head
+/// the projection rigidly matches is the evidence a generic impl's own header
+/// equalities need.
 static FailureOr<SmallVector<ImplWitnessRule>> collectImplWitnessRules(
     ImplOp impl, ModuleOp module,
     llvm::function_ref<InFlightDiagnostic()> errFn) {
@@ -628,11 +634,6 @@ static FailureOr<SmallVector<ImplWitnessRule>> collectImplWitnessRules(
       return impl.emitOpError()
              << "a witness must name a projection, found "
              << witness.getProjection();
-    if (isPolymorphicType(witness.getProjection()))
-      return impl.emitOpError()
-             << "witness projection " << witness.getProjection()
-             << " is not ground; a witness resolves only a "
-                "ground sibling projection";
     auto subst = verifyProjectionResolutionAtImpl(
         module, witness, /*premises=*/{}, obligationPremises,
         dischargeWitnesses, errFn);
