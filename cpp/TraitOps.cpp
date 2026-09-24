@@ -1179,18 +1179,27 @@ TypeArguments ImplOp::readTypeArgumentsFor(ClaimType actualSelfClaim,
         GenericTypeInterface parameter = getParameterOccurrence(bare);
         if (!parameter || !args.binds(parameter) || args.lookup(parameter))
           return false;
+        // A side still mentioning a parameter this reading has not settled
+        // says nothing yet; the round that settles that one settles this. It
+        // is not normalized either: normalizing a projection over an
+        // unsettled parameter selects among every impl of its trait, this
+        // one included, and reading this impl's equalities again recurses
+        // without end.
         Type value = instantiate(other, known);
+        auto settled = [&](Type type) {
+          for (GenericTypeInterface inside : getTypeParametersIn(type))
+            if (args.binds(inside) && !args.lookup(inside))
+              return false;
+          return true;
+        };
+        if (!settled(value))
+          return false;
         if (normalize) {
           FailureOr<Type> normalized = normalize(value);
           if (failed(normalized))
             return false;
           value = *normalized;
         }
-        // A value still mentioning a parameter this reading has not settled
-        // says nothing yet; the round that settles that one settles this.
-        for (GenericTypeInterface inside : getTypeParametersIn(value))
-          if (args.binds(inside) && !args.lookup(inside))
-            return false;
         if (failed(args.assign(parameter, value, /*err=*/nullptr)))
           return false;
         grew = true;
