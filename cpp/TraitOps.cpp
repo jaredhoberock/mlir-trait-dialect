@@ -3050,6 +3050,23 @@ static FailureOr<SpecializationMap> readTypeArguments(
     return count;
   };
 
+  // An equality claim's endpoints are the one position an instance does not
+  // resolve: stamping the callee rebinds the variables inside them and nothing
+  // else, so its equality parameters take exactly the spelling a parameter is
+  // read as there. Every other position is compared through normalization,
+  // which reduces that spelling wherever the call spells it resolved. So a
+  // parameter an equality operand spells is read there first.
+  auto formalFn = dyn_cast<FunctionType>(formal);
+  auto actualFn = dyn_cast<FunctionType>(actual);
+  if (formalFn && actualFn && formalFn.getNumInputs() == actualFn.getNumInputs())
+    for (auto [formalInput, actualInput] :
+         llvm::zip(formalFn.getInputs(), actualFn.getInputs())) {
+      auto formalClaim = dyn_cast<ClaimType>(formalInput);
+      auto actualClaim = dyn_cast<ClaimType>(actualInput);
+      if (formalClaim && actualClaim && formalClaim.isEquality() &&
+          actualClaim.isEquality())
+        extractTypeArguments(formalInput, actualInput, args);
+    }
   extractTypeArguments(formal, actual, args);
   for (unsigned before = filled(); !args.complete(); ) {
     // A round that will not normalize has learned nothing, so it stops the
