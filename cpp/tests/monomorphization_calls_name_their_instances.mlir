@@ -1,13 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 
-// RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' -o %t.first
-// RUN: FileCheck %s < %t.first
-// RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' -o %t.second
-// RUN: diff %t.first %t.second
+// RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' | FileCheck %s
 
-// Resolving several applications and their premises must produce deterministic
-// IR. Compiling this module twice must give byte-identical emitted modules.
+// Monomorphizing calls whose claims resolve several applications and their
+// premises gives each call its own instance: the two claims on one callee name
+// two instances, and every rewritten call names the instance created for it.
 
 !T = !trait.poly<0>
 

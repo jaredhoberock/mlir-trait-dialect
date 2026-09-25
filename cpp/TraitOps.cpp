@@ -1627,11 +1627,8 @@ FailureOr<func::FuncOp> ImplOp::getOrSpecializeFreeFunctionFromMethod(
 std::string ImplOp::generateSymName(TraitApplicationAttr selfApp,
                                     PredicateArrayAttr assumptions) {
   // Build the full type-argument and where-clause signature for hashing. The
-  // application entries hash exactly as an application-only impl always has, so
-  // generalizing the where clause to carry equalities never perturbs the
-  // synthesized name of an impl that assumes only applications. Equality entries
-  // then contribute their own entropy, so two impls that differ only in an
-  // equality assumption synthesize distinct names.
+  // equality entries follow the application entries, so two impls that differ
+  // only in an equality assumption synthesize distinct names.
   std::string signature;
   llvm::raw_string_ostream os(signature);
   for (auto ty : selfApp.getTypeArgs()) {
@@ -1649,15 +1646,11 @@ std::string ImplOp::generateSymName(TraitApplicationAttr selfApp,
       }
     }
   }
+  os << "_eq";
   if (assumptions) {
-    bool firstEquality = true;
     for (Attribute pred : assumptions) {
       auto eq = dyn_cast<TypeEqualityAttr>(pred);
       if (!eq) continue;
-      if (firstEquality) {
-        os << "_eq";
-        firstEquality = false;
-      }
       os << "_" << eq.getLhs() << "_" << eq.getRhs();
     }
   }
