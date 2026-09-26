@@ -939,6 +939,31 @@ specializeCallTarget(CallOpT op, PatternRewriter &rewriter,
     return failure();
   }
   target.callee = *callee;
+
+  // A template's projection-resolution witness leaves a premise of its cited
+  // impl that still spells a type variable to the instances, and this instance
+  // is one. Its witnesses were rebuilt at the instance with the clone, and a
+  // later rewrite may fold one away before the module is verified again, so a
+  // fresh instance decides each whose cited impl states a where-equality here:
+  // through the evidence the instance holds and what impl selection has
+  // settled, the context the stage owns.
+  if (chain.depthAt(target.callee.getOperation(), templateKey) == 0 &&
+      !isPolymorphicType(Type(target.callee.getFunctionType()))) {
+    WalkResult refused = target.callee.walk([&](WitnessOp witness) {
+      WitnessAttr attr = witness.getWitnessAttr();
+      if (!attr)
+        return WalkResult::advance();
+      auto cited = lookupSymbolFrom<ImplOp>(module, attr.getImplRef());
+      if (!cited || !cited.getAssumptions().hasEqualities())
+        return WalkResult::advance();
+      return failed(witness.verifyResolution(module, &here))
+                 ? WalkResult::interrupt()
+                 : WalkResult::advance();
+    });
+    if (refused.wasInterrupted())
+      return failure();
+  }
+
   chain.note(target.callee.getOperation(), caller, templateKey);
   return target;
 }
@@ -1666,11 +1691,27 @@ mintProjectionResolutionWitness(ProjectionType proj,
               .getResult());
     }
   }
+  // The impl's arguments at the claim selection chose it for, read through the
+  // same record selection read them under; the witness carries them, each
+  // keyed by the impl parameter it binds.
+  RecordedProjectionLookup byRecord(ctx.settle.reading);
+  auto substitution = resolvedImpl->impl.buildSubstitutionForSelfClaim(
+      resolvedImpl->selectedClaim, byRecord, /*errFn=*/nullptr);
+  if (failed(substitution))
+    return failure();
+  SmallVector<TypeBindingAttr> arguments;
+  for (GenericTypeInterface parameter : resolvedImpl->impl.getTypeParams()) {
+    std::optional<Type> argument = substitution->lookup(parameter);
+    if (!argument)
+      return failure();
+    arguments.push_back(TypeBindingAttr::get(mlirCtx, Type(parameter), *argument));
+  }
   TypeEqualityAttr equality =
       TypeEqualityAttr::get(mlirCtx, Type(proj), *binding);
   auto witness_attr = WitnessAttr::get(
       mlirCtx, Attribute(equality),
-      FlatSymbolRefAttr::get(mlirCtx, resolvedImpl->impl.getSymName()));
+      FlatSymbolRefAttr::get(mlirCtx, resolvedImpl->impl.getSymName()),
+      ArrayRef<TypeBindingAttr>(arguments));
   Value witness = WitnessOp::create(ctx.witnessBuilder, ctx.loc, equality, witness_attr,
                                     obligationPremises)
                       .getResult();

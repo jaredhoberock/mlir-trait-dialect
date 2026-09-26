@@ -48,13 +48,31 @@ LogicalResult TypeEqualityAttr::verify(
   return success();
 }
 
+// A binding's parameter is a label a declaration binds: a type parameter that
+// is its own parameter occurrence, not a wrapper constraining one, since a
+// substitution is keyed by the labels themselves.
+LogicalResult TypeBindingAttr::verify(
+    llvm::function_ref<InFlightDiagnostic()> emitError,
+    Type parameter, Type argument) {
+  if (!parameter || !argument)
+    return emitError() << "a type binding pairs a parameter with an argument";
+  if (Type(getParameterOccurrence(parameter)) != parameter)
+    return emitError() << "a type binding's key must be a type parameter, found "
+                       << parameter;
+  return success();
+}
+
 // Structural well-formedness of a witness: the predicate is one of the two arms
 // and an impl is named. An equality predicate's own invariant -- it contains no
-// proven claim -- is enforced when the `TypeEqualityAttr` is constructed, so
-// this checks only the arm and the presence of both fields.
+// proven claim -- is enforced when the `TypeEqualityAttr` is constructed. An
+// application-armed witness carries no arguments: its impl is read at the
+// application it names. Whether an equality-armed witness's keys are exactly
+// the cited impl's parameters needs the impl, so it is checked where the
+// witness is verified.
 LogicalResult WitnessAttr::verify(
     llvm::function_ref<InFlightDiagnostic()> emitError,
-    Attribute predicate, FlatSymbolRefAttr impl) {
+    Attribute predicate, FlatSymbolRefAttr impl,
+    ArrayRef<TypeBindingAttr> arguments) {
   if (!predicate)
     return emitError() << "a witness pairs a predicate with an impl";
   if (!isa<TraitApplicationAttr, TypeEqualityAttr>(predicate))
@@ -62,8 +80,34 @@ LogicalResult WitnessAttr::verify(
                           "a type equality, found " << predicate;
   if (!impl)
     return emitError() << "a witness must name the impl that witnesses it";
-
+  if (isa<TraitApplicationAttr>(predicate) && !arguments.empty())
+    return emitError() << "an application witness names its impl alone; the "
+                          "impl is read at the application it discharges";
   return success();
+}
+
+std::optional<std::pair<Attribute, WalkResult>> respellWitness(
+    WitnessAttr witness, llvm::function_ref<Type(Type)> respell) {
+  auto equality = dyn_cast<TypeEqualityAttr>(witness.getPredicate());
+  if (!equality)
+    return std::nullopt;
+  MLIRContext *ctx = witness.getContext();
+  auto rebuiltEquality = TypeEqualityAttr::getChecked(
+      /*emitError=*/nullptr, ctx, respell(equality.getLhs()),
+      respell(equality.getRhs()));
+  if (!rebuiltEquality)
+    return std::nullopt;
+  SmallVector<TypeBindingAttr> arguments;
+  for (TypeBindingAttr binding : witness.getArguments())
+    arguments.push_back(TypeBindingAttr::get(ctx, binding.getParameter(),
+                                             respell(binding.getArgument())));
+  auto rebuilt = WitnessAttr::getChecked(/*emitError=*/nullptr, ctx,
+                                         Attribute(rebuiltEquality),
+                                         witness.getImplRef(),
+                                         ArrayRef<TypeBindingAttr>(arguments));
+  if (!rebuilt)
+    return std::nullopt;
+  return std::make_pair(Attribute(rebuilt), WalkResult::skip());
 }
 
 // Reach every symbol a witness names as a symbol reference, which no type walk
@@ -87,15 +131,52 @@ LogicalResult WitnessAttr::verifySymbolUses(
   return success();
 }
 
+ParseResult parseImplArguments(AsmParser &parser,
+                               SmallVectorImpl<TypeBindingAttr> &arguments) {
+  if (failed(parser.parseOptionalLSquare()))
+    return success();
+  if (succeeded(parser.parseOptionalRSquare()))
+    return success();
+  if (parser.parseCommaSeparatedList([&]() -> ParseResult {
+        Type parameter, argument;
+        if (parser.parseType(parameter) || parser.parseEqual() ||
+            parser.parseType(argument))
+          return failure();
+        auto err = [&]() { return parser.emitError(parser.getNameLoc()); };
+        auto binding = TypeBindingAttr::getChecked(err, parser.getContext(),
+                                                   parameter, argument);
+        if (!binding)
+          return failure();
+        arguments.push_back(binding);
+        return success();
+      }))
+    return failure();
+  return parser.parseRSquare();
+}
+
+void printImplArguments(AsmPrinter &printer,
+                        ArrayRef<TypeBindingAttr> arguments) {
+  if (arguments.empty())
+    return;
+  printer << '[';
+  llvm::interleaveComma(arguments, printer, [&](TypeBindingAttr binding) {
+    printer << binding.getParameter() << " = " << binding.getArgument();
+  });
+  printer << ']';
+}
+
 Attribute WitnessAttr::parse(AsmParser &parser, Type) {
   FailureOr<Attribute> predicate = parseApplicationOrEqualityPredicate(parser);
   if (failed(predicate))
     return {};
   FlatSymbolRefAttr impl;
-  if (parser.parseKeyword("by") || parser.parseAttribute(impl))
+  SmallVector<TypeBindingAttr> arguments;
+  if (parser.parseKeyword("by") || parser.parseAttribute(impl) ||
+      parseImplArguments(parser, arguments))
     return {};
   auto err = [&]() { return parser.emitError(parser.getNameLoc()); };
-  return WitnessAttr::getChecked(err, parser.getContext(), *predicate, impl);
+  return WitnessAttr::getChecked(err, parser.getContext(), *predicate, impl,
+                                 arguments);
 }
 
 void WitnessAttr::print(AsmPrinter &printer) const {
@@ -104,6 +185,7 @@ void WitnessAttr::print(AsmPrinter &printer) const {
   else
     cast<TypeEqualityAttr>(getPredicate()).print(printer);
   printer << " by " << getImplRef();
+  printImplArguments(printer, getArguments());
 }
 
 void TraitDialect::registerAttributes() {

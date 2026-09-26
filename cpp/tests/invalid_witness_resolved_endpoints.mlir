@@ -3,12 +3,10 @@
 
 // RUN: mlir-opt %s -verify-diagnostics -split-input-file
 
-// The witness instance check requires the current endpoints to be a single
-// substitution instance of the witness. Resolving a projection
-// inside an endpoint -- collapsing @Trait[i64]::Output to i64 -- is not a
-// substitution instance of the projection spelling, so the resolved endpoint
-// form is refused. This is why the specializing clone rule leaves an equality
-// claim's endpoints pure substitution and resolves nothing inside them.
+// A projection-resolution witness's result is its own equality. A result whose
+// endpoints differ from the witness's -- here an instance with the projection
+// collapsed to i64 -- is refused: a clone rebuilds the witness and respells the
+// claim under one substitution, and resolves nothing inside either.
 
 !S = !trait.poly<0>
 !U = !trait.poly<1>
@@ -22,8 +20,8 @@ trait.impl private @Trait_impl for @Trait[!U] {
 }
 
 func.func @resolved_endpoints() -> !trait.claim<i64 = i64> {
-  // expected-error @below {{result endpoints 'i64' = 'i64' are not an instance of the witness}}
-  %e = trait.witness proj_resolve !trait.proj<@Trait[!S], "Output"> resolves !S by @Trait_impl
+  // expected-error @below {{result endpoints 'i64' = 'i64' are not the witness's}}
+  %e = trait.witness proj_resolve !trait.proj<@Trait[!S], "Output"> resolves !S by @Trait_impl[!U = !S]
     : !trait.claim<i64 = i64>
   return %e : !trait.claim<i64 = i64>
 }

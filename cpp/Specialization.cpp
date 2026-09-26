@@ -92,22 +92,26 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &sub
                : std::nullopt;
   });
 
-  // The clone rule for equality evidence: the endpoints receive the variable
-  // bindings alone, stamped once -- no projection or evidence binding, and no
-  // module lookup, resolved inside them -- matching what the witness verifier
-  // enforces: the current endpoints must be a single-substitution instance of
-  // the witness's own equality, which a resolution would break. A witness's
-  // stored equality is likewise NOT rewritten -- it is immutable evidence.
+  // The clone rule for equality evidence: an equality claim's endpoints, and a
+  // projection-resolution witness's endpoints and arguments, receive the
+  // variable bindings alone, stamped once -- no projection or evidence binding,
+  // and no module lookup, resolved inside them -- so the witness a clone holds
+  // is rebuilt at the instance its claim is, under the one substitution.
   llvm::DenseMap<Type, Type> variableBindings;
   for (auto [key, value] : subst)
     if (isa<GenericTypeInterface>(key))
       variableBindings.try_emplace(key, value);
+  auto respell = [variableBindings](Type t) {
+    return applySubstitutionOnce(variableBindings, t);
+  };
   replacer.addReplacement(
-      [variableBindings](ClaimType claim)
-          -> std::optional<std::pair<Type, WalkResult>> {
-    return respellEqualityEndpoints(claim, [&](Type t) {
-      return applySubstitutionOnce(variableBindings, t);
-    });
+      [respell](ClaimType claim) -> std::optional<std::pair<Type, WalkResult>> {
+    return respellEqualityEndpoints(claim, respell);
+  });
+  replacer.addReplacement(
+      [respell](WitnessAttr witness)
+          -> std::optional<std::pair<Attribute, WalkResult>> {
+    return respellWitness(witness, respell);
   });
 
   return replacer;

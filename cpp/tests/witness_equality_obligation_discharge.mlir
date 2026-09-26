@@ -24,10 +24,10 @@ trait.impl private @Has_tuple for @Has[tuple<!U>] where [@X[!U]] {
 }
 
 // CHECK-LABEL: func.func @f
-// CHECK: trait.witness proj_resolve !trait.proj<@Has[tuple<i32>], "Out"> resolves i64 by @Has_tuple given
+// CHECK: trait.witness proj_resolve !trait.proj<@Has[tuple<i32>], "Out"> resolves i64 by @Has_tuple[!trait.poly<0> = i32] given
 // CHECK: trait.coerce
 func.func @f(%v: !trait.proj<@Has[tuple<i32>], "Out">, %x: !trait.claim<@X[i32]>) -> i64 {
-  %eq = trait.witness proj_resolve !trait.proj<@Has[tuple<i32>], "Out"> resolves i64 by @Has_tuple given(%x)
+  %eq = trait.witness proj_resolve !trait.proj<@Has[tuple<i32>], "Out"> resolves i64 by @Has_tuple[!U = i32] given(%x)
     : (!trait.claim<@X[i32]>)
     : !trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = i64>
   %c = trait.coerce %v : !trait.proj<@Has[tuple<i32>], "Out"> to i64 via (%eq)

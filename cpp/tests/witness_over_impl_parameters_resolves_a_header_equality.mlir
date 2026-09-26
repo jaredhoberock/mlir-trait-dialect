@@ -29,6 +29,6 @@ trait.trait private @Foo[!S]
 }
 
 trait.impl private @Foo_box for @Foo[tuple<!S>]
-    witnesses [#trait<witness !trait.proj<@Bar[tuple<!S>], "Assoc"> = !S by @Bar_box>] {
+    witnesses [#trait<witness !trait.proj<@Bar[tuple<!S>], "Assoc"> = !S by @Bar_box[!S = !S]>] {
   trait.assoc_type @U = !S
 }

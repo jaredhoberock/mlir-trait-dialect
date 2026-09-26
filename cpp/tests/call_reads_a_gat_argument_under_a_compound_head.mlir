@@ -37,7 +37,7 @@ func.func private @g(%x: !T,
 // CHECK: call @g_
 func.func @main(%a: i64, %b: i1) -> i1 {
   %w = trait.witness @M0_i64 for @M0[i64]
-  %e = trait.witness proj_resolve !trait.proj<@Has[tuple<i64>], "A", [i1]> resolves i1 by @Has_tuple given(%w)
+  %e = trait.witness proj_resolve !trait.proj<@Has[tuple<i64>], "A", [i1]> resolves i1 by @Has_tuple[!U = i64] given(%w)
     : (!trait.claim<@M0[i64] by @M0_i64>)
     : !trait.claim<!trait.proj<@Has[tuple<i64>], "A", [i1]> = i1>
   %p = trait.coerce %b : i1 to !trait.proj<@Has[tuple<i64>], "A", [i1]> via (%e)

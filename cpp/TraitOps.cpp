@@ -581,8 +581,8 @@ void TraitOp::print(OpAsmPrinter &p) {
 //===----------------------------------------------------------------------===//
 
 /// A verified equality-armed witness in replayable form: the cited impl, the
-/// projection's trait application, and the head-match substitution, ready for
-/// NormalizationContext::addLocalProjectionRule.
+/// projection's trait application, and the substitution the witness's
+/// arguments make, ready for NormalizationContext::addLocalProjectionRule.
 struct ImplWitnessRule {
   ImplOp impl;
   TraitApplicationAttr app;
@@ -599,13 +599,13 @@ struct ImplWitnessRule {
 /// and mutual justification could ground a false equality on nothing.
 ///
 /// A witness projection carrying the impl's own parameters is verified like
-/// any other: the head match is rigid, so a variable in the projection matches
-/// only a variable in the cited impl's head. A witness citing a
-/// single-instance impl for a projection quantified over the host impl's
-/// parameters fails that match -- it would accept a generic impl on the
-/// strength of one instance -- while one citing a blanket sibling whose head
-/// the projection rigidly matches is the evidence a generic impl's own header
-/// equalities need.
+/// any other: the head comparison is rigid, so a variable in the projection
+/// equals only the same variable in the cited impl's head at the witness's
+/// arguments. A witness citing a single-instance impl for a projection
+/// quantified over the host impl's parameters fails that comparison -- it
+/// would accept a generic impl on the strength of one instance -- while one
+/// citing a blanket sibling at the host's parameters is the evidence a generic
+/// impl's own header equalities need.
 static FailureOr<SmallVector<ImplWitnessRule>> collectImplWitnessRules(
     ImplOp impl, ModuleOp module,
     llvm::function_ref<InFlightDiagnostic()> errFn) {
@@ -1328,6 +1328,35 @@ SmallVector<GenericTypeInterface, 4> ImplOp::getTypeParams() {
   return getTypeParametersIn(tupled);
 }
 
+FailureOr<SpecializationMap> ImplOp::substitutionFor(
+    ArrayRef<TypeBindingAttr> arguments,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  SmallVector<GenericTypeInterface, 4> params = getTypeParams();
+  SpecializationMap substitution;
+  for (TypeBindingAttr binding : arguments) {
+    auto parameter = dyn_cast<GenericTypeInterface>(binding.getParameter());
+    if (!parameter || !llvm::is_contained(params, parameter)) {
+      if (err) err() << "the citation binds " << binding.getParameter()
+                     << ", which is not a type parameter of impl '@"
+                     << getSymName() << "'";
+      return failure();
+    }
+    if (substitution.lookup(parameter)) {
+      if (err) err() << "the citation binds type parameter " << Type(parameter)
+                     << " of impl '@" << getSymName() << "' twice";
+      return failure();
+    }
+    substitution.bind(parameter, binding.getArgument());
+  }
+  for (GenericTypeInterface parameter : params)
+    if (!substitution.lookup(parameter)) {
+      if (err) err() << "the citation binds no argument for type parameter "
+                     << Type(parameter) << " of impl '@" << getSymName() << "'";
+      return failure();
+    }
+  return substitution;
+}
+
 FailureOr<func::FuncOp> ImplOp::getOrSpecializeMethod(OpBuilder& builder, StringRef methodName) {
   auto trait = getTrait();
 
@@ -1870,26 +1899,56 @@ void ImplOp::print(OpAsmPrinter &printer) {
 }
 
 
-/// Refuses a citation of `impl` at `cited` whose equality premises do not hold
-/// there.
-///
-/// An equality premise restricts where the impl applies, and only the
-/// application being cited says whether it holds. Each side is read through the
-/// arguments that application supplies, then through the impl's own
-/// associated-type bindings for it -- a premise may project through the very
-/// application being cited -- and then through `evidence`, the citation's own
-/// context. Identity after that reading is the whole judgment, and it is the
-/// one impl selection makes over a candidate: the impl's application-arm
-/// premises travel as subproofs, its equality premises are decided here.
-///
-/// A reading carrying a type variable is a premise this citation cannot decide,
-/// and `openPremise` says where it is decided instead: at the instances made of
-/// this template, which read it at the arguments they supply, or nowhere -- a
-/// proof op states its impl's premises at the claim it stands over, and a
-/// citation of that proof reads nothing inside it.
-static LogicalResult verifyEqualityPremisesHoldAt(
+/// Whether every outermost projection `side` still spells is over one of
+/// `impl`'s where-clause applications at `arguments`, or a trait requirement
+/// one of them carries, each read through `evidence`: a projection whose
+/// evidence is the premise a citation of the impl supplies for that
+/// application, or the requirement that premise stands over.
+static bool projectionsStandOnPremises(Type side, ImplOp impl,
+                                       const SpecializationMap &arguments,
+                                       NormalizationContext &evidence) {
+  ModuleOp module = impl->getParentOfType<ModuleOp>();
+  SmallVector<TraitApplicationAttr> premises;
+  SmallVector<std::pair<ClaimType, unsigned>> pending;
+  for (TraitApplicationAttr app : impl.getAssumptions().getApplications())
+    pending.push_back(
+        {cast<ClaimType>(instantiate(Type(ClaimType::get(impl.getContext(), app)),
+                                     arguments)),
+         0});
+  while (!pending.empty()) {
+    auto [claim, depth] = pending.pop_back_val();
+    auto read = evidence.normalize(Type(claim), /*err=*/nullptr);
+    ClaimType premise = succeeded(read) ? cast<ClaimType>(*read) : claim;
+    if (llvm::is_contained(premises, premise.getTraitApplication()))
+      continue;
+    premises.push_back(premise.getTraitApplication());
+    if (depth == kInstantiationDepthLimit)
+      continue;
+    auto trait = premise.getTraitApplication().getTrait(module, /*err=*/nullptr);
+    if (failed(trait))
+      continue;
+    auto requirements =
+        trait->specializeRequirementsAsClaimsFor(premise, /*errFn=*/nullptr);
+    if (succeeded(requirements))
+      for (ClaimType requirement : *requirements)
+        if (requirement.isApplication())
+          pending.push_back({requirement, depth + 1});
+  }
+  bool standing = true;
+  AttrTypeWalker walker;
+  walker.addWalk([&](ProjectionType projection) {
+    if (!llvm::is_contained(premises, projection.getTraitApplication()))
+      standing = false;
+    return WalkResult::skip();
+  });
+  walker.walk<WalkOrder::PreOrder>(side);
+  return standing;
+}
+
+LogicalResult mlir::trait::verifyEqualityPremisesHoldAt(
     ImplOp impl, ClaimType cited, const SpecializationMap &arguments,
     NormalizationContext evidence, OpenPremise openPremise,
+    StandingPremise standingPremise,
     llvm::function_ref<InFlightDiagnostic()> err) {
   SmallVector<TypeEqualityAttr> equalities =
       impl.getAssumptions().getEqualities();
@@ -1917,16 +1976,26 @@ static LogicalResult verifyEqualityPremisesHoldAt(
                      << " reads " << *lhs << " = " << *rhs << " at " << cited;
       return failure();
     }
+    // Sides read as one type hold, whatever they spell.
+    if (*lhs == *rhs)
+      continue;
     // A side still spelling a projection after the reading is one this citation
     // cannot decide. The impls the reading saw bind that projection for nobody
     // or for two candidates at once; what it denotes is decided by the impl
     // selection chose for its application, which a reader holding no record may
-    // not consult. So the premise is neither true nor false here and
-    // is left standing, as a side spelling a type variable is. The stage reads
-    // every citation standing at its exit through what selection settled, and
-    // that is where a premise left standing here is decided.
-    if (spellsAProjection(*lhs) || spellsAProjection(*rhs))
-      continue;
+    // not consult. So the premise is neither true nor false here, and
+    // `standingPremise` says where it is decided.
+    if (spellsAProjection(*lhs) || spellsAProjection(*rhs)) {
+      if (standingPremise == StandingPremise::DecidedAtStageExit ||
+          (projectionsStandOnPremises(*lhs, impl, arguments, evidence) &&
+           projectionsStandOnPremises(*rhs, impl, arguments, evidence)))
+        continue;
+      if (err) err() << "impl '@" << impl.getSymName() << "' applies where "
+                     << equality.getLhs() << " = " << equality.getRhs()
+                     << ", and nothing here settles " << *lhs << " = " << *rhs
+                     << " at " << cited;
+      return failure();
+    }
     if (*lhs != *rhs) {
       if (err) err() << "impl '@" << impl.getSymName() << "' applies where "
                      << equality.getLhs() << " = " << equality.getRhs()
@@ -1962,7 +2031,8 @@ static LogicalResult verifyEqualityPremisesOfImplAt(
     return failure();
 
   return verifyEqualityPremisesHoldAt(impl, cited, *arguments, evidence,
-                                      openPremise, err);
+                                      openPremise,
+                                      StandingPremise::DecidedAtStageExit, err);
 }
 
 LogicalResult ImplOp::verifyEqualityPremisesAt(
@@ -2021,6 +2091,59 @@ LogicalResult ProofOp::verify() {
   return success();
 }
 
+/// Re-verifies `impl`'s projection-resolution witnesses at `arguments`, the
+/// substitution a proof's claim makes for the impl's parameters. The impl
+/// verified each witness at its own parameters, where a premise of the cited
+/// impl that still spelled a type variable was left to the instances; the claim
+/// a proof stands over is such an instance, and each witness, rebuilt there,
+/// must hold -- its obligations covered by the impl's where clause at that
+/// claim, which the proof's subproofs discharge, or by its discharge citations.
+///
+/// XXX TODO: deleted when a citation carries the evidence for its cited impl's
+/// where-equalities by index (an application's premises admitting equalities,
+/// the evidence-terms plan's C7), so the impl's own verification decides every
+/// premise locally.
+static LogicalResult verifyDeclaredWitnessesAt(
+    ImplOp impl, const SpecializationMap &arguments, ModuleOp module,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  ArrayAttr declared = impl.getWitnessesAttr();
+  if (!declared)
+    return success();
+  MLIRContext *ctx = impl.getContext();
+  auto atClaim = [&](Type t) { return instantiate(t, arguments); };
+  SmallVector<TraitApplicationAttr> obligationPremises;
+  for (TraitApplicationAttr app : impl.getAssumptions().getApplications())
+    obligationPremises.push_back(
+        cast<ClaimType>(atClaim(Type(ClaimType::get(ctx, app))))
+            .getTraitApplication());
+  SmallVector<WitnessAttr> dischargeWitnesses;
+  for (auto witness : declared.getAsRange<WitnessAttr>())
+    if (isa<TraitApplicationAttr>(witness.getPredicate()))
+      dischargeWitnesses.push_back(WitnessAttr::get(
+          ctx,
+          Attribute(cast<ClaimType>(atClaim(Type(ClaimType::get(
+                                        ctx, witness.getApplication()))))
+                        .getTraitApplication()),
+          witness.getImplRef(), {}));
+  for (auto witness : declared.getAsRange<WitnessAttr>()) {
+    if (!isa<TypeEqualityAttr>(witness.getPredicate()))
+      continue;
+    auto rebuilt = respellWitness(witness, atClaim);
+    if (!rebuilt) {
+      if (err) err() << "the declaration witness of "
+                     << witness.getProjection() << " = "
+                     << witness.getResolved()
+                     << " does not construct at this proof's claim";
+      return failure();
+    }
+    if (failed(verifyProjectionResolutionAtImpl(
+            module, cast<WitnessAttr>(rebuilt->first), /*premises=*/{},
+            obligationPremises, dischargeWitnesses, err)))
+      return failure();
+  }
+  return success();
+}
+
 LogicalResult ProofOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // Verification writes nothing, so every name read under it resolves through
   // the symbol tables the walk this is one step of has already built.
@@ -2059,8 +2182,9 @@ LogicalResult ProofOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   auto throughEvidence = [&](Type ty) -> FailureOr<Type> {
     return reading.normalize(ty, errFn);
   };
-  if (failed(implOp.buildSubstitutionForSelfClaim(getProvenClaim(),
-                                                  throughEvidence, errFn)))
+  auto arguments = implOp.buildSubstitutionForSelfClaim(getProvenClaim(),
+                                                        throughEvidence, errFn);
+  if (failed(arguments))
     return failure();
 
   // The impl's equality premises stand over this claim, and this claim is where
@@ -2069,6 +2193,9 @@ LogicalResult ProofOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (failed(verifyEqualityPremisesAt(getProvenClaim(),
                                       DemandOrigin::ProofVerification,
                                       OpenPremise::RefusedHere, errFn)))
+    return failure();
+
+  if (failed(verifyDeclaredWitnessesAt(implOp, *arguments, module, errFn)))
     return failure();
 
   // One entry in the given list per obligation the impl states at this claim,
@@ -2258,19 +2385,22 @@ ParseResult WitnessOp::parse(OpAsmParser &p, OperationState& result) {
   };
 
   // Equality proj-resolve arm: `proj_resolve !projection resolves !resolved
-  // by @impl [given(%premises...) : (types...)] : <result-type>`.
+  // by @impl[!P = T, ...] [given(%premises...) : (types...)] : <result-type>`.
   if (succeeded(p.parseOptionalKeyword("proj_resolve"))) {
     Type projection, resolved;
     FlatSymbolRefAttr citedImpl;
+    SmallVector<TypeBindingAttr> arguments;
     if (p.parseType(projection) || p.parseKeyword("resolves") ||
         p.parseType(resolved) || p.parseKeyword("by") ||
-        p.parseAttribute(citedImpl))
+        p.parseAttribute(citedImpl) || parseImplArguments(p, arguments))
       return failure();
     auto err = [&] { return p.emitError(p.getCurrentLocation()); };
     auto equality = TypeEqualityAttr::getChecked(err, ctx, projection, resolved);
     if (!equality)
       return failure();
-    auto witness = WitnessAttr::getChecked(err, ctx, Attribute(equality), citedImpl);
+    auto witness = WitnessAttr::getChecked(err, ctx, Attribute(equality),
+                                           citedImpl,
+                                           ArrayRef<TypeBindingAttr>(arguments));
     if (!witness)
       return failure();
     result.addAttribute("witness", witness);
@@ -2326,6 +2456,7 @@ void WitnessOp::print(OpAsmPrinter &p) {
   if (auto witness = getWitnessAttr()) {
     p << " proj_resolve " << witness.getProjection() << " resolves "
       << witness.getResolved() << " by " << witness.getImplRef();
+    printImplArguments(p, witness.getArguments());
     if (!getPremises().empty()) {
       p << " given";
       printTypedOperandList(p, getPremises());
@@ -2360,9 +2491,9 @@ void WitnessOp::print(OpAsmPrinter &p) {
 
 // The op's attributes must match the result claim's arm exactly, and the result
 // type must equal the claim reconstructed from those attributes. For the
-// equality arm, the current endpoints must be a single-substitution structural
-// instance of the witness's endpoints (proj-resolve), identical (refl), or
-// entailed by the premises' ground congruence closure (compose).
+// equality arm, the result's equality must be the witness's own (proj-resolve),
+// have identical endpoints (refl), or be entailed by the premises' ground
+// congruence closure (compose).
 LogicalResult WitnessOp::verify() {
   ClaimType result = dyn_cast<ClaimType>(getResult().getType());
   if (!result)
@@ -2393,13 +2524,9 @@ LogicalResult WitnessOp::verify() {
     }
 
     if (hasWitness) {
-      // proj-resolve: the current endpoints must be a single-substitution
-      // structural instance of the witness's endpoints. The witness's
-      // generic parameters are the variables; a single substitution must carry
-      // the witness's projection and resolved type to the current pair. This
-      // passes impl verification (identity), the clone-substituted state, and ground, and
-      // rejects any non-substitution mangling. It is structural and local -- no
-      // module lookup -- so the pair is matched with a null module.
+      // proj-resolve: the result is the witness's own equality. A clone
+      // rebuilds the witness and respells the claim under one substitution
+      // (`respellWitness`, `respellEqualityEndpoints`), so the two never part.
       WitnessAttr witness = getWitnessAttr();
       // The witness slot carries a proj-resolve leaf, so its predicate is an
       // equality; a coerce discharge's application-headed witness has no place
@@ -2407,16 +2534,11 @@ LogicalResult WitnessOp::verify() {
       if (!isa<TypeEqualityAttr>(witness.getPredicate()))
         return emitOpError() << "a proj-resolve witness must carry an "
                                 "equality";
-      MLIRContext *ctx = getContext();
-      Type witnessPair = TupleType::get(ctx, {witness.getProjection(), witness.getResolved()});
-      Type currentPair = TupleType::get(ctx, {eq.getLhs(), eq.getRhs()});
-      if (failed(matchDeclaration(getTypeParametersIn(witnessPair), witnessPair,
-                                  currentPair, /*normalize=*/Normalizer(),
-                                  /*err=*/nullptr)))
+      if (witness.getEquality() != eq)
         return emitOpError() << "result endpoints " << eq.getLhs() << " = "
-                             << eq.getRhs()
-                             << " are not an instance of the witness "
-                             << witness.getProjection() << " = " << witness.getResolved();
+                             << eq.getRhs() << " are not the witness's "
+                             << witness.getProjection() << " = "
+                             << witness.getResolved();
       return success();
     }
 
@@ -2473,6 +2595,30 @@ LogicalResult WitnessOp::verify() {
   return success();
 }
 
+LogicalResult WitnessOp::verifyResolution(ModuleOp module,
+                                          const ReadOnlyImplResolver *settled) {
+  SmallVector<TypeEqualityAttr> equalityPremises;
+  SmallVector<TraitApplicationAttr> applicationPremises;
+  for (Value premise : getPremises())
+    if (auto claim = dyn_cast<ClaimType>(premise.getType())) {
+      if (auto eq = claim.getEqualityAttr())
+        equalityPremises.push_back(eq);
+      else if (claim.isApplication())
+        applicationPremises.push_back(claim.getTraitApplication());
+    }
+  auto siteEvidence = [&] {
+    NormalizationContext evidence =
+        buildLocalClaimNormalizationContext(getOperation(), getPremises(), module);
+    if (settled)
+      evidence.setRecordedFacts(settled);
+    return evidence;
+  };
+  return verifyProjectionResolutionAtUse(module, getWitnessAttr(),
+                                         equalityPremises, applicationPremises,
+                                         siteEvidence,
+                                         [&] { return emitOpError(); });
+}
+
 LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // Verification writes nothing, so every name read under it resolves through
   // the symbol tables the walk this is one step of has already built.
@@ -2485,32 +2631,16 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   auto errFn = [&] { return emitOpError(); };
 
   // Equality proj-resolve arm: verify the citation where its symbol uses are
-  // checked. The cited impl must bind the associated type the witness's
-  // projection names to its resolved type, once specialized for the projection's
-  // trait application, AND the witness's premises must discharge the cited impl's
-  // own assumptions. The premises split by arm: equality claims are the
-  // comparison modulus, application claims discharge the assumptions. The module
-  // read runs here, on every full module verification -- not per consumer --
-  // through the same obligation-aware check the C-API projection-resolution query
-  // runs in obligation mode, so a consumer classifying a witness cannot
-  // disagree with this verdict.
-  if (auto witness = getWitnessAttr()) {
-    SmallVector<TypeEqualityAttr> equalityPremises;
-    SmallVector<TraitApplicationAttr> applicationPremises;
-    for (Value premise : getPremises())
-      if (auto claim = dyn_cast<ClaimType>(premise.getType())) {
-        if (auto eq = claim.getEqualityAttr())
-          equalityPremises.push_back(eq);
-        else if (claim.isApplication())
-          applicationPremises.push_back(claim.getTraitApplication());
-      }
-    // The op's current result equality is the instance the discharge check
-    // carries the stored evidence's assumptions to, so a clone's premises match
-    // at the clone's spelling rather than the stored one.
-    return verifyProjectionResolutionAtUse(module, witness, equalityPremises,
-                                           applicationPremises, errFn,
-                                           getResultClaim().getEqualityAttr());
-  }
+  // checked. The cited impl, at the type arguments the witness carries, must
+  // bind the associated type the witness's projection names to its resolved
+  // type, its where-clause equalities must hold there, AND the witness's
+  // premises must discharge the cited impl's own assumptions. The premises split
+  // by arm: equality claims are the comparison modulus, application claims
+  // discharge the assumptions. The where-clause equalities are read through
+  // what this op may read any spelling through: the hypotheses of the scope it
+  // stands in and the evidence its premises carry.
+  if (getWitnessAttr())
+    return verifyResolution(module, /*settled=*/nullptr);
 
   // Refl arm: nothing to verify here.
   if (getRefl())
@@ -2580,7 +2710,8 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (proof)
     return success();
   return verifyEqualityPremisesHoldAt(impl, getProvenClaim(), *subst, reading,
-                                      OpenPremise::DecidedAtInstances, errFn);
+                                      OpenPremise::DecidedAtInstances,
+                                      StandingPremise::DecidedAtStageExit, errFn);
 }
 
 
@@ -2769,6 +2900,7 @@ LogicalResult DeriveOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (failed(verifyEqualityPremisesHoldAt(implOp, derivedClaim, *subst,
                                           normalization,
                                           OpenPremise::DecidedAtInstances,
+                                          StandingPremise::DecidedAtStageExit,
                                           errFn)))
     return failure();
 

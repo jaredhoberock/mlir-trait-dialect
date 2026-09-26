@@ -24,9 +24,9 @@ trait.impl private @A_impl for @A[!U] { trait.assoc_type @Item = !U }
 trait.impl private @B_impl for @B[!U] { trait.assoc_type @Item = !U }
 
 func.func @use(%pa: !trait.proj<@A[i64], "Item">) -> !trait.proj<@B[i64], "Item"> {
-  %w1 = trait.witness proj_resolve !trait.proj<@A[i64], "Item"> resolves i64 by @A_impl
+  %w1 = trait.witness proj_resolve !trait.proj<@A[i64], "Item"> resolves i64 by @A_impl[!U = i64]
     : !trait.claim<!trait.proj<@A[i64], "Item"> = i64>
-  %w2 = trait.witness proj_resolve !trait.proj<@B[i64], "Item"> resolves i64 by @B_impl
+  %w2 = trait.witness proj_resolve !trait.proj<@B[i64], "Item"> resolves i64 by @B_impl[!U = i64]
     : !trait.claim<!trait.proj<@B[i64], "Item"> = i64>
   %c = trait.witness compose(%w1, %w2)
     : (!trait.claim<!trait.proj<@A[i64], "Item"> = i64>, !trait.claim<!trait.proj<@B[i64], "Item"> = i64>)

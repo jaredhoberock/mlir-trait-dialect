@@ -464,6 +464,14 @@ def ImplOp : TraitDialectOp<"impl", [
     // returns all distinct generic types that occur in this ImplOp's self application and assumptions
     SmallVector<GenericTypeInterface, 4> getTypeParams();
 
+    /// The substitution a citation's `arguments` make for this impl: each
+    /// binding keyed by one of the impl's own parameters. Fails when a key is
+    /// not one of them, when two bind the same one, or when one takes no
+    /// argument.
+    FailureOr<SpecializationMap> substitutionFor(
+        ArrayRef<TypeBindingAttr> arguments,
+        llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+
     /// Returns the impl-local definition of `methodName`, synthesizing it from
     /// the trait default method when the impl does not provide its own body.
     ///
@@ -1092,8 +1100,9 @@ def WitnessOp : TraitDialectOp<"witness", [
     Equality arm. Introduces a value of type `!trait.claim<!A = !B>` that is
     evidence the two spellings name one type. There are three leaves:
 
-      * proj-resolve: cites an impl by symbol and carries an immutable
-        witness. The equality holds because the cited impl binds the
+      * proj-resolve: cites an impl by symbol, at the arguments selection
+        chose for its parameters, and carries an immutable witness. The equality
+        holds because the cited impl, applied at those arguments, binds the
         associated type the projection names to the resolved type. When the
         cited impl's own Self application is itself spelled with projections,
         structural matching cannot align it with the projection being resolved,
@@ -1102,13 +1111,15 @@ def WitnessOp : TraitDialectOp<"witness", [
         evidence: the refl and compose arms only combine equalities that
         proj-resolve leaves establish.
 
-        // @A[i64]::Item resolves to i64 through impl @A_impl's binding.
-        %item_eq = trait.witness proj_resolve !trait.proj<@A[i64], "Item"> resolves i64 by @A_impl
+        // @A[i64]::Item resolves to i64 through the binding of impl
+        // `@A_impl for @A[!trait.poly<1>]`, applied at !trait.poly<1> = i64.
+        %item_eq = trait.witness proj_resolve !trait.proj<@A[i64], "Item"> resolves i64 by @A_impl[!trait.poly<1> = i64]
 
-        Verifying the witness resolves the projection through the cited
-        impl's binding and additionally discharges the cited impl's own
-        assumptions; `verifyProjectionResolutionAtUse` (TraitOps.hpp) states the
-        full contract.
+        Verifying the witness checks the cited impl at its arguments: its
+        header is the projection's application, its binding is the resolved
+        type, its where-clause equalities hold, and the witness's premises
+        discharge its own assumptions; `verifyProjectionResolutionAtUse`
+        (TraitOps.hpp) states the full contract.
 
       * refl: proof-free, cites nothing; the endpoints are identical at
         construction. It exists because a concrete instantiation of an equality
@@ -1124,8 +1135,8 @@ def WitnessOp : TraitDialectOp<"witness", [
 
         // From @A[i64]::Item = i64 and @B[i64]::Item = i64, derive
         // @A[i64]::Item = @B[i64]::Item without asserting it.
-        %a_eq = trait.witness proj_resolve !trait.proj<@A[i64], "Item"> resolves i64 by @A_impl
-        %b_eq = trait.witness proj_resolve !trait.proj<@B[i64], "Item"> resolves i64 by @B_impl
+        %a_eq = trait.witness proj_resolve !trait.proj<@A[i64], "Item"> resolves i64 by @A_impl[!trait.poly<1> = i64]
+        %b_eq = trait.witness proj_resolve !trait.proj<@B[i64], "Item"> resolves i64 by @B_impl[!trait.poly<1> = i64]
         %item_eq = trait.witness compose(%a_eq, %b_eq)
 
         Only the leaf premises are stored; the transitivity and congruence
@@ -1144,9 +1155,8 @@ def WitnessOp : TraitDialectOp<"witness", [
     Verification (verify() and verifySymbolUses) ensures the present attributes
     match the result claim's arm, that the result type equals the claim
     reconstructed from those attributes, and, for the equality arm's proj-resolve
-    leaf, that the cited impl actually binds as stated and that the current
-    endpoints are a single-substitution instance of the witness's
-    endpoints. For
+    leaf, that the cited impl at the witness's arguments applies and binds
+    as stated and that the result's equality is the witness's own. For
     the composition leaf verify() replays the ground congruence closure over the
     premises and requires it to entail the result equality; the leaf cites no
     symbol, so verifySymbolUses is a no-op for it.
@@ -1205,6 +1215,15 @@ def WitnessOp : TraitDialectOp<"witness", [
   let results = (outs Claim:$result);
 
   let extraClassDeclaration = [{
+    /// Verifies this projection-resolution witness: the cited impl, at the
+    /// arguments the witness carries, applies, binds as stated and has its
+    /// assumptions discharged (`verifyProjectionResolutionAtUse`). The site's
+    /// evidence is the scope's hypotheses and the premises' evidence and, when
+    /// `settled` is given, what the stage's impl selection has settled -- the
+    /// context an instance of a template is decided in.
+    LogicalResult verifyResolution(ModuleOp module,
+                                   const ReadOnlyImplResolver *settled);
+
     ClaimType getResultClaim() {
       return cast<ClaimType>(getResult().getType());
     }

@@ -40,7 +40,7 @@ func.func @f(
     %x: !trait.claim<@X[!trait.proj<@Other[i32], "A">]>,
     %e: !trait.claim<!trait.proj<@Other[i32], "A"> = i32>
 ) -> i64 {
-  %eq = trait.witness proj_resolve !trait.proj<@Has[tuple<i32>], "Out"> resolves i64 by @Has_tuple given(%x, %e)
+  %eq = trait.witness proj_resolve !trait.proj<@Has[tuple<i32>], "Out"> resolves i64 by @Has_tuple[!U = i32] given(%x, %e)
     : (!trait.claim<@X[!trait.proj<@Other[i32], "A">]>, !trait.claim<!trait.proj<@Other[i32], "A"> = i32>)
     : !trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = i64>
   %c = trait.coerce %v : !trait.proj<@Has[tuple<i32>], "Out"> to i64 via (%eq)

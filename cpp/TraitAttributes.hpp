@@ -15,7 +15,7 @@ namespace mlir::trait {
 #define GET_ATTRDEF_CLASSES
 #include <TraitAttributes.hpp.inc>
 
-namespace mlir { class AsmParser; }
+namespace mlir { class AsmParser; class AsmPrinter; }
 
 namespace mlir::trait {
 
@@ -28,5 +28,17 @@ namespace mlir::trait {
 /// argument list.
 FailureOr<TraitApplicationAttr>
 parseTraitApplicationBody(AsmParser &parser, FlatSymbolRefAttr traitName);
+
+/// Parse the arguments an impl citation carries, `[!P = T, ...]`, one binding
+/// per parameter of the impl, into `arguments`; an absent list is an empty one.
+/// The one grammar for the arguments a projection-resolution witness carries,
+/// in its attribute and its op form alike.
+ParseResult parseImplArguments(AsmParser &parser,
+                               SmallVectorImpl<TypeBindingAttr> &arguments);
+
+/// Print the arguments an impl citation carries as `parseImplArguments` reads
+/// them: nothing when there are none.
+void printImplArguments(AsmPrinter &printer,
+                        ArrayRef<TypeBindingAttr> arguments);
 
 } // end mlir::trait

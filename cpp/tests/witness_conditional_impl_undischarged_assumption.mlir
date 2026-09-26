@@ -26,7 +26,7 @@ trait.impl private @Has_tuple for @Has[tuple<!U>] where [@X[!U]] {
 
 // CHECK: cited impl '@Has_tuple' has an undischarged assumption '!trait.claim<@X[i32]>'
 func.func @f(%v: !trait.proj<@Has[tuple<i32>], "Out">) -> i64 {
-  %eq = trait.witness proj_resolve !trait.proj<@Has[tuple<i32>], "Out"> resolves i64 by @Has_tuple
+  %eq = trait.witness proj_resolve !trait.proj<@Has[tuple<i32>], "Out"> resolves i64 by @Has_tuple[!U = i32]
     : !trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = i64>
   %c = trait.coerce %v : !trait.proj<@Has[tuple<i32>], "Out"> to i64 via (%eq)
     : (!trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = i64>)

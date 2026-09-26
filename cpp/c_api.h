@@ -128,45 +128,29 @@ MlirType traitProjectionTypeGet(MlirContext ctx,
 MlirAttribute traitTypeEqualityAttrGet(MlirContext ctx,
                                        MlirType lhs, MlirType rhs);
 
-/// Return the #trait.witness<predicate by @impl> attribute pairing `predicate`
-/// with `implName` as the impl that witnesses it. `predicate` is either a type
-/// equality (a projection-resolution witness `projection = resolved`) or a
-/// `#trait.application` attribute (an obligation the impl discharges). Returns a
-/// null attribute if `predicate` is neither arm or construction fails.
+/// Return the #trait.binding<parameter = argument> attribute: one entry of the
+/// substitution an impl citation carries, keyed by the impl's own type
+/// parameter. Returns a null attribute if `parameter` is not a type parameter.
+MlirAttribute traitTypeBindingAttrGet(MlirContext ctx, MlirType parameter,
+                                      MlirType argument);
+
+/// Return the #trait.witness<predicate by @impl[arguments]> attribute pairing
+/// `predicate` with `implName` as the impl that witnesses it. `predicate` is
+/// either a type equality (a projection-resolution witness `projection =
+/// resolved`, whose `arguments` are #trait.binding attributes, one per type
+/// parameter of the cited impl) or a `#trait.application` attribute (an
+/// obligation the impl discharges, carrying no arguments). Returns a null
+/// attribute if `predicate` is neither arm or construction fails.
 MlirAttribute traitWitnessAttrGet(MlirContext ctx,
                                   MlirAttribute predicate,
-                                  MlirStringRef implName);
+                                  MlirStringRef implName,
+                                  MlirAttribute *arguments, intptr_t numArguments);
 
 /// Answer whether `input` and `result` stand under the pending judgment a
 /// marked coerce carries, running verifyPendingCoerceEndpoints (TraitOps.hpp).
 /// Diagnostics are suppressed; a refusal is a classification answer, not a
 /// compile error.
 bool traitCoercePendingAccepts(MlirType input, MlirType result);
-
-/// Answer whether a projection-resolution witness cited to `implName` in
-/// `module` verifies at a use site, running verifyProjectionResolutionAtUse
-/// (TraitOps.hpp). `premises` are !trait.claim types split by arm (equality
-/// claims the comparison modulus, application claims covering the cited impl's
-/// assumptions); ground projections resolve by module lookup. Diagnostics are
-/// suppressed; a refusal is a classification answer, not a compile error.
-bool traitProjectionResolutionVerifiesAtUse(MlirModule module,
-                                            MlirType projection, MlirType resolved,
-                                            MlirStringRef implName,
-                                            MlirType *premises, intptr_t numPremises);
-
-/// Answer whether a projection-resolution witness cited to `implName` in
-/// `module` verifies at the citing impl's verification, running
-/// verifyProjectionResolutionAtImpl (TraitOps.hpp). `premises` are !trait.claim
-/// types split by arm (equality claims the comparison modulus, application claims
-/// covering the cited impl's assumptions) and `discharges` are `#trait.witness`
-/// citations covering the cited impl's conditional assumptions; the projection's
-/// application stays rigid. Diagnostics are suppressed; a refusal is a
-/// classification answer, not a compile error.
-bool traitProjectionResolutionVerifiesAtImpl(MlirModule module,
-                                              MlirType projection, MlirType resolved,
-                                              MlirStringRef implName,
-                                              MlirType *premises, intptr_t numPremises,
-                                              MlirAttribute *discharges, intptr_t numDischarges);
 
 /// Create a trait.assoc_type op. If boundType.ptr is non-null, the op gets a
 /// bound_type attribute (for use inside trait.impl); otherwise it is a bare

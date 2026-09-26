@@ -29,6 +29,13 @@ AttrTypeReplacer makeEndpointSealedReplacer() {
           -> std::optional<std::pair<Attribute, WalkResult>> {
         return std::make_pair(Attribute(eq), WalkResult::skip());
       });
+  replacer.addReplacement(
+      [](WitnessAttr witness)
+          -> std::optional<std::pair<Attribute, WalkResult>> {
+        if (!isa<TypeEqualityAttr>(witness.getPredicate()))
+          return std::nullopt;
+        return std::make_pair(Attribute(witness), WalkResult::skip());
+      });
   return replacer;
 }
 

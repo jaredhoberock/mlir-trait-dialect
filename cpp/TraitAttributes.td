@@ -114,10 +114,33 @@ def TypeEqualityAttr : AttrDef<TraitDialect, "TypeEquality", []> {
   let assemblyFormat = "`` $lhs `=` $rhs";
 }
 
+// One entry of a substitution: a type parameter a declaration binds, and the
+// argument it takes.
+def TypeBindingAttr : AttrDef<TraitDialect, "TypeBinding", []> {
+  let mnemonic = "binding";
+  let summary = "A declaration's type parameter and the argument it takes";
+  let description = [{
+    Pairs a type `parameter` -- one a declaration binds, spelled as that
+    declaration spells it -- with the `argument` it takes. A list of these is
+    a substitution keyed by the declaration's own parameters, so the entries
+    carry no order a reader must agree on. The parameter is the label itself,
+    never a wrapper constraining one.
+  }];
+
+  let parameters = (ins "::mlir::Type":$parameter, "::mlir::Type":$argument);
+
+  let genVerifyDecl = 1;
+
+  // Prints `parameter = argument`; see `TypeEqualityAttr` for the leading
+  // empty literal.
+  let assemblyFormat = "`` $parameter `=` $argument";
+}
+
 // A predicate and the impl that witnesses it. One shape serves two roles, read
-// off the predicate arm: an equality `projection = resolved` the impl's
-// associated-type binding resolves (a projection-resolution witness), or a
-// trait application the impl discharges (an obligation discharge).
+// off the predicate arm: an equality `projection = resolved` the associated-type
+// binding of the impl, at the arguments the witness carries for its parameters,
+// resolves (a projection-resolution witness), or a trait application the impl
+// discharges (an obligation discharge).
 def WitnessAttr : AttrDef<TraitDialect, "Witness",
     [DeclareAttrInterfaceMethods<SymbolUserAttrInterface>]> {
   let mnemonic = "witness";
@@ -127,15 +150,27 @@ def WitnessAttr : AttrDef<TraitDialect, "Witness",
     resolved by the impl's associated-type binding, or an application obligation
     the impl supplies. The predicate is one of two arms:
 
-      * a `TypeEqualityAttr` `projection = resolved`, holding because the impl
-        binds the associated type `projection` names (a projection carrying its
-        member and any associated-type arguments) to `resolved`, once the impl
-        is specialized for the projection's trait application.
+      * a `TypeEqualityAttr` `projection = resolved`, holding because the impl,
+        at `arguments`, binds the associated type `projection` names (a
+        projection carrying its member and any associated-type arguments) to
+        `resolved`. `arguments` is the impl's substitution: one binding per
+        parameter of the impl, keyed by the parameter as the impl spells it.
+        It holds the arguments selection chose, so verification substitutes
+        them rather than reading them off the projection: a parameter only a
+        where-clause equality determines has no position in the projection to
+        be read from. Every type parameter an argument spells is one the
+        equality spells, so the instance a clone carries the equality to
+        carries the arguments with it.
 
       * a `TraitApplicationAttr`, an obligation the impl supplies, discharging a
         cited conditional sibling impl's standing assumptions; verification
         resolves the named impl by symbol and never scans the module, so an
         impl's verdict does not depend on the unrelated impls the module carries.
+        The impl is read at the application it names, so this arm carries no
+        arguments.
+
+    Printed `predicate by @impl[!P = T, ...]`; the brackets are omitted when
+    the impl binds no parameter.
 
     Witnessing is one concept carried two ways, chosen by scope. This attribute
     IS the witness and stands alone as declaration-level witnessing. Where
@@ -145,18 +180,19 @@ def WitnessAttr : AttrDef<TraitDialect, "Witness",
 
     Both predicate arms are walk-visible, so every symbol either names is
     reached by the framework's own symbol-user driver wherever this attribute
-    rides. An equality predicate is immutable under rewriting for the reason
-    `TypeEqualityAttr` states: every replacer the dialect builds carries the
-    attribute-level rule that returns an equality unchanged and skips its
-    interior, and a bare witness's equality stands in exactly such an attribute
-    position. The only mover that preserves an immutable equality witness is
-    the clone rule's rebuild of the whole witness: one substitution applied to
-    both endpoints atomically, rebuilt through the checked constructor.
+    rides. A projection-resolution witness is immutable under rewriting for the
+    reason `TypeEqualityAttr` states, and its arguments with it: every replacer
+    the dialect builds carries the attribute-level rules that return an
+    equality, and an equality-armed witness, unchanged and skip their interior.
+    A clone moves the claim a `trait.witness` produces, never the witness it
+    holds; verification carries the stored endpoints and arguments to the
+    clone's equality by the one substitution relating the two.
   }];
 
   let parameters = (ins
     "::mlir::Attribute":$predicate,
-    "::mlir::FlatSymbolRefAttr":$impl_ref
+    "::mlir::FlatSymbolRefAttr":$impl_ref,
+    ArrayRefParameter<"TypeBindingAttr">:$arguments
   );
 
   let extraClassDeclaration = [{

@@ -28,28 +28,36 @@ public:
   }
 };
 
+class NormalizationContext;
+
 /// Verifies an equality-armed projection-resolution `witness` against `module`;
-/// passing an application-armed witness is a caller bug. Succeeds iff the cited
-/// impl (`witness.getImplRef()`), specialized for the projection's application
-/// and modulo the equality `premises`, binds the projection to the resolved
-/// type, proofs ignored. The cited impl's own assumptions must each be covered
+/// passing an application-armed witness is a caller bug. The cited impl
+/// (`witness.getImplRef()`) is applied at the arguments the witness carries,
+/// keyed by the impl's own parameters. Succeeds iff the impl at those arguments is
+/// an impl for the projection's application, binds the projection to the
+/// resolved type modulo the equality `premises`, proofs ignored, and applies
+/// there: each of its where-clause equalities holds under the evidence
+/// `siteEvidence` builds and the impl's own declaration witnesses, and each of
+/// its own assumptions is covered
 /// by the application-arm `obligationPremises` -- deliberately not its trait
 /// requirements, which may quantify over GAT variables with no ground instance
-/// here. This use-site entry resolves the actual side's ground projections by
-/// module lookup. `err`, when non-null, receives the diagnostic on refusal.
+/// here. This use-site entry resolves ground projections in the head comparison
+/// and the assumptions by module lookup. `err`, when non-null, receives the
+/// diagnostic on refusal.
 LogicalResult verifyProjectionResolutionAtUse(
     ModuleOp module, WitnessAttr witness,
     ArrayRef<TypeEqualityAttr> premises,
     ArrayRef<TraitApplicationAttr> obligationPremises,
-    llvm::function_ref<InFlightDiagnostic()> err = nullptr,
-    TypeEqualityAttr currentEquality = {});
+    llvm::function_ref<NormalizationContext()> siteEvidence,
+    llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
 /// The ImplOp-verification companion to `verifyProjectionResolutionAtUse`, running the
-/// same binding check and assumption discharge, differing in three ways. Its
-/// head match is rigid -- only the cited impl's own generics instantiate -- so
-/// the verdict is estate-independent. Its assumptions may also be covered by a
-/// `dischargeWitnesses` entry, recursively over the same finite list. And on
-/// success it returns the head-match substitution.
+/// same checks, differing in four ways. Its head comparison is rigid -- only
+/// the cited impl's own generics instantiate -- so the verdict is
+/// estate-independent. Its where-clause equalities are read through the cited
+/// impl's own declaration witnesses alone. Its assumptions may also be covered
+/// by a `dischargeWitnesses` entry, recursively over the same finite list. And
+/// on success it returns the substitution the witness's arguments make.
 FailureOr<SpecializationMap> verifyProjectionResolutionAtImpl(
     ModuleOp module, WitnessAttr witness,
     ArrayRef<TypeEqualityAttr> premises,
@@ -219,5 +227,30 @@ private:
   LookupScope moduleLookupScope = LookupScope::Ground;
   DemandOrigin moduleLookupOrigin = DemandOrigin::DeclarationMatch;
 };
+
+/// Refuses a citation of `impl` at `cited` whose equality premises do not hold
+/// there.
+///
+/// An equality premise restricts where the impl applies, and only the
+/// application being cited says whether it holds. Each side is read through the
+/// arguments that application supplies, then through the impl's own
+/// associated-type bindings for it -- a premise may project through the very
+/// application being cited -- and then through `evidence`, the citation's own
+/// context. Identity after that reading is the whole judgment, and it is the
+/// one impl selection makes over a candidate: the impl's application-arm
+/// premises travel as subproofs, its equality premises are decided here.
+///
+/// A reading carrying a type variable is a premise this citation cannot decide,
+/// and `openPremise` says where it is decided instead: at the instances made of
+/// this template, which read it at the arguments they supply, or nowhere -- a
+/// proof op states its impl's premises at the claim it stands over, and a
+/// citation of that proof reads nothing inside it. A closed reading still
+/// spelling a projection `evidence` does not resolve is decided where
+/// `standingPremise` says.
+LogicalResult verifyEqualityPremisesHoldAt(
+    ImplOp impl, ClaimType cited, const SpecializationMap &arguments,
+    NormalizationContext evidence, OpenPremise openPremise,
+    StandingPremise standingPremise,
+    llvm::function_ref<InFlightDiagnostic()> err);
 
 } // end mlir::trait

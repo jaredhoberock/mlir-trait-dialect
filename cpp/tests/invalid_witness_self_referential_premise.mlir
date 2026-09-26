@@ -24,7 +24,7 @@ trait.impl private @Trait_impl for @Trait[!U] {
 }
 
 func.func @f(%pre: !trait.claim<!S = tuple<!S>>) -> !trait.claim<!trait.proj<@Trait[!S], "Output"> = !S> {
-  %e = trait.witness proj_resolve !trait.proj<@Trait[!S], "Output"> resolves !S by @Trait_impl
+  %e = trait.witness proj_resolve !trait.proj<@Trait[!S], "Output"> resolves !S by @Trait_impl[!U = !S]
     given(%pre) : (!trait.claim<!S = tuple<!S>>)
     : !trait.claim<!trait.proj<@Trait[!S], "Output"> = !S>
   return %e : !trait.claim<!trait.proj<@Trait[!S], "Output"> = !S>
@@ -50,7 +50,7 @@ trait.impl private @Trait_impl for @Trait[!U] {
 
 func.func @f(%pre: !trait.claim<!S = tuple<!S>>) -> !trait.claim<!trait.proj<@Trait[!S], "Output"> = i32> {
   // expected-error @below {{impl '@Trait_impl' binds the projection to '!trait.poly<0>', not the certified resolution 'i32'}}
-  %e = trait.witness proj_resolve !trait.proj<@Trait[!S], "Output"> resolves i32 by @Trait_impl
+  %e = trait.witness proj_resolve !trait.proj<@Trait[!S], "Output"> resolves i32 by @Trait_impl[!U = !S]
     given(%pre) : (!trait.claim<!S = tuple<!S>>)
     : !trait.claim<!trait.proj<@Trait[!S], "Output"> = i32>
   return %e : !trait.claim<!trait.proj<@Trait[!S], "Output"> = i32>

@@ -44,7 +44,7 @@ func.func private @gen(%v: !trait.proj<@Has[!S], "Out">, %c: !trait.claim<!trait
 // LOWER: return %arg0 : i64
 func.func @main(%pv: !trait.proj<@Has[tuple<i32>], "Out">) -> i64 {
   %w = trait.witness @X_i32 for @X[i32]
-  %eq = trait.witness proj_resolve !trait.proj<@Has[tuple<i32>], "Out"> resolves i64 by @Has_tuple given(%w)
+  %eq = trait.witness proj_resolve !trait.proj<@Has[tuple<i32>], "Out"> resolves i64 by @Has_tuple[!U = i32] given(%w)
     : (!trait.claim<@X[i32] by @X_i32>)
     : !trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = i64>
   // LOWER: call @gen{{.*}}(%arg0) : (i64) -> i64

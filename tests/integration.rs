@@ -586,46 +586,6 @@ fn the_project_builder_selects_a_requirement_by_position() {
 }
 
 #[test]
-fn the_obligation_aware_verification_demands_the_cited_impl_s_assumptions() {
-    let registry = DialectRegistry::new();
-    register_all_dialects(&registry);
-    let context = Context::new();
-    context.append_dialect_registry(&registry);
-    trait_::register(&context);
-    context.load_all_available_dialects();
-
-    // @Has_tuple binds @Has[tuple<!U>]::Out to i64 and requires @X[!U]. The
-    // module carries no impl of @X, so for !U = i32 the assumption is unmet.
-    let module = Module::parse(
-        &context,
-        "!U = !trait.poly<0>\n\
-         trait.trait private @X[!U] {}\n\
-         trait.trait private @Has[!U] { trait.assoc_type @Out }\n\
-         trait.impl private @Has_tuple for @Has[tuple<!U>] where [@X[!U]] { trait.assoc_type @Out = i64 }\n",
-    )
-    .expect("the fixture module parses");
-
-    let projection = melior::ir::Type::parse(&context, "!trait.proj<@Has[tuple<i32>], \"Out\">")
-        .expect("the projection parses");
-    let i64_ty: melior::ir::Type = IntegerType::new(&context, 64).into();
-    let i32_ty: melior::ir::Type = IntegerType::new(&context, 32).into();
-
-    // With no premise verification refuses: the impl's @X[i32] assumption is
-    // undischarged.
-    assert!(!trait_::projection_resolution_verifies_at_use(
-        &module, projection, i64_ty, "Has_tuple", &[]
-    ));
-
-    // Supplying an @X[i32] application premise discharges the assumption, and
-    // verification accepts.
-    let x_i32 = trait_::trait_application_attr(&context, "X", &[i32_ty]);
-    let x_i32_claim: melior::ir::Type = trait_::claim_type(&context, x_i32).into();
-    assert!(trait_::projection_resolution_verifies_at_use(
-        &module, projection, i64_ty, "Has_tuple", &[x_i32_claim]
-    ));
-}
-
-#[test]
 fn the_two_monomorphization_steps_render_through_discovery() {
     // The trait dialect contributes its lowering as two steps; the driver
     // discovers them over a context the dialect is registered in. A step is begun

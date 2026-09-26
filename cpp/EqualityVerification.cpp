@@ -43,14 +43,14 @@ static Type applyEqualityPremises(Type ty,
 }
 
 // verifyProjectionResolutionAtUse and verifyProjectionResolutionAtImpl share
-// the static core below; their contract -- the binding and the obligation
-// discharge -- is stated in full at their declarations in TraitOps.hpp.
+// the static core below; their contract -- the binding, the where-clause
+// equalities and the obligation discharge -- is stated in full at their
+// declarations in TraitOps.hpp.
 
-// Specializes `impl`'s own application assumptions for `selfClaim` through
-// `subst` -- the head-match substitution verification already built -- rather
-// than rebuilding one module-grade. Keeping the same rigid substitution here as
-// at the head match is what makes the assumptions the discharge check inspects
-// agree with the head the match produced.
+// Specializes `impl`'s own application assumptions through `subst` -- the
+// substitution the head was checked at -- rather than rebuilding one
+// module-grade. Keeping the one substitution is what makes the assumptions the
+// discharge check inspects agree with the head that was checked.
 static SmallVector<ClaimType> specializeAssumptionsThroughSubst(
     ImplOp impl, const SpecializationMap &subst) {
   return llvm::map_to_vector(impl.getAssumptionsAsClaims(), [&](ClaimType a) {
@@ -174,17 +174,108 @@ static bool dischargeApplicationObligation(
   return false;
 }
 
-// The binding check and obligation discharge, written once. On success it
-// returns the head-match substitution; `rigidHeadMatch` selects the head-match
-// mode. `witness` must be equality-armed.
+// The substitution a citation's `arguments` make for `impl`'s parameters (see
+// `ImplOp::substitutionFor`), each argument carried through `carry` -- the
+// instance substitution a clone's equality determines, or the arguments of an
+// enclosing citation.
+static FailureOr<SpecializationMap> substitutionCarriedBy(
+    ImplOp impl, ArrayRef<TypeBindingAttr> arguments,
+    const SpecializationMap &carry,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  if (failed(impl.substitutionFor(arguments, err)))
+    return failure();
+  SpecializationMap carried;
+  for (TypeBindingAttr binding : arguments)
+    carried.bind(cast<GenericTypeInterface>(binding.getParameter()),
+                 instantiate(binding.getArgument(), carry));
+  return carried;
+}
+
+// A citation's evidence for an impl's where-clause equalities is the site's
+// (`site`), then the impl's own declaration witnesses carried to the citation's
+// arguments.
+static NormalizationContext citationEvidence(
+    const NormalizationContext &site, ModuleOp module, ImplOp impl,
+    const SpecializationMap &arguments,
+    SmallVectorImpl<std::pair<Operation *, TraitApplicationAttr>> &inProgress);
+
+// Whether `impl` applies at `arguments` -- its where-clause equalities hold
+// there, read through `citationEvidence` -- by the judgment every citation of
+// an impl makes; a closed premise that evidence leaves unsettled does not hold.
+// `err`, when non-null, receives the refusal.
+static LogicalResult verifyImplAppliesAt(
+    const NormalizationContext &site, ModuleOp module, ImplOp impl,
+    const SpecializationMap &arguments,
+    SmallVectorImpl<std::pair<Operation *, TraitApplicationAttr>> &inProgress,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  if (!impl.getAssumptions().hasEqualities())
+    return success();
+  auto self = cast<ClaimType>(instantiate(Type(impl.getSelfClaim()), arguments));
+  return verifyEqualityPremisesHoldAt(
+      impl, self, arguments,
+      citationEvidence(site, module, impl, arguments, inProgress),
+      OpenPremise::DecidedAtInstances, StandingPremise::DecidedWithItsPremise,
+      err);
+}
+
+// Each of the impl's declaration witnesses is a sibling impl at the arguments
+// it carries. It was verified at the impl, where those arguments may have been
+// open; carried to `arguments` the sibling's own where-clause equalities are
+// read again, and a sibling that does not apply there contributes no rule -- a
+// witness citing a conditional impl holds only where that impl does. A sibling
+// citation already under check (`inProgress`) contributes nothing along that
+// path. Reading evidence never refuses: a witness whose rule cannot be built is
+// refused at the impl that declares it, and contributes none here.
+static NormalizationContext citationEvidence(
+    const NormalizationContext &site, ModuleOp module, ImplOp impl,
+    const SpecializationMap &arguments,
+    SmallVectorImpl<std::pair<Operation *, TraitApplicationAttr>> &inProgress) {
+  NormalizationContext evidence = site;
+  ArrayAttr declared = impl.getWitnessesAttr();
+  if (!declared)
+    return evidence;
+  for (auto sibling : declared.getAsRange<WitnessAttr>()) {
+    if (!isa<TypeEqualityAttr>(sibling.getPredicate()))
+      continue;
+    auto projection =
+        dyn_cast<ProjectionType>(instantiate(sibling.getProjection(), arguments));
+    auto siblingImpl = lookupSymbolFrom<ImplOp>(module, sibling.getImplRef());
+    if (!projection || !siblingImpl)
+      continue;
+    auto siblingSubst = substitutionCarriedBy(
+        siblingImpl, sibling.getArguments(), arguments, /*err=*/nullptr);
+    if (failed(siblingSubst))
+      continue;
+    std::pair<Operation *, TraitApplicationAttr> citation{
+        siblingImpl.getOperation(), projection.getTraitApplication()};
+    if (llvm::is_contained(inProgress, citation))
+      continue;
+    inProgress.push_back(citation);
+    bool applies = succeeded(verifyImplAppliesAt(
+        site, module, siblingImpl, *siblingSubst, inProgress, /*err=*/nullptr));
+    inProgress.pop_back();
+    if (applies)
+      evidence.addLocalProjectionRule(siblingImpl,
+                                      projection.getTraitApplication(),
+                                      *siblingSubst);
+  }
+  return evidence;
+}
+
+// The binding check, the where-clause equality check and the obligation
+// discharge, written once. On success it returns the substitution the
+// witness's arguments make; `rigidHeadMatch` selects the head-match mode.
+// `siteEvidence` builds what the where-clause equalities are read through
+// beyond the cited impl's own; it runs only for an impl declaring one.
+// `witness` must be equality-armed.
 static FailureOr<SpecializationMap> verifyProjectionResolutionCore(
     ModuleOp module, WitnessAttr witness,
     ArrayRef<TypeEqualityAttr> premises,
     ArrayRef<TraitApplicationAttr> obligationPremises,
     ArrayRef<WitnessAttr> dischargeWitnesses,
+    llvm::function_ref<NormalizationContext()> siteEvidence,
     bool rigidHeadMatch,
-    llvm::function_ref<InFlightDiagnostic()> err,
-    TypeEqualityAttr currentEquality = {}) {
+    llvm::function_ref<InFlightDiagnostic()> err) {
   assert(isa<TypeEqualityAttr>(witness.getPredicate()) &&
          "projection-resolution verification requires an equality-armed witness");
   Type projection = witness.getProjection();
@@ -204,13 +295,19 @@ static FailureOr<SpecializationMap> verifyProjectionResolutionCore(
     return failure();
   }
 
-  // Head match the cited impl against the projection's application. The impl-
-  // verification entry passes rigidHeadMatch: it instantiates only the cited impl's own
-  // generics against a null module, so a projection spelled in the projection's
-  // application stays rigid and is never resolved by a module-visible impl --
-  // an impl's verdict cannot then turn on the unrelated impls the module carries.
-  // The use-site entry leaves it clear and resolves the actual side's ground
-  // projections by module lookup.
+  // The cited impl's parameters take the arguments the witness carries, each
+  // by its key; nothing is read off the projection.
+  auto subst = implOp.substitutionFor(witness.getArguments(), err);
+  if (failed(subst))
+    return failure();
+
+  // The impl at those arguments must be an impl for the projection's
+  // application. The impl-verification entry passes rigidHeadMatch: the header
+  // is compared with no module, so a projection spelled in either stays rigid
+  // and is never resolved by a module-visible impl -- an impl's verdict cannot
+  // then turn on the unrelated impls the module carries. The use-site entry
+  // leaves it clear and resolves both sides' ground projections by module
+  // lookup.
   ClaimType selfClaim =
       ClaimType::get(module.getContext(), projectionTy.getTraitApplication());
   // XXX TODO a projection a declaration spells must be over its own self
@@ -219,11 +316,17 @@ static FailureOr<SpecializationMap> verifyProjectionResolutionCore(
   // evidence at a known index and this module read deletes with LookupScope and
   // the verifier DemandOrigins.
   ImplProjectionLookup byImplLookup(module, DemandOrigin::ProofVerification);
-  auto subst = implOp.buildSubstitutionForSelfClaim(
-      selfClaim, rigidHeadMatch ? Normalizer() : Normalizer(byImplLookup),
-      err);
-  if (failed(subst))
+  if (failed(verifyEqualAfterInstantiation(
+          Type(implOp.getSelfClaim()), *subst, Type(selfClaim),
+          rigidHeadMatch ? Normalizer() : Normalizer(byImplLookup),
+          /*err=*/nullptr))) {
+    if (err) err() << "impl '" << citedImpl
+                   << "' at the witness's arguments is an impl for "
+                   << instantiate(Type(implOp.getSelfClaim()), *subst)
+                   << ", not for the projection's application "
+                   << Type(selfClaim);
     return failure();
+  }
 
   auto bound = implOp.specializeAssociatedTypeBinding(
       projectionTy.getAssocName().getValue(), projectionTy.getAssocTypeArgs(),
@@ -247,32 +350,37 @@ static FailureOr<SpecializationMap> verifyProjectionResolutionCore(
     return failure();
   }
 
-  // The op's current endpoints may be a substitution instance of the witness's
-  // stored ones -- a clone specializes the stored projection and resolved into
-  // its own equality. The assumptions to discharge are the stored impl's
-  // assumptions carried to that instance, so the premises a clone supplies at
-  // its own spelling match. Without a current equality the stored endpoints
-  // stand in and the instance substitution is the identity.
-  SpecializationMap instanceSubst;
-  if (currentEquality) {
-    Type stored = TupleType::get(
-        module.getContext(), {witness.getProjection(), witness.getResolved()});
-    Type current = TupleType::get(
-        module.getContext(),
-        {currentEquality.getLhs(), currentEquality.getRhs()});
-    auto match = matchDeclaration(getTypeParametersIn(stored), stored, current,
-                                  /*normalize=*/Normalizer(), /*err=*/nullptr);
-    if (succeeded(match))
-      instanceSubst = *match;
+  // The cited impl applies only where its where-clause equalities hold, read at
+  // the witness's arguments by the judgment every citation of an impl makes. A
+  // reading still spelling a type variable is decided at the instances made of
+  // this template, where a clone carries the witness's arguments to ground; a
+  // closed reading must be settled by the citation's evidence, or rest on one of
+  // the cited impl's premises.
+  if (implOp.getAssumptions().hasEqualities()) {
+    NormalizationContext site = siteEvidence();
+    // XXX TODO a projection a declaration spells must be over its own self
+    // application, a where-clause application, a trait requirement or a
+    // declared witness (Rust's projection well-formedness rule), so every
+    // projection has evidence at a known index and this module read deletes
+    // with LookupScope and the verifier DemandOrigins. Until then a use reads a
+    // closed projection no premise stands behind -- a compiler rule's binding,
+    // a sibling projection its template left generic -- through the module's
+    // impls, as its head comparison and its obligations do.
+    if (!rigidHeadMatch)
+      site.setModuleLookup(module, LookupScope::Ground,
+                           DemandOrigin::ProofVerification);
+    SmallVector<std::pair<Operation *, TraitApplicationAttr>> inProgress;
+    if (failed(verifyImplAppliesAt(site, module, implOp, *subst, inProgress,
+                                   err)))
+      return failure();
   }
 
-  // Obligation-discharge check. The cited impl's own assumptions -- specialized
-  // through the same rigid head-match substitution, then carried to the op's
-  // current endpoints -- must each be discharged, proof-stripped and modulo the
-  // cited equality premises, by a hypothetical cover (arm i) or a declared
-  // discharge citation (arm ii). The impl's trait requirements are deliberately
-  // not reached here (they may quantify over GAT variables with no ground
-  // instance at the witness).
+  // Obligation-discharge check. The cited impl's own assumptions, at the
+  // witness's arguments carried to the op's current endpoints, must each be
+  // discharged, proof-stripped and modulo the cited equality premises, by a
+  // hypothetical cover (arm i) or a declared discharge citation (arm ii). The
+  // impl's trait requirements are deliberately not reached here (they may
+  // quantify over GAT variables with no ground instance at the witness).
   ObligationDischargeContext dischargeCtx{module,
                                           premises,
                                           obligationPremises,
@@ -282,7 +390,6 @@ static FailureOr<SpecializationMap> verifyProjectionResolutionCore(
   for (ClaimType assumption :
        specializeAssumptionsThroughSubst(implOp, *subst)) {
     Type want = Type(assumption.asUnproven());
-    want = instantiate(want, instanceSubst);
     // At the use-site entry, read the obligation modulo the module's ground
     // impls, so an assumption spelling a ground projection is compared as its
     // resolution -- a non-converging chain refuses.
@@ -315,13 +422,13 @@ LogicalResult mlir::trait::verifyProjectionResolutionAtUse(
     ModuleOp module, WitnessAttr witness,
     ArrayRef<TypeEqualityAttr> premises,
     ArrayRef<TraitApplicationAttr> obligationPremises,
-    llvm::function_ref<InFlightDiagnostic()> err,
-    TypeEqualityAttr currentEquality) {
+    llvm::function_ref<NormalizationContext()> siteEvidence,
+    llvm::function_ref<InFlightDiagnostic()> err) {
   if (failed(verifyProjectionResolutionCore(module, witness, premises,
                                             obligationPremises,
                                             /*dischargeWitnesses=*/{},
-                                            /*rigidHeadMatch=*/false, err,
-                                            currentEquality)))
+                                            siteEvidence,
+                                            /*rigidHeadMatch=*/false, err)))
     return failure();
   return success();
 }
@@ -332,9 +439,9 @@ FailureOr<SpecializationMap> mlir::trait::verifyProjectionResolutionAtImpl(
     ArrayRef<TraitApplicationAttr> obligationPremises,
     ArrayRef<WitnessAttr> dischargeWitnesses,
     llvm::function_ref<InFlightDiagnostic()> err) {
-  return verifyProjectionResolutionCore(module, witness, premises,
-                                        obligationPremises, dischargeWitnesses,
-                                        /*rigidHeadMatch=*/true, err);
+  return verifyProjectionResolutionCore(
+      module, witness, premises, obligationPremises, dischargeWitnesses,
+      [] { return NormalizationContext(); }, /*rigidHeadMatch=*/true, err);
 }
 
 // A distinct sentinel type per child position. A shell is only ever compared

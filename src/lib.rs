@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 use melior::{
     Context, pass::Pass, StringRef,
-    ir::{AttributeLike, Identifier, Location, Module, Operation, Type, TypeLike, Value, ValueLike},
+    ir::{AttributeLike, Identifier, Location, Operation, Type, TypeLike, Value, ValueLike},
     ir::attribute::Attribute,
     ir::operation::{OperationBuilder, OperationLike},
 };
 use mlir_sys::{
-    MlirAttribute, MlirContext, MlirLocation, MlirModule,
+    MlirAttribute, MlirContext, MlirLocation,
     MlirOperation, MlirPass, MlirStringRef,
     MlirType, MlirValue,
     mlirArrayAttrGet, mlirIdentifierGet, mlirIntegerAttrGet, mlirIntegerTypeGet,
@@ -80,19 +80,13 @@ unsafe extern "C" {
                               assoc_type_args: *const MlirType, num_assoc_type_args: isize) -> MlirType;
     fn traitTypeEqualityAttrGet(ctx: MlirContext,
                                 lhs: MlirType, rhs: MlirType) -> MlirAttribute;
+    fn traitTypeBindingAttrGet(ctx: MlirContext,
+                               parameter: MlirType, argument: MlirType) -> MlirAttribute;
     fn traitWitnessAttrGet(ctx: MlirContext,
                            predicate: MlirAttribute,
-                           impl_name: MlirStringRef) -> MlirAttribute;
+                           impl_name: MlirStringRef,
+                           arguments: *const MlirAttribute, num_arguments: isize) -> MlirAttribute;
     fn traitCoercePendingAccepts(input: MlirType, result: MlirType) -> bool;
-    fn traitProjectionResolutionVerifiesAtUse(module: MlirModule,
-                                    projection: MlirType, resolved: MlirType,
-                                    impl_name: MlirStringRef,
-                                    premises: *const MlirType, num_premises: isize) -> bool;
-    fn traitProjectionResolutionVerifiesAtImpl(module: MlirModule,
-                                    projection: MlirType, resolved: MlirType,
-                                    impl_name: MlirStringRef,
-                                    premises: *const MlirType, num_premises: isize,
-                                    discharges: *const MlirAttribute, num_discharges: isize) -> bool;
     fn traitAssocTypeOpCreate(loc: MlirLocation,
                               name: MlirStringRef,
                               bound_type: MlirType,
@@ -544,13 +538,33 @@ pub fn type_equality_attr<'c>(ctx: &'c Context, lhs: Type<'c>, rhs: Type<'c>) ->
     if attr.to_raw().ptr.is_null() { None } else { Some(attr) }
 }
 
-/// The `#trait.witness<predicate by @impl>` attribute pairing `predicate` (a
-/// type equality resolving a projection, or a `#trait.application` the impl
-/// discharges) with `impl_name` as the impl that witnesses it. Returns `None`
-/// if `predicate` is neither arm or construction fails.
-pub fn witness_attr<'c>(ctx: &'c Context, predicate: Attribute<'c>, impl_name: &str) -> Option<Attribute<'c>> {
+/// The `#trait.witness<predicate by @impl[!P = T, ...]>` attribute pairing
+/// `predicate` (a type equality resolving a projection, or a
+/// `#trait.application` the impl discharges) with `impl_name` as the impl that
+/// witnesses it. A projection-resolution witness carries the cited impl's
+/// substitution: `arguments` pairs each of the impl's own type parameters, as
+/// the impl spells it, with the argument it takes. An application witness
+/// carries none. Returns `None` if `predicate` is neither arm, a key is not a
+/// type parameter, or construction fails.
+pub fn witness_attr<'c>(
+    ctx: &'c Context,
+    predicate: Attribute<'c>,
+    impl_name: &str,
+    arguments: &[(Type<'c>, Type<'c>)],
+) -> Option<Attribute<'c>> {
+    let mut bindings = Vec::with_capacity(arguments.len());
+    for (parameter, argument) in arguments {
+        let binding = unsafe {
+            traitTypeBindingAttrGet(ctx.to_raw(), parameter.to_raw(), argument.to_raw())
+        };
+        if binding.ptr.is_null() {
+            return None;
+        }
+        bindings.push(binding);
+    }
     let attr = unsafe { Attribute::from_raw(traitWitnessAttrGet(
-        ctx.to_raw(), predicate.to_raw(), StringRef::new(impl_name).to_raw())) };
+        ctx.to_raw(), predicate.to_raw(), StringRef::new(impl_name).to_raw(),
+        bindings.as_ptr(), bindings.len() as isize)) };
     if attr.to_raw().ptr.is_null() { None } else { Some(attr) }
 }
 
@@ -610,63 +624,6 @@ pub fn coerce_pending_accepts(input: Type, result: Type) -> bool {
     unsafe { traitCoercePendingAccepts(input.to_raw(), result.to_raw()) }
 }
 
-/// Answer whether the projection-resolution witness `(projection, resolved)`
-/// cited to `impl_name` verifies at a use site, looking that impl up in
-/// `module`. `premises` are claim types split by arm: the equality claims are
-/// the comparison modulus (usually empty), the application claims cover the
-/// cited impl's own assumptions. Ground projections resolve by module lookup, so
-/// the verdict may consult the module's other impls. Refusal is a plain `false`,
-/// not a diagnostic.
-pub fn projection_resolution_verifies_at_use(
-    module: &Module,
-    projection: Type,
-    resolved: Type,
-    impl_name: &str,
-    premises: &[Type],
-) -> bool {
-    let raw_premises: Vec<MlirType> = premises.iter().map(|t| t.to_raw()).collect();
-    unsafe {
-        traitProjectionResolutionVerifiesAtUse(
-            module.to_raw(),
-            projection.to_raw(),
-            resolved.to_raw(),
-            StringRef::new(impl_name).to_raw(),
-            raw_premises.as_ptr(),
-            raw_premises.len() as isize,
-        )
-    }
-}
-
-/// Answer whether the projection-resolution witness `(projection, resolved)`
-/// cited to `impl_name` verifies at the citing impl's verification, looking that impl
-/// up in `module`. `premises` are claim types split by arm: the equality claims
-/// are the comparison modulus, the application claims and the `discharges`
-/// citations cover the cited impl's own assumptions. The projection's
-/// application stays rigid, so the verdict never depends on unrelated module
-/// impls. Refusal is a plain `false`, not a diagnostic.
-pub fn projection_resolution_verifies_at_impl<'c>(
-    module: &Module,
-    projection: Type,
-    resolved: Type,
-    impl_name: &str,
-    premises: &[Type],
-    discharges: &[Attribute<'c>],
-) -> bool {
-    let raw_premises: Vec<MlirType> = premises.iter().map(|t| t.to_raw()).collect();
-    let raw_discharges: Vec<MlirAttribute> = discharges.iter().map(|a| a.to_raw()).collect();
-    unsafe {
-        traitProjectionResolutionVerifiesAtImpl(
-            module.to_raw(),
-            projection.to_raw(),
-            resolved.to_raw(),
-            StringRef::new(impl_name).to_raw(),
-            raw_premises.as_ptr(),
-            raw_premises.len() as isize,
-            raw_discharges.as_ptr(),
-            raw_discharges.len() as isize,
-        )
-    }
-}
 
 /// Create a `trait.assoc_type` op. Pass `None` for a bare declaration (inside a
 /// trait body) or `Some(type)` for a binding (inside an impl body).

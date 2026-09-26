@@ -65,6 +65,17 @@ inline std::optional<std::pair<Type, WalkResult>> respellEqualityEndpoints(
       WalkResult::skip());
 }
 
+/// The clone rule for a projection-resolution witness: rebuild it with `respell`
+/// applied to its endpoints and to every argument it carries, atomically,
+/// through the checked constructor, so the witness a clone holds is the instance
+/// its claim is. The keys are the cited impl's own parameters, which no clone
+/// substitutes. Answers nullopt for an application-armed witness and when the
+/// rebuilt witness does not construct -- the op then keeps its stored witness,
+/// which its respelled claim no longer matches and verification refuses -- and
+/// otherwise always skips the result's interior.
+std::optional<std::pair<Attribute, WalkResult>> respellWitness(
+    WitnessAttr witness, llvm::function_ref<Type(Type)> respell);
+
 /// A replacer whose equality endpoints are a leaf.
 ///
 /// An equality's endpoints are ordinary sub-elements, so every walk reaches
@@ -78,7 +89,11 @@ inline std::optional<std::pair<Type, WalkResult>> respellEqualityEndpoints(
 /// attribute rather than on the claim because a bare `TypeEqualityAttr` stands
 /// in attribute positions with no claim around it: the witness attribute of an
 /// equality-arm `trait.witness`, and the `assumptions` and `witnesses` arrays of
-/// `trait.impl`. The one sanctioned mover is `respellEqualityEndpoints`.
+/// `trait.impl`. A projection-resolution witness is sealed whole: the type
+/// arguments it carries are read with its endpoints, so rewriting either alone
+/// would pair arguments with an equality they were not chosen for. The
+/// sanctioned movers are `respellEqualityEndpoints` and `respellWitness`, which
+/// a clone registers together.
 AttrTypeReplacer makeEndpointSealedReplacer();
 
 /// The sealed replacer above plus the one rule every ground-projection rewrite
@@ -278,6 +293,26 @@ enum class OpenPremise {
   /// stands over, and a citation of that proof reads nothing inside it, so a
   /// premise the claim leaves open is one no later reading decides.
   RefusedHere
+};
+
+/// Where an equality premise a citation reads closed -- no type variable left
+/// -- but still spelling a projection its evidence does not resolve is decided.
+enum class StandingPremise {
+  /// The stage's exit, which reads every citation standing there through what
+  /// selection settled.
+  DecidedAtStageExit,
+
+  /// Where the evidence for each projection it still spells stands. A
+  /// projection over one of the cited impl's where-clause applications, at the
+  /// citation, rests on the premise discharging that application: a proof has
+  /// resolved it already, an allegation the stage settles, a hypothesis the
+  /// frame's caller supplies -- so it is left standing. A projection over any
+  /// other application rests on nothing the citation carries, and the premise
+  /// is refused (invalid_witness_premise_unsettled.mlir): the stage's leftover
+  /// settlement reads a witness's spelling through the module's impls, which is
+  /// not evidence. This is the projection well-formedness rule the
+  /// module-lookup XXX TODOs name, applied to one citation's premises.
+  DecidedWithItsPremise
 };
 
 /// What deriving each proven obligation produced, kept for as long as the proof
@@ -846,8 +881,7 @@ inline Type applySubstitutionOnce(const llvm::DenseMap<Type,Type> &subst,
 
   // Move the equality endpoints the seal above holds as a leaf, applying the
   // generic-keyed part of the map alone: an endpoint receives variable
-  // bindings, never a projection or evidence binding resolved inside it, which
-  // a witness verifier's single-substitution instance check would break.
+  // bindings, never a projection or evidence binding resolved inside it.
   llvm::DenseMap<Type, Type> genericKeyed = specialization.toTypeMap();
   replacer.addReplacement(
       [genericKeyed](ClaimType claim)
