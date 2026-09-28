@@ -11,7 +11,6 @@ include "mlir/IR/OpBase.td"
 include "mlir/IR/RegionKindInterface.td"
 include "mlir/IR/SymbolInterfaces.td"
 include "Trait.td"
-include "TraitAttrInterfaces.td"
 include "TraitTypes.td"
 
 
@@ -405,15 +404,6 @@ def ImplOp : TraitDialectOp<"impl", [
     the impl that supplies it, and the discharge recursion resolves every
     discharger by symbol without scanning the module.
 
-    An impl a dialect's generator produced as an instance of one of its impl
-    rules carries that rule after its application, `by <rule>` (an attribute
-    implementing `RuleAttrInterface`): its provenance, which no verifier reads.
-    A declared impl carries none.
-
-    ```mlir
-    trait.impl for @Convergence[i64] by #coop.rule<convergence> { ... }
-    ```
-
     A witness for a bound requirement of the trait -- a requirement quantified
     over variables of its own, a generic associated type's bound -- names the
     requirement by its position and proves its conclusion under its binder, for
@@ -450,7 +440,6 @@ def ImplOp : TraitDialectOp<"impl", [
     PredicateArrayAttr:$assumptions,
     OptionalAttr<TypedArrayAttrBase<WitnessAttr,
         "array of impl witnesses">>:$witnesses,
-    OptionalAttr<RuleAttrInterface>:$rule,
     OptionalAttr<StrAttr>:$sym_visibility
   );
   let regions = (region SizedRegion<1>:$body);
@@ -849,22 +838,12 @@ def AllegeOp : TraitDialectOp<"allege", [
       // polymorphic: deferred to instantiate-monomorphs
       %q = trait.allege @Printable[!trait.poly<0>] unsafe
 
-    Rule form. `by <rule>` names the impl rule that asserts the claim -- an
-    attribute implementing `RuleAttrInterface`, owned and interpreted by the
-    dialect whose generator produces the rule's impls -- and `given(%claims)`
-    the facts the rule consulted. The assertion is trusted: impl selection
-    proves the claim as it proves any allegation, by whichever impl it
-    selects, a declared impl included, and neither the rule nor the premises
-    are compared with the impl it selects. A claim nothing proves is refused
-    here, naming the rule. A claim a rule asserts consulting nothing takes no
-    `given`.
-
-      %c = trait.allege @Convergence[!T] by #coop.rule<convergence> unsafe
+    An allegation is a trusted assertion and carries no justification: impl
+    selection proves its claim by whichever impl it selects, and a claim
+    nothing proves is refused here.
   }];
 
-  let arguments = (ins OptionalAttr<UnitAttr>:$unsafe,
-                       OptionalAttr<RuleAttrInterface>:$rule,
-                       Variadic<Claim>:$premises);
+  let arguments = (ins OptionalAttr<UnitAttr>:$unsafe);
 
   let results = (outs Claim:$result);
 
@@ -872,8 +851,7 @@ def AllegeOp : TraitDialectOp<"allege", [
     OpBuilder<(ins "::mlir::trait::TraitApplicationAttr":$app), [{
       mlir::MLIRContext* ctx = $_builder.getContext();
       auto claimTy = ClaimType::get(ctx, app);
-      return build($_builder, $_state, claimTy, /*unsafe=*/nullptr,
-                   /*rule=*/nullptr, /*premises=*/::mlir::ValueRange{});
+      return build($_builder, $_state, claimTy, /*unsafe=*/nullptr);
     }]>,
     OpBuilder<(ins "::mlir::trait::TraitApplicationAttr":$app,
                    "bool":$isUnsafe), [{
@@ -882,21 +860,7 @@ def AllegeOp : TraitDialectOp<"allege", [
       auto unsafeAttr = isUnsafe
         ? $_builder.getUnitAttr()
         : mlir::UnitAttr();
-      return build($_builder, $_state, claimTy, unsafeAttr, /*rule=*/nullptr,
-                   /*premises=*/::mlir::ValueRange{});
-    }]>,
-    // the rule form
-    OpBuilder<(ins "::mlir::trait::TraitApplicationAttr":$app,
-                   "bool":$isUnsafe,
-                   "::mlir::trait::RuleAttrInterface":$ruleIdentity,
-                   "::mlir::ValueRange":$rulePremises), [{
-      mlir::MLIRContext* ctx = $_builder.getContext();
-      auto claimTy = ClaimType::get(ctx, app);
-      auto unsafeAttr = isUnsafe
-        ? $_builder.getUnitAttr()
-        : mlir::UnitAttr();
-      return build($_builder, $_state, claimTy, unsafeAttr, ruleIdentity,
-                   rulePremises);
+      return build($_builder, $_state, claimTy, unsafeAttr);
     }]>
   ];
 

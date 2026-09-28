@@ -428,18 +428,11 @@ MlirAttribute traitWitnessBodyGetRequirementHop(MlirContext ctx,
 }
 
 MlirAttribute traitWitnessBodyGetAllegation(MlirContext ctx,
-                                            MlirAttribute application,
-                                            MlirAttribute rule) {
+                                            MlirAttribute application) {
   auto app = dyn_cast_or_null<TraitApplicationAttr>(unwrap(application));
   if (!app)
     return {};
-  RuleAttrInterface identity;
-  if (!mlirAttributeIsNull(rule)) {
-    identity = dyn_cast<RuleAttrInterface>(unwrap(rule));
-    if (!identity)
-      return {};
-  }
-  return wrap(AllegationAttr::get(unwrap(ctx), app, identity));
+  return wrap(AllegationAttr::get(unwrap(ctx), app));
 }
 
 MlirType traitBoundVarTypeGet(MlirContext wrappedCtx, unsigned int position) {

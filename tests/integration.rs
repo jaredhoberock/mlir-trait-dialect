@@ -1035,7 +1035,7 @@ fn the_body_builders_state_a_requirement_hop_and_an_allegation() {
     impl_op.region(0).unwrap().first_block().unwrap()
         .append_operation(trait_::assoc_type(loc, "A", Some(i64_ty), &[x]));
     let marker_i64 = trait_::trait_application_attr(&context, "Marker", &[i64_ty]);
-    trait_::set_impl_witnesses(&impl_op, &[evidence(trait_::WitnessBody::Allegation { application: marker_i64, rule: None })]);
+    trait_::set_impl_witnesses(&impl_op, &[evidence(trait_::WitnessBody::Allegation(marker_i64))]);
     module.body().append_operation(impl_op);
 
     assert!(module.as_operation().verify());
@@ -1112,51 +1112,6 @@ trait.impl private @Tr_tuple for @Tr[tuple<!trait.poly<1>>] where [@Tr[!trait.po
             && rendered.contains("from @Tr_tuple[!trait.poly<1> = !trait.poly<0>] given(%arg0, %arg1)"),
         "the proof and the derive print the arguments they state: {rendered}"
     );
-}
-
-#[test]
-fn the_rule_allegation_builder_states_a_rule_the_verifier_reads() {
-    let registry = DialectRegistry::new();
-    register_all_dialects(&registry);
-    let context = Context::new();
-    context.append_dialect_registry(&registry);
-    trait_::register(&context);
-    context.load_all_available_dialects();
-
-    let source = "\
-trait.trait private @A[!trait.poly<0>] {}\n\
-trait.trait private @B[!trait.poly<0>] {}\n";
-    let module = Module::parse(&context, source).expect("the fixture module parses");
-    let loc = Location::unknown(&context);
-    let i32_ty: melior::ir::Type = IntegerType::new(&context, 32).into();
-    let b_i32 = trait_::trait_application_attr(&context, "B", &[i32_ty]);
-    let b_claim: melior::ir::Type = trait_::claim_type(&context, b_i32).into();
-
-    // A rule is an attribute of the dialect implementing it, which this
-    // dialect's tests do not load: an attribute implementing no rule stands in,
-    // and the verifier refuses it.
-    let rule = StringAttribute::new(&context, "not.a.rule").into();
-    let block = Block::new(&[(b_claim, loc)]);
-    block.append_operation(trait_::allege_by_rule(
-        loc,
-        trait_::trait_application_attr(&context, "A", &[i32_ty]),
-        rule,
-        &[block.argument(0).unwrap().into()],
-        false,
-    ));
-    block.append_operation(func::r#return(&[], loc));
-    let body = Region::new();
-    body.append_block(block);
-    module.body().append_operation(func::func(
-        &context,
-        StringAttribute::new(&context, "f"),
-        TypeAttribute::new(FunctionType::new(&context, &[b_claim], &[]).into()),
-        body,
-        &[],
-        loc,
-    ));
-
-    assert!(!module.as_operation().verify());
 }
 
 #[test]

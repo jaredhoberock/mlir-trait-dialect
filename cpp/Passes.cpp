@@ -537,16 +537,6 @@ static uint64_t respellProvenClaimsInPlace(const ImplResolver &resolver,
   return positionsRespelled;
 }
 
-/// `diagnostic`, naming the rule asserting `op`'s claim when it is an
-/// allegation naming one: the claim's refusal is the rule's assertion refused.
-static InFlightDiagnostic namingAssertingRule(Operation *op,
-                                           InFlightDiagnostic diagnostic) {
-  if (auto allege = dyn_cast<AllegeOp>(op))
-    if (RuleAttrInterface rule = allege.getRuleAttr())
-      diagnostic << "by rule " << rule << ": ";
-  return diagnostic;
-}
-
 /// An allegation a witness body rests on: the impl stating the witness, the
 /// bound requirement of its trait the witness is for, and the allegation.
 struct AllegationBehind {
@@ -631,8 +621,8 @@ allegationBehindBody(Attribute body, ClaimType source, ImplOp impl,
 /// `op` committed to, refusing through `err` where it is not.
 ///
 /// A derive stating its impl's arguments commits to a proof through that impl.
-/// Any other op commits to nothing: an allegation naming a rule is a trusted
-/// assertion, which any proof selection makes of its claim meets.
+/// Any other op commits to nothing: an allegation is a trusted assertion, which
+/// any proof selection makes of its claim meets.
 static LogicalResult verifyProofKeepsCommitment(
     Operation *op, FlatSymbolRefAttr proof,
     llvm::function_ref<InFlightDiagnostic()> err) {
@@ -732,7 +722,7 @@ struct ProveClaimResultPattern : public RewritePattern {
 
     DemandFrame frame(op->getLoc());
 
-    auto errFn = [&] { return namingAssertingRule(op, op->emitOpError()); };
+    auto errFn = [&] { return op->emitOpError(); };
 
     // The claim is demanded where it stands: the proof this op will name is a
     // symbol its own module resolves, and the impls that may serve it are the
@@ -822,8 +812,7 @@ FailureOr<ImplResolver> resolveImpls(ModuleOp module) {
   module.walk([&](AllegeOp op) {
     if (!op.getClaim().isMonomorphic() || isForeign(op)) return;
     hasLeftovers = true;
-    namingAssertingRule(op, op.emitError())
-        << "unresolved monomorphic trait.allege after resolve-impls";
+    op.emitError() << "unresolved monomorphic trait.allege after resolve-impls";
   });
   if (hasLeftovers) return failure();
 
@@ -2313,8 +2302,7 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
         continue;
     }
     InFlightDiagnostic report =
-        namingAssertingRule(op, op->emitError())
-        << "unproven monomorphic claim " << claim
+        op->emitError() << "unproven monomorphic claim " << claim
         << " after instantiate-monomorphs";
     // A hop off a proven claim reads its requirement's evidence out of the
     // source's proof, and a citation nothing decides leaves the hop's claim

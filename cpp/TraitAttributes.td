@@ -224,19 +224,10 @@ def AllegationAttr : AttrDef<TraitDialect, "Allegation", []> {
     there is refused at that use, naming the allegation the requirement's
     evidence rests on through any hops -- the stating impl's own, or the one
     behind the premise or supertrait a hop reads. Printed within a witness as
-    `allege @Trait[...]`, or `allege @Trait[...] by <rule>` naming the impl
-    rule that asserts the application, as `trait.allege` names one: `rule` is
-    an attribute implementing `RuleAttrInterface`, trusted as `trait.allege`
-    trusts it. The form naming no rule is deleted together with
-    `trait.allege`'s.
+    `allege @Trait[...]`. Like `trait.allege`, it is a trusted assertion and
+    carries no justification.
   }];
-  let parameters = (ins "TraitApplicationAttr":$application,
-                        OptionalParameter<"RuleAttrInterface">:$rule);
-  let builders = [
-    AttrBuilder<(ins "TraitApplicationAttr":$application), [{
-      return $_get($_ctxt, application, RuleAttrInterface());
-    }]>
-  ];
+  let parameters = (ins "TraitApplicationAttr":$application);
   let hasCustomAssemblyFormat = 1;
 }
 

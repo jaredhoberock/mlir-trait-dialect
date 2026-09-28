@@ -13,7 +13,6 @@ namespace mlir::trait {
   class SpecializationMap;
 }
 
-#include <TraitAttrInterfaces.hpp.inc>
 
 #define GET_ATTRDEF_CLASSES
 #include <TraitAttributes.hpp.inc>
