@@ -408,6 +408,29 @@ pub fn assume<'c>(loc: Location<'c>,
         .add_results(&[claim]))
 }
 
+/// Build a positional `trait.assume` citing the self application of the trait
+/// or impl whose method it stands in. `claim` spells that application's claim,
+/// which verification checks.
+pub fn assume_self<'c>(loc: Location<'c>,
+                       claim: Type<'c>,
+) -> Operation<'c> {
+    build_op(OperationBuilder::new("trait.assume", loc)
+        .add_attributes(&[(identifier(loc, "entry"), unit_attr(loc))])
+        .add_results(&[claim]))
+}
+
+/// Build a positional `trait.assume` citing entry `position` of the where
+/// clause of the trait or impl whose method it stands in. `claim` spells the
+/// claim that entry states, which verification checks.
+pub fn assume_entry<'c>(loc: Location<'c>,
+                        position: usize,
+                        claim: Type<'c>,
+) -> Operation<'c> {
+    build_op(OperationBuilder::new("trait.assume", loc)
+        .add_attributes(&[(identifier(loc, "entry"), index_attr(loc, position))])
+        .add_results(&[claim]))
+}
+
 /// The `!trait.poly<label>` type. A label names a position in the declaration
 /// that binds it, so it is non-negative and local to that declaration.
 pub fn poly_type<'c>(

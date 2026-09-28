@@ -782,3 +782,70 @@ func.func @host(%x: i32) -> i32 {\n\
          {after}"
     );
 }
+
+/// The method body of `@A_gen`, the last operation of `module`: a positional
+/// assume is placed where it cites that impl's entries.
+fn impl_method_body<'c, 'a>(module: &'a Module<'c>) -> melior::ir::BlockRef<'c, 'a> {
+    let mut last = module.body().first_operation().expect("the fixture holds operations");
+    while let Some(next) = last.next_in_block() {
+        last = next;
+    }
+    let method = last
+        .region(0)
+        .expect("an impl has a body")
+        .first_block()
+        .expect("an impl body has a block")
+        .first_operation()
+        .expect("the impl holds its method");
+    method
+        .region(0)
+        .expect("a method has a body")
+        .first_block()
+        .expect("the method body has a block")
+}
+
+#[test]
+fn the_positional_assume_builders_cite_the_entries_the_verifier_reads() {
+    let registry = DialectRegistry::new();
+    register_all_dialects(&registry);
+    let context = Context::new();
+    context.append_dialect_registry(&registry);
+    trait_::register(&context);
+    context.load_all_available_dialects();
+
+    // @A_gen's where clause states @B[T] at position 0 and @C[T] at position 1.
+    let source = "\
+trait.trait private @B[!trait.poly<0>] { func.func private @b(!trait.poly<0>) -> i64 }\n\
+trait.trait private @C[!trait.poly<0>] { func.func private @c(!trait.poly<0>) -> i64 }\n\
+trait.trait private @A[!trait.poly<0>] { func.func private @a(!trait.poly<0>) -> i64 }\n\
+trait.impl private @A_gen for @A[!trait.poly<0>] where [@B[!trait.poly<0>], @C[!trait.poly<0>]] {\n\
+  func.func @a(%x: !trait.poly<0>) -> i64 {\n\
+    %c = arith.constant 0 : i64\n\
+    return %c : i64\n\
+  }\n\
+}\n";
+    let loc = Location::unknown(&context);
+    let t = trait_::poly_type(&context, 0);
+    let claim = |name: &str| -> melior::ir::Type {
+        trait_::claim_type(&context, trait_::trait_application_attr(&context, name, &[t])).into()
+    };
+
+    // Each builder writes the entry the verifier reads, and the result type
+    // spells the claim that entry states.
+    let module = Module::parse(&context, source).expect("the fixture module parses");
+    let body = impl_method_body(&module);
+    body.insert_operation(0, trait_::assume_self(loc, claim("A")));
+    body.insert_operation(1, trait_::assume_entry(loc, 1, claim("C")));
+    assert!(module.as_operation().verify());
+    let rendered = module.as_operation().to_string();
+    assert!(
+        rendered.contains("trait.assume self : !trait.claim<@A[!trait.poly<0>]>")
+            && rendered.contains("trait.assume 1 : !trait.claim<@C[!trait.poly<0>]>"),
+        "the citations print as position and claim: {rendered}"
+    );
+
+    // A claim other than the entry at the position is refused.
+    let module = Module::parse(&context, source).expect("the fixture module parses");
+    impl_method_body(&module).insert_operation(0, trait_::assume_entry(loc, 0, claim("C")));
+    assert!(!module.as_operation().verify());
+}

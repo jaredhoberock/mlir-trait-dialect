@@ -891,8 +891,34 @@ def AssumeOp : TraitDialectOp<"assume", [
         ...
       }
 
+    Positional form. Inside a method of a `trait.trait` or `trait.impl`, an
+    assume may instead cite an entry of the enclosing declaration by position:
+    `self`, the declaration's own self application, or `N`, entry `N` of its
+    `where` clause -- the trait's `requirements`, the impl's `assumptions`. The
+    result type spells the claim the entry states, and the verifier refuses an
+    assume whose spelled claim is not exactly that entry, so the text reads as
+    the fact while the position is what the op means. Two entries that spell
+    one claim stay two citations. An entry that binds parameters of its own is
+    selected with `trait.project` and its type arguments instead.
+
+      trait.impl @A_gen for @A[!T] where [@B[!T], !trait.proj<@B[!T], "Out"> = i64] {
+        func.func @method_a(%self: !T) -> i32 {
+          %s = trait.assume self : !trait.claim<@A[!T]>
+          %b = trait.assume 0 : !trait.claim<@B[!T]>
+          %e = trait.assume 1 : !trait.claim<!trait.proj<@B[!T], "Out"> = i64>
+          ...
+        }
+      }
+
     Note that `trait.assume` is the *only* context-sensitive operation in this dialect.
   }];
+
+  // Absent for the form that names its claim by spelling; `unit` for the
+  // enclosing declaration's self application; an index for an entry of its
+  // `where` clause.
+  let arguments = (ins
+    OptionalAttr<AnyAttrOf<[UnitAttr, ConfinedAttr<I64Attr, [IntNonNegative]>]>>:$entry
+  );
 
   let results = (outs Claim:$result);
 
@@ -906,13 +932,47 @@ def AssumeOp : TraitDialectOp<"assume", [
     }
 
     TraitOp getTrait();
+
+    /// Whether this assume cites the enclosing declaration's self application
+    /// by position.
+    bool citesSelf() {
+      return ::llvm::isa_and_nonnull<UnitAttr>(getEntryAttr());
+    }
+
+    /// The `where`-clause entry this assume cites by position, if it cites
+    /// one.
+    std::optional<uint64_t> getWherePosition() {
+      if (auto position = ::llvm::dyn_cast_or_null<IntegerAttr>(getEntryAttr()))
+        return position.getInt();
+      return std::nullopt;
+    }
+
+    /// Whether this assume cites an entry of its enclosing declaration by
+    /// position rather than naming its claim by spelling.
+    bool isPositional() { return static_cast<bool>(getEntryAttr()); }
   }];
 
+  let skipDefaultBuilders = 1;
   let builders = [
+    // the form naming its claim by spelling
+    OpBuilder<(ins "::mlir::Type":$claim), [{
+      $_state.addTypes(claim);
+    }]>,
     // convenience builds from a TraitApplicationAttr instead of a ClaimType
     OpBuilder<(ins "::mlir::trait::TraitApplicationAttr":$assumption), [{
       auto ctx = $_builder.getContext();
       build($_builder, $_state, ClaimType::get(ctx, assumption));
+    }]>,
+    // the positional form citing the enclosing declaration's self application
+    OpBuilder<(ins "::mlir::Type":$claim, "::mlir::UnitAttr":$self), [{
+      $_state.addAttribute("entry", self);
+      $_state.addTypes(claim);
+    }]>,
+    // the positional form citing entry `position` of the enclosing
+    // declaration's where clause
+    OpBuilder<(ins "::mlir::Type":$claim, "uint64_t":$position), [{
+      $_state.addAttribute("entry", $_builder.getI64IntegerAttr(position));
+      $_state.addTypes(claim);
     }]>
   ];
 

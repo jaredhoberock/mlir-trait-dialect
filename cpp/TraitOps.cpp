@@ -1383,6 +1383,28 @@ FailureOr<func::FuncOp> ImplOp::getOrSpecializeMethod(OpBuilder& builder, String
   // attempted; there is no method here to answer with.
   if (!specialized)
     return failure();
+
+  // A positional assume in the trait's method cites the trait's where clause,
+  // and in this impl a where-clause position names the impl's own entries. The
+  // trait's requirement at that position is the one this impl's self claim
+  // carries there, so the clone selects it off that claim: `self` still names
+  // the declaration's own application, which in this impl is its own.
+  SmallVector<AssumeOp> requirementAssumes;
+  specialized.walk([&](AssumeOp assume) {
+    if (assume.getWherePosition())
+      requirementAssumes.push_back(assume);
+  });
+  for (AssumeOp assume : requirementAssumes) {
+    OpBuilder::InsertionGuard assumeGuard(builder);
+    builder.setInsertionPoint(assume);
+    Value self = AssumeOp::create(builder, assume.getLoc(), getSelfClaim(),
+                                  builder.getUnitAttr());
+    Value requirement =
+        ProjectOp::create(builder, assume.getLoc(), assume.getClaim(), self,
+                          *assume.getWherePosition());
+    assume.getResult().replaceAllUsesWith(requirement);
+    assume.erase();
+  }
   return specialized;
 }
 
@@ -1416,6 +1438,10 @@ static func::FuncOp specializeAndReplaceAssumes(
 
   SmallVector<AssumeOp> toErase;
   funcOp.walk([&](AssumeOp a) {
+    // A positional assume cites an entry of the declaration its method stands
+    // in, not a parameter whose claim happens to spell the same.
+    if (a.isPositional())
+      return;
     ClaimType claim = a.getClaim();
     Value replacement;
     if (auto eq = claim.getEqualityAttr()) {
@@ -1509,10 +1535,38 @@ static func::FuncOp specializeMethodAsFreeFuncWithLeadingSelfProof(
   // names none, and what stands for it is the requirement of the self proof it
   // states: the impl's equality where-clause, selected by its position. An
   // assume stating neither is left for its own verifier to refuse.
+  // The impl's where clause stands after its trait's requirements in the
+  // leading self proof's requirement list.
+  uint64_t traitRequirementCount = 0;
+  if (auto trait = selfProofTy.getTraitApplication().getTrait(module);
+      succeeded(trait))
+    traitRequirementCount = trait->getRequirements().size();
+
   SmallVector<AssumeOp> toErase;
   funcOp.walk([&](AssumeOp a) {
     PatternRewriter::InsertionGuard guard(rewriter);
     rewriter.setInsertionPoint(a);
+
+    // A positional assume cites the impl's self application or one of its
+    // where-clause entries, and the leading self proof is that application's
+    // evidence: the self itself, or the requirement at the entry's position,
+    // derived from the proof rather than spelled.
+    if (a.citesSelf()) {
+      rewriter.replaceAllUsesWith(a.getResult(), selfProofArg);
+      toErase.push_back(a);
+      return;
+    }
+    if (std::optional<uint64_t> position = a.getWherePosition()) {
+      uint64_t index = traitRequirementCount + *position;
+      auto requirement = getClaimRequirementAt(selfProofTy, module, index);
+      if (failed(requirement))
+        return;
+      Value replacement = ProjectOp::create(rewriter, a.getLoc(), *requirement,
+                                            selfProofArg, index);
+      rewriter.replaceAllUsesWith(a.getResult(), replacement);
+      toErase.push_back(a);
+      return;
+    }
 
     ClaimType stated = provenOrSame(a.getClaim());
     Value replacement;
@@ -2938,6 +2992,28 @@ LogicalResult DeriveOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 ParseResult AssumeOp::parse(OpAsmParser &p, OperationState &st) {
   MLIRContext *ctx = p.getContext();
 
+  // The positional form: `self` or an entry index, then the claim the entry
+  // states as the result type.
+  auto parseStatedClaim = [&]() -> ParseResult {
+    Type claim;
+    if (p.parseColonType(claim))
+      return failure();
+    st.addTypes(claim);
+    return success();
+  };
+  if (succeeded(p.parseOptionalKeyword("self"))) {
+    st.addAttribute("entry", p.getBuilder().getUnitAttr());
+    return parseStatedClaim();
+  }
+  uint64_t position;
+  OptionalParseResult positional = p.parseOptionalInteger(position);
+  if (positional.has_value()) {
+    if (failed(*positional))
+      return failure();
+    st.addAttribute("entry", p.getBuilder().getI64IntegerAttr(position));
+    return parseStatedClaim();
+  }
+
   // `@Trait[...]` is an application hypothesis; `!A = !B` is an equality
   // hypothesis. The claim's result type wraps whichever predicate is parsed.
   FailureOr<Attribute> pred = parseApplicationOrEqualityPredicate(p);
@@ -2955,6 +3031,15 @@ void AssumeOp::print(OpAsmPrinter &p) {
   p << " ";
 
   ClaimType claim = getClaim();
+  if (citesSelf()) {
+    p << "self : " << Type(claim);
+    return;
+  }
+  if (std::optional<uint64_t> position = getWherePosition()) {
+    p << *position << " : " << Type(claim);
+    return;
+  }
+
   if (auto eq = claim.getEqualityAttr()) {
     // equality arm: `!lhs = !rhs`
     p << eq.getLhs() << " = " << eq.getRhs();
@@ -2963,6 +3048,59 @@ void AssumeOp::print(OpAsmPrinter &p) {
 
   // application arm: print the assumed trait application
   claim.getTraitApplication().print(p);
+}
+
+/// Checks a positional assume against the declaration whose method it stands
+/// in: the entry it cites exists, is a claim the scope holds as a hypothesis,
+/// and is exactly the claim the result type spells.
+static LogicalResult verifyPositionalAssume(AssumeOp assume,
+                                            func::FuncOp funcOp) {
+  Operation *owner = funcOp->getParentOp();
+  TraitApplicationAttr selfApplication;
+  PredicateArrayAttr where;
+  if (auto trait = dyn_cast_or_null<TraitOp>(owner)) {
+    selfApplication = trait.getSelfApplication();
+    where = trait.getRequirements();
+  } else if (auto impl = dyn_cast_or_null<ImplOp>(owner)) {
+    selfApplication = impl.getSelfApplication();
+    where = impl.getAssumptions();
+  } else {
+    return assume.emitOpError()
+           << "cites an entry of the declaration its function is a method of, "
+              "but '@"
+           << funcOp.getSymName() << "' is a method of no trait or impl";
+  }
+
+  MLIRContext *ctx = assume.getContext();
+  ClaimType stated;
+  if (assume.citesSelf()) {
+    stated = ClaimType::get(ctx, selfApplication);
+  } else {
+    uint64_t position = *assume.getWherePosition();
+    if (position >= where.size())
+      return assume.emitOpError()
+             << "cites where-clause entry " << position << ", but the "
+             << "enclosing declaration's where clause has " << where.size()
+             << " entries";
+    Attribute entry = where.getPredicates()[position];
+    if (auto app = dyn_cast<TraitApplicationAttr>(entry))
+      stated = ClaimType::get(ctx, app);
+    else if (auto eq = dyn_cast<TypeEqualityAttr>(entry))
+      stated = ClaimType::getEquality(ctx, eq);
+    else
+      return assume.emitOpError()
+             << "cites where-clause entry " << position
+             << ", which binds parameters of its own; select it with "
+                "trait.project and its type arguments";
+  }
+
+  // The spelled claim is an annotation on the citation: the position decides
+  // which claim this op produces.
+  if (assume.getClaim() != stated)
+    return assume.emitOpError() << "the cited entry states " << stated
+                                << ", but the result type spells "
+                                << assume.getClaim();
+  return success();
 }
 
 LogicalResult AssumeOp::verify() {
@@ -2977,6 +3115,9 @@ LogicalResult AssumeOp::verify() {
   if (!funcOp)
     return emitOpError() << "must be within a 'func.func', found "
                          << isolatedAncestor->getName();
+
+  if (isPositional())
+    return verifyPositionalAssume(*this, funcOp);
 
   ClaimType claim = getClaim();
   TraitOp enclosingTrait = funcOp->getParentOfType<TraitOp>();
