@@ -23,7 +23,7 @@ trait.impl private @Trait_impl_i32 for @Trait[i32] {
 
 // A conditional impl: for any U where Trait[U], Trait holds for tuple<U>
 !T1 = !trait.poly<1>
-// CHECK: trait.impl private @Trait_impl_tuple for @Trait[tuple<!trait.poly<1>>]where [@Trait[!trait.poly<1>]]
+// CHECK: trait.impl private @Trait_impl_tuple for @Trait[tuple<!trait.poly<1>>] where [@Trait[!trait.poly<1>]]
 trait.impl private @Trait_impl_tuple for @Trait[tuple<!T1>] where [@Trait[!T1]] {
   func.func @method(%self: tuple<!T1>) -> i32 {
     %a = trait.assume @Trait[!T1]

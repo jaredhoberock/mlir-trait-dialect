@@ -7,6 +7,8 @@
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/DialectImplementation.h>
 
+#include <TraitAttrInterfaces.cpp.inc>
+
 #define GET_ATTRDEF_CLASSES
 #include <TraitAttributes.cpp.inc>
 

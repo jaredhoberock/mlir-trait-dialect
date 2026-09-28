@@ -537,6 +537,72 @@ static uint64_t respellProvenClaimsInPlace(const ImplResolver &resolver,
   return positionsRespelled;
 }
 
+/// `diagnostic`, naming the rule `op` commits its claim to when it is an
+/// allegation naming one: the claim's refusal is the rule's.
+static InFlightDiagnostic namingCommitment(Operation *op,
+                                           InFlightDiagnostic diagnostic) {
+  if (auto allege = dyn_cast<AllegeOp>(op))
+    if (RuleAttrInterface rule = allege.getRuleAttr())
+      diagnostic << "by rule " << rule << ": ";
+  return diagnostic;
+}
+
+/// Whether the proof selection made for `op`'s claim, `proof`, is the proof
+/// `op` committed to, refusing through `err` where it is not.
+///
+/// A derive stating its impl's arguments commits to a proof through that impl.
+/// An allegation naming a rule commits to a proof through an instance of that
+/// rule -- an impl carrying the rule, never a declared impl -- whose where
+/// clause at the claim is exactly the premises the allegation names, in order,
+/// each compared modulo the evidence it carries after `resolve` reads it. Any
+/// other op commits to nothing.
+static LogicalResult verifyProofKeepsCommitment(
+    Operation *op, FlatSymbolRefAttr proof,
+    llvm::function_ref<Type(Type)> resolve,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  ModuleOp scope = getAnchorModule(op);
+  auto claim = cast<ClaimType>(resolve(op->getResult(0).getType())).asUnproven();
+  auto provenBy = ProofOp::getImplFromProof(scope, proof);
+
+  if (auto derive = dyn_cast<DeriveOp>(op)) {
+    if (!derive.statesImplArguments() ||
+        (succeeded(provenBy) && *provenBy == derive.getImplOp()))
+      return success();
+    return err() << "derives " << claim << " from impl " << derive.getImplAttr()
+                 << ", and impl selection proved it by " << proof;
+  }
+
+  auto allege = dyn_cast<AllegeOp>(op);
+  RuleAttrInterface rule = allege ? allege.getRuleAttr() : RuleAttrInterface();
+  if (!rule)
+    return success();
+  if (failed(provenBy) || provenBy->getRuleAttr() != rule)
+    return err() << "alleges " << claim << " by rule " << rule
+                 << ", and impl selection proved it by " << proof
+                 << ", which is no instance of that rule";
+
+  auto arguments = provenBy->buildSubstitutionForSelfClaim(claim);
+  PredicateArrayAttr where = provenBy->getAssumptions();
+  if (failed(arguments) || where.size() != allege.getPremises().size())
+    return err() << "alleges " << claim << " by rule " << rule << " given "
+                 << allege.getPremises().size() << " premises, and the rule's "
+                 << "instance @" << provenBy->getSymName() << " applies under "
+                 << where.size();
+  for (auto [position, pair] :
+       llvm::enumerate(llvm::zip(where, allege.getPremises()))) {
+    auto [entry, premise] = pair;
+    Type expected = resolve(instantiate(
+        Type(ClaimType::get(op->getContext(), entry, nullptr)), *arguments));
+    auto named = cast<ClaimType>(resolve(premise.getType())).asUnproven();
+    if (Type(named) != expected)
+      return err() << "alleges " << claim << " by rule " << rule
+                   << ", whose instance applies under " << expected
+                   << " at premise " << position << ", and the allegation names "
+                   << named;
+  }
+  return success();
+}
+
 /// Proves a claim-producing op and replaces it with a trait.witness.
 ///
 /// The proving obligation is keyed on the result ClaimType, not the
@@ -557,9 +623,9 @@ struct ProveClaimResultPattern : public RewritePattern {
   ImplResolver *minting;
   /// A read of what impl selection has settled, which every use has.
   ReadOnlyImplResolver reading;
-  /// The derives whose cited impl selection has already contradicted, each
+  /// The ops whose commitment selection has already contradicted, each
   /// reported once.
-  mutable llvm::DenseSet<Operation *> refusedDerives;
+  mutable llvm::DenseSet<Operation *> refusedCommitments;
 
   /// The step that establishes the facts the rest of the stage reads. It
   /// matches `trait.allege` alone: a claim derived inside a still-polymorphic
@@ -593,28 +659,23 @@ struct ProveClaimResultPattern : public RewritePattern {
     if (claim.isEquality())
       return rewriter.notifyMatchFailure(op, "equality claim is not impl-proved");
 
-    // A derive stating its impl's arguments made a choice: the witness it
-    // becomes is of a proof through that impl. Selection proving the claim
-    // through another is two answers to one question, refused where the
-    // choice was written rather than settled silently by the second.
-    auto provedThroughAnotherImpl = [&](FlatSymbolRefAttr proof) {
-      auto derive = dyn_cast<DeriveOp>(op);
-      if (!derive || !derive.statesImplArguments())
+    // An op committed to how its claim is proved refuses a proof other than the
+    // one it committed to, where the commitment was written: two answers to one
+    // question are not settled silently by the second. The driver offers an op
+    // it did not rewrite again, so a refusal is reported the first time only.
+    auto commitmentBroken = [&](FlatSymbolRefAttr proof,
+                                llvm::function_ref<Type(Type)> resolve) {
+      if (refusedCommitments.contains(op))
+        return true;
+      if (succeeded(verifyProofKeepsCommitment(op, proof, resolve,
+                                               [&] { return op->emitOpError(); })))
         return false;
-      auto provenBy = ProofOp::getImplFromProof(getAnchorModule(op), proof);
-      if (succeeded(provenBy) && *provenBy == derive.getImplOp())
-        return false;
-      // The driver offers an op it did not rewrite again, so the refusal is
-      // reported the first time only.
-      if (refusedDerives.insert(op).second)
-        derive.emitOpError() << "derives " << claim.asUnproven()
-                             << " from impl " << derive.getImplAttr()
-                             << ", and impl selection proved it by " << proof;
+      refusedCommitments.insert(op);
       return true;
     };
 
     if (claim.isProven()) {
-      if (provedThroughAnotherImpl(claim.getProof()))
+      if (commitmentBroken(claim.getProof(), [](Type ty) { return ty; }))
         return rewriter.notifyMatchFailure(op, "selection chose another impl");
       rewriter.replaceOpWithNewOp<WitnessOp>(op, claim.getProof(),
                                              claim.getTraitApplication());
@@ -627,7 +688,7 @@ struct ProveClaimResultPattern : public RewritePattern {
 
     DemandFrame frame(op->getLoc());
 
-    auto errFn = [&] { return op->emitOpError(); };
+    auto errFn = [&] { return namingCommitment(op, op->emitOpError()); };
 
     // The claim is demanded where it stands: the proof this op will name is a
     // symbol its own module resolves, and the impls that may serve it are the
@@ -635,23 +696,21 @@ struct ProveClaimResultPattern : public RewritePattern {
     ModuleOp scope = getAnchorModule(op);
     ReadOnlyImplResolver here = reading.in(scope);
 
-    // An allegation naming the rule its claim holds by is proved by that rule.
-    Attribute rule;
-    if (auto allege = dyn_cast<AllegeOp>(op))
-      rule = allege.getRuleAttr();
-
     // build or reuse canonical evidence for this claim
     FailureOr<FlatSymbolRefAttr> sym =
-        minting ? minting->resolveAndEnsureProofFor(claim, scope, rewriter,
-                                                    errFn, nullptr, rule)
+        minting ? minting->resolveAndEnsureProofFor(claim, scope, rewriter, errFn)
                 : here.getRecordedProofFor(claim);
     if (failed(sym)) {
       if (!minting)
-        (void)(rule ? here.decline(claim, rule) : here.decline(claim));
+        (void)here.decline(claim);
       return rewriter.notifyMatchFailure(op, "couldn't find proof of this claim");
     }
 
-    if (provedThroughAnotherImpl(*sym))
+    auto resolve = [&](Type ty) -> Type {
+      return minting ? minting->resolveProjectionsIn(ty, scope, rewriter)
+                     : here.resolveProjectionsIn(ty);
+    };
+    if (commitmentBroken(*sym, resolve))
       return rewriter.notifyMatchFailure(op, "selection chose another impl");
 
     // Mint the witness at the same spelling the proof was recorded under.
@@ -723,7 +782,8 @@ FailureOr<ImplResolver> resolveImpls(ModuleOp module) {
   module.walk([&](AllegeOp op) {
     if (!op.getClaim().isMonomorphic() || isForeign(op)) return;
     hasLeftovers = true;
-    op.emitError() << "unresolved monomorphic trait.allege after resolve-impls";
+    namingCommitment(op, op.emitError())
+        << "unresolved monomorphic trait.allege after resolve-impls";
   });
   if (hasLeftovers) return failure();
 
@@ -2212,8 +2272,9 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
       if (failed(derive.verifySymbolUses(symbolTable)))
         continue;
     }
-    op->emitError() << "unproven monomorphic claim " << claim
-                    << " after instantiate-monomorphs";
+    namingCommitment(op, op->emitError())
+        << "unproven monomorphic claim " << claim
+        << " after instantiate-monomorphs";
   }
   if (hasLeftovers) return failure();
 

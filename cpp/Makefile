@@ -34,7 +34,9 @@ GENERATED := \
   $(BUILD_DIR)/TraitTypes.hpp.inc \
   $(BUILD_DIR)/TraitTypes.cpp.inc \
   $(BUILD_DIR)/TraitTypeInterfaces.hpp.inc \
-  $(BUILD_DIR)/TraitTypeInterfaces.cpp.inc
+  $(BUILD_DIR)/TraitTypeInterfaces.cpp.inc \
+  $(BUILD_DIR)/TraitAttrInterfaces.hpp.inc \
+  $(BUILD_DIR)/TraitAttrInterfaces.cpp.inc
 
 .PHONY: all clean test
 
@@ -72,6 +74,12 @@ $(BUILD_DIR)/TraitTypeInterfaces.hpp.inc: TraitTypeInterfaces.td $(TD_FILES) | $
 
 $(BUILD_DIR)/TraitTypeInterfaces.cpp.inc: TraitTypeInterfaces.td $(TD_FILES) | $(BUILD_DIR)
 	$(TBLGEN) --gen-type-interface-defs $(INCLUDES) $< -o $@
+
+$(BUILD_DIR)/TraitAttrInterfaces.hpp.inc: TraitAttrInterfaces.td $(TD_FILES) | $(BUILD_DIR)
+	$(TBLGEN) --gen-attr-interface-decls $(INCLUDES) $< -o $@
+
+$(BUILD_DIR)/TraitAttrInterfaces.cpp.inc: TraitAttrInterfaces.td $(TD_FILES) | $(BUILD_DIR)
+	$(TBLGEN) --gen-attr-interface-defs $(INCLUDES) $< -o $@
 
 $(BUILD_DIR)/%.o: %.cpp $(GENERATED) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -MMD -MP -c $< -o $@

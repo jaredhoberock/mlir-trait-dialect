@@ -37,19 +37,6 @@ struct ImplGenerator {
   generateImpl(TraitOp trait,
                ClaimType wanted,
                OpBuilder &builder) const = 0;
-
-  // Creates exactly one new ImplOp for the wanted claim by the compiler rule
-  // `rule` identifies, or fails. The identity is an attribute of the dialect
-  // implementing the rule and opaque to this one: a generator implementing
-  // the rule recognizes it, and every other declines. The contract is
-  // generateImpl's otherwise.
-  virtual FailureOr<ImplOp>
-  generateImplByRule(TraitOp trait,
-                     ClaimType wanted,
-                     Attribute rule,
-                     OpBuilder &builder) const {
-    return failure();
-  }
 };
 
 // Composite that itself behaves like an ImplGenerator
@@ -65,21 +52,6 @@ class ImplGeneratorSet : public ImplGenerator {
         // so each attempt starts from the insertion point we were handed
         OpBuilder::InsertionGuard guard(builder);
         auto maybeImpl = g->generateImpl(trait, wanted, builder);
-        if (succeeded(maybeImpl))
-          return maybeImpl;
-      }
-      return failure();
-    }
-
-    inline FailureOr<ImplOp>
-    generateImplByRule(TraitOp trait,
-                       ClaimType wanted,
-                       Attribute rule,
-                       OpBuilder &builder) const override {
-      // the generator implementing the rule is the one that recognizes it
-      for (const auto &g : generators) {
-        OpBuilder::InsertionGuard guard(builder);
-        auto maybeImpl = g->generateImplByRule(trait, wanted, rule, builder);
         if (succeeded(maybeImpl))
           return maybeImpl;
       }
@@ -356,15 +328,11 @@ class ImplResolver {
     /// claim's application on, and is left alone where selection did not
     /// refuse -- a proof that fails downstream of a selected impl names no
     /// refutation.
-    ///
-    /// `rule`, when given, identifies the compiler rule the claim was stated to
-    /// hold by, and an impl generation asks for is asked for by that rule.
     FailureOr<FlatSymbolRefAttr> resolveAndEnsureProofFor(ClaimType claim,
                                                           ModuleOp scope,
                                                           OpBuilder &builder,
                                                           llvm::function_ref<InFlightDiagnostic()> err = nullptr,
-                                                          std::optional<Refutation> *refusedOn = nullptr,
-                                                          Attribute rule = nullptr);
+                                                          std::optional<Refutation> *refusedOn = nullptr);
 
     /// Resolves a concrete ProjectionType to the type it projects to.
     /// Uses the internal impl resolution pipeline to find the matching impl,
@@ -525,8 +493,7 @@ class ImplResolver {
         ModuleOp scope,
         OpBuilder &builder,
         llvm::function_ref<InFlightDiagnostic()> err = nullptr,
-        std::optional<Refutation> *refusedOn = nullptr,
-        Attribute rule = nullptr);
+        std::optional<Refutation> *refusedOn = nullptr);
 
     /// Records `sym` as what proves `app` in `scope`, counting the fact.
     void recordProof(ModuleOp scope, TraitApplicationAttr app,
@@ -694,9 +661,6 @@ public:
   /// whether an unserved demand is still there to serve.
   LogicalResult decline(ProjectionType demand) const;
   LogicalResult decline(ClaimType demand) const;
-  /// As above, for a claim stated to hold by the compiler rule `rule`
-  /// identifies: the demand carries the rule to the round that serves it.
-  LogicalResult decline(ClaimType demand, Attribute rule) const;
 
   /// The impl selection settled on for `wanted`, paired with the claim it
   /// settled it under. Fails where selection was never asked, where it refused,

@@ -116,14 +116,6 @@ public:
     return it->second;
   }
 
-  /// Records that `demand` was raised as a claim holding by the compiler rule
-  /// `rule` identifies; the first rule recorded for a demand stands.
-  void recordRule(Type demand, Attribute rule) { rules.try_emplace(demand, rule); }
-
-  /// The rule `demand` was raised as holding by, or null when it was raised
-  /// with none.
-  Attribute getRule(Type demand) const { return rules.lookup(demand); }
-
   void pushFrame(Type demand);
   void pushFrame(Location origin);
   void popFrame();
@@ -156,7 +148,6 @@ private:
   llvm::SetVector<Type> demands;
   llvm::DenseMap<Type, unsigned> arms;
   llvm::DenseMap<Type, Location> raisedAt;
-  llvm::DenseMap<Type, Attribute> rules;
   SmallVector<Location, 8> frames;
 };
 
@@ -236,9 +227,5 @@ void recordLookupMiss(Type demand, LookupMissReason reason, DemandOrigin origin,
                       unsigned enclosingDepth);
 void recordResolverProjectionMiss(Type demand);
 void recordReadOnlyResolverMiss(Type demand);
-
-/// Records a read-only resolver miss of a claim raised as holding by the
-/// compiler rule `rule` identifies, so the round serving it asks for the rule.
-void recordReadOnlyResolverMiss(Type demand, Attribute rule);
 
 } // namespace mlir::trait

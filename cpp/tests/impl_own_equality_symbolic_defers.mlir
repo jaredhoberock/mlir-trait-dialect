@@ -15,7 +15,7 @@ trait.trait private @FoldFn[!S] {
   trait.assoc_type @Output
 }
 
-// CHECK: trait.impl private @FoldFn_gen for @FoldFn[!trait.poly<0>]where [!trait.proj<@FoldFn[!trait.poly<0>], "Output"> = !trait.poly<1>]
+// CHECK: trait.impl private @FoldFn_gen for @FoldFn[!trait.poly<0>] where [!trait.proj<@FoldFn[!trait.poly<0>], "Output"> = !trait.poly<1>]
 trait.impl private @FoldFn_gen for @FoldFn[!S] where [!trait.proj<@FoldFn[!S], "Output"> = !Acc] {
   trait.assoc_type @Output = !Acc
 }

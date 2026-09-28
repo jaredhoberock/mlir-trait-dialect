@@ -40,6 +40,21 @@ static void printVisibilityKeyword(::mlir::OpAsmPrinter &printer,
     printer << visibility.getValue();
 }
 
+/// Parse an impl rule's identity: an attribute implementing
+/// `RuleAttrInterface`, refused where it stands otherwise.
+static ::mlir::FailureOr<RuleAttrInterface>
+parseRuleIdentity(::mlir::OpAsmParser &parser) {
+  ::mlir::Attribute rule;
+  ::llvm::SMLoc location = parser.getCurrentLocation();
+  if (parser.parseAttribute(rule))
+    return ::mlir::failure();
+  if (auto identity = ::llvm::dyn_cast<RuleAttrInterface>(rule))
+    return identity;
+  return parser.emitError(location)
+         << rule << " names no impl rule: a rule is an attribute implementing "
+                    "RuleAttrInterface";
+}
+
 /// Parse the arguments a citation of an impl states for its parameters,
 /// `[!P = T, ...]`, straight after the impl's name. Present, even empty, the
 /// list is the form stating them; absent, it is the form that states none.
@@ -2191,6 +2206,14 @@ ParseResult ImplOp::parse(OpAsmParser &p, OperationState &result) {
   if (!selfApp)
     return p.emitError(p.getCurrentLocation(), "expected a TraitApplicationAttr");
   result.addAttribute("self_application", selfApp);  
+
+  // the impl rule a generated impl is an instance of
+  if (succeeded(p.parseOptionalKeyword("by"))) {
+    FailureOr<RuleAttrInterface> rule = parseRuleIdentity(p);
+    if (failed(rule))
+      return failure();
+    result.addAttribute("rule", *rule);
+  }
   
   // where clause: one mixed PredicateArrayAttr (application and equality arms in
   // declaration order), stored directly as $assumptions -- no second array and
@@ -2264,10 +2287,12 @@ void ImplOp::print(OpAsmPrinter &printer) {
 
   printer << "for ";
   getSelfApplication().print(printer);
+  if (RuleAttrInterface rule = getRuleAttr())
+    printer << " by " << rule;
 
   // print assumptions if not empty
   if (!getAssumptions().empty()) {
-    printer << "where ";
+    printer << " where ";
     getAssumptions().print(printer);
   }
 
@@ -2290,7 +2315,7 @@ void ImplOp::print(OpAsmPrinter &printer) {
   printer.printOptionalAttrDictWithKeyword(
     (*this)->getAttrs(),
     /*elidedAttrs=*/{"sym_name", "self_application", "assumptions", "witnesses",
-                     "bound_evidence", "sym_visibility"}
+                     "bound_evidence", "rule", "sym_visibility"}
   );
   printer << " ";
   printer.printRegion(getBody());
@@ -4721,10 +4746,10 @@ ParseResult AllegeOp::parse(OpAsmParser &p, OperationState &st) {
 
   // parse the optional rule the claim holds by, and the facts it consulted
   if (succeeded(p.parseOptionalKeyword("by"))) {
-    Attribute rule;
-    if (p.parseAttribute(rule))
+    FailureOr<RuleAttrInterface> rule = parseRuleIdentity(p);
+    if (failed(rule))
       return failure();
-    st.addAttribute("rule", rule);
+    st.addAttribute("rule", *rule);
     if (succeeded(p.parseOptionalKeyword("given"))) {
       SmallVector<OpAsmParser::UnresolvedOperand> premises;
       SmallVector<Type> premiseTypes;

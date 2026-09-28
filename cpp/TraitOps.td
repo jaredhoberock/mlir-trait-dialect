@@ -11,6 +11,7 @@ include "mlir/IR/OpBase.td"
 include "mlir/IR/RegionKindInterface.td"
 include "mlir/IR/SymbolInterfaces.td"
 include "Trait.td"
+include "TraitAttrInterfaces.td"
 include "TraitTypes.td"
 
 
@@ -404,6 +405,15 @@ def ImplOp : TraitDialectOp<"impl", [
     the impl that supplies it, and the discharge recursion resolves every
     discharger by symbol without scanning the module.
 
+    An impl a dialect's generator produced as an instance of one of its impl
+    rules carries that rule after its application, `by <rule>` (an attribute
+    implementing `RuleAttrInterface`). It is the provenance a `trait.allege`
+    naming the rule is checked against: a declared impl carries none.
+
+    ```mlir
+    trait.impl for @Convergence[i64] by #coop.rule<convergence> { ... }
+    ```
+
     The optional `bound_evidence` array carries, for each bound requirement of
     the trait -- a requirement quantified over parameters of its own, a generic
     associated type's bound -- the evidence that it holds for every argument
@@ -443,6 +453,7 @@ def ImplOp : TraitDialectOp<"impl", [
         "array of impl witnesses">>:$witnesses,
     OptionalAttr<TypedArrayAttrBase<BoundEvidenceAttr,
         "array of bound requirement evidence">>:$bound_evidence,
+    OptionalAttr<RuleAttrInterface>:$rule,
     OptionalAttr<StrAttr>:$sym_visibility
   );
   let regions = (region SizedRegion<1>:$body);
@@ -826,19 +837,21 @@ def AllegeOp : TraitDialectOp<"allege", [
       // polymorphic: deferred to instantiate-monomorphs
       %q = trait.allege @Printable[!trait.poly<0>] unsafe
 
-    Rule form. `by <rule>` names the compiler rule the claim holds by, and
-    `given(%claims)` the facts that rule consulted. The rule identity is an
-    attribute of the dialect whose impl generator implements the rule, opaque
-    to this dialect: when the claim is proved, generation is asked for the
-    rule by that identity (`ImplGenerator::generateImplByRule`) rather than by
-    the trait's name. The premises are the rule's evidence, carried with the
-    claim; a claim a rule proves from none takes no `given`.
+    Rule form. `by <rule>` commits the claim to a proof through an instance of
+    an impl rule -- an attribute implementing `RuleAttrInterface`, owned and
+    interpreted by the dialect whose generator produces the rule's impls -- and
+    `given(%claims)` names the premises that instance applies under: its where
+    clause at the claim, in order. Where impl selection proves the claim, the
+    proof must be through an impl carrying that rule, at those premises; a
+    declared impl never substitutes for the rule, and a claim the rule's
+    generator supplies no instance of is refused here, naming the rule. A claim
+    a rule proves under no premise takes no `given`.
 
       %c = trait.allege @Convergence[!T] by #coop.rule<convergence> unsafe
   }];
 
   let arguments = (ins OptionalAttr<UnitAttr>:$unsafe,
-                       OptionalAttr<AnyAttr>:$rule,
+                       OptionalAttr<RuleAttrInterface>:$rule,
                        Variadic<Claim>:$premises);
 
   let results = (outs Claim:$result);
@@ -863,7 +876,7 @@ def AllegeOp : TraitDialectOp<"allege", [
     // the rule form
     OpBuilder<(ins "::mlir::trait::TraitApplicationAttr":$app,
                    "bool":$isUnsafe,
-                   "::mlir::Attribute":$ruleIdentity,
+                   "::mlir::trait::RuleAttrInterface":$ruleIdentity,
                    "::mlir::ValueRange":$rulePremises), [{
       mlir::MLIRContext* ctx = $_builder.getContext();
       auto claimTy = ClaimType::get(ctx, app);

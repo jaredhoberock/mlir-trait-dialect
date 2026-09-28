@@ -29,7 +29,7 @@ trait.trait private @T2[!S] {
   func.func private @id(!S) -> !S
 }
 
-// CHECK: trait.impl private @T2_i64 for @T2[i64]where [!trait.proj<@Sib[i64], "Elem"> = i64]
+// CHECK: trait.impl private @T2_i64 for @T2[i64] where [!trait.proj<@Sib[i64], "Elem"> = i64]
 trait.impl private @T2_i64 for @T2[i64] where [!trait.proj<@Sib[i64], "Elem"> = i64]
     witnesses [#trait<witness !trait.proj<@Sib[i64], "Elem"> = i64 by @Sib_cond>,
                #trait<witness @X[i64] by @X_i64>] {

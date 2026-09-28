@@ -228,11 +228,4 @@ void recordReadOnlyResolverMiss(Type demand) {
   recordPending(demand, 0, ambientLookupDepth);
 }
 
-void recordReadOnlyResolverMiss(Type demand, Attribute rule) {
-  recordPending(demand, 0, ambientLookupDepth);
-  // Recorded under the conditions the demand itself is.
-  if (ambientLedger && !ambientSpeculating && !ambientLookupDepth)
-    ambientLedger->recordRule(demand, rule);
-}
-
 } // namespace mlir::trait

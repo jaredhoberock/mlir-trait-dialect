@@ -1031,7 +1031,7 @@ trait.impl private @Tr_tuple for @Tr[tuple<!trait.poly<1>>] where [@Tr[!trait.po
 }
 
 #[test]
-fn the_rule_allegation_builder_carries_the_rule_and_its_premises() {
+fn the_rule_allegation_builder_states_a_rule_the_verifier_reads() {
     let registry = DialectRegistry::new();
     register_all_dialects(&registry);
     let context = Context::new();
@@ -1048,9 +1048,10 @@ trait.trait private @B[!trait.poly<0>] {}\n";
     let b_i32 = trait_::trait_application_attr(&context, "B", &[i32_ty]);
     let b_claim: melior::ir::Type = trait_::claim_type(&context, b_i32).into();
 
-    // The identity is the implementing dialect's and opaque here, so any
-    // attribute stands in for one.
-    let rule = StringAttribute::new(&context, "some.rule").into();
+    // A rule is an attribute of the dialect implementing it, which this
+    // dialect's tests do not load: an attribute implementing no rule stands in,
+    // and the verifier refuses it.
+    let rule = StringAttribute::new(&context, "not.a.rule").into();
     let block = Block::new(&[(b_claim, loc)]);
     block.append_operation(trait_::allege_by_rule(
         loc,
@@ -1071,10 +1072,5 @@ trait.trait private @B[!trait.poly<0>] {}\n";
         loc,
     ));
 
-    assert!(module.as_operation().verify());
-    let rendered = module.as_operation().to_string();
-    assert!(
-        rendered.contains("trait.allege @A[i32] by \"some.rule\" given(%arg0 : !trait.claim<@B[i32]>)"),
-        "the allegation prints its rule and premises: {rendered}"
-    );
+    assert!(!module.as_operation().verify());
 }

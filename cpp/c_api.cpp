@@ -56,22 +56,6 @@ void traitRegisterDialect(MlirContext context) {
   unwrap(context)->loadDialect<TraitDialect>();
 }
 
-MlirOperation traitAllegeByRuleOpCreate(MlirLocation loc,
-                                        MlirAttribute app,
-                                        MlirAttribute rule,
-                                        MlirValue *premises,
-                                        intptr_t numPremises,
-                                        bool isUnsafe) {
-  auto traitApp = dyn_cast<TraitApplicationAttr>(unwrap(app));
-  if (!traitApp || !rule.ptr)
-    return {};
-  OpBuilder builder(unwrap(loc)->getContext());
-  return wrap(AllegeOp::create(builder, unwrap(loc), traitApp, isUnsafe,
-                               unwrap(rule),
-                               ValueRange(unwrapArray(premises, numPremises)))
-                  .getOperation());
-}
-
 MlirPass traitCreateInstantiateMonomorphsPass() {
   return wrap(createInstantiateMonomorphsPass().release());
 }
