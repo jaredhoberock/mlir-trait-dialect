@@ -1304,13 +1304,15 @@ static FailureOr<SpecializationMap> requirementSubstitution(
   if (fromTrait)
     return declarations.trait.buildSubstitutionForSelfClaim(claim, errFn);
 
+  // A proof stating its impl's arguments carries them to the claim.
+  if (declarations.proof && declarations.proof.statesImplArguments())
+    return declarations.proof.getImplArgumentsAt(claim, errFn);
+
   // A parameter the impl's header leaves open and its where clause determines is
-  // read through the impls the module holds.
-  // XXX TODO a projection a declaration spells must be over its own self
-  // application, a where-clause application, a trait requirement or a declared
-  // witness (Rust's projection well-formedness rule), so every projection has
-  // evidence at a known index and this module read deletes with LookupScope and
-  // the verifier DemandOrigins.
+  // read through the impls the module holds, for a proof stating no arguments.
+  // XXX TODO deleted with the proof form stating no arguments: impl selection
+  // still mints that form, and a proof over an impl whose parameter only its
+  // where clause's equality determines is read here.
   ImplProjectionLookup byImplLookup(module, DemandOrigin::ProofVerification);
   return declarations.impl.readTypeArgumentsFor(claim, byImplLookup)
       .toSpecialization();
@@ -1399,6 +1401,37 @@ static FailureOr<ClaimRequirement> readRequirement(
   // reaches is unproven too.
   if (!claim.isProven())
     return ClaimRequirement{instantiatePredicate(application, *subst), {}};
+
+  // A proof stating its impl's arguments names the provider at the
+  // requirement's own position, and the application is the obligation at
+  // those arguments: a trait requirement read through the impl's own binding,
+  // as the proof's citations read it.
+  if (declarations.proof && declarations.proof.statesImplArguments()) {
+    auto provider = dyn_cast<FlatSymbolRefAttr>(
+        declarations.proof.getSubproofNames()[index]);
+    if (!provider) {
+      if (errFn)
+        errFn() << "proof '" << claim.getProof() << "' names no symbol for "
+                   "requirement " << index;
+      return failure();
+    }
+    ClaimType obligation = instantiatePredicate(application, *subst);
+    if (fromTrait) {
+      auto implArguments = declarations.proof.getImplArgumentsAt(claim, errFn);
+      if (failed(implArguments))
+        return failure();
+      NormalizationContext own;
+      own.addLocalProjectionRule(declarations.impl,
+                                 claim.asUnproven().getTraitApplication(),
+                                 *implArguments);
+      auto read = own.normalize(Type(obligation), errFn);
+      if (failed(read))
+        return failure();
+      obligation = cast<ClaimType>(*read);
+    }
+    return ClaimRequirement{
+        ClaimType::get(ctx, obligation.getTraitApplication(), provider), {}};
+  }
 
   // A proven claim's application requirement carries the provider of the
   // subproof discharging it. The proof names one subproof per obligation -- the

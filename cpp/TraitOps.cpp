@@ -39,6 +39,49 @@ static void printVisibilityKeyword(::mlir::OpAsmPrinter &printer,
   if (visibility && visibility.getValue() != "public")
     printer << visibility.getValue();
 }
+
+/// Parse the arguments a citation of an impl states for its parameters,
+/// `[!P = T, ...]`, straight after the impl's name. Present, even empty, the
+/// list is the form stating them; absent, it is the form that states none.
+static ::mlir::ParseResult
+parseImplCitationArguments(::mlir::OpAsmParser &parser,
+                           ::mlir::ArrayAttr &arguments) {
+  if (failed(parser.parseOptionalLSquare()))
+    return ::mlir::success();
+  ::llvm::SmallVector<::mlir::Attribute> bindings;
+  if (failed(parser.parseOptionalRSquare())) {
+    if (parser.parseCommaSeparatedList([&]() -> ::mlir::ParseResult {
+          ::mlir::Type parameter, argument;
+          if (parser.parseType(parameter) || parser.parseEqual() ||
+              parser.parseType(argument))
+            return ::mlir::failure();
+          auto binding = TypeBindingAttr::getChecked(
+              [&] { return parser.emitError(parser.getNameLoc()); },
+              parser.getContext(), parameter, argument);
+          if (!binding)
+            return ::mlir::failure();
+          bindings.push_back(binding);
+          return ::mlir::success();
+        }) ||
+        parser.parseRSquare())
+      return ::mlir::failure();
+  }
+  arguments = parser.getBuilder().getArrayAttr(bindings);
+  return ::mlir::success();
+}
+
+static void printImplCitationArguments(::mlir::OpAsmPrinter &printer,
+                                       ::mlir::Operation *,
+                                       ::mlir::ArrayAttr arguments) {
+  if (!arguments)
+    return;
+  printer << '[';
+  ::llvm::interleaveComma(arguments, printer, [&](::mlir::Attribute a) {
+    auto binding = ::llvm::cast<TypeBindingAttr>(a);
+    printer << binding.getParameter() << " = " << binding.getArgument();
+  });
+  printer << ']';
+}
 } // namespace mlir::trait
 
 #define GET_OP_CLASSES
@@ -2103,6 +2146,33 @@ FailureOr<SmallVector<ClaimType>> ImplOp::specializeObligationsAsClaimsFor(
   return obligations;
 }
 
+FailureOr<SmallVector<ClaimType>> ImplOp::specializeObligationsAt(
+    ClaimType actualSelfClaim, const SpecializationMap &arguments,
+    llvm::function_ref<InFlightDiagnostic()> errFn) {
+  auto requirements =
+      getTrait().specializeRequirementsAsClaimsFor(actualSelfClaim, errFn);
+  if (failed(requirements))
+    return failure();
+  llvm::erase_if(*requirements, [](ClaimType c) { return c.isEquality(); });
+
+  // A trait requirement spelling a projection over this impl's own application
+  // reads it through this impl's binding at the arguments, as the obligations
+  // read off a claim do.
+  NormalizationContext normalization;
+  normalization.addLocalProjectionRule(
+      *this, actualSelfClaim.getTraitApplication(), arguments);
+  SmallVector<ClaimType> obligations;
+  for (ClaimType requirement : *requirements) {
+    auto resolved = normalization.normalize(requirement, errFn);
+    if (failed(resolved))
+      return failure();
+    obligations.push_back(cast<ClaimType>(*resolved));
+  }
+  for (ClaimType assumption : getAssumptionsAsClaims())
+    obligations.push_back(cast<ClaimType>(instantiate(Type(assumption), arguments)));
+  return obligations;
+}
+
 ParseResult ImplOp::parse(OpAsmParser &p, OperationState &result) {
   // optional `private`/`nested` keyword before the name, as func.func reads it;
   // a missing keyword is not an error (the op is public) and consumes nothing.
@@ -2410,13 +2480,45 @@ LogicalResult ProofOp::verify() {
   if (failed(verifyTemplateIsNotPublic(getOperation())))
     return failure();
 
-  // check that every name is a FlatSymbolRefAttr
+  // Every entry names a symbol, except that the form stating its impl's
+  // arguments holds `unit` where a requirement or premise is decided without
+  // one; which entries those are is read against the impl where its symbols
+  // are verified.
   for (Attribute name : getSubproofNames()) {
-    if (!isa<FlatSymbolRefAttr>(name)) {
-      return emitOpError() << "'subproof_names' must contain only FlatSymbolRefAttr elements";
-    }
+    if (isa<FlatSymbolRefAttr>(name))
+      continue;
+    if (statesImplArguments() && isa<UnitAttr>(name))
+      continue;
+    return emitOpError() << "'subproof_names' must contain only FlatSymbolRefAttr elements";
   }
   return success();
+}
+
+FailureOr<SpecializationMap> ProofOp::getImplArgumentsAt(
+    ClaimType at, llvm::function_ref<InFlightDiagnostic()> err) {
+  ImplOp impl = getImpl();
+  if (!impl) {
+    if (err) err() << "cannot find impl '" << getImplNameAttr() << "'";
+    return failure();
+  }
+  SmallVector<TypeBindingAttr> bindings;
+  for (Attribute binding : getArgumentsAttr())
+    bindings.push_back(cast<TypeBindingAttr>(binding));
+  auto stated = impl.substitutionFor(bindings, err);
+  if (failed(stated))
+    return failure();
+
+  // The stated arguments spell this proof's own variables; the claim it is
+  // carried to is an instance of its own claim, which supplies them.
+  Type own = Type(getProvenClaim().asUnproven());
+  auto instance = matchDeclaration(getTypeParametersIn(own), own,
+                                   Type(at.asUnproven()), Normalizer(), err);
+  if (failed(instance))
+    return failure();
+  SpecializationMap atInstance;
+  for (GenericTypeInterface parameter : impl.getTypeParams())
+    atInstance.bind(parameter, instance->apply(*stated->lookup(parameter)));
+  return atInstance;
 }
 
 /// Re-verifies `impl`'s projection-resolution witnesses at `arguments`, the
@@ -2521,8 +2623,24 @@ LogicalResult ProofOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   auto throughEvidence = [&](Type ty) -> FailureOr<Type> {
     return reading.normalize(ty, errFn);
   };
-  auto arguments = implOp.buildSubstitutionForSelfClaim(getProvenClaim(),
-                                                        throughEvidence, errFn);
+  // A proof stating its impl's arguments proves the header at them, spelled
+  // exactly: the arguments are a substitution, and nothing is read.
+  FailureOr<SpecializationMap> arguments = failure();
+  if (statesImplArguments()) {
+    arguments = getImplArgumentsAt(getProvenClaim(), errFn);
+    if (failed(arguments))
+      return failure();
+    auto header =
+        cast<ClaimType>(instantiate(Type(implOp.getSelfClaim()), *arguments));
+    if (header.getTraitApplication() != getTraitApplication())
+      return emitOpError() << "impl '" << getImplNameAttr()
+                           << "' at its stated arguments is an impl of "
+                           << header.getTraitApplication() << ", not of "
+                           << getTraitApplication();
+  } else {
+    arguments = implOp.buildSubstitutionForSelfClaim(getProvenClaim(),
+                                                     throughEvidence, errFn);
+  }
   if (failed(arguments))
     return failure();
 
@@ -2594,11 +2712,54 @@ FailureOr<SmallVector<ClaimType>> ProofOp::verifyAndGetSubproofClaims(
   }
 
   // The obligations at the application this proof is being carried to. The
-  // given list is indexed by them, so this is also the arity to check.
-  auto obligations = implOp.specializeObligationsAsClaimsFor(at, origin, err);
+  // given list is indexed by them, so this is also the arity to check. A proof
+  // stating its impl's arguments carries them there; one stating none reads
+  // them off the claim.
+  FailureOr<SmallVector<ClaimType>> obligations = failure();
+  if (statesImplArguments()) {
+    auto arguments = getImplArgumentsAt(at, err);
+    if (failed(arguments))
+      return failure();
+    obligations = implOp.specializeObligationsAt(at, *arguments, err);
+  } else {
+    obligations = implOp.specializeObligationsAsClaimsFor(at, origin, err);
+  }
   if (failed(obligations)) return failure();
 
-  ArrayAttr subproofNames = getSubproofNames();
+  // A given list holding one entry per requirement and where-clause entry
+  // cites a symbol exactly at the application entries, which are the
+  // obligations in order.
+  SmallVector<Attribute> subproofNames(getSubproofNames().begin(),
+                                       getSubproofNames().end());
+  if (statesImplArguments()) {
+    SmallVector<Attribute> entries(implOp.getTrait().getRequirements().begin(),
+                                   implOp.getTrait().getRequirements().end());
+    llvm::append_range(entries, implOp.getAssumptions());
+    if (subproofNames.size() != entries.size()) {
+      if (err) err() << "arity mismatch: impl '" << getImplNameAttr()
+                     << "' and its trait state " << entries.size()
+                     << " requirements and where-clause entries, but found "
+                     << subproofNames.size() << " given entries";
+      return failure();
+    }
+    SmallVector<Attribute> citations;
+    for (auto [position, pair] :
+         llvm::enumerate(llvm::zip(entries, subproofNames))) {
+      auto [entry, name] = pair;
+      bool application = isa<TraitApplicationAttr>(entry);
+      if (application != isa<FlatSymbolRefAttr>(name)) {
+        if (err) err() << "given entry " << position << " is " << name
+                       << ", and entry " << position << " is "
+                       << (application ? "an application a symbol discharges"
+                                       : "decided without a symbol, so its "
+                                         "given entry is unit");
+        return failure();
+      }
+      if (application)
+        citations.push_back(name);
+    }
+    subproofNames = std::move(citations);
+  }
   if (subproofNames.size() != obligations->size()) {
     if (err) err() << "arity mismatch: expected " << obligations->size()
                    << " subproofs, but found " << subproofNames.size();
@@ -3088,6 +3249,13 @@ ParseResult DeriveOp::parse(OpAsmParser &p, OperationState &result) {
   if (p.parseAttribute(implRef, "impl", result.attributes))
     return failure();
 
+  // parse the arguments the impl's parameters take, when stated
+  ArrayAttr implArguments;
+  if (parseImplCitationArguments(p, implArguments))
+    return failure();
+  if (implArguments)
+    result.addAttribute("arguments", implArguments);
+
   // parse `given`
   if (p.parseKeyword("given"))
     return failure();
@@ -3134,7 +3302,9 @@ void DeriveOp::print(OpAsmPrinter &p) {
 
   p << " ";
   getTraitApplication().print(p);
-  p << " from " << getImplAttr() << " given(";
+  p << " from " << getImplAttr();
+  printImplCitationArguments(p, getOperation(), getArgumentsAttr());
+  p << " given(";
   llvm::interleaveComma(getAssumptions(), p, [&](Value v) {
     p.printOperand(v);
   });
@@ -3151,7 +3321,7 @@ void DeriveOp::print(OpAsmPrinter &p) {
 
   p.printOptionalAttrDictWithKeyword(
     (*this)->getAttrs(),
-    /*elidedAttrs=*/{"trait_application", "impl"}
+    /*elidedAttrs=*/{"trait_application", "impl", "arguments"}
   );
 }
 
@@ -3172,12 +3342,54 @@ ImplOp DeriveOp::getImplOp() {
 ///  4. Each operand's claim type matches the corresponding specialized
 ///     assumption (so the caller is providing exactly the evidence the impl
 ///     requires under this specialization).
+/// Verifies a derive stating its impl's arguments: the derived application is
+/// the impl's header at them, and each operand's claim is the impl's
+/// where-clause entry at them, in order. A substitution decides both, so no
+/// spelling is read through anything.
+static LogicalResult verifyDeriveAtStatedArguments(
+    DeriveOp derive, llvm::function_ref<InFlightDiagnostic()> errFn) {
+  ImplOp impl = derive.getImplOp();
+  if (!impl)
+    return errFn() << "cannot find trait.impl '" << derive.getImplAttr() << "'";
+  auto arguments = impl.substitutionFor(derive.getImplArguments(), errFn);
+  if (failed(arguments))
+    return failure();
+
+  auto header = cast<ClaimType>(instantiate(Type(impl.getSelfClaim()), *arguments));
+  if (header.getTraitApplication() != derive.getTraitApplication())
+    return errFn() << "impl '" << derive.getImplAttr() << "' at its stated "
+                   << "arguments is an impl of " << header.getTraitApplication()
+                   << ", not of " << derive.getTraitApplication();
+
+  PredicateArrayAttr where = impl.getAssumptions();
+  if (derive.getAssumptions().size() != where.size())
+    return errFn() << "impl '" << derive.getImplAttr() << "' states "
+                   << where.size() << " where-clause entries, and the derive "
+                   << "supplies " << derive.getAssumptions().size()
+                   << " premises";
+  MLIRContext *ctx = derive.getContext();
+  for (auto [position, pair] :
+       llvm::enumerate(llvm::zip(derive.getAssumptions(), where))) {
+    auto [operand, entry] = pair;
+    auto expected = cast<ClaimType>(
+        instantiate(Type(ClaimType::get(ctx, entry, nullptr)), *arguments));
+    ClaimType supplied = cast<ClaimType>(operand.getType()).asUnproven();
+    if (supplied != expected)
+      return errFn() << "premise " << position << " is " << expected
+                     << ", and the derive supplies " << supplied;
+  }
+  return success();
+}
+
 LogicalResult DeriveOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // Verification writes nothing, so every name read under it resolves through
   // the symbol tables the walk this is one step of has already built.
   SymbolLookupScope symbolAnswers(getOperation(), symbolTable);
 
   auto errFn = [&] { return emitOpError(); };
+
+  if (statesImplArguments())
+    return verifyDeriveAtStatedArguments(*this, errFn);
 
   // A trait.derive discharges the cited impl's application-arm assumptions, so
   // every assumption operand must be a trait-application claim. An equality

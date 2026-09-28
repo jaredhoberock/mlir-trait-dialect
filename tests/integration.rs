@@ -961,3 +961,71 @@ fn the_bound_builders_state_and_select_a_quantified_requirement() {
     module.body().append_operation(impl_op);
     assert!(!module.as_operation().verify());
 }
+
+#[test]
+fn the_builders_state_an_impls_arguments_on_a_derive_and_a_proof() {
+    let registry = DialectRegistry::new();
+    register_all_dialects(&registry);
+    let context = Context::new();
+    context.append_dialect_registry(&registry);
+    trait_::register(&context);
+    context.load_all_available_dialects();
+
+    // @Tr_tuple is an impl of @Tr[tuple<U>] where @Tr[U] and Tr[U]::Out = i64.
+    let source = "\
+trait.trait private @Tr[!trait.poly<0>] { trait.assoc_type @Out }\n\
+trait.impl private @Tr_i32 for @Tr[i32] { trait.assoc_type @Out = i64 }\n\
+trait.impl private @Tr_tuple for @Tr[tuple<!trait.poly<1>>] where [@Tr[!trait.poly<1>], !trait.proj<@Tr[!trait.poly<1>], \"Out\"> = i64] {\n\
+  trait.assoc_type @Out = i64\n\
+}\n";
+    let module = Module::parse(&context, source).expect("the fixture module parses");
+    let loc = Location::unknown(&context);
+    let t = trait_::poly_type(&context, 0);
+    let u = trait_::poly_type(&context, 1);
+    let i32_ty: melior::ir::Type = IntegerType::new(&context, 32).into();
+    let i64_ty: melior::ir::Type = IntegerType::new(&context, 64).into();
+    let tuple_of = |ty| melior::ir::r#type::TupleType::new(&context, &[ty]).into();
+
+    // The proof at i32: the trait states no requirement, and the impl's two
+    // entries are the application @Tr_i32 discharges and the equality.
+    let tr_tuple_i32 = trait_::trait_application_attr(&context, "Tr", &[tuple_of(i32_ty)]);
+    let proof = trait_::proof_with_arguments(
+        loc, "p", "Tr_tuple", &[(u, i32_ty)], tr_tuple_i32, &[Some("Tr_i32"), None])
+        .expect("the proof builds");
+    module.body().append_operation(proof);
+
+    // A derive at T with one premise per where-clause entry.
+    let tr_t = trait_::trait_application_attr(&context, "Tr", &[t]);
+    let tr_t_claim: melior::ir::Type = trait_::claim_type(&context, tr_t).into();
+    let out_of_t = trait_::projection_type(&context, tr_t, "Out", &[]);
+    let out_is_i64 = trait_::equality_claim_type(&context, out_of_t, i64_ty)
+        .expect("the equality claim constructs");
+    let block = Block::new(&[(tr_t_claim, loc), (out_is_i64, loc)]);
+    let tr_tuple_t = trait_::trait_application_attr(&context, "Tr", &[tuple_of(t)]);
+    block.append_operation(
+        trait_::derive_with_arguments(
+            loc, tr_tuple_t, "Tr_tuple", &[(u, t)],
+            &[block.argument(0).unwrap().into(), block.argument(1).unwrap().into()])
+            .expect("the derive builds"));
+    block.append_operation(func::r#return(&[], loc));
+    let body = Region::new();
+    body.append_block(block);
+    let vis_id = Identifier::new(&context, "sym_visibility");
+    let private_attr = StringAttribute::new(&context, "private").into();
+    module.body().append_operation(func::func(
+        &context,
+        StringAttribute::new(&context, "g"),
+        TypeAttribute::new(FunctionType::new(&context, &[tr_t_claim, out_is_i64], &[]).into()),
+        body,
+        &[(vis_id, private_attr)],
+        loc,
+    ));
+
+    assert!(module.as_operation().verify());
+    let rendered = module.as_operation().to_string();
+    assert!(
+        rendered.contains("proves @Tr_tuple[!trait.poly<1> = i32] for @Tr[tuple<i32>] given [@Tr_i32, unit]")
+            && rendered.contains("from @Tr_tuple[!trait.poly<1> = !trait.poly<0>] given(%arg0, %arg1)"),
+        "the proof and the derive print the arguments they state: {rendered}"
+    );
+}

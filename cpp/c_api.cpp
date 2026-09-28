@@ -290,6 +290,70 @@ MlirOperation traitDeriveOpCreate(MlirLocation loc,
   return wrap(op.getOperation());
 }
 
+/// The #trait.binding attributes `arguments` holds, or nothing when one is of
+/// another kind.
+static std::optional<SmallVector<TypeBindingAttr>>
+unwrapBindings(MlirAttribute *arguments, intptr_t count) {
+  SmallVector<TypeBindingAttr> bindings;
+  for (Attribute argument : unwrapArray(arguments, count)) {
+    auto binding = dyn_cast<TypeBindingAttr>(argument);
+    if (!binding)
+      return std::nullopt;
+    bindings.push_back(binding);
+  }
+  return bindings;
+}
+
+MlirOperation traitProofOpCreateWithArguments(MlirLocation loc,
+                                              MlirStringRef symName,
+                                              MlirStringRef implName,
+                                              MlirAttribute *arguments,
+                                              intptr_t numArguments,
+                                              MlirAttribute wrappedTraitApp,
+                                              MlirAttribute *given,
+                                              intptr_t numGiven) {
+  MLIRContext *ctx = unwrap(loc)->getContext();
+  auto traitApp = dyn_cast<TraitApplicationAttr>(unwrap(wrappedTraitApp));
+  auto bindings = unwrapBindings(arguments, numArguments);
+  if (!traitApp || !bindings)
+    return {};
+  SmallVector<Attribute> entries = unwrapArray(given, numGiven);
+  if (!llvm::all_of(entries, [](Attribute entry) {
+        return isa<FlatSymbolRefAttr, UnitAttr>(entry);
+      }))
+    return {};
+
+  OpBuilder builder(ctx);
+  auto op = ProofOp::create(
+      builder, unwrap(loc),
+      builder.getStringAttr(StringRef(symName.data, symName.length)),
+      FlatSymbolRefAttr::get(ctx, StringRef(implName.data, implName.length)),
+      *bindings, traitApp, builder.getArrayAttr(entries));
+  return wrap(op.getOperation());
+}
+
+MlirOperation traitDeriveOpCreateWithArguments(MlirLocation loc,
+                                               MlirAttribute wrappedTraitApp,
+                                               MlirStringRef implName,
+                                               MlirAttribute *arguments,
+                                               intptr_t numArguments,
+                                               MlirValue *premises,
+                                               intptr_t numPremises) {
+  MLIRContext *ctx = unwrap(loc)->getContext();
+  auto traitApp = dyn_cast<TraitApplicationAttr>(unwrap(wrappedTraitApp));
+  auto bindings = unwrapBindings(arguments, numArguments);
+  if (!traitApp || !bindings)
+    return {};
+
+  OpBuilder builder(ctx);
+  auto op = DeriveOp::create(
+      builder, unwrap(loc), traitApp,
+      FlatSymbolRefAttr::get(ctx, StringRef(implName.data, implName.length)),
+      ArrayRef<TypeBindingAttr>(*bindings),
+      ValueRange(unwrapArray(premises, numPremises)));
+  return wrap(op.getOperation());
+}
+
 MlirType traitPolyTypeGet(MlirContext wrappedCtx, unsigned int label) {
   return wrap(PolyType::get(unwrap(wrappedCtx), label));
 }

@@ -557,6 +557,9 @@ struct ProveClaimResultPattern : public RewritePattern {
   ImplResolver *minting;
   /// A read of what impl selection has settled, which every use has.
   ReadOnlyImplResolver reading;
+  /// The derives whose cited impl selection has already contradicted, each
+  /// reported once.
+  mutable llvm::DenseSet<Operation *> refusedDerives;
 
   /// The step that establishes the facts the rest of the stage reads. It
   /// matches `trait.allege` alone: a claim derived inside a still-polymorphic
@@ -590,7 +593,29 @@ struct ProveClaimResultPattern : public RewritePattern {
     if (claim.isEquality())
       return rewriter.notifyMatchFailure(op, "equality claim is not impl-proved");
 
+    // A derive stating its impl's arguments made a choice: the witness it
+    // becomes is of a proof through that impl. Selection proving the claim
+    // through another is two answers to one question, refused where the
+    // choice was written rather than settled silently by the second.
+    auto provedThroughAnotherImpl = [&](FlatSymbolRefAttr proof) {
+      auto derive = dyn_cast<DeriveOp>(op);
+      if (!derive || !derive.statesImplArguments())
+        return false;
+      auto provenBy = ProofOp::getImplFromProof(getAnchorModule(op), proof);
+      if (succeeded(provenBy) && *provenBy == derive.getImplOp())
+        return false;
+      // The driver offers an op it did not rewrite again, so the refusal is
+      // reported the first time only.
+      if (refusedDerives.insert(op).second)
+        derive.emitOpError() << "derives " << claim.asUnproven()
+                             << " from impl " << derive.getImplAttr()
+                             << ", and impl selection proved it by " << proof;
+      return true;
+    };
+
     if (claim.isProven()) {
+      if (provedThroughAnotherImpl(claim.getProof()))
+        return rewriter.notifyMatchFailure(op, "selection chose another impl");
       rewriter.replaceOpWithNewOp<WitnessOp>(op, claim.getProof(),
                                              claim.getTraitApplication());
       return success();
@@ -619,6 +644,9 @@ struct ProveClaimResultPattern : public RewritePattern {
         (void)here.decline(claim);
       return rewriter.notifyMatchFailure(op, "couldn't find proof of this claim");
     }
+
+    if (provedThroughAnotherImpl(*sym))
+      return rewriter.notifyMatchFailure(op, "selection chose another impl");
 
     // Mint the witness at the same spelling the proof was recorded under.
     // Impl selection resolves the claim's monomorphic projections before

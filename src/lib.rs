@@ -10,7 +10,8 @@ use mlir_sys::{
     MlirAttribute, MlirContext, MlirLocation,
     MlirOperation, MlirPass, MlirStringRef,
     MlirType, MlirValue,
-    mlirArrayAttrGet, mlirIdentifierGet, mlirIntegerAttrGet, mlirIntegerTypeGet,
+    mlirArrayAttrGet, mlirFlatSymbolRefAttrGet, mlirIdentifierGet, mlirIntegerAttrGet,
+    mlirIntegerTypeGet,
     mlirLocationGetContext,
     mlirOperationGetContext,
     mlirOperationSetAttributeByName, mlirTypeAttrGet, mlirUnitAttrGet,
@@ -63,6 +64,17 @@ unsafe extern "C" {
                            trait_app: MlirAttribute,
                            impl_name: MlirStringRef,
                            assumptions: *const MlirValue, num_assumptions: isize) -> MlirOperation;
+    fn traitProofOpCreateWithArguments(loc: MlirLocation,
+                                       sym_name: MlirStringRef,
+                                       impl_name: MlirStringRef,
+                                       arguments: *const MlirAttribute, num_arguments: isize,
+                                       trait_app: MlirAttribute,
+                                       given: *const MlirAttribute, num_given: isize) -> MlirOperation;
+    fn traitDeriveOpCreateWithArguments(loc: MlirLocation,
+                                        trait_app: MlirAttribute,
+                                        impl_name: MlirStringRef,
+                                        arguments: *const MlirAttribute, num_arguments: isize,
+                                        premises: *const MlirValue, num_premises: isize) -> MlirOperation;
 
     fn traitPolyTypeGet(ctx: MlirContext, label: u32) -> MlirType;
 
@@ -457,6 +469,75 @@ pub fn derive<'c>(loc: Location<'c>,
         assumptions.as_ptr() as *const _,
         assumptions.len() as isize,
     ))}
+}
+
+/// The `#trait.binding` attributes pairing each of an impl's own parameters, as
+/// the impl spells it, with the argument it takes; `None` if a key is not a
+/// type parameter.
+fn impl_bindings<'c>(loc: Location<'c>, arguments: &[(Type<'c>, Type<'c>)]) -> Option<Vec<MlirAttribute>> {
+    let ctx = unsafe { mlirLocationGetContext(loc.to_raw()) };
+    let mut bindings = Vec::with_capacity(arguments.len());
+    for (parameter, argument) in arguments {
+        let binding = unsafe { traitTypeBindingAttrGet(ctx, parameter.to_raw(), argument.to_raw()) };
+        if binding.ptr.is_null() {
+            return None;
+        }
+        bindings.push(binding);
+    }
+    Some(bindings)
+}
+
+/// Create a `trait.proof` stating the arguments its impl's parameters take,
+/// `arguments`, one pair per parameter of the impl. `given` holds one entry per
+/// requirement of the trait and per entry of the impl's where clause, in that
+/// order: `Some(symbol)` discharging an application entry, `None` for every
+/// other. Returns `None` if a key is not a type parameter.
+pub fn proof_with_arguments<'c>(loc: Location<'c>,
+                                sym_name: &str,
+                                impl_name: &str,
+                                arguments: &[(Type<'c>, Type<'c>)],
+                                trait_app: TraitApplicationAttribute<'c>,
+                                given: &[Option<&str>],
+) -> Option<Operation<'c>> {
+    let bindings = impl_bindings(loc, arguments)?;
+    let ctx = unsafe { mlirLocationGetContext(loc.to_raw()) };
+    let entries: Vec<MlirAttribute> = given
+        .iter()
+        .map(|entry| unsafe {
+            match entry {
+                Some(symbol) => mlirFlatSymbolRefAttrGet(ctx, StringRef::new(symbol).to_raw()),
+                None => mlirUnitAttrGet(ctx),
+            }
+        })
+        .collect();
+    let op = unsafe { traitProofOpCreateWithArguments(
+        loc.to_raw(),
+        StringRef::new(sym_name).to_raw(),
+        StringRef::new(impl_name).to_raw(),
+        bindings.as_ptr(), bindings.len() as isize,
+        trait_app.to_raw(),
+        entries.as_ptr(), entries.len() as isize) };
+    if op.ptr.is_null() { None } else { Some(unsafe { Operation::from_raw(op) }) }
+}
+
+/// Create a `trait.derive` stating the arguments its impl's parameters take,
+/// `arguments`, one pair per parameter of the impl, with `premises` holding one
+/// claim per entry of the impl's where clause, in its order. Returns `None` if
+/// a key is not a type parameter.
+pub fn derive_with_arguments<'c>(loc: Location<'c>,
+                                 trait_app: TraitApplicationAttribute<'c>,
+                                 impl_name: &str,
+                                 arguments: &[(Type<'c>, Type<'c>)],
+                                 premises: &[Value<'c,'_>],
+) -> Option<Operation<'c>> {
+    let bindings = impl_bindings(loc, arguments)?;
+    let op = unsafe { traitDeriveOpCreateWithArguments(
+        loc.to_raw(),
+        trait_app.to_raw(),
+        StringRef::new(impl_name).to_raw(),
+        bindings.as_ptr(), bindings.len() as isize,
+        premises.as_ptr() as *const _, premises.len() as isize) };
+    if op.ptr.is_null() { None } else { Some(unsafe { Operation::from_raw(op) }) }
 }
 
 /// Build a `trait.assume` introducing the hypothesis `claim`: an application
