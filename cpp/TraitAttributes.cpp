@@ -64,25 +64,56 @@ LogicalResult TypeBindingAttr::verify(
   return success();
 }
 
-// Structural well-formedness of a witness: the predicate is one of the two arms
-// and an impl is named. An equality predicate's own invariant -- it contains no
-// proven claim -- is enforced when the `TypeEqualityAttr` is constructed. An
-// application-armed witness carries no arguments: its impl is read at the
-// application it names. Whether an equality-armed witness's keys are exactly
-// the cited impl's parameters needs the impl, so it is checked where the
-// witness is verified.
+// Whether `body` is the body of a bound requirement's witness: an impl
+// citation whose discharges are such bodies in turn, a binder premise, an impl
+// premise or reflexivity.
+static LogicalResult verifyWitnessBody(
+    llvm::function_ref<InFlightDiagnostic()> emitError, Attribute body) {
+  if (auto citation = dyn_cast_or_null<ImplCitationAttr>(body)) {
+    if (!citation.getImplRef())
+      return emitError() << "a witness body citing an impl names it";
+    for (Attribute discharge : citation.getDischarges())
+      if (failed(verifyWitnessBody(emitError, discharge)))
+        return failure();
+    return success();
+  }
+  if (!isa_and_nonnull<BinderPremiseAttr, ImplPremiseAttr, UnitAttr>(body))
+    return emitError() << "a witness body is an impl citation, a binder "
+                          "premise, an impl premise or reflexivity, found "
+                       << body;
+  return success();
+}
+
+// Structural well-formedness of a witness: the predicate is one of the three
+// arms and the body fit for it. A bound requirement's body is any of the four
+// arms. An application or equality witness cites the impl that witnesses it and
+// discharges nothing: those arms read the cited impl's premises where they are
+// verified. An equality predicate's own invariant -- it contains no proven
+// claim -- is enforced when the `TypeEqualityAttr` is constructed. An
+// application-armed witness's citation carries no arguments: its impl is read
+// at the application it names. Whether a citation's keys are exactly the cited
+// impl's parameters needs the impl, so it is checked where the witness is
+// verified.
 LogicalResult WitnessAttr::verify(
-    llvm::function_ref<InFlightDiagnostic()> emitError,
-    Attribute predicate, FlatSymbolRefAttr impl,
-    ArrayRef<TypeBindingAttr> arguments) {
-  if (!predicate)
-    return emitError() << "a witness pairs a predicate with an impl";
-  if (!isa<TraitApplicationAttr, TypeEqualityAttr>(predicate))
-    return emitError() << "a witness predicate must be a trait application or "
-                          "a type equality, found " << predicate;
-  if (!impl)
-    return emitError() << "a witness must name the impl that witnesses it";
-  if (isa<TraitApplicationAttr>(predicate) && !arguments.empty())
+    llvm::function_ref<InFlightDiagnostic()> emitError, Attribute predicate,
+    Attribute body) {
+  if (auto position = dyn_cast_or_null<IntegerAttr>(predicate)) {
+    if (position.getInt() < 0)
+      return emitError() << "a requirement position is non-negative";
+    return verifyWitnessBody(emitError, body);
+  }
+  if (!isa_and_nonnull<TraitApplicationAttr, TypeEqualityAttr>(predicate))
+    return emitError() << "a witness predicate must be a trait application, "
+                          "a type equality or a requirement position, found "
+                       << predicate;
+  auto citation = dyn_cast_or_null<ImplCitationAttr>(body);
+  if (!citation || !citation.getImplRef())
+    return emitError() << "a witness of an application or an equality cites "
+                          "the impl that witnesses it";
+  if (!citation.getDischarges().empty())
+    return emitError() << "only a bound requirement's witness discharges the "
+                          "premises of the impl it cites";
+  if (isa<TraitApplicationAttr>(predicate) && !citation.getArguments().empty())
     return emitError() << "an application witness names its impl alone; the "
                           "impl is read at the application it discharges";
   return success();
@@ -112,12 +143,9 @@ std::optional<std::pair<Attribute, WalkResult>> respellWitness(
   return std::make_pair(Attribute(rebuilt), WalkResult::skip());
 }
 
-// Reach every symbol a witness names as a symbol reference, which no type walk
-// reaches: the impl the witness cites, and the trait an application predicate
-// names. An equality predicate names symbols only through the types in its
-// endpoints, and those are ordinary sub-elements the framework's own type walk
-// reaches wherever this attribute rides.
-LogicalResult WitnessAttr::verifySymbolUses(
+// Reach every impl a citation names, and the impls its discharges name in turn,
+// as symbol references no type walk reaches.
+LogicalResult ImplCitationAttr::verifySymbolUses(
     Operation *op, SymbolTableCollection &symbolTable) const {
   // Verification writes nothing, so every name read under it resolves through
   // the symbol tables the walk this is one step of has already built.
@@ -127,7 +155,27 @@ LogicalResult WitnessAttr::verifySymbolUses(
   if (!isa_and_nonnull<ImplOp>(impl))
     return op->emitError() << "witness names '" << getImplRef()
                            << "', which does not resolve to an impl";
+  for (Attribute discharge : getDischarges())
+    if (auto citation = dyn_cast<ImplCitationAttr>(discharge))
+      if (failed(citation.verifySymbolUses(op, symbolTable)))
+        return failure();
+  return success();
+}
 
+// Reach every symbol a witness names as a symbol reference, which no type walk
+// reaches: the impls its body cites, and the trait an application predicate
+// names. An equality predicate names symbols only through the types in its
+// endpoints, and those are ordinary sub-elements the framework's own type walk
+// reaches wherever this attribute rides.
+LogicalResult WitnessAttr::verifySymbolUses(
+    Operation *op, SymbolTableCollection &symbolTable) const {
+  // Verification writes nothing, so every name read under it resolves through
+  // the symbol tables the walk this is one step of has already built.
+  SymbolLookupScope symbolAnswers(op, symbolTable);
+
+  if (auto citation = dyn_cast<ImplCitationAttr>(getBody()))
+    if (failed(citation.verifySymbolUses(op, symbolTable)))
+      return failure();
   if (auto app = dyn_cast<TraitApplicationAttr>(getPredicate()))
     return app.verifySymbolUses(op, symbolTable);
   return success();
@@ -167,27 +215,136 @@ void printImplArguments(AsmPrinter &printer,
   printer << ']';
 }
 
-Attribute WitnessAttr::parse(AsmParser &parser, Type) {
-  FailureOr<Attribute> predicate = parseApplicationOrEqualityPredicate(parser);
-  if (failed(predicate))
-    return {};
+/// Parse a witness body: `@impl[!P = T, ...] given [body, ...]`, `premise N`,
+/// `where N` or `refl`. Every arm is read here and nowhere else.
+static FailureOr<Attribute> parseWitnessBody(AsmParser &parser) {
+  MLIRContext *ctx = parser.getContext();
+  unsigned position;
+  if (succeeded(parser.parseOptionalKeyword("premise"))) {
+    if (parser.parseInteger(position))
+      return failure();
+    return Attribute(BinderPremiseAttr::get(ctx, position));
+  }
+  if (succeeded(parser.parseOptionalKeyword("where"))) {
+    if (parser.parseInteger(position))
+      return failure();
+    return Attribute(ImplPremiseAttr::get(ctx, position));
+  }
+  if (succeeded(parser.parseOptionalKeyword("refl")))
+    return Attribute(UnitAttr::get(ctx));
+
   FlatSymbolRefAttr impl;
   SmallVector<TypeBindingAttr> arguments;
-  if (parser.parseKeyword("by") || parser.parseAttribute(impl) ||
-      parseImplArguments(parser, arguments))
+  if (parser.parseAttribute(impl) || parseImplArguments(parser, arguments))
+    return failure();
+  SmallVector<Attribute> discharges;
+  if (succeeded(parser.parseOptionalKeyword("given")) &&
+      parser.parseCommaSeparatedList(AsmParser::Delimiter::Square, [&] {
+        FailureOr<Attribute> discharge = parseWitnessBody(parser);
+        if (failed(discharge))
+          return failure();
+        discharges.push_back(*discharge);
+        return success();
+      }))
+    return failure();
+  return Attribute(ImplCitationAttr::get(ctx, impl, arguments, discharges));
+}
+
+/// Print a witness body as `parseWitnessBody` reads it.
+static void printWitnessBody(AsmPrinter &printer, Attribute body) {
+  if (auto premise = dyn_cast<BinderPremiseAttr>(body)) {
+    printer << "premise " << premise.getPosition();
+    return;
+  }
+  if (auto premise = dyn_cast<ImplPremiseAttr>(body)) {
+    printer << "where " << premise.getPosition();
+    return;
+  }
+  if (isa<UnitAttr>(body)) {
+    printer << "refl";
+    return;
+  }
+  auto citation = cast<ImplCitationAttr>(body);
+  printer << citation.getImplRef();
+  printImplArguments(printer, citation.getArguments());
+  if (citation.getDischarges().empty())
+    return;
+  printer << " given [";
+  llvm::interleaveComma(citation.getDischarges(), printer,
+                        [&](Attribute discharge) {
+                          printWitnessBody(printer, discharge);
+                        });
+  printer << "]";
+}
+
+/// Parse a body arm standing alone, as `T` prints it.
+template <typename T>
+static Attribute parseWitnessBodyArm(AsmParser &parser) {
+  FailureOr<Attribute> body = parseWitnessBody(parser);
+  if (failed(body))
+    return {};
+  if (!isa<T>(*body)) {
+    parser.emitError(parser.getNameLoc(), "expected another witness body");
+    return {};
+  }
+  return *body;
+}
+
+Attribute ImplCitationAttr::parse(AsmParser &parser, Type) {
+  return parseWitnessBodyArm<ImplCitationAttr>(parser);
+}
+void ImplCitationAttr::print(AsmPrinter &printer) const {
+  printer << ' ';
+  printWitnessBody(printer, *this);
+}
+Attribute BinderPremiseAttr::parse(AsmParser &parser, Type) {
+  return parseWitnessBodyArm<BinderPremiseAttr>(parser);
+}
+void BinderPremiseAttr::print(AsmPrinter &printer) const {
+  printer << ' ';
+  printWitnessBody(printer, *this);
+}
+Attribute ImplPremiseAttr::parse(AsmParser &parser, Type) {
+  return parseWitnessBodyArm<ImplPremiseAttr>(parser);
+}
+void ImplPremiseAttr::print(AsmPrinter &printer) const {
+  printer << ' ';
+  printWitnessBody(printer, *this);
+}
+
+Attribute WitnessAttr::parse(AsmParser &parser, Type) {
+  MLIRContext *ctx = parser.getContext();
+  Attribute predicate;
+  if (succeeded(parser.parseOptionalKeyword("requirement"))) {
+    int64_t position;
+    if (parser.parseInteger(position))
+      return {};
+    predicate = IntegerAttr::get(IntegerType::get(ctx, 64), position);
+  } else {
+    FailureOr<Attribute> read = parseApplicationOrEqualityPredicate(parser);
+    if (failed(read))
+      return {};
+    predicate = *read;
+  }
+  if (parser.parseKeyword("by"))
+    return {};
+  FailureOr<Attribute> body = parseWitnessBody(parser);
+  if (failed(body))
     return {};
   auto err = [&]() { return parser.emitError(parser.getNameLoc()); };
-  return WitnessAttr::getChecked(err, parser.getContext(), *predicate, impl,
-                                 arguments);
+  return WitnessAttr::getChecked(err, ctx, predicate, *body);
 }
 
 void WitnessAttr::print(AsmPrinter &printer) const {
-  if (auto app = dyn_cast<TraitApplicationAttr>(getPredicate()))
+  printer << ' ';
+  if (std::optional<unsigned> position = getRequirement())
+    printer << "requirement " << *position;
+  else if (auto app = dyn_cast<TraitApplicationAttr>(getPredicate()))
     app.print(printer);
   else
     cast<TypeEqualityAttr>(getPredicate()).print(printer);
-  printer << " by " << getImplRef();
-  printImplArguments(printer, getArguments());
+  printer << " by ";
+  printWitnessBody(printer, getBody());
 }
 
 void TraitDialect::registerAttributes() {
@@ -444,149 +601,6 @@ Attribute BoundPredicateAttr::parse(AsmParser &p, Type) {
 void BoundPredicateAttr::print(AsmPrinter &printer) const {
   printer << ' ';
   printBoundPredicateBody(printer, *this);
-}
-
-LogicalResult BoundBodyAttr::verify(
-    llvm::function_ref<InFlightDiagnostic()> emitError,
-    std::optional<unsigned> premise, std::optional<unsigned> whereEntry,
-    bool refl, FlatSymbolRefAttr impl, ArrayRef<TypeBindingAttr> arguments,
-    ArrayRef<BoundBodyAttr> discharges) {
-  unsigned forms = premise.has_value() + whereEntry.has_value() + refl +
-                   static_cast<bool>(impl);
-  if (forms != 1)
-    return emitError() << "evidence under a binder is exactly one of a "
-                          "premise, a where-clause entry, reflexivity, or an "
-                          "impl";
-  if (!impl && (!arguments.empty() || !discharges.empty()))
-    return emitError() << "only evidence citing an impl carries arguments and "
-                          "discharges";
-  return success();
-}
-
-// An impl the body cites, at any depth, is a symbol reference no type walk
-// reaches, so it is checked here.
-LogicalResult BoundBodyAttr::verifySymbolUses(
-    Operation *op, SymbolTableCollection &symbolTable) const {
-  // Verification writes nothing, so every name read under it resolves through
-  // the symbol tables the walk this is one step of has already built.
-  SymbolLookupScope symbolAnswers(op, symbolTable);
-
-  if (FlatSymbolRefAttr impl = getImplRef()) {
-    Operation *cited = symbolTable.lookupNearestSymbolFrom(op, impl);
-    if (!isa_and_nonnull<ImplOp>(cited))
-      return op->emitError() << "evidence names '" << impl
-                             << "', which does not resolve to an impl";
-  }
-  for (BoundBodyAttr discharge : getDischarges())
-    if (failed(discharge.verifySymbolUses(op, symbolTable)))
-      return failure();
-  return success();
-}
-
-Attribute BoundBodyAttr::parse(AsmParser &p, Type) {
-  MLIRContext *ctx = p.getContext();
-  auto err = [&]() { return p.emitError(p.getCurrentLocation()); };
-  auto leaf = [&](std::optional<unsigned> premise,
-                  std::optional<unsigned> whereEntry, bool refl) {
-    return BoundBodyAttr::getChecked(err, ctx, premise, whereEntry, refl,
-                                     FlatSymbolRefAttr(), {}, {});
-  };
-
-  unsigned position;
-  if (succeeded(p.parseOptionalKeyword("premise"))) {
-    if (p.parseInteger(position))
-      return {};
-    return leaf(position, std::nullopt, false);
-  }
-  if (succeeded(p.parseOptionalKeyword("where"))) {
-    if (p.parseInteger(position))
-      return {};
-    return leaf(std::nullopt, position, false);
-  }
-  if (succeeded(p.parseOptionalKeyword("refl")))
-    return leaf(std::nullopt, std::nullopt, true);
-
-  FlatSymbolRefAttr impl;
-  SmallVector<TypeBindingAttr> arguments;
-  if (p.parseAttribute(impl) || parseImplArguments(p, arguments))
-    return {};
-  SmallVector<BoundBodyAttr> discharges;
-  if (succeeded(p.parseOptionalKeyword("given")) &&
-      p.parseCommaSeparatedList(AsmParser::Delimiter::Square, [&] {
-        auto discharge =
-            dyn_cast_or_null<BoundBodyAttr>(BoundBodyAttr::parse(p, Type()));
-        if (!discharge)
-          return failure();
-        discharges.push_back(discharge);
-        return success();
-      }))
-    return {};
-  return BoundBodyAttr::getChecked(err, ctx, std::nullopt, std::nullopt, false,
-                                   impl, arguments, discharges);
-}
-
-// A body as `BoundBodyAttr::parse` reads it, with no leading space: the form an
-// enclosing attribute prints it in.
-static void printBoundBody(AsmPrinter &printer, BoundBodyAttr body) {
-  if (std::optional<unsigned> premise = body.getPremise()) {
-    printer << "premise " << *premise;
-    return;
-  }
-  if (std::optional<unsigned> whereEntry = body.getWhereEntry()) {
-    printer << "where " << *whereEntry;
-    return;
-  }
-  if (body.getRefl()) {
-    printer << "refl";
-    return;
-  }
-  printer << body.getImplRef();
-  printImplArguments(printer, body.getArguments());
-  if (body.getDischarges().empty())
-    return;
-  printer << " given [";
-  llvm::interleaveComma(body.getDischarges(), printer,
-                        [&](BoundBodyAttr discharge) {
-                          printBoundBody(printer, discharge);
-                        });
-  printer << "]";
-}
-
-void BoundBodyAttr::print(AsmPrinter &printer) const {
-  printer << ' ';
-  printBoundBody(printer, *this);
-}
-
-LogicalResult BoundEvidenceAttr::verifySymbolUses(
-    Operation *op, SymbolTableCollection &symbolTable) const {
-  // Verification writes nothing, so every name read under it resolves through
-  // the symbol tables the walk this is one step of has already built.
-  SymbolLookupScope symbolAnswers(op, symbolTable);
-
-  if (failed(getPredicate().verifySymbolUses(op, symbolTable)))
-    return failure();
-  return getBody().verifySymbolUses(op, symbolTable);
-}
-
-Attribute BoundEvidenceAttr::parse(AsmParser &p, Type) {
-  unsigned requirement;
-  if (p.parseInteger(requirement) || p.parseColon() ||
-      p.parseKeyword("forall"))
-    return {};
-  FailureOr<BoundPredicateAttr> predicate = parseBoundPredicateBody(p);
-  if (failed(predicate) || p.parseKeyword("by"))
-    return {};
-  auto body = dyn_cast_or_null<BoundBodyAttr>(BoundBodyAttr::parse(p, Type()));
-  if (!body)
-    return {};
-  return BoundEvidenceAttr::get(p.getContext(), requirement, *predicate, body);
-}
-
-void BoundEvidenceAttr::print(AsmPrinter &printer) const {
-  printer << ' ' << getRequirement() << ": ";
-  printBoundPredicateBody(printer, getPredicate());
-  printer << " by ";
-  printBoundBody(printer, getBody());
 }
 
 FailureOr<Attribute> parseWherePredicate(AsmParser &p) {

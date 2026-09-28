@@ -9,7 +9,7 @@
 // impl states the evidence that it holds for every argument, one body of each
 // form: an impl that holds everywhere, the binder's premise, the impl's own
 // where-clause entry, an impl whose premise the binder's premise discharges,
-// and the impl stating it.
+// the impl stating it, and reflexivity.
 
 !S = !trait.poly<0>
 !X = !trait.poly<1>
@@ -24,22 +24,22 @@ trait.impl private @Marker_i1 for @Marker[i1] {}
 trait.impl private @Marker_wrap for @Marker[tuple<!P>] where [@Marker[!P]] {}
 
 trait.impl private @Has_i32 for @Has[i32]
-    bound_evidence [#trait<bound_evidence 0: forall [!X] where [@Marker[!X]] -> @Marker[!trait.proj<@Has[i32], "A", [!X]>] by @Marker_i1>] {
+    witnesses [#trait<witness requirement 0 by @Marker_i1>] {
   trait.assoc_type @A<[!X]> = i1
 }
 
 trait.impl private @Has_i64 for @Has[i64]
-    bound_evidence [#trait<bound_evidence 0: forall [!X] where [@Marker[!X]] -> @Marker[!trait.proj<@Has[i64], "A", [!X]>] by premise 0>] {
+    witnesses [#trait<witness requirement 0 by premise 0>] {
   trait.assoc_type @A<[!X]> = !X
 }
 
 trait.impl private @Has_tuple for @Has[tuple<!P>] where [@Marker[!P]]
-    bound_evidence [#trait<bound_evidence 0: forall [!X] where [@Marker[!X]] -> @Marker[!trait.proj<@Has[tuple<!P>], "A", [!X]>] by where 0>] {
+    witnesses [#trait<witness requirement 0 by where 0>] {
   trait.assoc_type @A<[!X]> = !P
 }
 
 trait.impl private @Has_f32 for @Has[f32]
-    bound_evidence [#trait<bound_evidence 0: forall [!X] where [@Marker[!X]] -> @Marker[!trait.proj<@Has[f32], "A", [!X]>] by @Marker_wrap[!P = !X] given [premise 0]>] {
+    witnesses [#trait<witness requirement 0 by @Marker_wrap[!P = !X] given [premise 0]>] {
   trait.assoc_type @A<[!X]> = tuple<!X>
 }
 
@@ -47,13 +47,24 @@ trait.trait private @Self[!S] where [forall [!X] -> @Self[!trait.proj<@Self[!S],
   trait.assoc_type @A<[!X]>
 }
 trait.impl private @Self_i32 for @Self[i32]
-    bound_evidence [#trait<bound_evidence 0: forall [!X] -> @Self[!trait.proj<@Self[i32], "A", [!X]>] by @Self_i32>] {
+    witnesses [#trait<witness requirement 0 by @Self_i32>] {
   trait.assoc_type @A<[!X]> = i32
 }
 
+// An equality conclusion is proved by reflexivity when the impl's own binding
+// makes its two sides one type.
+trait.trait private @Same[!S] where [forall [!X] -> !trait.proj<@Same[!S], "A", [!X]> = !X] {
+  trait.assoc_type @A<[!X]>
+}
+trait.impl private @Same_i32 for @Same[i32]
+    witnesses [#trait<witness requirement 0 by refl>] {
+  trait.assoc_type @A<[!X]> = !X
+}
+
 // CHECK: trait.trait private @Has[!trait.poly<0>] where [forall [!trait.poly<1>] where [@Marker[!trait.poly<1>]] -> @Marker[!trait.proj<@Has[!trait.poly<0>], "A", [!trait.poly<1>]>]]
-// CHECK: bound_evidence [#trait<bound_evidence 0: forall [!trait.poly<1>] where [@Marker[!trait.poly<1>]] -> @Marker[!trait.proj<@Has[i32], "A", [!trait.poly<1>]>] by @Marker_i1>]
+// CHECK: witnesses [#trait<witness requirement 0 by @Marker_i1>]
 // CHECK: by premise 0>]
 // CHECK: by where 0>]
 // CHECK: by @Marker_wrap[!trait.poly<2> = !trait.poly<1>] given [premise 0]>]
 // CHECK: by @Self_i32>]
+// CHECK: witnesses [#trait<witness requirement 0 by refl>]

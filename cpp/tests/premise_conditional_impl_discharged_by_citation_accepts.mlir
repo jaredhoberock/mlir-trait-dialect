@@ -30,7 +30,7 @@ trait.trait private @Host[!S] {
   func.func private @make(!S) -> !trait.proj<@Sib[!S], "Elem">
 }
 
-// CHECK: trait.impl private @Host_i64 for @Host[i64]witnesses [#trait<witness!trait.proj<@Sib[i64], "Elem"> = i32 by @Sib_i64_cond>, #trait<witness@Y[i64] by @Y_i64>]
+// CHECK: trait.impl private @Host_i64 for @Host[i64] witnesses [#trait<witness !trait.proj<@Sib[i64], "Elem"> = i32 by @Sib_i64_cond>, #trait<witness @Y[i64] by @Y_i64>]
 trait.impl private @Host_i64 for @Host[i64]
     witnesses [#trait<witness !trait.proj<@Sib[i64], "Elem"> = i32 by @Sib_i64_cond>,
                #trait<witness @Y[i64] by @Y_i64>] {

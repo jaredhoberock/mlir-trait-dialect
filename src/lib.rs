@@ -102,15 +102,14 @@ unsafe extern "C" {
                                   parameters: *const MlirType, num_parameters: isize,
                                   premises: *const MlirAttribute, num_premises: isize,
                                   conclusion: MlirAttribute) -> MlirAttribute;
-    fn traitBoundBodyAttrGetPremise(ctx: MlirContext, position: u32) -> MlirAttribute;
-    fn traitBoundBodyAttrGetWhereEntry(ctx: MlirContext, position: u32) -> MlirAttribute;
-    fn traitBoundBodyAttrGetRefl(ctx: MlirContext) -> MlirAttribute;
-    fn traitBoundBodyAttrGetImpl(ctx: MlirContext,
-                                 impl_name: MlirStringRef,
-                                 arguments: *const MlirAttribute, num_arguments: isize,
-                                 discharges: *const MlirAttribute, num_discharges: isize) -> MlirAttribute;
-    fn traitBoundEvidenceAttrGet(ctx: MlirContext, requirement: u32,
-                                 predicate: MlirAttribute, body: MlirAttribute) -> MlirAttribute;
+    fn traitWitnessAttrGetForRequirement(ctx: MlirContext, requirement: u32,
+                                         body: MlirAttribute) -> MlirAttribute;
+    fn traitWitnessBodyGetCitation(ctx: MlirContext,
+                                   impl_name: MlirStringRef,
+                                   arguments: *const MlirAttribute, num_arguments: isize,
+                                   discharges: *const MlirAttribute, num_discharges: isize) -> MlirAttribute;
+    fn traitWitnessBodyGetBinderPremise(ctx: MlirContext, position: u32) -> MlirAttribute;
+    fn traitWitnessBodyGetImplPremise(ctx: MlirContext, position: u32) -> MlirAttribute;
     fn traitCoercePendingAccepts(input: MlirType, result: MlirType) -> bool;
     fn traitAssocTypeOpCreate(loc: MlirLocation,
                               name: MlirStringRef,
@@ -304,27 +303,11 @@ pub fn impl_named<'c>(loc: Location<'c>,
     ))}
 }
 
-/// Attach the `bound_evidence` array to an existing `trait.impl` op: one
-/// `#trait.bound_evidence` per bound requirement of its trait. The impl
-/// verifier checks each against the requirement at the impl's arguments, so
-/// this only assembles the array.
-pub fn set_impl_bound_evidence<'c>(
-    impl_op: &Operation<'c>,
-    attrs: &[Attribute<'c>],
-) {
-    unsafe {
-        let name_ref = StringRef::new("bound_evidence").to_raw();
-        let ctx = mlirOperationGetContext(impl_op.to_raw());
-        let raw: Vec<MlirAttribute> = attrs.iter().map(|a| a.to_raw()).collect();
-        let array = mlirArrayAttrGet(ctx, raw.len() as isize, raw.as_ptr());
-        mlirOperationSetAttributeByName(impl_op.to_raw(), name_ref, array);
-    }
-}
-
 /// Attach the checked `witnesses` array to an existing `trait.impl` op -- each a
 /// `#trait.witness` the impl verifier reads by arm: an equality-armed
-/// projection-resolution witness, or an application-armed obligation
-/// discharge covering a cited conditional impl's standing assumption. The impl
+/// projection-resolution witness, an application-armed obligation discharge
+/// covering a cited conditional impl's standing assumption, or the witness of
+/// a bound requirement of the impl's trait. The impl
 /// verifier checks every entry, its attribute kind included, at impl verification, so this
 /// only assembles the array.
 pub fn set_impl_witnesses<'c>(
@@ -497,8 +480,7 @@ pub fn derive<'c>(loc: Location<'c>,
 /// The `#trait.binding` attributes pairing each of an impl's own parameters, as
 /// the impl spells it, with the argument it takes; `None` if a key is not a
 /// type parameter.
-fn impl_bindings<'c>(loc: Location<'c>, arguments: &[(Type<'c>, Type<'c>)]) -> Option<Vec<MlirAttribute>> {
-    let ctx = unsafe { mlirLocationGetContext(loc.to_raw()) };
+fn type_bindings<'c>(ctx: MlirContext, arguments: &[(Type<'c>, Type<'c>)]) -> Option<Vec<MlirAttribute>> {
     let mut bindings = Vec::with_capacity(arguments.len());
     for (parameter, argument) in arguments {
         let binding = unsafe { traitTypeBindingAttrGet(ctx, parameter.to_raw(), argument.to_raw()) };
@@ -522,7 +504,7 @@ pub fn proof_with_arguments<'c>(loc: Location<'c>,
                                 trait_app: TraitApplicationAttribute<'c>,
                                 given: &[Option<&str>],
 ) -> Option<Operation<'c>> {
-    let bindings = impl_bindings(loc, arguments)?;
+    let bindings = type_bindings(unsafe { mlirLocationGetContext(loc.to_raw()) }, arguments)?;
     let ctx = unsafe { mlirLocationGetContext(loc.to_raw()) };
     let entries: Vec<MlirAttribute> = given
         .iter()
@@ -553,7 +535,7 @@ pub fn derive_with_arguments<'c>(loc: Location<'c>,
                                  arguments: &[(Type<'c>, Type<'c>)],
                                  premises: &[Value<'c,'_>],
 ) -> Option<Operation<'c>> {
-    let bindings = impl_bindings(loc, arguments)?;
+    let bindings = type_bindings(unsafe { mlirLocationGetContext(loc.to_raw()) }, arguments)?;
     let op = unsafe { traitDeriveOpCreateWithArguments(
         loc.to_raw(),
         trait_app.to_raw(),
@@ -739,16 +721,7 @@ pub fn witness_attr<'c>(
     impl_name: &str,
     arguments: &[(Type<'c>, Type<'c>)],
 ) -> Option<Attribute<'c>> {
-    let mut bindings = Vec::with_capacity(arguments.len());
-    for (parameter, argument) in arguments {
-        let binding = unsafe {
-            traitTypeBindingAttrGet(ctx.to_raw(), parameter.to_raw(), argument.to_raw())
-        };
-        if binding.ptr.is_null() {
-            return None;
-        }
-        bindings.push(binding);
-    }
+    let bindings = type_bindings(ctx.to_raw(), arguments)?;
     let attr = unsafe { Attribute::from_raw(traitWitnessAttrGet(
         ctx.to_raw(), predicate.to_raw(), StringRef::new(impl_name).to_raw(),
         bindings.as_ptr(), bindings.len() as isize)) };
@@ -774,48 +747,41 @@ pub fn bound_predicate_attr<'c>(
     if attr.to_raw().ptr.is_null() { None } else { Some(attr) }
 }
 
-/// Evidence under a bound requirement's binder: the `#trait.body` one of its
-/// four forms builds.
-pub enum BoundBody<'c> {
+/// A witness body: the evidence a `#trait.witness` states for its predicate.
+pub enum WitnessBody<'c> {
     /// The binder's premise at this position.
-    Premise(u32),
+    BinderPremise(u32),
     /// The stating impl's where-clause entry at this position.
-    WhereEntry(u32),
+    ImplPremise(u32),
     /// An equality whose sides are one type through the stating impl's bindings.
     Refl,
     /// The impl named, at its parameters' arguments, with one body per entry of
     /// its where clause.
-    Impl {
-        name: &'c str,
+    Citation {
+        impl_name: &'c str,
         arguments: Vec<(Type<'c>, Type<'c>)>,
         discharges: Vec<Attribute<'c>>,
     },
 }
 
-/// The `#trait.body` attribute `body` describes. Returns `None` if an argument's
-/// key is not a type parameter or a discharge is not a body.
-pub fn bound_body_attr<'c>(ctx: &'c Context, body: BoundBody<'c>) -> Option<Attribute<'c>> {
+/// The witness body attribute `body` describes. Returns `None` if an argument's
+/// key is not a type parameter.
+pub fn witness_body_attr<'c>(ctx: &'c Context, body: WitnessBody<'c>) -> Option<Attribute<'c>> {
     let raw = unsafe {
         match body {
-            BoundBody::Premise(position) => traitBoundBodyAttrGetPremise(ctx.to_raw(), position),
-            BoundBody::WhereEntry(position) => {
-                traitBoundBodyAttrGetWhereEntry(ctx.to_raw(), position)
+            WitnessBody::BinderPremise(position) => {
+                traitWitnessBodyGetBinderPremise(ctx.to_raw(), position)
             }
-            BoundBody::Refl => traitBoundBodyAttrGetRefl(ctx.to_raw()),
-            BoundBody::Impl { name, arguments, discharges } => {
-                let mut bindings = Vec::with_capacity(arguments.len());
-                for (parameter, argument) in arguments {
-                    let binding = traitTypeBindingAttrGet(
-                        ctx.to_raw(), parameter.to_raw(), argument.to_raw());
-                    if binding.ptr.is_null() {
-                        return None;
-                    }
-                    bindings.push(binding);
-                }
+            WitnessBody::ImplPremise(position) => {
+                traitWitnessBodyGetImplPremise(ctx.to_raw(), position)
+            }
+            WitnessBody::Refl => mlirUnitAttrGet(ctx.to_raw()),
+            WitnessBody::Citation { impl_name, arguments, discharges } => {
+                let bindings = type_bindings(ctx.to_raw(), &arguments)?;
                 let raw_discharges: Vec<MlirAttribute> =
                     discharges.iter().map(|d| d.to_raw()).collect();
-                traitBoundBodyAttrGetImpl(
-                    ctx.to_raw(), StringRef::new(name).to_raw(),
+                traitWitnessBodyGetCitation(
+                    ctx.to_raw(), StringRef::new(impl_name).to_raw(),
                     bindings.as_ptr(), bindings.len() as isize,
                     raw_discharges.as_ptr(), raw_discharges.len() as isize)
             }
@@ -825,18 +791,17 @@ pub fn bound_body_attr<'c>(ctx: &'c Context, body: BoundBody<'c>) -> Option<Attr
     if attr.to_raw().ptr.is_null() { None } else { Some(attr) }
 }
 
-/// The `#trait.bound_evidence` an impl states for the bound requirement at
-/// position `requirement` of its trait: `predicate` is that requirement at the
-/// impl's arguments and `body` proves its conclusion. Returns `None` if either
-/// attribute is of another kind.
-pub fn bound_evidence_attr<'c>(
+/// The `#trait.witness` proving the bound requirement at position `requirement`
+/// of the trait of the impl whose `witnesses` array holds it: `body` proves the
+/// requirement's conclusion under its binder. Returns `None` if `body` is no
+/// witness body.
+pub fn requirement_witness_attr<'c>(
     ctx: &'c Context,
     requirement: u32,
-    predicate: Attribute<'c>,
     body: Attribute<'c>,
 ) -> Option<Attribute<'c>> {
-    let attr = unsafe { Attribute::from_raw(traitBoundEvidenceAttrGet(
-        ctx.to_raw(), requirement, predicate.to_raw(), body.to_raw())) };
+    let attr = unsafe { Attribute::from_raw(traitWitnessAttrGetForRequirement(
+        ctx.to_raw(), requirement, body.to_raw())) };
     if attr.to_raw().ptr.is_null() { None } else { Some(attr) }
 }
 

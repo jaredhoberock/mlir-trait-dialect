@@ -414,19 +414,18 @@ def ImplOp : TraitDialectOp<"impl", [
     trait.impl for @Convergence[i64] by #coop.rule<convergence> { ... }
     ```
 
-    The optional `bound_evidence` array carries, for each bound requirement of
-    the trait -- a requirement quantified over parameters of its own, a generic
-    associated type's bound -- the evidence that it holds for every argument
-    (`#trait.bound_evidence`). An impl of a trait with a bound requirement
-    states exactly one for each, and the verifier checks each against the
-    requirement at the impl's arguments:
+    A witness for a bound requirement of the trait -- a requirement quantified
+    over parameters of its own, a generic associated type's bound -- names the
+    requirement by its position and proves its conclusion under its binder, for
+    every argument (see `#trait.witness`). An impl of a trait with a bound
+    requirement states exactly one for each:
 
     ```mlir
     trait.trait @Has[!S] where [forall [!X] -> @Marker[!trait.proj<@Has[!S], "A", [!X]>]] {
       trait.assoc_type @A<[!X]>
     }
     trait.impl @Has_i32 for @Has[i32]
-        bound_evidence [#trait<bound_evidence 0: forall [!X] -> @Marker[!trait.proj<@Has[i32], "A", [!X]>] by @Marker_i1>] {
+        witnesses [#trait<witness requirement 0 by @Marker_i1>] {
       trait.assoc_type @A<[!X]> = i1
     }
     ```
@@ -451,8 +450,6 @@ def ImplOp : TraitDialectOp<"impl", [
     PredicateArrayAttr:$assumptions,
     OptionalAttr<TypedArrayAttrBase<WitnessAttr,
         "array of impl witnesses">>:$witnesses,
-    OptionalAttr<TypedArrayAttrBase<BoundEvidenceAttr,
-        "array of bound requirement evidence">>:$bound_evidence,
     OptionalAttr<RuleAttrInterface>:$rule,
     OptionalAttr<StrAttr>:$sym_visibility
   );

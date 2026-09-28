@@ -40,7 +40,7 @@ trait.impl private @Marker_i1 for @Marker[i1] {
 }
 
 trait.impl private @Has_i32 for @Has[i32]
-    bound_evidence [#trait<bound_evidence 0: forall [!X] where [@Marker[!X]] -> @Marker[!trait.proj<@Has[i32], "A", [!X]>] by @Marker_i1>] {
+    witnesses [#trait<witness requirement 0 by @Marker_i1>] {
   trait.assoc_type @A<[!X]> = i1
 }
 

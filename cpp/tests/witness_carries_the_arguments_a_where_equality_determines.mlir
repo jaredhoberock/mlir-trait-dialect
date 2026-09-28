@@ -35,7 +35,7 @@ trait.trait private @Foo[!S] {
   func.func private @f(!S) -> !trait.proj<@S[i64], "Out">
 }
 
-// CHECK: trait.impl private @Foo_i64 for @Foo[i64]witnesses [#trait<witness!trait.proj<@S[i64], "Out"> = i1 by @S_i64[!trait.poly<1> = i1]>]
+// CHECK: trait.impl private @Foo_i64 for @Foo[i64] witnesses [#trait<witness !trait.proj<@S[i64], "Out"> = i1 by @S_i64[!trait.poly<1> = i1]>]
 trait.impl private @Foo_i64 for @Foo[i64]
     witnesses [#trait<witness !trait.proj<@S[i64], "Out"> = i1 by @S_i64[!U = i1]>] {
   func.func @f(%x: i64) -> i1 {

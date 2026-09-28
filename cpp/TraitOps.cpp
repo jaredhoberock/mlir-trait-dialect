@@ -1199,11 +1199,11 @@ struct BoundEvidenceScope {
 /// is an impl of it at the arguments it carries, each of that impl's
 /// where-clause entries there discharged in turn by the body standing at the
 /// entry's position.
-static LogicalResult verifyBoundBody(BoundEvidenceScope &scope,
-                                     BoundBodyAttr body, Attribute predicate) {
+static LogicalResult verifyWitnessBody(BoundEvidenceScope &scope,
+                                       Attribute body, Attribute predicate) {
   auto refuse = [&](const Twine &why) {
-    return scope.errFn() << "evidence " << body << " does not prove "
-                         << predicate << ": " << why;
+    return scope.errFn() << "evidence does not prove " << predicate << ": "
+                         << why;
   };
   auto citing = [&](Attribute cited) -> LogicalResult {
     FailureOr<bool> same = scope.same(cited, predicate);
@@ -1214,20 +1214,20 @@ static LogicalResult verifyBoundBody(BoundEvidenceScope &scope,
     return success();
   };
 
-  if (std::optional<unsigned> premise = body.getPremise()) {
-    if (*premise >= scope.premises.size())
+  if (auto premise = dyn_cast<BinderPremiseAttr>(body)) {
+    if (premise.getPosition() >= scope.premises.size())
       return refuse(Twine("the binder states ") +
                     Twine(scope.premises.size()) + " premises");
-    return citing(scope.premises[*premise]);
+    return citing(scope.premises[premise.getPosition()]);
   }
-  if (std::optional<unsigned> whereEntry = body.getWhereEntry()) {
+  if (auto premise = dyn_cast<ImplPremiseAttr>(body)) {
     PredicateArrayAttr where = scope.impl.getAssumptions();
-    if (*whereEntry >= where.size())
+    if (premise.getPosition() >= where.size())
       return refuse(Twine("the impl's where clause has ") +
                     Twine(where.size()) + " entries");
-    return citing(where.getPredicates()[*whereEntry]);
+    return citing(where.getPredicates()[premise.getPosition()]);
   }
-  if (body.getRefl()) {
+  if (isa<UnitAttr>(body)) {
     auto equality = dyn_cast<TypeEqualityAttr>(predicate);
     if (!equality)
       return refuse(Twine("reflexivity proves only an equality"));
@@ -1240,10 +1240,11 @@ static LogicalResult verifyBoundBody(BoundEvidenceScope &scope,
     return success();
   }
 
-  ImplOp cited = lookupSymbolFrom<ImplOp>(scope.module, body.getImplRef());
+  auto citation = cast<ImplCitationAttr>(body);
+  ImplOp cited = lookupSymbolFrom<ImplOp>(scope.module, citation.getImplRef());
   if (!cited)
     return refuse(Twine("it names no impl"));
-  auto arguments = cited.substitutionFor(body.getArguments(), scope.errFn);
+  auto arguments = cited.substitutionFor(citation.getArguments(), scope.errFn);
   if (failed(arguments))
     return failure();
   auto application = dyn_cast<TraitApplicationAttr>(predicate);
@@ -1254,26 +1255,42 @@ static LogicalResult verifyBoundBody(BoundEvidenceScope &scope,
     return failure();
 
   PredicateArrayAttr where = cited.getAssumptions();
-  if (body.getDischarges().size() != where.size())
+  if (citation.getDischarges().size() != where.size())
     return refuse(Twine("the cited impl's where clause has ") +
                   Twine(where.size()) + " entries, and the evidence discharges " +
-                  Twine(body.getDischarges().size()));
-  for (auto [entry, discharge] : llvm::zip(where, body.getDischarges()))
-    if (failed(verifyBoundBody(scope, discharge,
-                               instantiatePredicate(entry, *arguments))))
+                  Twine(citation.getDischarges().size()));
+  for (auto [entry, discharge] : llvm::zip(where, citation.getDischarges()))
+    if (failed(verifyWitnessBody(scope, discharge,
+                                 instantiatePredicate(entry, *arguments))))
       return failure();
   return success();
 }
 
-/// Verifies the evidence this impl states for each bound requirement of its
-/// trait: exactly one per such requirement, stating that requirement at the
-/// impl's arguments, with a body proving its conclusion under its binder.
+/// Verifies the witnesses this impl states for the bound requirements of its
+/// trait: exactly one per such requirement, whose body proves the
+/// requirement's conclusion at the impl's arguments, under its binder.
 static LogicalResult verifyBoundRequirementEvidence(
     ImplOp impl, TraitOp traitOp, ArrayRef<ImplWitnessRule> witnessRules,
     llvm::function_ref<InFlightDiagnostic()> errFn) {
   PredicateArrayAttr requirements = traitOp.getRequirements();
-  ArrayAttr stated = impl.getBoundEvidenceAttr();
-  if (!requirements.hasBoundPredicates() && (!stated || stated.empty()))
+  DenseMap<unsigned, WitnessAttr> byRequirement;
+  if (ArrayAttr witnesses = impl.getWitnessesAttr()) {
+    for (auto witness : witnesses.getAsRange<WitnessAttr>()) {
+      std::optional<unsigned> position = witness.getRequirement();
+      if (!position)
+        continue;
+      if (*position >= requirements.size() ||
+          !isa<BoundPredicateAttr>(requirements.getPredicates()[*position]))
+        return impl.emitOpError()
+               << "states a witness for requirement " << *position
+               << ", which is not a bound requirement of trait '@"
+               << traitOp.getSymName() << "'";
+      if (!byRequirement.try_emplace(*position, witness).second)
+        return impl.emitOpError() << "states a witness for requirement "
+                                  << *position << " twice";
+    }
+  }
+  if (!requirements.hasBoundPredicates())
     return success();
 
   auto module = impl.getModule(errFn);
@@ -1286,53 +1303,26 @@ static LogicalResult verifyBoundRequirementEvidence(
   if (failed(own))
     return failure();
 
-  MLIRContext *ctx = impl.getContext();
-  DenseMap<unsigned, BoundEvidenceAttr> byRequirement;
-  if (stated) {
-    for (auto evidence : stated.getAsRange<BoundEvidenceAttr>()) {
-      unsigned position = evidence.getRequirement();
-      if (position >= requirements.size() ||
-          !isa<BoundPredicateAttr>(requirements.getPredicates()[position]))
-        return impl.emitOpError()
-               << "states bound evidence for requirement " << position
-               << ", which is not a bound requirement of trait '@"
-               << traitOp.getSymName() << "'";
-      if (!byRequirement.try_emplace(position, evidence).second)
-        return impl.emitOpError()
-               << "states bound evidence for requirement " << position
-               << " twice";
-    }
-  }
-
-  auto atImpl = [&](Attribute predicate) {
-    return instantiatePredicate(predicate, *traitArguments);
-  };
   for (auto [position, requirement] : llvm::enumerate(requirements)) {
     auto bound = dyn_cast<BoundPredicateAttr>(requirement);
     if (!bound)
       continue;
-    auto evidence = byRequirement.find(position);
-    if (evidence == byRequirement.end())
+    auto witness = byRequirement.find(position);
+    if (witness == byRequirement.end())
       return impl.emitOpError()
-             << "states no evidence for bound requirement " << position
+             << "states no witness for bound requirement " << position
              << " of trait '@" << traitOp.getSymName() << "'";
 
     // The requirement at this impl's arguments: its binder's parameters stay
     // the trait's, since the binder is still quantified here.
-    SmallVector<Attribute> premises = llvm::map_to_vector(
-        bound.getPremises(), [&](Attribute p) { return atImpl(p); });
-    auto expected = BoundPredicateAttr::get(ctx, bound.getParameters(),
-                                            premises,
-                                            atImpl(bound.getConclusion()));
-    if (evidence->second.getPredicate() != expected)
-      return impl.emitOpError()
-             << "states bound evidence for requirement " << position << " as "
-             << evidence->second.getPredicate()
-             << ", but the requirement at this impl is " << expected;
-
+    SmallVector<Attribute> premises =
+        llvm::map_to_vector(bound.getPremises(), [&](Attribute premise) {
+          return instantiatePredicate(premise, *traitArguments);
+        });
     BoundEvidenceScope scope{impl, premises, *own, *module, errFn};
-    if (failed(verifyBoundBody(scope, evidence->second.getBody(),
-                               expected.getConclusion())))
+    if (failed(verifyWitnessBody(
+            scope, witness->second.getBody(),
+            instantiatePredicate(bound.getConclusion(), *traitArguments))))
       return failure();
   }
   return success();
@@ -2239,14 +2229,6 @@ ParseResult ImplOp::parse(OpAsmParser &p, OperationState &result) {
     result.addAttribute("witnesses", witnesses);
   }
 
-  // Optional evidence for the trait's bound requirements: one array of
-  // #trait.bound_evidence entries.
-  if (succeeded(p.parseOptionalKeyword("bound_evidence"))) {
-    ArrayAttr boundEvidence;
-    if (p.parseAttribute(boundEvidence))
-      return failure();
-    result.addAttribute("bound_evidence", boundEvidence);
-  }
 
   // sym_name: use parsed or synthesize from parameters
   StringAttr symNameAttr = parsedSymName
@@ -2299,23 +2281,16 @@ void ImplOp::print(OpAsmPrinter &printer) {
   // print witnesses if present and non-empty
   if (ArrayAttr witnesses = getWitnessesAttr()) {
     if (!witnesses.empty()) {
-      printer << "witnesses ";
+      printer << " witnesses ";
       printer.printAttribute(witnesses);
     }
   }
 
-  // print bound requirement evidence if present and non-empty
-  if (ArrayAttr boundEvidence = getBoundEvidenceAttr()) {
-    if (!boundEvidence.empty()) {
-      printer << " bound_evidence ";
-      printer.printAttribute(boundEvidence);
-    }
-  }
 
   printer.printOptionalAttrDictWithKeyword(
     (*this)->getAttrs(),
     /*elidedAttrs=*/{"sym_name", "self_application", "assumptions", "witnesses",
-                     "bound_evidence", "rule", "sym_visibility"}
+                     "rule", "sym_visibility"}
   );
   printer << " ";
   printer.printRegion(getBody());

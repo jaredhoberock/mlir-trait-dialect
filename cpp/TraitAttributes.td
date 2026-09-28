@@ -136,64 +136,137 @@ def TypeBindingAttr : AttrDef<TraitDialect, "TypeBinding", []> {
   let assemblyFormat = "`` $parameter `=` $argument";
 }
 
-// A predicate and the impl that witnesses it. One shape serves two roles, read
-// off the predicate arm: an equality `projection = resolved` the associated-type
-// binding of the impl, at the arguments the witness carries for its parameters,
-// resolves (a projection-resolution witness), or a trait application the impl
-// discharges (an obligation discharge).
+// The evidence a witness body cites an impl through: the impl, the arguments
+// its parameters take, and a body per entry of its where clause.
+def ImplCitationAttr : AttrDef<TraitDialect, "ImplCitation",
+    [DeclareAttrInterfaceMethods<SymbolUserAttrInterface>]> {
+  let mnemonic = "cite";
+  let summary = "A witness body citing an impl at arguments";
+  let description = [{
+    The impl arm of a witness body: the impl `impl_ref`, at `arguments` -- one
+    binding per parameter of the impl, keyed by the parameter as the impl spells
+    it -- and `discharges`, one body per entry of the impl's where clause, in
+    its order, each proving that entry at the arguments. Printed within a
+    witness as `@impl[!P = T, ...] given [body, ...]`; the brackets are omitted
+    when the impl binds no parameter and `given` when it discharges nothing.
+  }];
+
+  let parameters = (ins
+    "::mlir::FlatSymbolRefAttr":$impl_ref,
+    ArrayRefParameter<"TypeBindingAttr">:$arguments,
+    ArrayRefParameter<"::mlir::Attribute">:$discharges
+  );
+
+  let hasCustomAssemblyFormat = 1;
+}
+
+// The premise at a position of the binder a witness body stands under.
+def BinderPremiseAttr : AttrDef<TraitDialect, "BinderPremise", []> {
+  let mnemonic = "premise";
+  let summary = "A witness body citing a premise of its binder";
+  let description = [{
+    The premise at `position` of the bound requirement a witness body proves
+    the conclusion of. Printed within a witness as `premise N`.
+  }];
+  let parameters = (ins "unsigned":$position);
+  let hasCustomAssemblyFormat = 1;
+}
+
+// The entry at a position of the where clause of the impl stating a witness.
+def ImplPremiseAttr : AttrDef<TraitDialect, "ImplPremise", []> {
+  let mnemonic = "where";
+  let summary = "A witness body citing an entry of its impl's where clause";
+  let description = [{
+    The entry at `position` of the where clause of the impl whose witness this
+    body is. Printed within a witness as `where N`.
+  }];
+  let parameters = (ins "unsigned":$position);
+  let hasCustomAssemblyFormat = 1;
+}
+
+// A predicate and the evidence that it holds.
 def WitnessAttr : AttrDef<TraitDialect, "Witness",
     [DeclareAttrInterfaceMethods<SymbolUserAttrInterface>]> {
   let mnemonic = "witness";
-  let summary = "A predicate and the impl that witnesses it";
+  let summary = "A predicate and the evidence that it holds";
   let description = [{
-    Pairs a `predicate` with the `impl` that witnesses it -- an equality
-    resolved by the impl's associated-type binding, or an application obligation
-    the impl supplies. The predicate is one of two arms:
+    Pairs a `predicate` with a `body`, the evidence that it holds. The
+    predicate is one of three arms:
 
-      * a `TypeEqualityAttr` `projection = resolved`, holding because the impl,
-        at `arguments`, binds the associated type `projection` names (a
-        projection carrying its member and any associated-type arguments) to
-        `resolved`. `arguments` is the impl's substitution: one binding per
-        parameter of the impl, keyed by the parameter as the impl spells it.
-        It holds the arguments selection chose, so verification substitutes
-        them rather than reading them off the projection: a parameter only a
-        where-clause equality determines has no position in the projection to
-        be read from. Every type parameter an argument spells is one the
-        equality spells, so the instance a clone carries the equality to
-        carries the arguments with it.
+      * a `TypeEqualityAttr` `projection = resolved`, holding because the impl
+        the body cites, at the arguments the body carries, binds the associated
+        type `projection` names (a projection carrying its member and any
+        associated-type arguments) to `resolved`. The arguments are the impl's
+        substitution: one binding per parameter of the impl, keyed by the
+        parameter as the impl spells it. They hold the arguments selection
+        chose, so verification substitutes them rather than reading them off
+        the projection: a parameter only a where-clause equality determines has
+        no position in the projection to be read from. Every type parameter an
+        argument spells is one the equality spells, so the instance a clone
+        carries the equality to carries the arguments with it.
 
-      * a `TraitApplicationAttr`, an obligation the impl supplies, discharging a
-        cited conditional sibling impl's standing assumptions; verification
-        resolves the named impl by symbol and never scans the module, so an
-        impl's verdict does not depend on the unrelated impls the module carries.
-        The impl is read at the application it names, so this arm carries no
-        arguments.
+      * a `TraitApplicationAttr`, an obligation the impl the body cites
+        supplies, discharging a cited conditional sibling impl's standing
+        assumptions; verification resolves the named impl by symbol and never
+        scans the module, so an impl's verdict does not depend on the unrelated
+        impls the module carries. The impl is read at the application it names,
+        so the body carries no arguments.
 
-    Printed `predicate by @impl[!P = T, ...]`; the brackets are omitted when
-    the impl binds no parameter.
+      * a requirement position `requirement N`: the bound requirement at
+        position N of the trait of the impl whose `witnesses` array holds this
+        witness, at the impl's arguments. The predicate is that requirement,
+        derived and never stated; the body proves its conclusion under its
+        binder.
+
+    The body is one of four arms, each an attribute of its own:
+
+      * an impl citation (`ImplCitationAttr`), `@impl[!P = T, ...] given
+        [body, ...]`: the impl at those arguments, whose header is the
+        predicate, with a body discharging each entry of its where clause.
+        Only a bound requirement's body discharges entries: the equality and
+        application arms read the impl's premises as they always have;
+      * `premise N` (`BinderPremiseAttr`), the binder's premise N;
+      * `where N` (`ImplPremiseAttr`), entry N of the stating impl's where
+        clause;
+      * `refl` (a unit attribute), an equality whose two sides are one type
+        read through the stating impl's own bindings.
+
+    The last three stand only under a bound requirement, whose binder and impl
+    they cite.
+
+    Printed `predicate by body`.
 
     Witnessing is one concept carried two ways, chosen by scope. This attribute
     IS the witness and stands alone as declaration-level witnessing. Where
     evidence must be a typed claim value, the `trait.witness` op wraps this same
     content and produces the value. See `trait.impl` for a printed `witnesses [...]`
-    array carrying both arms.
+    array carrying every arm.
 
-    Both predicate arms are walk-visible, so every symbol either names is
-    reached by the framework's own symbol-user driver wherever this attribute
-    rides. A projection-resolution witness is immutable under rewriting for the
-    reason `TypeEqualityAttr` states, and its arguments with it: every replacer
-    the dialect builds carries the attribute-level rules that return an
-    equality, and an equality-armed witness, unchanged and skip their interior.
-    A clone moves the claim a `trait.witness` produces, never the witness it
-    holds; verification carries the stored endpoints and arguments to the
-    clone's equality by the one substitution relating the two.
+    Every predicate arm is walk-visible, so every symbol one names is reached by
+    the framework's own symbol-user driver wherever this attribute rides. A
+    projection-resolution witness is immutable under rewriting for the reason
+    `TypeEqualityAttr` states, and its arguments with it: every replacer the
+    dialect builds carries the attribute-level rules that return an equality,
+    and an equality-armed witness, unchanged and skip their interior. A clone
+    moves the claim a `trait.witness` produces, never the witness it holds;
+    verification carries the stored endpoints and arguments to the clone's
+    equality by the one substitution relating the two.
   }];
 
   let parameters = (ins
     "::mlir::Attribute":$predicate,
-    "::mlir::FlatSymbolRefAttr":$impl_ref,
-    ArrayRefParameter<"TypeBindingAttr">:$arguments
+    "::mlir::Attribute":$body
   );
+
+  let builders = [
+    // a witness whose body cites `impl` at `arguments`, discharging nothing
+    AttrBuilder<(ins "::mlir::Attribute":$predicate,
+                     "::mlir::FlatSymbolRefAttr":$impl,
+                     "::llvm::ArrayRef<TypeBindingAttr>":$arguments), [{
+      return $_get($_ctxt, predicate,
+                   ImplCitationAttr::get($_ctxt, impl, arguments, {}));
+    }]>
+  ];
 
   let extraClassDeclaration = [{
     // The equality this witness resolves, read off the predicate; valid only
@@ -209,6 +282,22 @@ def WitnessAttr : AttrDef<TraitDialect, "Witness",
     // application-headed witness.
     TraitApplicationAttr getApplication() const {
       return ::mlir::cast<TraitApplicationAttr>(getPredicate());
+    }
+    // The position of the bound requirement this witness proves, when it
+    // proves one.
+    std::optional<unsigned> getRequirement() const {
+      if (auto position = ::mlir::dyn_cast<IntegerAttr>(getPredicate()))
+        return position.getInt();
+      return std::nullopt;
+    }
+    // The impl the body cites and the arguments it carries; valid for an
+    // equality- or application-headed witness, whose body always cites one.
+    ImplCitationAttr getCitation() const {
+      return ::mlir::cast<ImplCitationAttr>(getBody());
+    }
+    FlatSymbolRefAttr getImplRef() const { return getCitation().getImplRef(); }
+    ArrayRef<TypeBindingAttr> getArguments() const {
+      return getCitation().getArguments();
     }
   }];
 
@@ -258,72 +347,6 @@ def BoundPredicateAttr : AttrDef<TraitDialect, "BoundPredicate",
   }];
 
   let genVerifyDecl = 1;
-  let hasCustomAssemblyFormat = 1;
-}
-
-// Evidence for one predicate under a bound requirement's binder, as an impl
-// states it for the trait's bound requirement.
-def BoundBodyAttr : AttrDef<TraitDialect, "BoundBody",
-    [DeclareAttrInterfaceMethods<SymbolUserAttrInterface>]> {
-  let mnemonic = "body";
-  let summary = "Evidence for a predicate under a bound requirement's binder";
-  let description = [{
-    Evidence that one predicate holds under the binder of a bound requirement,
-    inside the impl that states it. Four forms, each citing by position:
-
-      * `premise N` -- the binder's premise N;
-      * `where N` -- entry N of the impl's own where clause;
-      * `refl` -- an equality whose two sides are one type once read through
-        the impl's own bindings;
-      * `@impl[!P = T, ...] given [body, ...]` -- the impl named, at the
-        arguments the bindings carry for its parameters, whose application is
-        the predicate; `given` holds one body per entry of that impl's where
-        clause, in its order, each discharging the entry at those arguments.
-        It is omitted when that where clause is empty. The impl may be the
-        one stating the evidence: a requirement it proves by being itself.
-
-    Every predicate is compared after reading it through the stating impl's
-    own associated-type bindings, so `Has[S]::A<X>` is the type the impl binds
-    `A<X>` to.
-  }];
-
-  let parameters = (ins
-    OptionalParameter<"std::optional<unsigned>">:$premise,
-    OptionalParameter<"std::optional<unsigned>">:$where_entry,
-    "bool":$refl,
-    OptionalParameter<"::mlir::FlatSymbolRefAttr">:$impl_ref,
-    OptionalArrayRefParameter<"TypeBindingAttr">:$arguments,
-    OptionalArrayRefParameter<"BoundBodyAttr">:$discharges
-  );
-
-  let genVerifyDecl = 1;
-  let hasCustomAssemblyFormat = 1;
-}
-
-// The evidence an impl states for one bound requirement of its trait.
-def BoundEvidenceAttr : AttrDef<TraitDialect, "BoundEvidence",
-    [DeclareAttrInterfaceMethods<SymbolUserAttrInterface>]> {
-  let mnemonic = "bound_evidence";
-  let summary = "An impl's evidence for its trait's bound requirement";
-  let description = [{
-    The evidence an impl states for the bound requirement at position
-    `requirement` of its trait's where clause: `predicate` is that requirement
-    at the impl's own arguments -- the binder's parameters as the trait spells
-    them, its premises and conclusion instantiated -- and `body` is evidence
-    for the conclusion under the binder, which holds for every argument of the
-    parameters at which the premises hold. The impl verifier refuses a
-    predicate other than the requirement at that position, and a body that does
-    not prove the conclusion.
-
-    Printed `N: forall [...] where [...] -> conclusion by body`.
-  }];
-
-  let parameters = (ins
-    "unsigned":$requirement,
-    "BoundPredicateAttr":$predicate,
-    "BoundBodyAttr":$body
-  );
-
   let hasCustomAssemblyFormat = 1;
 }
 

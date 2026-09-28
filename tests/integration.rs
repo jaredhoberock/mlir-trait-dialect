@@ -897,16 +897,16 @@ fn the_bound_builders_state_and_select_a_quantified_requirement() {
     // `impl Has for i32 { type A<X> = X; }` proves the bound by its premise.
     let has_i32 = trait_::trait_application_attr(&context, "Has", &[i32_ty]);
     let evidence = |body| {
-        trait_::bound_evidence_attr(
-            &context, 0, bound_at(i32_ty),
-            trait_::bound_body_attr(&context, body).expect("the body constructs"),
+        trait_::requirement_witness_attr(
+            &context, 0,
+            trait_::witness_body_attr(&context, body).expect("the body constructs"),
         )
-        .expect("the evidence constructs")
+        .expect("the witness constructs")
     };
     let impl_op = trait_::impl_named(loc, "Has_i32", has_i32, &[]);
     impl_op.region(0).unwrap().first_block().unwrap()
         .append_operation(trait_::assoc_type(loc, "A", Some(x), &[x]));
-    trait_::set_impl_bound_evidence(&impl_op, &[evidence(trait_::BoundBody::Premise(0))]);
+    trait_::set_impl_witnesses(&impl_op, &[evidence(trait_::WitnessBody::BinderPremise(0))]);
     module.body().append_operation(impl_op);
 
     // A generic function selects the requirement at i1 with a claim of its
@@ -951,7 +951,7 @@ fn the_bound_builders_state_and_select_a_quantified_requirement() {
     let impl_op = trait_::impl_named(loc, "Has_i32", has_i32, &[]);
     impl_op.region(0).unwrap().first_block().unwrap()
         .append_operation(trait_::assoc_type(loc, "A", Some(x), &[x]));
-    trait_::set_impl_bound_evidence(&impl_op, &[evidence(trait_::BoundBody::WhereEntry(0))]);
+    trait_::set_impl_witnesses(&impl_op, &[evidence(trait_::WitnessBody::ImplPremise(0))]);
     let module = Module::new(loc);
     module.body().append_operation(trait_::trait_(loc, "Marker", &[s], &[]));
     let has = trait_::trait_(loc, "Has", &[s], &[bound_at(s)]);

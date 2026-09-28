@@ -187,39 +187,36 @@ MlirAttribute traitBoundPredicateAttrGet(MlirContext ctx,
                                          intptr_t numPremises,
                                          MlirAttribute conclusion);
 
-/// Return the #trait.body evidence citing premise `position` of the binder it
-/// stands under.
-MlirAttribute traitBoundBodyAttrGetPremise(MlirContext ctx, unsigned position);
+/// Return the #trait.witness proving the bound requirement at position
+/// `requirement` of the trait of the impl whose `witnesses` array holds it,
+/// with `body` proving its conclusion under its binder. Returns a null
+/// attribute if `body` is no witness body.
+MlirAttribute traitWitnessAttrGetForRequirement(MlirContext ctx,
+                                                unsigned requirement,
+                                                MlirAttribute body);
 
-/// Return the #trait.body evidence citing entry `position` of the where clause
-/// of the impl stating it.
-MlirAttribute traitBoundBodyAttrGetWhereEntry(MlirContext ctx,
-                                              unsigned position);
+/// Return the witness body citing the impl `implName` at `arguments`
+/// (#trait.binding attributes, one per parameter of that impl), with one body
+/// in `discharges` per entry of that impl's where clause, in its order. Returns
+/// a null attribute if an argument is not a binding. The body citing the
+/// binder's premise and the body citing the impl's own premise are below;
+/// reflexivity is the unit attribute.
+MlirAttribute traitWitnessBodyGetCitation(MlirContext ctx,
+                                          MlirStringRef implName,
+                                          MlirAttribute *arguments,
+                                          intptr_t numArguments,
+                                          MlirAttribute *discharges,
+                                          intptr_t numDischarges);
 
-/// Return the #trait.body evidence for an equality whose two sides are one
-/// type once read through the stating impl's own bindings.
-MlirAttribute traitBoundBodyAttrGetRefl(MlirContext ctx);
+/// Return the witness body citing premise `position` of the binder it stands
+/// under.
+MlirAttribute traitWitnessBodyGetBinderPremise(MlirContext ctx,
+                                               unsigned position);
 
-/// Return the #trait.body evidence citing the impl `implName` at `arguments`
-/// (#trait.binding attributes, one per parameter of that impl) with one
-/// #trait.body in `discharges` per entry of that impl's where clause, in its
-/// order. Returns a null attribute if an argument is not a binding or a
-/// discharge is not a body.
-MlirAttribute traitBoundBodyAttrGetImpl(MlirContext ctx,
-                                        MlirStringRef implName,
-                                        MlirAttribute *arguments,
-                                        intptr_t numArguments,
-                                        MlirAttribute *discharges,
-                                        intptr_t numDischarges);
-
-/// Return the #trait.bound_evidence an impl states for the bound requirement at
-/// position `requirement` of its trait: `predicate` (a #trait.bound) is that
-/// requirement at the impl's arguments and `body` (a #trait.body) proves its
-/// conclusion under its binder. Returns a null attribute if either is of
-/// another kind.
-MlirAttribute traitBoundEvidenceAttrGet(MlirContext ctx, unsigned requirement,
-                                        MlirAttribute predicate,
-                                        MlirAttribute body);
+/// Return the witness body citing entry `position` of the where clause of the
+/// impl stating the witness.
+MlirAttribute traitWitnessBodyGetImplPremise(MlirContext ctx,
+                                             unsigned position);
 
 /// Answer whether `input` and `result` stand under the pending judgment a
 /// marked coerce carries, running verifyPendingCoerceEndpoints (TraitOps.hpp).
