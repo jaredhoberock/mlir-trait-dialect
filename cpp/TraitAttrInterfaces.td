@@ -14,12 +14,13 @@ def RuleAttrInterface : AttrInterface<"RuleAttrInterface"> {
     An attribute implementing this interface names an impl rule: a family of
     impls one dialect's generator produces, each an instance of the rule at one
     application. The meaning of the rule is that dialect's; this dialect reads
-    the identity alone. A generated `trait.impl` carries the rule it is an
-    instance of, and a `trait.allege` naming a rule commits its claim to a proof
-    through an impl carrying that rule, as the ops' own documentation states.
-    The interface declares no method: implementing it is the whole statement
-    that the attribute names a rule, as an attribute implementing a memory-space
-    or target interface states it is one.
+    the identity alone, and trusts it. A generated `trait.impl` carries the
+    rule it is an instance of as its provenance, and a `trait.allege` names the
+    rule asserting its claim; no verifier compares the two, and impl selection
+    proves an allegation's claim by whichever impl it selects. The interface
+    declares no method: implementing it is the whole statement that the
+    attribute names a rule, as an attribute implementing a memory-space or
+    target interface states it is one.
   }];
 }
 

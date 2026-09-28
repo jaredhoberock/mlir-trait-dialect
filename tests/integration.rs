@@ -1158,3 +1158,32 @@ trait.trait private @B[!trait.poly<0>] {}\n";
 
     assert!(!module.as_operation().verify());
 }
+
+#[test]
+fn a_module_describes_the_impls_and_traits_it_names() {
+    let registry = DialectRegistry::new();
+    register_all_dialects(&registry);
+    let context = Context::new();
+    context.append_dialect_registry(&registry);
+    trait_::register(&context);
+    context.load_all_available_dialects();
+
+    let source = "\
+trait.trait private @A[!trait.poly<0>] { trait.assoc_type @Out }\n\
+trait.trait private @Tr[!trait.poly<0>] {}\n\
+trait.impl private @Tr_tuple for @Tr[tuple<!trait.poly<1>, !trait.poly<0>>] where [@A[!trait.poly<1>], !trait.proj<@A[!trait.poly<1>], \"Out\"> = !trait.poly<0>] {}\n";
+    let module = Module::parse(&context, source).expect("the fixture module parses");
+
+    assert_eq!(
+        trait_::describe_impl(&module, "Tr_tuple"),
+        Some(trait_::ImplDescription {
+            trait_name: "Tr".to_string(),
+            type_params: vec![trait_::poly_type(&context, 1), trait_::poly_type(&context, 0)],
+            where_traits: vec!["A".to_string(), String::new()],
+        }),
+    );
+    assert_eq!(trait_::describe_impl(&module, "Tr_missing"), None);
+    assert_eq!(trait_::describe_impl(&module, "Tr"), None, "a trait is no impl");
+    assert!(trait_::has_trait(&module, "A"));
+    assert!(!trait_::has_trait(&module, "Tr_tuple"), "an impl is no trait");
+}

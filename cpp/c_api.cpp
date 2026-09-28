@@ -510,4 +510,41 @@ bool traitIsPendingExpansion(MlirModule module) {
   return isPendingExpansion(unwrap(module));
 }
 
+bool traitModuleDescribeImpl(MlirModule module, MlirStringRef name,
+                             MlirStringRef *traitName, MlirType *typeParams,
+                             intptr_t maxTypeParams, intptr_t *numTypeParams,
+                             MlirStringRef *whereTraits,
+                             intptr_t maxWhereEntries,
+                             intptr_t *numWhereEntries) {
+  ModuleOp moduleOp = unwrap(module);
+  auto impl = dyn_cast_or_null<ImplOp>(
+      SymbolTable::lookupSymbolIn(moduleOp, StringRef(name.data, name.length)));
+  if (!impl)
+    return false;
+  StringRef trait = impl.getTraitNameAttr().getValue();
+  *traitName = mlirStringRefCreate(trait.data(), trait.size());
+  SmallVector<GenericTypeInterface, 4> parameters = impl.getTypeParams();
+  *numTypeParams = parameters.size();
+  for (auto [position, parameter] : llvm::enumerate(parameters))
+    if (intptr_t(position) < maxTypeParams)
+      typeParams[position] = wrap(Type(parameter));
+  ArrayRef<Attribute> entries = impl.getAssumptions().getPredicates();
+  *numWhereEntries = entries.size();
+  for (auto [position, entry] : llvm::enumerate(entries)) {
+    if (intptr_t(position) >= maxWhereEntries)
+      break;
+    StringRef applied;
+    if (auto app = dyn_cast<TraitApplicationAttr>(entry))
+      applied = app.getTraitName().getValue();
+    whereTraits[position] = mlirStringRefCreate(applied.data(), applied.size());
+  }
+  return true;
+}
+
+bool traitModuleHasTrait(MlirModule module, MlirStringRef name) {
+  ModuleOp moduleOp = unwrap(module);
+  return isa_and_nonnull<TraitOp>(
+      SymbolTable::lookupSymbolIn(moduleOp, StringRef(name.data, name.length)));
+}
+
 } // end extern "C"

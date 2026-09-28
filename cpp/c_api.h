@@ -253,6 +253,24 @@ bool traitVerifyAcyclicTraitsStructure(MlirModule module);
 /// its discharge by. Any other op answers false.
 bool traitIsRewritableGenericCall(MlirOperation op);
 
+/// Describe the `trait.impl` named `name` at the top level of `module`: the
+/// trait it implements; its type parameters, in the order a citation's
+/// arguments bind them, up to `maxTypeParams` of them into `typeParams`; and
+/// the trait each where-clause entry applies, in order, up to
+/// `maxWhereEntries` of them into `whereTraits` (an empty name for an
+/// equality entry). The full counts are written to `numTypeParams` and
+/// `numWhereEntries`. Returns false, writing nothing, when `module` holds no
+/// impl of that name. Names point into the context's storage.
+bool traitModuleDescribeImpl(MlirModule module, MlirStringRef name,
+                             MlirStringRef *traitName, MlirType *typeParams,
+                             intptr_t maxTypeParams, intptr_t *numTypeParams,
+                             MlirStringRef *whereTraits,
+                             intptr_t maxWhereEntries,
+                             intptr_t *numWhereEntries);
+
+/// Whether `module` holds a `trait.trait` named `name` at its top level.
+bool traitModuleHasTrait(MlirModule module, MlirStringRef name);
+
 /// Whether `module` still carries instantiation work outside a template: a
 /// rewritable generic call, or an unproven monomorphic application claim or an
 /// unresolved ground projection not yet discharged. This is the erase step's

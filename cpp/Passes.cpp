@@ -539,7 +539,7 @@ static uint64_t respellProvenClaimsInPlace(const ImplResolver &resolver,
 
 /// `diagnostic`, naming the rule asserting `op`'s claim when it is an
 /// allegation naming one: the claim's refusal is the rule's assertion refused.
-static InFlightDiagnostic namingCommitment(Operation *op,
+static InFlightDiagnostic namingAssertingRule(Operation *op,
                                            InFlightDiagnostic diagnostic) {
   if (auto allege = dyn_cast<AllegeOp>(op))
     if (RuleAttrInterface rule = allege.getRuleAttr())
@@ -732,7 +732,7 @@ struct ProveClaimResultPattern : public RewritePattern {
 
     DemandFrame frame(op->getLoc());
 
-    auto errFn = [&] { return namingCommitment(op, op->emitOpError()); };
+    auto errFn = [&] { return namingAssertingRule(op, op->emitOpError()); };
 
     // The claim is demanded where it stands: the proof this op will name is a
     // symbol its own module resolves, and the impls that may serve it are the
@@ -822,7 +822,7 @@ FailureOr<ImplResolver> resolveImpls(ModuleOp module) {
   module.walk([&](AllegeOp op) {
     if (!op.getClaim().isMonomorphic() || isForeign(op)) return;
     hasLeftovers = true;
-    namingCommitment(op, op.emitError())
+    namingAssertingRule(op, op.emitError())
         << "unresolved monomorphic trait.allege after resolve-impls";
   });
   if (hasLeftovers) return failure();
@@ -2313,7 +2313,7 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
         continue;
     }
     InFlightDiagnostic report =
-        namingCommitment(op, op->emitError())
+        namingAssertingRule(op, op->emitError())
         << "unproven monomorphic claim " << claim
         << " after instantiate-monomorphs";
     // A hop off a proven claim reads its requirement's evidence out of the

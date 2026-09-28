@@ -104,6 +104,12 @@ unsafe extern "C" {
                                          premises: *const MlirAttribute, num_premises: isize) -> MlirAttribute;
     fn traitWitnessBodyGetAllegation(ctx: MlirContext, application: MlirAttribute, rule: MlirAttribute) -> MlirAttribute;
     fn traitCoercePendingAccepts(input: MlirType, result: MlirType) -> bool;
+    fn traitModuleDescribeImpl(module: mlir_sys::MlirModule, name: MlirStringRef,
+                               trait_name: *mut MlirStringRef,
+                               type_params: *mut MlirType, max_type_params: isize, num_type_params: *mut isize,
+                               where_traits: *mut MlirStringRef, max_where_entries: isize,
+                               num_where_entries: *mut isize) -> bool;
+    fn traitModuleHasTrait(module: mlir_sys::MlirModule, name: MlirStringRef) -> bool;
     fn traitAssocTypeOpCreate(loc: MlirLocation,
                               name: MlirStringRef,
                               bound_type: MlirType,
@@ -925,4 +931,55 @@ pub fn assoc_type<'c>(loc: Location<'c>, name: &str, bound_type: Option<Type<'c>
         type_params.as_ptr() as *const _,
         type_params.len() as isize,
     ))}
+}
+
+/// What a module states of the `trait.impl` named `name` at its top level: the
+/// trait it implements, its type parameters in the order a citation's
+/// arguments bind them, and the trait each where-clause entry applies, in
+/// order (empty for an equality entry).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImplDescription<'c> {
+    pub trait_name: String,
+    pub type_params: Vec<Type<'c>>,
+    pub where_traits: Vec<String>,
+}
+
+/// The `trait.impl` named `name` at the top level of `module`, described; `None`
+/// when the module holds no impl of that name.
+pub fn describe_impl<'c>(module: &melior::ir::Module<'c>, name: &str) -> Option<ImplDescription<'c>> {
+    let empty = MlirStringRef { data: std::ptr::null(), length: 0 };
+    let mut trait_name = empty;
+    let (mut num_type_params, mut num_where_entries) = (0isize, 0isize);
+    let describe = |type_params: &mut [MlirType], where_traits: &mut [MlirStringRef], trait_name: &mut MlirStringRef,
+                    num_type_params: &mut isize, num_where_entries: &mut isize| unsafe {
+        traitModuleDescribeImpl(
+            module.to_raw(),
+            StringRef::new(name).to_raw(),
+            trait_name,
+            type_params.as_mut_ptr(),
+            type_params.len() as isize,
+            num_type_params,
+            where_traits.as_mut_ptr(),
+            where_traits.len() as isize,
+            num_where_entries,
+        )
+    };
+    // The first call counts; the second fills buffers of those sizes.
+    if !describe(&mut [], &mut [], &mut trait_name, &mut num_type_params, &mut num_where_entries) {
+        return None;
+    }
+    let mut type_params = vec![MlirType { ptr: std::ptr::null_mut() }; num_type_params as usize];
+    let mut where_traits = vec![empty; num_where_entries as usize];
+    describe(&mut type_params, &mut where_traits, &mut trait_name, &mut num_type_params, &mut num_where_entries);
+    let text = |name: MlirStringRef| unsafe { StringRef::from_raw(name) }.as_str().expect("a trait name is UTF-8").to_string();
+    Some(ImplDescription {
+        trait_name: text(trait_name),
+        type_params: type_params.into_iter().map(|ty| unsafe { Type::from_raw(ty) }).collect(),
+        where_traits: where_traits.into_iter().map(|name| if name.data.is_null() { String::new() } else { text(name) }).collect(),
+    })
+}
+
+/// Whether `module` holds a `trait.trait` named `name` at its top level.
+pub fn has_trait(module: &melior::ir::Module, name: &str) -> bool {
+    unsafe { traitModuleHasTrait(module.to_raw(), StringRef::new(name).to_raw()) }
 }
