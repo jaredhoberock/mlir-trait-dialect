@@ -589,10 +589,10 @@ static LogicalResult verifyProofKeepsCommitment(
                  << "instance @" << provenBy->getSymName() << " applies under "
                  << where.size();
   for (auto [position, pair] :
-       llvm::enumerate(llvm::zip(where, allege.getPremises()))) {
+       llvm::enumerate(llvm::zip(provenBy->getWhereClauseAt(*arguments),
+                                 allege.getPremises()))) {
     auto [entry, premise] = pair;
-    Type expected = resolve(instantiate(
-        Type(ClaimType::get(op->getContext(), entry, nullptr)), *arguments));
+    Type expected = resolve(Type(entry));
     auto named = cast<ClaimType>(resolve(premise.getType())).asUnproven();
     if (Type(named) != expected)
       return err() << "alleges " << claim << " by rule " << rule

@@ -1324,14 +1324,6 @@ static FailureOr<SpecializationMap> requirementSubstitution(
       .toSpecialization();
 }
 
-/// The claim `predicate`, an application or an equality, states, instantiated
-/// through `subst`: unproven, since a predicate names no evidence.
-static ClaimType instantiatePredicate(Attribute predicate,
-                                      const SpecializationMap &subst) {
-  Type claim = ClaimType::get(predicate.getContext(), predicate, nullptr);
-  return cast<ClaimType>(instantiate(claim, subst));
-}
-
 /// Requirement `index` of `claim`, which is in range: the declared predicate
 /// instantiated at the claim's arguments. An application requirement of a
 /// proven claim carries the provider of the subproof discharging it, read from

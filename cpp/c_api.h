@@ -97,33 +97,6 @@ MlirOperation traitDeriveOpCreate(MlirLocation loc,
                                   MlirStringRef implName,
                                   MlirValue* assumptions, intptr_t numAssumptions);
 
-/// Create a trait.proof stating the arguments its impl's parameters take:
-/// `arguments` are #trait.binding attributes, one per parameter of the impl,
-/// and `given` holds one entry per requirement of the trait and per entry of
-/// the impl's where clause, in that order -- a flat symbol reference for each
-/// application entry and a unit attribute for each other. Returns a null
-/// operation if an argument is not a binding or a given entry is neither.
-MlirOperation traitProofOpCreateWithArguments(MlirLocation loc,
-                                              MlirStringRef symName,
-                                              MlirStringRef implName,
-                                              MlirAttribute *arguments,
-                                              intptr_t numArguments,
-                                              MlirAttribute traitApp,
-                                              MlirAttribute *given,
-                                              intptr_t numGiven);
-
-/// Create a trait.derive stating the arguments its impl's parameters take:
-/// `arguments` are #trait.binding attributes, one per parameter of the impl,
-/// and `premises` hold one claim per entry of the impl's where clause, in its
-/// order. Returns a null operation if an argument is not a binding.
-MlirOperation traitDeriveOpCreateWithArguments(MlirLocation loc,
-                                               MlirAttribute traitApp,
-                                               MlirStringRef implName,
-                                               MlirAttribute *arguments,
-                                               intptr_t numArguments,
-                                               MlirValue *premises,
-                                               intptr_t numPremises);
-
 /// Return the !trait.poly<label> type. A label names a position in the
 /// declaration that binds it, so it is non-negative.
 MlirType traitPolyTypeGet(MlirContext ctx, unsigned int label);

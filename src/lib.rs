@@ -14,7 +14,7 @@ use mlir_sys::{
     mlirIntegerTypeGet,
     mlirLocationGetContext,
     mlirOperationGetContext,
-    mlirOperationSetAttributeByName, mlirTypeAttrGet, mlirUnitAttrGet,
+    mlirOperationSetAttributeByName, mlirStringAttrGet, mlirTypeAttrGet, mlirUnitAttrGet,
 };
 
 unsafe extern "C" {
@@ -64,17 +64,6 @@ unsafe extern "C" {
                            trait_app: MlirAttribute,
                            impl_name: MlirStringRef,
                            assumptions: *const MlirValue, num_assumptions: isize) -> MlirOperation;
-    fn traitProofOpCreateWithArguments(loc: MlirLocation,
-                                       sym_name: MlirStringRef,
-                                       impl_name: MlirStringRef,
-                                       arguments: *const MlirAttribute, num_arguments: isize,
-                                       trait_app: MlirAttribute,
-                                       given: *const MlirAttribute, num_given: isize) -> MlirOperation;
-    fn traitDeriveOpCreateWithArguments(loc: MlirLocation,
-                                        trait_app: MlirAttribute,
-                                        impl_name: MlirStringRef,
-                                        arguments: *const MlirAttribute, num_arguments: isize,
-                                        premises: *const MlirValue, num_premises: isize) -> MlirOperation;
 
     fn traitPolyTypeGet(ctx: MlirContext, label: u32) -> MlirType;
 
@@ -166,15 +155,28 @@ fn index_attr<'c>(loc: Location<'c>, value: usize) -> Attribute<'c> {
     }
 }
 
+/// An array attribute in the location's context holding `items`.
+fn array_attr<'c>(loc: Location<'c>, items: &[MlirAttribute]) -> Attribute<'c> {
+    unsafe {
+        let ctx = mlirLocationGetContext(loc.to_raw());
+        Attribute::from_raw(mlirArrayAttrGet(ctx, items.len() as isize, items.as_ptr()))
+    }
+}
+
+/// A flat symbol reference to `name` in the location's context.
+fn symbol_ref_attr<'c>(loc: Location<'c>, name: &str) -> Attribute<'c> {
+    unsafe {
+        let ctx = mlirLocationGetContext(loc.to_raw());
+        Attribute::from_raw(mlirFlatSymbolRefAttrGet(ctx, StringRef::new(name).to_raw()))
+    }
+}
+
 /// An array of type attributes in the location's context, as a list of type
 /// arguments is stored (a `trait.project` hop's arguments for a binder).
 fn type_array_attr<'c>(loc: Location<'c>, types: &[Type<'c>]) -> Attribute<'c> {
-    unsafe {
-        let ctx = mlirLocationGetContext(loc.to_raw());
-        let raw: Vec<MlirAttribute> =
-            types.iter().map(|t| mlirTypeAttrGet(t.to_raw())).collect();
-        Attribute::from_raw(mlirArrayAttrGet(ctx, raw.len() as isize, raw.as_ptr()))
-    }
+    let raw: Vec<MlirAttribute> =
+        types.iter().map(|t| unsafe { mlirTypeAttrGet(t.to_raw()) }).collect();
+    array_attr(loc, &raw)
 }
 
 /// The unit attribute in the location's context (the value of a present
@@ -505,24 +507,28 @@ pub fn proof_with_arguments<'c>(loc: Location<'c>,
                                 given: &[Option<&str>],
 ) -> Option<Operation<'c>> {
     let bindings = type_bindings(unsafe { mlirLocationGetContext(loc.to_raw()) }, arguments)?;
-    let ctx = unsafe { mlirLocationGetContext(loc.to_raw()) };
     let entries: Vec<MlirAttribute> = given
         .iter()
-        .map(|entry| unsafe {
-            match entry {
-                Some(symbol) => mlirFlatSymbolRefAttrGet(ctx, StringRef::new(symbol).to_raw()),
-                None => mlirUnitAttrGet(ctx),
-            }
+        .map(|entry| match entry {
+            Some(symbol) => symbol_ref_attr(loc, symbol).to_raw(),
+            None => unit_attr(loc).to_raw(),
         })
         .collect();
-    let op = unsafe { traitProofOpCreateWithArguments(
-        loc.to_raw(),
-        StringRef::new(sym_name).to_raw(),
-        StringRef::new(impl_name).to_raw(),
-        bindings.as_ptr(), bindings.len() as isize,
-        trait_app.to_raw(),
-        entries.as_ptr(), entries.len() as isize) };
-    if op.ptr.is_null() { None } else { Some(unsafe { Operation::from_raw(op) }) }
+    let name = |text: &str| unsafe {
+        Attribute::from_raw(mlirStringAttrGet(
+            mlirLocationGetContext(loc.to_raw()), StringRef::new(text).to_raw()))
+    };
+    // A proof is a template that dies with monomorphization, so it is private
+    // from birth, as every other proof is minted.
+    Some(build_op(OperationBuilder::new("trait.proof", loc)
+        .add_attributes(&[
+            (identifier(loc, "sym_name"), name(sym_name)),
+            (identifier(loc, "impl_name"), symbol_ref_attr(loc, impl_name)),
+            (identifier(loc, "arguments"), array_attr(loc, &bindings)),
+            (identifier(loc, "trait_application"), trait_app.into()),
+            (identifier(loc, "subproof_names"), array_attr(loc, &entries)),
+            (identifier(loc, "sym_visibility"), name("private")),
+        ])))
 }
 
 /// Create a `trait.derive` stating the arguments its impl's parameters take,
@@ -535,14 +541,17 @@ pub fn derive_with_arguments<'c>(loc: Location<'c>,
                                  arguments: &[(Type<'c>, Type<'c>)],
                                  premises: &[Value<'c,'_>],
 ) -> Option<Operation<'c>> {
-    let bindings = type_bindings(unsafe { mlirLocationGetContext(loc.to_raw()) }, arguments)?;
-    let op = unsafe { traitDeriveOpCreateWithArguments(
-        loc.to_raw(),
-        trait_app.to_raw(),
-        StringRef::new(impl_name).to_raw(),
-        bindings.as_ptr(), bindings.len() as isize,
-        premises.as_ptr() as *const _, premises.len() as isize) };
-    if op.ptr.is_null() { None } else { Some(unsafe { Operation::from_raw(op) }) }
+    let ctx = unsafe { mlirLocationGetContext(loc.to_raw()) };
+    let bindings = type_bindings(ctx, arguments)?;
+    let claim = unsafe { Type::from_raw(traitClaimTypeGet(ctx, trait_app.to_raw())) };
+    Some(build_op(OperationBuilder::new("trait.derive", loc)
+        .add_operands(premises)
+        .add_attributes(&[
+            (identifier(loc, "trait_application"), trait_app.into()),
+            (identifier(loc, "impl"), symbol_ref_attr(loc, impl_name)),
+            (identifier(loc, "arguments"), array_attr(loc, &bindings)),
+        ])
+        .add_results(&[claim])))
 }
 
 /// Build a `trait.assume` introducing the hypothesis `claim`: an application

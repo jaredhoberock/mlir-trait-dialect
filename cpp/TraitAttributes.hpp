@@ -40,14 +40,14 @@ FailureOr<Attribute> parseWherePredicate(AsmParser &parser);
 void printWherePredicate(AsmPrinter &printer, Attribute predicate);
 
 /// Parse the arguments an impl citation carries, `[!P = T, ...]`, one binding
-/// per parameter of the impl, into `arguments`; an absent list is an empty one.
-/// The one grammar for the arguments a projection-resolution witness carries,
-/// in its attribute and its op form alike.
-ParseResult parseImplArguments(AsmParser &parser,
-                               SmallVectorImpl<TypeBindingAttr> &arguments);
+/// per parameter of the impl, into `arguments`, and return whether the list is
+/// present. The one grammar for the arguments every citation of an impl
+/// carries; whether an absent list means an empty one or no statement at all
+/// is the citing form's to decide.
+FailureOr<bool> parseImplArguments(AsmParser &parser,
+                                   SmallVectorImpl<TypeBindingAttr> &arguments);
 
-/// Print the arguments an impl citation carries as `parseImplArguments` reads
-/// them: nothing when there are none.
+/// Print `arguments` as the list `parseImplArguments` reads, `[]` when empty.
 void printImplArguments(AsmPrinter &printer,
                         ArrayRef<TypeBindingAttr> arguments);
 

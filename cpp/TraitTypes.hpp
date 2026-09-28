@@ -1284,6 +1284,16 @@ inline Type instantiate(Type declared, const SpecializationMap &args) {
   return args.apply(declared);
 }
 
+/// The unproven claim stating `predicate` -- a trait application or a type
+/// equality -- with its parameters replaced by `args`. A substitution rewrites
+/// the type arguments a claim carries and never the claim itself, so the
+/// result is a claim.
+inline ClaimType instantiatePredicate(Attribute predicate,
+                                      const SpecializationMap &args) {
+  return cast<ClaimType>(instantiate(
+      Type(ClaimType::get(predicate.getContext(), predicate, nullptr)), args));
+}
+
 /// Reads `actual` for the arguments `formal`'s parameters take, filling `args`.
 ///
 /// The walk runs in lockstep. A formal parameter occurrence takes the actual

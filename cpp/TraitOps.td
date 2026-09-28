@@ -464,6 +464,21 @@ def ImplOp : TraitDialectOp<"impl", [
       return ClaimType::get(getContext(), getSelfApplication());
     }
 
+    /// The application this impl's header states at `arguments`, a
+    /// substitution for its parameters.
+    TraitApplicationAttr getSelfApplicationAt(const SpecializationMap &arguments) {
+      return instantiatePredicate(getSelfApplication(), arguments)
+          .getTraitApplication();
+    }
+
+    /// Each entry of this impl's where clause at `arguments`, a substitution
+    /// for its parameters, in order, as the unproven claim stating it.
+    SmallVector<ClaimType> getWhereClauseAt(const SpecializationMap &arguments) {
+      return llvm::map_to_vector(getAssumptions(), [&](Attribute entry) {
+        return instantiatePredicate(entry, arguments);
+      });
+    }
+
     FlatSymbolRefAttr getTraitNameAttr() const {
       return getSelfApplication().getTraitName();
     }
@@ -1120,16 +1135,6 @@ def DeriveOp : TraitDialectOp<"derive", [
       ClaimType claimTy = ClaimType::get($_builder.getContext(), traitApp);
       build($_builder, $_state, claimTy, traitApp, impl, /*arguments=*/nullptr,
             assumptions);
-    }]>,
-    // the form stating the impl's arguments
-    OpBuilder<(ins "TraitApplicationAttr":$traitApp,
-                   "FlatSymbolRefAttr":$impl,
-                   "ArrayRef<TypeBindingAttr>":$implArguments,
-                   "ValueRange":$premises), [{
-      ClaimType claimTy = ClaimType::get($_builder.getContext(), traitApp);
-      SmallVector<Attribute> bindings(implArguments.begin(), implArguments.end());
-      build($_builder, $_state, claimTy, traitApp, impl,
-            $_builder.getArrayAttr(bindings), premises);
     }]>
   ];
 
@@ -1941,18 +1946,6 @@ def ProofOp : TraitDialectOp<"proof", [
       $_state.addAttribute("trait_application", trait_application);
       $_state.addAttribute("subproof_names", subproof_names);
       $_state.addAttribute("sym_visibility", $_builder.getStringAttr("private"));
-    }]>,
-
-    // the form stating the impl's arguments, whose given list holds one entry
-    // per requirement and where-clause entry
-    OpBuilder<(ins "::mlir::StringAttr":$sym_name,
-                   "::mlir::FlatSymbolRefAttr":$impl_name,
-                   "::mlir::ArrayRef<TypeBindingAttr>":$implArguments,
-                   "::mlir::trait::TraitApplicationAttr":$trait_application,
-                   "::mlir::ArrayAttr":$given), [{
-      SmallVector<Attribute> bindings(implArguments.begin(), implArguments.end());
-      $_state.addAttribute("arguments", $_builder.getArrayAttr(bindings));
-      build($_builder, $_state, sym_name, impl_name, trait_application, given);
     }]>,
 
     // convenience: StringRef + ArrayRef<FlatSymbolRefAttr>

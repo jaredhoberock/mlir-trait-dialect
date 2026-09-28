@@ -182,12 +182,12 @@ LogicalResult WitnessAttr::verifySymbolUses(
   return success();
 }
 
-ParseResult parseImplArguments(AsmParser &parser,
-                               SmallVectorImpl<TypeBindingAttr> &arguments) {
+FailureOr<bool> parseImplArguments(AsmParser &parser,
+                                   SmallVectorImpl<TypeBindingAttr> &arguments) {
   if (failed(parser.parseOptionalLSquare()))
-    return success();
+    return false;
   if (succeeded(parser.parseOptionalRSquare()))
-    return success();
+    return true;
   if (parser.parseCommaSeparatedList([&]() -> ParseResult {
         Type parameter, argument;
         if (parser.parseType(parameter) || parser.parseEqual() ||
@@ -200,15 +200,14 @@ ParseResult parseImplArguments(AsmParser &parser,
           return failure();
         arguments.push_back(binding);
         return success();
-      }))
+      }) ||
+      parser.parseRSquare())
     return failure();
-  return parser.parseRSquare();
+  return true;
 }
 
 void printImplArguments(AsmPrinter &printer,
                         ArrayRef<TypeBindingAttr> arguments) {
-  if (arguments.empty())
-    return;
   printer << '[';
   llvm::interleaveComma(arguments, printer, [&](TypeBindingAttr binding) {
     printer << binding.getParameter() << " = " << binding.getArgument();
@@ -236,7 +235,8 @@ static FailureOr<Attribute> parseWitnessBody(AsmParser &parser) {
 
   FlatSymbolRefAttr impl;
   SmallVector<TypeBindingAttr> arguments;
-  if (parser.parseAttribute(impl) || parseImplArguments(parser, arguments))
+  if (parser.parseAttribute(impl) ||
+      failed(parseImplArguments(parser, arguments)))
     return failure();
   SmallVector<Attribute> discharges;
   if (succeeded(parser.parseOptionalKeyword("given")) &&
@@ -267,7 +267,8 @@ static void printWitnessBody(AsmPrinter &printer, Attribute body) {
   }
   auto citation = cast<ImplCitationAttr>(body);
   printer << citation.getImplRef();
-  printImplArguments(printer, citation.getArguments());
+  if (!citation.getArguments().empty())
+    printImplArguments(printer, citation.getArguments());
   if (citation.getDischarges().empty())
     return;
   printer << " given [";
