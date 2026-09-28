@@ -153,8 +153,12 @@ using ImplCandidateMemo =
 /// Lookup changes nothing it reads, so a caller that holds `module`'s impls
 /// unchanged across many lookups under one `scope` keeps one memo across all of
 /// them, and each application's impls are scanned once. The memo is the caller's
-/// and lives no longer than that: stamping one monomorph clones a body and adds
-/// no impl, while impl generation between two stampings may.
+/// and lives no longer than that: a stamping replacer holds one for the one
+/// clone it stamps, while impl generation between two stampings may add an
+/// impl. The trait stage stamps only under its instantiation driver, which
+/// stands an `ImplGenerationFreeze`: an impl-generation request raised there is
+/// a diagnostic and a failed stage, so no impl enters while such a memo is
+/// live.
 Type resolveProjectionsByLookup(Type ty, ModuleOp module, DemandOrigin origin,
                                 LookupScope scope, ImplCandidateMemo &memo);
 
