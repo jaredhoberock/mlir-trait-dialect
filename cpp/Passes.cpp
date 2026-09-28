@@ -307,8 +307,14 @@ LogicalResult verifyDeclaredClaimProofs(ModuleOp module) {
     // signature it came from; without one it would be recorded unattributed
     // even though this dialect knows exactly where it arose.
     DemandFrame frame(f.getLoc());
+    auto byGroundLookup = [&](Type ty) -> FailureOr<Type> {
+      return resolveProjectionsByLookup(ty, module, DemandOrigin::ProofRecording,
+                                        LookupScope::Ground,
+                                        /*emitError=*/nullptr);
+    };
     if (failed(verifyCitationsIn(Type(f.getFunctionType()), module,
-                                 DemandOrigin::ProofRecording, errFn)))
+                                 DemandOrigin::ProofRecording, byGroundLookup,
+                                 errFn)))
       status = failure();
   }
   return status;
@@ -1600,7 +1606,7 @@ verifyProofDischargesItsObligations(ProofOp proof,
   };
   for (ClaimType subproof : *subproofs) {
     switch (verifyCitation(subproof.asUnproven(), subproof, module,
-                           DemandOrigin::ProofVerification, err, reading)) {
+                           DemandOrigin::ProofVerification, reading, err)) {
     case Citation::Carries:
       continue;
     case Citation::Refused:

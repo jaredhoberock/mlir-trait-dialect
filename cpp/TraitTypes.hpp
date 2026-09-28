@@ -1399,18 +1399,19 @@ enum class Citation {
 /// are all decided there holds at every instance of it, so a citation of it
 /// needs this top-level match alone.
 ///
-/// `origin` names the caller: the readings here normalize through the
-/// ground-projection lookup, so they raise demand.
+/// `normalize` is the evidence the caller holds, and both sides are read
+/// through it and nothing else: a proof op's verifier gives the proofs
+/// discharging its impl's obligations, by index; a call's verifier gives the
+/// evidence the call carries; a stage reader gives what it has settled. A
+/// verifier never reads the impls standing around it, so its verdict does not
+/// depend on an unrelated impl. A citation this declines under a weaker reading
+/// can carry under a stronger.
 ///
-/// `normalize`, when given, is read instead of that lookup. A verifier gives
-/// none -- what it may reduce a projection through is the impls standing around
-/// it -- while a reader holding what impl selection settled gives that, and a
-/// citation this declines under the weaker reading can carry under the
-/// stronger.
+/// `origin` names the caller: an impl named directly has its equality premises
+/// read through the ground-projection lookup, which raises demand.
 Citation verifyCitation(ClaimType unproven, ClaimType proven, ModuleOp module,
-                        DemandOrigin origin,
-                        llvm::function_ref<InFlightDiagnostic()> err,
-                        Normalizer normalize = nullptr);
+                        DemandOrigin origin, Normalizer normalize,
+                        llvm::function_ref<InFlightDiagnostic()> err);
 
 /// Derives the whole tree standing under `proven` and extends `bindings` with a
 /// mapping for every obligation it discharges, which is what a clone needs to
@@ -1453,8 +1454,10 @@ LogicalResult verifyAndRecordProof(ClaimType unproven,
 /// A citation nothing standing now decides is left to the leftover walk, which
 /// refuses an obligation no round resolves.
 ///
-/// `origin` names the caller: the readings raise demand.
+/// `normalize` is the evidence the caller holds, which every citation is read
+/// through (`verifyCitation`). `origin` names the caller.
 LogicalResult verifyCitationsIn(Type ty, ModuleOp module, DemandOrigin origin,
+                                Normalizer normalize,
                                 llvm::function_ref<InFlightDiagnostic()> err);
 
 /// Walks `ty` and binds every proof the types it spells name.

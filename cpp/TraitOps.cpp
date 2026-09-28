@@ -2163,15 +2163,26 @@ LogicalResult ProofOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (!implOp)
     return emitOpError() << "cannot find impl '" << getImplNameAttr() << "'";
 
+  // The evidence this proof holds: the proofs discharging the impl's own
+  // obligations, by index, and the trees standing under them. The proof's own
+  // rule is not among them -- nothing here is justified by what it is checking.
+  // It is gathered on the first reading that meets a projection: a spelling
+  // that has none is rebuilt by substitution alone.
+  std::optional<NormalizationContext> subproofEvidence;
+  auto evidence = [&]() -> NormalizationContext & {
+    if (!subproofEvidence)
+      subproofEvidence =
+          buildSubproofNormalizationContext(*this, getProvenClaim(), module);
+    return *subproofEvidence;
+  };
+
   // The impl's header must carry to the claim this proof stands over. What a
-  // projection that header spells reduces through is the evidence this proof
-  // holds: the proofs discharging the impl's own obligations, by index, and
-  // then the impls the module holds. The proof's own rule is not among them --
-  // nothing here is justified by what it is checking.
+  // projection that header spells reduces through is that evidence and then
+  // the impls the module holds.
   NormalizationContext reading;
   if (spellsAProjection(Type(implOp.getSelfClaim())) ||
       implOp.getAssumptions().hasEqualities())
-    reading = buildSubproofNormalizationContext(*this, getProvenClaim(), module);
+    reading = evidence();
   // XXX TODO a projection a declaration spells must be over its own self
   // application, a where-clause application, a trait requirement or a declared
   // witness (Rust's projection well-formedness rule), so every projection has
@@ -2207,11 +2218,23 @@ LogicalResult ProofOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (failed(subproofs))
     return failure();
 
+  // A citation is read through the evidence above and not through the impls
+  // standing around this proof. A projection an obligation spells over one of
+  // the impl's where-clause or trait-requirement applications reduces through
+  // the subproof at that application's index. One over an application no
+  // subproof discharges -- one an impl proves, not this proof -- is left
+  // standing, and the citation is declined for the stage to decide through what
+  // selection settles.
+  auto throughSubproofs = [&](Type ty) -> FailureOr<Type> {
+    if (!spellsAProjection(ty))
+      return ty;
+    return evidence().normalize(ty, /*err=*/nullptr);
+  };
   for (ClaimType subproof : *subproofs)
     // A citation nothing standing now decides leaves its obligation unproven,
     // which impl selection derives and the leftover walk refuses.
     if (verifyCitation(subproof.asUnproven(), subproof, module,
-                       DemandOrigin::ProofVerification,
+                       DemandOrigin::ProofVerification, throughSubproofs,
                        errFn) == Citation::Refused)
       return failure();
 
@@ -3531,7 +3554,8 @@ static LogicalResult verifyProofsAtCall(Operation *call, ValueRange operands,
     if (failed(read))
       return failure();
     if (failed(verifyCitationsIn(*read, module,
-                                 DemandOrigin::CallSignatureVerification, err)))
+                                 DemandOrigin::CallSignatureVerification,
+                                 normalize, err)))
       return failure();
   }
   return success();

@@ -785,9 +785,8 @@ private:
 } // namespace
 
 Citation verifyCitation(ClaimType unproven, ClaimType proven, ModuleOp module,
-                        DemandOrigin origin,
-                        llvm::function_ref<InFlightDiagnostic()> err,
-                        Normalizer normalize) {
+                        DemandOrigin origin, Normalizer normalize,
+                        llvm::function_ref<InFlightDiagnostic()> err) {
   // look up the trait and its requirements using the unproven claim
   auto trait = unproven.getTraitApplication().getTrait(module, err);
   if (failed(trait)) return Citation::Refused;
@@ -797,29 +796,22 @@ Citation verifyCitation(ClaimType unproven, ClaimType proven, ModuleOp module,
   if (failed(symOp)) return Citation::Refused;
 
   // Whether the declaration, read at the arguments this obligation supplies,
-  // rebuilds the obligation.
+  // rebuilds the obligation, both sides read through the evidence the caller
+  // holds.
   //
-  // A side still spelling a projection once the impls standing now have been
-  // read is one nothing here can decide: those impls resolve it for nobody, and
-  // impl selection resolves it through the candidate it settles on, which a
-  // reader holding no record cannot. Such an obligation is declined rather than
-  // discharged, so the claim stands unproven for selection to derive and for
-  // the leftover walk to refuse.
+  // A side still spelling a projection once that evidence has been read is one
+  // nothing here can decide: impl selection resolves it through the candidate
+  // it settles on, which a reader holding no record cannot. Such an obligation
+  // is declined rather than discharged, so the claim stands unproven for
+  // selection to derive and for the leftover walk to refuse.
   auto readDeclaration = [&](Type declaration) -> Citation {
-    // XXX TODO a projection a declaration spells must be over its own self
-    // application, a where-clause application, a trait requirement or a declared
-    // witness (Rust's projection well-formedness rule), so every projection has
-    // evidence at a known index and this module read deletes with LookupScope and
-    // the verifier DemandOrigins.
-    ImplProjectionLookup byImplLookup(module, origin);
-    Normalizer reading = normalize ? normalize : Normalizer(byImplLookup);
     if (succeeded(matchDeclaration(getTypeParametersIn(declaration), declaration,
-                                   Type(unproven), reading,
+                                   Type(unproven), normalize,
                                    /*err=*/nullptr)))
       return Citation::Carries;
 
-    FailureOr<Type> readObligation = reading(Type(unproven));
-    FailureOr<Type> readDeclared = reading(declaration);
+    FailureOr<Type> readObligation = normalize(Type(unproven));
+    FailureOr<Type> readDeclared = normalize(declaration);
     if (failed(readObligation) || failed(readDeclared) ||
         containsType<ProjectionType>(*readObligation) ||
         containsType<ProjectionType>(*readDeclared))
@@ -946,26 +938,27 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
   // that reaches the same obligation keys it identically and records the same
   // proven spelling, so a second observation matches the first literally
   // instead of reconciling two equivalent spellings.
+  //
+  // A cyclic associated-type binding leaves these ground projections without a
+  // normal form. The fallible resolver refuses it here so proof verification
+  // fails cleanly on hostile IR rather than the resolution running the process
+  // out of its budget deeper down.
+  // XXX TODO a projection a declaration spells must be over its own self
+  // application, a where-clause application, a trait requirement or a declared
+  // witness (Rust's projection well-formedness rule), so every projection has
+  // evidence at a known index and this module read deletes with LookupScope and
+  // the verifier DemandOrigins.
+  auto recorderReading = [&](Type ty) -> FailureOr<Type> {
+    return resolveProjectionsByLookup(ty, module, origin, LookupScope::Ground,
+                                      err);
+  };
   {
-    // A cyclic associated-type binding leaves these ground projections without
-    // a normal form. The fallible resolver refuses it here so proof
-    // verification fails cleanly on hostile IR rather than the resolution
-    // running the process out of its budget deeper down.
-    // XXX TODO a projection a declaration spells must be over its own self
-    // application, a where-clause application, a trait requirement or a declared
-    // witness (Rust's projection well-formedness rule), so every projection has
-    // evidence at a known index and this module read deletes with LookupScope and
-    // the verifier DemandOrigins.
-    FailureOr<Type> normalizedProven =
-        resolveProjectionsByLookup(proven, module, origin,
-                                   LookupScope::Ground, err);
+    FailureOr<Type> normalizedProven = recorderReading(proven);
     if (failed(normalizedProven))
       return failure();
     proven = cast<ClaimType>(*normalizedProven);
 
-    FailureOr<Type> normalizedUnproven =
-        resolveProjectionsByLookup(unproven, module, origin,
-                                   LookupScope::Ground, err);
+    FailureOr<Type> normalizedUnproven = recorderReading(unproven);
     if (failed(normalizedUnproven))
       return failure();
     unproven = cast<ClaimType>(*normalizedUnproven);
@@ -1013,8 +1006,16 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
   }
 
   // Whether the citation discharges this obligation at all is the one-level
-  // judgment, and it is the whole of what the evidence here has to say.
-  switch (verifyCitation(unproven, proven, module, origin, err)) {
+  // judgment, and it is the whole of what the evidence here has to say. The
+  // cited declaration is read through the reading both sides of the pair were
+  // brought to above, so the three meet at one grade; a declaration that
+  // reading cannot bring to a normal form declines rather than refuses.
+  auto declarationReading = [&](Type ty) -> FailureOr<Type> {
+    return resolveProjectionsByLookup(ty, module, origin, LookupScope::Ground,
+                                      /*emitError=*/nullptr);
+  };
+  switch (verifyCitation(unproven, proven, module, origin, declarationReading,
+                         err)) {
   case Citation::Carries:
     break;
   case Citation::Declined:
@@ -1164,6 +1165,7 @@ LogicalResult verifyAndRecordProof(
 }
 
 LogicalResult verifyCitationsIn(Type ty, ModuleOp module, DemandOrigin origin,
+                                Normalizer normalize,
                                 llvm::function_ref<InFlightDiagnostic()> err) {
   LogicalResult status = success();
 
@@ -1174,8 +1176,8 @@ LogicalResult verifyCitationsIn(Type ty, ModuleOp module, DemandOrigin origin,
     if (!claim || !claim.isProven())
       return;
 
-    if (verifyCitation(claim.asUnproven(), claim, module, origin, err) ==
-        Citation::Refused)
+    if (verifyCitation(claim.asUnproven(), claim, module, origin, normalize,
+                       err) == Citation::Refused)
       status = failure();
   });
 

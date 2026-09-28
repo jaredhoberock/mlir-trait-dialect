@@ -3,26 +3,20 @@
 
 // RUN: mlir-opt %s -verify-diagnostics
 
-// @B's second requirement projects through @Foo, its first, which @forged
-// discharges with a proof of @Foo_any -- an impl binding Out to its own
-// variable. That subproof is the evidence at the requirement's index, so the
-// obligation @B_blanket states is @A of the variable itself. @forged cites
-// @A_i64 for it, evidence of @A at one argument, and the two claims are
-// compared where the proof stands.
+// @B's second requirement projects through @Foo, its first. Two impls of @Foo
+// stand at i32, binding Out to i32 and to i64, so the impls around the proof
+// do not say what @Foo[i32]::Out is; the subproof @forged names at the index of
+// @Foo[i32] does. Read through it, the obligation is @A[i64], and @forged
+// cites @A_i32 for it.
 
 trait.trait private @Foo[!trait.poly<0>] { trait.assoc_type @Out }
 trait.impl private @Foo_any for @Foo[!trait.poly<0>] { trait.assoc_type @Out = !trait.poly<0> }
+trait.impl private @Foo_i32 for @Foo[i32] { trait.assoc_type @Out = i64 }
 trait.trait private @A[!trait.poly<0>] { func.func private @a() -> i64 }
 trait.trait private @B[!trait.poly<0>] where [@Foo[!trait.poly<0>], @A[!trait.proj<@Foo[!trait.poly<0>], "Out">]] { func.func private @b() -> i64 }
 trait.impl private @A_i32 for @A[i32] {
   func.func @a() -> i64 {
     %c = arith.constant 32 : i64
-    return %c : i64
-  }
-}
-trait.impl private @A_i64 for @A[i64] {
-  func.func @a() -> i64 {
-    %c = arith.constant 64 : i64
     return %c : i64
   }
 }
@@ -34,11 +28,5 @@ trait.impl private @B_blanket for @B[!trait.poly<0>] {
     return %r : i64
   }
 }
-trait.proof private @Foo_any_p proves @Foo_any for @Foo[!trait.poly<0>] given []
-// expected-error @below {{proof @A_i64 proves '!trait.claim<@A[i64]>', which does not discharge the obligation '!trait.claim<@A[!trait.poly<0>]>'}}
-trait.proof private @forged proves @B_blanket for @B[!trait.poly<0>] given [@Foo_any_p, @A_i64]
-func.func @main() -> i64 {
-  %w = trait.witness @forged for @B[i32]
-  %r = trait.method.call %w @B[i32]::@b() : () -> i64 by @forged
-  return %r : i64
-}
+// expected-error @below {{proof @A_i32 proves '!trait.claim<@A[i32]>', which does not discharge the obligation '!trait.claim<@A[i64]>'}}
+trait.proof private @forged proves @B_blanket for @B[i32] given [@Foo_i32, @A_i32]
