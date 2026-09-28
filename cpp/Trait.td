@@ -10,12 +10,19 @@ def TraitDialect : Dialect {
   let summary = "A dialect for trait-constrained polymorphism";
   let cppNamespace = "::mlir::trait";
 
-  let useDefaultAttributePrinterParser = 1;
+  let useDefaultAttributePrinterParser = 0;
   let useDefaultTypePrinterParser = 1;
 
   let extraClassDeclaration = [{
     void registerAttributes();
     void registerTypes();
+
+    /// Parse an attribute of this dialect, refusing text its body leaves
+    /// unread.
+    ::mlir::Attribute parseAttribute(::mlir::DialectAsmParser &parser,
+                                     ::mlir::Type type) const override;
+    void printAttribute(::mlir::Attribute attr,
+                        ::mlir::DialectAsmPrinter &printer) const override;
   }];
 }
 

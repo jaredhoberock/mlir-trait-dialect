@@ -547,10 +547,23 @@ static InFlightDiagnostic namingCommitment(Operation *op,
   return diagnostic;
 }
 
-/// The impl proving `source` and the allegation it states for its trait's
-/// bound requirement `index`, when its witness for that requirement alleges
-/// one; `std::nullopt` otherwise.
-static std::optional<std::pair<ImplOp, AllegationAttr>>
+/// An allegation a witness body rests on: the impl stating the witness, the
+/// bound requirement of its trait the witness is for, and the allegation.
+struct AllegationBehind {
+  ImplOp impl;
+  unsigned requirement;
+  AllegationAttr allegation;
+};
+
+static std::optional<AllegationBehind>
+allegationBehindBody(Attribute body, ClaimType source, ImplOp impl,
+                     unsigned requirement, ModuleOp module);
+
+/// The allegation requirement `index` of the proven claim `source` rests on:
+/// the one the witness of `source`'s impl for that requirement states or
+/// reads a requirement off, through requirement hops; `std::nullopt` where the
+/// requirement rests on none.
+static std::optional<AllegationBehind>
 allegedRequirementOf(ClaimType source, ModuleOp module, unsigned index) {
   auto cited = ProofOp::getProofOpOrUnconditionalImplOp(module, source.getProof(),
                                                         nullptr);
@@ -562,9 +575,56 @@ allegedRequirementOf(ClaimType source, ModuleOp module, unsigned index) {
     return std::nullopt;
   for (auto witness : impl.getWitnessesAttr().getAsRange<WitnessAttr>())
     if (witness.getRequirement() == index)
-      if (auto allegation = dyn_cast<AllegationAttr>(witness.getBody()))
-        return std::make_pair(impl, allegation);
+      return allegationBehindBody(witness.getBody(), source, impl, index,
+                                  module);
   return std::nullopt;
+}
+
+/// The proven claim `body`, a witness body of `impl` read under the proven
+/// claim `source`, proves at the instance: a premise of the impl, as
+/// `source`'s proof discharges it, or a requirement of such a claim read by a
+/// hop, when a subproof provides it; `std::nullopt` otherwise.
+static std::optional<ClaimType> claimProvedBy(Attribute body, ClaimType source,
+                                              ImplOp impl, ModuleOp module) {
+  FailureOr<ClaimRequirement> read = failure();
+  if (auto premise = dyn_cast<ImplPremiseAttr>(body)) {
+    // The impl's premises are the claim's requirements after its trait's.
+    auto count = getClaimRequirementCount(source, module);
+    if (failed(count))
+      return std::nullopt;
+    unsigned position =
+        *count - impl.getAssumptions().size() + premise.getPosition();
+    read = getClaimRequirementAt(source, module, position, ArrayRef<Type>());
+  } else if (auto hop = dyn_cast<RequirementHopAttr>(body)) {
+    std::optional<ClaimType> of = claimProvedBy(hop.getOf(), source, impl,
+                                                module);
+    if (!of)
+      return std::nullopt;
+    read = getClaimRequirementAt(*of, module, hop.getPosition(),
+                                 hop.getTypeArgs());
+  }
+  if (failed(read) || !read->conclusion.isProven())
+    return std::nullopt;
+  return read->conclusion;
+}
+
+/// The allegation `body`, `impl`'s witness body for bound requirement
+/// `requirement` read under the proven claim `source`, rests on: the body
+/// itself when it alleges; for a hop off a body proving a claim at the
+/// instance, the allegation the hopped requirement of that claim rests on;
+/// for a hop off any other body, the allegation that body rests on.
+static std::optional<AllegationBehind>
+allegationBehindBody(Attribute body, ClaimType source, ImplOp impl,
+                     unsigned requirement, ModuleOp module) {
+  if (auto allegation = dyn_cast<AllegationAttr>(body))
+    return AllegationBehind{impl, requirement, allegation};
+  auto hop = dyn_cast<RequirementHopAttr>(body);
+  if (!hop)
+    return std::nullopt;
+  if (std::optional<ClaimType> of = claimProvedBy(hop.getOf(), source, impl,
+                                                  module))
+    return allegedRequirementOf(*of, module, hop.getPosition());
+  return allegationBehindBody(hop.getOf(), source, impl, requirement, module);
 }
 
 /// Whether the proof selection made for `op`'s claim, `proof`, is the proof
@@ -2311,15 +2371,18 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
               << cited->conclusion.getProof() << " for requirement "
               << project.getIndex() << ", which nothing decides here";
         // A bound requirement's instance is proved here by selection; where
-        // the source's impl alleges the requirement rather than proving it,
-        // the allegation is what selection did not settle.
+        // the source's evidence for the requirement rests on an allegation
+        // rather than a proof, the allegation is what selection did not
+        // settle.
         if (auto alleged = allegedRequirementOf(source, getAnchorModule(op),
                                                 project.getIndex()))
           report.attachNote()
-              << "impl @" << alleged->first.getSymName() << " alleges requirement "
-              << project.getIndex() << " of its trait as "
-              << ClaimType::get(op->getContext(), alleged->second.getApplication())
-              << ", which selection does not prove here";
+              << "the witness of impl @" << alleged->impl.getSymName()
+              << " for requirement " << alleged->requirement
+              << " of its trait rests on the allegation "
+              << ClaimType::get(op->getContext(),
+                                alleged->allegation.getApplication())
+              << ", which nothing proves";
       }
   }
   if (hasLeftovers) return failure();

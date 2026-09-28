@@ -56,7 +56,28 @@ trait.impl private @Holds_i32 for @Holds[i32]
   trait.assoc_type @C<[!X]> = tuple<i64, i64>
 }
 
+// A hop off a hop off a citation discharging the cited impl's premise: each
+// `given` belongs to the body it follows, and the text reads back the same.
+trait.trait private @Goal[!S] {}
+trait.trait private @Mid[!S] where [@Goal[!S]] {}
+trait.trait private @Base[!S] where [forall [!trait.bound<0>] -> @Mid[!trait.proj<@Base[!S], "A", [!trait.bound<0>]>]] {
+  trait.assoc_type @A<[!X]>
+}
+trait.impl private @Base_p for @Base[tuple<!P>] where [@Mid[!P]]
+    witnesses [#trait<witness requirement 0 by where 0>] {
+  trait.assoc_type @A<[!X]> = !P
+}
+trait.trait private @Dst[!S] where [forall [!trait.bound<0>] -> @Goal[!trait.proj<@Dst[!S], "A", [!trait.bound<0>]>]] {
+  trait.assoc_type @A<[!X]>
+}
+trait.impl private @Dst_p for @Dst[tuple<!P>] where [@Mid[!P]]
+    witnesses [#trait<witness requirement 0 by requirement 0 of requirement 0 for [!trait.bound<0>] of @Base_p[!P = !P] given [where 0]>] {
+  trait.assoc_type @A<[!X]> = !trait.proj<@Base[tuple<!P>], "A", [!X]>
+}
+
 // CHECK: witnesses [#trait<witness requirement 0 by requirement 0 of where 0>]
 // CHECK: witnesses [#trait<witness requirement 0 by requirement 0 for [!trait.bound<0>] of where 0>]
 // CHECK: witnesses [#trait<witness requirement 0 by requirement 0 for [!trait.bound<0>] given [premise 0] of where 0>]
 // CHECK: witnesses [#trait<witness requirement 0 by allege @Rule[tuple<i64, i64>]>]
+// CHECK: witnesses [#trait<witness requirement 0 by where 0>]
+// CHECK: witnesses [#trait<witness requirement 0 by requirement 0 of requirement 0 for [!trait.bound<0>] of @Base_p[!trait.poly<2> = !trait.poly<2>] given [where 0]>]

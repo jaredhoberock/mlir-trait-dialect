@@ -467,6 +467,41 @@ void TraitDialect::registerAttributes() {
   >();
 }
 
+// The generic parser hands a dialect the text between `#trait<` and `>` and
+// reads nothing of what the dialect leaves unread, and a witness body ends
+// where its last arm ends: `requirement 0 of where 0 given [where 0]` would
+// read as `requirement 0 of where 0`, its suffix silently dropped. So every
+// attribute of this dialect reads its whole text or is refused.
+Attribute TraitDialect::parseAttribute(DialectAsmParser &parser,
+                                       Type type) const {
+  SMLoc tagLoc = parser.getCurrentLocation();
+  StringRef tag;
+  Attribute attr;
+  OptionalParseResult parsed =
+      generatedAttributeParser(parser, &tag, type, attr);
+  if (!parsed.has_value()) {
+    parser.emitError(tagLoc) << "unknown attribute `" << tag
+                             << "` in dialect `" << getNamespace() << "`";
+    return {};
+  }
+  if (failed(*parsed))
+    return {};
+  // The text ends where the dialect's text does: at the `>` closing the
+  // verbose form, which the lexer reads next, or past a pretty form's own
+  // closing delimiter.
+  SMLoc next = parser.getCurrentLocation();
+  if (next.getPointer() < parser.getFullSymbolSpec().end()) {
+    parser.emitError(next, "expected the end of the attribute");
+    return {};
+  }
+  return attr;
+}
+
+void TraitDialect::printAttribute(Attribute attr,
+                                  DialectAsmPrinter &printer) const {
+  (void)generatedAttributePrinter(attr, printer);
+}
+
 template<class T>
 static T cantFail(FailureOr<T> f, const char* message) {
   if (failed(f))

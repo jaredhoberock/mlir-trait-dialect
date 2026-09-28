@@ -217,10 +217,14 @@ def AllegationAttr : AttrDef<TraitDialect, "Allegation", []> {
     decides rather than an impl the stating impl can cite: the application
     `application` is alleged, as `trait.allege` alleges a claim, and not
     proved at the impl. Verification checks only that the allegation states
-    the predicate its position names. Nothing is lost: a bound requirement's
-    instance is proved where it is used, by selection at the instance, and a
-    claim selection cannot prove there is refused at that use, naming the
-    allegation. Printed within a witness as `allege @Trait[...]`.
+    the predicate its position names. A requirement hop may read off an
+    allegation, as off any body, and the requirement it reads is alleged with
+    it. Nothing is lost: a bound requirement's instance is proved where it is
+    used, by selection at the instance, and a claim selection cannot prove
+    there is refused at that use, naming the allegation the requirement's
+    evidence rests on through any hops -- the stating impl's own, or the one
+    behind the premise or supertrait a hop reads. Printed within a witness as
+    `allege @Trait[...]`.
 
     The allegation carries no rule identity, as `trait.allege` without `by`
     carries none. It takes one exactly as `trait.allege` does, once producers

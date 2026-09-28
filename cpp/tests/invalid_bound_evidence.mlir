@@ -298,3 +298,24 @@ trait.impl private @Holds_i32 for @Holds[i32]
 trait.trait private @A[!trait.poly<0>] {}
 // expected-error @below {{a witness of an application or an equality cites the impl that witnesses it}}
 trait.impl private @A_i32 for @A[i32] witnesses [#trait<witness @A[i64] by allege @A[i64]>] {}
+
+// -----
+
+// A witness body ends where its last arm ends; text after it belongs to no
+// body and is refused rather than dropped. `where 0` takes no `given`.
+
+!S = !trait.poly<0>
+!X = !trait.poly<1>
+trait.trait private @Goal[!S] {}
+trait.trait private @Mid[!S] where [@Goal[!S]] {}
+trait.trait private @Base[!S] where [forall [!trait.bound<0>] -> @Mid[!trait.proj<@Base[!S], "A", [!trait.bound<0>]>]] {
+  trait.assoc_type @A<[!X]>
+}
+trait.trait private @Dst[!S] where [forall [!trait.bound<0>] -> @Goal[!trait.proj<@Dst[!S], "A", [!trait.bound<0>]>]] {
+  trait.assoc_type @A<[!X]>
+}
+trait.impl private @Dst_i32 for @Dst[i32] where [@Base[i32]]
+    // expected-error @below {{expected the end of the attribute}}
+    witnesses [#trait<witness requirement 0 by requirement 0 of requirement 0 for [!trait.bound<0>] of where 0 given [where 0]>] {
+  trait.assoc_type @A<[!X]> = !trait.proj<@Base[i32], "A", [!X]>
+}
