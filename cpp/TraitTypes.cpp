@@ -478,6 +478,12 @@ Type PolyType::specializeWith(const SpecializationMap &subst) const {
   return *this;
 }
 
+Type BoundVarType::specializeWith(const SpecializationMap &subst) const {
+  if (auto replacement = subst.lookup(cast<GenericTypeInterface>(*this)))
+    return *replacement;
+  return *this;
+}
+
 Type PolyType::parse(AsmParser &parser) {
   MLIRContext *ctx = parser.getContext();
   int label = 0;
@@ -1332,10 +1338,9 @@ static ClaimType instantiatePredicate(Attribute predicate,
 /// the proof by position; every other requirement is unproven, an equality
 /// never carrying a provider at all.
 ///
-/// A bound requirement is instantiated at `binderArguments` for the parameters
-/// it binds as well, in the one substitution that instantiates the claim's --
-/// the binder's parameters are the trait's own and distinct from its header's
-/// -- so none is ever read unbound. It is unproven: the impl proves it once for
+/// A bound requirement is instantiated at `binderArguments` for the variables
+/// it binds as well, in the one substitution that instantiates the claim's, so
+/// none is ever read unbound. It is unproven: the impl proves it once for
 /// every argument, and the instance is proved where it is used. Any other
 /// requirement binds nothing and takes no arguments.
 static FailureOr<ClaimRequirement> readRequirement(
@@ -1359,17 +1364,19 @@ static FailureOr<ClaimRequirement> readRequirement(
     return failure();
 
   if (auto bound = dyn_cast<BoundPredicateAttr>(predicate)) {
-    if (binderArguments.size() != bound.getParameters().size()) {
+    if (binderArguments.size() != bound.getArity()) {
       if (errFn)
-        errFn() << "requirement " << index << " binds "
-                << bound.getParameters().size() << " parameters, and "
-                << binderArguments.size() << " arguments are supplied";
+        errFn() << "requirement " << index << " binds " << bound.getArity()
+                << " variables, and " << binderArguments.size()
+                << " arguments are supplied";
       return failure();
     }
+    // The binder's variables are positional, never one of the trait's
+    // parameters, so the two substitutions merge without a clash.
     SpecializationMap both = *subst;
-    for (auto [parameter, argument] :
-         llvm::zip(bound.getParameters(), binderArguments))
-      both.bind(getParameterOccurrence(parameter), argument);
+    for (auto [variable, argument] :
+         bound.bindingFor(binderArguments).toTypeMap())
+      both.bind(cast<GenericTypeInterface>(variable), argument);
     ClaimRequirement result;
     result.conclusion = instantiatePredicate(bound.getConclusion(), both);
     for (Attribute premise : bound.getPremises())
@@ -1378,7 +1385,7 @@ static FailureOr<ClaimRequirement> readRequirement(
   }
   if (!binderArguments.empty()) {
     if (errFn)
-      errFn() << "requirement " << index << " binds no parameters, and "
+      errFn() << "requirement " << index << " binds no variables, and "
               << binderArguments.size() << " arguments are supplied";
     return failure();
   }

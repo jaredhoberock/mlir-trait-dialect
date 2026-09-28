@@ -1351,7 +1351,7 @@ FailureOr<uint64_t> getClaimRequirementCount(
     llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
 
 /// One requirement of a claim, read at the arguments a hop supplies for the
-/// parameters it binds.
+/// variables it binds.
 struct ClaimRequirement {
   /// The claim the requirement states at the source's arguments and those.
   ClaimType conclusion;
@@ -1361,7 +1361,7 @@ struct ClaimRequirement {
 };
 
 /// The requirement `claim` carries at `index`, read at `binderArguments` for
-/// the parameters it binds -- one per parameter of a bound requirement, none
+/// the variables it binds -- one per variable of a bound requirement, none
 /// for any other -- in the order `getClaimRequirementAt` below reads.
 FailureOr<ClaimRequirement> getClaimRequirementAt(
     ClaimType claim,

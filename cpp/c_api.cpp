@@ -463,17 +463,19 @@ MlirAttribute traitWitnessBodyGetImplPremise(MlirContext ctx,
   return wrap(ImplPremiseAttr::get(unwrap(ctx), position));
 }
 
+MlirType traitBoundVarTypeGet(MlirContext wrappedCtx, unsigned int position) {
+  return wrap(BoundVarType::get(unwrap(wrappedCtx), position));
+}
+
 MlirAttribute traitBoundPredicateAttrGet(MlirContext wrappedCtx,
-                                         MlirType *parameters,
-                                         intptr_t numParameters,
+                                         unsigned int arity,
                                          MlirAttribute *premises,
                                          intptr_t numPremises,
                                          MlirAttribute conclusion) {
   MLIRContext *ctx = unwrap(wrappedCtx);
   auto err = [&] { return emitError(UnknownLoc::get(ctx)); };
   return wrap(BoundPredicateAttr::getChecked(
-      err, ctx, ArrayRef<Type>(unwrapArray(parameters, numParameters)),
-      ArrayRef<Attribute>(unwrapArray(premises, numPremises)),
+      err, ctx, arity, ArrayRef<Attribute>(unwrapArray(premises, numPremises)),
       unwrap(conclusion)));
 }
 

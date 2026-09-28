@@ -8,7 +8,7 @@
 !S = !trait.poly<0>
 !X = !trait.poly<1>
 trait.trait private @Marker[!S] {}
-trait.trait private @Has[!S] where [forall [!X] -> @Marker[!trait.proj<@Has[!S], "A", [!X]>]] {
+trait.trait private @Has[!S] where [forall [!trait.bound<0>] -> @Marker[!trait.proj<@Has[!S], "A", [!trait.bound<0>]>]] {
   trait.assoc_type @A<[!X]>
 }
 // expected-error @below {{states no witness for bound requirement 0 of trait '@Has'}}
@@ -35,7 +35,7 @@ trait.impl private @Has_i1 for @Has[i1] witnesses [#trait<witness requirement 0 
 !X = !trait.poly<1>
 trait.trait private @Marker[!S] {}
 trait.impl private @Marker_i1 for @Marker[i1] {}
-trait.trait private @Has[!S] where [forall [!X] -> @Marker[!trait.proj<@Has[!S], "A", [!X]>]] {
+trait.trait private @Has[!S] where [forall [!trait.bound<0>] -> @Marker[!trait.proj<@Has[!S], "A", [!trait.bound<0>]>]] {
   trait.assoc_type @A<[!X]>
 }
 // expected-error @below {{states a witness for requirement 0 twice}}
@@ -52,10 +52,10 @@ trait.impl private @Has_i32 for @Has[i32]
 !X = !trait.poly<1>
 trait.trait private @Marker[!S] {}
 trait.impl private @Marker_i64 for @Marker[i64] {}
-trait.trait private @Has[!S] where [forall [!X] -> @Marker[!trait.proj<@Has[!S], "A", [!X]>]] {
+trait.trait private @Has[!S] where [forall [!trait.bound<0>] -> @Marker[!trait.proj<@Has[!S], "A", [!trait.bound<0>]>]] {
   trait.assoc_type @A<[!X]>
 }
-// expected-error @below {{does not prove #trait<application@Marker[!trait.proj<@Has[i32], "A", [!trait.poly<1>]>]>: it states another predicate}}
+// expected-error @below {{does not prove #trait<application@Marker[!trait.proj<@Has[i32], "A", [!trait.bound<0>]>]>: it states another predicate}}
 trait.impl private @Has_i32 for @Has[i32] witnesses [#trait<witness requirement 0 by @Marker_i64>] {
   trait.assoc_type @A<[!X]> = i1
 }
@@ -69,7 +69,7 @@ trait.impl private @Has_i32 for @Has[i32] witnesses [#trait<witness requirement 
 !X = !trait.poly<1>
 trait.trait private @Marker[!S] {}
 trait.trait private @Other[!S] {}
-trait.trait private @Has[!S] where [forall [!X] where [@Other[!X]] -> @Marker[!trait.proj<@Has[!S], "A", [!X]>]] {
+trait.trait private @Has[!S] where [forall [!trait.bound<0>] where [@Other[!trait.bound<0>]] -> @Marker[!trait.proj<@Has[!S], "A", [!trait.bound<0>]>]] {
   trait.assoc_type @A<[!X]>
 }
 // expected-error @below {{it states another predicate}}
@@ -84,7 +84,7 @@ trait.impl private @Has_i32 for @Has[i32] witnesses [#trait<witness requirement 
 !S = !trait.poly<0>
 !X = !trait.poly<1>
 trait.trait private @Marker[!S] {}
-trait.trait private @Has[!S] where [forall [!X] where [@Marker[!X]] -> @Marker[!trait.proj<@Has[!S], "A", [!X]>]] {
+trait.trait private @Has[!S] where [forall [!trait.bound<0>] where [@Marker[!trait.bound<0>]] -> @Marker[!trait.proj<@Has[!S], "A", [!trait.bound<0>]>]] {
   trait.assoc_type @A<[!X]>
 }
 // expected-error @below {{the binder states 1 premises}}
@@ -99,7 +99,7 @@ trait.impl private @Has_i32 for @Has[i32] witnesses [#trait<witness requirement 
 !S = !trait.poly<0>
 !X = !trait.poly<1>
 trait.trait private @Marker[!S] {}
-trait.trait private @Has[!S] where [forall [!X] where [@Marker[!X]] -> @Marker[!trait.proj<@Has[!S], "A", [!X]>]] {
+trait.trait private @Has[!S] where [forall [!trait.bound<0>] where [@Marker[!trait.bound<0>]] -> @Marker[!trait.proj<@Has[!S], "A", [!trait.bound<0>]>]] {
   trait.assoc_type @A<[!X]>
 }
 // expected-error @below {{the impl's where clause has 0 entries}}
@@ -117,11 +117,11 @@ trait.impl private @Has_i32 for @Has[i32] witnesses [#trait<witness requirement 
 !P = !trait.poly<2>
 trait.trait private @Marker[!S] {}
 trait.impl private @Marker_wrap for @Marker[tuple<!P>] where [@Marker[!P]] {}
-trait.trait private @Has[!S] where [forall [!X] where [@Marker[!X]] -> @Marker[!trait.proj<@Has[!S], "A", [!X]>]] {
+trait.trait private @Has[!S] where [forall [!trait.bound<0>] where [@Marker[!trait.bound<0>]] -> @Marker[!trait.proj<@Has[!S], "A", [!trait.bound<0>]>]] {
   trait.assoc_type @A<[!X]>
 }
 // expected-error @below {{the cited impl's where clause has 1 entries, and the evidence discharges 0}}
-trait.impl private @Has_i32 for @Has[i32] witnesses [#trait<witness requirement 0 by @Marker_wrap[!P = !X]>] {
+trait.impl private @Has_i32 for @Has[i32] witnesses [#trait<witness requirement 0 by @Marker_wrap[!P = !trait.bound<0>]>] {
   trait.assoc_type @A<[!X]> = tuple<!X>
 }
 
@@ -133,7 +133,7 @@ trait.impl private @Has_i32 for @Has[i32] witnesses [#trait<witness requirement 
 !X = !trait.poly<1>
 trait.trait private @Marker[!S] {}
 trait.impl private @Marker_i1 for @Marker[i1] {}
-trait.trait private @Has[!S] where [forall [!X] -> !trait.proj<@Has[!S], "A", [!X]> = !X] {
+trait.trait private @Has[!S] where [forall [!trait.bound<0>] -> !trait.proj<@Has[!S], "A", [!trait.bound<0>]> = !trait.bound<0>] {
   trait.assoc_type @A<[!X]>
 }
 // expected-error @below {{an impl proves only a trait application}}
@@ -148,10 +148,10 @@ trait.impl private @Has_i32 for @Has[i32] witnesses [#trait<witness requirement 
 
 !S = !trait.poly<0>
 !X = !trait.poly<1>
-trait.trait private @Has[!S] where [forall [!X] -> !trait.proj<@Has[!S], "A", [!X]> = !X] {
+trait.trait private @Has[!S] where [forall [!trait.bound<0>] -> !trait.proj<@Has[!S], "A", [!trait.bound<0>]> = !trait.bound<0>] {
   trait.assoc_type @A<[!X]>
 }
-// expected-error @below {{evidence does not prove #trait<equality!trait.proj<@Has[i32], "A", [!trait.poly<1>]> = !trait.poly<1>>: its two sides are two types}}
+// expected-error @below {{evidence does not prove #trait<equality!trait.proj<@Has[i32], "A", [!trait.bound<0>]> = !trait.bound<0>>: its two sides are two types}}
 trait.impl private @Has_i32 for @Has[i32] witnesses [#trait<witness requirement 0 by refl>] {
   trait.assoc_type @A<[!X]> = i1
 }
@@ -161,7 +161,7 @@ trait.impl private @Has_i32 for @Has[i32] witnesses [#trait<witness requirement 
 !S = !trait.poly<0>
 !X = !trait.poly<1>
 trait.trait private @Marker[!S] {}
-trait.trait private @Has[!S] where [forall [!X] -> @Marker[!trait.proj<@Has[!S], "A", [!X]>]] {
+trait.trait private @Has[!S] where [forall [!trait.bound<0>] -> @Marker[!trait.proj<@Has[!S], "A", [!trait.bound<0>]>]] {
   trait.assoc_type @A<[!X]>
 }
 // expected-error @below {{reflexivity proves only an equality}}

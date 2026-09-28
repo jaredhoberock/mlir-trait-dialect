@@ -98,8 +98,8 @@ unsafe extern "C" {
                            predicate: MlirAttribute,
                            impl_name: MlirStringRef,
                            arguments: *const MlirAttribute, num_arguments: isize) -> MlirAttribute;
-    fn traitBoundPredicateAttrGet(ctx: MlirContext,
-                                  parameters: *const MlirType, num_parameters: isize,
+    fn traitBoundVarTypeGet(ctx: MlirContext, position: u32) -> MlirType;
+    fn traitBoundPredicateAttrGet(ctx: MlirContext, arity: u32,
                                   premises: *const MlirAttribute, num_premises: isize,
                                   conclusion: MlirAttribute) -> MlirAttribute;
     fn traitWitnessAttrGetForRequirement(ctx: MlirContext, requirement: u32,
@@ -430,7 +430,7 @@ pub fn proof<'c>(loc: Location<'c>,
 }
 
 /// Create a `trait.project` op selecting the bound requirement `index` of
-/// `src_claim` at `type_args`, one per parameter it binds, with `premises`, one
+/// `src_claim` at `type_args`, one per variable it binds, with `premises`, one
 /// claim per premise it states there. `result_claim` spells the conclusion that
 /// selection derives, which verification checks.
 pub fn project_bound<'c>(loc: Location<'c>,
@@ -589,6 +589,15 @@ pub fn poly_type<'c>(
     ))}
 }
 
+/// The `!trait.bound<position>` type: the variable at `position` of the binder
+/// of the `#trait.bound` predicate that spells it.
+pub fn bound_var_type<'c>(
+    ctx: &'c Context,
+    position: u32,
+) -> Type<'c> {
+    unsafe { Type::from_raw(traitBoundVarTypeGet(ctx.to_raw(), position)) }
+}
+
 #[derive(Clone, Copy)]
 pub struct ClaimType<'c> {
     type_: Type<'c>,
@@ -728,20 +737,20 @@ pub fn witness_attr<'c>(
     if attr.to_raw().ptr.is_null() { None } else { Some(attr) }
 }
 
-/// The `#trait.bound` predicate `forall [parameters] where [premises] ->
-/// conclusion`, a trait's requirement for every argument of parameters of its
-/// own. Returns `None` if construction fails: a parameter that is not a type
-/// parameter or repeats, a premise or conclusion that is neither a trait
-/// application nor a type equality, or a conclusion spelling no parameter.
+/// The `#trait.bound` predicate `forall [!trait.bound<0>, ...] where
+/// [premises] -> conclusion`, a trait's requirement for every choice of
+/// `arity` types, spelled with `bound_var_type`. Returns `None` if
+/// construction fails: no variable, a premise or conclusion that is neither a
+/// trait application nor a type equality or spells a variable past `arity`, or
+/// a conclusion spelling no variable.
 pub fn bound_predicate_attr<'c>(
     ctx: &'c Context,
-    parameters: &[Type<'c>],
+    arity: u32,
     premises: &[Attribute<'c>],
     conclusion: Attribute<'c>,
 ) -> Option<Attribute<'c>> {
     let attr = unsafe { Attribute::from_raw(traitBoundPredicateAttrGet(
-        ctx.to_raw(),
-        parameters.as_ptr() as *const _, parameters.len() as isize,
+        ctx.to_raw(), arity,
         premises.as_ptr() as *const _, premises.len() as isize,
         conclusion.to_raw())) };
     if attr.to_raw().ptr.is_null() { None } else { Some(attr) }

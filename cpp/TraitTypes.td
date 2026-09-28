@@ -51,6 +51,40 @@ def PolyType : TypeDef<TraitDialect, "Poly", [
   let hasCustomAssemblyFormat = 1;
 }
 
+// A variable a bound predicate binds, named by its position in the binder
+def BoundVarType : TypeDef<TraitDialect, "BoundVar", [
+  GenericTypeInterface,
+  PolymorphicTypeInterface
+]> {
+  let mnemonic = "bound";
+  let summary = "A variable of a bound predicate, by position";
+
+  let description = [{
+    The `!trait.bound<N>` type is the variable at position N of the binder of
+    the bound predicate (`#trait.bound`) it stands in, as `d0` is a dimension of
+    the affine map it stands in. It is positional, not a label, and a kind of
+    type variable apart from a declaration's `!trait.poly` parameters: the
+    trait and impl verifiers refuse one as a parameter, and a predicate array
+    refuses one in any entry but a bound predicate, so a declaration's
+    parameter is never mistaken for a binder's variable. It stands in the
+    premises and conclusion of the bound predicate that binds it and in the
+    witness bodies proving one. Instantiating the binder at arguments
+    substitutes argument N for it.
+  }];
+
+  let extraClassDeclaration = [{
+    // for GenericTypeInterface
+    Type specializeWith(const ::mlir::trait::SpecializationMap &subst) const;
+
+    // for PolymorphicTypeInterface
+    bool isPolymorphic() const { return true; }
+  }];
+
+  let parameters = (ins "unsigned":$position);
+
+  let assemblyFormat = "`<` $position `>`";
+}
+
 // Represents a claim, possibly with direct proof, that a trait application is satisfied by some implementation
 def ClaimType : TypeDef<TraitDialect, "Claim", [
   PolymorphicTypeInterface,

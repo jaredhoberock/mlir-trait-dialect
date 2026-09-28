@@ -855,13 +855,13 @@ trait.impl private @A_gen for @A[!trait.poly<0>] where [@B[!trait.poly<0>], @C[!
 fn marker_bound_of_has<'c>(
     context: &'c Context,
     receiver: melior::ir::Type<'c>,
-    x: melior::ir::Type<'c>,
 ) -> melior::ir::attribute::Attribute<'c> {
+    let x = trait_::bound_var_type(context, 0);
     let has = trait_::trait_application_attr(context, "Has", &[receiver]);
     let a_of_x = trait_::projection_type(context, has, "A", &[x]);
     trait_::bound_predicate_attr(
         context,
-        &[x],
+        1,
         &[trait_::trait_application_attr(context, "Marker", &[x]).into()],
         trait_::trait_application_attr(context, "Marker", &[a_of_x]).into(),
     )
@@ -886,7 +886,7 @@ fn the_bound_builders_state_and_select_a_quantified_requirement() {
 
     // @Has states `forall X where Marker[X] -> Marker[Has[S]::A<X>]`, the bound
     // of `type A<X>: Marker where X: Marker`.
-    let bound_at = |receiver| marker_bound_of_has(&context, receiver, x);
+    let bound_at = |receiver| marker_bound_of_has(&context, receiver);
     let module = Module::new(loc);
     module.body().append_operation(trait_::trait_(loc, "Marker", &[s], &[]));
     let has = trait_::trait_(loc, "Has", &[s], &[bound_at(s)]);

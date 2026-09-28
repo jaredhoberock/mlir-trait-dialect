@@ -307,57 +307,28 @@ FailureOr<FunctionType> NormalizationContext::normalize(
 // TraitOp
 //===----------------------------------------------------------------------===//
 
-/// The parameters an entry of a where clause spells outside any binder of its
-/// own: every parameter of an application or an equality, and the parameters
-/// a bound predicate's premises and conclusion spell other than those it binds.
-static DenseSet<Type> parametersSpelledFreeBy(Attribute entry) {
-  MLIRContext *ctx = entry.getContext();
-  auto spelledBy = [&](Attribute predicate) {
-    return getTypeParametersIn(Type(ClaimType::get(ctx, predicate, nullptr)));
-  };
-  DenseSet<Type> spelled;
-  auto bound = dyn_cast<BoundPredicateAttr>(entry);
-  if (!bound) {
-    for (GenericTypeInterface parameter : spelledBy(entry))
-      spelled.insert(Type(parameter));
-    return spelled;
-  }
-  auto add = [&](Attribute predicate) {
-    for (GenericTypeInterface parameter : spelledBy(predicate))
-      if (!llvm::is_contained(bound.getParameters(), Type(parameter)))
-        spelled.insert(Type(parameter));
-  };
-  for (Attribute premise : bound.getPremises())
-    add(premise);
-  add(bound.getConclusion());
-  return spelled;
-}
-
-/// A bound requirement's parameters are its own: none is one of the trait's
-/// parameters, and none stands in another entry, where it would be read
-/// unbound. Its conclusion is a requirement like any other, so it may not name
-/// the trait itself except through a projection.
+/// A bound requirement spells no parameter but the trait's own and its
+/// binder's variables, so no premise a hop supplies is satisfied by an
+/// unrelated same-labelled parameter of the caller. Its conclusion is a
+/// requirement like any other, so it may not name the trait itself except
+/// through a projection.
 static LogicalResult verifyBoundRequirements(TraitOp trait,
                                              const DenseSet<Type> &traitParams) {
-  PredicateArrayAttr requirements = trait.getRequirements();
-  for (auto [index, entry] : llvm::enumerate(requirements)) {
+  for (auto [index, entry] : llvm::enumerate(trait.getRequirements())) {
     auto bound = dyn_cast<BoundPredicateAttr>(entry);
     if (!bound)
       continue;
-    for (Type parameter : bound.getParameters()) {
-      if (traitParams.contains(parameter))
-        return trait.emitOpError()
-               << "bound requirement " << index << " binds " << parameter
-               << ", which is a parameter of trait '@" << trait.getSymName()
-               << "'";
-      for (auto [other, otherEntry] : llvm::enumerate(requirements))
-        if (other != index &&
-            parametersSpelledFreeBy(otherEntry).contains(parameter))
+    SmallVector<Attribute> predicates(bound.getPremises());
+    predicates.push_back(bound.getConclusion());
+    for (Attribute predicate : predicates)
+      for (GenericTypeInterface parameter : getTypeParametersIn(
+               Type(ClaimType::get(trait.getContext(), predicate, nullptr))))
+        if (!isa<BoundVarType>(Type(parameter)) &&
+            !traitParams.contains(Type(parameter)))
           return trait.emitOpError()
-                 << "requirement " << other << " spells " << parameter
-                 << ", which bound requirement " << index
-                 << " binds; a bound parameter stands only inside its binder";
-    }
+                 << "bound requirement " << index << " spells "
+                 << Type(parameter) << ", which is neither a parameter of trait "
+                 << "'@" << trait.getSymName() << "' nor a variable of its binder";
     if (auto app = dyn_cast<TraitApplicationAttr>(bound.getConclusion()))
       if (app.getTraitName().getValue() == trait.getSymName() &&
           !containsType<ProjectionType>(app.getTypeArgs().front()))
@@ -365,6 +336,21 @@ static LogicalResult verifyBoundRequirements(TraitOp trait,
                << "bound requirement " << index << " concludes " << app
                << ", which must not reference the current trait";
   }
+  return success();
+}
+
+/// A binder variable stands only inside the bound predicate that binds it and
+/// the witness proving that predicate, never as a declaration's parameter:
+/// the two kinds of type variable are then disjoint, so an evidence body that
+/// compares a declaration's predicate with a binder's can never read one as
+/// the other.
+static LogicalResult verifyParameterIsNoBinderVariable(Operation *op,
+                                                       Type parameter) {
+  if (isa<BoundVarType>(parameter))
+    return op->emitOpError()
+           << "type parameter " << parameter
+           << " is a binder variable, which stands only inside a bound "
+              "predicate";
   return success();
 }
 
@@ -379,6 +365,8 @@ LogicalResult TraitOp::verify() {
   for (Type ty : typeParams) {
     if (!isa<GenericTypeInterface>(ty))
       return emitOpError() << "expected GenericTypeInterface (e.g., !trait.poly), found " << ty;
+    if (failed(verifyParameterIsNoBinderVariable(getOperation(), ty)))
+      return failure();
     if (!uniqueParams.insert(ty).second)
       return emitOpError() << "type parameters must be unique";
   }
@@ -1023,12 +1011,16 @@ LogicalResult ImplOp::verify() {
   if (failed(verifyTemplateIsNotPublic(getOperation())))
     return failure();
   // An impl's premises restrict the arguments it applies at; one quantified
-  // over parameters of its own would restrict nothing any argument supplies.
+  // over variables of its own would restrict nothing any argument supplies.
   for (auto [index, predicate] : llvm::enumerate(getAssumptions()))
     if (isa<BoundPredicateAttr>(predicate))
       return emitOpError() << "where-clause entry " << index
-                           << " binds parameters of its own; only a trait's "
+                           << " binds variables of its own; only a trait's "
                               "requirement is quantified";
+  for (GenericTypeInterface parameter : getTypeParams())
+    if (failed(verifyParameterIsNoBinderVariable(getOperation(),
+                                                 Type(parameter))))
+      return failure();
   if (failed(verifyImplParametersAreConstrained(*this)))
     return failure();
   return verifyAssociatedTypeBindingScopes(*this);
@@ -1313,8 +1305,9 @@ static LogicalResult verifyBoundRequirementEvidence(
              << "states no witness for bound requirement " << position
              << " of trait '@" << traitOp.getSymName() << "'";
 
-    // The requirement at this impl's arguments: its binder's parameters stay
-    // the trait's, since the binder is still quantified here.
+    // The requirement at this impl's arguments: its binder's variables stay
+    // free, since the binder is still quantified here, and no parameter of
+    // this impl is one of them.
     SmallVector<Attribute> premises =
         llvm::map_to_vector(bound.getPremises(), [&](Attribute premise) {
           return instantiatePredicate(premise, *traitArguments);
@@ -3576,7 +3569,7 @@ static LogicalResult verifyPositionalAssume(AssumeOp assume,
     else
       return assume.emitOpError()
              << "cites where-clause entry " << position
-             << ", which binds parameters of its own; select it with "
+             << ", which binds variables of its own; select it with "
                 "trait.project and its type arguments";
   }
 

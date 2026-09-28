@@ -16,7 +16,7 @@
 !P = !trait.poly<2>
 
 trait.trait private @Marker[!S] {}
-trait.trait private @Has[!S] where [forall [!X] where [@Marker[!X]] -> @Marker[!trait.proj<@Has[!S], "A", [!X]>]] {
+trait.trait private @Has[!S] where [forall [!trait.bound<0>] where [@Marker[!trait.bound<0>]] -> @Marker[!trait.proj<@Has[!S], "A", [!trait.bound<0>]>]] {
   trait.assoc_type @A<[!X]>
 }
 
@@ -39,11 +39,11 @@ trait.impl private @Has_tuple for @Has[tuple<!P>] where [@Marker[!P]]
 }
 
 trait.impl private @Has_f32 for @Has[f32]
-    witnesses [#trait<witness requirement 0 by @Marker_wrap[!P = !X] given [premise 0]>] {
+    witnesses [#trait<witness requirement 0 by @Marker_wrap[!P = !trait.bound<0>] given [premise 0]>] {
   trait.assoc_type @A<[!X]> = tuple<!X>
 }
 
-trait.trait private @Self[!S] where [forall [!X] -> @Self[!trait.proj<@Self[!S], "A", [!X]>]] {
+trait.trait private @Self[!S] where [forall [!trait.bound<0>] -> @Self[!trait.proj<@Self[!S], "A", [!trait.bound<0>]>]] {
   trait.assoc_type @A<[!X]>
 }
 trait.impl private @Self_i32 for @Self[i32]
@@ -53,7 +53,7 @@ trait.impl private @Self_i32 for @Self[i32]
 
 // An equality conclusion is proved by reflexivity when the impl's own binding
 // makes its two sides one type.
-trait.trait private @Same[!S] where [forall [!X] -> !trait.proj<@Same[!S], "A", [!X]> = !X] {
+trait.trait private @Same[!S] where [forall [!trait.bound<0>] -> !trait.proj<@Same[!S], "A", [!trait.bound<0>]> = !trait.bound<0>] {
   trait.assoc_type @A<[!X]>
 }
 trait.impl private @Same_i32 for @Same[i32]
@@ -61,10 +61,10 @@ trait.impl private @Same_i32 for @Same[i32]
   trait.assoc_type @A<[!X]> = !X
 }
 
-// CHECK: trait.trait private @Has[!trait.poly<0>] where [forall [!trait.poly<1>] where [@Marker[!trait.poly<1>]] -> @Marker[!trait.proj<@Has[!trait.poly<0>], "A", [!trait.poly<1>]>]]
+// CHECK: trait.trait private @Has[!trait.poly<0>] where [forall [!trait.bound<0>] where [@Marker[!trait.bound<0>]] -> @Marker[!trait.proj<@Has[!trait.poly<0>], "A", [!trait.bound<0>]>]]
 // CHECK: witnesses [#trait<witness requirement 0 by @Marker_i1>]
 // CHECK: by premise 0>]
 // CHECK: by where 0>]
-// CHECK: by @Marker_wrap[!trait.poly<2> = !trait.poly<1>] given [premise 0]>]
+// CHECK: by @Marker_wrap[!trait.poly<2> = !trait.bound<0>] given [premise 0]>]
 // CHECK: by @Self_i32>]
 // CHECK: witnesses [#trait<witness requirement 0 by refl>]

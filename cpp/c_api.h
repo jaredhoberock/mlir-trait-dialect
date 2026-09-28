@@ -174,15 +174,17 @@ MlirAttribute traitWitnessAttrGet(MlirContext ctx,
                                   MlirStringRef implName,
                                   MlirAttribute *arguments, intptr_t numArguments);
 
-/// Return the #trait.bound predicate `forall [parameters] where [premises] ->
-/// conclusion`: the requirement a trait states for every argument of
-/// parameters of its own. Each premise and the conclusion is a trait
-/// application or a type equality; the parameters are distinct type
-/// parameters the conclusion spells. Returns a null attribute if construction
-/// fails.
+/// Return the !trait.bound<position> type: the variable at `position` of the
+/// binder of the #trait.bound predicate that spells it.
+MlirType traitBoundVarTypeGet(MlirContext ctx, unsigned int position);
+
+/// Return the #trait.bound predicate `forall [!trait.bound<0>, ...,
+/// !trait.bound<arity - 1>] where [premises] -> conclusion`: the requirement a
+/// trait states for every choice of `arity` types. Each premise and the
+/// conclusion is a trait application or a type equality, and the conclusion
+/// spells every variable. Returns a null attribute if construction fails.
 MlirAttribute traitBoundPredicateAttrGet(MlirContext ctx,
-                                         MlirType *parameters,
-                                         intptr_t numParameters,
+                                         unsigned int arity,
                                          MlirAttribute *premises,
                                          intptr_t numPremises,
                                          MlirAttribute conclusion);

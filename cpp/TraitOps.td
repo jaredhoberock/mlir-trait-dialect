@@ -415,13 +415,13 @@ def ImplOp : TraitDialectOp<"impl", [
     ```
 
     A witness for a bound requirement of the trait -- a requirement quantified
-    over parameters of its own, a generic associated type's bound -- names the
+    over variables of its own, a generic associated type's bound -- names the
     requirement by its position and proves its conclusion under its binder, for
     every argument (see `#trait.witness`). An impl of a trait with a bound
     requirement states exactly one for each:
 
     ```mlir
-    trait.trait @Has[!S] where [forall [!X] -> @Marker[!trait.proj<@Has[!S], "A", [!X]>]] {
+    trait.trait @Has[!S] where [forall [!trait.bound<0>] -> @Marker[!trait.proj<@Has[!S], "A", [!trait.bound<0>]>]] {
       trait.assoc_type @A<[!X]>
     }
     trait.impl @Has_i32 for @Has[i32]
@@ -964,7 +964,7 @@ def AssumeOp : TraitDialectOp<"assume", [
     result type spells the claim the entry states, and the verifier refuses an
     assume whose spelled claim is not exactly that entry, so the text reads as
     the fact while the position is what the op means. Two entries that spell
-    one claim stay two citations. An entry that binds parameters of its own is
+    one claim stay two citations. An entry that binds variables of its own is
     selected with `trait.project` and its type arguments instead.
 
       trait.impl @A_gen for @A[!T] where [@B[!T], !trait.proj<@B[!T], "Out"> = i64] {
@@ -1193,17 +1193,17 @@ def ProjectOp : TraitDialectOp<"project", [
     compares it with the requirement the index selects and refuses a
     disagreement.
 
-    A **bound** requirement -- one quantified over parameters of its own, a
+    A **bound** requirement -- one quantified over variables of its own, a
     generic associated type's bound -- is selected at arguments for those
-    parameters: `for [types]` supplies one per parameter and `given(%claims)`
+    variables: `for [types]` supplies one per variable and `given(%claims)`
     one claim per premise it states, each the premise instantiated at the
     source's arguments and those types. The result is its conclusion
     instantiated the same way, and is unproven: the bound is proved once for
     every argument, by the impl's own evidence, and the instance is proved
     where it is used. A requirement that binds nothing takes neither.
 
-      // trait.trait @Has[!S] where [forall [!X] where [@Other[!X]]
-      //                               -> @Marker[!trait.proj<@Has[!S], "A", [!X]>]]
+      // trait.trait @Has[!S] where [forall [!trait.bound<0>] where [@Other[!trait.bound<0>]]
+      //                   -> @Marker[!trait.proj<@Has[!S], "A", [!trait.bound<0>]>]]
       %m = trait.project %h[0] for [i1] given(%o : !trait.claim<@Other[i1]>)
         : !trait.claim<@Has[!T]> -> !trait.claim<@Marker[!trait.proj<@Has[!T], "A", [i1]>]>
 

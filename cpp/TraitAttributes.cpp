@@ -3,6 +3,7 @@
 #include "Trait.hpp"
 #include "TraitAttributes.hpp"
 #include "TraitOps.hpp"
+#include <llvm/ADT/Sequence.h>
 #include <llvm/ADT/TypeSwitch.h>
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/DialectImplementation.h>
@@ -461,52 +462,50 @@ void TraitApplicationAttr::print(mlir::AsmPrinter &printer) const {
   printer << ']';
 }
 
-// The parameters a predicate spells, each counted once. Claims carry their
-// type arguments in an attribute, so the predicate is read through the claim
-// that states it, whose reader descends into them.
-static SmallVector<GenericTypeInterface, 4>
-parametersSpelledBy(Attribute predicate) {
-  return getTypeParametersIn(
-      Type(ClaimType::get(predicate.getContext(), predicate, nullptr)));
+// The binder variables a predicate spells. Claims carry their type arguments in
+// an attribute, so the predicate is read through the claim that states it,
+// whose reader descends into them.
+static SmallVector<BoundVarType> binderVariablesSpelledBy(Attribute predicate) {
+  SmallVector<BoundVarType> variables;
+  for (GenericTypeInterface generic : getGenericTypesIn(
+           Type(ClaimType::get(predicate.getContext(), predicate, nullptr))))
+    if (auto variable = dyn_cast<BoundVarType>(Type(generic)))
+      variables.push_back(variable);
+  return variables;
 }
 
 LogicalResult BoundPredicateAttr::verify(
-    llvm::function_ref<InFlightDiagnostic()> emitError,
-    ArrayRef<Type> parameters, ArrayRef<Attribute> premises,
-    Attribute conclusion) {
-  if (parameters.empty())
-    return emitError() << "a bound predicate binds at least one parameter";
-  DenseSet<Type> bound;
-  for (Type parameter : parameters) {
-    if (!parameter || Type(getParameterOccurrence(parameter)) != parameter)
-      return emitError() << "a bound predicate binds type parameters, found "
-                         << parameter;
-    if (!bound.insert(parameter).second)
-      return emitError() << "a bound predicate binds " << parameter << " twice";
+    llvm::function_ref<InFlightDiagnostic()> emitError, unsigned arity,
+    ArrayRef<Attribute> premises, Attribute conclusion) {
+  if (arity == 0)
+    return emitError() << "a bound predicate binds at least one variable";
+  SmallVector<Attribute> predicates(premises.begin(), premises.end());
+  predicates.push_back(conclusion);
+  for (Attribute predicate : predicates) {
+    if (!isa_and_nonnull<TraitApplicationAttr, TypeEqualityAttr>(predicate))
+      return emitError() << "a bound predicate's premises and conclusion are "
+                            "trait applications or type equalities";
+    for (BoundVarType variable : binderVariablesSpelledBy(predicate))
+      if (variable.getPosition() >= arity)
+        return emitError() << "a bound predicate binds " << arity
+                           << " variables, and " << predicate << " spells "
+                           << Type(variable);
   }
-  for (Attribute premise : premises)
-    if (!isa_and_nonnull<TraitApplicationAttr, TypeEqualityAttr>(premise))
-      return emitError() << "a bound predicate's premise must be a trait "
-                            "application or a type equality";
-  if (!isa_and_nonnull<TraitApplicationAttr, TypeEqualityAttr>(conclusion))
-    return emitError() << "a bound predicate's conclusion must be a trait "
-                          "application or a type equality";
-  if (llvm::none_of(parametersSpelledBy(conclusion),
-                    [&](GenericTypeInterface spelled) {
-                      return bound.contains(Type(spelled));
-                    }))
+  if (binderVariablesSpelledBy(conclusion).empty())
     return emitError() << "a bound predicate's conclusion spells none of the "
-                          "parameters it binds";
+                          "variables it binds";
   return success();
 }
 
 SpecializationMap
 BoundPredicateAttr::bindingFor(ArrayRef<Type> arguments) const {
-  assert(arguments.size() == getParameters().size() &&
-         "one argument per parameter the binder introduces");
+  assert(arguments.size() == getArity() &&
+         "one argument per variable the binder introduces");
   SpecializationMap binding;
-  for (auto [parameter, argument] : llvm::zip(getParameters(), arguments))
-    binding.bind(getParameterOccurrence(parameter), argument);
+  for (auto [position, argument] : llvm::enumerate(arguments))
+    binding.bind(cast<GenericTypeInterface>(Type(BoundVarType::get(
+                     getContext(), static_cast<unsigned>(position)))),
+                 argument);
   return binding;
 }
 
@@ -528,15 +527,24 @@ LogicalResult BoundPredicateAttr::verifySymbolUses(
   return success();
 }
 
-// `forall [params] where [premises] -> conclusion`, following the keyword the
+// `forall [variables] where [premises] -> conclusion`, following the keyword the
 // caller has already read.
 static FailureOr<BoundPredicateAttr> parseBoundPredicateBody(AsmParser &p) {
-  SmallVector<Type> parameters;
-  if (p.parseCommaSeparatedList(AsmParser::Delimiter::Square, [&] {
-        Type parameter;
-        if (p.parseType(parameter))
+  // The variables, listed in position order.
+  unsigned arity = 0;
+  if (p.parseCommaSeparatedList(AsmParser::Delimiter::Square,
+                                [&]() -> ParseResult {
+        llvm::SMLoc location = p.getCurrentLocation();
+        Type variable;
+        if (p.parseType(variable))
           return failure();
-        parameters.push_back(parameter);
+        auto bound = dyn_cast<BoundVarType>(variable);
+        if (!bound || bound.getPosition() != arity)
+          return p.emitError(location)
+                 << "a bound predicate lists its variables in position order: "
+                    "expected !trait.bound<"
+                 << arity << ">, found " << variable;
+        ++arity;
         return success();
       }))
     return failure();
@@ -559,7 +567,7 @@ static FailureOr<BoundPredicateAttr> parseBoundPredicateBody(AsmParser &p) {
     return failure();
 
   auto err = [&]() { return p.emitError(p.getCurrentLocation()); };
-  auto bound = BoundPredicateAttr::getChecked(err, p.getContext(), parameters,
+  auto bound = BoundPredicateAttr::getChecked(err, p.getContext(), arity,
                                               premises, *conclusion);
   if (!bound)
     return failure();
@@ -576,7 +584,9 @@ static void printApplicationOrEquality(AsmPrinter &printer, Attribute p) {
 static void printBoundPredicateBody(AsmPrinter &printer,
                                     BoundPredicateAttr bound) {
   printer << "forall [";
-  llvm::interleaveComma(bound.getParameters(), printer);
+  llvm::interleaveComma(llvm::seq(bound.getArity()), printer, [&](unsigned position) {
+    printer << Type(BoundVarType::get(bound.getContext(), position));
+  });
   printer << "]";
   if (!bound.getPremises().empty()) {
     printer << " where [";
@@ -623,11 +633,17 @@ void printWherePredicate(AsmPrinter &printer, Attribute predicate) {
 LogicalResult PredicateArrayAttr::verify(
     llvm::function_ref<InFlightDiagnostic()> emitError,
     ArrayRef<Attribute> predicates) {
-  for (Attribute p : predicates)
-    if (!mlir::isa<TraitApplicationAttr, TypeEqualityAttr, BoundPredicateAttr>(
-            p))
+  for (Attribute p : predicates) {
+    if (isa<BoundPredicateAttr>(p))
+      continue;
+    if (!mlir::isa<TraitApplicationAttr, TypeEqualityAttr>(p))
       return emitError() << "a trait requirement must be a trait application, "
                             "a type equality, or a bound predicate";
+    // A binder variable stands only inside its binder.
+    if (!binderVariablesSpelledBy(p).empty())
+      return emitError() << p << " spells a binder variable outside a bound "
+                                 "predicate";
+  }
   return success();
 }
 

@@ -311,38 +311,42 @@ def WitnessAttr : AttrDef<TraitDialect, "Witness",
 def BoundPredicateAttr : AttrDef<TraitDialect, "BoundPredicate",
     [DeclareAttrInterfaceMethods<SymbolUserAttrInterface>]> {
   let mnemonic = "bound";
-  let summary = "A predicate quantified over parameters of its own";
+  let summary = "A predicate quantified over variables of its own";
   let description = [{
-    Represents `forall parameters. premises => conclusion`: for every argument
-    of each parameter at which every premise holds, the conclusion holds. The
+    Represents `forall variables. premises => conclusion`: for every argument
+    of each variable at which every premise holds, the conclusion holds. The
     premises and the conclusion are each a trait application or a type
-    equality, spelled over the parameters the binder introduces and over the
-    parameters of the declaration it stands in. It is the requirement a trait
+    equality, spelled over the binder's variables and over the parameters of
+    the trait whose where clause states it. It is the requirement a trait
     states for a generic associated type's bound: `type A<X>: Marker where X:
     Other` is
 
-      forall [!X] where [@Other[!X]] -> @Marker[!trait.proj<@Has[!S], "A", [!X]>]
+      forall [!trait.bound<0>] where [@Other[!trait.bound<0>]]
+        -> @Marker[!trait.proj<@Has[!S], "A", [!trait.bound<0>]>]
 
-    The parameters are the binder's own: a reader instantiates them together
-    with the declaration's parameters, in one substitution, and never reads one
-    unbound. So each is a type parameter, they are distinct, and the conclusion
-    spells at least one of them -- a binder quantifying nothing is a plain
-    predicate spelled another way. Bound predicates do not nest.
+    The binder's variables are positional (`!trait.bound<N>`), so the binder
+    stores how many it binds and nothing else; no declaration's parameter can
+    be one of them. Each variable the premises and conclusion spell is in
+    range, and the conclusion spells at least one -- a binder quantifying
+    nothing is a plain predicate spelled another way. A reader instantiates the
+    variables together with the trait's parameters, in one substitution, and
+    never reads one unbound. Bound predicates do not nest.
 
-    Printed `forall [params] where [premises] -> conclusion`; `where [...]` is
-    omitted when there are no premises.
+    Printed `forall [variables] where [premises] -> conclusion`, the variables
+    listed in position order; `where [...]` is omitted when there are no
+    premises.
   }];
 
   let parameters = (ins
-    ArrayRefParameter<"Type">:$parameters,
+    "unsigned":$arity,
     ArrayRefParameter<"::mlir::Attribute">:$premises,
     "::mlir::Attribute":$conclusion
   );
 
   let extraClassDeclaration = [{
-    /// The substitution that instantiates this binder: each parameter it binds
+    /// The substitution that instantiates this binder: each variable it binds
     /// taking the argument at its position in `arguments`, which has one per
-    /// parameter.
+    /// variable.
     SpecializationMap bindingFor(ArrayRef<Type> arguments) const;
   }];
 
@@ -366,9 +370,10 @@ def PredicateArrayAttr : AttrDef<TraitDialect, "PredicateArray",
       * a `TypeEqualityAttr` -- two spellings must name one type, e.g.
         `!trait.proj<@Trait[!S], "Assoc"> = i64`;
       * a `BoundPredicateAttr` -- a predicate that holds for every argument of
-        parameters of its own, e.g. a generic associated type's bound
-        `forall [!X] -> @Marker[!trait.proj<@Trait[!S], "A", [!X]>]`. Only a
-        trait's where clause states one; an impl's premises bind nothing.
+        variables of its own, e.g. a generic associated type's bound
+        `forall [!trait.bound<0>] -> @Marker[!trait.proj<@Trait[!S], "A",
+        [!trait.bound<0>]>]`. Only a trait's where clause states one; an impl's
+        premises bind nothing. A binder variable stands in no other entry.
 
     Application entries are proved at impl selection; equality entries are
     checked at impl verification against the impl's own bindings; a bound
