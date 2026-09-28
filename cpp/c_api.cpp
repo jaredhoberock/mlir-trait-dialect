@@ -503,41 +503,37 @@ bool traitIsPendingExpansion(MlirModule module) {
   return isPendingExpansion(unwrap(module));
 }
 
-bool traitModuleDescribeImpl(MlirModule module, MlirStringRef name,
-                             MlirStringRef *traitName, MlirType *typeParams,
-                             intptr_t maxTypeParams, intptr_t *numTypeParams,
-                             MlirStringRef *whereTraits,
-                             intptr_t maxWhereEntries,
-                             intptr_t *numWhereEntries) {
+TraitImplInstantiation traitModuleInstantiateImpl(MlirModule module, MlirStringRef name,
+                                MlirAttribute const *bindings,
+                                intptr_t numBindings, MlirType *header,
+                                MlirType *whereClaims, intptr_t maxWhere,
+                                intptr_t *numWhere) {
   ModuleOp moduleOp = unwrap(module);
   auto impl = dyn_cast_or_null<ImplOp>(
       SymbolTable::lookupSymbolIn(moduleOp, StringRef(name.data, name.length)));
   if (!impl)
-    return false;
-  StringRef trait = impl.getTraitNameAttr().getValue();
-  *traitName = mlirStringRefCreate(trait.data(), trait.size());
-  SmallVector<GenericTypeInterface, 4> parameters = impl.getTypeParams();
-  *numTypeParams = parameters.size();
-  for (auto [position, parameter] : llvm::enumerate(parameters))
-    if (intptr_t(position) < maxTypeParams)
-      typeParams[position] = wrap(Type(parameter));
-  ArrayRef<Attribute> entries = impl.getAssumptions().getPredicates();
-  *numWhereEntries = entries.size();
-  for (auto [position, entry] : llvm::enumerate(entries)) {
-    if (intptr_t(position) >= maxWhereEntries)
-      break;
-    StringRef applied;
-    if (auto app = dyn_cast<TraitApplicationAttr>(entry))
-      applied = app.getTraitName().getValue();
-    whereTraits[position] = mlirStringRefCreate(applied.data(), applied.size());
+    return TraitImplAbsent;
+  SmallVector<TypeBindingAttr> arguments;
+  for (intptr_t i = 0; i < numBindings; ++i) {
+    auto binding = dyn_cast_or_null<TypeBindingAttr>(unwrap(bindings[i]));
+    if (!binding)
+      return TraitImplNotItsParameters;
+    arguments.push_back(binding);
   }
-  return true;
-}
-
-bool traitModuleHasTrait(MlirModule module, MlirStringRef name) {
-  ModuleOp moduleOp = unwrap(module);
-  return isa_and_nonnull<TraitOp>(
-      SymbolTable::lookupSymbolIn(moduleOp, StringRef(name.data, name.length)));
+  // The substitution a derive stating these arguments makes, and the header
+  // and where clause its verifier compares at it.
+  FailureOr<SpecializationMap> substitution =
+      impl.substitutionFor(arguments, /*err=*/nullptr);
+  if (failed(substitution))
+    return TraitImplNotItsParameters;
+  *header = wrap(Type(
+      ClaimType::get(impl.getContext(), impl.getSelfApplicationAt(*substitution))));
+  SmallVector<ClaimType> where = impl.getWhereClauseAt(*substitution);
+  *numWhere = where.size();
+  for (auto [position, claim] : llvm::enumerate(where))
+    if (intptr_t(position) < maxWhere)
+      whereClaims[position] = wrap(Type(claim));
+  return TraitImplInstantiated;
 }
 
 } // end extern "C"

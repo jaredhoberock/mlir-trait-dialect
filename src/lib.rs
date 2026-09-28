@@ -104,12 +104,10 @@ unsafe extern "C" {
                                          premises: *const MlirAttribute, num_premises: isize) -> MlirAttribute;
     fn traitWitnessBodyGetAllegation(ctx: MlirContext, application: MlirAttribute) -> MlirAttribute;
     fn traitCoercePendingAccepts(input: MlirType, result: MlirType) -> bool;
-    fn traitModuleDescribeImpl(module: mlir_sys::MlirModule, name: MlirStringRef,
-                               trait_name: *mut MlirStringRef,
-                               type_params: *mut MlirType, max_type_params: isize, num_type_params: *mut isize,
-                               where_traits: *mut MlirStringRef, max_where_entries: isize,
-                               num_where_entries: *mut isize) -> bool;
-    fn traitModuleHasTrait(module: mlir_sys::MlirModule, name: MlirStringRef) -> bool;
+    fn traitModuleInstantiateImpl(module: mlir_sys::MlirModule, name: MlirStringRef,
+                                  bindings: *const MlirAttribute, num_bindings: isize,
+                                  header: *mut MlirType, where_claims: *mut MlirType, max_where: isize,
+                                  num_where: *mut isize) -> u32;
     fn traitAssocTypeOpCreate(loc: MlirLocation,
                               name: MlirStringRef,
                               bound_type: MlirType,
@@ -907,53 +905,59 @@ pub fn assoc_type<'c>(loc: Location<'c>, name: &str, bound_type: Option<Type<'c>
     ))}
 }
 
-/// What a module states of the `trait.impl` named `name` at its top level: the
-/// trait it implements, its type parameters in the order a citation's
-/// arguments bind them, and the trait each where-clause entry applies, in
-/// order (empty for an equality entry).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ImplDescription<'c> {
-    pub trait_name: String,
-    pub type_params: Vec<Type<'c>>,
-    pub where_traits: Vec<String>,
+/// The outcomes `traitModuleInstantiateImpl` reports, `c_api.h`'s
+/// `TraitImplInstantiation`.
+const TRAIT_IMPL_INSTANTIATED: u32 = 0;
+const TRAIT_IMPL_ABSENT: u32 = 1;
+
+/// Why an impl a module names was not instantiated.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImplRefusal {
+    /// The module holds no impl of that name.
+    Absent,
+    /// An argument binds no parameter of the impl.
+    NotItsParameters,
 }
 
-/// The `trait.impl` named `name` at the top level of `module`, described; `None`
-/// when the module holds no impl of that name.
-pub fn describe_impl<'c>(module: &melior::ir::Module<'c>, name: &str) -> Option<ImplDescription<'c>> {
-    let empty = MlirStringRef { data: std::ptr::null(), length: 0 };
-    let mut trait_name = empty;
-    let (mut num_type_params, mut num_where_entries) = (0isize, 0isize);
-    let describe = |type_params: &mut [MlirType], where_traits: &mut [MlirStringRef], trait_name: &mut MlirStringRef,
-                    num_type_params: &mut isize, num_where_entries: &mut isize| unsafe {
-        traitModuleDescribeImpl(
+/// The claims the `trait.impl` named `name` at the top level of `module` states
+/// at `arguments`, each a parameter of the impl and the type it takes, as a
+/// derive stating those arguments reads them: the claim its header states, and
+/// those its where-clause entries state, in order. Refused with `Absent` when
+/// the module holds no impl of that name, and with `NotItsParameters` when an
+/// argument binds no parameter of it.
+pub fn instantiate_impl<'c>(
+    ctx: &'c Context,
+    module: &melior::ir::Module<'c>,
+    name: &str,
+    arguments: &[(Type<'c>, Type<'c>)],
+) -> Result<(Type<'c>, Vec<Type<'c>>), ImplRefusal> {
+    let bindings = type_bindings(ctx.to_raw(), arguments).ok_or(ImplRefusal::NotItsParameters)?;
+    let null = MlirType { ptr: std::ptr::null_mut() };
+    let mut header = null;
+    let mut count = 0isize;
+    let instantiate = |header: &mut MlirType, where_claims: &mut [MlirType], count: &mut isize| unsafe {
+        traitModuleInstantiateImpl(
             module.to_raw(),
             StringRef::new(name).to_raw(),
-            trait_name,
-            type_params.as_mut_ptr(),
-            type_params.len() as isize,
-            num_type_params,
-            where_traits.as_mut_ptr(),
-            where_traits.len() as isize,
-            num_where_entries,
+            bindings.as_ptr(),
+            bindings.len() as isize,
+            header,
+            where_claims.as_mut_ptr(),
+            where_claims.len() as isize,
+            count,
         )
     };
-    // The first call counts; the second fills buffers of those sizes.
-    if !describe(&mut [], &mut [], &mut trait_name, &mut num_type_params, &mut num_where_entries) {
-        return None;
+    // The first call counts the where clause; the second fills a buffer of
+    // that size.
+    match instantiate(&mut header, &mut [], &mut count) {
+        TRAIT_IMPL_INSTANTIATED => {}
+        TRAIT_IMPL_ABSENT => return Err(ImplRefusal::Absent),
+        _ => return Err(ImplRefusal::NotItsParameters),
     }
-    let mut type_params = vec![MlirType { ptr: std::ptr::null_mut() }; num_type_params as usize];
-    let mut where_traits = vec![empty; num_where_entries as usize];
-    describe(&mut type_params, &mut where_traits, &mut trait_name, &mut num_type_params, &mut num_where_entries);
-    let text = |name: MlirStringRef| unsafe { StringRef::from_raw(name) }.as_str().expect("a trait name is UTF-8").to_string();
-    Some(ImplDescription {
-        trait_name: text(trait_name),
-        type_params: type_params.into_iter().map(|ty| unsafe { Type::from_raw(ty) }).collect(),
-        where_traits: where_traits.into_iter().map(|name| if name.data.is_null() { String::new() } else { text(name) }).collect(),
-    })
-}
-
-/// Whether `module` holds a `trait.trait` named `name` at its top level.
-pub fn has_trait(module: &melior::ir::Module, name: &str) -> bool {
-    unsafe { traitModuleHasTrait(module.to_raw(), StringRef::new(name).to_raw()) }
+    let mut where_claims = vec![null; count as usize];
+    instantiate(&mut header, &mut where_claims, &mut count);
+    Ok((
+        unsafe { Type::from_raw(header) },
+        where_claims.into_iter().map(|claim| unsafe { Type::from_raw(claim) }).collect(),
+    ))
 }

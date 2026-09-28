@@ -1115,7 +1115,7 @@ trait.impl private @Tr_tuple for @Tr[tuple<!trait.poly<1>>] where [@Tr[!trait.po
 }
 
 #[test]
-fn a_module_describes_the_impls_and_traits_it_names() {
+fn an_impl_instantiates_at_the_arguments_a_derive_states() {
     let registry = DialectRegistry::new();
     register_all_dialects(&registry);
     let context = Context::new();
@@ -1128,17 +1128,30 @@ trait.trait private @A[!trait.poly<0>] { trait.assoc_type @Out }\n\
 trait.trait private @Tr[!trait.poly<0>] {}\n\
 trait.impl private @Tr_tuple for @Tr[tuple<!trait.poly<1>, !trait.poly<0>>] where [@A[!trait.poly<1>], !trait.proj<@A[!trait.poly<1>], \"Out\"> = !trait.poly<0>] {}\n";
     let module = Module::parse(&context, source).expect("the fixture module parses");
+    let i32_ty: melior::ir::Type = IntegerType::new(&context, 32).into();
+    let i64_ty: melior::ir::Type = IntegerType::new(&context, 64).into();
+    let claim = |text: &str| melior::ir::Type::parse(&context, text).expect("the claim parses");
 
+    let arguments = [(trait_::poly_type(&context, 1), i32_ty), (trait_::poly_type(&context, 0), i64_ty)];
     assert_eq!(
-        trait_::describe_impl(&module, "Tr_tuple"),
-        Some(trait_::ImplDescription {
-            trait_name: "Tr".to_string(),
-            type_params: vec![trait_::poly_type(&context, 1), trait_::poly_type(&context, 0)],
-            where_traits: vec!["A".to_string(), String::new()],
-        }),
+        trait_::instantiate_impl(&context, &module, "Tr_tuple", &arguments),
+        Ok((
+            claim("!trait.claim<@Tr[tuple<i32, i64>]>"),
+            vec![claim("!trait.claim<@A[i32]>"), claim("!trait.claim<!trait.proj<@A[i32], \"Out\"> = i64>")],
+        )),
     );
-    assert_eq!(trait_::describe_impl(&module, "Tr_missing"), None);
-    assert_eq!(trait_::describe_impl(&module, "Tr"), None, "a trait is no impl");
-    assert!(trait_::has_trait(&module, "A"));
-    assert!(!trait_::has_trait(&module, "Tr_tuple"), "an impl is no trait");
+    let foreign = [(trait_::poly_type(&context, 5), i32_ty)];
+    assert_eq!(
+        trait_::instantiate_impl(&context, &module, "Tr_tuple", &foreign),
+        Err(trait_::ImplRefusal::NotItsParameters),
+    );
+    assert_eq!(
+        trait_::instantiate_impl(&context, &module, "Tr_missing", &arguments),
+        Err(trait_::ImplRefusal::Absent),
+    );
+    assert_eq!(
+        trait_::instantiate_impl(&context, &module, "Tr", &arguments),
+        Err(trait_::ImplRefusal::Absent),
+        "a trait is no impl"
+    );
 }
