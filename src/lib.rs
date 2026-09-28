@@ -52,6 +52,11 @@ unsafe extern "C" {
                            trait_app: MlirAttribute) -> MlirOperation;
     fn traitAllegeUnsafeOpCreate(loc: MlirLocation,
                                  trait_app: MlirAttribute) -> MlirOperation;
+    fn traitAllegeByRuleOpCreate(loc: MlirLocation,
+                                 trait_app: MlirAttribute,
+                                 rule: MlirAttribute,
+                                 premises: *const MlirValue, num_premises: isize,
+                                 is_unsafe: bool) -> MlirOperation;
     fn traitWitnessOpCreate(loc: MlirLocation,
                             proof_name: MlirStringRef,
                             trait_app: MlirAttribute) -> MlirOperation;
@@ -389,6 +394,26 @@ pub fn allege_unsafe<'c>(loc: Location<'c>,
     unsafe { Operation::from_raw(traitAllegeUnsafeOpCreate(
         loc.to_raw(),
         trait_app.to_raw(),
+    ))}
+}
+
+/// Build a `trait.allege` stating that its claim holds by the compiler rule
+/// `rule` identifies -- an attribute of the dialect implementing the rule --
+/// with `premises`, the claims of the facts the rule consulted. `is_unsafe`
+/// admits a polymorphic claim.
+pub fn allege_by_rule<'c>(loc: Location<'c>,
+                          trait_app: TraitApplicationAttribute<'c>,
+                          rule: Attribute<'c>,
+                          premises: &[Value<'c,'_>],
+                          is_unsafe: bool,
+) -> Operation<'c> {
+    unsafe { Operation::from_raw(traitAllegeByRuleOpCreate(
+        loc.to_raw(),
+        trait_app.to_raw(),
+        rule.to_raw(),
+        premises.as_ptr() as *const _,
+        premises.len() as isize,
+        is_unsafe,
     ))}
 }
 

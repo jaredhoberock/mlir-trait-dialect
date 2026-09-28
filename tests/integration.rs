@@ -1029,3 +1029,52 @@ trait.impl private @Tr_tuple for @Tr[tuple<!trait.poly<1>>] where [@Tr[!trait.po
         "the proof and the derive print the arguments they state: {rendered}"
     );
 }
+
+#[test]
+fn the_rule_allegation_builder_carries_the_rule_and_its_premises() {
+    let registry = DialectRegistry::new();
+    register_all_dialects(&registry);
+    let context = Context::new();
+    context.append_dialect_registry(&registry);
+    trait_::register(&context);
+    context.load_all_available_dialects();
+
+    let source = "\
+trait.trait private @A[!trait.poly<0>] {}\n\
+trait.trait private @B[!trait.poly<0>] {}\n";
+    let module = Module::parse(&context, source).expect("the fixture module parses");
+    let loc = Location::unknown(&context);
+    let i32_ty: melior::ir::Type = IntegerType::new(&context, 32).into();
+    let b_i32 = trait_::trait_application_attr(&context, "B", &[i32_ty]);
+    let b_claim: melior::ir::Type = trait_::claim_type(&context, b_i32).into();
+
+    // The identity is the implementing dialect's and opaque here, so any
+    // attribute stands in for one.
+    let rule = StringAttribute::new(&context, "some.rule").into();
+    let block = Block::new(&[(b_claim, loc)]);
+    block.append_operation(trait_::allege_by_rule(
+        loc,
+        trait_::trait_application_attr(&context, "A", &[i32_ty]),
+        rule,
+        &[block.argument(0).unwrap().into()],
+        false,
+    ));
+    block.append_operation(func::r#return(&[], loc));
+    let body = Region::new();
+    body.append_block(block);
+    module.body().append_operation(func::func(
+        &context,
+        StringAttribute::new(&context, "f"),
+        TypeAttribute::new(FunctionType::new(&context, &[b_claim], &[]).into()),
+        body,
+        &[],
+        loc,
+    ));
+
+    assert!(module.as_operation().verify());
+    let rendered = module.as_operation().to_string();
+    assert!(
+        rendered.contains("trait.allege @A[i32] by \"some.rule\" given(%arg0 : !trait.claim<@B[i32]>)"),
+        "the allegation prints its rule and premises: {rendered}"
+    );
+}

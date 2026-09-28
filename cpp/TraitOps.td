@@ -825,9 +825,21 @@ def AllegeOp : TraitDialectOp<"allege", [
 
       // polymorphic: deferred to instantiate-monomorphs
       %q = trait.allege @Printable[!trait.poly<0>] unsafe
+
+    Rule form. `by <rule>` names the compiler rule the claim holds by, and
+    `given(%claims)` the facts that rule consulted. The rule identity is an
+    attribute of the dialect whose impl generator implements the rule, opaque
+    to this dialect: when the claim is proved, generation is asked for the
+    rule by that identity (`ImplGenerator::generateImplByRule`) rather than by
+    the trait's name. The premises are the rule's evidence, carried with the
+    claim; a claim a rule proves from none takes no `given`.
+
+      %c = trait.allege @Convergence[!T] by #coop.rule<convergence> unsafe
   }];
 
-  let arguments = (ins OptionalAttr<UnitAttr>:$unsafe);
+  let arguments = (ins OptionalAttr<UnitAttr>:$unsafe,
+                       OptionalAttr<AnyAttr>:$rule,
+                       Variadic<Claim>:$premises);
 
   let results = (outs Claim:$result);
 
@@ -835,7 +847,8 @@ def AllegeOp : TraitDialectOp<"allege", [
     OpBuilder<(ins "::mlir::trait::TraitApplicationAttr":$app), [{
       mlir::MLIRContext* ctx = $_builder.getContext();
       auto claimTy = ClaimType::get(ctx, app);
-      return build($_builder, $_state, claimTy, /*unsafe=*/nullptr);
+      return build($_builder, $_state, claimTy, /*unsafe=*/nullptr,
+                   /*rule=*/nullptr, /*premises=*/::mlir::ValueRange{});
     }]>,
     OpBuilder<(ins "::mlir::trait::TraitApplicationAttr":$app,
                    "bool":$isUnsafe), [{
@@ -844,7 +857,21 @@ def AllegeOp : TraitDialectOp<"allege", [
       auto unsafeAttr = isUnsafe
         ? $_builder.getUnitAttr()
         : mlir::UnitAttr();
-      return build($_builder, $_state, claimTy, unsafeAttr);
+      return build($_builder, $_state, claimTy, unsafeAttr, /*rule=*/nullptr,
+                   /*premises=*/::mlir::ValueRange{});
+    }]>,
+    // the rule form
+    OpBuilder<(ins "::mlir::trait::TraitApplicationAttr":$app,
+                   "bool":$isUnsafe,
+                   "::mlir::Attribute":$ruleIdentity,
+                   "::mlir::ValueRange":$rulePremises), [{
+      mlir::MLIRContext* ctx = $_builder.getContext();
+      auto claimTy = ClaimType::get(ctx, app);
+      auto unsafeAttr = isUnsafe
+        ? $_builder.getUnitAttr()
+        : mlir::UnitAttr();
+      return build($_builder, $_state, claimTy, unsafeAttr, ruleIdentity,
+                   rulePremises);
     }]>
   ];
 

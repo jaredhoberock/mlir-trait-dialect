@@ -635,13 +635,19 @@ struct ProveClaimResultPattern : public RewritePattern {
     ModuleOp scope = getAnchorModule(op);
     ReadOnlyImplResolver here = reading.in(scope);
 
+    // An allegation naming the rule its claim holds by is proved by that rule.
+    Attribute rule;
+    if (auto allege = dyn_cast<AllegeOp>(op))
+      rule = allege.getRuleAttr();
+
     // build or reuse canonical evidence for this claim
     FailureOr<FlatSymbolRefAttr> sym =
-        minting ? minting->resolveAndEnsureProofFor(claim, scope, rewriter, errFn)
+        minting ? minting->resolveAndEnsureProofFor(claim, scope, rewriter,
+                                                    errFn, nullptr, rule)
                 : here.getRecordedProofFor(claim);
     if (failed(sym)) {
       if (!minting)
-        (void)here.decline(claim);
+        (void)(rule ? here.decline(claim, rule) : here.decline(claim));
       return rewriter.notifyMatchFailure(op, "couldn't find proof of this claim");
     }
 

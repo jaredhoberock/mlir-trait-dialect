@@ -4719,6 +4719,23 @@ ParseResult AllegeOp::parse(OpAsmParser &p, OperationState &st) {
   TraitApplicationAttr app = dyn_cast_or_null<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
   if (!app) return p.emitError(p.getCurrentLocation(), "expected a TraitApplicationAttr");
 
+  // parse the optional rule the claim holds by, and the facts it consulted
+  if (succeeded(p.parseOptionalKeyword("by"))) {
+    Attribute rule;
+    if (p.parseAttribute(rule))
+      return failure();
+    st.addAttribute("rule", rule);
+    if (succeeded(p.parseOptionalKeyword("given"))) {
+      SmallVector<OpAsmParser::UnresolvedOperand> premises;
+      SmallVector<Type> premiseTypes;
+      if (p.parseLParen() || p.parseOperandList(premises) || p.parseColon() ||
+          p.parseTypeList(premiseTypes) || p.parseRParen() ||
+          p.resolveOperands(premises, premiseTypes, p.getCurrentLocation(),
+                            st.operands))
+        return failure();
+    }
+  }
+
   // parse optional `unsafe` keyword
   UnitAttr unsafeAttr;
   if (succeeded(p.parseOptionalKeyword("unsafe")))
@@ -4739,6 +4756,19 @@ void AllegeOp::print(OpAsmPrinter &p) {
   // print the claimed trait application
   getClaim().getTraitApplication().print(p);
 
+  // print the rule and the facts it consulted
+  if (Attribute rule = getRuleAttr()) {
+    p << " by ";
+    p.printAttribute(rule);
+    if (!getPremises().empty()) {
+      p << " given(";
+      p.printOperands(getPremises());
+      p << " : ";
+      llvm::interleaveComma(getPremises().getTypes(), p);
+      p << ")";
+    }
+  }
+
   // print optional unsafe
   if (getUnsafe())
     p << " unsafe";
@@ -4749,5 +4779,9 @@ LogicalResult AllegeOp::verify() {
   if (!getUnsafe() && !getClaim().isMonomorphic())
     return emitOpError() << "expected monomorphic claim, got "
                          << getClaim();
+  // Premises are the facts a rule consulted, so they stand only with one.
+  if (!getRuleAttr() && !getPremises().empty())
+    return emitOpError() << "carries premises but names no rule they are the "
+                            "premises of";
   return success();
 }

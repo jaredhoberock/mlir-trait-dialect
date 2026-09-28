@@ -78,6 +78,18 @@ MlirOperation traitAllegeOpCreate(MlirLocation loc,
 MlirOperation traitAllegeUnsafeOpCreate(MlirLocation loc,
                                         MlirAttribute traitApp);
 
+/// Create a trait.allege stating that its claim holds by the compiler rule
+/// `rule` identifies -- an attribute of the dialect implementing the rule --
+/// with `premises`, the claims of the facts the rule consulted. `isUnsafe`
+/// admits a polymorphic claim. Returns a null operation if `traitApp` is not
+/// a trait application or `rule` is null.
+MlirOperation traitAllegeByRuleOpCreate(MlirLocation loc,
+                                        MlirAttribute traitApp,
+                                        MlirAttribute rule,
+                                        MlirValue *premises,
+                                        intptr_t numPremises,
+                                        bool isUnsafe);
+
 /// Create a trait.witness operation
 MlirOperation traitWitnessOpCreate(MlirLocation loc,
                                    MlirStringRef proofName,
