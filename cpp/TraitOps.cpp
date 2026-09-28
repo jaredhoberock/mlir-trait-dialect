@@ -1165,39 +1165,93 @@ struct BoundEvidenceScope {
   }
 };
 
-/// Whether `body` proves `predicate` in `scope`: the premise or where-clause
-/// entry it cites states it, its two sides are one type, or the impl it cites
-/// is an impl of it at the arguments it carries, each of that impl's
-/// where-clause entries there discharged in turn by the body standing at the
-/// entry's position.
 static LogicalResult verifyWitnessBody(BoundEvidenceScope &scope,
-                                       Attribute body, Attribute predicate) {
-  auto refuse = [&](const Twine &why) {
-    return scope.errFn() << "evidence does not prove " << predicate << ": "
-                         << why;
-  };
-  auto citing = [&](Attribute cited) -> LogicalResult {
-    FailureOr<bool> same = scope.same(cited, predicate);
-    if (failed(same))
-      return failure();
-    if (!*same)
-      return refuse(Twine("it states another predicate"));
-    return success();
-  };
+                                       Attribute body, Attribute predicate);
 
+/// The predicate `body` proves in `scope`, read off the body itself: a binder
+/// premise or where-clause entry by position; an impl citation's header at its
+/// arguments, each of the cited impl's where-clause entries there discharged
+/// in turn; a requirement hop's requirement of the application its body
+/// proves, read by position as `trait.project` reads one, at its type
+/// arguments, each premise there discharged in turn; an allegation's stated
+/// application. Reflexivity states no predicate of its own -- it proves the
+/// equality its position names, which `verifyWitnessBody` reads -- so it is
+/// refused here. `refuse` reports under the predicate the outermost body is
+/// verified against.
+static FailureOr<Attribute>
+readWitnessBody(BoundEvidenceScope &scope, Attribute body,
+                llvm::function_ref<InFlightDiagnostic(const Twine &)> refuse) {
   if (auto premise = dyn_cast<BinderPremiseAttr>(body)) {
     if (premise.getPosition() >= scope.premises.size())
       return refuse(Twine("the binder states ") +
                     Twine(scope.premises.size()) + " premises");
-    return citing(scope.premises[premise.getPosition()]);
+    return scope.premises[premise.getPosition()];
   }
   if (auto premise = dyn_cast<ImplPremiseAttr>(body)) {
     PredicateArrayAttr where = scope.impl.getAssumptions();
     if (premise.getPosition() >= where.size())
       return refuse(Twine("the impl's where clause has ") +
                     Twine(where.size()) + " entries");
-    return citing(where.getPredicates()[premise.getPosition()]);
+    return where.getPredicates()[premise.getPosition()];
   }
+  if (isa<UnitAttr>(body))
+    return refuse(Twine("reflexivity proves only the equality its position "
+                        "names"));
+  if (auto allegation = dyn_cast<AllegationAttr>(body))
+    return Attribute(allegation.getApplication());
+  if (auto hop = dyn_cast<RequirementHopAttr>(body)) {
+    FailureOr<Attribute> of = readWitnessBody(scope, hop.getOf(), refuse);
+    if (failed(of))
+      return failure();
+    auto application = dyn_cast<TraitApplicationAttr>(*of);
+    if (!application)
+      return refuse(Twine("a requirement is read off a trait application"));
+    auto requirement = getClaimRequirementAt(
+        ClaimType::get(scope.impl.getContext(), application), scope.module,
+        hop.getPosition(), hop.getTypeArgs(), scope.errFn);
+    if (failed(requirement))
+      return failure();
+    if (hop.getPremises().size() != requirement->premises.size())
+      return refuse(Twine("requirement ") + Twine(hop.getPosition()) +
+                    " states " + Twine(requirement->premises.size()) +
+                    " premises, and the evidence discharges " +
+                    Twine(hop.getPremises().size()));
+    for (auto [premise, stated] :
+         llvm::zip(hop.getPremises(), requirement->premises))
+      if (failed(verifyWitnessBody(scope, premise, stated.getPredicate())))
+        return failure();
+    return requirement->conclusion.getPredicate();
+  }
+
+  auto citation = cast<ImplCitationAttr>(body);
+  ImplOp cited = lookupSymbolFrom<ImplOp>(scope.module, citation.getImplRef());
+  if (!cited)
+    return refuse(Twine("it names no impl"));
+  auto arguments = cited.substitutionFor(citation.getArguments(), scope.errFn);
+  if (failed(arguments))
+    return failure();
+  SmallVector<ClaimType> where = cited.getWhereClauseAt(*arguments);
+  if (citation.getDischarges().size() != where.size())
+    return refuse(Twine("the cited impl's where clause has ") +
+                  Twine(where.size()) + " entries, and the evidence discharges " +
+                  Twine(citation.getDischarges().size()));
+  for (auto [entry, discharge] : llvm::zip(where, citation.getDischarges()))
+    if (failed(verifyWitnessBody(scope, discharge, entry.getPredicate())))
+      return failure();
+  return Attribute(cited.getSelfApplicationAt(*arguments));
+}
+
+/// Whether `body` proves `predicate` in `scope`: reflexivity when the
+/// equality's two sides are one type read through the impl's own bindings;
+/// any other body when the predicate it proves (`readWitnessBody`) is
+/// `predicate` once both are read through those bindings.
+static LogicalResult verifyWitnessBody(BoundEvidenceScope &scope,
+                                       Attribute body, Attribute predicate) {
+  auto refuse = [&](const Twine &why) {
+    return scope.errFn() << "evidence does not prove " << predicate << ": "
+                         << why;
+  };
+
   if (isa<UnitAttr>(body)) {
     auto equality = dyn_cast<TypeEqualityAttr>(predicate);
     if (!equality)
@@ -1210,27 +1264,17 @@ static LogicalResult verifyWitnessBody(BoundEvidenceScope &scope,
       return refuse(Twine("its two sides are two types"));
     return success();
   }
-
-  auto citation = cast<ImplCitationAttr>(body);
-  ImplOp cited = lookupSymbolFrom<ImplOp>(scope.module, citation.getImplRef());
-  if (!cited)
-    return refuse(Twine("it names no impl"));
-  auto arguments = cited.substitutionFor(citation.getArguments(), scope.errFn);
-  if (failed(arguments))
-    return failure();
-  if (!isa<TraitApplicationAttr>(predicate))
+  if (isa<ImplCitationAttr>(body) && !isa<TraitApplicationAttr>(predicate))
     return refuse(Twine("an impl proves only a trait application"));
-  if (failed(citing(cited.getSelfApplicationAt(*arguments))))
-    return failure();
 
-  SmallVector<ClaimType> where = cited.getWhereClauseAt(*arguments);
-  if (citation.getDischarges().size() != where.size())
-    return refuse(Twine("the cited impl's where clause has ") +
-                  Twine(where.size()) + " entries, and the evidence discharges " +
-                  Twine(citation.getDischarges().size()));
-  for (auto [entry, discharge] : llvm::zip(where, citation.getDischarges()))
-    if (failed(verifyWitnessBody(scope, discharge, entry.getPredicate())))
-      return failure();
+  FailureOr<Attribute> proved = readWitnessBody(scope, body, refuse);
+  if (failed(proved))
+    return failure();
+  FailureOr<bool> same = scope.same(*proved, predicate);
+  if (failed(same))
+    return failure();
+  if (!*same)
+    return refuse(Twine("it states another predicate"));
   return success();
 }
 

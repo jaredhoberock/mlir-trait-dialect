@@ -193,6 +193,23 @@ MlirAttribute traitWitnessBodyGetBinderPremise(MlirContext ctx,
 MlirAttribute traitWitnessBodyGetImplPremise(MlirContext ctx,
                                              unsigned position);
 
+/// Return the witness body reading requirement `position` of the application
+/// the witness body `of` proves, at `typeArgs` (one per variable the
+/// requirement binds), with one body in `premises` per premise it states there.
+MlirAttribute traitWitnessBodyGetRequirementHop(MlirContext ctx,
+                                                unsigned position,
+                                                MlirAttribute of,
+                                                MlirType *typeArgs,
+                                                intptr_t numTypeArgs,
+                                                MlirAttribute *premises,
+                                                intptr_t numPremises);
+
+/// Return the witness body alleging the trait application `application` (a
+/// #trait.application attribute). Returns a null attribute if `application` is
+/// no trait application.
+MlirAttribute traitWitnessBodyGetAllegation(MlirContext ctx,
+                                            MlirAttribute application);
+
 /// Answer whether `input` and `result` stand under the pending judgment a
 /// marked coerce carries, running verifyPendingCoerceEndpoints (TraitOps.hpp).
 /// Diagnostics are suppressed; a refusal is a classification answer, not a

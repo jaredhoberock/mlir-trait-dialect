@@ -66,8 +66,9 @@ LogicalResult TypeBindingAttr::verify(
 }
 
 // Whether `body` is the body of a bound requirement's witness: an impl
-// citation whose discharges are such bodies in turn, a binder premise, an impl
-// premise or reflexivity.
+// citation whose discharges are such bodies in turn, a requirement hop whose
+// body and premises are such bodies in turn, a binder premise, an impl
+// premise, reflexivity or an allegation.
 static LogicalResult verifyWitnessBody(
     llvm::function_ref<InFlightDiagnostic()> emitError, Attribute body) {
   if (auto citation = dyn_cast_or_null<ImplCitationAttr>(body)) {
@@ -78,9 +79,23 @@ static LogicalResult verifyWitnessBody(
         return failure();
     return success();
   }
+  if (auto hop = dyn_cast_or_null<RequirementHopAttr>(body)) {
+    if (failed(verifyWitnessBody(emitError, hop.getOf())))
+      return failure();
+    for (Attribute premise : hop.getPremises())
+      if (failed(verifyWitnessBody(emitError, premise)))
+        return failure();
+    return success();
+  }
+  if (auto allegation = dyn_cast_or_null<AllegationAttr>(body)) {
+    if (!allegation.getApplication())
+      return emitError() << "an allegation states a trait application";
+    return success();
+  }
   if (!isa_and_nonnull<BinderPremiseAttr, ImplPremiseAttr, UnitAttr>(body))
-    return emitError() << "a witness body is an impl citation, a binder "
-                          "premise, an impl premise or reflexivity, found "
+    return emitError() << "a witness body is an impl citation, a requirement "
+                          "hop, a binder premise, an impl premise, reflexivity "
+                          "or an allegation, found "
                        << body;
   return success();
 }
@@ -144,8 +159,28 @@ std::optional<std::pair<Attribute, WalkResult>> respellWitness(
   return std::make_pair(Attribute(rebuilt), WalkResult::skip());
 }
 
-// Reach every impl a citation names, and the impls its discharges name in turn,
-// as symbol references no type walk reaches.
+// Reach every symbol a witness body names, as symbol references no type walk
+// reaches: the impl a citation names, the trait an allegation names, and the
+// symbols of every body a citation or a requirement hop holds in turn.
+static LogicalResult verifyBodySymbolUses(Attribute body, Operation *op,
+                                          SymbolTableCollection &symbolTable) {
+  if (auto citation = dyn_cast<ImplCitationAttr>(body))
+    return citation.verifySymbolUses(op, symbolTable);
+  if (auto hop = dyn_cast<RequirementHopAttr>(body)) {
+    if (failed(verifyBodySymbolUses(hop.getOf(), op, symbolTable)))
+      return failure();
+    for (Attribute premise : hop.getPremises())
+      if (failed(verifyBodySymbolUses(premise, op, symbolTable)))
+        return failure();
+    return success();
+  }
+  if (auto allegation = dyn_cast<AllegationAttr>(body))
+    return allegation.getApplication().verifySymbolUses(op, symbolTable);
+  return success();
+}
+
+// Reach every impl a citation names, and the symbols its discharges name in
+// turn, as symbol references no type walk reaches.
 LogicalResult ImplCitationAttr::verifySymbolUses(
     Operation *op, SymbolTableCollection &symbolTable) const {
   // Verification writes nothing, so every name read under it resolves through
@@ -157,9 +192,8 @@ LogicalResult ImplCitationAttr::verifySymbolUses(
     return op->emitError() << "witness names '" << getImplRef()
                            << "', which does not resolve to an impl";
   for (Attribute discharge : getDischarges())
-    if (auto citation = dyn_cast<ImplCitationAttr>(discharge))
-      if (failed(citation.verifySymbolUses(op, symbolTable)))
-        return failure();
+    if (failed(verifyBodySymbolUses(discharge, op, symbolTable)))
+      return failure();
   return success();
 }
 
@@ -174,9 +208,8 @@ LogicalResult WitnessAttr::verifySymbolUses(
   // the symbol tables the walk this is one step of has already built.
   SymbolLookupScope symbolAnswers(op, symbolTable);
 
-  if (auto citation = dyn_cast<ImplCitationAttr>(getBody()))
-    if (failed(citation.verifySymbolUses(op, symbolTable)))
-      return failure();
+  if (failed(verifyBodySymbolUses(getBody(), op, symbolTable)))
+    return failure();
   if (auto app = dyn_cast<TraitApplicationAttr>(getPredicate()))
     return app.verifySymbolUses(op, symbolTable);
   return success();
@@ -215,11 +248,47 @@ void printImplArguments(AsmPrinter &printer,
   printer << ']';
 }
 
+/// Parse a comma-separated, bracketed list of witness bodies.
+static ParseResult parseWitnessBodyList(AsmParser &parser,
+                                        SmallVectorImpl<Attribute> &bodies);
+
 /// Parse a witness body: `@impl[!P = T, ...] given [body, ...]`, `premise N`,
-/// `where N` or `refl`. Every arm is read here and nowhere else.
+/// `where N`, `refl`, `requirement N for [types] given [body, ...] of body`
+/// or `allege @Trait[...]`. Every arm is read here and nowhere else.
 static FailureOr<Attribute> parseWitnessBody(AsmParser &parser) {
   MLIRContext *ctx = parser.getContext();
   unsigned position;
+  if (succeeded(parser.parseOptionalKeyword("requirement"))) {
+    if (parser.parseInteger(position))
+      return failure();
+    SmallVector<Type> typeArgs;
+    if (succeeded(parser.parseOptionalKeyword("for")) &&
+        parser.parseCommaSeparatedList(AsmParser::Delimiter::Square, [&] {
+          Type type;
+          if (parser.parseType(type))
+            return failure();
+          typeArgs.push_back(type);
+          return success();
+        }))
+      return failure();
+    SmallVector<Attribute> premises;
+    if (succeeded(parser.parseOptionalKeyword("given")) &&
+        parseWitnessBodyList(parser, premises))
+      return failure();
+    if (parser.parseKeyword("of"))
+      return failure();
+    FailureOr<Attribute> of = parseWitnessBody(parser);
+    if (failed(of))
+      return failure();
+    return Attribute(RequirementHopAttr::get(ctx, position, *of, typeArgs, premises));
+  }
+  if (succeeded(parser.parseOptionalKeyword("allege"))) {
+    auto application =
+        dyn_cast_or_null<TraitApplicationAttr>(TraitApplicationAttr::parse(parser, {}));
+    if (!application)
+      return failure();
+    return Attribute(AllegationAttr::get(ctx, application));
+  }
   if (succeeded(parser.parseOptionalKeyword("premise"))) {
     if (parser.parseInteger(position))
       return failure();
@@ -240,19 +309,47 @@ static FailureOr<Attribute> parseWitnessBody(AsmParser &parser) {
     return failure();
   SmallVector<Attribute> discharges;
   if (succeeded(parser.parseOptionalKeyword("given")) &&
-      parser.parseCommaSeparatedList(AsmParser::Delimiter::Square, [&] {
-        FailureOr<Attribute> discharge = parseWitnessBody(parser);
-        if (failed(discharge))
-          return failure();
-        discharges.push_back(*discharge);
-        return success();
-      }))
+      parseWitnessBodyList(parser, discharges))
     return failure();
   return Attribute(ImplCitationAttr::get(ctx, impl, arguments, discharges));
 }
 
+static ParseResult parseWitnessBodyList(AsmParser &parser,
+                                        SmallVectorImpl<Attribute> &bodies) {
+  return parser.parseCommaSeparatedList(AsmParser::Delimiter::Square, [&] {
+    FailureOr<Attribute> body = parseWitnessBody(parser);
+    if (failed(body))
+      return failure();
+    bodies.push_back(*body);
+    return success();
+  });
+}
+
 /// Print a witness body as `parseWitnessBody` reads it.
 static void printWitnessBody(AsmPrinter &printer, Attribute body) {
+  if (auto hop = dyn_cast<RequirementHopAttr>(body)) {
+    printer << "requirement " << hop.getPosition();
+    if (!hop.getTypeArgs().empty()) {
+      printer << " for [";
+      llvm::interleaveComma(hop.getTypeArgs(), printer);
+      printer << "]";
+    }
+    if (!hop.getPremises().empty()) {
+      printer << " given [";
+      llvm::interleaveComma(hop.getPremises(), printer, [&](Attribute premise) {
+        printWitnessBody(printer, premise);
+      });
+      printer << "]";
+    }
+    printer << " of ";
+    printWitnessBody(printer, hop.getOf());
+    return;
+  }
+  if (auto allegation = dyn_cast<AllegationAttr>(body)) {
+    printer << "allege ";
+    allegation.getApplication().print(printer);
+    return;
+  }
   if (auto premise = dyn_cast<BinderPremiseAttr>(body)) {
     printer << "premise " << premise.getPosition();
     return;
@@ -310,6 +407,20 @@ Attribute ImplPremiseAttr::parse(AsmParser &parser, Type) {
   return parseWitnessBodyArm<ImplPremiseAttr>(parser);
 }
 void ImplPremiseAttr::print(AsmPrinter &printer) const {
+  printer << ' ';
+  printWitnessBody(printer, *this);
+}
+Attribute RequirementHopAttr::parse(AsmParser &parser, Type) {
+  return parseWitnessBodyArm<RequirementHopAttr>(parser);
+}
+void RequirementHopAttr::print(AsmPrinter &printer) const {
+  printer << ' ';
+  printWitnessBody(printer, *this);
+}
+Attribute AllegationAttr::parse(AsmParser &parser, Type) {
+  return parseWitnessBodyArm<AllegationAttr>(parser);
+}
+void AllegationAttr::print(AsmPrinter &printer) const {
   printer << ' ';
   printWitnessBody(printer, *this);
 }

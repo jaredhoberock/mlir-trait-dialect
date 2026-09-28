@@ -963,6 +963,90 @@ fn the_bound_builders_state_and_select_a_quantified_requirement() {
 }
 
 #[test]
+fn the_body_builders_state_a_requirement_hop_and_an_allegation() {
+    let registry = DialectRegistry::new();
+    register_all_dialects(&registry);
+    let context = Context::new();
+    context.append_dialect_registry(&registry);
+    trait_::register(&context);
+    context.load_all_available_dialects();
+
+    let loc = Location::unknown(&context);
+    let s = trait_::poly_type(&context, 0);
+    let x = trait_::poly_type(&context, 1);
+    let p = trait_::poly_type(&context, 2);
+    let i64_ty: melior::ir::Type = IntegerType::new(&context, 64).into();
+    let x_bound = trait_::bound_var_type(&context, 0);
+
+    // @Has states `forall X -> Marker[Has[S]::A<X>]`; `@Sub` requires `Marker`.
+    let bound_at = |receiver| {
+        let has = trait_::trait_application_attr(&context, "Has", &[receiver]);
+        let a_of_x = trait_::projection_type(&context, has, "A", &[x_bound]);
+        trait_::bound_predicate_attr(
+            &context,
+            1,
+            &[],
+            trait_::trait_application_attr(&context, "Marker", &[a_of_x]).into(),
+        )
+        .expect("the bound predicate constructs")
+    };
+    let module = Module::new(loc);
+    module.body().append_operation(trait_::trait_(loc, "Marker", &[s], &[]));
+    module.body().append_operation(trait_::trait_(
+        loc,
+        "Sub",
+        &[s],
+        &[trait_::trait_application_attr(&context, "Marker", &[s]).into()],
+    ));
+    let has = trait_::trait_(loc, "Has", &[s], &[bound_at(s)]);
+    has.region(0).unwrap().first_block().unwrap()
+        .append_operation(trait_::assoc_type(loc, "A", None, &[x]));
+    module.body().append_operation(has);
+
+    let evidence = |body| {
+        trait_::requirement_witness_attr(
+            &context, 0,
+            trait_::witness_body_attr(&context, body).expect("the body constructs"),
+        )
+        .expect("the witness constructs")
+    };
+
+    // `impl<P: Sub> Has for (P,) { type A<X> = P; }` reads its bound off its
+    // premise's requirement.
+    let tuple_p: melior::ir::Type = melior::ir::r#type::TupleType::new(&context, &[p]).into();
+    let has_tuple = trait_::trait_application_attr(&context, "Has", &[tuple_p]);
+    let sub_p = trait_::trait_application_attr(&context, "Sub", &[p]);
+    let impl_op = trait_::impl_named(loc, "Has_sub", has_tuple, &[sub_p.into()]);
+    impl_op.region(0).unwrap().first_block().unwrap()
+        .append_operation(trait_::assoc_type(loc, "A", Some(p), &[x]));
+    let where_0 = trait_::witness_body_attr(&context, trait_::WitnessBody::ImplPremise(0))
+        .expect("the body constructs");
+    trait_::set_impl_witnesses(&impl_op, &[evidence(trait_::WitnessBody::RequirementHop {
+        position: 0,
+        of: where_0,
+        type_args: vec![],
+        premises: vec![],
+    })]);
+    module.body().append_operation(impl_op);
+
+    // `impl Has for i64 { type A<X> = i64; }` alleges `Marker[i64]`.
+    let has_i64 = trait_::trait_application_attr(&context, "Has", &[i64_ty]);
+    let impl_op = trait_::impl_named(loc, "Has_i64", has_i64, &[]);
+    impl_op.region(0).unwrap().first_block().unwrap()
+        .append_operation(trait_::assoc_type(loc, "A", Some(i64_ty), &[x]));
+    let marker_i64 = trait_::trait_application_attr(&context, "Marker", &[i64_ty]);
+    trait_::set_impl_witnesses(&impl_op, &[evidence(trait_::WitnessBody::Allegation(marker_i64))]);
+    module.body().append_operation(impl_op);
+
+    assert!(module.as_operation().verify());
+    let rendered = module.as_operation().to_string();
+    assert!(
+        rendered.contains("by requirement 0 of where 0") && rendered.contains("by allege @Marker[i64]"),
+        "the hop and the allegation print what they state: {rendered}"
+    );
+}
+
+#[test]
 fn the_builders_state_an_impls_arguments_on_a_derive_and_a_proof() {
     let registry = DialectRegistry::new();
     register_all_dialects(&registry);

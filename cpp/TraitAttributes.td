@@ -184,6 +184,53 @@ def ImplPremiseAttr : AttrDef<TraitDialect, "ImplPremise", []> {
   let hasCustomAssemblyFormat = 1;
 }
 
+// A requirement of the application another witness body proves.
+def RequirementHopAttr : AttrDef<TraitDialect, "RequirementHop", []> {
+  let mnemonic = "hop";
+  let summary = "A witness body reading a requirement of another body's application";
+  let description = [{
+    Requirement `position` of the trait application the body `of` proves,
+    instantiated at that application and, for a bound requirement, at
+    `type_args`, one per variable it binds, with `premises`, one body per
+    premise it states there, each proving that premise -- the positional read
+    `trait.project %c[N] for [types] given(...)` makes of a claim, stated as
+    evidence. Printed within a witness as `requirement N for [types] given
+    [body, ...] of body`; `for` is omitted when the requirement binds nothing
+    and `given` when it states no premise. The body read from stands last, so
+    a citation's own `given` never reads as the hop's.
+  }];
+  let parameters = (ins
+    "unsigned":$position,
+    "::mlir::Attribute":$of,
+    ArrayRefParameter<"::mlir::Type">:$type_args,
+    ArrayRefParameter<"::mlir::Attribute">:$premises
+  );
+  let hasCustomAssemblyFormat = 1;
+}
+
+// A trait application a witness body states without proving it.
+def AllegationAttr : AttrDef<TraitDialect, "Allegation", []> {
+  let mnemonic = "allegation";
+  let summary = "A witness body alleging a trait application";
+  let description = [{
+    The body of a bound requirement's witness whose conclusion a compiler rule
+    decides rather than an impl the stating impl can cite: the application
+    `application` is alleged, as `trait.allege` alleges a claim, and not
+    proved at the impl. Verification checks only that the allegation states
+    the predicate its position names. Nothing is lost: a bound requirement's
+    instance is proved where it is used, by selection at the instance, and a
+    claim selection cannot prove there is refused at that use, naming the
+    allegation. Printed within a witness as `allege @Trait[...]`.
+
+    The allegation carries no rule identity, as `trait.allege` without `by`
+    carries none. It takes one exactly as `trait.allege` does, once producers
+    name the rule their proof used, and this identity-less form is deleted
+    together with `trait.allege`'s.
+  }];
+  let parameters = (ins "TraitApplicationAttr":$application);
+  let hasCustomAssemblyFormat = 1;
+}
+
 // A predicate and the evidence that it holds.
 def WitnessAttr : AttrDef<TraitDialect, "Witness",
     [DeclareAttrInterfaceMethods<SymbolUserAttrInterface>]> {
@@ -218,7 +265,7 @@ def WitnessAttr : AttrDef<TraitDialect, "Witness",
         derived and never stated; the body proves its conclusion under its
         binder.
 
-    The body is one of four arms, each an attribute of its own:
+    The body is one of six arms, each an attribute of its own:
 
       * an impl citation (`ImplCitationAttr`), `@impl[!P = T, ...] given
         [body, ...]`: the impl at those arguments, whose header is the
@@ -229,10 +276,15 @@ def WitnessAttr : AttrDef<TraitDialect, "Witness",
       * `where N` (`ImplPremiseAttr`), entry N of the stating impl's where
         clause;
       * `refl` (a unit attribute), an equality whose two sides are one type
-        read through the stating impl's own bindings.
+        read through the stating impl's own bindings;
+      * `requirement N for [types] given [body, ...] of body`
+        (`RequirementHopAttr`), requirement N of the application the last
+        body proves, at the types, its premises discharged in turn;
+      * `allege @Trait[...]` (`AllegationAttr`), an application a compiler
+        rule decides, proved where the requirement is used.
 
-    The last three stand only under a bound requirement, whose binder and impl
-    they cite.
+    All but the citation stand only under a bound requirement, whose binder
+    and impl they cite.
 
     Printed `predicate by body`.
 

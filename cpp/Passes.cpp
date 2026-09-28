@@ -547,6 +547,26 @@ static InFlightDiagnostic namingCommitment(Operation *op,
   return diagnostic;
 }
 
+/// The impl proving `source` and the allegation it states for its trait's
+/// bound requirement `index`, when its witness for that requirement alleges
+/// one; `std::nullopt` otherwise.
+static std::optional<std::pair<ImplOp, AllegationAttr>>
+allegedRequirementOf(ClaimType source, ModuleOp module, unsigned index) {
+  auto cited = ProofOp::getProofOpOrUnconditionalImplOp(module, source.getProof(),
+                                                        nullptr);
+  if (failed(cited))
+    return std::nullopt;
+  auto proof = dyn_cast<ProofOp>(*cited);
+  ImplOp impl = proof ? proof.getImpl() : dyn_cast<ImplOp>(*cited);
+  if (!impl || !impl.getWitnessesAttr())
+    return std::nullopt;
+  for (auto witness : impl.getWitnessesAttr().getAsRange<WitnessAttr>())
+    if (witness.getRequirement() == index)
+      if (auto allegation = dyn_cast<AllegationAttr>(witness.getBody()))
+        return std::make_pair(impl, allegation);
+  return std::nullopt;
+}
+
 /// Whether the proof selection made for `op`'s claim, `proof`, is the proof
 /// `op` committed to, refusing through `err` where it is not.
 ///
@@ -2290,6 +2310,16 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
               << "proof " << source.getProof() << " cites "
               << cited->conclusion.getProof() << " for requirement "
               << project.getIndex() << ", which nothing decides here";
+        // A bound requirement's instance is proved here by selection; where
+        // the source's impl alleges the requirement rather than proving it,
+        // the allegation is what selection did not settle.
+        if (auto alleged = allegedRequirementOf(source, getAnchorModule(op),
+                                                project.getIndex()))
+          report.attachNote()
+              << "impl @" << alleged->first.getSymName() << " alleges requirement "
+              << project.getIndex() << " of its trait as "
+              << ClaimType::get(op->getContext(), alleged->second.getApplication())
+              << ", which selection does not prove here";
       }
   }
   if (hasLeftovers) return failure();

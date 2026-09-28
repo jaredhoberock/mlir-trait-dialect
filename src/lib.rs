@@ -99,6 +99,10 @@ unsafe extern "C" {
                                    discharges: *const MlirAttribute, num_discharges: isize) -> MlirAttribute;
     fn traitWitnessBodyGetBinderPremise(ctx: MlirContext, position: u32) -> MlirAttribute;
     fn traitWitnessBodyGetImplPremise(ctx: MlirContext, position: u32) -> MlirAttribute;
+    fn traitWitnessBodyGetRequirementHop(ctx: MlirContext, position: u32, of: MlirAttribute,
+                                         type_args: *const MlirType, num_type_args: isize,
+                                         premises: *const MlirAttribute, num_premises: isize) -> MlirAttribute;
+    fn traitWitnessBodyGetAllegation(ctx: MlirContext, application: MlirAttribute) -> MlirAttribute;
     fn traitCoercePendingAccepts(input: MlirType, result: MlirType) -> bool;
     fn traitAssocTypeOpCreate(loc: MlirLocation,
                               name: MlirStringRef,
@@ -780,6 +784,18 @@ pub enum WitnessBody<'c> {
         arguments: Vec<(Type<'c>, Type<'c>)>,
         discharges: Vec<Attribute<'c>>,
     },
+    /// Requirement `position` of the application the body `of` proves, at
+    /// `type_args`, one per variable the requirement binds, with one body per
+    /// premise it states there.
+    RequirementHop {
+        position: u32,
+        of: Attribute<'c>,
+        type_args: Vec<Type<'c>>,
+        premises: Vec<Attribute<'c>>,
+    },
+    /// A trait application a compiler rule decides, alleged rather than proved
+    /// at the stating impl and proved where the requirement is used.
+    Allegation(TraitApplicationAttribute<'c>),
 }
 
 /// The witness body attribute `body` describes. Returns `None` if an argument's
@@ -802,6 +818,17 @@ pub fn witness_body_attr<'c>(ctx: &'c Context, body: WitnessBody<'c>) -> Option<
                     ctx.to_raw(), StringRef::new(impl_name).to_raw(),
                     bindings.as_ptr(), bindings.len() as isize,
                     raw_discharges.as_ptr(), raw_discharges.len() as isize)
+            }
+            WitnessBody::RequirementHop { position, of, type_args, premises } => {
+                let raw_types: Vec<MlirType> = type_args.iter().map(|t| t.to_raw()).collect();
+                let raw_premises: Vec<MlirAttribute> = premises.iter().map(|p| p.to_raw()).collect();
+                traitWitnessBodyGetRequirementHop(
+                    ctx.to_raw(), position, of.to_raw(),
+                    raw_types.as_ptr(), raw_types.len() as isize,
+                    raw_premises.as_ptr(), raw_premises.len() as isize)
+            }
+            WitnessBody::Allegation(application) => {
+                traitWitnessBodyGetAllegation(ctx.to_raw(), application.to_raw())
             }
         }
     };

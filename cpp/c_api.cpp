@@ -413,6 +413,28 @@ MlirAttribute traitWitnessBodyGetImplPremise(MlirContext ctx,
   return wrap(ImplPremiseAttr::get(unwrap(ctx), position));
 }
 
+MlirAttribute traitWitnessBodyGetRequirementHop(MlirContext ctx,
+                                                unsigned position,
+                                                MlirAttribute of,
+                                                MlirType *typeArgs,
+                                                intptr_t numTypeArgs,
+                                                MlirAttribute *premises,
+                                                intptr_t numPremises) {
+  SmallVector<Type> types;
+  for (intptr_t i = 0; i < numTypeArgs; ++i)
+    types.push_back(unwrap(typeArgs[i]));
+  return wrap(RequirementHopAttr::get(unwrap(ctx), position, unwrap(of), types,
+                                      unwrapArray(premises, numPremises)));
+}
+
+MlirAttribute traitWitnessBodyGetAllegation(MlirContext ctx,
+                                            MlirAttribute application) {
+  auto app = dyn_cast_or_null<TraitApplicationAttr>(unwrap(application));
+  if (!app)
+    return {};
+  return wrap(AllegationAttr::get(unwrap(ctx), app));
+}
+
 MlirType traitBoundVarTypeGet(MlirContext wrappedCtx, unsigned int position) {
   return wrap(BoundVarType::get(unwrap(wrappedCtx), position));
 }
