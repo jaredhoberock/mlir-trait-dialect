@@ -60,6 +60,10 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &sub
   // below is the one mover, and it reaches an equality only through the claim
   // that wraps it.
   AttrTypeReplacer replacer = makeEndpointSealedReplacer();
+  // A replacer stamps one clone, which adds functions and no impl, so the impls
+  // every lookup below scans are the same for all of them: each application's
+  // candidates are read once per replacer.
+  auto candidates = std::make_shared<ImplCandidateMemo>();
   replacer.addReplacement(
       [=](Type t) -> std::optional<std::pair<Type, WalkResult>> {
     // A template's clone: the substitution is a structural rewrite of the whole
@@ -74,7 +78,7 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &sub
     Type result = applySubstitutionToFixedPoint(subst, t);
     result = resolveProjectionsByLookup(result, module,
                                         DemandOrigin::MonomorphStampOut,
-                                        LookupScope::Ground);
+                                        LookupScope::Ground, *candidates);
 
     // A generic type owns its specialization entirely, so the substitution
     // reaches the parameter it stands for through `specializeWith` and never

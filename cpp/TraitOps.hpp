@@ -142,6 +142,22 @@ struct HasOnlyChildOps {
 
 namespace mlir::trait {
 
+/// The impls of each trait application's trait whose headers carry to that
+/// application, as module-visible lookup under one scope found them.
+using ImplCandidateMemo =
+    llvm::DenseMap<TraitApplicationAttr, llvm::SmallVector<ImplOp>>;
+
+/// `resolveProjectionsByLookup`, reading each application's candidate impls
+/// through `memo` and adding those it scans for.
+///
+/// Lookup changes nothing it reads, so a caller that holds `module`'s impls
+/// unchanged across many lookups under one `scope` keeps one memo across all of
+/// them, and each application's impls are scanned once. The memo is the caller's
+/// and lives no longer than that: stamping one monomorph clones a body and adds
+/// no impl, while impl generation between two stampings may.
+Type resolveProjectionsByLookup(Type ty, ModuleOp module, DemandOrigin origin,
+                                LookupScope scope, ImplCandidateMemo &memo);
+
 /// One local associated-type resolution rule available while normalizing a type.
 ///
 /// The rule says that projections whose trait application is exactly `app` may

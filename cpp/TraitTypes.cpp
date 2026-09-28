@@ -217,32 +217,33 @@ Type normalizeProjectionsToFixedPoint(Type ty, ModuleOp module,
   return out;
 }
 
-// Shared body of both projection-resolution entry points. `converged` reports
-// whether the fixed-point driver reached a normal form: on false, `ty` carries
-// the driver's partial (the still-unresolved projection spelled as written),
-// and the two public overloads decide how to surface the nonconvergence -- the
-// infallible one declines on the partial after a diagnostic, the fallible one
-// refuses.
+// Shared body of the projection-resolution entry points. `candidateCache` holds
+// the candidate impls each application's lookup has found, which this reading
+// and the header readings under it share. `converged` reports whether the
+// fixed-point driver reached a normal form: on false, `ty` carries the driver's
+// partial (the still-unresolved projection spelled as written), and the public
+// entries decide how to surface the nonconvergence -- the infallible ones
+// decline on the partial after a diagnostic, the fallible one refuses.
 static Type resolveProjectionsByLookupCore(Type ty, ModuleOp module,
                                            DemandOrigin origin, LookupScope scope,
+                                           ImplCandidateMemo &candidateCache,
                                            bool &converged) {
   converged = true;
   if (!module)
     return ty;
 
-  // Candidate impls per trait application, memoized for this resolution. The
-  // lookup mutates no impls, so the memo stays valid across the fixed-point
-  // iterations below, and it is scoped to this call so nothing outside observes
-  // it -- repeated projections over the same application skip the module scan.
-  DenseMap<TraitApplicationAttr, SmallVector<ImplOp>> candidateCache;
-
   // The context a candidate's header is read through here: this lookup itself,
-  // at the same scope, so a header spelling a projection (`impl<T>
-  // Index<T::Shape, T::Element> for T`) reproduces a demand spelling the
-  // resolution and is read by the rule the demand is read by.
+  // at the same scope and through the same candidates, so a header spelling a
+  // projection (`impl<T> Index<T::Shape, T::Element> for T`) reproduces a demand
+  // spelling the resolution and is read by the rule the demand is read by. A
+  // reading that does not converge is a header this reading cannot rebuild.
   auto byLookup = [&](Type ty) -> FailureOr<Type> {
-    return resolveProjectionsByLookup(ty, module, origin, scope,
-                                      /*emitError=*/nullptr);
+    bool headerConverged;
+    Type read = resolveProjectionsByLookupCore(ty, module, origin, scope,
+                                               candidateCache, headerConverged);
+    if (!headerConverged)
+      return failure();
+    return read;
   };
 
   AttrTypeReplacer replacer = makeEndpointSealedReplacer();
@@ -289,21 +290,25 @@ static Type resolveProjectionsByLookupCore(Type ty, ModuleOp module,
     // list): selecting it is mechanical name resolution, not premise evaluation,
     // and a legal program has already discharged this ground projection's head
     // claim -- the premise the conditional impl carries.
+    //
+    // The candidates are read once per application and held: this lookup
+    // mutates no impl. Reading them may read other applications' candidates
+    // into the same memo, so the count and the one candidate are taken before
+    // anything below reads further.
     auto it = candidateCache.find(app);
     if (it == candidateCache.end()) {
       auto trait = app.getTrait(module, nullptr);
       if (failed(trait))
         return declineWith(LookupMissReason::TraitSymbolNotFound);
-      it = candidateCache
-               .insert({app, trait->getCandidateImplsFor(claim, byLookup)})
-               .first;
+      SmallVector<ImplOp> found = trait->getCandidateImplsFor(claim, byLookup);
+      it = candidateCache.try_emplace(app, std::move(found)).first;
     }
-    const SmallVector<ImplOp> &candidates = it->second;
-    if (candidates.size() != 1)
-      return declineWith(candidates.empty()
+    size_t candidateCount = it->second.size();
+    if (candidateCount != 1)
+      return declineWith(candidateCount == 0
                              ? LookupMissReason::NoCandidateImpl
                              : LookupMissReason::MultipleCandidateImpls);
-    ImplOp impl = candidates.front();
+    ImplOp impl = it->second.front();
 
     // A projection over a type variable in its head denotes one type at every
     // instance of that variable, so the impl serving it must serve every
@@ -343,8 +348,14 @@ static Type resolveProjectionsByLookupCore(Type ty, ModuleOp module,
 
 Type resolveProjectionsByLookup(Type ty, ModuleOp module, DemandOrigin origin,
                                 LookupScope scope) {
+  ImplCandidateMemo memo;
+  return resolveProjectionsByLookup(ty, module, origin, scope, memo);
+}
+
+Type resolveProjectionsByLookup(Type ty, ModuleOp module, DemandOrigin origin,
+                                LookupScope scope, ImplCandidateMemo &memo) {
   bool converged;
-  Type out = resolveProjectionsByLookupCore(ty, module, origin, scope,
+  Type out = resolveProjectionsByLookupCore(ty, module, origin, scope, memo,
                                             converged);
   // The infallible entry cannot refuse. A projection that will not ground stays
   // spelled as written in `out`, so every spelling comparison downstream
@@ -358,8 +369,9 @@ Type resolveProjectionsByLookup(Type ty, ModuleOp module, DemandOrigin origin,
 FailureOr<Type> resolveProjectionsByLookup(
     Type ty, ModuleOp module, DemandOrigin origin, LookupScope scope,
     llvm::function_ref<InFlightDiagnostic()> emitError) {
+  ImplCandidateMemo memo;
   bool converged;
-  Type out = resolveProjectionsByLookupCore(ty, module, origin, scope,
+  Type out = resolveProjectionsByLookupCore(ty, module, origin, scope, memo,
                                             converged);
   // The fallible entry refuses a projection that will not ground so a verifier
   // reached from untrusted IR fails cleanly rather than admitting the cycle.
