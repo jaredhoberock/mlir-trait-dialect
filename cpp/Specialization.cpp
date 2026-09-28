@@ -64,6 +64,15 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &sub
   // every lookup below scans are the same for all of them: each application's
   // candidates are read once per replacer.
   auto candidates = std::make_shared<ImplCandidateMemo>();
+  // One type stamped whole: the substitution, then -- for a monomorphic clone --
+  // the ground projections it minted resolved.
+  auto stamp = [=](Type t) -> Type {
+    if (!module)
+      return applySubstitutionOnce(subst, t);
+    return resolveProjectionsByLookup(applySubstitutionToFixedPoint(subst, t),
+                                      module, DemandOrigin::MonomorphStampOut,
+                                      LookupScope::Ground, *candidates);
+  };
   replacer.addReplacement(
       [=](Type t) -> std::optional<std::pair<Type, WalkResult>> {
     // A template's clone: the substitution is a structural rewrite of the whole
@@ -72,13 +81,9 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &sub
     // were the declaration's own spelling again, which grows a parameter bound
     // over itself one level per visit.
     if (!module)
-      return std::make_pair(applySubstitutionOnce(subst, t),
-                            WalkResult::skip());
+      return std::make_pair(stamp(t), WalkResult::skip());
 
-    Type result = applySubstitutionToFixedPoint(subst, t);
-    result = resolveProjectionsByLookup(result, module,
-                                        DemandOrigin::MonomorphStampOut,
-                                        LookupScope::Ground, *candidates);
+    Type result = stamp(t);
 
     // A generic type owns its specialization entirely, so the substitution
     // reaches the parameter it stands for through `specializeWith` and never
@@ -94,6 +99,19 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &sub
                ? std::optional<std::pair<Type, WalkResult>>(
                      std::make_pair(result, WalkResult::advance()))
                : std::nullopt;
+  });
+
+  // A binding's key is a parameter of the declaration a citation names -- the
+  // impl a derive or proof states arguments for -- and not of the declaration
+  // this clone is cut from, whatever label the two share. So the clone stamps
+  // the argument whole and keeps the key.
+  replacer.addReplacement(
+      [stamp](TypeBindingAttr binding)
+          -> std::optional<std::pair<Attribute, WalkResult>> {
+    auto stamped = TypeBindingAttr::get(binding.getContext(),
+                                        binding.getParameter(),
+                                        stamp(binding.getArgument()));
+    return std::make_pair(Attribute(stamped), WalkResult::skip());
   });
 
   // The clone rule for equality evidence: an equality claim's endpoints, and a
