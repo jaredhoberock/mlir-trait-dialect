@@ -407,8 +407,8 @@ def ImplOp : TraitDialectOp<"impl", [
 
     An impl a dialect's generator produced as an instance of one of its impl
     rules carries that rule after its application, `by <rule>` (an attribute
-    implementing `RuleAttrInterface`). It is the provenance a `trait.allege`
-    naming the rule is checked against: a declared impl carries none.
+    implementing `RuleAttrInterface`): its provenance, which no verifier reads.
+    A declared impl carries none.
 
     ```mlir
     trait.impl for @Convergence[i64] by #coop.rule<convergence> { ... }
@@ -849,15 +849,15 @@ def AllegeOp : TraitDialectOp<"allege", [
       // polymorphic: deferred to instantiate-monomorphs
       %q = trait.allege @Printable[!trait.poly<0>] unsafe
 
-    Rule form. `by <rule>` commits the claim to a proof through an instance of
-    an impl rule -- an attribute implementing `RuleAttrInterface`, owned and
-    interpreted by the dialect whose generator produces the rule's impls -- and
-    `given(%claims)` names the premises that instance applies under: its where
-    clause at the claim, in order. Where impl selection proves the claim, the
-    proof must be through an impl carrying that rule, at those premises; a
-    declared impl never substitutes for the rule, and a claim the rule's
-    generator supplies no instance of is refused here, naming the rule. A claim
-    a rule proves under no premise takes no `given`.
+    Rule form. `by <rule>` names the impl rule that asserts the claim -- an
+    attribute implementing `RuleAttrInterface`, owned and interpreted by the
+    dialect whose generator produces the rule's impls -- and `given(%claims)`
+    the facts the rule consulted. The assertion is trusted: impl selection
+    proves the claim as it proves any allegation, by whichever impl it
+    selects, a declared impl included, and neither the rule nor the premises
+    are compared with the impl it selects. A claim nothing proves is refused
+    here, naming the rule. A claim a rule asserts consulting nothing takes no
+    `given`.
 
       %c = trait.allege @Convergence[!T] by #coop.rule<convergence> unsafe
   }];

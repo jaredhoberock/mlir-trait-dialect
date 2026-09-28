@@ -287,7 +287,19 @@ static FailureOr<Attribute> parseWitnessBody(AsmParser &parser) {
         dyn_cast_or_null<TraitApplicationAttr>(TraitApplicationAttr::parse(parser, {}));
     if (!application)
       return failure();
-    return Attribute(AllegationAttr::get(ctx, application));
+    RuleAttrInterface rule;
+    if (succeeded(parser.parseOptionalKeyword("by"))) {
+      Attribute named;
+      llvm::SMLoc loc = parser.getCurrentLocation();
+      if (parser.parseAttribute(named))
+        return failure();
+      rule = dyn_cast<RuleAttrInterface>(named);
+      if (!rule)
+        return parser.emitError(loc)
+               << named << " names no impl rule: a rule is an attribute "
+                           "implementing RuleAttrInterface";
+    }
+    return Attribute(AllegationAttr::get(ctx, application, rule));
   }
   if (succeeded(parser.parseOptionalKeyword("premise"))) {
     if (parser.parseInteger(position))
@@ -348,6 +360,8 @@ static void printWitnessBody(AsmPrinter &printer, Attribute body) {
   if (auto allegation = dyn_cast<AllegationAttr>(body)) {
     printer << "allege ";
     allegation.getApplication().print(printer);
+    if (RuleAttrInterface rule = allegation.getRule())
+      printer << " by " << Attribute(rule);
     return;
   }
   if (auto premise = dyn_cast<BinderPremiseAttr>(body)) {

@@ -1035,7 +1035,7 @@ fn the_body_builders_state_a_requirement_hop_and_an_allegation() {
     impl_op.region(0).unwrap().first_block().unwrap()
         .append_operation(trait_::assoc_type(loc, "A", Some(i64_ty), &[x]));
     let marker_i64 = trait_::trait_application_attr(&context, "Marker", &[i64_ty]);
-    trait_::set_impl_witnesses(&impl_op, &[evidence(trait_::WitnessBody::Allegation(marker_i64))]);
+    trait_::set_impl_witnesses(&impl_op, &[evidence(trait_::WitnessBody::Allegation { application: marker_i64, rule: None })]);
     module.body().append_operation(impl_op);
 
     assert!(module.as_operation().verify());

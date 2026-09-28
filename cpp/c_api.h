@@ -205,10 +205,13 @@ MlirAttribute traitWitnessBodyGetRequirementHop(MlirContext ctx,
                                                 intptr_t numPremises);
 
 /// Return the witness body alleging the trait application `application` (a
-/// #trait.application attribute). Returns a null attribute if `application` is
-/// no trait application.
+/// #trait.application attribute) by the impl rule `rule`, an attribute
+/// implementing RuleAttrInterface, or by no rule when `rule` is null. Returns a
+/// null attribute if `application` is no trait application or `rule` is
+/// neither null nor a rule.
 MlirAttribute traitWitnessBodyGetAllegation(MlirContext ctx,
-                                            MlirAttribute application);
+                                            MlirAttribute application,
+                                            MlirAttribute rule);
 
 /// Answer whether `input` and `result` stand under the pending judgment a
 /// marked coerce carries, running verifyPendingCoerceEndpoints (TraitOps.hpp).

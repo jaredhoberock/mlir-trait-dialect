@@ -102,7 +102,7 @@ unsafe extern "C" {
     fn traitWitnessBodyGetRequirementHop(ctx: MlirContext, position: u32, of: MlirAttribute,
                                          type_args: *const MlirType, num_type_args: isize,
                                          premises: *const MlirAttribute, num_premises: isize) -> MlirAttribute;
-    fn traitWitnessBodyGetAllegation(ctx: MlirContext, application: MlirAttribute) -> MlirAttribute;
+    fn traitWitnessBodyGetAllegation(ctx: MlirContext, application: MlirAttribute, rule: MlirAttribute) -> MlirAttribute;
     fn traitCoercePendingAccepts(input: MlirType, result: MlirType) -> bool;
     fn traitAssocTypeOpCreate(loc: MlirLocation,
                               name: MlirStringRef,
@@ -793,9 +793,11 @@ pub enum WitnessBody<'c> {
         type_args: Vec<Type<'c>>,
         premises: Vec<Attribute<'c>>,
     },
-    /// A trait application a compiler rule decides, alleged rather than proved
-    /// at the stating impl and proved where the requirement is used.
-    Allegation(TraitApplicationAttribute<'c>),
+    /// A trait application alleged rather than proved at the stating impl and
+    /// proved where the requirement is used; `rule`, an attribute implementing
+    /// the dialect's `RuleAttrInterface`, names the impl rule asserting it, as
+    /// `allege_by_rule` does.
+    Allegation { application: TraitApplicationAttribute<'c>, rule: Option<Attribute<'c>> },
 }
 
 /// The witness body attribute `body` describes. Returns `None` if an argument's
@@ -827,8 +829,9 @@ pub fn witness_body_attr<'c>(ctx: &'c Context, body: WitnessBody<'c>) -> Option<
                     raw_types.as_ptr(), raw_types.len() as isize,
                     raw_premises.as_ptr(), raw_premises.len() as isize)
             }
-            WitnessBody::Allegation(application) => {
-                traitWitnessBodyGetAllegation(ctx.to_raw(), application.to_raw())
+            WitnessBody::Allegation { application, rule } => {
+                let rule = rule.map(|rule| rule.to_raw()).unwrap_or(MlirAttribute { ptr: std::ptr::null() });
+                traitWitnessBodyGetAllegation(ctx.to_raw(), application.to_raw(), rule)
             }
         }
     };
