@@ -1316,15 +1316,31 @@ static FailureOr<SpecializationMap> requirementSubstitution(
       .toSpecialization();
 }
 
+/// The claim `predicate`, an application or an equality, states, instantiated
+/// through `subst`: unproven, since a predicate names no evidence.
+static ClaimType instantiatePredicate(Attribute predicate,
+                                      const SpecializationMap &subst) {
+  Type claim = ClaimType::get(predicate.getContext(), predicate, nullptr);
+  return cast<ClaimType>(instantiate(claim, subst));
+}
+
 /// Requirement `index` of `claim`, which is in range: the declared predicate
 /// instantiated at the claim's arguments. An application requirement of a
 /// proven claim carries the provider of the subproof discharging it, read from
 /// the proof by position; every other requirement is unproven, an equality
 /// never carrying a provider at all.
-static FailureOr<ClaimType> readRequirement(
+///
+/// A bound requirement is instantiated at `binderArguments` for the parameters
+/// it binds as well, in the one substitution that instantiates the claim's --
+/// the binder's parameters are the trait's own and distinct from its header's
+/// -- so none is ever read unbound. It is unproven: the impl proves it once for
+/// every argument, and the instance is proved where it is used. Any other
+/// requirement binds nothing and takes no arguments.
+static FailureOr<ClaimRequirement> readRequirement(
     ClaimType claim,
     RequirementDeclarations &declarations,
     unsigned index,
+    ArrayRef<Type> binderArguments,
     ModuleOp module,
     llvm::function_ref<InFlightDiagnostic()> errFn) {
   MLIRContext *ctx = claim.getContext();
@@ -1340,12 +1356,36 @@ static FailureOr<ClaimType> readRequirement(
   if (failed(subst))
     return failure();
 
+  if (auto bound = dyn_cast<BoundPredicateAttr>(predicate)) {
+    if (binderArguments.size() != bound.getParameters().size()) {
+      if (errFn)
+        errFn() << "requirement " << index << " binds "
+                << bound.getParameters().size() << " parameters, and "
+                << binderArguments.size() << " arguments are supplied";
+      return failure();
+    }
+    SpecializationMap both = *subst;
+    for (auto [parameter, argument] :
+         llvm::zip(bound.getParameters(), binderArguments))
+      both.bind(getParameterOccurrence(parameter), argument);
+    ClaimRequirement result;
+    result.conclusion = instantiatePredicate(bound.getConclusion(), both);
+    for (Attribute premise : bound.getPremises())
+      result.premises.push_back(instantiatePredicate(premise, both));
+    return result;
+  }
+  if (!binderArguments.empty()) {
+    if (errFn)
+      errFn() << "requirement " << index << " binds no parameters, and "
+              << binderArguments.size() << " arguments are supplied";
+    return failure();
+  }
+
   // An equality requirement is instantiated and stops there: an equality claim
   // never carries a proof, so a proven claim reaches one exactly as an unproven
   // claim does.
-  if (auto equality = dyn_cast<TypeEqualityAttr>(predicate))
-    return ClaimType::getEquality(ctx, instantiate(equality.getLhs(), *subst),
-                                  instantiate(equality.getRhs(), *subst));
+  if (isa<TypeEqualityAttr>(predicate))
+    return ClaimRequirement{instantiatePredicate(predicate, *subst), {}};
 
   auto application = dyn_cast<TraitApplicationAttr>(predicate);
   if (!application) {
@@ -1357,10 +1397,8 @@ static FailureOr<ClaimType> readRequirement(
 
   // An unproven claim carries no evidence, so every application requirement it
   // reaches is unproven too.
-  if (!claim.isProven()) {
-    auto requirement = ClaimType::get(ctx, application);
-    return cast<ClaimType>(instantiate(Type(requirement), *subst));
-  }
+  if (!claim.isProven())
+    return ClaimRequirement{instantiatePredicate(application, *subst), {}};
 
   // A proven claim's application requirement carries the provider of the
   // subproof discharging it. The proof names one subproof per obligation -- the
@@ -1399,8 +1437,10 @@ static FailureOr<ClaimType> readRequirement(
                  "obligation " << obligationIndex;
     return failure();
   }
-  return ClaimType::get(
-      ctx, (*obligations)[obligationIndex].getTraitApplication(), provider);
+  return ClaimRequirement{
+      ClaimType::get(ctx, (*obligations)[obligationIndex].getTraitApplication(),
+                     provider),
+      {}};
 }
 
 FailureOr<uint64_t> getClaimRequirementCount(
@@ -1418,10 +1458,11 @@ FailureOr<uint64_t> getClaimRequirementCount(
   return static_cast<uint64_t>(declarations->count());
 }
 
-FailureOr<ClaimType> getClaimRequirementAt(
+FailureOr<ClaimRequirement> getClaimRequirementAt(
     ClaimType claim,
     ModuleOp module,
     uint64_t index,
+    ArrayRef<Type> binderArguments,
     llvm::function_ref<InFlightDiagnostic()> errFn) {
   auto count = getClaimRequirementCount(claim, module, errFn);
   if (failed(count))
@@ -1437,7 +1478,20 @@ FailureOr<ClaimType> getClaimRequirementAt(
   auto declarations = readRequirementDeclarations(claim, module, errFn);
   if (failed(declarations))
     return failure();
-  return readRequirement(claim, *declarations, index, module, errFn);
+  return readRequirement(claim, *declarations, index, binderArguments, module,
+                         errFn);
+}
+
+FailureOr<ClaimType> getClaimRequirementAt(
+    ClaimType claim,
+    ModuleOp module,
+    uint64_t index,
+    llvm::function_ref<InFlightDiagnostic()> errFn) {
+  auto requirement = getClaimRequirementAt(claim, module, index,
+                                           /*binderArguments=*/{}, errFn);
+  if (failed(requirement))
+    return failure();
+  return requirement->conclusion;
 }
 
 //===----------------------------------------------------------------------===//

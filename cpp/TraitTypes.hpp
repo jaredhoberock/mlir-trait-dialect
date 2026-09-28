@@ -1350,6 +1350,26 @@ FailureOr<uint64_t> getClaimRequirementCount(
     ModuleOp module,
     llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
 
+/// One requirement of a claim, read at the arguments a hop supplies for the
+/// parameters it binds.
+struct ClaimRequirement {
+  /// The claim the requirement states at the source's arguments and those.
+  ClaimType conclusion;
+  /// The premises a bound requirement states there, in its order; empty for a
+  /// requirement that binds nothing.
+  SmallVector<ClaimType> premises;
+};
+
+/// The requirement `claim` carries at `index`, read at `binderArguments` for
+/// the parameters it binds -- one per parameter of a bound requirement, none
+/// for any other -- in the order `getClaimRequirementAt` below reads.
+FailureOr<ClaimRequirement> getClaimRequirementAt(
+    ClaimType claim,
+    ModuleOp module,
+    uint64_t index,
+    ArrayRef<Type> binderArguments,
+    llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
+
 /// The requirement `claim` carries at `index`, in the one order a projection
 /// indexes them by: the trait's `where` predicates in declaration order, then --
 /// when `claim` is proven -- the assumptions of the impl its proof cites, which

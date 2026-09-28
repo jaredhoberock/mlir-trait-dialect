@@ -362,7 +362,9 @@ LogicalResult verifyAcyclicTraitsStructure(ModuleOp module) {
 
     for (Attribute pred : requirements) {
       // Only application requirements form trait-to-trait edges; an equality
-      // requirement has no trait head and cannot close a `where`-clause cycle.
+      // requirement has no trait head and cannot close a `where`-clause cycle,
+      // and a bound requirement is never elaborated as a hypothesis -- it is
+      // selected at arguments -- so it closes none either.
       auto app = dyn_cast<TraitApplicationAttr>(pred);
       if (!app)
         continue;

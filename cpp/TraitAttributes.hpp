@@ -8,8 +8,9 @@
 #include <mlir/IR/SymbolTable.h>
 
 namespace mlir::trait {
-  // forward declaration of TraitOp for Attributes.td/Attributes.hpp.inc
+  // forward declarations for Attributes.td/Attributes.hpp.inc
   class TraitOp;
+  class SpecializationMap;
 }
 
 #define GET_ATTRDEF_CLASSES
@@ -28,6 +29,13 @@ namespace mlir::trait {
 /// argument list.
 FailureOr<TraitApplicationAttr>
 parseTraitApplicationBody(AsmParser &parser, FlatSymbolRefAttr traitName);
+
+/// Parse a where-clause entry: an application (`@Trait[...]`), an equality
+/// (`!A = !B`), or a bound predicate (`forall [...] where [...] -> ...`).
+FailureOr<Attribute> parseWherePredicate(AsmParser &parser);
+
+/// Print a where-clause entry as `parseWherePredicate` reads it.
+void printWherePredicate(AsmPrinter &printer, Attribute predicate);
 
 /// Parse the arguments an impl citation carries, `[!P = T, ...]`, one binding
 /// per parameter of the impl, into `arguments`; an absent list is an empty one.

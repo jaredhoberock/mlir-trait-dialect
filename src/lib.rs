@@ -13,7 +13,7 @@ use mlir_sys::{
     mlirArrayAttrGet, mlirIdentifierGet, mlirIntegerAttrGet, mlirIntegerTypeGet,
     mlirLocationGetContext,
     mlirOperationGetContext,
-    mlirOperationSetAttributeByName, mlirUnitAttrGet,
+    mlirOperationSetAttributeByName, mlirTypeAttrGet, mlirUnitAttrGet,
 };
 
 unsafe extern "C" {
@@ -86,6 +86,19 @@ unsafe extern "C" {
                            predicate: MlirAttribute,
                            impl_name: MlirStringRef,
                            arguments: *const MlirAttribute, num_arguments: isize) -> MlirAttribute;
+    fn traitBoundPredicateAttrGet(ctx: MlirContext,
+                                  parameters: *const MlirType, num_parameters: isize,
+                                  premises: *const MlirAttribute, num_premises: isize,
+                                  conclusion: MlirAttribute) -> MlirAttribute;
+    fn traitBoundBodyAttrGetPremise(ctx: MlirContext, position: u32) -> MlirAttribute;
+    fn traitBoundBodyAttrGetWhereEntry(ctx: MlirContext, position: u32) -> MlirAttribute;
+    fn traitBoundBodyAttrGetRefl(ctx: MlirContext) -> MlirAttribute;
+    fn traitBoundBodyAttrGetImpl(ctx: MlirContext,
+                                 impl_name: MlirStringRef,
+                                 arguments: *const MlirAttribute, num_arguments: isize,
+                                 discharges: *const MlirAttribute, num_discharges: isize) -> MlirAttribute;
+    fn traitBoundEvidenceAttrGet(ctx: MlirContext, requirement: u32,
+                                 predicate: MlirAttribute, body: MlirAttribute) -> MlirAttribute;
     fn traitCoercePendingAccepts(input: MlirType, result: MlirType) -> bool;
     fn traitAssocTypeOpCreate(loc: MlirLocation,
                               name: MlirStringRef,
@@ -139,6 +152,17 @@ fn index_attr<'c>(loc: Location<'c>, value: usize) -> Attribute<'c> {
     unsafe {
         let ctx = mlirLocationGetContext(loc.to_raw());
         Attribute::from_raw(mlirIntegerAttrGet(mlirIntegerTypeGet(ctx, 64), value as i64))
+    }
+}
+
+/// An array of type attributes in the location's context, as a list of type
+/// arguments is stored (a `trait.project` hop's arguments for a binder).
+fn type_array_attr<'c>(loc: Location<'c>, types: &[Type<'c>]) -> Attribute<'c> {
+    unsafe {
+        let ctx = mlirLocationGetContext(loc.to_raw());
+        let raw: Vec<MlirAttribute> =
+            types.iter().map(|t| mlirTypeAttrGet(t.to_raw())).collect();
+        Attribute::from_raw(mlirArrayAttrGet(ctx, raw.len() as isize, raw.as_ptr()))
     }
 }
 
@@ -268,6 +292,23 @@ pub fn impl_named<'c>(loc: Location<'c>,
     ))}
 }
 
+/// Attach the `bound_evidence` array to an existing `trait.impl` op: one
+/// `#trait.bound_evidence` per bound requirement of its trait. The impl
+/// verifier checks each against the requirement at the impl's arguments, so
+/// this only assembles the array.
+pub fn set_impl_bound_evidence<'c>(
+    impl_op: &Operation<'c>,
+    attrs: &[Attribute<'c>],
+) {
+    unsafe {
+        let name_ref = StringRef::new("bound_evidence").to_raw();
+        let ctx = mlirOperationGetContext(impl_op.to_raw());
+        let raw: Vec<MlirAttribute> = attrs.iter().map(|a| a.to_raw()).collect();
+        let array = mlirArrayAttrGet(ctx, raw.len() as isize, raw.as_ptr());
+        mlirOperationSetAttributeByName(impl_op.to_raw(), name_ref, array);
+    }
+}
+
 /// Attach the checked `witnesses` array to an existing `trait.impl` op -- each a
 /// `#trait.witness` the impl verifier reads by arm: an equality-armed
 /// projection-resolution witness, or an application-armed obligation
@@ -368,6 +409,25 @@ pub fn proof<'c>(loc: Location<'c>,
         raw_names.as_ptr(),
         raw_names.len() as isize,
     ))}
+}
+
+/// Create a `trait.project` op selecting the bound requirement `index` of
+/// `src_claim` at `type_args`, one per parameter it binds, with `premises`, one
+/// claim per premise it states there. `result_claim` spells the conclusion that
+/// selection derives, which verification checks.
+pub fn project_bound<'c>(loc: Location<'c>,
+                         src_claim: Value<'c,'_>,
+                         index: usize,
+                         type_args: &[Type<'c>],
+                         premises: &[Value<'c,'_>],
+                         result_claim: Type<'c>,
+) -> Operation<'c> {
+    build_op(OperationBuilder::new("trait.project", loc)
+        .add_operands(&[src_claim])
+        .add_operands(premises)
+        .add_attributes(&[(identifier(loc, "index"), index_attr(loc, index)),
+                          (identifier(loc, "type_args"), type_array_attr(loc, type_args))])
+        .add_results(&[result_claim]))
 }
 
 /// Create a `trait.project` op selecting requirement `index` of `src_claim`:
@@ -588,6 +648,91 @@ pub fn witness_attr<'c>(
     let attr = unsafe { Attribute::from_raw(traitWitnessAttrGet(
         ctx.to_raw(), predicate.to_raw(), StringRef::new(impl_name).to_raw(),
         bindings.as_ptr(), bindings.len() as isize)) };
+    if attr.to_raw().ptr.is_null() { None } else { Some(attr) }
+}
+
+/// The `#trait.bound` predicate `forall [parameters] where [premises] ->
+/// conclusion`, a trait's requirement for every argument of parameters of its
+/// own. Returns `None` if construction fails: a parameter that is not a type
+/// parameter or repeats, a premise or conclusion that is neither a trait
+/// application nor a type equality, or a conclusion spelling no parameter.
+pub fn bound_predicate_attr<'c>(
+    ctx: &'c Context,
+    parameters: &[Type<'c>],
+    premises: &[Attribute<'c>],
+    conclusion: Attribute<'c>,
+) -> Option<Attribute<'c>> {
+    let attr = unsafe { Attribute::from_raw(traitBoundPredicateAttrGet(
+        ctx.to_raw(),
+        parameters.as_ptr() as *const _, parameters.len() as isize,
+        premises.as_ptr() as *const _, premises.len() as isize,
+        conclusion.to_raw())) };
+    if attr.to_raw().ptr.is_null() { None } else { Some(attr) }
+}
+
+/// Evidence under a bound requirement's binder: the `#trait.body` one of its
+/// four forms builds.
+pub enum BoundBody<'c> {
+    /// The binder's premise at this position.
+    Premise(u32),
+    /// The stating impl's where-clause entry at this position.
+    WhereEntry(u32),
+    /// An equality whose sides are one type through the stating impl's bindings.
+    Refl,
+    /// The impl named, at its parameters' arguments, with one body per entry of
+    /// its where clause.
+    Impl {
+        name: &'c str,
+        arguments: Vec<(Type<'c>, Type<'c>)>,
+        discharges: Vec<Attribute<'c>>,
+    },
+}
+
+/// The `#trait.body` attribute `body` describes. Returns `None` if an argument's
+/// key is not a type parameter or a discharge is not a body.
+pub fn bound_body_attr<'c>(ctx: &'c Context, body: BoundBody<'c>) -> Option<Attribute<'c>> {
+    let raw = unsafe {
+        match body {
+            BoundBody::Premise(position) => traitBoundBodyAttrGetPremise(ctx.to_raw(), position),
+            BoundBody::WhereEntry(position) => {
+                traitBoundBodyAttrGetWhereEntry(ctx.to_raw(), position)
+            }
+            BoundBody::Refl => traitBoundBodyAttrGetRefl(ctx.to_raw()),
+            BoundBody::Impl { name, arguments, discharges } => {
+                let mut bindings = Vec::with_capacity(arguments.len());
+                for (parameter, argument) in arguments {
+                    let binding = traitTypeBindingAttrGet(
+                        ctx.to_raw(), parameter.to_raw(), argument.to_raw());
+                    if binding.ptr.is_null() {
+                        return None;
+                    }
+                    bindings.push(binding);
+                }
+                let raw_discharges: Vec<MlirAttribute> =
+                    discharges.iter().map(|d| d.to_raw()).collect();
+                traitBoundBodyAttrGetImpl(
+                    ctx.to_raw(), StringRef::new(name).to_raw(),
+                    bindings.as_ptr(), bindings.len() as isize,
+                    raw_discharges.as_ptr(), raw_discharges.len() as isize)
+            }
+        }
+    };
+    let attr = unsafe { Attribute::from_raw(raw) };
+    if attr.to_raw().ptr.is_null() { None } else { Some(attr) }
+}
+
+/// The `#trait.bound_evidence` an impl states for the bound requirement at
+/// position `requirement` of its trait: `predicate` is that requirement at the
+/// impl's arguments and `body` proves its conclusion. Returns `None` if either
+/// attribute is of another kind.
+pub fn bound_evidence_attr<'c>(
+    ctx: &'c Context,
+    requirement: u32,
+    predicate: Attribute<'c>,
+    body: Attribute<'c>,
+) -> Option<Attribute<'c>> {
+    let attr = unsafe { Attribute::from_raw(traitBoundEvidenceAttrGet(
+        ctx.to_raw(), requirement, predicate.to_raw(), body.to_raw())) };
     if attr.to_raw().ptr.is_null() { None } else { Some(attr) }
 }
 

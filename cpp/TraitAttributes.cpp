@@ -302,31 +302,339 @@ void TraitApplicationAttr::print(mlir::AsmPrinter &printer) const {
   printer << ']';
 }
 
+// The parameters a predicate spells, each counted once. Claims carry their
+// type arguments in an attribute, so the predicate is read through the claim
+// that states it, whose reader descends into them.
+static SmallVector<GenericTypeInterface, 4>
+parametersSpelledBy(Attribute predicate) {
+  return getTypeParametersIn(
+      Type(ClaimType::get(predicate.getContext(), predicate, nullptr)));
+}
+
+LogicalResult BoundPredicateAttr::verify(
+    llvm::function_ref<InFlightDiagnostic()> emitError,
+    ArrayRef<Type> parameters, ArrayRef<Attribute> premises,
+    Attribute conclusion) {
+  if (parameters.empty())
+    return emitError() << "a bound predicate binds at least one parameter";
+  DenseSet<Type> bound;
+  for (Type parameter : parameters) {
+    if (!parameter || Type(getParameterOccurrence(parameter)) != parameter)
+      return emitError() << "a bound predicate binds type parameters, found "
+                         << parameter;
+    if (!bound.insert(parameter).second)
+      return emitError() << "a bound predicate binds " << parameter << " twice";
+  }
+  for (Attribute premise : premises)
+    if (!isa_and_nonnull<TraitApplicationAttr, TypeEqualityAttr>(premise))
+      return emitError() << "a bound predicate's premise must be a trait "
+                            "application or a type equality";
+  if (!isa_and_nonnull<TraitApplicationAttr, TypeEqualityAttr>(conclusion))
+    return emitError() << "a bound predicate's conclusion must be a trait "
+                          "application or a type equality";
+  if (llvm::none_of(parametersSpelledBy(conclusion),
+                    [&](GenericTypeInterface spelled) {
+                      return bound.contains(Type(spelled));
+                    }))
+    return emitError() << "a bound predicate's conclusion spells none of the "
+                          "parameters it binds";
+  return success();
+}
+
+SpecializationMap
+BoundPredicateAttr::bindingFor(ArrayRef<Type> arguments) const {
+  assert(arguments.size() == getParameters().size() &&
+         "one argument per parameter the binder introduces");
+  SpecializationMap binding;
+  for (auto [parameter, argument] : llvm::zip(getParameters(), arguments))
+    binding.bind(getParameterOccurrence(parameter), argument);
+  return binding;
+}
+
+// A bound predicate's premises and conclusion name traits as symbol references,
+// which no type walk reaches, so they are checked here as a where clause's
+// application entries are.
+LogicalResult BoundPredicateAttr::verifySymbolUses(
+    Operation *op, SymbolTableCollection &symbolTable) const {
+  // Verification writes nothing, so every name read under it resolves through
+  // the symbol tables the walk this is one step of has already built.
+  SymbolLookupScope symbolAnswers(op, symbolTable);
+
+  for (Attribute premise : getPremises())
+    if (auto app = dyn_cast<TraitApplicationAttr>(premise))
+      if (failed(app.verifySymbolUses(op, symbolTable)))
+        return failure();
+  if (auto app = dyn_cast<TraitApplicationAttr>(getConclusion()))
+    return app.verifySymbolUses(op, symbolTable);
+  return success();
+}
+
+// `forall [params] where [premises] -> conclusion`, following the keyword the
+// caller has already read.
+static FailureOr<BoundPredicateAttr> parseBoundPredicateBody(AsmParser &p) {
+  SmallVector<Type> parameters;
+  if (p.parseCommaSeparatedList(AsmParser::Delimiter::Square, [&] {
+        Type parameter;
+        if (p.parseType(parameter))
+          return failure();
+        parameters.push_back(parameter);
+        return success();
+      }))
+    return failure();
+
+  SmallVector<Attribute> premises;
+  if (succeeded(p.parseOptionalKeyword("where")) &&
+      p.parseCommaSeparatedList(AsmParser::Delimiter::Square, [&] {
+        FailureOr<Attribute> premise = parseApplicationOrEqualityPredicate(p);
+        if (failed(premise))
+          return failure();
+        premises.push_back(*premise);
+        return success();
+      }))
+    return failure();
+
+  if (p.parseArrow())
+    return failure();
+  FailureOr<Attribute> conclusion = parseApplicationOrEqualityPredicate(p);
+  if (failed(conclusion))
+    return failure();
+
+  auto err = [&]() { return p.emitError(p.getCurrentLocation()); };
+  auto bound = BoundPredicateAttr::getChecked(err, p.getContext(), parameters,
+                                              premises, *conclusion);
+  if (!bound)
+    return failure();
+  return bound;
+}
+
+static void printApplicationOrEquality(AsmPrinter &printer, Attribute p) {
+  if (auto app = dyn_cast<TraitApplicationAttr>(p))
+    app.print(printer);
+  else
+    cast<TypeEqualityAttr>(p).print(printer);
+}
+
+static void printBoundPredicateBody(AsmPrinter &printer,
+                                    BoundPredicateAttr bound) {
+  printer << "forall [";
+  llvm::interleaveComma(bound.getParameters(), printer);
+  printer << "]";
+  if (!bound.getPremises().empty()) {
+    printer << " where [";
+    llvm::interleaveComma(bound.getPremises(), printer, [&](Attribute p) {
+      printApplicationOrEquality(printer, p);
+    });
+    printer << "]";
+  }
+  printer << " -> ";
+  printApplicationOrEquality(printer, bound.getConclusion());
+}
+
+Attribute BoundPredicateAttr::parse(AsmParser &p, Type) {
+  if (p.parseKeyword("forall"))
+    return {};
+  FailureOr<BoundPredicateAttr> bound = parseBoundPredicateBody(p);
+  if (failed(bound))
+    return {};
+  return *bound;
+}
+
+void BoundPredicateAttr::print(AsmPrinter &printer) const {
+  printer << ' ';
+  printBoundPredicateBody(printer, *this);
+}
+
+LogicalResult BoundBodyAttr::verify(
+    llvm::function_ref<InFlightDiagnostic()> emitError,
+    std::optional<unsigned> premise, std::optional<unsigned> whereEntry,
+    bool refl, FlatSymbolRefAttr impl, ArrayRef<TypeBindingAttr> arguments,
+    ArrayRef<BoundBodyAttr> discharges) {
+  unsigned forms = premise.has_value() + whereEntry.has_value() + refl +
+                   static_cast<bool>(impl);
+  if (forms != 1)
+    return emitError() << "evidence under a binder is exactly one of a "
+                          "premise, a where-clause entry, reflexivity, or an "
+                          "impl";
+  if (!impl && (!arguments.empty() || !discharges.empty()))
+    return emitError() << "only evidence citing an impl carries arguments and "
+                          "discharges";
+  return success();
+}
+
+// An impl the body cites, at any depth, is a symbol reference no type walk
+// reaches, so it is checked here.
+LogicalResult BoundBodyAttr::verifySymbolUses(
+    Operation *op, SymbolTableCollection &symbolTable) const {
+  // Verification writes nothing, so every name read under it resolves through
+  // the symbol tables the walk this is one step of has already built.
+  SymbolLookupScope symbolAnswers(op, symbolTable);
+
+  if (FlatSymbolRefAttr impl = getImplRef()) {
+    Operation *cited = symbolTable.lookupNearestSymbolFrom(op, impl);
+    if (!isa_and_nonnull<ImplOp>(cited))
+      return op->emitError() << "evidence names '" << impl
+                             << "', which does not resolve to an impl";
+  }
+  for (BoundBodyAttr discharge : getDischarges())
+    if (failed(discharge.verifySymbolUses(op, symbolTable)))
+      return failure();
+  return success();
+}
+
+Attribute BoundBodyAttr::parse(AsmParser &p, Type) {
+  MLIRContext *ctx = p.getContext();
+  auto err = [&]() { return p.emitError(p.getCurrentLocation()); };
+  auto leaf = [&](std::optional<unsigned> premise,
+                  std::optional<unsigned> whereEntry, bool refl) {
+    return BoundBodyAttr::getChecked(err, ctx, premise, whereEntry, refl,
+                                     FlatSymbolRefAttr(), {}, {});
+  };
+
+  unsigned position;
+  if (succeeded(p.parseOptionalKeyword("premise"))) {
+    if (p.parseInteger(position))
+      return {};
+    return leaf(position, std::nullopt, false);
+  }
+  if (succeeded(p.parseOptionalKeyword("where"))) {
+    if (p.parseInteger(position))
+      return {};
+    return leaf(std::nullopt, position, false);
+  }
+  if (succeeded(p.parseOptionalKeyword("refl")))
+    return leaf(std::nullopt, std::nullopt, true);
+
+  FlatSymbolRefAttr impl;
+  SmallVector<TypeBindingAttr> arguments;
+  if (p.parseAttribute(impl) || parseImplArguments(p, arguments))
+    return {};
+  SmallVector<BoundBodyAttr> discharges;
+  if (succeeded(p.parseOptionalKeyword("given")) &&
+      p.parseCommaSeparatedList(AsmParser::Delimiter::Square, [&] {
+        auto discharge =
+            dyn_cast_or_null<BoundBodyAttr>(BoundBodyAttr::parse(p, Type()));
+        if (!discharge)
+          return failure();
+        discharges.push_back(discharge);
+        return success();
+      }))
+    return {};
+  return BoundBodyAttr::getChecked(err, ctx, std::nullopt, std::nullopt, false,
+                                   impl, arguments, discharges);
+}
+
+// A body as `BoundBodyAttr::parse` reads it, with no leading space: the form an
+// enclosing attribute prints it in.
+static void printBoundBody(AsmPrinter &printer, BoundBodyAttr body) {
+  if (std::optional<unsigned> premise = body.getPremise()) {
+    printer << "premise " << *premise;
+    return;
+  }
+  if (std::optional<unsigned> whereEntry = body.getWhereEntry()) {
+    printer << "where " << *whereEntry;
+    return;
+  }
+  if (body.getRefl()) {
+    printer << "refl";
+    return;
+  }
+  printer << body.getImplRef();
+  printImplArguments(printer, body.getArguments());
+  if (body.getDischarges().empty())
+    return;
+  printer << " given [";
+  llvm::interleaveComma(body.getDischarges(), printer,
+                        [&](BoundBodyAttr discharge) {
+                          printBoundBody(printer, discharge);
+                        });
+  printer << "]";
+}
+
+void BoundBodyAttr::print(AsmPrinter &printer) const {
+  printer << ' ';
+  printBoundBody(printer, *this);
+}
+
+LogicalResult BoundEvidenceAttr::verifySymbolUses(
+    Operation *op, SymbolTableCollection &symbolTable) const {
+  // Verification writes nothing, so every name read under it resolves through
+  // the symbol tables the walk this is one step of has already built.
+  SymbolLookupScope symbolAnswers(op, symbolTable);
+
+  if (failed(getPredicate().verifySymbolUses(op, symbolTable)))
+    return failure();
+  return getBody().verifySymbolUses(op, symbolTable);
+}
+
+Attribute BoundEvidenceAttr::parse(AsmParser &p, Type) {
+  unsigned requirement;
+  if (p.parseInteger(requirement) || p.parseColon() ||
+      p.parseKeyword("forall"))
+    return {};
+  FailureOr<BoundPredicateAttr> predicate = parseBoundPredicateBody(p);
+  if (failed(predicate) || p.parseKeyword("by"))
+    return {};
+  auto body = dyn_cast_or_null<BoundBodyAttr>(BoundBodyAttr::parse(p, Type()));
+  if (!body)
+    return {};
+  return BoundEvidenceAttr::get(p.getContext(), requirement, *predicate, body);
+}
+
+void BoundEvidenceAttr::print(AsmPrinter &printer) const {
+  printer << ' ' << getRequirement() << ": ";
+  printBoundPredicateBody(printer, getPredicate());
+  printer << " by ";
+  printBoundBody(printer, getBody());
+}
+
+FailureOr<Attribute> parseWherePredicate(AsmParser &p) {
+  if (succeeded(p.parseOptionalKeyword("forall"))) {
+    FailureOr<BoundPredicateAttr> bound = parseBoundPredicateBody(p);
+    if (failed(bound))
+      return failure();
+    return Attribute(*bound);
+  }
+  return parseApplicationOrEqualityPredicate(p);
+}
+
+void printWherePredicate(AsmPrinter &printer, Attribute predicate) {
+  if (auto bound = dyn_cast<BoundPredicateAttr>(predicate))
+    printBoundPredicateBody(printer, bound);
+  else
+    printApplicationOrEquality(printer, predicate);
+}
+
 LogicalResult PredicateArrayAttr::verify(
     llvm::function_ref<InFlightDiagnostic()> emitError,
     ArrayRef<Attribute> predicates) {
   for (Attribute p : predicates)
-    if (!mlir::isa<TraitApplicationAttr, TypeEqualityAttr>(p))
-      return emitError() << "a trait requirement must be a trait application "
-                            "or a type equality";
+    if (!mlir::isa<TraitApplicationAttr, TypeEqualityAttr, BoundPredicateAttr>(
+            p))
+      return emitError() << "a trait requirement must be a trait application, "
+                            "a type equality, or a bound predicate";
   return success();
 }
 
-// Verify each predicate. An application entry names a trait as a symbol
-// reference, which no type walk reaches, so it is checked here. An equality
-// entry names symbols only through the types in its endpoints, and the
-// framework's own type walk over the owning operation's attributes reaches
-// those, so there is nothing left for this entry point to check.
+// Verify each predicate. An application entry, and every application a bound
+// entry states, names a trait as a symbol reference, which no type walk
+// reaches, so it is checked here. An equality entry names symbols only through
+// the types in its endpoints, and the framework's own type walk over the owning
+// operation's attributes reaches those, so there is nothing left for this entry
+// point to check.
 LogicalResult PredicateArrayAttr::verifySymbolUses(
     Operation *op, SymbolTableCollection &symbolTable) const {
   // Verification writes nothing, so every name read under it resolves through
   // the symbol tables the walk this is one step of has already built.
   SymbolLookupScope symbolAnswers(op, symbolTable);
 
-  for (Attribute p : getPredicates())
+  for (Attribute p : getPredicates()) {
     if (auto app = mlir::dyn_cast<TraitApplicationAttr>(p))
       if (failed(app.verifySymbolUses(op, symbolTable)))
         return failure();
+    if (auto bound = mlir::dyn_cast<BoundPredicateAttr>(p))
+      if (failed(bound.verifySymbolUses(op, symbolTable)))
+        return failure();
+  }
   return success();
 }
 
@@ -341,9 +649,10 @@ Attribute PredicateArrayAttr::parse(AsmParser &p, Type) {
   if (succeeded(p.parseOptionalRSquare()))
     return PredicateArrayAttr::getChecked(errFn, ctx, preds);
 
-  // Each entry is an application (`@Trait[...]`) or an equality (`!A = !B`).
+  // Each entry is an application (`@Trait[...]`), an equality (`!A = !B`), or
+  // a bound predicate (`forall [...] ... -> ...`).
   do {
-    FailureOr<Attribute> pred = parseApplicationOrEqualityPredicate(p);
+    FailureOr<Attribute> pred = parseWherePredicate(p);
     if (failed(pred))
       return {};
     preds.push_back(*pred);
@@ -358,10 +667,7 @@ Attribute PredicateArrayAttr::parse(AsmParser &p, Type) {
 void PredicateArrayAttr::print(mlir::AsmPrinter &printer) const {
   printer << "[";
   llvm::interleaveComma(getPredicates(), printer, [&](Attribute p) {
-    if (auto app = mlir::dyn_cast<TraitApplicationAttr>(p))
-      app.print(printer);
-    else
-      mlir::cast<TypeEqualityAttr>(p).print(printer);
+    printWherePredicate(printer, p);
   });
   printer << ']';
 }

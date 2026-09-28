@@ -849,3 +849,115 @@ trait.impl private @A_gen for @A[!trait.poly<0>] where [@B[!trait.poly<0>], @C[!
     impl_method_body(&module).insert_operation(0, trait_::assume_entry(loc, 0, claim("C")));
     assert!(!module.as_operation().verify());
 }
+
+/// `forall X where Marker[X] -> Marker[Has[receiver]::A<X>]`, the bound of
+/// `type A<X>: Marker where X: Marker` at `receiver`.
+fn marker_bound_of_has<'c>(
+    context: &'c Context,
+    receiver: melior::ir::Type<'c>,
+    x: melior::ir::Type<'c>,
+) -> melior::ir::attribute::Attribute<'c> {
+    let has = trait_::trait_application_attr(context, "Has", &[receiver]);
+    let a_of_x = trait_::projection_type(context, has, "A", &[x]);
+    trait_::bound_predicate_attr(
+        context,
+        &[x],
+        &[trait_::trait_application_attr(context, "Marker", &[x]).into()],
+        trait_::trait_application_attr(context, "Marker", &[a_of_x]).into(),
+    )
+    .expect("the bound predicate constructs")
+}
+
+#[test]
+fn the_bound_builders_state_and_select_a_quantified_requirement() {
+    let registry = DialectRegistry::new();
+    register_all_dialects(&registry);
+    let context = Context::new();
+    context.append_dialect_registry(&registry);
+    trait_::register(&context);
+    context.load_all_available_dialects();
+
+    let loc = Location::unknown(&context);
+    let s = trait_::poly_type(&context, 0);
+    let x = trait_::poly_type(&context, 1);
+    let t = trait_::poly_type(&context, 2);
+    let i1: melior::ir::Type = IntegerType::new(&context, 1).into();
+    let i32_ty: melior::ir::Type = IntegerType::new(&context, 32).into();
+
+    // @Has states `forall X where Marker[X] -> Marker[Has[S]::A<X>]`, the bound
+    // of `type A<X>: Marker where X: Marker`.
+    let bound_at = |receiver| marker_bound_of_has(&context, receiver, x);
+    let module = Module::new(loc);
+    module.body().append_operation(trait_::trait_(loc, "Marker", &[s], &[]));
+    let has = trait_::trait_(loc, "Has", &[s], &[bound_at(s)]);
+    has.region(0).unwrap().first_block().unwrap()
+        .append_operation(trait_::assoc_type(loc, "A", None, &[x]));
+    module.body().append_operation(has);
+
+    // `impl Has for i32 { type A<X> = X; }` proves the bound by its premise.
+    let has_i32 = trait_::trait_application_attr(&context, "Has", &[i32_ty]);
+    let evidence = |body| {
+        trait_::bound_evidence_attr(
+            &context, 0, bound_at(i32_ty),
+            trait_::bound_body_attr(&context, body).expect("the body constructs"),
+        )
+        .expect("the evidence constructs")
+    };
+    let impl_op = trait_::impl_named(loc, "Has_i32", has_i32, &[]);
+    impl_op.region(0).unwrap().first_block().unwrap()
+        .append_operation(trait_::assoc_type(loc, "A", Some(x), &[x]));
+    trait_::set_impl_bound_evidence(&impl_op, &[evidence(trait_::BoundBody::Premise(0))]);
+    module.body().append_operation(impl_op);
+
+    // A generic function selects the requirement at i1 with a claim of its
+    // premise there.
+    let has_t = trait_::trait_application_attr(&context, "Has", &[t]);
+    let has_t_claim: melior::ir::Type = trait_::claim_type(&context, has_t).into();
+    let marker_i1: melior::ir::Type = trait_::claim_type(
+        &context, trait_::trait_application_attr(&context, "Marker", &[i1])).into();
+    let a_of_i1 = trait_::projection_type(&context, has_t, "A", &[i1]);
+    let conclusion: melior::ir::Type = trait_::claim_type(
+        &context, trait_::trait_application_attr(&context, "Marker", &[a_of_i1])).into();
+    let block = Block::new(&[(has_t_claim, loc), (marker_i1, loc)]);
+    block.append_operation(trait_::project_bound(
+        loc,
+        block.argument(0).unwrap().into(),
+        0,
+        &[i1],
+        &[block.argument(1).unwrap().into()],
+        conclusion,
+    ));
+    block.append_operation(func::r#return(&[], loc));
+    let body = Region::new();
+    body.append_block(block);
+    let vis_id = Identifier::new(&context, "sym_visibility");
+    let private_attr = StringAttribute::new(&context, "private").into();
+    module.body().append_operation(func::func(
+        &context,
+        StringAttribute::new(&context, "f"),
+        TypeAttribute::new(FunctionType::new(&context, &[has_t_claim, marker_i1], &[]).into()),
+        body,
+        &[(vis_id, private_attr)],
+        loc,
+    ));
+    assert!(module.as_operation().verify());
+    let rendered = module.as_operation().to_string();
+    assert!(
+        rendered.contains("by premise 0") && rendered.contains("[0] for [i1] given("),
+        "the evidence and the hop print what they state: {rendered}"
+    );
+
+    // Evidence citing a where-clause entry the impl does not have is refused.
+    let impl_op = trait_::impl_named(loc, "Has_i32", has_i32, &[]);
+    impl_op.region(0).unwrap().first_block().unwrap()
+        .append_operation(trait_::assoc_type(loc, "A", Some(x), &[x]));
+    trait_::set_impl_bound_evidence(&impl_op, &[evidence(trait_::BoundBody::WhereEntry(0))]);
+    let module = Module::new(loc);
+    module.body().append_operation(trait_::trait_(loc, "Marker", &[s], &[]));
+    let has = trait_::trait_(loc, "Has", &[s], &[bound_at(s)]);
+    has.region(0).unwrap().first_block().unwrap()
+        .append_operation(trait_::assoc_type(loc, "A", None, &[x]));
+    module.body().append_operation(has);
+    module.body().append_operation(impl_op);
+    assert!(!module.as_operation().verify());
+}

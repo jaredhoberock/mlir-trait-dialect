@@ -216,26 +216,142 @@ def WitnessAttr : AttrDef<TraitDialect, "Witness",
   let hasCustomAssemblyFormat = 1;
 }
 
+// A predicate quantified over type parameters of its own, under premises of its
+// own: a requirement a trait states for every argument of an associated type's
+// parameters (a generic associated type's bound).
+def BoundPredicateAttr : AttrDef<TraitDialect, "BoundPredicate",
+    [DeclareAttrInterfaceMethods<SymbolUserAttrInterface>]> {
+  let mnemonic = "bound";
+  let summary = "A predicate quantified over parameters of its own";
+  let description = [{
+    Represents `forall parameters. premises => conclusion`: for every argument
+    of each parameter at which every premise holds, the conclusion holds. The
+    premises and the conclusion are each a trait application or a type
+    equality, spelled over the parameters the binder introduces and over the
+    parameters of the declaration it stands in. It is the requirement a trait
+    states for a generic associated type's bound: `type A<X>: Marker where X:
+    Other` is
+
+      forall [!X] where [@Other[!X]] -> @Marker[!trait.proj<@Has[!S], "A", [!X]>]
+
+    The parameters are the binder's own: a reader instantiates them together
+    with the declaration's parameters, in one substitution, and never reads one
+    unbound. So each is a type parameter, they are distinct, and the conclusion
+    spells at least one of them -- a binder quantifying nothing is a plain
+    predicate spelled another way. Bound predicates do not nest.
+
+    Printed `forall [params] where [premises] -> conclusion`; `where [...]` is
+    omitted when there are no premises.
+  }];
+
+  let parameters = (ins
+    ArrayRefParameter<"Type">:$parameters,
+    ArrayRefParameter<"::mlir::Attribute">:$premises,
+    "::mlir::Attribute":$conclusion
+  );
+
+  let extraClassDeclaration = [{
+    /// The substitution that instantiates this binder: each parameter it binds
+    /// taking the argument at its position in `arguments`, which has one per
+    /// parameter.
+    SpecializationMap bindingFor(ArrayRef<Type> arguments) const;
+  }];
+
+  let genVerifyDecl = 1;
+  let hasCustomAssemblyFormat = 1;
+}
+
+// Evidence for one predicate under a bound requirement's binder, as an impl
+// states it for the trait's bound requirement.
+def BoundBodyAttr : AttrDef<TraitDialect, "BoundBody",
+    [DeclareAttrInterfaceMethods<SymbolUserAttrInterface>]> {
+  let mnemonic = "body";
+  let summary = "Evidence for a predicate under a bound requirement's binder";
+  let description = [{
+    Evidence that one predicate holds under the binder of a bound requirement,
+    inside the impl that states it. Four forms, each citing by position:
+
+      * `premise N` -- the binder's premise N;
+      * `where N` -- entry N of the impl's own where clause;
+      * `refl` -- an equality whose two sides are one type once read through
+        the impl's own bindings;
+      * `@impl[!P = T, ...] given [body, ...]` -- the impl named, at the
+        arguments the bindings carry for its parameters, whose application is
+        the predicate; `given` holds one body per entry of that impl's where
+        clause, in its order, each discharging the entry at those arguments.
+        It is omitted when that where clause is empty. The impl may be the
+        one stating the evidence: a requirement it proves by being itself.
+
+    Every predicate is compared after reading it through the stating impl's
+    own associated-type bindings, so `Has[S]::A<X>` is the type the impl binds
+    `A<X>` to.
+  }];
+
+  let parameters = (ins
+    OptionalParameter<"std::optional<unsigned>">:$premise,
+    OptionalParameter<"std::optional<unsigned>">:$where_entry,
+    "bool":$refl,
+    OptionalParameter<"::mlir::FlatSymbolRefAttr">:$impl_ref,
+    OptionalArrayRefParameter<"TypeBindingAttr">:$arguments,
+    OptionalArrayRefParameter<"BoundBodyAttr">:$discharges
+  );
+
+  let genVerifyDecl = 1;
+  let hasCustomAssemblyFormat = 1;
+}
+
+// The evidence an impl states for one bound requirement of its trait.
+def BoundEvidenceAttr : AttrDef<TraitDialect, "BoundEvidence",
+    [DeclareAttrInterfaceMethods<SymbolUserAttrInterface>]> {
+  let mnemonic = "bound_evidence";
+  let summary = "An impl's evidence for its trait's bound requirement";
+  let description = [{
+    The evidence an impl states for the bound requirement at position
+    `requirement` of its trait's where clause: `predicate` is that requirement
+    at the impl's own arguments -- the binder's parameters as the trait spells
+    them, its premises and conclusion instantiated -- and `body` is evidence
+    for the conclusion under the binder, which holds for every argument of the
+    parameters at which the premises hold. The impl verifier refuses a
+    predicate other than the requirement at that position, and a body that does
+    not prove the conclusion.
+
+    Printed `N: forall [...] where [...] -> conclusion by body`.
+  }];
+
+  let parameters = (ins
+    "unsigned":$requirement,
+    "BoundPredicateAttr":$predicate,
+    "BoundBodyAttr":$body
+  );
+
+  let hasCustomAssemblyFormat = 1;
+}
+
 // An ordered array of the one-hop predicates a trait requires -- its `where`
-// clause; each entry is a trait application or a type equality (see the
-// description).
+// clause; each entry is a trait application, a type equality, or a bound
+// predicate (see the description).
 def PredicateArrayAttr : AttrDef<TraitDialect, "PredicateArray",
     [DeclareAttrInterfaceMethods<SymbolUserAttrInterface>]> {
   let mnemonic = "predicate_array";
   let summary = "An ordered array of predicates required by a trait";
   let description = [{
     Represents the ordered list of one-hop predicates a `trait.trait` requires
-    (its `where` clause). Each entry is one of two arms, distinct in meaning:
+    (its `where` clause). Each entry is one of three arms, distinct in meaning:
 
       * a `TraitApplicationAttr` -- an implementation must exist for a trait
         applied to a list of types, e.g. `@Eq[!S]`;
       * a `TypeEqualityAttr` -- two spellings must name one type, e.g.
-        `!trait.proj<@Trait[!S], "Assoc"> = i64`.
+        `!trait.proj<@Trait[!S], "Assoc"> = i64`;
+      * a `BoundPredicateAttr` -- a predicate that holds for every argument of
+        parameters of its own, e.g. a generic associated type's bound
+        `forall [!X] -> @Marker[!trait.proj<@Trait[!S], "A", [!X]>]`. Only a
+        trait's where clause states one; an impl's premises bind nothing.
 
     Application entries are proved at impl selection; equality entries are
-    checked at impl verification against the impl's own bindings. An application-only
-    array prints and parses as a plain array of trait applications; existing
-    textual forms round-trip unchanged.
+    checked at impl verification against the impl's own bindings; a bound
+    entry is proved once, for every argument, by the evidence body the impl
+    states for it. An application-only array prints and parses as a plain
+    array of trait applications; existing textual forms round-trip unchanged.
 
     Example:
       !S = trait.poly<0>
@@ -285,6 +401,13 @@ def PredicateArrayAttr : AttrDef<TraitDialect, "PredicateArray",
     bool hasEqualities() const {
       return llvm::any_of(getPredicates(), [](::mlir::Attribute p) {
         return mlir::isa<TypeEqualityAttr>(p);
+      });
+    }
+
+    // Whether any entry is a bound predicate.
+    bool hasBoundPredicates() const {
+      return llvm::any_of(getPredicates(), [](::mlir::Attribute p) {
+        return mlir::isa<BoundPredicateAttr>(p);
       });
     }
 

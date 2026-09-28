@@ -370,6 +370,86 @@ MlirAttribute traitWitnessAttrGet(MlirContext wrappedCtx,
   return wrap(witness);
 }
 
+MlirAttribute traitBoundPredicateAttrGet(MlirContext wrappedCtx,
+                                         MlirType *parameters,
+                                         intptr_t numParameters,
+                                         MlirAttribute *premises,
+                                         intptr_t numPremises,
+                                         MlirAttribute conclusion) {
+  MLIRContext *ctx = unwrap(wrappedCtx);
+  auto err = [&] { return emitError(UnknownLoc::get(ctx)); };
+  return wrap(BoundPredicateAttr::getChecked(
+      err, ctx, ArrayRef<Type>(unwrapArray(parameters, numParameters)),
+      ArrayRef<Attribute>(unwrapArray(premises, numPremises)),
+      unwrap(conclusion)));
+}
+
+/// A leaf body: one of a premise, a where-clause entry, or reflexivity.
+static MlirAttribute boundBodyLeaf(MlirContext wrappedCtx,
+                                   std::optional<unsigned> premise,
+                                   std::optional<unsigned> whereEntry,
+                                   bool refl) {
+  MLIRContext *ctx = unwrap(wrappedCtx);
+  auto err = [&] { return emitError(UnknownLoc::get(ctx)); };
+  return wrap(BoundBodyAttr::getChecked(err, ctx, premise, whereEntry, refl,
+                                        FlatSymbolRefAttr(), {}, {}));
+}
+
+MlirAttribute traitBoundBodyAttrGetPremise(MlirContext ctx, unsigned position) {
+  return boundBodyLeaf(ctx, position, std::nullopt, false);
+}
+
+MlirAttribute traitBoundBodyAttrGetWhereEntry(MlirContext ctx,
+                                              unsigned position) {
+  return boundBodyLeaf(ctx, std::nullopt, position, false);
+}
+
+MlirAttribute traitBoundBodyAttrGetRefl(MlirContext ctx) {
+  return boundBodyLeaf(ctx, std::nullopt, std::nullopt, true);
+}
+
+MlirAttribute traitBoundBodyAttrGetImpl(MlirContext wrappedCtx,
+                                        MlirStringRef implName,
+                                        MlirAttribute *arguments,
+                                        intptr_t numArguments,
+                                        MlirAttribute *discharges,
+                                        intptr_t numDischarges) {
+  MLIRContext *ctx = unwrap(wrappedCtx);
+  auto err = [&] { return emitError(UnknownLoc::get(ctx)); };
+  SmallVector<TypeBindingAttr> bindings;
+  for (Attribute argument : unwrapArray(arguments, numArguments)) {
+    auto binding = dyn_cast<TypeBindingAttr>(argument);
+    if (!binding)
+      return {};
+    bindings.push_back(binding);
+  }
+  SmallVector<BoundBodyAttr> bodies;
+  for (Attribute discharge : unwrapArray(discharges, numDischarges)) {
+    auto body = dyn_cast<BoundBodyAttr>(discharge);
+    if (!body)
+      return {};
+    bodies.push_back(body);
+  }
+  FlatSymbolRefAttr implRef =
+      FlatSymbolRefAttr::get(ctx, StringRef(implName.data, implName.length));
+  std::optional<unsigned> none;
+  return wrap(BoundBodyAttr::getChecked(err, ctx, none, none, false, implRef,
+                                        ArrayRef<TypeBindingAttr>(bindings),
+                                        ArrayRef<BoundBodyAttr>(bodies)));
+}
+
+MlirAttribute traitBoundEvidenceAttrGet(MlirContext wrappedCtx,
+                                        unsigned requirement,
+                                        MlirAttribute predicate,
+                                        MlirAttribute body) {
+  auto bound = dyn_cast<BoundPredicateAttr>(unwrap(predicate));
+  auto evidence = dyn_cast<BoundBodyAttr>(unwrap(body));
+  if (!bound || !evidence)
+    return {};
+  return wrap(BoundEvidenceAttr::get(unwrap(wrappedCtx), requirement, bound,
+                                     evidence));
+}
+
 bool traitCoercePendingAccepts(MlirType input, MlirType result) {
   // The consult runs the verifier's own marked arm: strip proofs, then the
   // shared pending judgment. Sharing the function keeps the classifier's verdict

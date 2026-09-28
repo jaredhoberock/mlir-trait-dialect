@@ -146,6 +146,53 @@ MlirAttribute traitWitnessAttrGet(MlirContext ctx,
                                   MlirStringRef implName,
                                   MlirAttribute *arguments, intptr_t numArguments);
 
+/// Return the #trait.bound predicate `forall [parameters] where [premises] ->
+/// conclusion`: the requirement a trait states for every argument of
+/// parameters of its own. Each premise and the conclusion is a trait
+/// application or a type equality; the parameters are distinct type
+/// parameters the conclusion spells. Returns a null attribute if construction
+/// fails.
+MlirAttribute traitBoundPredicateAttrGet(MlirContext ctx,
+                                         MlirType *parameters,
+                                         intptr_t numParameters,
+                                         MlirAttribute *premises,
+                                         intptr_t numPremises,
+                                         MlirAttribute conclusion);
+
+/// Return the #trait.body evidence citing premise `position` of the binder it
+/// stands under.
+MlirAttribute traitBoundBodyAttrGetPremise(MlirContext ctx, unsigned position);
+
+/// Return the #trait.body evidence citing entry `position` of the where clause
+/// of the impl stating it.
+MlirAttribute traitBoundBodyAttrGetWhereEntry(MlirContext ctx,
+                                              unsigned position);
+
+/// Return the #trait.body evidence for an equality whose two sides are one
+/// type once read through the stating impl's own bindings.
+MlirAttribute traitBoundBodyAttrGetRefl(MlirContext ctx);
+
+/// Return the #trait.body evidence citing the impl `implName` at `arguments`
+/// (#trait.binding attributes, one per parameter of that impl) with one
+/// #trait.body in `discharges` per entry of that impl's where clause, in its
+/// order. Returns a null attribute if an argument is not a binding or a
+/// discharge is not a body.
+MlirAttribute traitBoundBodyAttrGetImpl(MlirContext ctx,
+                                        MlirStringRef implName,
+                                        MlirAttribute *arguments,
+                                        intptr_t numArguments,
+                                        MlirAttribute *discharges,
+                                        intptr_t numDischarges);
+
+/// Return the #trait.bound_evidence an impl states for the bound requirement at
+/// position `requirement` of its trait: `predicate` (a #trait.bound) is that
+/// requirement at the impl's arguments and `body` (a #trait.body) proves its
+/// conclusion under its binder. Returns a null attribute if either is of
+/// another kind.
+MlirAttribute traitBoundEvidenceAttrGet(MlirContext ctx, unsigned requirement,
+                                        MlirAttribute predicate,
+                                        MlirAttribute body);
+
 /// Answer whether `input` and `result` stand under the pending judgment a
 /// marked coerce carries, running verifyPendingCoerceEndpoints (TraitOps.hpp).
 /// Diagnostics are suppressed; a refusal is a classification answer, not a

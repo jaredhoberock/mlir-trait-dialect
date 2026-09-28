@@ -404,6 +404,23 @@ def ImplOp : TraitDialectOp<"impl", [
     the impl that supplies it, and the discharge recursion resolves every
     discharger by symbol without scanning the module.
 
+    The optional `bound_evidence` array carries, for each bound requirement of
+    the trait -- a requirement quantified over parameters of its own, a generic
+    associated type's bound -- the evidence that it holds for every argument
+    (`#trait.bound_evidence`). An impl of a trait with a bound requirement
+    states exactly one for each, and the verifier checks each against the
+    requirement at the impl's arguments:
+
+    ```mlir
+    trait.trait @Has[!S] where [forall [!X] -> @Marker[!trait.proj<@Has[!S], "A", [!X]>]] {
+      trait.assoc_type @A<[!X]>
+    }
+    trait.impl @Has_i32 for @Has[i32]
+        bound_evidence [#trait<bound_evidence 0: forall [!X] -> @Marker[!trait.proj<@Has[i32], "A", [!X]>] by @Marker_i1>] {
+      trait.assoc_type @A<[!X]> = i1
+    }
+    ```
+
     Example of the mixed `where` clause and the `witnesses` array:
 
     ```mlir
@@ -424,6 +441,8 @@ def ImplOp : TraitDialectOp<"impl", [
     PredicateArrayAttr:$assumptions,
     OptionalAttr<TypedArrayAttrBase<WitnessAttr,
         "array of impl witnesses">>:$witnesses,
+    OptionalAttr<TypedArrayAttrBase<BoundEvidenceAttr,
+        "array of bound requirement evidence">>:$bound_evidence,
     OptionalAttr<StrAttr>:$sym_visibility
   );
   let regions = (region SizedRegion<1>:$body);
@@ -1079,6 +1098,20 @@ def ProjectOp : TraitDialectOp<"project", [
     compares it with the requirement the index selects and refuses a
     disagreement.
 
+    A **bound** requirement -- one quantified over parameters of its own, a
+    generic associated type's bound -- is selected at arguments for those
+    parameters: `for [types]` supplies one per parameter and `given(%claims)`
+    one claim per premise it states, each the premise instantiated at the
+    source's arguments and those types. The result is its conclusion
+    instantiated the same way, and is unproven: the bound is proved once for
+    every argument, by the impl's own evidence, and the instance is proved
+    where it is used. A requirement that binds nothing takes neither.
+
+      // trait.trait @Has[!S] where [forall [!X] where [@Other[!X]]
+      //                               -> @Marker[!trait.proj<@Has[!S], "A", [!X]>]]
+      %m = trait.project %h[0] for [i1] given(%o : !trait.claim<@Other[i1]>)
+        : !trait.claim<@Has[!T]> -> !trait.claim<@Marker[!trait.proj<@Has[!T], "A", [i1]>]>
+
     Notes:
     * Only a **single hop** is performed; chain `trait.project` for transitive
       consequences.
@@ -1107,7 +1140,9 @@ def ProjectOp : TraitDialectOp<"project", [
   }];
 
   let arguments = (ins Claim:$source,
-                       ConfinedAttr<I64Attr, [IntNonNegative]>:$index);
+                       ConfinedAttr<I64Attr, [IntNonNegative]>:$index,
+                       OptionalAttr<TypeArrayAttr>:$type_args,
+                       Variadic<Claim>:$premises);
   let results   = (outs Claim:$result);
 
   let extraClassDeclaration = [{
@@ -1118,10 +1153,36 @@ def ProjectOp : TraitDialectOp<"project", [
     ClaimType getResultClaim() {
       return cast<ClaimType>(getResult().getType());
     }
+
+    /// The arguments this hop supplies for the parameters a bound requirement
+    /// binds; empty for any other requirement.
+    SmallVector<Type> getBinderArguments() {
+      SmallVector<Type> arguments;
+      if (ArrayAttr typeArgs = getTypeArgsAttr())
+        for (Attribute argument : typeArgs)
+          arguments.push_back(cast<TypeAttr>(argument).getValue());
+      return arguments;
+    }
   }];
 
-  let assemblyFormat =
-    "$source `[` $index `]` attr-dict `:` type($source) `->` type($result)";
+  let builders = [
+    // a hop to a requirement that binds nothing
+    OpBuilder<(ins "::mlir::Type":$result, "::mlir::Value":$source,
+                   "uint64_t":$index), [{
+      build($_builder, $_state, result, source, index, /*type_args=*/nullptr,
+            /*premises=*/::mlir::ValueRange{});
+    }]>
+  ];
+
+  // `%c[k]`, then for a bound requirement `for [types]` and `given(%claims)`,
+  // then the source and result claims. The operand types of `given` are read
+  // off the premises the requirement states, so they are printed with the
+  // claims.
+  let assemblyFormat = [{
+    $source `[` $index `]` (`for` $type_args^)?
+    (`given` `(` $premises^ `:` type($premises) `)`)?
+    attr-dict `:` type($source) `->` type($result)
+  }];
 }
 
 
