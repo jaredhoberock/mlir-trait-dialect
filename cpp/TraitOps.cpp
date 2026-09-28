@@ -388,6 +388,9 @@ LogicalResult TraitOp::verify() {
         return assoc.emitOpError()
                << "type parameter list holds " << param
                << ", which is not a type variable";
+      for (GenericTypeInterface inside : getTypeParametersIn(param))
+        if (failed(verifyParameterIsNoBinderVariable(assoc, Type(inside))))
+          return failure();
       if (uniqueParams.contains(param))
         return assoc.emitOpError()
                << "type parameter " << param << " is already a parameter of trait '@"
@@ -963,6 +966,8 @@ static LogicalResult verifyAssociatedTypeBindingScopes(ImplOp impl) {
         // around a label (a coordinate parameter carries the label it stands
         // for), and declaring it declares the label it carries.
         for (GenericTypeInterface inside : getTypeParametersIn(param)) {
+          if (failed(verifyParameterIsNoBinderVariable(assoc, Type(inside))))
+            return failure();
           if (headerParams.contains(Type(inside)))
             return assoc.emitOpError()
                    << "type parameter " << param

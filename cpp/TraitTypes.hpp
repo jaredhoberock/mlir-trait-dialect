@@ -1516,16 +1516,20 @@ ModuleOp getAnchorModule(Operation *anchor);
 /// XXX TODO A projection is well-formed when its trait application is
 /// provable, impls included -- Rust's rule -- so a declaration may spell a
 /// projection over an application no premise of its own states and only an
-/// impl proves (`trait Foo where Bar[Wrap<Self>]::Assoc: Cd`). A lookup under
-/// a scope reads such a projection through the impls the module holds, so a
-/// verifier's verdict turns on declarations outside the op it verifies. The
-/// scopes, `ImplProjectionLookup` and the verifier `DemandOrigin`s delete
-/// once every reader holds evidence for every projection it reads: impl
-/// selection minting only the proof form that states its impl's arguments,
-/// and each declaration carrying, at a known position, the impl citation its
-/// well-formedness check found for each application it spells that no premise
-/// states -- the choice Rust's check makes and discards, recorded where it is
-/// made.
+/// impl proves (`trait Foo where Bar[Wrap<Self>]::Assoc: Cd`). A verifier
+/// that reads such a projection through the impls the module holds decides by
+/// declarations outside the op it verifies. Those reads -- the three
+/// `ImplProjectionLookup`s (`ImplOp::specializeObligationsAsClaimsFor`, the
+/// requirement reader's substitution for a proof stating no arguments, and
+/// the projection-resolution witness verifier's header comparison) and the
+/// verifier `DemandOrigin`s -- delete once every verifier holds evidence for
+/// every projection it reads: impl selection minting only the proof form that
+/// states its impl's arguments, and each declaration carrying, at a known
+/// position, the impl citation its well-formedness check found for each
+/// application it spells that no premise states -- the choice Rust's check
+/// makes and discards, recorded where it is made. The scopes stay: which
+/// projection the stage may rewrite while it instantiates and stamps is impl
+/// selection's own policy, which no evidence-holding reader replaces.
 enum class LookupScope {
   /// Only a projection whose arguments are all concrete. Its resolution is a
   /// fact about the program: the spelling names one type, and rewriting it into

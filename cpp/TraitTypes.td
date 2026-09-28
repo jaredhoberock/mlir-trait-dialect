@@ -64,10 +64,10 @@ def BoundVarType : TypeDef<TraitDialect, "BoundVar", [
     the bound predicate (`#trait.bound`) it stands in, as `d0` is a dimension of
     the affine map it stands in. It is positional, not a label, and a kind of
     type variable apart from a declaration's `!trait.poly` parameters: the
-    trait and impl verifiers refuse one among a header's parameters, and a
-    predicate array refuses one in any entry but a bound predicate, so no
-    parameter of the impl whose evidence proves a bound requirement can be
-    read as that requirement's variable. It stands in the premises and
+    trait and impl verifiers refuse one among a header's or an associated
+    type's parameters, and a predicate array refuses one in any entry but a
+    bound predicate, so no parameter of the impl whose evidence proves a bound
+    requirement can be read as that requirement's variable. It stands in the premises and
     conclusion of the bound predicate that binds it and in the witness bodies
     proving one; spelled anywhere else (a method's signature, a hop's type
     arguments) it is a variable of that function like any other, and a hop

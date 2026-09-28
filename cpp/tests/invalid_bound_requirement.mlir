@@ -79,6 +79,30 @@ trait.impl private @Has_tuple for @Has[tuple<!trait.bound<0>>]
 
 // -----
 
+// An associated type's own parameter is a declaration's parameter too.
+
+!S = !trait.poly<0>
+trait.trait private @Marker[!S] {}
+trait.trait private @Has[!S] where [forall [!trait.bound<0>] -> @Marker[!trait.proj<@Has[!S], "A", [!trait.bound<0>]>]] {
+  // expected-error @below {{type parameter '!trait.bound<0>' is a binder variable, which stands only inside a bound predicate}}
+  trait.assoc_type @A<[!trait.bound<0>]>
+}
+
+// -----
+
+!S = !trait.poly<0>
+trait.trait private @Marker[!S] {}
+trait.impl private @Marker_i1 for @Marker[i1] {}
+trait.trait private @Has[!S] where [forall [!trait.bound<0>] -> @Marker[!trait.proj<@Has[!S], "A", [!trait.bound<0>]>]] {
+  trait.assoc_type @A<[!trait.poly<1>]>
+}
+trait.impl private @Has_i32 for @Has[i32] witnesses [#trait<witness requirement 0 by @Marker_i1>] {
+  // expected-error @below {{type parameter '!trait.bound<0>' is a binder variable, which stands only inside a bound predicate}}
+  trait.assoc_type @A<[!trait.bound<0>]> = i1
+}
+
+// -----
+
 // A bound entry spells only the trait's parameters and its binder's variables:
 // a premise over a parameter from nowhere would be satisfied by whatever
 // same-labelled parameter a selecting scope holds.
