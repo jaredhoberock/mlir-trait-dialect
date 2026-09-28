@@ -1875,6 +1875,15 @@ static func::FuncOp specializeMethodAsFreeFuncWithLeadingSelfProof(
       return;
     }
     if (std::optional<uint64_t> position = a.getWherePosition()) {
+      ClaimType stated = provenOrSame(a.getClaim());
+      if (stated.isProven()) {
+        Value replacement = WitnessOp::create(rewriter, a.getLoc(),
+                                              stated.getProof(),
+                                              stated.getTraitApplication());
+        rewriter.replaceAllUsesWith(a.getResult(), replacement);
+        toErase.push_back(a);
+        return;
+      }
       uint64_t index = traitRequirementCount + *position;
       auto requirement = getClaimRequirementAt(selfProofTy, module, index);
       if (failed(requirement))
