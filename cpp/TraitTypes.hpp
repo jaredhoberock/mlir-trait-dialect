@@ -1429,13 +1429,10 @@ enum class Citation {
 /// are all decided there holds at every instance of it, so a citation of it
 /// needs this top-level match alone.
 ///
-/// `normalize` is the evidence the caller holds, and both sides are read
-/// through it and nothing else: a proof op's verifier gives the proofs
-/// discharging its impl's obligations, by index; a call's verifier gives the
-/// evidence the call carries; a stage reader gives what it has settled. A
-/// verifier never reads the impls standing around it, so its verdict does not
-/// depend on an unrelated impl. A citation this declines under a weaker reading
-/// can carry under a stronger.
+/// Both sides are read through `normalize` and nothing else, so whether the
+/// cited declaration rebuilds the obligation is a function of the two claims,
+/// the declaration and that reading. A citation this declines under a weaker
+/// reading can carry under a stronger.
 ///
 /// `origin` names the caller: an impl named directly has its equality premises
 /// read through the ground-projection lookup, which raises demand.
@@ -1515,6 +1512,20 @@ LogicalResult bindProofsIn(Type ty,
 ModuleOp getAnchorModule(Operation *anchor);
 
 /// Which projections a lookup is licensed to resolve.
+///
+/// XXX TODO A projection is well-formed when its trait application is
+/// provable, impls included -- Rust's rule -- so a declaration may spell a
+/// projection over an application no premise of its own states and only an
+/// impl proves (`trait Foo where Bar[Wrap<Self>]::Assoc: Cd`). A lookup under
+/// a scope reads such a projection through the impls the module holds, so a
+/// verifier's verdict turns on declarations outside the op it verifies. The
+/// scopes, `ImplProjectionLookup` and the verifier `DemandOrigin`s delete
+/// once every reader holds evidence for every projection it reads: impl
+/// selection minting only the proof form that states its impl's arguments,
+/// and each declaration carrying, at a known position, the impl citation its
+/// well-formedness check found for each application it spells that no premise
+/// states -- the choice Rust's check makes and discards, recorded where it is
+/// made.
 enum class LookupScope {
   /// Only a projection whose arguments are all concrete. Its resolution is a
   /// fact about the program: the spelling names one type, and rewriting it into

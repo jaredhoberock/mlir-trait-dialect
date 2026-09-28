@@ -89,11 +89,6 @@ static bool groundApplicationsMatch(const ObligationDischargeContext &ctx,
     return true;
   if (!ctx.resolveGround)
     return false;
-  // XXX TODO a projection a declaration spells must be over its own self
-  // application, a where-clause application, a trait requirement or a declared
-  // witness (Rust's projection well-formedness rule), so every projection has
-  // evidence at a known index and this module read deletes with LookupScope and
-  // the verifier DemandOrigins.
   auto haveGround = resolveProjectionsByLookup(
       have, ctx.module, DemandOrigin::ProofVerification, LookupScope::Ground,
       ctx.err);
@@ -310,11 +305,6 @@ static FailureOr<SpecializationMap> verifyProjectionResolutionCore(
   // lookup.
   ClaimType selfClaim =
       ClaimType::get(module.getContext(), projectionTy.getTraitApplication());
-  // XXX TODO a projection a declaration spells must be over its own self
-  // application, a where-clause application, a trait requirement or a declared
-  // witness (Rust's projection well-formedness rule), so every projection has
-  // evidence at a known index and this module read deletes with LookupScope and
-  // the verifier DemandOrigins.
   ImplProjectionLookup byImplLookup(module, DemandOrigin::ProofVerification);
   if (failed(verifyEqualAfterInstantiation(
           Type(implOp.getSelfClaim()), *subst, Type(selfClaim),
@@ -358,14 +348,10 @@ static FailureOr<SpecializationMap> verifyProjectionResolutionCore(
   // the cited impl's premises.
   if (implOp.getAssumptions().hasEqualities()) {
     NormalizationContext site = siteEvidence();
-    // XXX TODO a projection a declaration spells must be over its own self
-    // application, a where-clause application, a trait requirement or a
-    // declared witness (Rust's projection well-formedness rule), so every
-    // projection has evidence at a known index and this module read deletes
-    // with LookupScope and the verifier DemandOrigins. Until then a use reads a
-    // closed projection no premise stands behind -- a compiler rule's binding,
-    // a sibling projection its template left generic -- through the module's
-    // impls, as its head comparison and its obligations do.
+    // A use reads a closed projection no premise stands behind -- a compiler
+    // rule's binding, a sibling projection its template left generic --
+    // through the module's impls, as its head comparison and its obligations
+    // do.
     if (!rigidHeadMatch)
       site.setModuleLookup(module, LookupScope::Ground,
                            DemandOrigin::ProofVerification);
@@ -394,11 +380,6 @@ static FailureOr<SpecializationMap> verifyProjectionResolutionCore(
     // impls, so an assumption spelling a ground projection is compared as its
     // resolution -- a non-converging chain refuses.
     if (dischargeCtx.resolveGround) {
-      // XXX TODO a projection a declaration spells must be over its own self
-      // application, a where-clause application, a trait requirement or a
-      // declared witness (Rust's projection well-formedness rule), so every
-      // projection has evidence at a known index and this module read deletes
-      // with LookupScope and the verifier DemandOrigins.
       auto wantGround = resolveProjectionsByLookup(
           want, module, DemandOrigin::ProofVerification, LookupScope::Ground,
           err);
