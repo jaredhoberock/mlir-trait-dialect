@@ -10,7 +10,7 @@
 // nothing checked: @forged names @A_i64 where the projection denotes i32. The
 // obligation is left undischarged instead, so @B_i32's requirement stands
 // unproven and the call through it is refused rather than dispatched to
-// @A_i64's method.
+// @A_i64's method, naming the citation nothing decided.
 
 trait.trait private @Foo[!trait.poly<0>] { trait.assoc_type @Out }
 // expected-note@+1 {{candidate}}
@@ -36,8 +36,9 @@ trait.impl private @A_i64 for @A[i64] {
 trait.impl private @B_i32 for @B[i32] {
   func.func @b(%x: i32) -> i64 {
     %s = trait.assume @B[i32]
-    // expected-error@+2 {{incoherent impls (multiple satisfiable) for '!trait.proj<@Foo[i32], "Out">'}}
-    // expected-error@+1 {{unproven monomorphic claim '!trait.claim<@A[!trait.proj<@Foo[i32], "Out">]>' after instantiate-monomorphs}}
+    // expected-error@+3 {{incoherent impls (multiple satisfiable) for '!trait.proj<@Foo[i32], "Out">'}}
+    // expected-error@+2 {{unproven monomorphic claim '!trait.claim<@A[!trait.proj<@Foo[i32], "Out">]>' after instantiate-monomorphs}}
+    // expected-note@+1 {{proof @forged cites @A_i64 for requirement 0, which nothing decides here}}
     %a = trait.project %s[0] : !trait.claim<@B[i32]> -> !trait.claim<@A[!trait.proj<@Foo[i32], "Out">]>
     %r = trait.method.call %a @A[!trait.proj<@Foo[i32], "Out">]::@a() : () -> i64
     return %r : i64

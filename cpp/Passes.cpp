@@ -2272,9 +2272,25 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
       if (failed(derive.verifySymbolUses(symbolTable)))
         continue;
     }
-    namingCommitment(op, op->emitError())
+    InFlightDiagnostic report =
+        namingCommitment(op, op->emitError())
         << "unproven monomorphic claim " << claim
         << " after instantiate-monomorphs";
+    // A hop off a proven claim reads its requirement's evidence out of the
+    // source's proof, and a citation nothing decides leaves the hop's claim
+    // unproven for selection. Where selection could not prove it either, the
+    // citation the proof names is what the report must point at.
+    if (auto project = dyn_cast<ProjectOp>(op))
+      if (ClaimType source = project.getSourceClaim(); source.isProven()) {
+        auto cited = getClaimRequirementAt(source, getAnchorModule(op),
+                                           project.getIndex(),
+                                           project.getBinderArguments());
+        if (succeeded(cited) && cited->conclusion.isProven())
+          report.attachNote()
+              << "proof " << source.getProof() << " cites "
+              << cited->conclusion.getProof() << " for requirement "
+              << project.getIndex() << ", which nothing decides here";
+      }
   }
   if (hasLeftovers) return failure();
 
