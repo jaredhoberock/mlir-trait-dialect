@@ -122,6 +122,10 @@ bool traitTypeIsAClaim(MlirType type) {
   return isa<ClaimType>(unwrap(type));
 }
 
+bool traitClaimTypeIsMonomorphic(MlirType claimType) {
+  return cast<ClaimType>(unwrap(claimType)).isMonomorphic();
+}
+
 MlirType traitProjectionTypeGet(MlirContext wrappedCtx,
                                 MlirAttribute wrappedTraitApp,
                                 MlirStringRef assocName,

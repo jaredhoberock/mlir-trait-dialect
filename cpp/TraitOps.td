@@ -598,18 +598,6 @@ def ImplOp : TraitDialectOp<"impl", [
 
     SmallVector<ClaimType> getAssumptionsAsClaims();
 
-    FailureOr<SmallVector<ClaimType>> specializeAssumptionsAsClaimsFor(
-        ClaimType actualSelfClaim,
-        Normalizer normalize,
-        llvm::function_ref<InFlightDiagnostic()> errFn);
-
-    FailureOr<SmallVector<ClaimType>> specializeAssumptionsAsClaimsFor(
-        ClaimType actualSelfClaim,
-        llvm::function_ref<InFlightDiagnostic()> errFn = nullptr) {
-      return specializeAssumptionsAsClaimsFor(actualSelfClaim, Normalizer(),
-                                              errFn);
-    }
-
     /// This impl's obligations at `actualSelfClaim` when the arguments its
     /// parameters take there are `arguments`: the trait's application
     /// requirements, read through this impl's own bindings, then the impl's
@@ -825,13 +813,13 @@ def AllegeOp : TraitDialectOp<"allege", [
     satisfied, `@Trait[Types...]`, or that two spellings name one type,
     `!A = !B`.
 
-    By default, type arguments must be concrete (monomorphic). This enforces
-    a key invariant: polymorphic code never fabricates claims. Claims
-    originate at monomorphic call sites and flow into polymorphic code
+    By default, the claim must be monomorphic: it spells no type variable.
+    This enforces a key invariant: polymorphic code never fabricates claims.
+    Claims originate at monomorphic call sites and flow into polymorphic code
     through `!trait.claim` parameters.
 
-    The optional `unsafe` keyword relaxes this restriction, allowing
-    polymorphic type arguments. This is used for ImplGenerator-provided
+    The optional `unsafe` keyword relaxes this restriction, allowing a claim
+    that spells type variables. This is used for ImplGenerator-provided
     evidence where the obligation cannot be checked until types are
     instantiated.
 
@@ -858,8 +846,8 @@ def AllegeOp : TraitDialectOp<"allege", [
 
     An allegation is a trusted assertion and carries no justification: impl
     selection proves its claim by whichever impl it selects, and a claim
-    nothing proves -- an equality whose sides resolve to two types among
-    them -- is refused here.
+    nothing proves -- an application no impl serves, or an equality whose
+    sides resolve to two types -- is refused here.
   }];
 
   let arguments = (ins OptionalAttr<UnitAttr>:$unsafe);
@@ -871,15 +859,6 @@ def AllegeOp : TraitDialectOp<"allege", [
       mlir::MLIRContext* ctx = $_builder.getContext();
       auto claimTy = ClaimType::get(ctx, app);
       return build($_builder, $_state, claimTy, /*unsafe=*/nullptr);
-    }]>,
-    OpBuilder<(ins "::mlir::trait::TraitApplicationAttr":$app,
-                   "bool":$isUnsafe), [{
-      mlir::MLIRContext* ctx = $_builder.getContext();
-      auto claimTy = ClaimType::get(ctx, app);
-      auto unsafeAttr = isUnsafe
-        ? $_builder.getUnitAttr()
-        : mlir::UnitAttr();
-      return build($_builder, $_state, claimTy, unsafeAttr);
     }]>
   ];
 
@@ -1153,7 +1132,7 @@ def DeriveOp : TraitDialectOp<"derive", [
   // derived claim is read off the application and the operand types are
   // printed only when there are operands.
   let assemblyFormat = [{
-    custom<ClaimApplication>(type($result)) `from` $impl ``
+    custom<ClaimPredicate>(type($result)) `from` $impl ``
     custom<ImplCitationArguments>($arguments) `given` `(` $assumptions `)`
     (`:` `(` type($assumptions)^ `)`)? attr-dict-with-keyword
   }];

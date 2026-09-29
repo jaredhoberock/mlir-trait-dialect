@@ -147,28 +147,10 @@ static void printImplHeader(::mlir::OpAsmPrinter &printer, ::mlir::Operation *op
   printWhereClause(printer, op, assumptions);
 }
 
-/// The claim an allegation or a derive produces, spelled by the trait
-/// application it states: read as that application's unproven claim, and
-/// printed as the application the claim states.
-static ::mlir::ParseResult parseClaimApplication(::mlir::OpAsmParser &parser,
-                                                 ::mlir::Type &claim) {
-  auto application = ::llvm::dyn_cast_or_null<TraitApplicationAttr>(
-      TraitApplicationAttr::parse(parser, {}));
-  if (!application)
-    return parser.emitError(parser.getCurrentLocation(),
-                            "expected a TraitApplicationAttr");
-  claim = ClaimType::get(parser.getContext(), application);
-  return ::mlir::success();
-}
-
-static void printClaimApplication(::mlir::OpAsmPrinter &printer,
-                                  ::mlir::Operation *, ::mlir::Type claim) {
-  ::llvm::cast<ClaimType>(claim).getTraitApplication().print(printer);
-}
-
-/// The claim an allegation or an assume names by spelling, read by the
-/// predicate it states: an application `@Trait[...]` or an equality
-/// `!A = !B`, each read as its unproven claim, and printed as that predicate.
+/// The unproven claim an op names by spelling the predicate it states: an
+/// application `@Trait[...]` or an equality `!A = !B`, read as its unproven
+/// claim and printed as that predicate. An op whose result admits one arm only
+/// refuses the other through its result type's constraint.
 static ::mlir::ParseResult parseClaimPredicate(::mlir::OpAsmParser &parser,
                                                ::mlir::Type &claim) {
   ::mlir::FailureOr<::mlir::Attribute> predicate =
@@ -2089,32 +2071,6 @@ SmallVector<ClaimType> ImplOp::getAssumptionsAsClaims() {
   return llvm::map_to_vector(getAssumptions().getApplications(),
                              [ctx](TraitApplicationAttr app) {
     return ClaimType::get(ctx, app);
-  });
-}
-
-FailureOr<SmallVector<ClaimType>> ImplOp::specializeAssumptionsAsClaimsFor(
-    ClaimType actualSelfClaim,
-    Normalizer normalize,
-    llvm::function_ref<InFlightDiagnostic()> errFn) {
-  // The arguments actualSelfClaim supplies for this impl's parameters, read off
-  // it by position; `normalize` is the caller's established context, which is
-  // what a parameter the header leaves open and the where clause determines is
-  // read through. Reading is all this does: whether the header carries to the
-  // claim is settled where the impl was matched to it -- at selection, or at the
-  // verifier of the proof or derive citing it -- and remaking that verdict here
-  // would remake it under whatever context stands at the reading instead.
-  SpecializationMap subst =
-      readTypeArgumentsFor(actualSelfClaim, normalize).toSpecialization();
-
-  // apply the substitution to each assumption. As with a trait's requirements,
-  // a substitution rewrites the type arguments a claim carries and never the
-  // claim wrapper (its keys are never a whole ClaimType), so the result is
-  // always a claim; the cast holds structurally even on unverified IR.
-  return llvm::map_to_vector(getAssumptionsAsClaims(), [&](ClaimType assumption) {
-    ClaimType specializedAssumption = dyn_cast_or_null<ClaimType>(instantiate(assumption, subst));
-    if (!specializedAssumption)
-      llvm_unreachable("ImplOp::specializeAssumptionsAsClaimsFor: expected ClaimType");
-    return specializedAssumption;
   });
 }
 

@@ -39,6 +39,7 @@ unsafe extern "C" {
                                      trait_app: MlirAttribute) -> MlirType;
     fn traitClaimTypeGetTraitApplication(claim_ty: MlirType) -> MlirAttribute;
     fn traitTypeIsAClaim(ty: MlirType) -> bool;
+    fn traitClaimTypeIsMonomorphic(claim_ty: MlirType) -> bool;
     fn traitGetGenericTypesIn(ty: MlirType, results: *mut MlirType, max_results: isize) -> isize;
 
     fn traitProjectionTypeGet(ctx: MlirContext,
@@ -353,29 +354,29 @@ pub fn func_call<'c>(loc: Location<'c>,
 }
 
 /// The unproven claim of `predicate`, a trait application or a type equality
-/// (`type_equality_attr`), in the location's context.
+/// (`type_equality_attr`), in the location's context. Panics on any other
+/// attribute, which is a malformed call rather than a refused program.
 fn unproven_claim<'c>(loc: Location<'c>, predicate: Attribute<'c>) -> Type<'c> {
-    unsafe { Type::from_raw(traitClaimTypeGet(mlirLocationGetContext(loc.to_raw()), predicate.to_raw())) }
+    let claim = unsafe {
+        Type::from_raw(traitClaimTypeGet(mlirLocationGetContext(loc.to_raw()), predicate.to_raw()))
+    };
+    assert!(!claim.to_raw().ptr.is_null(), "a claim states a trait application or a type equality");
+    claim
 }
 
-/// Build a `trait.allege` of the monomorphic claim predicate `predicate`: a
-/// trait application or a type equality (`type_equality_attr`).
+/// Build a `trait.allege` of the claim predicate `predicate`, a trait
+/// application or a type equality (`type_equality_attr`). The allegation is
+/// marked `unsafe` exactly when its claim spells a type variable: such a claim
+/// is checked once the instance is concrete.
 pub fn allege<'c>(loc: Location<'c>,
                   predicate: Attribute<'c>,
 ) -> Operation<'c> {
-    build_op(OperationBuilder::new("trait.allege", loc)
-        .add_results(&[unproven_claim(loc, predicate)]))
-}
-
-/// Build a `trait.allege` of the claim predicate `predicate` marked `unsafe`,
-/// which may spell type variables: its claim is checked once the instance is
-/// concrete.
-pub fn allege_unsafe<'c>(loc: Location<'c>,
-                         predicate: Attribute<'c>,
-) -> Operation<'c> {
-    build_op(OperationBuilder::new("trait.allege", loc)
-        .add_attributes(&[(identifier(loc, "unsafe"), unit_attr(loc))])
-        .add_results(&[unproven_claim(loc, predicate)]))
+    let claim = unproven_claim(loc, predicate);
+    let mut builder = OperationBuilder::new("trait.allege", loc);
+    if !unsafe { traitClaimTypeIsMonomorphic(claim.to_raw()) } {
+        builder = builder.add_attributes(&[(identifier(loc, "unsafe"), unit_attr(loc))]);
+    }
+    build_op(builder.add_results(&[claim]))
 }
 
 /// Build a `trait.witness` of `trait_app` proved by the proof or unconditional

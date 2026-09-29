@@ -724,7 +724,7 @@ static FailureOr<ResolutionHop> resolutionHopOf(ProjectionType proj,
 /// does, and runs to a fixed point because a binding may itself spell a
 /// projection. Fails where a hop fails or a ground projection still stands.
 static FailureOr<std::pair<Type, Type>>
-resolutionHopsOf(TypeEqualityAttr eq, const ResolutionSource &source,
+resolveEndpoints(TypeEqualityAttr eq, const ResolutionSource &source,
                  SmallVectorImpl<ResolutionHop> &hops) {
   if (eq.getLhs() == eq.getRhs())
     return std::make_pair(eq.getLhs(), eq.getRhs());
@@ -886,14 +886,9 @@ struct ProveClaimResultPattern : public RewritePattern {
     ReadOnlyImplResolver here = reading.in(scope);
 
     // build or reuse canonical evidence for this claim
-    FailureOr<FlatSymbolRefAttr> sym =
-        minting ? minting->resolveAndEnsureProofFor(claim, scope, rewriter, errFn)
-                : here.getRecordedProofFor(claim);
-    if (failed(sym)) {
-      if (!minting)
-        (void)here.decline(claim);
+    FailureOr<FlatSymbolRefAttr> sym = proofFor(claim, scope, rewriter, errFn);
+    if (failed(sym))
       return rewriter.notifyMatchFailure(op, "couldn't find proof of this claim");
-    }
 
     if (commitmentBroken(*sym))
       return rewriter.notifyMatchFailure(op, "selection chose another impl");
@@ -916,6 +911,22 @@ struct ProveClaimResultPattern : public RewritePattern {
     );
 
     return success();
+  }
+
+  /// The proof of the monomorphic application claim `claim` demanded in
+  /// `scope`: the one selection makes where this pattern may establish facts,
+  /// else the one the record holds, a claim the record does not prove being
+  /// declined for a later round.
+  FailureOr<FlatSymbolRefAttr>
+  proofFor(ClaimType claim, ModuleOp scope, PatternRewriter &rewriter,
+           llvm::function_ref<InFlightDiagnostic()> errFn) const {
+    if (minting)
+      return minting->resolveAndEnsureProofFor(claim, scope, rewriter, errFn);
+    ReadOnlyImplResolver here = reading.in(scope);
+    FailureOr<FlatSymbolRefAttr> proof = here.getRecordedProofFor(claim);
+    if (failed(proof))
+      (void)here.decline(claim);
+    return proof;
   }
 
   /// Proves the monomorphic equality `eq` `allegation` alleges: each projection
@@ -942,17 +953,12 @@ struct ProveClaimResultPattern : public RewritePattern {
         (void)here.decline(proj);
       return std::nullopt;
     };
-    auto proofOf = [&](ClaimType claim) -> FailureOr<FlatSymbolRefAttr> {
-      if (minting)
-        return minting->resolveAndEnsureProofFor(claim, scope, rewriter, errFn);
-      FailureOr<FlatSymbolRefAttr> proof = here.getRecordedProofFor(claim);
-      if (failed(proof))
-        (void)here.decline(claim);
-      return proof;
+    auto proofOf = [&](ClaimType claim) {
+      return proofFor(claim, scope, rewriter, errFn);
     };
     ResolutionSource source{here, hop, proofOf, scope};
     SmallVector<ResolutionHop> hops;
-    auto sides = resolutionHopsOf(eq, source, hops);
+    auto sides = resolveEndpoints(eq, source, hops);
     if (failed(sides))
       return rewriter.notifyMatchFailure(allegation,
                                          "a projection is not resolved");
@@ -1943,10 +1949,12 @@ citedImplAndClaim(Operation *op) {
 /// assume goes dead and is eliminated; where it feeds a use that keeps the
 /// equality claim -- an operand of an already-ground callee that retains the
 /// parameter -- nothing consumes it, and a bare `trait.assume` is an axiom no
-/// legalization removes. Now that the equality ground-resolves, this proves it
-/// as an equality allegation is proved, through `settle`, which may put an
-/// undemanded projection to selection; proofs the premises need are minted
-/// through `settle.proofBuilder` at the module body.
+/// legalization removes. Now that the equality ground-resolves, this resolves
+/// each projection its endpoints spell through the impl `settle` selects for
+/// the projection's application, which may put an undemanded projection to
+/// selection, and builds the witness of those hops where the endpoints meet;
+/// proofs the premises need are minted through `settle.proofBuilder` at the
+/// module body.
 static LogicalResult reduceGroundEqualityAssume(
     AssumeOp assume, TypeEqualityAttr eq, const ProjectionSettleContext &settle) {
   auto hop = [&](ProjectionType proj) { return resolveProjectionHop(proj, settle); };
@@ -1956,7 +1964,7 @@ static LogicalResult reduceGroundEqualityAssume(
   };
   ResolutionSource source{settle.reading, hop, proofOf, settle.module};
   SmallVector<ResolutionHop> hops;
-  auto sides = resolutionHopsOf(eq, source, hops);
+  auto sides = resolveEndpoints(eq, source, hops);
   if (failed(sides) || sides->first != sides->second)
     return failure();
   OpBuilder builder(assume);
@@ -2231,9 +2239,12 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
   // proving. Keying this check on the result type rather than on the set of
   // claim-producing ops makes it total over producers: an op whose claims the
   // patterns above fail to discharge is an error here, never a silent gap. The
-  // whole result type is walked, so a claim nested inside an aggregate is caught
-  // too, not only a claim that is the root type. Trait infrastructure regions
-  // are templates and keep their unproven claims.
+  // one claim that passes unproven is an equality whose endpoints ground-resolve
+  // to one spelling, standing on an op erasure removes or on an assume this
+  // check reduces to its witness. The whole result type is walked, so a claim
+  // nested inside an aggregate is caught too, not only a claim that is the root
+  // type. Trait infrastructure regions are templates and keep their unproven
+  // claims.
   bool hasLeftovers = false;
   ReadOnlyImplResolver reading(*resolver);
   // Settling an equality claim resolves the projections in its endpoints, which
@@ -2276,13 +2287,15 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
     // ground-resolve to one spelling through impls whose obligations hold. A
     // monomorphic equality that resolves is not a leftover; one whose projection
     // has no obligation-holding impl stays unequal and is reported like an
-    // unprovable application claim.
-    if (claim.isEquality() &&
+    // unprovable application claim. An allegation is proved by the claim-proving
+    // pattern alone, so one still standing here is a leftover however its
+    // endpoints resolve.
+    if (claim.isEquality() && !isa<AllegeOp>(op) &&
         equalityClaimGroundResolvesToOneSpelling(claim, settle)) {
       // A surviving equality `trait.assume` is an inherited axiom no
       // legalization removes; now that it ground-resolves, replace it with the
-      // witness proving it. Producers already carrying legal evidence (a
-      // `trait.witness`) need nothing here.
+      // witness proving it. A `trait.witness` or `trait.project` standing here
+      // is removed by erasure.
       if (auto assume = dyn_cast<AssumeOp>(op))
         if (failed(reduceGroundEqualityAssume(assume, claim.getEqualityAttr(),
                                               settle))) {
