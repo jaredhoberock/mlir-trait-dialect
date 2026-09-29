@@ -63,7 +63,7 @@ fn test_jit() {
             );
 
             let block = Block::new(&[(self_ty, loc), (other_ty, loc)]);
-            let c = block.append_operation(trait_::assume(
+            let c = block.append_operation(trait_::assume_self(
                 loc,
                 trait_::claim_type(
                   &context,
@@ -154,14 +154,15 @@ fn test_jit() {
             eq
         };
 
-        let partial_eq_impl_i32_i32 = trait_::impl_(
+        let partial_eq_impl_i32_i32 = trait_::impl_named(
             loc,
+            "PartialEq_impl_i32_i32",
             trait_::trait_application_attr(
                 &context,
                 "PartialEq",
                 &[i32_ty, i32_ty],
             ),
-            &[], // no assumptions
+            &[], // no where-clause predicates
         );
 
         let block = partial_eq_impl_i32_i32

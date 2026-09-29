@@ -324,12 +324,12 @@ LogicalResult verifyDeclaredClaimProofs(ModuleOp module) {
 // VerifyAcyclicTraitsPass
 //===----------------------------------------------------------------------===//
 
-// The structural half of the acyclicity check, split from the full verify tail
-// so it is safe on unverified IR: it reads trait symbols by name and refuses a
-// dangling `where`-clause reference through a diagnostic rather than reaching the
-// aborting trait accessor. The trait-to-trait edges it walks form the
-// `where`-clause dependency graph; a back-edge is a cycle.
-LogicalResult verifyAcyclicTraitsStructure(ModuleOp module) {
+// The structural half of the acyclicity check, which runs before the module is
+// verified: it reads trait symbols by name and refuses a dangling `where`-clause
+// reference through a diagnostic rather than reaching the aborting trait
+// accessor. The trait-to-trait edges it walks form the `where`-clause dependency
+// graph; a back-edge is a cycle.
+static LogicalResult verifyAcyclicTraitsStructure(ModuleOp module) {
   enum class Status : uint8_t { NotSeen = 0, InPath, Done };
   DenseMap<TraitOp, Status> status;
   SmallVector<TraitOp, 16> stack;
@@ -1099,65 +1099,37 @@ specializeCallTarget(CallOpT op, PatternRewriter &rewriter,
   return target;
 }
 
-struct FuncCallOpLowering : public OpRewritePattern<FuncCallOp> {
+/// Lowers a trait call whose instance is ready to a call of that instance.
+///
+/// A `trait.func.call` becomes a `func.call` of the specialized callee, its
+/// operands passing through untouched: the readiness law established that every
+/// operand claim is proven, so specialization never bakes an unprovable claim
+/// parameter into the callee. A `trait.method.call` becomes a `trait.func.call`
+/// of the method's free-function instance, its receiver claim passed as the
+/// leading argument.
+template <typename CallOpT>
+struct CallOpLowering : public OpRewritePattern<CallOpT> {
   ReadOnlyImplResolver reading;
 
-  FuncCallOpLowering(MLIRContext *ctx, const ReadOnlyImplResolver &reading)
-    : OpRewritePattern(ctx), reading(reading) {}
+  CallOpLowering(MLIRContext *ctx, const ReadOnlyImplResolver &reading)
+    : OpRewritePattern<CallOpT>(ctx), reading(reading) {}
 
-  LogicalResult matchAndRewrite(FuncCallOp callOp, PatternRewriter &rewriter) const override {
+  LogicalResult matchAndRewrite(CallOpT op, PatternRewriter &rewriter) const override {
     // The one readiness law, checked before any demand is raised: monomorphic
-    // operands, proven operand claims, a callee at module scope with a
-    // signature.
-    if (!isRewritableGenericCall(callOp))
-      return rewriter.notifyMatchFailure(callOp, "not a rewritable generic call");
-
-    // The predicate confirmed the callee's signature exists; read it again to
-    // specialize against, as the substitution below reads it.
-    auto formalTy = callOp.getCalleeFunctionType();
-    if (failed(formalTy))
-      return rewriter.notifyMatchFailure(callOp, "couldn't get callee function type");
-
-    DemandFrame frame(callOp.getLoc());
-
-    auto target = specializeCallTarget(callOp, rewriter, reading, *formalTy);
-    if (failed(target))
-      return failure();
-
-    // Operands pass through untouched (as in MethodCallOpLowering). The
-    // readiness law above established that every operand claim is proven, so
-    // specialization never bakes an unprovable claim parameter into the callee:
-    // an operand application claim reaches this point only after the impl backing
-    // it resolved and its proof settled.
-    rewriter.replaceOpWithNewOp<func::CallOp>(
-      callOp,
-      target->callee.getSymName(),
-      target->resultTypes,
-      callOp.getOperands()
-    );
-
-    return success();
-  }
-};
-
-struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
-  ReadOnlyImplResolver reading;
-
-  MethodCallOpLowering(MLIRContext *ctx, const ReadOnlyImplResolver &reading)
-    : OpRewritePattern(ctx), reading(reading) {}
-
-  LogicalResult matchAndRewrite(MethodCallOp op, PatternRewriter &rewriter) const override {
-    // The one readiness law, checked before any demand is raised: monomorphic
-    // operands, a proven receiver claim, proven argument claims, a method with a
-    // signature.
+    // operands, proven claims, and a callee with a signature -- for a free
+    // function, one at module scope.
     if (!isRewritableGenericCall(op))
       return rewriter.notifyMatchFailure(op, "not a rewritable generic call");
 
-    // The predicate confirmed the method's signature exists; read it again to
+    // The predicate confirmed the callee's signature exists; read it again to
     // specialize against, as the substitution below reads it.
-    auto formalTy = op.getMethodFunctionType();
+    FailureOr<FunctionType> formalTy;
+    if constexpr (std::is_same_v<CallOpT, FuncCallOp>)
+      formalTy = op.getCalleeFunctionType();
+    else
+      formalTy = op.getMethodFunctionType();
     if (failed(formalTy))
-      return rewriter.notifyMatchFailure(op, "couldn't get method function type");
+      return rewriter.notifyMatchFailure(op, "couldn't get the callee's function type");
 
     DemandFrame frame(op.getLoc());
 
@@ -1165,19 +1137,16 @@ struct MethodCallOpLowering : public OpRewritePattern<MethodCallOp> {
     if (failed(target))
       return failure();
 
-    // pass the claim as the first argument to the specialized callee
-    SmallVector<Value> args;
-    args.push_back(op.getClaim());
-    llvm::append_range(args, op.getArguments());
-
-    // replace with a trait.func.call to the specialized callee
-    rewriter.replaceOpWithNewOp<FuncCallOp>(
-      op,
-      target->resultTypes,
-      target->callee.getSymName(),
-      args
-    );
-
+    if constexpr (std::is_same_v<CallOpT, FuncCallOp>) {
+      rewriter.replaceOpWithNewOp<func::CallOp>(
+          op, target->callee.getSymName(), target->resultTypes, op.getOperands());
+    } else {
+      SmallVector<Value> args;
+      args.push_back(op.getClaim());
+      llvm::append_range(args, op.getArguments());
+      rewriter.replaceOpWithNewOp<FuncCallOp>(
+          op, target->resultTypes, target->callee.getSymName(), args);
+    }
     return success();
   }
 };
@@ -1764,7 +1733,7 @@ citedImplAndClaim(Operation *op) {
   if (!witness || witness.getRefl() || witness.getResultClaim().isEquality())
     return std::nullopt;
   auto cited = ProofOp::getProofOpOrUnconditionalImplOp(
-      module, witness.getProofAttr(), /*err=*/nullptr);
+      module, witness.getProof(), /*err=*/nullptr);
   if (failed(cited))
     return std::nullopt;
   auto impl = dyn_cast<ImplOp>(*cited);
@@ -2160,8 +2129,8 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
       RewritePatternSet patterns(ctx);
       patterns.add<ProveClaimResultPattern>(ctx, reading);
       patterns.add<MonomorphizeResultTypesPattern>(ctx);
-      patterns.add<FuncCallOpLowering>(ctx, reading);
-      patterns.add<MethodCallOpLowering>(ctx, reading);
+      patterns.add<CallOpLowering<FuncCallOp>, CallOpLowering<MethodCallOp>>(
+          ctx, reading);
       patterns.add<ResolveProjectionsPattern>(ctx, reading);
       if (askImplSelectionForImpls)
         patterns.add<AskImplSelectionForADeclaredClaimPattern>(ctx, *resolver);

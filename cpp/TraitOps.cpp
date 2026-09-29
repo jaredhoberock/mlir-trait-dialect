@@ -63,6 +63,88 @@ static void printImplCitationArguments(::mlir::OpAsmPrinter &printer,
     printImplArguments(printer, ::llvm::to_vector(
                                     arguments.getAsRange<TypeBindingAttr>()));
 }
+
+/// A declaration's where clause, `where [predicate, ...]`: read as the empty
+/// clause where the keyword is absent, and printed, with the space before it,
+/// only where it states something.
+static ::mlir::ParseResult parseWhereClause(::mlir::OpAsmParser &parser,
+                                            PredicateArrayAttr &clause) {
+  if (::mlir::failed(parser.parseOptionalKeyword("where"))) {
+    clause = PredicateArrayAttr::get(parser.getContext(),
+                                     ::llvm::ArrayRef<::mlir::Attribute>());
+    return ::mlir::success();
+  }
+  clause = ::llvm::dyn_cast_or_null<PredicateArrayAttr>(
+      PredicateArrayAttr::parse(parser, {}));
+  if (!clause)
+    return parser.emitError(parser.getCurrentLocation(),
+                            "expected a predicate array");
+  return ::mlir::success();
+}
+
+static void printWhereClause(::mlir::OpAsmPrinter &printer, ::mlir::Operation *,
+                             PredicateArrayAttr clause) {
+  if (clause.empty())
+    return;
+  printer << " where ";
+  clause.print(printer);
+}
+
+/// An impl's header, `[@name] for @Trait[...] [where [...]]`. The name is read
+/// as the one synthesized from the application and the where clause where it is
+/// absent, and printed only where it is another.
+static ::mlir::ParseResult
+parseImplHeader(::mlir::OpAsmParser &parser, ::mlir::StringAttr &symName,
+                TraitApplicationAttr &selfApplication,
+                PredicateArrayAttr &assumptions) {
+  (void)parser.parseOptionalSymbolName(symName);
+  if (parser.parseKeyword("for"))
+    return ::mlir::failure();
+  selfApplication = ::llvm::dyn_cast_or_null<TraitApplicationAttr>(
+      TraitApplicationAttr::parse(parser, {}));
+  if (!selfApplication)
+    return parser.emitError(parser.getCurrentLocation(),
+                            "expected a TraitApplicationAttr");
+  if (parseWhereClause(parser, assumptions))
+    return ::mlir::failure();
+  if (!symName)
+    symName = parser.getBuilder().getStringAttr(
+        ImplOp::generateSymName(selfApplication, assumptions));
+  return ::mlir::success();
+}
+
+static void printImplHeader(::mlir::OpAsmPrinter &printer, ::mlir::Operation *op,
+                            ::mlir::StringAttr symName,
+                            TraitApplicationAttr selfApplication,
+                            PredicateArrayAttr assumptions) {
+  if (symName.getValue() !=
+      ImplOp::generateSymName(selfApplication, assumptions)) {
+    printer.printSymbolName(symName.getValue());
+    printer << ' ';
+  }
+  printer << "for ";
+  selfApplication.print(printer);
+  printWhereClause(printer, op, assumptions);
+}
+
+/// The claim an allegation or a derive produces, spelled by the trait
+/// application it states: read as that application's unproven claim, and
+/// printed as the application the claim states.
+static ::mlir::ParseResult parseClaimApplication(::mlir::OpAsmParser &parser,
+                                                 ::mlir::Type &claim) {
+  auto application = ::llvm::dyn_cast_or_null<TraitApplicationAttr>(
+      TraitApplicationAttr::parse(parser, {}));
+  if (!application)
+    return parser.emitError(parser.getCurrentLocation(),
+                            "expected a TraitApplicationAttr");
+  claim = ClaimType::get(parser.getContext(), application);
+  return ::mlir::success();
+}
+
+static void printClaimApplication(::mlir::OpAsmPrinter &printer,
+                                  ::mlir::Operation *, ::mlir::Type claim) {
+  ::llvm::cast<ClaimType>(claim).getTraitApplication().print(printer);
+}
 } // namespace mlir::trait
 
 #define GET_OP_CLASSES
@@ -320,6 +402,28 @@ static LogicalResult verifyParameterIsNoBinderVariable(Operation *op,
   return success();
 }
 
+/// The type variable entry `declared` of `assoc`'s type parameter list
+/// declares, refused where it stands when the entry is not a type, not a type
+/// variable, or carries a binder variable. A child's own invariants are
+/// verified after its parent's, so the entry is read as an attribute that may
+/// be anything rather than cast.
+static FailureOr<Type> readAssociatedTypeParameter(AssocTypeOp assoc,
+                                                   Attribute declared) {
+  auto typeAttr = dyn_cast<TypeAttr>(declared);
+  if (!typeAttr)
+    return assoc.emitOpError()
+           << "type parameter list holds " << declared << ", which is not a type";
+  Type param = typeAttr.getValue();
+  if (!isa<GenericTypeInterface>(param))
+    return assoc.emitOpError()
+           << "type parameter list holds " << param
+           << ", which is not a type variable";
+  for (GenericTypeInterface inside : getTypeParametersIn(param))
+    if (failed(verifyParameterIsNoBinderVariable(assoc, Type(inside))))
+      return failure();
+  return param;
+}
+
 LogicalResult TraitOp::verify() {
   if (failed(verifyTemplateIsNotPublic(getOperation())))
     return failure();
@@ -351,10 +455,6 @@ LogicalResult TraitOp::verify() {
   // A parameter is a type variable: it is the key a projection's argument is
   // substituted for, so a ground type standing in the list would carry every
   // occurrence of that same type in the binding away with it.
-  //
-  // A child's own invariants are verified after its parent's, so each entry is
-  // read as an attribute that may be anything and refused where it stands rather
-  // than cast.
   DenseSet<Type> gatParams;
   for (Operation &op : getBody().front()) {
     auto assoc = dyn_cast<AssocTypeOp>(op);
@@ -363,24 +463,15 @@ LogicalResult TraitOp::verify() {
     ArrayAttr declaredParams = assoc.getTypeParamsAttr();
     if (!declaredParams)
       continue;
-    for (Attribute tyAttr : declaredParams) {
-      auto typeAttr = dyn_cast<TypeAttr>(tyAttr);
-      if (!typeAttr)
+    for (Attribute declared : declaredParams) {
+      FailureOr<Type> param = readAssociatedTypeParameter(assoc, declared);
+      if (failed(param))
+        return failure();
+      if (uniqueParams.contains(*param))
         return assoc.emitOpError()
-               << "type parameter list holds " << tyAttr << ", which is not a type";
-      Type param = typeAttr.getValue();
-      if (!isa<GenericTypeInterface>(param))
-        return assoc.emitOpError()
-               << "type parameter list holds " << param
-               << ", which is not a type variable";
-      for (GenericTypeInterface inside : getTypeParametersIn(param))
-        if (failed(verifyParameterIsNoBinderVariable(assoc, Type(inside))))
-          return failure();
-      if (uniqueParams.contains(param))
-        return assoc.emitOpError()
-               << "type parameter " << param << " is already a parameter of trait '@"
+               << "type parameter " << *param << " is already a parameter of trait '@"
                << getSymName() << "'";
-      gatParams.insert(param);
+      gatParams.insert(*param);
     }
   }
 
@@ -569,104 +660,10 @@ SmallVector<ImplOp> TraitOp::getCandidateImplsFor(ClaimType wanted,
   return result;
 }
 
-// Parse the bracketed parameter list shared by trait and associated type
-// declarations. Keep the explicit square delimiter, including the empty list.
-static ParseResult parseTypeParameters(OpAsmParser &p, ArrayAttr &parameters) {
-  SmallVector<Type> types;
-  if (p.parseCommaSeparatedList(OpAsmParser::Delimiter::Square, [&] {
-        Type type;
-        if (p.parseType(type)) return failure();
-        types.push_back(type);
-        return success();
-      }))
-    return failure();
-  parameters = p.getBuilder().getTypeArrayAttr(types);
-  return success();
-}
-
-ParseResult TraitOp::parse(OpAsmParser &p, OperationState &s) {
-  MLIRContext *ctx = p.getContext();
-
-  // optional `private`/`nested` keyword before the name, as func.func reads it;
-  // a missing keyword is not an error (the op is public) and consumes nothing.
-  (void)mlir::impl::parseOptionalVisibilityKeyword(p, s.attributes);
-
-  // sym_name
-  StringAttr symName;
-  if (p.parseSymbolName(symName, "sym_name", s.attributes))
-    return failure();
-
-  // [ type_params ]
-  ArrayAttr typeParams;
-  if (parseTypeParameters(p, typeParams)) return failure();
-  s.addAttribute("type_params", typeParams);
-
-  // requirements
-  auto requirements = PredicateArrayAttr::get(ctx, ArrayRef<Attribute>());
-  if (succeeded(p.parseOptionalKeyword("where"))) {
-    requirements = dyn_cast_or_null<PredicateArrayAttr>(PredicateArrayAttr::parse(p,{}));
-    if (!requirements)
-      return p.emitError(p.getCurrentLocation(), "expected a predicate array");
-  }
-  s.addAttribute("requirements", requirements);
-
-  // attr-dict-with-keyword
-  if (p.parseOptionalAttrDictWithKeyword(s.attributes))
-    return failure();
-
-  // region body
-  Region *body = s.addRegion();
-  if (p.parseRegion(*body, /*args=*/{}, /*types=*/{})) return failure();
-  if (body->empty()) body->emplaceBlock();
-
-  return success();
-}
-
-void TraitOp::print(OpAsmPrinter &p) {
-  // optional `private`/`nested` keyword before the name; public is elided
-  if (auto vis = getSymVisibilityAttr())
-    if (vis.getValue() != "public")
-      p << ' ' << vis.getValue();
-
-  // `@sym_name`
-  p << ' ';
-  p.printSymbolName(getSymNameAttr());
-
-  // `[ type_params ]`
-  p << "[";
-  llvm::interleaveComma(getTypeParams(), p, [&](Attribute tyAttr) {
-    p.printType(cast<TypeAttr>(tyAttr).getValue());
-  });
-  p << ']';
-
-  // print requirements if not empty
-  if (!getRequirements().empty()) {
-    p << " where ";
-    getRequirements().print(p);
-  }
-
-  // print any trailing attributes
-  p.printOptionalAttrDictWithKeyword((*this)->getAttrs(),
-                                     /*elided=*/{"sym_name","type_params","requirements","sym_visibility"});
-
-  // region body
-  p << ' ';
-  p.printRegion(getBody(), /*printEntryBlockArgs=*/false);
-}
-
 
 //===----------------------------------------------------------------------===//
 // ImplOp
 //===----------------------------------------------------------------------===//
-
-/// A verified equality-armed witness in replayable form: the cited impl, the
-/// projection's trait application, and the substitution the witness's
-/// arguments make, ready for NormalizationContext::addLocalProjectionRule.
-struct ImplWitnessRule {
-  ImplOp impl;
-  TraitApplicationAttr app;
-  SpecializationMap subst;
-};
 
 /// Verifies an impl's equality-armed witnesses and returns each as a local
 /// resolution rule. Such a witness certifies that a sibling impl binds the
@@ -685,10 +682,10 @@ struct ImplWitnessRule {
 /// would accept a generic impl on the strength of one instance -- while one
 /// citing a blanket sibling at the host's parameters is the evidence a generic
 /// impl's own header equalities need.
-static FailureOr<SmallVector<ImplWitnessRule>> collectImplWitnessRules(
+static FailureOr<SmallVector<LocalProjectionRule>> collectImplWitnessRules(
     ImplOp impl, ModuleOp module,
     llvm::function_ref<InFlightDiagnostic()> errFn) {
-  SmallVector<ImplWitnessRule> rules;
+  SmallVector<LocalProjectionRule> rules;
   ArrayAttr witnesses = impl.getWitnessesAttr();
   if (!witnesses)
     return rules;
@@ -708,19 +705,12 @@ static FailureOr<SmallVector<ImplWitnessRule>> collectImplWitnessRules(
     auto witness = cast<WitnessAttr>(entry);
     if (!isa<TypeEqualityAttr>(witness.getPredicate()))
       continue;
-    auto projectionTy = dyn_cast<ProjectionType>(witness.getProjection());
-    if (!projectionTy)
-      return impl.emitOpError()
-             << "a witness must name a projection, found "
-             << witness.getProjection();
-    auto subst = verifyProjectionResolutionAtImpl(
+    auto rule = verifyProjectionResolutionAtImpl(
         module, witness, /*premises=*/{}, obligationPremises,
         dischargeWitnesses, errFn);
-    if (failed(subst))
+    if (failed(rule))
       return failure();
-    auto citedImpl = lookupSymbolFrom<ImplOp>(module, witness.getImplRef());
-    rules.push_back(
-        {citedImpl, projectionTy.getTraitApplication(), std::move(*subst)});
+    rules.push_back(std::move(*rule));
   }
   return rules;
 }
@@ -740,7 +730,7 @@ static FailureOr<SmallVector<ImplWitnessRule>> collectImplWitnessRules(
 /// substitution the first rule carries is what the impl's self claim says its
 /// parameters take, which is those parameters themselves.
 static FailureOr<NormalizationContext> buildImplOwnNormalizationContext(
-    ImplOp impl, ArrayRef<ImplWitnessRule> witnessRules,
+    ImplOp impl, ArrayRef<LocalProjectionRule> witnessRules,
     llvm::function_ref<InFlightDiagnostic()> errFn) {
   auto ownArguments = impl.buildSubstitutionForSelfClaim(impl.getSelfClaim(), errFn);
   if (failed(ownArguments))
@@ -748,7 +738,7 @@ static FailureOr<NormalizationContext> buildImplOwnNormalizationContext(
 
   NormalizationContext ctx;
   ctx.addLocalProjectionRule(impl, impl.getSelfApplication(), *ownArguments);
-  for (const ImplWitnessRule &rule : witnessRules)
+  for (const LocalProjectionRule &rule : witnessRules)
     ctx.addLocalProjectionRule(rule.impl, rule.app, rule.subst);
   for (Attribute predicate : impl.getAssumptions())
     if (auto equality = dyn_cast<TypeEqualityAttr>(predicate))
@@ -808,7 +798,7 @@ static DenseSet<Type> getTraitHeaderParameters(TraitOp traitOp) {
 /// copy of the method that is actually cloned.
 static FailureOr<TraitMethodCorrespondence> buildTraitMethodCorrespondence(
     ImplOp impl, TraitOp traitOp, func::FuncOp implMethod,
-    ArrayRef<ImplWitnessRule> witnessRules,
+    ArrayRef<LocalProjectionRule> witnessRules,
     llvm::function_ref<InFlightDiagnostic()> errFn) {
   StringRef name = implMethod.getSymName();
   auto traitMethod = traitOp.getMethod(name, errFn);
@@ -904,7 +894,7 @@ static FailureOr<TraitMethodCorrespondence> buildTraitMethodCorrespondence(
 }
 
 static LogicalResult verifyEqualityObligations(
-    ImplOp impl, TraitOp traitOp, ArrayRef<ImplWitnessRule> witnessRules,
+    ImplOp impl, TraitOp traitOp, ArrayRef<LocalProjectionRule> witnessRules,
     llvm::function_ref<InFlightDiagnostic()> errFn);
 
 static LogicalResult verifyImplParametersAreConstrained(ImplOp impl);
@@ -921,10 +911,6 @@ static LogicalResult verifyImplParametersAreConstrained(ImplOp impl);
 /// A binding's own parameter is a type variable: it is the key a projection's
 /// argument is substituted for, so a ground type standing in the list would
 /// carry every occurrence of that same type in the bound type away with it.
-///
-/// A child's own invariants are verified after its parent's, so each entry is
-/// read as an attribute that may be anything and refused where it stands rather
-/// than cast.
 static LogicalResult verifyAssociatedTypeBindingScopes(ImplOp impl) {
   DenseSet<Type> headerParams;
   for (GenericTypeInterface parameter : impl.getTypeParams())
@@ -937,25 +923,17 @@ static LogicalResult verifyAssociatedTypeBindingScopes(ImplOp impl) {
 
     DenseSet<Type> ownParams;
     if (ArrayAttr declaredParams = assoc.getTypeParamsAttr()) {
-      for (Attribute tyAttr : declaredParams) {
-        auto typeAttr = dyn_cast<TypeAttr>(tyAttr);
-        if (!typeAttr)
-          return assoc.emitOpError()
-                 << "type parameter list holds " << tyAttr << ", which is not a type";
-        Type param = typeAttr.getValue();
-        if (!isa<GenericTypeInterface>(param))
-          return assoc.emitOpError()
-                 << "type parameter list holds " << param
-                 << ", which is not a type variable";
+      for (Attribute declared : declaredParams) {
+        FailureOr<Type> param = readAssociatedTypeParameter(assoc, declared);
+        if (failed(param))
+          return failure();
         // A declared parameter may be a generic type another dialect wraps
         // around a label (a coordinate parameter carries the label it stands
         // for), and declaring it declares the label it carries.
-        for (GenericTypeInterface inside : getTypeParametersIn(param)) {
-          if (failed(verifyParameterIsNoBinderVariable(assoc, Type(inside))))
-            return failure();
+        for (GenericTypeInterface inside : getTypeParametersIn(*param)) {
           if (headerParams.contains(Type(inside)))
             return assoc.emitOpError()
-                   << "type parameter " << param
+                   << "type parameter " << *param
                    << " is already a parameter of impl '@"
                    << impl.getSymName() << "'";
           ownParams.insert(Type(inside));
@@ -998,7 +976,7 @@ LogicalResult ImplOp::verify() {
 }
 
 static LogicalResult verifyBoundRequirementEvidence(
-    ImplOp impl, TraitOp traitOp, ArrayRef<ImplWitnessRule> witnessRules,
+    ImplOp impl, TraitOp traitOp, ArrayRef<LocalProjectionRule> witnessRules,
     llvm::function_ref<InFlightDiagnostic()> errFn);
 
 LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
@@ -1267,7 +1245,7 @@ static LogicalResult verifyWitnessBody(BoundEvidenceScope &scope,
 /// trait: exactly one per such requirement, whose body proves the
 /// requirement's conclusion at the impl's arguments, under its binder.
 static LogicalResult verifyBoundRequirementEvidence(
-    ImplOp impl, TraitOp traitOp, ArrayRef<ImplWitnessRule> witnessRules,
+    ImplOp impl, TraitOp traitOp, ArrayRef<LocalProjectionRule> witnessRules,
     llvm::function_ref<InFlightDiagnostic()> errFn) {
   PredicateArrayAttr requirements = traitOp.getRequirements();
   DenseMap<unsigned, WitnessAttr> byRequirement;
@@ -1338,7 +1316,7 @@ static LogicalResult verifyBoundRequirementEvidence(
 /// that carries the impl to an application -- and application requirements are
 /// proved at selection too.
 static LogicalResult verifyEqualityObligations(
-    ImplOp impl, TraitOp traitOp, ArrayRef<ImplWitnessRule> witnessRules,
+    ImplOp impl, TraitOp traitOp, ArrayRef<LocalProjectionRule> witnessRules,
     llvm::function_ref<InFlightDiagnostic()> errFn) {
   // The guard keeps the self-claim specialization off an impl with nothing of
   // the kind to check.
@@ -2155,115 +2133,6 @@ FailureOr<SmallVector<ClaimType>> ImplOp::specializeObligationsAt(
   return obligations;
 }
 
-ParseResult ImplOp::parse(OpAsmParser &p, OperationState &result) {
-  // optional `private`/`nested` keyword before the name, as func.func reads it;
-  // a missing keyword is not an error (the op is public) and consumes nothing.
-  (void)mlir::impl::parseOptionalVisibilityKeyword(p, result.attributes);
-
-  // parse optional symbolic name: trait.impl @Sym
-  StringAttr parsedSymName;
-  (void)p.parseOptionalSymbolName(parsedSymName);
-
-  // parse mandatory for
-  if (p.parseKeyword("for"))
-    return failure();
-  
-  // parse @TraitName[Types...]
-  TraitApplicationAttr selfApp = dyn_cast_or_null<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
-  if (!selfApp)
-    return p.emitError(p.getCurrentLocation(), "expected a TraitApplicationAttr");
-  result.addAttribute("self_application", selfApp);  
-  
-  // where clause: one mixed PredicateArrayAttr (application and equality arms in
-  // declaration order), stored directly as $assumptions -- no second array and
-  // no partition. An application-only clause parses as a plain array of trait
-  // applications.
-  auto assumptions = PredicateArrayAttr::get(p.getContext(), ArrayRef<Attribute>{});
-  if (succeeded(p.parseOptionalKeyword("where"))) {
-    assumptions = dyn_cast_or_null<PredicateArrayAttr>(PredicateArrayAttr::parse(p, {}));
-    if (!assumptions)
-      return p.emitError(p.getCurrentLocation(), "expected a PredicateArrayAttr");
-  }
-  result.addAttribute("assumptions", assumptions);
-
-  // Optional witnesses: one array of #trait.witness entries, each an
-  // equality-armed projection-resolution witness or an application-armed
-  // obligation discharge. Absent, the printed and parsed form is byte-identical
-  // to an impl without them; the synthesized sym_name reads only the self
-  // application and assumptions, so witnesses never perturb it.
-  if (succeeded(p.parseOptionalKeyword("witnesses"))) {
-    ArrayAttr witnesses;
-    if (p.parseAttribute(witnesses))
-      return failure();
-    result.addAttribute("witnesses", witnesses);
-  }
-
-
-  // sym_name: use parsed or synthesize from parameters
-  StringAttr symNameAttr = parsedSymName
-    ? parsedSymName
-    : p.getBuilder().getStringAttr(generateSymName(selfApp, assumptions));
-  result.addAttribute("sym_name", symNameAttr);
-  
-  // Parse attributes and body region
-  if (p.parseOptionalAttrDictWithKeyword(result.attributes))
-    return failure();
-    
-  Region* bodyRegion = result.addRegion();
-  if (p.parseRegion(*bodyRegion, /*arguments=*/{}, /*argTypes=*/{}))
-    return failure();
-  
-  // Ensure the region has exactly one block (matching builder logic)
-  if (bodyRegion->empty())
-    bodyRegion->emplaceBlock();
-    
-  return success();
-}
-
-void ImplOp::print(OpAsmPrinter &printer) {
-  // decide whether to print the symbolic name
-  StringAttr symNameAttr = getSymNameAttr();
-  std::string synthesized = generateSymName(getSelfApplication(), getAssumptions());
-  bool printExplicitSymName = symNameAttr && symNameAttr.getValue() != synthesized;
-
-  // Print: trait.impl [private] [@SymName] for @TraitName [types...] assumptions { ... }
-  if (auto vis = getSymVisibilityAttr())
-    if (vis.getValue() != "public")
-      printer << ' ' << vis.getValue();
-  printer << " ";
-  if (printExplicitSymName) {
-    printer.printSymbolName(symNameAttr);
-    printer << " ";
-  }
-
-  printer << "for ";
-  getSelfApplication().print(printer);
-
-  // print assumptions if not empty
-  if (!getAssumptions().empty()) {
-    printer << " where ";
-    getAssumptions().print(printer);
-  }
-
-  // print witnesses if present and non-empty
-  if (ArrayAttr witnesses = getWitnessesAttr()) {
-    if (!witnesses.empty()) {
-      printer << " witnesses ";
-      printer.printAttribute(witnesses);
-    }
-  }
-
-
-  printer.printOptionalAttrDictWithKeyword(
-    (*this)->getAttrs(),
-    /*elidedAttrs=*/{"sym_name", "self_application", "assumptions", "witnesses",
-                     "rule", "sym_visibility"}
-  );
-  printer << " ";
-  printer.printRegion(getBody());
-}
-
-
 /// Whether every outermost projection `side` still spells is over one of
 /// `impl`'s where-clause applications at `arguments`, or a trait requirement
 /// one of them carries, each read through `evidence`: a projection whose
@@ -2894,24 +2763,15 @@ ParseResult WitnessOp::parse(OpAsmParser &p, OperationState& result) {
     return parseResultType();
   }
 
-  // parse @Symbol
+  // Application arm: `@Symbol for @Trait[Types...]`, which is the proven
+  // claim the result type is.
   FlatSymbolRefAttr proof;
-  if (p.parseAttribute(proof, "proof", result.attributes))
+  if (p.parseAttribute(proof) || p.parseKeyword("for"))
     return failure();
-
-  // parse `for`
-  if (p.parseKeyword("for"))
-    return failure();
-
-  // parse @Trait[Types...]
   TraitApplicationAttr traitApp = dyn_cast_or_null<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
   if (!traitApp)
     return p.emitError(p.getCurrentLocation(), "expected a TraitApplicationAttr");
-  result.addAttribute("trait_application", traitApp);
-
-  // construct the result type
-  ClaimType claimTy = ClaimType::get(p.getContext(), traitApp, proof);
-  result.addTypes(claimTy);
+  result.addTypes(ClaimType::get(p.getContext(), traitApp, proof));
 
   // parse additional attributes
   if (p.parseOptionalAttrDictWithKeyword(result.attributes))
@@ -2949,35 +2809,28 @@ void WitnessOp::print(OpAsmPrinter &p) {
   }
 
   // Application arm.
-  p << " " << getProofAttr() << " for ";
-  getTraitApplicationAttr().print(p);
+  p << " " << getProof() << " for ";
+  getResultClaim().getTraitApplication().print(p);
 
-  p.printOptionalAttrDictWithKeyword(
-    (*this)->getAttrs(),
-    /*elidedAttrs=*/{"proof", "trait_application", "witness", "refl"}
-  );
+  p.printOptionalAttrDictWithKeyword((*this)->getAttrs(),
+                                     /*elidedAttrs=*/{"witness", "refl"});
 }
 
-// The op's attributes must match the result claim's arm exactly, and the result
-// type must equal the claim reconstructed from those attributes. For the
-// equality arm, the result's equality must be the witness's own (proj-resolve),
-// have identical endpoints (refl), or be entailed by the premises' ground
-// congruence closure (compose).
+// The op's attributes must match the result claim's arm exactly. For the
+// application arm the result claim names the proof it cites. For the equality
+// arm, the result's equality must be the witness's own (proj-resolve), have
+// identical endpoints (refl), or be entailed by the premises' ground congruence
+// closure (compose).
 LogicalResult WitnessOp::verify() {
   ClaimType result = dyn_cast<ClaimType>(getResult().getType());
   if (!result)
     return emitOpError() << "result must be a !trait.claim";
 
-  bool hasProof = static_cast<bool>(getProofAttr());
-  bool hasApp = static_cast<bool>(getTraitApplicationAttr());
   bool hasWitness = static_cast<bool>(getWitnessAttr());
   bool hasRefl = getRefl();
 
   // Equality arm.
   if (result.isEquality()) {
-    if (hasProof || hasApp)
-      return emitOpError() << "an equality witness carries no proof or trait "
-                              "application";
     if (hasWitness && hasRefl)
       return emitOpError() << "an equality witness carries at most one of a "
                               "proj-resolve leaf or a refl marker";
@@ -3054,13 +2907,9 @@ LogicalResult WitnessOp::verify() {
   if (hasWitness || hasRefl || !getPremises().empty())
     return emitOpError() << "an application witness carries neither a "
                             "proj-resolve leaf, a refl marker, nor premises";
-  if (!hasProof || !hasApp)
-    return emitOpError() << "an application witness carries a proof and a "
-                            "trait application";
-  if (result != getProvenClaim())
-    return emitOpError() << "result " << result
-                         << " does not match the witnessed claim "
-                         << getProvenClaim();
+  if (!result.isProven())
+    return emitOpError() << "an application witness's claim " << result
+                         << " names the proof it cites";
   return success();
 }
 
@@ -3123,13 +2972,13 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
   // Application arm: one lookup of the cited symbol; a directly-named impl must
   // be unconditional, and a proof names the impl it stands over.
-  auto cited = ProofOp::getProofOpOrUnconditionalImplOp(module, getProofAttr(),
+  auto cited = ProofOp::getProofOpOrUnconditionalImplOp(module, getProof(),
                                                         errFn);
   if (failed(cited)) return failure();
   auto proof = dyn_cast<ProofOp>(*cited);
   ImplOp impl = proof ? proof.getImpl() : cast<ImplOp>(*cited);
   if (!impl)
-    return emitOpError() << "proof '" << getProofAttr()
+    return emitOpError() << "proof '" << getProof()
                          << "' does not resolve to an impl";
 
   // As at a proof: a projection the impl's header spells reduces through the
@@ -3152,7 +3001,7 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // because a blanket impl's header carries to every application of its trait.
   if (proof) {
     auto citationErr = [&] {
-      return errFn() << "the proof " << getProofAttr()
+      return errFn() << "the proof " << getProof()
                      << " this witness cites stands over another claim: ";
     };
     Type proofClaim = Type(proof.getProvenClaim());
@@ -3182,100 +3031,6 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 //===----------------------------------------------------------------------===//
 // DeriveOp
 //===----------------------------------------------------------------------===//
-
-ParseResult DeriveOp::parse(OpAsmParser &p, OperationState &result) {
-  // trait.derive @Trait[Types...] from @Impl given(%claims...)
-
-  // parse @Trait[Types...]
-  TraitApplicationAttr traitApp = dyn_cast_or_null<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
-  if (!traitApp)
-    return p.emitError(p.getCurrentLocation(), "expected a TraitApplicationAttr");
-  result.addAttribute("trait_application", traitApp);
-
-  // parse `from`
-  if (p.parseKeyword("from"))
-    return failure();
-
-  // parse @Impl
-  FlatSymbolRefAttr implRef;
-  if (p.parseAttribute(implRef, "impl", result.attributes))
-    return failure();
-
-  // parse the arguments the impl's parameters take, when stated
-  ArrayAttr implArguments;
-  if (parseImplCitationArguments(p, implArguments))
-    return failure();
-  if (implArguments)
-    result.addAttribute("arguments", implArguments);
-
-  // parse `given`
-  if (p.parseKeyword("given"))
-    return failure();
-
-  // parse ( %claims... )
-  SmallVector<OpAsmParser::UnresolvedOperand> assumptions;
-  if (p.parseOperandList(assumptions, OpAsmParser::Delimiter::Paren))
-    return failure();
-
-  // parse `: (` type_list `)`
-  SmallVector<Type> assumptionTypes;
-  if (!assumptions.empty()) {
-    if (p.parseColon())
-      return failure();
-    if (failed(p.parseCommaSeparatedList(OpAsmParser::Delimiter::Paren, [&] {
-          Type ty;
-          if (p.parseType(ty)) return failure();
-          assumptionTypes.push_back(ty);
-          return success();
-        })))
-      return failure();
-
-    if (assumptionTypes.size() != assumptions.size())
-      return p.emitError(p.getCurrentLocation(), "assumption type count mismatch");
-
-    auto loc = p.getCurrentLocation();
-    if (p.resolveOperands(assumptions, assumptionTypes, loc, result.operands))
-      return failure();
-  }
-
-  // construct the unproven result type
-  ClaimType claimTy = ClaimType::get(p.getContext(), traitApp);
-  result.addTypes(claimTy);
-
-  // parse optional attributes
-  if (p.parseOptionalAttrDictWithKeyword(result.attributes))
-    return failure();
-
-  return success();
-}
-
-void DeriveOp::print(OpAsmPrinter &p) {
-  // trait.derive @Trait[Types...] from @Impl given(%claims...)
-
-  p << " ";
-  getTraitApplication().print(p);
-  p << " from " << getImplAttr();
-  printImplCitationArguments(p, getOperation(), getArgumentsAttr());
-  p << " given(";
-  llvm::interleaveComma(getAssumptions(), p, [&](Value v) {
-    p.printOperand(v);
-  });
-  p << ")";
-
-  // print types if there are assumptions
-  if (!getAssumptions().empty()) {
-    p << " : (";
-    llvm::interleaveComma(getAssumptions().getTypes(), p, [&](Type ty) {
-      p.printType(ty);
-    });
-    p << ")";
-  }
-
-  p.printOptionalAttrDictWithKeyword(
-    (*this)->getAttrs(),
-    /*elidedAttrs=*/{"trait_application", "impl", "arguments"}
-  );
-}
 
 ImplOp DeriveOp::getImplOp() {
   ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
@@ -4137,6 +3892,99 @@ static LogicalResult verifyProofsAtCall(Operation *call, ValueRange operands,
   return success();
 }
 
+/// The type arguments a call supplies for the declaration it calls, once that
+/// declaration instantiated at them is the signature the call spells.
+///
+/// `formal` is the callee's signature and `known` the arguments already fixed
+/// before the call's own types are read -- a method's trait arguments, which
+/// ride in its receiver claim; `parameters` are the ones this call's types
+/// determine, read against `formal` instantiated at `known`. `actual` is the
+/// signature the call spells, and `localClaims` the claims it holds, which are
+/// its evidence, read by index. `commitsToEvidence` says whether one of those
+/// claims commits to evidence -- a proven claim, or one a derive produced --
+/// which is what licenses reading a ground projection through the module's
+/// impls.
+///
+/// `reading` is the stage's record of what impl selection has settled, which
+/// the comparison reads both signatures through on top of that evidence. A
+/// verifier passes none and compares through the evidence alone, and then the
+/// proofs the call's claims name are read at their own claims as well.
+static FailureOr<SpecializationMap> readCallSpecialization(
+    Operation *call, ModuleOp module, FunctionType formal,
+    const SpecializationMap &known, ArrayRef<GenericTypeInterface> parameters,
+    FunctionType actual, ValueRange localClaims, bool commitsToEvidence,
+    StringRef callee, const ReadOnlyImplResolver *reading,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  // Reading the evidence at this call resolves symbol names and writes nothing,
+  // so what a name answers is held for the read. Under a stage already holding
+  // answers this reads through those.
+  SymbolLookupScope symbolAnswers;
+
+  NormalizationContext normalization =
+      buildLocalClaimNormalizationContext(call, localClaims, module);
+  normalization.setRecordedFacts(reading);
+  // XXX TODO A claim this call's own arguments spell can carry a ground
+  // projection no evidence at this site reduces, because the impl serving it is
+  // named nowhere the call can read. The module's impls stand in, and only
+  // where the call commits to evidence -- an ordinary unproven claim grants
+  // nothing. Deleted once the claim a call commits to carries the impls serving
+  // the projections its arguments spell; see setModuleLookup.
+  if (commitsToEvidence)
+    normalization.setModuleLookup(module, LookupScope::Ground);
+  auto normalize = [&](Type ty) -> FailureOr<Type> {
+    return normalization.normalize(ty, err);
+  };
+
+  // The reading's own context, which differs from the comparison's in one way:
+  // it reduces a projection whose own spelling determines the impl serving it
+  // even where its associated-type arguments still hold a variable. A reading
+  // compares a spelling and never serves one, which is what that scope licenses.
+  NormalizationContext readingContext = normalization;
+  readingContext.setModuleLookup(module, LookupScope::Determined);
+  auto normalizeForReading = [&](Type ty) -> FailureOr<Type> {
+    return readingContext.normalize(ty, err);
+  };
+
+  // At pass time the comparison reads softly: a call whose evidence is not yet
+  // recorded waits for a later round. A call whose operands are already
+  // monomorphic says everything it will ever say about the instance it wants,
+  // so a parameter its types do not determine is refused here, named, rather
+  // than surfacing later as a type variable nothing bound.
+  auto reportHere = [&]() -> InFlightDiagnostic { return call->emitOpError(); };
+  llvm::function_ref<InFlightDiagnostic()> refusal = err;
+  if (!refusal && llvm::all_of(call->getOperandTypes(), isMonomorphicType))
+    refusal = reportHere;
+
+  auto read = readTypeArguments(parameters, instantiate(Type(formal), known),
+                                Type(actual), normalizeForReading, callee,
+                                refusal);
+  if (failed(read)) return failure();
+
+  SpecializationMap arguments = known;
+  for (GenericTypeInterface parameter : parameters)
+    if (auto argument = read->lookup(parameter))
+      arguments.bind(parameter, *argument);
+
+  // One identity: the callee's declaration instantiated at those arguments is
+  // the signature spelled here.
+  if (failed(verifyEqualAfterInstantiation(Type(formal), arguments,
+                                           Type(actual), normalize, err)))
+    return failure();
+
+  // The proofs this call's claims name are read at their own claims: each
+  // spells evidence for one application, and the declaration that evidence
+  // holds must carry to it. What the evidence proves underneath was decided at
+  // the proof op holding it. The factory that closes the substitution walks the
+  // same spellings where the call is lowered; a verifier has no lowering behind
+  // it, so it reads them here or nowhere.
+  if (!reading &&
+      failed(verifyProofsAtCall(call, call->getOperands(), normalize, module,
+                                err)))
+    return failure();
+
+  return arguments;
+}
+
 LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // Verification writes nothing, so every name read under it resolves through
   // the symbol tables the walk this is one step of has already built.
@@ -4153,11 +4001,6 @@ LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable)
 FailureOr<SpecializationMap> MethodCallOp::buildParameterSpecialization(
     const ReadOnlyImplResolver *reading,
     llvm::function_ref<InFlightDiagnostic()> err) {
-  // Reading the evidence at this call resolves symbol names and writes nothing,
-  // so what a name answers is held for the read. Under a stage already holding
-  // answers this reads through those.
-  SymbolLookupScope symbolAnswers;
-
   auto module = getModule(err);
   if (failed(module)) return failure();
 
@@ -4169,87 +4012,27 @@ FailureOr<SpecializationMap> MethodCallOp::buildParameterSpecialization(
 
   // A method's declaration binds the trait header's parameters and then its
   // own. The prefix comes from the receiver claim by position -- the trait's
-  // arguments ride in the application.
+  // arguments ride in the application -- and this call's types determine the
+  // method's own variables, the ones its declaration binds beyond the header's.
   auto traitSubst = trait->buildSubstitutionForSelfClaim(getClaimType(), err);
   if (failed(traitSubst)) return failure();
+  SmallVector<GenericTypeInterface, 4> ownParams = getOwnTypeParameters(
+      Type(*methodFormalTy), getTraitHeaderParameters(*trait));
 
   // The evidence this call holds: the receiver claim's proof tree and the
-  // claims its arguments carry, read by index. At pass time the record of what
-  // impl selection has settled is read on top of that; a verifier has none.
+  // claims its arguments carry. Only the receiver commits the call to evidence.
   SmallVector<Value> localClaims;
   localClaims.push_back(getClaim());
   for (Value argument : getArguments())
     if (isa<ClaimType>(argument.getType()))
       localClaims.push_back(argument);
-  NormalizationContext normalization =
-      buildLocalClaimNormalizationContext(getOperation(), localClaims, *module);
-  normalization.setRecordedFacts(reading);
-  // XXX TODO A claim this call's own arguments spell can carry a ground
-  // projection no evidence at this site reduces, because the impl serving it is
-  // named nowhere the call can read. The module's impls stand in, and only
-  // where the receiver claim commits to evidence -- an ordinary unproven claim
-  // grants nothing. Deleted once the claim a call commits to carries the impls
-  // serving the projections its arguments spell; see setModuleLookup.
-  if (getClaimType().isProven() || getClaim().getDefiningOp<DeriveOp>())
-    normalization.setModuleLookup(*module, LookupScope::Ground);
-  auto normalize = [&](Type ty) -> FailureOr<Type> {
-    return normalization.normalize(ty, err);
-  };
+  bool commitsToEvidence =
+      getClaimType().isProven() || getClaim().getDefiningOp<DeriveOp>();
 
-  // The reading's own context, which differs from the comparison's in one way:
-  // it reduces a projection whose own spelling determines the impl serving it
-  // even where its associated-type arguments still hold a variable. A reading
-  // compares a spelling and never serves one, which is what that scope licenses.
-  NormalizationContext readingContext = normalization;
-  readingContext.setModuleLookup(*module, LookupScope::Determined);
-  auto normalizeForReading = [&](Type ty) -> FailureOr<Type> {
-    return readingContext.normalize(ty, err);
-  };
-
-  // The method's own variables are the ones its declaration binds beyond the
-  // trait header's, and this call's types determine each of them.
-  SmallVector<GenericTypeInterface, 4> ownParams = getOwnTypeParameters(
-      Type(*methodFormalTy), getTraitHeaderParameters(*trait));
-
-  // At pass time the comparison reads softly: a call whose evidence is not yet
-  // recorded waits for a later round. A call whose operands are already
-  // monomorphic says everything it will ever say about the instance it wants,
-  // so a parameter its types do not determine is refused here, named, rather
-  // than surfacing later as a type variable nothing bound.
-  auto reportHere = [&]() -> InFlightDiagnostic { return emitOpError(); };
-  llvm::function_ref<InFlightDiagnostic()> refusal = err;
-  if (!refusal && llvm::all_of(getOperandTypes(), isMonomorphicType))
-    refusal = reportHere;
-
-  FunctionType actual = getActualFunctionType();
-  auto ownArgs = readTypeArguments(
-      ownParams, instantiate(Type(*methodFormalTy), *traitSubst), Type(actual),
-      normalizeForReading, getMethodName(), refusal);
-  if (failed(ownArgs)) return failure();
-
-  SpecializationMap arguments = *traitSubst;
-  for (GenericTypeInterface parameter : ownParams)
-    if (auto argument = ownArgs->lookup(parameter))
-      arguments.bind(parameter, *argument);
-
-  // One identity: the method's declaration instantiated at the arguments above
-  // is the signature spelled here.
-  if (failed(verifyEqualAfterInstantiation(Type(*methodFormalTy), arguments,
-                                           Type(actual), normalize, err)))
-    return failure();
-
-  // The proofs this call's claims name are read at their own claims: each
-  // spells evidence for one application, and the declaration that evidence
-  // holds must carry to it. What the evidence proves underneath was decided at
-  // the proof op holding it. The factory that closes the substitution walks the
-  // same spellings where the call is lowered; a verifier has no lowering behind
-  // it, so it reads them here or nowhere.
-  if (!reading &&
-      failed(verifyProofsAtCall(getOperation(), getOperands(), normalize,
-                                *module, err)))
-    return failure();
-
-  return arguments;
+  return readCallSpecialization(getOperation(), *module, *methodFormalTy,
+                                *traitSubst, ownParams, getActualFunctionType(),
+                                localClaims, commitsToEvidence, getMethodName(),
+                                reading, err);
 }
 
 ImplOp MethodCallOp::getProvenImpl() {
@@ -4418,78 +4201,28 @@ LogicalResult FuncCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 FailureOr<SpecializationMap> FuncCallOp::buildParameterSpecialization(
     const ReadOnlyImplResolver *reading,
     llvm::function_ref<InFlightDiagnostic()> err) {
-  // As at a method call: the read resolves symbol names and writes nothing.
-  SymbolLookupScope symbolAnswers;
-
   auto module = getModule(err);
   if (failed(module)) return failure();
 
-  auto maybeFormal = getCalleeFunctionType(err);
-  if (failed(maybeFormal)) return failure();
+  auto formal = getCalleeFunctionType(err);
+  if (failed(formal)) return failure();
 
-  // The evidence this call holds: the claims its operands carry, read by index
-  // through their proof trees. At pass time the record of what impl selection
-  // has settled is read on top of that; a verifier has none.
+  // The evidence this call holds: the claims its operands carry, any of which
+  // commits the call to evidence. The callee's declaration binds the parameters
+  // its signature spells, and this call's own types determine each of them.
   SmallVector<Value> localClaims;
   for (Value operand : getOperands())
     if (isa<ClaimType>(operand.getType()))
       localClaims.push_back(operand);
-  NormalizationContext normalization =
-      buildLocalClaimNormalizationContext(getOperation(), localClaims, *module);
-  normalization.setRecordedFacts(reading);
-  // XXX TODO As at a method call: a ground projection an operand claim spells
-  // and no evidence here reduces is read through the module's impls, and only
-  // where an operand claim commits to evidence. Deleted on the same trigger;
-  // see setModuleLookup.
-  if (llvm::any_of(localClaims, [](Value claim) {
-        return cast<ClaimType>(claim.getType()).isProven() ||
-               claim.getDefiningOp<DeriveOp>();
-      }))
-    normalization.setModuleLookup(*module, LookupScope::Ground);
-  auto normalize = [&](Type ty) -> FailureOr<Type> {
-    return normalization.normalize(ty, err);
-  };
+  bool commitsToEvidence = llvm::any_of(localClaims, [](Value claim) {
+    return cast<ClaimType>(claim.getType()).isProven() ||
+           claim.getDefiningOp<DeriveOp>();
+  });
 
-  // As at a method call: the reading's own context reduces a projection whose
-  // own spelling determines the impl serving it even where its associated-type
-  // arguments still hold a variable.
-  NormalizationContext readingContext = normalization;
-  readingContext.setModuleLookup(*module, LookupScope::Determined);
-  auto normalizeForReading = [&](Type ty) -> FailureOr<Type> {
-    return readingContext.normalize(ty, err);
-  };
-
-  // The callee's declaration binds the parameters its signature spells, and
-  // this call's own types determine each of them.
-  auto reportHere = [&]() -> InFlightDiagnostic { return emitOpError(); };
-  llvm::function_ref<InFlightDiagnostic()> refusal = err;
-  if (!refusal && llvm::all_of(getOperandTypes(), isMonomorphicType))
-    refusal = reportHere;
-
-  FunctionType actual = getActualFunctionType();
-  auto arguments = readTypeArguments(getCalleeTypeParams(), Type(*maybeFormal),
-                                     Type(actual), normalizeForReading,
-                                     getCalleeName(), refusal);
-  if (failed(arguments)) return failure();
-
-  // One identity: the callee's declaration instantiated at those arguments is
-  // the signature spelled here.
-  if (failed(verifyEqualAfterInstantiation(Type(*maybeFormal), *arguments,
-                                           Type(actual), normalize, err)))
-    return failure();
-
-  // The proofs this call's claims name are read at their own claims: each
-  // spells evidence for one application, and the declaration that evidence
-  // holds must carry to it. What the evidence proves underneath was decided at
-  // the proof op holding it. The factory that closes the substitution walks the
-  // same spellings where the call is lowered; a verifier has no lowering behind
-  // it, so it reads them here or nowhere.
-  if (!reading &&
-      failed(verifyProofsAtCall(getOperation(), getOperands(), normalize,
-                                *module, err)))
-    return failure();
-
-  return *arguments;
+  return readCallSpecialization(getOperation(), *module, *formal,
+                                SpecializationMap(), getCalleeTypeParams(),
+                                getActualFunctionType(), localClaims,
+                                commitsToEvidence, getCalleeName(), reading, err);
 }
 
 /// The name the instance of `op`'s callee carries, given the substitution that
@@ -4604,94 +4337,8 @@ LogicalResult ProjectOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
 
 //===----------------------------------------------------------------------===//
-// AssocTypeOp
-//===----------------------------------------------------------------------===//
-
-ParseResult AssocTypeOp::parse(OpAsmParser &p, OperationState &st) {
-  // parse @Name
-  StringAttr symName;
-  if (p.parseSymbolName(symName, "sym_name", st.attributes))
-    return failure();
-
-  // parse optional <[type_params...]>
-  if (succeeded(p.parseOptionalLess())) {
-    ArrayAttr typeParams;
-    if (parseTypeParameters(p, typeParams) || p.parseGreater())
-      return failure();
-    st.addAttribute("type_params", typeParams);
-  }
-
-  // parse optional = bound_type
-  if (succeeded(p.parseOptionalEqual())) {
-    TypeAttr boundType;
-    if (p.parseAttribute(boundType, "bound_type", st.attributes))
-      return failure();
-  }
-
-  // parse optional attr-dict
-  if (p.parseOptionalAttrDict(st.attributes))
-    return failure();
-
-  return success();
-}
-
-void AssocTypeOp::print(OpAsmPrinter &p) {
-  p << ' ';
-  p.printSymbolName(getSymNameAttr());
-
-  // print <[type_params...]> if present
-  if (auto tp = getTypeParams(); tp && !tp->empty()) {
-    p << "<[";
-    llvm::interleaveComma(*tp, p, [&](Attribute tyAttr) {
-      p.printType(cast<TypeAttr>(tyAttr).getValue());
-    });
-    p << "]>";
-  }
-
-  // print = bound_type if present
-  if (auto bt = getBoundType()) {
-    p << " = " << *bt;
-  }
-
-  // print any trailing attributes
-  p.printOptionalAttrDict((*this)->getAttrs(),
-                           /*elided=*/{"sym_name", "bound_type", "type_params"});
-}
-
-
-//===----------------------------------------------------------------------===//
 // AllegeOp
 //===----------------------------------------------------------------------===//
-
-ParseResult AllegeOp::parse(OpAsmParser &p, OperationState &st) {
-  // parse `@Trait[Types...]`
-  TraitApplicationAttr app = dyn_cast_or_null<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
-  if (!app) return p.emitError(p.getCurrentLocation(), "expected a TraitApplicationAttr");
-
-  // parse optional `unsafe` keyword
-  UnitAttr unsafeAttr;
-  if (succeeded(p.parseOptionalKeyword("unsafe")))
-    unsafeAttr = p.getBuilder().getUnitAttr();
-  if (unsafeAttr)
-    st.addAttribute("unsafe", unsafeAttr);
-
-  // result type is the claim of the trait application
-  auto claimTy = ClaimType::get(p.getContext(), app);
-  st.addTypes(claimTy);
-
-  return success();
-}
-
-void AllegeOp::print(OpAsmPrinter &p) {
-  p << " ";
-
-  // print the claimed trait application
-  getClaim().getTraitApplication().print(p);
-
-  // print optional unsafe
-  if (getUnsafe())
-    p << " unsafe";
-}
 
 LogicalResult AllegeOp::verify() {
   // claim must be monomorphic unless unsafe

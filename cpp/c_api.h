@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
-// Builders return unattached operations. Attribute and type getters intern
-// canonical values; boolean queries use the dialect's own judgments. These
-// entry points do not mutate existing operations.
+// Attribute and type getters intern canonical values; boolean queries use the
+// dialect's own judgments. These entry points do not mutate existing
+// operations. Operations are built through MLIR's generic operation state, and
+// each op's verifier is what refuses an ill-formed one.
 
 #include "mlir-c/IR.h"
 #include "mlir-c/Pass.h"
@@ -32,70 +33,12 @@ MlirAttribute traitTraitApplicationAttrGet(MlirContext ctx,
 /// Checks whether the given attribute is a trait application.
 bool traitAttributeIsATraitApplication(MlirAttribute attr);
 
-/// Create a trait.trait operation whose `where` clause carries a mixed list of
-/// predicates: each entry is a trait application or a type equality. A
-/// non-predicate attribute yields a null operation.
-MlirOperation traitTraitOpCreate(MlirLocation loc, MlirStringRef name,
-                                 MlirType* typeParams, intptr_t numTypeParams,
-                                 MlirAttribute* predicates, intptr_t numPredicates);
-
-/// Create a trait.impl operation. `assumptions` must all be trait applications;
-/// use traitImplOpCreateNamed for a named impl with a mixed where clause.
-MlirOperation traitImplOpCreate(MlirLocation loc,
-                                MlirAttribute selfTraitApp,
-                                MlirAttribute* assumptions, intptr_t numAssumptions);
-
-/// Create a named trait.impl operation whose `where` clause carries a mixed list
-/// of predicates: each entry is a trait application the impl assumes, or a type
-/// equality it asserts about its own bindings. A non-predicate attribute yields
-/// a null operation.
-MlirOperation traitImplOpCreateNamed(MlirLocation loc,
-                                     MlirStringRef symName,
-                                     MlirAttribute selfTraitApp,
-                                     MlirAttribute* predicates, intptr_t numPredicates);
-
-/// Create a trait.method.call operation. The instance it wants is read off the
-/// claim, argument and result types against the method's declaration.
-MlirOperation traitMethodCallOpCreate(MlirLocation loc,
-                                      MlirStringRef traitName,
-                                      MlirStringRef methodName,
-                                      MlirValue claim,
-                                      MlirValue* arguments, intptr_t numArguments,
-                                      MlirType* resultTypes, intptr_t numResults);
-
-/// Create a trait.func.call operation. The instance it wants is read off the
-/// operand and result types against the callee's declaration.
-MlirOperation traitFuncCallOpCreate(MlirLocation loc,
-                                    MlirStringRef callee,
-                                    MlirValue* arguments, intptr_t numArguments,
-                                    MlirType* resultTypes, intptr_t numResults);
-
-/// Create a trait.allege operation
-MlirOperation traitAllegeOpCreate(MlirLocation loc,
-                                  MlirAttribute traitApp);
-
-/// Create a trait.allege operation with the unsafe attribute
-MlirOperation traitAllegeUnsafeOpCreate(MlirLocation loc,
-                                        MlirAttribute traitApp);
-
-
-/// Create a trait.witness operation
-MlirOperation traitWitnessOpCreate(MlirLocation loc,
-                                   MlirStringRef proofName,
-                                   MlirAttribute traitApp);
-
-/// Create a trait.proof operation
-MlirOperation traitProofOpCreate(MlirLocation loc,
-                                 MlirStringRef symName,
-                                 MlirStringRef implName,
-                                 MlirAttribute traitApp,
-                                 MlirStringRef* subproofNames, intptr_t numSubproofs);
-
-/// Create a trait.derive operation
-MlirOperation traitDeriveOpCreate(MlirLocation loc,
-                                  MlirAttribute traitApp,
-                                  MlirStringRef implName,
-                                  MlirValue* assumptions, intptr_t numAssumptions);
+/// Return the #trait.predicate_array holding `predicates`, a trait's or an
+/// impl's where clause: each entry a trait application, a type equality or a
+/// bound predicate. Returns a null attribute if an entry is none of those.
+MlirAttribute traitPredicateArrayAttrGet(MlirContext ctx,
+                                         MlirAttribute *predicates,
+                                         intptr_t numPredicates);
 
 /// Return the !trait.poly<label> type. A label names a position in the
 /// declaration that binds it, so it is non-negative.
@@ -107,13 +50,19 @@ MlirType traitPolyTypeGet(MlirContext ctx, unsigned int label);
 MlirType traitClaimTypeGet(MlirContext ctx,
                            MlirAttribute predicate);
 
+/// Return the !trait.claim<app by @proofName> proving the trait application
+/// `traitApp` by the symbol `proofName`. Returns a null type if `traitApp` is no
+/// trait application.
+MlirType traitProvenClaimTypeGet(MlirAttribute traitApp,
+                                 MlirStringRef proofName);
+
 /// Return a claim type with the same proof as `claimType` but
 /// with a different trait application.
 MlirType traitClaimTypeWithApplication(MlirType claimType,
                                        MlirAttribute traitApp);
 
 /// Return a !trait.claim's TraitApplicationAttr
-MlirAttribute traitClaimTypeGetTraitApplicationGet(MlirType claimType);
+MlirAttribute traitClaimTypeGetTraitApplication(MlirType claimType);
 
 /// Checks whether the given type is a claim type.
 bool traitTypeIsAClaim(MlirType type);
@@ -216,15 +165,6 @@ MlirAttribute traitWitnessBodyGetAllegation(MlirContext ctx,
 /// compile error.
 bool traitCoercePendingAccepts(MlirType input, MlirType result);
 
-/// Create a trait.assoc_type op. If boundType.ptr is non-null, the op gets a
-/// bound_type attribute (for use inside trait.impl); otherwise it is a bare
-/// declaration (for use inside trait.trait).
-/// If numTypeParams > 0, typeParams are the GAT type parameters.
-MlirOperation traitAssocTypeOpCreate(MlirLocation loc,
-                                     MlirStringRef name,
-                                     MlirType boundType,
-                                     MlirType *typeParams, intptr_t numTypeParams);
-
 /// Collect all unique types implementing GenericTypeInterface found in `type`.
 ///
 /// This walks `type` recursively and returns every distinct generic type
@@ -235,20 +175,6 @@ MlirOperation traitAssocTypeOpCreate(MlirLocation loc,
 /// buffer of sufficient size. Returs the total number of unique generic
 /// types found.
 intptr_t traitGetGenericTypesIn(MlirType type, MlirType *results, intptr_t maxResults);
-
-/// Run the structural acyclicity screen on `module` and report whether it is
-/// free of `where`-clause cycles and dangling trait references. Reads trait
-/// symbols by name and refuses a dangling reference cleanly, so it is safe on
-/// unverified IR: a launch runs it ahead of the full verifier to screen a frozen
-/// blob. Diagnostics reach the context's handler; the return value is the
-/// verdict alone. Returns true when the screen holds.
-bool traitVerifyAcyclicTraitsStructure(MlirModule module);
-
-/// Whether `op` is a generic trait call instantiation can rewrite now -- a
-/// trait.func.call or trait.method.call whose every precondition the instantiate
-/// patterns check holds. This is the predicate the instantiate step qualifies
-/// its discharge by. Any other op answers false.
-bool traitIsRewritableGenericCall(MlirOperation op);
 
 /// The outcome of instantiating an impl a module names.
 typedef enum {
@@ -270,12 +196,6 @@ TraitImplInstantiation traitModuleInstantiateImpl(MlirModule module, MlirStringR
                                 intptr_t numBindings, MlirType *header,
                                 MlirType *whereClaims, intptr_t maxWhere,
                                 intptr_t *numWhere);
-
-/// Whether `module` still carries instantiation work outside a template: a
-/// rewritable generic call, or an unproven monomorphic application claim or an
-/// unresolved ground projection not yet discharged. This is the erase step's
-/// readiness -- it may run only when this answers false.
-bool traitIsPendingExpansion(MlirModule module);
 
 #ifdef __cplusplus
 }

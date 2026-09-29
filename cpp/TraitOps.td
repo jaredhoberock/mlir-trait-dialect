@@ -293,7 +293,12 @@ def TraitOp : TraitDialectOp<"trait", [
     }]>
   ];
 
-  let hasCustomAssemblyFormat = 1;
+  // `private @Name[params] where [...] {...}`; the where clause is printed only
+  // when it states something.
+  let assemblyFormat = [{
+    custom<VisibilityKeyword>($sym_visibility) $sym_name `` $type_params
+    `` custom<WhereClause>($requirements) attr-dict-with-keyword $body
+  }];
   let hasVerifier = 1;
 }
 
@@ -316,9 +321,9 @@ def ImplOp : TraitDialectOp<"impl", [
     to refer to this implementation by name. If omitted from the textual IR, a unique
     `sym_name` will be automatically synthesized from the other arguments.
 
-    The `trait_name` attribute is a FlatSymbolRefAttr pointing to a `trait.trait`
-    declaration (e.g., `@PartialEq`), and `type_args` is an ArrayRefParameter of Types
-    representing the list of types that implement the trait (e.g., [`i32`, `i32`]).
+    The `self_application` attribute is the trait application the impl
+    implements: a `trait.trait` symbol (e.g., `@PartialEq`) applied to the types
+    that implement it (e.g., `[i32, i32]`).
 
     This operation contains a region with `func.func` operations, each
     implementing one of the trait's methods.
@@ -326,7 +331,7 @@ def ImplOp : TraitDialectOp<"impl", [
     Example:
 
     ```mlir
-    trait.impl @PartialEq_impl_i32 @PartialEq for [i32,i32] {
+    trait.impl @PartialEq_impl_i32 for @PartialEq[i32,i32] {
       func.func @eq(%self: i32, %other: i32) -> i1 {
         %res = arith.cmpi eq, %self, %other : i32
         return %res : i1
@@ -730,7 +735,13 @@ def ImplOp : TraitDialectOp<"impl", [
     }]>
   ];
 
-  let hasCustomAssemblyFormat = 1;
+  // `private [@Name] for @Trait[...] where [...] witnesses [...] {...}`; the
+  // name is elided where it is the one synthesized from the header.
+  let assemblyFormat = [{
+    custom<VisibilityKeyword>($sym_visibility)
+    custom<ImplHeader>($sym_name, $self_application, $assumptions)
+    (`witnesses` $witnesses^)? attr-dict-with-keyword $body
+  }];
   let hasVerifier = 1;
 }
 
@@ -764,7 +775,9 @@ def AssocTypeOp : TraitDialectOp<"assoc_type", [
     OptionalAttr<TypeArrayAttr>:$type_params
   );
 
-  let hasCustomAssemblyFormat = 1;
+  let assemblyFormat = [{
+    $sym_name (`<` $type_params^ `>`)? (`=` $bound_type^)? attr-dict
+  }];
 }
 
 
@@ -870,7 +883,9 @@ def AllegeOp : TraitDialectOp<"allege", [
     }
   }];
 
-  let hasCustomAssemblyFormat = 1;
+  let assemblyFormat = [{
+    custom<ClaimApplication>(type($result)) (`unsafe` $unsafe^)? attr-dict
+  }];
   let hasVerifier = 1;
 }
 
@@ -1080,7 +1095,6 @@ def DeriveOp : TraitDialectOp<"derive", [
   }];
 
   let arguments = (ins
-    TraitApplicationAttr:$trait_application,
     FlatSymbolRefAttr:$impl,
     OptionalAttr<TypedArrayAttrBase<TypeBindingAttr,
         "the arguments the impl's parameters take">>:$arguments,
@@ -1097,7 +1111,7 @@ def DeriveOp : TraitDialectOp<"derive", [
                    "FlatSymbolRefAttr":$impl,
                    "ValueRange":$assumptions), [{
       ClaimType claimTy = ClaimType::get($_builder.getContext(), traitApp);
-      build($_builder, $_state, claimTy, traitApp, impl, /*arguments=*/nullptr,
+      build($_builder, $_state, claimTy, impl, /*arguments=*/nullptr,
             assumptions);
     }]>
   ];
@@ -1105,6 +1119,11 @@ def DeriveOp : TraitDialectOp<"derive", [
   let extraClassDeclaration = [{
     ClaimType getDerivedClaim() {
       return cast<ClaimType>(getResult().getType());
+    }
+
+    /// The application this derive derives, which its result claim states.
+    TraitApplicationAttr getTraitApplication() {
+      return getDerivedClaim().getTraitApplication();
     }
 
     ImplOp getImplOp();
@@ -1124,7 +1143,14 @@ def DeriveOp : TraitDialectOp<"derive", [
     }
   }];
 
-  let hasCustomAssemblyFormat = 1;
+  // `@Trait[...] from @impl[!P = T, ...] given(%claims) : (types)`; the
+  // derived claim is read off the application and the operand types are
+  // printed only when there are operands.
+  let assemblyFormat = [{
+    custom<ClaimApplication>(type($result)) `from` $impl ``
+    custom<ImplCitationArguments>($arguments) `given` `(` $assumptions `)`
+    (`:` `(` type($assumptions)^ `)`)? attr-dict-with-keyword
+  }];
 }
 
 
@@ -1337,9 +1363,11 @@ def WitnessOp : TraitDialectOp<"witness", [
     projection heads -- the combination that made GHC's unscoped newtype coercions
     unsound -- so admitting a representational leaf requires role machinery first.
 
-    Verification (verify() and verifySymbolUses) ensures the present attributes
-    match the result claim's arm, that the result type equals the claim
-    reconstructed from those attributes, and, for the equality arm's proj-resolve
+    The application arm is its result claim alone: the claim names the
+    application and the proof or impl proving it, and the op stores neither a
+    second time. Verification (verify() and verifySymbolUses) ensures the
+    present attributes match the result claim's arm, that an application
+    witness's claim names a proof, and, for the equality arm's proj-resolve
     leaf, that the cited impl at the witness's arguments applies and binds
     as stated and that the result's equality is the witness's own. For
     the composition leaf verify() replays the ground congruence closure over the
@@ -1347,11 +1375,9 @@ def WitnessOp : TraitDialectOp<"witness", [
     symbol, so verifySymbolUses is a no-op for it.
   }];
 
+  // The application arm is its result claim alone, which names the proof or
+  // impl it cites; the equality arm carries its leaf.
   let arguments = (ins
-    // Application arm.
-    OptionalAttr<FlatSymbolRefAttr>:$proof, // refers to trait.proof or trait.impl
-    OptionalAttr<TraitApplicationAttr>:$trait_application,
-    // Equality arm.
     OptionalAttr<WitnessAttr>:$witness,               // proj-resolve leaf
     UnitAttr:$refl,                                     // refl leaf
     Variadic<Claim>:$premises
@@ -1363,8 +1389,8 @@ def WitnessOp : TraitDialectOp<"witness", [
                    "::mlir::trait::TraitApplicationAttr":$trait_application), [{
       MLIRContext* ctx = $_builder.getContext();
       ClaimType claimTy = ClaimType::get(ctx, trait_application, proof);
-      build($_builder, $_state, claimTy, proof, trait_application,
-            /*witness=*/nullptr, /*refl=*/nullptr, /*premises=*/{});
+      build($_builder, $_state, claimTy, /*witness=*/nullptr, /*refl=*/nullptr,
+            /*premises=*/{});
     }]>,
     // Equality proj-resolve arm.
     OpBuilder<(ins "::mlir::trait::TypeEqualityAttr":$equality,
@@ -1372,16 +1398,13 @@ def WitnessOp : TraitDialectOp<"witness", [
                    "::mlir::ValueRange":$premises), [{
       MLIRContext* ctx = $_builder.getContext();
       ClaimType claimTy = ClaimType::getEquality(ctx, equality);
-      build($_builder, $_state, claimTy, /*proof=*/nullptr,
-            /*trait_application=*/nullptr, witness, /*refl=*/nullptr,
-            premises);
+      build($_builder, $_state, claimTy, witness, /*refl=*/nullptr, premises);
     }]>,
     // Equality refl arm.
     OpBuilder<(ins "::mlir::trait::TypeEqualityAttr":$equality), [{
       MLIRContext* ctx = $_builder.getContext();
       ClaimType claimTy = ClaimType::getEquality(ctx, equality);
-      build($_builder, $_state, claimTy, /*proof=*/nullptr,
-            /*trait_application=*/nullptr, /*witness=*/nullptr,
+      build($_builder, $_state, claimTy, /*witness=*/nullptr,
             $_builder.getUnitAttr(), /*premises=*/{});
     }]>,
     // Equality composition arm. Distinct in arity from the proj-resolve builder
@@ -1391,9 +1414,8 @@ def WitnessOp : TraitDialectOp<"witness", [
                    "::mlir::ValueRange":$premises), [{
       MLIRContext* ctx = $_builder.getContext();
       ClaimType claimTy = ClaimType::getEquality(ctx, equality);
-      build($_builder, $_state, claimTy, /*proof=*/nullptr,
-            /*trait_application=*/nullptr, /*witness=*/nullptr,
-            /*refl=*/nullptr, premises);
+      build($_builder, $_state, claimTy, /*witness=*/nullptr, /*refl=*/nullptr,
+            premises);
     }]>
   ];
 
@@ -1413,10 +1435,10 @@ def WitnessOp : TraitDialectOp<"witness", [
       return cast<ClaimType>(getResult().getType());
     }
 
-    // Valid only on the application arm.
-    ClaimType getProvenClaim() {
-      return ClaimType::get(getContext(), getTraitApplicationAttr(), getProofAttr());
-    }
+    // The claim an application witness proves, and the proof or impl it
+    // cites; valid only on the application arm.
+    ClaimType getProvenClaim() { return getResultClaim(); }
+    FlatSymbolRefAttr getProof() { return getResultClaim().getProof(); }
   }];
 
   let hasCustomAssemblyFormat = 1;

@@ -19,8 +19,6 @@ namespace mlir::trait {
 // concrete helper classes are defined in this header.
 class TraitOp;
 class SpecializationMap;
-class ProjectionBindings;
-class EvidenceBindings;
 class CallSubstitution;
 class ImplResolver;
 class ReadOnlyImplResolver;
@@ -119,24 +117,41 @@ inline Type applySubstitutionOnce(const llvm::DenseMap<Type,Type> &subst,
 inline Type applySubstitutionToFixedPoint(const llvm::DenseMap<Type,Type> &subst,
                                           Type ty);
 
-/// SpecializationMap: GenericTypeInterface -> Type.
-///
-/// Concrete type arguments chosen for generic type parameters.
-class SpecializationMap {
+/// A substitution keyed by one kind of type: each key bound to the one value it
+/// stands for. A key is bound once, and binding it again to a different value
+/// is a caller bug the assertion names.
+template <typename KeyT, typename ValueT = Type>
+class TypeBindings {
 public:
-  std::optional<Type> lookup(GenericTypeInterface key) const {
+  std::optional<ValueT> lookup(KeyT key) const {
     auto it = bindings.find(key);
     if (it == bindings.end())
       return std::nullopt;
     return it->second;
   }
 
-  void bind(GenericTypeInterface key, Type value) {
+  void bind(KeyT key, ValueT value) {
     assert((!bindings.count(key) || bindings.lookup(key) == value) &&
-           "specialization bindings must not be replaced with a different type");
+           "a binding must not be replaced with a different value");
     bindings[key] = value;
   }
 
+  llvm::DenseMap<Type, Type> toTypeMap() const {
+    llvm::DenseMap<Type, Type> result;
+    for (auto [key, value] : bindings)
+      result[key] = value;
+    return result;
+  }
+
+  size_t bindingCount() const { return bindings.size(); }
+
+protected:
+  llvm::DenseMap<KeyT, ValueT> bindings;
+};
+
+/// The type arguments chosen for a declaration's type parameters.
+class SpecializationMap : public TypeBindings<GenericTypeInterface> {
+public:
   // A specialization is fully composed by construction, so one structural
   // substitution pass is enough.
   //
@@ -147,13 +162,6 @@ public:
   // through the module-capable replacer.
   Type apply(Type ty) const { return applySubstitutionOnce(toTypeMap(), ty); }
 
-  llvm::DenseMap<Type, Type> toTypeMap() const {
-    llvm::DenseMap<Type, Type> result;
-    for (auto [key, value] : bindings)
-      result[key] = value;
-    return result;
-  }
-
   static SpecializationMap fromTypeMap(const llvm::DenseMap<Type, Type> &subst) {
     SpecializationMap result;
     for (auto [key, value] : subst) {
@@ -163,88 +171,24 @@ public:
     }
     return result;
   }
-
-private:
-  friend class CallSubstitution;
-
-  size_t bindingCount() const { return bindings.size(); }
-
-  llvm::DenseMap<GenericTypeInterface, Type> bindings;
 };
 
-/// ProjectionBindings: ProjectionType -> Type.
-///
-/// Concrete associated type results for projection types.
-class ProjectionBindings {
-public:
-  std::optional<Type> lookup(ProjectionType key) const {
-    auto it = bindings.find(key);
-    if (it == bindings.end())
-      return std::nullopt;
-    return it->second;
-  }
+/// The concrete associated types projections stand for.
+using ProjectionBindings = TypeBindings<ProjectionType>;
 
-  void bind(ProjectionType key, Type value) {
-    assert((!bindings.count(key) || bindings.lookup(key) == value) &&
-           "projection bindings must not be replaced with a different type");
-    bindings[key] = value;
-  }
-
-  llvm::DenseMap<Type, Type> toTypeMap() const {
-    llvm::DenseMap<Type, Type> result;
-    for (auto [key, value] : bindings)
-      result[key] = value;
-    return result;
-  }
-
-private:
-  friend class CallSubstitution;
-
-  size_t bindingCount() const { return bindings.size(); }
-
-  llvm::DenseMap<ProjectionType, Type> bindings;
-};
-
-/// EvidenceBindings: ClaimType -> ClaimType.
-///
-/// Maps unproven claim spellings to equivalent proven claim spellings discovered
+/// Unproven claim spellings mapped to the equivalent proven spellings found
 /// while checking evidence.
-class EvidenceBindings {
+class EvidenceBindings : public TypeBindings<ClaimType, ClaimType> {
 public:
-  std::optional<ClaimType> lookup(ClaimType key) const {
-    auto it = bindings.find(key);
-    if (it == bindings.end())
-      return std::nullopt;
-    return it->second;
-  }
-
   void bind(ClaimType unproven, ClaimType proven) {
     assert(!unproven.isProven() && "evidence keys must be unproven claims");
     assert(proven.isProven() && "evidence values must be proven claims");
-    assert((!bindings.count(unproven) || bindings.lookup(unproven) == proven) &&
-           "evidence bindings must not be replaced with a different proof");
-    bindings[unproven] = proven;
+    TypeBindings::bind(unproven, proven);
   }
 
   // Used by the recursive proof derivation to roll back an optimistic binding
   // when a nested obligation fails.
   void erase(ClaimType key) { bindings.erase(key); }
-
-  bool empty() const { return bindings.empty(); }
-
-  llvm::DenseMap<Type, Type> toTypeMap() const {
-    llvm::DenseMap<Type, Type> result;
-    for (auto [key, value] : bindings)
-      result[key] = value;
-    return result;
-  }
-
-private:
-  friend class CallSubstitution;
-
-  size_t bindingCount() const { return bindings.size(); }
-
-  llvm::DenseMap<ClaimType, ClaimType> bindings;
 };
 
 /// Whether a spelling is one nothing but a respelling can move.

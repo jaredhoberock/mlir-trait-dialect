@@ -342,6 +342,43 @@ ImplResolver::ImplResolver(ModuleOp m, std::shared_ptr<DemandLedger> ledger)
   }
 }
 
+/// The arguments carrying `resolved`'s impl header to the claim selection chose
+/// it for, read through `record`, the context selection chose it under.
+static FailureOr<SpecializationMap>
+argumentsOf(const ResolvedImpl &resolved, const ReadOnlyImplResolver &record,
+            llvm::function_ref<InFlightDiagnostic()> err) {
+  ImplOp impl = resolved.impl;
+  return impl.buildSubstitutionForSelfClaim(
+      resolved.selectedClaim, RecordedProjectionLookup(record), err);
+}
+
+/// The type `proj` projects to through `resolved`, the impl selection settled
+/// on for its application, at `assocTypeArgs`, the projection's own
+/// associated-type arguments as the caller resolved them.
+static FailureOr<Type>
+bindingThrough(const ResolvedImpl &resolved, ProjectionType proj,
+               ArrayRef<Type> assocTypeArgs, const ReadOnlyImplResolver &record,
+               llvm::function_ref<InFlightDiagnostic()> err) {
+  auto arguments = argumentsOf(resolved, record, err);
+  if (failed(arguments)) return failure();
+  ImplOp impl = resolved.impl;
+  return impl.specializeAssociatedTypeBinding(
+      proj.getAssocName().getValue(), assocTypeArgs, *arguments, err);
+}
+
+/// The monomorphic application `resolved`'s impl header states at `arguments`,
+/// the ones it takes at the claim selection chose it for, which is what a proof
+/// of that claim is recorded under.
+static FailureOr<TraitApplicationAttr>
+monomorphicApplicationOf(const ResolvedImpl &resolved,
+                         const SpecializationMap &arguments) {
+  auto instance = dyn_cast_or_null<ClaimType>(
+      instantiate(Type(resolved.selectedClaim), arguments));
+  if (!instance || !instance.isMonomorphic())
+    return failure();
+  return instance.getTraitApplication();
+}
+
 FailureOr<Type> ImplResolver::resolveProjectionType(
     ProjectionType proj,
     ModuleOp scope,
@@ -350,43 +387,43 @@ FailureOr<Type> ImplResolver::resolveProjectionType(
     std::optional<Refutation> *refusedOn) {
   DemandFrame frame{Type(proj)};
 
-  auto traitApp = proj.getTraitApplication();
-  StringRef assocName = proj.getAssocName().getValue();
-
-  ClaimType claim = ClaimType::get(proj.getContext(), traitApp);
+  ClaimType claim = ClaimType::get(proj.getContext(), proj.getTraitApplication());
   auto resolvedImpl = resolveImplFor(claim, scope, builder, err, refusedOn);
   if (failed(resolvedImpl)) return failure();
-  ImplOp impl = resolvedImpl->impl;
 
   SmallVector<Type> assocTypeArgs;
   for (Type arg : proj.getAssocTypeArgs())
     assocTypeArgs.push_back(resolveProjectionsIn(arg, scope, builder));
 
-  // The arguments carrying this impl's header to the claim selection chose it
-  // for, read through the same context selection chose it under.
-  RecordedProjectionLookup byRecord(*this, scope);
-  auto subst = impl.buildSubstitutionForSelfClaim(resolvedImpl->selectedClaim,
-                                                  byRecord, err);
-  if (failed(subst)) return failure();
-
-  return impl.specializeAssociatedTypeBinding(assocName, assocTypeArgs, *subst,
-                                              err);
+  return bindingThrough(*resolvedImpl, proj, assocTypeArgs,
+                        ReadOnlyImplResolver(*this, scope), err);
 }
 
-/// Names the ambiguity that refused `demand`, where the demand stands.
+/// What putting `demand` to impl selection settled, given what selection
+/// refused it on when it did not serve it.
 ///
-/// Two satisfiable impls of one ground application is the refusal no later
-/// resolution overturns, so it is decided here and nowhere else. It is also a
-/// refusal the demand's own spelling need not carry: an obligation read off a
-/// trait's where clause at a ground application is spelled in no operation, so
-/// the stage's leftover walks have nothing to find and the demand would go
-/// unreported.
-static void reportAmbiguousDemand(Type demand, ModuleOp scope,
-                                  ArrayRef<ImplOp> satisfiable) {
+/// Two or more satisfiable candidates is the one refusal no later resolution
+/// overturns: candidates are only appended. Every other way of not serving --
+/// no candidate yet, or a binding whose own arguments have still to resolve --
+/// is one the facts can move under.
+///
+/// The ambiguity is named where the demand stands, and here and nowhere else.
+/// It is a refusal the demand's own spelling need not carry: an obligation read
+/// off a trait's where clause at a ground application is spelled in no
+/// operation, so the stage's leftover walks have nothing to find and the demand
+/// would go unreported.
+static ImplResolver::DemandDisposition
+refusalDisposition(Type demand, ModuleOp scope,
+                   const std::optional<Refutation> &refusedOn) {
+  if (!refusedOn ||
+      refusedOn->arm != RefutationArm::MultipleSatisfiableCandidates)
+    return ImplResolver::DemandDisposition::Deferred;
   InFlightDiagnostic diagnostic =
       emitError(currentDemandAnchor().value_or(scope.getLoc()))
       << "incoherent impls (multiple satisfiable) for " << demand;
-  nameCandidates(diagnostic, satisfiable, scope.getLoc(), "candidate");
+  nameCandidates(diagnostic, refusedOn->satisfiable, scope.getLoc(),
+                 "candidate");
+  return ImplResolver::DemandDisposition::Refused;
 }
 
 ImplResolver::DemandDisposition
@@ -401,17 +438,7 @@ ImplResolver::serveDemand(ProjectionType demand, ModuleOp scope,
   if (succeeded(resolveProjectionType(demand, scope, builder, /*err=*/nullptr,
                                       &refusedOn)))
     return DemandDisposition::Served;
-
-  // A refusal for two or more satisfiable candidates is the one refusal no
-  // later resolution overturns. Every other way of not serving -- no candidate
-  // yet, or a binding whose own arguments have still to resolve -- is one the
-  // facts can move under.
-  if (!refusedOn ||
-      refusedOn->arm != RefutationArm::MultipleSatisfiableCandidates)
-    return DemandDisposition::Deferred;
-
-  reportAmbiguousDemand(Type(demand), scope, refusedOn->satisfiable);
-  return DemandDisposition::Refused;
+  return refusalDisposition(Type(demand), scope, refusedOn);
 }
 
 ImplResolver::DemandDisposition
@@ -425,16 +452,7 @@ ImplResolver::serveDemand(ClaimType demand, ModuleOp scope,
   if (succeeded(resolveAndEnsureProofFor(demand, scope, builder,
                                          /*err=*/nullptr, &refusedOn)))
     return DemandDisposition::Served;
-
-  // The same reading as for a projection: two or more satisfiable candidates is
-  // the one refusal no later resolution overturns, and every other way of not
-  // serving is one the facts can move under.
-  if (!refusedOn ||
-      refusedOn->arm != RefutationArm::MultipleSatisfiableCandidates)
-    return DemandDisposition::Deferred;
-
-  reportAmbiguousDemand(Type(demand), scope, refusedOn->satisfiable);
-  return DemandDisposition::Refused;
+  return refusalDisposition(Type(demand), scope, refusedOn);
 }
 
 Type ImplResolver::resolveProjectionsIn(Type ty, ModuleOp scope,
@@ -505,20 +523,14 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
   ImplOp impl = resolvedImpl->impl;
   ClaimType selected = resolvedImpl->selectedClaim;
 
-  // the arguments carrying this impl's header to the selected claim, read
-  // through the same context selection chose it under
-  RecordedProjectionLookup byRecord(*this, scope);
-  auto subst = impl.buildSubstitutionForSelfClaim(selected, byRecord, err);
+  auto subst = argumentsOf(*resolvedImpl, ReadOnlyImplResolver(*this, scope), err);
   if (failed(subst)) return failure();
-
-  // monomorphize the selected claim with that substitution
-  ClaimType monomorphicWanted = dyn_cast_or_null<ClaimType>(instantiate(Type(selected), *subst));
-  if (!monomorphicWanted || !monomorphicWanted.isMonomorphic()) {
+  auto monomorphic = monomorphicApplicationOf(*resolvedImpl, *subst);
+  if (failed(monomorphic)) {
     if (err) err() << "could not monomorphize claim: " << originalWanted;
     return failure();
   }
-
-  TraitApplicationAttr app = monomorphicWanted.getTraitApplication();
+  TraitApplicationAttr app = *monomorphic;
 
   // check the proof memo for this monomorphic app, as read here
   if (auto it = memo.proofMemo.find({scope, app}); it != memo.proofMemo.end())
@@ -707,22 +719,13 @@ ReadOnlyImplResolver::resolveProjectionType(ProjectionType proj) const {
   ClaimType claim = ClaimType::get(proj.getContext(), proj.getTraitApplication());
   auto resolvedImpl = getRecordedImplFor(claim);
   if (failed(resolvedImpl)) return failure();
-  ImplOp impl = resolvedImpl->impl;
 
   SmallVector<Type> assocTypeArgs;
   for (Type arg : proj.getAssocTypeArgs())
     assocTypeArgs.push_back(resolveProjectionsIn(arg));
 
-  // The arguments carrying this impl's header to the claim selection chose it
-  // for, read through the same context selection chose it under.
-  RecordedProjectionLookup byRecord(*this);
-  auto subst = impl.buildSubstitutionForSelfClaim(resolvedImpl->selectedClaim,
-                                                  byRecord,
-                                                  /*errFn=*/nullptr);
-  if (failed(subst)) return failure();
-
-  return impl.specializeAssociatedTypeBinding(
-      proj.getAssocName().getValue(), assocTypeArgs, *subst);
+  return bindingThrough(*resolvedImpl, proj, assocTypeArgs, *this,
+                        /*err=*/nullptr);
 }
 
 Type ReadOnlyImplResolver::resolveProjectionsIn(Type ty) const {
@@ -759,19 +762,12 @@ ReadOnlyImplResolver::getRecordedProofFor(ClaimType claim) const {
   auto resolvedImpl = getRecordedImplFor(claim);
   if (failed(resolvedImpl)) return failure();
 
-  // The arguments carrying this impl's header to the claim selection chose it
-  // for, read through the same context selection chose it under.
-  RecordedProjectionLookup byRecord(*this);
-  auto subst = resolvedImpl->impl.buildSubstitutionForSelfClaim(
-      resolvedImpl->selectedClaim, byRecord, /*errFn=*/nullptr);
+  auto subst = argumentsOf(*resolvedImpl, *this, /*err=*/nullptr);
   if (failed(subst)) return failure();
+  auto monomorphic = monomorphicApplicationOf(*resolvedImpl, *subst);
+  if (failed(monomorphic)) return failure();
 
-  auto monomorphic = dyn_cast_or_null<ClaimType>(
-      instantiate(Type(resolvedImpl->selectedClaim), *subst));
-  if (!monomorphic || !monomorphic.isMonomorphic())
-    return failure();
-
-  auto proof = getRecordedProof(monomorphic.getTraitApplication());
+  auto proof = getRecordedProof(*monomorphic);
   if (!proof) return failure();
   return *proof;
 }

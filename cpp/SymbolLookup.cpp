@@ -8,13 +8,19 @@ namespace mlir::trait {
 /// A symbol table operation and a name it was asked about, paired with what it
 /// answered.
 ///
-/// XXX TODO: this is what MLIR's `SymbolTableCollection` already is, kept true
-/// across writes by `SymbolTable::insert`, `erase` and `invalidateSymbolTable`.
-/// It goes when every site that mints a symbol inserts through one such
-/// collection instead of appending to a module body: the consumer dialects'
-/// generators, `ProofOp::create` in ImplResolution.cpp and `func::FuncOp`
-/// specialization in Specialization.cpp. That is the same change as the
-/// resolver publishing the impls it generates.
+/// Under a verifier this stays: a name read in a module standing above the
+/// table the walk is over is read in a table whose names the verifier has not
+/// yet checked to be unique, and a `SymbolTable` built over it asserts on the
+/// duplicate the verifier is about to diagnose, so a `SymbolTableCollection`
+/// may answer for the walked table alone.
+///
+/// XXX TODO: across a stage this is what MLIR's `SymbolTableCollection`
+/// already is, kept true across writes by `SymbolTable::insert`, `erase` and
+/// `invalidateSymbolTable`. The stage's use of it goes when every site that
+/// mints a symbol inserts through one such collection instead of appending to
+/// a module body: the consumer dialects' generators, `ProofOp::create` in
+/// ImplResolution.cpp and `func::FuncOp` specialization in Specialization.cpp.
+/// That is the same change as the resolver publishing the impls it generates.
 struct HeldSymbolAnswers {
   llvm::DenseMap<std::pair<Operation *, StringAttr>, Operation *> answers;
 

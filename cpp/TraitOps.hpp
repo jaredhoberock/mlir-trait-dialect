@@ -51,20 +51,6 @@ LogicalResult verifyProjectionResolutionAtUse(
     llvm::function_ref<NormalizationContext()> siteEvidence,
     llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
-/// The ImplOp-verification companion to `verifyProjectionResolutionAtUse`, running the
-/// same checks, differing in four ways. Its head comparison is rigid -- only
-/// the cited impl's own generics instantiate -- so the verdict is
-/// estate-independent. Its where-clause equalities are read through the cited
-/// impl's own declaration witnesses alone. Its assumptions may also be covered
-/// by a `dischargeWitnesses` entry, recursively over the same finite list. And
-/// on success it returns the substitution the witness's arguments make.
-FailureOr<SpecializationMap> verifyProjectionResolutionAtImpl(
-    ModuleOp module, WitnessAttr witness,
-    ArrayRef<TypeEqualityAttr> premises,
-    ArrayRef<TraitApplicationAttr> obligationPremises,
-    ArrayRef<WitnessAttr> dischargeWitnesses,
-    llvm::function_ref<InFlightDiagnostic()> err = nullptr);
-
 /// Rewrite a type with every proven application claim stripped to its unproven
 /// form. Coerce comparison is modulo the proof, permanently.
 Type stripClaimProofs(Type type);
@@ -173,6 +159,22 @@ struct LocalProjectionRule {
   TraitApplicationAttr app;
   SpecializationMap subst;
 };
+
+/// The ImplOp-verification companion to `verifyProjectionResolutionAtUse`, running the
+/// same checks, differing in four ways. Its head comparison is rigid -- only
+/// the cited impl's own generics instantiate -- so the verdict is
+/// estate-independent. Its where-clause equalities are read through the cited
+/// impl's own declaration witnesses alone. Its assumptions may also be covered
+/// by a `dischargeWitnesses` entry, recursively over the same finite list. And
+/// on success it returns the rule the witness certifies: the cited impl, the
+/// projection's application, and the substitution the witness's arguments
+/// make.
+FailureOr<LocalProjectionRule> verifyProjectionResolutionAtImpl(
+    ModuleOp module, WitnessAttr witness,
+    ArrayRef<TypeEqualityAttr> premises,
+    ArrayRef<TraitApplicationAttr> obligationPremises,
+    ArrayRef<WitnessAttr> dischargeWitnesses,
+    llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
 /// Context controlling how far `normalize` may resolve projection types.
 ///

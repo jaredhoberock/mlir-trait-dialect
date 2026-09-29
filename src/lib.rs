@@ -2,19 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 use melior::{
     Context, pass::Pass, StringRef,
-    ir::{AttributeLike, Identifier, Location, Operation, Type, TypeLike, Value, ValueLike},
+    ir::{AttributeLike, Block, Identifier, Location, Operation, Region, RegionLike, Type, TypeLike, Value},
     ir::attribute::Attribute,
     ir::operation::{OperationBuilder, OperationLike},
 };
 use mlir_sys::{
-    MlirAttribute, MlirContext, MlirLocation,
-    MlirOperation, MlirPass, MlirStringRef,
-    MlirType, MlirValue,
+    MlirAttribute, MlirContext, MlirPass, MlirStringRef, MlirType,
     mlirArrayAttrGet, mlirFlatSymbolRefAttrGet, mlirIdentifierGet, mlirIntegerAttrGet,
     mlirIntegerTypeGet,
     mlirLocationGetContext,
     mlirOperationGetContext,
-    mlirOperationSetAttributeByName, mlirStringAttrGet, mlirTypeAttrGet, mlirUnitAttrGet,
+    mlirOperationSetAttributeByName, mlirStringAttrGet, mlirSymbolRefAttrGet, mlirTypeAttrGet,
+    mlirUnitAttrGet,
 };
 
 unsafe extern "C" {
@@ -27,48 +26,15 @@ unsafe extern "C" {
                                     type_args: *const MlirType, num_type_args: isize) -> MlirAttribute;
     fn traitAttributeIsATraitApplication(attr: MlirAttribute) -> bool;
 
-    fn traitTraitOpCreate(loc: MlirLocation,
-                          name: MlirStringRef,
-                          type_params: *const MlirType, num_type_params: isize,
-                          predicates: *const MlirAttribute, num_predicates: isize) -> MlirOperation;
-    fn traitImplOpCreate(loc: MlirLocation,
-                         self_trait_app: MlirAttribute,
-                         assumptions: *const MlirAttribute, num_assumptions: isize) -> MlirOperation;
-    fn traitImplOpCreateNamed(loc: MlirLocation,
-                              sym_name: MlirStringRef,
-                              self_trait_app: MlirAttribute,
-                              predicates: *const MlirAttribute, num_predicates: isize) -> MlirOperation;
-    fn traitMethodCallOpCreate(loc: MlirLocation,
-                               trait_name: MlirStringRef,
-                               method_name: MlirStringRef,
-                               claim: MlirValue,
-                               arguments: *const MlirValue, num_arguments: isize,
-                               result_types: *const MlirType, num_results: isize) -> MlirOperation;
-    fn traitFuncCallOpCreate(loc: MlirLocation,
-                             callee: MlirStringRef,
-                             arguments: *const MlirValue, num_arguments: isize,
-                             result_types: *const MlirType, num_results: isize) -> MlirOperation;
-    fn traitAllegeOpCreate(loc: MlirLocation,
-                           trait_app: MlirAttribute) -> MlirOperation;
-    fn traitAllegeUnsafeOpCreate(loc: MlirLocation,
-                                 trait_app: MlirAttribute) -> MlirOperation;
-    fn traitWitnessOpCreate(loc: MlirLocation,
-                            proof_name: MlirStringRef,
-                            trait_app: MlirAttribute) -> MlirOperation;
-    fn traitProofOpCreate(loc: MlirLocation,
-                          sym_name: MlirStringRef,
-                          impl_name: MlirStringRef,
-                          trait_app: MlirAttribute,
-                          subproof_names: *const MlirStringRef, num_subproofs: isize) -> MlirOperation;
-    fn traitDeriveOpCreate(loc: MlirLocation,
-                           trait_app: MlirAttribute,
-                           impl_name: MlirStringRef,
-                           assumptions: *const MlirValue, num_assumptions: isize) -> MlirOperation;
+    fn traitPredicateArrayAttrGet(ctx: MlirContext,
+                                  predicates: *const MlirAttribute, num_predicates: isize) -> MlirAttribute;
 
     fn traitPolyTypeGet(ctx: MlirContext, label: u32) -> MlirType;
 
     fn traitClaimTypeGet(ctx: MlirContext,
                          predicate: MlirAttribute) -> MlirType;
+    fn traitProvenClaimTypeGet(trait_app: MlirAttribute,
+                               proof_name: MlirStringRef) -> MlirType;
     fn traitClaimTypeWithApplication(claim_ty: MlirType,
                                      trait_app: MlirAttribute) -> MlirType;
     fn traitClaimTypeGetTraitApplication(claim_ty: MlirType) -> MlirAttribute;
@@ -108,10 +74,6 @@ unsafe extern "C" {
                                   bindings: *const MlirAttribute, num_bindings: isize,
                                   header: *mut MlirType, where_claims: *mut MlirType, max_where: isize,
                                   num_where: *mut isize) -> u32;
-    fn traitAssocTypeOpCreate(loc: MlirLocation,
-                              name: MlirStringRef,
-                              bound_type: MlirType,
-                              type_params: *const MlirType, num_type_params: isize) -> MlirOperation;
 }
 
 pub fn register(ctx: &Context) {
@@ -193,6 +155,41 @@ fn unit_attr<'c>(loc: Location<'c>) -> Attribute<'c> {
     unsafe { Attribute::from_raw(mlirUnitAttrGet(mlirLocationGetContext(loc.to_raw()))) }
 }
 
+/// A string attribute holding `text` in the location's context, as a symbol's
+/// name and its visibility are stored.
+fn string_attr<'c>(loc: Location<'c>, text: &str) -> Attribute<'c> {
+    unsafe {
+        Attribute::from_raw(mlirStringAttrGet(
+            mlirLocationGetContext(loc.to_raw()), StringRef::new(text).to_raw()))
+    }
+}
+
+/// The type attribute holding `ty`.
+fn type_attr<'c>(ty: Type<'c>) -> Attribute<'c> {
+    unsafe { Attribute::from_raw(mlirTypeAttrGet(ty.to_raw())) }
+}
+
+/// A declaration's body: one region holding one empty block, which the caller
+/// fills through `first_block`.
+fn declaration_body<'c>() -> Region<'c> {
+    let region = Region::new();
+    region.append_block(Block::new(&[]));
+    region
+}
+
+/// The checked `#trait.predicate_array` holding `predicates`, a where clause.
+/// Panics on an entry that is none of a trait application, a type equality and
+/// a bound predicate, which is a malformed call rather than a refused program.
+fn predicate_array_attr<'c>(loc: Location<'c>, predicates: &[Attribute<'c>]) -> Attribute<'c> {
+    let raw: Vec<MlirAttribute> = predicates.iter().map(|p| p.to_raw()).collect();
+    let array = unsafe {
+        Attribute::from_raw(traitPredicateArrayAttrGet(
+            mlirLocationGetContext(loc.to_raw()), raw.as_ptr(), raw.len() as isize))
+    };
+    assert!(!array.to_raw().ptr.is_null(), "a where clause holds predicates only");
+    array
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct TraitApplicationAttribute<'c> {
     attribute: Attribute<'c>,
@@ -265,52 +262,40 @@ pub fn trait_application_attr<'c>(
 
 /// Build a `trait.trait` whose `where` clause carries a mixed list of
 /// predicates: each entry is a trait application or a type equality attribute.
+/// A trait is a template that dies with monomorphization, so it is private from
+/// birth.
 pub fn trait_<'c>(loc: Location<'c>,
                   name: &str,
                   type_params: &[Type<'c>],
                   predicates: &[Attribute<'c>],
 ) -> Operation<'c> {
-    unsafe { Operation::from_raw(traitTraitOpCreate(
-        loc.to_raw(),
-        StringRef::new(name).to_raw(),
-        type_params.as_ptr() as *const _,
-        type_params.len() as isize,
-        predicates.as_ptr() as *const _,
-        predicates.len() as isize,
-    ))}
-}
-
-pub fn impl_<'c>(loc: Location<'c>,
-                 self_trait_app: TraitApplicationAttribute<'c>,
-                 assumptions: &[TraitApplicationAttribute<'c>],
-) -> Operation<'c> {
-    let app_attr: Attribute<'c> = self_trait_app.into();
-    let asm_attrs: Vec<Attribute<'c>> =
-        assumptions.iter().copied().map(Into::into).collect();
-    unsafe { Operation::from_raw(traitImplOpCreate(
-        loc.to_raw(),
-        app_attr.to_raw(),
-        asm_attrs.as_ptr() as *const _,
-        asm_attrs.len() as isize,
-    ))}
+    build_op(OperationBuilder::new("trait.trait", loc)
+        .add_attributes(&[
+            (identifier(loc, "sym_name"), string_attr(loc, name)),
+            (identifier(loc, "type_params"), type_array_attr(loc, type_params)),
+            (identifier(loc, "requirements"), predicate_array_attr(loc, predicates)),
+            (identifier(loc, "sym_visibility"), string_attr(loc, "private")),
+        ])
+        .add_regions([declaration_body()]))
 }
 
 /// Build a named `trait.impl` whose `where` clause carries a mixed list of
 /// predicates: each entry is a trait application the impl assumes, or a type
-/// equality it asserts about its own bindings.
+/// equality it asserts about its own bindings. An impl is a template that dies
+/// with monomorphization, so it is private from birth.
 pub fn impl_named<'c>(loc: Location<'c>,
                       sym_name: &str,
                       self_trait_app: TraitApplicationAttribute<'c>,
                       predicates: &[Attribute<'c>],
 ) -> Operation<'c> {
-    let app_attr: Attribute<'c> = self_trait_app.into();
-    unsafe { Operation::from_raw(traitImplOpCreateNamed(
-        loc.to_raw(),
-        StringRef::new(sym_name).to_raw(),
-        app_attr.to_raw(),
-        predicates.as_ptr() as *const _,
-        predicates.len() as isize,
-    ))}
+    build_op(OperationBuilder::new("trait.impl", loc)
+        .add_attributes(&[
+            (identifier(loc, "sym_name"), string_attr(loc, sym_name)),
+            (identifier(loc, "self_application"), self_trait_app.into()),
+            (identifier(loc, "assumptions"), predicate_array_attr(loc, predicates)),
+            (identifier(loc, "sym_visibility"), string_attr(loc, "private")),
+        ])
+        .add_regions([declaration_body()]))
 }
 
 /// Attach the checked `witnesses` array to an existing `trait.impl` op -- each a
@@ -333,6 +318,8 @@ pub fn set_impl_witnesses<'c>(
     }
 }
 
+/// Build a `trait.method.call` of `@trait_name::@method_name` through `claim`,
+/// the receiver claim, with `arguments`; `result_types` are the call's results.
 pub fn method_call<'c>(loc: Location<'c>,
                        trait_name: &str,
                        method_name: &str,
@@ -340,80 +327,64 @@ pub fn method_call<'c>(loc: Location<'c>,
                        arguments: &[Value<'c,'_>],
                        result_types: &[Type<'c>],
 ) -> Operation<'c> {
-    unsafe { Operation::from_raw(traitMethodCallOpCreate(
-        loc.to_raw(),
-        StringRef::new(trait_name).to_raw(),
-        StringRef::new(method_name).to_raw(),
-        claim.to_raw(),
-        arguments.as_ptr() as *const _,
-        arguments.len() as isize,
-        result_types.as_ptr() as *const _,
-        result_types.len() as isize,
-    ))}
+    let method_ref = unsafe {
+        let ctx = mlirLocationGetContext(loc.to_raw());
+        let method = mlirFlatSymbolRefAttrGet(ctx, StringRef::new(method_name).to_raw());
+        Attribute::from_raw(mlirSymbolRefAttrGet(ctx, StringRef::new(trait_name).to_raw(), 1, &method))
+    };
+    build_op(OperationBuilder::new("trait.method.call", loc)
+        .add_operands(&[claim])
+        .add_operands(arguments)
+        .add_attributes(&[(identifier(loc, "method_ref"), method_ref)])
+        .add_results(result_types))
 }
 
+/// Build a `trait.func.call` of `@callee` with `arguments`; `result_types` are
+/// the call's results.
 pub fn func_call<'c>(loc: Location<'c>,
                      callee: &str,
                      arguments: &[Value<'c,'_>],
                      result_types: &[Type<'c>],
 ) -> Operation<'c> {
-    unsafe { Operation::from_raw(traitFuncCallOpCreate(
-        loc.to_raw(),
-        StringRef::new(callee).to_raw(),
-        arguments.as_ptr() as *const _,
-        arguments.len() as isize,
-        result_types.as_ptr() as *const _,
-        result_types.len() as isize,
-    ))}
+    build_op(OperationBuilder::new("trait.func.call", loc)
+        .add_operands(arguments)
+        .add_attributes(&[(identifier(loc, "callee_name"), symbol_ref_attr(loc, callee))])
+        .add_results(result_types))
 }
 
+/// The unproven claim of `trait_app`, in the location's context.
+fn unproven_claim<'c>(loc: Location<'c>, trait_app: TraitApplicationAttribute<'c>) -> Type<'c> {
+    unsafe { Type::from_raw(traitClaimTypeGet(mlirLocationGetContext(loc.to_raw()), trait_app.to_raw())) }
+}
+
+/// Build a `trait.allege` of the monomorphic application `trait_app`.
 pub fn allege<'c>(loc: Location<'c>,
                   trait_app: TraitApplicationAttribute<'c>,
 ) -> Operation<'c> {
-    unsafe { Operation::from_raw(traitAllegeOpCreate(
-        loc.to_raw(),
-        trait_app.to_raw(),
-    ))}
+    build_op(OperationBuilder::new("trait.allege", loc)
+        .add_results(&[unproven_claim(loc, trait_app)]))
 }
 
+/// Build a `trait.allege` of `trait_app` marked `unsafe`, which may spell type
+/// variables: its claim is checked once the instance is concrete.
 pub fn allege_unsafe<'c>(loc: Location<'c>,
                          trait_app: TraitApplicationAttribute<'c>,
 ) -> Operation<'c> {
-    unsafe { Operation::from_raw(traitAllegeUnsafeOpCreate(
-        loc.to_raw(),
-        trait_app.to_raw(),
-    ))}
+    build_op(OperationBuilder::new("trait.allege", loc)
+        .add_attributes(&[(identifier(loc, "unsafe"), unit_attr(loc))])
+        .add_results(&[unproven_claim(loc, trait_app)]))
 }
 
+/// Build a `trait.witness` of `trait_app` proved by the proof or unconditional
+/// impl named `proof_name`.
 pub fn witness<'c>(loc: Location<'c>,
                    proof_name: &str,
                    trait_app: TraitApplicationAttribute<'c>,
 ) -> Operation<'c> {
-    unsafe { Operation::from_raw(traitWitnessOpCreate(
-        loc.to_raw(),
-        StringRef::new(proof_name).to_raw(),
-        trait_app.to_raw(),
-    ))}
-}
-
-pub fn proof<'c>(loc: Location<'c>,
-                 sym_name: &str,
-                 impl_name: &str,
-                 trait_app: TraitApplicationAttribute<'c>,
-                 subproof_names: &[&str],
-) -> Operation<'c> {
-    let raw_names: Vec<MlirStringRef> = subproof_names
-        .iter()
-        .map(|s| StringRef::new(s).to_raw())
-        .collect();
-    unsafe { Operation::from_raw(traitProofOpCreate(
-        loc.to_raw(),
-        StringRef::new(sym_name).to_raw(),
-        StringRef::new(impl_name).to_raw(),
-        trait_app.to_raw(),
-        raw_names.as_ptr(),
-        raw_names.len() as isize,
-    ))}
+    let claim = unsafe {
+        Type::from_raw(traitProvenClaimTypeGet(trait_app.to_raw(), StringRef::new(proof_name).to_raw()))
+    };
+    build_op(OperationBuilder::new("trait.witness", loc).add_results(&[claim]))
 }
 
 /// Create a `trait.project` op selecting the bound requirement `index` of
@@ -450,18 +421,18 @@ pub fn project<'c>(loc: Location<'c>,
         .add_results(&[result_claim]))
 }
 
+/// Build a `trait.derive` of `trait_app` through the impl `impl_name`, stating
+/// none of its arguments, with one claim in `assumptions` per application entry
+/// of the impl's where clause.
 pub fn derive<'c>(loc: Location<'c>,
                   trait_app: TraitApplicationAttribute<'c>,
                   impl_name: &str,
                   assumptions: &[Value<'c,'_>],
 ) -> Operation<'c> {
-    unsafe { Operation::from_raw(traitDeriveOpCreate(
-        loc.to_raw(),
-        trait_app.to_raw(),
-        StringRef::new(impl_name).to_raw(),
-        assumptions.as_ptr() as *const _,
-        assumptions.len() as isize,
-    ))}
+    build_op(OperationBuilder::new("trait.derive", loc)
+        .add_operands(assumptions)
+        .add_attributes(&[(identifier(loc, "impl"), symbol_ref_attr(loc, impl_name))])
+        .add_results(&[unproven_claim(loc, trait_app)]))
 }
 
 /// The `#trait.binding` attributes pairing each of an impl's own parameters, as
@@ -499,20 +470,16 @@ pub fn proof_with_arguments<'c>(loc: Location<'c>,
             None => unit_attr(loc).to_raw(),
         })
         .collect();
-    let name = |text: &str| unsafe {
-        Attribute::from_raw(mlirStringAttrGet(
-            mlirLocationGetContext(loc.to_raw()), StringRef::new(text).to_raw()))
-    };
     // A proof is a template that dies with monomorphization, so it is private
     // from birth, as every other proof is minted.
     Some(build_op(OperationBuilder::new("trait.proof", loc)
         .add_attributes(&[
-            (identifier(loc, "sym_name"), name(sym_name)),
+            (identifier(loc, "sym_name"), string_attr(loc, sym_name)),
             (identifier(loc, "impl_name"), symbol_ref_attr(loc, impl_name)),
             (identifier(loc, "arguments"), array_attr(loc, &bindings)),
             (identifier(loc, "trait_application"), trait_app.into()),
             (identifier(loc, "subproof_names"), array_attr(loc, &entries)),
-            (identifier(loc, "sym_visibility"), name("private")),
+            (identifier(loc, "sym_visibility"), string_attr(loc, "private")),
         ])))
 }
 
@@ -526,26 +493,15 @@ pub fn derive_with_arguments<'c>(loc: Location<'c>,
                                  arguments: &[(Type<'c>, Type<'c>)],
                                  premises: &[Value<'c,'_>],
 ) -> Option<Operation<'c>> {
-    let ctx = unsafe { mlirLocationGetContext(loc.to_raw()) };
-    let bindings = type_bindings(ctx, arguments)?;
-    let claim = unsafe { Type::from_raw(traitClaimTypeGet(ctx, trait_app.to_raw())) };
+    let bindings = type_bindings(unsafe { mlirLocationGetContext(loc.to_raw()) }, arguments)?;
+    let claim = unproven_claim(loc, trait_app);
     Some(build_op(OperationBuilder::new("trait.derive", loc)
         .add_operands(premises)
         .add_attributes(&[
-            (identifier(loc, "trait_application"), trait_app.into()),
             (identifier(loc, "impl"), symbol_ref_attr(loc, impl_name)),
             (identifier(loc, "arguments"), array_attr(loc, &bindings)),
         ])
         .add_results(&[claim])))
-}
-
-/// Build a `trait.assume` introducing the hypothesis `claim`: an application
-/// claim `@Trait[...]` or an equality claim `!A = !B`.
-pub fn assume<'c>(loc: Location<'c>,
-                  claim: Type<'c>,
-) -> Operation<'c> {
-    build_op(OperationBuilder::new("trait.assume", loc)
-        .add_results(&[claim]))
 }
 
 /// Build a positional `trait.assume` citing the self application of the trait
@@ -892,17 +848,14 @@ pub fn coerce_pending_accepts(input: Type, result: Type) -> bool {
 /// trait body) or `Some(type)` for a binding (inside an impl body).
 /// Pass `type_params` for GAT type parameters (empty slice for non-GAT).
 pub fn assoc_type<'c>(loc: Location<'c>, name: &str, bound_type: Option<Type<'c>>, type_params: &[Type<'c>]) -> Operation<'c> {
-    let raw_type = match bound_type {
-        Some(ty) => ty.to_raw(),
-        None => MlirType { ptr: std::ptr::null_mut() },
-    };
-    unsafe { Operation::from_raw(traitAssocTypeOpCreate(
-        loc.to_raw(),
-        StringRef::new(name).to_raw(),
-        raw_type,
-        type_params.as_ptr() as *const _,
-        type_params.len() as isize,
-    ))}
+    let mut attributes = vec![(identifier(loc, "sym_name"), string_attr(loc, name))];
+    if let Some(bound_type) = bound_type {
+        attributes.push((identifier(loc, "bound_type"), type_attr(bound_type)));
+    }
+    if !type_params.is_empty() {
+        attributes.push((identifier(loc, "type_params"), type_array_attr(loc, type_params)));
+    }
+    build_op(OperationBuilder::new("trait.assoc_type", loc).add_attributes(&attributes))
 }
 
 /// The outcomes `traitModuleInstantiateImpl` reports, `c_api.h`'s

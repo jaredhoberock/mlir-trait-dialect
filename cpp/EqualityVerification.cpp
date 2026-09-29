@@ -258,12 +258,12 @@ static NormalizationContext citationEvidence(
 }
 
 // The binding check, the where-clause equality check and the obligation
-// discharge, written once. On success it returns the substitution the
-// witness's arguments make; `rigidHeadMatch` selects the head-match mode.
+// discharge, written once. On success it returns the rule the witness
+// certifies; `rigidHeadMatch` selects the head-match mode.
 // `siteEvidence` builds what the where-clause equalities are read through
 // beyond the cited impl's own; it runs only for an impl declaring one.
 // `witness` must be equality-armed.
-static FailureOr<SpecializationMap> verifyProjectionResolutionCore(
+static FailureOr<LocalProjectionRule> verifyProjectionResolutionCore(
     ModuleOp module, WitnessAttr witness,
     ArrayRef<TypeEqualityAttr> premises,
     ArrayRef<TraitApplicationAttr> obligationPremises,
@@ -396,7 +396,8 @@ static FailureOr<SpecializationMap> verifyProjectionResolutionCore(
       return failure();
     }
   }
-  return *subst;
+  return LocalProjectionRule{implOp, projectionTy.getTraitApplication(),
+                             std::move(*subst)};
 }
 
 LogicalResult mlir::trait::verifyProjectionResolutionAtUse(
@@ -414,7 +415,7 @@ LogicalResult mlir::trait::verifyProjectionResolutionAtUse(
   return success();
 }
 
-FailureOr<SpecializationMap> mlir::trait::verifyProjectionResolutionAtImpl(
+FailureOr<LocalProjectionRule> mlir::trait::verifyProjectionResolutionAtImpl(
     ModuleOp module, WitnessAttr witness,
     ArrayRef<TypeEqualityAttr> premises,
     ArrayRef<TraitApplicationAttr> obligationPremises,
