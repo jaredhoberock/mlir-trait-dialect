@@ -352,27 +352,30 @@ pub fn func_call<'c>(loc: Location<'c>,
         .add_results(result_types))
 }
 
-/// The unproven claim of `trait_app`, in the location's context.
-fn unproven_claim<'c>(loc: Location<'c>, trait_app: TraitApplicationAttribute<'c>) -> Type<'c> {
-    unsafe { Type::from_raw(traitClaimTypeGet(mlirLocationGetContext(loc.to_raw()), trait_app.to_raw())) }
+/// The unproven claim of `predicate`, a trait application or a type equality
+/// (`type_equality_attr`), in the location's context.
+fn unproven_claim<'c>(loc: Location<'c>, predicate: Attribute<'c>) -> Type<'c> {
+    unsafe { Type::from_raw(traitClaimTypeGet(mlirLocationGetContext(loc.to_raw()), predicate.to_raw())) }
 }
 
-/// Build a `trait.allege` of the monomorphic application `trait_app`.
+/// Build a `trait.allege` of the monomorphic claim predicate `predicate`: a
+/// trait application or a type equality (`type_equality_attr`).
 pub fn allege<'c>(loc: Location<'c>,
-                  trait_app: TraitApplicationAttribute<'c>,
+                  predicate: Attribute<'c>,
 ) -> Operation<'c> {
     build_op(OperationBuilder::new("trait.allege", loc)
-        .add_results(&[unproven_claim(loc, trait_app)]))
+        .add_results(&[unproven_claim(loc, predicate)]))
 }
 
-/// Build a `trait.allege` of `trait_app` marked `unsafe`, which may spell type
-/// variables: its claim is checked once the instance is concrete.
+/// Build a `trait.allege` of the claim predicate `predicate` marked `unsafe`,
+/// which may spell type variables: its claim is checked once the instance is
+/// concrete.
 pub fn allege_unsafe<'c>(loc: Location<'c>,
-                         trait_app: TraitApplicationAttribute<'c>,
+                         predicate: Attribute<'c>,
 ) -> Operation<'c> {
     build_op(OperationBuilder::new("trait.allege", loc)
         .add_attributes(&[(identifier(loc, "unsafe"), unit_attr(loc))])
-        .add_results(&[unproven_claim(loc, trait_app)]))
+        .add_results(&[unproven_claim(loc, predicate)]))
 }
 
 /// Build a `trait.witness` of `trait_app` proved by the proof or unconditional
@@ -432,7 +435,7 @@ pub fn derive<'c>(loc: Location<'c>,
     build_op(OperationBuilder::new("trait.derive", loc)
         .add_operands(assumptions)
         .add_attributes(&[(identifier(loc, "impl"), symbol_ref_attr(loc, impl_name))])
-        .add_results(&[unproven_claim(loc, trait_app)]))
+        .add_results(&[unproven_claim(loc, trait_app.into())]))
 }
 
 /// The `#trait.binding` attributes pairing each of an impl's own parameters, as
@@ -494,7 +497,7 @@ pub fn derive_with_arguments<'c>(loc: Location<'c>,
                                  premises: &[Value<'c,'_>],
 ) -> Option<Operation<'c>> {
     let bindings = type_bindings(unsafe { mlirLocationGetContext(loc.to_raw()) }, arguments)?;
-    let claim = unproven_claim(loc, trait_app);
+    let claim = unproven_claim(loc, trait_app.into());
     Some(build_op(OperationBuilder::new("trait.derive", loc)
         .add_operands(premises)
         .add_attributes(&[

@@ -635,6 +635,158 @@ static LogicalResult verifyProofKeepsCommitment(
                << ", and impl selection proved it by " << proof;
 }
 
+/// Resolve to a fixed point every ground projection standing anywhere in `type`,
+/// descending composites, through `hop`. A projection `hop` declines and any
+/// polymorphic projection are left standing. Resolution runs to a fixed point
+/// because one hop's binding may spell the next; the shared normalizer owns the
+/// bound and stops the compilation at a chain that never grounds out, the same
+/// refusal every ground resolver makes.
+static Type resolveGroundProjections(
+    Type type, ModuleOp module,
+    llvm::function_ref<std::optional<Type>(ProjectionType)> hop) {
+  return normalizeProjectionsToFixedPoint(type, module, [&](Type current) {
+    AttrTypeReplacer replacer = makeGroundProjectionReplacer(hop);
+    return replacer.replace(current);
+  });
+}
+
+/// Where the witness of a resolved projection reads the facts it cites: `hop`
+/// resolves one monomorphic projection, recording the impl selection chose for
+/// its application in `reading`, and `proofOf` proves an application claim.
+/// Each answers nothing where it does not serve. `module` bounds the
+/// fixed-point resolution of an endpoint.
+struct ResolutionSource {
+  const ReadOnlyImplResolver &reading;
+  llvm::function_ref<std::optional<Type>(ProjectionType)> hop;
+  llvm::function_ref<FailureOr<FlatSymbolRefAttr>(ClaimType)> proofOf;
+  ModuleOp module;
+};
+
+/// One hop of an endpoint's resolution, as its witness cites it: the equality
+/// `projection = binding`, the witness naming the impl selection chose for the
+/// projection's application at the arguments its parameters take there, and
+/// one proven claim per application premise of that impl at those arguments,
+/// which the witness's verifier requires discharged.
+struct ResolutionHop {
+  TypeEqualityAttr equality;
+  WitnessAttr witness;
+  SmallVector<ClaimType> premises;
+};
+
+/// The hop resolving `proj` through `source`. Fails where `source` resolves
+/// it through no impl or proves no premise of that impl.
+static FailureOr<ResolutionHop> resolutionHopOf(ProjectionType proj,
+                                                const ResolutionSource &source) {
+  std::optional<Type> binding = source.hop(proj);
+  if (!binding)
+    return failure();
+  MLIRContext *ctx = proj.getContext();
+  auto resolved = source.reading.getRecordedImplFor(
+      ClaimType::get(ctx, proj.getTraitApplication()));
+  if (failed(resolved))
+    return failure();
+  ImplOp impl = resolved->impl;
+  // The impl's arguments at the claim selection chose it for, read through the
+  // record selection read them under.
+  auto arguments = impl.buildSubstitutionForSelfClaim(
+      resolved->selectedClaim, RecordedProjectionLookup(source.reading),
+      /*errFn=*/nullptr);
+  if (failed(arguments))
+    return failure();
+  SmallVector<TypeBindingAttr> bindings;
+  for (GenericTypeInterface parameter : impl.getTypeParams()) {
+    std::optional<Type> argument = arguments->lookup(parameter);
+    if (!argument)
+      return failure();
+    bindings.push_back(TypeBindingAttr::get(ctx, Type(parameter), *argument));
+  }
+  ResolutionHop hop;
+  for (ClaimType assumption : impl.getAssumptionsAsClaims()) {
+    auto premise = cast<ClaimType>(instantiate(Type(assumption), *arguments));
+    FailureOr<FlatSymbolRefAttr> proof = source.proofOf(premise);
+    if (failed(proof))
+      return failure();
+    hop.premises.push_back(
+        ClaimType::get(ctx, premise.getTraitApplication(), *proof));
+  }
+  hop.equality = TypeEqualityAttr::get(ctx, Type(proj), *binding);
+  hop.witness = WitnessAttr::get(ctx, Attribute(hop.equality),
+                                 FlatSymbolRefAttr::get(ctx, impl.getSymName()),
+                                 ArrayRef<TypeBindingAttr>(bindings));
+  return hop;
+}
+
+/// The ground spellings the endpoints of `eq` resolve to through `source`,
+/// appending one hop per ground projection resolved on the way to `hops`;
+/// identical endpoints are read as spelled. The walk descends composites, so a
+/// projection nested inside one -- the resolved side of
+/// `type Out = Vec<Self::Item>` -- yields its hop just as a top-level projection
+/// does, and runs to a fixed point because a binding may itself spell a
+/// projection. Fails where a hop fails or a ground projection still stands.
+static FailureOr<std::pair<Type, Type>>
+resolutionHopsOf(TypeEqualityAttr eq, const ResolutionSource &source,
+                 SmallVectorImpl<ResolutionHop> &hops) {
+  if (eq.getLhs() == eq.getRhs())
+    return std::make_pair(eq.getLhs(), eq.getRhs());
+  // The shared resolver leaves a projection whose hop fails standing; the
+  // failure is carried out past the fixed point so that it, and not the
+  // standing projection, is what refuses.
+  bool hopFailed = false;
+  auto resolve = [&](Type endpoint) {
+    return resolveGroundProjections(
+        endpoint, source.module,
+        [&](ProjectionType proj) -> std::optional<Type> {
+          FailureOr<ResolutionHop> hop = resolutionHopOf(proj, source);
+          if (failed(hop)) {
+            hopFailed = true;
+            return std::nullopt;
+          }
+          hops.push_back(*hop);
+          return hop->equality.getRhs();
+        });
+  };
+  Type lhs = resolve(eq.getLhs());
+  Type rhs = resolve(eq.getRhs());
+  bool standing = false;
+  for (Type side : {lhs, rhs})
+    side.walk([&](ProjectionType proj) {
+      standing |= !isPolymorphicType(Type(proj));
+    });
+  if (hopFailed || standing)
+    return failure();
+  return std::make_pair(lhs, rhs);
+}
+
+/// Builds at `builder`'s insertion point the witness of `eq` from `hops`, the
+/// hops resolving its endpoints to one ground spelling: refl for identical
+/// endpoints; the sole hop's witness where it proves `eq` as spelled; else the
+/// composition of every hop's witness, whose ground congruence closure carries
+/// the endpoints together across every hop. Each hop's witness carries a
+/// witness of each premise it discharges.
+static Value buildEqualityWitness(OpBuilder &builder, Location loc,
+                                  TypeEqualityAttr eq,
+                                  ArrayRef<ResolutionHop> hops) {
+  if (eq.getLhs() == eq.getRhs())
+    return WitnessOp::create(builder, loc, eq).getResult();
+  assert(!hops.empty() &&
+         "two spellings of one ground type differ in a projection they spell");
+  SmallVector<Value> witnesses;
+  for (const ResolutionHop &hop : hops) {
+    SmallVector<Value> premises =
+        llvm::map_to_vector(hop.premises, [&](ClaimType premise) -> Value {
+          return WitnessOp::create(builder, loc, premise.getProof(),
+                                   premise.getTraitApplication())
+              .getResult();
+        });
+    witnesses.push_back(
+        WitnessOp::create(builder, loc, hop.equality, hop.witness, premises)
+            .getResult());
+  }
+  if (witnesses.size() == 1 && hops.front().equality == eq)
+    return witnesses.front();
+  return WitnessOp::create(builder, loc, eq, ValueRange(witnesses)).getResult();
+}
+
 /// Proves a claim-producing op and replaces it with a trait.witness.
 ///
 /// The proving obligation is keyed on the result ClaimType, not the
@@ -643,7 +795,8 @@ static LogicalResult verifyProofKeepsCommitment(
 /// built it: the fact-establishing use matches trait.allege alone, because a
 /// claim derived inside a still-polymorphic body is not yet its business,
 /// while the read-only driver use matches allege, derive and project results
-/// alike.
+/// alike. An alleged equality is proved by resolving its projections through
+/// the impls selection chooses for their applications.
 ///
 /// Both registrations are permanent. A claim result the driver's own rewrites
 /// produce is one no step before the driver could have seen, for the same reason
@@ -655,9 +808,10 @@ struct ProveClaimResultPattern : public RewritePattern {
   ImplResolver *minting;
   /// A read of what impl selection has settled, which every use has.
   ReadOnlyImplResolver reading;
-  /// The ops whose commitment selection has already contradicted, each
-  /// reported once.
-  mutable llvm::DenseSet<Operation *> refusedCommitments;
+  /// The ops whose claim selection has already contradicted -- a derive
+  /// committed to another impl, an equality whose sides selection resolves to
+  /// two types -- each reported once.
+  mutable llvm::DenseSet<Operation *> contradicted;
 
   /// The step that establishes the facts the rest of the stage reads. It
   /// matches `trait.allege` alone: a claim derived inside a still-polymorphic
@@ -685,23 +839,27 @@ struct ProveClaimResultPattern : public RewritePattern {
     // legalizes wherever a consumer still wants its result.
     auto claim = cast<ClaimType>(op->getResult(0).getType());
 
-    // An equality claim is never proven by impl selection; a projection hop to a
-    // trait's equality requirement is established by the requirement itself and
-    // discharged when its endpoints ground-resolve at the leftover check.
-    if (claim.isEquality())
-      return rewriter.notifyMatchFailure(op, "equality claim is not impl-proved");
+    // A projection hop to a trait's equality requirement is established by the
+    // requirement itself and discharged when its endpoints ground-resolve at the
+    // leftover check. An alleged equality is proved here once monomorphic.
+    if (claim.isEquality()) {
+      auto allegation = dyn_cast<AllegeOp>(op);
+      if (!allegation || !claim.isMonomorphic())
+        return rewriter.notifyMatchFailure(op, "equality claim proved elsewhere");
+      return proveAllegedEquality(allegation, claim.getEqualityAttr(), rewriter);
+    }
 
     // An op committed to how its claim is proved refuses a proof other than the
     // one it committed to, where the commitment was written: two answers to one
     // question are not settled silently by the second. The driver offers an op
     // it did not rewrite again, so a refusal is reported the first time only.
     auto commitmentBroken = [&](FlatSymbolRefAttr proof) {
-      if (refusedCommitments.contains(op))
+      if (contradicted.contains(op))
         return true;
       if (succeeded(verifyProofKeepsCommitment(op, proof,
                                                [&] { return op->emitOpError(); })))
         return false;
-      refusedCommitments.insert(op);
+      contradicted.insert(op);
       return true;
     };
 
@@ -757,6 +915,59 @@ struct ProveClaimResultPattern : public RewritePattern {
       recorded.getTraitApplication()
     );
 
+    return success();
+  }
+
+  /// Proves the monomorphic equality `eq` `allegation` alleges: each projection
+  /// its sides spell resolves through the impl selection chooses for the
+  /// projection's application, one hop at a time, and where both sides reach
+  /// one type the allegation becomes the witness of those hops. Sides that
+  /// reach two types are refused where the allegation stands. A projection the
+  /// record does not resolve is declined by the read-only use, which a later
+  /// round serves, and refused by selection where selection itself cannot
+  /// serve it.
+  LogicalResult proveAllegedEquality(AllegeOp allegation, TypeEqualityAttr eq,
+                                     PatternRewriter &rewriter) const {
+    DemandFrame frame(allegation.getLoc());
+    auto errFn = [&] { return allegation.emitOpError(); };
+    ModuleOp scope = getAnchorModule(allegation);
+    ReadOnlyImplResolver here = reading.in(scope);
+    auto hop = [&](ProjectionType proj) -> std::optional<Type> {
+      FailureOr<Type> resolved =
+          minting ? minting->resolveProjectionType(proj, scope, rewriter, errFn)
+                  : here.resolveProjectionType(proj);
+      if (succeeded(resolved))
+        return *resolved;
+      if (!minting)
+        (void)here.decline(proj);
+      return std::nullopt;
+    };
+    auto proofOf = [&](ClaimType claim) -> FailureOr<FlatSymbolRefAttr> {
+      if (minting)
+        return minting->resolveAndEnsureProofFor(claim, scope, rewriter, errFn);
+      FailureOr<FlatSymbolRefAttr> proof = here.getRecordedProofFor(claim);
+      if (failed(proof))
+        (void)here.decline(claim);
+      return proof;
+    };
+    ResolutionSource source{here, hop, proofOf, scope};
+    SmallVector<ResolutionHop> hops;
+    auto sides = resolutionHopsOf(eq, source, hops);
+    if (failed(sides))
+      return rewriter.notifyMatchFailure(allegation,
+                                         "a projection is not resolved");
+    if (sides->first != sides->second) {
+      if (contradicted.insert(allegation).second)
+        errFn() << "alleges " << eq.getLhs() << " = " << eq.getRhs()
+                << ", and impl selection resolves its sides to "
+                << sides->first << " and " << sides->second;
+      return rewriter.notifyMatchFailure(allegation,
+                                         "selection resolves the sides apart");
+    }
+    rewriter.setInsertionPoint(allegation);
+    rewriter.replaceOp(allegation, buildEqualityWitness(rewriter,
+                                                        allegation.getLoc(), eq,
+                                                        hops));
     return success();
   }
 };
@@ -1541,21 +1752,6 @@ resolveProjectionHop(ProjectionType proj, const ProjectionSettleContext &settle)
   return std::nullopt;
 }
 
-/// Resolve to a fixed point every ground projection standing anywhere in `type`,
-/// descending composites, through `hop`. A projection `hop` declines and any
-/// polymorphic projection are left standing. Resolution runs to a fixed point
-/// because one hop's binding may spell the next; the shared normalizer owns the
-/// bound and stops the compilation at a chain that never grounds out, the same
-/// refusal every ground resolver makes.
-static Type resolveGroundProjections(
-    Type type, ModuleOp module,
-    llvm::function_ref<std::optional<Type>(ProjectionType)> hop) {
-  return normalizeProjectionsToFixedPoint(type, module, [&](Type current) {
-    AttrTypeReplacer replacer = makeGroundProjectionReplacer(hop);
-    return replacer.replace(current);
-  });
-}
-
 /// Resolve one hop of a projection over a type variable through the impls the
 /// module holds.
 ///
@@ -1738,126 +1934,8 @@ citedImplAndClaim(Operation *op) {
   return std::make_pair(impl, witness.getProvenClaim());
 }
 
-/// The settlement resolvers, per-site builder, and location a projection-
-/// resolution witness mint reads but never varies as the chain walks hop to
-/// hop. Recorded facts, obligation-holding selection, and the module-body
-/// builder impl generation goes through come from `settle`; the witness and its
-/// premise witnesses insert at the consumer through `witnessBuilder`, so they
-/// dominate it, while premise proofs and any impl generation go to the module
-/// body through `settle.proofBuilder`; every op carries `loc`.
-struct ProjectionResolveMintContext {
-  ProjectionSettleContext settle;
-  Location loc;
-  OpBuilder &witnessBuilder;
-};
-
-/// Mint the proj-resolve witness proving `<proj = binding>`, where the impl
-/// `proj`'s trait application resolves through binds the projected member to
-/// `binding` in one hop, paired with that binding. Resolution goes through the
-/// same obligation-holding selection the settlement ran, so the cited impl is
-/// one whose bounds hold. Premises discharging that impl's own assumptions ride
-/// along, so a witness citing a conditional impl passes obligation-discharge
-/// verification. The minting `ctx` supplies the resolvers and builders. Fails
-/// where the projection has no obligation-holding impl.
-static FailureOr<std::pair<Value, Type>>
-mintProjectionResolutionWitness(ProjectionType proj,
-                                const ProjectionResolveMintContext &ctx) {
-  MLIRContext *mlirCtx = proj.getContext();
-  auto binding = resolveProjectionHop(proj, ctx.settle);
-  if (!binding)
-    return failure();
-  ClaimType selfClaim = ClaimType::get(mlirCtx, proj.getTraitApplication());
-  auto resolvedImpl = ctx.settle.reading.getRecordedImplFor(selfClaim);
-  if (failed(resolvedImpl))
-    return failure();
-  SmallVector<Value> obligationPremises;
-  if (!resolvedImpl->impl.isUnconditional()) {
-    auto assumptions = resolvedImpl->impl.specializeAssumptionsAsClaimsFor(
-        resolvedImpl->selectedClaim);
-    if (failed(assumptions))
-      return failure();
-    for (ClaimType assumption : *assumptions) {
-      auto proof = ctx.settle.resolver.resolveAndEnsureProofFor(
-          assumption, ctx.settle.module, ctx.settle.proofBuilder);
-      if (failed(proof))
-        return failure();
-      obligationPremises.push_back(
-          WitnessOp::create(ctx.witnessBuilder, ctx.loc, *proof,
-                            assumption.getTraitApplication())
-              .getResult());
-    }
-  }
-  // The impl's arguments at the claim selection chose it for, read through the
-  // same record selection read them under; the witness carries them, each
-  // keyed by the impl parameter it binds.
-  RecordedProjectionLookup byRecord(ctx.settle.reading);
-  auto substitution = resolvedImpl->impl.buildSubstitutionForSelfClaim(
-      resolvedImpl->selectedClaim, byRecord, /*errFn=*/nullptr);
-  if (failed(substitution))
-    return failure();
-  SmallVector<TypeBindingAttr> arguments;
-  for (GenericTypeInterface parameter : resolvedImpl->impl.getTypeParams()) {
-    std::optional<Type> argument = substitution->lookup(parameter);
-    if (!argument)
-      return failure();
-    arguments.push_back(TypeBindingAttr::get(mlirCtx, Type(parameter), *argument));
-  }
-  TypeEqualityAttr equality =
-      TypeEqualityAttr::get(mlirCtx, Type(proj), *binding);
-  auto witness_attr = WitnessAttr::get(
-      mlirCtx, Attribute(equality),
-      FlatSymbolRefAttr::get(mlirCtx, resolvedImpl->impl.getSymName()),
-      ArrayRef<TypeBindingAttr>(arguments));
-  Value witness = WitnessOp::create(ctx.witnessBuilder, ctx.loc, equality, witness_attr,
-                                    obligationPremises)
-                      .getResult();
-  return std::make_pair(witness, *binding);
-}
-
-/// Walk a projection endpoint to its ground spelling, appending one witness for
-/// every ground projection resolved along the way. The walk descends composites
-/// exactly as the settlement decision does, so a projection nested inside one --
-/// the resolved side of `type Out = Vec<Self::Item>`, where the projection sits
-/// inside the vector -- yields its evidence just as a top-level projection does;
-/// resolution runs to a fixed point because a resolved binding may itself spell
-/// a projection. A concrete endpoint contributes no witness. A projection with
-/// no obligation-holding impl fails; a chain that never grounds out stops the
-/// compilation at the shared normalizer, the same refusal every ground resolver
-/// makes.
-static LogicalResult
-mintProjectionResolveChain(Type endpoint,
-                           const ProjectionResolveMintContext &ctx,
-                           SmallVector<Value> &witnesses) {
-  // A hop that cannot mint its witness fails the whole chain, but the shared
-  // resolver only leaves such a projection standing; this side channel carries
-  // that failure out past the fixed point so the outer result short-circuits
-  // rather than falling through to the unresolved-projection check below.
-  LogicalResult mintOutcome = success();
-  Type current = resolveGroundProjections(
-      endpoint, ctx.settle.module, [&](ProjectionType proj) -> std::optional<Type> {
-        auto witness = mintProjectionResolutionWitness(proj, ctx);
-        if (failed(witness)) {
-          mintOutcome = failure();
-          return std::nullopt;
-        }
-        witnesses.push_back(witness->first);
-        return witness->second;
-      });
-  if (failed(mintOutcome))
-    return failure();
-  // A ground projection still standing at the fixed point never resolved.
-  bool unresolved = false;
-  current.walk([&](Type sub) {
-    if (auto proj = dyn_cast<ProjectionType>(sub))
-      if (!isPolymorphicType(proj))
-        unresolved = true;
-  });
-  return failure(unresolved);
-}
-
-/// Replace a ground-resolvable equality `trait.assume` with the witness that
-/// proves its equality, inserted at the assume so it dominates the assume's
-/// uses.
+/// Replaces a ground-resolvable equality `trait.assume` with the witness of its
+/// equality, inserted at the assume so it dominates the assume's uses.
 ///
 /// An equality assume is an axiom the enclosing scope inherited (an impl's or
 /// trait's where-clause equality re-established inside a method body). Where it
@@ -1865,64 +1943,26 @@ mintProjectionResolveChain(Type endpoint,
 /// assume goes dead and is eliminated; where it feeds a use that keeps the
 /// equality claim -- an operand of an already-ground callee that retains the
 /// parameter -- nothing consumes it, and a bare `trait.assume` is an axiom no
-/// legalization removes. Now that the equality ground-resolves, this mints the
-/// evidence that proves it, exactly as codegen mints where the equality is
-/// first established: a refl marker for identical endpoints, or one proj-resolve
-/// witness per hop of each projection an endpoint carries -- nested in a
-/// composite or standing alone, since a resolved binding may itself spell a
-/// projection -- each citing the impl that
-/// binds one hop, with application-arm premises discharging a conditional impl's
-/// own assumptions so the witness passes verification. A lone witness
-/// that already proves the result equality outright is that witness when the
-/// orientation matches; otherwise the hops' witnesses compose to the result
-/// equality, whose ground congruence closure carries the endpoints together
-/// across every hop and is direction-blind. Settlement gates this reduction on
-/// the same fixed-point resolution reaching one ground spelling within the hop
-/// bound, so the walk here terminates; a chain that never grounds out stops the
-/// compilation at the shared normalizer. Proofs the premises need are minted
-/// through `settle.proofBuilder` at the module body; the witnesses themselves
-/// are inserted at the assume.
+/// legalization removes. Now that the equality ground-resolves, this proves it
+/// as an equality allegation is proved, through `settle`, which may put an
+/// undemanded projection to selection; proofs the premises need are minted
+/// through `settle.proofBuilder` at the module body.
 static LogicalResult reduceGroundEqualityAssume(
     AssumeOp assume, TypeEqualityAttr eq, const ProjectionSettleContext &settle) {
-  MLIRContext *ctx = assume.getContext();
-  Location loc = assume.getLoc();
-  Type lhs = eq.getLhs();
-  Type rhs = eq.getRhs();
-
-  OpBuilder builder(ctx);
-  builder.setInsertionPoint(assume);
-
-  auto replaceWith = [&](Value witness) {
-    assume.getResult().replaceAllUsesWith(witness);
-    assume.erase();
+  auto hop = [&](ProjectionType proj) { return resolveProjectionHop(proj, settle); };
+  auto proofOf = [&](ClaimType claim) {
+    return settle.resolver.resolveAndEnsureProofFor(claim, settle.module,
+                                                    settle.proofBuilder);
   };
-
-  // refl: identical endpoints carry their own evidence.
-  if (lhs == rhs) {
-    replaceWith(WitnessOp::create(builder, loc, eq).getResult());
-    return success();
-  }
-
-  // Mint each endpoint's per-hop resolution chain (see the function doc);
-  // no premises means the endpoints did not ground-resolve.
-  ProjectionResolveMintContext mintCtx{settle, loc, builder};
-  SmallVector<Value> premises;
-  if (failed(mintProjectionResolveChain(lhs, mintCtx, premises)) ||
-      failed(mintProjectionResolveChain(rhs, mintCtx, premises)))
+  ResolutionSource source{settle.reading, hop, proofOf, settle.module};
+  SmallVector<ResolutionHop> hops;
+  auto sides = resolutionHopsOf(eq, source, hops);
+  if (failed(sides) || sides->first != sides->second)
     return failure();
-  if (premises.empty())
-    return failure();
-
-  // A sole hop witness that already proves the result equality is used as is;
-  // otherwise the hops' witnesses compose to it below.
-  if (premises.size() == 1)
-    if (auto sole = cast<WitnessOp>(premises.front().getDefiningOp());
-        sole.getResultClaim().getEqualityAttr() == eq) {
-      replaceWith(premises.front());
-      return success();
-    }
-  replaceWith(
-      WitnessOp::create(builder, loc, eq, ValueRange(premises)).getResult());
+  OpBuilder builder(assume);
+  assume.getResult().replaceAllUsesWith(
+      buildEqualityWitness(builder, assume.getLoc(), eq, hops));
+  assume.erase();
   return success();
 }
 

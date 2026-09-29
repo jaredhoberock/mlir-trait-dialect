@@ -819,10 +819,11 @@ def Projection : Type<
 def AllegeOp : TraitDialectOp<"allege", [
   Pure
 ]> {
-  let summary = "Unverified claim that a trait implementation exists";
+  let summary = "Unverified claim that a trait application or a type equality holds";
   let description = [{
-    Produces a `!trait.claim<@Trait[Types...]>` value asserting that a trait
-    application is satisfied.
+    Produces a `!trait.claim` value asserting that a trait application is
+    satisfied, `@Trait[Types...]`, or that two spellings name one type,
+    `!A = !B`.
 
     By default, type arguments must be concrete (monomorphic). This enforces
     a key invariant: polymorphic code never fabricates claims. Claims
@@ -840,6 +841,10 @@ def AllegeOp : TraitDialectOp<"allege", [
     pass resolves monomorphic alleges and skips polymorphic ones. The
     instantiate-monomorphs pass resolves the remaining (now-concrete)
     alleges. Unresolved monomorphic alleges after resolve-impls are errors.
+    An equality is proved by resolving each projection its sides spell
+    through the impl selection selects for the projection's application: the
+    projection-resolution witness citing that impl at its arguments, or the
+    composition of one such witness per projection resolved.
 
     Examples:
       // monomorphic: resolved by resolve-impls
@@ -848,14 +853,18 @@ def AllegeOp : TraitDialectOp<"allege", [
       // polymorphic: deferred to instantiate-monomorphs
       %q = trait.allege @Printable[!trait.poly<0>] unsafe
 
+      // the type the impl serving @Iterator[i32] binds `Item` to
+      %e = trait.allege !trait.proj<@Iterator[i32], "Item"> = i64
+
     An allegation is a trusted assertion and carries no justification: impl
     selection proves its claim by whichever impl it selects, and a claim
-    nothing proves is refused here.
+    nothing proves -- an equality whose sides resolve to two types among
+    them -- is refused here.
   }];
 
   let arguments = (ins OptionalAttr<UnitAttr>:$unsafe);
 
-  let results = (outs ApplicationClaim:$result);
+  let results = (outs Claim:$result);
 
   let builders = [
     OpBuilder<(ins "::mlir::trait::TraitApplicationAttr":$app), [{
@@ -881,7 +890,7 @@ def AllegeOp : TraitDialectOp<"allege", [
   }];
 
   let assemblyFormat = [{
-    custom<ClaimApplication>(type($result)) (`unsafe` $unsafe^)? attr-dict
+    custom<ClaimPredicate>(type($result)) (`unsafe` $unsafe^)? attr-dict
   }];
   let hasVerifier = 1;
 }

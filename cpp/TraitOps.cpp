@@ -165,6 +165,28 @@ static void printClaimApplication(::mlir::OpAsmPrinter &printer,
                                   ::mlir::Operation *, ::mlir::Type claim) {
   ::llvm::cast<ClaimType>(claim).getTraitApplication().print(printer);
 }
+
+/// The claim an allegation or an assume names by spelling, read by the
+/// predicate it states: an application `@Trait[...]` or an equality
+/// `!A = !B`, each read as its unproven claim, and printed as that predicate.
+static ::mlir::ParseResult parseClaimPredicate(::mlir::OpAsmParser &parser,
+                                               ::mlir::Type &claim) {
+  ::mlir::FailureOr<::mlir::Attribute> predicate =
+      parseApplicationOrEqualityPredicate(parser);
+  if (::mlir::failed(predicate))
+    return ::mlir::failure();
+  claim = ClaimType::get(parser.getContext(), *predicate, /*proof=*/nullptr);
+  return ::mlir::success();
+}
+
+static void printClaimPredicate(::mlir::OpAsmPrinter &printer,
+                                ::mlir::Operation *, ::mlir::Type claim) {
+  auto stated = ::llvm::cast<ClaimType>(claim);
+  if (auto equality = stated.getEqualityAttr())
+    printer << equality.getLhs() << " = " << equality.getRhs();
+  else
+    stated.getTraitApplication().print(printer);
+}
 } // namespace mlir::trait
 
 #define GET_OP_CLASSES
@@ -3159,8 +3181,6 @@ LogicalResult DeriveOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 //===----------------------------------------------------------------------===//
 
 ParseResult AssumeOp::parse(OpAsmParser &p, OperationState &st) {
-  MLIRContext *ctx = p.getContext();
-
   // The positional form: `self` or an entry index, then the claim the entry
   // states as the result type.
   auto parseStatedClaim = [&]() -> ParseResult {
@@ -3184,15 +3204,11 @@ ParseResult AssumeOp::parse(OpAsmParser &p, OperationState &st) {
   }
 
   // `@Trait[...]` is an application hypothesis; `!A = !B` is an equality
-  // hypothesis. The claim's result type wraps whichever predicate is parsed.
-  FailureOr<Attribute> pred = parseApplicationOrEqualityPredicate(p);
-  if (failed(pred))
+  // hypothesis.
+  Type claim;
+  if (parseClaimPredicate(p, claim))
     return failure();
-  if (auto app = dyn_cast<TraitApplicationAttr>(*pred))
-    st.addTypes(ClaimType::get(ctx, app));
-  else
-    st.addTypes(ClaimType::getEquality(ctx, cast<TypeEqualityAttr>(*pred)));
-
+  st.addTypes(claim);
   return success();
 }
 
@@ -3209,14 +3225,7 @@ void AssumeOp::print(OpAsmPrinter &p) {
     return;
   }
 
-  if (auto eq = claim.getEqualityAttr()) {
-    // equality arm: `!lhs = !rhs`
-    p << eq.getLhs() << " = " << eq.getRhs();
-    return;
-  }
-
-  // application arm: print the assumed trait application
-  claim.getTraitApplication().print(p);
+  printClaimPredicate(p, *this, claim);
 }
 
 /// Checks a positional assume against the declaration whose method it stands

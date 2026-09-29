@@ -264,7 +264,7 @@ fn test_jit() {
                 &context,
                 "PartialEq",
                 &[i32_ty, i32_ty],
-            ),
+            ).into(),
         ));
         let result = block.append_operation(trait_::func_call(
             loc,
@@ -397,7 +397,7 @@ fn test_jit() {
                 &context,
                 "PartialEq",
                 &[i32_ty,i32_ty],
-            ),
+            ).into(),
         ));
         let result = block.append_operation(trait_::func_call(
             loc,
