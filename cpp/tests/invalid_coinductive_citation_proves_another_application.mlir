@@ -12,4 +12,4 @@ trait.trait private @Foo[!trait.poly<0>] {}
 trait.impl private @Foo_tuple for @Foo[tuple<!trait.poly<0>>] where [@Foo[!trait.poly<0>]] {}
 
 // expected-error @below {{proof @p proves '!trait.claim<@Foo[tuple<i32>]>', which does not discharge the obligation '!trait.claim<@Foo[i32]>'}}
-trait.proof private @p proves @Foo_tuple for @Foo[tuple<i32>] given [@p]
+trait.proof private @p proves @Foo_tuple[!trait.poly<0> = i32] for @Foo[tuple<i32>] given [@p]

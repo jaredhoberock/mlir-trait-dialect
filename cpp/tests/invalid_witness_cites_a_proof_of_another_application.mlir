@@ -13,7 +13,7 @@ trait.trait private @A[!trait.poly<0>] {}
 trait.trait private @B[!trait.poly<0>] where [@A[!trait.poly<0>]] {}
 trait.impl private @A_i32 for @A[i32] {}
 trait.impl private @B_blanket for @B[!trait.poly<0>] {}
-trait.proof private @p proves @B_blanket for @B[i32] given [@A_i32]
+trait.proof private @p proves @B_blanket[!trait.poly<0> = i32] for @B[i32] given [@A_i32]
 
 func.func @main() -> !trait.claim<@B[i64] by @p> {
   // expected-error @below {{the proof @p this witness cites stands over another claim: type mismatch: expected '!trait.claim<@B[i32]>' but found '!trait.claim<@B[i64]>'}}

@@ -19,7 +19,7 @@ module {
   trait.impl private @D_impl for @D[!trait.poly<3>, !trait.poly<3>] {}
   trait.impl private @A_i32 for @A[i32] { trait.assoc_type @Out = i64 }
   trait.impl private @A_f32 for @A[f32] { trait.assoc_type @Out = i64 }
-  trait.proof private @D_p proves @D_impl for @D[i64, i64] given []
+  trait.proof private @D_p proves @D_impl[!trait.poly<3> = i64] for @D[i64, i64] given []
 
   func.func @main() -> i32 {
     %d = trait.witness @D_p for @D[i64, i64]

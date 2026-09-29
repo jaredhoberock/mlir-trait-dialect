@@ -71,7 +71,7 @@ trait.impl private @B_impl for @B[i32] {
     return %r : i64
   }
 }
-trait.proof private @p proves @B_impl for @B[i32] given [@A_top]
+trait.proof private @p proves @B_impl[] for @B[i32] given [@A_top]
 // CHECK: func.func private @A_top_a
 // CHECK: func.func private @B_impl_b
 // CHECK: call @A_top_a

@@ -37,7 +37,7 @@ trait.impl private @B_i32 for @B[i32] {
 }
 
 // expected-error @below {{proof @A_i64 proves '!trait.claim<@A[i64]>', which does not discharge the obligation '!trait.claim<@A[i32]>'}}
-trait.proof private @forged proves @B_i32 for @B[i32] given [@A_i64]
+trait.proof private @forged proves @B_i32[] for @B[i32] given [@A_i64]
 
 func.func @main(%x: i32) -> i64 {
   %c = trait.allege @B[i32]

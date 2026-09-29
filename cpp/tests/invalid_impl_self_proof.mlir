@@ -14,4 +14,4 @@ trait.impl private @B_impl for @B[!trait.poly<3>] where [
 ] {}
 
 // expected-error @+1 {{'@A_impl' binds type parameters, assumes an application, or implements a trait requiring an application, so it must be cited through a trait.proof}}
-trait.proof private @B_impl_p proves @B_impl for @B[i8] given [@A_impl]
+trait.proof private @B_impl_p proves @B_impl[!trait.poly<3> = i8] for @B[i8] given [@A_impl]

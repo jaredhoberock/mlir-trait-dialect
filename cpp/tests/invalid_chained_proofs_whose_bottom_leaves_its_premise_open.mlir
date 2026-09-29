@@ -36,9 +36,9 @@ trait.impl private @X_blanket for @X[!trait.poly<0>] {
   }
 }
 // expected-error @below {{a proof states its impl's premises at its own claim; one the claim leaves open is stated at the instance instead: '!trait.poly<0>' = 'i64' reads '!trait.poly<0>' = 'i64' at '!trait.claim<@V[!trait.poly<0>] by @pv>'}}
-trait.proof private @pv proves @OnlyI64 for @V[!trait.poly<0>] given []
-trait.proof private @pu proves @U_blanket for @U[!trait.poly<0>] given [@pv]
-trait.proof private @px proves @X_blanket for @X[!trait.poly<0>] given [@pu]
+trait.proof private @pv proves @OnlyI64[!trait.poly<0> = !trait.poly<0>] for @V[!trait.poly<0>] given [unit]
+trait.proof private @pu proves @U_blanket[!trait.poly<0> = !trait.poly<0>] for @U[!trait.poly<0>] given [@pv]
+trait.proof private @px proves @X_blanket[!trait.poly<0> = !trait.poly<0>] for @X[!trait.poly<0>] given [@pu]
 func.func @main() -> i64 {
   %w = trait.witness @px for @X[i8]
   %r = trait.method.call %w @X[i8]::@x() : () -> i64 by @px

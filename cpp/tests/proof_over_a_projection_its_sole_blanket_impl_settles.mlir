@@ -36,7 +36,7 @@ trait.impl private @B_blanket for @B[!trait.poly<0>] {
     return %r : i64
   }
 }
-trait.proof private @P proves @B_blanket for @B[!trait.poly<0>] given [@A_i64]
+trait.proof private @P proves @B_blanket[!trait.poly<0> = !trait.poly<0>] for @B[!trait.poly<0>] given [@A_i64]
 func.func @main() -> i64 {
   %w = trait.witness @P for @B[i32]
   %r = trait.method.call %w @B[i32]::@b() : () -> i64 by @P

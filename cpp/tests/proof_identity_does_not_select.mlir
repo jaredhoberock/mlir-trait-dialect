@@ -42,7 +42,7 @@ trait.impl private @T_f64 for @T[f64] {
   }
 }
 
-trait.proof private @P proves @T_cond for @T[i32] given [@U_i32]
+trait.proof private @P proves @T_cond[!S = i32] for @T[i32] given [@U_i32]
 
 func.func private @g(%c: !trait.claim<@T[!S]>, %x: !S) -> !trait.proj<@T[!S], "Out"> {
   %r = trait.method.call %c @T[!S]::@m(%x) : (!S) -> !trait.proj<@T[!S], "Out">

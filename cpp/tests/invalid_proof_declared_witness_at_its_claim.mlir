@@ -37,7 +37,7 @@ trait.impl private @Foo_T for @Foo[!T]
 }
 // Instance at T := i64 -- WRONG: @S[i64]::Out is i1, but @Foo_T at i64 returns i64.
 // expected-error @below {{impl '@S_i64' applies where '!trait.proj<@Marker[i64], "M">' = '!trait.poly<1>', and nothing here makes 'i1' and 'i64' one type at '!trait.claim<@S[i64]>'}}
-trait.proof private @Foo_i64_p proves @Foo_T for @Foo[i64] given []
+trait.proof private @Foo_i64_p proves @Foo_T[!T = i64] for @Foo[i64] given []
 func.func @main(%x: i64) -> i1 {
   %w = trait.allege @Foo[i64]
   %r = trait.method.call %w @Foo[i64]::@f(%x) : (i64) -> !trait.proj<@S[i64], "Out">

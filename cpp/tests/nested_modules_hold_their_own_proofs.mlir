@@ -12,7 +12,7 @@ trait.trait private @A[!trait.poly<0>] {}
 trait.trait private @B[!trait.poly<0>] where [@A[!trait.poly<0>]] {}
 trait.impl private @A_top for @A[i32] {}
 trait.impl private @B_impl for @B[i32] {}
-trait.proof private @p proves @B_impl for @B[i32] given [@A_top]
+trait.proof private @p proves @B_impl[] for @B[i32] given [@A_top]
 
 func.func private @callee(%c: !trait.claim<@B[!trait.poly<0>]>) -> !trait.claim<@A[!trait.poly<0>]> {
   %a = trait.project %c[0] : !trait.claim<@B[!trait.poly<0>]> -> !trait.claim<@A[!trait.poly<0>]>
@@ -34,7 +34,7 @@ module @inner {
   trait.trait private @B[!trait.poly<0>] where [@A[!trait.poly<0>]] {}
   trait.impl private @A_inner for @A[i32] {}
   trait.impl private @B_impl for @B[i32] {}
-  trait.proof private @p proves @B_impl for @B[i32] given [@A_inner]
+  trait.proof private @p proves @B_impl[] for @B[i32] given [@A_inner]
 
   func.func private @callee(%c: !trait.claim<@B[!trait.poly<0>]>) -> !trait.claim<@A[!trait.poly<0>]> {
     %a = trait.project %c[0] : !trait.claim<@B[!trait.poly<0>]> -> !trait.claim<@A[!trait.poly<0>]>

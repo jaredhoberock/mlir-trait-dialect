@@ -16,7 +16,7 @@ trait.trait private @T[!trait.poly<2>] where [@A[!trait.poly<2>], @B[!trait.poly
 trait.impl private @A_i64 for @A[i64] {}
 trait.impl private @B_i64 for @B[i64] {}
 trait.impl private @T_impl for @T[i64] {}
-trait.proof private @T_p proves @T_impl for @T[i64] given [@A_i64, @B_i64]
+trait.proof private @T_p proves @T_impl[] for @T[i64] given [@A_i64, @B_i64]
 
 // CHECK-LABEL: func.func @f
 // CHECK: trait.project %arg0[0] : <@T[i64] by @T_p> -> <@A[i64] by @A_i64>

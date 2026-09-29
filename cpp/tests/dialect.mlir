@@ -231,20 +231,13 @@ trait.impl private @Ord_impl_i32 for @Ord[i32] {
 }
 
 // CHECK-LABEL: trait.proof private @PartialOrd_impl_i32_i32_p
-trait.proof private @PartialOrd_impl_i32_i32_p proves @PartialOrd_impl_i32_i32 for @PartialOrd[i32,i32] given [
-  @PartialEq_impl_i32_i32
-]
+trait.proof private @PartialOrd_impl_i32_i32_p proves @PartialOrd_impl_i32_i32[] for @PartialOrd[i32, i32] given [@PartialEq_impl_i32_i32]
 
 // CHECK-LABEL: trait.proof private @Eq_impl_i32_p
-trait.proof private @Eq_impl_i32_p proves @Eq_impl_i32 for @Eq[i32] given [
-  @PartialEq_impl_i32_i32
-]
+trait.proof private @Eq_impl_i32_p proves @Eq_impl_i32[] for @Eq[i32] given [@PartialEq_impl_i32_i32]
 
 // CHECK-LABEL: trait.proof private @Ord_impl_i32_p
-trait.proof private @Ord_impl_i32_p proves @Ord_impl_i32 for @Ord[i32] given [
-  @Eq_impl_i32_p,
-  @PartialOrd_impl_i32_i32_p
-]
+trait.proof private @Ord_impl_i32_p proves @Ord_impl_i32[] for @Ord[i32] given [@Eq_impl_i32_p, @PartialOrd_impl_i32_i32_p]
 
 // CHECK-LABEL: func.func @max
 func.func @max(%a: i32, %b: i32) -> i32 {

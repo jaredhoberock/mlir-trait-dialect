@@ -20,7 +20,7 @@ trait.impl private @Vector_blanket for @Vector[!trait.poly<0>] where [@Tensor[!t
 }
 trait.impl private @Tensor_i8 for @Tensor[i8] {}
 // expected-error @below {{impl '@Vector_blanket' applies where '!trait.proj<@Foo[!trait.poly<0>], "Out">' = 'i64', and after instantiate-monomorphs nothing makes '!trait.proj<@Foo[i8], "Out">' and 'i64' one type at '!trait.claim<@Vector[i8] by @p>'}}
-trait.proof private @p proves @Vector_blanket for @Vector[i8] given [@Tensor_i8]
+trait.proof private @p proves @Vector_blanket[!trait.poly<0> = i8] for @Vector[i8] given [@Tensor_i8, unit]
 
 // -----
 
@@ -48,4 +48,4 @@ trait.impl private @Vector_b for @Vector[!trait.poly<0>] where [@Tensor[!trait.p
 }
 trait.impl private @Tensor_i8 for @Tensor[i8] {}
 // expected-error @below {{impl '@Vector_a' applies where '!trait.proj<@Foo[!trait.poly<0>], "Out">' = 'i64', and after instantiate-monomorphs nothing makes '!trait.proj<@Foo[i8], "Out">' and 'i64' one type at '!trait.claim<@Vector[i8] by @p>'}}
-trait.proof private @p proves @Vector_a for @Vector[i8] given [@Tensor_i8]
+trait.proof private @p proves @Vector_a[!trait.poly<0> = i8] for @Vector[i8] given [@Tensor_i8, unit]

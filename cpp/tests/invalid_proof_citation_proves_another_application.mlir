@@ -14,4 +14,4 @@ trait.impl private @B_i32 for @B[i32] {}
 trait.impl private @A_i64 for @A[i64] {}
 
 // expected-error @below {{proof @A_i64 proves '!trait.claim<@A[i64]>', which does not discharge the obligation '!trait.claim<@A[i32]>'}}
-trait.proof private @forged proves @B_i32 for @B[i32] given [@A_i64]
+trait.proof private @forged proves @B_i32[] for @B[i32] given [@A_i64]

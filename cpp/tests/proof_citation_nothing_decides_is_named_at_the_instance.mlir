@@ -10,7 +10,7 @@
 // the proven claim is left unproven, selection cannot prove it either, and the
 // refusal names the citation that nothing decided.
 
-// VERIFIED: trait.proof private @forged proves @B_blanket for @B[!trait.poly<0>] given [@A_i64]
+// VERIFIED: trait.proof private @forged proves @B_blanket[!trait.poly<0> = !trait.poly<0>] for @B[!trait.poly<0>] given [@A_i64]
 // INSTANCE: error: unproven monomorphic claim '!trait.claim<@A[!trait.proj<@Foo[i32], "Out">]>' after instantiate-monomorphs
 // INSTANCE: note: proof @forged cites @A_i64 for requirement 0, which nothing decides here
 
@@ -31,7 +31,7 @@ trait.impl private @B_blanket for @B[!trait.poly<0>] {
     return %r : i64
   }
 }
-trait.proof private @forged proves @B_blanket for @B[!trait.poly<0>] given [@A_i64]
+trait.proof private @forged proves @B_blanket[!trait.poly<0> = !trait.poly<0>] for @B[!trait.poly<0>] given [@A_i64]
 func.func @main() -> i64 {
   %w = trait.witness @forged for @B[i32]
   %r = trait.method.call %w @B[i32]::@b() : () -> i64 by @forged

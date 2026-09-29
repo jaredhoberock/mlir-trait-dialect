@@ -259,236 +259,6 @@ enum class StandingPremise {
   DecidedWithItsPremise
 };
 
-/// What deriving each proven obligation produced, kept for as long as the proof
-/// stands.
-///
-/// The evidence bindings a derivation writes are the closure of one proof: the
-/// obligation it discharges bound to the claim proving it, then the same for
-/// every obligation underneath. That closure is a fact about the proof, not
-/// about the caller that asked for it, so it is kept once per normalized pair
-/// rather than once per asking, and it is kept whatever else the fact base
-/// does: an impl minted since can make a NEW application resolvable, but it
-/// cannot change what the proof already standing over this one binds.
-///
-/// The key is the pair AS NORMALIZED -- the demanded obligation and the proven
-/// value with their ground projections resolved -- rather than the pair as some
-/// caller happened to spell it. Two callers reaching one obligation through
-/// different projection spellings key it identically that way, which is what
-/// lets one record answer both.
-///
-/// The module the derivation read is part of the key as well. A spelling names
-/// its symbols in one symbol table, and two modules can spell one claim
-/// identically and mean two different proofs of it, so what a derivation
-/// answers for is that claim under the module it was read from and not the
-/// spelling alone.
-///
-/// The spellings inside a closure are the module's, and a sweep respells those,
-/// so the record is transcribed with the module by the sweep that moves them --
-/// storing them at a grade nothing respells would mean storing them without
-/// their proofs, which is what the closure is for.
-///
-/// Entries are only ever added, and re-recording one is checked rather than
-/// trusted: two derivations of one application that disagree are a fault this
-/// must report, not a race to the map.
-class ProofClosureRecord {
-public:
-  /// The evidence bindings one derivation wrote, in the order it wrote them.
-  using Closure = SmallVector<std::pair<ClaimType, ClaimType>, 4>;
-
-  /// What deriving `proven` for `unproven` under `anchor` produced, or nothing
-  /// when no derivation of that pair has been recorded. Both sides are the
-  /// normalized spellings, and `anchor` is the module they were read from.
-  const Closure *lookup(Operation *anchor, ClaimType unproven,
-                        ClaimType proven) const {
-    auto it = entries.find(Key{anchor, unproven, proven});
-    return it == entries.end() ? nullptr : &it->second;
-  }
-
-  /// Whether a claim is one nothing but a respelling can move, which is the
-  /// condition on holding what deriving it produced: an open spelling is one an
-  /// impl generated since, or the instance a template is cut at, can move to
-  /// another type, and the derivation would reach another closure there.
-  static bool isSettled(ClaimType claim) {
-    return spellingIsSettled(Type(claim));
-  }
-
-  /// Whether the pair and every binding in `closure` are settled, which is the
-  /// condition on holding a derivation for longer than the fact base stands.
-  static bool isSettled(ClaimType unproven, ClaimType proven,
-                        const Closure &closure) {
-    if (!isSettled(unproven) || !isSettled(proven))
-      return false;
-    for (auto [boundUnproven, boundProven] : closure)
-      if (!isSettled(boundUnproven) || !isSettled(boundProven))
-        return false;
-    return true;
-  }
-
-  /// Records `closure` as what deriving `proven` for `unproven` produces, and
-  /// says whether this record now answers for the pair.
-  ///
-  /// A derivation that is not settled is refused: this answers for as long as
-  /// the proof stands, and an unsettled derivation stands only until the next
-  /// impl.
-  ///
-  /// A second derivation of one settled pair reaching a different closure is a
-  /// pair this answers for no longer: the entry is withdrawn and the pair is
-  /// refused from then on, so that what this holds is only ever what deriving
-  /// would have produced.
-  bool record(Operation *anchor, ClaimType unproven, ClaimType proven,
-              Closure closure) {
-    assert(isWellGraded(unproven, proven) &&
-           "a recorded pair is an obligation and the claim proving it");
-    if (!isSettled(unproven, proven, closure))
-      return false;
-    switch (place(entries, Key{anchor, unproven, proven}, std::move(closure))) {
-    case Placement::Held:
-    case Placement::Agreed:
-      return true;
-    case Placement::Withdrawn:
-    case Placement::Refused:
-      return false;
-    }
-    llvm_unreachable("a closure is placed, agreed with, withdrawn or refused");
-  }
-
-  /// Respells every key and every binding this holds under `anchor` through
-  /// `replacer`, which is the same rewrite the sweep applies to that module.
-  ///
-  /// A derivation read under another module keeps its spellings: the rewrite
-  /// names proof symbols one symbol table resolves, and what another module
-  /// spells the same way it proves its own way.
-  ///
-  /// Two pairs can respell to one -- an unproven claim among the type arguments
-  /// of both gains the same proof -- and the closures they carry are then two
-  /// closures held for one pair. That pair meets the rule a pair derived twice
-  /// meets: the closures are compared, equal ones leave it answered, differing
-  /// ones withdraw it, and a pair already disputed takes neither. So what this
-  /// holds after a transcription is still only what deriving would have
-  /// produced.
-  void respellWith(AttrTypeReplacer &replacer, Operation *anchor) {
-    EntryMap respelled;
-    respelled.reserve(entries.size());
-    // The sweep's rewrite is the one that gives an unproven claim its proof, so
-    // applying it to a spelling rewrites what is nested inside that spelling AND
-    // the spelling itself. Only the first is wanted here: every position of this
-    // record is an obligation or the claim proving one, and which it is says how
-    // a reader will spell its ask. So each position keeps its own grade and
-    // takes the interior rewrite -- an obligation stays an obligation whose type
-    // arguments now name their proofs, which is exactly the spelling the next
-    // ask arrives in.
-    auto respellObligation = [&](ClaimType claim) {
-      return cast<ClaimType>(replacer.replace(Type(claim))).asUnproven();
-    };
-    auto respellProof = [&](ClaimType claim) {
-      return cast<ClaimType>(replacer.replace(Type(claim)));
-    };
-    auto respellBinding = [&](const std::pair<ClaimType, ClaimType> &binding) {
-      return std::make_pair(respellObligation(binding.first),
-                            respellProof(binding.second));
-    };
-    // A key's module is the symbol table its spellings name, which a sweep
-    // rewriting types does not move.
-    auto respellKey = [&](const Key &key) {
-      return Key{std::get<0>(key), respellObligation(std::get<1>(key)),
-                 respellProof(std::get<2>(key))};
-    };
-    // The disputes are transcribed first, because a disputed pair is one no
-    // closure answers for again: an entry whose key respells onto a disputed
-    // one is refused by it, rather than the two deciding it between them.
-    llvm::DenseSet<Key> respelledDisputes;
-    respelledDisputes.reserve(disputed.size());
-    for (auto &key : disputed)
-      respelledDisputes.insert(std::get<0>(key) == anchor ? respellKey(key)
-                                                          : key);
-    disputed = std::move(respelledDisputes);
-    for (auto &entry : entries) {
-      if (std::get<0>(entry.first) != anchor) {
-        place(respelled, entry.first, entry.second);
-        continue;
-      }
-      Closure closure;
-      closure.reserve(entry.second.size());
-      for (auto &binding : entry.second) {
-        // A closure is the set of bindings replaying it writes, and two
-        // bindings that were distinct can respell alike. Keeping both would
-        // make comparing closures stricter than comparing the bindings they
-        // write, so a binding already in hand is not written again.
-        std::pair<ClaimType, ClaimType> transcribed = respellBinding(binding);
-        if (!llvm::is_contained(closure, transcribed))
-          closure.push_back(transcribed);
-      }
-      place(respelled, respellKey(entry.first), std::move(closure));
-    }
-    entries = std::move(respelled);
-    assert(gradesHold() && "transcribing must leave every position its grade");
-  }
-
-private:
-  /// A module, an obligation read under it, and the claim proving that
-  /// obligation, which is what every key this holds is. A binding inside a
-  /// closure is the obligation and the claim alone: every binding a derivation
-  /// wrote was read under the key's own module.
-  using Key = std::tuple<Operation *, ClaimType, ClaimType>;
-  using EntryMap = llvm::DenseMap<Key, Closure>;
-
-  /// What placing a closure under a key left this holding.
-  enum class Placement {
-    /// The key held no closure and now holds this one.
-    Held,
-    /// The key held an equal closure, which is the one that stands.
-    Agreed,
-    /// The key held a differing closure, so neither stands.
-    Withdrawn,
-    /// The key is disputed, so it takes no closure.
-    Refused,
-  };
-
-  /// Places `closure` under `key` in `into`, holding a key to one closure.
-  ///
-  /// Two closures held for one pair that disagree are a pair this cannot answer
-  /// for: whichever answer it gave, the other closure would have been what
-  /// deriving produced. The entry is withdrawn and the pair is refused from
-  /// then on, so a reader gets no answer rather than the wrong one and the
-  /// reader's own fallback is what covers it.
-  Placement place(EntryMap &into, const Key &key, Closure closure) {
-    if (disputed.contains(key))
-      return Placement::Refused;
-    auto [entry, inserted] = into.try_emplace(key, std::move(closure));
-    if (inserted)
-      return Placement::Held;
-    if (entry->second == closure)
-      return Placement::Agreed;
-    into.erase(entry);
-    disputed.insert(key);
-    return Placement::Withdrawn;
-  }
-
-  /// Whether a pair is an obligation paired with a claim proving it, which is
-  /// what every key and every binding this holds is.
-  static bool isWellGraded(ClaimType unproven, ClaimType proven) {
-    return !unproven.isProven() && proven.isProven();
-  }
-
-  /// Whether every position this holds carries the grade its place demands.
-  bool gradesHold() const {
-    for (auto &entry : entries) {
-      if (!isWellGraded(std::get<1>(entry.first), std::get<2>(entry.first)))
-        return false;
-      for (auto [unproven, proven] : entry.second)
-        if (!isWellGraded(unproven, proven))
-          return false;
-    }
-    for (auto &key : disputed)
-      if (!isWellGraded(std::get<1>(key), std::get<2>(key)))
-        return false;
-    return true;
-  }
-
-  EntryMap entries;
-  llvm::DenseSet<Key> disputed;
-};
-
 /// The proof derivations one span of resolution has completed, so that a
 /// derivation performed once can be replayed rather than performed again.
 ///
@@ -512,20 +282,10 @@ private:
 /// This holds no fact: everything in it is derivable again, which is what lets
 /// a reader keep it through a handle that may not resolve and makes dropping an
 /// entry always safe.
-///
-/// Beside it, and reached through it because every site that derives already
-/// carries it, sits the record of what deriving each proven application
-/// produces. That record answers for a pair however the caller spelled its
-/// projections, and for as long as the proof stands; this memo answers for the
-/// pair exactly as it arrived, and only until the next fact.
 class ProofDerivationMemo {
 public:
   /// The evidence bindings one derivation wrote, in the order it wrote them.
-  using Closure = ProofClosureRecord::Closure;
-
-  /// What deriving each proven application produces.
-  ProofClosureRecord &getClosures() { return closures; }
-  const ProofClosureRecord &getClosures() const { return closures; }
+  using Closure = SmallVector<std::pair<ClaimType, ClaimType>, 4>;
 
   /// The closure deriving `proven` for `unproven` under `anchor` produced, or
   /// nothing when no derivation of that pair is held against the fact base as it
@@ -564,7 +324,6 @@ private:
   };
 
   llvm::DenseMap<Key, Entry> entries;
-  ProofClosureRecord closures;
   uint64_t factBase = 0;
 };
 
@@ -614,9 +373,9 @@ public:
   /// The components expose bindings for one another -- a projection binding can
   /// rewrite a spelling into one that names a proof, and a proof binding can
   /// expose a projection in the claim it names -- so all three are chased
-  /// together until no component grows. Every proven claim is read off the record
-  /// of what deriving each pair produces, and only a pair no derivation has
-  /// reached before is derived, through the same prover proof birth uses.
+  /// together until no component grows. Every proven claim is derived through
+  /// the same prover proof birth uses, replaying a pair the stage's derivation
+  /// memo already holds against the facts as they stand.
   ///
   /// Fails where the read cannot close it: a projection it cannot answer leaves
   /// the call spelling a type it cannot make concrete, and an obligation it
@@ -1462,16 +1221,13 @@ ModuleOp getAnchorModule(Operation *anchor);
 /// projection over an application no premise of its own states and only an
 /// impl proves (`trait Foo where Bar[Wrap<Self>]::Assoc: Cd`). A verifier
 /// that reads such a projection through the impls the module holds decides by
-/// declarations outside the op it verifies. Those reads -- the three
-/// `ImplProjectionLookup`s (`ImplOp::specializeObligationsAsClaimsFor`, the
-/// requirement reader's substitution for a proof stating no arguments, and
-/// the projection-resolution witness verifier's header comparison) and the
-/// verifier `DemandOrigin`s -- delete once every verifier holds evidence for
-/// every projection it reads: impl selection minting only the proof form that
-/// states its impl's arguments, and each declaration carrying, at a known
-/// position, the impl citation its well-formedness check found for each
-/// application it spells that no premise states -- the choice Rust's check
-/// makes and discards, recorded where it is made. The scopes stay: which
+/// declarations outside the op it verifies. Those reads -- the
+/// `ImplProjectionLookup` the projection-resolution witness verifier's header
+/// comparison makes, and the verifier `DemandOrigin`s -- delete once every
+/// verifier holds evidence for every projection it reads: each declaration
+/// carrying, at a known position, the impl citation its well-formedness check
+/// found for each application it spells that no premise states -- the choice
+/// Rust's check makes and discards, recorded where it is made. The scopes stay: which
 /// projection the stage may rewrite while it instantiates and stamps is impl
 /// selection's own policy, which no evidence-holding reader replaces.
 enum class LookupScope {

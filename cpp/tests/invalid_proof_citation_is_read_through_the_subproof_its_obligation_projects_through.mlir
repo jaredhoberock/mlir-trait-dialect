@@ -29,4 +29,4 @@ trait.impl private @B_blanket for @B[!trait.poly<0>] {
   }
 }
 // expected-error @below {{proof @A_i32 proves '!trait.claim<@A[i32]>', which does not discharge the obligation '!trait.claim<@A[i64]>'}}
-trait.proof private @forged proves @B_blanket for @B[i32] given [@Foo_i32, @A_i32]
+trait.proof private @forged proves @B_blanket[!trait.poly<0> = i32] for @B[i32] given [@Foo_i32, @A_i32]

@@ -12,7 +12,7 @@ trait.trait private @U[!trait.poly<0>] {}
 trait.trait private @T[!trait.poly<1>] {}
 trait.impl private @U_impl for @U[i64] {}
 trait.impl private @T_impl for @T[!trait.poly<2>] where [@U[!trait.poly<2>]] {}
-trait.proof private @T_p proves @T_impl for @T[i64] given [@U_impl]
+trait.proof private @T_p proves @T_impl[!trait.poly<2> = i64] for @T[i64] given [@U_impl]
 
 // CHECK: trait.project %{{.*}}[0] : <@T[i64] by @T_p> -> <@U[i64] by @U_impl>
 func.func @f(%s: !trait.claim<@T[i64] by @T_p>) -> !trait.claim<@U[i64] by @U_impl> {

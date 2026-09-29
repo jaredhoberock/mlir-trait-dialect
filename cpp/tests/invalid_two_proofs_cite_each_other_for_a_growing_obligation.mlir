@@ -37,8 +37,8 @@ trait.impl private @Q_all for @Q1[!trait.poly<0>] where [@P1[tuple<!trait.poly<0
   }
 }
 
-trait.proof private @p proves @P_all for @P1[!trait.poly<0>] given [@q]
-trait.proof private @q proves @Q_all for @Q1[!trait.poly<0>] given [@p]
+trait.proof private @p proves @P_all[!trait.poly<0> = !trait.poly<0>] for @P1[!trait.poly<0>] given [@q]
+trait.proof private @q proves @Q_all[!trait.poly<0> = !trait.poly<0>] for @Q1[!trait.poly<0>] given [@p]
 
 func.func @main() -> i64 {
   %w = trait.witness @p for @P1[i32]

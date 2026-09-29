@@ -21,7 +21,7 @@ trait.impl private @Tensor_i8 for @Tensor[i8] {
   }
 }
 
-trait.proof private @p proves @Vector_blanket for @Vector[i8] given [@Tensor_i8]
+trait.proof private @p proves @Vector_blanket[!trait.poly<0> = i8] for @Vector[i8] given [@Tensor_i8, unit]
 
 // CHECK: func.func @main
 // CHECK: call @[[SHAPE:Tensor_i8_shape]]

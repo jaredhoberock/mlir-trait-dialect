@@ -64,6 +64,26 @@ static void printImplCitationArguments(::mlir::OpAsmPrinter &printer,
                                     arguments.getAsRange<TypeBindingAttr>()));
 }
 
+/// The arguments a proof states for its impl's parameters, which every proof
+/// states: the citation grammar above with the list required.
+static ::mlir::ParseResult
+parseStatedImplArguments(::mlir::OpAsmParser &parser,
+                         ::mlir::ArrayAttr &arguments) {
+  if (parseImplCitationArguments(parser, arguments))
+    return ::mlir::failure();
+  if (!arguments)
+    return parser.emitError(parser.getCurrentLocation(),
+                            "expected the arguments the impl's parameters take, "
+                            "`[!P = T, ...]`");
+  return ::mlir::success();
+}
+
+static void printStatedImplArguments(::mlir::OpAsmPrinter &printer,
+                                     ::mlir::Operation *op,
+                                     ::mlir::ArrayAttr arguments) {
+  printImplCitationArguments(printer, op, arguments);
+}
+
 /// A declaration's where clause, `where [predicate, ...]`: read as the empty
 /// clause where the keyword is absent, and printed, with the space before it,
 /// only where it states something.
@@ -2076,26 +2096,6 @@ FailureOr<SmallVector<ClaimType>> ImplOp::specializeAssumptionsAsClaimsFor(
   });
 }
 
-FailureOr<SmallVector<ClaimType>> ImplOp::specializeObligationsAsClaimsFor(
-    ClaimType actualSelfClaim,
-    DemandOrigin origin,
-    llvm::function_ref<InFlightDiagnostic()> errFn) {
-  auto module = getModule(errFn);
-  if (failed(module)) return failure();
-
-  // A parameter the header leaves open and the where clause determines is read
-  // through the impls the module holds; `origin` names that reading.
-  ImplProjectionLookup byImplLookup(*module, origin);
-
-  // The arguments are read off the claim by position, as the assumptions'
-  // are: whether the header carries to the claim is settled where the impl was
-  // matched to it, not here.
-  return specializeObligationsAt(
-      actualSelfClaim,
-      readTypeArgumentsFor(actualSelfClaim, byImplLookup).toSpecialization(),
-      errFn);
-}
-
 FailureOr<SmallVector<ClaimType>> ImplOp::specializeObligationsAt(
     ClaimType actualSelfClaim, const SpecializationMap &arguments,
     llvm::function_ref<InFlightDiagnostic()> errFn) {
@@ -2311,17 +2311,12 @@ LogicalResult ProofOp::verify() {
   if (failed(verifyTemplateIsNotPublic(getOperation())))
     return failure();
 
-  // Every entry names a symbol, except that the form stating its impl's
-  // arguments holds `unit` where a requirement or premise is decided without
-  // one; which entries those are is read against the impl where its symbols
-  // are verified.
-  for (Attribute name : getSubproofNames()) {
-    if (isa<FlatSymbolRefAttr>(name))
-      continue;
-    if (statesImplArguments() && isa<UnitAttr>(name))
-      continue;
-    return emitOpError() << "'subproof_names' must contain only FlatSymbolRefAttr elements";
-  }
+  // Every entry names a symbol, or is `unit` where a requirement or premise is
+  // decided without one; which entries those are is read against the impl
+  // where its symbols are verified.
+  for (Attribute name : getSubproofNames())
+    if (!isa<FlatSymbolRefAttr, UnitAttr>(name))
+      return emitOpError() << "'subproof_names' must contain only symbols and unit";
   return success();
 }
 
@@ -2437,36 +2432,34 @@ LogicalResult ProofOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     return *subproofEvidence;
   };
 
-  // The impl's header must carry to the claim this proof stands over. What a
-  // projection that header spells reduces through is that evidence and then
-  // the impls the module holds.
-  NormalizationContext reading;
-  if (spellsAProjection(Type(implOp.getSelfClaim())) ||
-      implOp.getAssumptions().hasEqualities())
-    reading = evidence();
-  reading.setModuleLookup(module, LookupScope::Ground,
-                          DemandOrigin::ProofVerification);
-  auto throughEvidence = [&](Type ty) -> FailureOr<Type> {
-    return reading.normalize(ty, errFn);
-  };
-  // A proof stating its impl's arguments proves the header at them, spelled
-  // exactly: the arguments are a substitution, and nothing is read.
-  FailureOr<SpecializationMap> arguments = failure();
-  if (statesImplArguments()) {
-    arguments = getImplArgumentsAt(getProvenClaim(), errFn);
-    if (failed(arguments))
-      return failure();
-    TraitApplicationAttr header = implOp.getSelfApplicationAt(*arguments);
-    if (header != getTraitApplication())
-      return emitOpError() << "impl '" << getImplNameAttr()
-                           << "' at its stated arguments is an impl of "
-                           << header << ", not of " << getTraitApplication();
-  } else {
-    arguments = implOp.buildSubstitutionForSelfClaim(getProvenClaim(),
-                                                     throughEvidence, errFn);
-  }
+  // The impl's header at the arguments this proof states must be the claim it
+  // stands over. A header spelling a projection (`impl<T> Index<T::Shape,
+  // T::Element> for T`) is read at them through that evidence and then the
+  // impls the module holds, which is what carries it to a claim spelling the
+  // resolution.
+  auto arguments = getImplArgumentsAt(getProvenClaim(), errFn);
   if (failed(arguments))
     return failure();
+  TraitApplicationAttr header = implOp.getSelfApplicationAt(*arguments);
+  bool carries = header == getTraitApplication();
+  if (spellsAProjection(Type(implOp.getSelfClaim()))) {
+    NormalizationContext reading = evidence();
+    reading.setModuleLookup(module, LookupScope::Ground,
+                            DemandOrigin::ProofVerification);
+    // A reading with no normal form is refused where it is read.
+    auto read = [&](Type ty) {
+      return reading.normalize(stripClaimProofs(ty), errFn);
+    };
+    FailureOr<Type> rebuilt = read(instantiate(Type(implOp.getSelfClaim()), *arguments));
+    FailureOr<Type> wanted = read(Type(getProvenClaim()));
+    if (failed(rebuilt) || failed(wanted))
+      return failure();
+    carries = *rebuilt == *wanted;
+  }
+  if (!carries)
+    return emitOpError() << "impl '" << getImplNameAttr()
+                         << "' at its stated arguments is an impl of " << header
+                         << ", not of " << getTraitApplication();
 
   // The impl's equality premises stand over this claim, and this claim is where
   // they are decided: a citation of this proof reads nothing inside it, so a
@@ -2483,8 +2476,7 @@ LogicalResult ProofOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // each naming evidence that discharges the obligation at its index. What that
   // evidence proves underneath is the business of its own verifier: a citation
   // is read at the top level and no deeper.
-  auto subproofs = verifyAndGetSubproofClaims(
-      getProvenClaim(), DemandOrigin::ProofVerification, errFn);
+  auto subproofs = verifyAndGetSubproofClaims(getProvenClaim(), errFn);
   if (failed(subproofs))
     return failure();
 
@@ -2519,8 +2511,7 @@ TraitOp ProofOp::getTrait() {
 }
 
 FailureOr<SmallVector<ClaimType>> ProofOp::verifyAndGetSubproofClaims(
-    ClaimType at, DemandOrigin origin,
-    llvm::function_ref<InFlightDiagnostic()> err) {
+    ClaimType at, llvm::function_ref<InFlightDiagnostic()> err) {
   SmallVector<ClaimType> result;
 
   ModuleOp module = (*this)->getParentOfType<ModuleOp>();
@@ -2535,68 +2526,47 @@ FailureOr<SmallVector<ClaimType>> ProofOp::verifyAndGetSubproofClaims(
     return failure();
   }
 
-  // The obligations at the application this proof is being carried to. The
-  // given list is indexed by them, so this is also the arity to check. A proof
-  // stating its impl's arguments carries them there; one stating none reads
-  // them off the claim.
-  FailureOr<SmallVector<ClaimType>> obligations = failure();
-  if (statesImplArguments()) {
-    auto arguments = getImplArgumentsAt(at, err);
-    if (failed(arguments))
-      return failure();
-    obligations = implOp.specializeObligationsAt(at, *arguments, err);
-  } else {
-    obligations = implOp.specializeObligationsAsClaimsFor(at, origin, err);
-  }
+  // The obligations at the application this proof is being carried to, at the
+  // arguments it states carried there.
+  auto arguments = getImplArgumentsAt(at, err);
+  if (failed(arguments))
+    return failure();
+  auto obligations = implOp.specializeObligationsAt(at, *arguments, err);
   if (failed(obligations)) return failure();
 
-  // A given list holding one entry per requirement and where-clause entry
+  // The given list holds one entry per requirement and where-clause entry and
   // cites a symbol exactly at the application entries, which are the
   // obligations in order.
-  SmallVector<Attribute> subproofNames(getSubproofNames().begin(),
-                                       getSubproofNames().end());
-  if (statesImplArguments()) {
-    SmallVector<Attribute> entries(implOp.getTrait().getRequirements().begin(),
-                                   implOp.getTrait().getRequirements().end());
-    llvm::append_range(entries, implOp.getAssumptions());
-    if (subproofNames.size() != entries.size()) {
-      if (err) err() << "arity mismatch: impl '" << getImplNameAttr()
-                     << "' and its trait state " << entries.size()
-                     << " requirements and where-clause entries, but found "
-                     << subproofNames.size() << " given entries";
-      return failure();
-    }
-    SmallVector<Attribute> citations;
-    for (auto [position, pair] :
-         llvm::enumerate(llvm::zip(entries, subproofNames))) {
-      auto [entry, name] = pair;
-      bool application = isa<TraitApplicationAttr>(entry);
-      if (application != isa<FlatSymbolRefAttr>(name)) {
-        if (err) err() << "given entry " << position << " is " << name
-                       << ", and entry " << position << " is "
-                       << (application ? "an application a symbol discharges"
-                                       : "decided without a symbol, so its "
-                                         "given entry is unit");
-        return failure();
-      }
-      if (application)
-        citations.push_back(name);
-    }
-    subproofNames = std::move(citations);
-  }
-  if (subproofNames.size() != obligations->size()) {
-    if (err) err() << "arity mismatch: expected " << obligations->size()
-                   << " subproofs, but found " << subproofNames.size();
+  SmallVector<Attribute> entries(implOp.getTrait().getRequirements().begin(),
+                                 implOp.getTrait().getRequirements().end());
+  llvm::append_range(entries, implOp.getAssumptions());
+  ArrayAttr given = getSubproofNames();
+  if (given.size() != entries.size()) {
+    if (err) err() << "arity mismatch: impl '" << getImplNameAttr()
+                   << "' and its trait state " << entries.size()
+                   << " requirements and where-clause entries, but found "
+                   << given.size() << " given entries";
     return failure();
   }
-
-  for (auto [obligation, name] : llvm::zip(*obligations, subproofNames)) {
-    auto subproofRef = dyn_cast<FlatSymbolRefAttr>(name);
-    if (!subproofRef) {
-      if (err) err() << "expected FlatSymbolRefAttr";
+  SmallVector<FlatSymbolRefAttr> citations;
+  for (auto [position, pair] : llvm::enumerate(llvm::zip(entries, given))) {
+    auto [entry, name] = pair;
+    bool application = isa<TraitApplicationAttr>(entry);
+    if (application != isa<FlatSymbolRefAttr>(name)) {
+      if (err) err() << "given entry " << position << " is " << name
+                     << ", and entry " << position << " is "
+                     << (application ? "an application a symbol discharges"
+                                     : "decided without a symbol, so its "
+                                       "given entry is unit");
       return failure();
     }
+    if (application)
+      citations.push_back(cast<FlatSymbolRefAttr>(name));
+  }
+  assert(citations.size() == obligations->size() &&
+         "the obligations are the application entries in order");
 
+  for (auto [obligation, subproofRef] : llvm::zip(*obligations, citations)) {
     // A coinductive self-citation needs no arm of its own: looking the name up
     // finds this proof, and whether its claim discharges the obligation is the
     // same comparison every other citation answers.
@@ -3039,16 +3009,27 @@ ImplOp DeriveOp::getImplOp() {
   return lookupSymbolFrom<ImplOp>(module, getImplAttr());
 }
 
-/// Verifies that a trait.derive op is well-formed with respect to its symbols:
-///
-///  1. The @impl symbol resolves to a trait.impl op.
-///  2. The impl's self application can be specialized against the derived claim
-///     (i.e., the impl's header structurally matches the claim we want to derive).
-///  3. The number of assumption operands equals the impl's assumption count
-///     after specialization.
-///  4. Each operand's claim type matches the corresponding specialized
-///     assumption (so the caller is providing exactly the evidence the impl
-///     requires under this specialization).
+/// Refuses `supplied` unless it holds one claim per entry of `expected`, each
+/// that entry, read modulo the evidence it names. `owner` names what states the
+/// entries and `supplier` the op supplying them, as a refusal reads them.
+static LogicalResult verifyPremisesSuppliedByPosition(
+    ValueRange supplied, ArrayRef<ClaimType> expected, const Twine &owner,
+    StringRef supplier, llvm::function_ref<InFlightDiagnostic()> errFn) {
+  if (supplied.size() != expected.size())
+    return errFn() << owner << " states " << expected.size()
+                   << " premises, and the " << supplier << " supplies "
+                   << supplied.size();
+  for (auto [position, pair] : llvm::enumerate(llvm::zip(supplied, expected))) {
+    auto [operand, premise] = pair;
+    ClaimType claim = cast<ClaimType>(operand.getType()).asUnproven();
+    if (claim != premise)
+      return errFn() << "premise " << position << " of " << owner << " is "
+                     << premise << ", and the " << supplier << " supplies "
+                     << claim;
+  }
+  return success();
+}
+
 /// Verifies a derive stating its impl's arguments: the derived application is
 /// the impl's header at them, and each operand's claim is the impl's
 /// where-clause entry at them, in order. A substitution decides both, so no
@@ -3068,23 +3049,21 @@ static LogicalResult verifyDeriveAtStatedArguments(
                    << "arguments is an impl of " << header << ", not of "
                    << derive.getTraitApplication();
 
-  SmallVector<ClaimType> where = impl.getWhereClauseAt(*arguments);
-  if (derive.getAssumptions().size() != where.size())
-    return errFn() << "impl '" << derive.getImplAttr() << "' states "
-                   << where.size() << " where-clause entries, and the derive "
-                   << "supplies " << derive.getAssumptions().size()
-                   << " premises";
-  for (auto [position, pair] :
-       llvm::enumerate(llvm::zip(derive.getAssumptions(), where))) {
-    auto [operand, expected] = pair;
-    ClaimType supplied = cast<ClaimType>(operand.getType()).asUnproven();
-    if (supplied != expected)
-      return errFn() << "premise " << position << " is " << expected
-                     << ", and the derive supplies " << supplied;
-  }
-  return success();
+  return verifyPremisesSuppliedByPosition(
+      derive.getAssumptions(), impl.getWhereClauseAt(*arguments),
+      "impl '@" + derive.getImpl() + "'", "derive", errFn);
 }
 
+/// Verifies that a trait.derive op is well-formed with respect to its symbols:
+///
+///  1. The @impl symbol resolves to a trait.impl op.
+///  2. The impl's self application can be specialized against the derived claim
+///     (i.e., the impl's header structurally matches the claim we want to derive).
+///  3. The number of assumption operands equals the impl's assumption count
+///     after specialization.
+///  4. Each operand's claim type matches the corresponding specialized
+///     assumption (so the caller is providing exactly the evidence the impl
+///     requires under this specialization).
 LogicalResult DeriveOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // Verification writes nothing, so every name read under it resolves through
   // the symbol tables the walk this is one step of has already built.
@@ -3717,8 +3696,7 @@ static void addLocalProjectionRulesFromProvenClaim(
   // subproofs, so a proof already read contributes nothing a second time.
   if (proof)
     if (visited.insert(proof.getOperation()).second) {
-      auto subproofs = proof.verifyAndGetSubproofClaims(
-          claim, DemandOrigin::ProofVerification, /*err=*/nullptr);
+      auto subproofs = proof.verifyAndGetSubproofClaims(claim, /*err=*/nullptr);
       if (succeeded(subproofs))
         for (ClaimType subproof : *subproofs)
           if (subproof.isProven())
@@ -3833,8 +3811,7 @@ NormalizationContext buildSubproofNormalizationContext(ProofOp proof,
   // The proof itself is marked read before the walk starts, so the tree it
   // stands over contributes and it does not.
   visited.insert(proof.getOperation());
-  auto subproofs = proof.verifyAndGetSubproofClaims(
-      at, DemandOrigin::ProofVerification, /*err=*/nullptr);
+  auto subproofs = proof.verifyAndGetSubproofClaims(at, /*err=*/nullptr);
   if (succeeded(subproofs))
     for (ClaimType subproof : *subproofs)
       if (subproof.isProven())
@@ -4310,20 +4287,10 @@ LogicalResult ProjectOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // A bound requirement holds where its premises do, so the hop carries one
   // claim per premise, each the premise at the arguments it supplies; a claim
   // is read modulo the evidence it names.
-  if (getPremises().size() != requirement->premises.size())
-    return emitOpError() << "requirement " << getIndex() << " states "
-                         << requirement->premises.size()
-                         << " premises, and the hop supplies "
-                         << getPremises().size();
-  for (auto [position, pair] :
-       llvm::enumerate(llvm::zip(getPremises(), requirement->premises))) {
-    auto [operand, premise] = pair;
-    ClaimType supplied = cast<ClaimType>(operand.getType()).asUnproven();
-    if (supplied != premise)
-      return emitOpError() << "premise " << position << " of requirement "
-                           << getIndex() << " is " << premise
-                           << ", and the hop supplies " << supplied;
-  }
+  if (failed(verifyPremisesSuppliedByPosition(
+          getPremises(), requirement->premises,
+          "requirement " + Twine(getIndex()), "hop", errFn)))
+    return failure();
 
   // The result type is an annotation on the selection: the index decides which
   // claim this op produces, so the spelled one must be that claim.

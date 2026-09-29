@@ -57,4 +57,4 @@ func.func @test() -> i32 {
   return %res : i32
 }
 
-// CHECK: trait.proof private @Marker_via_assoc_{{.*}}_p proves @Marker_via_assoc for @Marker[i32] given [@Trait_i32, @Marker_unit]
+// CHECK: trait.proof private @Marker_via_assoc_{{.*}}_p proves @Marker_via_assoc[!trait.poly<1> = i32] for @Marker[i32] given [@Trait_i32, @Marker_unit]

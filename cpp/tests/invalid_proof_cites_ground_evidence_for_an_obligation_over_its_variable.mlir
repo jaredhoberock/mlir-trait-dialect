@@ -34,9 +34,9 @@ trait.impl private @B_blanket for @B[!trait.poly<0>] {
     return %r : i64
   }
 }
-trait.proof private @Foo_any_p proves @Foo_any for @Foo[!trait.poly<0>] given []
+trait.proof private @Foo_any_p proves @Foo_any[!trait.poly<0> = !trait.poly<0>] for @Foo[!trait.poly<0>] given []
 // expected-error @below {{proof @A_i64 proves '!trait.claim<@A[i64]>', which does not discharge the obligation '!trait.claim<@A[!trait.poly<0>]>'}}
-trait.proof private @forged proves @B_blanket for @B[!trait.poly<0>] given [@Foo_any_p, @A_i64]
+trait.proof private @forged proves @B_blanket[!trait.poly<0> = !trait.poly<0>] for @B[!trait.poly<0>] given [@Foo_any_p, @A_i64]
 func.func @main() -> i64 {
   %w = trait.witness @forged for @B[i32]
   %r = trait.method.call %w @B[i32]::@b() : () -> i64 by @forged

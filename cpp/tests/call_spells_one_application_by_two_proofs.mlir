@@ -16,8 +16,8 @@ trait.impl private @T_i64 for @T[i64] {
     return %c : i64
   }
 }
-trait.proof private @pv1 proves @T_i64 for @T[i64] given []
-trait.proof private @pv2 proves @T_i64 for @T[i64] given []
+trait.proof private @pv1 proves @T_i64[] for @T[i64] given []
+trait.proof private @pv2 proves @T_i64[] for @T[i64] given []
 
 func.func private @callee(!trait.claim<@T[i64]>, !trait.claim<@T[i64]>)
 

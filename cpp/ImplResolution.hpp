@@ -447,20 +447,13 @@ class ImplResolver {
     /// through a handle that may not resolve still records into it.
     InstantiationChain &getInstantiationChain() const { return instantiations; }
 
-    /// Says a sweep has respelled `scope`'s copy of the recorded facts,
-    /// `replacer` being the rewrite it applied there.
+    /// Says a sweep has respelled the module's copy of the recorded facts.
     ///
     /// A sweep records no proof, so the fact count does not move for it; what
     /// a derivation reads are spellings, so what was derived before the sweep
-    /// was derived from a module that no longer stands. The memo of spelling
-    /// pairs answers that by holding nothing across the sweep; the record of
-    /// per-application closures is transcribed instead, because it is what a
-    /// reader that must not derive serves from and dropping it would leave that
-    /// reader with nothing. Only what was derived under `scope` is transcribed:
-    /// the rewrite names symbols that module's symbol table resolves, and a
-    /// derivation read under another one is not spelled in them.
-    void noteRespelling(AttrTypeReplacer &replacer, ModuleOp scope) const {
-      derivations.getClosures().respellWith(replacer, scope);
+    /// was derived from a module that no longer stands, and the memo of
+    /// spelling pairs holds nothing across it.
+    void noteRespelling() const {
       derivations.noteRespelling();
       ++recordEpoch;
     }
@@ -514,6 +507,24 @@ class ImplResolver {
     /// a fact.
     void noteRecordWritten() { ++recordEpoch; }
 
+    /// The proofs standing in one module: by the impl each stands over and the
+    /// application it proves, and by name. Read off the module at the first
+    /// mint in it and extended by every proof minted there, which is the one
+    /// site that writes a proof while the stage runs. Nothing the stage runs
+    /// erases a proof -- a rewrite driver never takes a symbol for dead, and
+    /// proofs go only in the erase pass after the stage -- so every op held
+    /// here stands.
+    struct StandingProofs {
+      DenseMap<std::pair<ImplOp, TraitApplicationAttr>, ProofOp> byClaim;
+      DenseMap<StringAttr, ProofOp> byName;
+
+      /// Adds `proof`, keeping the first proof of one impl at one application.
+      void note(ProofOp proof);
+    };
+
+    /// The proofs standing in `scope`, read once.
+    StandingProofs &getStandingProofs(ModuleOp scope);
+
     /// Checks whether all of `impl`'s where-clause assumptions are satisfiable
     /// when specialized for `concreteSelf`, read in `scope`.
     LogicalResult assumptionsSatisfiableFor(ImplOp impl,
@@ -531,6 +542,7 @@ class ImplResolver {
     mutable ModuleOp module;
     std::shared_ptr<DemandLedger> ledger;
     ProofResolutionMemo memo;
+    DenseMap<Operation *, StandingProofs> standingProofs;
     mutable ProofDerivationMemo derivations;
     mutable InstantiationChain instantiations;
     ImplGeneratorSet generators;

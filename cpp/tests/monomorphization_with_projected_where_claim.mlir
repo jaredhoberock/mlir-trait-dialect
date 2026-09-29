@@ -61,4 +61,4 @@ func.func @main() -> i32 {
   %c0_i32 = arith.constant 0 : i32
   return %c0_i32 : i32
 }
-trait.proof private @Has_impl_p proves @Has_impl for @Has[f64] given [@MyEq_impl]
+trait.proof private @Has_impl_p proves @Has_impl[] for @Has[f64] given [@MyEq_impl]

@@ -79,7 +79,7 @@ trait.trait private @Tag[!S] {
 trait.impl private @Tag_i32 for @Tag[i32] {
 }
 
-trait.proof private @Tag_p proves @Tag_i32 for @Tag[i32] given []
+trait.proof private @Tag_p proves @Tag_i32[] for @Tag[i32] given []
 
 func.func private @holds_evidence_in_its_type(%e: !trait.claim<@Tag[i32] by @Tag_p>) -> i32 {
   %same = trait.coerce %e : !trait.claim<@Tag[i32] by @Tag_p> to !trait.claim<@Tag[i32] by @Tag_p>
@@ -101,8 +101,8 @@ trait.impl private @Ping_i64 for @Ping[i64] {
   trait.assoc_type @Other = i32
 }
 
-trait.proof private @Ping_i32_p proves @Ping_i32 for @Ping[i32] given [@Ping_i64_p]
-trait.proof private @Ping_i64_p proves @Ping_i64 for @Ping[i64] given [@Ping_i32_p]
+trait.proof private @Ping_i32_p proves @Ping_i32[] for @Ping[i32] given [@Ping_i64_p]
+trait.proof private @Ping_i64_p proves @Ping_i64[] for @Ping[i64] given [@Ping_i32_p]
 
 // The method clone, the helper the live clone reaches, the clone itself and
 // main are the whole of what stands; the implicit-check-nots on the RUN line

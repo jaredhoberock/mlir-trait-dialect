@@ -14,8 +14,8 @@ trait.trait private @Safe[!trait.poly<0>, !trait.poly<1>] {}
 trait.impl private @Safe_impl for @Safe[i32, i64] {}
 trait.impl private @Safe_impl_alt for @Safe[i32, i64] {}
 
-trait.proof private @Safe_proof proves @Safe_impl for @Safe[i32, i64] given []
-trait.proof private @Safe_proof_alt proves @Safe_impl_alt for @Safe[i32, i64] given []
+trait.proof private @Safe_proof proves @Safe_impl[] for @Safe[i32, i64] given []
+trait.proof private @Safe_proof_alt proves @Safe_impl_alt[] for @Safe[i32, i64] given []
 
 func.func @swap() -> !trait.claim<@Safe[i32, i64] by @Safe_proof_alt> {
   %s = trait.witness @Safe_proof for @Safe[i32, i64]
@@ -38,8 +38,8 @@ trait.trait private @Safe[!trait.poly<0>, !trait.poly<1>] {}
 trait.impl private @Safe_impl for @Safe[i32, i64] {}
 trait.impl private @Safe_impl_alt for @Safe[i32, i64] {}
 
-trait.proof private @Safe_proof proves @Safe_impl for @Safe[i32, i64] given []
-trait.proof private @Safe_proof_alt proves @Safe_impl_alt for @Safe[i32, i64] given []
+trait.proof private @Safe_proof proves @Safe_impl[] for @Safe[i32, i64] given []
+trait.proof private @Safe_proof_alt proves @Safe_impl_alt[] for @Safe[i32, i64] given []
 
 func.func @masked_swap(%s: tuple<!trait.claim<@Safe[i32, i64] by @Safe_proof>>)
     -> tuple<!trait.claim<@Safe[i32, i64] by @Safe_proof_alt>> {

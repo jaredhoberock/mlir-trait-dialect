@@ -25,8 +25,8 @@ trait.impl private @Trait_impl for @Trait[i64, !T2] {
 
 !T3 = !trait.poly<3>
 
-// CHECK: trait.proof private @Trait_proof proves @Trait_impl for @Trait[i64, tuple<!trait.poly<3>>] given []
-trait.proof private @Trait_proof proves @Trait_impl for @Trait[i64, tuple<!T3>] given []
+// CHECK: trait.proof private @Trait_proof proves @Trait_impl[!trait.poly<2> = tuple<!trait.poly<3>>] for @Trait[i64, tuple<!trait.poly<3>>] given []
+trait.proof private @Trait_proof proves @Trait_impl[!T2 = tuple<!T3>] for @Trait[i64, tuple<!T3>] given []
 
 // CHECK: func.func @test
 func.func @test(%arg0: tuple<!T3>) -> i64 {

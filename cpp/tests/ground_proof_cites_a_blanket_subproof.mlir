@@ -24,8 +24,8 @@ trait.impl private @B2_i32 for @B2[i32, i32] {
     return %r : i64
   }
 }
-trait.proof private @a2 proves @A2_blanket for @A2[!trait.poly<2>, !trait.poly<3>] given []
-trait.proof private @pb proves @B2_i32 for @B2[i32, i32] given [@a2]
+trait.proof private @a2 proves @A2_blanket[!trait.poly<2> = !trait.poly<2>, !trait.poly<3> = !trait.poly<3>] for @A2[!trait.poly<2>, !trait.poly<3>] given []
+trait.proof private @pb proves @B2_i32[] for @B2[i32, i32] given [@a2]
 
 // CHECK-NOT: trait.
 // CHECK: func.func private @[[A:A2_blanket_[a-z0-9]+]]_a() -> i64

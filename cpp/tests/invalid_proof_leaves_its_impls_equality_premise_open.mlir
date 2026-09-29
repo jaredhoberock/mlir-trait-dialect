@@ -19,4 +19,4 @@ trait.impl private @OnlyI64 for @Vector[!trait.poly<0>]
   }
 }
 // expected-error @below {{a proof states its impl's premises at its own claim; one the claim leaves open is stated at the instance instead: '!trait.poly<0>' = 'i64' reads '!trait.poly<0>' = 'i64' at '!trait.claim<@Vector[!trait.poly<0>] by @p>'}}
-trait.proof private @p proves @OnlyI64 for @Vector[!trait.poly<0>] given []
+trait.proof private @p proves @OnlyI64[!trait.poly<0> = !trait.poly<0>] for @Vector[!trait.poly<0>] given [unit]

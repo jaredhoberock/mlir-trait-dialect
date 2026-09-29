@@ -15,7 +15,7 @@ trait.impl private @A_top for @A[i32] {}
 trait.impl private @B_impl for @B[i32] {
   func.func @m(%x: i32) -> i32 { return %x : i32 }
 }
-trait.proof private @p proves @B_impl for @B[i32] given [@A_top]
+trait.proof private @p proves @B_impl[] for @B[i32] given [@A_top]
 
 // CHECK: func.func private @B_impl_m(%{{.*}}: i32) -> i32
 // CHECK: func.func @main(%{{.*}}: i32) -> i32
@@ -35,7 +35,7 @@ module @inner {
   trait.impl private @B_impl for @B[i64] {
     func.func @m(%x: i64) -> i64 { return %x : i64 }
   }
-  trait.proof private @p proves @B_impl for @B[i64] given [@A_inner]
+  trait.proof private @p proves @B_impl[] for @B[i64] given [@A_inner]
 
   // CHECK: func.func private @B_impl_m(%{{.*}}: i64) -> i64
   // CHECK: func.func @main(%{{.*}}: i64) -> i64

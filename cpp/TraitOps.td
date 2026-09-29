@@ -610,17 +610,6 @@ def ImplOp : TraitDialectOp<"impl", [
                                               errFn);
     }
 
-    /// Specializes this impl's requirements and assumptions for `actualSelfClaim`.
-    ///
-    /// `origin` names the caller: normalization reads only this impl's own
-    /// bindings, so a projection over a sibling application survives it and is
-    /// recorded as demand this normalization did not serve. Both the stage's
-    /// resolver and a proof op's verifier reach here.
-    FailureOr<SmallVector<ClaimType>> specializeObligationsAsClaimsFor(
-        ClaimType actualSelfClaim,
-        DemandOrigin origin,
-        llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
-
     /// This impl's obligations at `actualSelfClaim` when the arguments its
     /// parameters take there are `arguments`: the trait's application
     /// requirements, read through this impl's own bindings, then the impl's
@@ -787,6 +776,14 @@ def Claim : Type<
   "::mlir::trait::ClaimType"
 >;
 
+/// A claim of a trait application, the only claim impl selection can prove.
+def ApplicationClaim : Type<
+  And<[CPred<"::mlir::isa<::mlir::trait::ClaimType>($_self)">,
+       CPred<"::mlir::cast<::mlir::trait::ClaimType>($_self).isApplication()">]>,
+  "a '!trait.claim' of a trait application",
+  "::mlir::trait::ClaimType"
+>;
+
 def Projection : Type<
   CPred<"::mlir::isa<ProjectionType>($_self)">,
   "any '!trait.proj' type",
@@ -858,7 +855,7 @@ def AllegeOp : TraitDialectOp<"allege", [
 
   let arguments = (ins OptionalAttr<UnitAttr>:$unsafe);
 
-  let results = (outs Claim:$result);
+  let results = (outs ApplicationClaim:$result);
 
   let builders = [
     OpBuilder<(ins "::mlir::trait::TraitApplicationAttr":$app), [{
@@ -1104,7 +1101,7 @@ def DeriveOp : TraitDialectOp<"derive", [
     Variadic<Claim>:$assumptions
   );
 
-  let results = (outs Claim:$result);
+  let results = (outs ApplicationClaim:$result);
 
   let builders = [
     OpBuilder<(ins "TraitApplicationAttr":$traitApp,
@@ -1803,14 +1800,15 @@ def ProofOp : TraitDialectOp<"proof", [
 
     Leaf `trait.impl`s have nothing to discharge and may not be wrapped in a `trait.proof`; they are unconditional self-proofs.
 
-    Form stating the impl's arguments. `proves @impl[!P = T, ...]` carries the
-    argument each of the impl's own parameters takes; the proven application
-    is the impl's header at those arguments, spelled exactly. The `given` list
-    then holds one entry per requirement of the trait and per entry of the
-    impl's where clause, in that order, so a requirement's position is its
-    position in the list: the symbol discharging an application entry, and
-    `unit` for an equality entry, decided at this proof's claim, or a bound
-    requirement, which the impl's own evidence proves for every argument.
+    `proves @impl[!P = T, ...]` carries the argument each of the impl's own
+    parameters takes; the proven application is the impl's header at those
+    arguments, read through the evidence the proof holds where the header
+    spells a projection. The `given` list then holds one entry per requirement
+    of the trait and per entry of the impl's where clause, in that order, so a
+    requirement's position is its position in the list: the symbol discharging
+    an application entry, and `unit` for an equality entry, decided at this
+    proof's claim, or a bound requirement, which the impl's own evidence proves
+    for every argument.
 
     ```mlir
     // trait.trait @B[!S] where [@A[!S], !trait.proj<@B[!S], "Out"> = i64]
@@ -1822,8 +1820,8 @@ def ProofOp : TraitDialectOp<"proof", [
   let arguments = (ins
     SymbolNameAttr:$sym_name,                // the name of this proof
     FlatSymbolRefAttr:$impl_name,            // the name of the impl being proven
-    OptionalAttr<TypedArrayAttrBase<TypeBindingAttr,
-        "the arguments the impl's parameters take">>:$arguments,
+    TypedArrayAttrBase<TypeBindingAttr,
+        "the arguments the impl's parameters take">:$arguments,
     TraitApplicationAttr:$trait_application, // must match the impl's trait application
     ArrayAttr:$subproof_names,               // the names of prerequisite proofs
     OptionalAttr<StrAttr>:$sym_visibility
@@ -1878,27 +1876,18 @@ def ProofOp : TraitDialectOp<"proof", [
     /// those obligations are read: a proof written over type variables states
     /// them over those same variables, and a citation supplies the instance.
     ///
-    /// `origin` names the caller, which the obligation specialization this
-    /// performs raises its demand under.
-    FailureOr<SmallVector<ClaimType>> verifyAndGetSubproofClaims(ClaimType at,
-                                                                 DemandOrigin origin,
-                                                                 llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+    FailureOr<SmallVector<ClaimType>> verifyAndGetSubproofClaims(
+        ClaimType at, llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     SmallVector<ClaimType> getSubproofClaims() {
-      auto maybeResult = verifyAndGetSubproofClaims(getProvenClaim(),
-                                                    DemandOrigin::ProofVerification);
+      auto maybeResult = verifyAndGetSubproofClaims(getProvenClaim());
       if (failed(maybeResult))
         llvm_unreachable("ProofOp::getSubproofClaims: verifyAndGetSubproofClaims failed");
       return *maybeResult;
     }
 
-    /// Whether this proof states the arguments its impl's parameters take, with
-    /// one `given` entry per requirement and where-clause entry.
-    bool statesImplArguments() { return static_cast<bool>(getArgumentsAttr()); }
-
     /// The arguments this proof's impl takes at `at`, the claim it is carried
-    /// to: the arguments it states, carried from its own claim to `at`. Valid
-    /// only when it states them.
+    /// to: the arguments it states, carried from its own claim to `at`.
     FailureOr<SpecializationMap> getImplArgumentsAt(
         ClaimType at, llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
@@ -1919,36 +1908,23 @@ def ProofOp : TraitDialectOp<"proof", [
 
   let skipDefaultBuilders = 1;
   let builders = [
-    // low-level builder mirroring the generated default's signature, so every
-    // mint site (ImplResolution.cpp, the convenience builder below) reaches it.
     // A proof is a template that dies with monomorphization, so it is private
     // from birth: erase collects it by liveness, never by kind.
     OpBuilder<(ins "::mlir::StringAttr":$sym_name,
                    "::mlir::FlatSymbolRefAttr":$impl_name,
+                   "::mlir::ArrayAttr":$arguments,
                    "::mlir::trait::TraitApplicationAttr":$trait_application,
                    "::mlir::ArrayAttr":$subproof_names), [{
       $_state.addAttribute("sym_name", sym_name);
       $_state.addAttribute("impl_name", impl_name);
+      $_state.addAttribute("arguments", arguments);
       $_state.addAttribute("trait_application", trait_application);
       $_state.addAttribute("subproof_names", subproof_names);
       $_state.addAttribute("sym_visibility", $_builder.getStringAttr("private"));
-    }]>,
-
-    // convenience: StringRef + ArrayRef<FlatSymbolRefAttr>
-    OpBuilder<(ins "::mlir::StringRef":$sym_name,
-                   "::mlir::FlatSymbolRefAttr":$impl_name,
-                   "::mlir::trait::TraitApplicationAttr":$trait_application,
-                   "::mlir::ArrayRef<FlatSymbolRefAttr>":$subproof_names), [{
-      SmallVector<Attribute> attrs(subproof_names.begin(), subproof_names.end());
-      build($_builder, $_state,
-            $_builder.getStringAttr(sym_name),
-            impl_name,
-            trait_application,
-            $_builder.getArrayAttr(attrs));
     }]>
   ];
 
-  let assemblyFormat = "custom<VisibilityKeyword>($sym_visibility) $sym_name `proves` $impl_name `` custom<ImplCitationArguments>($arguments) `for` $trait_application `given` $subproof_names attr-dict";
+  let assemblyFormat = "custom<VisibilityKeyword>($sym_visibility) $sym_name `proves` $impl_name `` custom<StatedImplArguments>($arguments) `for` $trait_application `given` $subproof_names attr-dict";
   let hasVerifier = 1;
 }
 

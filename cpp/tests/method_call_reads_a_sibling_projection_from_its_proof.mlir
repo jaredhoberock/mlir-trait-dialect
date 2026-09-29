@@ -36,7 +36,7 @@ trait.impl private @Host_i64 for @Host[i64]
   }
 }
 
-trait.proof private @p proves @Host_i64 for @Host[i64] given [@Sib_i64]
+trait.proof private @p proves @Host_i64[] for @Host[i64] given [@Sib_i64]
 
 // CHECK-LABEL: func.func @main
 // CHECK: trait.method.call

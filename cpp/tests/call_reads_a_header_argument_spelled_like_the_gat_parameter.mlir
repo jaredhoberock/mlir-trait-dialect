@@ -20,7 +20,7 @@ trait.trait private @Has[!trait.poly<1>] {
 trait.impl private @Has_tuple for @Has[tuple<!U>] {
   trait.assoc_type @A<[!W]> = tuple<!U, !W>
 }
-trait.proof private @Has_tuple_p proves @Has_tuple for @Has[tuple<!X>] given []
+trait.proof private @Has_tuple_p proves @Has_tuple[!U = !trait.poly<4>] for @Has[tuple<!trait.poly<4>>] given []
 
 func.func private @g(%x: !T,
                      %v: !trait.proj<@Has[tuple<!T>], "A", [!V]>,

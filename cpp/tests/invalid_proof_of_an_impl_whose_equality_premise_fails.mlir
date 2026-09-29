@@ -19,4 +19,4 @@ trait.impl private @Tensor_i8 for @Tensor[i8] {
 }
 
 // expected-error @below {{impl '@Vector_blanket' applies where '!trait.proj<@Tensor[!trait.poly<0>], "Shape">' = 'i64', and nothing here makes 'tuple<i64, i64>' and 'i64' one type at '!trait.claim<@Vector[i8] by @p>'}}
-trait.proof private @p proves @Vector_blanket for @Vector[i8] given [@Tensor_i8]
+trait.proof private @p proves @Vector_blanket[!trait.poly<0> = i8] for @Vector[i8] given [@Tensor_i8, unit]

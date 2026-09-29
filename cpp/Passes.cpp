@@ -527,12 +527,9 @@ static uint64_t respellProvenClaimsInPlace(const ImplResolver &resolver,
   // A sweep records no proof, so the count of facts does not move for it; what
   // it moves is the module's spelling of them, which is what proof derivation
   // reads. A sweep that respelled nothing leaves every derivation reading the
-  // module it read. Each module's derivations are transcribed by the replacer
-  // that respelled that module, because a spelling means what the symbol table
-  // holding it says.
+  // module it read.
   if (positionsRespelled != 0)
-    for (auto &[scope, replacer] : replacers)
-      resolver.noteRespelling(*replacer, cast<ModuleOp>(scope));
+    resolver.noteRespelling();
 
   return positionsRespelled;
 }
@@ -873,8 +870,8 @@ void CallSubstitution::discoverProjectionBindings(
 }
 
 /// Read the proven-claim bindings visible after applying the current
-/// substitution off the record, deriving only a pair the record has no answer
-/// for.
+/// substitution, replaying a pair the stage's derivation memo holds and
+/// deriving any other.
 LogicalResult CallSubstitution::readEvidenceBindings(
     TypeRange types, ModuleOp module, const ReadOnlyImplResolver &reading,
     llvm::function_ref<InFlightDiagnostic()> err) {
@@ -1690,8 +1687,7 @@ verifyProofDischargesItsObligations(ProofOp proof,
   if (!module)
     return success();
   auto err = [&] { return proof.emitError(); };
-  auto subproofs = proof.verifyAndGetSubproofClaims(
-      proof.getProvenClaim(), DemandOrigin::ProofVerification, err);
+  auto subproofs = proof.verifyAndGetSubproofClaims(proof.getProvenClaim(), err);
   if (failed(subproofs))
     return failure();
 

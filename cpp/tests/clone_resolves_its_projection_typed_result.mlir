@@ -20,7 +20,7 @@ trait.impl private @Producer_i64 for @Producer[i64] {
     return %c : i32
   }
 }
-trait.proof private @Producer_i64_p proves @Producer_i64 for @Producer[i64] given []
+trait.proof private @Producer_i64_p proves @Producer_i64[] for @Producer[i64] given []
 
 func.func private @tpl(%claim: !trait.claim<@Producer[!trait.poly<0>]>, %v: !trait.poly<0>)
     -> !trait.proj<@Producer[!trait.poly<0>], "Item"> {

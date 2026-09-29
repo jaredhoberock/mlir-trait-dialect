@@ -455,12 +455,12 @@ fn type_bindings<'c>(ctx: MlirContext, arguments: &[(Type<'c>, Type<'c>)]) -> Op
 /// requirement of the trait and per entry of the impl's where clause, in that
 /// order: `Some(symbol)` discharging an application entry, `None` for every
 /// other. Returns `None` if a key is not a type parameter.
-pub fn proof_with_arguments<'c>(loc: Location<'c>,
-                                sym_name: &str,
-                                impl_name: &str,
-                                arguments: &[(Type<'c>, Type<'c>)],
-                                trait_app: TraitApplicationAttribute<'c>,
-                                given: &[Option<&str>],
+pub fn proof<'c>(loc: Location<'c>,
+                 sym_name: &str,
+                 impl_name: &str,
+                 arguments: &[(Type<'c>, Type<'c>)],
+                 trait_app: TraitApplicationAttribute<'c>,
+                 given: &[Option<&str>],
 ) -> Option<Operation<'c>> {
     let bindings = type_bindings(unsafe { mlirLocationGetContext(loc.to_raw()) }, arguments)?;
     let entries: Vec<MlirAttribute> = given

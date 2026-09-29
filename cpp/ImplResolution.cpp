@@ -315,21 +315,21 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
   return diagnoseImplResolutionFailure(trait, originalWanted, good, bad, err);
 }
 
-// The trait.proof in `module` standing over `impl` at `app`, if one is written
-// there.
-//
-// The impl is matched by identity rather than by name: a name is resolved in
-// one symbol table, and two modules can each hold an impl of that name meaning
-// two different impls, so a proof naming the other module's is no proof of this
-// one. The proof this hands back is a symbol `module` resolves, because that is
-// where it was found.
-static ProofOp findExistingProofFor(ModuleOp module, ImplOp impl, TraitApplicationAttr app) {
-  for (ProofOp proof : module.getOps<ProofOp>()) {
-    if (proof.getImpl() == impl && proof.getTraitApplication() == app) {
-      return proof;
-    }
-  }
-  return nullptr;
+ImplResolver::StandingProofs &ImplResolver::getStandingProofs(ModuleOp scope) {
+  auto [entry, inserted] = standingProofs.try_emplace(scope.getOperation());
+  // Read once per module, in module order, so the first proof of an impl at an
+  // application is the one found. The impl is matched by identity rather than
+  // by name: a name is resolved in one symbol table, and two modules can each
+  // hold an impl of that name meaning two different impls.
+  if (inserted)
+    for (ProofOp proof : scope.getOps<ProofOp>())
+      entry->second.note(proof);
+  return entry->second;
+}
+
+void ImplResolver::StandingProofs::note(ProofOp proof) {
+  byClaim.try_emplace({proof.getImpl(), proof.getTraitApplication()}, proof);
+  byName.try_emplace(proof.getSymNameAttr(), proof);
 }
 
 ImplResolver::ImplResolver(ModuleOp m, std::shared_ptr<DemandLedger> ledger)
@@ -551,7 +551,7 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
   // the impl's obligations, and selection must not hand back a proof it has not
   // seen derive. One that does not derive leaves selection to build its own
   // below, and the standing proof is refused where it is written.
-  if (ProofOp proof = findExistingProofFor(scope, impl, app)) {
+  if (ProofOp proof = getStandingProofs(scope).byClaim.lookup({impl, app})) {
     auto sym = FlatSymbolRefAttr::get(ctx, proof.getSymNameAttr());
     ClaimType standing = ClaimType::get(ctx, app, sym);
     EvidenceBindings bindings;
@@ -566,10 +566,7 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
   // Compute the proof name early so we can use it as the coinductive memo entry.
   std::string proofName = impl.generateMangledName(*subst) + "_p";
   auto proofSym = FlatSymbolRefAttr::get(ctx, proofName);
-  for (ProofOp proof : scope.getOps<ProofOp>()) {
-    if (proof.getSymName() != proofName)
-      continue;
-
+  if (getStandingProofs(scope).byName.contains(proofSym.getAttr())) {
     ClaimType candidate = ClaimType::get(ctx, app, proofSym);
     EvidenceBindings bindings;
     if (succeeded(verifyAndRecordProof(candidate.asUnproven(), candidate,
@@ -593,18 +590,41 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
   auto rollback =
       llvm::scope_exit([&] { memo.proofMemo.erase({scope, app}); });
 
-  // specialize all obligations against the claim selected during resolution
-  auto obligations = impl.specializeObligationsAsClaimsFor(
-      selected, DemandOrigin::ProofRecording, err);
+  // The obligations at the arguments selection chose, each proved in turn:
+  // the trait's application requirements and then the impl's application
+  // premises, which are the application entries of the proof's given list.
+  auto obligations = impl.specializeObligationsAt(selected, *subst, err);
   if (failed(obligations)) return failure();
-
-  // recursively prove monomorphic obligations
   SmallVector<Attribute> subproofSymbols;
   for (ClaimType ob : *obligations) {
     auto sym = resolveAndEnsureProofFor(ob, scope, builder, err);
     if (failed(sym)) return failure();
     subproofSymbols.push_back(*sym);
   }
+
+  // The proof states the arguments its impl's parameters take and holds one
+  // given entry per requirement and where-clause entry: the subproof at an
+  // application entry, `unit` at every other.
+  SmallVector<Attribute> arguments;
+  for (GenericTypeInterface parameter : impl.getTypeParams()) {
+    std::optional<Type> argument = subst->lookup(parameter);
+    if (!argument) {
+      if (err) err() << "selection read no argument for type parameter "
+                     << Type(parameter) << " of impl '@" << impl.getSymName()
+                     << "' at " << originalWanted;
+      return failure();
+    }
+    arguments.push_back(TypeBindingAttr::get(ctx, Type(parameter), *argument));
+  }
+  SmallVector<Attribute> given;
+  auto nextSubproof = subproofSymbols.begin();
+  auto giveEntry = [&](Attribute entry) {
+    given.push_back(isa<TraitApplicationAttr>(entry)
+                        ? *nextSubproof++
+                        : Attribute(UnitAttr::get(ctx)));
+  };
+  llvm::for_each(impl.getTrait().getRequirements(), giveEntry);
+  llvm::for_each(impl.getAssumptions(), giveEntry);
 
   // create the proof and memoize by the monomorphic app
   //
@@ -617,14 +637,11 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
   builder.setInsertionPointToEnd(scope.getBody());
 
   ProofOp proof = ProofOp::create(
-    builder,
-    builder.getUnknownLoc(),
-    StringAttr::get(ctx, proofName),
-    FlatSymbolRefAttr::get(ctx, impl.getSymName()),
-    app,
-    ArrayAttr::get(ctx, subproofSymbols)
-  );
+      builder, builder.getUnknownLoc(), StringAttr::get(ctx, proofName),
+      FlatSymbolRefAttr::get(ctx, impl.getSymName()),
+      ArrayAttr::get(ctx, arguments), app, ArrayAttr::get(ctx, given));
 
+  getStandingProofs(scope).note(proof);
   FlatSymbolRefAttr sym = FlatSymbolRefAttr::get(ctx, proof.getSymNameAttr());
   recordProof(scope, app, sym);
   return sym;

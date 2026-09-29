@@ -26,9 +26,9 @@ trait.impl private @V_blanket for @V[!trait.poly<0>] where [@Has[!trait.poly<0>]
     return %c : i64
   }
 }
-trait.proof private @ma proves @Marker_any for @Marker[!trait.poly<0>] given []
-trait.proof private @hm proves @Has_m for @Has[!trait.poly<0>] given [@ma]
-trait.proof private @pv proves @V_blanket for @V[!trait.poly<0>] given [@hm]
+trait.proof private @ma proves @Marker_any[!trait.poly<0> = !trait.poly<0>] for @Marker[!trait.poly<0>] given []
+trait.proof private @hm proves @Has_m[!trait.poly<0> = !trait.poly<0>] for @Has[!trait.poly<0>] given [@ma]
+trait.proof private @pv proves @V_blanket[!trait.poly<0> = !trait.poly<0>] for @V[!trait.poly<0>] given [@hm, unit]
 
 // CHECK-NOT: trait.
 // CHECK: func.func private @[[V:V_blanket_[a-z0-9]+]]_v() -> i64
@@ -57,9 +57,9 @@ trait.impl private @V_blanket for @V[!trait.poly<0>] where [@Has[!trait.poly<0>]
     return %c : i64
   }
 }
-trait.proof private @ma proves @Marker_any for @Marker[!trait.poly<0>] given []
-trait.proof private @hm proves @Has_m for @Has[!trait.poly<0>] given [@ma]
-trait.proof private @pv proves @V_blanket for @V[!trait.poly<0>] given [@hm]
+trait.proof private @ma proves @Marker_any[!trait.poly<0> = !trait.poly<0>] for @Marker[!trait.poly<0>] given []
+trait.proof private @hm proves @Has_m[!trait.poly<0> = !trait.poly<0>] for @Has[!trait.poly<0>] given [@ma]
+trait.proof private @pv proves @V_blanket[!trait.poly<0> = !trait.poly<0>] for @V[!trait.poly<0>] given [@hm, unit]
 
 // CHECK-NOT: trait.
 // CHECK: func.func private @[[V2:V_blanket_[a-z0-9]+]]_v() -> i64

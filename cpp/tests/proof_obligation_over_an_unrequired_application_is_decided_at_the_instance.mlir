@@ -13,7 +13,7 @@
 // through the impl selection settles for @Foo[i32], and refuses the citation
 // there.
 
-// VERIFIED: trait.proof private @forged proves @B_blanket for @B[!trait.poly<0>] given [@A_i64]
+// VERIFIED: trait.proof private @forged proves @B_blanket[!trait.poly<0> = !trait.poly<0>] for @B[!trait.poly<0>] given [@A_i64]
 // INSTANCE: error: 'trait.method.call' op proof @A_i64 proves '!trait.claim<@A[i64]>', which does not discharge the obligation '!trait.claim<@A[i32]>'
 
 trait.trait private @Foo[!trait.poly<0>] { trait.assoc_type @Out }
@@ -34,7 +34,7 @@ trait.impl private @B_blanket for @B[!trait.poly<0>] {
     return %r : i64
   }
 }
-trait.proof private @forged proves @B_blanket for @B[!trait.poly<0>] given [@A_i64]
+trait.proof private @forged proves @B_blanket[!trait.poly<0> = !trait.poly<0>] for @B[!trait.poly<0>] given [@A_i64]
 func.func @main() -> i64 {
   %w = trait.witness @forged for @B[i32]
   %r = trait.method.call %w @B[i32]::@b() : () -> i64 by @forged

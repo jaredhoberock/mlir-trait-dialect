@@ -19,8 +19,8 @@ trait.impl private @T_i64 for @T[i64] {
     return %c : i64
   }
 }
-trait.proof private @pv1 proves @T_i64 for @T[i64] given []
-trait.proof private @pv2 proves @T_i64 for @T[i64] given []
+trait.proof private @pv1 proves @T_i64[] for @T[i64] given []
+trait.proof private @pv2 proves @T_i64[] for @T[i64] given []
 
 func.func private @g(%c: !trait.claim<@T[!trait.poly<3>]>) -> i64 {
   %r = trait.method.call %c @T[!trait.poly<3>]::@t() : () -> i64

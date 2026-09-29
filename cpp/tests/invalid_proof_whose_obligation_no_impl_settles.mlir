@@ -25,7 +25,7 @@ trait.impl private @B_i32 for @B[i32] {
   }
 }
 // expected-error @below {{obligation '!trait.claim<@A[!trait.proj<@Foo[i32], "Out">]>' of proof @forged is discharged by no evidence}}
-trait.proof private @forged proves @B_i32 for @B[i32] given [@A_i64]
+trait.proof private @forged proves @B_i32[] for @B[i32] given [@A_i64]
 func.func @main() -> i64 {
   %w = trait.witness @forged for @B[i32]
   %r = trait.method.call %w @B[i32]::@value() : () -> i64 by @forged

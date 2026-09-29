@@ -1074,7 +1074,7 @@ trait.impl private @Tr_tuple for @Tr[tuple<!trait.poly<1>>] where [@Tr[!trait.po
     // The proof at i32: the trait states no requirement, and the impl's two
     // entries are the application @Tr_i32 discharges and the equality.
     let tr_tuple_i32 = trait_::trait_application_attr(&context, "Tr", &[tuple_of(i32_ty)]);
-    let proof = trait_::proof_with_arguments(
+    let proof = trait_::proof(
         loc, "p", "Tr_tuple", &[(u, i32_ty)], tr_tuple_i32, &[Some("Tr_i32"), None])
         .expect("the proof builds");
     module.body().append_operation(proof);

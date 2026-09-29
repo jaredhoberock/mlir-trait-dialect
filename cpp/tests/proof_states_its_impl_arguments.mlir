@@ -40,7 +40,7 @@ trait.impl private @A_tuple for @A[tuple<!U>] {
     return %c : i64
   }
 }
-trait.proof private @A_tuple_p proves @A_tuple for @A[tuple<i32>] given []
+trait.proof private @A_tuple_p proves @A_tuple[!U = i32] for @A[tuple<i32>] given []
 trait.impl private @C_i32 for @C[i32] {
   trait.assoc_type @Val = i64
 }

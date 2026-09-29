@@ -754,12 +754,10 @@ private:
 class DerivationStaging {
 public:
   void hold(ClaimType keyUnproven, ClaimType keyProven,
-            ClaimType normalizedUnproven, ClaimType normalizedProven,
+            ClaimType normalizedUnproven,
             const ProofDerivationMemo::Closure &closure) {
     byNormalizedObligation[normalizedUnproven] = held.size();
-    held.push_back(
-        Held{keyUnproven, keyProven, normalizedUnproven, normalizedProven,
-             closure});
+    held.push_back(Held{keyUnproven, keyProven, closure});
   }
 
   /// What deriving the obligation now bound to `normalizedUnproven` produced,
@@ -772,27 +770,17 @@ public:
     return &held[it->second].closure;
   }
 
-  /// Publishes every node into the memo of spelling pairs, and every node's
-  /// closure into the record of what deriving its pair produces. One derivation
-  /// reads one module, which both are keyed by along with the pair.
-  ///
-  /// The record decides for itself what it can keep: an unsettled derivation and
-  /// a pair two derivations disagree over are both refused there.
+  /// Publishes every node into the memo of spelling pairs. One derivation reads
+  /// one module, which the memo is keyed by along with the pair.
   void publishInto(ProofDerivationMemo &memo, ModuleOp module) const {
-    ProofClosureRecord &closures = memo.getClosures();
-    for (const Held &node : held) {
+    for (const Held &node : held)
       memo.record(module, node.keyUnproven, node.keyProven, node.closure);
-      (void)closures.record(module, node.normalizedUnproven,
-                            node.normalizedProven, node.closure);
-    }
   }
 
 private:
   struct Held {
     ClaimType keyUnproven;
     ClaimType keyProven;
-    ClaimType normalizedUnproven;
-    ClaimType normalizedProven;
     ProofDerivationMemo::Closure closure;
   };
 
@@ -977,22 +965,6 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
     unproven = cast<ClaimType>(*normalizedUnproven);
   }
 
-  // What deriving one settled pair produces is a fact about the proof standing
-  // over it and not about the caller that reached it, so a pair the record
-  // already holds is replayed here instead of derived a second time. This is
-  // the node every reader shares: a call site asking about a proven claim, and
-  // an obligation underneath some other derivation, both arrive at this pair in
-  // the grade the record is keyed in, and both get the closure the derivation
-  // that ran first wrote. Replaying it writes exactly the bindings deriving
-  // would write, including the pair's own, so nothing below needs to run.
-  if (memo) {
-    if (const auto *closure =
-            memo->getClosures().lookup(module, unproven, proven)) {
-      derived.take(*closure);
-      return replayClosure(*closure, bindings, err);
-    }
-  }
-
   // early exit if we've already recorded this obligation. The same proof may
   // be observed through multiple equivalent claim spellings, so validate proof
   // coherence instead of requiring syntactic claim equality.
@@ -1001,20 +973,12 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
       return failure();
     // What this node would have written is already written. When this
     // derivation is what wrote it, that closure is in hand and stands for this
-    // node's; when something before this derivation wrote it, the record of
-    // what deriving the application produces is where the closure is, because
-    // it is kept per application rather than per derivation. Only where neither
-    // has it does the node go undescribed, and nothing containing it can be
-    // held either.
-    if (const auto *closure = staging.lookupDerived(unproven)) {
+    // node's; when something before this derivation wrote it, the node goes
+    // undescribed, and nothing containing it can be held either.
+    if (const auto *closure = staging.lookupDerived(unproven))
       derived.take(*closure);
-    } else if (const auto *recorded =
-                   memo ? memo->getClosures().lookup(module, unproven, proven)
-                        : nullptr) {
-      derived.take(*recorded);
-    } else {
+    else
       derived.complete = false;
-    }
     return success();
   }
 
@@ -1049,7 +1013,7 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
     bindings.bind(unproven, proven);
     // A leaf: the binding it wrote is the whole of what deriving it produces.
     derived.add(unproven, proven);
-    staging.hold(askedUnproven, askedProven, unproven, proven, derived.closure);
+    staging.hold(askedUnproven, askedProven, unproven, derived.closure);
     return success();
   }
 
@@ -1092,7 +1056,7 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
   // for it, so the obligation a child is asked about and the evidence it is
   // asked to read are one object here.
   auto subproofs =
-      proof.verifyAndGetSubproofClaims(proven.asUnproven(), origin, err);
+      proof.verifyAndGetSubproofClaims(proven.asUnproven(), err);
   if (failed(subproofs)) return failure();
 
   // Bind optimistically before recursing so that coinductive self-references
@@ -1118,7 +1082,7 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
   }
 
   if (derived.complete) {
-    staging.hold(askedUnproven, askedProven, unproven, proven, derived.closure);
+    staging.hold(askedUnproven, askedProven, unproven, derived.closure);
   } else {
     derived.take({});
   }
@@ -1282,41 +1246,20 @@ static FailureOr<RequirementDeclarations> readRequirementDeclarations(
   return declarations;
 }
 
-/// How many of the first `stop` entries of `predicates` are applications --
-/// the position the entry at `stop` stands at in the obligation stream, which
-/// carries the application entries alone.
-static unsigned applicationsBefore(PredicateArrayAttr predicates, unsigned stop) {
-  unsigned applications = 0;
-  for (Attribute predicate : predicates.getPredicates().take_front(stop))
-    if (isa<TraitApplicationAttr>(predicate))
-      ++applications;
-  return applications;
-}
-
 /// The substitution requirement `index` is instantiated through: a trait-header
 /// requirement speaks the trait's parameters, one of the impl's own assumptions
-/// speaks the impl's.
+/// speaks the impl's, which the cited proof states. An impl cited directly is
+/// unconditional and binds no parameter.
 static FailureOr<SpecializationMap> requirementSubstitution(
     ClaimType claim,
     RequirementDeclarations &declarations,
     bool fromTrait,
-    ModuleOp module,
     llvm::function_ref<InFlightDiagnostic()> errFn) {
   if (fromTrait)
     return declarations.trait.buildSubstitutionForSelfClaim(claim, errFn);
-
-  // A proof stating its impl's arguments carries them to the claim.
-  if (declarations.proof && declarations.proof.statesImplArguments())
-    return declarations.proof.getImplArgumentsAt(claim, errFn);
-
-  // A parameter the impl's header leaves open and its where clause determines is
-  // read through the impls the module holds, for a proof stating no arguments.
-  // XXX TODO deleted with the proof form stating no arguments: impl selection
-  // still mints that form, and a proof over an impl whose parameter only its
-  // where clause's equality determines is read here.
-  ImplProjectionLookup byImplLookup(module, DemandOrigin::ProofVerification);
-  return declarations.impl.readTypeArgumentsFor(claim, byImplLookup)
-      .toSpecialization();
+  if (!declarations.proof)
+    return SpecializationMap();
+  return declarations.proof.getImplArgumentsAt(claim, errFn);
 }
 
 /// Requirement `index` of `claim`, which is in range: the declared predicate
@@ -1335,7 +1278,6 @@ static FailureOr<ClaimRequirement> readRequirement(
     RequirementDeclarations &declarations,
     unsigned index,
     ArrayRef<Type> binderArguments,
-    ModuleOp module,
     llvm::function_ref<InFlightDiagnostic()> errFn) {
   MLIRContext *ctx = claim.getContext();
   PredicateArrayAttr traitRequirements = declarations.traitRequirements();
@@ -1345,8 +1287,7 @@ static FailureOr<ClaimRequirement> readRequirement(
       fromTrait ? traitRequirements.getPredicates()[index]
                 : declarations.implAssumptions().getPredicates()[index - traitCount];
 
-  auto subst =
-      requirementSubstitution(claim, declarations, fromTrait, module, errFn);
+  auto subst = requirementSubstitution(claim, declarations, fromTrait, errFn);
   if (failed(subst))
     return failure();
 
@@ -1396,78 +1337,39 @@ static FailureOr<ClaimRequirement> readRequirement(
   if (!claim.isProven())
     return ClaimRequirement{instantiatePredicate(application, *subst), {}};
 
-  // A proof stating its impl's arguments names the provider at the
-  // requirement's own position, and the application is the obligation at
-  // those arguments: a trait requirement read through the impl's own binding,
-  // as the proof's citations read it.
-  if (declarations.proof && declarations.proof.statesImplArguments()) {
-    auto provider = dyn_cast<FlatSymbolRefAttr>(
-        declarations.proof.getSubproofNames()[index]);
-    if (!provider) {
-      if (errFn)
-        errFn() << "proof '" << claim.getProof() << "' names no symbol for "
-                   "requirement " << index;
-      return failure();
-    }
-    ClaimType obligation = instantiatePredicate(application, *subst);
-    if (fromTrait) {
-      auto implArguments = declarations.proof.getImplArgumentsAt(claim, errFn);
-      if (failed(implArguments))
-        return failure();
-      NormalizationContext own;
-      own.addLocalProjectionRule(declarations.impl,
-                                 claim.asUnproven().getTraitApplication(),
-                                 *implArguments);
-      auto read = own.normalize(Type(obligation), errFn);
-      if (failed(read))
-        return failure();
-      obligation = cast<ClaimType>(*read);
-    }
-    return ClaimRequirement{
-        ClaimType::get(ctx, obligation.getTraitApplication(), provider), {}};
-  }
-
-  // A proven claim's application requirement carries the provider of the
-  // subproof discharging it. The proof names one subproof per obligation -- the
-  // trait's application requirements, then the impl's -- so this requirement's
-  // obligation is its position among the application entries standing before
-  // it, and both the application and its provider are read out of that
-  // obligation rather than instantiated a second time.
-  unsigned obligationIndex =
-      fromTrait ? applicationsBefore(traitRequirements, index)
-                : applicationsBefore(traitRequirements, traitCount) +
-                      applicationsBefore(declarations.implAssumptions(),
-                                         index - traitCount);
-
-  auto obligations = declarations.impl.specializeObligationsAsClaimsFor(
-      claim, DemandOrigin::ProofVerification, errFn);
-  if (failed(obligations))
-    return failure();
-  assert(obligationIndex < obligations->size() &&
-         "the obligation stream carries the application entries this position "
-         "was counted over");
-
-  ArrayAttr subproofNames =
-      declarations.proof ? declarations.proof.getSubproofNames() : ArrayAttr();
-  size_t namedSubproofs = subproofNames ? subproofNames.size() : 0;
-  if (namedSubproofs != obligations->size()) {
-    if (errFn)
-      errFn() << "proof '" << claim.getProof() << "' names " << namedSubproofs
-              << " subproofs for " << obligations->size() << " obligations";
-    return failure();
-  }
-
-  auto provider = dyn_cast<FlatSymbolRefAttr>(subproofNames[obligationIndex]);
+  // A proven claim's application requirement carries the provider its proof
+  // names at the requirement's own position, and the application is the
+  // obligation at the proof's arguments: a trait requirement read through the
+  // impl's own binding, as the proof's citations read it. An impl cited
+  // directly is unconditional, so no application requirement reaches here
+  // through one.
+  ArrayAttr given = declarations.proof ? declarations.proof.getSubproofNames()
+                                       : ArrayAttr();
+  auto provider = given && index < given.size()
+                      ? dyn_cast<FlatSymbolRefAttr>(given[index])
+                      : FlatSymbolRefAttr();
   if (!provider) {
     if (errFn)
       errFn() << "proof '" << claim.getProof() << "' names no symbol for "
-                 "obligation " << obligationIndex;
+                 "requirement " << index;
     return failure();
   }
+  ClaimType obligation = instantiatePredicate(application, *subst);
+  if (fromTrait) {
+    auto implArguments = declarations.proof.getImplArgumentsAt(claim, errFn);
+    if (failed(implArguments))
+      return failure();
+    NormalizationContext own;
+    own.addLocalProjectionRule(declarations.impl,
+                               claim.asUnproven().getTraitApplication(),
+                               *implArguments);
+    auto read = own.normalize(Type(obligation), errFn);
+    if (failed(read))
+      return failure();
+    obligation = cast<ClaimType>(*read);
+  }
   return ClaimRequirement{
-      ClaimType::get(ctx, (*obligations)[obligationIndex].getTraitApplication(),
-                     provider),
-      {}};
+      ClaimType::get(ctx, obligation.getTraitApplication(), provider), {}};
 }
 
 FailureOr<uint64_t> getClaimRequirementCount(
@@ -1505,8 +1407,7 @@ FailureOr<ClaimRequirement> getClaimRequirementAt(
   auto declarations = readRequirementDeclarations(claim, module, errFn);
   if (failed(declarations))
     return failure();
-  return readRequirement(claim, *declarations, index, binderArguments, module,
-                         errFn);
+  return readRequirement(claim, *declarations, index, binderArguments, errFn);
 }
 
 FailureOr<ClaimType> getClaimRequirementAt(

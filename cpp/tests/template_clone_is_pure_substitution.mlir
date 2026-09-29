@@ -24,7 +24,7 @@ trait.impl private @T_impl for @T[!trait.poly<2>] where [!trait.proj<@Assoc[!tra
     return %e : !trait.claim<!trait.proj<@Assoc[!trait.poly<2>], "Out"> = i32>
   }
 }
-trait.proof private @T_p proves @T_impl for @T[i64] given []
+trait.proof private @T_p proves @T_impl[!trait.poly<2> = i64] for @T[i64] given [unit]
 
 // The bare projection parameter resolves to i32; the equality endpoint does not.
 // CHECK: func.func private @T_impl

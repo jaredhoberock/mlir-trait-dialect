@@ -28,7 +28,7 @@ trait.impl private @X_all for @X[!trait.poly<0>] where [@X[tuple<!trait.poly<0>>
   }
 }
 
-trait.proof private @p proves @X_all for @X[!trait.poly<0>] given [@p]
+trait.proof private @p proves @X_all[!trait.poly<0> = !trait.poly<0>] for @X[!trait.poly<0>] given [@p]
 
 func.func @main() -> i64 {
   %w = trait.witness @p for @X[i32]

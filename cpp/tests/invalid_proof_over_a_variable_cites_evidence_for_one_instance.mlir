@@ -34,7 +34,7 @@ trait.impl private @B_blanket for @B[!trait.poly<0>] {
   }
 }
 // expected-error@+1 {{proof @A_i64 proves '!trait.claim<@A[i64]>', which does not discharge the obligation '!trait.claim<@A[!trait.poly<0>]>'}}
-trait.proof private @forged proves @B_blanket for @B[!trait.poly<0>] given [@A_i64]
+trait.proof private @forged proves @B_blanket[!trait.poly<0> = !trait.poly<0>] for @B[!trait.poly<0>] given [@A_i64]
 
 // -----
 
@@ -60,5 +60,5 @@ trait.impl private @B_blanket for @B[!trait.poly<0>] {
     return %r : i64
   }
 }
-trait.proof private @a_stands proves @A_blanket for @A[!trait.poly<1>] given []
-trait.proof private @stands proves @B_blanket for @B[!trait.poly<0>] given [@a_stands]
+trait.proof private @a_stands proves @A_blanket[!trait.poly<1> = !trait.poly<1>] for @A[!trait.poly<1>] given []
+trait.proof private @stands proves @B_blanket[!trait.poly<0> = !trait.poly<0>] for @B[!trait.poly<0>] given [@a_stands]

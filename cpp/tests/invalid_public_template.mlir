@@ -32,4 +32,4 @@ trait.impl private @T_i32 for @T[i32] {
 }
 
 // expected-error @below {{'trait.proof' op must not be public}}
-trait.proof @T_p proves @T_i32 for @T[i32] given []
+trait.proof  @T_p proves @T_i32[] for @T[i32] given []

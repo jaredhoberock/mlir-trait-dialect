@@ -24,8 +24,8 @@ trait.impl private @U_blanket for @U[!trait.poly<0>] {
     return %c : i64
   }
 }
-trait.proof private @pv proves @V_blanket for @V[!trait.poly<0>] given []
-trait.proof private @pu proves @U_blanket for @U[!trait.poly<0>] given [@pv]
+trait.proof private @pv proves @V_blanket[!trait.poly<0> = !trait.poly<0>] for @V[!trait.poly<0>] given []
+trait.proof private @pu proves @U_blanket[!trait.poly<0> = !trait.poly<0>] for @U[!trait.poly<0>] given [@pv]
 
 // CHECK-NOT: trait.
 // CHECK: func.func private @[[V:V_blanket_[a-z0-9]+]]_v() -> i64
@@ -61,8 +61,8 @@ trait.impl private @U_blanket for @U[!trait.poly<0>] {
     return %c : i64
   }
 }
-trait.proof private @pv proves @V_blanket for @V[!trait.poly<0>] given []
-trait.proof private @pu proves @U_blanket for @U[!trait.poly<0>] given [@pv]
+trait.proof private @pv proves @V_blanket[!trait.poly<0> = !trait.poly<0>] for @V[!trait.poly<0>] given []
+trait.proof private @pu proves @U_blanket[!trait.poly<0> = !trait.poly<0>] for @U[!trait.poly<0>] given [@pv]
 
 // CHECK-NOT: trait.
 // CHECK: func.func private @[[V2:V_blanket_[a-z0-9]+]]_v() -> i64

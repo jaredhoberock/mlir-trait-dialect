@@ -20,7 +20,7 @@ trait.impl private @Producer_i64 for @Producer[i64] {
 }
 trait.trait private @Has[!trait.poly<0>] {}
 trait.impl private @Has_i32 for @Has[i32] {}
-trait.proof private @Has_i32_p proves @Has_i32 for @Has[i32] given []
+trait.proof private @Has_i32_p proves @Has_i32[] for @Has[i32] given []
 
 func.func private @tpl(%h: !trait.claim<@Has[!trait.poly<1>]>,
                        %e: !trait.claim<!trait.proj<@Producer[i64], "Item"> = !trait.poly<1>>) {

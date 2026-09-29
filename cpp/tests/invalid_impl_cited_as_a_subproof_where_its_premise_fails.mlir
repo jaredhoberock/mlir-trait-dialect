@@ -27,4 +27,4 @@ trait.impl private @Uses_i32 for @Uses[i32] {
   }
 }
 // expected-error @below {{impl '@I' applies where 'i32' = 'i64', and nothing here makes 'i32' and 'i64' one type at '!trait.claim<@T[i32]>'}}
-trait.proof private @q proves @Uses_i32 for @Uses[i32] given [@I]
+trait.proof private @q proves @Uses_i32[] for @Uses[i32] given [@I]

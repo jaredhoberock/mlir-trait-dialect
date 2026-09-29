@@ -16,7 +16,7 @@ trait.trait private @Tr[!trait.poly<0>] {
 trait.impl private @Tr_i64 for @Tr[i64] {
   func.func @m(%self: i64) -> i64 { return %self : i64 }
 }
-trait.proof private @Tr_i64_p proves @Tr_i64 for @Tr[i64] given []
+trait.proof private @Tr_i64_p proves @Tr_i64[] for @Tr[i64] given []
 
 // CHECK: func.func private @tpl
 // CHECK: trait.allege @Tr[i64]

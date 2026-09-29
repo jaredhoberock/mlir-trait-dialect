@@ -57,12 +57,13 @@ trait.proof private @p proves @B_tuple[!U = i32] for @B[tuple<i32>] given [@C_i3
 
 // -----
 
-// A proof stating no arguments names a symbol at every entry of its given list.
+// A proof states the arguments its impl's parameters take; a spelling stating
+// none is refused where it is read.
 
 !S = !trait.poly<0>
 !U = !trait.poly<1>
 trait.trait private @A[!S] {}
 trait.trait private @B[!S] {}
 trait.impl private @B_tuple for @B[tuple<!U>] where [@A[!U]] {}
-// expected-error @below {{'subproof_names' must contain only FlatSymbolRefAttr elements}}
+// expected-error @below {{expected the arguments the impl's parameters take, `[!P = T, ...]`}}
 trait.proof private @p proves @B_tuple for @B[tuple<i32>] given [unit]

@@ -26,4 +26,4 @@ trait.trait private @Wants[!W] {}
 trait.impl private @Wants_impl for @Wants[!trait.proj<@Grow[i32], "Output">] {}
 
 // expected-error @+1 {{projection normalization did not converge within 64 iterations}}
-trait.proof private @p proves @Wants_impl for @Wants[!trait.proj<@Grow[i32], "Output">] given []
+trait.proof private @p proves @Wants_impl[] for @Wants[!trait.proj<@Grow[i32], "Output">] given []

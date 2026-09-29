@@ -26,7 +26,7 @@ trait.impl private @Tr_tuple for @Tr[tuple<!U>] where [@Tr[!U], !trait.proj<@Tr[
   trait.assoc_type @Out = i64
 }
 func.func private @g(%t: !trait.claim<@Tr[!T]>) {
-  // expected-error @below {{impl '@Tr_tuple' states 2 where-clause entries, and the derive supplies 1 premises}}
+  // expected-error @below {{impl '@Tr_tuple' states 2 premises, and the derive supplies 1}}
   %d = trait.derive @Tr[tuple<!T>] from @Tr_tuple[!U = !T] given(%t) : (!trait.claim<@Tr[!T]>)
   return
 }
@@ -42,7 +42,7 @@ trait.impl private @Tr_tuple for @Tr[tuple<!U>] where [@Tr[!U], !trait.proj<@Tr[
   trait.assoc_type @Out = i64
 }
 func.func private @g(%t: !trait.claim<@Tr[!T]>) {
-  // expected-error @below {{premise 1 is '!trait.claim<!trait.proj<@Tr[!trait.poly<0>], "Out"> = i64>', and the derive supplies '!trait.claim<@Tr[!trait.poly<0>]>'}}
+  // expected-error @below {{premise 1 of impl '@Tr_tuple' is '!trait.claim<!trait.proj<@Tr[!trait.poly<0>], "Out"> = i64>', and the derive supplies '!trait.claim<@Tr[!trait.poly<0>]>'}}
   %d = trait.derive @Tr[tuple<!T>] from @Tr_tuple[!U = !T] given(%t, %t) : (!trait.claim<@Tr[!T]>, !trait.claim<@Tr[!T]>)
   return
 }
