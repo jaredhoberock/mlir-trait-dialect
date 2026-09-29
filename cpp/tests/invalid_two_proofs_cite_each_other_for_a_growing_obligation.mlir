@@ -24,7 +24,7 @@ trait.trait private @Q1[!trait.poly<0>] { func.func private @q() -> i64 }
 
 trait.impl private @P_all for @P1[!trait.poly<0>] where [@Q1[!trait.poly<0>]] {
   func.func @p() -> i64 {
-    %a = trait.assume @Q1[!trait.poly<0>]
+    %a = trait.assume 0 : !trait.claim<@Q1[!trait.poly<0>]>
     %r = trait.method.call %a @Q1[!trait.poly<0>]::@q() : () -> i64
     return %r : i64
   }

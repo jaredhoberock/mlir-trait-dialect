@@ -18,7 +18,7 @@ trait.impl private @A2_blanket for @A2[!trait.poly<2>, !trait.poly<3>] {
 }
 trait.impl private @B2_i32 for @B2[i32, i32] {
   func.func @b() -> i64 {
-    %s = trait.assume @B2[i32, i32]
+    %s = trait.assume self : !trait.claim<@B2[i32, i32]>
     %a = trait.project %s[0] : !trait.claim<@B2[i32, i32]> -> !trait.claim<@A2[i32, i32]>
     %r = trait.method.call %a @A2[i32, i32]::@a() : () -> i64
     return %r : i64

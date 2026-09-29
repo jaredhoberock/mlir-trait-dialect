@@ -35,7 +35,7 @@ trait.impl private @B_impl_i8 for @B[i8] {
 // CHECK-NOT: trait.impl private @A_impl_poly
 trait.impl private @A_impl_poly for @A[!T2] where [@B[!T2]] {
   func.func @method_a(%arg0: !T2) -> i32 {
-    %b = trait.assume @B[!T2]
+    %b = trait.assume 0 : !trait.claim<@B[!T2]>
     %res = trait.method.call %b @B[!T2]::@method_b(%arg0)
       : (!T2) -> i32
     return %res : i32

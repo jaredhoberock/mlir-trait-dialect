@@ -37,19 +37,13 @@ include "TraitTypes.td"
 //    Impl resolution is a separate global pass that runs before
 //    monomorphization.
 //
-// 3. Polymorphic code never fabricates claims — with one exception.
-//    Claims normally originate at monomorphic call sites (trait.allege)
-//    and flow into polymorphic code through !trait.claim parameters.
-//    This ensures that polymorphic code cannot assume a trait is
-//    implemented without the caller proving it — the core of "correct
-//    by construction."
-//
-//    The exception is `trait.allege ... unsafe`, which allows polymorphic
-//    code to fabricate a claim whose types are not yet concrete.  These
-//    claims are skipped by resolve-impls and resolved post-monomorphization
-//    once types are concrete.  This exists for ImplGenerator-provided
-//    evidence where the obligation can only be checked after type
-//    parameters are instantiated.
+// 3. Claims flow into polymorphic code through !trait.claim parameters,
+//    so polymorphic code relies on a trait only where its caller proves
+//    it.  A claim code fabricates is an allegation (trait.allege), a
+//    trusted assertion that impl selection proves where its types are
+//    concrete: resolve-impls proves a monomorphic one and
+//    instantiate-monomorphs each instance of a polymorphic one, and one
+//    nothing proves is refused where it stands.
 //
 // 4. The IR is the sole authority on claims.  All proof structure lives
 //    in the IR itself — no side tables, no external state.  Analysis
@@ -99,7 +93,7 @@ def TraitOp : TraitDialectOp<"trait", [
 
       // an optional method
       func.func @ne(%self: !S, %other: !O) -> i1 {
-        %a = trait.assume @PartialEq[!S,!O]
+        %a = trait.assume self : !trait.claim<@PartialEq[!S,!O]>
         %eq = trait.method.call @PartialEq::@eq<%a>(%self, %other)
           : (!S, !O) -> i1
           as !trait.claim<@PartialEq[!S,!O]> (!S,!O) -> i1
@@ -376,7 +370,7 @@ def ImplOp : TraitDialectOp<"impl", [
       @B[!T2]
     ] {
       func.func @method_a(%self: !T2) -> i32 {
-        %a = trait.assume @B[!T2]
+        %a = trait.assume 0 : !trait.claim<@B[!T2]>
         %res = trait.method.call @B::@method_b<%a>(%self)
           : !(T1) -> i32
           as !trait.claim<@B[!T2]> (!T2) -> i32
@@ -788,8 +782,8 @@ def Projection : Type<
 //
 //   Op              Role                                         Analogy
 //   ----------      ------------------------------------------   -----------
-//   trait.allege    Fabricate a monomorphic claim at a call       Assertion
-//                   site, to be proven later by impl resolution
+//   trait.allege    Fabricate a claim, to be proven later by      Assertion
+//                   impl resolution where its types are concrete
 //   trait.assume    Materialize the enclosing trait/impl's        Hypothesis
 //                   self claim or a declared assumption
 //   trait.derive    Construct a new claim from a conditional      Introduction
@@ -813,16 +807,6 @@ def AllegeOp : TraitDialectOp<"allege", [
     satisfied, `@Trait[Types...]`, or that two spellings name one type,
     `!A = !B`.
 
-    By default, the claim must be monomorphic: it spells no type variable.
-    This enforces a key invariant: polymorphic code never fabricates claims.
-    Claims originate at monomorphic call sites and flow into polymorphic code
-    through `!trait.claim` parameters.
-
-    The optional `unsafe` keyword relaxes this restriction, allowing a claim
-    that spells type variables. This is used for ImplGenerator-provided
-    evidence where the obligation cannot be checked until types are
-    instantiated.
-
     `trait.allege` does not verify that a matching `trait.impl` exists at
     the point of emission. It is intended to be elaborated into verified
     `trait.witness` operations by a claim-proving pass. The resolve-impls
@@ -839,7 +823,7 @@ def AllegeOp : TraitDialectOp<"allege", [
       %p = trait.allege @Ord[i32]
 
       // polymorphic: deferred to instantiate-monomorphs
-      %q = trait.allege @Printable[!trait.poly<0>] unsafe
+      %q = trait.allege @Printable[!trait.poly<0>]
 
       // the type the impl serving @Iterator[i32] binds `Item` to
       %e = trait.allege !trait.proj<@Iterator[i32], "Item"> = i64
@@ -850,15 +834,13 @@ def AllegeOp : TraitDialectOp<"allege", [
     sides resolve to two types -- is refused here.
   }];
 
-  let arguments = (ins OptionalAttr<UnitAttr>:$unsafe);
-
   let results = (outs Claim:$result);
 
   let builders = [
     OpBuilder<(ins "::mlir::trait::TraitApplicationAttr":$app), [{
       mlir::MLIRContext* ctx = $_builder.getContext();
       auto claimTy = ClaimType::get(ctx, app);
-      return build($_builder, $_state, claimTy, /*unsafe=*/nullptr);
+      return build($_builder, $_state, claimTy);
     }]>
   ];
 
@@ -869,82 +851,31 @@ def AllegeOp : TraitDialectOp<"allege", [
   }];
 
   let assemblyFormat = [{
-    custom<ClaimPredicate>(type($result)) (`unsafe` $unsafe^)? attr-dict
+    custom<ClaimPredicate>(type($result)) attr-dict
   }];
-  let hasVerifier = 1;
 }
 
 
 def AssumeOp : TraitDialectOp<"assume", [
   Pure
 ]>{
-  let summary = "Introduce an axiomatic claim from the enclosing scope";
+  let summary = "Introduce a hypothesis of the enclosing declaration by position";
   let description = [{
     Creates a zero-sized SSA value of type `!trait.claim<...>` that introduces a
-    **hypothesis** holding axiomatically in the current scope. The claim is
-    either arm: an application `@Trait[types]`, or a type equality `!A = !B`.
+    **hypothesis** of the declaration whose method the op stands in: `self`,
+    the declaration's own self application, or `N`, entry `N` of its `where`
+    clause -- a `trait.trait`'s `requirements`, a `trait.impl`'s
+    `assumptions`. The result type spells the claim the entry states, and the
+    verifier refuses an assume whose spelled claim is not exactly that entry,
+    so the text reads as the fact while the position is what the op means. Two
+    entries that spell one claim stay two citations. An entry that binds
+    variables of its own is selected with `trait.project` and its type
+    arguments instead.
 
-    Use `trait.project` to derive *consequences* of an application axiom (e.g.,
-    trait requirements or impl assumptions). Use `trait.witness` for claims
-    backed by concrete impl evidence.
-
-    An **application** assume must name an axiom of the enclosing scope, checked
-    in order:
-      1. A `!trait.claim`-typed parameter of the enclosing function
-      2. The enclosing `trait.trait`'s self application
-      3. The enclosing `trait.impl`'s self application or an assumed application
-
-    An **equality** assume is legal exactly when its equality matches, by
-    identity, one equality axiom of the enclosing scope:
-      1. An equality `!trait.claim`-typed parameter of the enclosing function
-      2. An equality entry of the enclosing declaration's `where` clause -- the
-         enclosing `trait.impl`'s assumptions inside an impl method, or the
-         enclosing `trait.trait`'s requirements inside a trait method.
-    A trait's requirement list anchors an equality assume exactly as an impl's
-    assumption list anchors an application assume; a method body shares the
-    enclosing declaration's polymorphic variables, so identity of the equality
-    predicate is the check and no weaker match is accepted.
-
-    Example of an equality assume anchored by the enclosing trait's requirement:
-      trait.trait @FoldFn[!S] where [!trait.proj<@FoldFn[!S], "Output"> = !S] {
-        trait.assoc_type @Output
-        func.func @fold(%x: !S) -> !S {
-          %e = trait.assume !trait.proj<@FoldFn[!S], "Output"> = !S
-          ...
-        }
-      }
-
-    Example inside a trait method body:
-      trait.trait @PartialEq[!S,!O] {
-        func.func @eq(!S, !O) -> i1
-
-        func.func @ne(%self: !S, %other: !O) -> i1 {
-          %a = trait.assume @PartialEq[!S,!O]
-
-          %eq = trait.method.call @PartialEq::@eq<%a>(%self, %other)
-            : (!S, !O) -> i1
-            as !trait.claim<@PartialEq[!S,!O]> (!S,!O) -> i1
-          %true = arith.constant 1 : i1
-          %res = arith.xori %eq, %true : i1
-          return %res : i1
-        }
-      }
-
-    Example inside a standalone polymorphic function:
-      func.func @call_foo(%c: !trait.claim<@Foo[!T]>, %x: !T) -> !T {
-        %a = trait.assume @Foo[!T]
-        ...
-      }
-
-    Positional form. Inside a method of a `trait.trait` or `trait.impl`, an
-    assume may instead cite an entry of the enclosing declaration by position:
-    `self`, the declaration's own self application, or `N`, entry `N` of its
-    `where` clause -- the trait's `requirements`, the impl's `assumptions`. The
-    result type spells the claim the entry states, and the verifier refuses an
-    assume whose spelled claim is not exactly that entry, so the text reads as
-    the fact while the position is what the op means. Two entries that spell
-    one claim stay two citations. An entry that binds variables of its own is
-    selected with `trait.project` and its type arguments instead.
+    Use `trait.project` to derive *consequences* of an application hypothesis
+    (e.g., trait requirements or impl assumptions). Use `trait.witness` for
+    claims backed by concrete impl evidence. A function that is no method takes
+    the claims it relies on as `!trait.claim` parameters.
 
       trait.impl @A_gen for @A[!T] where [@B[!T], !trait.proj<@B[!T], "Out"> = i64] {
         func.func @method_a(%self: !T) -> i32 {
@@ -958,11 +889,10 @@ def AssumeOp : TraitDialectOp<"assume", [
     Note that `trait.assume` is the *only* context-sensitive operation in this dialect.
   }];
 
-  // Absent for the form that names its claim by spelling; `unit` for the
-  // enclosing declaration's self application; an index for an entry of its
-  // `where` clause.
+  // `unit` for the enclosing declaration's self application; an index for an
+  // entry of its `where` clause.
   let arguments = (ins
-    OptionalAttr<AnyAttrOf<[UnitAttr, ConfinedAttr<I64Attr, [IntNonNegative]>]>>:$entry
+    AnyAttrOf<[UnitAttr, ConfinedAttr<I64Attr, [IntNonNegative]>]>:$entry
   );
 
   let results = (outs Claim:$result);
@@ -972,49 +902,27 @@ def AssumeOp : TraitDialectOp<"assume", [
       return cast<ClaimType>(getResult().getType());
     }
 
-    TraitApplicationAttr getTraitApplication() {
-      return getClaim().getTraitApplication();
-    }
-
-    TraitOp getTrait();
-
-    /// Whether this assume cites the enclosing declaration's self application
-    /// by position.
+    /// Whether this assume cites the enclosing declaration's self application.
     bool citesSelf() {
-      return ::llvm::isa_and_nonnull<UnitAttr>(getEntryAttr());
+      return ::llvm::isa<UnitAttr>(getEntryAttr());
     }
 
-    /// The `where`-clause entry this assume cites by position, if it cites
-    /// one.
+    /// The `where`-clause entry this assume cites, if it cites one.
     std::optional<uint64_t> getWherePosition() {
-      if (auto position = ::llvm::dyn_cast_or_null<IntegerAttr>(getEntryAttr()))
+      if (auto position = ::llvm::dyn_cast<IntegerAttr>(getEntryAttr()))
         return position.getInt();
       return std::nullopt;
     }
-
-    /// Whether this assume cites an entry of its enclosing declaration by
-    /// position rather than naming its claim by spelling.
-    bool isPositional() { return static_cast<bool>(getEntryAttr()); }
   }];
 
   let skipDefaultBuilders = 1;
   let builders = [
-    // the form naming its claim by spelling
-    OpBuilder<(ins "::mlir::Type":$claim), [{
-      $_state.addTypes(claim);
-    }]>,
-    // convenience builds from a TraitApplicationAttr instead of a ClaimType
-    OpBuilder<(ins "::mlir::trait::TraitApplicationAttr":$assumption), [{
-      auto ctx = $_builder.getContext();
-      build($_builder, $_state, ClaimType::get(ctx, assumption));
-    }]>,
-    // the positional form citing the enclosing declaration's self application
+    // citing the enclosing declaration's self application
     OpBuilder<(ins "::mlir::Type":$claim, "::mlir::UnitAttr":$self), [{
       $_state.addAttribute("entry", self);
       $_state.addTypes(claim);
     }]>,
-    // the positional form citing entry `position` of the enclosing
-    // declaration's where clause
+    // citing entry `position` of the enclosing declaration's where clause
     OpBuilder<(ins "::mlir::Type":$claim, "uint64_t":$position), [{
       $_state.addAttribute("entry", $_builder.getI64IntegerAttr(position));
       $_state.addTypes(claim);
@@ -1157,7 +1065,7 @@ def ProjectOp : TraitDialectOp<"project", [
     ```mlir
     // a trait-level requirement (an unproven or a proven source claim)
     // trait.trait @Ord[!S] where [@Eq[!S], @PartialOrd[!S,!S]]
-    %p = trait.assume @Ord[!T]
+    %p = trait.assume self : !trait.claim<@Ord[!T]>
     %eq = trait.project %p[0] : !trait.claim<@Ord[!T]> -> !trait.claim<@Eq[!T]>
 
     // an impl assumption: the requirement list continues past the trait's two

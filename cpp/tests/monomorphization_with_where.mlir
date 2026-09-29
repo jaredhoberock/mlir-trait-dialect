@@ -10,7 +10,7 @@ trait.trait private @PartialEq[!PartialEqS,!PartialEqO] {
   func.func private @eq(!PartialEqS, !PartialEqO) -> i1
   
   func.func @ne(%self: !PartialEqS, %other: !PartialEqO) -> i1 {
-    %partial_eq = trait.assume @PartialEq[!PartialEqS,!PartialEqO]
+    %partial_eq = trait.assume self : !trait.claim<@PartialEq[!PartialEqS,!PartialEqO]>
     %equal = trait.method.call %partial_eq @PartialEq[!PartialEqS,!PartialEqO]::@eq(%self, %other)
       : (!PartialEqS, !PartialEqO) -> i1
     %true = arith.constant 1 : i1
@@ -78,7 +78,7 @@ trait.trait private @PartialOrd[!PartialOrdS,!PartialOrdO] where [
   func.func private @partial_cmp(!PartialOrdS, !PartialOrdO) -> !opt_ord
 
   func.func @lt(%self: !PartialOrdS, %other: !PartialOrdO) -> i1 {
-    %partial_ord = trait.assume @PartialOrd[!PartialOrdS,!PartialOrdO]
+    %partial_ord = trait.assume self : !trait.claim<@PartialOrd[!PartialOrdS,!PartialOrdO]>
 
     %cmp = trait.method.call %partial_ord @PartialOrd[!PartialOrdS,!PartialOrdO]::@partial_cmp(%self, %other)
       : (!PartialOrdS,!PartialOrdO) -> !opt_ord
@@ -89,7 +89,7 @@ trait.trait private @PartialOrd[!PartialOrdS,!PartialOrdO] where [
   }
 
   func.func @le(%self: !PartialOrdS, %other: !PartialOrdO) -> i1 {
-    %partial_ord = trait.assume @PartialOrd[!PartialOrdS,!PartialOrdO]
+    %partial_ord = trait.assume self : !trait.claim<@PartialOrd[!PartialOrdS,!PartialOrdO]>
 
     %partial_eq = trait.project %partial_ord[0]
       : !trait.claim<@PartialOrd[!PartialOrdS,!PartialOrdO]>
@@ -106,7 +106,7 @@ trait.trait private @PartialOrd[!PartialOrdS,!PartialOrdO] where [
   }
 
   func.func @gt(%self: !PartialOrdS, %other: !PartialOrdO) -> i1 {
-    %partial_ord = trait.assume @PartialOrd[!PartialOrdS,!PartialOrdO]
+    %partial_ord = trait.assume self : !trait.claim<@PartialOrd[!PartialOrdS,!PartialOrdO]>
 
     %cmp = trait.method.call %partial_ord @PartialOrd[!PartialOrdS,!PartialOrdO]::@partial_cmp(%self, %other)
       : (!PartialOrdS,!PartialOrdO) -> !opt_ord
@@ -117,7 +117,7 @@ trait.trait private @PartialOrd[!PartialOrdS,!PartialOrdO] where [
   }
 
   func.func @ge(%self: !PartialOrdS, %other: !PartialOrdO) -> i1 {
-    %partial_ord = trait.assume @PartialOrd[!PartialOrdS,!PartialOrdO]
+    %partial_ord = trait.assume self : !trait.claim<@PartialOrd[!PartialOrdS,!PartialOrdO]>
 
     %partial_eq = trait.project %partial_ord[0]
       : !trait.claim<@PartialOrd[!PartialOrdS,!PartialOrdO]>
@@ -165,7 +165,7 @@ trait.trait private @Ord[!OrdS] where [
   func.func private @cmp(!OrdS, !OrdS) -> !ord
 
   func.func @max(%self: !OrdS, %other: !OrdS) -> !OrdS {
-    %ord = trait.assume @Ord[!OrdS]
+    %ord = trait.assume self : !trait.claim<@Ord[!OrdS]>
     %partial_ord = trait.project %ord[1]
       : !trait.claim<@Ord[!OrdS]>
       -> !trait.claim<@PartialOrd[!OrdS,!OrdS]>
@@ -183,7 +183,7 @@ trait.trait private @Ord[!OrdS] where [
   }
 
   func.func @min(%self: !OrdS, %other: !OrdS) -> !OrdS {
-    %ord = trait.assume @Ord[!OrdS]
+    %ord = trait.assume self : !trait.claim<@Ord[!OrdS]>
     %partial_ord = trait.project %ord[1]
       : !trait.claim<@Ord[!OrdS]>
       -> !trait.claim<@PartialOrd[!OrdS,!OrdS]>

@@ -9,14 +9,9 @@
 // projection sits inside the tuple rather than at its top. @Inner_i64 binds Item
 // to i64, so <tuple<@Inner[i64]::Item> = tuple<i64>> holds through the one hop
 // nested in the tuple. Settlement resolves ground projections anywhere in an
-// endpoint, descending composites, so it grounds the endpoint at tuple<i64>;
-// reducing the surviving equality assume to a witness descends the same
-// composite and mints the proj-resolve leaf for the nested @Inner[i64]::Item
-// hop, then composes it to the endpoint equality. A mint that inspected only the
-// endpoint's top level would find no projection there, mint nothing, and refuse
-// the assume it had already judged settled.
+// endpoint, descending composites, so it grounds the endpoint at tuple<i64>.
 
-// The composition witness the reduction mints has this shape: the nested
+// The composition witness of that equality has this shape: the nested
 // proj-resolve leaf grounding @Inner[i64]::Item, and a compose whose ground
 // congruence closure lifts that equality through the tuple to the endpoint
 // equality.
@@ -27,9 +22,8 @@
 trait.trait private @Inner[!S] { trait.assoc_type @Item }
 trait.impl private @Inner_i64 for @Inner[i64] { trait.assoc_type @Item = i64 }
 
-// The composition witness the reduction mints, written out by hand so its shape
-// and the verifier's acceptance of a projection nested in a composite endpoint
-// are both pinned. The coerce keeps the witness live so parse-time verification
+// The composition witness, written out by hand so its shape and the verifier's
+// acceptance of a projection nested in a composite endpoint are both pinned. The coerce keeps the witness live so parse-time verification
 // judges it.
 func.func @evidence(%p: tuple<!trait.proj<@Inner[i64], "Item">>) -> tuple<i64> {
   %w = trait.witness proj_resolve !trait.proj<@Inner[i64], "Item"> resolves i64 by @Inner_i64
@@ -48,18 +42,18 @@ trait.trait private @Run[!S] {
 
 // The callee's monomorphic instance keeps the equality-claim parameter on its
 // ABI even though the body ignores it: the parameter carries the evidence across
-// the call boundary, so the assume that supplies it has no other consumer and
-// survives to the leftover check as a monomorphic equality whose endpoint is a
-// composite carrying a projection.
+// the call boundary, so the projection of the impl's entry that supplies it in
+// the method's clone has no other consumer and stands at the leftover check as
+// a monomorphic equality whose endpoint is a composite carrying a projection.
 func.func private @need(%v: i64, %e: !trait.claim<tuple<!trait.proj<@Inner[!S], "Item">> = tuple<i64>>) -> i64 {
   return %v : i64
 }
 
 // The closure-like impl: its where-clause carries the inherited equality; the
-// method re-establishes it as an assume and forwards it as the call operand.
+// method cites it by position and forwards it as the call operand.
 trait.impl private @Run_gen for @Run[!S] where [@Inner[!S], tuple<!trait.proj<@Inner[!S], "Item">> = tuple<i64>] {
   func.func @go(%x: !S) -> i64 {
-    %e = trait.assume tuple<!trait.proj<@Inner[!S], "Item">> = tuple<i64>
+    %e = trait.assume 1 : !trait.claim<tuple<!trait.proj<@Inner[!S], "Item">> = tuple<i64>>
     %v = arith.constant 7 : i64
     %r = trait.func.call @need(%v, %e)
       : (i64, !trait.claim<tuple<!trait.proj<@Inner[!S], "Item">> = tuple<i64>>) -> i64
@@ -74,8 +68,7 @@ func.func @main() -> i64 {
   return %r : i64
 }
 
-// The composite endpoint settles clean: the assume reduces to the composition
-// witness above, the callee keeps the equality parameter, and no axiomatic
-// assume survives.
+// The composite endpoint settles clean: the callee keeps the equality
+// parameter, and no assume survives.
 // CHECK: func.func @main
 // CHECK-NOT: trait.assume

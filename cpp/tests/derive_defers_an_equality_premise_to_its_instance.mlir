@@ -5,8 +5,8 @@
 
 // The counterpart of the refused derive: inside a template, the derive supplies
 // @Vector_blanket's premise Tensor[T]::Shape = i64 as an allegation over the
-// template's own variable, unsafe, which the template cannot decide, and the
-// derive stands. The instance decides it: cloned at i8, where @Tensor_i8 binds
+// template's own variable, which the template cannot decide, and the derive
+// stands. The instance decides it: cloned at i8, where @Tensor_i8 binds
 // Shape to i64, the allegation is proved and the clone stands.
 
 trait.trait private @Tensor[!trait.poly<0>] {
@@ -23,7 +23,7 @@ func.func private @needs(%v: !trait.claim<@Vector[!trait.poly<0>]>) {
 }
 
 func.func private @f(%t: !trait.claim<@Tensor[!trait.poly<0>]>) {
-  %e = trait.allege !trait.proj<@Tensor[!trait.poly<0>], "Shape"> = i64 unsafe
+  %e = trait.allege !trait.proj<@Tensor[!trait.poly<0>], "Shape"> = i64
   %v = trait.derive @Vector[!trait.poly<0>] from @Vector_blanket[!trait.poly<0> = !trait.poly<0>] given(%t, %e)
     : (!trait.claim<@Tensor[!trait.poly<0>]>, !trait.claim<!trait.proj<@Tensor[!trait.poly<0>], "Shape"> = i64>)
   trait.func.call @needs(%v) : (!trait.claim<@Vector[!trait.poly<0>]>) -> ()

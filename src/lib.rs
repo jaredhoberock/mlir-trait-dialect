@@ -39,7 +39,6 @@ unsafe extern "C" {
                                      trait_app: MlirAttribute) -> MlirType;
     fn traitClaimTypeGetTraitApplication(claim_ty: MlirType) -> MlirAttribute;
     fn traitTypeIsAClaim(ty: MlirType) -> bool;
-    fn traitClaimTypeIsMonomorphic(claim_ty: MlirType) -> bool;
     fn traitGetGenericTypesIn(ty: MlirType, results: *mut MlirType, max_results: isize) -> isize;
 
     fn traitProjectionTypeGet(ctx: MlirContext,
@@ -150,7 +149,7 @@ fn type_array_attr<'c>(loc: Location<'c>, types: &[Type<'c>]) -> Attribute<'c> {
 }
 
 /// The unit attribute in the location's context (the value of a present
-/// `UnitAttr`, e.g. a witness's `refl` or an allegation's `unsafe` marker).
+/// `UnitAttr`, e.g. a witness's `refl` or an assume's `self` entry).
 fn unit_attr<'c>(loc: Location<'c>) -> Attribute<'c> {
     unsafe { Attribute::from_raw(mlirUnitAttrGet(mlirLocationGetContext(loc.to_raw()))) }
 }
@@ -364,18 +363,12 @@ fn unproven_claim<'c>(loc: Location<'c>, predicate: Attribute<'c>) -> Type<'c> {
 }
 
 /// Build a `trait.allege` of the claim predicate `predicate`, a trait
-/// application or a type equality (`type_equality_attr`). The allegation is
-/// marked `unsafe` exactly when its claim spells a type variable: such a claim
-/// is checked once the instance is concrete.
+/// application or a type equality (`type_equality_attr`).
 pub fn allege<'c>(loc: Location<'c>,
                   predicate: Attribute<'c>,
 ) -> Operation<'c> {
     let claim = unproven_claim(loc, predicate);
-    let mut builder = OperationBuilder::new("trait.allege", loc);
-    if !unsafe { traitClaimTypeIsMonomorphic(claim.to_raw()) } {
-        builder = builder.add_attributes(&[(identifier(loc, "unsafe"), unit_attr(loc))]);
-    }
-    build_op(builder.add_results(&[claim]))
+    build_op(OperationBuilder::new("trait.allege", loc).add_results(&[claim]))
 }
 
 /// Build a `trait.witness` of `trait_app` proved by the proof or unconditional

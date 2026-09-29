@@ -10,7 +10,7 @@ trait.trait private @PartialEq [!S,!O] {
   func.func private @eq(!S, !O) -> i1
 
   func.func @neq(%self: !S, %other: !O) -> i1 {
-    %partial_eq = trait.assume @PartialEq[!S,!O]
+    %partial_eq = trait.assume self : !trait.claim<@PartialEq[!S,!O]>
     %equal = trait.method.call %partial_eq @PartialEq[!S,!O]::@eq(%self, %other)
       : (!S, !O) -> i1
     %true = arith.constant 1 : i1

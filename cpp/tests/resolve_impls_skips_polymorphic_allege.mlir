@@ -34,8 +34,8 @@ func.func @test_mono(%x: i32) -> i32 {
 // CHECK: func.func @test_poly
 !T2 = !trait.poly<2>
 func.func @test_poly(%x: !T2) -> i32 {
-  // CHECK: trait.allege @Safe[!trait.poly<2>] unsafe
-  %c = trait.allege @Safe[!T2] unsafe
+  // CHECK: trait.allege @Safe[!trait.poly<2>]
+  %c = trait.allege @Safe[!T2]
   %r = trait.method.call %c @Safe[!T2]::@check(%x) : (!T2) -> i32
   return %r : i32
 }

@@ -43,7 +43,7 @@ trait.impl private @Trait_impl_i32 for @Trait[i32] {
 !T1 = !trait.poly<1>
 trait.impl private @Trait_impl_tuple for @Trait[tuple<!T1>] where [@Trait[!T1]] {
   func.func @method(%self: tuple<!T1>) -> i32 {
-    %a = trait.assume @Trait[!T1]
+    %a = trait.assume 0 : !trait.claim<@Trait[!T1]>
     %res = arith.constant 1 : i32
     return %res : i32
   }
@@ -121,7 +121,7 @@ trait.impl private @TraitA_impl_i32 for @TraitA[i32] {
 !T6 = !trait.poly<6>
 trait.impl private @TraitB_from_TraitA for @TraitB[!T6] where [@TraitA[!T6]] {
   func.func @method_b(%self: !T6) -> i32 {
-    %a = trait.assume @TraitA[!T6]
+    %a = trait.assume 0 : !trait.claim<@TraitA[!T6]>
     %res = trait.method.call %a @TraitA[!T6]::@method_a(%self)
       : (!T6) -> i32
     return %res : i32
@@ -167,8 +167,8 @@ trait.impl private @TraitC_impl_i32 for @TraitC[i32] {
 !T9 = !trait.poly<9>
 trait.impl private @TraitC_impl_tuple for @TraitC[tuple<!T9>] where [@TraitA[!T9], @TraitC[!T9]] {
   func.func @method_c(%self: tuple<!T9>) -> i32 {
-    %a = trait.assume @TraitA[!T9]
-    %c = trait.assume @TraitC[!T9]
+    %a = trait.assume 0 : !trait.claim<@TraitA[!T9]>
+    %c = trait.assume 1 : !trait.claim<@TraitC[!T9]>
     %res = arith.constant 30 : i32
     return %res : i32
   }

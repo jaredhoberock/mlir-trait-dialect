@@ -5,12 +5,11 @@
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' | FileCheck %s
 
 // A FoldFn-shaped polymorphic impl asserts its own equality Self::Output = Self
-// and binds Output to Self. Its method body mints an equality-arm trait.assume
-// anchored on that assumption and feeds it to a trait.coerce that rewrites a
-// projection-typed value to the accumulator type. The source verifies and the
-// equality assume is present.
+// and binds Output to Self. Its method body cites that assumption by position
+// and feeds it to a trait.coerce that rewrites a projection-typed value to the
+// accumulator type. The source verifies and the equality assume is present.
 
-// VERIFY: trait.assume !trait.proj<@FoldFn[!trait.poly<0>], "Output"> = !trait.poly<0>
+// VERIFY: trait.assume 0 : !trait.claim<!trait.proj<@FoldFn[!trait.poly<0>], "Output"> = !trait.poly<0>>
 
 !S = !trait.poly<0>
 
@@ -22,7 +21,7 @@ trait.trait private @FoldFn[!S] {
 trait.impl private @FoldFn_gen for @FoldFn[!S] where [!trait.proj<@FoldFn[!S], "Output"> = !S] {
   trait.assoc_type @Output = !S
   func.func nested @run(%p: !trait.proj<@FoldFn[!S], "Output">) -> !S {
-    %e = trait.assume !trait.proj<@FoldFn[!S], "Output"> = !S
+    %e = trait.assume 0 : !trait.claim<!trait.proj<@FoldFn[!S], "Output"> = !S>
     %r = trait.coerce %p : !trait.proj<@FoldFn[!S], "Output"> to !S via (%e)
       : (!trait.claim<!trait.proj<@FoldFn[!S], "Output"> = !S>)
     return %r : !S

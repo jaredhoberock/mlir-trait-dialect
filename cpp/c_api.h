@@ -67,10 +67,6 @@ MlirAttribute traitClaimTypeGetTraitApplication(MlirType claimType);
 /// Checks whether the given type is a claim type.
 bool traitTypeIsAClaim(MlirType type);
 
-/// Checks whether the claim type `claimType` spells no type variable
-/// (ClaimType::isMonomorphic).
-bool traitClaimTypeIsMonomorphic(MlirType claimType);
-
 /// Return the !trait.proj<@Trait[Types...], "AssocName", [AssocTypeArgs...]> type
 MlirType traitProjectionTypeGet(MlirContext ctx,
                                 MlirAttribute traitApp,

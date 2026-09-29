@@ -4,16 +4,17 @@
 // RUN: mlir-opt %s | FileCheck %s --check-prefix=VERIFY
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' | FileCheck %s
 
-// The inherited where-clause equality <@Wrap[i64]::Item = i64> is forwarded to a
-// callee operand whose monomorphic instance retains the equality-claim
-// parameter, so the surviving trait.assume has no other consumer. The equality
-// holds only across two resolution hops: @Wrap_i64 binds Item to @Mid[i64]::Out,
-// and @Mid_i64 binds that Out to i64. Settlement's fixed-point resolution
-// grounds both hops; reducing the assume to a witness walks the same chain,
-// minting one proj-resolve witness per hop and composing them -- a single
-// hop would leave @Mid[i64]::Out still spelled and the equality unproven.
+// The impl's where-clause equality <@Wrap[i64]::Item = i64>, cited by its method
+// by position, is forwarded to a callee operand whose monomorphic instance
+// retains the equality-claim parameter. In the method's clone the citation is
+// the projection of that entry off the self proof, which stands at the leftover
+// check with no other consumer. The equality holds only across two resolution
+// hops: @Wrap_i64 binds Item to @Mid[i64]::Out, and @Mid_i64 binds that Out to
+// i64. Settlement's fixed-point resolution grounds both hops -- a single hop
+// would leave @Mid[i64]::Out still spelled and the equality unproven -- and
+// erasure removes the projection.
 
-// VERIFY: trait.assume !trait.proj<@Wrap[!trait.poly<0>], "Item"> = i64
+// VERIFY: trait.assume 1 : !trait.claim<!trait.proj<@Wrap[!trait.poly<0>], "Item"> = i64>
 
 !S = !trait.poly<0>
 
@@ -35,10 +36,10 @@ func.func private @need(%v: i64, %e: !trait.claim<!trait.proj<@Wrap[!S], "Item">
 }
 
 // The closure-like impl: its where-clause carries the inherited equality; the
-// method re-establishes it as an assume and forwards it as the call operand.
+// method cites it by position and forwards it as the call operand.
 trait.impl private @Run_gen for @Run[!S] where [@Wrap[!S], !trait.proj<@Wrap[!S], "Item"> = i64] {
   func.func @go(%x: !S) -> i64 {
-    %e = trait.assume !trait.proj<@Wrap[!S], "Item"> = i64
+    %e = trait.assume 1 : !trait.claim<!trait.proj<@Wrap[!S], "Item"> = i64>
     %v = arith.constant 7 : i64
     %r = trait.func.call @need(%v, %e)
       : (i64, !trait.claim<!trait.proj<@Wrap[!S], "Item"> = i64>) -> i64
@@ -53,9 +54,8 @@ func.func @main() -> i64 {
   return %r : i64
 }
 
-// The two-hop chain settles clean: the assume becomes the composed witness that
-// proves <@Wrap[i64]::Item = i64>, the callee keeps the equality parameter, and
-// no axiomatic assume survives.
+// The two-hop chain settles clean: the callee keeps the equality parameter, and
+// no assume survives.
 // CHECK: func.func private @need
 // CHECK-NOT: trait.assume
 // CHECK: func.func @main

@@ -1695,62 +1695,6 @@ FailureOr<func::FuncOp> ImplOp::getOrSpecializeMethod(OpBuilder& builder, String
   return specialized;
 }
 
-/// Specialize a polymorphic function and replace any AssumeOps whose
-/// trait application matches a claim-typed function parameter.
-///
-/// Null when the callee has no body to clone -- an external declaration --
-/// which specialization has already refused with a diagnostic. Every caller
-/// turns that into a failure rather than reading the instance.
-static func::FuncOp specializeAndReplaceAssumes(
-    PatternRewriter &rewriter, func::FuncOp callee,
-    StringRef name, const DenseMap<Type,Type> &subst) {
-  auto funcOp = specializePolymorph(rewriter, callee, name, subst);
-  if (!funcOp)
-    return nullptr;
-
-  // A trait.assume materializes a hypothesis whose evidence, once the function
-  // is specialized, is carried by a claim-typed parameter of the same arm: an
-  // application assume is satisfied by an application parameter naming the same
-  // trait application, an equality assume by an equality parameter carrying the
-  // same equality.
-  DenseMap<TraitApplicationAttr, Value> applicationParams;
-  DenseMap<TypeEqualityAttr, Value> equalityParams;
-  for (auto arg : funcOp.getArguments())
-    if (auto claimTy = dyn_cast<ClaimType>(arg.getType())) {
-      if (claimTy.isApplication())
-        applicationParams[claimTy.getTraitApplication()] = arg;
-      else if (auto eq = claimTy.getEqualityAttr())
-        equalityParams[eq] = arg;
-    }
-
-  SmallVector<AssumeOp> toErase;
-  funcOp.walk([&](AssumeOp a) {
-    // A positional assume cites an entry of the declaration its method stands
-    // in, not a parameter whose claim happens to spell the same.
-    if (a.isPositional())
-      return;
-    ClaimType claim = a.getClaim();
-    Value replacement;
-    if (auto eq = claim.getEqualityAttr()) {
-      auto it = equalityParams.find(eq);
-      if (it != equalityParams.end())
-        replacement = it->second;
-    } else {
-      auto it = applicationParams.find(claim.getTraitApplication());
-      if (it != applicationParams.end())
-        replacement = it->second;
-    }
-    if (replacement) {
-      rewriter.replaceAllUsesWith(a.getResult(), replacement);
-      toErase.push_back(a);
-    }
-  });
-  for (auto a : toErase)
-    rewriter.eraseOp(a);
-
-  return funcOp;
-}
-
 static func::FuncOp specializeMethodAsFreeFuncWithLeadingSelfProof(
     PatternRewriter& rewriter,
     ModuleOp module,
@@ -1766,8 +1710,9 @@ static func::FuncOp specializeMethodAsFreeFuncWithLeadingSelfProof(
   // clone the method into the method's grandparent
   rewriter.setInsertionPointAfter(method->getParentOp());
 
-  // specialize the function and replace assumes matching claim-typed parameters
-  auto funcOp = specializeAndReplaceAssumes(rewriter, method, functionName, subst);
+  // An external declaration has no body to clone; specialization has refused
+  // it.
+  auto funcOp = specializePolymorph(rewriter, method, functionName, subst);
   if (!funcOp)
     return nullptr;
 
@@ -1804,26 +1749,15 @@ static func::FuncOp specializeMethodAsFreeFuncWithLeadingSelfProof(
     return claim;
   };
 
-  // The self proof's requirements by position, so an assume stating one selects
-  // it off the leading proof. An entry this clone cannot read is one no assume
-  // can select, so the reading is taken requirement by requirement.
-  llvm::DenseMap<Type, uint64_t> requirementIndex;
-  if (auto count = getClaimRequirementCount(selfProofTy, module); succeeded(count))
-    for (uint64_t index = 0; index < *count; ++index)
-      if (auto requirement = getClaimRequirementAt(selfProofTy, module, index);
-          succeeded(requirement))
-        requirementIndex.try_emplace(Type(*requirement), index);
-
-  // Replace every remaining AssumeOp with the evidence the leading self proof
-  // gives for what it states, so the clone holds no trait.assume an AssumeOp
-  // verifier would refuse at module scope. A proven claim already names the
-  // proof discharging it -- a fact of the impl, settled once the self is ground
-  // -- so the witness carrying that proof is minted directly. An unproven claim
-  // names none, and what stands for it is the requirement of the self proof it
-  // states: the impl's equality where-clause, selected by its position. An
-  // assume stating neither is left for its own verifier to refuse.
-  // The impl's where clause stands after its trait's requirements in the
-  // leading self proof's requirement list.
+  // Replace every AssumeOp with the evidence the leading self proof gives for
+  // the entry it cites, so the clone holds no trait.assume an AssumeOp verifier
+  // would refuse at module scope. A proven claim already names the proof
+  // discharging it -- a fact of the impl, settled once the self is ground -- so
+  // the witness carrying that proof is minted directly. An unproven claim names
+  // none, and what stands for it is the requirement of the self proof at the
+  // entry's position: the impl's where clause stands after its trait's
+  // requirements in the leading self proof's requirement list. An entry the
+  // proof cannot read is left for the assume's own verifier to refuse.
   uint64_t traitRequirementCount = 0;
   if (auto trait = selfProofTy.getTraitApplication().getTrait(module);
       succeeded(trait))
@@ -1834,47 +1768,24 @@ static func::FuncOp specializeMethodAsFreeFuncWithLeadingSelfProof(
     PatternRewriter::InsertionGuard guard(rewriter);
     rewriter.setInsertionPoint(a);
 
-    // A positional assume cites the impl's self application or one of its
-    // where-clause entries, and the leading self proof is that application's
-    // evidence: the self itself, or the requirement at the entry's position,
-    // derived from the proof rather than spelled.
+    // An assume cites the impl's self application or one of its where-clause
+    // entries, and the leading self proof is that application's evidence: the
+    // self itself, or the requirement at the entry's position, derived from
+    // the proof rather than spelled.
+    Value replacement;
     if (a.citesSelf()) {
-      rewriter.replaceAllUsesWith(a.getResult(), selfProofArg);
-      toErase.push_back(a);
-      return;
-    }
-    if (std::optional<uint64_t> position = a.getWherePosition()) {
-      ClaimType stated = provenOrSame(a.getClaim());
-      if (stated.isProven()) {
-        Value replacement = WitnessOp::create(rewriter, a.getLoc(),
-                                              stated.getProof(),
-                                              stated.getTraitApplication());
-        rewriter.replaceAllUsesWith(a.getResult(), replacement);
-        toErase.push_back(a);
-        return;
-      }
-      uint64_t index = traitRequirementCount + *position;
+      replacement = selfProofArg;
+    } else if (ClaimType stated = provenOrSame(a.getClaim());
+               stated.isProven()) {
+      replacement = WitnessOp::create(rewriter, a.getLoc(), stated.getProof(),
+                                      stated.getTraitApplication());
+    } else {
+      uint64_t index = traitRequirementCount + *a.getWherePosition();
       auto requirement = getClaimRequirementAt(selfProofTy, module, index);
       if (failed(requirement))
         return;
-      Value replacement = ProjectOp::create(rewriter, a.getLoc(), *requirement,
-                                            selfProofArg, index);
-      rewriter.replaceAllUsesWith(a.getResult(), replacement);
-      toErase.push_back(a);
-      return;
-    }
-
-    ClaimType stated = provenOrSame(a.getClaim());
-    Value replacement;
-    if (stated.isProven()) {
-      replacement = WitnessOp::create(rewriter, a.getLoc(), stated.getProof(),
-                                      stated.getTraitApplication());
-    } else if (auto position = requirementIndex.find(Type(stated));
-               position != requirementIndex.end()) {
-      replacement = ProjectOp::create(rewriter, a.getLoc(), stated, selfProofArg,
-                                      position->second);
-    } else {
-      return;
+      replacement = ProjectOp::create(rewriter, a.getLoc(), *requirement,
+                                      selfProofArg, index);
     }
 
     rewriter.replaceAllUsesWith(a.getResult(), replacement);
@@ -3024,32 +2935,18 @@ LogicalResult DeriveOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 //===----------------------------------------------------------------------===//
 
 ParseResult AssumeOp::parse(OpAsmParser &p, OperationState &st) {
-  // The positional form: `self` or an entry index, then the claim the entry
-  // states as the result type.
-  auto parseStatedClaim = [&]() -> ParseResult {
-    Type claim;
-    if (p.parseColonType(claim))
-      return failure();
-    st.addTypes(claim);
-    return success();
-  };
+  // `self` or an entry index, then the claim the entry states as the result
+  // type.
   if (succeeded(p.parseOptionalKeyword("self"))) {
     st.addAttribute("entry", p.getBuilder().getUnitAttr());
-    return parseStatedClaim();
-  }
-  uint64_t position;
-  OptionalParseResult positional = p.parseOptionalInteger(position);
-  if (positional.has_value()) {
-    if (failed(*positional))
+  } else {
+    uint64_t position;
+    if (p.parseInteger(position))
       return failure();
     st.addAttribute("entry", p.getBuilder().getI64IntegerAttr(position));
-    return parseStatedClaim();
   }
-
-  // `@Trait[...]` is an application hypothesis; `!A = !B` is an equality
-  // hypothesis.
   Type claim;
-  if (parseClaimPredicate(p, claim))
+  if (p.parseColonType(claim))
     return failure();
   st.addTypes(claim);
   return success();
@@ -3057,25 +2954,27 @@ ParseResult AssumeOp::parse(OpAsmParser &p, OperationState &st) {
 
 void AssumeOp::print(OpAsmPrinter &p) {
   p << " ";
-
-  ClaimType claim = getClaim();
-  if (citesSelf()) {
-    p << "self : " << Type(claim);
-    return;
-  }
-  if (std::optional<uint64_t> position = getWherePosition()) {
-    p << *position << " : " << Type(claim);
-    return;
-  }
-
-  printClaimPredicate(p, *this, claim);
+  if (citesSelf())
+    p << "self";
+  else
+    p << *getWherePosition();
+  p << " : " << Type(getClaim());
 }
 
-/// Checks a positional assume against the declaration whose method it stands
-/// in: the entry it cites exists, is a claim the scope holds as a hypothesis,
-/// and is exactly the claim the result type spells.
-static LogicalResult verifyPositionalAssume(AssumeOp assume,
-                                            func::FuncOp funcOp) {
+LogicalResult AssumeOp::verify() {
+  // An assume cites an entry of the declaration whose method it stands in, so
+  // the isolated region it stands in is that method's.
+  Operation *isolatedAncestor =
+      getOperation()->getParentWithTrait<OpTrait::IsIsolatedFromAbove>();
+  if (!isolatedAncestor)
+    return emitOpError("must be within an IsolatedFromAbove region");
+  auto funcOp = dyn_cast<func::FuncOp>(isolatedAncestor);
+  if (!funcOp)
+    return emitOpError() << "must be within a 'func.func', found "
+                         << isolatedAncestor->getName();
+
+  // The entry it cites exists, is a claim the declaration holds as a
+  // hypothesis, and is exactly the claim the result type spells.
   Operation *owner = funcOp->getParentOp();
   TraitApplicationAttr selfApplication;
   PredicateArrayAttr where;
@@ -3086,20 +2985,20 @@ static LogicalResult verifyPositionalAssume(AssumeOp assume,
     selfApplication = impl.getSelfApplication();
     where = impl.getAssumptions();
   } else {
-    return assume.emitOpError()
+    return emitOpError()
            << "cites an entry of the declaration its function is a method of, "
               "but '@"
            << funcOp.getSymName() << "' is a method of no trait or impl";
   }
 
-  MLIRContext *ctx = assume.getContext();
+  MLIRContext *ctx = getContext();
   ClaimType stated;
-  if (assume.citesSelf()) {
+  if (citesSelf()) {
     stated = ClaimType::get(ctx, selfApplication);
   } else {
-    uint64_t position = *assume.getWherePosition();
+    uint64_t position = *getWherePosition();
     if (position >= where.size())
-      return assume.emitOpError()
+      return emitOpError()
              << "cites where-clause entry " << position << ", but the "
              << "enclosing declaration's where clause has " << where.size()
              << " entries";
@@ -3109,7 +3008,7 @@ static LogicalResult verifyPositionalAssume(AssumeOp assume,
     else if (auto eq = dyn_cast<TypeEqualityAttr>(entry))
       stated = ClaimType::getEquality(ctx, eq);
     else
-      return assume.emitOpError()
+      return emitOpError()
              << "cites where-clause entry " << position
              << ", which binds variables of its own; select it with "
                 "trait.project and its type arguments";
@@ -3117,82 +3016,10 @@ static LogicalResult verifyPositionalAssume(AssumeOp assume,
 
   // The spelled claim is an annotation on the citation: the position decides
   // which claim this op produces.
-  if (assume.getClaim() != stated)
-    return assume.emitOpError() << "the cited entry states " << stated
-                                << ", but the result type spells "
-                                << assume.getClaim();
+  if (getClaim() != stated)
+    return emitOpError() << "the cited entry states " << stated
+                         << ", but the result type spells " << getClaim();
   return success();
-}
-
-LogicalResult AssumeOp::verify() {
-  // verify line-of-sight between trait.assume op its enclosing function-like op so
-  // that we are able to replace uses of trait.assume with a function parameter
-  Operation* isolatedAncestor = getOperation()->getParentWithTrait<OpTrait::IsIsolatedFromAbove>();
-  if (!isolatedAncestor)
-    return emitOpError("must be within an IsolatedFromAbove region");
-
-  // the isolated ancestor must be a FuncOp
-  auto funcOp = dyn_cast<func::FuncOp>(isolatedAncestor);
-  if (!funcOp)
-    return emitOpError() << "must be within a 'func.func', found "
-                         << isolatedAncestor->getName();
-
-  if (isPositional())
-    return verifyPositionalAssume(*this, funcOp);
-
-  ClaimType claim = getClaim();
-  TraitOp enclosingTrait = funcOp->getParentOfType<TraitOp>();
-  ImplOp enclosingImpl = funcOp->getParentOfType<ImplOp>();
-
-  // An assumed predicate is an axiom of the enclosing scope exactly when it
-  // matches one by identity -- a method body shares the enclosing declaration's
-  // polymorphic variables, so no weaker match is accepted. Application and
-  // equality predicates are disjoint attribute kinds, so one set serves both
-  // arms: an equality assume can match only an equality entry, an application
-  // assume only an application entry. The sources are the enclosing function's
-  // claim parameters, the enclosing impl's assumptions, the enclosing trait's
-  // equality requirements, and -- anchoring an application assume as the impl's
-  // assumption list anchors an equality one -- the enclosing trait's and impl's
-  // own self-applications.
-  DenseSet<Attribute> assumable;
-  for (Type argType : funcOp.getArgumentTypes())
-    if (auto c = dyn_cast<ClaimType>(argType)) {
-      if (auto eq = c.getEqualityAttr())
-        assumable.insert(eq);
-      else if (c.isApplication())
-        assumable.insert(c.getTraitApplication());
-    }
-  if (enclosingImpl) {
-    assumable.insert(enclosingImpl.getSelfApplication());
-    for (Attribute pred : enclosingImpl.getAssumptions())
-      assumable.insert(pred);
-  }
-  if (enclosingTrait) {
-    assumable.insert(enclosingTrait.getSelfApplication());
-    for (Attribute pred : enclosingTrait.getRequirements())
-      if (isa<TypeEqualityAttr>(pred))
-        assumable.insert(pred);
-  }
-
-  if (auto assumedEq = claim.getEqualityAttr()) {
-    if (!assumable.contains(assumedEq))
-      return emitOpError() << "assumed equality " << assumedEq
-                           << " is not assumable in this context";
-    return success();
-  }
-
-  auto assumedApp = getTraitApplication();
-  if (!assumable.contains(assumedApp))
-    return emitOpError() << "assumed trait application " << assumedApp
-                         << " is not assumable in this context";
-  return success();
-}
-
-TraitOp AssumeOp::getTrait() {
-  ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
-  if (!module)
-    llvm_unreachable("AssumeOp:getTrait: not inside of a module");
-  return getTraitApplication().getTraitOrAbort(module, "AssumeOp::getTrait: couldn't find trait");
 }
 
 
@@ -4088,7 +3915,7 @@ FailureOr<func::FuncOp> FuncCallOp::getOrSpecializeCallee(
   PatternRewriter::InsertionGuard guard(rewriter);
   rewriter.setInsertionPointAfter(*callee);
   auto instance =
-      specializeAndReplaceAssumes(rewriter, *callee, instanceName, subst.toTypeMap());
+      specializePolymorph(rewriter, *callee, instanceName, subst.toTypeMap());
   // An external polymorphic declaration has no body to clone; specialization
   // has refused it, so this call has no instance to name.
   if (!instance)
@@ -4131,18 +3958,5 @@ LogicalResult ProjectOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
                          << requirement->conclusion << " but found "
                          << getResultClaim();
 
-  return success();
-}
-
-
-//===----------------------------------------------------------------------===//
-// AllegeOp
-//===----------------------------------------------------------------------===//
-
-LogicalResult AllegeOp::verify() {
-  // claim must be monomorphic unless unsafe
-  if (!getUnsafe() && !getClaim().isMonomorphic())
-    return emitOpError() << "expected monomorphic claim, got "
-                         << getClaim();
   return success();
 }

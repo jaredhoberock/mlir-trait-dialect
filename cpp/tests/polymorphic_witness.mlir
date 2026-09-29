@@ -18,7 +18,7 @@ trait.trait private @Trait [!T0, !T1] {
 // CHECK: trait.impl private @Trait_impl for @Trait[i64, !trait.poly<2>]
 trait.impl private @Trait_impl for @Trait[i64, !T2] {
   func.func @method(%self: i64, %arg: !T2) -> i64 {
-    %0 = trait.assume @Trait[i64, !T2]
+    %0 = trait.assume self : !trait.claim<@Trait[i64, !T2]>
     return %self : i64
   }
 }

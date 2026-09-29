@@ -19,7 +19,7 @@ trait.trait private @T[!S] {
 }
 trait.impl private @T_impl for @T[!trait.poly<2>] where [!trait.proj<@Assoc[!trait.poly<2>], "Out"> = i32] {
   func.func nested @m(%self: !trait.poly<2>) -> !trait.claim<!trait.proj<@Assoc[!trait.poly<2>], "Out"> = i32> {
-    %e = trait.assume !trait.proj<@Assoc[!trait.poly<2>], "Out"> = i32
+    %e = trait.assume 0 : !trait.claim<!trait.proj<@Assoc[!trait.poly<2>], "Out"> = i32>
     return %e : !trait.claim<!trait.proj<@Assoc[!trait.poly<2>], "Out"> = i32>
   }
 }

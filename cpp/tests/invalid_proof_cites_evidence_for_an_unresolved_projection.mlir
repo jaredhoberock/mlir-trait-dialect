@@ -35,7 +35,7 @@ trait.impl private @A_i64 for @A[i64] {
 }
 trait.impl private @B_i32 for @B[i32] {
   func.func @b(%x: i32) -> i64 {
-    %s = trait.assume @B[i32]
+    %s = trait.assume self : !trait.claim<@B[i32]>
     // expected-error@+3 {{incoherent impls (multiple satisfiable) for '!trait.proj<@Foo[i32], "Out">'}}
     // expected-error@+2 {{unproven monomorphic claim '!trait.claim<@A[!trait.proj<@Foo[i32], "Out">]>' after instantiate-monomorphs}}
     // expected-note@+1 {{proof @forged cites @A_i64 for requirement 0, which nothing decides here}}

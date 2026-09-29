@@ -49,7 +49,7 @@ trait.impl private @Wrapper_impl for @Wrapper[!Wi] where [
 ] {
   func.func @get(%self: !Wi) -> i32 {
     // use the @Container[T] assumption to call @first, then @Printable to print
-    %container = trait.assume @Container[!Wi]
+    %container = trait.assume 0 : !trait.claim<@Container[!Wi]>
     %elem = trait.method.call %container @Container[!Wi]::@first(%self)
       : (!Wi) -> !trait.proj<@Container[!Wi], "Elem">
 

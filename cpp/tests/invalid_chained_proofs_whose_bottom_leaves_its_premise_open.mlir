@@ -21,7 +21,7 @@ trait.impl private @OnlyI64 for @V[!trait.poly<0>] where [!trait.poly<0> = i64] 
 }
 trait.impl private @U_blanket for @U[!trait.poly<0>] {
   func.func @u() -> i64 {
-    %s = trait.assume @U[!trait.poly<0>]
+    %s = trait.assume self : !trait.claim<@U[!trait.poly<0>]>
     %a = trait.project %s[0] : !trait.claim<@U[!trait.poly<0>]> -> !trait.claim<@V[!trait.poly<0>]>
     %r = trait.method.call %a @V[!trait.poly<0>]::@v() : () -> i64
     return %r : i64
@@ -29,7 +29,7 @@ trait.impl private @U_blanket for @U[!trait.poly<0>] {
 }
 trait.impl private @X_blanket for @X[!trait.poly<0>] {
   func.func @x() -> i64 {
-    %s = trait.assume @X[!trait.poly<0>]
+    %s = trait.assume self : !trait.claim<@X[!trait.poly<0>]>
     %a = trait.project %s[0] : !trait.claim<@X[!trait.poly<0>]> -> !trait.claim<@U[!trait.poly<0>]>
     %r = trait.method.call %a @U[!trait.poly<0>]::@u() : () -> i64
     return %r : i64

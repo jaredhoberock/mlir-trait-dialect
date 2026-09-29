@@ -61,7 +61,7 @@ func.func @method_result_normalizes_chained_bindings(%value: i64) -> !Output {
 // CHECK-LABEL: func.func @method_result_normalizes_after_binding_input_generics
 // CHECK: trait.method.call
 func.func @method_result_normalizes_after_binding_input_generics(%value: i64) -> !Output {
-  %map = trait.allege @Map[i64] unsafe
+  %map = trait.allege @Map[i64]
   %fn = trait.witness @Fn_i1_i64 for @Fn[i1, i64]
   %fn_uni = trait.derive @FnUni[i1, i64] from @FnUni_i1_i64[] given(%fn)
     : (!trait.claim<@Fn[i1, i64] by @Fn_i1_i64>)

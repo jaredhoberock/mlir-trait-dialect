@@ -22,7 +22,7 @@ trait.trait private @X[!trait.poly<0>] { func.func private @x() -> i64 }
 
 trait.impl private @X_all for @X[!trait.poly<0>] where [@X[tuple<!trait.poly<0>>]] {
   func.func @x() -> i64 {
-    %a = trait.assume @X[tuple<!trait.poly<0>>]
+    %a = trait.assume 0 : !trait.claim<@X[tuple<!trait.poly<0>>]>
     %r = trait.method.call %a @X[tuple<!trait.poly<0>>]::@x() : () -> i64
     return %r : i64
   }

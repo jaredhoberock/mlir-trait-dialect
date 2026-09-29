@@ -32,7 +32,7 @@ trait.trait @PartialEq[!S,!O] {
   // an optional method with default implementation
   func.func @ne(%self: !S, %other: !O) -> i1 {
     // get a claim value for this trait
-    %partial_eq = trait.assume @PartialEq[!S,!O]
+    %partial_eq = trait.assume self : !trait.claim<@PartialEq[!S,!O]>
 
     // call a method using the claim
     %equal = trait.method.call %partial_eq @PartialEq[!S,!O]::@eq(%self, %other)

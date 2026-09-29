@@ -22,7 +22,7 @@ trait.impl private @Hold_claim for @Hold[!trait.claim<@Ground[i32]>] where [
   @Ground[i32]
 ] {
   func.func @held() -> !trait.claim<@Ground[i32]> {
-    %g = trait.assume @Ground[i32]
+    %g = trait.assume 0 : !trait.claim<@Ground[i32]>
     return %g : !trait.claim<@Ground[i32]>
   }
 }

@@ -57,7 +57,7 @@ trait.impl private @Inner_i32 for @Inner[i32] {
 trait.impl private @Outer_tuple for @Outer[tuple<!U>] where [@Inner[!U]] {
   trait.assoc_type @Assoc = !trait.proj<@Inner[!U], "Assoc">
   func.func @method(%self: tuple<!U>) -> !trait.proj<@Inner[!U], "Assoc"> {
-    %a = trait.assume @Inner[!U]
+    %a = trait.assume 0 : !trait.claim<@Inner[!U]>
     %elem = "test.extract"(%self) : (tuple<!U>) -> !U
     %res = trait.method.call %a @Inner[!U]::@method(%elem)
       : (!U) -> !trait.proj<@Inner[!U], "Assoc">

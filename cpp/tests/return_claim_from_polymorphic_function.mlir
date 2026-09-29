@@ -21,7 +21,7 @@ trait.impl private @Get_impl_claim for @Get[!trait.claim<@Assumption[i32]>] wher
   @Assumption[i32]
 ] {
   func.func @get() -> !trait.claim<@Assumption[i32]> {
-    %res = trait.assume @Assumption[i32]
+    %res = trait.assume 0 : !trait.claim<@Assumption[i32]>
     return %res : !trait.claim<@Assumption[i32]>
   }
 }

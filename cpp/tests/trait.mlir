@@ -25,7 +25,7 @@ trait.trait private @PartialEq[!PartialEqSelf, !PartialEqOther] {
   func.func private @eq(!PartialEqSelf, !PartialEqOther) -> i1
   
   func.func @neq(%self: !PartialEqSelf, %other: !PartialEqOther) -> i1 {
-    %partial_eq = trait.assume @PartialEq[!PartialEqSelf, !PartialEqOther]
+    %partial_eq = trait.assume self : !trait.claim<@PartialEq[!PartialEqSelf, !PartialEqOther]>
 
     %eq = trait.method.call %partial_eq @PartialEq[!PartialEqSelf,!PartialEqOther]::@eq(%self, %other)
       : (!PartialEqSelf, !PartialEqOther) -> i1
@@ -52,7 +52,7 @@ trait.trait private @PartialOrd[!PartialOrdSelf, !PartialOrdOther] where [
   func.func private @partial_cmp(!PartialOrdSelf, !PartialOrdOther) -> !ordering
 
   func.func @lt(%self: !PartialOrdSelf, %other: !PartialOrdOther) -> i1 {
-    %partial_ord = trait.assume @PartialOrd[!PartialOrdSelf,!PartialOrdOther]
+    %partial_ord = trait.assume self : !trait.claim<@PartialOrd[!PartialOrdSelf,!PartialOrdOther]>
 
     %cmp = trait.method.call %partial_ord @PartialOrd[!PartialOrdSelf,!PartialOrdOther]::@partial_cmp(%self, %other)
       : (!PartialOrdSelf, !PartialOrdOther) -> !ordering

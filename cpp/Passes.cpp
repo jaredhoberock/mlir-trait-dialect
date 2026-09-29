@@ -1940,41 +1940,6 @@ citedImplAndClaim(Operation *op) {
   return std::make_pair(impl, witness.getProvenClaim());
 }
 
-/// Replaces a ground-resolvable equality `trait.assume` with the witness of its
-/// equality, inserted at the assume so it dominates the assume's uses.
-///
-/// An equality assume is an axiom the enclosing scope inherited (an impl's or
-/// trait's where-clause equality re-established inside a method body). Where it
-/// feeds only a `trait.coerce` that folds once the projection resolves, the
-/// assume goes dead and is eliminated; where it feeds a use that keeps the
-/// equality claim -- an operand of an already-ground callee that retains the
-/// parameter -- nothing consumes it, and a bare `trait.assume` is an axiom no
-/// legalization removes. Now that the equality ground-resolves, this resolves
-/// each projection its endpoints spell through the impl `settle` selects for
-/// the projection's application, which may put an undemanded projection to
-/// selection, and builds the witness of those hops where the endpoints meet;
-/// proofs the premises need are minted through `settle.proofBuilder` at the
-/// module body.
-static LogicalResult reduceGroundEqualityAssume(
-    AssumeOp assume, TypeEqualityAttr eq, const ProjectionSettleContext &settle) {
-  auto hop = [&](ProjectionType proj) { return resolveProjectionHop(proj, settle); };
-  auto proofOf = [&](ClaimType claim) {
-    return settle.resolver.resolveAndEnsureProofFor(claim, settle.module,
-                                                    settle.proofBuilder);
-  };
-  ResolutionSource source{settle.reading, hop, proofOf, settle.module};
-  SmallVector<ResolutionHop> hops;
-  auto sides = resolveEndpoints(eq, source, hops);
-  if (failed(sides) || sides->first != sides->second)
-    return failure();
-  OpBuilder builder(assume);
-  assume.getResult().replaceAllUsesWith(
-      buildEqualityWitness(builder, assume.getLoc(), eq, hops));
-  assume.erase();
-  return success();
-}
-
-
 } // end namespace
 
 /// `askImplSelectionForImpls` adds the pattern that puts a declared claim to
@@ -2240,11 +2205,10 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
   // claim-producing ops makes it total over producers: an op whose claims the
   // patterns above fail to discharge is an error here, never a silent gap. The
   // one claim that passes unproven is an equality whose endpoints ground-resolve
-  // to one spelling, standing on an op erasure removes or on an assume this
-  // check reduces to its witness. The whole result type is walked, so a claim
-  // nested inside an aggregate is caught too, not only a claim that is the root
-  // type. Trait infrastructure regions are templates and keep their unproven
-  // claims.
+  // to one spelling, standing on an op erasure removes. The whole result type
+  // is walked, so a claim nested inside an aggregate is caught too, not only a
+  // claim that is the root type. Trait infrastructure regions are templates and
+  // keep their unproven claims.
   bool hasLeftovers = false;
   ReadOnlyImplResolver reading(*resolver);
   // Settling an equality claim resolves the projections in its endpoints, which
@@ -2289,24 +2253,11 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
     // has no obligation-holding impl stays unequal and is reported like an
     // unprovable application claim. An allegation is proved by the claim-proving
     // pattern alone, so one still standing here is a leftover however its
-    // endpoints resolve.
+    // endpoints resolve. A `trait.witness` or `trait.project` of an equality
+    // that resolves is removed by erasure.
     if (claim.isEquality() && !isa<AllegeOp>(op) &&
-        equalityClaimGroundResolvesToOneSpelling(claim, settle)) {
-      // A surviving equality `trait.assume` is an inherited axiom no
-      // legalization removes; now that it ground-resolves, replace it with the
-      // witness proving it. A `trait.witness` or `trait.project` standing here
-      // is removed by erasure.
-      if (auto assume = dyn_cast<AssumeOp>(op))
-        if (failed(reduceGroundEqualityAssume(assume, claim.getEqualityAttr(),
-                                              settle))) {
-          hasLeftovers = true;
-          op->emitError()
-              << "ground-resolvable equality assumption " << claim
-              << " could not be reduced to a witness after "
-                 "instantiate-monomorphs";
-        }
+        equalityClaimGroundResolvesToOneSpelling(claim, settle))
       continue;
-    }
     hasLeftovers = true;
     InFlightDiagnostic report =
         op->emitError() << "unproven monomorphic claim " << claim
