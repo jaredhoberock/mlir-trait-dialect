@@ -34,8 +34,8 @@ trait.impl private @CondImpl for @Tr[!X] where [@Other[!trait.proj<@HasPart[i64]
 func.func private @template(
   %op: !trait.claim<@Other[f32]>
 ) -> !trait.claim<@Tr[!T7]> {
-  // expected-error @+1 {{assumption operand #0 has claim}}
-  %d = trait.derive @Tr[!T7] from @CondImpl given(%op)
+  // expected-error @+1 {{premise 0 of impl '@CondImpl' is '!trait.claim<@Other[!trait.proj<@HasPart[i64], "Part">]>', and the derive supplies '!trait.claim<@Other[f32]>'}}
+  %d = trait.derive @Tr[!T7] from @CondImpl[!X = !T7] given(%op)
     : (!trait.claim<@Other[f32]>)
   return %d : !trait.claim<@Tr[!T7]>
 }

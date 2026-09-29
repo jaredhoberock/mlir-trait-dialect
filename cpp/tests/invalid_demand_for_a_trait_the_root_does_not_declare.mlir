@@ -19,7 +19,7 @@ module @inner {
   trait.impl private @Has_i32 for @Has[i32] { trait.assoc_type @Out = i64 }
   // expected-error @below {{unresolved projection '!trait.proj<@Has[i32], "Out">' after instantiate-monomorphs}}
   func.func @g(%x: !trait.proj<@Has[i32], "Out">) -> i64 {
-    %c = trait.coerce %x : !trait.proj<@Has[i32], "Out"> to i64 unproven
+    %c = arith.constant 0 : i64
     return %c : i64
   }
 }

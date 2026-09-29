@@ -1039,34 +1039,14 @@ def DeriveOp : TraitDialectOp<"derive", [
     in-scope claim for `Trait[!T]`, there is no way to produce
     `Trait[Struct<!T>]` without `trait.derive`.
 
-    It names the conditional impl and takes claim operands satisfying its
-    assumptions, producing the impl's derived claim. During
-    `instantiateMonomorphs`, once types are concrete, it is rewritten into
-    a `trait.witness` backed by a minted `trait.proof`.
-
-    Example:
-
-    ```mlir
-    // Given: impl<U: Trait> Trait for Struct<U> where [@Trait[U]]
-    // and an in-scope claim %t for Trait[!T]:
-    %d = trait.derive @Trait[Struct<!T>] from @the_impl given(%t)
-    ```
-
-    Verification ensures:
-    * The `@impl` symbol refers to a `trait.impl`.
-    * The impl can be specialized for the derived claim.
-    * The number of assumption operands matches the impl's assumption count.
-    * Each operand's claim type matches the corresponding specialized assumption.
-
-    Form stating the impl's arguments. `from @impl[!P = T, ...]` carries the
-    argument each of the impl's own parameters takes, and `given` then holds
-    one claim per entry of the impl's where clause in its order -- an
-    application claim for an application entry and an equality claim for an
-    equality entry. The derived application is the impl's header at those
-    arguments, spelled exactly, and each operand's claim is its entry at them,
-    so verification is a substitution: no module is read and no premise is
-    decided again. The brackets are printed even when the impl binds no
-    parameter.
+    It names the impl and the argument each of the impl's own parameters
+    takes, `from @impl[!P = T, ...]`, and `given` then holds one claim per
+    entry of the impl's where clause in its order -- an application claim for
+    an application entry and an equality claim for an equality entry. The
+    derived application is the impl's header at those arguments, spelled
+    exactly, and each operand's claim is its entry at them, so verification is
+    a substitution: no module is read and no premise is decided again. The
+    brackets are printed even when the impl binds no parameter.
 
     ```mlir
     // Given: impl<U> Trait for Struct<U> where [@Trait[U], Trait[U]::Out = i64]
@@ -1074,32 +1054,20 @@ def DeriveOp : TraitDialectOp<"derive", [
       : (!trait.claim<@Trait[!T]>, !trait.claim<!trait.proj<@Trait[!T], "Out"> = i64>)
     ```
 
-    Once monomorphic, a derive stating its impl's arguments becomes a witness of
-    the proof impl selection mints for its claim, which must stand over the
-    impl the derive cites.
+    Once monomorphic, a derive becomes a witness of the proof impl selection
+    mints for its claim, which must stand over the impl the derive cites.
   }];
 
   let arguments = (ins
     FlatSymbolRefAttr:$impl,
-    OptionalAttr<TypedArrayAttrBase<TypeBindingAttr,
-        "the arguments the impl's parameters take">>:$arguments,
-    // One operand per where-clause entry when the impl's arguments are stated,
-    // else one application claim per application entry; the verifier checks
-    // the arm so a mismatched claim is diagnosed at its operand.
+    TypedArrayAttrBase<TypeBindingAttr,
+        "the arguments the impl's parameters take">:$arguments,
+    // One operand per where-clause entry; the verifier checks each against its
+    // entry so a mismatched claim is diagnosed at its operand.
     Variadic<Claim>:$assumptions
   );
 
   let results = (outs ApplicationClaim:$result);
-
-  let builders = [
-    OpBuilder<(ins "TraitApplicationAttr":$traitApp,
-                   "FlatSymbolRefAttr":$impl,
-                   "ValueRange":$assumptions), [{
-      ClaimType claimTy = ClaimType::get($_builder.getContext(), traitApp);
-      build($_builder, $_state, claimTy, impl, /*arguments=*/nullptr,
-            assumptions);
-    }]>
-  ];
 
   let extraClassDeclaration = [{
     ClaimType getDerivedClaim() {
@@ -1113,18 +1081,9 @@ def DeriveOp : TraitDialectOp<"derive", [
 
     ImplOp getImplOp();
 
-    /// Whether this derive states the arguments its impl's parameters take,
-    /// with one operand per entry of the impl's where clause.
-    bool statesImplArguments() { return static_cast<bool>(getArgumentsAttr()); }
-
-    /// The arguments this derive states for its impl's parameters; empty when
-    /// it states none.
+    /// The arguments this derive states for its impl's parameters.
     SmallVector<TypeBindingAttr> getImplArguments() {
-      SmallVector<TypeBindingAttr> result;
-      if (ArrayAttr arguments = getArgumentsAttr())
-        for (Attribute binding : arguments)
-          result.push_back(cast<TypeBindingAttr>(binding));
-      return result;
+      return llvm::to_vector(getArguments().getAsRange<TypeBindingAttr>());
     }
   }];
 
@@ -1133,7 +1092,7 @@ def DeriveOp : TraitDialectOp<"derive", [
   // printed only when there are operands.
   let assemblyFormat = [{
     custom<ClaimPredicate>(type($result)) `from` $impl ``
-    custom<ImplCitationArguments>($arguments) `given` `(` $assumptions `)`
+    custom<StatedImplArguments>($arguments) `given` `(` $assumptions `)`
     (`:` `(` type($assumptions)^ `)`)? attr-dict-with-keyword
   }];
 }
@@ -1472,38 +1431,16 @@ def CoerceOp : TraitDialectOp<"coerce", [
 
     Example, reflexive:
       %r = trait.coerce %v : i64 to i64  // discharged terminal state; folds to %v
-
-    The `unproven` marker names a coerce standing in a projection-convergence
-    obligation whose evidence is not available at emission: the reconciling
-    equalities cannot be cited yet because the impl that supplies them is an
-    ImplGenerator's, minted only at monomorphization. A marked coerce cites
-    nothing -- `equalities` must be empty -- and stands in a pending judgment:
-    with the proofs stripped and the no-proof-swap clause enforced exactly as
-    above, the endpoints stand under the rule `verifyPendingCoerceEndpoints`
-    owns, which lets an endpoint still spelling a projection or a type variable
-    stand and refuses two ground endpoints that differ. That rule, not this
-    description, is the authoritative statement of what stands; what an open
-    endpoint denotes is settled by instantiation and by the impls
-    monomorphization mints. The marked form mints nothing consumable: monomorphization
-    respells its projections to ground, discharging the obligation to the reflexive
-    form the folder collapses -- or, if the two lookups ground to different types,
-    failing the build. A marked coerce surviving past monomorphization is a hard
-    error (the erase barrier refuses it), never a tolerated residual; the erase
-    barrier is where ground truth is arbitrated.
-
-    Example, marked:
-      %u = trait.coerce %x : !trait.proj<@Fold[i64], "Item"> to i64 unproven
   }];
 
-  let arguments = (ins AnyType:$input, Variadic<Claim>:$equalities,
-                   UnitAttr:$unproven);
+  let arguments = (ins AnyType:$input, Variadic<Claim>:$equalities);
   let results = (outs AnyType:$result);
 
   // Prints `%v : In to Out`, then an optional `via (%eqs) : (types)` citing the
-  // equalities, then the optional `unproven` marker. The explicit space literal
-  // before `(` restores the space the declarative printer drops ahead of an
-  // opening paren, preserving the `via (` spelling.
-  let assemblyFormat = "$input `:` type($input) `to` type($result) (`via` ` ` `(` $equalities^ `)` `:` `(` type($equalities) `)`)? (`unproven` $unproven^)? attr-dict";
+  // equalities. The explicit space literal before `(` restores the space the
+  // declarative printer drops ahead of an opening paren, preserving the `via (`
+  // spelling.
+  let assemblyFormat = "$input `:` type($input) `to` type($result) (`via` ` ` `(` $equalities^ `)` `:` `(` type($equalities) `)`)? attr-dict";
   let hasVerifier = 1;
   let hasFolder = 1;
 }

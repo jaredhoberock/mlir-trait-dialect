@@ -37,8 +37,8 @@ trait.impl private @Trait_impl_tuple for @Trait[tuple<!T1>] where [@Trait[!T1]] 
 // A polymorphic function that uses trait.derive
 // CHECK-LABEL: func.func @poly_fn
 func.func @poly_fn(%arg: tuple<!T2>, %t_claim: !trait.claim<@Trait[!T2]>) -> i32 {
-  // CHECK: trait.derive @Trait[tuple<!trait.poly<2>>] from @Trait_impl_tuple given(%{{.*}}) : (!trait.claim<@Trait[!trait.poly<2>]>)
-  %d = trait.derive @Trait[tuple<!T2>] from @Trait_impl_tuple given(%t_claim) : (!trait.claim<@Trait[!T2]>)
+  // CHECK: trait.derive @Trait[tuple<!trait.poly<2>>] from @Trait_impl_tuple[!trait.poly<1> = !trait.poly<2>] given(%{{.*}}) : (!trait.claim<@Trait[!trait.poly<2>]>)
+  %d = trait.derive @Trait[tuple<!T2>] from @Trait_impl_tuple[!T1 = !T2] given(%t_claim) : (!trait.claim<@Trait[!T2]>)
   %res = trait.method.call %d @Trait[tuple<!T2>]::@method(%arg)
     : (tuple<!T2>) -> i32
   return %res : i32

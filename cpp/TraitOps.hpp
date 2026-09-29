@@ -55,19 +55,6 @@ LogicalResult verifyProjectionResolutionAtUse(
 /// form. Coerce comparison is modulo the proof, permanently.
 Type stripClaimProofs(Type type);
 
-/// The pending judgment a marked (unproven) coerce carries; one judgment serves
-/// every checker of this evidence. Endpoints identical after proof stripping are
-/// reconciled. Endpoints where either side still spells a projection or a type
-/// variable are open -- instantiation and the impls monomorphization mints
-/// settle what each denotes -- so they stand, and the bonded erase pass judges
-/// the op once every projection is ground, refusing a coerce whose ground
-/// endpoints stand apart. Two ground endpoints that differ are refused here: no
-/// later step brings them together. Endpoints arrive with proofs already
-/// stripped. `emitError`, when non-null, receives the diagnostic on refusal.
-LogicalResult verifyPendingCoerceEndpoints(
-    Type input, Type result,
-    llvm::function_ref<InFlightDiagnostic()> emitError = nullptr);
-
 /// A type's term decomposition for ground reasoning: an exact constructor
 /// identity together with the positional type children the constructor is
 /// applied to. Two types denote the same constructor exactly when their keys are

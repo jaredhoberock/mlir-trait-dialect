@@ -34,8 +34,8 @@ func.func private @callee(!trait.claim<@Grow[!X]>, !trait.claim<@Loop[!X]>)
 !Y = !trait.poly<3>
 func.func @caller(%eq: !trait.claim<!trait.proj<@Grow[!Y], "Out"> = !trait.proj<@Loop[!Y], "Out">>)
     -> !trait.proj<@Loop[!Y], "Out"> {
-  %g = trait.derive @Grow[!Y] from @Grow_any given()
-  %l = trait.derive @Loop[!Y] from @Loop_any given()
+  %g = trait.derive @Grow[!Y] from @Grow_any[!U = !Y] given()
+  %l = trait.derive @Loop[!Y] from @Loop_any[!U = !Y] given()
   // expected-error @below {{projection normalization did not converge; check for cyclic associated type bindings}}
   %r = trait.func.call @callee(%g, %l)
     : (!trait.claim<@Grow[!Y]>, !trait.claim<@Loop[!Y]>) -> !trait.proj<@Loop[!Y], "Out">

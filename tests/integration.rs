@@ -1088,7 +1088,7 @@ trait.impl private @Tr_tuple for @Tr[tuple<!trait.poly<1>>] where [@Tr[!trait.po
     let block = Block::new(&[(tr_t_claim, loc), (out_is_i64, loc)]);
     let tr_tuple_t = trait_::trait_application_attr(&context, "Tr", &[tuple_of(t)]);
     block.append_operation(
-        trait_::derive_with_arguments(
+        trait_::derive(
             loc, tr_tuple_t, "Tr_tuple", &[(u, t)],
             &[block.argument(0).unwrap().into(), block.argument(1).unwrap().into()])
             .expect("the derive builds"));

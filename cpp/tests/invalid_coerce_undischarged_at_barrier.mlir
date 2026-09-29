@@ -33,14 +33,17 @@ func.func @dead_divergent(%v: i32, %e: !trait.claim<i32 = i16>) {
 trait.trait private @Bound[!trait.poly<0>] {}
 trait.trait private @Assoc[!trait.poly<0>] { trait.assoc_type @Output }
 
-// A marked claim-to-claim respell, valid when the coerce verifies (its projection could
-// converge), that reaches the barrier with the projection unresolved: its
-// recorded endpoints still differ, so the claim-to-claim 1:0 erasure is refused
-// rather than dropping an undischarged respell.
+// A claim-to-claim respell, valid when the coerce verifies (it cites the
+// equality its projection resolves by), that reaches the barrier with the
+// projection unresolved: its recorded endpoints still differ, so the
+// claim-to-claim 1:0 erasure is refused rather than dropping an undischarged
+// respell.
 // CHECK: failed to legalize operation 'trait.coerce'
-func.func @marked_respell_unresolved(
-    %b: !trait.claim<@Bound[!trait.proj<@Assoc[i64], "Output">]>) {
+func.func @respell_unresolved(
+    %b: !trait.claim<@Bound[!trait.proj<@Assoc[i64], "Output">]>,
+    %e: !trait.claim<!trait.proj<@Assoc[i64], "Output"> = i64>) {
   %c = trait.coerce %b : !trait.claim<@Bound[!trait.proj<@Assoc[i64], "Output">]>
-    to !trait.claim<@Bound[i64]> unproven
+    to !trait.claim<@Bound[i64]>
+    via (%e) : (!trait.claim<!trait.proj<@Assoc[i64], "Output"> = i64>)
   return
 }

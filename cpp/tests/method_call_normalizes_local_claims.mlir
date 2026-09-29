@@ -52,7 +52,7 @@ trait.impl private @FnUni_i1_i64 for @FnUni[i1, i64] where [@Fn[i1, i64]] {
 // CHECK-LABEL: func.func @method_result_normalizes_chained_bindings
 // CHECK: trait.method.call
 func.func @method_result_normalizes_chained_bindings(%value: i64) -> !Output {
-  %claim = trait.derive @Trait[i64] from @Trait_impl given()
+  %claim = trait.derive @Trait[i64] from @Trait_impl[!T = i64] given()
   %result = trait.method.call %claim @Trait[i64]::@get(%value)
     : (i64) -> !Output
   return %result : !Output
@@ -63,7 +63,7 @@ func.func @method_result_normalizes_chained_bindings(%value: i64) -> !Output {
 func.func @method_result_normalizes_after_binding_input_generics(%value: i64) -> !Output {
   %map = trait.allege @Map[i64] unsafe
   %fn = trait.witness @Fn_i1_i64 for @Fn[i1, i64]
-  %fn_uni = trait.derive @FnUni[i1, i64] from @FnUni_i1_i64 given(%fn)
+  %fn_uni = trait.derive @FnUni[i1, i64] from @FnUni_i1_i64[] given(%fn)
     : (!trait.claim<@Fn[i1, i64] by @Fn_i1_i64>)
   %f = arith.constant false
   %result = trait.method.call %map @Map[i64]::@map(%value, %f, %fn_uni)

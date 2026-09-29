@@ -3,11 +3,9 @@
 
 // RUN: mlir-opt %s -verify-diagnostics -split-input-file
 
-// trait.derive discharges the cited impl's application-arm assumptions, so each
-// assumption operand must be a trait-application claim. An equality claim
-// carries no trait application to match; the ODS operand type is loosened to any
-// claim, so the arm is refused by the verifier with a located diagnostic naming
-// the design law rather than asserting inside the arm-asserting accessor.
+// A derive supplies one claim per entry of its impl's where clause, each the
+// entry at the stated arguments, so an equality claim supplied for an
+// application entry is refused at its position.
 
 !T0 = !trait.poly<0>
 trait.trait private @Trait[!T0] {}
@@ -15,7 +13,7 @@ trait.impl private @Trait_impl_i32 for @Trait[i32] {}
 trait.impl private @Trait_impl_tuple for @Trait[tuple<!T0>] where [@Trait[!T0]] {}
 
 func.func @f(%e: !trait.claim<i32 = i32>) -> !trait.claim<@Trait[tuple<i32>]> {
-  // expected-error @below {{assumption operand #0 ('!trait.claim<i32 = i32>') must be a trait-application claim; an equality claim is not a legal trait.derive operand}}
-  %d = trait.derive @Trait[tuple<i32>] from @Trait_impl_tuple given(%e) : (!trait.claim<i32 = i32>)
+  // expected-error @below {{premise 0 of impl '@Trait_impl_tuple' is '!trait.claim<@Trait[i32]>', and the derive supplies '!trait.claim<i32 = i32>'}}
+  %d = trait.derive @Trait[tuple<i32>] from @Trait_impl_tuple[!T0 = i32] given(%e) : (!trait.claim<i32 = i32>)
   return %d : !trait.claim<@Trait[tuple<i32>]>
 }

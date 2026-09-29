@@ -41,47 +41,29 @@ static void printVisibilityKeyword(::mlir::OpAsmPrinter &printer,
 }
 
 /// The arguments a derive or proof states for its impl's parameters, in the
-/// grammar every impl citation shares. Present, even empty, the list is the
-/// form stating them; absent, it is the form that states none.
+/// grammar every impl citation shares, `[!P = T, ...]`, which both always
+/// state: the brackets are required, even for an impl binding no parameter.
 static ::mlir::ParseResult
-parseImplCitationArguments(::mlir::OpAsmParser &parser,
-                           ::mlir::ArrayAttr &arguments) {
+parseStatedImplArguments(::mlir::OpAsmParser &parser,
+                         ::mlir::ArrayAttr &arguments) {
   ::llvm::SmallVector<TypeBindingAttr> bindings;
   ::mlir::FailureOr<bool> present = parseImplArguments(parser, bindings);
   if (::mlir::failed(present))
     return ::mlir::failure();
-  if (*present)
-    arguments = parser.getBuilder().getArrayAttr(
-        ::llvm::SmallVector<::mlir::Attribute>(bindings.begin(), bindings.end()));
-  return ::mlir::success();
-}
-
-static void printImplCitationArguments(::mlir::OpAsmPrinter &printer,
-                                       ::mlir::Operation *,
-                                       ::mlir::ArrayAttr arguments) {
-  if (arguments)
-    printImplArguments(printer, ::llvm::to_vector(
-                                    arguments.getAsRange<TypeBindingAttr>()));
-}
-
-/// The arguments a proof states for its impl's parameters, which every proof
-/// states: the citation grammar above with the list required.
-static ::mlir::ParseResult
-parseStatedImplArguments(::mlir::OpAsmParser &parser,
-                         ::mlir::ArrayAttr &arguments) {
-  if (parseImplCitationArguments(parser, arguments))
-    return ::mlir::failure();
-  if (!arguments)
+  if (!*present)
     return parser.emitError(parser.getCurrentLocation(),
                             "expected the arguments the impl's parameters take, "
                             "`[!P = T, ...]`");
+  arguments = parser.getBuilder().getArrayAttr(
+      ::llvm::SmallVector<::mlir::Attribute>(bindings.begin(), bindings.end()));
   return ::mlir::success();
 }
 
 static void printStatedImplArguments(::mlir::OpAsmPrinter &printer,
-                                     ::mlir::Operation *op,
+                                     ::mlir::Operation *,
                                      ::mlir::ArrayAttr arguments) {
-  printImplCitationArguments(printer, op, arguments);
+  printImplArguments(printer,
+                     ::llvm::to_vector(arguments.getAsRange<TypeBindingAttr>()));
 }
 
 /// A declaration's where clause, `where [predicate, ...]`: read as the empty
@@ -3008,127 +2990,32 @@ static LogicalResult verifyPremisesSuppliedByPosition(
   return success();
 }
 
-/// Verifies a derive stating its impl's arguments: the derived application is
-/// the impl's header at them, and each operand's claim is the impl's
+/// Verifies a derive: the derived application is the impl's header at the
+/// arguments the derive states, and each operand's claim is the impl's
 /// where-clause entry at them, in order. A substitution decides both, so no
 /// spelling is read through anything.
-static LogicalResult verifyDeriveAtStatedArguments(
-    DeriveOp derive, llvm::function_ref<InFlightDiagnostic()> errFn) {
-  ImplOp impl = derive.getImplOp();
-  if (!impl)
-    return errFn() << "cannot find trait.impl '" << derive.getImplAttr() << "'";
-  auto arguments = impl.substitutionFor(derive.getImplArguments(), errFn);
-  if (failed(arguments))
-    return failure();
-
-  TraitApplicationAttr header = impl.getSelfApplicationAt(*arguments);
-  if (header != derive.getTraitApplication())
-    return errFn() << "impl '" << derive.getImplAttr() << "' at its stated "
-                   << "arguments is an impl of " << header << ", not of "
-                   << derive.getTraitApplication();
-
-  return verifyPremisesSuppliedByPosition(
-      derive.getAssumptions(), impl.getWhereClauseAt(*arguments),
-      "impl '@" + derive.getImpl() + "'", "derive", errFn);
-}
-
-/// Verifies that a trait.derive op is well-formed with respect to its symbols:
-///
-///  1. The @impl symbol resolves to a trait.impl op.
-///  2. The impl's self application can be specialized against the derived claim
-///     (i.e., the impl's header structurally matches the claim we want to derive).
-///  3. The number of assumption operands equals the impl's assumption count
-///     after specialization.
-///  4. Each operand's claim type matches the corresponding specialized
-///     assumption (so the caller is providing exactly the evidence the impl
-///     requires under this specialization).
 LogicalResult DeriveOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // Verification writes nothing, so every name read under it resolves through
   // the symbol tables the walk this is one step of has already built.
   SymbolLookupScope symbolAnswers(getOperation(), symbolTable);
 
   auto errFn = [&] { return emitOpError(); };
-
-  if (statesImplArguments())
-    return verifyDeriveAtStatedArguments(*this, errFn);
-
-  // A trait.derive discharges the cited impl's application-arm assumptions, so
-  // every assumption operand must be a trait-application claim. An equality
-  // claim carries no application to match and is not a legal derive operand.
-  for (auto [i, operand] : llvm::enumerate(getAssumptions())) {
-    auto operandClaim = cast<ClaimType>(operand.getType());
-    if (!operandClaim.isApplication())
-      return emitOpError() << "assumption operand #" << i << " (" << operandClaim
-                           << ") must be a trait-application claim; an equality "
-                              "claim is not a legal trait.derive operand";
-  }
-
-  // look up impl by symbol
-  auto implOp = getImplOp();
-  if (!implOp)
-    return emitOpError() << "cannot find trait.impl '" << getImplAttr() << "'";
-
-  ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
-  if (!module)
-    return emitOpError() << "not in a module";
-
-  // The evidence this derive holds: the claims its given operands carry, read
-  // by index through their own impls and proof trees. An impl whose header
-  // forwards an associated type spells a projection the derive's demand spells
-  // through the base, and this is what reduces the two to one grade.
-  NormalizationContext normalization =
-      buildLocalClaimNormalizationContext(getOperation(), getAssumptions(),
-                                          module);
-  // XXX TODO A claim operand that is neither proven nor derived carries no
-  // impl, so an impl whose header forwards through such an operand's own
-  // application has nothing here to reduce it. The module's impls stand in
-  // until such an operand carries the impl serving it; see setModuleLookup.
-  normalization.setModuleLookup(module, LookupScope::Determined);
-  auto normalize = [&](Type ty) -> FailureOr<Type> {
-    return normalization.normalize(ty, errFn);
-  };
-
-  // build substitution: impl's self claim -> derived claim
-  ClaimType derivedClaim = getDerivedClaim();
-  auto subst =
-      implOp.buildSubstitutionForSelfClaim(derivedClaim, normalize, errFn);
-  if (failed(subst))
+  ImplOp impl = getImplOp();
+  if (!impl)
+    return errFn() << "cannot find trait.impl '" << getImplAttr() << "'";
+  auto arguments = impl.substitutionFor(getImplArguments(), errFn);
+  if (failed(arguments))
     return failure();
 
-  // specialize impl's assumptions for the derived claim
-  SmallVector<ClaimType> specializedAssumptions =
-      llvm::map_to_vector(implOp.getAssumptionsAsClaims(), [&](ClaimType a) {
-        return cast<ClaimType>(instantiate(Type(a), *subst));
-      });
+  TraitApplicationAttr header = impl.getSelfApplicationAt(*arguments);
+  if (header != getTraitApplication())
+    return errFn() << "impl '" << getImplAttr() << "' at its stated "
+                   << "arguments is an impl of " << header << ", not of "
+                   << getTraitApplication();
 
-  // check operand count matches assumption count
-  if (getAssumptions().size() != specializedAssumptions.size())
-    return emitOpError() << "expected " << specializedAssumptions.size()
-                         << " assumption operands, got " << getAssumptions().size();
-
-  // check each operand's claim type matches the corresponding specialized assumption
-  for (auto [i, pair] : llvm::enumerate(llvm::zip(getAssumptions(), specializedAssumptions))) {
-    auto [operand, expected] = pair;
-    ClaimType operandClaim = cast<ClaimType>(operand.getType());
-    if (operandClaim.getTraitApplication() != expected.getTraitApplication())
-      return emitOpError() << "assumption operand #" << i
-                           << " has claim " << operandClaim
-                           << " but expected " << expected;
-  }
-
-  // The impl's equality premises take no operand -- the operand list is indexed
-  // by its application-arm assumptions -- so they are read here, through the
-  // same context: the hypotheses the scope holds and the evidence the operands
-  // carry. A premise neither settles is a premise this derive does not meet,
-  // the judgment selection makes over the same impl.
-  if (failed(verifyEqualityPremisesHoldAt(implOp, derivedClaim, *subst,
-                                          normalization,
-                                          OpenPremise::DecidedAtInstances,
-                                          StandingPremise::DecidedAtStageExit,
-                                          errFn)))
-    return failure();
-
-  return success();
+  return verifyPremisesSuppliedByPosition(
+      getAssumptions(), impl.getWhereClauseAt(*arguments),
+      "impl '@" + getImpl() + "'", "derive", errFn);
 }
 
 
@@ -3321,34 +3208,22 @@ LogicalResult CoerceOp::verify() {
   Type input = stripClaimProofs(getInput().getType());
   Type result = stripClaimProofs(getResult().getType());
 
-  if (getUnproven()) {
-    // The marked form cites nothing: its reconciling equalities are minted only
-    // at monomorphization, so the endpoints stand in the pending judgment.
-    if (!getEqualities().empty())
-      return emitOpError()
-             << "an unproven coerce may not cite equalities; it stands in a "
-                "pending judgment discharged at monomorphization";
-    if (failed(verifyPendingCoerceEndpoints(
-            input, result, [&]() -> InFlightDiagnostic { return emitOpError(); })))
-      return failure();
-  } else {
-    // 3. Collect the cited equalities; each operand must be an equality claim.
-    SmallVector<TypeEqualityAttr> cited;
-    for (Value e : getEqualities()) {
-      auto claim = dyn_cast<ClaimType>(e.getType());
-      if (!claim || !claim.isEquality())
-        return emitOpError() << "coerce cites equality claims, but operand has "
-                                "type " << e.getType();
-      cited.push_back(claim.getEqualityAttr());
-    }
-
-    // 4. The two endpoints must fall in one class of the ground congruence
-    // closure the cited equalities seed -- the shared entailment decision.
-    if (!entailedByGroundCongruence(input, result, cited))
-      return emitOpError() << "input type " << getInput().getType()
-                           << " and result type " << getResult().getType()
-                           << " are not equal under the cited equalities";
+  // 3. Collect the cited equalities; each operand must be an equality claim.
+  SmallVector<TypeEqualityAttr> cited;
+  for (Value e : getEqualities()) {
+    auto claim = dyn_cast<ClaimType>(e.getType());
+    if (!claim || !claim.isEquality())
+      return emitOpError() << "coerce cites equality claims, but operand has "
+                              "type " << e.getType();
+    cited.push_back(claim.getEqualityAttr());
   }
+
+  // 4. The two endpoints must fall in one class of the ground congruence
+  // closure the cited equalities seed -- the shared entailment decision.
+  if (!entailedByGroundCongruence(input, result, cited))
+    return emitOpError() << "input type " << getInput().getType()
+                         << " and result type " << getResult().getType()
+                         << " are not equal under the cited equalities";
 
   // 2. The no-proof-swap clause runs deep. The endpoints denote one claim once
   // the equalities reconcile them, so a proof present on the result and absent
@@ -3807,19 +3682,11 @@ NormalizationContext buildLocalClaimNormalizationContext(Operation *op,
 /// Each spelling is read through the call's own context first: a coerce
 /// respells a claim through an equality it cites, and the proof standing on the
 /// respelled claim is the proof of the spelling that equality carries it back
-/// to. A value a MARKED coerce produced is skipped: its reconciling equality is
-/// minted only at monomorphization, so nothing here can carry its spelling
-/// back, and the bonded erase pass judges it once every projection grounds.
+/// to.
 static LogicalResult verifyProofsAtCall(Operation *call, ValueRange operands,
                                         Normalizer normalize, ModuleOp module,
                                         llvm::function_ref<InFlightDiagnostic()> err) {
-  SmallVector<Type> spellings;
-  for (Value operand : operands) {
-    auto coerce = operand.getDefiningOp<CoerceOp>();
-    if (coerce && coerce.getUnproven())
-      continue;
-    spellings.push_back(operand.getType());
-  }
+  SmallVector<Type> spellings(operands.getTypes());
   llvm::append_range(spellings, call->getResultTypes());
 
   for (Type spelling : spellings) {

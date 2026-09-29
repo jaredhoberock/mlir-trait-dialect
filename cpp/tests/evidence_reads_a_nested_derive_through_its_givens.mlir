@@ -3,14 +3,13 @@
 
 // RUN: mlir-opt %s | FileCheck %s
 
-// An op reads the evidence it holds children first, so a given operand that is
-// itself a derive from a projection-spelling header is read through the rules
-// that derive's own givens contribute. @Idx_blanket spells its index and its
-// element through @Ten[Self], and only the binding %view carries reduces those
-// to what %idx spells. Read without it, @Idx_blanket's header stands as
-// written, and the two consumers below -- a derive holding the @Idx claim as a
-// given, and a method call whose receiver it is -- refuse a claim their own
-// operand already carries.
+// An op reads the evidence it holds children first, so a receiver that is a
+// derive from a projection-spelling header is read through the rules that
+// derive's own givens contribute. @Idx_blanket spells its index and its element
+// through @Ten[Self], and only the binding %view carries reduces the index to
+// the i64 the method call below passes. Read without it, @Idx_blanket's header
+// stands as written, and the call refuses an index its receiver's own evidence
+// already settles.
 
 !T = !trait.poly<0>
 trait.trait private @Ten[!T] {
@@ -43,30 +42,22 @@ trait.impl private @Idx_blanket
   }
 }
 
-!V = !trait.poly<6>
-trait.trait private @Walk[!V] {
-}
-
-trait.impl private @Walk_blanket for @Walk[!V]
-    where [@Idx[!V, i64, !trait.proj<@Ten[!V], "Element">]] {
-}
-
 // CHECK-LABEL: func.func @reads_a_given_derive
-// CHECK: trait.derive @Walk[tuple<!trait.poly<7>>] from @Walk_blanket
 // CHECK: trait.method.call
 !W = !trait.poly<7>
 func.func @reads_a_given_derive(%ten: !trait.claim<@Ten[!W]>,
                                 %self: tuple<!W>, %i: i64)
     -> !trait.proj<@Ten[tuple<!W>], "Element"> {
-  %view = trait.derive @Ten[tuple<!W>] from @Ten_box given(%ten)
+  %view = trait.derive @Ten[tuple<!W>] from @Ten_box[!B = !W] given(%ten)
     : (!trait.claim<@Ten[!W]>)
   %idx = trait.derive
-    @Idx[tuple<!W>, i64, !trait.proj<@Ten[tuple<!W>], "Element">]
-    from @Idx_blanket given(%view) : (!trait.claim<@Ten[tuple<!W>]>)
-  %walk = trait.derive @Walk[tuple<!W>] from @Walk_blanket given(%idx)
-    : (!trait.claim<@Idx[tuple<!W>, i64, !trait.proj<@Ten[tuple<!W>], "Element">]>)
+    @Idx[tuple<!W>, !trait.proj<@Ten[tuple<!W>], "Shape">,
+         !trait.proj<@Ten[tuple<!W>], "Element">]
+    from @Idx_blanket[!U = tuple<!W>] given(%view)
+    : (!trait.claim<@Ten[tuple<!W>]>)
   %e = trait.method.call %idx
-    @Idx[tuple<!W>, i64, !trait.proj<@Ten[tuple<!W>], "Element">]::@at(%self, %i)
+    @Idx[tuple<!W>, !trait.proj<@Ten[tuple<!W>], "Shape">,
+         !trait.proj<@Ten[tuple<!W>], "Element">]::@at(%self, %i)
     : (tuple<!W>, i64) -> !trait.proj<@Ten[tuple<!W>], "Element">
   return %e : !trait.proj<@Ten[tuple<!W>], "Element">
 }

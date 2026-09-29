@@ -163,12 +163,6 @@ MlirAttribute traitWitnessBodyGetRequirementHop(MlirContext ctx,
 MlirAttribute traitWitnessBodyGetAllegation(MlirContext ctx,
                                             MlirAttribute application);
 
-/// Answer whether `input` and `result` stand under the pending judgment a
-/// marked coerce carries, running verifyPendingCoerceEndpoints (TraitOps.hpp).
-/// Diagnostics are suppressed; a refusal is a classification answer, not a
-/// compile error.
-bool traitCoercePendingAccepts(MlirType input, MlirType result);
-
 /// Collect all unique types implementing GenericTypeInterface found in `type`.
 ///
 /// This walks `type` recursively and returns every distinct generic type

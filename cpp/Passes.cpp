@@ -617,14 +617,14 @@ allegationBehindBody(Attribute body, ClaimType source, ImplOp impl,
 /// Whether the proof selection made for `op`'s claim, `proof`, is the proof
 /// `op` committed to, refusing through `err` where it is not.
 ///
-/// A derive stating its impl's arguments commits to a proof through that impl.
-/// Any other op commits to nothing: an allegation is a trusted assertion, which
-/// any proof selection makes of its claim meets.
+/// A derive commits to a proof through the impl it cites. Any other op commits
+/// to nothing: an allegation is a trusted assertion, which any proof selection
+/// makes of its claim meets.
 static LogicalResult verifyProofKeepsCommitment(
     Operation *op, FlatSymbolRefAttr proof,
     llvm::function_ref<InFlightDiagnostic()> err) {
   auto derive = dyn_cast<DeriveOp>(op);
-  if (!derive || !derive.statesImplArguments())
+  if (!derive)
     return success();
   ModuleOp scope = getAnchorModule(op);
   auto provenBy = ProofOp::getImplFromProof(scope, proof);
@@ -2308,17 +2308,6 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
       continue;
     }
     hasLeftovers = true;
-    // A derive names the impl it stands on, so where its claim went unproven
-    // the op itself can say why: a premise that impl applies under, deferred
-    // while the template stood over its own variables and false at the instance
-    // this clone was cut at, is refused by the derive's own citation check and
-    // named there. The report below names the claim and not the premise, so it
-    // is what stands where the citation has nothing to add.
-    if (auto derive = dyn_cast<DeriveOp>(op)) {
-      SymbolTableCollection symbolTable;
-      if (failed(derive.verifySymbolUses(symbolTable)))
-        continue;
-    }
     InFlightDiagnostic report =
         op->emitError() << "unproven monomorphic claim " << claim
         << " after instantiate-monomorphs";
@@ -2455,11 +2444,9 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
     return failure();
 
   // ModuleOp's own verifier hook runs here over the module shell -- it does not
-  // recurse into the body, which is not guaranteed to verify recursively in
-  // general: a marked coerce whose two projections grounded to different types
-  // can stand here, and this shallow tail does not judge it. The bonded erase
-  // pass refuses such a coerce at its barrier, where endpoints that stand apart
-  // cannot be discharged and cannot cross.
+  // recurse into the body, and this shallow tail judges no coerce. The bonded
+  // erase pass refuses a coerce at its barrier where its endpoints stand apart:
+  // they cannot be discharged and cannot cross.
   DemandRecordingSuspension verifying;
   if (failed(module.verify()))
     return failure();
@@ -2527,12 +2514,13 @@ struct EraseCoerceOp : public OpConversionPattern<CoerceOp> {
     // resolution rewrote both to the same ground type), while an undischarged one
     // (its two projections ground to different types) still relates two spellings
     // and may not cross the barrier unjudged: every claim-to-claim coerce that
-    // reaches the barrier live, proven or marked, is judged here (one dropped as
-    // dead earlier, during instantiate-monomorphs, forwarded no value and so needs
-    // no judgment). Comparison strips application-claim proofs, exactly as the verifier does:
-    // a coerce compares modulo the proof permanently, so exchanging a proof
-    // label alone is not a surviving difference. (The value-carrying arm below
-    // needs no strip; the values it forwards carry no proof.)
+    // reaches the barrier live is judged here (one dropped as dead earlier,
+    // during instantiate-monomorphs, forwarded no value and so needs no
+    // judgment). Comparison strips application-claim proofs, exactly as the
+    // verifier does: a coerce compares modulo the proof permanently, so
+    // exchanging a proof label alone is not a surviving difference. (The
+    // value-carrying arm below needs no strip; the values it forwards carry no
+    // proof.)
     ValueRange input = adaptor.getInput();
     if (input.empty() || op.getResult().use_empty()) {
       if (stripClaimProofs(op.getInput().getType()) !=

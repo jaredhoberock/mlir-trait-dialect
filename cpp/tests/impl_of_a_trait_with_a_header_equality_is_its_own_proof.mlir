@@ -31,6 +31,8 @@ trait.impl private @T_i64 for @T[i64] {
 func.func @main(%x: i64) -> i64 {
   %c = trait.allege @T[i64]
   %r = trait.method.call %c @T[i64]::@get(%x) : (i64) -> !trait.proj<@T[i64], "Out">
-  %o = trait.coerce %r : !trait.proj<@T[i64], "Out"> to i64 unproven
+  %e = trait.allege !trait.proj<@T[i64], "Out"> = i64
+  %o = trait.coerce %r : !trait.proj<@T[i64], "Out"> to i64
+    via (%e) : (!trait.claim<!trait.proj<@T[i64], "Out"> = i64>)
   return %o : i64
 }

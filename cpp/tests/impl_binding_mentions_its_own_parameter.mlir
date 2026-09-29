@@ -29,6 +29,8 @@ trait.impl private @I for @Tr[tuple<!trait.poly<0>>] {
 func.func @main(%s: tuple<i32>) -> i32 {
   %c = trait.allege @Tr[tuple<i32>]
   %r = trait.method.call %c @Tr[tuple<i32>]::@f(%s) : (tuple<i32>) -> !trait.proj<@Tr[tuple<i32>], "X">
-  %o = trait.coerce %r : !trait.proj<@Tr[tuple<i32>], "X"> to i32 unproven
+  %e = trait.allege !trait.proj<@Tr[tuple<i32>], "X"> = i32
+  %o = trait.coerce %r : !trait.proj<@Tr[tuple<i32>], "X"> to i32
+    via (%e) : (!trait.claim<!trait.proj<@Tr[tuple<i32>], "X"> = i32>)
   return %o : i32
 }

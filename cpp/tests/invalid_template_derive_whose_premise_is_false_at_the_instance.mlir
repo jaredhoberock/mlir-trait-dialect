@@ -4,11 +4,10 @@
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' -verify-diagnostics
 
 // @Vector_blanket applies where Tensor[T]::Shape is i64. Inside the template
-// that premise reads over the template's own variable and is left to the
-// instances; at the instance @Tensor_i8 binds Shape to tuple<i64, i64>, so the
-// impl does not apply there. The derive names the impl it stands on, so the
-// refusal names the premise rather than reporting only that the claim went
-// unproven.
+// the derive supplies that premise as an allegation over the template's own
+// variable, unsafe and left to the instances; at the instance @Tensor_i8 binds
+// Shape to tuple<i64, i64>, so the allegation is refused where it stands, and
+// it and the derive resting on it stand unproven at the instantiation check.
 
 trait.trait private @Tensor[!trait.poly<0>] { trait.assoc_type @Shape }
 trait.trait private @Vector[!trait.poly<0>] { func.func private @v() -> i64 }
@@ -20,8 +19,12 @@ trait.impl private @Vector_blanket for @Vector[!trait.poly<0>] where [@Tensor[!t
 }
 trait.impl private @Tensor_i8 for @Tensor[i8] { trait.assoc_type @Shape = tuple<i64, i64> }
 func.func private @f(%t: !trait.claim<@Tensor[!trait.poly<0>]>) -> i64 {
-  // expected-error@+1 {{impl '@Vector_blanket' applies where '!trait.proj<@Tensor[!trait.poly<0>], "Shape">' = 'i64', and nothing here makes 'tuple<i64, i64>' and 'i64' one type at '!trait.claim<@Vector[i8]>'}}
-  %v = trait.derive @Vector[!trait.poly<0>] from @Vector_blanket given(%t) : (!trait.claim<@Tensor[!trait.poly<0>]>)
+  // expected-error@+2 {{alleges '!trait.proj<@Tensor[i8], "Shape">' = 'i64', and impl selection resolves its sides to 'tuple<i64, i64>' and 'i64'}}
+  // expected-error@+1 {{unproven monomorphic claim '!trait.claim<!trait.proj<@Tensor[i8], "Shape"> = i64>' after instantiate-monomorphs}}
+  %e = trait.allege !trait.proj<@Tensor[!trait.poly<0>], "Shape"> = i64 unsafe
+  // expected-error@+1 {{unproven monomorphic claim '!trait.claim<@Vector[i8]>' after instantiate-monomorphs}}
+  %v = trait.derive @Vector[!trait.poly<0>] from @Vector_blanket[!trait.poly<0> = !trait.poly<0>] given(%t, %e)
+    : (!trait.claim<@Tensor[!trait.poly<0>]>, !trait.claim<!trait.proj<@Tensor[!trait.poly<0>], "Shape"> = i64>)
   %r = trait.method.call %v @Vector[!trait.poly<0>]::@v() : () -> i64
   return %r : i64
 }

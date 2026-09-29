@@ -70,7 +70,6 @@ unsafe extern "C" {
                                          type_args: *const MlirType, num_type_args: isize,
                                          premises: *const MlirAttribute, num_premises: isize) -> MlirAttribute;
     fn traitWitnessBodyGetAllegation(ctx: MlirContext, application: MlirAttribute) -> MlirAttribute;
-    fn traitCoercePendingAccepts(input: MlirType, result: MlirType) -> bool;
     fn traitModuleInstantiateImpl(module: mlir_sys::MlirModule, name: MlirStringRef,
                                   bindings: *const MlirAttribute, num_bindings: isize,
                                   header: *mut MlirType, where_claims: *mut MlirType, max_where: isize,
@@ -151,7 +150,7 @@ fn type_array_attr<'c>(loc: Location<'c>, types: &[Type<'c>]) -> Attribute<'c> {
 }
 
 /// The unit attribute in the location's context (the value of a present
-/// `UnitAttr`, e.g. a witness's `refl` or a coerce's `unproven` marker).
+/// `UnitAttr`, e.g. a witness's `refl` or an allegation's `unsafe` marker).
 fn unit_attr<'c>(loc: Location<'c>) -> Attribute<'c> {
     unsafe { Attribute::from_raw(mlirUnitAttrGet(mlirLocationGetContext(loc.to_raw()))) }
 }
@@ -425,20 +424,6 @@ pub fn project<'c>(loc: Location<'c>,
         .add_results(&[result_claim]))
 }
 
-/// Build a `trait.derive` of `trait_app` through the impl `impl_name`, stating
-/// none of its arguments, with one claim in `assumptions` per application entry
-/// of the impl's where clause.
-pub fn derive<'c>(loc: Location<'c>,
-                  trait_app: TraitApplicationAttribute<'c>,
-                  impl_name: &str,
-                  assumptions: &[Value<'c,'_>],
-) -> Operation<'c> {
-    build_op(OperationBuilder::new("trait.derive", loc)
-        .add_operands(assumptions)
-        .add_attributes(&[(identifier(loc, "impl"), symbol_ref_attr(loc, impl_name))])
-        .add_results(&[unproven_claim(loc, trait_app.into())]))
-}
-
 /// The `#trait.binding` attributes pairing each of an impl's own parameters, as
 /// the impl spells it, with the argument it takes; `None` if a key is not a
 /// type parameter.
@@ -491,11 +476,11 @@ pub fn proof<'c>(loc: Location<'c>,
 /// `arguments`, one pair per parameter of the impl, with `premises` holding one
 /// claim per entry of the impl's where clause, in its order. Returns `None` if
 /// a key is not a type parameter.
-pub fn derive_with_arguments<'c>(loc: Location<'c>,
-                                 trait_app: TraitApplicationAttribute<'c>,
-                                 impl_name: &str,
-                                 arguments: &[(Type<'c>, Type<'c>)],
-                                 premises: &[Value<'c,'_>],
+pub fn derive<'c>(loc: Location<'c>,
+                  trait_app: TraitApplicationAttribute<'c>,
+                  impl_name: &str,
+                  arguments: &[(Type<'c>, Type<'c>)],
+                  premises: &[Value<'c,'_>],
 ) -> Option<Operation<'c>> {
     let bindings = type_bindings(unsafe { mlirLocationGetContext(loc.to_raw()) }, arguments)?;
     let claim = unproven_claim(loc, trait_app.into());
@@ -826,27 +811,6 @@ pub fn coerce<'c>(loc: Location<'c>, input: Value<'c, '_>, equalities: &[Value<'
         .add_operands(equalities)
         .add_results(&[result_type]))
 }
-
-/// Create a marked (unproven) `trait.coerce`: change `input`'s written type to
-/// `result_type` citing no equalities. The reconciling equality is supplied by
-/// an impl minted at monomorphization, which respells the endpoints' projections
-/// to ground and leaves the reflexive form the folder discharges.
-pub fn coerce_unproven<'c>(loc: Location<'c>, input: Value<'c, '_>, result_type: Type<'c>) -> Operation<'c> {
-    build_op(OperationBuilder::new("trait.coerce", loc)
-        .add_operands(&[input])
-        .add_attributes(&[(identifier(loc, "unproven"), unit_attr(loc))])
-        .add_results(&[result_type]))
-}
-
-/// Answer whether `input` and `result` could converge under the pending
-/// judgment a marked (unproven) `trait.coerce` carries: proofs stripped, then
-/// projection unification with each projection an opaque variable, bare-
-/// projection aliases admitted. This is the one judgment every checker of the
-/// marked coerce shares. Refusal is a plain `false`, not a diagnostic.
-pub fn coerce_pending_accepts(input: Type, result: Type) -> bool {
-    unsafe { traitCoercePendingAccepts(input.to_raw(), result.to_raw()) }
-}
-
 
 /// Create a `trait.assoc_type` op. Pass `None` for a bare declaration (inside a
 /// trait body) or `Some(type)` for a binding (inside an impl body).

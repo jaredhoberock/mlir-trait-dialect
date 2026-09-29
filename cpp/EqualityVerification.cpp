@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // The judgments shared across the trait dialect's equality-evidence checkers:
-// projection resolution with its obligation discharge, the ground-congruence
-// entailment a witness composition and a proven coerce both appeal to, and the
-// consistency a marked coerce is held to while its endpoints are still open.
+// projection resolution with its obligation discharge, and the ground-congruence
+// entailment a witness composition and a coerce both appeal to.
 
 #include "Trait.hpp"
 #include "TraitOps.hpp"
@@ -700,32 +699,3 @@ Type mlir::trait::stripClaimProofs(Type type) {
   return strip.replace(type);
 }
 
-// The pending judgment a marked (unproven) coerce carries. Its reconciling
-// equalities are not yet citable -- the impl that supplies them is minted at
-// monomorphization -- so the endpoints are judged twice: here, where the
-// spellings may still be open, and again at the erase barrier, where they are
-// not. Endpoints identical after proof stripping are already reconciled.
-// Endpoints where either side still spells a projection or a type variable are
-// open: what each denotes is settled by instantiation and by the impls
-// monomorphization mints, so this verifier has nothing to decide and leaves the
-// judgment to the barrier, which refuses a coerce whose ground endpoints stand
-// apart. Two ground endpoints that differ are settled here and now: no later
-// step can bring them together, so they are refused. Endpoints arrive with
-// proofs already stripped.
-LogicalResult mlir::trait::verifyPendingCoerceEndpoints(
-    Type input, Type result,
-    llvm::function_ref<InFlightDiagnostic()> emitError) {
-  if (input == result)
-    return success();
-
-  auto stillOpen = [](Type ty) {
-    return containsType<ProjectionType>(ty) || containsType<PolyType>(ty);
-  };
-  if (stillOpen(input) || stillOpen(result))
-    return success();
-
-  if (emitError)
-    emitError() << "input type " << input << " and result type " << result
-                << " are not consistent as a pending coerce";
-  return failure();
-}

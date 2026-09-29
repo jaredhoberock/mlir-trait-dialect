@@ -242,17 +242,6 @@ MlirAttribute traitBoundPredicateAttrGet(MlirContext wrappedCtx,
       unwrap(conclusion)));
 }
 
-bool traitCoercePendingAccepts(MlirType input, MlirType result) {
-  // The consult runs the verifier's own marked arm: strip proofs, then the
-  // shared pending judgment. Sharing the function keeps the classifier's verdict
-  // and the codegen-exit verifier's from ever disagreeing.
-  Type in = stripClaimProofs(unwrap(input));
-  Type out = stripClaimProofs(unwrap(result));
-  // A refused pending judgment is a classification answer, not a compile error,
-  // so this consult passes no diagnostic sink and the judgment stays silent.
-  return succeeded(verifyPendingCoerceEndpoints(in, out));
-}
-
 intptr_t traitGetGenericTypesIn(MlirType type, MlirType *results, intptr_t maxResults) {
   auto generics = getGenericTypesIn(unwrap(type));
   intptr_t count = static_cast<intptr_t>(generics.size());
