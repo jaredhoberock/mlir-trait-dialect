@@ -204,37 +204,44 @@ struct ResolvedImpl {
   ClaimType selectedClaim;
 };
 
-/// One step of a ground projection's resolution: the impl selection settled on
-/// for the projection's application, the arguments that impl's parameters take
-/// at the claim selection chose it for, and the impl's binding of the projected
-/// associated type at those arguments and at the projection's own
-/// associated-type arguments as spelled.
+/// One step of the resolution of a projection with a ground head: the impl
+/// selection settled on for the projection's application, the arguments that
+/// impl's parameters take at the claim selection chose it for, and the impl's
+/// binding of the projected associated type at those arguments and at the
+/// projection's own associated-type arguments as spelled.
 ///
 /// The binding is specialized and nothing more: a projection it spells, the
 /// impl's own or one an associated-type argument carried in, is a step of its
 /// own. So `projection = binding` is exactly what the witness verifier's
 /// specialization of the cited impl's binding reproduces. The only constructor
-/// reads the arguments off what selection settled and specializes the binding
-/// itself, so a step that exists states what the selected impl binds at the
-/// arguments it takes there.
+/// asks selection about the projection's own application, reads the arguments
+/// off what selection settled, and specializes the binding itself, so a step
+/// that exists states what the impl selected for its projection binds at the
+/// arguments it takes there. Only the two owners of selection and its record
+/// construct one.
 class ProjectionResolution {
 public:
-  /// The step resolving `projection` through `resolved`, the impl selection
-  /// settled on for its application, read through `record`, the context
-  /// selection chose it under. Fails where the impl's header does not carry to
-  /// the claim selection chose it for, or where the impl binds no such
-  /// associated type at the projection's associated-type arguments.
-  static FailureOr<ProjectionResolution>
-  get(ProjectionType projection, const ResolvedImpl &resolved,
-      const ReadOnlyImplResolver &record,
-      llvm::function_ref<InFlightDiagnostic()> err = nullptr);
-
   ProjectionType getProjection() const { return projection; }
   ImplOp getImpl() const { return impl; }
   const SpecializationMap &getArguments() const { return arguments; }
   Type getBinding() const { return binding; }
 
 private:
+  friend class ImplResolver;
+  friend class ReadOnlyImplResolver;
+
+  /// The step resolving `projection` through the impl `select` settles on for
+  /// the projection's application, read through `record`, the context
+  /// selection chose it under. Fails where selection settles on no impl, where
+  /// the impl's header does not carry to the claim selection chose it for, or
+  /// where the impl binds no such associated type at the projection's
+  /// associated-type arguments.
+  static FailureOr<ProjectionResolution>
+  get(ProjectionType projection,
+      llvm::function_ref<FailureOr<ResolvedImpl>(ClaimType)> select,
+      const ReadOnlyImplResolver &record,
+      llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+
   ProjectionResolution(ProjectionType projection, ImplOp impl,
                        SpecializationMap arguments, Type binding)
       : projection(projection), impl(impl), arguments(std::move(arguments)),
@@ -320,7 +327,7 @@ struct ProofResolutionMemo {
 /// The main entry point is `resolveAndEnsureProofFor`, which guarantees
 /// that a canonical proof exists for a fully-concrete trait application.
 /// Resolution proceeds by:
-///   1. Returning the symbol of a self-proving `trait.impl` if one exists.
+///   1. Proving it by a self-proving `trait.impl` if one exists.
 ///   2. Otherwise, recursively resolving and ensuring proofs for all
 ///      requirements and assumptions, then creating or reusing a
 ///      `trait.proof` operation.
@@ -357,24 +364,26 @@ class ImplResolver {
 
     /// Ensures canonical proof for a fully-concrete trait application `claim`.
     /// Resolution proceeds as follows:
-    ///   1. If an unconditional ImplOp exists, return its symbol directly.
+    ///   1. If an unconditional ImplOp exists, its symbol proves the claim.
     ///   2. Otherwise, recursively resolve and ensure proofs for all requirements
-    ///      and assumptions, then create (or reuse) a `trait.proof` op and return
-    ///      its symbol.
+    ///      and assumptions, then create (or reuse) a `trait.proof` op whose
+    ///      symbol proves it.
     /// This function may mutate the IR via `builder`.
     ///
-    /// Returns the symbol (ImplOp or ProofOp) that proves `claim`, or failure if
-    /// no unique and satisfiable impl can be found.
+    /// Returns `claim` proven: the application its proof is recorded under,
+    /// which is `claim`'s with its projections resolved as selection resolved
+    /// them, naming the symbol (ImplOp or ProofOp) that proves it. Fails if no
+    /// unique and satisfiable impl can be found.
     ///
     /// `refusedOn`, when given, receives what impl selection refused this
     /// claim's application on, and is left alone where selection did not
     /// refuse -- a proof that fails downstream of a selected impl names no
     /// refutation.
-    FailureOr<FlatSymbolRefAttr> resolveAndEnsureProofFor(ClaimType claim,
-                                                          ModuleOp scope,
-                                                          OpBuilder &builder,
-                                                          llvm::function_ref<InFlightDiagnostic()> err = nullptr,
-                                                          std::optional<Refutation> *refusedOn = nullptr);
+    FailureOr<ClaimType> resolveAndEnsureProofFor(ClaimType claim,
+                                                  ModuleOp scope,
+                                                  OpBuilder &builder,
+                                                  llvm::function_ref<InFlightDiagnostic()> err = nullptr,
+                                                  std::optional<Refutation> *refusedOn = nullptr);
 
     /// Resolves one step of a concrete ProjectionType: the impl the internal
     /// impl resolution pipeline selects for its application, the arguments
@@ -408,7 +417,9 @@ class ImplResolver {
     /// scheduling rounds needs and what a bare resolution result does not say.
     /// A claim is served by proving it, which mints the proof its demander
     /// could only read; the two dispositions are read off the same refutation
-    /// arm.
+    /// arm. A projection deferred is recorded in the ledger, and the stage's
+    /// exit check (`DemandLedger::checkStandingDemandsServed`) refuses a
+    /// recorded demand still spelled and never served when the rounds end.
     DemandDisposition serveDemand(ProjectionType demand, ModuleOp scope,
                                   OpBuilder &builder);
     DemandDisposition serveDemand(ClaimType demand, ModuleOp scope,
@@ -445,11 +456,6 @@ class ImplResolver {
     /// does: a count that fell could show a reader the same number across a
     /// record that had changed in between.
     uint64_t getRecordEpoch() const { return recordEpoch; }
-
-    /// Walks `ty` and replaces every concrete (monomorphic) ProjectionType
-    /// with its resolved type via full impl lookup.  Polymorphic projections
-    /// are left untouched.  Returns the rewritten type.
-    Type resolveProjectionsIn(Type ty, ModuleOp scope, OpBuilder &builder);
 
     /// A replacer that respells every unproven claim whose trait application
     /// this resolver has recorded a proof for in `scope`.
@@ -520,6 +526,11 @@ class ImplResolver {
     friend class ImplGenerationFreeze;
     friend class ReadOnlyImplResolver;
 
+    /// Walks `ty` and replaces every concrete (monomorphic) ProjectionType
+    /// with its resolved type via full impl lookup.  Polymorphic projections
+    /// are left untouched.  Returns the rewritten type.
+    Type resolveProjectionsIn(Type ty, ModuleOp scope, OpBuilder &builder);
+
     /// Finds the unique impl for the wanted claim and returns the normalized
     /// claim that was actually used for selection. `refusedOn`, when given,
     /// receives the refutation a refusal was refused on.
@@ -530,11 +541,13 @@ class ImplResolver {
         llvm::function_ref<InFlightDiagnostic()> err = nullptr,
         std::optional<Refutation> *refusedOn = nullptr);
 
-    /// Records `sym` as what proves `app` in `scope`, counting the fact.
-    void recordProof(ModuleOp scope, TraitApplicationAttr app,
-                     FlatSymbolRefAttr sym) {
+    /// Records `sym` as what proves `app` in `scope`, counting the fact, and
+    /// answers the claim of `app` that `sym` proves.
+    ClaimType recordProof(ModuleOp scope, TraitApplicationAttr app,
+                          FlatSymbolRefAttr sym) {
       memo.proofMemo[{scope, app}] = sym;
       noteFactWritten();
+      return ClaimType::get(scope.getContext(), app, sym);
     }
 
     /// Counts one fact write, so that what was derived from the fact base
@@ -728,14 +741,15 @@ public:
   /// resolve, leaving the rest spelled as written and recording each one.
   Type resolveProjectionsIn(Type ty) const;
 
-  /// The symbol proving `claim`, from what impl selection has recorded. Fails
-  /// where no proof of it is recorded, which is what a caller declines on.
+  /// `claim` proven, from what impl selection has recorded: the application
+  /// its proof is recorded under, naming the symbol that proves it. Fails where
+  /// no proof of it is recorded, which is what a caller declines on.
   ///
   /// Proofs are recorded under the monomorphic application the selected impl's
   /// self-claim substitution produces, so a source spelling is put through the
   /// same two steps -- selection's own projection resolution, then that
   /// substitution -- before it is looked up.
-  FailureOr<FlatSymbolRefAttr> getRecordedProofFor(ClaimType claim) const;
+  FailureOr<ClaimType> getRecordedProofFor(ClaimType claim) const;
 
 private:
   /// The impl selection settled on for `wanted`, paired with the claim it

@@ -352,14 +352,16 @@ argumentsOf(const ResolvedImpl &resolved, const ReadOnlyImplResolver &record,
       resolved.selectedClaim, RecordedProjectionLookup(record), err);
 }
 
-FailureOr<ProjectionResolution>
-ProjectionResolution::get(ProjectionType projection,
-                          const ResolvedImpl &resolved,
-                          const ReadOnlyImplResolver &record,
-                          llvm::function_ref<InFlightDiagnostic()> err) {
-  auto arguments = argumentsOf(resolved, record, err);
+FailureOr<ProjectionResolution> ProjectionResolution::get(
+    ProjectionType projection,
+    llvm::function_ref<FailureOr<ResolvedImpl>(ClaimType)> select,
+    const ReadOnlyImplResolver &record,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  auto resolved = select(projection.asClaim());
+  if (failed(resolved)) return failure();
+  auto arguments = argumentsOf(*resolved, record, err);
   if (failed(arguments)) return failure();
-  ImplOp impl = resolved.impl;
+  ImplOp impl = resolved->impl;
   auto binding = impl.specializeAssociatedTypeBinding(
       projection.getAssocName().getValue(), projection.getAssocTypeArgs(),
       *arguments, err);
@@ -389,11 +391,10 @@ FailureOr<ProjectionResolution> ImplResolver::resolveProjection(
     std::optional<Refutation> *refusedOn) {
   DemandFrame frame{Type(proj)};
 
-  ClaimType claim = ClaimType::get(proj.getContext(), proj.getTraitApplication());
-  auto resolvedImpl = resolveImplFor(claim, scope, builder, err, refusedOn);
-  if (failed(resolvedImpl)) return failure();
-
-  return ProjectionResolution::get(proj, *resolvedImpl,
+  auto select = [&](ClaimType claim) {
+    return resolveImplFor(claim, scope, builder, err, refusedOn);
+  };
+  return ProjectionResolution::get(proj, select,
                                    ReadOnlyImplResolver(*this, scope), err);
 }
 
@@ -436,7 +437,15 @@ ImplResolver::serveDemand(ProjectionType demand, ModuleOp scope,
   if (succeeded(resolveProjection(demand, scope, builder, /*err=*/nullptr,
                                   &refusedOn)))
     return DemandDisposition::Served;
-  return refusalDisposition(Type(demand), scope, refusedOn);
+  DemandDisposition disposition =
+      refusalDisposition(Type(demand), scope, refusedOn);
+  // A demand put to selection is one the stage has undertaken to serve,
+  // wherever it was found spelled, and the stage's exit check reads the
+  // recorded demands. So one selection could not serve yet is recorded here,
+  // whether an engine recorded it before or the round found it spelled.
+  if (disposition == DemandDisposition::Deferred)
+    recordResolverProjectionMiss(Type(demand));
+  return disposition;
 }
 
 ImplResolver::DemandDisposition
@@ -505,7 +514,7 @@ AttrTypeReplacer ImplResolver::makeProvenClaimReplacer(ModuleOp scope) const {
   return replacer;
 }
 
-FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
+FailureOr<ClaimType> ImplResolver::resolveAndEnsureProofFor(
     ClaimType wanted,
     ModuleOp scope,
     OpBuilder &builder,
@@ -529,19 +538,16 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
     return failure();
   }
   TraitApplicationAttr app = *monomorphic;
+  MLIRContext *ctx = scope.getContext();
 
   // check the proof memo for this monomorphic app, as read here
   if (auto it = memo.proofMemo.find({scope, app}); it != memo.proofMemo.end())
-    return it->second;
-
-  MLIRContext *ctx = scope.getContext();
+    return ClaimType::get(ctx, app, it->second);
 
   // check for an unconditional impl
-  if (impl.isUnconditional()) {
-    auto sym = FlatSymbolRefAttr::get(ctx, impl.getSymName());
-    recordProof(scope, app, sym);
-    return sym;
-  }
+  if (impl.isUnconditional())
+    return recordProof(scope, app,
+                       FlatSymbolRefAttr::get(ctx, impl.getSymName()));
 
   // A proof already standing for this impl at this application answers for it
   // only when deriving it succeeds. Naming the impl and the application is
@@ -555,10 +561,8 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
     EvidenceBindings bindings;
     if (succeeded(verifyAndRecordProof(standing.asUnproven(), standing, scope,
                                        bindings, DemandOrigin::ProofRecording,
-                                       &derivations, /*err=*/nullptr))) {
-      recordProof(scope, app, sym);
-      return sym;
-    }
+                                       &derivations, /*err=*/nullptr)))
+      return recordProof(scope, app, sym);
   }
 
   // Compute the proof name early so we can use it as the coinductive memo entry.
@@ -570,10 +574,8 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
     if (succeeded(verifyAndRecordProof(candidate.asUnproven(), candidate,
                                        scope, bindings,
                                        DemandOrigin::ProofRecording,
-                                       &derivations, err))) {
-      recordProof(scope, app, proofSym);
-      return proofSym;
-    }
+                                       &derivations, err)))
+      return recordProof(scope, app, proofSym);
 
     if (err)
       err() << "proof symbol collision for @" << proofName;
@@ -595,9 +597,9 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
   if (failed(obligations)) return failure();
   SmallVector<Attribute> subproofSymbols;
   for (ClaimType ob : *obligations) {
-    auto sym = resolveAndEnsureProofFor(ob, scope, builder, err);
-    if (failed(sym)) return failure();
-    subproofSymbols.push_back(*sym);
+    auto subproof = resolveAndEnsureProofFor(ob, scope, builder, err);
+    if (failed(subproof)) return failure();
+    subproofSymbols.push_back(subproof->getProof());
   }
 
   // The proof states the arguments its impl's parameters take and holds one
@@ -640,9 +642,8 @@ FailureOr<FlatSymbolRefAttr> ImplResolver::resolveAndEnsureProofFor(
       ArrayAttr::get(ctx, arguments), app, ArrayAttr::get(ctx, given));
 
   getStandingProofs(scope).note(proof);
-  FlatSymbolRefAttr sym = FlatSymbolRefAttr::get(ctx, proof.getSymNameAttr());
-  recordProof(scope, app, sym);
-  return sym;
+  return recordProof(scope, app,
+                     FlatSymbolRefAttr::get(ctx, proof.getSymNameAttr()));
 }
 
 //===----------------------------------------------------------------------===//
@@ -731,11 +732,8 @@ FailureOr<ProjectionResolution>
 ReadOnlyImplResolver::resolveProjection(ProjectionType proj) const {
   DemandFrame frame{Type(proj)};
 
-  ClaimType claim = ClaimType::get(proj.getContext(), proj.getTraitApplication());
-  auto resolvedImpl = getRecordedImplFor(claim);
-  if (failed(resolvedImpl)) return failure();
-
-  return ProjectionResolution::get(proj, *resolvedImpl, *this, /*err=*/nullptr);
+  auto select = [this](ClaimType claim) { return getRecordedImplFor(claim); };
+  return ProjectionResolution::get(proj, select, *this, /*err=*/nullptr);
 }
 
 Type ReadOnlyImplResolver::resolveProjectionsIn(Type ty) const {
@@ -765,7 +763,7 @@ Type ReadOnlyImplResolver::resolveProjectionsIn(Type ty) const {
       ty, scope, [&](Type t) { return replacer.replace(t); });
 }
 
-FailureOr<FlatSymbolRefAttr>
+FailureOr<ClaimType>
 ReadOnlyImplResolver::getRecordedProofFor(ClaimType claim) const {
   DemandFrame frame{Type(claim)};
 
@@ -779,7 +777,7 @@ ReadOnlyImplResolver::getRecordedProofFor(ClaimType claim) const {
 
   auto proof = getRecordedProof(*monomorphic);
   if (!proof) return failure();
-  return *proof;
+  return ClaimType::get(claim.getContext(), *monomorphic, *proof);
 }
 
 } // end mlir::trait

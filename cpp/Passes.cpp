@@ -635,28 +635,13 @@ static LogicalResult verifyProofKeepsCommitment(
                << ", and impl selection proved it by " << proof;
 }
 
-/// Resolve to a fixed point every ground projection standing anywhere in `type`,
-/// descending composites, through `hop`. A projection `hop` declines and any
-/// polymorphic projection are left standing. Resolution runs to a fixed point
-/// because one hop's binding may spell the next; the shared normalizer owns the
-/// bound and stops the compilation at a chain that never grounds out, the same
-/// refusal every ground resolver makes.
-static Type resolveGroundProjections(
-    Type type, ModuleOp module,
-    llvm::function_ref<std::optional<Type>(ProjectionType)> hop) {
-  return normalizeProjectionsToFixedPoint(type, module, [&](Type current) {
-    AttrTypeReplacer replacer = makeGroundProjectionReplacer(hop);
-    return replacer.replace(current);
-  });
-}
-
 /// Where the witness of a resolved projection reads the facts it cites: `hop`
 /// resolves one step of a monomorphic projection and `proofOf` proves an
-/// application claim. Each fails where it does not serve. `module` bounds the
-/// fixed-point resolution of an endpoint.
+/// application claim, answering it proven. Each fails where it does not serve.
+/// `module` bounds the fixed-point resolution of an endpoint.
 struct ResolutionSource {
   llvm::function_ref<FailureOr<ProjectionResolution>(ProjectionType)> hop;
-  llvm::function_ref<FailureOr<FlatSymbolRefAttr>(ClaimType)> proofOf;
+  llvm::function_ref<FailureOr<ClaimType>(ClaimType)> proofOf;
   ModuleOp module;
 };
 
@@ -691,11 +676,11 @@ static FailureOr<ResolutionHop> resolutionHopOf(ProjectionType proj,
   ResolutionHop hop;
   for (ClaimType assumption : impl.getAssumptionsAsClaims()) {
     auto premise = cast<ClaimType>(instantiate(Type(assumption), arguments));
-    FailureOr<FlatSymbolRefAttr> proof = source.proofOf(premise);
-    if (failed(proof))
+    FailureOr<ClaimType> proven = source.proofOf(premise);
+    if (failed(proven))
       return failure();
-    hop.premises.push_back(
-        ClaimType::get(ctx, premise.getTraitApplication(), *proof));
+    hop.premises.push_back(ClaimType::get(ctx, premise.getTraitApplication(),
+                                          proven->getProof()));
   }
   hop.equality = TypeEqualityAttr::get(ctx, Type(step->getProjection()),
                                        step->getBinding());
@@ -706,9 +691,9 @@ static FailureOr<ResolutionHop> resolutionHopOf(ProjectionType proj,
 }
 
 /// The ground spellings the endpoints of `eq` resolve to through `source`,
-/// appending one hop per ground projection resolved on the way to `hops`;
-/// identical endpoints are read as spelled. The walk descends composites, so a
-/// projection nested inside one -- the resolved side of
+/// appending one hop per distinct ground projection resolved on the way to
+/// `hops`; identical endpoints are read as spelled. The walk descends
+/// composites, so a projection nested inside one -- the resolved side of
 /// `type Out = Vec<Self::Item>` -- yields its hop just as a top-level projection
 /// does, and runs to a fixed point because a binding may itself spell a
 /// projection, the impl's own or one a generic associated type's argument
@@ -719,22 +704,29 @@ resolveEndpoints(TypeEqualityAttr eq, const ResolutionSource &source,
                  SmallVectorImpl<ResolutionHop> &hops) {
   if (eq.getLhs() == eq.getRhs())
     return std::make_pair(eq.getLhs(), eq.getRhs());
-  // The shared resolver leaves a projection whose hop fails standing; the
-  // failure is carried out past the fixed point so that it, and not the
-  // standing projection, is what refuses.
+  // A projection whose hop fails is left standing; the failure is carried out
+  // past the fixed point so that it, and not the standing projection, is what
+  // refuses. One replacer serves both endpoints and every round of the fixed
+  // point, and it answers a projection it has already met from its cache, so a
+  // projection spelled twice is one hop.
   bool hopFailed = false;
+  AttrTypeReplacer replacer = makeGroundProjectionReplacer(
+      [&](ProjectionType proj) -> std::optional<Type> {
+        FailureOr<ResolutionHop> hop = resolutionHopOf(proj, source);
+        if (failed(hop)) {
+          hopFailed = true;
+          return std::nullopt;
+        }
+        hops.push_back(*hop);
+        return hop->equality.getRhs();
+      });
+  // The shared normalizer owns the fixed point's bound and stops the
+  // compilation at a chain that never grounds out, the same refusal every
+  // ground resolver makes.
   auto resolve = [&](Type endpoint) {
-    return resolveGroundProjections(
+    return normalizeProjectionsToFixedPoint(
         endpoint, source.module,
-        [&](ProjectionType proj) -> std::optional<Type> {
-          FailureOr<ResolutionHop> hop = resolutionHopOf(proj, source);
-          if (failed(hop)) {
-            hopFailed = true;
-            return std::nullopt;
-          }
-          hops.push_back(*hop);
-          return hop->equality.getRhs();
-        });
+        [&](Type current) { return replacer.replace(current); });
   };
   Type lhs = resolve(eq.getLhs());
   Type rhs = resolve(eq.getRhs());
@@ -874,50 +866,38 @@ struct ProveClaimResultPattern : public RewritePattern {
     // symbol its own module resolves, and the impls that may serve it are the
     // ones standing there.
     ModuleOp scope = getAnchorModule(op);
-    ReadOnlyImplResolver here = reading.in(scope);
 
     // build or reuse canonical evidence for this claim
-    FailureOr<FlatSymbolRefAttr> sym = proofFor(claim, scope, rewriter, errFn);
-    if (failed(sym))
+    FailureOr<ClaimType> proven = proofFor(claim, scope, rewriter, errFn);
+    if (failed(proven))
       return rewriter.notifyMatchFailure(op, "couldn't find proof of this claim");
 
-    if (commitmentBroken(*sym))
+    if (commitmentBroken(proven->getProof()))
       return rewriter.notifyMatchFailure(op, "selection chose another impl");
 
-    // Mint the witness at the same spelling the proof was recorded under.
-    // Impl selection resolves the claim's monomorphic projections before
-    // recording (resolveImplFor), so the recorded fact is spelled with those
-    // projections resolved. Spelling the witness at the producer's source claim
-    // instead would leave the witnessed application and its recorded proof
-    // disagreeing on the projections. Resolving here is deterministic recorded
-    // lookup (the impls are already in the module) and is idempotent with the
-    // resolution resolveAndEnsureProofFor just performed.
-    auto recorded = cast<ClaimType>(
-        minting ? minting->resolveProjectionsIn(claim, scope, rewriter)
-                : here.resolveProjectionsIn(claim));
-    rewriter.replaceOpWithNewOp<WitnessOp>(
-      op,
-      *sym,
-      recorded.getTraitApplication()
-    );
+    // The witness names the application its proof was recorded under, which
+    // selection spelled with the claim's projections resolved; the producer's
+    // source spelling would leave the two disagreeing on those projections.
+    rewriter.replaceOpWithNewOp<WitnessOp>(op, proven->getProof(),
+                                           proven->getTraitApplication());
 
     return success();
   }
 
-  /// The proof of the monomorphic application claim `claim` demanded in
-  /// `scope`: the one selection makes where this pattern may establish facts,
-  /// else the one the record holds, a claim the record does not prove being
+  /// The monomorphic application claim `claim` demanded in `scope`, proven:
+  /// by the proof selection makes where this pattern may establish facts, else
+  /// by the one the record holds, a claim the record does not prove being
   /// declined for a later round.
-  FailureOr<FlatSymbolRefAttr>
+  FailureOr<ClaimType>
   proofFor(ClaimType claim, ModuleOp scope, PatternRewriter &rewriter,
            llvm::function_ref<InFlightDiagnostic()> errFn) const {
     if (minting)
       return minting->resolveAndEnsureProofFor(claim, scope, rewriter, errFn);
     ReadOnlyImplResolver here = reading.in(scope);
-    FailureOr<FlatSymbolRefAttr> proof = here.getRecordedProofFor(claim);
-    if (failed(proof))
+    FailureOr<ClaimType> proven = here.getRecordedProofFor(claim);
+    if (failed(proven))
       (void)here.decline(claim);
-    return proof;
+    return proven;
   }
 
   /// Proves the monomorphic equality `eq` `allegation` alleges: each projection
