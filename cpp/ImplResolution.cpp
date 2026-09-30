@@ -352,18 +352,20 @@ argumentsOf(const ResolvedImpl &resolved, const ReadOnlyImplResolver &record,
       resolved.selectedClaim, RecordedProjectionLookup(record), err);
 }
 
-/// The type `proj` projects to through `resolved`, the impl selection settled
-/// on for its application, at `assocTypeArgs`, the projection's own
-/// associated-type arguments as the caller resolved them.
-static FailureOr<Type>
-bindingThrough(const ResolvedImpl &resolved, ProjectionType proj,
-               ArrayRef<Type> assocTypeArgs, const ReadOnlyImplResolver &record,
-               llvm::function_ref<InFlightDiagnostic()> err) {
+FailureOr<ProjectionResolution>
+ProjectionResolution::get(ProjectionType projection,
+                          const ResolvedImpl &resolved,
+                          const ReadOnlyImplResolver &record,
+                          llvm::function_ref<InFlightDiagnostic()> err) {
   auto arguments = argumentsOf(resolved, record, err);
   if (failed(arguments)) return failure();
   ImplOp impl = resolved.impl;
-  return impl.specializeAssociatedTypeBinding(
-      proj.getAssocName().getValue(), assocTypeArgs, *arguments, err);
+  auto binding = impl.specializeAssociatedTypeBinding(
+      projection.getAssocName().getValue(), projection.getAssocTypeArgs(),
+      *arguments, err);
+  if (failed(binding)) return failure();
+  return ProjectionResolution(projection, impl, std::move(*arguments),
+                              *binding);
 }
 
 /// The monomorphic application `resolved`'s impl header states at `arguments`,
@@ -379,7 +381,7 @@ monomorphicApplicationOf(const ResolvedImpl &resolved,
   return instance.getTraitApplication();
 }
 
-FailureOr<Type> ImplResolver::resolveProjectionType(
+FailureOr<ProjectionResolution> ImplResolver::resolveProjection(
     ProjectionType proj,
     ModuleOp scope,
     OpBuilder &builder,
@@ -391,12 +393,8 @@ FailureOr<Type> ImplResolver::resolveProjectionType(
   auto resolvedImpl = resolveImplFor(claim, scope, builder, err, refusedOn);
   if (failed(resolvedImpl)) return failure();
 
-  SmallVector<Type> assocTypeArgs;
-  for (Type arg : proj.getAssocTypeArgs())
-    assocTypeArgs.push_back(resolveProjectionsIn(arg, scope, builder));
-
-  return bindingThrough(*resolvedImpl, proj, assocTypeArgs,
-                        ReadOnlyImplResolver(*this, scope), err);
+  return ProjectionResolution::get(proj, *resolvedImpl,
+                                   ReadOnlyImplResolver(*this, scope), err);
 }
 
 /// What putting `demand` to impl selection settled, given what selection
@@ -435,8 +433,8 @@ ImplResolver::serveDemand(ProjectionType demand, ModuleOp scope,
   // type is not wanted here -- the answer this call is for is whether asking
   // again could settle it differently.
   std::optional<Refutation> refusedOn;
-  if (succeeded(resolveProjectionType(demand, scope, builder, /*err=*/nullptr,
-                                      &refusedOn)))
+  if (succeeded(resolveProjection(demand, scope, builder, /*err=*/nullptr,
+                                  &refusedOn)))
     return DemandDisposition::Served;
   return refusalDisposition(Type(demand), scope, refusedOn);
 }
@@ -459,14 +457,14 @@ Type ImplResolver::resolveProjectionsIn(Type ty, ModuleOp scope,
                                         OpBuilder &builder) {
   AttrTypeReplacer replacer = makeGroundProjectionReplacer(
       [this, scope, &builder](ProjectionType proj) -> std::optional<Type> {
-    auto resolved = resolveProjectionType(proj, scope, builder);
+    auto resolved = resolveProjection(proj, scope, builder);
     if (failed(resolved)) {
       // Preserve the unresolved demand for a later preparation boundary even
       // though this walk leaves its projection spelled as written.
       recordResolverProjectionMiss(Type(proj));
       return std::nullopt;
     }
-    return *resolved;
+    return resolved->getBinding();
   });
   return normalizeProjectionsToFixedPoint(
       ty, scope, [&](Type t) { return replacer.replace(t); });
@@ -729,20 +727,15 @@ ReadOnlyImplResolver::getRecordedImplFor(ClaimType wanted) const {
   return ResolvedImpl{outcome->getImpl(), selected};
 }
 
-FailureOr<Type>
-ReadOnlyImplResolver::resolveProjectionType(ProjectionType proj) const {
+FailureOr<ProjectionResolution>
+ReadOnlyImplResolver::resolveProjection(ProjectionType proj) const {
   DemandFrame frame{Type(proj)};
 
   ClaimType claim = ClaimType::get(proj.getContext(), proj.getTraitApplication());
   auto resolvedImpl = getRecordedImplFor(claim);
   if (failed(resolvedImpl)) return failure();
 
-  SmallVector<Type> assocTypeArgs;
-  for (Type arg : proj.getAssocTypeArgs())
-    assocTypeArgs.push_back(resolveProjectionsIn(arg));
-
-  return bindingThrough(*resolvedImpl, proj, assocTypeArgs, *this,
-                        /*err=*/nullptr);
+  return ProjectionResolution::get(proj, *resolvedImpl, *this, /*err=*/nullptr);
 }
 
 Type ReadOnlyImplResolver::resolveProjectionsIn(Type ty) const {
@@ -752,9 +745,9 @@ Type ReadOnlyImplResolver::resolveProjectionsIn(Type ty) const {
   // therefore read here whatever those arguments still spell.
   AttrTypeReplacer replacer = makeGroundHeadProjectionReplacer(
       [this](ProjectionType proj) -> std::optional<Type> {
-    auto resolved = resolveProjectionType(proj);
+    auto resolved = resolveProjection(proj);
     if (succeeded(resolved))
-      return *resolved;
+      return resolved->getBinding();
     // Selection settles a projection only for an application some round put to
     // it, so a spelling nothing has asked about yet has no recorded fact to
     // read. One exactly one impl in the module binds is one selection would

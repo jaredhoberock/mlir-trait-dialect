@@ -476,9 +476,9 @@ static uint64_t respellProvenClaimsInPlace(const ImplResolver &resolver,
           auto proj = dyn_cast<ProjectionType>(t);
           if (!proj || isPolymorphicType(proj))
             return std::nullopt;
-          auto resolved = reading.resolveProjectionType(proj);
+          auto resolved = reading.resolveProjection(proj);
           if (succeeded(resolved))
-            return *resolved;
+            return resolved->getBinding();
           return std::nullopt;
         });
     return *held;
@@ -651,13 +651,11 @@ static Type resolveGroundProjections(
 }
 
 /// Where the witness of a resolved projection reads the facts it cites: `hop`
-/// resolves one monomorphic projection, recording the impl selection chose for
-/// its application in `reading`, and `proofOf` proves an application claim.
-/// Each answers nothing where it does not serve. `module` bounds the
+/// resolves one step of a monomorphic projection and `proofOf` proves an
+/// application claim. Each fails where it does not serve. `module` bounds the
 /// fixed-point resolution of an endpoint.
 struct ResolutionSource {
-  const ReadOnlyImplResolver &reading;
-  llvm::function_ref<std::optional<Type>(ProjectionType)> hop;
+  llvm::function_ref<FailureOr<ProjectionResolution>(ProjectionType)> hop;
   llvm::function_ref<FailureOr<FlatSymbolRefAttr>(ClaimType)> proofOf;
   ModuleOp module;
 };
@@ -673,43 +671,34 @@ struct ResolutionHop {
   SmallVector<ClaimType> premises;
 };
 
-/// The hop resolving `proj` through `source`. Fails where `source` resolves
-/// it through no impl or proves no premise of that impl.
+/// The hop resolving one step of `proj` through `source`. Fails where `source`
+/// resolves it through no impl or proves no premise of that impl.
 static FailureOr<ResolutionHop> resolutionHopOf(ProjectionType proj,
                                                 const ResolutionSource &source) {
-  std::optional<Type> binding = source.hop(proj);
-  if (!binding)
+  FailureOr<ProjectionResolution> step = source.hop(proj);
+  if (failed(step))
     return failure();
   MLIRContext *ctx = proj.getContext();
-  auto resolved = source.reading.getRecordedImplFor(
-      ClaimType::get(ctx, proj.getTraitApplication()));
-  if (failed(resolved))
-    return failure();
-  ImplOp impl = resolved->impl;
-  // The impl's arguments at the claim selection chose it for, read through the
-  // record selection read them under.
-  auto arguments = impl.buildSubstitutionForSelfClaim(
-      resolved->selectedClaim, RecordedProjectionLookup(source.reading),
-      /*errFn=*/nullptr);
-  if (failed(arguments))
-    return failure();
+  ImplOp impl = step->getImpl();
+  const SpecializationMap &arguments = step->getArguments();
   SmallVector<TypeBindingAttr> bindings;
   for (GenericTypeInterface parameter : impl.getTypeParams()) {
-    std::optional<Type> argument = arguments->lookup(parameter);
+    std::optional<Type> argument = arguments.lookup(parameter);
     if (!argument)
       return failure();
     bindings.push_back(TypeBindingAttr::get(ctx, Type(parameter), *argument));
   }
   ResolutionHop hop;
   for (ClaimType assumption : impl.getAssumptionsAsClaims()) {
-    auto premise = cast<ClaimType>(instantiate(Type(assumption), *arguments));
+    auto premise = cast<ClaimType>(instantiate(Type(assumption), arguments));
     FailureOr<FlatSymbolRefAttr> proof = source.proofOf(premise);
     if (failed(proof))
       return failure();
     hop.premises.push_back(
         ClaimType::get(ctx, premise.getTraitApplication(), *proof));
   }
-  hop.equality = TypeEqualityAttr::get(ctx, Type(proj), *binding);
+  hop.equality = TypeEqualityAttr::get(ctx, Type(step->getProjection()),
+                                       step->getBinding());
   hop.witness = WitnessAttr::get(ctx, Attribute(hop.equality),
                                  FlatSymbolRefAttr::get(ctx, impl.getSymName()),
                                  ArrayRef<TypeBindingAttr>(bindings));
@@ -722,7 +711,9 @@ static FailureOr<ResolutionHop> resolutionHopOf(ProjectionType proj,
 /// projection nested inside one -- the resolved side of
 /// `type Out = Vec<Self::Item>` -- yields its hop just as a top-level projection
 /// does, and runs to a fixed point because a binding may itself spell a
-/// projection. Fails where a hop fails or a ground projection still stands.
+/// projection, the impl's own or one a generic associated type's argument
+/// carried into it. Fails where a hop fails or a ground projection still
+/// stands.
 static FailureOr<std::pair<Type, Type>>
 resolveEndpoints(TypeEqualityAttr eq, const ResolutionSource &source,
                  SmallVectorImpl<ResolutionHop> &hops) {
@@ -943,20 +934,18 @@ struct ProveClaimResultPattern : public RewritePattern {
     auto errFn = [&] { return allegation.emitOpError(); };
     ModuleOp scope = getAnchorModule(allegation);
     ReadOnlyImplResolver here = reading.in(scope);
-    auto hop = [&](ProjectionType proj) -> std::optional<Type> {
-      FailureOr<Type> resolved =
-          minting ? minting->resolveProjectionType(proj, scope, rewriter, errFn)
-                  : here.resolveProjectionType(proj);
-      if (succeeded(resolved))
-        return *resolved;
-      if (!minting)
+    auto hop = [&](ProjectionType proj) {
+      FailureOr<ProjectionResolution> resolved =
+          minting ? minting->resolveProjection(proj, scope, rewriter, errFn)
+                  : here.resolveProjection(proj);
+      if (failed(resolved) && !minting)
         (void)here.decline(proj);
-      return std::nullopt;
+      return resolved;
     };
     auto proofOf = [&](ClaimType claim) {
       return proofFor(claim, scope, rewriter, errFn);
     };
-    ResolutionSource source{here, hop, proofOf, scope};
+    ResolutionSource source{hop, proofOf, scope};
     SmallVector<ResolutionHop> hops;
     auto sides = resolveEndpoints(eq, source, hops);
     if (failed(sides))
@@ -1061,9 +1050,9 @@ void CallSubstitution::discoverProjectionBindings(
         return;
       if (projectionBindings.lookup(proj))
         return;
-      auto resolved = reading.resolveProjectionType(proj);
+      auto resolved = reading.resolveProjection(proj);
       if (succeeded(resolved)) {
-        projectionBindings.bind(proj, *resolved);
+        projectionBindings.bind(proj, resolved->getBinding());
         return;
       }
       // The read answers from the impls selection has settled on, and it settles
@@ -1479,12 +1468,12 @@ struct ResolveProjectionsPattern : public RewritePattern {
     ReadOnlyImplResolver here = reading.in(getAnchorModule(op));
     AttrTypeReplacer replacer = makeGroundProjectionReplacer(
         [&](ProjectionType proj) -> std::optional<Type> {
-      auto resolved = here.resolveProjectionType(proj);
+      auto resolved = here.resolveProjection(proj);
       if (failed(resolved)) {
         (void)here.decline(proj);
         return std::nullopt;
       }
-      return *resolved;
+      return resolved->getBinding();
     });
     if (!wouldReplace(replacer, op,
                       /*replaceAttrs=*/true,
@@ -1747,14 +1736,14 @@ struct ProjectionSettleContext {
 /// where the projection has no obligation-holding impl.
 static std::optional<Type>
 resolveProjectionHop(ProjectionType proj, const ProjectionSettleContext &settle) {
-  if (auto recorded = settle.reading.resolveProjectionType(proj);
+  if (auto recorded = settle.reading.resolveProjection(proj);
       succeeded(recorded))
-    return *recorded;
+    return recorded->getBinding();
   SpeculationScope speculation;
-  if (auto selected = settle.resolver.resolveProjectionType(
+  if (auto selected = settle.resolver.resolveProjection(
           proj, settle.module, settle.proofBuilder);
       succeeded(selected))
-    return *selected;
+    return selected->getBinding();
   return std::nullopt;
 }
 

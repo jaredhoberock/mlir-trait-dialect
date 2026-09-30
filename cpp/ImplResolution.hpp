@@ -204,6 +204,48 @@ struct ResolvedImpl {
   ClaimType selectedClaim;
 };
 
+/// One step of a ground projection's resolution: the impl selection settled on
+/// for the projection's application, the arguments that impl's parameters take
+/// at the claim selection chose it for, and the impl's binding of the projected
+/// associated type at those arguments and at the projection's own
+/// associated-type arguments as spelled.
+///
+/// The binding is specialized and nothing more: a projection it spells, the
+/// impl's own or one an associated-type argument carried in, is a step of its
+/// own. So `projection = binding` is exactly what the witness verifier's
+/// specialization of the cited impl's binding reproduces. The only constructor
+/// reads the arguments off what selection settled and specializes the binding
+/// itself, so a step that exists states what the selected impl binds at the
+/// arguments it takes there.
+class ProjectionResolution {
+public:
+  /// The step resolving `projection` through `resolved`, the impl selection
+  /// settled on for its application, read through `record`, the context
+  /// selection chose it under. Fails where the impl's header does not carry to
+  /// the claim selection chose it for, or where the impl binds no such
+  /// associated type at the projection's associated-type arguments.
+  static FailureOr<ProjectionResolution>
+  get(ProjectionType projection, const ResolvedImpl &resolved,
+      const ReadOnlyImplResolver &record,
+      llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+
+  ProjectionType getProjection() const { return projection; }
+  ImplOp getImpl() const { return impl; }
+  const SpecializationMap &getArguments() const { return arguments; }
+  Type getBinding() const { return binding; }
+
+private:
+  ProjectionResolution(ProjectionType projection, ImplOp impl,
+                       SpecializationMap arguments, Type binding)
+      : projection(projection), impl(impl), arguments(std::move(arguments)),
+        binding(binding) {}
+
+  ProjectionType projection;
+  ImplOp impl;
+  SpecializationMap arguments;
+  Type binding;
+};
+
 /// The template instantiations one stage run has cut.
 ///
 /// Each instance is cut for a template at a call standing inside another
@@ -334,19 +376,19 @@ class ImplResolver {
                                                           llvm::function_ref<InFlightDiagnostic()> err = nullptr,
                                                           std::optional<Refutation> *refusedOn = nullptr);
 
-    /// Resolves a concrete ProjectionType to the type it projects to.
-    /// Uses the internal impl resolution pipeline to find the matching impl,
-    /// then looks up the associated type binding and applies substitution.
+    /// Resolves one step of a concrete ProjectionType: the impl the internal
+    /// impl resolution pipeline selects for its application, the arguments
+    /// that impl takes there, and its associated-type binding specialized at
+    /// them.
     ///
     /// `refusedOn`, when given, receives what impl selection refused this
     /// projection's application on, and is left alone when selection did not
     /// refuse -- a resolution that fails downstream of a selected impl names no
     /// refutation.
-    FailureOr<Type> resolveProjectionType(ProjectionType proj,
-                                          ModuleOp scope,
-                                          OpBuilder &builder,
-                                          llvm::function_ref<InFlightDiagnostic()> err = nullptr,
-                                          std::optional<Refutation> *refusedOn = nullptr);
+    FailureOr<ProjectionResolution> resolveProjection(
+        ProjectionType proj, ModuleOp scope, OpBuilder &builder,
+        llvm::function_ref<InFlightDiagnostic()> err = nullptr,
+        std::optional<Refutation> *refusedOn = nullptr);
 
     /// What putting one demand to impl selection settled.
     enum class DemandDisposition : uint8_t {
@@ -674,23 +716,13 @@ public:
   LogicalResult decline(ProjectionType demand) const;
   LogicalResult decline(ClaimType demand) const;
 
-  /// The impl selection settled on for `wanted`, paired with the claim it
-  /// settled it under. Fails where selection was never asked, where it refused,
-  /// and where a projection in `wanted` cannot be resolved from what is
-  /// recorded.
-  ///
-  /// Selection keys what it records by the claim whose projections it resolved,
-  /// so the source spelling is put through the same resolution before it is
-  /// looked up.
-  FailureOr<ResolvedImpl> getRecordedImplFor(ClaimType wanted) const;
-
-  /// The type `proj` projects to, from what impl selection has recorded.
+  /// One step of `proj`'s resolution, from what impl selection has recorded.
   ///
   /// Reading the associated-type binding off the selected impl and specializing
   /// it for the claim selection settled under are reads of the module, so all
   /// that separates this from the resolution it stands in for is where the impl
   /// comes from.
-  FailureOr<Type> resolveProjectionType(ProjectionType proj) const;
+  FailureOr<ProjectionResolution> resolveProjection(ProjectionType proj) const;
 
   /// Walks `ty` and replaces every monomorphic projection this read can
   /// resolve, leaving the rest spelled as written and recording each one.
@@ -706,6 +738,16 @@ public:
   FailureOr<FlatSymbolRefAttr> getRecordedProofFor(ClaimType claim) const;
 
 private:
+  /// The impl selection settled on for `wanted`, paired with the claim it
+  /// settled it under. Fails where selection was never asked, where it refused,
+  /// and where a projection in `wanted` cannot be resolved from what is
+  /// recorded.
+  ///
+  /// Selection keys what it records by the claim whose projections it resolved,
+  /// so the source spelling is put through the same resolution before it is
+  /// looked up.
+  FailureOr<ResolvedImpl> getRecordedImplFor(ClaimType wanted) const;
+
   const ImplResolver &resolver;
   ModuleOp scope;
 };
