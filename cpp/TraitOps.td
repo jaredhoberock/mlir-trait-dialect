@@ -539,12 +539,13 @@ def ImplOp : TraitDialectOp<"impl", [
 
     /// The arguments this impl takes for `actualSelfClaim`, without judging
     /// them: read off the demanded application by position, then filled out
-    /// from the where clause's equalities, each of which says what the
-    /// parameter standing bare on one of its sides is once the other side is
-    /// read through `normalize`. A parameter neither settles is left open, and
-    /// what that means is the caller's: at impl selection an open parameter is
-    /// an impl that does not apply, at a comparison it stands in the rebuilt
-    /// header.
+    /// from the where clause's equalities, one side read against the type the
+    /// other side names once that side is read through `normalize` -- never
+    /// a projection of this impl's own trait application, which names a type
+    /// only through the parameters being read. A parameter neither settles
+    /// is left open, and what that means is the caller's: at impl selection
+    /// an open parameter is an impl that does not apply, at a comparison it
+    /// stands in the rebuilt header.
     TypeArguments readTypeArgumentsFor(ClaimType actualSelfClaim,
                                        Normalizer normalize);
 

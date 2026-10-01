@@ -1351,16 +1351,60 @@ static LogicalResult verifyEqualityObligations(
   return success();
 }
 
-/// Rust's constrained-parameter rule (E0207): every parameter an impl binds
-/// must be determined by the application the impl is selected for.
+namespace {
+/// One way a where-clause equality of an impl determines its parameters: once
+/// every parameter `input` spells is known, so is the type `input` stands for,
+/// and the parameters `determined` spells outside every projection are read off
+/// that type.
+struct EqualityReading {
+  Type input;
+  Type determined;
+};
+} // namespace
+
+/// The readings `impl`'s where-clause equalities offer under rustc's
+/// constrained-parameter rule (`setup_constraining_clauses` in
+/// rustc_hir_analysis/src/constrained_generic_params.rs). Each equality is read
+/// in both directions, except that a projection of the impl's own trait
+/// application is never an input: it resolves through this impl's own
+/// associated-type binding, which is spelled over the very parameters it would
+/// determine, so it names no type until they are known (rustc skips "a sneaky
+/// attempt to project out an associated type defined by this very trait").
 ///
-/// A parameter standing only inside a projection is not determined -- a
-/// projection is not injective, so two arguments can reach one resolution --
-/// and a parameter standing nowhere in the self application is determined only
-/// by a where-clause equality that pins it: bare on one side, with the other
-/// side's parameters determined in turn. A parameter nothing determines would
-/// leave the impl's methods and associated-type bindings spelling a variable
-/// selection never assigns.
+/// A projection spells nothing outside every projection, so a reading whose
+/// determined side is one determines nothing, and on an equality between a
+/// projection and a type the two directions are rustc's one reading, from the
+/// projection to the type.
+static SmallVector<EqualityReading> getEqualityReadings(ImplOp impl) {
+  TraitApplicationAttr own = impl.getSelfApplication();
+  auto projectsOwnApplication = [&](Type side) {
+    auto projection = dyn_cast<ProjectionType>(side);
+    return projection && projection.getTraitApplication() == own;
+  };
+  SmallVector<EqualityReading> readings;
+  for (TypeEqualityAttr equality : impl.getAssumptions().getEqualities()) {
+    if (!projectsOwnApplication(equality.getLhs()))
+      readings.push_back({equality.getLhs(), equality.getRhs()});
+    if (!projectsOwnApplication(equality.getRhs()))
+      readings.push_back({equality.getRhs(), equality.getLhs()});
+  }
+  return readings;
+}
+
+/// rustc's constrained-parameter rule (E0207,
+/// `enforce_impl_non_lifetime_params_are_constrained` in
+/// rustc_hir_analysis/src/impl_wf_check.rs): every type parameter an impl binds
+/// is constrained. A parameter is constrained when the self application spells
+/// it outside every projection, or when an equality reading
+/// (`getEqualityReadings`) whose input spells only constrained parameters spells
+/// it outside every projection on its determined side, to a fixed point.
+///
+/// A projection is not injective -- two arguments can reach one resolution --
+/// so a parameter standing only inside one is not constrained by it. Every
+/// constrained parameter is one `readTypeArgumentsFor` reads off a demanded
+/// application, so each use of the impl names one instance of it; a parameter
+/// nothing constrains would leave the impl's methods and associated-type
+/// bindings spelling a variable selection never assigns.
 static LogicalResult verifyImplParametersAreConstrained(ImplOp impl) {
   // The parameters the self application determines: those standing somewhere in
   // it outside a projection.
@@ -1378,27 +1422,21 @@ static LogicalResult verifyImplParametersAreConstrained(ImplOp impl) {
   for (Type argument : impl.getSelfApplication().getTypeArgs())
     readOutsideProjections(argument);
 
-  // Then close over the where clause's equalities: a bare parameter on one side
-  // is determined once every parameter on the other side is.
-  SmallVector<TypeEqualityAttr> premises;
-  for (Attribute pred : impl.getAssumptions())
-    if (auto eq = dyn_cast<TypeEqualityAttr>(pred))
-      premises.push_back(eq);
+  // Then close over the where clause's equality readings: one whose input
+  // spells only constrained parameters constrains what its determined side
+  // spells outside every projection.
+  SmallVector<EqualityReading> readings = getEqualityReadings(impl);
   for (bool grew = true; grew;) {
     grew = false;
-    auto determines = [&](Type bare, Type other) {
-      GenericTypeInterface parameter = getParameterOccurrence(bare);
-      if (!parameter || constrained.contains(Type(parameter)))
-        return;
-      for (GenericTypeInterface inside : getTypeParametersIn(other))
-        if (!constrained.contains(Type(inside)))
-          return;
-      constrained.insert(Type(parameter));
-      grew = true;
-    };
-    for (TypeEqualityAttr eq : premises) {
-      determines(eq.getLhs(), eq.getRhs());
-      determines(eq.getRhs(), eq.getLhs());
+    for (const EqualityReading &reading : readings) {
+      if (!llvm::all_of(getTypeParametersIn(reading.input),
+                        [&](GenericTypeInterface inside) {
+                          return constrained.contains(Type(inside));
+                        }))
+        continue;
+      size_t before = constrained.size();
+      readOutsideProjections(reading.determined);
+      grew |= constrained.size() != before;
     }
   }
 
@@ -1406,8 +1444,8 @@ static LogicalResult verifyImplParametersAreConstrained(ImplOp impl) {
     if (!constrained.contains(Type(parameter)))
       return impl.emitOpError()
              << "type parameter " << Type(parameter)
-             << " is not constrained by the impl's trait application, so impl "
-                "selection cannot determine it";
+             << " is not constrained by the impl's trait application or its "
+                "where clause, so impl selection cannot determine it";
   return success();
 }
 
@@ -1450,50 +1488,46 @@ TypeArguments ImplOp::readTypeArgumentsFor(ClaimType actualSelfClaim,
   TypeArguments args(getTypeParams());
   extractTypeArguments(Type(getSelfClaim()), Type(actualSelfClaim), args);
 
-  // A parameter the header leaves open is one the where clause determines: an
-  // equality with that parameter bare on one side says what it is, once the
-  // other side is instantiated at what is known and read through `normalize`.
-  // Determining one can determine another, so the reading runs until it stops
-  // growing.
+  // A parameter the header leaves open is one an equality reading determines
+  // (`verifyImplParametersAreConstrained`): the reading's input, instantiated at
+  // what is known and read through `normalize`, is the type its determined side
+  // is read against, as the header is read against the demand. Determining one
+  // parameter can settle another reading's input, so the reading runs until it
+  // stops growing.
+  auto settled = [&](Type type) {
+    return llvm::all_of(getTypeParametersIn(type),
+                        [&](GenericTypeInterface inside) {
+                          return !args.binds(inside) || args.lookup(inside);
+                        });
+  };
+  auto settledCount = [&] {
+    return llvm::count_if(args.getParameters(),
+                          [&](GenericTypeInterface parameter) {
+                            return args.lookup(parameter).has_value();
+                          });
+  };
+  SmallVector<EqualityReading> readings = getEqualityReadings(*this);
   for (bool grew = true; grew;) {
     grew = false;
-    for (Attribute predicate : getAssumptions()) {
-      auto equality = dyn_cast<TypeEqualityAttr>(predicate);
-      if (!equality)
+    for (const EqualityReading &reading : readings) {
+      // A determined side with no open parameter has nothing to learn, so its
+      // input is not normalized. Nor is an input still spelling an open
+      // parameter: normalizing a projection over one selects among every impl
+      // of its trait, this one included, and reading this impl's equalities
+      // again recurses without end. The round that settles that parameter reads
+      // this one.
+      if (settled(reading.determined) || !settled(reading.input))
         continue;
-      SpecializationMap known = args.toSpecialization();
-      auto determines = [&](Type bare, Type other) {
-        GenericTypeInterface parameter = getParameterOccurrence(bare);
-        if (!parameter || !args.binds(parameter) || args.lookup(parameter))
-          return false;
-        // A side still mentioning a parameter this reading has not settled
-        // says nothing yet; the round that settles that one settles this. It
-        // is not normalized either: normalizing a projection over an
-        // unsettled parameter selects among every impl of its trait, this
-        // one included, and reading this impl's equalities again recurses
-        // without end.
-        Type value = instantiate(other, known);
-        auto settled = [&](Type type) {
-          for (GenericTypeInterface inside : getTypeParametersIn(type))
-            if (args.binds(inside) && !args.lookup(inside))
-              return false;
-          return true;
-        };
-        if (!settled(value))
-          return false;
-        if (normalize) {
-          FailureOr<Type> normalized = normalize(value);
-          if (failed(normalized))
-            return false;
-          value = *normalized;
-        }
-        if (failed(args.assign(parameter, value, /*err=*/nullptr)))
-          return false;
-        grew = true;
-        return true;
-      };
-      if (!determines(equality.getLhs(), equality.getRhs()))
-        determines(equality.getRhs(), equality.getLhs());
+      Type value = instantiate(reading.input, args.toSpecialization());
+      if (normalize) {
+        FailureOr<Type> normalized = normalize(value);
+        if (failed(normalized))
+          continue;
+        value = *normalized;
+      }
+      auto before = settledCount();
+      extractTypeArguments(reading.determined, value, args);
+      grew |= settledCount() != before;
     }
   }
   return args;
