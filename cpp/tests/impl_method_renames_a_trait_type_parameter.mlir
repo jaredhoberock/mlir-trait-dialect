@@ -8,12 +8,12 @@
 // arguments -- named under the trait's labels -- rekey onto the clone's.
 
 trait.trait private @T[!trait.poly<0>] {
-  func.func private @f(!trait.poly<0>, !trait.poly<1>, !trait.poly<2>) -> !trait.poly<1>
+  trait.method @f(!trait.poly<0>, !trait.poly<1>, !trait.poly<2>) -> !trait.poly<1>
 }
 
 trait.impl private @I for @T[i32] {
-  func.func @f(%x: i32, %m: !trait.poly<7>, %n: !trait.poly<8>) -> !trait.poly<7> {
-    return %m : !trait.poly<7>
+  trait.method @f(%x: i32, %m: !trait.poly<7>, %n: !trait.poly<8>) -> !trait.poly<7> {
+    trait.return %m : !trait.poly<7>
   }
 }
 

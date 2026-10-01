@@ -12,12 +12,12 @@
 // does not instantiate them.
 
 trait.trait private @T[!trait.poly<0>] {
-  func.func private @f(!trait.poly<0>, !trait.poly<1>, !trait.poly<2>) -> !trait.poly<1>
+  trait.method @f(!trait.poly<0>, !trait.poly<1>, !trait.poly<2>) -> !trait.poly<1>
 }
 
 // expected-error @below {{method 'f' spells 'tuple<!trait.poly<1>>' where trait '@T' declares the type parameter '!trait.poly<1>': an impl's copy of a method renames the trait's type parameters, one for one}}
 trait.impl private @I for @T[i32] {
-  func.func @f(%x: i32, %m: tuple<!trait.poly<1>>, %n: !trait.poly<2>) -> tuple<!trait.poly<1>> {
-    return %m : tuple<!trait.poly<1>>
+  trait.method @f(%x: i32, %m: tuple<!trait.poly<1>>, %n: !trait.poly<2>) -> tuple<!trait.poly<1>> {
+    trait.return %m : tuple<!trait.poly<1>>
   }
 }

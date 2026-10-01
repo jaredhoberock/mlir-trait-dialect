@@ -30,28 +30,28 @@ trait.trait private @Fold[!A] { trait.assoc_type @Item }
 trait.impl private @Fold_gen for @Fold[!B] where [@Vec[!B]] {
   trait.assoc_type @Item = !trait.proj<@Tensor[!B], "Element">
 }
-trait.trait private @Mark[!A] { func.func private @value() -> i64 }
+trait.trait private @Mark[!A] { trait.method @value() -> i64 }
 trait.impl private @Mark_i64 for @Mark[i64] {
-  func.func @value() -> i64 {
+  trait.method @value() -> i64 {
     %v = arith.constant 7 : i64
-    return %v : i64
+    trait.return %v : i64
   }
 }
 trait.trait private @Tr[!A] {
-  func.func private @run(!trait.claim<@Mark[!A]>) -> i64
+  trait.method @run(!trait.claim<@Mark[!A]>) -> i64
 }
 trait.impl private @Tr_i64 for @Tr[i64] {
-  func.func @run(%m: !trait.claim<@Mark[i64]>) -> i64 {
+  trait.method @run(%m: !trait.claim<@Mark[i64]>) -> i64 {
     %v = trait.method.call %m @Mark[i64]::@value() : () -> i64
-    return %v : i64
+    trait.return %v : i64
   }
 }
-trait.trait private @Get[!A] { func.func private @get() -> i64 }
+trait.trait private @Get[!A] { trait.method @get() -> i64 }
 trait.impl private @Tr_gen for @Get[!B] where [@Mark[!B]] {
-  func.func @get() -> i64 {
+  trait.method @get() -> i64 {
     %m = trait.assume 0 : !trait.claim<@Mark[!B]>
     %v = trait.method.call %m @Mark[!B]::@value() : () -> i64
-    return %v : i64
+    trait.return %v : i64
   }
 }
 trait.proof private @P proves @Tr_gen[!B = i64] for @Get[i64] given [@Mark_i64]

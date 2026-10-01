@@ -15,14 +15,14 @@
 
 trait.trait private @T[!S] {
   trait.assoc_type @Out
-  func.func private @m(!S) -> !trait.proj<@T[!S], "Out">
+  trait.method @m(!S) -> !trait.proj<@T[!S], "Out">
 }
 
 trait.impl private @T_i32 for @T[i32] {
   trait.assoc_type @Out = i64
-  func.func private @m(%x: i32) -> i64 {
+  trait.method @m(%x: i32) -> i64 {
     %c = arith.constant 7 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 
@@ -59,22 +59,22 @@ func.func @by_allegation(%x: i32) -> !trait.proj<@T[i32], "Out"> {
 
 trait.trait private @T[!S] {
   trait.assoc_type @Out
-  func.func private @m(!S) -> !trait.proj<@T[!S], "Out">
+  trait.method @m(!S) -> !trait.proj<@T[!S], "Out">
 }
 
 trait.impl private @T_f64 for @T[f64] {
   trait.assoc_type @Out = i1
-  func.func private @m(%x: f64) -> i1 {
+  trait.method @m(%x: f64) -> i1 {
     %c = arith.constant true
-    return %c : i1
+    trait.return %c : i1
   }
 }
 
 trait.impl private @T_i32 for @T[i32] {
   trait.assoc_type @Out = i64
-  func.func private @m(%x: i32) -> i64 {
+  trait.method @m(%x: i32) -> i64 {
     %c = arith.constant 7 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 
@@ -121,14 +121,14 @@ func.func @selects_by_type(%x: f64) -> !trait.proj<@T[f64], "Out"> {
 
 trait.trait private @T[!S] {
   trait.assoc_type @Out
-  func.func private @m(!S) -> !trait.proj<@T[!S], "Out">
+  trait.method @m(!S) -> !trait.proj<@T[!S], "Out">
 }
 
 trait.impl private @Chosen for @T[i32] {
   trait.assoc_type @Out = i64
-  func.func private @m(%x: i32) -> i64 {
+  trait.method @m(%x: i32) -> i64 {
     %c = arith.constant 7 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 

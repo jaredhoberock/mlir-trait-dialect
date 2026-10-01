@@ -29,7 +29,7 @@ trait.impl private @Sib_i64_cond for @Sib[i64] where [@A[i64]] {
 }
 
 trait.trait private @Host[!S] {
-  func.func private @make(!S) -> !trait.proj<@Sib[!S], "Elem">
+  trait.method @make(!S) -> !trait.proj<@Sib[!S], "Elem">
 }
 
 // expected-error @below {{cited impl '@Sib_i64_cond' has an undischarged assumption '!trait.claim<@A[i64]>'; the witness premises do not supply it}}
@@ -37,8 +37,8 @@ trait.impl private @Host_i64 for @Host[i64]
     witnesses [#trait<witness !trait.proj<@Sib[i64], "Elem"> = i32 by @Sib_i64_cond>,
                #trait<witness @A[i64] by @A_cond>,
                #trait<witness @B[i64] by @B_cond>] {
-  func.func @make(%x: i64) -> i32 {
+  trait.method @make(%x: i64) -> i32 {
     %r = ub.poison : i32
-    return %r : i32
+    trait.return %r : i32
   }
 }

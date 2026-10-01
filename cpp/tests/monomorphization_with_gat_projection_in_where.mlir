@@ -22,24 +22,24 @@
 !T = !trait.poly<1>
 
 trait.trait private @Printable[!S] {
-  func.func private @print(!S) -> i32
+  trait.method @print(!S) -> i32
 }
 
 trait.trait private @Transform[!S] where [@Printable[!trait.proj<@Transform[!S], "Output", [i32]>]] {
   trait.assoc_type @Output<[!T]>
-  func.func private @apply(!S, !T) -> !trait.proj<@Transform[!S], "Output", [!T]>
+  trait.method @apply(!S, !T) -> !trait.proj<@Transform[!S], "Output", [!T]>
 }
 
 trait.impl private for @Printable[i32] {
-  func.func @print(%self: i32) -> i32 {
-    return %self : i32
+  trait.method @print(%self: i32) -> i32 {
+    trait.return %self : i32
   }
 }
 
 trait.impl private for @Transform[i64] {
   trait.assoc_type @Output<[!T]> = !T
-  func.func @apply(%self: i64, %x: !T) -> !T {
-    return %x : !T
+  trait.method @apply(%self: i64, %x: !T) -> !T {
+    trait.return %x : !T
   }
 }
 

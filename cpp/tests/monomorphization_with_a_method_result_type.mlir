@@ -6,13 +6,13 @@
 !T = !trait.poly<0>
 trait.trait private @Get[!T] {
   // method returns the trait's type parameter
-  func.func private @get() -> !T
+  trait.method @get() -> !T
 }
 
 trait.impl private for @Get[i32] {
-  func.func @get() -> i32 {
+  trait.method @get() -> i32 {
     %c = arith.constant 0 : i32
-    return %c : i32
+    trait.return %c : i32
   }
 }
 

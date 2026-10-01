@@ -667,11 +667,11 @@ fn instantiate_is_ready_only_while_a_rewritable_call_stands() {
 !S = !trait.poly<0>\n\
 !V = !trait.poly<9>\n\
 trait.trait private @Store[!S] {\n\
-  func.func private @keep(!S, !V) -> !V\n\
+  trait.method @keep(!S, !V) -> !V\n\
 }\n\
 trait.impl private @Store_impl_i64 for @Store[i64] {\n\
-  func.func @keep(%self: i64, %v: !trait.poly<5>) -> !trait.poly<5> {\n\
-    return %v : !trait.poly<5>\n\
+  trait.method @keep(%self: i64, %v: !trait.poly<5>) -> !trait.poly<5> {\n\
+    trait.return %v : !trait.poly<5>\n\
   }\n\
 }\n\
 func.func private @tpl(%p: !trait.claim<@Store[i64]>, %x: i64, %v: !trait.poly<7>) -> !trait.poly<7> {\n\
@@ -727,12 +727,12 @@ fn instantiate_is_ready_on_a_standing_claim_obligation() {
 
     let source = "\
 trait.trait private @T[!trait.poly<0>] {\n\
-  func.func private @m(!trait.poly<0>) -> i32\n\
+  trait.method @m(!trait.poly<0>) -> i32\n\
 }\n\
 trait.impl private @T_i32 for @T[i32] {\n\
-  func.func @m(%a: i32) -> i32 {\n\
+  trait.method @m(%a: i32) -> i32 {\n\
     %c = arith.constant 1 : i32\n\
-    return %c : i32\n\
+    trait.return %c : i32\n\
   }\n\
 }\n\
 func.func @host(%x: i32) -> i32 {\n\
@@ -792,13 +792,13 @@ fn the_positional_assume_builders_cite_the_entries_the_verifier_reads() {
 
     // @A_gen's where clause states @B[T] at position 0 and @C[T] at position 1.
     let source = "\
-trait.trait private @B[!trait.poly<0>] { func.func private @b(!trait.poly<0>) -> i64 }\n\
-trait.trait private @C[!trait.poly<0>] { func.func private @c(!trait.poly<0>) -> i64 }\n\
-trait.trait private @A[!trait.poly<0>] { func.func private @a(!trait.poly<0>) -> i64 }\n\
+trait.trait private @B[!trait.poly<0>] { trait.method @b(!trait.poly<0>) -> i64 }\n\
+trait.trait private @C[!trait.poly<0>] { trait.method @c(!trait.poly<0>) -> i64 }\n\
+trait.trait private @A[!trait.poly<0>] { trait.method @a(!trait.poly<0>) -> i64 }\n\
 trait.impl private @A_gen for @A[!trait.poly<0>] where [@B[!trait.poly<0>], @C[!trait.poly<0>]] {\n\
-  func.func @a(%x: !trait.poly<0>) -> i64 {\n\
+  trait.method @a(%x: !trait.poly<0>) -> i64 {\n\
     %c = arith.constant 0 : i64\n\
-    return %c : i64\n\
+    trait.return %c : i64\n\
   }\n\
 }\n";
     let loc = Location::unknown(&context);

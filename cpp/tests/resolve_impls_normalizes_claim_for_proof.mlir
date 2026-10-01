@@ -12,7 +12,7 @@
 !L = !trait.poly<0>
 !R = !trait.poly<1>
 trait.trait private @Eq[!L, !R] {
-  func.func nested @use()
+  trait.method @use()
 }
 
 trait.trait private @Ord[!trait.poly<4>] {}
@@ -21,8 +21,8 @@ trait.impl private @Ord_i64 for @Ord[i64] {}
 
 !T = !trait.poly<2>
 trait.impl private @Eq_same for @Eq[!T, !T] where [@Ord[!T]] {
-  func.func nested @use() {
-    return
+  trait.method @use() {
+    trait.return
   }
 }
 

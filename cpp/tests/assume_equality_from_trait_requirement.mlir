@@ -11,9 +11,9 @@
 
 trait.trait private @FoldFn[!S] where [!trait.proj<@FoldFn[!S], "Output"> = !S] {
   trait.assoc_type @Output
-  func.func @fold(%x: !S) -> !S {
+  trait.method @fold(%x: !S) -> !S {
     %e = trait.assume 0 : !trait.claim<!trait.proj<@FoldFn[!S], "Output"> = !S>
-    return %x : !S
+    trait.return %x : !S
   }
 }
 

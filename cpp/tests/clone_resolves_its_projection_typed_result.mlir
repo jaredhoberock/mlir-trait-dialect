@@ -11,13 +11,13 @@
 
 trait.trait private @Producer[!trait.poly<0>] {
   trait.assoc_type @Item
-  func.func private @make(!trait.poly<0>) -> !trait.proj<@Producer[!trait.poly<0>], "Item">
+  trait.method @make(!trait.poly<0>) -> !trait.proj<@Producer[!trait.poly<0>], "Item">
 }
 trait.impl private @Producer_i64 for @Producer[i64] {
   trait.assoc_type @Item = i32
-  func.func @make(%x: i64) -> i32 {
+  trait.method @make(%x: i64) -> i32 {
     %c = arith.constant 0 : i32
-    return %c : i32
+    trait.return %c : i32
   }
 }
 trait.proof private @Producer_i64_p proves @Producer_i64[] for @Producer[i64] given []

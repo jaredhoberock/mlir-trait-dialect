@@ -13,12 +13,12 @@
 !M = !trait.poly<1>
 
 trait.trait private @Keep[!S] {
-  func.func private @keep(!S, !M) -> !S
+  trait.method @keep(!S, !M) -> !S
 }
 
 // expected-error @below {{method 'keep' binds 0 type parameter(s) of its own, but trait '"Keep"' declares it with 1}}
 trait.impl private @Keep_i64 for @Keep[i64] {
-  func.func @keep(%x: i64, %m: i32) -> i64 {
-    return %x : i64
+  trait.method @keep(%x: i64, %m: i32) -> i64 {
+    trait.return %x : i64
   }
 }

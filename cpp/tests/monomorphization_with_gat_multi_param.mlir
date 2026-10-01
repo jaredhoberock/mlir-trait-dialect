@@ -25,18 +25,18 @@
 trait.trait private @BiMap[!S] {
   trait.assoc_type @Left<[!T, !U]>
   trait.assoc_type @Right<[!T, !U]>
-  func.func private @left(!S, !T, !U) -> !trait.proj<@BiMap[!S], "Left", [!T, !U]>
-  func.func private @right(!S, !T, !U) -> !trait.proj<@BiMap[!S], "Right", [!T, !U]>
+  trait.method @left(!S, !T, !U) -> !trait.proj<@BiMap[!S], "Left", [!T, !U]>
+  trait.method @right(!S, !T, !U) -> !trait.proj<@BiMap[!S], "Right", [!T, !U]>
 }
 
 trait.impl private for @BiMap[i1] {
   trait.assoc_type @Left<[!T, !U]> = !T
   trait.assoc_type @Right<[!T, !U]> = !U
-  func.func @left(%self: i1, %a: !T, %b: !U) -> !T {
-    return %a : !T
+  trait.method @left(%self: i1, %a: !T, %b: !U) -> !T {
+    trait.return %a : !T
   }
-  func.func @right(%self: i1, %a: !T, %b: !U) -> !U {
-    return %b : !U
+  trait.method @right(%self: i1, %a: !T, %b: !U) -> !U {
+    trait.return %b : !U
   }
 }
 

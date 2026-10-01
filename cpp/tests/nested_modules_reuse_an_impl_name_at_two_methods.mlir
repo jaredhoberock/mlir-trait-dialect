@@ -21,19 +21,19 @@
 // CHECK: func.func @main
 // CHECK: call @T_i32_{{h[0-9a-f]+}}_m
 
-trait.trait private @T[!trait.poly<0>] { func.func private @m() -> i64 }
+trait.trait private @T[!trait.poly<0>] { trait.method @m() -> i64 }
 trait.impl private @T_i32 for @T[i32] {
-  func.func @m() -> i64 {
+  trait.method @m() -> i64 {
     %c = arith.constant 1 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 module @inner {
-  trait.trait private @T[!trait.poly<0>] { func.func private @m() -> i64 }
+  trait.trait private @T[!trait.poly<0>] { trait.method @m() -> i64 }
   trait.impl private @T_i32 for @T[i32] {
-    func.func @m() -> i64 {
+    trait.method @m() -> i64 {
       %c = arith.constant 2 : i64
-      return %c : i64
+      trait.return %c : i64
     }
   }
   func.func @main() -> i64 {
@@ -60,11 +60,11 @@ func.func @main() -> i64 {
 // CHECK: func.func @main
 // CHECK: call @T_i32_{{h[0-9a-f]+}}_m
 
-trait.trait private @T[!trait.poly<0>] { func.func private @m() -> i64 }
+trait.trait private @T[!trait.poly<0>] { trait.method @m() -> i64 }
 trait.impl private @T_i32 for @T[i32] {
-  func.func @m() -> i64 {
+  trait.method @m() -> i64 {
     %c = arith.constant 1 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 func.func @main() -> i64 {
@@ -73,11 +73,11 @@ func.func @main() -> i64 {
   return %r : i64
 }
 module @inner {
-  trait.trait private @T[!trait.poly<0>] { func.func private @m() -> i64 }
+  trait.trait private @T[!trait.poly<0>] { trait.method @m() -> i64 }
   trait.impl private @T_i32 for @T[i32] {
-    func.func @m() -> i64 {
+    trait.method @m() -> i64 {
       %c = arith.constant 2 : i64
-      return %c : i64
+      trait.return %c : i64
     }
   }
   func.func @main() -> i64 {

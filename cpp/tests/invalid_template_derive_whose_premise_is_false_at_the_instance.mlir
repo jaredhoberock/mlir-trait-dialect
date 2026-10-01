@@ -10,11 +10,11 @@
 // it and the derive resting on it stand unproven at the instantiation check.
 
 trait.trait private @Tensor[!trait.poly<0>] { trait.assoc_type @Shape }
-trait.trait private @Vector[!trait.poly<0>] { func.func private @v() -> i64 }
+trait.trait private @Vector[!trait.poly<0>] { trait.method @v() -> i64 }
 trait.impl private @Vector_blanket for @Vector[!trait.poly<0>] where [@Tensor[!trait.poly<0>], !trait.proj<@Tensor[!trait.poly<0>], "Shape"> = i64] {
-  func.func @v() -> i64 {
+  trait.method @v() -> i64 {
     %c = arith.constant 7 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 trait.impl private @Tensor_i8 for @Tensor[i8] { trait.assoc_type @Shape = tuple<i64, i64> }

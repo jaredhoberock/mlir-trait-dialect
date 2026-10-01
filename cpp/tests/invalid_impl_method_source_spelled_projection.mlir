@@ -16,13 +16,13 @@
 
 trait.trait private @Container[!S] {
   trait.assoc_type @Elem
-  func.func private @id(!S, !S) -> !S
+  trait.method @id(!S, !S) -> !S
 }
 
 // CHECK: method 'id' has incompatible signature: expected '(i32, i32) -> i32' but found '(i32, i64) -> i32'
 trait.impl private for @Container[i32] {
   trait.assoc_type @Elem = i64
-  func.func @id(%self: i32, %e: !trait.proj<@Container[i32], "Elem">) -> i32 {
-    return %self : i32
+  trait.method @id(%self: i32, %e: !trait.proj<@Container[i32], "Elem">) -> i32 {
+    trait.return %self : i32
   }
 }

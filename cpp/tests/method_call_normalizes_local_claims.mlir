@@ -15,15 +15,15 @@ trait.impl private @Value_i64 for @Value[i64] {
 trait.trait private @Trait[!T] {
   trait.assoc_type @First
   trait.assoc_type @Second
-  func.func private @get(!T) -> !trait.proj<@Trait[!T], "First">
+  trait.method @get(!T) -> !trait.proj<@Trait[!T], "First">
 }
 
 trait.impl private @Trait_impl for @Trait[!T] {
   trait.assoc_type @First = !trait.proj<@Trait[!T], "Second">
   trait.assoc_type @Second = !Output
-  func.func @get(%self: !T) -> !Output {
+  trait.method @get(%self: !T) -> !Output {
     %result = ub.poison : !Output
-    return %result : !Output
+    trait.return %result : !Output
   }
 }
 
@@ -35,7 +35,7 @@ trait.trait private @FnUni[!T, !U] {
 }
 
 trait.trait private @Map[!T] {
-  func.func private @map(
+  trait.method @map(
     !T,
     !U,
     !trait.claim<@FnUni[!U, !T]>

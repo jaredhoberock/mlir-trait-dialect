@@ -10,7 +10,7 @@
 // inside the arm-asserting accessor.
 
 trait.trait private @Trait[!trait.poly<0>] {
-  func.func private @m(!trait.poly<0>) -> i1
+  trait.method @m(!trait.poly<0>) -> i1
 }
 
 func.func @f(%x: i64) -> i1 {

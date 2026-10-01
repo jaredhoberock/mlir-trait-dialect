@@ -12,29 +12,29 @@
 !S = !trait.poly<0>
 
 trait.trait private @Tr[!S] {
-  func.func private @get(!S) -> i64
+  trait.method @get(!S) -> i64
 }
 
 trait.impl private @Tr_tuple for @Tr[tuple<!S>] where [@Tr[!S]] {
-  func.func @get(%x: tuple<!S>) -> i64 {
+  trait.method @get(%x: tuple<!S>) -> i64 {
     %c = arith.constant 35 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 
 trait.trait private @Wrap[!S] where [@Tr[!S]] {
-  func.func @wrapped(%x: tuple<!S>) -> i64 {
+  trait.method @wrapped(%x: tuple<!S>) -> i64 {
     %t = trait.assume 0 : !trait.claim<@Tr[!S]>
     %d = trait.derive @Tr[tuple<!S>] from @Tr_tuple[!S = !S] given(%t) : (!trait.claim<@Tr[!S]>)
     %r = trait.method.call %d @Tr[tuple<!S>]::@get(%x) : (tuple<!S>) -> i64
-    return %r : i64
+    trait.return %r : i64
   }
 }
 
 trait.impl private @Tr_i32 for @Tr[i32] {
-  func.func @get(%x: i32) -> i64 {
+  trait.method @get(%x: i32) -> i64 {
     %c = arith.constant 7 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 

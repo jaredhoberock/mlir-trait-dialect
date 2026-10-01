@@ -26,13 +26,13 @@ trait.impl private @S_i64 for @S[i64] where [!trait.proj<@Marker[i64], "M"> = !U
   trait.assoc_type @Out = !U
 }
 trait.trait private @Foo[!S] {
-  func.func private @f(!S) -> !trait.proj<@S[i64], "Out">
+  trait.method @f(!S) -> !trait.proj<@S[i64], "Out">
 }
 // Template impl over !T: its declaration witness reads i1 = !T, deferred.
 trait.impl private @Foo_T for @Foo[!T]
     witnesses [#trait<witness !trait.proj<@S[i64], "Out"> = !T by @S_i64[!U = !T]>] {
-  func.func @f(%x: !T) -> !T {
-    return %x : !T
+  trait.method @f(%x: !T) -> !T {
+    trait.return %x : !T
   }
 }
 // Instance at T := i64 -- WRONG: @S[i64]::Out is i1, but @Foo_T at i64 returns i64.

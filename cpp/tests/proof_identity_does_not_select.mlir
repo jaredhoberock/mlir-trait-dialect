@@ -20,7 +20,7 @@ trait.trait private @U[!S] {
 
 trait.trait private @T[!S] {
   trait.assoc_type @Out
-  func.func private @m(!S) -> !trait.proj<@T[!S], "Out">
+  trait.method @m(!S) -> !trait.proj<@T[!S], "Out">
 }
 
 trait.impl private @U_i32 for @U[i32] {
@@ -28,17 +28,17 @@ trait.impl private @U_i32 for @U[i32] {
 
 trait.impl private @T_cond for @T[!S] where [@U[!S]] {
   trait.assoc_type @Out = i64
-  func.func private @m(%x: !S) -> i64 {
+  trait.method @m(%x: !S) -> i64 {
     %c = arith.constant 7 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 
 trait.impl private @T_f64 for @T[f64] {
   trait.assoc_type @Out = i1
-  func.func private @m(%x: f64) -> i1 {
+  trait.method @m(%x: f64) -> i1 {
     %c = arith.constant true
-    return %c : i1
+    trait.return %c : i1
   }
 }
 

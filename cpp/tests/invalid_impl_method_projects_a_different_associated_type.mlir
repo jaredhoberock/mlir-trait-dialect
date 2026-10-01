@@ -11,7 +11,7 @@ trait.trait private @Fn[!F] {
 trait.trait private @SameAs[!S, !F] {}
 
 trait.trait private @Trait[!S] {
-  func.func private @method(
+  trait.method @method(
     !S,
     !trait.claim<@SameAs[
       !trait.proj<@Fn[!S], "Output">,
@@ -22,7 +22,7 @@ trait.trait private @Trait[!S] {
 
 // expected-error @below {{method 'method' has incompatible signature}}
 trait.impl private @Trait_i32 for @Trait[i32] {
-  func.func @method(
+  trait.method @method(
     %self: i32,
     %same: !trait.claim<@SameAs[
       !trait.proj<@Fn[i32], "Other">,
@@ -30,6 +30,6 @@ trait.impl private @Trait_i32 for @Trait[i32] {
     ]>
   ) -> i32 {
     %c0 = arith.constant 0 : i32
-    return %c0 : i32
+    trait.return %c0 : i32
   }
 }

@@ -32,15 +32,15 @@ trait.impl private @S_i64 for @S[i64] where [!trait.proj<@Marker[i64], "M"> = !U
 }
 
 trait.trait private @Foo[!S] {
-  func.func private @f(!S) -> !trait.proj<@S[i64], "Out">
+  trait.method @f(!S) -> !trait.proj<@S[i64], "Out">
 }
 
 // CHECK: trait.impl private @Foo_i64 for @Foo[i64] witnesses [#trait<witness !trait.proj<@S[i64], "Out"> = i1 by @S_i64[!trait.poly<1> = i1]>]
 trait.impl private @Foo_i64 for @Foo[i64]
     witnesses [#trait<witness !trait.proj<@S[i64], "Out"> = i1 by @S_i64[!U = i1]>] {
-  func.func @f(%x: i64) -> i1 {
+  trait.method @f(%x: i64) -> i1 {
     %t = arith.constant true
-    return %t : i1
+    trait.return %t : i1
   }
 }
 

@@ -22,11 +22,11 @@ trait.trait private @Has[!trait.poly<0>] { trait.assoc_type @Out }
 trait.impl private @Has_m for @Has[!trait.poly<0>] where [@Marker[!trait.poly<0>]] { trait.assoc_type @Out = i64 }
 trait.impl private @Has_o for @Has[!trait.poly<0>] where [@Other[!trait.poly<0>]] { trait.assoc_type @Out = i8 }
 
-trait.trait private @T[!trait.poly<0>] { func.func private @m() -> i64 }
+trait.trait private @T[!trait.poly<0>] { trait.method @m() -> i64 }
 trait.impl private @I for @T[i32] where [!trait.proj<@Has[i32], "Out"> = i64] {
-  func.func @m() -> i64 {
+  trait.method @m() -> i64 {
     %c = arith.constant 1 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 

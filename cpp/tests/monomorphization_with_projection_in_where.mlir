@@ -12,26 +12,26 @@
 !S = !trait.poly<0>
 
 trait.trait private @Printable[!S] {
-  func.func private @print(!S) -> i32
+  trait.method @print(!S) -> i32
 }
 
 trait.trait private @Iterable[!S] where [@Printable[!trait.proj<@Iterable[!S], "Item">]] {
   trait.assoc_type @Item
-  func.func private @first(!S) -> !trait.proj<@Iterable[!S], "Item">
+  trait.method @first(!S) -> !trait.proj<@Iterable[!S], "Item">
 }
 
 trait.impl private for @Printable[i64] {
-  func.func @print(%self: i64) -> i32 {
+  trait.method @print(%self: i64) -> i32 {
     %c = arith.trunci %self : i64 to i32
-    return %c : i32
+    trait.return %c : i32
   }
 }
 
 trait.impl private for @Iterable[i32] {
   trait.assoc_type @Item = i64
-  func.func @first(%self: i32) -> i64 {
+  trait.method @first(%self: i32) -> i64 {
     %c = arith.extsi %self : i32 to i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 

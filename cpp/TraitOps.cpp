@@ -1099,8 +1099,8 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
                                << traitArity;
       }
     } else {
-      return emitOpError() << "body may only contain 'trait.method', 'func.func' "
-                              "or 'trait.assoc_type' operations";
+      return emitOpError() << "body may only contain 'trait.method' or "
+                              "'trait.assoc_type' operations";
     }
   }
 

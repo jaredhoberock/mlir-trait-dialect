@@ -4,8 +4,8 @@
 // RUN: mlir-opt -pass-pipeline='builtin.module(monomorphize-trait)' %s | FileCheck %s
 
 trait.trait private @Trait[!trait.poly<0>] {
-  func.func nested @method(%self: !trait.poly<0>, %value: !trait.poly<1>) -> !trait.poly<1> {
-    return %value : !trait.poly<1>
+  trait.method @method(%self: !trait.poly<0>, %value: !trait.poly<1>) -> !trait.poly<1> {
+    trait.return %value : !trait.poly<1>
   }
 }
 

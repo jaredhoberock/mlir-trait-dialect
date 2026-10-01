@@ -27,13 +27,13 @@ trait.impl private @Ten_view for @Ten[f32] {
 !S = !trait.poly<1>
 !O = !trait.poly<2>
 trait.trait private @Get[!S, !O] {
-  func.func nested @use()
+  trait.method @use()
 }
 
 !U = !trait.poly<3>
 trait.impl private @Get_blanket for @Get[!U, !trait.proj<@Ten[!U], "Element">] where [@Ten[!U]] {
-  func.func nested @use() {
-    return
+  trait.method @use() {
+    trait.return
   }
 }
 

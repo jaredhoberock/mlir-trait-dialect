@@ -17,31 +17,31 @@ trait.trait private @Foo[!trait.poly<0>] { trait.assoc_type @Out }
 trait.impl private @Foo_any for @Foo[!trait.poly<0>] { trait.assoc_type @Out = i32 }
 // expected-note@+1 {{candidate}}
 trait.impl private @Foo_i32 for @Foo[i32] { trait.assoc_type @Out = i32 }
-trait.trait private @A[!trait.poly<0>] { func.func private @a() -> i64 }
+trait.trait private @A[!trait.poly<0>] { trait.method @a() -> i64 }
 trait.trait private @B[!trait.poly<0>] where [@A[!trait.proj<@Foo[!trait.poly<0>], "Out">]] {
-  func.func private @b(!trait.poly<0>) -> i64
+  trait.method @b(!trait.poly<0>) -> i64
 }
 trait.impl private @A_i32 for @A[i32] {
-  func.func @a() -> i64 {
+  trait.method @a() -> i64 {
     %c = arith.constant 32 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 trait.impl private @A_i64 for @A[i64] {
-  func.func @a() -> i64 {
+  trait.method @a() -> i64 {
     %c = arith.constant 64 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 trait.impl private @B_i32 for @B[i32] {
-  func.func @b(%x: i32) -> i64 {
+  trait.method @b(%x: i32) -> i64 {
     %s = trait.assume self : !trait.claim<@B[i32]>
     // expected-error@+3 {{incoherent impls (multiple satisfiable) for '!trait.proj<@Foo[i32], "Out">'}}
     // expected-error@+2 {{unproven monomorphic claim '!trait.claim<@A[!trait.proj<@Foo[i32], "Out">]>' after instantiate-monomorphs}}
     // expected-note@+1 {{proof @forged cites @A_i64 for requirement 0, which nothing decides here}}
     %a = trait.project %s[0] : !trait.claim<@B[i32]> -> !trait.claim<@A[!trait.proj<@Foo[i32], "Out">]>
     %r = trait.method.call %a @A[!trait.proj<@Foo[i32], "Out">]::@a() : () -> i64
-    return %r : i64
+    trait.return %r : i64
   }
 }
 trait.proof private @forged proves @B_i32[] for @B[i32] given [@A_i64]

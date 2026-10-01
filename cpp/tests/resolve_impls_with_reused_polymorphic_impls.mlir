@@ -5,8 +5,8 @@
 
 !A = !trait.poly<0>
 trait.trait private @A[!A] {
-  func.func @a() {
-    return
+  trait.method @a() {
+    trait.return
   }
 }
 
@@ -37,8 +37,8 @@ trait.impl private @B_tuple_impl_arity_2 for @B[tuple<!D, !E>] where [
 trait.impl private @A_polymorphic_impl for @A[!F] where [
   @B[!F]
 ] {
-  func.func @a() {
-    return
+  trait.method @a() {
+    trait.return
   }
 }
 

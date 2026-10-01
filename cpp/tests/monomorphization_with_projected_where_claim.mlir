@@ -19,23 +19,23 @@
 // CHECK-NOT: trait.method.call
 
 trait.trait private @MyEq[!trait.poly<0>, !trait.poly<1>] {
-  func.func nested @eq(!trait.poly<0>, !trait.poly<1>) -> i1
+  trait.method @eq(!trait.poly<0>, !trait.poly<1>) -> i1
 }
 trait.trait private @Has[!trait.poly<2>] where [@MyEq[!trait.proj<@Has[!trait.poly<2>], "A">, !trait.proj<@Has[!trait.poly<2>], "A">]] {
   trait.assoc_type @A
-  func.func nested @get(!trait.poly<2>) -> !trait.proj<@Has[!trait.poly<2>], "A">
+  trait.method @get(!trait.poly<2>) -> !trait.proj<@Has[!trait.poly<2>], "A">
 }
 trait.impl private @MyEq_impl for @MyEq[i64, i64] {
-  func.func nested @eq(%arg0: i64, %arg1: i64) -> i1 {
+  trait.method @eq(%arg0: i64, %arg1: i64) -> i1 {
     %true = arith.constant true
-    return %true : i1
+    trait.return %true : i1
   }
 }
 trait.impl private @Has_impl for @Has[f64] {
   trait.assoc_type @A = i64
-  func.func nested @get(%arg0: f64) -> i64 {
+  trait.method @get(%arg0: f64) -> i64 {
     %c0_i64 = arith.constant 0 : i64
-    return %c0_i64 : i64
+    trait.return %c0_i64 : i64
   }
 }
 

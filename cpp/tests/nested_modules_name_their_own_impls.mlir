@@ -9,11 +9,11 @@
 // its own symbol table resolves -- not the one the module around it holds under
 // another name.
 
-trait.trait private @T[!trait.poly<0>] { func.func private @m() -> i64 }
+trait.trait private @T[!trait.poly<0>] { trait.method @m() -> i64 }
 trait.impl private @T_i32 for @T[i32] {
-  func.func @m() -> i64 {
+  trait.method @m() -> i64 {
     %c = arith.constant 1 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 // CHECK: func.func private @T_i32_{{h[0-9a-f]+}}_m
@@ -28,11 +28,11 @@ func.func @main() -> i64 {
 
 // CHECK: module @inner
 module @inner {
-  trait.trait private @T[!trait.poly<0>] { func.func private @m() -> i64 }
+  trait.trait private @T[!trait.poly<0>] { trait.method @m() -> i64 }
   trait.impl private @T_inner for @T[i32] {
-    func.func @m() -> i64 {
+    trait.method @m() -> i64 {
       %c = arith.constant 2 : i64
-      return %c : i64
+      trait.return %c : i64
     }
   }
   // CHECK: func.func private @T_inner_{{h[0-9a-f]+}}_m
@@ -55,20 +55,20 @@ module @inner {
 // in, so the outer proof is no answer for the inner demand, which builds the
 // proof citing @A_inner.
 
-trait.trait private @A[!trait.poly<0>] { func.func private @a() -> i64 }
-trait.trait private @B[!trait.poly<0>] where [@A[!trait.poly<0>]] { func.func private @b() -> i64 }
+trait.trait private @A[!trait.poly<0>] { trait.method @a() -> i64 }
+trait.trait private @B[!trait.poly<0>] where [@A[!trait.poly<0>]] { trait.method @b() -> i64 }
 trait.impl private @A_top for @A[i32] {
-  func.func @a() -> i64 {
+  trait.method @a() -> i64 {
     %c = arith.constant 1 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 trait.impl private @B_impl for @B[i32] {
-  func.func @b() -> i64 {
+  trait.method @b() -> i64 {
     %s = trait.assume self : !trait.claim<@B[i32]>
     %a = trait.project %s[0] : !trait.claim<@B[i32]> -> !trait.claim<@A[i32]>
     %r = trait.method.call %a @A[i32]::@a() : () -> i64
-    return %r : i64
+    trait.return %r : i64
   }
 }
 trait.proof private @p proves @B_impl[] for @B[i32] given [@A_top]
@@ -83,20 +83,20 @@ func.func @main() -> i64 {
 
 // CHECK: module @inner
 module @inner {
-  trait.trait private @A[!trait.poly<0>] { func.func private @a() -> i64 }
-  trait.trait private @B[!trait.poly<0>] where [@A[!trait.poly<0>]] { func.func private @b() -> i64 }
+  trait.trait private @A[!trait.poly<0>] { trait.method @a() -> i64 }
+  trait.trait private @B[!trait.poly<0>] where [@A[!trait.poly<0>]] { trait.method @b() -> i64 }
   trait.impl private @A_inner for @A[i32] {
-    func.func @a() -> i64 {
+    trait.method @a() -> i64 {
       %c = arith.constant 2 : i64
-      return %c : i64
+      trait.return %c : i64
     }
   }
   trait.impl private @B_impl for @B[i32] {
-    func.func @b() -> i64 {
+    trait.method @b() -> i64 {
       %s = trait.assume self : !trait.claim<@B[i32]>
       %a = trait.project %s[0] : !trait.claim<@B[i32]> -> !trait.claim<@A[i32]>
       %r = trait.method.call %a @A[i32]::@a() : () -> i64
-      return %r : i64
+      trait.return %r : i64
     }
   }
   // CHECK: func.func private @A_inner_{{h[0-9a-f]+}}_a

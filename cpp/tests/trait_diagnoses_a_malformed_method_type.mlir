@@ -10,6 +10,6 @@
 // RUN: mlir-opt %s -verify-diagnostics
 
 trait.trait private @Tr[!trait.poly<0>] {
-  // expected-error@+1 {{'func.func' op requires a function type in its 'function_type' attribute}}
-  "func.func"() <{sym_name = "m", function_type = i64}> ({}) : () -> ()
+  // expected-error@+1 {{'trait.method' op requires a function type in its 'function_type' attribute}}
+  "trait.method"() <{sym_name = "m", function_type = i64}> ({}) : () -> ()
 }

@@ -148,14 +148,14 @@ trait.impl private @S_i64 for @S[i64] where [!trait.proj<@Marker[i64], "M"> = !U
   trait.assoc_type @Out = !U
 }
 trait.trait private @Foo[!S] {
-  func.func private @f(!S) -> !trait.proj<@S[i64], "Out">
+  trait.method @f(!S) -> !trait.proj<@S[i64], "Out">
 }
 
 // expected-error @below {{impl '@S_i64' applies where '!trait.proj<@Marker[i64], "M">' = '!trait.poly<1>', and nothing here makes 'i1' and 'i64' one type at '!trait.claim<@S[i64]>'}}
 trait.impl private @Foo_i64 for @Foo[i64]
     witnesses [#trait<witness !trait.proj<@S[i64], "Out"> = i64 by @S_i64[!U = i64]>] {
-  func.func @f(%x: i64) -> i64 {
-    return %x : i64
+  trait.method @f(%x: i64) -> i64 {
+    trait.return %x : i64
   }
 }
 

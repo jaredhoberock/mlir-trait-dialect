@@ -12,8 +12,8 @@
 // time, so the clone here is one tuple deep and no deeper.
 
 trait.trait private @Tr[!trait.poly<0>] {
-  func.func nested @method(%self: !trait.poly<0>) -> !trait.poly<0> {
-    return %self : !trait.poly<0>
+  trait.method @method(%self: !trait.poly<0>) -> !trait.poly<0> {
+    trait.return %self : !trait.poly<0>
   }
 }
 

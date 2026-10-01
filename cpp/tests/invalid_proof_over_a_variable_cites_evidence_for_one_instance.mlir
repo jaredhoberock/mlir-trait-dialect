@@ -9,28 +9,28 @@
 // dispatch @B_blanket's requirement through it: @B[i32]::@b would call
 // @A_i64's method where @A_i32's is the impl for i32.
 
-trait.trait private @A[!trait.poly<0>] { func.func private @a() -> i64 }
+trait.trait private @A[!trait.poly<0>] { trait.method @a() -> i64 }
 trait.trait private @B[!trait.poly<0>] where [@A[!trait.poly<0>]] {
-  func.func private @b(!trait.poly<0>) -> i64
+  trait.method @b(!trait.poly<0>) -> i64
 }
 trait.impl private @A_i32 for @A[i32] {
-  func.func @a() -> i64 {
+  trait.method @a() -> i64 {
     %c = arith.constant 32 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 trait.impl private @A_i64 for @A[i64] {
-  func.func @a() -> i64 {
+  trait.method @a() -> i64 {
     %c = arith.constant 64 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 trait.impl private @B_blanket for @B[!trait.poly<0>] {
-  func.func @b(%x: !trait.poly<0>) -> i64 {
+  trait.method @b(%x: !trait.poly<0>) -> i64 {
     %s = trait.assume self : !trait.claim<@B[!trait.poly<0>]>
     %a = trait.project %s[0] : !trait.claim<@B[!trait.poly<0>]> -> !trait.claim<@A[!trait.poly<0>]>
     %r = trait.method.call %a @A[!trait.poly<0>]::@a() : () -> i64
-    return %r : i64
+    trait.return %r : i64
   }
 }
 // expected-error@+1 {{proof @A_i64 proves '!trait.claim<@A[i64]>', which does not discharge the obligation '!trait.claim<@A[!trait.poly<0>]>'}}
@@ -42,22 +42,22 @@ trait.proof private @forged proves @B_blanket[!trait.poly<0> = !trait.poly<0>] f
 // standing over a variable of its own, rebuilds the obligation at whatever
 // that obligation spells.
 
-trait.trait private @A[!trait.poly<0>] { func.func private @a() -> i64 }
+trait.trait private @A[!trait.poly<0>] { trait.method @a() -> i64 }
 trait.trait private @B[!trait.poly<0>] where [@A[!trait.poly<0>]] {
-  func.func private @b(!trait.poly<0>) -> i64
+  trait.method @b(!trait.poly<0>) -> i64
 }
 trait.impl private @A_blanket for @A[!trait.poly<1>] {
-  func.func @a() -> i64 {
+  trait.method @a() -> i64 {
     %c = arith.constant 1 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 trait.impl private @B_blanket for @B[!trait.poly<0>] {
-  func.func @b(%x: !trait.poly<0>) -> i64 {
+  trait.method @b(%x: !trait.poly<0>) -> i64 {
     %s = trait.assume self : !trait.claim<@B[!trait.poly<0>]>
     %a = trait.project %s[0] : !trait.claim<@B[!trait.poly<0>]> -> !trait.claim<@A[!trait.poly<0>]>
     %r = trait.method.call %a @A[!trait.poly<0>]::@a() : () -> i64
-    return %r : i64
+    trait.return %r : i64
   }
 }
 trait.proof private @a_stands proves @A_blanket[!trait.poly<1> = !trait.poly<1>] for @A[!trait.poly<1>] given []

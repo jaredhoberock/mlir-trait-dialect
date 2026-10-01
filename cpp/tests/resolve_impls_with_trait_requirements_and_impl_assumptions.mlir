@@ -24,9 +24,9 @@ trait.impl private @B_impl for @B[!Bi] {}
 trait.trait private @C[!C] where [
   @A[!C]
 ] {
-  func.func @method(%self: !C) -> i1 {
+  trait.method @method(%self: !C) -> i1 {
     %res = arith.constant 0 : i1
-    return %res : i1
+    trait.return %res : i1
   }
 }
 

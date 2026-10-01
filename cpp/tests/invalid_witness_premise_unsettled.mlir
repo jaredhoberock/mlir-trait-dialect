@@ -59,14 +59,14 @@ trait.impl private @S_gen for @S[!T] where [!trait.proj<@Marker[!T], "M"> = !U] 
   trait.assoc_type @Out = !U
 }
 trait.trait private @Foo[!S] {
-  func.func private @f(!S) -> !trait.proj<@S[i64], "Out">
+  trait.method @f(!S) -> !trait.proj<@S[i64], "Out">
 }
 // WRONG declaration witness: S[i64]::Out is i1 through the module, the witness says i64.
 // expected-error @below {{impl '@S_gen' applies where '!trait.proj<@Marker[!trait.poly<2>], "M">' = '!trait.poly<1>', and nothing here settles '!trait.proj<@Marker[i64], "M">' = 'i64' at '!trait.claim<@S[i64]>'}}
 trait.impl private @Foo_i64 for @Foo[i64]
     witnesses [#trait<witness !trait.proj<@S[i64], "Out"> = i64 by @S_gen[!T = i64, !U = i64]>] {
-  func.func @f(%x: i64) -> i64 {
-    return %x : i64
+  trait.method @f(%x: i64) -> i64 {
+    trait.return %x : i64
   }
 }
 func.func @main(%x: i64) -> i1 {

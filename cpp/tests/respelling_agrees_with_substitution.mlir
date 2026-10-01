@@ -15,15 +15,15 @@ trait.trait private @Ground[!T] {}
 trait.impl private @Ground_all for @Ground[!T] {}
 
 trait.trait private @Hold[!T] {
-  func.func private @held() -> !T
+  trait.method @held() -> !T
 }
 
 trait.impl private @Hold_claim for @Hold[!trait.claim<@Ground[i32]>] where [
   @Ground[i32]
 ] {
-  func.func @held() -> !trait.claim<@Ground[i32]> {
+  trait.method @held() -> !trait.claim<@Ground[i32]> {
     %g = trait.assume 0 : !trait.claim<@Ground[i32]>
-    return %g : !trait.claim<@Ground[i32]>
+    trait.return %g : !trait.claim<@Ground[i32]>
   }
 }
 

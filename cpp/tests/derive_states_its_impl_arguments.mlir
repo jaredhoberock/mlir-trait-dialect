@@ -18,22 +18,22 @@
 
 trait.trait private @Tr[!T] {
   trait.assoc_type @Out
-  func.func private @get(!T) -> i64
+  trait.method @get(!T) -> i64
 }
 
 trait.impl private @Tr_i32 for @Tr[i32] {
   trait.assoc_type @Out = i64
-  func.func @get(%x: i32) -> i64 {
+  trait.method @get(%x: i32) -> i64 {
     %c = arith.constant 7 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 
 trait.impl private @Tr_tuple for @Tr[tuple<!U>] where [@Tr[!U], !trait.proj<@Tr[!U], "Out"> = i64] {
   trait.assoc_type @Out = i64
-  func.func @get(%x: tuple<!U>) -> i64 {
+  trait.method @get(%x: tuple<!U>) -> i64 {
     %c = arith.constant 35 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 

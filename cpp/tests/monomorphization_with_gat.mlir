@@ -19,13 +19,13 @@
 
 trait.trait private @Test[!S] {
   trait.assoc_type @Wrapper<[!T]>
-  func.func private @test(!S, !T) -> !trait.proj<@Test[!S], "Wrapper", [!T]>
+  trait.method @test(!S, !T) -> !trait.proj<@Test[!S], "Wrapper", [!T]>
 }
 
 trait.impl private for @Test[i1] {
   trait.assoc_type @Wrapper<[!T]> = !T
-  func.func @test(%self: i1, %value: !T) -> !T {
-    return %value : !T
+  trait.method @test(%self: i1, %value: !T) -> !T {
+    trait.return %value : !T
   }
 }
 

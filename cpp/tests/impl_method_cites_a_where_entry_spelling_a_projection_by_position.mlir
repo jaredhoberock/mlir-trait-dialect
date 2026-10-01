@@ -16,39 +16,39 @@
 !X = !trait.poly<2>
 
 trait.trait private @Fn[!F, !X] {
-  func.func private @call(!F, !X) -> i64
+  trait.method @call(!F, !X) -> i64
 }
 
 trait.impl private @Fn_i8 for @Fn[i8, i64] {
-  func.func @call(%f: i8, %x: i64) -> i64 {
-    return %x : i64
+  trait.method @call(%f: i8, %x: i64) -> i64 {
+    trait.return %x : i64
   }
 }
 
 trait.trait private @Tr[!S] {
   trait.assoc_type @Root
-  func.func private @go(!S, !F, !trait.claim<@Fn[!F, !trait.proj<@Tr[!S], "Root">]>) -> i64
+  trait.method @go(!S, !F, !trait.claim<@Fn[!F, !trait.proj<@Tr[!S], "Root">]>) -> i64
 }
 
 trait.impl private @Tr_i32 for @Tr[i32] {
   trait.assoc_type @Root = i64
-  func.func @go(%s: i32, %f: !F, %c: !trait.claim<@Fn[!F, i64]>) -> i64 {
+  trait.method @go(%s: i32, %f: !F, %c: !trait.claim<@Fn[!F, i64]>) -> i64 {
     %seven = arith.constant 7 : i64
-    return %seven : i64
+    trait.return %seven : i64
   }
 }
 
 trait.trait private @U[!S, !F] {
-  func.func private @u(!S, !F) -> i64
+  trait.method @u(!S, !F) -> i64
 }
 
 trait.impl private @U_gen for @U[!S, !F] where [@Tr[!S], @Fn[!F, !trait.proj<@Tr[!S], "Root">]] {
-  func.func @u(%s: !S, %f: !F) -> i64 {
+  trait.method @u(%s: !S, %f: !F) -> i64 {
     %t = trait.assume 0 : !trait.claim<@Tr[!S]>
     %c = trait.assume 1 : !trait.claim<@Fn[!F, !trait.proj<@Tr[!S], "Root">]>
     %r = trait.method.call %t @Tr[!S]::@go(%s, %f, %c)
       : (!S, !F, !trait.claim<@Fn[!F, !trait.proj<@Tr[!S], "Root">]>) -> i64
-    return %r : i64
+    trait.return %r : i64
   }
 }
 

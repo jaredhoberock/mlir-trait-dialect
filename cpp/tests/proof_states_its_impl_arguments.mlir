@@ -18,26 +18,26 @@
 !U = !trait.poly<1>
 
 trait.trait private @A[!S] {
-  func.func private @a(!S) -> i64
+  trait.method @a(!S) -> i64
 }
 trait.trait private @C[!S] {
   trait.assoc_type @Val
 }
 trait.trait private @B[!S] where [@A[!S], !trait.proj<@B[!S], "Out"> = i64] {
   trait.assoc_type @Out
-  func.func private @b(!S) -> i64
+  trait.method @b(!S) -> i64
 }
 
 trait.impl private @A_i32 for @A[i32] {
-  func.func @a(%x: i32) -> i64 {
+  trait.method @a(%x: i32) -> i64 {
     %c = arith.constant 7 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 trait.impl private @A_tuple for @A[tuple<!U>] {
-  func.func @a(%x: tuple<!U>) -> i64 {
+  trait.method @a(%x: tuple<!U>) -> i64 {
     %c = arith.constant 11 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 trait.proof private @A_tuple_p proves @A_tuple[!U = i32] for @A[tuple<i32>] given []
@@ -46,9 +46,9 @@ trait.impl private @C_i32 for @C[i32] {
 }
 trait.impl private @B_tuple for @B[tuple<!U>] where [@A[!U], !trait.proj<@C[!U], "Val"> = i64] {
   trait.assoc_type @Out = i64
-  func.func @b(%x: tuple<!U>) -> i64 {
+  trait.method @b(%x: tuple<!U>) -> i64 {
     %c = arith.constant 35 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 trait.proof private @p proves @B_tuple[!U = i32] for @B[tuple<i32>] given [@A_tuple_p, unit, @A_i32, unit]

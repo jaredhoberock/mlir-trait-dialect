@@ -16,12 +16,12 @@ trait.trait private @Assoc[!trait.poly<0>] { trait.assoc_type @Out }
 trait.impl private @Assoc_i64 for @Assoc[i64] { trait.assoc_type @Out = i32 }
 
 trait.trait private @T[!S] {
-  func.func private @m(!S, !trait.proj<@Assoc[!S], "Out">) -> !trait.claim<!trait.proj<@Assoc[!S], "Out"> = i32>
+  trait.method @m(!S, !trait.proj<@Assoc[!S], "Out">) -> !trait.claim<!trait.proj<@Assoc[!S], "Out"> = i32>
 }
 trait.impl private @T_impl for @T[!trait.poly<2>] where [!trait.proj<@Assoc[!trait.poly<2>], "Out"> = i32] {
-  func.func nested @m(%self: !trait.poly<2>, %p: !trait.proj<@Assoc[!trait.poly<2>], "Out">) -> !trait.claim<!trait.proj<@Assoc[!trait.poly<2>], "Out"> = i32> {
+  trait.method @m(%self: !trait.poly<2>, %p: !trait.proj<@Assoc[!trait.poly<2>], "Out">) -> !trait.claim<!trait.proj<@Assoc[!trait.poly<2>], "Out"> = i32> {
     %e = trait.assume 0 : !trait.claim<!trait.proj<@Assoc[!trait.poly<2>], "Out"> = i32>
-    return %e : !trait.claim<!trait.proj<@Assoc[!trait.poly<2>], "Out"> = i32>
+    trait.return %e : !trait.claim<!trait.proj<@Assoc[!trait.poly<2>], "Out"> = i32>
   }
 }
 trait.proof private @T_p proves @T_impl[!trait.poly<2> = i64] for @T[i64] given [unit]

@@ -9,12 +9,12 @@
 !T = !trait.poly<0>
 
 trait.trait private @Greet[!T] {
-  func.func private @greet(!T) -> i32
+  trait.method @greet(!T) -> i32
 }
 
 trait.impl private @Greet_i32 for @Greet[i32] {
-  func.func @greet(%x: i32) -> i32 {
-    return %x : i32
+  trait.method @greet(%x: i32) -> i32 {
+    trait.return %x : i32
   }
 }
 

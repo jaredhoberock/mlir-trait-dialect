@@ -9,11 +9,11 @@
 
 trait.trait private @A[!trait.poly<0>] {}
 trait.trait private @B[!trait.poly<0>] where [@A[!trait.poly<0>]] {
-  func.func private @m(!trait.poly<0>) -> !trait.poly<0>
+  trait.method @m(!trait.poly<0>) -> !trait.poly<0>
 }
 trait.impl private @A_top for @A[i32] {}
 trait.impl private @B_impl for @B[i32] {
-  func.func @m(%x: i32) -> i32 { return %x : i32 }
+  trait.method @m(%x: i32) -> i32 { trait.return %x : i32 }
 }
 trait.proof private @p proves @B_impl[] for @B[i32] given [@A_top]
 
@@ -29,11 +29,11 @@ func.func @main(%x: i32) -> i32 {
 module @inner {
   trait.trait private @A[!trait.poly<0>] {}
   trait.trait private @B[!trait.poly<0>] where [@A[!trait.poly<0>]] {
-    func.func private @m(!trait.poly<0>) -> !trait.poly<0>
+    trait.method @m(!trait.poly<0>) -> !trait.poly<0>
   }
   trait.impl private @A_inner for @A[i64] {}
   trait.impl private @B_impl for @B[i64] {
-    func.func @m(%x: i64) -> i64 { return %x : i64 }
+    trait.method @m(%x: i64) -> i64 { trait.return %x : i64 }
   }
   trait.proof private @p proves @B_impl[] for @B[i64] given [@A_inner]
 

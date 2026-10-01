@@ -7,23 +7,23 @@
 !PartialEqO = !trait.poly<1>
 // CHECK-NOT: trait.trait private @PartialEq
 trait.trait private @PartialEq[!PartialEqS,!PartialEqO] {
-  func.func private @eq(!PartialEqS, !PartialEqO) -> i1
+  trait.method @eq(!PartialEqS, !PartialEqO) -> i1
   
-  func.func @ne(%self: !PartialEqS, %other: !PartialEqO) -> i1 {
+  trait.method @ne(%self: !PartialEqS, %other: !PartialEqO) -> i1 {
     %partial_eq = trait.assume self : !trait.claim<@PartialEq[!PartialEqS,!PartialEqO]>
     %equal = trait.method.call %partial_eq @PartialEq[!PartialEqS,!PartialEqO]::@eq(%self, %other)
       : (!PartialEqS, !PartialEqO) -> i1
     %true = arith.constant 1 : i1
     %not_equal = arith.xori %equal, %true : i1
-    return %not_equal : i1
+    trait.return %not_equal : i1
   }
 }
 
 // CHECK-NOT: trait.impl private @PartialEq
 trait.impl private @PartialEq_impl_i32_i32 for @PartialEq[i32,i32] {
-  func.func @eq(%self: i32, %other: i32) -> i1 {
+  trait.method @eq(%self: i32, %other: i32) -> i1 {
     %equal = arith.cmpi eq, %self, %other : i32
-    return %equal : i1
+    trait.return %equal : i1
   }
 }
 
@@ -75,9 +75,9 @@ trait.trait private @PartialOrd[!PartialOrdS,!PartialOrdO] where [
   @PartialEq[!PartialOrdS,!PartialOrdO]
 ]
 {
-  func.func private @partial_cmp(!PartialOrdS, !PartialOrdO) -> !opt_ord
+  trait.method @partial_cmp(!PartialOrdS, !PartialOrdO) -> !opt_ord
 
-  func.func @lt(%self: !PartialOrdS, %other: !PartialOrdO) -> i1 {
+  trait.method @lt(%self: !PartialOrdS, %other: !PartialOrdO) -> i1 {
     %partial_ord = trait.assume self : !trait.claim<@PartialOrd[!PartialOrdS,!PartialOrdO]>
 
     %cmp = trait.method.call %partial_ord @PartialOrd[!PartialOrdS,!PartialOrdO]::@partial_cmp(%self, %other)
@@ -85,10 +85,10 @@ trait.trait private @PartialOrd[!PartialOrdS,!PartialOrdO] where [
 
     %ord_lt = arith.constant 0 : !opt_ord
     %res = arith.cmpi eq, %cmp, %ord_lt : !opt_ord
-    return %res : i1
+    trait.return %res : i1
   }
 
-  func.func @le(%self: !PartialOrdS, %other: !PartialOrdO) -> i1 {
+  trait.method @le(%self: !PartialOrdS, %other: !PartialOrdO) -> i1 {
     %partial_ord = trait.assume self : !trait.claim<@PartialOrd[!PartialOrdS,!PartialOrdO]>
 
     %partial_eq = trait.project %partial_ord[0]
@@ -102,10 +102,10 @@ trait.trait private @PartialOrd[!PartialOrdS,!PartialOrdO] where [
       : (!PartialOrdS,!PartialOrdO) -> i1
 
     %res = arith.ori %lt, %eq : i1
-    return %res : i1
+    trait.return %res : i1
   }
 
-  func.func @gt(%self: !PartialOrdS, %other: !PartialOrdO) -> i1 {
+  trait.method @gt(%self: !PartialOrdS, %other: !PartialOrdO) -> i1 {
     %partial_ord = trait.assume self : !trait.claim<@PartialOrd[!PartialOrdS,!PartialOrdO]>
 
     %cmp = trait.method.call %partial_ord @PartialOrd[!PartialOrdS,!PartialOrdO]::@partial_cmp(%self, %other)
@@ -113,10 +113,10 @@ trait.trait private @PartialOrd[!PartialOrdS,!PartialOrdO] where [
 
     %ord_gt = arith.constant 2 : !opt_ord
     %res = arith.cmpi eq, %cmp, %ord_gt : !opt_ord
-    return %res : i1
+    trait.return %res : i1
   }
 
-  func.func @ge(%self: !PartialOrdS, %other: !PartialOrdO) -> i1 {
+  trait.method @ge(%self: !PartialOrdS, %other: !PartialOrdO) -> i1 {
     %partial_ord = trait.assume self : !trait.claim<@PartialOrd[!PartialOrdS,!PartialOrdO]>
 
     %partial_eq = trait.project %partial_ord[0]
@@ -130,13 +130,13 @@ trait.trait private @PartialOrd[!PartialOrdS,!PartialOrdO] where [
       : (!PartialOrdS,!PartialOrdO) -> i1
 
     %res = arith.ori %gt, %eq : i1
-    return %res : i1
+    trait.return %res : i1
   }
 }
 
 // CHECK-NOT: trait.impl private @PartialOrd
 trait.impl private @PartialOrd_impl_i32_i32 for @PartialOrd[i32,i32] {
-  func.func @partial_cmp(%a: i32, %b: i32) -> !opt_ord {
+  trait.method @partial_cmp(%a: i32, %b: i32) -> !opt_ord {
     %c_lt = arith.constant 0 : !opt_ord
     %c_eq = arith.constant 1 : !opt_ord
     %c_gt = arith.constant 2 : !opt_ord
@@ -145,7 +145,7 @@ trait.impl private @PartialOrd_impl_i32_i32 for @PartialOrd[i32,i32] {
     %eq = arith.cmpi eq,  %a, %b : i32
     %gt_or_lt = arith.select %lt, %c_lt, %c_gt : !opt_ord
     %res = arith.select %eq, %c_eq, %gt_or_lt : !opt_ord
-    return %res : !opt_ord
+    trait.return %res : !opt_ord
   }
 }
 
@@ -162,9 +162,9 @@ trait.trait private @Ord[!OrdS] where [
   @PartialOrd[!OrdS,!OrdS]
 ]
 {
-  func.func private @cmp(!OrdS, !OrdS) -> !ord
+  trait.method @cmp(!OrdS, !OrdS) -> !ord
 
-  func.func @max(%self: !OrdS, %other: !OrdS) -> !OrdS {
+  trait.method @max(%self: !OrdS, %other: !OrdS) -> !OrdS {
     %ord = trait.assume self : !trait.claim<@Ord[!OrdS]>
     %partial_ord = trait.project %ord[1]
       : !trait.claim<@Ord[!OrdS]>
@@ -179,10 +179,10 @@ trait.trait private @Ord[!OrdS] where [
       scf.yield %other : !OrdS
     }
 
-    return %res : !OrdS
+    trait.return %res : !OrdS
   }
 
-  func.func @min(%self: !OrdS, %other: !OrdS) -> !OrdS {
+  trait.method @min(%self: !OrdS, %other: !OrdS) -> !OrdS {
     %ord = trait.assume self : !trait.claim<@Ord[!OrdS]>
     %partial_ord = trait.project %ord[1]
       : !trait.claim<@Ord[!OrdS]>
@@ -197,13 +197,13 @@ trait.trait private @Ord[!OrdS] where [
       scf.yield %other: !OrdS
     }
 
-    return %res : !OrdS
+    trait.return %res : !OrdS
   }
 }
 
 // CHECK-NOT: trait.impl private @Ord
 trait.impl private @Ord_impl_i32 for @Ord[i32] {
-  func.func @cmp(%a: i32, %b: i32) -> !ord {
+  trait.method @cmp(%a: i32, %b: i32) -> !ord {
     %lt = arith.cmpi slt, %a, %b : i32
     %eq = arith.cmpi eq,  %a, %b : i32
 
@@ -213,7 +213,7 @@ trait.impl private @Ord_impl_i32 for @Ord[i32] {
 
     %gt_or_lt = arith.select %lt, %c_lt, %c_gt : !ord
     %res = arith.select %eq, %c_eq, %gt_or_lt : !ord
-    return %res : !ord
+    trait.return %res : !ord
   }
 }
 

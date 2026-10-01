@@ -6,25 +6,25 @@
 // ---- Test 0: Add
 
 // CHECK-LABEL: trait private @Add
-// CHECK: func.func private @add(!trait.poly<0>, !trait.poly<0>) -> !trait.poly<0>
+// CHECK: trait.method @add(!trait.poly<0>, !trait.poly<0>) -> !trait.poly<0>
 
 !AddSelf = !trait.poly<0>
 trait.trait private @Add[!AddSelf] {
-  func.func private @add(!AddSelf, !AddSelf) -> !AddSelf
+  trait.method @add(!AddSelf, !AddSelf) -> !AddSelf
 }
 
 // ---- Test 1: PartialEq
 
 // CHECK-LABEL: trait private @PartialEq
-// CHECK: func.func private @eq(!trait.poly<1>, !trait.poly<2>) -> i1
-// CHECK: func.func @neq(%{{.*}}: !trait.poly<1>, %{{.*}}: !trait.poly<2>) -> i1
+// CHECK: trait.method @eq(!trait.poly<1>, !trait.poly<2>) -> i1
+// CHECK: trait.method @neq(%{{.*}}: !trait.poly<1>, %{{.*}}: !trait.poly<2>) -> i1
 
 !PartialEqSelf = !trait.poly<1>
 !PartialEqOther = !trait.poly<2>
 trait.trait private @PartialEq[!PartialEqSelf, !PartialEqOther] {
-  func.func private @eq(!PartialEqSelf, !PartialEqOther) -> i1
+  trait.method @eq(!PartialEqSelf, !PartialEqOther) -> i1
   
-  func.func @neq(%self: !PartialEqSelf, %other: !PartialEqOther) -> i1 {
+  trait.method @neq(%self: !PartialEqSelf, %other: !PartialEqOther) -> i1 {
     %partial_eq = trait.assume self : !trait.claim<@PartialEq[!PartialEqSelf, !PartialEqOther]>
 
     %eq = trait.method.call %partial_eq @PartialEq[!PartialEqSelf,!PartialEqOther]::@eq(%self, %other)
@@ -32,15 +32,15 @@ trait.trait private @PartialEq[!PartialEqSelf, !PartialEqOther] {
 
     %true = arith.constant true
     %res = arith.xori %eq, %true : i1
-    return %res : i1
+    trait.return %res : i1
   }
 }
 
 // ---- Test 2: PartialOrd
 
 // CHECK-LABEL: trait private @PartialOrd
-// CHECK: func.func private @partial_cmp(!trait.poly<3>, !trait.poly<4>) -> !llvm.struct<"ordering", ()>
-// CHECK: func.func @lt(%{{.*}}: !trait.poly<3>, %{{.*}}: !trait.poly<4>) -> i1
+// CHECK: trait.method @partial_cmp(!trait.poly<3>, !trait.poly<4>) -> !llvm.struct<"ordering", ()>
+// CHECK: trait.method @lt(%{{.*}}: !trait.poly<3>, %{{.*}}: !trait.poly<4>) -> i1
 
 !ordering = !llvm.struct<"ordering", ()>
 !PartialOrdSelf = !trait.poly<3>
@@ -49,15 +49,15 @@ trait.trait private @PartialOrd[!PartialOrdSelf, !PartialOrdOther] where [
   @PartialEq[!PartialOrdSelf, !PartialOrdOther]
 ]
 {
-  func.func private @partial_cmp(!PartialOrdSelf, !PartialOrdOther) -> !ordering
+  trait.method @partial_cmp(!PartialOrdSelf, !PartialOrdOther) -> !ordering
 
-  func.func @lt(%self: !PartialOrdSelf, %other: !PartialOrdOther) -> i1 {
+  trait.method @lt(%self: !PartialOrdSelf, %other: !PartialOrdOther) -> i1 {
     %partial_ord = trait.assume self : !trait.claim<@PartialOrd[!PartialOrdSelf,!PartialOrdOther]>
 
     %cmp = trait.method.call %partial_ord @PartialOrd[!PartialOrdSelf,!PartialOrdOther]::@partial_cmp(%self, %other)
       : (!PartialOrdSelf, !PartialOrdOther) -> !ordering
 
     %res = arith.constant false
-    return %res : i1
+    trait.return %res : i1
   }
 }

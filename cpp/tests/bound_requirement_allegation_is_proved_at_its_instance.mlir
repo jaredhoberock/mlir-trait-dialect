@@ -13,12 +13,12 @@
 !M = !trait.poly<3>
 
 trait.trait private @Rule[!S] {
-  func.func private @size(!S) -> i64
+  trait.method @size(!S) -> i64
 }
 trait.impl private @Rule_pair for @Rule[tuple<i64, i64>] {
-  func.func private @size(%x: tuple<i64, i64>) -> i64 {
+  trait.method @size(%x: tuple<i64, i64>) -> i64 {
     %c = arith.constant 2 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 trait.trait private @Holds[!S] where [forall [!trait.bound<0>] -> @Rule[!trait.proj<@Holds[!S], "C", [!trait.bound<0>]>]] {

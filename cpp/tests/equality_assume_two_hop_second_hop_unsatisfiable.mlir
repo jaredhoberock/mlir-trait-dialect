@@ -26,7 +26,7 @@ trait.trait private @Wrap[!S] { trait.assoc_type @Item }
 trait.impl private @Wrap_i64 for @Wrap[i64] { trait.assoc_type @Item = !trait.proj<@Mid[i64], "Out"> }
 
 trait.trait private @Run[!S] {
-  func.func private @go(!S) -> i64
+  trait.method @go(!S) -> i64
 }
 
 func.func private @need(%v: i64, %e: !trait.claim<!trait.proj<@Wrap[!S], "Item"> = i64>) -> i64 {
@@ -34,12 +34,12 @@ func.func private @need(%v: i64, %e: !trait.claim<!trait.proj<@Wrap[!S], "Item">
 }
 
 trait.impl private @Run_gen for @Run[!S] where [@Wrap[!S], !trait.proj<@Wrap[!S], "Item"> = i64] {
-  func.func @go(%x: !S) -> i64 {
+  trait.method @go(%x: !S) -> i64 {
     %e = trait.assume 1 : !trait.claim<!trait.proj<@Wrap[!S], "Item"> = i64>
     %v = arith.constant 7 : i64
     %r = trait.func.call @need(%v, %e)
       : (i64, !trait.claim<!trait.proj<@Wrap[!S], "Item"> = i64>) -> i64
-    return %r : i64
+    trait.return %r : i64
   }
 }
 

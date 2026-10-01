@@ -9,14 +9,14 @@
 !T1 = !trait.poly<1>
 
 trait.trait private @Trait [!T0, !T1] {
-  func.func private @method(!T0, !T1) -> i64
+  trait.method @method(!T0, !T1) -> i64
 }
 
 !T2 = !trait.poly<2>
 trait.impl private @Trait_impl for @Trait[i64, !T2] {
-  func.func @method(%self: i64, %arg: !T2) -> i64 {
+  trait.method @method(%self: i64, %arg: !T2) -> i64 {
     %0 = trait.assume self : !trait.claim<@Trait[i64, !T2]>
-    return %self : i64
+    trait.return %self : i64
   }
 }
 

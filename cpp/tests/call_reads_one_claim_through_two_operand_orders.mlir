@@ -10,18 +10,18 @@
 // it discharges at the application the citation names, so both spell it at i8.
 // Split 2 swaps the operand order.
 
-trait.trait private @V[!trait.poly<0>] { func.func private @v() -> i64 }
-trait.trait private @U[!trait.poly<0>] where [@V[!trait.poly<0>]] { func.func private @u() -> i64 }
+trait.trait private @V[!trait.poly<0>] { trait.method @v() -> i64 }
+trait.trait private @U[!trait.poly<0>] where [@V[!trait.poly<0>]] { trait.method @u() -> i64 }
 trait.impl private @V_blanket for @V[!trait.poly<0>] {
-  func.func @v() -> i64 {
+  trait.method @v() -> i64 {
     %c = arith.constant 7 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 trait.impl private @U_blanket for @U[!trait.poly<0>] {
-  func.func @u() -> i64 {
+  trait.method @u() -> i64 {
     %c = arith.constant 1 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 trait.proof private @pv proves @V_blanket[!trait.poly<0> = !trait.poly<0>] for @V[!trait.poly<0>] given []
@@ -47,18 +47,18 @@ func.func @main() -> i64 {
 
 // -----
 
-trait.trait private @V[!trait.poly<0>] { func.func private @v() -> i64 }
-trait.trait private @U[!trait.poly<0>] where [@V[!trait.poly<0>]] { func.func private @u() -> i64 }
+trait.trait private @V[!trait.poly<0>] { trait.method @v() -> i64 }
+trait.trait private @U[!trait.poly<0>] where [@V[!trait.poly<0>]] { trait.method @u() -> i64 }
 trait.impl private @V_blanket for @V[!trait.poly<0>] {
-  func.func @v() -> i64 {
+  trait.method @v() -> i64 {
     %c = arith.constant 7 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 trait.impl private @U_blanket for @U[!trait.poly<0>] {
-  func.func @u() -> i64 {
+  trait.method @u() -> i64 {
     %c = arith.constant 1 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 trait.proof private @pv proves @V_blanket[!trait.poly<0> = !trait.poly<0>] for @V[!trait.poly<0>] given []

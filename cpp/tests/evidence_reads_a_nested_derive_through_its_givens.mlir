@@ -28,17 +28,17 @@ trait.impl private @Ten_box for @Ten[tuple<!B>] where [@Ten[!B]] {
 !I = !trait.poly<3>
 !E = !trait.poly<4>
 trait.trait private @Idx[!S, !I, !E] {
-  func.func private @at(!S, !I) -> !E
+  trait.method @at(!S, !I) -> !E
 }
 
 !U = !trait.poly<5>
 trait.impl private @Idx_blanket
     for @Idx[!U, !trait.proj<@Ten[!U], "Shape">, !trait.proj<@Ten[!U], "Element">]
     where [@Ten[!U]] {
-  func.func @at(%self: !U, %i: !trait.proj<@Ten[!U], "Shape">)
+  trait.method @at(%self: !U, %i: !trait.proj<@Ten[!U], "Shape">)
       -> !trait.proj<@Ten[!U], "Element"> {
     %r = ub.poison : !trait.proj<@Ten[!U], "Element">
-    return %r : !trait.proj<@Ten[!U], "Element">
+    trait.return %r : !trait.proj<@Ten[!U], "Element">
   }
 }
 

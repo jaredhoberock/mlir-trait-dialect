@@ -19,21 +19,21 @@
 // CHECK: note: required by {{.*}}@P1[tuple<i32>]{{.*}}, stated by proof @p
 // CHECK: note: {{.*}} more frame(s) elided
 
-trait.trait private @P1[!trait.poly<0>] { func.func private @p() -> i64 }
-trait.trait private @Q1[!trait.poly<0>] { func.func private @q() -> i64 }
+trait.trait private @P1[!trait.poly<0>] { trait.method @p() -> i64 }
+trait.trait private @Q1[!trait.poly<0>] { trait.method @q() -> i64 }
 
 trait.impl private @P_all for @P1[!trait.poly<0>] where [@Q1[!trait.poly<0>]] {
-  func.func @p() -> i64 {
+  trait.method @p() -> i64 {
     %a = trait.assume 0 : !trait.claim<@Q1[!trait.poly<0>]>
     %r = trait.method.call %a @Q1[!trait.poly<0>]::@q() : () -> i64
-    return %r : i64
+    trait.return %r : i64
   }
 }
 
 trait.impl private @Q_all for @Q1[!trait.poly<0>] where [@P1[tuple<!trait.poly<0>>]] {
-  func.func @q() -> i64 {
+  trait.method @q() -> i64 {
     %c = arith.constant 1 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 

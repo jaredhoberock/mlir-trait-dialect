@@ -159,27 +159,24 @@ static bool insertionStandsInsideTemplate(OpBuilder &builder) {
   return false;
 }
 
-/// Ends every block of `function`'s body that a function return ends with the
-/// return of `function`'s own kind, over the same operands. A return nested in a
-/// deeper region ends no block of the body and is left alone.
-static void endWithOwnReturns(RewriterBase &rewriter,
-                              FunctionOpInterface function) {
-  bool isMethod = isa<MethodOp>(function);
+/// When `function` is a `func.func` cut from a method, ends with `func.return`
+/// every block of its body the method's `trait.return` ends, over the same
+/// operands. A return nested in a deeper region ends no block of the body and is
+/// left alone.
+static void endWithFunctionReturns(RewriterBase &rewriter,
+                                   FunctionOpInterface function) {
+  if (!isa<func::FuncOp>(function))
+    return;
   for (Block &block : function.getFunctionBody()) {
     if (block.empty())
       continue;
-    Operation *terminator = &block.back();
-    if (isMethod ? !isa<func::ReturnOp>(terminator)
-                 : !isa<ReturnOp>(terminator))
+    auto methodReturn = dyn_cast<ReturnOp>(&block.back());
+    if (!methodReturn)
       continue;
     OpBuilder::InsertionGuard guard(rewriter);
-    rewriter.setInsertionPoint(terminator);
-    if (isMethod)
-      rewriter.replaceOpWithNewOp<ReturnOp>(terminator,
-                                            terminator->getOperands());
-    else
-      rewriter.replaceOpWithNewOp<func::ReturnOp>(terminator,
-                                                  terminator->getOperands());
+    rewriter.setInsertionPoint(methodReturn);
+    rewriter.replaceOpWithNewOp<func::ReturnOp>(methodReturn,
+                                                methodReturn.getOperands());
   }
 }
 
@@ -255,7 +252,7 @@ FunctionOpInterface specializePolymorph(RewriterBase& rewriter,
                                  instance.getFunctionBody(),
                                  mapping,
                                  replacer);
-  endWithOwnReturns(rewriter, instance);
+  endWithFunctionReturns(rewriter, instance);
 
   return instance;
 }

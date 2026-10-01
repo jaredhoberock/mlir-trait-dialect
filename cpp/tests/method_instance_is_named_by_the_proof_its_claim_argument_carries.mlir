@@ -12,24 +12,24 @@
 // CHECK: {{^}}16{{$}}
 
 !T = !trait.poly<0>
-trait.trait private @Mark[!T] { func.func private @value() -> i64 }
-trait.trait private @Tr[!T] { func.func private @run(!trait.claim<@Mark[!T]>) -> i64 }
+trait.trait private @Mark[!T] { trait.method @value() -> i64 }
+trait.trait private @Tr[!T] { trait.method @run(!trait.claim<@Mark[!T]>) -> i64 }
 trait.impl private @Mark_one for @Mark[i32] {
-  func.func @value() -> i64 {
+  trait.method @value() -> i64 {
     %v = arith.constant 7 : i64
-    return %v : i64
+    trait.return %v : i64
   }
 }
 trait.impl private @Mark_two for @Mark[i32] {
-  func.func @value() -> i64 {
+  trait.method @value() -> i64 {
     %v = arith.constant 9 : i64
-    return %v : i64
+    trait.return %v : i64
   }
 }
 trait.impl private @Tr_i32 for @Tr[i32] {
-  func.func @run(%m: !trait.claim<@Mark[i32]>) -> i64 {
+  trait.method @run(%m: !trait.claim<@Mark[i32]>) -> i64 {
     %v = trait.method.call %m @Mark[i32]::@value() : () -> i64
-    return %v : i64
+    trait.return %v : i64
   }
 }
 func.func @main() -> i64 {

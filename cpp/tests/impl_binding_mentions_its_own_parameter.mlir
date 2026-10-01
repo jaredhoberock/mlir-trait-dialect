@@ -13,13 +13,13 @@
 
 trait.trait private @Tr[!trait.poly<0>] {
   trait.assoc_type @X
-  func.func private @f(!trait.poly<0>) -> !trait.proj<@Tr[!trait.poly<0>], "X">
+  trait.method @f(!trait.poly<0>) -> !trait.proj<@Tr[!trait.poly<0>], "X">
 }
 trait.impl private @I for @Tr[tuple<!trait.poly<0>>] {
   trait.assoc_type @X = !trait.poly<0>
-  func.func @f(%s: tuple<!trait.poly<0>>) -> !trait.poly<0> {
+  trait.method @f(%s: tuple<!trait.poly<0>>) -> !trait.poly<0> {
     %e = builtin.unrealized_conversion_cast %s : tuple<!trait.poly<0>> to !trait.poly<0>
-    return %e : !trait.poly<0>
+    trait.return %e : !trait.poly<0>
   }
 }
 

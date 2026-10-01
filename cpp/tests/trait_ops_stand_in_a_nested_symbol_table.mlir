@@ -10,7 +10,7 @@
 // RUN: mlir-opt %s | FileCheck %s
 
 trait.trait private @Tr[!trait.poly<0>] {
-  func.func private @m(!trait.poly<0>) -> i64
+  trait.method @m(!trait.poly<0>) -> i64
 }
 
 // CHECK: gpu.module @nested
@@ -18,10 +18,10 @@ trait.trait private @Tr[!trait.poly<0>] {
 // CHECK: trait.impl private @Tr_i64 for @Tr[i64]
 gpu.module @nested {
   trait.trait private @Inner[!trait.poly<0>] {
-    func.func private @n(!trait.poly<0>) -> i64
+    trait.method @n(!trait.poly<0>) -> i64
   }
 
   trait.impl private @Tr_i64 for @Tr[i64] {
-    func.func @m(%self: i64) -> i64 { return %self : i64 }
+    trait.method @m(%self: i64) -> i64 { trait.return %self : i64 }
   }
 }

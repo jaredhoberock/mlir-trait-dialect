@@ -14,22 +14,22 @@
 // CHECK: {{^}}79{{$}}
 
 !T = !trait.poly<0>
-trait.trait private @Mark[!T] { func.func private @value() -> i64 }
-trait.trait private @Tr[!T] { func.func private @value() -> i64 }
+trait.trait private @Mark[!T] { trait.method @value() -> i64 }
+trait.trait private @Tr[!T] { trait.method @value() -> i64 }
 trait.impl private @Mark_one for @Mark[i32] {
-  func.func @value() -> i64 {
+  trait.method @value() -> i64 {
     %v = arith.constant 7 : i64
-    return %v : i64
+    trait.return %v : i64
   }
 }
 trait.impl private @Mark_two for @Mark[i32] {
-  func.func @value() -> i64 {
+  trait.method @value() -> i64 {
     %v = arith.constant 9 : i64
-    return %v : i64
+    trait.return %v : i64
   }
 }
 trait.impl private @Tr_impl for @Tr[i32] where [@Mark[i32], @Mark[i32]] {
-  func.func @value() -> i64 {
+  trait.method @value() -> i64 {
     %first = scf.execute_region -> i64 {
       %m0 = trait.assume 0 : !trait.claim<@Mark[i32]>
       %v0 = trait.method.call %m0 @Mark[i32]::@value() : () -> i64
@@ -42,7 +42,7 @@ trait.impl private @Tr_impl for @Tr[i32] where [@Mark[i32], @Mark[i32]] {
     %ten = arith.constant 10 : i64
     %scaled = arith.muli %first, %ten : i64
     %r = arith.addi %scaled, %v1 : i64
-    return %r : i64
+    trait.return %r : i64
   }
 }
 trait.proof private @P proves @Tr_impl[] for @Tr[i32] given [@Mark_one, @Mark_two]

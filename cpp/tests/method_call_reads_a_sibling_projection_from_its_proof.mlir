@@ -25,14 +25,14 @@ trait.impl private @Sib_i64_twin for @Sib[i64] {
 }
 
 trait.trait private @Host[!S] where [@Sib[!S]] {
-  func.func private @get(!S) -> !trait.proj<@Sib[!S], "Elem">
+  trait.method @get(!S) -> !trait.proj<@Sib[!S], "Elem">
 }
 
 trait.impl private @Host_i64 for @Host[i64]
     witnesses [#trait<witness !trait.proj<@Sib[i64], "Elem"> = f32 by @Sib_i64>] {
-  func.func @get(%x: i64) -> f32 {
+  trait.method @get(%x: i64) -> f32 {
     %r = ub.poison : f32
-    return %r : f32
+    trait.return %r : f32
   }
 }
 

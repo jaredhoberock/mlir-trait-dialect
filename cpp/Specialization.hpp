@@ -25,12 +25,11 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &sub
 /// clone, or null when `polymorph` has no body to clone.
 ///
 /// The clone is the function the block it is inserted into holds: a
-/// `trait.method` inside a trait or impl, ended by `trait.return`, and a
-/// `func.func` anywhere else, ended by `func.return`. Every block the
-/// polymorph's own return ends is ended by the clone's, over the same operands;
-/// nothing else in the body changes kind. A method carries no visibility, so a
-/// clone into a trait or impl takes none, and a `func.func` takes the
-/// polymorph's.
+/// `trait.method` inside a trait or impl and a `func.func` anywhere else. A
+/// method cut into a `func.func` has every `trait.return` ending a block of its
+/// body become a `func.return` over the same operands; nothing else in the body
+/// changes kind. A method carries no visibility, so a clone into a trait or impl
+/// takes none, and a `func.func` takes the polymorph's.
 FunctionOpInterface specializePolymorph(RewriterBase& rewriter,
                                         FunctionOpInterface polymorph,
                                         StringRef instanceName,

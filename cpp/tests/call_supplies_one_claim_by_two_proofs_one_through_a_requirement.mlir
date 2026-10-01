@@ -17,20 +17,20 @@ trait.trait private @T0[!trait.poly<0>] {
   trait.assoc_type @A
 }
 
-trait.trait private @T1[!trait.poly<1>] { func.func private @value() -> i64 }
+trait.trait private @T1[!trait.poly<1>] { trait.method @value() -> i64 }
 
 trait.trait private @T2[!trait.poly<2>] where [@T1[!trait.proj<@T0[!trait.poly<2>], "A">]] {}
 
 trait.impl private @T1_i64_a for @T1[i64] {
-  func.func @value() -> i64 {
+  trait.method @value() -> i64 {
     %v = arith.constant 7 : i64
-    return %v : i64
+    trait.return %v : i64
   }
 }
 trait.impl private @T1_i64_b for @T1[i64] {
-  func.func @value() -> i64 {
+  trait.method @value() -> i64 {
     %v = arith.constant 9 : i64
-    return %v : i64
+    trait.return %v : i64
   }
 }
 

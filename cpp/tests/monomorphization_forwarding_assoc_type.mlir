@@ -36,32 +36,32 @@
 
 trait.trait private @Inner[!S] {
   trait.assoc_type @Assoc
-  func.func private @method(!S) -> !trait.proj<@Inner[!S], "Assoc">
+  trait.method @method(!S) -> !trait.proj<@Inner[!S], "Assoc">
 }
 
 trait.trait private @Outer[!S] {
   trait.assoc_type @Assoc
-  func.func private @method(!S) -> !trait.proj<@Outer[!S], "Assoc">
+  trait.method @method(!S) -> !trait.proj<@Outer[!S], "Assoc">
 }
 
 // Concrete impl: Inner for i32, Assoc = f32
 trait.impl private @Inner_i32 for @Inner[i32] {
   trait.assoc_type @Assoc = f32
-  func.func @method(%self: i32) -> f32 {
+  trait.method @method(%self: i32) -> f32 {
     %c = arith.sitofp %self : i32 to f32
-    return %c : f32
+    trait.return %c : f32
   }
 }
 
 // Forwarding impl: Outer for tuple<U> where Inner[U], Assoc = Inner[U]::Assoc
 trait.impl private @Outer_tuple for @Outer[tuple<!U>] where [@Inner[!U]] {
   trait.assoc_type @Assoc = !trait.proj<@Inner[!U], "Assoc">
-  func.func @method(%self: tuple<!U>) -> !trait.proj<@Inner[!U], "Assoc"> {
+  trait.method @method(%self: tuple<!U>) -> !trait.proj<@Inner[!U], "Assoc"> {
     %a = trait.assume 0 : !trait.claim<@Inner[!U]>
     %elem = "test.extract"(%self) : (tuple<!U>) -> !U
     %res = trait.method.call %a @Inner[!U]::@method(%elem)
       : (!U) -> !trait.proj<@Inner[!U], "Assoc">
-    return %res : !trait.proj<@Inner[!U], "Assoc">
+    trait.return %res : !trait.proj<@Inner[!U], "Assoc">
   }
 }
 

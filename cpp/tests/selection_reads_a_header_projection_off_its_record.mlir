@@ -40,15 +40,15 @@ trait.impl private @Small_i32 for @Small[i32] {
 !U = !trait.poly<5>
 !V = !trait.poly<6>
 trait.trait private @Takes[!U, !V] {
-  func.func private @go(!U) -> !V
+  trait.method @go(!U) -> !V
 }
 
 !W = !trait.poly<7>
 trait.impl private @Takes_blanket
     for @Takes[!W, !trait.proj<@Item[!W], "Of">] where [@Item[!W]] {
-  func.func @go(%x: !W) -> !trait.proj<@Item[!W], "Of"> {
+  trait.method @go(%x: !W) -> !trait.proj<@Item[!W], "Of"> {
     %r = ub.poison : !trait.proj<@Item[!W], "Of">
-    return %r : !trait.proj<@Item[!W], "Of">
+    trait.return %r : !trait.proj<@Item[!W], "Of">
   }
 }
 

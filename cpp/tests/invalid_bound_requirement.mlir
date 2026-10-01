@@ -143,9 +143,9 @@ trait.impl private @Has_any for @Has[!trait.poly<0>] where [forall [!trait.bound
 trait.trait private @Marker[!trait.poly<0>] {}
 trait.trait private @Has[!trait.poly<0>] where [forall [!trait.bound<0>] -> @Marker[!trait.proj<@Has[!trait.poly<0>], "A", [!trait.bound<0>]>]] {
   trait.assoc_type @A<[!trait.poly<1>]>
-  func.func @m(%x: !trait.poly<0>) -> !trait.poly<0> {
+  trait.method @m(%x: !trait.poly<0>) -> !trait.poly<0> {
     // expected-error @below {{cites where-clause entry 0, which binds variables of its own; select it with trait.project and its type arguments}}
     %b = trait.assume 0 : !trait.claim<@Marker[!trait.poly<0>]>
-    return %x : !trait.poly<0>
+    trait.return %x : !trait.poly<0>
   }
 }

@@ -12,13 +12,13 @@
 
 trait.trait private @T[!trait.poly<0>] where [!trait.proj<@T[!trait.poly<0>], "Out"> = i64] {
   trait.assoc_type @Out
-  func.func private @get(!trait.poly<0>) -> !trait.proj<@T[!trait.poly<0>], "Out">
+  trait.method @get(!trait.poly<0>) -> !trait.proj<@T[!trait.poly<0>], "Out">
 }
 trait.impl private @T_i64 for @T[i64] {
   trait.assoc_type @Out = i64
-  func.func @get(%x: i64) -> i64 {
+  trait.method @get(%x: i64) -> i64 {
     %c = arith.constant 5 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 

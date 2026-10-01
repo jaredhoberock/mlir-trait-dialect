@@ -7,14 +7,14 @@
 
 trait.trait private @Get[!T] {
   trait.assoc_type @Output
-  func.func private @get(!T) -> !trait.proj<@Get[!T], "Output">
+  trait.method @get(!T) -> !trait.proj<@Get[!T], "Output">
 }
 
 trait.impl private for @Get[i32] {
   trait.assoc_type @Output = i64
-  func.func @get(%self: i32) -> i64 {
+  trait.method @get(%self: i32) -> i64 {
     %c = arith.extsi %self : i32 to i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 

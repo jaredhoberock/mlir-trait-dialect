@@ -12,7 +12,7 @@
 !M = !trait.poly<3>
 
 trait.trait private @Rule[!S] {
-  func.func private @size(!S) -> i64
+  trait.method @size(!S) -> i64
 }
 trait.trait private @Holds[!S] where [forall [!trait.bound<0>] -> @Rule[!trait.proj<@Holds[!S], "C", [!trait.bound<0>]>]] {
   trait.assoc_type @C<[!X]>
@@ -52,7 +52,7 @@ func.func @main(%x: !trait.proj<@Holds[i32], "C", [i1]>) -> i64 {
 !M = !trait.poly<3>
 
 trait.trait private @Mark[!S] {
-  func.func private @value(!S) -> i64
+  trait.method @value(!S) -> i64
 }
 trait.trait private @Base[!S] where [forall [!trait.bound<0>] -> @Mark[!trait.proj<@Base[!S], "A", [!trait.bound<0>]>]] {
   trait.assoc_type @A<[!X]>
@@ -99,7 +99,7 @@ func.func @main(%x: !trait.proj<@Outer[i32], "A", [i1]>) -> i64 {
 !M = !trait.poly<3>
 
 trait.trait private @Sup0[!S] {
-  func.func private @sup(!S) -> i64
+  trait.method @sup(!S) -> i64
 }
 trait.trait private @Sub0[!S] where [@Sup0[!S]] {}
 trait.trait private @Has[!S] where [forall [!trait.bound<0>] -> @Sup0[!trait.proj<@Has[!S], "A", [!trait.bound<0>]>]] {

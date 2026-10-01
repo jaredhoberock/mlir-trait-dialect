@@ -9,11 +9,11 @@
 // verifies: they are two names for one fact, and which name a clone takes is
 // settled where the clone is cut.
 
-trait.trait private @T[!trait.poly<0>] { func.func private @t() -> i64 }
+trait.trait private @T[!trait.poly<0>] { trait.method @t() -> i64 }
 trait.impl private @T_i64 for @T[i64] {
-  func.func @t() -> i64 {
+  trait.method @t() -> i64 {
     %c = arith.constant 5 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 trait.proof private @pv1 proves @T_i64[] for @T[i64] given []

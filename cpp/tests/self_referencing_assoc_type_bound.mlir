@@ -13,5 +13,5 @@
 
 trait.trait private @Trait[!S] where [@Trait[!trait.proj<@Trait[!S], "Assoc">]] {
   trait.assoc_type @Assoc
-  func.func private @get(!S) -> !trait.proj<@Trait[!S], "Assoc">
+  trait.method @get(!S) -> !trait.proj<@Trait[!S], "Assoc">
 }

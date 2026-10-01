@@ -20,7 +20,7 @@
 !T0 = !trait.poly<0>
 
 trait.trait private @Tr [!T0] {
-  func.func private @method(!T0) -> i32
+  trait.method @method(!T0) -> i32
 }
 
 // A blanket impl: @outer derives its claim at its own type variable, so the
@@ -28,9 +28,9 @@ trait.trait private @Tr [!T0] {
 // type justifies nothing about a variable.
 !B = !trait.poly<9>
 trait.impl private @Tr_any for @Tr[!B] {
-  func.func @method(%self: !B) -> i32 {
+  trait.method @method(%self: !B) -> i32 {
     %c = arith.constant 0 : i32
-    return %c : i32
+    trait.return %c : i32
   }
 }
 

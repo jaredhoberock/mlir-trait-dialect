@@ -24,26 +24,26 @@
 
 trait.trait private @Inner[!S] {
   trait.assoc_type @Item
-  func.func private @get(!S) -> !trait.proj<@Inner[!S], "Item">
+  trait.method @get(!S) -> !trait.proj<@Inner[!S], "Item">
 }
 
 trait.trait private @Outer[!S] {
   trait.assoc_type @Wrap<[!T]>
-  func.func private @wrap(!S, !T) -> !trait.proj<@Outer[!S], "Wrap", [!T]>
+  trait.method @wrap(!S, !T) -> !trait.proj<@Outer[!S], "Wrap", [!T]>
 }
 
 trait.impl private for @Inner[i32] {
   trait.assoc_type @Item = i64
-  func.func @get(%self: i32) -> i64 {
+  trait.method @get(%self: i32) -> i64 {
     %c = arith.extsi %self : i32 to i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 
 trait.impl private for @Outer[i1] {
   trait.assoc_type @Wrap<[!T]> = !T
-  func.func @wrap(%self: i1, %x: !T) -> !T {
-    return %x : !T
+  trait.method @wrap(%self: i1, %x: !T) -> !T {
+    trait.return %x : !T
   }
 }
 

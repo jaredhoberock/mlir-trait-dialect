@@ -19,11 +19,11 @@ trait.impl private @Marker_any for @Marker[!trait.poly<0>] {}
 trait.impl private @Other_i32 for @Other[i32] {}
 trait.impl private @Has_m for @Has[!trait.poly<0>] where [@Marker[!trait.poly<0>]] { trait.assoc_type @Out = i64 }
 trait.impl private @Has_o for @Has[!trait.poly<0>] where [@Other[!trait.poly<0>]] { trait.assoc_type @Out = i32 }
-trait.trait private @V[!trait.poly<0>] { func.func private @v() -> i64 }
+trait.trait private @V[!trait.poly<0>] { trait.method @v() -> i64 }
 trait.impl private @V_blanket for @V[!trait.poly<0>] where [@Has[!trait.poly<0>], !trait.proj<@Has[!trait.poly<0>], "Out"> = i64] {
-  func.func @v() -> i64 {
+  trait.method @v() -> i64 {
     %c = arith.constant 7 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 trait.proof private @ma proves @Marker_any[!trait.poly<0> = !trait.poly<0>] for @Marker[!trait.poly<0>] given []
@@ -50,11 +50,11 @@ trait.impl private @Marker_any for @Marker[!trait.poly<0>] {}
 trait.impl private @Other_i32 for @Other[i32] {}
 trait.impl private @Has_m for @Has[!trait.poly<0>] where [@Marker[!trait.poly<0>]] { trait.assoc_type @Out = i64 }
 trait.impl private @Has_o for @Has[!trait.poly<0>] where [@Other[!trait.poly<0>]] { trait.assoc_type @Out = i32 }
-trait.trait private @V[!trait.poly<0>] { func.func private @v() -> i64 }
+trait.trait private @V[!trait.poly<0>] { trait.method @v() -> i64 }
 trait.impl private @V_blanket for @V[!trait.poly<0>] where [@Has[!trait.poly<0>], !trait.proj<@Has[!trait.poly<0>], "Out"> = i64] {
-  func.func @v() -> i64 {
+  trait.method @v() -> i64 {
     %c = arith.constant 7 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 trait.proof private @ma proves @Marker_any[!trait.poly<0> = !trait.poly<0>] for @Marker[!trait.poly<0>] given []

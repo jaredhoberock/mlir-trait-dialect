@@ -5,7 +5,7 @@
 
 trait.trait private @Unwrap[!T] {
   trait.assoc_type @Output
-  func.func private @unwrap(!T) -> !trait.proj<@Unwrap[!T], "Output">
+  trait.method @unwrap(!T) -> !trait.proj<@Unwrap[!T], "Output">
 }
 
 trait.trait private @Broad[!T] {
@@ -18,9 +18,9 @@ trait.impl private @Broad_i64 for @Broad[i64] {
 
 trait.impl private @Unwrap_i64 for @Unwrap[i64] {
   trait.assoc_type @Output = !X
-  func.func @unwrap(%self: i64) -> !X {
+  trait.method @unwrap(%self: i64) -> !X {
     %result = ub.poison : !X
-    return %result : !X
+    trait.return %result : !X
   }
 }
 

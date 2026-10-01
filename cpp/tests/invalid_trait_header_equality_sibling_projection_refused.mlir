@@ -22,12 +22,12 @@ trait.impl private @Sib_i64 for @Sib[i64] {
 }
 
 trait.trait private @T[!S] where [!trait.proj<@Sib[!S], "Elem"> = f32] {
-  func.func private @id(!S) -> !S
+  trait.method @id(!S) -> !S
 }
 
 // expected-error @below {{does not satisfy trait-header equality requirement '!trait.claim<!trait.proj<@Sib[i64], "Elem"> = f32>': '!trait.proj<@Sib[i64], "Elem">' and 'f32' are not the same type}}
 trait.impl private @T_i64 for @T[i64] {
-  func.func @id(%x: i64) -> i64 {
-    return %x : i64
+  trait.method @id(%x: i64) -> i64 {
+    trait.return %x : i64
   }
 }

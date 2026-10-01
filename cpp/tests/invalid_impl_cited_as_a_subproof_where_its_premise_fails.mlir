@@ -9,21 +9,21 @@
 // only place it can be decided.
 
 trait.trait private @T[!trait.poly<0>] {
-  func.func private @m() -> i64
+  trait.method @m() -> i64
 }
 trait.impl private @I for @T[i32] where [i32 = i64] {
-  func.func @m() -> i64 {
+  trait.method @m() -> i64 {
     %c = arith.constant 1 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 trait.trait private @Uses[!trait.poly<0>] where [@T[!trait.poly<0>]] {
-  func.func private @u() -> i64
+  trait.method @u() -> i64
 }
 trait.impl private @Uses_i32 for @Uses[i32] {
-  func.func @u() -> i64 {
+  trait.method @u() -> i64 {
     %c = arith.constant 3 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 // expected-error @below {{impl '@I' applies where 'i32' = 'i64', and nothing here makes 'i32' and 'i64' one type at '!trait.claim<@T[i32]>'}}

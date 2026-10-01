@@ -6,7 +6,7 @@
 // this trait returns some type from get
 !R = !trait.poly<0>
 trait.trait private @Get[!R] {
-  func.func private @get() -> !R
+  trait.method @get() -> !R
 }
 
 // this trait will be used in an impl where below
@@ -20,9 +20,9 @@ trait.impl private @Assumption_impl for @Assumption[!A] {}
 trait.impl private @Get_impl_claim for @Get[!trait.claim<@Assumption[i32]>] where [
   @Assumption[i32]
 ] {
-  func.func @get() -> !trait.claim<@Assumption[i32]> {
+  trait.method @get() -> !trait.claim<@Assumption[i32]> {
     %res = trait.assume 0 : !trait.claim<@Assumption[i32]>
-    return %res : !trait.claim<@Assumption[i32]>
+    trait.return %res : !trait.claim<@Assumption[i32]>
   }
 }
 

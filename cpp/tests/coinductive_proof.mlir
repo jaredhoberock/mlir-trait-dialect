@@ -13,17 +13,17 @@
 !S = !trait.poly<0>
 trait.trait private @Rec[!S] where [@Rec[!trait.proj<@Rec[!S], "Sub">]] {
   trait.assoc_type @Sub
-  func.func private @id(!S) -> !S
+  trait.method @id(!S) -> !S
 }
 
 trait.impl private @Rec_i64 for @Rec[i64] {
   trait.assoc_type @Sub = i64
-  func.func private @id(%x: i64) -> i64 { return %x : i64 }
+  trait.method @id(%x: i64) -> i64 { trait.return %x : i64 }
 }
 
 trait.impl private @Rec_unit for @Rec[tuple<>] {
   trait.assoc_type @Sub = tuple<>
-  func.func private @id(%x: tuple<>) -> tuple<> { return %x : tuple<> }
+  trait.method @id(%x: tuple<>) -> tuple<> { trait.return %x : tuple<> }
 }
 
 func.func @test_coinductive(%x: i64) -> i64 {

@@ -37,7 +37,7 @@ func.func @evidence(%p: tuple<!trait.proj<@Inner[i64], "Item">>) -> tuple<i64> {
 }
 
 trait.trait private @Run[!S] {
-  func.func private @go(!S) -> i64
+  trait.method @go(!S) -> i64
 }
 
 // The callee's monomorphic instance keeps the equality-claim parameter on its
@@ -52,12 +52,12 @@ func.func private @need(%v: i64, %e: !trait.claim<tuple<!trait.proj<@Inner[!S], 
 // The closure-like impl: its where-clause carries the inherited equality; the
 // method cites it by position and forwards it as the call operand.
 trait.impl private @Run_gen for @Run[!S] where [@Inner[!S], tuple<!trait.proj<@Inner[!S], "Item">> = tuple<i64>] {
-  func.func @go(%x: !S) -> i64 {
+  trait.method @go(%x: !S) -> i64 {
     %e = trait.assume 1 : !trait.claim<tuple<!trait.proj<@Inner[!S], "Item">> = tuple<i64>>
     %v = arith.constant 7 : i64
     %r = trait.func.call @need(%v, %e)
       : (i64, !trait.claim<tuple<!trait.proj<@Inner[!S], "Item">> = tuple<i64>>) -> i64
-    return %r : i64
+    trait.return %r : i64
   }
 }
 

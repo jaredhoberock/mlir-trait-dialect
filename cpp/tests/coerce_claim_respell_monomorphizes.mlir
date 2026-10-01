@@ -11,12 +11,12 @@
 // the concrete method. The respell sweep does not trip.
 
 trait.trait private @Bound[!trait.poly<0>] {
-  func.func private @use(!trait.poly<0>) -> i1
+  trait.method @use(!trait.poly<0>) -> i1
 }
 trait.impl private @Bound_impl for @Bound[i64] {
-  func.func @use(%self: i64) -> i1 {
+  trait.method @use(%self: i64) -> i1 {
     %t = arith.constant 1 : i1
-    return %t : i1
+    trait.return %t : i1
   }
 }
 

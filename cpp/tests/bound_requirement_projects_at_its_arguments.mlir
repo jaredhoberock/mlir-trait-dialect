@@ -19,23 +19,23 @@
 !M = !trait.poly<3>
 
 trait.trait private @Marker[!S] {
-  func.func private @mark(!S) -> i64
+  trait.method @mark(!S) -> i64
 }
 
 trait.trait private @Has[!S] where [forall [!trait.bound<0>] where [@Marker[!trait.bound<0>]] -> @Marker[!trait.proj<@Has[!S], "A", [!trait.bound<0>]>]] {
   trait.assoc_type @A<[!X]>
-  func.func @use(%x: !trait.proj<@Has[!S], "A", [i1]>, %p: !trait.claim<@Marker[i1]>) -> i64 {
+  trait.method @use(%x: !trait.proj<@Has[!S], "A", [i1]>, %p: !trait.claim<@Marker[i1]>) -> i64 {
     %s = trait.assume self : !trait.claim<@Has[!S]>
     %m = trait.project %s[0] for [i1] given(%p : !trait.claim<@Marker[i1]>) : !trait.claim<@Has[!S]> -> !trait.claim<@Marker[!trait.proj<@Has[!S], "A", [i1]>]>
     %r = trait.method.call %m @Marker[!trait.proj<@Has[!S], "A", [i1]>]::@mark(%x) : (!trait.proj<@Has[!S], "A", [i1]>) -> i64
-    return %r : i64
+    trait.return %r : i64
   }
 }
 
 trait.impl private @Marker_i1 for @Marker[i1] {
-  func.func @mark(%x: i1) -> i64 {
+  trait.method @mark(%x: i1) -> i64 {
     %c = arith.constant 7 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 

@@ -9,15 +9,15 @@
 
 trait.trait private @Tensor[!trait.poly<0>] {
   trait.assoc_type @Shape
-  func.func private @shape(!trait.poly<0>) -> !trait.proj<@Tensor[!trait.poly<0>], "Shape">
+  trait.method @shape(!trait.poly<0>) -> !trait.proj<@Tensor[!trait.poly<0>], "Shape">
 }
 trait.trait private @Vector[!trait.poly<0>] {}
 trait.impl private @Vector_blanket for @Vector[!trait.poly<0>] where [@Tensor[!trait.poly<0>], !trait.proj<@Tensor[!trait.poly<0>], "Shape"> = i64] {}
 trait.impl private @Tensor_i8 for @Tensor[i8] {
   trait.assoc_type @Shape = i64
-  func.func @shape(%x: i8) -> i64 {
+  trait.method @shape(%x: i8) -> i64 {
     %c = arith.constant 1 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 

@@ -15,20 +15,20 @@
 
 trait.trait private @Mark[!T] {}
 trait.trait private @Tr[!T] {
-  func.func private @get(!T) -> i64
+  trait.method @get(!T) -> i64
 }
 
 trait.impl private @Tr_any for @Tr[tuple<!U>] where [@Mark[!U]] {
-  func.func @get(%x: tuple<!U>) -> i64 {
+  trait.method @get(%x: tuple<!U>) -> i64 {
     %c = arith.constant 1 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 
 trait.impl private @Tr_i32 for @Tr[tuple<i32>] {
-  func.func @get(%x: tuple<i32>) -> i64 {
+  trait.method @get(%x: tuple<i32>) -> i64 {
     %c = arith.constant 2 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 

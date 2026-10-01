@@ -9,7 +9,7 @@
 // RUN: mlir-opt %s | FileCheck %s
 
 trait.trait private @Tr[!trait.poly<0>] {
-  func.func private @m(!trait.poly<0>, !trait.poly<9>) -> !trait.poly<9>
+  trait.method @m(!trait.poly<0>, !trait.poly<9>) -> !trait.poly<9>
 }
 
 // CHECK: trait.method.call {{.*}}::@m

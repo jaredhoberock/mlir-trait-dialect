@@ -22,15 +22,15 @@ trait.impl private @Out_i32 for @Out[i32] {
 !G = !trait.poly<1>
 trait.trait private @Fold[!G] {
   trait.assoc_type @Sum
-  func.func private @run(!G) -> !trait.proj<@Fold[!G], "Sum">
+  trait.method @run(!G) -> !trait.proj<@Fold[!G], "Sum">
 }
 
 !Acc = !trait.poly<2>
 trait.impl private @Fold_gen for @Fold[!G] where [!trait.proj<@Out[!G], "Output"> = !Acc] {
   trait.assoc_type @Sum = !Acc
-  func.func @run(%x: !G) -> !Acc {
+  trait.method @run(%x: !G) -> !Acc {
     %r = builtin.unrealized_conversion_cast %x : !G to !Acc
-    return %r : !Acc
+    trait.return %r : !Acc
   }
 }
 

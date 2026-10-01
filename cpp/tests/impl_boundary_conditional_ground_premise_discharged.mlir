@@ -25,15 +25,15 @@ trait.impl private @Sibling_i64 for @Sibling[i64] where [@Needs[i64]] {
 
 trait.trait private @Host[!S] {
   trait.assoc_type @Out
-  func.func private @make(!S) -> !trait.proj<@Sibling[!S], "Elem">
+  trait.method @make(!S) -> !trait.proj<@Sibling[!S], "Elem">
 }
 
 // CHECK: trait.impl private @Host_i64
 trait.impl private @Host_i64 for @Host[i64] where [@Needs[i64]]
     witnesses [#trait<witness !trait.proj<@Sibling[i64], "Elem"> = i64 by @Sibling_i64>] {
   trait.assoc_type @Out = i64
-  func.func @make(%x: i64) -> i64 {
+  trait.method @make(%x: i64) -> i64 {
     %r = ub.poison : i64
-    return %r : i64
+    trait.return %r : i64
   }
 }

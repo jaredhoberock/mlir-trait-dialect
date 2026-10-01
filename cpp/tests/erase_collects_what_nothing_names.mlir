@@ -28,20 +28,20 @@
 !S = !trait.poly<0>
 
 trait.trait private @Show[!S] {
-  func.func private @show(!S) -> i32
+  trait.method @show(!S) -> i32
 }
 
 trait.impl private @Show_i32 for @Show[i32] {
-  func.func private @show(%x: i32) -> i32 {
-    return %x : i32
+  trait.method @show(%x: i32) -> i32 {
+    trait.return %x : i32
   }
 }
 
 // no call selects this impl, so its method is never cloned
 trait.impl private @Show_i64 for @Show[i64] {
-  func.func private @show(%x: i64) -> i32 {
+  trait.method @show(%x: i64) -> i32 {
     %c = arith.constant 0 : i32
-    return %c : i32
+    trait.return %c : i32
   }
 }
 

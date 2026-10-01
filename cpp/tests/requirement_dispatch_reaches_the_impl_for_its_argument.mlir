@@ -8,29 +8,29 @@
 // @B_i32's body makes through that requirement reaches @A_i32's method.
 
 trait.trait private @A[!trait.poly<0>] {
-  func.func private @a() -> i64
+  trait.method @a() -> i64
 }
 trait.trait private @B[!trait.poly<0>] where [@A[!trait.poly<0>]] {
-  func.func private @b(!trait.poly<0>) -> i64
+  trait.method @b(!trait.poly<0>) -> i64
 }
 trait.impl private @A_i32 for @A[i32] {
-  func.func @a() -> i64 {
+  trait.method @a() -> i64 {
     %c = arith.constant 32 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 trait.impl private @A_i64 for @A[i64] {
-  func.func @a() -> i64 {
+  trait.method @a() -> i64 {
     %c = arith.constant 64 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 trait.impl private @B_i32 for @B[i32] {
-  func.func @b(%x: i32) -> i64 {
+  trait.method @b(%x: i32) -> i64 {
     %s = trait.assume self : !trait.claim<@B[i32]>
     %a = trait.project %s[0] : !trait.claim<@B[i32]> -> !trait.claim<@A[i32]>
     %r = trait.method.call %a @A[i32]::@a() : () -> i64
-    return %r : i64
+    trait.return %r : i64
   }
 }
 

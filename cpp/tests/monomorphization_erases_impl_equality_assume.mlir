@@ -15,16 +15,16 @@
 
 trait.trait private @FoldFn[!S] {
   trait.assoc_type @Output
-  func.func nested @run(!trait.proj<@FoldFn[!S], "Output">) -> !S
+  trait.method @run(!trait.proj<@FoldFn[!S], "Output">) -> !S
 }
 
 trait.impl private @FoldFn_gen for @FoldFn[!S] where [!trait.proj<@FoldFn[!S], "Output"> = !S] {
   trait.assoc_type @Output = !S
-  func.func nested @run(%p: !trait.proj<@FoldFn[!S], "Output">) -> !S {
+  trait.method @run(%p: !trait.proj<@FoldFn[!S], "Output">) -> !S {
     %e = trait.assume 0 : !trait.claim<!trait.proj<@FoldFn[!S], "Output"> = !S>
     %r = trait.coerce %p : !trait.proj<@FoldFn[!S], "Output"> to !S via (%e)
       : (!trait.claim<!trait.proj<@FoldFn[!S], "Output"> = !S>)
-    return %r : !S
+    trait.return %r : !S
   }
 }
 

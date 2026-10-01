@@ -9,7 +9,7 @@
 !T = !trait.poly<0>
 
 trait.trait private @Unwrap[!T] {
-  func.func private @unwrap(!T) -> !T
+  trait.method @unwrap(!T) -> !T
 }
 
 func.func private @caller(%claim: !trait.claim<@Unwrap[!T]>, %value: !T) -> !T {

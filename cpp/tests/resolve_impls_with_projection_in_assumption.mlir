@@ -12,35 +12,35 @@
 
 trait.trait private @Trait[!T] {
   trait.assoc_type @Assoc
-  func.func private @dummy(!T) -> i32
+  trait.method @dummy(!T) -> i32
 }
 
 trait.trait private @Marker[!T] {
-  func.func private @mark(!T) -> i32
+  trait.method @mark(!T) -> i32
 }
 
 // impl Trait for i32 { type Assoc = tuple<>; }
 trait.impl private @Trait_i32 for @Trait[i32] {
   trait.assoc_type @Assoc = tuple<>
-  func.func @dummy(%arg: i32) -> i32 {
-    return %arg : i32
+  trait.method @dummy(%arg: i32) -> i32 {
+    trait.return %arg : i32
   }
 }
 
 // impl Marker for tuple<> {}
 trait.impl private @Marker_unit for @Marker[tuple<>] {
-  func.func @mark(%arg: tuple<>) -> i32 {
+  trait.method @mark(%arg: tuple<>) -> i32 {
     %c = arith.constant 1 : i32
-    return %c : i32
+    trait.return %c : i32
   }
 }
 
 // impl<T: Trait> Marker for T where T::Assoc: Marker {}
 !U = !trait.poly<1>
 trait.impl private @Marker_via_assoc for @Marker[!U] where [@Trait[!U], @Marker[!trait.proj<@Trait[!U], "Assoc">]] {
-  func.func @mark(%arg: !U) -> i32 {
+  trait.method @mark(%arg: !U) -> i32 {
     %c = arith.constant 2 : i32
-    return %c : i32
+    trait.return %c : i32
   }
 }
 

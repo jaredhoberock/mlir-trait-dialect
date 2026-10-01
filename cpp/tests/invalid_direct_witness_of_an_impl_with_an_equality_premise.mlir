@@ -8,12 +8,12 @@
 // naming the impl directly names one of those applications.
 
 trait.trait private @T[!trait.poly<0>] {
-  func.func private @m() -> i64
+  trait.method @m() -> i64
 }
 trait.impl private @I for @T[i32] where [i32 = i64] {
-  func.func @m() -> i64 {
+  trait.method @m() -> i64 {
     %c = arith.constant 1 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 func.func @main() -> i64 {

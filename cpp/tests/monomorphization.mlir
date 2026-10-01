@@ -7,23 +7,23 @@
 !O = !trait.poly<1>
 // CHECK-NOT: trait.trait private @PartialEq
 trait.trait private @PartialEq [!S,!O] {
-  func.func private @eq(!S, !O) -> i1
+  trait.method @eq(!S, !O) -> i1
 
-  func.func @neq(%self: !S, %other: !O) -> i1 {
+  trait.method @neq(%self: !S, %other: !O) -> i1 {
     %partial_eq = trait.assume self : !trait.claim<@PartialEq[!S,!O]>
     %equal = trait.method.call %partial_eq @PartialEq[!S,!O]::@eq(%self, %other)
       : (!S, !O) -> i1
     %true = arith.constant 1 : i1
     %res = arith.xori %equal, %true : i1
-    return %res : i1
+    trait.return %res : i1
   }
 }
 
 // CHECK-NOT: trait.impl private @PartialEq
 trait.impl private @PartialEq_impl_i32_i32 for @PartialEq[i32,i32] {
-  func.func @eq(%self: i32, %other: i32) -> i1 {
+  trait.method @eq(%self: i32, %other: i32) -> i1 {
     %res = arith.cmpi eq, %self, %other : i32
-    return %res : i1
+    trait.return %res : i1
   }
 }
 

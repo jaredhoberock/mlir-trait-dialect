@@ -65,10 +65,7 @@ class HasChildren<list<string> ops>
 
 def TraitOp : TraitDialectOp<"trait", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
-  // XXX TODO a method spelled as a `func.func` is accepted beside `trait.method`
-  // while the producers switch to `trait.method`; the commit that removes the
-  // `func::FuncOp` arm from both declarations' child lists deletes it.
-  HasChildren<["trait::MethodOp", "func::FuncOp", "trait::AssocTypeOp"]>,
+  HasChildren<["trait::MethodOp", "trait::AssocTypeOp"]>,
   HasGetModule,
   IsolatedFromAbove,
   SingleBlock,
@@ -301,10 +298,7 @@ def TraitOp : TraitDialectOp<"trait", [
 
 def ImplOp : TraitDialectOp<"impl", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
-  // XXX TODO a method spelled as a `func.func` is accepted beside `trait.method`
-  // while the producers switch to `trait.method`; the commit that removes the
-  // `func::FuncOp` arm from both declarations' child lists deletes it.
-  HasChildren<["trait::MethodOp", "func::FuncOp", "trait::AssocTypeOp"]>,
+  HasChildren<["trait::MethodOp", "trait::AssocTypeOp"]>,
   HasGetModule,
   IsolatedFromAbove,
   SingleBlock,

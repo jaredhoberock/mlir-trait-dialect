@@ -29,14 +29,14 @@ trait.impl private @Sib_i32 for @Sib[i32] {
 }
 
 trait.trait private @Host[!S] {
-  func.func private @make(!S) -> !trait.proj<@Sib[!S], "Elem">
+  trait.method @make(!S) -> !trait.proj<@Sib[!S], "Elem">
 }
 
 // expected-error @below {{impl '@Sib_i32' at the witness's arguments is an impl for '!trait.claim<@Sib[i32]>', not for the projection's application '!trait.claim<@Sib[!trait.proj<@Other[i64], "X">]>'}}
 trait.impl private @Host_p for @Host[!trait.proj<@Other[i64], "X">]
     witnesses [#trait<witness !trait.proj<@Sib[!trait.proj<@Other[i64], "X">], "Elem"> = f32 by @Sib_i32>] {
-  func.func @make(%x: !trait.proj<@Other[i64], "X">) -> f32 {
+  trait.method @make(%x: !trait.proj<@Other[i64], "X">) -> f32 {
     %r = ub.poison : f32
-    return %r : f32
+    trait.return %r : f32
   }
 }

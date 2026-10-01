@@ -15,39 +15,39 @@
 !S = !trait.poly<0>
 
 trait.trait private @Printable[!S] {
-  func.func private @print(!S) -> i32
+  trait.method @print(!S) -> i32
 }
 
 trait.impl private @Printable_impl_i64 for @Printable[i64] {
-  func.func @print(%self: i64) -> i32 {
+  trait.method @print(%self: i64) -> i32 {
     %c = arith.trunci %self : i64 to i32
-    return %c : i32
+    trait.return %c : i32
   }
 }
 
 trait.trait private @Container[!S] where [@Printable[!trait.proj<@Container[!S], "Elem">]] {
   trait.assoc_type @Elem
-  func.func private @first(!S) -> !trait.proj<@Container[!S], "Elem">
+  trait.method @first(!S) -> !trait.proj<@Container[!S], "Elem">
 }
 
 trait.impl private @Container_impl_i32 for @Container[i32] {
   trait.assoc_type @Elem = i64
-  func.func @first(%self: i32) -> i64 {
+  trait.method @first(%self: i32) -> i64 {
     %c = arith.extsi %self : i32 to i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 
 // Wraps @Container: @Wrapper[T] requires @Container[T]
 trait.trait private @Wrapper[!S] {
-  func.func private @get(!S) -> i32
+  trait.method @get(!S) -> i32
 }
 
 !Wi = !trait.poly<1>
 trait.impl private @Wrapper_impl for @Wrapper[!Wi] where [
   @Container[!Wi]
 ] {
-  func.func @get(%self: !Wi) -> i32 {
+  trait.method @get(%self: !Wi) -> i32 {
     // use the @Container[T] assumption to call @first, then @Printable to print
     %container = trait.assume 0 : !trait.claim<@Container[!Wi]>
     %elem = trait.method.call %container @Container[!Wi]::@first(%self)
@@ -61,7 +61,7 @@ trait.impl private @Wrapper_impl for @Wrapper[!Wi] where [
     %result = trait.method.call %printable @Printable[!trait.proj<@Container[!Wi], "Elem">]::@print(%elem)
       : (!trait.proj<@Container[!Wi], "Elem">) -> i32
 
-    return %result : i32
+    trait.return %result : i32
   }
 }
 

@@ -11,24 +11,24 @@
 !U = !trait.poly<1>
 
 trait.trait private @Convert[!T, !U] {
-  func.func nested @convert(!U) -> !T
+  trait.method @convert(!U) -> !T
 }
 
 trait.impl private @Convert_i32 for @Convert[i32, i32] {
-  func.func nested @convert(%x: i32) -> i32 {
-    return %x : i32
+  trait.method @convert(%x: i32) -> i32 {
+    trait.return %x : i32
   }
 }
 
 trait.trait private @Choose[!T] {
-  func.func nested @choose(!T, !trait.claim<@Convert[!T, !T]>) -> !T
+  trait.method @choose(!T, !trait.claim<@Convert[!T, !T]>) -> !T
 }
 
 trait.impl private @Choose_i32 for @Choose[i32] {
-  func.func nested @choose(%a: i32, %same: !trait.claim<@Convert[i32, i32]>) -> i32 {
+  trait.method @choose(%a: i32, %same: !trait.claim<@Convert[i32, i32]>) -> i32 {
     %converted = trait.method.call %same @Convert[i32, i32]::@convert(%a)
       : (i32) -> i32
-    return %converted : i32
+    trait.return %converted : i32
   }
 }
 

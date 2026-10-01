@@ -27,7 +27,7 @@ trait.trait private @SameAs[!S, !R] {
 }
 
 trait.trait private @Trait[!S] where [@Base[!S]] {
-  func.func private @method(
+  trait.method @method(
     !S,
     !F,
     !trait.claim<@Fn[!F, tuple<!trait.proj<@Base[!S], "Assoc">>]>,
@@ -44,7 +44,7 @@ trait.impl private @Base_i32 for @Base[i32] {
 
 trait.impl private @Trait_i32 for @Trait[i32]
     witnesses [#trait<witness !trait.proj<@Base[i32], "Assoc"> = i64 by @Base_i32>] {
-  func.func @method(
+  trait.method @method(
     %self: i32,
     %f: !F,
     %fn: !trait.claim<@Fn[!F, tuple<i64>]>,
@@ -54,9 +54,9 @@ trait.impl private @Trait_i32 for @Trait[i32]
     ]>
   ) -> i32 {
     %c0 = arith.constant 0 : i32
-    return %c0 : i32
+    trait.return %c0 : i32
   }
 }
 
 // CHECK-LABEL: trait.impl private @Trait_i32
-// CHECK: func.func @method
+// CHECK: trait.method @method

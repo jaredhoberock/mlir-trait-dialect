@@ -5,11 +5,11 @@
 
 // Trait @SameAs with a convert method
 trait.trait private @SameAs[!trait.poly<0>, !trait.poly<1>] {
-  func.func nested @convert(!trait.poly<1>) -> !trait.poly<0>
+  trait.method @convert(!trait.poly<1>) -> !trait.poly<0>
 }
 trait.impl private @SameAs_i32_i32 for @SameAs[i32, i32] {
-  func.func nested @convert(%arg0: i32) -> i32 {
-    return %arg0 : i32
+  trait.method @convert(%arg0: i32) -> i32 {
+    trait.return %arg0 : i32
   }
 }
 
@@ -17,17 +17,17 @@ trait.impl private @SameAs_i32_i32 for @SameAs[i32, i32] {
 !T = !trait.poly<2>
 !U = !trait.poly<3>
 trait.trait private @Chooser[!T] {
-  func.func nested @choose(!T, !U, !trait.claim<@SameAs[!T, !U]>) -> !T
+  trait.method @choose(!T, !U, !trait.claim<@SameAs[!T, !U]>) -> !T
 }
 // The impl's copy of @choose binds a variable of its own for each the trait's
 // declaration of it binds: a copy with fewer would be a different declaration.
 !V = !trait.poly<4>
 trait.impl private @Chooser_i32 for @Chooser[i32] {
-  func.func nested @choose(%a: i32, %b: !V, %same: !trait.claim<@SameAs[i32, !V]>) -> i32 {
+  trait.method @choose(%a: i32, %b: !V, %same: !trait.claim<@SameAs[i32, !V]>) -> i32 {
     // inner method call uses the where-clause claim
     %converted = trait.method.call %same @SameAs[i32, !V]::@convert(%b)
       : (!V) -> i32
-    return %converted : i32
+    trait.return %converted : i32
   }
 }
 

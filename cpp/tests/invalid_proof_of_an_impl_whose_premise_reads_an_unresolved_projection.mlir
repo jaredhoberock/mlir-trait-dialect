@@ -11,11 +11,11 @@
 
 trait.trait private @Foo[!trait.poly<0>] { trait.assoc_type @Out }
 trait.trait private @Tensor[!trait.poly<0>] {}
-trait.trait private @Vector[!trait.poly<0>] { func.func private @v() -> i64 }
+trait.trait private @Vector[!trait.poly<0>] { trait.method @v() -> i64 }
 trait.impl private @Vector_blanket for @Vector[!trait.poly<0>] where [@Tensor[!trait.poly<0>], !trait.proj<@Foo[!trait.poly<0>], "Out"> = i64] {
-  func.func @v() -> i64 {
+  trait.method @v() -> i64 {
     %c = arith.constant 7 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 trait.impl private @Tensor_i8 for @Tensor[i8] {}
@@ -33,17 +33,17 @@ trait.trait private @Foo[!trait.poly<0>] { trait.assoc_type @Out }
 trait.impl private @Foo_any for @Foo[!trait.poly<0>] { trait.assoc_type @Out = i32 }
 trait.impl private @Foo_i8 for @Foo[i8] { trait.assoc_type @Out = i32 }
 trait.trait private @Tensor[!trait.poly<0>] {}
-trait.trait private @Vector[!trait.poly<0>] { func.func private @v() -> i64 }
+trait.trait private @Vector[!trait.poly<0>] { trait.method @v() -> i64 }
 trait.impl private @Vector_a for @Vector[!trait.poly<0>] where [@Tensor[!trait.poly<0>], !trait.proj<@Foo[!trait.poly<0>], "Out"> = i64] {
-  func.func @v() -> i64 {
+  trait.method @v() -> i64 {
     %c = arith.constant 1 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 trait.impl private @Vector_b for @Vector[!trait.poly<0>] where [@Tensor[!trait.poly<0>], !trait.proj<@Foo[!trait.poly<0>], "Out"> = i32] {
-  func.func @v() -> i64 {
+  trait.method @v() -> i64 {
     %c = arith.constant 2 : i64
-    return %c : i64
+    trait.return %c : i64
   }
 }
 trait.impl private @Tensor_i8 for @Tensor[i8] {}

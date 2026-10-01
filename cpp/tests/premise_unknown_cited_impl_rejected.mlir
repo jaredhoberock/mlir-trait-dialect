@@ -18,14 +18,14 @@ trait.impl private @Sib_i64 for @Sib[i64] {
 }
 
 trait.trait private @Host[!S] {
-  func.func private @make(!S) -> !trait.proj<@Sib[!S], "Elem">
+  trait.method @make(!S) -> !trait.proj<@Sib[!S], "Elem">
 }
 
 // expected-error @below {{cannot find trait.impl '@Nope' cited by the witness}}
 trait.impl private @Host_i64 for @Host[i64]
     witnesses [#trait<witness !trait.proj<@Sib[i64], "Elem"> = i32 by @Nope>] {
-  func.func @make(%x: i64) -> i32 {
+  trait.method @make(%x: i64) -> i32 {
     %r = ub.poison : i32
-    return %r : i32
+    trait.return %r : i32
   }
 }
