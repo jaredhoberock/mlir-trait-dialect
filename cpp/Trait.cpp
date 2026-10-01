@@ -9,6 +9,7 @@
 
 #include <mlir/CAPI/IR.h>
 #include <mlir/CAPI/Pass.h>
+#include <mlir/Interfaces/FoldInterfaces.h>
 
 #include <Trait.cpp.inc>
 
@@ -76,6 +77,24 @@ struct LoweringContribution : lowering::LoweringContributionInterface {
                    /*wantsCleanup=*/true);
   }
 };
+
+/// A constant the folder materializes while simplifying a method's body is
+/// placed in that body, as it is in an isolated function's.
+///
+/// The folder places a constant in the nearest enclosing region whose parent is
+/// isolated from above or top-level, unless the dialect owning a parent on the
+/// way claims that parent's region through this hook (`getInsertionRegion` in
+/// upstream's `FoldUtils.cpp`). A method is not isolated from above, so without
+/// the claim a method's constants would be pooled in its trait or impl, whose
+/// child list refuses them; with it every constant stays in the method that
+/// made it.
+struct MethodConstantPlacement : DialectFoldInterface {
+  using DialectFoldInterface::DialectFoldInterface;
+
+  bool shouldMaterializeInto(Region *region) const final {
+    return isa<MethodOp>(region->getParentOp());
+  }
+};
 } // namespace
 
 void TraitDialect::initialize() {
@@ -88,7 +107,7 @@ void TraitDialect::initialize() {
 #include <TraitOps.cpp.inc>
   >();
 
-  addInterfaces<LoweringContribution>();
+  addInterfaces<LoweringContribution, MethodConstantPlacement>();
 }
 
 }

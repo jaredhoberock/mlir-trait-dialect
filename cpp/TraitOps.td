@@ -65,7 +65,10 @@ class HasChildren<list<string> ops>
 
 def TraitOp : TraitDialectOp<"trait", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
-  HasChildren<["func::FuncOp", "trait::AssocTypeOp"]>,
+  // XXX TODO a method spelled as a `func.func` is accepted beside `trait.method`
+  // while the producers switch to `trait.method`; the commit that removes the
+  // `func::FuncOp` arm from both declarations' child lists deletes it.
+  HasChildren<["trait::MethodOp", "func::FuncOp", "trait::AssocTypeOp"]>,
   HasGetModule,
   IsolatedFromAbove,
   SingleBlock,
@@ -78,8 +81,8 @@ def TraitOp : TraitDialectOp<"trait", [
     Declares a trait interface, similar to a Rust or Scala trait, or a Haskell typeclass.
     A `trait.trait` operation defines a symbol that can be referenced by `!trait.claim`
     types, `trait.impl`, and `trait.method.call`. It contains a region which holds
-    `func.func` operations that define the method requirements for implementors. If any of
-    these `func.func` operations have a body, then the method is optional for implementors.
+    `trait.method` operations that define the method requirements for implementors. If any of
+    these `trait.method` operations have a body, then the method is optional for implementors.
 
     Example:
 
@@ -89,17 +92,16 @@ def TraitOp : TraitDialectOp<"trait", [
 
     trait.trait @PartialEq[!S,!O] {
       // a required method
-      func.func @eq(!S, !O) -> i1
+      trait.method @eq(!S, !O) -> i1
 
       // an optional method
-      func.func @ne(%self: !S, %other: !O) -> i1 {
+      trait.method @ne(%self: !S, %other: !O) -> i1 {
         %a = trait.assume self : !trait.claim<@PartialEq[!S,!O]>
-        %eq = trait.method.call @PartialEq::@eq<%a>(%self, %other)
+        %eq = trait.method.call %a @PartialEq[!S,!O]::@eq(%self, %other)
           : (!S, !O) -> i1
-          as !trait.claim<@PartialEq[!S,!O]> (!S,!O) -> i1
         %true = arith.constant 1 : i1
         %res = arith.xori %eq, %true : i1
-        return %res : i1
+        trait.return %res : i1
       }
     }
     ```
@@ -118,9 +120,9 @@ def TraitOp : TraitDialectOp<"trait", [
     !O = !trait.poly<1>
 
     trait.trait @PartialOrd[!S,!O] where [@PartialOrd[!S,!O]] {
-      func.func @partial_cmp(!S, !O) -> !opt_ord
+      trait.method @partial_cmp(!S, !O) -> !opt_ord
 
-      func.func @lt(%self: !S, %other: !O) -> !opt_ord {
+      trait.method @lt(%self: !S, %other: !O) -> !opt_ord {
         ...
       }
     }
@@ -160,8 +162,8 @@ def TraitOp : TraitDialectOp<"trait", [
       return ClaimType::get(getContext(), getSelfApplication());
     }
 
-    FailureOr<func::FuncOp> getMethod(StringRef methodName, llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
-      auto func = dyn_cast_or_null<func::FuncOp>(mlir::SymbolTable::lookupSymbolIn(*this, methodName));
+    FailureOr<FunctionOpInterface> getMethod(StringRef methodName, llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
+      auto func = dyn_cast_or_null<FunctionOpInterface>(mlir::SymbolTable::lookupSymbolIn(*this, methodName));
       if (!func) {
         if (err) err() << "cannot find method '@" << methodName
                        << "' in trait '" << getSymNameAttr() << "'";
@@ -177,19 +179,19 @@ def TraitOp : TraitDialectOp<"trait", [
     llvm::SmallSet<llvm::StringRef,8> getRequiredMethodNames() {
       llvm::SmallSet<llvm::StringRef,8> result;
       for (Operation& op : getBody().front()) {
-        if (auto func = dyn_cast<func::FuncOp>(op)) {
+        if (auto func = dyn_cast<FunctionOpInterface>(op)) {
           if (func.isExternal()) {
-            result.insert(func.getSymName());
+            result.insert(func.getName());
           }
         }
       }
       return result;
     }
 
-    std::vector<func::FuncOp> getOptionalMethods() {
-      std::vector<func::FuncOp> result;
+    std::vector<FunctionOpInterface> getOptionalMethods() {
+      std::vector<FunctionOpInterface> result;
       for (Operation& op : getBody().front()) {
-        if (auto func = dyn_cast<func::FuncOp>(op)) {
+        if (auto func = dyn_cast<FunctionOpInterface>(op)) {
           if (!func.isExternal()) {
             result.push_back(func);
           }
@@ -198,9 +200,9 @@ def TraitOp : TraitDialectOp<"trait", [
       return result;
     }
 
-    FailureOr<func::FuncOp> getOptionalMethod(StringRef methodName) {
+    FailureOr<FunctionOpInterface> getOptionalMethod(StringRef methodName) {
       for (auto method : getOptionalMethods()) {
-        if (method.getSymName() == methodName)
+        if (method.getName() == methodName)
           return method;
       }
       return failure();
@@ -299,7 +301,10 @@ def TraitOp : TraitDialectOp<"trait", [
 
 def ImplOp : TraitDialectOp<"impl", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
-  HasChildren<["func::FuncOp", "trait::AssocTypeOp"]>,
+  // XXX TODO a method spelled as a `func.func` is accepted beside `trait.method`
+  // while the producers switch to `trait.method`; the commit that removes the
+  // `func::FuncOp` arm from both declarations' child lists deletes it.
+  HasChildren<["trait::MethodOp", "func::FuncOp", "trait::AssocTypeOp"]>,
   HasGetModule,
   IsolatedFromAbove,
   SingleBlock,
@@ -319,16 +324,16 @@ def ImplOp : TraitDialectOp<"impl", [
     implements: a `trait.trait` symbol (e.g., `@PartialEq`) applied to the types
     that implement it (e.g., `[i32, i32]`).
 
-    This operation contains a region with `func.func` operations, each
+    This operation contains a region with `trait.method` operations, each
     implementing one of the trait's methods.
 
     Example:
 
     ```mlir
     trait.impl @PartialEq_impl_i32 for @PartialEq[i32,i32] {
-      func.func @eq(%self: i32, %other: i32) -> i1 {
+      trait.method @eq(%self: i32, %other: i32) -> i1 {
         %res = arith.cmpi eq, %self, %other : i32
-        return %res : i1
+        trait.return %res : i1
       }
     }
     ```
@@ -344,12 +349,12 @@ def ImplOp : TraitDialectOp<"impl", [
     ```mlir
     !T0 = !trait.poly<0>
     trait.trait @A[!T0] {
-      func.func @method_a(!T0) -> i32
+      trait.method @method_a(!T0) -> i32
     }
 
     !T1 = !trait.poly<1>
     trait.trait @B[!T1] {
-      func.func @method_B(!T1) -> i32
+      trait.method @method_B(!T1) -> i32
     }
     ```
 
@@ -358,9 +363,9 @@ def ImplOp : TraitDialectOp<"impl", [
     ```mlir
     // a concrete impl: @B[i32]
     trait.impl for @B[i32] {
-      func.func @method_b(%self: i32) -> i32 {
+      trait.method @method_b(%self: i32) -> i32 {
         %res = arith.constant 42 : i32
-        return %res : i32
+        trait.return %res : i32
       }
     }
 
@@ -369,12 +374,10 @@ def ImplOp : TraitDialectOp<"impl", [
     trait.impl for @A[!T2] where [
       @B[!T2]
     ] {
-      func.func @method_a(%self: !T2) -> i32 {
+      trait.method @method_a(%self: !T2) -> i32 {
         %a = trait.assume 0 : !trait.claim<@B[!T2]>
-        %res = trait.method.call @B::@method_b<%a>(%self)
-          : !(T1) -> i32
-          as !trait.claim<@B[!T2]> (!T2) -> i32
-        return %res : i32
+        %res = trait.method.call %a @B[!T2]::@method_b(%self) : (!T2) -> i32
+        trait.return %res : i32
       }
     }
     ```
@@ -477,8 +480,8 @@ def ImplOp : TraitDialectOp<"impl", [
       return getSelfApplication().getTypeArgs();
     }
 
-    FailureOr<func::FuncOp> getMethod(StringRef methodName, llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
-      auto func = dyn_cast_or_null<func::FuncOp>(mlir::SymbolTable::lookupSymbolIn(*this, methodName));
+    FailureOr<FunctionOpInterface> getMethod(StringRef methodName, llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
+      auto func = dyn_cast_or_null<FunctionOpInterface>(mlir::SymbolTable::lookupSymbolIn(*this, methodName));
       if (!func) {
         if (err) err() << "cannot find method '@" << methodName
                        << "' in impl '" << getSymNameAttr() << "'";
@@ -507,7 +510,7 @@ def ImplOp : TraitDialectOp<"impl", [
     ///
     /// The synthesized method is specialized for this impl's self application
     /// and inserted into the impl body so future lookups reuse the same symbol.
-    FailureOr<func::FuncOp> getOrSpecializeMethod(OpBuilder& builder, StringRef methodName);
+    FailureOr<FunctionOpInterface> getOrSpecializeMethod(RewriterBase& rewriter, StringRef methodName);
 
     /// Extracts a method from this impl as a free function with a leading self parameter.
     ///
@@ -733,7 +736,7 @@ def AssocTypeOp : TraitDialectOp<"assoc_type", [
     ```mlir
     trait.trait @Iterator[!S] {
       trait.assoc_type @Item
-      func.func private @next(!S) -> !trait.proj<@Iterator[!S], "Item">
+      trait.method @next(!S) -> !trait.proj<@Iterator[!S], "Item">
     }
     ```
 
@@ -741,7 +744,7 @@ def AssocTypeOp : TraitDialectOp<"assoc_type", [
     ```mlir
     trait.impl for @Iterator[i32] {
       trait.assoc_type @Item = i64
-      func.func @next(%self: i32) -> i64 { ... }
+      trait.method @next(%self: i32) -> i64 { ... }
     }
     ```
   }];
@@ -755,6 +758,125 @@ def AssocTypeOp : TraitDialectOp<"assoc_type", [
   let assemblyFormat = [{
     $sym_name (`<` $type_params^ `>`)? (`=` $bound_type^)? attr-dict
   }];
+}
+
+
+def MethodOp : TraitDialectOp<"method", [
+  AutomaticAllocationScope,
+  FunctionOpInterface,
+  ParentOneOf<["trait::TraitOp", "trait::ImplOp"]>
+]> {
+  let summary = "A method a trait declares or an impl defines";
+  let description = [{
+    A function-like member of a `trait.trait` or `trait.impl`, printed as a
+    `func.func` is and ended by `trait.return`. Its function type is the method's
+    interface: its value parameters, then its own claim parameters. In a trait, a
+    method without a body is required of every impl and a method with one is a
+    default; in an impl, every method has a body and defines the trait's method
+    of its name.
+
+    ```mlir
+    trait.trait private @PartialEq[!S, !O] {
+      trait.method @eq(!S, !O) -> i1
+      trait.method @ne(%self: !S, %other: !O) -> i1 {
+        %a = trait.assume self : !trait.claim<@PartialEq[!S, !O]>
+        %eq = trait.method.call %a @PartialEq[!S, !O]::@eq(%self, %other)
+          : (!S, !O) -> i1
+        %true = arith.constant 1 : i1
+        %res = arith.xori %eq, %true : i1
+        trait.return %res : i1
+      }
+    }
+    ```
+
+    A method's parent is a trait or an impl (`ParentOneOf`), and a method lives
+    and dies with it: it carries no visibility (the verifier refuses one), so it
+    is never discardable on its own, and a method without a body is a requirement
+    rather than a declaration of something defined elsewhere (`isDeclaration` is
+    the interface's default, false).
+
+    A method is not isolated from above, but its body reads nothing from outside
+    itself: its declaration is isolated from above, holds no operation with a
+    result (its child list), and takes no block arguments (its verifier).
+    The constants the folder materializes while simplifying a method's body are
+    placed in that body, as in an isolated function's: the dialect's
+    `DialectFoldInterface` claims a method's body as the region to materialize
+    into.
+
+    A method is instantiated by cutting it into a module-level `func.func`, its
+    `trait.return`s becoming `func.return`s.
+  }];
+
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    TypeAttrOf<FunctionType>:$function_type,
+    OptionalAttr<DictArrayAttr>:$arg_attrs,
+    OptionalAttr<DictArrayAttr>:$res_attrs
+  );
+  let regions = (region AnyRegion:$body);
+
+  let builders = [
+    // A method of `name` and `type` with no body; a bodied method's caller adds
+    // the entry block.
+    OpBuilder<(ins "::llvm::StringRef":$name, "::mlir::FunctionType":$type), [{
+      $_state.addAttribute(::mlir::SymbolTable::getSymbolAttrName(),
+                           $_builder.getStringAttr(name));
+      $_state.addAttribute(getFunctionTypeAttrName($_state.name),
+                           ::mlir::TypeAttr::get(type));
+      $_state.addRegion();
+    }]>
+  ];
+
+  let extraClassDeclaration = [{
+    //===------------------------------------------------------------------===//
+    // FunctionOpInterface Methods
+    //===------------------------------------------------------------------===//
+
+    /// The body a call runs, null for a required method, which has none.
+    ::mlir::Region *getCallableRegion() { return isExternal() ? nullptr : &getBody(); }
+
+    ::llvm::ArrayRef<::mlir::Type> getArgumentTypes() { return getFunctionType().getInputs(); }
+
+    ::llvm::ArrayRef<::mlir::Type> getResultTypes() { return getFunctionType().getResults(); }
+  }];
+
+  let hasCustomAssemblyFormat = 1;
+  let hasVerifier = 1;
+}
+
+
+def ReturnOp : TraitDialectOp<"return", [
+  // XXX TODO a method is the one parent until a trait.impl returns the evidence
+  // for its trait's requirements and a trait.proof the claim it proves, both
+  // with trait.return; the commit that gives the declarations block arguments
+  // and those returns adds them as parents.
+  HasParent<"MethodOp">,
+  Pure,
+  ReturnLike,
+  Terminator
+]> {
+  let summary = "Returns from a method";
+  let description = [{
+    Ends a block of a `trait.method`'s body, returning its operands as the
+    method's results. Their number and types are the method's result types, by
+    identity.
+
+    ```mlir
+    trait.method @into(%x: !T) -> !U {
+      ...
+      trait.return %r : !U
+    }
+    ```
+  }];
+
+  let arguments = (ins Variadic<AnyType>:$operands);
+
+  let builders = [OpBuilder<(ins), [{
+    build($_builder, $_state, ::mlir::ValueRange());
+  }]>];
+
+  let assemblyFormat = "attr-dict ($operands^ `:` type($operands))?";
+  let hasVerifier = 1;
 }
 
 
@@ -884,7 +1006,7 @@ def AssumeOp : TraitDialectOp<"assume", [
     the claims it relies on as `!trait.claim` parameters.
 
       trait.impl @A_gen for @A[!T] where [@B[!T], !trait.proj<@B[!T], "Out"> = i64] {
-        func.func @method_a(%self: !T) -> i32 {
+        trait.method @method_a(%self: !T) -> i32 {
           %s = trait.assume self : !trait.claim<@A[!T]>
           %b = trait.assume 0 : !trait.claim<@B[!T]>
           %e = trait.assume 1 : !trait.claim<!trait.proj<@B[!T], "Out"> = i64>
@@ -1454,12 +1576,12 @@ def MethodCallOp : TraitDialectOp<"method.call", [
   let extraClassDeclaration = [{
     FailureOr<TraitOp> getTrait(llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
-    FailureOr<func::FuncOp> getMethod(llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+    FailureOr<FunctionOpInterface> getMethod(llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     FailureOr<FunctionType> getMethodFunctionType(llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
       auto maybeMethod = getMethod(err);
       if (failed(maybeMethod)) return failure();
-      return maybeMethod->getFunctionType();
+      return cast<FunctionType>(maybeMethod->getFunctionType());
     }
 
     /// Get a FunctionType corresponding to the actual argument and result types of this MethodCallOp

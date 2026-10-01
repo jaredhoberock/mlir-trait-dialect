@@ -178,21 +178,38 @@ LogicalResult verifyTemplateIsNotPublic(Operation *op) {
             "birth";
 }
 
-/// The function type of a child `func.func` a parent's verifier is about to
-/// read.
+/// A trait's or impl's body takes no block arguments, so a method, which is not
+/// isolated from above, reads nothing from outside its own body: the
+/// declaration is isolated from above and its child list admits no operation
+/// with a result, so its block arguments are the only values a method could
+/// read from around it.
+///
+/// XXX TODO the commit that gives trait.trait and trait.impl their self claim
+/// and prerequisites as block arguments, read by their methods, deletes this
+/// check.
+LogicalResult verifyDeclarationBodyTakesNoArguments(Operation *op) {
+  Region &body = op->getRegion(0);
+  if (body.empty() || body.front().getNumArguments() == 0)
+    return success();
+  return op->emitOpError() << "body must take no block arguments: a method "
+                              "reads nothing from outside its own body";
+}
+
+/// The function type of a child method a parent's verifier is about to read.
 ///
 /// A child's own invariants are verified after its parent's, so the type is read
 /// through the attribute dictionary rather than through the getter that casts:
 /// a malformed one is refused where it stands instead of aborting the cast.
-static FailureOr<FunctionType> readChildFunctionType(func::FuncOp function) {
-  auto typeAttr =
-      function->getAttrOfType<TypeAttr>(function.getFunctionTypeAttrName());
+/// `FunctionOpInterface` requires every implementer to hold its type in an
+/// attribute named `function_type`.
+static FailureOr<FunctionType> readChildFunctionType(FunctionOpInterface function) {
+  StringLiteral attrName = "function_type";
+  auto typeAttr = function->getAttrOfType<TypeAttr>(attrName);
   auto functionType =
       typeAttr ? dyn_cast<FunctionType>(typeAttr.getValue()) : FunctionType();
   if (!functionType) {
     function.emitOpError()
-        << "requires a function type in its '"
-        << function.getFunctionTypeAttrName().getValue() << "' attribute";
+        << "requires a function type in its '" << attrName << "' attribute";
     return failure();
   }
   return functionType;
@@ -208,7 +225,7 @@ static FailureOr<FunctionType> readChildFunctionType(func::FuncOp function) {
 /// syntactic check: the verifier does not try to invert equality predicates or
 /// associated-type bindings to recover missing result generics.
 static LogicalResult verifyFunctionResultGenericsAreDetermined(
-    func::FuncOp function, FunctionType functionType,
+    FunctionOpInterface function, FunctionType functionType,
     const DenseSet<Type> &providedGenerics) {
   DenseSet<Type> inputGenerics;
   for (Type input : functionType.getInputs()) {
@@ -230,7 +247,7 @@ static LogicalResult verifyFunctionResultGenericsAreDetermined(
       continue;
 
     return function.emitOpError()
-           << "function '" << function.getSymName()
+           << "function '" << function.getName()
            << "' result type contains type parameter " << resultGeneric
            << " that is not determined by any input type";
   }
@@ -433,6 +450,8 @@ static FailureOr<Type> readAssociatedTypeParameter(AssocTypeOp assoc,
 LogicalResult TraitOp::verify() {
   if (failed(verifyTemplateIsNotPublic(getOperation())))
     return failure();
+  if (failed(verifyDeclarationBodyTakesNoArguments(getOperation())))
+    return failure();
 
   auto typeParams = getTypeParams().getAsValueRange<TypeAttr>();
 
@@ -537,7 +556,7 @@ LogicalResult TraitOp::verify() {
 
   // check trait method result generics
   for (Operation &op : getBody().front()) {
-    if (auto method = dyn_cast<func::FuncOp>(op)) {
+    if (auto method = dyn_cast<FunctionOpInterface>(op)) {
       auto methodType = readChildFunctionType(method);
       if (failed(methodType))
         return failure();
@@ -803,10 +822,10 @@ static DenseSet<Type> getTraitHeaderParameters(TraitOp traitOp) {
 /// call reads the trait's declaration -- rekeys through the same pairing to the
 /// copy of the method that is actually cloned.
 static FailureOr<TraitMethodCorrespondence> buildTraitMethodCorrespondence(
-    ImplOp impl, TraitOp traitOp, func::FuncOp implMethod,
+    ImplOp impl, TraitOp traitOp, FunctionOpInterface implMethod,
     ArrayRef<LocalProjectionRule> witnessRules,
     llvm::function_ref<InFlightDiagnostic()> errFn) {
-  StringRef name = implMethod.getSymName();
+  StringRef name = implMethod.getName();
   auto traitMethod = traitOp.getMethod(name, errFn);
   if (failed(traitMethod)) return failure();
 
@@ -965,6 +984,8 @@ static LogicalResult verifyAssociatedTypeBindingScopes(ImplOp impl) {
 LogicalResult ImplOp::verify() {
   if (failed(verifyTemplateIsNotPublic(getOperation())))
     return failure();
+  if (failed(verifyDeclarationBodyTakesNoArguments(getOperation())))
+    return failure();
   // An impl's premises restrict the arguments it applies at; one quantified
   // over variables of its own would restrict nothing any argument supplies.
   for (auto [index, predicate] : llvm::enumerate(getAssumptions()))
@@ -1025,18 +1046,18 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
   // Collect method names from the trait
   llvm::SmallSet<StringRef, 8> requiredMethodNames = traitOp.getRequiredMethodNames();
-  std::vector<func::FuncOp> optionalMethods = traitOp.getOptionalMethods();
+  std::vector<FunctionOpInterface> optionalMethods = traitOp.getOptionalMethods();
   llvm::SmallSet<StringRef, 8> optionalMethodNames;
   for (auto f : optionalMethods) {
-    optionalMethodNames.insert(f.getSymName());
+    optionalMethodNames.insert(f.getName());
   }
 
   // Verify methods and associated type bindings
   llvm::SmallSet<StringRef, 8> definedMethods;
   llvm::SmallSet<StringRef, 8> definedAssocTypes;
   for (Operation &op : getBody().front()) {
-    if (auto implMethod = dyn_cast<func::FuncOp>(op)) {
-      StringRef name = implMethod.getSymName();
+    if (auto implMethod = dyn_cast<FunctionOpInterface>(op)) {
+      StringRef name = implMethod.getName();
       if (!requiredMethodNames.contains(name) && !optionalMethodNames.contains(name)) {
         return emitOpError() << "implements unknown method '" << name
                              << "' (not found in trait '" << getTraitNameAttr() << "')";
@@ -1078,7 +1099,8 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
                                << traitArity;
       }
     } else {
-      return emitOpError() << "body may only contain 'func.func' or 'trait.assoc_type' operations";
+      return emitOpError() << "body may only contain 'trait.method', 'func.func' "
+                              "or 'trait.assoc_type' operations";
     }
   }
 
@@ -1678,7 +1700,7 @@ FailureOr<SpecializationMap> ImplOp::substitutionFor(
   return substitution;
 }
 
-FailureOr<func::FuncOp> ImplOp::getOrSpecializeMethod(OpBuilder& builder, StringRef methodName) {
+FailureOr<FunctionOpInterface> ImplOp::getOrSpecializeMethod(RewriterBase& rewriter, StringRef methodName) {
   auto trait = getTrait();
 
   // check that we've named a valid trait method
@@ -1696,10 +1718,10 @@ FailureOr<func::FuncOp> ImplOp::getOrSpecializeMethod(OpBuilder& builder, String
   auto subst = trait.buildSubstitutionForSelfClaim(getSelfClaim());
   if (failed(subst)) return failure();
 
-  PatternRewriter::InsertionGuard guard(builder);
-  builder.setInsertionPointToEnd(&getBody().front());
+  PatternRewriter::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPointToEnd(&getBody().front());
   auto specialized =
-      specializePolymorph(builder, *traitMethod, methodName, subst->toTypeMap());
+      specializePolymorph(rewriter, *traitMethod, methodName, subst->toTypeMap());
   // A default method with no body to clone is refused where the clone was
   // attempted; there is no method here to answer with.
   if (!specialized)
@@ -1711,17 +1733,17 @@ FailureOr<func::FuncOp> ImplOp::getOrSpecializeMethod(OpBuilder& builder, String
   // carries there, so the clone selects it off that claim: `self` still names
   // the declaration's own application, which in this impl is its own.
   SmallVector<AssumeOp> requirementAssumes;
-  specialized.walk([&](AssumeOp assume) {
+  specialized->walk([&](AssumeOp assume) {
     if (assume.getWherePosition())
       requirementAssumes.push_back(assume);
   });
   for (AssumeOp assume : requirementAssumes) {
-    OpBuilder::InsertionGuard assumeGuard(builder);
-    builder.setInsertionPoint(assume);
-    Value self = AssumeOp::create(builder, assume.getLoc(), getSelfClaim(),
-                                  builder.getUnitAttr());
+    OpBuilder::InsertionGuard assumeGuard(rewriter);
+    rewriter.setInsertionPoint(assume);
+    Value self = AssumeOp::create(rewriter, assume.getLoc(), getSelfClaim(),
+                                  rewriter.getUnitAttr());
     Value requirement =
-        ProjectOp::create(builder, assume.getLoc(), assume.getClaim(), self,
+        ProjectOp::create(rewriter, assume.getLoc(), assume.getClaim(), self,
                           *assume.getWherePosition());
     assume.getResult().replaceAllUsesWith(requirement);
     assume.erase();
@@ -1732,7 +1754,7 @@ FailureOr<func::FuncOp> ImplOp::getOrSpecializeMethod(OpBuilder& builder, String
 static func::FuncOp specializeMethodAsFreeFuncWithLeadingSelfProof(
     PatternRewriter& rewriter,
     ModuleOp module,
-    func::FuncOp method,
+    FunctionOpInterface method,
     StringRef functionName,
     ClaimType selfProofTy,
     const DenseMap<Type,Type>& subst,
@@ -1745,8 +1767,9 @@ static func::FuncOp specializeMethodAsFreeFuncWithLeadingSelfProof(
   rewriter.setInsertionPointAfter(method->getParentOp());
 
   // An external declaration has no body to clone; specialization has refused
-  // it.
-  auto funcOp = specializePolymorph(rewriter, method, functionName, subst);
+  // it. Cut at module scope, the instance is a `func.func`.
+  auto funcOp = cast_if_present<func::FuncOp>(
+      specializePolymorph(rewriter, method, functionName, subst).getOperation());
   if (!funcOp)
     return nullptr;
 
@@ -1760,7 +1783,7 @@ static func::FuncOp specializeMethodAsFreeFuncWithLeadingSelfProof(
   rewriter.modifyOpInPlace(funcOp, [&] {
     (void)funcOp.insertArgument(/*idx=*/0, selfProofTy,
                                /*argAttrs=*/mlir::DictionaryAttr(),
-                               method.getLoc());
+                               method->getLoc());
     funcOp.setVisibility(SymbolTable::Visibility::Private);
   });
   BlockArgument selfProofArg = funcOp.getArgument(0);
@@ -1909,7 +1932,7 @@ FailureOr<func::FuncOp> ImplOp::getOrSpecializeFreeFunctionFromMethod(
        getTypeParametersIn((*method).getFunctionType()))
     typeArguments.push_back(applySubstitutionOnce(subst, parameter));
   SmallVector<Type> formalInputs{getSelfClaim()};
-  llvm::append_range(formalInputs, (*method).getFunctionType().getInputs());
+  llvm::append_range(formalInputs, (*method).getArgumentTypes());
   SmallVector<Type> actualInputs{provenSelfClaim};
   llvm::append_range(actualInputs, actualArguments);
   auto templateRef = SymbolRefAttr::get(
@@ -2959,6 +2982,59 @@ LogicalResult DeriveOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
 
 //===----------------------------------------------------------------------===//
+// MethodOp
+//===----------------------------------------------------------------------===//
+
+ParseResult MethodOp::parse(OpAsmParser &parser, OperationState &result) {
+  auto buildFunctionType =
+      [](Builder &builder, ArrayRef<Type> argTypes, ArrayRef<Type> results,
+         function_interface_impl::VariadicFlag,
+         std::string &) { return builder.getFunctionType(argTypes, results); };
+  return function_interface_impl::parseFunctionOp(
+      parser, result, /*allowVariadic=*/false,
+      getFunctionTypeAttrName(result.name), buildFunctionType,
+      getArgAttrsAttrName(result.name), getResAttrsAttrName(result.name));
+}
+
+void MethodOp::print(OpAsmPrinter &p) {
+  function_interface_impl::printFunctionOp(
+      p, *this, /*isVariadic=*/false, getFunctionTypeAttrName(),
+      getArgAttrsAttrName(), getResAttrsAttrName());
+}
+
+LogicalResult MethodOp::verify() {
+  // A method is a member of its declaration's symbol table and is collected
+  // with it. A visibility would make a private one discardable on its own
+  // (`SymbolOpInterface::canDiscardOnUseEmpty`), which no method is.
+  if ((*this)->hasAttr(SymbolTable::getVisibilityAttrName()))
+    return emitOpError() << "must carry no visibility: a method lives and dies "
+                            "with its trait or impl";
+  return success();
+}
+
+
+//===----------------------------------------------------------------------===//
+// ReturnOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult ReturnOp::verify() {
+  auto method = cast<MethodOp>((*this)->getParentOp());
+  ArrayRef<Type> results = method.getResultTypes();
+  if (getNumOperands() != results.size())
+    return emitOpError() << "has " << getNumOperands()
+                         << " operands, but enclosing method (@"
+                         << method.getName() << ") returns " << results.size();
+  for (auto [index, operand, result] :
+       llvm::enumerate(getOperandTypes(), results))
+    if (operand != result)
+      return emitOpError() << "type of return operand " << index << " ("
+                           << operand << ") doesn't match method result type ("
+                           << result << ") in method @" << method.getName();
+  return success();
+}
+
+
+//===----------------------------------------------------------------------===//
 // AssumeOp
 //===----------------------------------------------------------------------===//
 
@@ -2989,21 +3065,26 @@ void AssumeOp::print(OpAsmPrinter &p) {
   p << " : " << Type(getClaim());
 }
 
+static Operation *getScopeOwner(Operation *op);
+
 LogicalResult AssumeOp::verify() {
   // An assume cites an entry of the declaration whose method it stands in, so
-  // the isolated region it stands in is that method's.
-  Operation *isolatedAncestor =
-      getOperation()->getParentWithTrait<OpTrait::IsIsolatedFromAbove>();
-  if (!isolatedAncestor)
-    return emitOpError("must be within an IsolatedFromAbove region");
-  auto funcOp = dyn_cast<func::FuncOp>(isolatedAncestor);
-  if (!funcOp)
-    return emitOpError() << "must be within a 'func.func', found "
-                         << isolatedAncestor->getName();
+  // the scope it stands in is that method's.
+  //
+  // XXX TODO the commit that gives trait.trait and trait.impl their self claim
+  // and prerequisites as block arguments, read by their methods, deletes this op
+  // and its verifier.
+  Operation *scope = getScopeOwner(getOperation());
+  if (!scope)
+    return emitOpError("must be within a function");
+  auto function = dyn_cast<FunctionOpInterface>(scope);
+  if (!function)
+    return emitOpError() << "must be within a function, found "
+                         << scope->getName();
 
   // The entry it cites exists, is a claim the declaration holds as a
   // hypothesis, and is exactly the claim the result type spells.
-  Operation *owner = funcOp->getParentOp();
+  Operation *owner = function->getParentOp();
   TraitApplicationAttr selfApplication;
   PredicateArrayAttr where;
   if (auto trait = dyn_cast_or_null<TraitOp>(owner)) {
@@ -3016,7 +3097,7 @@ LogicalResult AssumeOp::verify() {
     return emitOpError()
            << "cites an entry of the declaration its function is a method of, "
               "but '@"
-           << funcOp.getSymName() << "' is a method of no trait or impl";
+           << function.getName() << "' is a method of no trait or impl";
   }
 
   MLIRContext *ctx = getContext();
@@ -3160,7 +3241,7 @@ FailureOr<TraitOp> MethodCallOp::getTrait(llvm::function_ref<InFlightDiagnostic(
     .getTrait(*module, err);
 }
 
-FailureOr<func::FuncOp> MethodCallOp::getMethod(llvm::function_ref<InFlightDiagnostic()> err) {
+FailureOr<FunctionOpInterface> MethodCallOp::getMethod(llvm::function_ref<InFlightDiagnostic()> err) {
   auto maybeTrait = getTrait(err);
   if (failed(maybeTrait)) return failure();
   auto func = maybeTrait->getMethod(getMethodName(), err);
@@ -3280,9 +3361,15 @@ LogicalResult MethodCallOp::verify() {
 /// so a nested function, a trait, an impl and a proof each answer for what they
 /// hold where they are declared; a region an op runs at run time -- a
 /// conditional, a loop, a cooperative body -- is interior to the scope around
-/// it.
+/// it. A method is not isolated from above but reads nothing of its
+/// declaration (`verifyDeclarationBodyTakesNoArguments`), so it too answers for
+/// what it holds.
+///
+/// XXX TODO the commit that gives trait.trait and trait.impl their self claim
+/// and prerequisites as block arguments, read by their methods, extends a
+/// method's scope to its declaration's and deletes the method arm.
 static bool isJudgedOnItsOwn(Operation *op) {
-  return op->hasTrait<OpTrait::IsIsolatedFromAbove>();
+  return op->hasTrait<OpTrait::IsIsolatedFromAbove>() || isa<MethodOp>(op);
 }
 
 /// The declaration `op` stands in: the innermost ancestor judged on its own.
@@ -3943,8 +4030,11 @@ FailureOr<func::FuncOp> FuncCallOp::getOrSpecializeCallee(
         rewriter.setInsertionPointAfter(*callee);
         // An external polymorphic declaration has no body to clone;
         // specialization refuses it, so this call has no instance to name.
-        return specializePolymorph(rewriter, *callee, instanceName,
-                                   subst.toTypeMap());
+        // Cut at module scope, the instance is a `func.func`.
+        return cast_if_present<func::FuncOp>(
+            specializePolymorph(rewriter, *callee, instanceName,
+                                subst.toTypeMap())
+                .getOperation());
       });
   if (!instance)
     return failure();

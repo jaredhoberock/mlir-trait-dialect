@@ -36,31 +36,14 @@ fn test_jit() {
     let other_ty = trait_::poly_type(&context, 1);
 
     let partial_eq = {
-        let vis_id = Identifier::new(&context, "sym_visibility");
-        let private_attr = StringAttribute::new(&context, "private").into();
-
         // (!S, !O) -> i1
         let eq_ty = FunctionType::new(&context, &[self_ty, other_ty], &[i1_ty]).into();
-        let eq = func::func(
-            &context,
-            StringAttribute::new(&context, "eq"),
-            TypeAttribute::new(eq_ty),
-            Region::new(),
-            &[(vis_id, private_attr)],
-            loc,
-        );
+        let eq = trait_::method(loc, "eq", eq_ty, Region::new());
 
         let neq = {
             // (!S, !O) -> i1
             let neq_ty = FunctionType::new(&context, &[self_ty, other_ty], &[i1_ty]).into();
-            let neq = func::func(
-                &context,
-                StringAttribute::new(&context, "neq"),
-                TypeAttribute::new(neq_ty),
-                Region::new(),
-                &[],
-                loc,
-            );
+            let neq = trait_::method(loc, "neq", neq_ty, Region::new());
 
             let block = Block::new(&[(self_ty, loc), (other_ty, loc)]);
             let c = block.append_operation(trait_::assume_self(
@@ -96,9 +79,9 @@ fn test_jit() {
                 true_.result(0).unwrap().into(),
                 loc,
             ));
-            block.append_operation(func::r#return(
-                &[result.result(0).unwrap().into()],
+            block.append_operation(trait_::return_(
                 loc,
+                &[result.result(0).unwrap().into()],
             ));
 
             neq.regions().next().unwrap()
@@ -127,14 +110,7 @@ fn test_jit() {
         let eq = {
             // (i32, i32) -> i1
             let method_ty = FunctionType::new(&context, &[i32_ty, i32_ty], &[i1_ty]).into();
-            let eq = func::func(
-                &context,
-                StringAttribute::new(&context, "eq"),
-                TypeAttribute::new(method_ty),
-                Region::new(),
-                &[],
-                loc,
-            );
+            let eq = trait_::method(loc, "eq", method_ty, Region::new());
 
             let block = Block::new(&[(i32_ty, loc), (i32_ty, loc)]);
             let result = block.append_operation(arith::cmpi(
@@ -144,9 +120,9 @@ fn test_jit() {
                 block.argument(1).unwrap().into(),
                 loc,
             ));
-            block.append_operation(func::r#return(
-                &[result.result(0).unwrap().into()],
+            block.append_operation(trait_::return_(
                 loc,
+                &[result.result(0).unwrap().into()],
             ));
 
             eq.regions().next().unwrap()

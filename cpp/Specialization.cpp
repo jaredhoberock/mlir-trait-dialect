@@ -159,16 +159,41 @@ static bool insertionStandsInsideTemplate(OpBuilder &builder) {
   return false;
 }
 
-func::FuncOp specializePolymorph(OpBuilder& builder,
-                                  func::FuncOp polymorph,
-                                  StringRef instanceName,
-                                  const DenseMap<Type,Type> &substitution) {
+/// Ends every block of `function`'s body that a function return ends with the
+/// return of `function`'s own kind, over the same operands. A return nested in a
+/// deeper region ends no block of the body and is left alone.
+static void endWithOwnReturns(RewriterBase &rewriter,
+                              FunctionOpInterface function) {
+  bool isMethod = isa<MethodOp>(function);
+  for (Block &block : function.getFunctionBody()) {
+    if (block.empty())
+      continue;
+    Operation *terminator = &block.back();
+    if (isMethod ? !isa<func::ReturnOp>(terminator)
+                 : !isa<ReturnOp>(terminator))
+      continue;
+    OpBuilder::InsertionGuard guard(rewriter);
+    rewriter.setInsertionPoint(terminator);
+    if (isMethod)
+      rewriter.replaceOpWithNewOp<ReturnOp>(terminator,
+                                            terminator->getOperands());
+    else
+      rewriter.replaceOpWithNewOp<func::ReturnOp>(terminator,
+                                                  terminator->getOperands());
+  }
+}
+
+FunctionOpInterface specializePolymorph(RewriterBase& rewriter,
+                                        FunctionOpInterface polymorph,
+                                        StringRef instanceName,
+                                        const DenseMap<Type,Type> &substitution) {
   if (polymorph.isExternal()) {
     polymorph.emitError("cannot specialize external function");
     return nullptr;
   }
 
   Location loc = polymorph.getLoc();
+  OpBuilder &builder = rewriter;
 
   // A clone whose signature still spells a type variable under the generic-keyed
   // bindings alone, or that is inserted inside a trait, impl, or proof, is a
@@ -184,7 +209,7 @@ func::FuncOp specializePolymorph(OpBuilder& builder,
   AttrTypeReplacer variableReplacer =
       makeTypeReplacerFromSubstitution(variableBindings, ModuleOp());
 
-  auto oldFunctionType = polymorph.getFunctionType();
+  auto oldFunctionType = cast<FunctionType>(polymorph.getFunctionType());
   auto substitutedType =
       llvm::cast<FunctionType>(variableReplacer.replace(oldFunctionType));
 
@@ -199,16 +224,25 @@ func::FuncOp specializePolymorph(OpBuilder& builder,
           ? substitutedType
           : llvm::cast<FunctionType>(replacer.replace(oldFunctionType));
 
-  // create the instance with the new type and instance name
-  func::FuncOp instance = func::FuncOp::create(builder, loc, instanceName, newFunctionType);
+  // create the instance with the new type and instance name, of the kind the
+  // block it stands in holds
+  bool instanceIsMethod =
+      isa<TraitOp, ImplOp>(builder.getInsertionBlock()->getParentOp());
+  FunctionOpInterface instance =
+      instanceIsMethod
+          ? FunctionOpInterface(
+                MethodOp::create(builder, loc, instanceName, newFunctionType))
+          : FunctionOpInterface(func::FuncOp::create(builder, loc, instanceName,
+                                                     newFunctionType));
 
   // clone the polymorph's attributes with type replacement
   for (NamedAttribute attr : polymorph->getAttrs()) {
     StringRef n = attr.getName();
 
-    // don't copy the polymorph's name or function type
-    if (n == polymorph.getSymNameAttrName() ||
-        n == polymorph.getFunctionTypeAttrName()) {
+    // don't copy the polymorph's name or function type, and give a method no
+    // visibility
+    if (n == SymbolTable::getSymbolAttrName() || n == "function_type" ||
+        (instanceIsMethod && n == SymbolTable::getVisibilityAttrName())) {
       continue;
     }
 
@@ -217,10 +251,11 @@ func::FuncOp specializePolymorph(OpBuilder& builder,
 
   IRMapping mapping;
   cloneRegionWithTypeReplacement(builder,
-                                 polymorph.getBody(),
-                                 instance.getBody(),
+                                 polymorph.getFunctionBody(),
+                                 instance.getFunctionBody(),
                                  mapping,
                                  replacer);
+  endWithOwnReturns(rewriter, instance);
 
   return instance;
 }

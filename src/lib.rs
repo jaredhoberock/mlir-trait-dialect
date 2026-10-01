@@ -297,6 +297,30 @@ pub fn impl_named<'c>(loc: Location<'c>,
         .add_regions([declaration_body()]))
 }
 
+/// Build a `trait.method` named `name` whose type is `function_type`, holding
+/// `body`: an empty region for a method a trait requires, or one whose entry
+/// block takes the function type's inputs and whose blocks end in
+/// `trait.return`. A method carries no visibility: it lives and dies with the
+/// trait or impl it stands in.
+pub fn method<'c>(loc: Location<'c>,
+                  name: &str,
+                  function_type: Type<'c>,
+                  body: Region<'c>,
+) -> Operation<'c> {
+    build_op(OperationBuilder::new("trait.method", loc)
+        .add_attributes(&[
+            (identifier(loc, "sym_name"), string_attr(loc, name)),
+            (identifier(loc, "function_type"), type_attr(function_type)),
+        ])
+        .add_regions([body]))
+}
+
+/// Build a `trait.return` of `operands`, the results of the method whose body
+/// the block it ends stands in.
+pub fn return_<'c>(loc: Location<'c>, operands: &[Value<'c, '_>]) -> Operation<'c> {
+    build_op(OperationBuilder::new("trait.return", loc).add_operands(operands))
+}
+
 /// Attach the checked `witnesses` array to an existing `trait.impl` op -- each a
 /// `#trait.witness` the impl verifier reads by arm: an equality-armed
 /// projection-resolution witness, an application-armed obligation discharge
