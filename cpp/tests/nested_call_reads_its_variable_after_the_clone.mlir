@@ -48,12 +48,12 @@ func.func @main(%x: i32, %v: f32) -> f32 {
 // The i64 method's instance for f32 stands beside its impl, then the forwarding
 // method's instance calls it in place of the nested generic call, and main calls
 // the forwarding instance.
-// CHECK-LABEL: func.func private @Store_impl_i64_keep_
+// CHECK-LABEL: func.func private @Store_impl_i64_{{h[0-9a-f]+}}_keep
 // CHECK-SAME: %{{.*}}: i64, %{{.*}}: f32) -> f32
-// CHECK-LABEL: func.func private @Store_impl_i32_keep_
+// CHECK-LABEL: func.func private @Store_impl_i32_{{h[0-9a-f]+}}_keep
 // CHECK-SAME: %{{.*}}: i32, %{{.*}}: f32) -> f32
 // CHECK-NOT: trait.method.call
-// CHECK: call @Store_impl_i64_keep_
+// CHECK: call @Store_impl_i64_{{h[0-9a-f]+}}_keep
 // CHECK-NOT: trait.method.call
 // CHECK-LABEL: func.func @main
-// CHECK: call @Store_impl_i32_keep_
+// CHECK: call @Store_impl_i32_{{h[0-9a-f]+}}_keep

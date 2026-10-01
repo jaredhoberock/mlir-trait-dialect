@@ -64,8 +64,8 @@ func.func @main(%x: !trait.proj<@Has[i32], "A", [i1]>) -> i64 {
   return %s : i64
 }
 
-// CHECK-DAG: func.func private @[[MARK:Marker_i1_mark[_a-z0-9]*]](%{{.*}}: i1) -> i64
-// CHECK-DAG: func.func private @[[USE:Has_i32_use[_a-z0-9]*]](%{{.*}}: i1) -> i64
+// CHECK-DAG: func.func private @[[MARK:Marker_i1_h[0-9a-f]+_mark]](%{{.*}}: i1) -> i64
+// CHECK-DAG: func.func private @[[USE:Has_i32_h[0-9a-f]+_use]](%{{.*}}: i1) -> i64
 // CHECK-DAG: func.func private @[[F:f_[_a-z0-9]*]](%{{.*}}: i1) -> i64
 // CHECK: func.func @main(%{{.*}}: i1) -> i64
 // CHECK-DAG: call @[[F]](

@@ -23,9 +23,9 @@ trait.impl private @T_i64 for @T[i64] {
 }
 
 // CHECK-NOT: trait.
-// CHECK: func.func private @T_i64_get(%[[X:.*]]: i64) -> i64
+// CHECK: func.func private @T_i64_{{h[0-9a-f]+}}_get(%[[X:.*]]: i64) -> i64
 // CHECK: func.func @main(%[[A:.*]]: i64) -> i64
-// CHECK: %[[R:.*]] = call @T_i64_get(%[[A]]) : (i64) -> i64
+// CHECK: %[[R:.*]] = call @T_i64_{{h[0-9a-f]+}}_get(%[[A]]) : (i64) -> i64
 // CHECK: return %[[R]] : i64
 // CHECK-NOT: trait.
 func.func @main(%x: i64) -> i64 {

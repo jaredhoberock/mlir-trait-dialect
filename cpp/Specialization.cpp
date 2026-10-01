@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 #include "Specialization.hpp"
+#include "SymbolLookup.hpp"
 #include "TraitOps.hpp"
 #include "TraitTypes.hpp"
 #include <mlir/IR/IRMapping.h>
@@ -249,6 +250,120 @@ void specializePolymorphicRegion(OpBuilder& builder,
                                  monomorph,
                                  mapping,
                                  replacer);
+}
+
+FailureOr<InstanceKey> InstanceKey::get(SymbolRefAttr templateRef,
+                                        ArrayRef<Type> typeArguments,
+                                        TypeRange formalInputs,
+                                        TypeRange actualInputs,
+                                        AttrTypeReplacer &stamp) {
+  if (formalInputs.size() != actualInputs.size())
+    return failure();
+
+  SmallVector<Type> stampedArguments;
+  for (Type argument : typeArguments)
+    stampedArguments.push_back(stamp.replace(argument));
+
+  SmallVector<Type> evidence;
+  for (auto [formal, supplied] : llvm::zip(formalInputs, actualInputs)) {
+    if (!containsType<ClaimType>(formal)) {
+      evidence.push_back(Type());
+      continue;
+    }
+    Type actual = stamp.replace(supplied);
+    // An equality's endpoints are a proposition, never evidence, so the walk
+    // judges the equality claim and not what stands inside it.
+    bool everyApplicationProven = true;
+    actual.walk<WalkOrder::PreOrder>([&](Type sub) -> WalkResult {
+      auto claim = dyn_cast<ClaimType>(sub);
+      if (!claim)
+        return WalkResult::advance();
+      if (claim.isEquality())
+        return WalkResult::skip();
+      if (!claim.isProven())
+        everyApplicationProven = false;
+      return WalkResult::advance();
+    });
+    if (!everyApplicationProven)
+      return failure();
+    evidence.push_back(actual);
+  }
+  return InstanceKey(templateRef, stampedArguments, std::move(evidence));
+}
+
+std::string InstanceKey::getSymbolName() const {
+  // The positions that take evidence are fixed by the template, so the evidence
+  // that follows the type arguments is read back to its positions unambiguously.
+  SmallVector<Type> identity(typeArguments);
+  llvm::append_range(identity, llvm::make_filter_range(
+                                   evidence, [](Type supplied) {
+                                     return static_cast<bool>(supplied);
+                                   }));
+
+  // A method's template is reached through its impl, and the hash qualifies the
+  // root it is reached through, so a method's name reads its impl, the identity
+  // of the instance, then the method.
+  std::string name = templateRef.getRootReference().str() +
+                     generateMangledNameSuffixFor(identity);
+  for (FlatSymbolRefAttr nested : templateRef.getNestedReferences())
+    name += "_" + nested.getValue().str();
+  return name;
+}
+
+func::FuncOp getOrCutInstance(RewriterBase &rewriter, ModuleOp module,
+                              const InstanceKey &key,
+                              llvm::function_ref<func::FuncOp(StringRef)> cut) {
+  std::string name = key.getSymbolName();
+  if (auto existing = lookupSymbolFrom<func::FuncOp>(
+          module, FlatSymbolRefAttr::get(module.getContext(), name)))
+    return existing;
+
+  func::FuncOp instance = cut(name);
+  if (!instance)
+    return nullptr;
+
+  FunctionType signature = instance.getFunctionType();
+  SmallVector<Type> inputs(signature.getInputs());
+  Block &entry = instance.getBody().front();
+  rewriter.modifyOpInPlace(instance, [&] {
+    for (auto [position, supplied] : llvm::enumerate(key.getEvidence())) {
+      if (!supplied)
+        continue;
+      inputs[position] = supplied;
+      entry.getArgument(position).setType(supplied);
+    }
+    instance.setFunctionType(FunctionType::get(
+        instance.getContext(), inputs, signature.getResults()));
+  });
+
+  // A projection's result is its source's requirement at its index. Where the
+  // substitution left a projection from a proven source unproven -- the claim it
+  // would have respelled it by is one two positions dispute -- the result is read
+  // off the source by that index instead, and taken only where proof derivation
+  // accepts the subproof the source names there: a citation derivation declines
+  // decides nothing, here as anywhere. Pre-order reaches a projection before any
+  // projection of its result.
+  instance.walk<WalkOrder::PreOrder>([&](ProjectOp project) {
+    ClaimType result = project.getResultClaim();
+    if (!project.getSourceClaim().isProven() || !result.isApplication() ||
+        result.isProven())
+      return;
+    auto requirement = getClaimRequirementAt(
+        project.getSourceClaim(), module, project.getIndex(),
+        project.getBinderArguments());
+    if (failed(requirement) || !requirement->conclusion.isProven())
+      return;
+    EvidenceBindings accepted;
+    if (failed(verifyAndRecordProof(result, requirement->conclusion, module,
+                                    accepted, DemandOrigin::ProofRecording,
+                                    /*memo=*/nullptr, /*err=*/nullptr)) ||
+        accepted.bindingCount() == 0)
+      return;
+    rewriter.modifyOpInPlace(project, [&] {
+      project.getResult().setType(requirement->conclusion);
+    });
+  });
+  return instance;
 }
 
 } // end mlir::trait

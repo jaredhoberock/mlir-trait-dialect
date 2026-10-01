@@ -195,9 +195,8 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
   // resolved vocabulary here; no other component resolves a demanded claim's
   // spelling before impl selection and proof creation. (The obligation
   // recorder in verifyAndRecordProof normalizes both the demanded obligation
-  // and the proven value's spelling before recording, so coherent spellings of
-  // one obligation record identically; recorded-proof equivalence then fires
-  // only to reject genuinely incoherent proofs, not to reconcile spellings.)
+  // and the proven value's spelling before recording, so every spelling of one
+  // obligation discharged by one proof records as one pair.)
   ClaimType selected =
       cast<ClaimType>(resolveProjectionsIn(wanted, scope, builder));
 

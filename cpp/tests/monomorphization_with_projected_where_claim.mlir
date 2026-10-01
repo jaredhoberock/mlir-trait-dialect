@@ -40,8 +40,8 @@ trait.impl private @Has_impl for @Has[f64] {
 }
 
 // CHECK-LABEL: func.func nested @f_
-// CHECK: %[[ID:.*]] = call @Has_impl_get
-// CHECK: %[[RES:.*]] = call @MyEq_impl_eq(%[[ID]], %[[ID]])
+// CHECK: %[[ID:.*]] = call @Has_impl_{{h[0-9a-f]+}}_get
+// CHECK: %[[RES:.*]] = call @MyEq_impl_{{h[0-9a-f]+}}_eq(%[[ID]], %[[ID]])
 // CHECK: return %[[RES]]
 func.func nested @f(%arg0: !trait.poly<3>, %arg1: !trait.claim<@Has[!trait.poly<3>]>) -> i1 {
   %0 = trait.method.call %arg1 @Has[!trait.poly<3>]::@get(%arg0)

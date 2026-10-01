@@ -29,3 +29,4 @@ config.name = "Trait Dialect Tests"
 trait_plugin = plugin('TRAIT_DIALECT_PLUGIN', os.path.join(os.path.dirname(__file__), '..', 'build', 'libtrait_dialect.so'))
 config.substitutions.append(('mlir-opt', f'{tool('mlir-opt')} --load-dialect-plugin={trait_plugin}'))
 config.substitutions.append(('FileCheck', tool('FileCheck')))
+config.substitutions.append(('mlir-runner', tool('mlir-runner')))

@@ -30,7 +30,7 @@ func.func private @tpl(%x: !trait.poly<1>, %v: i64) -> i64 {
 // CHECK-LABEL: func.func @host
 // CHECK-NOT: trait.allege
 // CHECK-NOT: trait.method.call
-// CHECK: call @Tr_i64_m
+// CHECK: call @Tr_i64_{{h[0-9a-f]+}}_m
 func.func @host(%v: i64) -> i64 {
   %c = trait.allege @Tr[i64]
   %r = trait.method.call %c @Tr[i64]::@m(%v) : (i64) -> i64

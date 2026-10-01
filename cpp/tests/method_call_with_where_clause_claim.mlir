@@ -40,15 +40,15 @@ func.func @test(%x: i32, %y: i32) -> i32 {
 }
 
 // Instance of SameAs::convert
-// CHECK: func.func private @SameAs_i32_i32_convert(
+// CHECK: func.func private @SameAs_i32_i32_{{h[0-9a-f]+}}_convert(
 
 // The instantiated choose should call SameAs_i32_i32_convert
-// CHECK: func.func private @Chooser_i32_choose
-// CHECK: call @SameAs_i32_i32_convert
+// CHECK: func.func private @Chooser_i32_{{h[0-9a-f]+}}_choose
+// CHECK: call @SameAs_i32_i32_{{h[0-9a-f]+}}_convert
 
 // Top-level test calls Chooser_i32_choose
 // CHECK: func.func @test(
-// CHECK: call @Chooser_i32_choose
+// CHECK: call @Chooser_i32_{{h[0-9a-f]+}}_choose
 
 // No trait ops should remain
 // CHECK-NOT: trait.trait

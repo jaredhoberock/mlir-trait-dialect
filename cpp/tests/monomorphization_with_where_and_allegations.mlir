@@ -33,7 +33,7 @@ trait.impl private @PartialEq_impl_i32_i32 for @PartialEq[i32,i32] {
 
 // CHECK-LABEL: func.func private @foo_{{.*}}
 // CHECK-NOT: builtin.unrealized_conversion_cast
-// CHECK: call @PartialEq_impl_i32_i32_eq
+// CHECK: call @PartialEq_impl_i32_i32_{{h[0-9a-f]+}}_eq
 func.func private @foo(%c: !trait.claim<@PartialEq[!T,!T]>, %x: !T, %y: !T) -> i1 {
   %res = trait.method.call %c @PartialEq[!T,!T]::@eq(%x, %y)
     : (!T,!T) -> i1
@@ -222,7 +222,7 @@ trait.impl private @Ord_impl_i32 for @Ord[i32] {
 // CHECK-LABEL: func.func @max
 // CHECK-NOT: trait.claim
 // CHECK-NOT: builtin.unrealized_conversion_cast
-// CHECK: call @Ord_impl_i32_max
+// CHECK: call @Ord_impl_i32_{{h[0-9a-f]+}}_max
 func.func @max(%a: i32, %b: i32) -> i32 {
   %ord = trait.allege @Ord[i32]
   %res = trait.method.call %ord @Ord[i32]::@max(%a, %b)
@@ -233,7 +233,7 @@ func.func @max(%a: i32, %b: i32) -> i32 {
 // CHECK-LABEL: func.func @min
 // CHECK-NOT: trait.claim
 // CHECK-NOT: builtin.unrealized_conversion_cast
-// CHECK: call @Ord_impl_i32_min
+// CHECK: call @Ord_impl_i32_{{h[0-9a-f]+}}_min
 func.func @min(%a: i32, %b: i32) -> i32 {
   %ord = trait.allege @Ord[i32]
   %res = trait.method.call %ord @Ord[i32]::@min(%a, %b)

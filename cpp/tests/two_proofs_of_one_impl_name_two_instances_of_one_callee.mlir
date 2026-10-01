@@ -1,16 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 
-// RUN: not mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' 2>&1 | FileCheck %s
+// RUN: mlir-opt %s -pass-pipeline='builtin.module(instantiate-monomorphs-trait)' | FileCheck %s --check-prefix=INSTANCES
+// RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait,convert-arith-to-llvm,convert-func-to-llvm,reconcile-unrealized-casts)' | mlir-runner -e main --entry-point-result=i64 | FileCheck %s
 
 // One callee, one type argument, two calls whose claim operands name different
-// proofs of @T[i64]. An instance is named by the type arguments alone, so both
-// calls reach one clone, whose parameter carries whichever proof the call that
-// cut it supplied. The other call is refused where that clone is looked up,
-// with both its operand and the clone's parameter in hand.
+// proofs of @T[i64], @pv1 and @pv2. An instance is named by the evidence it is
+// made with, never by its claim type alone, so the calls reach two instances,
+// each taking the proof its call supplied; both run @T_i64's method.
 
-// CHECK: error: 'trait.func.call' op passes '!trait.claim<@T[i64] by @pv1>' as operand #0 to the instance '@{{.*}}' its type arguments name, which takes '!trait.claim<@T[i64] by @pv2>'
-// CHECK-NEXT: trait.func.call @g(%w1)
+// INSTANCES-DAG: func.func private @[[G1:g_h[0-9a-f]+]](%{{.*}}: !trait.claim<@T[i64] by @pv1>) -> i64
+// INSTANCES-DAG: func.func private @[[G2:g_h[0-9a-f]+]](%{{.*}}: !trait.claim<@T[i64] by @pv2>) -> i64
+// INSTANCES-DAG: call @[[G1]](%{{.*}}) : (!trait.claim<@T[i64] by @pv1>) -> i64
+// INSTANCES-DAG: call @[[G2]](%{{.*}}) : (!trait.claim<@T[i64] by @pv2>) -> i64
+
+// CHECK: {{^}}10{{$}}
 
 trait.trait private @T[!trait.poly<0>] { func.func private @t() -> i64 }
 trait.impl private @T_i64 for @T[i64] {

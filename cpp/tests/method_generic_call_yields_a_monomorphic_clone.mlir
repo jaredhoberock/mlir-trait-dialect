@@ -35,8 +35,8 @@ func.func @main(%x: i64, %v: i32) -> i32 {
 // ahead of the instance cut from it, so the exclusion leads: a CHECK-NOT scans
 // only from the preceding match onward, and one placed after the positive check
 // would never reach the line such a clone stands on.
-// CHECK-NOT: func.func private @Store_impl_i64_keep_{{.*}}!trait.poly
-// CHECK: func.func private @Store_impl_i64_keep_{{.*}}%arg2: i32) -> i32
+// CHECK-NOT: func.func private @Store_impl_i64_{{h[0-9a-f]+}}_keep{{.*}}!trait.poly
+// CHECK: func.func private @Store_impl_i64_{{h[0-9a-f]+}}_keep{{.*}}%arg2: i32) -> i32
 // CHECK: func.func @main
-// CHECK: call @Store_impl_i64_keep_
+// CHECK: call @Store_impl_i64_{{h[0-9a-f]+}}_keep
 // CHECK-NOT: trait.method.call

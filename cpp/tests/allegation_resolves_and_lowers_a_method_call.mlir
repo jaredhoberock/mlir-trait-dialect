@@ -24,8 +24,8 @@ func.func @main(%x: i32) -> i32 {
   return %r : i32
 }
 
-// CHECK-LABEL: func.func private @Greet_i32_greet
+// CHECK-LABEL: func.func private @Greet_i32_{{h[0-9a-f]+}}_greet
 // CHECK: return %arg0 : i32
 // CHECK-LABEL: func.func @main
-// CHECK: call @Greet_i32_greet
+// CHECK: call @Greet_i32_{{h[0-9a-f]+}}_greet
 // CHECK: return {{.*}} : i32

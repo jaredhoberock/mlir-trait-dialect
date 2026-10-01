@@ -11,15 +11,15 @@
 
 // The checks follow the order the specializations are printed in, which is the
 // order the modules holding them stand in.
-// CHECK: func.func private @T_i32_m
+// CHECK: func.func private @T_i32_{{h[0-9a-f]+}}_m
 // CHECK: arith.constant 1
 // CHECK: module @inner
-// CHECK: func.func private @T_i32_m
+// CHECK: func.func private @T_i32_{{h[0-9a-f]+}}_m
 // CHECK: arith.constant 2
 // CHECK: func.func @main
-// CHECK: call @T_i32_m
+// CHECK: call @T_i32_{{h[0-9a-f]+}}_m
 // CHECK: func.func @main
-// CHECK: call @T_i32_m
+// CHECK: call @T_i32_{{h[0-9a-f]+}}_m
 
 trait.trait private @T[!trait.poly<0>] { func.func private @m() -> i64 }
 trait.impl private @T_i32 for @T[i32] {
@@ -50,15 +50,15 @@ func.func @main() -> i64 {
 
 // -----
 
-// CHECK: func.func private @T_i32_m
+// CHECK: func.func private @T_i32_{{h[0-9a-f]+}}_m
 // CHECK: arith.constant 1
 // CHECK: func.func @main
-// CHECK: call @T_i32_m
+// CHECK: call @T_i32_{{h[0-9a-f]+}}_m
 // CHECK: module @inner
-// CHECK: func.func private @T_i32_m
+// CHECK: func.func private @T_i32_{{h[0-9a-f]+}}_m
 // CHECK: arith.constant 2
 // CHECK: func.func @main
-// CHECK: call @T_i32_m
+// CHECK: call @T_i32_{{h[0-9a-f]+}}_m
 
 trait.trait private @T[!trait.poly<0>] { func.func private @m() -> i64 }
 trait.impl private @T_i32 for @T[i32] {

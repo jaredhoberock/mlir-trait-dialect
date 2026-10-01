@@ -17,7 +17,7 @@ trait.impl private @I for @T[i32] {
   }
 }
 
-// CHECK: func.func private @[[F:I_f[0-9a-z_]*]](%{{.*}}: i32, %{{.*}}: i64, %{{.*}}: i8) -> i64
+// CHECK: func.func private @[[F:I_h[0-9a-f]+_f]](%{{.*}}: i32, %{{.*}}: i64, %{{.*}}: i8) -> i64
 // CHECK: func.func @main
 // CHECK: call @[[F]]
 func.func @main(%x: i32, %m: i64, %n: i8) -> i64 {

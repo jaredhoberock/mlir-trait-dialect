@@ -512,8 +512,12 @@ def ImplOp : TraitDialectOp<"impl", [
     /// Extracts a method from this impl as a free function with a leading self parameter.
     ///
     /// Builds the impl specialization from the proven self claim, merges the
-    /// call-site substitution, and monomorphizes the cloned method.
+    /// call-site substitution, and monomorphizes the cloned method. The
+    /// instance is named by the evidence it is made with: the proven self
+    /// claim at the leading position, then `actualArguments`, what the call
+    /// supplies for the method's own parameters, position by position.
     FailureOr<func::FuncOp> getOrSpecializeFreeFunctionFromMethod(PatternRewriter& rewriter, ClaimType provenSelfClaim, StringRef methodName,
+                                                                   TypeRange actualArguments,
                                                                    const CallSubstitution &callSubst,
                                                                    ProofDerivationMemo *memo);
 
@@ -565,11 +569,12 @@ def ImplOp : TraitDialectOp<"impl", [
     // Helper to generate unique symbol name for an ImplOp
     static std::string generateSymName(TraitApplicationAttr selfApp, PredicateArrayAttr assumptions);
 
-    // The name of the instance this impl serves one claim with: its own symbol
-    // plus the arguments that claim supplied for its parameters. The caller
-    // hands the arguments it already built matching this impl to that claim,
-    // since remaking the match here would remake it under whatever context
-    // stands at the naming rather than the one the match was made under.
+    // The name this impl takes at one claim, which the proof selection mints
+    // for it there is named after: its own symbol plus the arguments that
+    // claim supplied for its parameters. The caller hands the arguments it
+    // already built matching this impl to that claim, since remaking the match
+    // here would remake it under whatever context stands at the naming rather
+    // than the one the match was made under.
     std::string generateMangledName(const SpecializationMap &arguments);
 
     bool isUnconditional();

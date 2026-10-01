@@ -63,7 +63,7 @@ func.func @main(%x: tuple<i32>, %y: i32) -> i64 {
 }
 
 // CHECK-DAG: func.func private @[[B:B_tuple_[_a-z0-9]*b[_a-z0-9]*]](%{{.*}}: tuple<i32>) -> i64
-// CHECK-DAG: func.func private @[[A:A_i32_a]](%{{.*}}: i32) -> i64
+// CHECK-DAG: func.func private @[[A:A_i32_h[0-9a-f]+_a]](%{{.*}}: i32) -> i64
 // CHECK: func.func @main
 // CHECK-DAG: call @[[B]](
 // CHECK-DAG: call @[[A]](

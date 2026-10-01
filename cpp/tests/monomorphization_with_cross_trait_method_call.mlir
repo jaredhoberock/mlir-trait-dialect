@@ -31,15 +31,15 @@ func.func @test(%arg0 : i1) -> i1 {
 }
 
 // Instance of A::a
-// CHECK: func.func private @A_impl_i1_a(
+// CHECK: func.func private @A_impl_i1_{{h[0-9a-f]+}}_a(
 
 // Instance of B::b that calls A_impl_i1_a
-// CHECK: func.func private @B_impl_i1_b(
-// CHECK: call @A_impl_i1_a
+// CHECK: func.func private @B_impl_i1_{{h[0-9a-f]+}}_b(
+// CHECK: call @A_impl_i1_{{h[0-9a-f]+}}_a
 
 // Top-level test calls B_impl_i1_b
 // CHECK: func.func @test(
-// CHECK: call @B_impl_i1_b
+// CHECK: call @B_impl_i1_{{h[0-9a-f]+}}_b
 
 // No trait ops should remain
 // CHECK-NOT: trait.trait

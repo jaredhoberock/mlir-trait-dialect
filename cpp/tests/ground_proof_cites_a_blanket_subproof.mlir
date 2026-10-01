@@ -29,10 +29,10 @@ trait.proof private @pb proves @B2_i32[] for @B2[i32, i32] given [@a2]
 
 // CHECK-NOT: trait.
 // CHECK: func.func private @[[A:A2_blanket_[a-z0-9]+]]_a() -> i64
-// CHECK: func.func private @B2_i32_b() -> i64
+// CHECK: func.func private @B2_i32_{{h[0-9a-f]+}}_b() -> i64
 // CHECK: call @[[A]]_a() : () -> i64
 // CHECK: func.func @main() -> i64
-// CHECK: call @B2_i32_b() : () -> i64
+// CHECK: call @B2_i32_{{h[0-9a-f]+}}_b() : () -> i64
 // CHECK-NOT: trait.
 func.func @main() -> i64 {
   %w = trait.witness @pb for @B2[i32, i32]

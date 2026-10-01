@@ -56,8 +56,8 @@ func.func @main() -> i64 {
 }
 
 // CHECK-LABEL: func.func private @callee_
-// CHECK: call @Trait_i64_method
-// CHECK-LABEL: func.func private @Trait_i64_method
+// CHECK: call @Trait_i64_{{h[0-9a-f]+}}_method
+// CHECK-LABEL: func.func private @Trait_i64_{{h[0-9a-f]+}}_method
 // CHECK: return %arg1 : i64
 // CHECK-LABEL: func.func @main() -> i64
 // CHECK: call @callee_

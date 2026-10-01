@@ -176,19 +176,72 @@ public:
 /// The concrete associated types projections stand for.
 using ProjectionBindings = TypeBindings<ProjectionType>;
 
-/// Unproven claim spellings mapped to the equivalent proven spellings found
-/// while checking evidence.
-class EvidenceBindings : public TypeBindings<ClaimType, ClaimType> {
+/// The evidence proof derivation has accepted: each unproven claim spelling it
+/// discharged, with every proven spelling it accepted as discharging it.
+///
+/// One claim can be discharged by two different proofs -- the same fact
+/// supplied for two reasons, at two positions of one use or of one proof's
+/// subproofs -- and both are evidence. A reader keyed by the claim alone cannot
+/// say which of them a spelling means, so the claim-keyed view answers only for
+/// a claim exactly one proof discharges; what carries each proof of any other
+/// claim is the position it was supplied at.
+class EvidenceBindings {
 public:
+  /// Records that `proven` discharges `unproven`.
   void bind(ClaimType unproven, ClaimType proven) {
     assert(!unproven.isProven() && "evidence keys must be unproven claims");
     assert(proven.isProven() && "evidence values must be proven claims");
-    TypeBindings::bind(unproven, proven);
+    SmallVector<ClaimType, 1> &accepted = proofs[unproven];
+    if (!llvm::is_contained(accepted, proven))
+      accepted.push_back(proven);
   }
 
-  // Used by the recursive proof derivation to roll back an optimistic binding
-  // when a nested obligation fails.
-  void erase(ClaimType key) { bindings.erase(key); }
+  /// Whether `proven` is recorded as discharging `unproven`.
+  bool holds(ClaimType unproven, ClaimType proven) const {
+    auto it = proofs.find(unproven);
+    return it != proofs.end() && llvm::is_contained(it->second, proven);
+  }
+
+  /// The proof recorded for `unproven` when exactly one is.
+  std::optional<ClaimType> lookup(ClaimType unproven) const {
+    auto it = proofs.find(unproven);
+    if (it == proofs.end() || it->second.size() != 1)
+      return std::nullopt;
+    return it->second.front();
+  }
+
+  /// Takes back the record that `proven` discharges `unproven`: the recursive
+  /// proof derivation's optimistic binding, when a nested obligation fails.
+  void erase(ClaimType unproven, ClaimType proven) {
+    auto it = proofs.find(unproven);
+    if (it == proofs.end())
+      return;
+    llvm::erase(it->second, proven);
+    if (it->second.empty())
+      proofs.erase(it);
+  }
+
+  /// The claim-keyed view: every claim exactly one proof discharges, mapped to
+  /// that proof.
+  llvm::DenseMap<Type, Type> toTypeMap() const {
+    llvm::DenseMap<Type, Type> result;
+    for (const auto &[unproven, accepted] : proofs)
+      if (accepted.size() == 1)
+        result[unproven] = accepted.front();
+    return result;
+  }
+
+  /// How many (claim, proof) pairs are recorded, which grows with every pair a
+  /// derivation accepts.
+  size_t bindingCount() const {
+    size_t count = 0;
+    for (const auto &entry : proofs)
+      count += entry.second.size();
+    return count;
+  }
+
+private:
+  llvm::DenseMap<ClaimType, SmallVector<ClaimType, 1>> proofs;
 };
 
 /// Whether a spelling is one nothing but a respelling can move.
@@ -363,7 +416,10 @@ private:
 /// The factory below is the only way to make one, so a substitution that exists
 /// is one the read closed: every monomorphic projection the call spells is bound
 /// to what impl selection settled for it, and every proven claim it spells is
-/// bound together with everything that claim's proof binds underneath.
+/// bound together with everything that claim's proof binds underneath -- except
+/// a claim the call proves by two different proofs, which no binding keyed by
+/// that claim can speak for. Each parameter of the instance a call lowers to
+/// takes its evidence from the position it was supplied at instead.
 class CallSubstitution {
 public:
   /// The closed substitution that lowers a call whose operands and results are
@@ -1339,10 +1395,6 @@ private:
 };
 
 std::string generateMangledNameSuffixFor(TypeRange typeArgs);
-
-std::string applySubstitutionAndGenerateMangledNameSuffix(
-    const DenseMap<Type,Type> &subst,
-    ArrayRef<GenericTypeInterface> typeParams);
 
 std::string applySubstitutionAndGenerateMangledNameSuffix(
     const SpecializationMap &subst, ArrayRef<GenericTypeInterface> typeParams);

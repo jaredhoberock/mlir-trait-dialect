@@ -31,14 +31,14 @@ func.func @main() -> i32 {
   return %result : i32
 }
 
-// CHECK-LABEL: func.func private @Trait_impl_i64_method{{.*}}(
+// CHECK-LABEL: func.func private @Trait_impl_i64_{{h[0-9a-f]+}}_method(
 // CHECK-SAME: i64) -> i64
-// CHECK-LABEL: func.func private @Trait_impl_i64_method{{.*}}(
+// CHECK-LABEL: func.func private @Trait_impl_i64_{{h[0-9a-f]+}}_method(
 // CHECK-SAME: i1) -> i1
 // CHECK-LABEL: func.func @main()
-// CHECK: call @Trait_impl_i64_method{{.*}}(
+// CHECK: call @Trait_impl_i64_{{h[0-9a-f]+}}_method(
 // CHECK-SAME: i64
-// CHECK: call @Trait_impl_i64_method{{.*}}(
+// CHECK: call @Trait_impl_i64_{{h[0-9a-f]+}}_method(
 // CHECK-SAME: i1
 // CHECK-NOT: trait.method.call
 // CHECK-NOT: trait.func.call

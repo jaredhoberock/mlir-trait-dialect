@@ -24,7 +24,7 @@ trait.impl private @Tensor_i8 for @Tensor[i8] {
 trait.proof private @p proves @Vector_blanket[!trait.poly<0> = i8] for @Vector[i8] given [@Tensor_i8, unit]
 
 // CHECK: func.func @main
-// CHECK: call @[[SHAPE:Tensor_i8_shape]]
+// CHECK: call @[[SHAPE:Tensor_i8_h[0-9a-f]+_shape]]
 // CHECK-NOT: trait.
 func.func @main(%x: i8) -> i64 {
   %w = trait.witness @p for @Vector[i8]

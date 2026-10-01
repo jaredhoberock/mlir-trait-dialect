@@ -47,7 +47,7 @@ func.func @main(%x: tuple<i32>) -> i64 {
 }
 
 // CHECK: func.func private @[[GET:Tr_tuple_[_a-z0-9]*get[_a-z0-9]*]](%{{.*}}: tuple<i32>) -> i64
-// CHECK: func.func private @[[W:Wrap_i32_wrapped[_a-z0-9]*]](%{{.*}}: tuple<i32>) -> i64
+// CHECK: func.func private @[[W:Wrap_i32_h[0-9a-f]+_wrapped]](%{{.*}}: tuple<i32>) -> i64
 // CHECK-NEXT: call @[[GET]](
 // CHECK: func.func @main
 // CHECK: call @[[W]](

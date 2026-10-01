@@ -41,10 +41,10 @@ func.func @main(%pv: !trait.proj<@FoldFn[i32], "Output">) -> i32 {
 // the now-dead pure assume is eliminated -- exactly as an application-arm assume
 // erases. The concrete instance is a clean identity function with no trait op.
 
-// CHECK: func.func private @FoldFn_gen_{{.*}}_run_{{.*}}(%arg0: i32) -> i32
+// CHECK: func.func private @FoldFn_gen_{{h[0-9a-f]+}}_run(%arg0: i32) -> i32
 // CHECK-NEXT: return %arg0 : i32
 // CHECK: func.func @main(%arg0: i32) -> i32
-// CHECK: call @FoldFn_gen_{{.*}}_run_
+// CHECK: call @FoldFn_gen_{{h[0-9a-f]+}}_run
 // CHECK-NOT: trait.assume
 // CHECK-NOT: trait.coerce
 // CHECK-NOT: trait.claim

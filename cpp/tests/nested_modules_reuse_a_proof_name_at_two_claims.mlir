@@ -17,7 +17,7 @@ trait.impl private @B_impl for @B[i32] {
 }
 trait.proof private @p proves @B_impl[] for @B[i32] given [@A_top]
 
-// CHECK: func.func private @B_impl_m(%{{.*}}: i32) -> i32
+// CHECK: func.func private @B_impl_{{h[0-9a-f]+}}_m(%{{.*}}: i32) -> i32
 // CHECK: func.func @main(%{{.*}}: i32) -> i32
 func.func @main(%x: i32) -> i32 {
   %w = trait.witness @p for @B[i32]
@@ -37,7 +37,7 @@ module @inner {
   }
   trait.proof private @p proves @B_impl[] for @B[i64] given [@A_inner]
 
-  // CHECK: func.func private @B_impl_m(%{{.*}}: i64) -> i64
+  // CHECK: func.func private @B_impl_{{h[0-9a-f]+}}_m(%{{.*}}: i64) -> i64
   // CHECK: func.func @main(%{{.*}}: i64) -> i64
   func.func @main(%x: i64) -> i64 {
     %w = trait.witness @p for @B[i64]

@@ -42,9 +42,9 @@ func.func @test() {
 // IR-NOT: trait.claim
 // IR-NOT: builtin.unrealized_conversion_cast
 
-// CHECK-LABEL: func.func private @Hold_claim_held()
+// CHECK-LABEL: func.func private @Hold_claim_{{h[0-9a-f]+}}_held()
 // CHECK: return
 // CHECK-LABEL: func.func private @take_
-// CHECK: call @Hold_claim_held() : () -> ()
+// CHECK: call @Hold_claim_{{h[0-9a-f]+}}_held() : () -> ()
 // CHECK-LABEL: func.func @test()
 // CHECK: call @take_

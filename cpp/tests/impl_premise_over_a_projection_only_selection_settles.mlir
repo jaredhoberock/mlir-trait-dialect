@@ -11,7 +11,7 @@
 // only @Has_m applies at i32, Has[i32]::Out is i64, and @I applies.
 
 // CHECK-LABEL: func.func @main
-// CHECK: call @I_m
+// CHECK: call @I_{{h[0-9a-f]+}}_m
 
 trait.trait private @Marker[!trait.poly<0>] {}
 trait.trait private @Other[!trait.poly<0>] {}

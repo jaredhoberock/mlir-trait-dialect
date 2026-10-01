@@ -16,10 +16,10 @@ trait.impl private @T_i32 for @T[i32] {
     return %c : i64
   }
 }
-// CHECK: func.func private @T_i32_m
+// CHECK: func.func private @T_i32_{{h[0-9a-f]+}}_m
 // CHECK: arith.constant 1
 // CHECK: func.func @main
-// CHECK: call @T_i32_m
+// CHECK: call @T_i32_{{h[0-9a-f]+}}_m
 func.func @main() -> i64 {
   %c = trait.allege @T[i32]
   %r = trait.method.call %c @T[i32]::@m() : () -> i64
@@ -35,10 +35,10 @@ module @inner {
       return %c : i64
     }
   }
-  // CHECK: func.func private @T_inner_m
+  // CHECK: func.func private @T_inner_{{h[0-9a-f]+}}_m
   // CHECK: arith.constant 2
   // CHECK: func.func @main
-  // CHECK: call @T_inner_m
+  // CHECK: call @T_inner_{{h[0-9a-f]+}}_m
   func.func @main() -> i64 {
     %c = trait.allege @T[i32]
     %r = trait.method.call %c @T[i32]::@m() : () -> i64
@@ -72,9 +72,9 @@ trait.impl private @B_impl for @B[i32] {
   }
 }
 trait.proof private @p proves @B_impl[] for @B[i32] given [@A_top]
-// CHECK: func.func private @A_top_a
-// CHECK: func.func private @B_impl_b
-// CHECK: call @A_top_a
+// CHECK: func.func private @A_top_{{h[0-9a-f]+}}_a
+// CHECK: func.func private @B_impl_{{h[0-9a-f]+}}_b
+// CHECK: call @A_top_{{h[0-9a-f]+}}_a
 func.func @main() -> i64 {
   %w = trait.witness @p for @B[i32]
   %r = trait.method.call %w @B[i32]::@b() : () -> i64 by @p
@@ -99,9 +99,9 @@ module @inner {
       return %r : i64
     }
   }
-  // CHECK: func.func private @A_inner_a
-  // CHECK: func.func private @B_impl_b
-  // CHECK: call @A_inner_a
+  // CHECK: func.func private @A_inner_{{h[0-9a-f]+}}_a
+  // CHECK: func.func private @B_impl_{{h[0-9a-f]+}}_b
+  // CHECK: call @A_inner_{{h[0-9a-f]+}}_a
   func.func @main() -> i64 {
     %c = trait.allege @B[i32]
     %r = trait.method.call %c @B[i32]::@b() : () -> i64

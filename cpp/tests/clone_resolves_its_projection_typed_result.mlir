@@ -38,7 +38,7 @@ func.func @main(%v: i64) -> !trait.proj<@Producer[i64], "Item"> {
 
 // CHECK: func.func {{.*}}@tpl_
 // CHECK-SAME: -> i32
-// CHECK: call @Producer_i64_make
+// CHECK: call @Producer_i64_{{h[0-9a-f]+}}_make
 // CHECK: return %{{.*}} : i32
 // CHECK-LABEL: func.func @main
 // CHECK: call @tpl_

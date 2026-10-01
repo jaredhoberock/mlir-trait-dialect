@@ -34,9 +34,9 @@ trait.impl private @B_i32 for @B[i32] {
   }
 }
 
-// CHECK: func.func private @[[A32:A_i32_a]]() -> i64
+// CHECK: func.func private @[[A32:A_i32_h[0-9a-f]+_a]]() -> i64
 // CHECK: arith.constant 32
-// CHECK: func.func private @[[B:B_i32_b]](%{{.*}}: i32) -> i64
+// CHECK: func.func private @[[B:B_i32_h[0-9a-f]+_b]](%{{.*}}: i32) -> i64
 // CHECK: call @[[A32]]
 // CHECK: func.func @main
 // CHECK: call @[[B]]

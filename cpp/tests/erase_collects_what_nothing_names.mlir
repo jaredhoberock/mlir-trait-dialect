@@ -107,10 +107,10 @@ trait.proof private @Ping_i64_p proves @Ping_i64[] for @Ping[i64] given [@Ping_i
 // The method clone, the helper the live clone reaches, the clone itself and
 // main are the whole of what stands; the implicit-check-nots on the RUN line
 // hold every region between them clear of the rest.
-// CHECK: func.func private @Show_i32_show
+// CHECK: func.func private @Show_i32_{{h[0-9a-f]+}}_show
 // CHECK: func.func private @used_helper
 // CHECK: func.func private @live_template
-// CHECK: call @Show_i32_show
+// CHECK: call @Show_i32_{{h[0-9a-f]+}}_show
 // CHECK: call @used_helper
 // CHECK: func.func @main
 // CHECK: call @live_template

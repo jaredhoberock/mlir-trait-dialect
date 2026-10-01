@@ -1765,33 +1765,19 @@ static func::FuncOp specializeMethodAsFreeFuncWithLeadingSelfProof(
   });
   BlockArgument selfProofArg = funcOp.getArgument(0);
 
-  // Read a proven claim spelling from the IMPL's own specialization: its
-  // evidence bindings map each of the impl's obligations (an unproven claim) to
-  // the proven claim discharging it, a fact of the impl fixed once the self is
-  // ground, so an application assume projects to the proven obligation. The call
-  // site's evidence bindings are deliberately not read here: a template clone is
-  // the template under variable bindings alone, and stamping one call's evidence
-  // over it would bind the clone to that call. An equality assume and any
-  // obligation the impl's specialization does not record fall back to the
-  // assume's own claim -- an equality never carries a proof, and a monomorphic
-  // clone's body already carries the proven spelling from full substitution.
-  auto provenOrSame = [&](ClaimType claim) -> ClaimType {
-    auto it = implSubst.find(claim);
-    if (it != implSubst.end())
-      if (auto proven = dyn_cast<ClaimType>(it->second))
-        return proven;
-    return claim;
-  };
-
-  // Replace every AssumeOp with the evidence the leading self proof gives for
-  // the entry it cites, so the clone holds no trait.assume an AssumeOp verifier
-  // would refuse at module scope. A proven claim already names the proof
-  // discharging it -- a fact of the impl, settled once the self is ground -- so
-  // the witness carrying that proof is minted directly. An unproven claim names
-  // none, and what stands for it is the requirement of the self proof at the
-  // entry's position: the impl's where clause stands after its trait's
-  // requirements in the leading self proof's requirement list. An entry the
-  // proof cannot read is left for the assume's own verifier to refuse.
+  // Every citation the method makes of its declaration -- `self`, or entry N
+  // of the impl's where clause, in whichever region or block of the body it
+  // stands -- is replaced by the evidence the leading self proof supplies at
+  // that position, read off the proof by index and never found by the entry's
+  // spelling: two entries spelling one claim can be discharged by different
+  // proofs, and only the position says which. The self proof's requirements are
+  // its trait's, then the impl's where clause, so entry N is requirement
+  // traitRequirementCount + N. A proven application there is the witness of the
+  // subproof the self proof names at that index, spelled with its ground
+  // projections resolved as the rest of the instance is stamped; an equality
+  // carries no proof and is projected from the self proof. A citation the proof
+  // cannot read is left standing, and the AssumeOp verifier refuses it once
+  // this instance stands at module scope, where no declaration encloses it.
   uint64_t traitRequirementCount = 0;
   if (auto trait = selfProofTy.getTraitApplication().getTrait(module);
       succeeded(trait))
@@ -1802,24 +1788,25 @@ static func::FuncOp specializeMethodAsFreeFuncWithLeadingSelfProof(
     PatternRewriter::InsertionGuard guard(rewriter);
     rewriter.setInsertionPoint(a);
 
-    // An assume cites the impl's self application or one of its where-clause
-    // entries, and the leading self proof is that application's evidence: the
-    // self itself, or the requirement at the entry's position, derived from
-    // the proof rather than spelled.
     Value replacement;
     if (a.citesSelf()) {
       replacement = selfProofArg;
-    } else if (ClaimType stated = provenOrSame(a.getClaim());
-               stated.isProven()) {
-      replacement = WitnessOp::create(rewriter, a.getLoc(), stated.getProof(),
-                                      stated.getTraitApplication());
     } else {
       uint64_t index = traitRequirementCount + *a.getWherePosition();
       auto requirement = getClaimRequirementAt(selfProofTy, module, index);
       if (failed(requirement))
         return;
-      replacement = ProjectOp::create(rewriter, a.getLoc(), *requirement,
-                                      selfProofArg, index);
+      if (requirement->isProven()) {
+        auto spelled = cast<ClaimType>(resolveProjectionsByLookup(
+            *requirement, module, DemandOrigin::MonomorphStampOut,
+            LookupScope::Ground));
+        replacement = WitnessOp::create(rewriter, a.getLoc(),
+                                        spelled.getProof(),
+                                        spelled.getTraitApplication());
+      } else {
+        replacement = ProjectOp::create(rewriter, a.getLoc(), *requirement,
+                                        selfProofArg, index);
+      }
     }
 
     rewriter.replaceAllUsesWith(a.getResult(), replacement);
@@ -1861,6 +1848,7 @@ FailureOr<func::FuncOp> ImplOp::getOrSpecializeFreeFunctionFromMethod(
     PatternRewriter& rewriter,
     ClaimType provenSelfClaim,
     StringRef methodName,
+    TypeRange actualArguments,
     const CallSubstitution &callSubst,
     ProofDerivationMemo *memo) {
   // check that methodName names a valid trait method
@@ -1909,38 +1897,44 @@ FailureOr<func::FuncOp> ImplOp::getOrSpecializeFreeFunctionFromMethod(
   for (const auto &[k, v] : callBindings)
     subst.try_emplace(k, v);
 
-  // The extracted function name must include every substitution used to clone
-  // the method body; otherwise different method-generic calls share a symbol.
-  auto functionName = generateMangledName(implSpec->getSpecialization()) + "_" +
-    methodName.str() +
-    applySubstitutionAndGenerateMangledNameSuffix(subst, getTypeParametersIn((*method).getFunctionType()));
+  // The instance is the one the impl's method names at these type arguments
+  // and this evidence: the receiver's proof at the leading position, then
+  // whatever the call supplies for each of the method's own parameters. The
+  // type arguments are the impl's, then every parameter the method's signature
+  // spells, so different method-generic calls name different instances too.
+  SmallVector<Type> typeArguments;
+  for (GenericTypeInterface parameter : getTypeParams())
+    typeArguments.push_back(implSpec->getSpecialization().apply(parameter));
+  for (GenericTypeInterface parameter :
+       getTypeParametersIn((*method).getFunctionType()))
+    typeArguments.push_back(applySubstitutionOnce(subst, parameter));
+  SmallVector<Type> formalInputs{getSelfClaim()};
+  llvm::append_range(formalInputs, (*method).getFunctionType().getInputs());
+  SmallVector<Type> actualInputs{provenSelfClaim};
+  llvm::append_range(actualInputs, actualArguments);
+  auto templateRef = SymbolRefAttr::get(
+      getSymNameAttr(), {FlatSymbolRefAttr::get(getContext(), methodName)});
+  AttrTypeReplacer stamp = makeTypeReplacerFromSubstitution(subst, module);
+  auto key = InstanceKey::get(templateRef, typeArguments, formalInputs,
+                              actualInputs, stamp);
+  if (failed(key))
+    return emitOpError() << "is supplied a claim that names no proof for '@"
+                         << methodName << "', which identifies no instance";
 
-  MLIRContext* ctx = getContext();
-
-  // look for an existing function
-  auto funcOp = lookupSymbolFrom<func::FuncOp>(
-    module,
-    FlatSymbolRefAttr::get(ctx, functionName)
-  );
-
-  if (!funcOp) {
-    // specialize into grandparent with mangled name
-    funcOp = specializeMethodAsFreeFuncWithLeadingSelfProof(
-      rewriter,
-      module,
-      *method,
-      functionName,
-      provenSelfClaim,
-      subst,
-      implSubst
-    );
-    // A method with no body to clone is refused where the clone was attempted;
-    // this call has no instance to name.
-    if (!funcOp)
-      return failure();
-  }
-
-  return funcOp;
+  // The leading self proof is read as the instance spells it, so its
+  // requirements are read at the arguments its proof states them for.
+  auto selfProof = cast<ClaimType>(key->getEvidence().front());
+  func::FuncOp instance = getOrCutInstance(
+      rewriter, module, *key, [&](StringRef instanceName) {
+        // A method with no body to clone is refused where the clone was
+        // attempted; this call has no instance to name.
+        return specializeMethodAsFreeFuncWithLeadingSelfProof(
+            rewriter, module, *method, instanceName, selfProof, subst,
+            implSubst);
+      });
+  if (!instance)
+    return failure();
+  return instance;
 }
 
 /// Generate a deterministic symbol name for an ImplOp.
@@ -3732,7 +3726,8 @@ FailureOr<func::FuncOp> MethodCallOp::getOrSpecializeCallee(
   ClaimType claimTy = cast<ClaimType>(getClaim().getType());
   return getProvenImpl()
     .getOrSpecializeFreeFunctionFromMethod(rewriter, claimTy, getMethodName(),
-                                           subst, memo);
+                                           getArguments().getTypes(), subst,
+                                           memo);
 }
 
 ParseResult MethodCallOp::parse(OpAsmParser& p, OperationState &st) {
@@ -3895,20 +3890,6 @@ FailureOr<SpecializationMap> FuncCallOp::buildParameterSpecialization(
                                 commitsToEvidence, getCalleeName(), reading, err);
 }
 
-/// The name the instance of `op`'s callee carries, given the substitution that
-/// specializes its body.
-///
-/// Mangling reads the specialization map alone, which is written when the
-/// substitution is built and is not touched by closing it -- closing adds
-/// projection and evidence bindings -- so the name a call is wired to and the
-/// body it is wired to are read off one object.
-static std::string calleeInstanceName(FuncCallOp op,
-                                      const CallSubstitution &subst) {
-  return op.getCalleeName().str() +
-         applySubstitutionAndGenerateMangledNameSuffix(subst.getSpecialization(),
-                                                       op.getCalleeTypeParams());
-}
-
 FailureOr<func::FuncOp> FuncCallOp::getOrSpecializeCallee(
     PatternRewriter &rewriter,
     const CallSubstitution &subst,
@@ -3916,42 +3897,55 @@ FailureOr<func::FuncOp> FuncCallOp::getOrSpecializeCallee(
   auto module = getModule();
   if (failed(module)) return failure();
 
-  std::string instanceName = calleeInstanceName(*this, subst);
-  auto existing = lookupSymbolFrom<func::FuncOp>(
-      *module, FlatSymbolRefAttr::get(rewriter.getStringAttr(instanceName)));
-  if (existing) {
-    // An instance is named by the type arguments alone, so every call at those
-    // arguments reaches this one. Its parameters carry the evidence the call
-    // that cut it supplied: a claim naming another proof of the same
-    // application is a parameter this instance does not have, and the call
-    // cannot be dispatched to it.
-    TypeRange parameters = existing.getFunctionType().getInputs();
-    TypeRange operands = getOperandTypes();
-    if (parameters.size() != operands.size())
-      return emitOpError() << "passes " << operands.size()
-                           << " operand(s) to the instance '@" << instanceName
-                           << "' its type arguments name, which takes "
-                           << parameters.size();
-    for (auto [index, types] : llvm::enumerate(llvm::zip(parameters, operands))) {
-      auto [parameter, operand] = types;
-      if (parameter != operand)
-        return emitOpError()
-               << "passes " << operand << " as operand #" << index
-               << " to the instance '@" << instanceName
-               << "' its type arguments name, which takes " << parameter;
-    }
-    return existing;
-  }
-
   auto callee = getCallee();
   if (failed(callee)) return failure();
 
-  PatternRewriter::InsertionGuard guard(rewriter);
-  rewriter.setInsertionPointAfter(*callee);
-  auto instance =
-      specializePolymorph(rewriter, *callee, instanceName, subst.toTypeMap());
-  // An external polymorphic declaration has no body to clone; specialization
-  // has refused it, so this call has no instance to name.
+  // A callee whose signature binds no type parameter is no template: the call
+  // reaches it as written, so what the call supplies must be what it declares.
+  SmallVector<GenericTypeInterface, 4> typeParams = getCalleeTypeParams();
+  if (typeParams.empty()) {
+    TypeRange parameters = callee->getFunctionType().getInputs();
+    TypeRange operands = getOperandTypes();
+    if (parameters.size() != operands.size())
+      return emitOpError() << "passes " << operands.size()
+                           << " operand(s) to '@" << getCalleeName()
+                           << "', which takes " << parameters.size();
+    for (auto [index, types] : llvm::enumerate(llvm::zip(parameters, operands))) {
+      auto [parameter, operand] = types;
+      if (parameter != operand)
+        return emitOpError() << "passes " << operand << " as operand #"
+                             << index << " to '@" << getCalleeName()
+                             << "', which takes " << parameter;
+    }
+    return *callee;
+  }
+
+  // The instance is the one this call's type arguments and evidence name. The
+  // specialization map is written when the substitution is built and is not
+  // touched by closing it, so the arguments read here and the body cut below
+  // are read off one object.
+  SmallVector<Type> typeArguments;
+  for (GenericTypeInterface parameter : typeParams)
+    typeArguments.push_back(subst.getSpecialization().apply(parameter));
+  AttrTypeReplacer stamp =
+      makeTypeReplacerFromSubstitution(subst.toTypeMap(), *module);
+  auto key = InstanceKey::get(getCalleeNameAttr(), typeArguments,
+                              callee->getFunctionType().getInputs(),
+                              getOperandTypes(), stamp);
+  if (failed(key))
+    return emitOpError() << "supplies '@" << getCalleeName()
+                         << "' a claim that names no proof, which identifies "
+                            "no instance";
+
+  func::FuncOp instance = getOrCutInstance(
+      rewriter, *module, *key, [&](StringRef instanceName) {
+        PatternRewriter::InsertionGuard guard(rewriter);
+        rewriter.setInsertionPointAfter(*callee);
+        // An external polymorphic declaration has no body to clone;
+        // specialization refuses it, so this call has no instance to name.
+        return specializePolymorph(rewriter, *callee, instanceName,
+                                   subst.toTypeMap());
+      });
   if (!instance)
     return failure();
   return instance;

@@ -100,15 +100,6 @@ std::string generateMangledNameSuffixFor(TypeRange typeArgs) {
 }
 
 std::string applySubstitutionAndGenerateMangledNameSuffix(
-    const DenseMap<Type,Type> &subst,
-    ArrayRef<GenericTypeInterface> typeParams) {
-  SmallVector<Type> concreteTypes;
-  for (auto ty : typeParams)
-    concreteTypes.push_back(applySubstitutionOnce(subst, ty));
-  return generateMangledNameSuffixFor(concreteTypes);
-}
-
-std::string applySubstitutionAndGenerateMangledNameSuffix(
     const SpecializationMap &subst, ArrayRef<GenericTypeInterface> typeParams) {
   SmallVector<Type> concreteTypes;
   for (auto ty : typeParams)
@@ -674,29 +665,6 @@ bool ClaimType::isPolymorphic() const {
   });
 }
 
-/// Verifies that two recorded proofs for the same obligation are coherent.
-///
-/// Proof recording keys on the demanded obligation, normalized to its ground
-/// form before recording, so every path that reaches one obligation keys and
-/// records it identically, and the candidate arrives already normalized at its
-/// recording site. A second observation is coherent exactly when its candidate
-/// equals the recorded proof literally. Any residual disagreement -- a
-/// different proof symbol, or a spelling that does not match after
-/// normalization -- is an incoherent proof mapping.
-static LogicalResult verifyEquivalentRecordedProof(
-    ClaimType unproven,
-    ClaimType recorded,
-    ClaimType candidate,
-    llvm::function_ref<InFlightDiagnostic()> err) {
-  if (recorded == candidate)
-    return success();
-
-  if (err) err() << "inconsistent proof mapping: " << unproven
-                 << " is already bound to " << recorded
-                 << ", but attempted to bind " << candidate;
-  return failure();
-}
-
 namespace {
 
 /// What one node of a derivation produced.
@@ -749,23 +717,24 @@ private:
 /// success is what keeps the memo from outliving an assumption that failed.
 ///
 /// A node is also what a later node of the same derivation exits early on, so
-/// this is indexed by the normalized obligation the early exit looks up as well
-/// as by the pair the memo is keyed on.
+/// this is indexed by the normalized pair the early exit looks up as well as by
+/// the pair the memo is keyed on.
 class DerivationStaging {
 public:
   void hold(ClaimType keyUnproven, ClaimType keyProven,
-            ClaimType normalizedUnproven,
+            ClaimType normalizedUnproven, ClaimType normalizedProven,
             const ProofDerivationMemo::Closure &closure) {
-    byNormalizedObligation[normalizedUnproven] = held.size();
+    byNormalizedPair[{normalizedUnproven, normalizedProven}] = held.size();
     held.push_back(Held{keyUnproven, keyProven, closure});
   }
 
-  /// What deriving the obligation now bound to `normalizedUnproven` produced,
-  /// when this derivation is what bound it.
+  /// What deriving `normalizedProven` for `normalizedUnproven` produced, when
+  /// this derivation is what recorded that pair.
   const ProofDerivationMemo::Closure *
-  lookupDerived(ClaimType normalizedUnproven) const {
-    auto it = byNormalizedObligation.find(normalizedUnproven);
-    if (it == byNormalizedObligation.end())
+  lookupDerived(ClaimType normalizedUnproven,
+                ClaimType normalizedProven) const {
+    auto it = byNormalizedPair.find({normalizedUnproven, normalizedProven});
+    if (it == byNormalizedPair.end())
       return nullptr;
     return &held[it->second].closure;
   }
@@ -785,7 +754,7 @@ private:
   };
 
   SmallVector<Held, 8> held;
-  llvm::DenseMap<ClaimType, size_t> byNormalizedObligation;
+  llvm::DenseMap<std::pair<ClaimType, ClaimType>, size_t> byNormalizedPair;
 };
 
 } // namespace
@@ -874,25 +843,14 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
                                  SmallVectorImpl<ObligationFrame> &chain,
                                  llvm::function_ref<InFlightDiagnostic()> err);
 
-/// Writes a closure a derivation already produced into `bindings`.
-///
-/// Every entry is looked up before it is written, because a differing
-/// re-binding is a program the compiler must diagnose rather than an
-/// impossibility it may assume: the same obligation can arrive proven by two
-/// symbols, and that is the incoherent proof mapping the derivation this
-/// replaces reports at its own early exit.
-static LogicalResult replayClosure(const ProofDerivationMemo::Closure &closure,
-                                   EvidenceBindings &bindings,
-                                   llvm::function_ref<InFlightDiagnostic()> err) {
-  for (auto [unproven, proven] : closure) {
-    if (auto existing = bindings.lookup(unproven)) {
-      if (failed(verifyEquivalentRecordedProof(unproven, *existing, proven, err)))
-        return failure();
-      continue;
-    }
+/// Writes a closure a derivation already produced into `bindings`: every pair
+/// it accepted, beside whatever `bindings` already holds. An obligation already
+/// discharged there by another proof is discharged by both, which is evidence
+/// supplied for two reasons and nothing to refuse.
+static void replayClosure(const ProofDerivationMemo::Closure &closure,
+                          EvidenceBindings &bindings) {
+  for (auto [unproven, proven] : closure)
     bindings.bind(unproven, proven);
-  }
-  return success();
 }
 
 /// Derives one node of a proof, extending `bindings` with everything the node's
@@ -934,7 +892,8 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
   if (memo) {
     if (const auto *closure = memo->lookup(module, askedUnproven, askedProven)) {
       derived.take(*closure);
-      return replayClosure(*closure, bindings, err);
+      replayClosure(*closure, bindings);
+      return success();
     }
   }
 
@@ -965,17 +924,18 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
     unproven = cast<ClaimType>(*normalizedUnproven);
   }
 
-  // early exit if we've already recorded this obligation. The same proof may
-  // be observed through multiple equivalent claim spellings, so validate proof
-  // coherence instead of requiring syntactic claim equality.
-  if (auto existing = bindings.lookup(unproven)) {
-    if (failed(verifyEquivalentRecordedProof(unproven, *existing, proven, err)))
-      return failure();
+  // Early exit when this proof is already recorded as discharging this
+  // obligation -- or is being recorded further up, which is what ends a
+  // coinductive self-reference. Both sides are normalized above, so every path
+  // reaching one pair meets it at one spelling. Another proof of the same
+  // obligation is a different pair: evidence supplied for another reason, which
+  // is derived on its own.
+  if (bindings.holds(unproven, proven)) {
     // What this node would have written is already written. When this
     // derivation is what wrote it, that closure is in hand and stands for this
     // node's; when something before this derivation wrote it, the node goes
     // undescribed, and nothing containing it can be held either.
-    if (const auto *closure = staging.lookupDerived(unproven))
+    if (const auto *closure = staging.lookupDerived(unproven, proven))
       derived.take(*closure);
     else
       derived.complete = false;
@@ -1013,7 +973,7 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
     bindings.bind(unproven, proven);
     // A leaf: the binding it wrote is the whole of what deriving it produces.
     derived.add(unproven, proven);
-    staging.hold(askedUnproven, askedProven, unproven, derived.closure);
+    staging.hold(askedUnproven, askedProven, unproven, proven, derived.closure);
     return success();
   }
 
@@ -1073,7 +1033,7 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
     DerivedNode child;
     if (failed(deriveProof(sub.asUnproven(), sub, module, bindings, origin, memo,
                            staging, child, chain, err))) {
-      bindings.erase(unproven);
+      bindings.erase(unproven, proven);
       return failure();
     }
     derived.complete &= child.complete;
@@ -1082,7 +1042,7 @@ static LogicalResult deriveProof(ClaimType unproven, ClaimType proven,
   }
 
   if (derived.complete) {
-    staging.hold(askedUnproven, askedProven, unproven, derived.closure);
+    staging.hold(askedUnproven, askedProven, unproven, proven, derived.closure);
   } else {
     derived.take({});
   }

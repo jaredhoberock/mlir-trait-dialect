@@ -23,7 +23,7 @@ trait.impl private @I for @Tr[tuple<!trait.poly<0>>] {
   }
 }
 
-// CHECK: func.func private @[[CLONE:I_h[0-9a-f]+_f_h[0-9a-f]+]](%{{.*}}: tuple<i32>) -> i32
+// CHECK: func.func private @[[CLONE:I_h[0-9a-f]+_f]](%{{.*}}: tuple<i32>) -> i32
 // CHECK: func.func @main(%{{.*}}: tuple<i32>) -> i32
 // CHECK: call @[[CLONE]]
 func.func @main(%s: tuple<i32>) -> i32 {

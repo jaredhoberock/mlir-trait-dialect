@@ -6,10 +6,10 @@
 // An impl method cites a where-clause entry spelling a projection by
 // position and passes it to a method whose instance spells the projection
 // resolved. Extracted for the instance a call wants, the citation reads the
-// entry's proof as the impl's own specialization spells it -- the proof
-// discharging that obligation, at its resolved spelling -- so the call meets
-// the instance its type arguments name with no mismatch reported along the
-// way.
+// subproof the self proof names at the entry's position, spelled with its
+// projection resolved as the rest of the instance is stamped, so the call meets
+// the instance its type arguments and evidence name with no mismatch reported
+// along the way.
 
 !S = !trait.poly<0>
 !F = !trait.poly<1>
@@ -58,7 +58,7 @@ func.func @main(%s: i32, %f: i8) -> i64 {
   return %r : i64
 }
 
-// CHECK: func.func private @[[GO:Tr_i32_go[_a-z0-9]*]](%{{.*}}: i32, %{{.*}}: i8) -> i64
+// CHECK: func.func private @[[GO:Tr_i32_h[0-9a-f]+_go]](%{{.*}}: i32, %{{.*}}: i8) -> i64
 // CHECK: func.func private @[[U:U_gen_[_a-z0-9]*]](%{{.*}}: i32, %{{.*}}: i8) -> i64
 // CHECK-NEXT: call @[[GO]](
 // CHECK: func.func @main

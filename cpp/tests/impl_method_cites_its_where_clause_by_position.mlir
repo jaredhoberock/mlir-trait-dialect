@@ -44,7 +44,7 @@ func.func @main(%x: i32) -> i64 {
   return %r : i64
 }
 
-// CHECK: func.func private @[[B:B_i32_b[_a-z0-9]*]](%{{.*}}: i32) -> i64
+// CHECK: func.func private @[[B:B_i32_h[0-9a-f]+_b]](%{{.*}}: i32) -> i64
 // CHECK: func.func private @[[A:A_gen_[_a-z0-9]*]](%{{.*}}: i32) -> i64
 // CHECK-NEXT: call @[[B]](
 // CHECK: func.func @main

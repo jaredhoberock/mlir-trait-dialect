@@ -29,7 +29,7 @@ trait.impl private @Assoc_impl for @Assoc[i64] {
 
 // CHECK-LABEL: func.func @respell_then_consume
 // CHECK-NOT: trait.coerce
-// CHECK: call @Bound_impl_use
+// CHECK: call @Bound_impl_{{h[0-9a-f]+}}_use
 func.func @respell_then_consume(%x: i64) -> i1 {
   %b = trait.allege @Bound[i64]
   %eq = trait.witness proj_resolve !trait.proj<@Assoc[i64], "Output"> resolves i64 by @Assoc_impl

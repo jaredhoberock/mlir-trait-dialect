@@ -11,7 +11,7 @@
 // leave a valid proof with an obligation nothing discharges.
 
 // CHECK-NOT: trait.
-// CHECK: func.func private @[[A:A_i64_a]]() -> i64
+// CHECK: func.func private @[[A:A_i64_h[0-9a-f]+_a]]() -> i64
 // CHECK: func.func private @[[B:B_blanket_[a-z0-9]+]]_b() -> i64
 // CHECK: call @[[A]]() : () -> i64
 // CHECK: func.func @main() -> i64

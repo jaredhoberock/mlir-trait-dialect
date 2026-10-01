@@ -40,9 +40,9 @@ func.func @test(%x: i32) -> i32 {
   return %res : i32
 }
 
-// CHECK-LABEL: func.func private @Convert_i32_convert
+// CHECK-LABEL: func.func private @Convert_i32_{{h[0-9a-f]+}}_convert
 // CHECK: return %arg0 : i32
-// CHECK-LABEL: func.func private @Choose_i32_choose
-// CHECK: call @Convert_i32_convert
+// CHECK-LABEL: func.func private @Choose_i32_{{h[0-9a-f]+}}_choose
+// CHECK: call @Convert_i32_{{h[0-9a-f]+}}_convert
 // CHECK-LABEL: func.func @test
-// CHECK: call @Choose_i32_choose
+// CHECK: call @Choose_i32_{{h[0-9a-f]+}}_choose

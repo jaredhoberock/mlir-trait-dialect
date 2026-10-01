@@ -46,6 +46,6 @@ func.func @main(%x: !trait.proj<@Holds[i32], "C", [i1]>) -> i64 {
   return %r : i64
 }
 
-// CHECK-DAG: func.func private @[[SIZE:Rule_pair_size[_a-z0-9]*]](%{{.*}}: tuple<i64, i64>) -> i64
+// CHECK-DAG: func.func private @[[SIZE:Rule_pair_h[0-9a-f]+_size]](%{{.*}}: tuple<i64, i64>) -> i64
 // CHECK: func.func @main(%{{.*}}: tuple<i64, i64>) -> i64
 // CHECK-NOT: trait.
