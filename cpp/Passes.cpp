@@ -614,25 +614,67 @@ allegationBehindBody(Attribute body, ClaimType source, ImplOp impl,
   return allegationBehindBody(hop.getOf(), source, impl, requirement, module);
 }
 
-/// Whether the proof selection made for `op`'s claim, `proof`, is the proof
-/// `op` committed to, refusing through `err` where it is not.
+/// Whether `proof`, the proof `derive`'s claim names or selection holds for
+/// it, proves it through the impl `derive` cites, refusing through `err` where
+/// it does not.
+static LogicalResult verifyProofCitesDerivedImpl(
+    DeriveOp derive, FlatSymbolRefAttr proof,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  auto provenBy = ProofOp::getImplFromProof(getAnchorModule(derive), proof);
+  if (succeeded(provenBy) && *provenBy == derive.getImplOp())
+    return success();
+  auto claim = cast<ClaimType>(derive.getResult().getType()).asUnproven();
+  return err() << "derives " << claim << " from impl " << derive.getImplAttr()
+               << ", and impl selection proved it by " << proof;
+}
+
+/// Whether `proof`, the proof `op`'s claim names or selection holds for it, is
+/// one `op` committed to, refusing through `err` where it is not.
 ///
-/// A derive commits to a proof through the impl it cites. Any other op commits
-/// to nothing: an allegation is a trusted assertion, which any proof selection
-/// makes of its claim meets.
+/// A derive commits to a proof through the impl it cites and the operands it
+/// is given: the proof must cite that impl and, at each where-clause entry
+/// whose operand is proven, name the evidence that operand names. Any other op
+/// commits to nothing: an allegation is a trusted assertion, which any proof
+/// selection makes of its claim meets.
 static LogicalResult verifyProofKeepsCommitment(
     Operation *op, FlatSymbolRefAttr proof,
     llvm::function_ref<InFlightDiagnostic()> err) {
   auto derive = dyn_cast<DeriveOp>(op);
   if (!derive)
     return success();
+  if (failed(verifyProofCitesDerivedImpl(derive, proof, err)))
+    return failure();
   ModuleOp scope = getAnchorModule(op);
-  auto provenBy = ProofOp::getImplFromProof(scope, proof);
-  if (succeeded(provenBy) && *provenBy == derive.getImplOp())
+
+  // The proof discharges the impl's where-clause entries, after its trait's
+  // requirements, by the subproofs it names; the derive discharges them by its
+  // operands. A proof naming another subproof at an entry than the proof the
+  // operand there names is evidence for another reason, which this derive does
+  // not hold: it is refused rather than witnessed over operands it did not
+  // come from. Two symbols of one evidence are one subproof. An unconditional
+  // impl has no entry to compare.
+  auto cited = ProofOp::getProofOpOrUnconditionalImplOp(scope, proof,
+                                                        /*errFn=*/nullptr);
+  auto proofOp = succeeded(cited) ? dyn_cast<ProofOp>(*cited) : ProofOp();
+  if (!proofOp)
     return success();
-  auto claim = cast<ClaimType>(op->getResult(0).getType()).asUnproven();
-  return err() << "derives " << claim << " from impl " << derive.getImplAttr()
-               << ", and impl selection proved it by " << proof;
+  ArrayRef<Attribute> given = proofOp.getSubproofNames().getValue();
+  size_t requirementCount =
+      derive.getImplOp().getTrait().getRequirements().size();
+  for (auto [index, operand] : llvm::enumerate(derive.getAssumptions())) {
+    auto premise = cast<ClaimType>(operand.getType());
+    size_t entry = requirementCount + index;
+    if (!premise.isApplication() || !premise.isProven() ||
+        entry >= given.size())
+      continue;
+    auto discharged = dyn_cast<FlatSymbolRefAttr>(given[entry]);
+    if (!discharged ||
+        !ProofOp::sameEvidence(scope, discharged, premise.getProof()))
+      return err() << "is given " << premise << " at where-clause entry "
+                   << index << ", which " << proof << " discharges by "
+                   << given[entry] << " instead";
+  }
+  return success();
 }
 
 /// Where the witness of a resolved projection reads the facts it cites: `hop`
@@ -770,6 +812,44 @@ static Value buildEqualityWitness(OpBuilder &builder, Location loc,
   return WitnessOp::create(builder, loc, eq, ValueRange(witnesses)).getResult();
 }
 
+/// Whether `value` is still produced by a claim producer the driver has not
+/// yet replaced with a witness -- a `trait.allege`, `trait.derive` or
+/// `trait.project` -- directly or through the ops that carry a claim on: a
+/// coerce or a select through its operands, and an op with regions, such as
+/// `scf.if` or `scf.execute_region`, through what its regions' terminators
+/// yield as well. The proof such a value is spelled with is the stamp's guess
+/// until its producer is judged, so it confirms no consumer. An equality
+/// carries no proof for the stamp to guess, and a block argument takes its
+/// evidence by position: neither waits.
+static bool fedByUnwitnessedProducer(Value value) {
+  llvm::SmallPtrSet<Operation *, 8> seen;
+  SmallVector<Value> worklist{value};
+  auto followClaims = [&](OperandRange operands) {
+    for (Value operand : operands)
+      if (containsType<ClaimType>(operand.getType()))
+        worklist.push_back(operand);
+  };
+  while (!worklist.empty()) {
+    Value current = worklist.pop_back_val();
+    if (auto claim = dyn_cast<ClaimType>(current.getType());
+        claim && claim.isEquality())
+      continue;
+    Operation *producer = current.getDefiningOp();
+    if (!producer || !seen.insert(producer).second)
+      continue;
+    if (isa<AllegeOp, DeriveOp, ProjectOp>(producer))
+      return true;
+    followClaims(producer->getOperands());
+    // A region's result is one of the values its terminators hand back; all
+    // of them are followed, which can only make a consumer wait longer.
+    for (Region &region : producer->getRegions())
+      for (Block &block : region)
+        if (!block.empty() && block.back().hasTrait<OpTrait::IsTerminator>())
+          followClaims(block.back().getOperands());
+  }
+  return false;
+}
+
 /// Proves a claim-producing op and replaces it with a trait.witness.
 ///
 /// The proving obligation is keyed on the result ClaimType, not the
@@ -795,21 +875,35 @@ struct ProveClaimResultPattern : public RewritePattern {
   /// committed to another impl, an equality whose sides selection resolves to
   /// two types -- each reported once.
   mutable llvm::DenseSet<Operation *> contradicted;
+  /// Set once this pattern refuses a claim. The stage that owns it fails on a
+  /// refusal as it fails on a demand selection refused: a refused op is left
+  /// standing, and a stage that succeeded past it would hand the steps after
+  /// it a module nothing proved.
+  bool &refusedAClaim;
 
   /// The step that establishes the facts the rest of the stage reads. It
   /// matches `trait.allege` alone: a claim derived inside a still-polymorphic
   /// body is not yet its business.
-  ProveClaimResultPattern(MLIRContext *ctx, ImplResolver &resolver)
+  ProveClaimResultPattern(MLIRContext *ctx, ImplResolver &resolver,
+                          bool &refusedAClaim)
     : RewritePattern(MatchAnyOpTypeTag(), /*benefit=*/1, ctx),
-      minting(&resolver), reading(resolver) {}
+      minting(&resolver), reading(resolver), refusedAClaim(refusedAClaim) {}
 
   /// The instantiation driver, which reads what earlier steps established. A
   /// fact minted while the driver runs reaches nothing the driver's earlier
   /// rewrites saw, so a claim the record does not prove is declined and left
   /// for the step that can prove it.
-  ProveClaimResultPattern(MLIRContext *ctx, const ReadOnlyImplResolver &reading)
+  ProveClaimResultPattern(MLIRContext *ctx, const ReadOnlyImplResolver &reading,
+                          bool &refusedAClaim)
     : RewritePattern(MatchAnyOpTypeTag(), /*benefit=*/1, ctx),
-      minting(nullptr), reading(reading) {}
+      minting(nullptr), reading(reading), refusedAClaim(refusedAClaim) {}
+
+  /// Records that `op`'s claim is refused, answering whether it was not
+  /// refused before, so each refusal is reported once.
+  bool refuse(Operation *op) const {
+    refusedAClaim = true;
+    return contradicted.insert(op).second;
+  }
 
   LogicalResult matchAndRewrite(Operation *op, PatternRewriter& rewriter) const override {
     if (minting ? !isa<AllegeOp>(op) : !isa<AllegeOp, DeriveOp, ProjectOp>(op))
@@ -832,6 +926,37 @@ struct ProveClaimResultPattern : public RewritePattern {
       return proveAllegedEquality(allegation, claim.getEqualityAttr(), rewriter);
     }
 
+    // A derive is judged against the evidence it is given, so it waits until
+    // each application operand is proven by a producer already judged: an
+    // operand still spelled by a guess would confirm the guess, and the
+    // witness the derive becomes would drop the operand, erasing the guess's
+    // producer unjudged. While it waits, the proof of its claim -- the one its
+    // result names, else the one selection holds -- is judged by its impl
+    // alone, so a derive proved through another impl is refused whether or not
+    // its operands are ever proven.
+    if (auto derive = dyn_cast<DeriveOp>(op);
+        derive && claim.isMonomorphic() &&
+        llvm::any_of(derive.getAssumptions(), [](Value operand) {
+          auto premise = cast<ClaimType>(operand.getType());
+          return premise.isApplication() &&
+                 (!premise.isProven() || fedByUnwitnessedProducer(operand));
+        })) {
+      DemandFrame frame(op->getLoc());
+      FailureOr<ClaimType> candidate =
+          claim.isProven()
+              ? FailureOr<ClaimType>(claim)
+              : proofFor(claim, getAnchorModule(op), rewriter,
+                         [&] { return op->emitOpError(); });
+      if (succeeded(candidate) && !contradicted.contains(op) &&
+          failed(verifyProofCitesDerivedImpl(
+              derive, candidate->getProof(),
+              [&] { return op->emitOpError(); }))) {
+        (void)refuse(op);
+        return rewriter.notifyMatchFailure(op, "selection chose another impl");
+      }
+      return rewriter.notifyMatchFailure(op, "waits for its given evidence");
+    }
+
     // An op committed to how its claim is proved refuses a proof other than the
     // one it committed to, where the commitment was written: two answers to one
     // question are not settled silently by the second. The driver offers an op
@@ -842,24 +967,45 @@ struct ProveClaimResultPattern : public RewritePattern {
       if (succeeded(verifyProofKeepsCommitment(op, proof,
                                                [&] { return op->emitOpError(); })))
         return false;
-      contradicted.insert(op);
+      (void)refuse(op);
       return true;
     };
 
-    if (claim.isProven()) {
-      if (commitmentBroken(claim.getProof()))
-        return rewriter.notifyMatchFailure(op, "selection chose another impl");
-      rewriter.replaceOpWithNewOp<WitnessOp>(op, claim.getProof(),
-                                             claim.getTraitApplication());
-      return success();
-    }
-
-    // skip polymorphic claims -- they can't be resolved until after monomorphization
-    if (!claim.isMonomorphic())
+    // A claim spelled unproven is proven by selection once it is monomorphic;
+    // a polymorphic one waits for the instance that grounds it.
+    if (!claim.isProven() && !claim.isMonomorphic())
       return rewriter.notifyMatchFailure(op, "polymorphic claim deferred");
 
-    DemandFrame frame(op->getLoc());
+    // A projection's evidence is its source's. The substitution a cut stamps
+    // a body under spells a claim by the one proof the use supplied for it,
+    // whichever position supplied it, and selection answers a claim by its
+    // application alone, so neither names a projection's evidence: a
+    // projection is witnessed only once its source and premises are proven by
+    // producers already judged, and only with the evidence at its index -- the
+    // subproof the source's proof cites there, or, where the proof cites
+    // nothing (a bound requirement, which the impl's witness proves and no
+    // subproof names), the proof selection holds for the claim. A proof the
+    // source holds at another of its requirements is no evidence for this one.
+    // A projection whose spelling or whose selected proof names other evidence
+    // was not supplied at its index, and is refused. A projection off a source
+    // no position proves has no evidence at its index to read, and takes
+    // selection's proof.
+    //
+    // XXX TODO: this judgement of a projection, the derive's wait for judged
+    // operands above, the reading of its subproofs against them in
+    // verifyProofKeepsCommitment, and ProofOp::sameEvidence, which both
+    // compare by, are deleted with the respelling of a cut body's claims by
+    // their spelling, when declarations and proofs take their evidence as block
+    // arguments and a cut maps each claim value from the value that supplies
+    // it.
+    auto project = dyn_cast<ProjectOp>(op);
+    if (project &&
+        (fedByUnwitnessedProducer(project.getSource()) ||
+         llvm::any_of(project.getPremises(), fedByUnwitnessedProducer) ||
+         (claim.isProven() && !project.getSourceClaim().isProven())))
+      return rewriter.notifyMatchFailure(op, "waits for its source");
 
+    DemandFrame frame(op->getLoc());
     auto errFn = [&] { return op->emitOpError(); };
 
     // The claim is demanded where it stands: the proof this op will name is a
@@ -867,20 +1013,58 @@ struct ProveClaimResultPattern : public RewritePattern {
     // ones standing there.
     ModuleOp scope = getAnchorModule(op);
 
-    // build or reuse canonical evidence for this claim
-    FailureOr<ClaimType> proven = proofFor(claim, scope, rewriter, errFn);
+    // The proof the op is spelled with, else the canonical evidence selection
+    // builds or reuses for its claim. A selected proof names the application
+    // it was recorded under, which selection spelled with the claim's
+    // projections resolved; the producer's source spelling would leave the
+    // witness and its proof disagreeing on those projections.
+    FailureOr<ClaimType> proven =
+        claim.isProven() ? FailureOr<ClaimType>(claim)
+                         : proofFor(claim, scope, rewriter, errFn);
     if (failed(proven))
       return rewriter.notifyMatchFailure(op, "couldn't find proof of this claim");
 
+    if (project && project.getSourceClaim().isProven()) {
+      auto requirement = getClaimRequirementAt(
+          project.getSourceClaim(), scope, project.getIndex(),
+          project.getBinderArguments());
+      if (failed(requirement))
+        return rewriter.notifyMatchFailure(op, "requirement unreadable");
+      FlatSymbolRefAttr cited;
+      if (requirement->conclusion.isProven()) {
+        // A subproof that does not prove the claim is a defect of the source's
+        // proof, which the stage reports at that proof, and no evidence here.
+        EvidenceBindings accepted;
+        if (succeeded(verifyAndRecordProof(
+                claim.asUnproven(), requirement->conclusion, scope, accepted,
+                DemandOrigin::ProofRecording, &reading.getDerivationMemo(),
+                /*err=*/nullptr)) &&
+            accepted.bindingCount() != 0)
+          cited = requirement->conclusion.getProof();
+      } else {
+        FailureOr<ClaimType> selected =
+            claim.isProven() ? proofFor(claim.asUnproven(), scope, rewriter,
+                                        errFn)
+                             : proven;
+        if (failed(selected))
+          return rewriter.notifyMatchFailure(op, "waits for selection");
+        cited = selected->getProof();
+      }
+      if (cited && !ProofOp::sameEvidence(scope, cited, proven->getProof())) {
+        if (refuse(op))
+          op->emitOpError() << "names " << proven->getProof()
+                            << ", which its source does not supply at index "
+                            << project.getIndex() << ": the evidence there is "
+                            << cited;
+        return rewriter.notifyMatchFailure(
+            op, "names a proof its source does not supply");
+      }
+    }
+
     if (commitmentBroken(proven->getProof()))
       return rewriter.notifyMatchFailure(op, "selection chose another impl");
-
-    // The witness names the application its proof was recorded under, which
-    // selection spelled with the claim's projections resolved; the producer's
-    // source spelling would leave the two disagreeing on those projections.
     rewriter.replaceOpWithNewOp<WitnessOp>(op, proven->getProof(),
                                            proven->getTraitApplication());
-
     return success();
   }
 
@@ -932,7 +1116,7 @@ struct ProveClaimResultPattern : public RewritePattern {
       return rewriter.notifyMatchFailure(allegation,
                                          "a projection is not resolved");
     if (sides->first != sides->second) {
-      if (contradicted.insert(allegation).second)
+      if (refuse(allegation))
         errFn() << "alleges " << eq.getLhs() << " = " << eq.getRhs()
                 << ", and impl selection resolves its sides to "
                 << sides->first << " and " << sides->second;
@@ -974,9 +1158,10 @@ FailureOr<ImplResolver> resolveImpls(ModuleOp module) {
   MLIRContext *ctx = module.getContext();
 
   // apply rewrite patterns
+  bool refusedAClaim = false;
   {
     RewritePatternSet patterns(ctx);
-    patterns.add<ProveClaimResultPattern>(ctx, resolver);
+    patterns.add<ProveClaimResultPattern>(ctx, resolver, refusedAClaim);
 
     // rewrite trait.allege -> trait.witness. Shells are excluded: an allege
     // inside a polymorphic function is resolved when that function is cloned
@@ -997,7 +1182,7 @@ FailureOr<ImplResolver> resolveImpls(ModuleOp module) {
     hasLeftovers = true;
     op.emitError() << "unresolved monomorphic trait.allege after resolve-impls";
   });
-  if (hasLeftovers) return failure();
+  if (hasLeftovers || refusedAClaim) return failure();
 
   // Normalize claim types: after allege→witness, a proof's type parameter
   // may itself contain a claim that was just proven.  Respell all
@@ -1247,7 +1432,7 @@ specializeCallTarget(CallOpT op, PatternRewriter &rewriter,
   }
 
   auto callee =
-      op.getOrSpecializeCallee(rewriter, *subst, &reading.getDerivationMemo());
+      op.getOrSpecializeCallee(rewriter, *subst);
   if (failed(callee)) {
     (void)rewriter.notifyMatchFailure(op, "couldn't get or specialize callee");
     return failure();
@@ -1944,6 +2129,10 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
   // Whether any round put a demand to selection and was told the application is
   // proven by no unique impl.
   bool refusedADemand = false;
+  // Whether the instantiation driver refused a claim an op committed to or was
+  // spelled with: a derive given evidence its proof discharges otherwise, a
+  // projection naming evidence its source does not supply.
+  bool refusedAClaim = false;
   // The fact epoch each unsettled demand was last put to selection at, which is
   // what says whether asking again could answer differently.
   DenseMap<Type, uint64_t> attempted;
@@ -2105,7 +2294,7 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
     if (!atInstantiationFixedPoint || instantiationInputMoved) {
       ReadOnlyImplResolver reading(*resolver);
       RewritePatternSet patterns(ctx);
-      patterns.add<ProveClaimResultPattern>(ctx, reading);
+      patterns.add<ProveClaimResultPattern>(ctx, reading, refusedAClaim);
       patterns.add<MonomorphizeResultTypesPattern>(ctx);
       patterns.add<CallOpLowering<FuncCallOp>, CallOpLowering<MethodCallOp>>(
           ctx, reading);
@@ -2371,12 +2560,13 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
   if (failed(module.verify()))
     return failure();
 
-  // A demand impl selection refused was named where it stood, and the rounds
-  // and the walks above ran on so that everything else standing is named too.
-  // The stage fails on it here: a refusal no later resolution overturns is an
-  // error in the program, and a stage that reported one and then succeeded
-  // would let the steps after it run on a module nothing proved.
-  return success(!refusedADemand);
+  // A demand impl selection refused, or a claim the driver refused, was named
+  // where it stood, and the rounds and the walks above ran on so that
+  // everything else standing is named too. The stage fails on it here: a
+  // refusal no later resolution overturns is an error in the program, and a
+  // stage that reported one and then succeeded would let the steps after it
+  // run on a module nothing proved.
+  return success(!refusedADemand && !refusedAClaim);
 }
 
 void InstantiateMonomorphsPass::runOnOperation() {

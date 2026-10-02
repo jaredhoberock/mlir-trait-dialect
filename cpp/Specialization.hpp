@@ -103,13 +103,20 @@ private:
 /// it, or the one `cut` makes under the key's symbol name.
 ///
 /// A fresh instance takes, at each position that takes evidence, exactly the
-/// evidence the key holds there. The substitution `cut` stamps the template
-/// under spells a claim the same way at every position, so where two positions
-/// receive one claim through different proofs only the position says which
-/// proof each parameter carries. `cut` answers null when the template has no
-/// body to clone, and so does this.
+/// evidence the key holds there, and a value its body derives from an operand
+/// takes that operand's evidence where the reading is positional: a projection
+/// the subproof its source cites at its index (none where the proof cites
+/// nothing there), a coerce its input's proof. The substitution `cut` stamps
+/// the template under spells a claim the same way at every position, so where
+/// two positions receive one claim through different proofs only the position
+/// says which proof each parameter carries. `evidence` is what the use
+/// supplies, every proof with everything it binds underneath: a value the
+/// rules above leave unproven whose claim `evidence` holds two proofs of is one
+/// no position decided, and the instance is reported, erased and answered null.
+/// `cut` answers null when the template has no body to clone, and so does this.
 func::FuncOp getOrCutInstance(RewriterBase &rewriter, ModuleOp module,
                               const InstanceKey &key,
-                              llvm::function_ref<func::FuncOp(StringRef)> cut);
+                              llvm::function_ref<func::FuncOp(StringRef)> cut,
+                              const EvidenceBindings &evidence);
 
 }

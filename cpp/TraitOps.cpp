@@ -5,6 +5,7 @@
 #include "TraitOps.hpp"
 #include "TraitTypes.hpp"
 #include <llvm/ADT/DenseMap.h>
+#include <llvm/ADT/DenseSet.h>
 #include <llvm/ADT/SetVector.h>
 #include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/ADT/SmallSet.h>
@@ -1605,10 +1606,9 @@ FailureOr<Type> ImplOp::specializeAssociatedTypeBinding(
   return instantiate(*binding, arguments);
 }
 
-FailureOr<ImplSpecialization> ImplOp::buildImplSpecialization(
+FailureOr<SpecializationMap> ImplOp::buildImplSpecialization(
     ClaimType provenSelfClaim,
     DemandOrigin origin,
-    ProofDerivationMemo *memo,
     llvm::function_ref<InFlightDiagnostic()> err) {
   if (!provenSelfClaim.isProven()) {
     if (err) err() << "expected proven self claim for " << getSymName();
@@ -1617,15 +1617,6 @@ FailureOr<ImplSpecialization> ImplOp::buildImplSpecialization(
 
   auto module = getModule(err);
   if (failed(module)) return failure();
-
-  EvidenceBindings evidence;
-
-  // Bind the same self claim without a proof to the proven self claim. This
-  // recursively records claim -> proven-claim evidence bindings.
-  ClaimType unprovenSelfClaim = provenSelfClaim.asUnproven();
-  if (failed(verifyAndRecordProof(unprovenSelfClaim, provenSelfClaim, *module,
-                                  evidence, origin, memo, err)))
-    return failure();
 
   // The self claim names the proof standing over this impl's obligations, so a
   // projection the header spells over one of them reduces through the impl that
@@ -1638,11 +1629,7 @@ FailureOr<ImplSpecialization> ImplOp::buildImplSpecialization(
   auto normalize = [&](Type ty) -> FailureOr<Type> {
     return throughProof.normalize(ty, err);
   };
-  auto specialization =
-      buildSubstitutionForSelfClaim(provenSelfClaim, normalize, err);
-  if (failed(specialization)) return failure();
-
-  return ImplSpecialization(*specialization, evidence);
+  return buildSubstitutionForSelfClaim(provenSelfClaim, normalize, err);
 }
 
 SmallVector<GenericTypeInterface, 4> ImplOp::getTypeParams() {
@@ -1757,8 +1744,7 @@ static func::FuncOp specializeMethodAsFreeFuncWithLeadingSelfProof(
     FunctionOpInterface method,
     StringRef functionName,
     ClaimType selfProofTy,
-    const DenseMap<Type,Type>& subst,
-    const DenseMap<Type,Type>& implSubst) {
+    const DenseMap<Type,Type>& subst) {
 
   // specialize the method into the grandparent with a mangled name
   PatternRewriter::InsertionGuard guard(rewriter);
@@ -1775,11 +1761,10 @@ static func::FuncOp specializeMethodAsFreeFuncWithLeadingSelfProof(
 
   // The clone leads with the proven self claim the call carries: the self is
   // ground and the impl's proof names it, in a template clone (a method with its
-  // own free generic) as in a monomorphic one. The clone's projections from that
-  // self to the impl's own obligations are spelled proven by the impl's proof --
-  // a fact of the impl fixed once the self is ground, not a call-site evidence
-  // binding -- and its assumed equalities project to the impl's equality
-  // where-clauses, so no assumption rides as a lifted claim parameter.
+  // own free generic) as in a monomorphic one. Its citations of the impl's
+  // where clause are read off that self proof by position below, and its
+  // assumed equalities project to the impl's equality where-clauses, so no
+  // assumption rides as a lifted claim parameter.
   rewriter.modifyOpInPlace(funcOp, [&] {
     (void)funcOp.insertArgument(/*idx=*/0, selfProofTy,
                                /*argAttrs=*/mlir::DictionaryAttr(),
@@ -1840,30 +1825,6 @@ static func::FuncOp specializeMethodAsFreeFuncWithLeadingSelfProof(
   for (auto a : toErase)
     rewriter.eraseOp(a);
 
-  // A template clone (one whose method generics are still free) is stamped under
-  // the variable bindings alone, so a ground claim its body derives from the
-  // proven self -- one hop past the projections replaced above, e.g. a
-  // requirement of an assumed application -- stays spelled unproven. A projection
-  // from the now-proven source to that unproven claim fails proofness parity. The
-  // impl's proof settles every such ground claim once the self is ground, so
-  // respell them here from the IMPL's evidence bindings alone -- the same fact
-  // of the impl, never a call site's -- over the whole body at once. A
-  // monomorphic clone already carries the proven spelling from full
-  // substitution, so this is an identity there.
-  llvm::DenseMap<Type, Type> evidenceRespell;
-  for (auto [key, value] : implSubst)
-    if (isa<ClaimType>(key))
-      if (auto proven = dyn_cast<ClaimType>(value))
-        if (proven.isProven())
-          evidenceRespell.try_emplace(key, value);
-  if (!evidenceRespell.empty()) {
-    AttrTypeReplacer replacer =
-        makeTypeReplacerFromSubstitution(evidenceRespell, ModuleOp());
-    replacer.recursivelyReplaceElementsIn(funcOp, /*replaceAttrs=*/true,
-                                          /*replaceLocs=*/false,
-                                          /*replaceTypes=*/true);
-  }
-
   return funcOp;
 }
 
@@ -1872,8 +1833,7 @@ FailureOr<func::FuncOp> ImplOp::getOrSpecializeFreeFunctionFromMethod(
     ClaimType provenSelfClaim,
     StringRef methodName,
     TypeRange actualArguments,
-    const CallSubstitution &callSubst,
-    ProofDerivationMemo *memo) {
+    const CallSubstitution &callSubst) {
   // check that methodName names a valid trait method
   if (!getTrait().hasMethod(methodName)) return failure();
 
@@ -1884,18 +1844,18 @@ FailureOr<func::FuncOp> ImplOp::getOrSpecializeFreeFunctionFromMethod(
   auto method = getOrSpecializeMethod(rewriter, methodName);
   if (failed(method)) return failure();
 
-  auto implSpec =
-      buildImplSpecialization(provenSelfClaim, DemandOrigin::ProofRecording,
-                              memo);
-  if (failed(implSpec)) return failure();
+  auto implArguments =
+      buildImplSpecialization(provenSelfClaim, DemandOrigin::ProofRecording);
+  if (failed(implArguments)) return failure();
 
-  // Build the same substitution that will be used to clone the method body:
-  // first the enclosing impl substitution, then method-generic bindings from
-  // this call site. The impl's own half is kept apart: the proven spellings a
-  // clone receives are facts of the impl, so they are read from it and never
-  // from the call.
-  DenseMap<Type,Type> implSubst = implSpec->toTypeMap();
-  DenseMap<Type,Type> subst = implSubst;
+  // The substitution the method body is cut under: the arguments the impl's
+  // parameters take at the receiver, then the method-generic bindings and the
+  // evidence of this call. The call reads the receiver's proof beside every
+  // claim argument's, so a claim two of them discharge by different proofs is
+  // held for both and bound for neither: no claim's spelling picks one source's
+  // proof over another's. Parameters and citations take their evidence by
+  // position; a value no position decides is refused where the cut finds it.
+  DenseMap<Type,Type> subst = implArguments->toTypeMap();
 
   // A call names its method-generic bindings under the trait method's own type
   // variables, while the method cloned below is the impl's copy, which carries
@@ -1927,7 +1887,7 @@ FailureOr<func::FuncOp> ImplOp::getOrSpecializeFreeFunctionFromMethod(
   // spells, so different method-generic calls name different instances too.
   SmallVector<Type> typeArguments;
   for (GenericTypeInterface parameter : getTypeParams())
-    typeArguments.push_back(implSpec->getSpecialization().apply(parameter));
+    typeArguments.push_back(implArguments->apply(parameter));
   for (GenericTypeInterface parameter :
        getTypeParametersIn((*method).getFunctionType()))
     typeArguments.push_back(applySubstitutionOnce(subst, parameter));
@@ -1952,9 +1912,9 @@ FailureOr<func::FuncOp> ImplOp::getOrSpecializeFreeFunctionFromMethod(
         // A method with no body to clone is refused where the clone was
         // attempted; this call has no instance to name.
         return specializeMethodAsFreeFuncWithLeadingSelfProof(
-            rewriter, module, *method, instanceName, selfProof, subst,
-            implSubst);
-      });
+            rewriter, module, *method, instanceName, selfProof, subst);
+      },
+      callSubst.getEvidence());
   if (!instance)
     return failure();
   return instance;
@@ -2558,6 +2518,52 @@ FailureOr<Operation*> ProofOp::getProofOpOrUnconditionalImplOp(
   }
 
   return *symOp;
+}
+
+bool ProofOp::sameEvidence(ModuleOp module, FlatSymbolRefAttr a,
+                           FlatSymbolRefAttr b) {
+  // A proof may cite itself, directly or around a cycle, so two proofs are
+  // compared coinductively: a pair already under comparison is assumed to
+  // name one evidence, and the answer is no only where some path through the
+  // two reaches a difference.
+  llvm::DenseSet<std::pair<Attribute, Attribute>> assumed;
+  SmallVector<std::pair<FlatSymbolRefAttr, FlatSymbolRefAttr>> pending{{a, b}};
+  while (!pending.empty()) {
+    auto [x, y] = pending.pop_back_val();
+    if (x == y || !assumed.insert({x, y}).second)
+      continue;
+    auto citedX = getProofOpOrUnconditionalImplOp(module, x);
+    auto citedY = getProofOpOrUnconditionalImplOp(module, y);
+    if (failed(citedX) || failed(citedY))
+      return false;
+    auto proofX = dyn_cast<ProofOp>(*citedX);
+    auto proofY = dyn_cast<ProofOp>(*citedY);
+    if (!proofX || !proofY) {
+      if (*citedX != *citedY)
+        return false;
+      continue;
+    }
+    if (proofX.getImplNameAttr() != proofY.getImplNameAttr() ||
+        proofX.getArguments() != proofY.getArguments())
+      return false;
+    ArrayRef<Attribute> givenX = proofX.getSubproofNames().getValue();
+    ArrayRef<Attribute> givenY = proofY.getSubproofNames().getValue();
+    if (givenX.size() != givenY.size())
+      return false;
+    // A bound requirement's entry is unit in every proof; an application's is
+    // the subproof discharging it.
+    for (auto [entryX, entryY] : llvm::zip(givenX, givenY)) {
+      auto subproofX = dyn_cast<FlatSymbolRefAttr>(entryX);
+      auto subproofY = dyn_cast<FlatSymbolRefAttr>(entryY);
+      if (!subproofX || !subproofY) {
+        if (entryX != entryY)
+          return false;
+        continue;
+      }
+      pending.push_back({subproofX, subproofY});
+    }
+  }
+  return true;
 }
 
 
@@ -3808,13 +3814,11 @@ ImplOp MethodCallOp::getProvenImpl() {
 
 FailureOr<func::FuncOp> MethodCallOp::getOrSpecializeCallee(
     PatternRewriter &rewriter,
-    const CallSubstitution &subst,
-    ProofDerivationMemo *memo) {
+    const CallSubstitution &subst) {
   ClaimType claimTy = cast<ClaimType>(getClaim().getType());
   return getProvenImpl()
     .getOrSpecializeFreeFunctionFromMethod(rewriter, claimTy, getMethodName(),
-                                           getArguments().getTypes(), subst,
-                                           memo);
+                                           getArguments().getTypes(), subst);
 }
 
 ParseResult MethodCallOp::parse(OpAsmParser& p, OperationState &st) {
@@ -3979,8 +3983,7 @@ FailureOr<SpecializationMap> FuncCallOp::buildParameterSpecialization(
 
 FailureOr<func::FuncOp> FuncCallOp::getOrSpecializeCallee(
     PatternRewriter &rewriter,
-    const CallSubstitution &subst,
-    ProofDerivationMemo *memo) {
+    const CallSubstitution &subst) {
   auto module = getModule();
   if (failed(module)) return failure();
 
@@ -4035,7 +4038,8 @@ FailureOr<func::FuncOp> FuncCallOp::getOrSpecializeCallee(
             specializePolymorph(rewriter, *callee, instanceName,
                                 subst.toTypeMap())
                 .getOperation());
-      });
+      },
+      subst.getEvidence());
   if (!instance)
     return failure();
   return instance;

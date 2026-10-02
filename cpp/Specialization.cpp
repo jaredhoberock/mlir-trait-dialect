@@ -298,7 +298,10 @@ FailureOr<InstanceKey> InstanceKey::get(SymbolRefAttr templateRef,
 
   SmallVector<Type> evidence;
   for (auto [formal, supplied] : llvm::zip(formalInputs, actualInputs)) {
-    if (!containsType<ClaimType>(formal)) {
+    // Whether a position takes evidence is read off its formal as the instance
+    // spells it: a formal spelled as a projection that resolves to a claim
+    // takes evidence exactly as one spelled as that claim does.
+    if (!containsType<ClaimType>(stamp.replace(formal))) {
       evidence.push_back(Type());
       continue;
     }
@@ -344,7 +347,8 @@ std::string InstanceKey::getSymbolName() const {
 
 func::FuncOp getOrCutInstance(RewriterBase &rewriter, ModuleOp module,
                               const InstanceKey &key,
-                              llvm::function_ref<func::FuncOp(StringRef)> cut) {
+                              llvm::function_ref<func::FuncOp(StringRef)> cut,
+                              const EvidenceBindings &evidence) {
   std::string name = key.getSymbolName();
   if (auto existing = lookupSymbolFrom<func::FuncOp>(
           module, FlatSymbolRefAttr::get(module.getContext(), name)))
@@ -368,33 +372,121 @@ func::FuncOp getOrCutInstance(RewriterBase &rewriter, ModuleOp module,
         instance.getContext(), inputs, signature.getResults()));
   });
 
-  // A projection's result is its source's requirement at its index. Where the
-  // substitution left a projection from a proven source unproven -- the claim it
-  // would have respelled it by is one two positions dispute -- the result is read
-  // off the source by that index instead, and taken only where proof derivation
-  // accepts the subproof the source names there: a citation derivation declines
-  // decides nothing, here as anywhere. Pre-order reaches a projection before any
-  // projection of its result.
-  instance.walk<WalkOrder::PreOrder>([&](ProjectOp project) {
-    ClaimType result = project.getResultClaim();
-    if (!project.getSourceClaim().isProven() || !result.isApplication() ||
-        result.isProven())
-      return;
-    auto requirement = getClaimRequirementAt(
-        project.getSourceClaim(), module, project.getIndex(),
-        project.getBinderArguments());
-    if (failed(requirement) || !requirement->conclusion.isProven())
-      return;
-    EvidenceBindings accepted;
-    if (failed(verifyAndRecordProof(result, requirement->conclusion, module,
-                                    accepted, DemandOrigin::ProofRecording,
-                                    /*memo=*/nullptr, /*err=*/nullptr)) ||
-        accepted.bindingCount() == 0)
-      return;
-    rewriter.modifyOpInPlace(project, [&] {
-      project.getResult().setType(requirement->conclusion);
+  // A value an op derives from an operand carries that operand's evidence. The
+  // substitution the instance was stamped under spelled each claim one way
+  // wherever it stands -- the one proof the use supplies for it, or no proof
+  // where the use supplies two -- so a derived value is read off the value it
+  // is derived from wherever that reading is positional:
+  // - a projection the substitution left unproven off a proven source is the
+  //   subproof the source's proof cites at the projection's index, where proof
+  //   derivation accepts it, at the application the result spells -- the
+  //   trait states the requirement before its projections are resolved, and
+  //   the result's spelling is the one its readers hold;
+  // - a coerce's result the substitution left unproven is its input's proof at
+  //   the application the result spells; the coerce verifier refuses any other.
+  // A value the substitution spelled proven is left as spelled: every reader
+  // of it already holds that spelling, and the instantiation driver judges it
+  // against its source before it is witnessed. Iterated to a fixed point so
+  // that a chain is read in dominance order whatever order its blocks stand in.
+  bool changed;
+  do {
+    changed = false;
+    instance.walk<WalkOrder::PreOrder>([&](Operation *op) {
+      auto retype = [&](Value value, Type type) {
+        if (value.getType() == type)
+          return;
+        rewriter.modifyOpInPlace(op, [&] { value.setType(type); });
+        changed = true;
+      };
+      if (auto project = dyn_cast<ProjectOp>(op)) {
+        ClaimType result = project.getResultClaim();
+        ClaimType source = project.getSourceClaim();
+        if (!source.isProven() || !result.isApplication())
+          return;
+        if (result.isProven())
+          return;
+        auto requirement = getClaimRequirementAt(
+            source, module, project.getIndex(), project.getBinderArguments());
+        if (failed(requirement) || !requirement->conclusion.isProven())
+          return;
+        EvidenceBindings accepted;
+        if (failed(verifyAndRecordProof(result, requirement->conclusion, module,
+                                        accepted, DemandOrigin::ProofRecording,
+                                        /*memo=*/nullptr, /*err=*/nullptr)) ||
+            accepted.bindingCount() == 0)
+          return;
+        retype(project.getResult(),
+               ClaimType::get(op->getContext(), result.getTraitApplication(),
+                              requirement->conclusion.getProof()));
+        return;
+      }
+      if (auto coerce = dyn_cast<CoerceOp>(op)) {
+        auto input = dyn_cast<ClaimType>(coerce.getInput().getType());
+        auto result = dyn_cast<ClaimType>(coerce.getResult().getType());
+        if (input && result && input.isApplication() && input.isProven() &&
+            result.isApplication() && !result.isProven())
+          retype(coerce.getResult(),
+                 ClaimType::get(op->getContext(), result.getTraitApplication(),
+                                input.getProof()));
+      }
     });
+  } while (changed);
+
+  // A value still spelled unproven whose claim the use supplies two proofs of.
+  // The substitution could not say which, no rule above supplied one from a
+  // position, and selection, asked for it later, would not know which position
+  // the value stands for either: it refuses where the two proofs select two
+  // impls and otherwise answers with a proof neither position supplied. The
+  // instance is refused here, naming both proofs, and the call that wanted it
+  // is left standing.
+  //
+  // XXX TODO: this refusal and the reading of derived values above are deleted
+  // with the respelling of a cut body's claims by their spelling, when
+  // declarations and proofs take their evidence as block arguments and a cut
+  // maps each claim value from the value that supplies it.
+  auto disputedClaimIn = [&](Type type) -> ClaimType {
+    ClaimType found;
+    type.walk([&](ClaimType claim) {
+      if (!found && claim.isApplication() && !claim.isProven() &&
+          evidence.proofsOf(claim).size() > 1)
+        found = claim;
+    });
+    return found;
+  };
+  auto report = [&](Operation *at, Value value, ClaimType claim) {
+    InFlightDiagnostic diagnostic =
+        at->emitOpError() << "is left with " << value.getType()
+                          << ", and this instance is supplied " << claim
+                          << " by two proofs, ";
+    llvm::interleave(
+        evidence.proofsOf(claim), diagnostic,
+        [&](ClaimType proof) { diagnostic << proof.getProof(); }, " and ");
+    diagnostic << "; no position says which this value carries";
+  };
+  WalkResult refused = instance.walk([&](Operation *op) -> WalkResult {
+    for (Value result : op->getResults())
+      if (ClaimType claim = disputedClaimIn(result.getType())) {
+        report(op, result, claim);
+        return WalkResult::interrupt();
+      }
+    for (Region &region : op->getRegions())
+      for (Block &block : region) {
+        // The entry block's arguments are the parameters, which take the
+        // evidence the key holds at their positions above.
+        if (op == instance.getOperation() && &block == &region.front())
+          continue;
+        for (BlockArgument argument : block.getArguments())
+          if (ClaimType claim = disputedClaimIn(argument.getType())) {
+            report(op, argument, claim);
+            return WalkResult::interrupt();
+          }
+      }
+    return WalkResult::advance();
   });
+  if (refused.wasInterrupted()) {
+    rewriter.eraseOp(instance);
+    return nullptr;
+  }
   return instance;
 }
 

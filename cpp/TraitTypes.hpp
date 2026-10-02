@@ -202,12 +202,13 @@ public:
     return it != proofs.end() && llvm::is_contained(it->second, proven);
   }
 
-  /// The proof recorded for `unproven` when exactly one is.
-  std::optional<ClaimType> lookup(ClaimType unproven) const {
+  /// Every proof recorded as discharging `unproven`, in recording order, and
+  /// none where none is. Two or more say the claim's spelling alone cannot name
+  /// the proof a value of that type carries.
+  ArrayRef<ClaimType> proofsOf(ClaimType unproven) const {
     auto it = proofs.find(unproven);
-    if (it == proofs.end() || it->second.size() != 1)
-      return std::nullopt;
-    return it->second.front();
+    return it == proofs.end() ? ArrayRef<ClaimType>()
+                              : ArrayRef<ClaimType>(it->second);
   }
 
   /// Takes back the record that `proven` discharges `unproven`: the recursive
@@ -380,34 +381,6 @@ private:
   uint64_t factBase = 0;
 };
 
-/// ImplSpecialization: SpecializationMap + EvidenceBindings.
-///
-/// The complete set of type rewrites needed to specialize an impl method for a
-/// proven self claim. Unlike CallSubstitution, this does not carry projection
-/// bindings or require fixed-point closure.
-class ImplSpecialization {
-public:
-  ImplSpecialization(SpecializationMap specialization,
-                     EvidenceBindings evidenceBindings)
-      : specialization(std::move(specialization)),
-        evidenceBindings(std::move(evidenceBindings)) {}
-
-  llvm::DenseMap<Type, Type> toTypeMap() const {
-    llvm::DenseMap<Type, Type> result = specialization.toTypeMap();
-    for (auto [key, value] : evidenceBindings.toTypeMap())
-      result[key] = value;
-    return result;
-  }
-
-  /// The arguments the impl's own parameters took, without the proven spellings
-  /// its evidence carries. What names an instance is read from this alone.
-  const SpecializationMap &getSpecialization() const { return specialization; }
-
-private:
-  SpecializationMap specialization;
-  EvidenceBindings evidenceBindings;
-};
-
 /// CallSubstitution: SpecializationMap + ProjectionBindings + EvidenceBindings.
 ///
 /// The complete set of type rewrites needed to lower one call site, closed under
@@ -443,6 +416,11 @@ public:
           llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
   const SpecializationMap &getSpecialization() const { return specialization; }
+
+  /// The evidence this call supplies: every proof its operands and results
+  /// spell -- a method call's receiver among them -- with everything each proof
+  /// binds underneath, keyed by the claim discharged.
+  const EvidenceBindings &getEvidence() const { return evidenceBindings; }
 
   // A projection binding can rewrite a spelling into one that names a proof and
   // a proof binding can expose a projection, so the ground half of this map is

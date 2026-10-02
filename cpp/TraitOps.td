@@ -508,15 +508,16 @@ def ImplOp : TraitDialectOp<"impl", [
 
     /// Extracts a method from this impl as a free function with a leading self parameter.
     ///
-    /// Builds the impl specialization from the proven self claim, merges the
+    /// Reads the impl's arguments off the proven self claim, adds the
     /// call-site substitution, and monomorphizes the cloned method. The
     /// instance is named by the evidence it is made with: the proven self
     /// claim at the leading position, then `actualArguments`, what the call
-    /// supplies for the method's own parameters, position by position.
+    /// supplies for the method's own parameters, position by position. The
+    /// evidence the body is stamped with is the call's, which holds the
+    /// receiver's proof and the arguments' together.
     FailureOr<func::FuncOp> getOrSpecializeFreeFunctionFromMethod(PatternRewriter& rewriter, ClaimType provenSelfClaim, StringRef methodName,
                                                                    TypeRange actualArguments,
-                                                                   const CallSubstitution &callSubst,
-                                                                   ProofDerivationMemo *memo);
+                                                                   const CallSubstitution &callSubst);
 
     /// The arguments carrying this impl's header to `actualSelfClaim`: read
     /// them off the demanded application by position, rebuild the header at
@@ -550,18 +551,17 @@ def ImplOp : TraitDialectOp<"impl", [
     TypeArguments readTypeArgumentsFor(ClaimType actualSelfClaim,
                                        Normalizer normalize);
 
-    /// Builds the impl specialization needed for a proven self claim.
+    /// The arguments this impl's parameters take at the proven self claim
+    /// `provenSelfClaim`. A projection the header spells over one of the
+    /// impl's obligations is read through the subproof the claim's proof names
+    /// for that obligation. The arguments carry no evidence: what the claim's
+    /// proof discharges is read off the claim by position wherever it is used.
     ///
-    /// The result contains the impl's generic type specialization and the
-    /// evidence bindings that preserve proof annotations when specializing the
-    /// impl method body.
-    ///
-    /// `origin` names the caller: recording the self claim's proof normalizes
-    /// both claims through the ground-projection lookup, so this raises demand.
-    FailureOr<ImplSpecialization> buildImplSpecialization(ClaimType provenSelfClaim,
-                                                                  DemandOrigin origin,
-                                                                  ProofDerivationMemo *memo,
-                                                                  llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+    /// `origin` names the caller: an application no subproof answers is read
+    /// through the ground-projection lookup, so this raises demand.
+    FailureOr<SpecializationMap> buildImplSpecialization(ClaimType provenSelfClaim,
+                                                         DemandOrigin origin,
+                                                         llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     // Helper to generate unique symbol name for an ImplOp
     static std::string generateSymName(TraitApplicationAttr selfApp, PredicateArrayAttr assumptions);
@@ -1084,8 +1084,10 @@ def DeriveOp : TraitDialectOp<"derive", [
       : (!trait.claim<@Trait[!T]>, !trait.claim<!trait.proj<@Trait[!T], "Out"> = i64>)
     ```
 
-    Once monomorphic, a derive becomes a witness of the proof impl selection
-    mints for its claim, which must stand over the impl the derive cites.
+    Once monomorphic, a derive becomes a witness of the proof its claim names,
+    or of the one impl selection holds for it, which must stand over the impl
+    the derive cites and discharge each where-clause entry whose operand is
+    proven by the proof that operand names; any other proof is refused.
   }];
 
   let arguments = (ins
@@ -1597,8 +1599,7 @@ def MethodCallOp : TraitDialectOp<"method.call", [
 
     /// Specializes the callee as a free function using a pre-built substitution.
     FailureOr<func::FuncOp> getOrSpecializeCallee(PatternRewriter &rewriter,
-                                                  const CallSubstitution &subst,
-                                                  ProofDerivationMemo *memo);
+                                                  const CallSubstitution &subst);
 
     ClaimType getClaimType() {
       return cast<ClaimType>(getClaim().getType());
@@ -1710,8 +1711,7 @@ def FuncCallOp : TraitDialectOp<"func.call", [
 
     /// Looks up or specializes the monomorphized callee using a pre-built substitution.
     FailureOr<func::FuncOp> getOrSpecializeCallee(PatternRewriter &rewriter,
-                                                  const CallSubstitution &subst,
-                                                  ProofDerivationMemo *memo);
+                                                  const CallSubstitution &subst);
 
     /// The type arguments this call supplies for its callee's parameters, once
     /// the callee's signature instantiated at them is the signature spelled
@@ -1859,6 +1859,16 @@ def ProofOp : TraitDialectOp<"proof", [
       ModuleOp module,
       FlatSymbolRefAttr name,
       llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
+
+    /// Whether `a` and `b` name one piece of evidence: one symbol, one
+    /// unconditional impl, or two proofs of one impl at one argument list
+    /// whose subproofs are, entry by entry, one piece of evidence again,
+    /// read coinductively where proofs cite themselves. A proof symbol names
+    /// evidence without interning it: the proof selection records for an impl
+    /// at an application and a proof written by hand for the same impl,
+    /// arguments and subproofs differ in name alone.
+    static bool sameEvidence(ModuleOp module, FlatSymbolRefAttr a,
+                             FlatSymbolRefAttr b);
   }];
 
   let skipDefaultBuilders = 1;
