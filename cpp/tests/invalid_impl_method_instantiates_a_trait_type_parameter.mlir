@@ -11,12 +11,12 @@
 // reaches no instance of it. An impl's copy renames the trait's parameters, it
 // does not instantiate them.
 
-trait.trait private @T[!trait.poly<0>] {
+trait.trait private @T(%self: !trait.claim<@T[!trait.poly<0>]>) {
   trait.method @f(!trait.poly<0>, !trait.poly<1>, !trait.poly<2>) -> !trait.poly<1>
 }
 
 // expected-error @below {{method 'f' spells 'tuple<!trait.poly<1>>' where trait '@T' declares the type parameter '!trait.poly<1>': an impl's copy of a method renames the trait's type parameters, one for one}}
-trait.impl private @I for @T[i32] {
+trait.impl private @I(%self: !trait.claim<@T[i32]>) {
   trait.method @f(%x: i32, %m: tuple<!trait.poly<1>>, %n: !trait.poly<2>) -> tuple<!trait.poly<1>> {
     trait.return %m : tuple<!trait.poly<1>>
   }

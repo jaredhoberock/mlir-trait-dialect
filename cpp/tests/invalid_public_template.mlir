@@ -11,25 +11,28 @@
 // op's own verifier, so a row that forgets the keyword fails at parse.
 
 // expected-error @below {{'trait.trait' op must not be public}}
-trait.trait @Public[!trait.poly<0>] {
+trait.trait @Public(%self: !trait.claim<@Public[!trait.poly<0>]>) {
 }
 
 // -----
 
-trait.trait private @T[!trait.poly<0>] {
+trait.trait private @T(%self: !trait.claim<@T[!trait.poly<0>]>) {
 }
 
 // expected-error @below {{'trait.impl' op must not be public}}
-trait.impl for @T[i32] {
+trait.impl @T_impl(%self: !trait.claim<@T[i32]>) {
 }
 
 // -----
 
-trait.trait private @T[!trait.poly<0>] {
+trait.trait private @T(%self: !trait.claim<@T[!trait.poly<0>]>) {
 }
 
-trait.impl private @T_i32 for @T[i32] {
+trait.impl private @T_i32(%self: !trait.claim<@T[i32]>) {
 }
 
 // expected-error @below {{'trait.proof' op must not be public}}
-trait.proof  @T_p proves @T_i32[] for @T[i32] given []
+trait.proof @T_p {
+  %d = trait.derive @T[i32] from @T_i32 given()
+  trait.return %d : !trait.claim<@T[i32]>
+}

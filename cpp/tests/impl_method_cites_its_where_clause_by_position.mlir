@@ -11,16 +11,16 @@
 
 !T = !trait.poly<0>
 
-trait.trait private @B[!T] {
+trait.trait private @B(%self: !trait.claim<@B[!T]>) {
   trait.assoc_type @Out
   trait.method @b(!T) -> !trait.proj<@B[!T], "Out">
 }
 
-trait.trait private @A[!T] {
+trait.trait private @A(%self: !trait.claim<@A[!T]>) {
   trait.method @a(!T) -> i64
 }
 
-trait.impl private @B_i32 for @B[i32] {
+trait.impl private @B_i32(%self: !trait.claim<@B[i32]>) {
   trait.assoc_type @Out = i64
   trait.method @b(%x: i32) -> i64 {
     %c = arith.constant 7 : i64
@@ -28,12 +28,10 @@ trait.impl private @B_i32 for @B[i32] {
   }
 }
 
-trait.impl private @A_gen for @A[!T] where [@B[!T], !trait.proj<@B[!T], "Out"> = i64] {
+trait.impl private @A_gen(%self: !trait.claim<@A[!T]>, %b_1: !trait.claim<@B[!T]>, %out: !trait.claim<!trait.proj<@B[!T], "Out"> = i64>) {
   trait.method @a(%x: !T) -> i64 {
-    %b = trait.assume 0 : !trait.claim<@B[!T]>
-    %e = trait.assume 1 : !trait.claim<!trait.proj<@B[!T], "Out"> = i64>
-    %o = trait.method.call %b @B[!T]::@b(%x) : (!T) -> !trait.proj<@B[!T], "Out">
-    %r = trait.coerce %o : !trait.proj<@B[!T], "Out"> to i64 via (%e) : (!trait.claim<!trait.proj<@B[!T], "Out"> = i64>)
+    %o = trait.method.call %b_1 @B[!T]::@b(%x) : (!T) -> !trait.proj<@B[!T], "Out">
+    %r = trait.coerce %o : !trait.proj<@B[!T], "Out"> to i64 via (%out) : (!trait.claim<!trait.proj<@B[!T], "Out"> = i64>)
     trait.return %r : i64
   }
 }

@@ -23,12 +23,12 @@
 // module-capable entry a pass or a committed-fact build uses resolves it where
 // a unique impl binds it.)
 
-trait.trait private @Callable[!trait.poly<0>] {
+trait.trait private @Callable(%self: !trait.claim<@Callable[!trait.poly<0>]>) {
   trait.assoc_type @Output
   trait.method @call(!trait.poly<0>) -> !trait.proj<@Callable[!trait.poly<0>], "Output">
 }
 
-trait.impl private @Callable_i64 for @Callable[i64] {
+trait.impl private @Callable_i64(%self_claim: !trait.claim<@Callable[i64]>) {
   trait.assoc_type @Output = i64
   trait.method @call(%self: i64) -> i64 {
     trait.return %self : i64

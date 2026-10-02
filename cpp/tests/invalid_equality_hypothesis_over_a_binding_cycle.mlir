@@ -12,18 +12,18 @@
 // cycle as it did before any hypothesis was in scope.
 
 !T = !trait.poly<0>
-trait.trait private @Grow[!T] {
+trait.trait private @Grow(%self: !trait.claim<@Grow[!T]>) {
   trait.assoc_type @Out
 }
-trait.trait private @Loop[!T] {
+trait.trait private @Loop(%self: !trait.claim<@Loop[!T]>) {
   trait.assoc_type @Out
 }
 
 !U = !trait.poly<1>
-trait.impl private @Grow_any for @Grow[!U] {
+trait.impl private @Grow_any(%self: !trait.claim<@Grow[!U]>) {
   trait.assoc_type @Out = tuple<!trait.proj<@Loop[!U], "Out">>
 }
-trait.impl private @Loop_any for @Loop[!U] {
+trait.impl private @Loop_any(%self: !trait.claim<@Loop[!U]>) {
   trait.assoc_type @Out = tuple<!trait.proj<@Grow[!U], "Out">>
 }
 
@@ -34,8 +34,8 @@ func.func private @callee(!trait.claim<@Grow[!X]>, !trait.claim<@Loop[!X]>)
 !Y = !trait.poly<3>
 func.func @caller(%eq: !trait.claim<!trait.proj<@Grow[!Y], "Out"> = !trait.proj<@Loop[!Y], "Out">>)
     -> !trait.proj<@Loop[!Y], "Out"> {
-  %g = trait.derive @Grow[!Y] from @Grow_any[!U = !Y] given()
-  %l = trait.derive @Loop[!Y] from @Loop_any[!U = !Y] given()
+  %g = trait.derive @Grow[!Y] from @Grow_any given()
+  %l = trait.derive @Loop[!Y] from @Loop_any given()
   // expected-error @below {{projection normalization did not converge; check for cyclic associated type bindings}}
   %r = trait.func.call @callee(%g, %l)
     : (!trait.claim<@Grow[!Y]>, !trait.claim<@Loop[!Y]>) -> !trait.proj<@Loop[!Y], "Out">

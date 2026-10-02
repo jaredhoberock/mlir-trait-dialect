@@ -8,6 +8,7 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/Transforms/DialectConversion.h"
+#include "llvm/Support/Mutex.h"
 #include "ImplResolution.hpp"
 #include <Trait.hpp.inc>
 

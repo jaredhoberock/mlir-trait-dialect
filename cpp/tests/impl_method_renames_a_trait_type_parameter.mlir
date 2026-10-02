@@ -7,11 +7,11 @@
 // trait's method parameters, one for one. That is a renaming, so a call's type
 // arguments -- named under the trait's labels -- rekey onto the clone's.
 
-trait.trait private @T[!trait.poly<0>] {
+trait.trait private @T(%self: !trait.claim<@T[!trait.poly<0>]>) {
   trait.method @f(!trait.poly<0>, !trait.poly<1>, !trait.poly<2>) -> !trait.poly<1>
 }
 
-trait.impl private @I for @T[i32] {
+trait.impl private @I(%self: !trait.claim<@T[i32]>) {
   trait.method @f(%x: i32, %m: !trait.poly<7>, %n: !trait.poly<8>) -> !trait.poly<7> {
     trait.return %m : !trait.poly<7>
   }

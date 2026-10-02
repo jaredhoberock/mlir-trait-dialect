@@ -10,13 +10,16 @@
 
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(instantiate-monomorphs-trait)' | FileCheck %s
 
-trait.trait private @Tr[!trait.poly<0>] {
+trait.trait private @Tr(%self: !trait.claim<@Tr[!trait.poly<0>]>) {
   trait.method @m(!trait.poly<0>) -> i64
 }
-trait.impl private @Tr_i64 for @Tr[i64] {
+trait.impl private @Tr_i64(%self_claim: !trait.claim<@Tr[i64]>) {
   trait.method @m(%self: i64) -> i64 { trait.return %self : i64 }
 }
-trait.proof private @Tr_i64_p proves @Tr_i64[] for @Tr[i64] given []
+trait.proof private @Tr_i64_p {
+  %d = trait.derive @Tr[i64] from @Tr_i64 given()
+  trait.return %d : !trait.claim<@Tr[i64]>
+}
 
 // CHECK: func.func private @tpl
 // CHECK: trait.allege @Tr[i64]

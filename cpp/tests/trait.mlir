@@ -9,7 +9,7 @@
 // CHECK: trait.method @add(!trait.poly<0>, !trait.poly<0>) -> !trait.poly<0>
 
 !AddSelf = !trait.poly<0>
-trait.trait private @Add[!AddSelf] {
+trait.trait private @Add(%self: !trait.claim<@Add[!AddSelf]>) {
   trait.method @add(!AddSelf, !AddSelf) -> !AddSelf
 }
 
@@ -21,13 +21,11 @@ trait.trait private @Add[!AddSelf] {
 
 !PartialEqSelf = !trait.poly<1>
 !PartialEqOther = !trait.poly<2>
-trait.trait private @PartialEq[!PartialEqSelf, !PartialEqOther] {
+trait.trait private @PartialEq(%self_claim: !trait.claim<@PartialEq[!PartialEqSelf, !PartialEqOther]>) {
   trait.method @eq(!PartialEqSelf, !PartialEqOther) -> i1
   
   trait.method @neq(%self: !PartialEqSelf, %other: !PartialEqOther) -> i1 {
-    %partial_eq = trait.assume self : !trait.claim<@PartialEq[!PartialEqSelf, !PartialEqOther]>
-
-    %eq = trait.method.call %partial_eq @PartialEq[!PartialEqSelf,!PartialEqOther]::@eq(%self, %other)
+    %eq = trait.method.call %self_claim @PartialEq[!PartialEqSelf,!PartialEqOther]::@eq(%self, %other)
       : (!PartialEqSelf, !PartialEqOther) -> i1
 
     %true = arith.constant true
@@ -45,16 +43,11 @@ trait.trait private @PartialEq[!PartialEqSelf, !PartialEqOther] {
 !ordering = !llvm.struct<"ordering", ()>
 !PartialOrdSelf = !trait.poly<3>
 !PartialOrdOther = !trait.poly<4>
-trait.trait private @PartialOrd[!PartialOrdSelf, !PartialOrdOther] where [
-  @PartialEq[!PartialOrdSelf, !PartialOrdOther]
-]
-{
+trait.trait private @PartialOrd(%self_claim: !trait.claim<@PartialOrd[!PartialOrdSelf, !PartialOrdOther]>) -> !trait.claim<@PartialEq[!PartialOrdSelf, !PartialOrdOther]> {
   trait.method @partial_cmp(!PartialOrdSelf, !PartialOrdOther) -> !ordering
 
   trait.method @lt(%self: !PartialOrdSelf, %other: !PartialOrdOther) -> i1 {
-    %partial_ord = trait.assume self : !trait.claim<@PartialOrd[!PartialOrdSelf,!PartialOrdOther]>
-
-    %cmp = trait.method.call %partial_ord @PartialOrd[!PartialOrdSelf,!PartialOrdOther]::@partial_cmp(%self, %other)
+    %cmp = trait.method.call %self_claim @PartialOrd[!PartialOrdSelf,!PartialOrdOther]::@partial_cmp(%self, %other)
       : (!PartialOrdSelf, !PartialOrdOther) -> !ordering
 
     %res = arith.constant false

@@ -8,11 +8,11 @@
 
 // RUN: mlir-opt %s -verify-diagnostics
 
-trait.trait private @Tr[!trait.poly<0>] {
+trait.trait private @Tr(%self: !trait.claim<@Tr[!trait.poly<0>]>) {
   trait.assoc_type @A<[!trait.poly<1>]>
 }
 
-trait.impl private @Tr_i32 for @Tr[i32] {
+trait.impl private @Tr_i32(%self: !trait.claim<@Tr[i32]>) {
   // expected-error@+1 {{'trait.assoc_type' op type parameter list holds 42 : i64, which is not a type}}
   "trait.assoc_type"() <{sym_name = "A", bound_type = i32, type_params = [42 : i64]}> : () -> ()
 }

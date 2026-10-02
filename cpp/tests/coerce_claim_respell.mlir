@@ -13,21 +13,24 @@
 
 !S = !trait.poly<0>
 
-trait.trait private @Conv[!S] {
+trait.trait private @Conv(%self: !trait.claim<@Conv[!S]>) {
   trait.assoc_type @At
 }
 
-trait.trait private @Safe[!trait.poly<0>, !trait.poly<1>] {
+trait.trait private @Safe(%self: !trait.claim<@Safe[!trait.poly<0>, !trait.poly<1>]>) {
 }
 
-trait.impl private @Conv_i1 for @Conv[i1] {
+trait.impl private @Conv_i1(%self: !trait.claim<@Conv[i1]>) {
   trait.assoc_type @At = i64
 }
 
-trait.impl private @Safe_impl for @Safe[i32, i64] {
+trait.impl private @Safe_impl(%self: !trait.claim<@Safe[i32, i64]>) {
 }
 
-trait.proof private @Safe_proof proves @Safe_impl[] for @Safe[i32, i64] given []
+trait.proof private @Safe_proof {
+  %d = trait.derive @Safe[i32, i64] from @Safe_impl given()
+  trait.return %d : !trait.claim<@Safe[i32, i64]>
+}
 
 // CHECK-LABEL: func.func @respell_preserves_proof
 // CHECK: trait.coerce %{{.*}} : !trait.claim<@Safe[i32, i64] by @Safe_proof> to !trait.claim<@Safe[i32, !trait.proj<@Conv[i1], "At">] by @Safe_proof>

@@ -9,8 +9,8 @@
 
 !S = !trait.poly<0>
 
-trait.trait private @A[!trait.poly<1>] {}
-trait.trait private @Has[!S] where [@A[!S]] {}
+trait.trait private @A(%self: !trait.claim<@A[!trait.poly<1>]>) {}
+trait.trait private @Has(%self: !trait.claim<@Has[!S]>) -> !trait.claim<@A[!S]> {}
 
 func.func @f(%p: !trait.claim<@Has[i32]>) -> !trait.claim<@A[i32]> {
   // CHECK: requirement index 1 is out of range

@@ -3,29 +3,44 @@
 
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait,convert-arith-to-llvm,convert-func-to-llvm,reconcile-unrealized-casts)' | mlir-runner -e main --entry-point-result=i64 | FileCheck %s
 
-// @Wrapped states an ordinary requirement @Mark[!T] and a bound requirement
-// @Mark at every argument, which @W witnesses by citing @Blanket; @PW
-// discharges the ordinary one by @PB, a proof of @Blanket too. @f projects the
-// bound requirement at i32. With @Blanket the one impl of @Mark[i32], the
-// proof selection holds for the projection is the one the call's evidence
-// spells it with, and the instance runs @Blanket.
+// @Wrapped states an ordinary requirement @Mark[!T] and a quantified
+// requirement @Mark at every argument. @W returns @PB, a proof of @Blanket, for
+// the ordinary one, and its evidence method derives the quantified one from
+// @Blanket. @f calls the evidence method at its own argument; with @Blanket
+// the one impl of @Mark[i32], the instance runs @Blanket.
 
 // CHECK: {{^}}9{{$}}
 
 !T = !trait.poly<0>
-trait.trait private @Mark[!T] { trait.method @value() -> i64 }
-trait.impl private @Blanket for @Mark[!T] {
+!B = !trait.poly<1>
+trait.trait private @Mark(%self: !trait.claim<@Mark[!T]>) { trait.method @value() -> i64 }
+trait.impl private @Blanket(%self: !trait.claim<@Mark[!T]>) {
   trait.method @value() -> i64 {
     %v = arith.constant 9 : i64
     trait.return %v : i64
   }
 }
-trait.trait private @Wrapped[!T] where [@Mark[!T], forall [!trait.bound<0>] -> @Mark[!trait.bound<0>]] {}
-trait.impl private @W for @Wrapped[i32] witnesses [#trait<witness requirement 1 by @Blanket[!T = !trait.bound<0>]>] {}
-trait.proof private @PB proves @Blanket[!T = i32] for @Mark[i32] given []
-trait.proof private @PW proves @W[] for @Wrapped[i32] given [@PB, unit]
+trait.trait private @Wrapped(%self: !trait.claim<@Wrapped[!T]>) -> !trait.claim<@Mark[!T]> {
+  trait.method @requirement_1() -> !trait.claim<@Mark[!B]>
+}
+trait.proof private @PB {
+  %d = trait.derive @Mark[i32] from @Blanket given()
+  trait.return %d : !trait.claim<@Mark[i32]>
+}
+trait.impl private @W(%self: !trait.claim<@Wrapped[i32]>) {
+  trait.method @requirement_1() -> !trait.claim<@Mark[!B]> {
+    %r = trait.derive @Mark[!B] from @Blanket given()
+    trait.return %r : !trait.claim<@Mark[!B]>
+  }
+  %mark = trait.witness @PB for @Mark[i32]
+  trait.return %mark : !trait.claim<@Mark[i32] by @PB>
+}
+trait.proof private @PW {
+  %d = trait.derive @Wrapped[i32] from @W given()
+  trait.return %d : !trait.claim<@Wrapped[i32]>
+}
 func.func private @f(%w: !trait.claim<@Wrapped[!T]>) -> i64 {
-  %m = trait.project %w[1] for [!T] : !trait.claim<@Wrapped[!T]> -> !trait.claim<@Mark[!T]>
+  %m = trait.method.call %w @Wrapped[!T]::@requirement_1() : () -> !trait.claim<@Mark[!T]>
   %v = trait.method.call %m @Mark[!T]::@value() : () -> i64
   return %v : i64
 }

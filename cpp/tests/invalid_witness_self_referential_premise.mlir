@@ -3,8 +3,8 @@
 
 // RUN: mlir-opt %s -verify-diagnostics -split-input-file
 
-// Verifying a witness reads its resolved binding modulo the cited equality
-// premises, and a premise whose one endpoint stands inside the other,
+// Verifying a witness reads its resolved binding modulo the equality premises
+// it supplies, and a premise whose one endpoint stands inside the other,
 // !poly<0> = tuple<!poly<0>>, is one class of two members like any other: both
 // sides of the comparison rewrite to the member the class stands for, which is
 // the smaller of the two, so the comparison settles rather than expanding the
@@ -15,16 +15,16 @@
 !S = !trait.poly<0>
 !U = !trait.poly<1>
 
-trait.trait private @Trait[!S] {
+trait.trait private @Trait(%self: !trait.claim<@Trait[!S]>) {
   trait.assoc_type @Output
 }
 
-trait.impl private @Trait_impl for @Trait[!U] {
+trait.impl private @Trait_impl(%self: !trait.claim<@Trait[!U]>, %eq: !trait.claim<!U = tuple<!U>>) {
   trait.assoc_type @Output = !U
 }
 
 func.func @f(%pre: !trait.claim<!S = tuple<!S>>) -> !trait.claim<!trait.proj<@Trait[!S], "Output"> = !S> {
-  %e = trait.witness proj_resolve !trait.proj<@Trait[!S], "Output"> resolves !S by @Trait_impl[!U = !S]
+  %e = trait.witness proj_resolve !trait.proj<@Trait[!S], "Output"> resolves !S by @Trait_impl
     given(%pre) : (!trait.claim<!S = tuple<!S>>)
     : !trait.claim<!trait.proj<@Trait[!S], "Output"> = !S>
   return %e : !trait.claim<!trait.proj<@Trait[!S], "Output"> = !S>
@@ -40,17 +40,17 @@ func.func @f(%pre: !trait.claim<!S = tuple<!S>>) -> !trait.claim<!trait.proj<@Tr
 !S = !trait.poly<0>
 !U = !trait.poly<1>
 
-trait.trait private @Trait[!S] {
+trait.trait private @Trait(%self: !trait.claim<@Trait[!S]>) {
   trait.assoc_type @Output
 }
 
-trait.impl private @Trait_impl for @Trait[!U] {
+trait.impl private @Trait_impl(%self: !trait.claim<@Trait[!U]>, %eq: !trait.claim<!U = tuple<!U>>) {
   trait.assoc_type @Output = !U
 }
 
 func.func @f(%pre: !trait.claim<!S = tuple<!S>>) -> !trait.claim<!trait.proj<@Trait[!S], "Output"> = i32> {
   // expected-error @below {{impl '@Trait_impl' binds the projection to '!trait.poly<0>', not the certified resolution 'i32'}}
-  %e = trait.witness proj_resolve !trait.proj<@Trait[!S], "Output"> resolves i32 by @Trait_impl[!U = !S]
+  %e = trait.witness proj_resolve !trait.proj<@Trait[!S], "Output"> resolves i32 by @Trait_impl
     given(%pre) : (!trait.claim<!S = tuple<!S>>)
     : !trait.claim<!trait.proj<@Trait[!S], "Output"> = i32>
   return %e : !trait.claim<!trait.proj<@Trait[!S], "Output"> = i32>

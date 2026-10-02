@@ -3,32 +3,33 @@
 
 // RUN: not mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' 2>&1 | FileCheck %s
 
-// @X_all proves @X[T] out of @X[tuple<T>], and @p cites ITSELF for that
-// obligation: read at @X[tuple<T>] the proof's declaration rebuilds it, so one
+// @X_all proves @X[T] out of @X[tuple<T>], and @p supplies ITSELF for that
+// premise: read at @X[tuple<T>] the proof's declaration rebuilds it, so one
 // level deep the citation carries and the proof verifies. Followed down, the
-// derivation asks about @X[tuple<i32>], then @X[tuple<tuple<i32>>], and never
-// ends. Every node is a new application, so the early exit on a bound
-// obligation never fires; the number of obligations standing on the derivation
-// is what stops it, exactly as it stops the same chain in impl selection. Each
-// frame names the proof whose citation put the next one on the chain, which is
-// the declaration to change.
+// derivation asks for @X[tuple<T>], then @X[tuple<tuple<T>>], and never ends.
+// Every step is a new application, so no citation repeats; the depth of the
+// obligation chain is what stops it, before any instance is cut, and each
+// frame names the proof that put the next step on the chain.
 
 // CHECK: error: overflow evaluating the requirement {{.*}}: 128 obligations stand on the chain that reaches it
-// CHECK: note: required by {{.*}}@X[i32]{{.*}}, stated by proof @p
-// CHECK: note: required by {{.*}}@X[tuple<i32>]{{.*}}, stated by proof @p
+// CHECK: note: required by {{.*}}@X[!trait.poly<0>]{{.*}}, stated by proof @p
+// CHECK: note: required by {{.*}}@X[tuple<!trait.poly<0>>]{{.*}}, stated by proof @p
 // CHECK: note: {{.*}} more frame(s) elided
 
-trait.trait private @X[!trait.poly<0>] { trait.method @x() -> i64 }
+trait.trait private @X(%self: !trait.claim<@X[!trait.poly<0>]>) { trait.method @x() -> i64 }
 
-trait.impl private @X_all for @X[!trait.poly<0>] where [@X[tuple<!trait.poly<0>>]] {
+trait.impl private @X_all(%self: !trait.claim<@X[!trait.poly<0>]>, %x: !trait.claim<@X[tuple<!trait.poly<0>>]>) {
   trait.method @x() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@X[tuple<!trait.poly<0>>]>
-    %r = trait.method.call %a @X[tuple<!trait.poly<0>>]::@x() : () -> i64
+    %r = trait.method.call %x @X[tuple<!trait.poly<0>>]::@x() : () -> i64
     trait.return %r : i64
   }
 }
 
-trait.proof private @p proves @X_all[!trait.poly<0> = !trait.poly<0>] for @X[!trait.poly<0>] given [@p]
+trait.proof private @p {
+  %p0 = trait.witness @p for @X[tuple<!trait.poly<0>>]
+  %d = trait.derive @X[!trait.poly<0>] from @X_all given(%p0) : (!trait.claim<@X[tuple<!trait.poly<0>>] by @p>)
+  trait.return %d : !trait.claim<@X[!trait.poly<0>]>
+}
 
 func.func @main() -> i64 {
   %w = trait.witness @p for @X[i32]

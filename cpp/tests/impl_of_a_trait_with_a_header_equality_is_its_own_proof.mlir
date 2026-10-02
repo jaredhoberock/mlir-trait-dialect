@@ -10,16 +10,18 @@
 // naming an impl carries no subproofs, so what it may not meet is an
 // application requirement.
 
-trait.trait private @T[!trait.poly<0>] where [!trait.proj<@T[!trait.poly<0>], "Out"> = i64] {
+trait.trait private @T(%self: !trait.claim<@T[!trait.poly<0>]>) -> !trait.claim<!trait.proj<@T[!trait.poly<0>], "Out"> = i64> {
   trait.assoc_type @Out
   trait.method @get(!trait.poly<0>) -> !trait.proj<@T[!trait.poly<0>], "Out">
 }
-trait.impl private @T_i64 for @T[i64] {
+trait.impl private @T_i64(%self: !trait.claim<@T[i64]>) {
   trait.assoc_type @Out = i64
   trait.method @get(%x: i64) -> i64 {
     %c = arith.constant 5 : i64
     trait.return %c : i64
   }
+  %req0 = trait.allege !trait.proj<@T[i64], "Out"> = i64
+  trait.return %req0 : !trait.claim<!trait.proj<@T[i64], "Out"> = i64>
 }
 
 // CHECK-NOT: trait.

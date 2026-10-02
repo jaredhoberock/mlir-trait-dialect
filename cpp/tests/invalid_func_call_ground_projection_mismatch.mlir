@@ -10,7 +10,7 @@
 
 !S = !trait.poly<0>
 
-trait.trait private @T[!S] {
+trait.trait private @T(%self: !trait.claim<@T[!S]>) {
   trait.assoc_type @Out
 }
 

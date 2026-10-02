@@ -12,15 +12,16 @@ thread_local unsigned ambientLookupDepth = 0;
 thread_local bool ambientSpeculating = false;
 
 /// Only a real unresolved obligation can cause later preparation work.
-void recordPending(Type demand, unsigned missArms, unsigned depth) {
+void recordPending(Demand demand, unsigned missArms, unsigned depth) {
   if (!ambientLedger || ambientSpeculating || depth)
     return;
   ambientLedger->record(demand, missArms);
 }
 } // namespace
 
-void DemandLedger::record(Type demand, unsigned missArms) {
-  assert(isMonomorphicType(demand) && "pending demands have a concrete type");
+void DemandLedger::record(Demand demand, unsigned missArms) {
+  assert(isMonomorphicType(demand.first) &&
+         "pending demands have a concrete type");
   demands.insert(demand);
   arms[demand] |= missArms;
   // The first frame that names a place keeps it: a demand is raised where an
@@ -46,11 +47,10 @@ void DemandLedger::popFrame() {
   frames.pop_back();
 }
 
-llvm::SetVector<Type> demandsSpelledIn(ModuleOp module, bool inAttributes,
-                                       DemandSkip projections,
-                                       DemandSkip claims,
-                                       DenseMap<Type, Location> *origins) {
-  llvm::SetVector<Type> spelled;
+llvm::SetVector<Demand>
+demandsSpelledIn(ModuleOp module, bool inAttributes, DemandSkip projections,
+                 DemandSkip claims, DenseMap<Demand, Location> *origins) {
+  llvm::SetVector<Demand> spelled;
   auto skips = [](DemandSkip discipline, Operation *op) {
     if (isa<TraitOp, ImplOp, ProofOp>(op))
       return true;
@@ -62,8 +62,9 @@ llvm::SetVector<Type> demandsSpelledIn(ModuleOp module, bool inAttributes,
   };
 
   Operation *spellingOp = nullptr;
-  auto note = [&](Type demand) {
-    if (spelled.insert(demand) && origins && spellingOp)
+  auto note = [&](Type spelling) {
+    Demand demand{spelling, getAnchorModule(spellingOp)};
+    if (spelled.insert(demand) && origins)
       origins->try_emplace(demand, spellingOp->getLoc());
   };
   // Note every monomorphic projection reachable in a type. An equality claim's
@@ -93,23 +94,30 @@ llvm::SetVector<Type> demandsSpelledIn(ModuleOp module, bool inAttributes,
   });
 
   auto collectClaims = [&](Type root) {
-    root.walk([&](Type sub) {
+    root.walk<WalkOrder::PreOrder>([&](Type sub) -> WalkResult {
       auto claim = dyn_cast<ClaimType>(sub);
       // Only application claims are impl-resolution demands. An equality claim is
       // established by trait.witness, not by selecting an impl, so it is never a
       // demand the resolver serves -- and it carries no trait application to
-      // resolve for.
+      // resolve for. Its endpoints are types it equates, so a claim spelled
+      // there is the type of some evidence and no demand for it.
+      if (claim && claim.isEquality())
+        return WalkResult::skip();
       if (claim && claim.isApplication() && !claim.isProven() &&
           claim.isMonomorphic())
         note(sub);
+      return WalkResult::advance();
     });
   };
   module.walk<WalkOrder::PreOrder>([&](Operation *op) -> WalkResult {
     if (skips(claims, op))
       return WalkResult::skip();
     spellingOp = op;
-    for (Type ty : op->getResultTypes())
-      collectClaims(ty);
+    // A claim whose evidence its producer reads by position is proven by that
+    // reading, not demanded of selection.
+    if (!producesPositionalEvidence(op))
+      for (Type ty : op->getResultTypes())
+        collectClaims(ty);
     for (Region &region : op->getRegions())
       for (Block &block : region)
         for (BlockArgument arg : block.getArguments())
@@ -121,16 +129,18 @@ llvm::SetVector<Type> demandsSpelledIn(ModuleOp module, bool inAttributes,
 
 LogicalResult
 DemandLedger::checkStandingDemandsServed(ModuleOp module,
-                                         const DenseSet<Type> &served) const {
+                                         const DenseSet<Demand> &served) const {
   // A demand spelled only inside trait infrastructure or a still-polymorphic
   // template is resolved on cloning. Like the leftover-projection sweep, this
   // check excludes obligations that preparation does not serve.
-  llvm::SetVector<Type> spelled = demandsSpelledIn(
-      module, /*inAttributes=*/true, DemandSkip::Foreign,
-      DemandSkip::Foreign);
+  DenseSet<Type> spelled;
+  for (Demand demand : demandsSpelledIn(module, /*inAttributes=*/true,
+                                        DemandSkip::Foreign,
+                                        DemandSkip::Foreign))
+    spelled.insert(demand.first);
 
   bool standing = false;
-  for (Type key : getDrainableDemands()) {
+  for (Demand key : getDrainableDemands()) {
     // Only real demands enter the queue; probes and speculation are excluded.
     if (served.contains(key))
       continue;
@@ -142,8 +152,11 @@ DemandLedger::checkStandingDemandsServed(ModuleOp module,
         (1u << static_cast<unsigned>(LookupMissReason::MultipleCandidateImpls)))
       continue;
 
+    // A demand left standing is one whose spelling stands in any module: the
+    // module it was recorded in is where it was asked, not the only place an
+    // unserved spelling would surface.
     bool stillSpelled = false;
-    key.walk([&](Type sub) {
+    key.first.walk([&](Type sub) {
       if (spelled.contains(sub))
         stillSpelled = true;
     });
@@ -152,7 +165,7 @@ DemandLedger::checkStandingDemandsServed(ModuleOp module,
 
     standing = true;
     module.emitError()
-        << "instantiate-monomorphs left the demand " << key
+        << "instantiate-monomorphs left the demand " << key.first
         << " standing and never served it";
   }
   return failure(standing);
@@ -214,18 +227,19 @@ SpeculationScope::SpeculationScope() : previous(ambientSpeculating) {
 
 SpeculationScope::~SpeculationScope() { ambientSpeculating = previous; }
 
-void recordLookupMiss(Type demand, LookupMissReason reason, DemandOrigin origin,
-                      unsigned enclosingDepth) {
+void recordLookupMiss(Type demand, ModuleOp anchor, LookupMissReason reason,
+                      DemandOrigin origin, unsigned enclosingDepth) {
   if (recordsToLedger(origin))
-    recordPending(demand, 1u << static_cast<unsigned>(reason), enclosingDepth);
+    recordPending({demand, anchor}, 1u << static_cast<unsigned>(reason),
+                  enclosingDepth);
 }
 
-void recordResolverProjectionMiss(Type demand) {
-  recordPending(demand, 0, ambientLookupDepth);
+void recordResolverProjectionMiss(Type demand, ModuleOp anchor) {
+  recordPending({demand, anchor}, 0, ambientLookupDepth);
 }
 
-void recordReadOnlyResolverMiss(Type demand) {
-  recordPending(demand, 0, ambientLookupDepth);
+void recordReadOnlyResolverMiss(Type demand, ModuleOp anchor) {
+  recordPending({demand, anchor}, 0, ambientLookupDepth);
 }
 
 } // namespace mlir::trait

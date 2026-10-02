@@ -14,23 +14,23 @@
 // candidate set resolveProjectionsByLookup reads wherever it runs, so the
 // outcome does not depend on whether a verifier or a pass drives it.
 
-trait.trait private @Needs[!trait.poly<0>] {}
+trait.trait private @Needs(%self: !trait.claim<@Needs[!trait.poly<0>]>) {}
 
-trait.trait private @Gen[!trait.poly<1>] {
+trait.trait private @Gen(%self: !trait.claim<@Gen[!trait.poly<1>]>) {
   trait.assoc_type @A
 }
 
-trait.impl private @Gen_cond for @Gen[i64] where [@Needs[i64]] {
+trait.impl private @Gen_cond(%self: !trait.claim<@Gen[i64]>, %needs: !trait.claim<@Needs[i64]>) {
   trait.assoc_type @A = i32
 }
 
-trait.impl private @Gen_peer for @Gen[f64] where [@Needs[f64]] {
+trait.impl private @Gen_peer(%self: !trait.claim<@Gen[f64]>, %needs: !trait.claim<@Needs[f64]>) {
   trait.assoc_type @A = f32
 }
 
-trait.trait private @T[!trait.poly<2>] {}
+trait.trait private @T(%self: !trait.claim<@T[!trait.poly<2>]>) {}
 
-trait.impl private @T_i32 for @T[i32] {}
+trait.impl private @T_i32(%self: !trait.claim<@T[i32]>) {}
 
 func.func @f() {
   %w = trait.witness @T_i32 for @T[!trait.proj<@Gen[i64], "A">]

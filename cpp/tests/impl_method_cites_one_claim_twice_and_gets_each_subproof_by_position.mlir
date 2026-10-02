@@ -14,38 +14,41 @@
 // CHECK: {{^}}79{{$}}
 
 !T = !trait.poly<0>
-trait.trait private @Mark[!T] { trait.method @value() -> i64 }
-trait.trait private @Tr[!T] { trait.method @value() -> i64 }
-trait.impl private @Mark_one for @Mark[i32] {
+trait.trait private @Mark(%self: !trait.claim<@Mark[!T]>) { trait.method @value() -> i64 }
+trait.trait private @Tr(%self: !trait.claim<@Tr[!T]>) { trait.method @value() -> i64 }
+trait.impl private @Mark_one(%self: !trait.claim<@Mark[i32]>) {
   trait.method @value() -> i64 {
     %v = arith.constant 7 : i64
     trait.return %v : i64
   }
 }
-trait.impl private @Mark_two for @Mark[i32] {
+trait.impl private @Mark_two(%self: !trait.claim<@Mark[i32]>) {
   trait.method @value() -> i64 {
     %v = arith.constant 9 : i64
     trait.return %v : i64
   }
 }
-trait.impl private @Tr_impl for @Tr[i32] where [@Mark[i32], @Mark[i32]] {
+trait.impl private @Tr_impl(%self: !trait.claim<@Tr[i32]>, %mark: !trait.claim<@Mark[i32]>, %mark_1: !trait.claim<@Mark[i32]>) {
   trait.method @value() -> i64 {
     %first = scf.execute_region -> i64 {
-      %m0 = trait.assume 0 : !trait.claim<@Mark[i32]>
-      %v0 = trait.method.call %m0 @Mark[i32]::@value() : () -> i64
+      %v0 = trait.method.call %mark @Mark[i32]::@value() : () -> i64
       scf.yield %v0 : i64
     }
     cf.br ^second
   ^second:
-    %m1 = trait.assume 1 : !trait.claim<@Mark[i32]>
-    %v1 = trait.method.call %m1 @Mark[i32]::@value() : () -> i64
+    %v1 = trait.method.call %mark_1 @Mark[i32]::@value() : () -> i64
     %ten = arith.constant 10 : i64
     %scaled = arith.muli %first, %ten : i64
     %r = arith.addi %scaled, %v1 : i64
     trait.return %r : i64
   }
 }
-trait.proof private @P proves @Tr_impl[] for @Tr[i32] given [@Mark_one, @Mark_two]
+trait.proof private @P {
+  %p0 = trait.witness @Mark_one for @Mark[i32]
+  %p1 = trait.witness @Mark_two for @Mark[i32]
+  %d = trait.derive @Tr[i32] from @Tr_impl given(%p0, %p1) : (!trait.claim<@Mark[i32] by @Mark_one>, !trait.claim<@Mark[i32] by @Mark_two>)
+  trait.return %d : !trait.claim<@Tr[i32]>
+}
 func.func @main() -> i64 {
   %p = trait.witness @P for @Tr[i32]
   %r = trait.method.call %p @Tr[i32]::@value() : () -> i64 by @P

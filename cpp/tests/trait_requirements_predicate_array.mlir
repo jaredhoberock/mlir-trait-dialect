@@ -12,9 +12,9 @@
 
 !S = !trait.poly<0>
 
-trait.trait private @Eq[!S] {}
+trait.trait private @Eq(%self: !trait.claim<@Eq[!S]>) {}
 
-// CHECK: trait.trait private @FoldFn[!trait.poly<0>] where [@Eq[!trait.poly<0>], !trait.proj<@FoldFn[!trait.poly<0>], "Output"> = !trait.poly<0>]
-trait.trait private @FoldFn[!S] where [@Eq[!S], !trait.proj<@FoldFn[!S], "Output"> = !S] {
+// CHECK: trait.trait private @FoldFn(%self: !trait.claim<@FoldFn[!trait.poly<0>]>
+trait.trait private @FoldFn(%self: !trait.claim<@FoldFn[!S]>) -> (!trait.claim<@Eq[!S]>, !trait.claim<!trait.proj<@FoldFn[!S], "Output"> = !S>) {
   trait.assoc_type @Output
 }

@@ -5,45 +5,55 @@
 // RUN: not mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' 2>&1 | FileCheck %s
 
 // Two impls of @Foo bind @Foo[i32], so nothing resolves @Foo[i32]::Out. The
-// obligation carrying that projection is @B's requirement read at @B[i32], and
-// it is spelled in no operation -- the trait's where clause spells it over the
-// trait's own variable -- so no walk over what the stage left behind can report
-// it. Selection names the ambiguity at the refusal, where the call that raised
-// the demand stands, and names the candidates that make it one.
+// claim carrying that projection is @B's requirement read at @B[i32]: @B_i32
+// returns an allegation of it, which replaces the projection off @B[i32]'s
+// proof. Selection names the ambiguity where the projection that raised the
+// demand stood, and names the candidates that make it one; the stage's
+// leftover walk names the allegation, where the impl wrote it, whose claim
+// stays unproven.
 //
 // The stage fails on the refusal, so the steps after it never run on a module
 // nothing proved. The second run reads the exit status, which the diagnostic
 // verifier does not.
-//
-// @forged is refused in its own right: read at its claim, the obligation the
-// requirement states still spells a projection nothing settles, so its citation
-// of @A_i64 discharges nothing.
 
 // CHECK: error: incoherent impls (multiple satisfiable) for '!trait.proj<@Foo[i32], "Out">'
 // CHECK: note: candidate
 // CHECK: note: candidate
 
-trait.trait private @Foo[!trait.poly<0>] { trait.assoc_type @Out }
+trait.trait private @Foo(%self: !trait.claim<@Foo[!trait.poly<0>]>) { trait.assoc_type @Out }
 // expected-note@+1 {{candidate}}
-trait.impl private @Foo_any for @Foo[!trait.poly<0>] { trait.assoc_type @Out = i32 }
+trait.impl private @Foo_any(%self: !trait.claim<@Foo[!trait.poly<0>]>) { trait.assoc_type @Out = i32 }
 // expected-note@+1 {{candidate}}
-trait.impl private @Foo_i32 for @Foo[i32] { trait.assoc_type @Out = i32 }
-trait.trait private @A[!trait.poly<0>] {}
-trait.trait private @B[!trait.poly<0>] where [@A[!trait.proj<@Foo[!trait.poly<0>], "Out">]] {
+trait.impl private @Foo_i32(%self: !trait.claim<@Foo[i32]>) { trait.assoc_type @Out = i32 }
+trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) {
+  trait.method @a() -> i64
+}
+trait.trait private @B(%self: !trait.claim<@B[!trait.poly<0>]>) -> !trait.claim<@A[!trait.proj<@Foo[!trait.poly<0>], "Out">]> {
   trait.method @value() -> i64
 }
-trait.impl private @A_i64 for @A[i64] {}
-trait.impl private @B_i32 for @B[i32] {
+trait.impl private @A_i64(%self: !trait.claim<@A[i64]>) {
+  trait.method @a() -> i64 {
+    %c = arith.constant 7 : i64
+    trait.return %c : i64
+  }
+}
+trait.impl private @B_i32(%self: !trait.claim<@B[i32]>) {
   trait.method @value() -> i64 {
     %c = arith.constant 13 : i64
     trait.return %c : i64
   }
+  // expected-error @below {{unproven monomorphic claim '!trait.claim<@A[!trait.proj<@Foo[i32], "Out">]>' after instantiate-monomorphs}}
+  %req0 = trait.allege @A[!trait.proj<@Foo[i32], "Out">]
+  trait.return %req0 : !trait.claim<@A[!trait.proj<@Foo[i32], "Out">]>
 }
-// expected-error @below {{obligation '!trait.claim<@A[!trait.proj<@Foo[i32], "Out">]>' of proof @forged is discharged by no evidence}}
-trait.proof private @forged proves @B_i32[] for @B[i32] given [@A_i64]
+trait.proof private @forged {
+  %d = trait.derive @B[i32] from @B_i32 given()
+  trait.return %d : !trait.claim<@B[i32]>
+}
 func.func @main() -> i64 {
   %w = trait.witness @forged for @B[i32]
   // expected-error @below {{incoherent impls (multiple satisfiable) for '!trait.proj<@Foo[i32], "Out">'}}
-  %r = trait.method.call %w @B[i32]::@value() : () -> i64 by @forged
+  %a = trait.project %w[0] : !trait.claim<@B[i32] by @forged> -> !trait.claim<@A[!trait.proj<@Foo[i32], "Out">]>
+  %r = trait.method.call %a @A[!trait.proj<@Foo[i32], "Out">]::@a() : () -> i64
   return %r : i64
 }

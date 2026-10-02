@@ -10,16 +10,16 @@
 // disabled on these rows so the screen sees the shapes a bytecode blob can carry
 // but the text parser and full verifier reject.
 
-// A trait op whose `where`-clause requirements property is absent: the screen
-// refuses it rather than dereferencing the null array while iterating its edges.
-// expected-error @+1 {{trait carries no `where`-clause requirements array}}
-"trait.trait"() ({^bb0:}) {sym_name = "A"} : () -> ()
+// A trait op whose requirements property is absent: the screen refuses it
+// rather than dereferencing the null array while iterating its edges.
+// expected-error @+1 {{trait carries no requirements list}}
+"trait.trait"() ({^bb0(%self: !trait.claim<@A[!trait.poly<0>]>):}) {sym_name = "A"} : () -> ()
 
 // -----
 
-// A `where` clause naming a trait the module does not define: the screen resolves
+// A requirement naming a trait the module does not define: the screen resolves
 // each edge by name and refuses the dangling reference rather than reaching the
 // aborting trait accessor.
 !T = !trait.poly<0>
 // expected-error @+1 {{trait `where` clause references undefined trait 'Undefined'}}
-trait.trait private @A[!T] where [@Undefined[!T]] {}
+trait.trait private @A(%self: !trait.claim<@A[!T]>) -> !trait.claim<@Undefined[!T]> {}

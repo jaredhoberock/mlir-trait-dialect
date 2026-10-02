@@ -11,9 +11,9 @@
 // CHECK: error: 'trait.func.call' op passes '!trait.claim<@T[i64] by @T_b>' as operand #0 to '@callee', which takes '!trait.claim<@T[i64] by @T_a>'
 // CHECK-NEXT: trait.func.call @callee(%b)
 
-trait.trait private @T[!trait.poly<0>] {}
-trait.impl private @T_a for @T[i64] {}
-trait.impl private @T_b for @T[i64] {}
+trait.trait private @T(%self: !trait.claim<@T[!trait.poly<0>]>) {}
+trait.impl private @T_a(%self: !trait.claim<@T[i64]>) {}
+trait.impl private @T_b(%self: !trait.claim<@T[i64]>) {}
 
 func.func private @callee(!trait.claim<@T[i64] by @T_a>)
 

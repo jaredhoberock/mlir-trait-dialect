@@ -9,11 +9,11 @@
 !T = !trait.poly<0>
 
 // CHECK: trait.trait private @Safe
-trait.trait private @Safe [!T] {
+trait.trait private @Safe(%self: !trait.claim<@Safe[!T]>) {
   trait.method @check(!T) -> i32
 }
 
-trait.impl private for @Safe[i32] {
+trait.impl private @Safe_impl(%self: !trait.claim<@Safe[i32]>) {
   trait.method @check(%x: i32) -> i32 {
     trait.return %x : i32
   }

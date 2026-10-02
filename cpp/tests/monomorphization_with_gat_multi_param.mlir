@@ -22,14 +22,14 @@
 !T = !trait.poly<1>
 !U = !trait.poly<2>
 
-trait.trait private @BiMap[!S] {
+trait.trait private @BiMap(%self: !trait.claim<@BiMap[!S]>) {
   trait.assoc_type @Left<[!T, !U]>
   trait.assoc_type @Right<[!T, !U]>
   trait.method @left(!S, !T, !U) -> !trait.proj<@BiMap[!S], "Left", [!T, !U]>
   trait.method @right(!S, !T, !U) -> !trait.proj<@BiMap[!S], "Right", [!T, !U]>
 }
 
-trait.impl private for @BiMap[i1] {
+trait.impl private @BiMap_impl(%self_claim: !trait.claim<@BiMap[i1]>) {
   trait.assoc_type @Left<[!T, !U]> = !T
   trait.assoc_type @Right<[!T, !U]> = !U
   trait.method @left(%self: i1, %a: !T, %b: !U) -> !T {

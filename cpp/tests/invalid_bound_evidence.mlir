@@ -3,142 +3,84 @@
 
 // RUN: mlir-opt %s -split-input-file -verify-diagnostics
 
-// An impl of a trait with a bound requirement states a witness for it.
+// A quantified requirement is a required method of its trait returning a claim,
+// so an impl of the trait defines it.
 
 !S = !trait.poly<0>
 !X = !trait.poly<1>
-trait.trait private @Marker[!S] {}
-trait.trait private @Has[!S] where [forall [!trait.bound<0>] -> @Marker[!trait.proj<@Has[!S], "A", [!trait.bound<0>]>]] {
+trait.trait private @Marker(%self: !trait.claim<@Marker[!S]>) {}
+trait.trait private @Has(%self: !trait.claim<@Has[!S]>) {
   trait.assoc_type @A<[!X]>
+  trait.method @requirement_0() -> !trait.claim<@Marker[!trait.proj<@Has[!S], "A", [!X]>]>
 }
-// expected-error @below {{states no witness for bound requirement 0 of trait '@Has'}}
-trait.impl private @Has_i32 for @Has[i32] {
+// expected-error @below {{missing implementation for required method 'requirement_0' of trait '@Has'}}
+trait.impl private @Has_i32(%self: !trait.claim<@Has[i32]>) {
   trait.assoc_type @A<[!X]> = i1
 }
 
 // -----
 
-// A requirement witness names a bound requirement of the trait by position.
-
-!S = !trait.poly<0>
-trait.trait private @Marker[!S] {}
-trait.impl private @Marker_i1 for @Marker[i1] {}
-trait.trait private @Has[!S] where [@Marker[!S]] {}
-// expected-error @below {{states a witness for requirement 0, which is not a bound requirement of trait '@Has'}}
-trait.impl private @Has_i1 for @Has[i1] witnesses [#trait<witness requirement 0 by @Marker_i1>] {}
-
-// -----
-
-// One witness per bound requirement.
+// The evidence the method returns is evidence of its conclusion at the impl:
+// an impl of another application proves another predicate.
 
 !S = !trait.poly<0>
 !X = !trait.poly<1>
-trait.trait private @Marker[!S] {}
-trait.impl private @Marker_i1 for @Marker[i1] {}
-trait.trait private @Has[!S] where [forall [!trait.bound<0>] -> @Marker[!trait.proj<@Has[!S], "A", [!trait.bound<0>]>]] {
+trait.trait private @Marker(%self: !trait.claim<@Marker[!S]>) {}
+trait.impl private @Marker_i64(%self: !trait.claim<@Marker[i64]>) {}
+trait.trait private @Has(%self: !trait.claim<@Has[!S]>) {
   trait.assoc_type @A<[!X]>
+  trait.method @requirement_0() -> !trait.claim<@Marker[!trait.proj<@Has[!S], "A", [!X]>]>
 }
-// expected-error @below {{states a witness for requirement 0 twice}}
-trait.impl private @Has_i32 for @Has[i32]
-    witnesses [#trait<witness requirement 0 by @Marker_i1>, #trait<witness requirement 0 by @Marker_i1>] {
+trait.impl private @Has_i32(%self: !trait.claim<@Has[i32]>) {
   trait.assoc_type @A<[!X]> = i1
-}
-
-// -----
-
-// An impl cited as evidence is an impl of the conclusion there.
-
-!S = !trait.poly<0>
-!X = !trait.poly<1>
-trait.trait private @Marker[!S] {}
-trait.impl private @Marker_i64 for @Marker[i64] {}
-trait.trait private @Has[!S] where [forall [!trait.bound<0>] -> @Marker[!trait.proj<@Has[!S], "A", [!trait.bound<0>]>]] {
-  trait.assoc_type @A<[!X]>
-}
-// expected-error @below {{does not prove #trait<application@Marker[!trait.proj<@Has[i32], "A", [!trait.bound<0>]>]>: it states another predicate}}
-trait.impl private @Has_i32 for @Has[i32] witnesses [#trait<witness requirement 0 by @Marker_i64>] {
-  trait.assoc_type @A<[!X]> = i1
+  trait.method @requirement_0() -> !trait.claim<@Marker[i1]> {
+    %m = trait.witness @Marker_i64 for @Marker[i64]
+    // expected-error @below {{type of return operand 0 ('!trait.claim<@Marker[i64] by @Marker_i64>') doesn't match method result type ('!trait.claim<@Marker[i1]>') in method @requirement_0}}
+    trait.return %m : !trait.claim<@Marker[i64] by @Marker_i64>
+  }
 }
 
 // -----
 
 // A binding that ignores the binder's premise is not proved by it: `A<X> = X`
-// states Marker of every X only where X is Marker.
+// states Marker of every X only where X is Marker, and the method holds Other.
 
 !S = !trait.poly<0>
 !X = !trait.poly<1>
-trait.trait private @Marker[!S] {}
-trait.trait private @Other[!S] {}
-trait.trait private @Has[!S] where [forall [!trait.bound<0>] where [@Other[!trait.bound<0>]] -> @Marker[!trait.proj<@Has[!S], "A", [!trait.bound<0>]>]] {
+trait.trait private @Marker(%self: !trait.claim<@Marker[!S]>) {}
+trait.trait private @Other(%self: !trait.claim<@Other[!S]>) {}
+trait.trait private @Has(%self: !trait.claim<@Has[!S]>) {
   trait.assoc_type @A<[!X]>
+  trait.method @requirement_0(!trait.claim<@Other[!X]>) -> !trait.claim<@Marker[!trait.proj<@Has[!S], "A", [!X]>]>
 }
-// expected-error @below {{it states another predicate}}
-trait.impl private @Has_i32 for @Has[i32] witnesses [#trait<witness requirement 0 by premise 0>] {
+trait.impl private @Has_i32(%self: !trait.claim<@Has[i32]>) {
   trait.assoc_type @A<[!X]> = !X
+  trait.method @requirement_0(%o: !trait.claim<@Other[!X]>) -> !trait.claim<@Marker[!X]> {
+    // expected-error @below {{type of return operand 0 ('!trait.claim<@Other[!trait.poly<1>]>') doesn't match method result type ('!trait.claim<@Marker[!trait.poly<1>]>') in method @requirement_0}}
+    trait.return %o : !trait.claim<@Other[!X]>
+  }
 }
 
 // -----
 
-// A premise position past the binder's premises names none.
-
-!S = !trait.poly<0>
-!X = !trait.poly<1>
-trait.trait private @Marker[!S] {}
-trait.trait private @Has[!S] where [forall [!trait.bound<0>] where [@Marker[!trait.bound<0>]] -> @Marker[!trait.proj<@Has[!S], "A", [!trait.bound<0>]>]] {
-  trait.assoc_type @A<[!X]>
-}
-// expected-error @below {{the binder states 1 premises}}
-trait.impl private @Has_i32 for @Has[i32] witnesses [#trait<witness requirement 0 by premise 1>] {
-  trait.assoc_type @A<[!X]> = !X
-}
-
-// -----
-
-// A where-clause position past the impl's where clause names no entry.
-
-!S = !trait.poly<0>
-!X = !trait.poly<1>
-trait.trait private @Marker[!S] {}
-trait.trait private @Has[!S] where [forall [!trait.bound<0>] where [@Marker[!trait.bound<0>]] -> @Marker[!trait.proj<@Has[!S], "A", [!trait.bound<0>]>]] {
-  trait.assoc_type @A<[!X]>
-}
-// expected-error @below {{the impl's where clause has 0 entries}}
-trait.impl private @Has_i32 for @Has[i32] witnesses [#trait<witness requirement 0 by where 0>] {
-  trait.assoc_type @A<[!X]> = !X
-}
-
-// -----
-
-// An impl cited with a premise discharges each of that impl's where-clause
-// entries in turn.
+// A derive of an impl supplies one claim per entry of that impl's where clause.
 
 !S = !trait.poly<0>
 !X = !trait.poly<1>
 !P = !trait.poly<2>
-trait.trait private @Marker[!S] {}
-trait.impl private @Marker_wrap for @Marker[tuple<!P>] where [@Marker[!P]] {}
-trait.trait private @Has[!S] where [forall [!trait.bound<0>] where [@Marker[!trait.bound<0>]] -> @Marker[!trait.proj<@Has[!S], "A", [!trait.bound<0>]>]] {
+trait.trait private @Marker(%self: !trait.claim<@Marker[!S]>) {}
+trait.impl private @Marker_wrap(%self: !trait.claim<@Marker[tuple<!P>]>, %marker: !trait.claim<@Marker[!P]>) {}
+trait.trait private @Has(%self: !trait.claim<@Has[!S]>) {
   trait.assoc_type @A<[!X]>
+  trait.method @requirement_0(!trait.claim<@Marker[!X]>) -> !trait.claim<@Marker[!trait.proj<@Has[!S], "A", [!X]>]>
 }
-// expected-error @below {{the cited impl's where clause has 1 entries, and the evidence discharges 0}}
-trait.impl private @Has_i32 for @Has[i32] witnesses [#trait<witness requirement 0 by @Marker_wrap[!P = !trait.bound<0>]>] {
+trait.impl private @Has_i32(%self: !trait.claim<@Has[i32]>) {
   trait.assoc_type @A<[!X]> = tuple<!X>
-}
-
-// -----
-
-// An impl proves an application, not an equality.
-
-!S = !trait.poly<0>
-!X = !trait.poly<1>
-trait.trait private @Marker[!S] {}
-trait.impl private @Marker_i1 for @Marker[i1] {}
-trait.trait private @Has[!S] where [forall [!trait.bound<0>] -> !trait.proj<@Has[!S], "A", [!trait.bound<0>]> = !trait.bound<0>] {
-  trait.assoc_type @A<[!X]>
-}
-// expected-error @below {{an impl proves only a trait application}}
-trait.impl private @Has_i32 for @Has[i32] witnesses [#trait<witness requirement 0 by @Marker_i1>] {
-  trait.assoc_type @A<[!X]> = !X
+  trait.method @requirement_0(%m: !trait.claim<@Marker[!X]>) -> !trait.claim<@Marker[tuple<!X>]> {
+    // expected-error @below {{impl '@Marker_wrap' has 1 where entries, and the citation supplies 0 claims}}
+    %d = trait.derive @Marker[tuple<!X>] from @Marker_wrap given()
+    trait.return %d : !trait.claim<@Marker[tuple<!X>]>
+  }
 }
 
 // -----
@@ -148,174 +90,38 @@ trait.impl private @Has_i32 for @Has[i32] witnesses [#trait<witness requirement 
 
 !S = !trait.poly<0>
 !X = !trait.poly<1>
-trait.trait private @Has[!S] where [forall [!trait.bound<0>] -> !trait.proj<@Has[!S], "A", [!trait.bound<0>]> = !trait.bound<0>] {
+trait.trait private @Has(%self: !trait.claim<@Has[!S]>) {
   trait.assoc_type @A<[!X]>
+  trait.method @requirement_0() -> !trait.claim<!trait.proj<@Has[!S], "A", [!X]> = !X>
 }
-// expected-error @below {{evidence does not prove #trait<equality!trait.proj<@Has[i32], "A", [!trait.bound<0>]> = !trait.bound<0>>: its two sides are two types}}
-trait.impl private @Has_i32 for @Has[i32] witnesses [#trait<witness requirement 0 by refl>] {
+trait.impl private @Has_i32(%self: !trait.claim<@Has[i32]>) {
   trait.assoc_type @A<[!X]> = i1
+  trait.method @requirement_0() -> !trait.claim<i1 = !X> {
+    // expected-error @below {{a refl witness requires identical endpoints, found 'i1' and '!trait.poly<1>'}}
+    %e = trait.witness refl : !trait.claim<i1 = !X>
+    trait.return %e : !trait.claim<i1 = !X>
+  }
 }
 
 // -----
 
-!S = !trait.poly<0>
-!X = !trait.poly<1>
-trait.trait private @Marker[!S] {}
-trait.trait private @Has[!S] where [forall [!trait.bound<0>] -> @Marker[!trait.proj<@Has[!S], "A", [!trait.bound<0>]>]] {
-  trait.assoc_type @A<[!X]>
-}
-// expected-error @below {{reflexivity proves only an equality}}
-trait.impl private @Has_i32 for @Has[i32] witnesses [#trait<witness requirement 0 by refl>] {
-  trait.assoc_type @A<[!X]> = i1
-}
-
-// -----
-
-// A witness of an application or an equality cites the impl that witnesses it:
-// a premise or reflexivity stands only under a bound requirement.
-
-trait.trait private @A[!trait.poly<0>] {}
-// expected-error @below {{a witness of an application or an equality cites the impl that witnesses it}}
-trait.impl private @A_i32 for @A[i32] witnesses [#trait<witness @A[i64] by premise 0>] {}
-
-// -----
-
-// Only a bound requirement's body discharges the premises of the impl it cites.
-
-trait.trait private @A[!trait.poly<0>] {}
-trait.impl private @A_i64 for @A[i64] {}
-// expected-error @below {{only a bound requirement's witness discharges the premises of the impl it cites}}
-trait.impl private @A_i32 for @A[i32] witnesses [#trait<witness @A[i64] by @A_i64 given [premise 0]>] {}
-
-// -----
-
-// A requirement hop names a requirement of the application its body proves,
-// by position.
+// A requirement read off a where argument names a requirement of that
+// argument's trait by position.
 
 !S = !trait.poly<0>
 !X = !trait.poly<1>
 !P = !trait.poly<2>
-trait.trait private @Sup0[!S] {}
-trait.trait private @Sub0[!S] where [@Sup0[!S]] {}
-trait.trait private @Has[!S] where [forall [!trait.bound<0>] -> @Sup0[!trait.proj<@Has[!S], "A", [!trait.bound<0>]>]] {
+trait.trait private @Sup0(%self: !trait.claim<@Sup0[!S]>) {}
+trait.trait private @Sub0(%self: !trait.claim<@Sub0[!S]>) -> !trait.claim<@Sup0[!S]> {}
+trait.trait private @Has(%self: !trait.claim<@Has[!S]>) {
   trait.assoc_type @A<[!X]>
+  trait.method @requirement_0() -> !trait.claim<@Sup0[!trait.proj<@Has[!S], "A", [!X]>]>
 }
-// expected-error @below {{requirement index 1 is out of range}}
-trait.impl private @Has_sub for @Has[tuple<!P>] where [@Sub0[!P]]
-    witnesses [#trait<witness requirement 0 by requirement 1 of where 0>] {
+trait.impl private @Has_sub(%self: !trait.claim<@Has[tuple<!P>]>, %sub0: !trait.claim<@Sub0[!P]>) {
   trait.assoc_type @A<[!X]> = !P
-}
-
-// -----
-
-// A hop reads the requirement of the trait its body proves, not of another.
-
-!S = !trait.poly<0>
-!X = !trait.poly<1>
-!P = !trait.poly<2>
-trait.trait private @Sup0[!S] {}
-trait.trait private @Other[!S] {}
-trait.trait private @Sub1[!S] where [@Other[!S]] {}
-trait.trait private @Has[!S] where [forall [!trait.bound<0>] -> @Sup0[!trait.proj<@Has[!S], "A", [!trait.bound<0>]>]] {
-  trait.assoc_type @A<[!X]>
-}
-// expected-error @below {{it states another predicate}}
-trait.impl private @Has_sub for @Has[tuple<!P>] where [@Sub1[!P]]
-    witnesses [#trait<witness requirement 0 by requirement 0 of where 0>] {
-  trait.assoc_type @A<[!X]> = !P
-}
-
-// -----
-
-// A hop reads a requirement off a trait application; reflexivity proves none.
-
-!S = !trait.poly<0>
-!X = !trait.poly<1>
-trait.trait private @Sup0[!S] {}
-trait.trait private @Has[!S] where [forall [!trait.bound<0>] -> @Sup0[!trait.proj<@Has[!S], "A", [!trait.bound<0>]>]] {
-  trait.assoc_type @A<[!X]>
-}
-// expected-error @below {{reflexivity proves only the equality its position names}}
-trait.impl private @Has_i32 for @Has[i32]
-    witnesses [#trait<witness requirement 0 by requirement 0 of refl>] {
-  trait.assoc_type @A<[!X]> = i1
-}
-
-// -----
-
-// A hop to a bound requirement discharges each premise it states there.
-
-!S = !trait.poly<0>
-!X = !trait.poly<1>
-!P = !trait.poly<2>
-trait.trait private @Marker[!S] {}
-trait.trait private @Gen[!S] where [forall [!trait.bound<0>] where [@Marker[!trait.bound<0>]] -> @Marker[!trait.proj<@Gen[!S], "B", [!trait.bound<0>]>]] {
-  trait.assoc_type @B<[!X]>
-}
-// expected-error @below {{requirement 0 states 1 premises, and the evidence discharges 0}}
-trait.impl private @Gen_fwd for @Gen[tuple<!P>] where [@Gen[!P]]
-    witnesses [#trait<witness requirement 0 by requirement 0 for [!trait.bound<0>] of where 0>] {
-  trait.assoc_type @B<[!X]> = !trait.proj<@Gen[!P], "B", [!X]>
-}
-
-// -----
-
-// A hop to a bound requirement takes one argument per variable it binds.
-
-!S = !trait.poly<0>
-!X = !trait.poly<1>
-!P = !trait.poly<2>
-trait.trait private @Marker[!S] {}
-trait.trait private @Gen[!S] where [forall [!trait.bound<0>] -> @Marker[!trait.proj<@Gen[!S], "B", [!trait.bound<0>]>]] {
-  trait.assoc_type @B<[!X]>
-}
-// expected-error @below {{requirement 0 binds 1 variables, and 0 arguments are supplied}}
-trait.impl private @Gen_fwd for @Gen[tuple<!P>] where [@Gen[!P]]
-    witnesses [#trait<witness requirement 0 by requirement 0 of where 0>] {
-  trait.assoc_type @B<[!X]> = !trait.proj<@Gen[!P], "B", [!X]>
-}
-
-// -----
-
-// An allegation states the predicate its position names.
-
-!S = !trait.poly<0>
-!X = !trait.poly<1>
-trait.trait private @Rule[!S] {}
-trait.trait private @Holds[!S] where [forall [!trait.bound<0>] -> @Rule[!trait.proj<@Holds[!S], "C", [!trait.bound<0>]>]] {
-  trait.assoc_type @C<[!X]>
-}
-// expected-error @below {{it states another predicate}}
-trait.impl private @Holds_i32 for @Holds[i32]
-    witnesses [#trait<witness requirement 0 by allege @Rule[i64]>] {
-  trait.assoc_type @C<[!X]> = tuple<i64, i64>
-}
-
-// -----
-
-// An allegation stands only under a bound requirement.
-
-trait.trait private @A[!trait.poly<0>] {}
-// expected-error @below {{a witness of an application or an equality cites the impl that witnesses it}}
-trait.impl private @A_i32 for @A[i32] witnesses [#trait<witness @A[i64] by allege @A[i64]>] {}
-
-// -----
-
-// A witness body ends where its last arm ends; text after it belongs to no
-// body and is refused rather than dropped. `where 0` takes no `given`.
-
-!S = !trait.poly<0>
-!X = !trait.poly<1>
-trait.trait private @Goal[!S] {}
-trait.trait private @Mid[!S] where [@Goal[!S]] {}
-trait.trait private @Base[!S] where [forall [!trait.bound<0>] -> @Mid[!trait.proj<@Base[!S], "A", [!trait.bound<0>]>]] {
-  trait.assoc_type @A<[!X]>
-}
-trait.trait private @Dst[!S] where [forall [!trait.bound<0>] -> @Goal[!trait.proj<@Dst[!S], "A", [!trait.bound<0>]>]] {
-  trait.assoc_type @A<[!X]>
-}
-trait.impl private @Dst_i32 for @Dst[i32] where [@Base[i32]]
-    // expected-error @below {{expected the end of the attribute}}
-    witnesses [#trait<witness requirement 0 by requirement 0 of requirement 0 for [!trait.bound<0>] of where 0 given [where 0]>] {
-  trait.assoc_type @A<[!X]> = !trait.proj<@Base[i32], "A", [!X]>
+  trait.method @requirement_0() -> !trait.claim<@Sup0[!P]> {
+    // expected-error @below {{requirement index 1 is out of range: '!trait.claim<@Sub0[!trait.poly<2>]>' has 1 requirements}}
+    %s = trait.project %sub0[1] : !trait.claim<@Sub0[!P]> -> !trait.claim<@Sup0[!P]>
+    trait.return %s : !trait.claim<@Sup0[!P]>
+  }
 }

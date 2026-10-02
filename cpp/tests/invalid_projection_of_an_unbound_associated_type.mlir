@@ -9,17 +9,17 @@
 
 !T = !trait.poly<0>
 
-trait.trait private @Gen[!T] {
+trait.trait private @Gen(%self: !trait.claim<@Gen[!T]>) {
   trait.assoc_type @A
 }
 
-trait.impl private @Gen_i64 for @Gen[i64] {
+trait.impl private @Gen_i64(%self: !trait.claim<@Gen[i64]>) {
   trait.assoc_type @A = i32
 }
 
-trait.trait private @Box[!T] {}
+trait.trait private @Box(%self: !trait.claim<@Box[!T]>) {}
 
-trait.impl private @Box_i32 for @Box[i32] {}
+trait.impl private @Box_i32(%self: !trait.claim<@Box[i32]>) {}
 
 func.func private @probes(%c: !trait.claim<@Box[!trait.proj<@Gen[i64], "B">]>,
                           %x: !T) -> !T {

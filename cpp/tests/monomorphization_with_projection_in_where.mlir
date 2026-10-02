@@ -11,28 +11,30 @@
 
 !S = !trait.poly<0>
 
-trait.trait private @Printable[!S] {
+trait.trait private @Printable(%self: !trait.claim<@Printable[!S]>) {
   trait.method @print(!S) -> i32
 }
 
-trait.trait private @Iterable[!S] where [@Printable[!trait.proj<@Iterable[!S], "Item">]] {
+trait.trait private @Iterable(%self: !trait.claim<@Iterable[!S]>) -> !trait.claim<@Printable[!trait.proj<@Iterable[!S], "Item">]> {
   trait.assoc_type @Item
   trait.method @first(!S) -> !trait.proj<@Iterable[!S], "Item">
 }
 
-trait.impl private for @Printable[i64] {
+trait.impl private @Printable_impl(%self_claim: !trait.claim<@Printable[i64]>) {
   trait.method @print(%self: i64) -> i32 {
     %c = arith.trunci %self : i64 to i32
     trait.return %c : i32
   }
 }
 
-trait.impl private for @Iterable[i32] {
+trait.impl private @Iterable_impl(%self_claim: !trait.claim<@Iterable[i32]>) {
   trait.assoc_type @Item = i64
   trait.method @first(%self: i32) -> i64 {
     %c = arith.extsi %self : i32 to i64
     trait.return %c : i64
   }
+  %req0 = trait.allege @Printable[!trait.proj<@Iterable[i32], "Item">]
+  trait.return %req0 : !trait.claim<@Printable[!trait.proj<@Iterable[i32], "Item">]>
 }
 
 // The key test: proving @Iterable[i32] triggers its where-clause

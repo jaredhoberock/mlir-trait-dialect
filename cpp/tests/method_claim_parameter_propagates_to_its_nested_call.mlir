@@ -10,21 +10,21 @@
 !T = !trait.poly<0>
 !U = !trait.poly<1>
 
-trait.trait private @Convert[!T, !U] {
+trait.trait private @Convert(%self: !trait.claim<@Convert[!T, !U]>) {
   trait.method @convert(!U) -> !T
 }
 
-trait.impl private @Convert_i32 for @Convert[i32, i32] {
+trait.impl private @Convert_i32(%self: !trait.claim<@Convert[i32, i32]>) {
   trait.method @convert(%x: i32) -> i32 {
     trait.return %x : i32
   }
 }
 
-trait.trait private @Choose[!T] {
+trait.trait private @Choose(%self: !trait.claim<@Choose[!T]>) {
   trait.method @choose(!T, !trait.claim<@Convert[!T, !T]>) -> !T
 }
 
-trait.impl private @Choose_i32 for @Choose[i32] {
+trait.impl private @Choose_i32(%self: !trait.claim<@Choose[i32]>) {
   trait.method @choose(%a: i32, %same: !trait.claim<@Convert[i32, i32]>) -> i32 {
     %converted = trait.method.call %same @Convert[i32, i32]::@convert(%a)
       : (i32) -> i32

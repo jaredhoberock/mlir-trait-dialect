@@ -4,31 +4,44 @@
 // RUN: mlir-opt %s -split-input-file -pass-pipeline='builtin.module(monomorphize-trait)' | FileCheck %s
 
 // @V_blanket applies where @Has[T]::Out is i64. Two conditional impls could
-// bind @Has[i8], and only @Has_m holds there, so the premise reads through the
-// subproof @pv cites for its @Has obligation. That subproof's claim is the
-// obligation at the application the citation names, which is the key the
-// premise's projection is looked up by: at @pv's own claim it reads i64 = i64,
-// and a proof whose premises are decided there stands at every instance of it.
-// Split 1 carries the proof to an instance at a witness; split 2 takes the
-// proven claim through a function parameter.
+// bind @Has[i8], and only @Has_m holds there; @pv supplies the equality entry
+// with a proj_resolve witness citing @Has_m over the proof @ma of its premise.
+// A proof whose premises are decided in its own body stands at every instance
+// of it. Split 1 carries the proof to an instance at a witness; split 2 takes
+// the proven claim through a function parameter.
 
-trait.trait private @Marker[!trait.poly<0>] {}
-trait.trait private @Other[!trait.poly<0>] {}
-trait.trait private @Has[!trait.poly<0>] { trait.assoc_type @Out }
-trait.impl private @Marker_any for @Marker[!trait.poly<0>] {}
-trait.impl private @Other_i32 for @Other[i32] {}
-trait.impl private @Has_m for @Has[!trait.poly<0>] where [@Marker[!trait.poly<0>]] { trait.assoc_type @Out = i64 }
-trait.impl private @Has_o for @Has[!trait.poly<0>] where [@Other[!trait.poly<0>]] { trait.assoc_type @Out = i32 }
-trait.trait private @V[!trait.poly<0>] { trait.method @v() -> i64 }
-trait.impl private @V_blanket for @V[!trait.poly<0>] where [@Has[!trait.poly<0>], !trait.proj<@Has[!trait.poly<0>], "Out"> = i64] {
+trait.trait private @Marker(%self: !trait.claim<@Marker[!trait.poly<0>]>) {}
+trait.trait private @Other(%self: !trait.claim<@Other[!trait.poly<0>]>) {}
+trait.trait private @Has(%self: !trait.claim<@Has[!trait.poly<0>]>) { trait.assoc_type @Out }
+trait.impl private @Marker_any(%self: !trait.claim<@Marker[!trait.poly<0>]>) {}
+trait.impl private @Other_i32(%self: !trait.claim<@Other[i32]>) {}
+trait.impl private @Has_m(%self: !trait.claim<@Has[!trait.poly<0>]>, %marker: !trait.claim<@Marker[!trait.poly<0>]>) { trait.assoc_type @Out = i64 }
+trait.impl private @Has_o(%self: !trait.claim<@Has[!trait.poly<0>]>, %other: !trait.claim<@Other[!trait.poly<0>]>) { trait.assoc_type @Out = i32 }
+trait.trait private @V(%self: !trait.claim<@V[!trait.poly<0>]>) { trait.method @v() -> i64 }
+trait.impl private @V_blanket(%self: !trait.claim<@V[!trait.poly<0>]>, %has: !trait.claim<@Has[!trait.poly<0>]>, %out: !trait.claim<!trait.proj<@Has[!trait.poly<0>], "Out"> = i64>) {
   trait.method @v() -> i64 {
     %c = arith.constant 7 : i64
     trait.return %c : i64
   }
 }
-trait.proof private @ma proves @Marker_any[!trait.poly<0> = !trait.poly<0>] for @Marker[!trait.poly<0>] given []
-trait.proof private @hm proves @Has_m[!trait.poly<0> = !trait.poly<0>] for @Has[!trait.poly<0>] given [@ma]
-trait.proof private @pv proves @V_blanket[!trait.poly<0> = !trait.poly<0>] for @V[!trait.poly<0>] given [@hm, unit]
+trait.proof private @ma {
+  %d = trait.derive @Marker[!trait.poly<0>] from @Marker_any given()
+  trait.return %d : !trait.claim<@Marker[!trait.poly<0>]>
+}
+trait.proof private @hm {
+  %p0 = trait.witness @ma for @Marker[!trait.poly<0>]
+  %d = trait.derive @Has[!trait.poly<0>] from @Has_m given(%p0) : (!trait.claim<@Marker[!trait.poly<0>] by @ma>)
+  trait.return %d : !trait.claim<@Has[!trait.poly<0>]>
+}
+trait.proof private @pv {
+  %p0 = trait.witness @hm for @Has[!trait.poly<0>]
+  %m = trait.witness @ma for @Marker[!trait.poly<0>]
+  %p1 = trait.witness proj_resolve !trait.proj<@Has[!trait.poly<0>], "Out"> resolves i64 by @Has_m
+    given(%m) : (!trait.claim<@Marker[!trait.poly<0>] by @ma>)
+    : !trait.claim<!trait.proj<@Has[!trait.poly<0>], "Out"> = i64>
+  %d = trait.derive @V[!trait.poly<0>] from @V_blanket given(%p0, %p1) : (!trait.claim<@Has[!trait.poly<0>] by @hm>, !trait.claim<!trait.proj<@Has[!trait.poly<0>], "Out"> = i64>)
+  trait.return %d : !trait.claim<@V[!trait.poly<0>]>
+}
 
 // CHECK-NOT: trait.
 // CHECK: func.func private @[[V:V_blanket_[a-z0-9]+]]_v() -> i64
@@ -43,23 +56,38 @@ func.func @main() -> i64 {
 
 // -----
 
-trait.trait private @Marker[!trait.poly<0>] {}
-trait.trait private @Other[!trait.poly<0>] {}
-trait.trait private @Has[!trait.poly<0>] { trait.assoc_type @Out }
-trait.impl private @Marker_any for @Marker[!trait.poly<0>] {}
-trait.impl private @Other_i32 for @Other[i32] {}
-trait.impl private @Has_m for @Has[!trait.poly<0>] where [@Marker[!trait.poly<0>]] { trait.assoc_type @Out = i64 }
-trait.impl private @Has_o for @Has[!trait.poly<0>] where [@Other[!trait.poly<0>]] { trait.assoc_type @Out = i32 }
-trait.trait private @V[!trait.poly<0>] { trait.method @v() -> i64 }
-trait.impl private @V_blanket for @V[!trait.poly<0>] where [@Has[!trait.poly<0>], !trait.proj<@Has[!trait.poly<0>], "Out"> = i64] {
+trait.trait private @Marker(%self: !trait.claim<@Marker[!trait.poly<0>]>) {}
+trait.trait private @Other(%self: !trait.claim<@Other[!trait.poly<0>]>) {}
+trait.trait private @Has(%self: !trait.claim<@Has[!trait.poly<0>]>) { trait.assoc_type @Out }
+trait.impl private @Marker_any(%self: !trait.claim<@Marker[!trait.poly<0>]>) {}
+trait.impl private @Other_i32(%self: !trait.claim<@Other[i32]>) {}
+trait.impl private @Has_m(%self: !trait.claim<@Has[!trait.poly<0>]>, %marker: !trait.claim<@Marker[!trait.poly<0>]>) { trait.assoc_type @Out = i64 }
+trait.impl private @Has_o(%self: !trait.claim<@Has[!trait.poly<0>]>, %other: !trait.claim<@Other[!trait.poly<0>]>) { trait.assoc_type @Out = i32 }
+trait.trait private @V(%self: !trait.claim<@V[!trait.poly<0>]>) { trait.method @v() -> i64 }
+trait.impl private @V_blanket(%self: !trait.claim<@V[!trait.poly<0>]>, %has: !trait.claim<@Has[!trait.poly<0>]>, %out: !trait.claim<!trait.proj<@Has[!trait.poly<0>], "Out"> = i64>) {
   trait.method @v() -> i64 {
     %c = arith.constant 7 : i64
     trait.return %c : i64
   }
 }
-trait.proof private @ma proves @Marker_any[!trait.poly<0> = !trait.poly<0>] for @Marker[!trait.poly<0>] given []
-trait.proof private @hm proves @Has_m[!trait.poly<0> = !trait.poly<0>] for @Has[!trait.poly<0>] given [@ma]
-trait.proof private @pv proves @V_blanket[!trait.poly<0> = !trait.poly<0>] for @V[!trait.poly<0>] given [@hm, unit]
+trait.proof private @ma {
+  %d = trait.derive @Marker[!trait.poly<0>] from @Marker_any given()
+  trait.return %d : !trait.claim<@Marker[!trait.poly<0>]>
+}
+trait.proof private @hm {
+  %p0 = trait.witness @ma for @Marker[!trait.poly<0>]
+  %d = trait.derive @Has[!trait.poly<0>] from @Has_m given(%p0) : (!trait.claim<@Marker[!trait.poly<0>] by @ma>)
+  trait.return %d : !trait.claim<@Has[!trait.poly<0>]>
+}
+trait.proof private @pv {
+  %p0 = trait.witness @hm for @Has[!trait.poly<0>]
+  %m = trait.witness @ma for @Marker[!trait.poly<0>]
+  %p1 = trait.witness proj_resolve !trait.proj<@Has[!trait.poly<0>], "Out"> resolves i64 by @Has_m
+    given(%m) : (!trait.claim<@Marker[!trait.poly<0>] by @ma>)
+    : !trait.claim<!trait.proj<@Has[!trait.poly<0>], "Out"> = i64>
+  %d = trait.derive @V[!trait.poly<0>] from @V_blanket given(%p0, %p1) : (!trait.claim<@Has[!trait.poly<0>] by @hm>, !trait.claim<!trait.proj<@Has[!trait.poly<0>], "Out"> = i64>)
+  trait.return %d : !trait.claim<@V[!trait.poly<0>]>
+}
 
 // CHECK-NOT: trait.
 // CHECK: func.func private @[[V2:V_blanket_[a-z0-9]+]]_v() -> i64

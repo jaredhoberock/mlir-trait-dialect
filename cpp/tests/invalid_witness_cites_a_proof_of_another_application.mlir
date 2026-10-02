@@ -9,14 +9,20 @@
 // covers every application of @B, so the proof's own claim is what the witness
 // is read against.
 
-trait.trait private @A[!trait.poly<0>] {}
-trait.trait private @B[!trait.poly<0>] where [@A[!trait.poly<0>]] {}
-trait.impl private @A_i32 for @A[i32] {}
-trait.impl private @B_blanket for @B[!trait.poly<0>] {}
-trait.proof private @p proves @B_blanket[!trait.poly<0> = i32] for @B[i32] given [@A_i32]
+trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) {}
+trait.trait private @B(%self: !trait.claim<@B[!trait.poly<0>]>) -> !trait.claim<@A[!trait.poly<0>]> {}
+trait.impl private @A_i32(%self: !trait.claim<@A[i32]>) {}
+trait.impl private @B_blanket(%self: !trait.claim<@B[!trait.poly<0>]>) {
+  %req0 = trait.allege @A[!trait.poly<0>]
+  trait.return %req0 : !trait.claim<@A[!trait.poly<0>]>
+}
+trait.proof private @p {
+  %d = trait.derive @B[i32] from @B_blanket given()
+  trait.return %d : !trait.claim<@B[i32]>
+}
 
 func.func @main() -> !trait.claim<@B[i64] by @p> {
-  // expected-error @below {{the proof @p this witness cites stands over another claim: type mismatch: expected '!trait.claim<@B[i32]>' but found '!trait.claim<@B[i64]>'}}
+  // expected-error @below {{proof @p proves '!trait.claim<@B[i32]>', which does not discharge the obligation '!trait.claim<@B[i64]>'}}
   %w = trait.witness @p for @B[i64]
   return %w : !trait.claim<@B[i64] by @p>
 }

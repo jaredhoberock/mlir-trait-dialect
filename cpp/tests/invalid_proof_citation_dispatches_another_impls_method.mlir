@@ -3,41 +3,40 @@
 
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' -verify-diagnostics
 
-// What a citation discharges decides which method a body reaches: @B_i32's
-// body projects its own requirement @A[i32] and calls @a through it. A citation
-// of @A_i64 there would carry the call to @A_i64's method, so the program would
-// answer 64 where it must answer 32. The mismatch is refused where it is
-// written.
+// What an impl returns for a requirement decides which method a body reaches:
+// @B_i32's body projects its own requirement @A[i32] and calls @a through it.
+// Evidence from @A_i64 there would carry the call to @A_i64's method, so the
+// program would answer 64 where it must answer 32. The mismatch is refused
+// where it is written.
 
-trait.trait private @A[!trait.poly<0>] {
+trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) {
   trait.method @a() -> i64
 }
-trait.trait private @B[!trait.poly<0>] where [@A[!trait.poly<0>]] {
+trait.trait private @B(%self: !trait.claim<@B[!trait.poly<0>]>) -> !trait.claim<@A[!trait.poly<0>]> {
   trait.method @b(!trait.poly<0>) -> i64
 }
-trait.impl private @A_i32 for @A[i32] {
+trait.impl private @A_i32(%self: !trait.claim<@A[i32]>) {
   trait.method @a() -> i64 {
     %c = arith.constant 32 : i64
     trait.return %c : i64
   }
 }
-trait.impl private @A_i64 for @A[i64] {
+trait.impl private @A_i64(%self: !trait.claim<@A[i64]>) {
   trait.method @a() -> i64 {
     %c = arith.constant 64 : i64
     trait.return %c : i64
   }
 }
-trait.impl private @B_i32 for @B[i32] {
+// expected-error @below {{returns '!trait.claim<@A[i64] by @A_i64>' for requirement 0, which trait '@B' states as '!trait.claim<@A[i32]>'}}
+trait.impl private @B_i32(%self: !trait.claim<@B[i32]>) {
   trait.method @b(%x: i32) -> i64 {
-    %s = trait.assume self : !trait.claim<@B[i32]>
-    %a = trait.project %s[0] : !trait.claim<@B[i32]> -> !trait.claim<@A[i32]>
+    %a = trait.project %self[0] : !trait.claim<@B[i32]> -> !trait.claim<@A[i32]>
     %r = trait.method.call %a @A[i32]::@a() : () -> i64
     trait.return %r : i64
   }
+  %a = trait.witness @A_i64 for @A[i64]
+  trait.return %a : !trait.claim<@A[i64] by @A_i64>
 }
-
-// expected-error @below {{proof @A_i64 proves '!trait.claim<@A[i64]>', which does not discharge the obligation '!trait.claim<@A[i32]>'}}
-trait.proof private @forged proves @B_i32[] for @B[i32] given [@A_i64]
 
 func.func @main(%x: i32) -> i64 {
   %c = trait.allege @B[i32]

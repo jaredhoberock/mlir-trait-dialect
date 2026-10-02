@@ -8,7 +8,7 @@
 
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(report-expansion-readiness-trait)' 2>&1 | FileCheck %s
 
-trait.trait private @Tr[!trait.poly<0>] {}
+trait.trait private @Tr(%self: !trait.claim<@Tr[!trait.poly<0>]>) {}
 
 func.func private @tpl(%x: !trait.poly<1>) -> !trait.poly<1> {
   %a = trait.allege @Tr[i64]

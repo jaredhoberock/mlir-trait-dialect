@@ -19,7 +19,7 @@
 
 !T0 = !trait.poly<0>
 
-trait.trait private @Tr [!T0] {
+trait.trait private @Tr(%self: !trait.claim<@Tr[!T0]>) {
   trait.method @method(!T0) -> i32
 }
 
@@ -27,7 +27,7 @@ trait.trait private @Tr [!T0] {
 // impl's header must be spelled over one too -- an impl for a single concrete
 // type justifies nothing about a variable.
 !B = !trait.poly<9>
-trait.impl private @Tr_any for @Tr[!B] {
+trait.impl private @Tr_any(%self_claim: !trait.claim<@Tr[!B]>) {
   trait.method @method(%self: !B) -> i32 {
     %c = arith.constant 0 : i32
     trait.return %c : i32
@@ -44,7 +44,7 @@ func.func private @inner(%x: !F, %c: !trait.claim<@Tr[!F]>) -> i32 {
 // Derives Tr[!G] (unconditional impl), passes claim to @inner
 !G = !trait.poly<3>
 func.func private @outer(%x: !G) -> i32 {
-  %c = trait.derive @Tr[!G] from @Tr_any[!B = !G] given()
+  %c = trait.derive @Tr[!G] from @Tr_any given()
   %r = trait.func.call @inner(%x, %c)
     : (!G, !trait.claim<@Tr[!G]>) -> i32
   return %r : i32

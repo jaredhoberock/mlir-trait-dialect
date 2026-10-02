@@ -15,18 +15,18 @@
 
 !S = !trait.poly<0>
 
-trait.trait private @U[!S] {
+trait.trait private @U(%self: !trait.claim<@U[!S]>) {
 }
 
-trait.trait private @T[!S] {
+trait.trait private @T(%self: !trait.claim<@T[!S]>) {
   trait.assoc_type @Out
   trait.method @m(!S) -> !trait.proj<@T[!S], "Out">
 }
 
-trait.impl private @U_i32 for @U[i32] {
+trait.impl private @U_i32(%self: !trait.claim<@U[i32]>) {
 }
 
-trait.impl private @T_cond for @T[!S] where [@U[!S]] {
+trait.impl private @T_cond(%self: !trait.claim<@T[!S]>, %u: !trait.claim<@U[!S]>) {
   trait.assoc_type @Out = i64
   trait.method @m(%x: !S) -> i64 {
     %c = arith.constant 7 : i64
@@ -34,7 +34,7 @@ trait.impl private @T_cond for @T[!S] where [@U[!S]] {
   }
 }
 
-trait.impl private @T_f64 for @T[f64] {
+trait.impl private @T_f64(%self: !trait.claim<@T[f64]>) {
   trait.assoc_type @Out = i1
   trait.method @m(%x: f64) -> i1 {
     %c = arith.constant true
@@ -42,7 +42,11 @@ trait.impl private @T_f64 for @T[f64] {
   }
 }
 
-trait.proof private @P proves @T_cond[!S = i32] for @T[i32] given [@U_i32]
+trait.proof private @P {
+  %p0 = trait.witness @U_i32 for @U[i32]
+  %d = trait.derive @T[i32] from @T_cond given(%p0) : (!trait.claim<@U[i32] by @U_i32>)
+  trait.return %d : !trait.claim<@T[i32]>
+}
 
 func.func private @g(%c: !trait.claim<@T[!S]>, %x: !S) -> !trait.proj<@T[!S], "Out"> {
   %r = trait.method.call %c @T[!S]::@m(%x) : (!S) -> !trait.proj<@T[!S], "Out">

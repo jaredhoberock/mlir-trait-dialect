@@ -13,29 +13,31 @@
 // CHECK: {{^}}79{{$}}
 
 !T = !trait.poly<0>
-trait.trait private @Mark[!T] { trait.method @value() -> i64 }
-trait.impl private @One for @Mark[i32] {
+trait.trait private @Mark(%self: !trait.claim<@Mark[!T]>) { trait.method @value() -> i64 }
+trait.impl private @One(%self: !trait.claim<@Mark[i32]>) {
   trait.method @value() -> i64 {
     %v = arith.constant 7 : i64
     trait.return %v : i64
   }
 }
-trait.impl private @Two for @Mark[i32] {
+trait.impl private @Two(%self: !trait.claim<@Mark[i32]>) {
   trait.method @value() -> i64 {
     %v = arith.constant 9 : i64
     trait.return %v : i64
   }
 }
-trait.trait private @Wrap[!T] where [!trait.proj<@Wrap[!T], "Item"> = !trait.claim<@Mark[!T]>] {
+trait.trait private @Wrap(%self: !trait.claim<@Wrap[!T]>) -> !trait.claim<!trait.proj<@Wrap[!T], "Item"> = !trait.claim<@Mark[!T]>> {
   trait.assoc_type @Item
 }
-trait.impl private @Wrap_i32 for @Wrap[i32] {
+trait.impl private @Wrap_i32(%self: !trait.claim<@Wrap[i32]>) {
   trait.assoc_type @Item = !trait.claim<@Mark[i32]>
+  %req0 = trait.allege !trait.proj<@Wrap[i32], "Item"> = !trait.claim<@Mark[i32]>
+  trait.return %req0 : !trait.claim<!trait.proj<@Wrap[i32], "Item"> = !trait.claim<@Mark[i32]>>
 }
-trait.trait private @Host[!T] {
+trait.trait private @Host(%self: !trait.claim<@Host[!T]>) {
   trait.method @m(!T, !trait.proj<@Wrap[!T], "Item">, !trait.claim<@Wrap[!T]>) -> i64
 }
-trait.impl private @Host_i32 for @Host[i32] {
+trait.impl private @Host_i32(%self: !trait.claim<@Host[i32]>) {
   trait.method @m(%x: i32, %c: !trait.proj<@Wrap[i32], "Item">, %w: !trait.claim<@Wrap[i32]>) -> i64 {
     %e = trait.project %w[0] : !trait.claim<@Wrap[i32]> -> !trait.claim<!trait.proj<@Wrap[i32], "Item"> = !trait.claim<@Mark[i32]>>
     %m = trait.coerce %c : !trait.proj<@Wrap[i32], "Item"> to !trait.claim<@Mark[i32]> via (%e) : (!trait.claim<!trait.proj<@Wrap[i32], "Item"> = !trait.claim<@Mark[i32]>>)

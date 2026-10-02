@@ -15,18 +15,20 @@
 // CHECK: {{^}}9{{$}}
 
 !T = !trait.poly<0>
-trait.trait private @Mark[!T] { trait.method @value() -> i64 }
-trait.trait private @Wrapped[!T] where [@Mark[!T]] {}
-trait.impl private @Nine for @Mark[i32] {
+trait.trait private @Mark(%self: !trait.claim<@Mark[!T]>) { trait.method @value() -> i64 }
+trait.trait private @Wrapped(%self: !trait.claim<@Wrapped[!T]>) -> !trait.claim<@Mark[!T]> {}
+trait.impl private @Nine(%self: !trait.claim<@Mark[i32]>) {
   trait.method @value() -> i64 {
     %v = arith.constant 9 : i64
     trait.return %v : i64
   }
 }
-trait.impl private @Wrapped_any for @Wrapped[!T] where [@Mark[!T]] {}
+trait.impl private @Wrapped_any(%self: !trait.claim<@Wrapped[!T]>, %mark: !trait.claim<@Mark[!T]>) {
+  trait.return %mark : !trait.claim<@Mark[!T]>
+}
 func.func private @g(%p: !trait.claim<@Mark[!T]>) -> i64 {
   %c = arith.constant false
-  %w = trait.derive @Wrapped[!T] from @Wrapped_any[!T = !T] given(%p) : (!trait.claim<@Mark[!T]>)
+  %w = trait.derive @Wrapped[!T] from @Wrapped_any given(%p) : (!trait.claim<@Mark[!T]>)
   %m = trait.project %w[0] : !trait.claim<@Wrapped[!T]> -> !trait.claim<@Mark[!T]>
   %s = arith.select %c, %p, %m : !trait.claim<@Mark[!T]>
   %v = trait.method.call %s @Mark[!T]::@value() : () -> i64

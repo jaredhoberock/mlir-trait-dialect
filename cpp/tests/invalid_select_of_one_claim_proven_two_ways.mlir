@@ -4,22 +4,22 @@
 // RUN: not mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' 2>&1 | FileCheck %s
 
 // @g selects between its two parameters, each @Mark[!T], and the call supplies
-// them through two impls of @Mark[i32]: @Seven and @Nine. The select's result
-// is spelled with no proof, and no position says which one it carries, so the
-// instance is refused, naming both, before any rewrite can fold the select to
-// either operand.
+// them through two impls of @Mark[i32]: @Seven and @Nine. A claim's proof is
+// part of its type, so the instance's two arms are of two types, and the
+// select, whose arms and result share one type, refuses the instance: which
+// impl the select's result runs is decided by no position.
 
-// CHECK: error: 'arith.select' op is left with '!trait.claim<@Mark[i32]>', and this instance is supplied '!trait.claim<@Mark[i32]>' by two proofs, @Seven and @Nine; no position says which this value carries
+// CHECK: error: 'arith.select' op failed to verify that all of {true_value, false_value, result} have same type
 
 !T = !trait.poly<0>
-trait.trait private @Mark[!T] { trait.method @value() -> i64 }
-trait.impl private @Seven for @Mark[i32] {
+trait.trait private @Mark(%self: !trait.claim<@Mark[!T]>) { trait.method @value() -> i64 }
+trait.impl private @Seven(%self: !trait.claim<@Mark[i32]>) {
   trait.method @value() -> i64 {
     %v = arith.constant 7 : i64
     trait.return %v : i64
   }
 }
-trait.impl private @Nine for @Mark[i32] {
+trait.impl private @Nine(%self: !trait.claim<@Mark[i32]>) {
   trait.method @value() -> i64 {
     %v = arith.constant 9 : i64
     trait.return %v : i64

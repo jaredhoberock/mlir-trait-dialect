@@ -10,17 +10,17 @@
 
 !T = !trait.poly<0>
 
-trait.trait private @Trait[!T] {
+trait.trait private @Trait(%self: !trait.claim<@Trait[!T]>) {
   trait.assoc_type @Assoc
   trait.method @dummy(!T) -> i32
 }
 
-trait.trait private @Marker[!T] {
+trait.trait private @Marker(%self: !trait.claim<@Marker[!T]>) {
   trait.method @mark(!T) -> i32
 }
 
 // impl Trait for i32 { type Assoc = tuple<>; }
-trait.impl private @Trait_i32 for @Trait[i32] {
+trait.impl private @Trait_i32(%self: !trait.claim<@Trait[i32]>) {
   trait.assoc_type @Assoc = tuple<>
   trait.method @dummy(%arg: i32) -> i32 {
     trait.return %arg : i32
@@ -28,7 +28,7 @@ trait.impl private @Trait_i32 for @Trait[i32] {
 }
 
 // impl Marker for tuple<> {}
-trait.impl private @Marker_unit for @Marker[tuple<>] {
+trait.impl private @Marker_unit(%self: !trait.claim<@Marker[tuple<>]>) {
   trait.method @mark(%arg: tuple<>) -> i32 {
     %c = arith.constant 1 : i32
     trait.return %c : i32
@@ -37,7 +37,7 @@ trait.impl private @Marker_unit for @Marker[tuple<>] {
 
 // impl<T: Trait> Marker for T where T::Assoc: Marker {}
 !U = !trait.poly<1>
-trait.impl private @Marker_via_assoc for @Marker[!U] where [@Trait[!U], @Marker[!trait.proj<@Trait[!U], "Assoc">]] {
+trait.impl private @Marker_via_assoc(%self: !trait.claim<@Marker[!U]>, %trait: !trait.claim<@Trait[!U]>, %marker: !trait.claim<@Marker[!trait.proj<@Trait[!U], "Assoc">]>) {
   trait.method @mark(%arg: !U) -> i32 {
     %c = arith.constant 2 : i32
     trait.return %c : i32
@@ -57,4 +57,7 @@ func.func @test() -> i32 {
   return %res : i32
 }
 
-// CHECK: trait.proof private @Marker_via_assoc_{{.*}}_p proves @Marker_via_assoc[!trait.poly<1> = i32] for @Marker[i32] given [@Trait_i32, @Marker_unit]
+// CHECK: trait.proof private @Marker_via_assoc_{{.*}}_p {
+// CHECK-NEXT: %[[T:.*]] = trait.witness @Trait_i32 for @Trait[i32]
+// CHECK-NEXT: %[[M:.*]] = trait.witness @Marker_unit for @Marker[
+// CHECK-NEXT: trait.derive @Marker[i32] from @Marker_via_assoc given(%[[T]], %[[M]])

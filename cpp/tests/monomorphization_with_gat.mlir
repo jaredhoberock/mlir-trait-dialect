@@ -17,12 +17,12 @@
 !S = !trait.poly<0>
 !T = !trait.poly<1>
 
-trait.trait private @Test[!S] {
+trait.trait private @Test(%self: !trait.claim<@Test[!S]>) {
   trait.assoc_type @Wrapper<[!T]>
   trait.method @test(!S, !T) -> !trait.proj<@Test[!S], "Wrapper", [!T]>
 }
 
-trait.impl private for @Test[i1] {
+trait.impl private @Test_impl(%self_claim: !trait.claim<@Test[i1]>) {
   trait.assoc_type @Wrapper<[!T]> = !T
   trait.method @test(%self: i1, %value: !T) -> !T {
     trait.return %value : !T

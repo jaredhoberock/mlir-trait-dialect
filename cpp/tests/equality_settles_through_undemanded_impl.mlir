@@ -21,11 +21,11 @@
 
 !U = !trait.poly<1>
 
-trait.trait private @Has[!trait.poly<0>] { trait.assoc_type @Out }
+trait.trait private @Has(%self: !trait.claim<@Has[!trait.poly<0>]>) { trait.assoc_type @Out }
 
-trait.impl private @Has_w1  for @Has[tuple<!U>]     { trait.assoc_type @Out = !trait.proj<@Has[!U], "Out"> }
-trait.impl private @Has_w2  for @Has[tuple<!U, !U>] { trait.assoc_type @Out = !trait.proj<@Has[!U], "Out"> }
-trait.impl private @Has_mid for @Has[i32]           { trait.assoc_type @Out = i64 }
+trait.impl private @Has_w1(%self: !trait.claim<@Has[tuple<!U>]>) { trait.assoc_type @Out = !trait.proj<@Has[!U], "Out"> }
+trait.impl private @Has_w2(%self: !trait.claim<@Has[tuple<!U, !U>]>) { trait.assoc_type @Out = !trait.proj<@Has[!U], "Out"> }
+trait.impl private @Has_mid(%self: !trait.claim<@Has[i32]>) { trait.assoc_type @Out = i64 }
 
 func.func private @gen(%c: !trait.claim<!trait.proj<@Has[tuple<!U>], "Out"> = !trait.proj<@Has[tuple<!U, !U>], "Out">>) -> () {
   return
@@ -36,9 +36,9 @@ func.func private @gen(%c: !trait.claim<!trait.proj<@Has[tuple<!U>], "Out"> = !t
 // CHECK-NOT: trait.claim
 // CHECK-NOT: trait.proj
 func.func @main() -> () {
-  %p1 = trait.witness proj_resolve !trait.proj<@Has[tuple<i32>], "Out"> resolves !trait.proj<@Has[i32], "Out"> by @Has_w1[!U = i32]
+  %p1 = trait.witness proj_resolve !trait.proj<@Has[tuple<i32>], "Out"> resolves !trait.proj<@Has[i32], "Out"> by @Has_w1
     : !trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = !trait.proj<@Has[i32], "Out">>
-  %p2 = trait.witness proj_resolve !trait.proj<@Has[tuple<i32, i32>], "Out"> resolves !trait.proj<@Has[i32], "Out"> by @Has_w2[!U = i32]
+  %p2 = trait.witness proj_resolve !trait.proj<@Has[tuple<i32, i32>], "Out"> resolves !trait.proj<@Has[i32], "Out"> by @Has_w2
     : !trait.claim<!trait.proj<@Has[tuple<i32, i32>], "Out"> = !trait.proj<@Has[i32], "Out">>
   %c = trait.witness compose(%p1, %p2)
     : (!trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = !trait.proj<@Has[i32], "Out">>, !trait.claim<!trait.proj<@Has[tuple<i32, i32>], "Out"> = !trait.proj<@Has[i32], "Out">>)

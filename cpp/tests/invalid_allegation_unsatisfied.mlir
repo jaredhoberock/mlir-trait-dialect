@@ -12,7 +12,7 @@
 // CHECK: 'trait.allege' op no impl with satisfiable assumptions for '!trait.claim<@T[i32]>'
 // CHECK: unresolved monomorphic trait.allege after resolve-impls
 
-trait.trait private @T[!trait.poly<0>] {
+trait.trait private @T(%self: !trait.claim<@T[!trait.poly<0>]>) {
 }
 
 func.func private @needs(%c: !trait.claim<@T[i32]>) {

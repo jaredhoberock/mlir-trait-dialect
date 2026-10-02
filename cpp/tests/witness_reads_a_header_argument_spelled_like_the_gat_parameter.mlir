@@ -13,15 +13,15 @@
 !U = !trait.poly<2>
 !W = !trait.poly<4>
 
-trait.trait private @Has[!trait.poly<1>] {
+trait.trait private @Has(%self: !trait.claim<@Has[!trait.poly<1>]>) {
   trait.assoc_type @A<[!trait.poly<3>]>
 }
-trait.impl private @Has_tuple for @Has[tuple<!U>] {
+trait.impl private @Has_tuple(%self: !trait.claim<@Has[tuple<!U>]>) {
   trait.assoc_type @A<[!W]> = tuple<!U, !W>
 }
 
 func.func private @k(%x: !X, %v: tuple<!X, i1>) -> !trait.proj<@Has[tuple<!X>], "A", [i1]> {
-  %e = trait.witness proj_resolve !trait.proj<@Has[tuple<!X>], "A", [i1]> resolves tuple<!X, i1> by @Has_tuple[!U = !X]
+  %e = trait.witness proj_resolve !trait.proj<@Has[tuple<!X>], "A", [i1]> resolves tuple<!X, i1> by @Has_tuple
     : !trait.claim<!trait.proj<@Has[tuple<!X>], "A", [i1]> = tuple<!X, i1>>
   %p = trait.coerce %v : tuple<!X, i1> to !trait.proj<@Has[tuple<!X>], "A", [i1]> via (%e)
     : (!trait.claim<!trait.proj<@Has[tuple<!X>], "A", [i1]> = tuple<!X, i1>>)

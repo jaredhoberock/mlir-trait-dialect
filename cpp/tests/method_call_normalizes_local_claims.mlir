@@ -4,21 +4,21 @@
 !U = !trait.poly<1>
 !Output = !trait.proj<@Value[i64], "Output">
 
-trait.trait private @Value[!T] {
+trait.trait private @Value(%self: !trait.claim<@Value[!T]>) {
   trait.assoc_type @Output
 }
 
-trait.impl private @Value_i64 for @Value[i64] {
+trait.impl private @Value_i64(%self: !trait.claim<@Value[i64]>) {
   trait.assoc_type @Output = i64
 }
 
-trait.trait private @Trait[!T] {
+trait.trait private @Trait(%self: !trait.claim<@Trait[!T]>) {
   trait.assoc_type @First
   trait.assoc_type @Second
   trait.method @get(!T) -> !trait.proj<@Trait[!T], "First">
 }
 
-trait.impl private @Trait_impl for @Trait[!T] {
+trait.impl private @Trait_impl(%self_claim: !trait.claim<@Trait[!T]>) {
   trait.assoc_type @First = !trait.proj<@Trait[!T], "Second">
   trait.assoc_type @Second = !Output
   trait.method @get(%self: !T) -> !Output {
@@ -27,14 +27,14 @@ trait.impl private @Trait_impl for @Trait[!T] {
   }
 }
 
-trait.trait private @Fn[!T, !U] {
+trait.trait private @Fn(%self: !trait.claim<@Fn[!T, !U]>) {
   trait.assoc_type @Output
 }
 
-trait.trait private @FnUni[!T, !U] {
+trait.trait private @FnUni(%self: !trait.claim<@FnUni[!T, !U]>) {
 }
 
-trait.trait private @Map[!T] {
+trait.trait private @Map(%self: !trait.claim<@Map[!T]>) {
   trait.method @map(
     !T,
     !U,
@@ -42,17 +42,17 @@ trait.trait private @Map[!T] {
   ) -> !trait.proj<@Fn[!U, !T], "Output">
 }
 
-trait.impl private @Fn_i1_i64 for @Fn[i1, i64] {
+trait.impl private @Fn_i1_i64(%self: !trait.claim<@Fn[i1, i64]>) {
   trait.assoc_type @Output = !Output
 }
 
-trait.impl private @FnUni_i1_i64 for @FnUni[i1, i64] where [@Fn[i1, i64]] {
+trait.impl private @FnUni_i1_i64(%self: !trait.claim<@FnUni[i1, i64]>, %fn: !trait.claim<@Fn[i1, i64]>) {
 }
 
 // CHECK-LABEL: func.func @method_result_normalizes_chained_bindings
 // CHECK: trait.method.call
 func.func @method_result_normalizes_chained_bindings(%value: i64) -> !Output {
-  %claim = trait.derive @Trait[i64] from @Trait_impl[!T = i64] given()
+  %claim = trait.derive @Trait[i64] from @Trait_impl given()
   %result = trait.method.call %claim @Trait[i64]::@get(%value)
     : (i64) -> !Output
   return %result : !Output
@@ -63,7 +63,7 @@ func.func @method_result_normalizes_chained_bindings(%value: i64) -> !Output {
 func.func @method_result_normalizes_after_binding_input_generics(%value: i64) -> !Output {
   %map = trait.allege @Map[i64]
   %fn = trait.witness @Fn_i1_i64 for @Fn[i1, i64]
-  %fn_uni = trait.derive @FnUni[i1, i64] from @FnUni_i1_i64[] given(%fn)
+  %fn_uni = trait.derive @FnUni[i1, i64] from @FnUni_i1_i64 given(%fn)
     : (!trait.claim<@Fn[i1, i64] by @Fn_i1_i64>)
   %f = arith.constant false
   %result = trait.method.call %map @Map[i64]::@map(%value, %f, %fn_uni)

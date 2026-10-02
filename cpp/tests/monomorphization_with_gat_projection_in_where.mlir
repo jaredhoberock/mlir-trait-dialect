@@ -21,26 +21,28 @@
 !S = !trait.poly<0>
 !T = !trait.poly<1>
 
-trait.trait private @Printable[!S] {
+trait.trait private @Printable(%self: !trait.claim<@Printable[!S]>) {
   trait.method @print(!S) -> i32
 }
 
-trait.trait private @Transform[!S] where [@Printable[!trait.proj<@Transform[!S], "Output", [i32]>]] {
+trait.trait private @Transform(%self: !trait.claim<@Transform[!S]>) -> !trait.claim<@Printable[!trait.proj<@Transform[!S], "Output", [i32]>]> {
   trait.assoc_type @Output<[!T]>
   trait.method @apply(!S, !T) -> !trait.proj<@Transform[!S], "Output", [!T]>
 }
 
-trait.impl private for @Printable[i32] {
+trait.impl private @Printable_impl(%self_claim: !trait.claim<@Printable[i32]>) {
   trait.method @print(%self: i32) -> i32 {
     trait.return %self : i32
   }
 }
 
-trait.impl private for @Transform[i64] {
+trait.impl private @Transform_impl(%self_claim: !trait.claim<@Transform[i64]>) {
   trait.assoc_type @Output<[!T]> = !T
   trait.method @apply(%self: i64, %x: !T) -> !T {
     trait.return %x : !T
   }
+  %req0 = trait.allege @Printable[!trait.proj<@Transform[i64], "Output", [i32]>]
+  trait.return %req0 : !trait.claim<@Printable[!trait.proj<@Transform[i64], "Output", [i32]>]>
 }
 
 // Proving @Transform[i64] must resolve the where clause:

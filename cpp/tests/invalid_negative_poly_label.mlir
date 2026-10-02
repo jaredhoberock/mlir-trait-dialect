@@ -19,7 +19,7 @@ func.func @negative_label(%a: !T) -> !T {
 // The refusal is on the spelling, so it reaches a label written inside a trait
 // application as well as one written in a signature.
 
-trait.trait private @Fold[!trait.poly<0>] {}
+trait.trait private @Fold(%self: !trait.claim<@Fold[!trait.poly<0>]>) {}
 
 // expected-error @below {{a !trait.poly label is non-negative; found -3}}
 func.func @negative_label_in_an_application(%c: !trait.claim<@Fold[!trait.poly<-3>]>) {

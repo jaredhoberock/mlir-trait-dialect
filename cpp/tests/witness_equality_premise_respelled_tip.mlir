@@ -1,47 +1,72 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 
-// RUN: mlir-opt %s | FileCheck %s
+// RUN: mlir-opt %s -split-input-file -verify-diagnostics
 
-// An obligation premise spelled through a projection discharges the cited impl's
-// assumption modulo an equality premise. @Has_tuple's assumption specializes to
-// @X[i32]; the witness supplies @X[!Other[i32]::A] together with the equality
-// premise !Other[i32]::A = i32. Verification rewrites the respelled premise by that
-// equality to @X[i32] and the assumption is discharged -- the equality premise
-// serves as the rewrite modulus, and the two admitted moduli (proof strip and
-// equality premises) are the only ones.
+// A premise spelled through a projection discharges the cited impl's where
+// entry modulo an equality the citation's scope holds. @Has_tuple's entry is
+// @X[i32] at the citation; the witness supplies @X[!Other[i32]::A], and @f
+// takes !Other[i32]::A = i32 as a claim parameter. No impl binds
+// @Other[i32]::A, so that hypothesis alone reads the supplied premise as
+// @X[i32], and the entry is discharged.
 
 !U = !trait.poly<0>
 
-trait.trait private @X[!U] {}
+trait.trait private @X(%self: !trait.claim<@X[!U]>) {}
 
-trait.trait private @Other[!U] {
+trait.trait private @Other(%self: !trait.claim<@Other[!U]>) {
   trait.assoc_type @A
 }
 
-trait.trait private @Has[!U] {
+trait.trait private @Has(%self: !trait.claim<@Has[!U]>) {
   trait.assoc_type @Out
 }
 
-trait.impl private @X_i32 for @X[i32] {}
-
-trait.impl private @Other_i32 for @Other[i32] {
-  trait.assoc_type @A = i32
-}
-
-trait.impl private @Has_tuple for @Has[tuple<!U>] where [@X[!U]] {
+trait.impl private @Has_tuple(%self: !trait.claim<@Has[tuple<!U>]>, %x: !trait.claim<@X[!U]>) {
   trait.assoc_type @Out = i64
 }
 
-// CHECK-LABEL: func.func @f
-// CHECK: trait.witness proj_resolve
 func.func @f(
     %v: !trait.proj<@Has[tuple<i32>], "Out">,
     %x: !trait.claim<@X[!trait.proj<@Other[i32], "A">]>,
     %e: !trait.claim<!trait.proj<@Other[i32], "A"> = i32>
 ) -> i64 {
-  %eq = trait.witness proj_resolve !trait.proj<@Has[tuple<i32>], "Out"> resolves i64 by @Has_tuple[!U = i32] given(%x, %e)
-    : (!trait.claim<@X[!trait.proj<@Other[i32], "A">]>, !trait.claim<!trait.proj<@Other[i32], "A"> = i32>)
+  %eq = trait.witness proj_resolve !trait.proj<@Has[tuple<i32>], "Out"> resolves i64 by @Has_tuple given(%x)
+    : (!trait.claim<@X[!trait.proj<@Other[i32], "A">]>)
+    : !trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = i64>
+  %c = trait.coerce %v : !trait.proj<@Has[tuple<i32>], "Out"> to i64 via (%eq)
+    : (!trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = i64>)
+  return %c : i64
+}
+
+// -----
+
+// Without the equality in scope nothing reads @X[!Other[i32]::A] as @X[i32],
+// and the witness is refused.
+
+!U = !trait.poly<0>
+
+trait.trait private @X(%self: !trait.claim<@X[!U]>) {}
+
+trait.trait private @Other(%self: !trait.claim<@Other[!U]>) {
+  trait.assoc_type @A
+}
+
+trait.trait private @Has(%self: !trait.claim<@Has[!U]>) {
+  trait.assoc_type @Out
+}
+
+trait.impl private @Has_tuple(%self: !trait.claim<@Has[tuple<!U>]>, %x: !trait.claim<@X[!U]>) {
+  trait.assoc_type @Out = i64
+}
+
+func.func @f(
+    %v: !trait.proj<@Has[tuple<i32>], "Out">,
+    %x: !trait.claim<@X[!trait.proj<@Other[i32], "A">]>
+) -> i64 {
+  // expected-error @below {{premise 0 of impl '@Has_tuple' is '!trait.claim<@X[i32]>', and the witness supplies '!trait.claim<@X[!trait.proj<@Other[i32], "A">]>'}}
+  %eq = trait.witness proj_resolve !trait.proj<@Has[tuple<i32>], "Out"> resolves i64 by @Has_tuple given(%x)
+    : (!trait.claim<@X[!trait.proj<@Other[i32], "A">]>)
     : !trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = i64>
   %c = trait.coerce %v : !trait.proj<@Has[tuple<i32>], "Out"> to i64 via (%eq)
     : (!trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = i64>)

@@ -15,13 +15,13 @@
 !B = !trait.poly<3>
 !X = !trait.poly<4>
 
-trait.trait private @Arg[!S] { trait.assoc_type @Out }
-trait.impl private @Arg_i64 for @Arg[i64] {
+trait.trait private @Arg(%self: !trait.claim<@Arg[!S]>) { trait.assoc_type @Out }
+trait.impl private @Arg_i64(%self: !trait.claim<@Arg[i64]>) {
   trait.assoc_type @Out = i32
 }
 
-trait.trait private @Gat[!S] { trait.assoc_type @Item<[!A]> }
-trait.impl private @Gat_any for @Gat[!T] {
+trait.trait private @Gat(%self: !trait.claim<@Gat[!S]>) { trait.assoc_type @Item<[!A]> }
+trait.impl private @Gat_any(%self: !trait.claim<@Gat[!T]>) {
   trait.assoc_type @Item<[!B]> = !B
 }
 
@@ -45,7 +45,7 @@ func.func @main() {
 // CHECK: trait.allege !trait.proj<@Gat[!trait.poly<4>], "Item", [!trait.proj<@Arg[!trait.poly<4>], "Out">]> = i32
 // CHECK-LABEL: func.func private @send_
 // CHECK-NOT: trait.allege
-// CHECK: %[[GAT:.*]] = trait.witness proj_resolve !trait.proj<@Gat[i64], "Item", [!trait.proj<@Arg[i64], "Out">]> resolves !trait.proj<@Arg[i64], "Out"> by @Gat_any[!trait.poly<2> = i64]
+// CHECK: %[[GAT:.*]] = trait.witness proj_resolve !trait.proj<@Gat[i64], "Item", [!trait.proj<@Arg[i64], "Out">]> resolves !trait.proj<@Arg[i64], "Out"> by @Gat_any
 // CHECK: %[[ARG:.*]] = trait.witness proj_resolve !trait.proj<@Arg[i64], "Out"> resolves i32 by @Arg_i64
 // CHECK: %[[BOTH:.*]] = trait.witness compose(%[[GAT]], %[[ARG]])
 // CHECK: call @sink_{{.*}}(%[[BOTH]])

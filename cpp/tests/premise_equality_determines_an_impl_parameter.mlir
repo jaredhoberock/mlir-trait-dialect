@@ -11,22 +11,22 @@
 
 !F = !trait.poly<0>
 
-trait.trait private @Out[!F] {
+trait.trait private @Out(%self: !trait.claim<@Out[!F]>) {
   trait.assoc_type @Output
 }
 
-trait.impl private @Out_i32 for @Out[i32] {
+trait.impl private @Out_i32(%self: !trait.claim<@Out[i32]>) {
   trait.assoc_type @Output = i64
 }
 
 !G = !trait.poly<1>
-trait.trait private @Fold[!G] {
+trait.trait private @Fold(%self: !trait.claim<@Fold[!G]>) {
   trait.assoc_type @Sum
   trait.method @run(!G) -> !trait.proj<@Fold[!G], "Sum">
 }
 
 !Acc = !trait.poly<2>
-trait.impl private @Fold_gen for @Fold[!G] where [!trait.proj<@Out[!G], "Output"> = !Acc] {
+trait.impl private @Fold_gen(%self: !trait.claim<@Fold[!G]>, %output: !trait.claim<!trait.proj<@Out[!G], "Output"> = !Acc>) {
   trait.assoc_type @Sum = !Acc
   trait.method @run(%x: !G) -> !Acc {
     %r = builtin.unrealized_conversion_cast %x : !G to !Acc

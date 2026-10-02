@@ -3,40 +3,43 @@
 
 // RUN: mlir-opt %s -verify-diagnostics
 
-// A discharge citation supplies an obligation only when its NAMED impl genuinely
-// discharges it -- the named impl's own assumptions must in turn be discharged.
-// The premise cites @Sib_i64_cond (assumes @Y[i64]); the citation names @Y_cond
-// as the discharger of @Y[i64], but @Y_cond itself assumes @Z[i64], and no
-// citation and no where entry supplies @Z[i64]. Verification follows the citation
-// to @Y_cond, finds its assumption @Z[i64] undischarged, and refuses -- the
-// obligation @Y[i64] therefore stays undischarged and the impl is refused at
-// impl verification.
+// A premise is supplied only by evidence that holds on its own -- the impl it
+// names must in turn have its where clause supplied. The proj_resolve witness
+// cites @Sib_i64_cond (which takes @Y[i64]) and supplies, by position, a
+// witness naming @Y_cond as the evidence for @Y[i64]; but @Y_cond itself takes
+// @Z[i64], which no witness supplies: a conditional impl is cited through a
+// proof that derives it from its premises, never named bare. The witness of
+// @Y_cond is refused, so the premise it would supply does not exist.
 
 !S = !trait.poly<0>
 
-trait.trait private @Y[!S] {}
-trait.trait private @Z[!S] {}
+trait.trait private @Y(%self: !trait.claim<@Y[!S]>) {}
+trait.trait private @Z(%self: !trait.claim<@Z[!S]>) {}
 
-trait.impl private @Y_cond for @Y[i64] where [@Z[i64]] {}
+trait.impl private @Y_cond(%self: !trait.claim<@Y[i64]>, %z: !trait.claim<@Z[i64]>) {}
 
-trait.trait private @Sib[!S] {
+trait.trait private @Sib(%self: !trait.claim<@Sib[!S]>) {
   trait.assoc_type @Elem
 }
 
-trait.impl private @Sib_i64_cond for @Sib[i64] where [@Y[i64]] {
+trait.impl private @Sib_i64_cond(%self: !trait.claim<@Sib[i64]>, %y: !trait.claim<@Y[i64]>) {
   trait.assoc_type @Elem = i32
 }
 
-trait.trait private @Host[!S] {
+trait.trait private @Host(%self: !trait.claim<@Host[!S]>) {
   trait.method @make(!S) -> !trait.proj<@Sib[!S], "Elem">
 }
 
-// expected-error @below {{cited impl '@Sib_i64_cond' has an undischarged assumption '!trait.claim<@Y[i64]>'; the witness premises do not supply it}}
-trait.impl private @Host_i64 for @Host[i64]
-    witnesses [#trait<witness !trait.proj<@Sib[i64], "Elem"> = i32 by @Sib_i64_cond>,
-               #trait<witness @Y[i64] by @Y_cond>] {
-  trait.method @make(%x: i64) -> i32 {
+trait.impl private @Host_i64(%self: !trait.claim<@Host[i64]>) {
+  trait.method @make(%x: i64) -> !trait.proj<@Sib[i64], "Elem"> {
     %r = ub.poison : i32
-    trait.return %r : i32
+    // expected-error @below {{impl '@Y_cond' binds type parameters or has a where clause, so it must be cited through a trait.proof}}
+    %y = trait.witness @Y_cond for @Y[i64]
+    %e = trait.witness proj_resolve !trait.proj<@Sib[i64], "Elem"> resolves i32 by @Sib_i64_cond
+      given(%y) : (!trait.claim<@Y[i64] by @Y_cond>)
+      : !trait.claim<!trait.proj<@Sib[i64], "Elem"> = i32>
+    %c = trait.coerce %r : i32 to !trait.proj<@Sib[i64], "Elem"> via (%e)
+      : (!trait.claim<!trait.proj<@Sib[i64], "Elem"> = i32>)
+    trait.return %c : !trait.proj<@Sib[i64], "Elem">
   }
 }

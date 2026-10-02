@@ -12,14 +12,14 @@
 // CHECK: {{^}}16{{$}}
 
 !T = !trait.poly<0>
-trait.trait private @Tr[!T] { trait.method @value() -> i64 }
-trait.impl private @One for @Tr[i32] {
+trait.trait private @Tr(%self: !trait.claim<@Tr[!T]>) { trait.method @value() -> i64 }
+trait.impl private @One(%self: !trait.claim<@Tr[i32]>) {
   trait.method @value() -> i64 {
     %v = arith.constant 7 : i64
     trait.return %v : i64
   }
 }
-trait.impl private @Two for @Tr[i32] {
+trait.impl private @Two(%self: !trait.claim<@Tr[i32]>) {
   trait.method @value() -> i64 {
     %v = arith.constant 9 : i64
     trait.return %v : i64

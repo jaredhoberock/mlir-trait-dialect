@@ -15,24 +15,22 @@
 
 !S = !trait.poly<0>
 
-trait.trait private @X[!S] {}
-trait.impl private @X_i64 for @X[i64] {}
+trait.trait private @X(%self: !trait.claim<@X[!S]>) {}
+trait.impl private @X_i64(%self: !trait.claim<@X[i64]>) {}
 
-trait.trait private @Sib[!S] {
+trait.trait private @Sib(%self: !trait.claim<@Sib[!S]>) {
   trait.assoc_type @Elem
 }
-trait.impl private @Sib_cond for @Sib[i64] where [@X[i64]] {
+trait.impl private @Sib_cond(%self: !trait.claim<@Sib[i64]>, %x: !trait.claim<@X[i64]>) {
   trait.assoc_type @Elem = i64
 }
 
-trait.trait private @T2[!S] {
+trait.trait private @T2(%self: !trait.claim<@T2[!S]>) {
   trait.method @id(!S) -> !S
 }
 
-// CHECK: trait.impl private @T2_i64 for @T2[i64] where [!trait.proj<@Sib[i64], "Elem"> = i64]
-trait.impl private @T2_i64 for @T2[i64] where [!trait.proj<@Sib[i64], "Elem"> = i64]
-    witnesses [#trait<witness !trait.proj<@Sib[i64], "Elem"> = i64 by @Sib_cond>,
-               #trait<witness @X[i64] by @X_i64>] {
+// CHECK: trait.impl private @T2_i64(%self: !trait.claim<@T2[i64]>
+trait.impl private @T2_i64(%self: !trait.claim<@T2[i64]>, %elem: !trait.claim<!trait.proj<@Sib[i64], "Elem"> = i64>) {
   trait.method @id(%x: i64) -> i64 {
     trait.return %x : i64
   }

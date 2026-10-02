@@ -11,23 +11,23 @@
 
 !U = !trait.poly<0>
 
-trait.trait private @X[!U] {}
+trait.trait private @X(%self: !trait.claim<@X[!U]>) {}
 
-trait.trait private @Has[!U] {
+trait.trait private @Has(%self: !trait.claim<@Has[!U]>) {
   trait.assoc_type @Out
 }
 
-trait.impl private @X_i32 for @X[i32] {}
+trait.impl private @X_i32(%self: !trait.claim<@X[i32]>) {}
 
-trait.impl private @Has_tuple for @Has[tuple<!U>] where [@X[!U]] {
+trait.impl private @Has_tuple(%self: !trait.claim<@Has[tuple<!U>]>, %x: !trait.claim<@X[!U]>) {
   trait.assoc_type @Out = i64
 }
 
 // CHECK-LABEL: func.func @f
-// CHECK: trait.witness proj_resolve !trait.proj<@Has[tuple<i32>], "Out"> resolves i64 by @Has_tuple[!trait.poly<0> = i32] given
+// CHECK: trait.witness proj_resolve !trait.proj<@Has[tuple<i32>], "Out"> resolves i64 by @Has_tuple given
 // CHECK: trait.coerce
 func.func @f(%v: !trait.proj<@Has[tuple<i32>], "Out">, %x: !trait.claim<@X[i32]>) -> i64 {
-  %eq = trait.witness proj_resolve !trait.proj<@Has[tuple<i32>], "Out"> resolves i64 by @Has_tuple[!U = i32] given(%x)
+  %eq = trait.witness proj_resolve !trait.proj<@Has[tuple<i32>], "Out"> resolves i64 by @Has_tuple given(%x)
     : (!trait.claim<@X[i32]>)
     : !trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = i64>
   %c = trait.coerce %v : !trait.proj<@Has[tuple<i32>], "Out"> to i64 via (%eq)

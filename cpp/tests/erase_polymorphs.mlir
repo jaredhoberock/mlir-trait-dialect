@@ -14,11 +14,11 @@
 
 !T = !trait.poly<0>
 
-trait.trait private @Base[!T] {
+trait.trait private @Base(%self: !trait.claim<@Base[!T]>) {
   trait.assoc_type @Assoc
 }
 
-trait.impl private @Base_i64 for @Base[i64] {
+trait.impl private @Base_i64(%self: !trait.claim<@Base[i64]>) {
   trait.assoc_type @Assoc = i1
 }
 

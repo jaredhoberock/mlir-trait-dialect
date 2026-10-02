@@ -11,17 +11,17 @@
 // there, a substitution the verifier checks with no reading. Monomorphized,
 // the derive becomes a witness of the proof through the impl it cites.
 
-// VERIFIED: trait.derive @Tr[tuple<!trait.poly<0>>] from @Tr_tuple[!trait.poly<1> = !trait.poly<0>] given(%arg0, %arg1)
+// VERIFIED: trait.derive @Tr[tuple<!trait.poly<0>>] from @Tr_tuple given(%arg0, %arg1)
 
 !T = !trait.poly<0>
 !U = !trait.poly<1>
 
-trait.trait private @Tr[!T] {
+trait.trait private @Tr(%self: !trait.claim<@Tr[!T]>) {
   trait.assoc_type @Out
   trait.method @get(!T) -> i64
 }
 
-trait.impl private @Tr_i32 for @Tr[i32] {
+trait.impl private @Tr_i32(%self: !trait.claim<@Tr[i32]>) {
   trait.assoc_type @Out = i64
   trait.method @get(%x: i32) -> i64 {
     %c = arith.constant 7 : i64
@@ -29,7 +29,7 @@ trait.impl private @Tr_i32 for @Tr[i32] {
   }
 }
 
-trait.impl private @Tr_tuple for @Tr[tuple<!U>] where [@Tr[!U], !trait.proj<@Tr[!U], "Out"> = i64] {
+trait.impl private @Tr_tuple(%self: !trait.claim<@Tr[tuple<!U>]>, %tr: !trait.claim<@Tr[!U]>, %out: !trait.claim<!trait.proj<@Tr[!U], "Out"> = i64>) {
   trait.assoc_type @Out = i64
   trait.method @get(%x: tuple<!U>) -> i64 {
     %c = arith.constant 35 : i64
@@ -38,7 +38,7 @@ trait.impl private @Tr_tuple for @Tr[tuple<!U>] where [@Tr[!U], !trait.proj<@Tr[
 }
 
 func.func private @g(%t: !trait.claim<@Tr[!T]>, %e: !trait.claim<!trait.proj<@Tr[!T], "Out"> = i64>, %x: tuple<!T>) -> i64 {
-  %d = trait.derive @Tr[tuple<!T>] from @Tr_tuple[!U = !T] given(%t, %e) : (!trait.claim<@Tr[!T]>, !trait.claim<!trait.proj<@Tr[!T], "Out"> = i64>)
+  %d = trait.derive @Tr[tuple<!T>] from @Tr_tuple given(%t, %e) : (!trait.claim<@Tr[!T]>, !trait.claim<!trait.proj<@Tr[!T], "Out"> = i64>)
   %r = trait.method.call %d @Tr[tuple<!T>]::@get(%x) : (tuple<!T>) -> i64
   return %r : i64
 }

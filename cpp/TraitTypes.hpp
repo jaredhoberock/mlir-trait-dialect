@@ -63,17 +63,6 @@ inline std::optional<std::pair<Type, WalkResult>> respellEqualityEndpoints(
       WalkResult::skip());
 }
 
-/// The clone rule for a projection-resolution witness: rebuild it with `respell`
-/// applied to its endpoints and to every argument it carries, atomically,
-/// through the checked constructor, so the witness a clone holds is the instance
-/// its claim is. The keys are the cited impl's own parameters, which no clone
-/// substitutes. Answers nullopt for an application-armed witness and when the
-/// rebuilt witness does not construct -- the op then keeps its stored witness,
-/// which its respelled claim no longer matches and verification refuses -- and
-/// otherwise always skips the result's interior.
-std::optional<std::pair<Attribute, WalkResult>> respellWitness(
-    WitnessAttr witness, llvm::function_ref<Type(Type)> respell);
-
 /// A replacer whose equality endpoints are a leaf.
 ///
 /// An equality's endpoints are ordinary sub-elements, so every walk reaches
@@ -84,14 +73,9 @@ std::optional<std::pair<Attribute, WalkResult>> respellWitness(
 /// kill a legal program. The one attribute-level rule this registers returns
 /// the equality unchanged and skips its interior, which makes every replacer
 /// built from it a reader of endpoints and never a writer. The rule sits on the
-/// attribute rather than on the claim because a bare `TypeEqualityAttr` stands
-/// in attribute positions with no claim around it: the witness attribute of an
-/// equality-arm `trait.witness`, and the `assumptions` and `witnesses` arrays of
-/// `trait.impl`. A projection-resolution witness is sealed whole: the type
-/// arguments it carries are read with its endpoints, so rewriting either alone
-/// would pair arguments with an equality they were not chosen for. The
-/// sanctioned movers are `respellEqualityEndpoints` and `respellWitness`, which
-/// a clone registers together.
+/// attribute rather than on the claim so that no attribute position holding a
+/// bare equality is reached either. The sanctioned mover is
+/// `respellEqualityEndpoints`, which a clone registers.
 AttrTypeReplacer makeEndpointSealedReplacer();
 
 /// The sealed replacer above plus the one rule every ground-projection rewrite
@@ -176,75 +160,6 @@ public:
 /// The concrete associated types projections stand for.
 using ProjectionBindings = TypeBindings<ProjectionType>;
 
-/// The evidence proof derivation has accepted: each unproven claim spelling it
-/// discharged, with every proven spelling it accepted as discharging it.
-///
-/// One claim can be discharged by two different proofs -- the same fact
-/// supplied for two reasons, at two positions of one use or of one proof's
-/// subproofs -- and both are evidence. A reader keyed by the claim alone cannot
-/// say which of them a spelling means, so the claim-keyed view answers only for
-/// a claim exactly one proof discharges; what carries each proof of any other
-/// claim is the position it was supplied at.
-class EvidenceBindings {
-public:
-  /// Records that `proven` discharges `unproven`.
-  void bind(ClaimType unproven, ClaimType proven) {
-    assert(!unproven.isProven() && "evidence keys must be unproven claims");
-    assert(proven.isProven() && "evidence values must be proven claims");
-    SmallVector<ClaimType, 1> &accepted = proofs[unproven];
-    if (!llvm::is_contained(accepted, proven))
-      accepted.push_back(proven);
-  }
-
-  /// Whether `proven` is recorded as discharging `unproven`.
-  bool holds(ClaimType unproven, ClaimType proven) const {
-    auto it = proofs.find(unproven);
-    return it != proofs.end() && llvm::is_contained(it->second, proven);
-  }
-
-  /// Every proof recorded as discharging `unproven`, in recording order, and
-  /// none where none is. Two or more say the claim's spelling alone cannot name
-  /// the proof a value of that type carries.
-  ArrayRef<ClaimType> proofsOf(ClaimType unproven) const {
-    auto it = proofs.find(unproven);
-    return it == proofs.end() ? ArrayRef<ClaimType>()
-                              : ArrayRef<ClaimType>(it->second);
-  }
-
-  /// Takes back the record that `proven` discharges `unproven`: the recursive
-  /// proof derivation's optimistic binding, when a nested obligation fails.
-  void erase(ClaimType unproven, ClaimType proven) {
-    auto it = proofs.find(unproven);
-    if (it == proofs.end())
-      return;
-    llvm::erase(it->second, proven);
-    if (it->second.empty())
-      proofs.erase(it);
-  }
-
-  /// The claim-keyed view: every claim exactly one proof discharges, mapped to
-  /// that proof.
-  llvm::DenseMap<Type, Type> toTypeMap() const {
-    llvm::DenseMap<Type, Type> result;
-    for (const auto &[unproven, accepted] : proofs)
-      if (accepted.size() == 1)
-        result[unproven] = accepted.front();
-    return result;
-  }
-
-  /// How many (claim, proof) pairs are recorded, which grows with every pair a
-  /// derivation accepts.
-  size_t bindingCount() const {
-    size_t count = 0;
-    for (const auto &entry : proofs)
-      count += entry.second.size();
-    return count;
-  }
-
-private:
-  llvm::DenseMap<ClaimType, SmallVector<ClaimType, 1>> proofs;
-};
-
 /// Whether a spelling is one nothing but a respelling can move.
 ///
 /// Two things leave a spelling open. A ground projection is one the impls
@@ -273,175 +188,58 @@ inline bool spellingIsSettled(Type ty) {
 /// read. A reading with no variable in it is decided here even where it spells a
 /// projection nothing resolves -- no instance moves that spelling either, so a
 /// premise it leaves unequal is a premise that does not hold, and the impl
-/// stating it does not apply. This is the one judgment impl selection, a proof,
-/// a witness and a derive all read their premises by; `OpenPremise` says where
-/// a reading this leaves open is decided.
+/// stating it does not apply. This is the judgment impl selection reads a
+/// candidate's equality premises by.
 inline bool premiseDefersToInstances(Type lhs, Type rhs) {
   return isPolymorphicType(lhs) || isPolymorphicType(rhs);
 }
 
-/// Where an equality premise a citation leaves open is decided.
-enum class OpenPremise {
-  /// The instances made of this template. The variable the reading carries
-  /// stands for whatever each instance binds it to, and the clone reads the
-  /// premise at the arguments that instance supplies.
-  DecidedAtInstances,
-
-  /// Here or nowhere. A proof op states its impl's premises at the claim it
-  /// stands over, and a citation of that proof reads nothing inside it, so a
-  /// premise the claim leaves open is one no later reading decides.
-  RefusedHere
-};
-
-/// Where an equality premise a citation reads closed -- no type variable left
-/// -- but still spelling a projection its evidence does not resolve is decided.
-enum class StandingPremise {
-  /// The stage's exit, which reads every citation standing there through what
-  /// selection settled.
-  DecidedAtStageExit,
-
-  /// Where the evidence for each projection it still spells stands. A
-  /// projection over one of the cited impl's where-clause applications, at the
-  /// citation, rests on the premise discharging that application: a proof has
-  /// resolved it already, an allegation the stage settles, a hypothesis the
-  /// frame's caller supplies -- so it is left standing. A projection over any
-  /// other application rests on nothing the citation carries, and the premise
-  /// is refused (invalid_witness_premise_unsettled.mlir): the stage's leftover
-  /// settlement reads a witness's spelling through the module's impls, which is
-  /// not evidence. This is the projection well-formedness rule the
-  /// module-lookup XXX TODOs name, applied to one citation's premises.
-  DecidedWithItsPremise
-};
-
-/// The proof derivations one span of resolution has completed, so that a
-/// derivation performed once can be replayed rather than performed again.
-///
-/// Recursive proof verification derives an obligation once per call site,
-/// because each call site's evidence map is born empty. A derivation's whole
-/// output is the closure of bindings it writes into that map, so replaying that
-/// closure into another map leaves it holding what deriving would have left it
-/// holding. This is an acceptance shortcut and nothing else: a pair it has no
-/// answer for is derived exactly as before.
-///
-/// A derivation reads the module. The ground-projection lookup resolves only
-/// where exactly one candidate binds an application, so an impl minted since
-/// can make an obligation newly resolvable or newly ambiguous and specialize it
-/// differently. Every entry therefore names the fact base it was read from, and
-/// an entry read from an earlier one is not an answer. Two events move that
-/// fact base and neither moves with the other: impl selection minting a fact,
-/// and a sweep respelling the module's copy of the facts -- a sweep records no
-/// proof, so a count of facts cannot see it, and what a derivation reads are
-/// spellings.
-///
-/// This holds no fact: everything in it is derivable again, which is what lets
-/// a reader keep it through a handle that may not resolve and makes dropping an
-/// entry always safe.
-class ProofDerivationMemo {
-public:
-  /// The evidence bindings one derivation wrote, in the order it wrote them.
-  using Closure = SmallVector<std::pair<ClaimType, ClaimType>, 4>;
-
-  /// The closure deriving `proven` for `unproven` under `anchor` produced, or
-  /// nothing when no derivation of that pair is held against the fact base as it
-  /// stands. A spelling names its symbols in one symbol table, so the module the
-  /// derivation read is part of what it answers for.
-  const Closure *lookup(Operation *anchor, ClaimType unproven,
-                        ClaimType proven) const {
-    auto it = entries.find(Key{anchor, unproven, proven});
-    if (it == entries.end() || it->second.factBase != factBase)
-      return nullptr;
-    return &it->second.closure;
-  }
-
-  /// Holds `closure` as what deriving `proven` for `unproven` under `anchor`
-  /// produced, against the fact base as it stands.
-  void record(Operation *anchor, ClaimType unproven, ClaimType proven,
-              Closure closure) {
-    entries[Key{anchor, unproven, proven}] = Entry{std::move(closure),
-                                                   factBase};
-  }
-
-  /// Says impl selection has minted a fact, so nothing derived before now was
-  /// derived from the module as it stands.
-  void noteFactWritten() { ++factBase; }
-
-  /// Says a sweep has respelled the module's copy of the facts.
-  void noteRespelling() { ++factBase; }
-
-private:
-  /// A module and the pair a caller asked about under it.
-  using Key = std::tuple<Operation *, ClaimType, ClaimType>;
-
-  struct Entry {
-    Closure closure;
-    uint64_t factBase = 0;
-  };
-
-  llvm::DenseMap<Key, Entry> entries;
-  uint64_t factBase = 0;
-};
-
-/// CallSubstitution: SpecializationMap + ProjectionBindings + EvidenceBindings.
+/// CallSubstitution: SpecializationMap + ProjectionBindings.
 ///
 /// The complete set of type rewrites needed to lower one call site, closed under
-/// the projections and the proofs those rewrites expose.
+/// the projections those rewrites expose.
 ///
 /// The factory below is the only way to make one, so a substitution that exists
 /// is one the read closed: every monomorphic projection the call spells is bound
-/// to what impl selection settled for it, and every proven claim it spells is
-/// bound together with everything that claim's proof binds underneath -- except
-/// a claim the call proves by two different proofs, which no binding keyed by
-/// that claim can speak for. Each parameter of the instance a call lowers to
-/// takes its evidence from the position it was supplied at instead.
+/// to what impl selection settled for it. A claim's proof is no binding: each
+/// parameter of the instance a call lowers to takes its evidence from the
+/// position it was supplied at, and a value its body computes from the value
+/// that supplies it.
 class CallSubstitution {
 public:
   /// The closed substitution that lowers a call whose operands and results are
   /// `operandTypes` and `resultTypes` and whose callee signature is `formalTy`,
   /// starting from the arguments the call supplies for the callee's parameters.
   ///
-  /// The components expose bindings for one another -- a projection binding can
-  /// rewrite a spelling into one that names a proof, and a proof binding can
-  /// expose a projection in the claim it names -- so all three are chased
-  /// together until no component grows. Every proven claim is derived through
-  /// the same prover proof birth uses, replaying a pair the stage's derivation
-  /// memo already holds against the facts as they stand.
+  /// A projection binding can expose another projection, so discovery runs
+  /// until no binding is added.
   ///
   /// Fails where the read cannot close it: a projection it cannot answer leaves
-  /// the call spelling a type it cannot make concrete, and an obligation it
-  /// cannot record has already reported itself.
+  /// the call spelling a type it cannot make concrete.
   static FailureOr<CallSubstitution>
   forCall(SpecializationMap specialization, TypeRange operandTypes,
           TypeRange resultTypes, FunctionType formalTy, ModuleOp module,
-          const ReadOnlyImplResolver &reading,
-          llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+          const ReadOnlyImplResolver &reading);
 
   const SpecializationMap &getSpecialization() const { return specialization; }
 
-  /// The evidence this call supplies: every proof its operands and results
-  /// spell -- a method call's receiver among them -- with everything each proof
-  /// binds underneath, keyed by the claim discharged.
-  const EvidenceBindings &getEvidence() const { return evidenceBindings; }
-
-  // A projection binding can rewrite a spelling into one that names a proof and
-  // a proof binding can expose a projection, so the ground half of this map is
-  // chased until it settles. Both kinds of key name a ground spelling, so no
-  // chain through them reaches a key from its own value; the parameter bindings
-  // ride along under keys nothing the chase mints spells again.
+  // A projection binding can rewrite a spelling into one that spells another
+  // projection, so the ground half of this map is chased until it settles. Its
+  // keys name ground spellings, so no chain through them reaches a key from its
+  // own value; the parameter bindings ride along under keys nothing the chase
+  // mints spells again.
   Type apply(Type ty) const {
     return applySubstitutionToFixedPoint(toTypeMap(), ty);
   }
 
-  // The three components key disjoint kinds of type -- a parameter, a
-  // projection, a claim -- so the union holds every binding each one made under
-  // the key it was made for. A variable therefore keeps the value bound to it,
-  // which is what an equality endpoint reading it must see; a chain through a
-  // projection or evidence key resolves because readers apply this map to a
-  // fixed point.
+  // The two components key disjoint kinds of type -- a parameter, a projection
+  // -- so the union holds every binding each one made under the key it was made
+  // for. A variable therefore keeps the value bound to it, which is what an
+  // equality endpoint reading it must see; a chain through a projection key
+  // resolves because readers apply this map to a fixed point.
   llvm::DenseMap<Type, Type> toTypeMap() const {
     llvm::DenseMap<Type, Type> result = specialization.toTypeMap();
     for (auto [key, value] : projectionBindings.toTypeMap())
-      result[key] = value;
-    for (auto [key, value] : evidenceBindings.toTypeMap())
       result[key] = value;
     return result;
   }
@@ -453,18 +251,9 @@ private:
   void discoverProjectionBindings(TypeRange types, ModuleOp module,
                                   const ReadOnlyImplResolver &reading,
                                   bool &declined);
-  LogicalResult readEvidenceBindings(
-      TypeRange types, ModuleOp module, const ReadOnlyImplResolver &reading,
-      llvm::function_ref<InFlightDiagnostic()> err);
-
-  size_t bindingCount() const {
-    return specialization.bindingCount() + projectionBindings.bindingCount() +
-           evidenceBindings.bindingCount();
-  }
 
   SpecializationMap specialization;
   ProjectionBindings projectionBindings;
-  EvidenceBindings evidenceBindings;
 };
 
 // Whether any occurrence of NeedleType is reachable in `ty`. An equality
@@ -1089,42 +878,27 @@ FailureOr<SpecializationMap> matchDeclaration(
 /// the type identities this dialect's own library carries.
 bool mentionsMonomorphicProjection(Type ty);
 
-/// How many requirements `claim` carries: the `where` predicates of the trait
-/// it applies, plus -- when `claim` is proven -- the assumptions of the impl its
-/// proof cites. An equality claim applies no trait, so it requires nothing.
+/// How many requirements `claim` carries: the requirements of the trait it
+/// applies, plus -- when `claim` is proven by a proof -- the where entries of the
+/// impl that proof derives it from. An equality claim applies no trait, so it
+/// requires nothing.
 FailureOr<uint64_t> getClaimRequirementCount(
     ClaimType claim,
     ModuleOp module,
     llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
 
-/// One requirement of a claim, read at the arguments a hop supplies for the
-/// variables it binds.
-struct ClaimRequirement {
-  /// The claim the requirement states at the source's arguments and those.
-  ClaimType conclusion;
-  /// The premises a bound requirement states there, in its order; empty for a
-  /// requirement that binds nothing.
-  SmallVector<ClaimType> premises;
-};
-
-/// The requirement `claim` carries at `index`, read at `binderArguments` for
-/// the variables it binds -- one per variable of a bound requirement, none
-/// for any other -- in the order `getClaimRequirementAt` below reads.
-FailureOr<ClaimRequirement> getClaimRequirementAt(
-    ClaimType claim,
-    ModuleOp module,
-    uint64_t index,
-    ArrayRef<Type> binderArguments,
-    llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
-
 /// The requirement `claim` carries at `index`, in the one order a projection
-/// indexes them by: the trait's `where` predicates in declaration order, then --
-/// when `claim` is proven -- the assumptions of the impl its proof cites, which
-/// is the order that proof already names its subproofs in. The requirement is
-/// instantiated at the claim's arguments; an application requirement of a proven
-/// claim carries the provider of the subproof discharging it, and an equality
-/// requirement never carries a provider. This is the one reading a
-/// `trait.project` hop is checked against. Refuses an index past the last
+/// indexes them by: the trait's requirements, its result signature, then --
+/// when `claim` is proven by a proof -- the where entries of the impl that
+/// proof's derive cites, the order its operands supply them in. The requirement
+/// is instantiated at the claim's arguments, a trait requirement of a proven
+/// claim read through the cited impl's own bindings as its return is spelled.
+/// A where entry of a proven claim carries the proof the derive's operand there
+/// names; a trait requirement carries none here, its evidence being the impl's
+/// return operand, which the stage inlines where a projection reads it
+/// (`ProjectOp::inlineEvidence`). An equality requirement never carries a
+/// provider. This is the one reading a `trait.project` hop is checked against,
+/// and it reads no declaration's body. Refuses an index past the last
 /// requirement.
 FailureOr<ClaimType> getClaimRequirementAt(
     ClaimType claim,
@@ -1158,53 +932,22 @@ enum class Citation {
 /// So the judgment is whether that declaration, read at the arguments this
 /// obligation supplies, rebuilds the obligation. The claim the citation is
 /// spelled with is built from the obligation, so it says nothing here; only the
-/// declaration does. An impl named directly must also apply where it is cited:
-/// it takes no subproof, so its equality premises are read here or nowhere.
+/// declaration does. An impl named directly is unconditional, so it assumes
+/// nothing there.
 ///
-/// Nothing is read inside a cited proof. A proof op decides its own premises
-/// and its own citations at the claim it stands over, and one whose premises
-/// are all decided there holds at every instance of it, so a citation of it
-/// needs this top-level match alone.
+/// Nothing is read inside a cited proof. A proof op's body decides its own
+/// premises and its own citations, so a citation of it needs this top-level
+/// match alone.
 ///
 /// Both sides are read through `normalize` and nothing else, so whether the
 /// cited declaration rebuilds the obligation is a function of the two claims,
 /// the declaration and that reading. A citation this declines under a weaker
 /// reading can carry under a stronger.
 ///
-/// `origin` names the caller: an impl named directly has its equality premises
-/// read through the ground-projection lookup, which raises demand.
+/// `origin` names the caller.
 Citation verifyCitation(ClaimType unproven, ClaimType proven, ModuleOp module,
                         DemandOrigin origin, Normalizer normalize,
                         llvm::function_ref<InFlightDiagnostic()> err);
-
-/// Derives the whole tree standing under `proven` and extends `bindings` with a
-/// mapping for every obligation it discharges, which is what a clone needs to
-/// respell the claims it carries. A verifier asks `verifyCitation` about one
-/// claim instead; this is the reader that goes underneath.
-///
-/// Notes:
-/// - `unproven` must be an unproven obligation; a proven `unproven` is a caller
-///   error and is rejected with a diagnostic.
-/// - Only records a mapping when converting an unproven form to its proven form;
-///   no-op if `unproven == proven`.
-/// - Recursively reads trait requirements and impl assumptions, ensuring all
-///   subproofs are consistent and present.
-///
-/// `origin` names the caller: this recorder normalizes both claims through the
-/// ground-projection lookup and normalizes the impl's obligations, so it raises
-/// demand. It has no default, so a new caller states which it is.
-///
-/// `memo`, when given, is consulted for the pair before anything else is done
-/// with it and holds what this derivation produces. It is the stage's, and one
-/// thread's. Like `origin` it has no default, so a new caller states whether it
-/// has one.
-LogicalResult verifyAndRecordProof(ClaimType unproven,
-                                   ClaimType proven,
-                                   ModuleOp module,
-                                   EvidenceBindings &bindings,
-                                   DemandOrigin origin,
-                                   ProofDerivationMemo *memo,
-                                   llvm::function_ref<InFlightDiagnostic()> err);
 
 /// Refuses every citation the claims `ty` spells that does not discharge the
 /// obligation it stands on, each read at its own claim and no deeper.
@@ -1223,24 +966,6 @@ LogicalResult verifyAndRecordProof(ClaimType unproven,
 LogicalResult verifyCitationsIn(Type ty, ModuleOp module, DemandOrigin origin,
                                 Normalizer normalize,
                                 llvm::function_ref<InFlightDiagnostic()> err);
-
-/// Walks `ty` and binds every proof the types it spells name.
-///
-/// For every `ClaimType` node inside `ty` that carries a proof (i.e.
-/// `isProven()`), this binds its unproven form (`claim.asUnproven()`) to the
-/// proven claim itself, and binds whatever that claim's proof binds underneath.
-/// If a conflicting binding for the same unproven key already exists, returns
-/// failure and emits an error through `err`.
-///
-/// `origin` names the caller, which every proof this walk derives is derived
-/// under, and `memo` is what each of those derivations is served from and held
-/// in. Neither has a default, so a new caller states both.
-LogicalResult bindProofsIn(Type ty,
-                                    ModuleOp module,
-                                    EvidenceBindings &bindings,
-                                    DemandOrigin origin,
-                                    ProofDerivationMemo *memo,
-                                    llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
 /// The module that anchors symbol lookups for `anchor`: the operation itself
 /// when it is the module, otherwise its enclosing module (null if it has none).
@@ -1371,6 +1096,9 @@ private:
   DemandOrigin origin;
   llvm::function_ref<InFlightDiagnostic()> err;
 };
+
+/// The symbol suffix `_h` followed by sixteen hex digits of `input`'s hash.
+std::string hashToSuffix(StringRef input);
 
 std::string generateMangledNameSuffixFor(TypeRange typeArgs);
 

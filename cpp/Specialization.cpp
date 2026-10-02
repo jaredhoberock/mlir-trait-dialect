@@ -4,40 +4,61 @@
 #include "SymbolLookup.hpp"
 #include "TraitOps.hpp"
 #include "TraitTypes.hpp"
+#include <llvm/ADT/SetVector.h>
 #include <mlir/IR/IRMapping.h>
 #include <mlir/IR/PatternMatch.h>
 #include <mlir/IR/Verifier.h>
 
 namespace mlir::trait {
 
-/// Clone block and successor mappings, then substitute in region order.
-/// Builder notifications admit the copied operations to rewrite listeners;
-/// visiting block arguments first preserves transient projection demand order.
+void cloneRegionStampedBefore(OpBuilder &builder, Region &source, Region &dest,
+                              Region::iterator before, IRMapping &mapping,
+                              AttrTypeReplacer &typeReplacer,
+                              AttrTypeReplacer &spellingReplacer) {
+  if (source.empty())
+    return;
+  // The clones stand from the block after the one preceding `before` up to
+  // `before`.
+  Block *preceding = before == dest.begin() ? nullptr : &*std::prev(before);
+  builder.cloneRegionBefore(source, dest, before, mapping);
+  // Each region's block arguments are stamped before its ops, which keeps the
+  // order transient projection demands are raised in.
+  auto substitute = [&](auto blocks, auto &recurse) -> void {
+    for (Block &block : blocks)
+      for (BlockArgument arg : block.getArguments())
+        arg.setType(typeReplacer.replace(arg.getType()));
+    for (Block &block : blocks) {
+      for (Operation &op : block) {
+        auto evidenceCall = dyn_cast<MethodCallOp>(&op);
+        AttrTypeReplacer &resultReplacer =
+            evidenceCall && evidenceCall.computesEvidence() ? spellingReplacer
+                                                            : typeReplacer;
+        for (Value result : op.getResults())
+          result.setType(resultReplacer.replace(result.getType()));
+        for (NamedAttribute attr : op.getAttrs())
+          op.setAttr(attr.getName(), typeReplacer.replace(attr.getValue()));
+        for (Region &nested : op.getRegions())
+          recurse(llvm::make_range(nested.begin(), nested.end()), recurse);
+      }
+    }
+  };
+  substitute(llvm::make_range(preceding ? std::next(preceding->getIterator())
+                                        : dest.begin(),
+                              before),
+             substitute);
+}
+
+/// Clones `oldRegion` into the end of `newRegion`, stamped
+/// (`cloneRegionStampedBefore`).
 static void cloneRegionWithTypeReplacement(
     OpBuilder& builder,
     Region &oldRegion,
     Region &newRegion,
     IRMapping &mapping,
-    AttrTypeReplacer &typeReplacer) {
-  if (oldRegion.empty())
-    return;
-  builder.cloneRegionBefore(oldRegion, newRegion, newRegion.end(), mapping);
-  auto substituteRegion = [&](Region &region, auto &recurse) -> void {
-    for (Block &block : region)
-      for (BlockArgument arg : block.getArguments())
-        arg.setType(typeReplacer.replace(arg.getType()));
-    for (Block &block : region) {
-      for (Operation &op : block) {
-        for (Value result : op.getResults())
-          result.setType(typeReplacer.replace(result.getType()));
-        for (NamedAttribute attr : op.getAttrs())
-          op.setAttr(attr.getName(), typeReplacer.replace(attr.getValue()));
-        for (Region &nested : op.getRegions())
-          recurse(nested, recurse);
-      }
-    }
-  };
-  substituteRegion(newRegion, substituteRegion);
+    AttrTypeReplacer &typeReplacer,
+    AttrTypeReplacer &spellingReplacer) {
+  cloneRegionStampedBefore(builder, oldRegion, newRegion, newRegion.end(),
+                           mapping, typeReplacer, spellingReplacer);
 }
 
 // A template clone -- one stamped with no module -- receives the bindings of a
@@ -56,10 +77,9 @@ static void cloneRegionWithTypeReplacement(
 // be resolved once evidence exists.
 AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &subst,
                                                   ModuleOp module) {
-  // The seal keeps a bare equality -- a witness's stored evidence, a
-  // where-clause predicate -- immutable under this rewrite; the clone rule
-  // below is the one mover, and it reaches an equality only through the claim
-  // that wraps it.
+  // The seal keeps a bare equality immutable under this rewrite; the clone
+  // rule below is the one mover, and it reaches an equality only through the
+  // claim that wraps it.
   AttrTypeReplacer replacer = makeEndpointSealedReplacer();
   // A replacer stamps one clone, which adds functions and no impl, so the impls
   // every lookup below scans are the same for all of them: each application's
@@ -102,24 +122,10 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &sub
                : std::nullopt;
   });
 
-  // A binding's key is a parameter of the declaration a citation names -- the
-  // impl a derive or proof states arguments for -- and not of the declaration
-  // this clone is cut from, whatever label the two share. So the clone stamps
-  // the argument whole and keeps the key.
-  replacer.addReplacement(
-      [stamp](TypeBindingAttr binding)
-          -> std::optional<std::pair<Attribute, WalkResult>> {
-    auto stamped = TypeBindingAttr::get(binding.getContext(),
-                                        binding.getParameter(),
-                                        stamp(binding.getArgument()));
-    return std::make_pair(Attribute(stamped), WalkResult::skip());
-  });
-
-  // The clone rule for equality evidence: an equality claim's endpoints, and a
-  // projection-resolution witness's endpoints and arguments, receive the
-  // variable bindings alone, stamped once -- no projection or evidence binding,
-  // and no module lookup, resolved inside them -- so the witness a clone holds
-  // is rebuilt at the instance its claim is, under the one substitution.
+  // The clone rule for equality evidence: an equality claim's endpoints receive
+  // the variable bindings alone, stamped once -- no projection binding, and no
+  // module lookup, resolved inside them -- so the equality a clone holds is
+  // rebuilt at the instance its claim is, under the one substitution.
   llvm::DenseMap<Type, Type> variableBindings;
   for (auto [key, value] : subst)
     if (isa<GenericTypeInterface>(key))
@@ -131,13 +137,17 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &sub
       [respell](ClaimType claim) -> std::optional<std::pair<Type, WalkResult>> {
     return respellEqualityEndpoints(claim, respell);
   });
-  replacer.addReplacement(
-      [respell](WitnessAttr witness)
-          -> std::optional<std::pair<Attribute, WalkResult>> {
-    return respellWitness(witness, respell);
-  });
 
   return replacer;
+}
+
+AttrTypeReplacer makeSpellingReplacerFromSubstitution(
+    const DenseMap<Type, Type> &subst) {
+  llvm::DenseMap<Type, Type> variableBindings;
+  for (auto [key, value] : subst)
+    if (isa<GenericTypeInterface>(key))
+      variableBindings.try_emplace(key, value);
+  return makeTypeReplacerFromSubstitution(variableBindings, ModuleOp());
 }
 
 /// Whether the block a builder inserts into stands inside a trait, impl, or
@@ -199,12 +209,8 @@ FunctionOpInterface specializePolymorph(RewriterBase& rewriter,
   // it as it accepts the source, and its spelling resolves when it is cloned for
   // a concrete instance. A monomorphic clone receives the full call substitution
   // and ground-projection normalization by module lookup.
-  llvm::DenseMap<Type, Type> variableBindings;
-  for (auto [key, value] : substitution)
-    if (isa<GenericTypeInterface>(key))
-      variableBindings.try_emplace(key, value);
   AttrTypeReplacer variableReplacer =
-      makeTypeReplacerFromSubstitution(variableBindings, ModuleOp());
+      makeSpellingReplacerFromSubstitution(substitution);
 
   auto oldFunctionType = cast<FunctionType>(polymorph.getFunctionType());
   auto substitutedType =
@@ -251,7 +257,8 @@ FunctionOpInterface specializePolymorph(RewriterBase& rewriter,
                                  polymorph.getFunctionBody(),
                                  instance.getFunctionBody(),
                                  mapping,
-                                 replacer);
+                                 replacer,
+                                 variableReplacer);
   endWithFunctionReturns(rewriter, instance);
 
   return instance;
@@ -275,13 +282,15 @@ void specializePolymorphicRegion(OpBuilder& builder,
                  ? polymorph.getParentOp()->getParentOfType<ModuleOp>()
                  : ModuleOp());
   AttrTypeReplacer replacer = makeTypeReplacerFromSubstitution(subst, module);
+  AttrTypeReplacer spellingReplacer = makeSpellingReplacerFromSubstitution(subst);
 
   IRMapping mapping;
   cloneRegionWithTypeReplacement(builder,
                                  polymorph,
                                  monomorph,
                                  mapping,
-                                 replacer);
+                                 replacer,
+                                 spellingReplacer);
 }
 
 FailureOr<InstanceKey> InstanceKey::get(SymbolRefAttr templateRef,
@@ -347,8 +356,7 @@ std::string InstanceKey::getSymbolName() const {
 
 func::FuncOp getOrCutInstance(RewriterBase &rewriter, ModuleOp module,
                               const InstanceKey &key,
-                              llvm::function_ref<func::FuncOp(StringRef)> cut,
-                              const EvidenceBindings &evidence) {
+                              llvm::function_ref<func::FuncOp(StringRef)> cut) {
   std::string name = key.getSymbolName();
   if (auto existing = lookupSymbolFrom<func::FuncOp>(
           module, FlatSymbolRefAttr::get(module.getContext(), name)))
@@ -372,121 +380,70 @@ func::FuncOp getOrCutInstance(RewriterBase &rewriter, ModuleOp module,
         instance.getContext(), inputs, signature.getResults()));
   });
 
-  // A value an op derives from an operand carries that operand's evidence. The
-  // substitution the instance was stamped under spelled each claim one way
-  // wherever it stands -- the one proof the use supplies for it, or no proof
-  // where the use supplies two -- so a derived value is read off the value it
-  // is derived from wherever that reading is positional:
-  // - a projection the substitution left unproven off a proven source is the
-  //   subproof the source's proof cites at the projection's index, where proof
-  //   derivation accepts it, at the application the result spells -- the
-  //   trait states the requirement before its projections are resolved, and
-  //   the result's spelling is the one its readers hold;
-  // - a coerce's result the substitution left unproven is its input's proof at
-  //   the application the result spells; the coerce verifier refuses any other.
-  // A value the substitution spelled proven is left as spelled: every reader
-  // of it already holds that spelling, and the instantiation driver judges it
-  // against its source before it is witnessed. Iterated to a fixed point so
-  // that a chain is read in dominance order whatever order its blocks stand in.
-  bool changed;
-  do {
-    changed = false;
-    instance.walk<WalkOrder::PreOrder>([&](Operation *op) {
-      auto retype = [&](Value value, Type type) {
-        if (value.getType() == type)
-          return;
-        rewriter.modifyOpInPlace(op, [&] { value.setType(type); });
-        changed = true;
-      };
-      if (auto project = dyn_cast<ProjectOp>(op)) {
-        ClaimType result = project.getResultClaim();
-        ClaimType source = project.getSourceClaim();
-        if (!source.isProven() || !result.isApplication())
-          return;
-        if (result.isProven())
-          return;
-        auto requirement = getClaimRequirementAt(
-            source, module, project.getIndex(), project.getBinderArguments());
-        if (failed(requirement) || !requirement->conclusion.isProven())
-          return;
-        EvidenceBindings accepted;
-        if (failed(verifyAndRecordProof(result, requirement->conclusion, module,
-                                        accepted, DemandOrigin::ProofRecording,
-                                        /*memo=*/nullptr, /*err=*/nullptr)) ||
-            accepted.bindingCount() == 0)
-          return;
-        retype(project.getResult(),
-               ClaimType::get(op->getContext(), result.getTraitApplication(),
-                              requirement->conclusion.getProof()));
+  // A value an op derives from an operand carries that operand's evidence: a
+  // projection off a proven source is replaced by the evidence the source's
+  // impl returns at its index (`ProjectOp::inlineEvidence`), and a coerce's
+  // result takes its input's proof at the application the result spells, which
+  // the coerce verifier holds to its input's. A value the substitution spelled
+  // proven is left as spelled, and one nothing here proves is the stage
+  // patterns' to prove. Repeated so that a chain is read in dominance order
+  // whatever order its blocks stand in, and so that a projection an inlined
+  // return computes is inlined in turn; returns that keep projecting one
+  // another stop at the instantiation limit and are left to the stage's rewrite
+  // budget.
+  for (unsigned round = 0; round < kInstantiationDepthLimit; ++round) {
+    bool changed = false;
+    SmallVector<ProjectOp> projections;
+    instance.walk([&](ProjectOp project) {
+      if (project.getSourceClaim().isProven())
+        projections.push_back(project);
+    });
+    for (ProjectOp project : projections)
+      changed |= succeeded(project.inlineEvidence(rewriter));
+    instance.walk([&](CoerceOp coerce) {
+      auto input = dyn_cast<ClaimType>(coerce.getInput().getType());
+      auto result = dyn_cast<ClaimType>(coerce.getResult().getType());
+      ClaimType carrying =
+          result && !result.isProven() ? result.carryingProofOf(input)
+                                       : ClaimType();
+      if (!carrying)
         return;
-      }
-      if (auto coerce = dyn_cast<CoerceOp>(op)) {
-        auto input = dyn_cast<ClaimType>(coerce.getInput().getType());
-        auto result = dyn_cast<ClaimType>(coerce.getResult().getType());
-        if (input && result && input.isApplication() && input.isProven() &&
-            result.isApplication() && !result.isProven())
-          retype(coerce.getResult(),
-                 ClaimType::get(op->getContext(), result.getTraitApplication(),
-                                input.getProof()));
-      }
+      rewriter.modifyOpInPlace(coerce,
+                               [&] { coerce.getResult().setType(carrying); });
+      changed = true;
     });
-  } while (changed);
-
-  // A value still spelled unproven whose claim the use supplies two proofs of.
-  // The substitution could not say which, no rule above supplied one from a
-  // position, and selection, asked for it later, would not know which position
-  // the value stands for either: it refuses where the two proofs select two
-  // impls and otherwise answers with a proof neither position supplied. The
-  // instance is refused here, naming both proofs, and the call that wanted it
-  // is left standing.
-  //
-  // XXX TODO: this refusal and the reading of derived values above are deleted
-  // with the respelling of a cut body's claims by their spelling, when
-  // declarations and proofs take their evidence as block arguments and a cut
-  // maps each claim value from the value that supplies it.
-  auto disputedClaimIn = [&](Type type) -> ClaimType {
-    ClaimType found;
-    type.walk([&](ClaimType claim) {
-      if (!found && claim.isApplication() && !claim.isProven() &&
-          evidence.proofsOf(claim).size() > 1)
-        found = claim;
-    });
-    return found;
-  };
-  auto report = [&](Operation *at, Value value, ClaimType claim) {
-    InFlightDiagnostic diagnostic =
-        at->emitOpError() << "is left with " << value.getType()
-                          << ", and this instance is supplied " << claim
-                          << " by two proofs, ";
-    llvm::interleave(
-        evidence.proofsOf(claim), diagnostic,
-        [&](ClaimType proof) { diagnostic << proof.getProof(); }, " and ");
-    diagnostic << "; no position says which this value carries";
-  };
-  WalkResult refused = instance.walk([&](Operation *op) -> WalkResult {
-    for (Value result : op->getResults())
-      if (ClaimType claim = disputedClaimIn(result.getType())) {
-        report(op, result, claim);
-        return WalkResult::interrupt();
-      }
-    for (Region &region : op->getRegions())
-      for (Block &block : region) {
-        // The entry block's arguments are the parameters, which take the
-        // evidence the key holds at their positions above.
-        if (op == instance.getOperation() && &block == &region.front())
-          continue;
-        for (BlockArgument argument : block.getArguments())
-          if (ClaimType claim = disputedClaimIn(argument.getType())) {
-            report(op, argument, claim);
-            return WalkResult::interrupt();
-          }
-      }
-    return WalkResult::advance();
-  });
-  if (refused.wasInterrupted()) {
-    rewriter.eraseOp(instance);
-    return nullptr;
+    if (!changed)
+      break;
   }
+
+  // A claim the instance returns is the value its returns hand back: where
+  // every return supplies one proven claim at a position the signature spells
+  // as that claim unproven, the result carries that proof, as the values
+  // feeding it do.
+  SmallVector<Type> results(instance.getFunctionType().getResults());
+  bool refined = false;
+  for (unsigned position = 0; position < results.size(); ++position) {
+    auto formal = dyn_cast<ClaimType>(results[position]);
+    if (!formal || !formal.isApplication() || formal.isProven())
+      continue;
+    llvm::SmallSetVector<Type, 1> supplied;
+    instance.walk([&](func::ReturnOp ret) {
+      supplied.insert(ret.getOperand(position).getType());
+    });
+    auto proven = supplied.size() == 1
+                      ? dyn_cast<ClaimType>(supplied.front())
+                      : ClaimType();
+    if (!proven || !proven.isProven() || proven.asUnproven() != formal)
+      continue;
+    results[position] = proven;
+    refined = true;
+  }
+  if (refined)
+    rewriter.modifyOpInPlace(instance, [&] {
+      instance.setFunctionType(FunctionType::get(
+          instance.getContext(), instance.getFunctionType().getInputs(),
+          results));
+    });
   return instance;
 }
 

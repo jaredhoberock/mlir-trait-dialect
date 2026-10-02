@@ -23,6 +23,34 @@ def TraitDialect : Dialect {
                                      ::mlir::Type type) const override;
     void printAttribute(::mlir::Attribute attr,
                         ::mlir::DialectAsmPrinter &printer) const override;
+
+    /// The requirements of the trait whose self application is `self` and
+    /// whose requirement list is `requirements`, instantiated at the
+    /// application `actual`, where an earlier instantiation recorded them.
+    /// The instance is a function of those three interned values alone, so
+    /// one recorded for any trait declaring them answers for every other.
+    std::optional<::llvm::SmallVector<::mlir::Type>>
+    lookupRequirementInstance(::mlir::Attribute self,
+                              ::mlir::Attribute requirements,
+                              ::mlir::Attribute actual) const;
+
+    /// Records `instance` as the requirements `lookupRequirementInstance`
+    /// answers with for `self`, `requirements` and `actual`.
+    void recordRequirementInstance(::mlir::Attribute self,
+                                   ::mlir::Attribute requirements,
+                                   ::mlir::Attribute actual,
+                                   ::llvm::ArrayRef<::mlir::Type> instance) const;
+
+  private:
+    /// The recorded requirement instances. Verifiers on worker threads read
+    /// and record them, so every access holds the lock.
+    mutable ::llvm::sys::SmartMutex<true> requirementInstanceLock;
+    mutable ::llvm::DenseMap<
+        std::tuple<::mlir::Attribute, ::mlir::Attribute, ::mlir::Attribute>,
+        ::llvm::SmallVector<::mlir::Type, 2>>
+        requirementInstances;
+
+  public:
   }];
 }
 

@@ -12,19 +12,19 @@
 !S = !trait.poly<0>
 !U = !trait.poly<1>
 
-trait.trait private @A[!S] { trait.assoc_type @Item }
-trait.trait private @B[!S] { trait.assoc_type @Item }
+trait.trait private @A(%self: !trait.claim<@A[!S]>) { trait.assoc_type @Item }
+trait.trait private @B(%self: !trait.claim<@B[!S]>) { trait.assoc_type @Item }
 
-trait.impl private @A_impl for @A[!U] { trait.assoc_type @Item = !U }
-trait.impl private @B_impl for @B[!U] { trait.assoc_type @Item = !U }
+trait.impl private @A_impl(%self: !trait.claim<@A[!U]>) { trait.assoc_type @Item = !U }
+trait.impl private @B_impl(%self: !trait.claim<@B[!U]>) { trait.assoc_type @Item = !U }
 
 // CHECK-LABEL: func.func @arms
 func.func @arms() {
-  // CHECK: trait.witness proj_resolve !trait.proj<@A[i64], "Item"> resolves i64 by @A_impl[!trait.poly<1> = i64] : !trait.claim<!trait.proj<@A[i64], "Item"> = i64>
-  %w1 = trait.witness proj_resolve !trait.proj<@A[i64], "Item"> resolves i64 by @A_impl[!U = i64]
+  // CHECK: trait.witness proj_resolve !trait.proj<@A[i64], "Item"> resolves i64 by @A_impl : !trait.claim<!trait.proj<@A[i64], "Item"> = i64>
+  %w1 = trait.witness proj_resolve !trait.proj<@A[i64], "Item"> resolves i64 by @A_impl
     : !trait.claim<!trait.proj<@A[i64], "Item"> = i64>
-  // CHECK: trait.witness proj_resolve !trait.proj<@B[i64], "Item"> resolves i64 by @B_impl[!trait.poly<1> = i64] : !trait.claim<!trait.proj<@B[i64], "Item"> = i64>
-  %w2 = trait.witness proj_resolve !trait.proj<@B[i64], "Item"> resolves i64 by @B_impl[!U = i64]
+  // CHECK: trait.witness proj_resolve !trait.proj<@B[i64], "Item"> resolves i64 by @B_impl : !trait.claim<!trait.proj<@B[i64], "Item"> = i64>
+  %w2 = trait.witness proj_resolve !trait.proj<@B[i64], "Item"> resolves i64 by @B_impl
     : !trait.claim<!trait.proj<@B[i64], "Item"> = i64>
   // CHECK: trait.witness refl : !trait.claim<i64 = i64>
   %r = trait.witness refl : !trait.claim<i64 = i64>

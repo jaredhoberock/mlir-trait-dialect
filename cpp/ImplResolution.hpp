@@ -6,6 +6,7 @@
 #include "TraitAttributes.hpp"
 #include "TraitOps.hpp"
 #include <memory>
+#include <variant>
 
 namespace mlir::trait {
 
@@ -158,8 +159,7 @@ private:
 /// A spelling names its symbols in one symbol table, and two modules can spell
 /// one application and mean two different impls of it, so what selection
 /// settles is settled for that application under the module it was demanded in
-/// and not for the spelling alone. This is the key the proof derivations are
-/// held under as well.
+/// and not for the spelling alone.
 using ScopedApplication = std::pair<Operation *, TraitApplicationAttr>;
 
 // Memoization state for pure impl resolution (no IR mutations).
@@ -253,6 +253,61 @@ private:
   Type binding;
 };
 
+/// Where the evidence for a monomorphic equality reads the facts it cites:
+/// `hop` resolves one step of a monomorphic projection and `proofOf` proves an
+/// application claim, answering it proven. Each fails where it does not serve.
+/// `module` bounds the fixed-point resolution of an endpoint.
+struct EqualitySource {
+  llvm::function_ref<FailureOr<ProjectionResolution>(ProjectionType)> hop;
+  llvm::function_ref<FailureOr<ClaimType>(ClaimType)> proofOf;
+  ModuleOp module;
+};
+
+struct EqualityResolution;
+
+/// One step of an endpoint's resolution, as its witness cites it: the equality
+/// `projection = binding`, the impl selection chose for the projection's
+/// application, and the evidence for each of that impl's where entries at the
+/// arguments its parameters take there, in order -- a proven application at an
+/// application entry, and the resolution of the equality at an equality entry.
+struct ResolutionStep {
+  TypeEqualityAttr equality;
+  FlatSymbolRefAttr impl;
+  SmallVector<std::variant<ClaimType, std::shared_ptr<EqualityResolution>>>
+      premises;
+};
+
+/// The resolution of a monomorphic equality's two sides to one spelling: one
+/// step per distinct projection resolved on the way.
+struct EqualityResolution {
+  TypeEqualityAttr equality;
+  SmallVector<ResolutionStep> steps;
+};
+
+/// The ground spellings the sides of `eq` resolve to through `source`,
+/// appending one step per distinct ground projection resolved on the way to
+/// `steps`; identical sides are read as spelled. The walk descends composites,
+/// so a projection nested inside one yields its step just as a top-level
+/// projection does, and runs to a fixed point because a binding may itself
+/// spell a projection. An equality entry of a resolving impl is resolved the
+/// same way, and must reach one spelling. Fails where a step fails or a ground
+/// projection still stands.
+FailureOr<std::pair<Type, Type>>
+resolveEquality(TypeEqualityAttr eq, const EqualitySource &source,
+                SmallVectorImpl<ResolutionStep> &steps, unsigned depth = 0);
+
+/// Builds at `builder`'s insertion point the evidence for `eq` from `steps`,
+/// the steps resolving its sides to one ground spelling: refl for identical
+/// sides; the sole step's witness where it proves `eq` as spelled; else the
+/// composition of every step's witness, whose ground congruence closure carries
+/// the sides together across every step. Each step's witness cites its impl
+/// with one claim per where entry, a witness of the proof at an application
+/// entry and the evidence built for the equality at an equality entry. The
+/// result is closed: it reads no value from around it.
+Value buildEqualityEvidence(OpBuilder &builder, Location loc,
+                            TypeEqualityAttr eq,
+                            ArrayRef<ResolutionStep> steps);
+
 /// The template instantiations one stage run has cut.
 ///
 /// Each instance is cut for a template at a call standing inside another
@@ -260,7 +315,8 @@ private:
 /// many instances of the SAME template stand on the path that reaches it. A
 /// template that instantiates itself at a larger type mints a distinct instance
 /// at every step, so no cycle guard sees a repeat; that count is what tells
-/// such a chain from a deep but finite nest of distinct templates.
+/// such a chain from a deep but finite nest of distinct templates, which Rust's
+/// monomorphization collector counts the same way, per function.
 ///
 /// An instance is named by the function it was cut into. Nothing erases a
 /// function while the stage runs, so a recorded name stands for as long as the
@@ -273,13 +329,13 @@ public:
   unsigned depthAt(Operation *instance, Attribute templateKey) const;
 
   /// Records that `instance` was cut for `templateKey` at a call inside
-  /// `parent`, and answers the depth it now stands at.
+  /// `parent`.
   ///
   /// An instance already recorded keeps the chain it was first cut on, and an
   /// instance that is its own parent -- a call whose specialization reached the
   /// very function it stands in -- records nothing, so the chain stays a
   /// forest.
-  unsigned note(Operation *instance, Operation *parent, Attribute templateKey);
+  void note(Operation *instance, Operation *parent, Attribute templateKey);
 
   /// The frames from the root down to `instance`, each a function and the
   /// template it was cut for. This is what a refusal at the depth limit names.
@@ -328,9 +384,8 @@ struct ProofResolutionMemo {
 /// that a canonical proof exists for a fully-concrete trait application.
 /// Resolution proceeds by:
 ///   1. Proving it by a self-proving `trait.impl` if one exists.
-///   2. Otherwise, recursively resolving and ensuring proofs for all
-///      requirements and assumptions, then creating or reusing a
-///      `trait.proof` operation.
+///   2. Otherwise, recursively resolving and ensuring proofs for the impl's
+///      where entries, then creating or reusing a `trait.proof` operation.
 /// Memoization is used to avoid redundant resolution work and to ensure
 /// canonicalization of proofs across calls.
 ///
@@ -365,9 +420,10 @@ class ImplResolver {
     /// Ensures canonical proof for a fully-concrete trait application `claim`.
     /// Resolution proceeds as follows:
     ///   1. If an unconditional ImplOp exists, its symbol proves the claim.
-    ///   2. Otherwise, recursively resolve and ensure proofs for all requirements
-    ///      and assumptions, then create (or reuse) a `trait.proof` op whose
-    ///      symbol proves it.
+    ///   2. Otherwise, recursively resolve and ensure proofs for the impl's
+    ///      where entries, then create (or reuse) a `trait.proof` op whose body
+    ///      derives the claim from the impl over that evidence and whose symbol
+    ///      proves it. The trait's requirements are the impl's to return.
     /// This function may mutate the IR via `builder`.
     ///
     /// Returns `claim` proven: the application its proof is recorded under,
@@ -481,30 +537,17 @@ class ImplResolver {
       return memo.resolutionMemo.chosen.size();
     }
 
-    /// The proof derivations completed over this resolver's span.
-    ///
-    /// Derivation is a computation over the module's facts and not a fact of
-    /// its own, so this is a cache rather than part of the record: a reader
-    /// holding this resolver through a handle that may not resolve may still
-    /// serve from it and still hold what it derives.
-    ProofDerivationMemo &getDerivationMemo() const { return derivations; }
-
     /// The template instantiations cut over this resolver's span, which is one
-    /// stage run. Like the derivation memo this is a computation over the
-    /// module rather than a fact of its own, so a reader holding this resolver
-    /// through a handle that may not resolve still records into it.
+    /// stage run. This is a computation over the module rather than a fact of
+    /// its own, so a reader holding this resolver through a handle that may not
+    /// resolve still records into it.
     InstantiationChain &getInstantiationChain() const { return instantiations; }
 
     /// Says a sweep has respelled the module's copy of the recorded facts.
     ///
     /// A sweep records no proof, so the fact count does not move for it; what
-    /// a derivation reads are spellings, so what was derived before the sweep
-    /// was derived from a module that no longer stands, and the memo of
-    /// spelling pairs holds nothing across it.
-    void noteRespelling() const {
-      derivations.noteRespelling();
-      ++recordEpoch;
-    }
+    /// a read answers from are spellings, so the record epoch moves.
+    void noteRespelling() const { ++recordEpoch; }
 
     /// Forgets every refusal a later resolution could answer differently.
     ///
@@ -521,6 +564,29 @@ class ImplResolver {
 
     /// Whether impl selection is part-way through no application.
     bool isQuiescent() const { return memo.resolutionMemo.visiting.empty(); }
+
+    /// The proof standing in `scope` whose body derives `app` from `impl`
+    /// given, at its application entries in order, the proofs `subproofs`
+    /// names; null where none stands. An equality entry is ground and has one
+    /// answer, so it identifies nothing.
+    ClaimType findProof(ModuleOp scope, ImplOp impl, TraitApplicationAttr app,
+                        ArrayRef<FlatSymbolRefAttr> subproofs) const;
+
+    /// Writes at the end of `scope` the proof whose body derives `app` from
+    /// `impl` at `arguments` over one premise per entry of `entries`, `impl`'s
+    /// where entries at those arguments: a witness of the proof `subproofs`
+    /// names for each application entry, in order, and for each equality entry
+    /// the evidence its `equalitySteps` build. This is a derive transcribed,
+    /// not a selection: it records nothing a selection reads. The proof is
+    /// named `name` where given, a name reserved for it (`freeProofName`), and
+    /// otherwise by its impl and arguments, told apart by its subproofs where
+    /// that name is taken.
+    ClaimType writeProof(ModuleOp scope, ImplOp impl, TraitApplicationAttr app,
+                         const SpecializationMap &arguments,
+                         ArrayRef<ClaimType> entries,
+                         ArrayRef<FlatSymbolRefAttr> subproofs,
+                         ArrayRef<SmallVector<ResolutionStep>> equalitySteps,
+                         OpBuilder &builder, StringAttr name = {}) const;
 
   private:
     friend class ImplGenerationFreeze;
@@ -555,7 +621,6 @@ class ImplResolver {
     void noteFactWritten() {
       ++factEpoch;
       noteRecordWritten();
-      derivations.noteFactWritten();
     }
 
     /// Counts one write to what a read answers from, whether or not it minted
@@ -570,15 +635,20 @@ class ImplResolver {
     /// proofs go only in the erase pass after the stage -- so every op held
     /// here stands.
     struct StandingProofs {
-      DenseMap<std::pair<ImplOp, TraitApplicationAttr>, ProofOp> byClaim;
+      /// Every proof of one impl at one application, in module order; two
+      /// stand apart where their derives are given different premises.
+      DenseMap<std::pair<ImplOp, TraitApplicationAttr>, SmallVector<ProofOp, 1>>
+          byClaim;
       DenseMap<StringAttr, ProofOp> byName;
 
-      /// Adds `proof`, keeping the first proof of one impl at one application.
+      /// Adds `proof`.
       void note(ProofOp proof);
     };
 
-    /// The proofs standing in `scope`, read once.
-    StandingProofs &getStandingProofs(ModuleOp scope);
+    /// The proofs standing in `scope`, read once. A view of the module the
+    /// stage extends wherever it writes a proof, so a reader holding the
+    /// resolver read-only still keeps it current.
+    StandingProofs &getStandingProofs(ModuleOp scope) const;
 
     /// Checks whether all of `impl`'s where-clause assumptions are satisfiable
     /// when specialized for `concreteSelf`, read in `scope`.
@@ -597,8 +667,19 @@ class ImplResolver {
     mutable ModuleOp module;
     std::shared_ptr<DemandLedger> ledger;
     ProofResolutionMemo memo;
-    DenseMap<Operation *, StandingProofs> standingProofs;
-    mutable ProofDerivationMemo derivations;
+    mutable DenseMap<Operation *, StandingProofs> standingProofs;
+
+    /// `base` where no symbol of `scope` holds it and no proof being proven
+    /// there has reserved it; otherwise `base` told apart by a hash of `salt`,
+    /// rehashed until free. Mangled names are not one-to-one -- an impl may be
+    /// named what another's mangling at some arguments spells, and any symbol
+    /// may be -- so a name is free only once both are asked.
+    StringAttr freeProofName(ModuleOp scope, StringRef base,
+                             StringRef salt) const;
+
+    /// The names reserved in each scope for proofs whose premises are being
+    /// proven, which a premise may cite before the proof is written.
+    mutable DenseSet<std::pair<Operation *, StringAttr>> reservedProofNames;
     mutable InstantiationChain instantiations;
     ImplGeneratorSet generators;
     const ImplGenerator *installedOverride = nullptr;
@@ -654,7 +735,8 @@ private:
 ///
 /// What this handle withholds is the generator arm: a caller reading through it
 /// cannot make impl selection run, so no impl is generated and no proof is
-/// minted on its account. The facts themselves are not frozen -- whoever holds
+/// selected on its account; the one proof it writes is the one a derive states
+/// (`writeProof`). The facts themselves are not frozen -- whoever holds
 /// the resolver goes on recording selections and creating `trait.proof` ops --
 /// so an answer here is what the memo held when it was asked.
 ///
@@ -692,16 +774,28 @@ public:
     return it->second;
   }
 
-  /// The proof derivations completed over the resolver's span. Serving from
-  /// them and holding what is derived through them takes no generator arm.
-  ProofDerivationMemo &getDerivationMemo() const {
-    return resolver.getDerivationMemo();
-  }
-
   /// The template instantiations cut over the resolver's span. Cutting one
-  /// takes no generator arm either: the template is already in the module.
+  /// takes no generator arm: the template is already in the module.
   InstantiationChain &getInstantiationChain() const {
     return resolver.getInstantiationChain();
+  }
+
+  /// The proof standing here that a derive states
+  /// (`ImplResolver::findProof`).
+  ClaimType findProof(ImplOp impl, TraitApplicationAttr app,
+                      ArrayRef<FlatSymbolRefAttr> subproofs) const {
+    return resolver.findProof(scope, impl, app, subproofs);
+  }
+
+  /// The proof a derive states, written here (`ImplResolver::writeProof`).
+  ClaimType writeProof(ImplOp impl, TraitApplicationAttr app,
+                       const SpecializationMap &arguments,
+                       ArrayRef<ClaimType> entries,
+                       ArrayRef<FlatSymbolRefAttr> subproofs,
+                       ArrayRef<SmallVector<ResolutionStep>> equalitySteps,
+                       OpBuilder &builder) const {
+    return resolver.writeProof(scope, impl, app, arguments, entries, subproofs,
+                               equalitySteps, builder);
   }
 
   /// How many times what this reads from has changed. Every answer here is read

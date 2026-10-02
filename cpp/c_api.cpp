@@ -56,31 +56,6 @@ bool traitAttributeIsATraitApplication(MlirAttribute attribute) {
   return isa<TraitApplicationAttr>(unwrap(attribute));
 }
 
-MlirAttribute traitPredicateArrayAttrGet(MlirContext wrappedCtx,
-                                         MlirAttribute *predicates,
-                                         intptr_t numPredicates) {
-  // The array's own verifier judges the arm of every entry, so a non-predicate
-  // attribute yields a null attribute rather than an ill-formed where clause.
-  MLIRContext *ctx = unwrap(wrappedCtx);
-  return wrap(PredicateArrayAttr::getChecked(
-      [&] { return emitError(UnknownLoc::get(ctx)); }, ctx,
-      ArrayRef<Attribute>(unwrapArray(predicates, numPredicates))));
-}
-
-/// The #trait.binding attributes `arguments` holds, or nothing when one is of
-/// another kind.
-static std::optional<SmallVector<TypeBindingAttr>>
-unwrapBindings(MlirAttribute *arguments, intptr_t count) {
-  SmallVector<TypeBindingAttr> bindings;
-  for (Attribute argument : unwrapArray(arguments, count)) {
-    auto binding = dyn_cast<TypeBindingAttr>(argument);
-    if (!binding)
-      return std::nullopt;
-    bindings.push_back(binding);
-  }
-  return bindings;
-}
-
 MlirType traitPolyTypeGet(MlirContext wrappedCtx, unsigned int label) {
   return wrap(PolyType::get(unwrap(wrappedCtx), label));
 }
@@ -143,101 +118,6 @@ MlirAttribute traitTypeEqualityAttrGet(MlirContext wrappedCtx,
   return wrap(eq);
 }
 
-MlirAttribute traitTypeBindingAttrGet(MlirContext wrappedCtx,
-                                      MlirType parameter, MlirType argument) {
-  MLIRContext *ctx = unwrap(wrappedCtx);
-  auto err = [&] { return emitError(UnknownLoc::get(ctx)); };
-  return wrap(TypeBindingAttr::getChecked(err, ctx, unwrap(parameter),
-                                          unwrap(argument)));
-}
-
-MlirAttribute traitWitnessAttrGet(MlirContext wrappedCtx,
-                                  MlirAttribute predicate,
-                                  MlirStringRef implName,
-                                  MlirAttribute *arguments, intptr_t numArguments) {
-  MLIRContext *ctx = unwrap(wrappedCtx);
-  auto err = [&] { return emitError(UnknownLoc::get(ctx)); };
-  auto bindings = unwrapBindings(arguments, numArguments);
-  if (!bindings)
-    return {};
-  return wrap(WitnessAttr::getChecked(
-      err, ctx, unwrap(predicate),
-      FlatSymbolRefAttr::get(ctx, StringRef(implName.data, implName.length)),
-      ArrayRef<TypeBindingAttr>(*bindings)));
-}
-
-MlirAttribute traitWitnessAttrGetForRequirement(MlirContext wrappedCtx,
-                                                unsigned requirement,
-                                                MlirAttribute body) {
-  MLIRContext *ctx = unwrap(wrappedCtx);
-  auto err = [&] { return emitError(UnknownLoc::get(ctx)); };
-  Attribute position = IntegerAttr::get(IntegerType::get(ctx, 64), requirement);
-  return wrap(WitnessAttr::getChecked(err, ctx, position, unwrap(body)));
-}
-
-MlirAttribute traitWitnessBodyGetCitation(MlirContext wrappedCtx,
-                                          MlirStringRef implName,
-                                          MlirAttribute *arguments,
-                                          intptr_t numArguments,
-                                          MlirAttribute *discharges,
-                                          intptr_t numDischarges) {
-  MLIRContext *ctx = unwrap(wrappedCtx);
-  auto bindings = unwrapBindings(arguments, numArguments);
-  if (!bindings)
-    return {};
-  return wrap(ImplCitationAttr::get(
-      ctx, FlatSymbolRefAttr::get(ctx, StringRef(implName.data, implName.length)),
-      *bindings, unwrapArray(discharges, numDischarges)));
-}
-
-MlirAttribute traitWitnessBodyGetBinderPremise(MlirContext ctx,
-                                               unsigned position) {
-  return wrap(BinderPremiseAttr::get(unwrap(ctx), position));
-}
-
-MlirAttribute traitWitnessBodyGetImplPremise(MlirContext ctx,
-                                             unsigned position) {
-  return wrap(ImplPremiseAttr::get(unwrap(ctx), position));
-}
-
-MlirAttribute traitWitnessBodyGetRequirementHop(MlirContext ctx,
-                                                unsigned position,
-                                                MlirAttribute of,
-                                                MlirType *typeArgs,
-                                                intptr_t numTypeArgs,
-                                                MlirAttribute *premises,
-                                                intptr_t numPremises) {
-  SmallVector<Type> types;
-  for (intptr_t i = 0; i < numTypeArgs; ++i)
-    types.push_back(unwrap(typeArgs[i]));
-  return wrap(RequirementHopAttr::get(unwrap(ctx), position, unwrap(of), types,
-                                      unwrapArray(premises, numPremises)));
-}
-
-MlirAttribute traitWitnessBodyGetAllegation(MlirContext ctx,
-                                            MlirAttribute application) {
-  auto app = dyn_cast_or_null<TraitApplicationAttr>(unwrap(application));
-  if (!app)
-    return {};
-  return wrap(AllegationAttr::get(unwrap(ctx), app));
-}
-
-MlirType traitBoundVarTypeGet(MlirContext wrappedCtx, unsigned int position) {
-  return wrap(BoundVarType::get(unwrap(wrappedCtx), position));
-}
-
-MlirAttribute traitBoundPredicateAttrGet(MlirContext wrappedCtx,
-                                         unsigned int arity,
-                                         MlirAttribute *premises,
-                                         intptr_t numPremises,
-                                         MlirAttribute conclusion) {
-  MLIRContext *ctx = unwrap(wrappedCtx);
-  auto err = [&] { return emitError(UnknownLoc::get(ctx)); };
-  return wrap(BoundPredicateAttr::getChecked(
-      err, ctx, arity, ArrayRef<Attribute>(unwrapArray(premises, numPremises)),
-      unwrap(conclusion)));
-}
-
 intptr_t traitGetGenericTypesIn(MlirType type, MlirType *results, intptr_t maxResults) {
   auto generics = getGenericTypesIn(unwrap(type));
   intptr_t count = static_cast<intptr_t>(generics.size());
@@ -250,8 +130,9 @@ intptr_t traitGetGenericTypesIn(MlirType type, MlirType *results, intptr_t maxRe
 }
 
 TraitImplInstantiation traitModuleInstantiateImpl(MlirModule module, MlirStringRef name,
-                                MlirAttribute const *bindings,
-                                intptr_t numBindings, MlirType *header,
+                                MlirType const *parameters,
+                                MlirType const *arguments,
+                                intptr_t numArguments, MlirType *header,
                                 MlirType *whereClaims, intptr_t maxWhere,
                                 intptr_t *numWhere) {
   ModuleOp moduleOp = unwrap(module);
@@ -259,22 +140,22 @@ TraitImplInstantiation traitModuleInstantiateImpl(MlirModule module, MlirStringR
       SymbolTable::lookupSymbolIn(moduleOp, StringRef(name.data, name.length)));
   if (!impl)
     return TraitImplAbsent;
-  SmallVector<TypeBindingAttr> arguments;
-  for (intptr_t i = 0; i < numBindings; ++i) {
-    auto binding = dyn_cast_or_null<TypeBindingAttr>(unwrap(bindings[i]));
-    if (!binding)
+  // The substitution the arguments make, one per parameter of the impl, which
+  // the impl's header and where clause are instantiated at.
+  SmallVector<GenericTypeInterface, 4> params = impl.getTypeParams();
+  SpecializationMap substitution;
+  for (intptr_t i = 0; i < numArguments; ++i) {
+    auto parameter = dyn_cast<GenericTypeInterface>(unwrap(parameters[i]));
+    if (!parameter || !llvm::is_contained(params, parameter) ||
+        substitution.lookup(parameter))
       return TraitImplNotItsParameters;
-    arguments.push_back(binding);
+    substitution.bind(parameter, unwrap(arguments[i]));
   }
-  // The substitution a derive stating these arguments makes, and the header
-  // and where clause its verifier compares at it.
-  FailureOr<SpecializationMap> substitution =
-      impl.substitutionFor(arguments, /*err=*/nullptr);
-  if (failed(substitution))
+  if (substitution.bindingCount() != params.size())
     return TraitImplNotItsParameters;
   *header = wrap(Type(
-      ClaimType::get(impl.getContext(), impl.getSelfApplicationAt(*substitution))));
-  SmallVector<ClaimType> where = impl.getWhereClauseAt(*substitution);
+      ClaimType::get(impl.getContext(), impl.getSelfApplicationAt(substitution))));
+  SmallVector<ClaimType> where = impl.getWhereClaimsAt(substitution);
   *numWhere = where.size();
   for (auto [position, claim] : llvm::enumerate(where))
     if (intptr_t(position) < maxWhere)

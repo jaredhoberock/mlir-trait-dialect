@@ -15,12 +15,12 @@
 // CHECK: trait.func.call @inner
 
 !T = !trait.poly<0>
-trait.trait private @Trait[!T] {
+trait.trait private @Trait(%self: !trait.claim<@Trait[!T]>) {
   trait.assoc_type @Item
 }
 
 !U = !trait.poly<1>
-trait.trait private @Other[!U] {
+trait.trait private @Other(%self: !trait.claim<@Other[!U]>) {
   trait.assoc_type @Item
 }
 

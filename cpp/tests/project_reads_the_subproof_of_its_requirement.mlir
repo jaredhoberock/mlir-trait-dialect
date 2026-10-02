@@ -9,14 +9,21 @@
 
 // RUN: mlir-opt %s | FileCheck %s
 
-trait.trait private @A[!trait.poly<0>] {}
-trait.trait private @B[!trait.poly<1>] {}
-trait.trait private @T[!trait.poly<2>] where [@A[!trait.poly<2>], @B[!trait.poly<2>]] {}
+trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) {}
+trait.trait private @B(%self: !trait.claim<@B[!trait.poly<1>]>) {}
+trait.trait private @T(%self: !trait.claim<@T[!trait.poly<2>]>) -> (!trait.claim<@A[!trait.poly<2>]>, !trait.claim<@B[!trait.poly<2>]>) {}
 
-trait.impl private @A_i64 for @A[i64] {}
-trait.impl private @B_i64 for @B[i64] {}
-trait.impl private @T_impl for @T[i64] {}
-trait.proof private @T_p proves @T_impl[] for @T[i64] given [@A_i64, @B_i64]
+trait.impl private @A_i64(%self: !trait.claim<@A[i64]>) {}
+trait.impl private @B_i64(%self: !trait.claim<@B[i64]>) {}
+trait.impl private @T_impl(%self: !trait.claim<@T[i64]>) {
+  %req0 = trait.allege @A[i64]
+  %req1 = trait.allege @B[i64]
+  trait.return %req0, %req1 : !trait.claim<@A[i64]>, !trait.claim<@B[i64]>
+}
+trait.proof private @T_p {
+  %d = trait.derive @T[i64] from @T_impl given()
+  trait.return %d : !trait.claim<@T[i64]>
+}
 
 // CHECK-LABEL: func.func @f
 // CHECK: trait.project %arg0[0] : <@T[i64] by @T_p> -> <@A[i64] by @A_i64>

@@ -10,25 +10,25 @@
 
 !T = !trait.poly<0>
 
-trait.trait private @Gen[!T] {
+trait.trait private @Gen(%self: !trait.claim<@Gen[!T]>) {
   trait.assoc_type @A
 }
 
 // expected-note@+1 {{candidate}}
-trait.impl private @Gen_wide for @Gen[i64] {
+trait.impl private @Gen_wide(%self: !trait.claim<@Gen[i64]>) {
   trait.assoc_type @A = i32
 }
 
 // expected-note@+1 {{candidate}}
-trait.impl private @Gen_narrow for @Gen[i64] {
+trait.impl private @Gen_narrow(%self: !trait.claim<@Gen[i64]>) {
   trait.assoc_type @A = i16
 }
 
-trait.trait private @Res[!T] {
+trait.trait private @Res(%self: !trait.claim<@Res[!T]>) {
   trait.assoc_type @X
 }
 
-trait.impl private @Res_i64 for @Res[i64] {
+trait.impl private @Res_i64(%self: !trait.claim<@Res[i64]>) {
   trait.assoc_type @X = i32
 }
 

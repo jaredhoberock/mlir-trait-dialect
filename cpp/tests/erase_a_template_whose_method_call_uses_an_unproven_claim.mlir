@@ -8,7 +8,7 @@
 
 !T = !trait.poly<0>
 
-trait.trait private @Unwrap[!T] {
+trait.trait private @Unwrap(%self: !trait.claim<@Unwrap[!T]>) {
   trait.method @unwrap(!T) -> !T
 }
 

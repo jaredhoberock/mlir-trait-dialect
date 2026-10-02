@@ -12,25 +12,37 @@
 // CHECK: {{^}}9{{$}}
 
 !T = !trait.poly<0>
-trait.trait private @Mark[!T] { trait.method @value() -> i64 }
-trait.impl private @Nine for @Mark[i32] {
+trait.trait private @Mark(%self: !trait.claim<@Mark[!T]>) { trait.method @value() -> i64 }
+trait.impl private @Nine(%self: !trait.claim<@Mark[i32]>) {
   trait.method @value() -> i64 {
     %v = arith.constant 9 : i64
     trait.return %v : i64
   }
 }
-trait.trait private @Wrapped[!T] where [@Mark[!T]] {
+trait.trait private @Wrapped(%self: !trait.claim<@Wrapped[!T]>) -> !trait.claim<@Mark[!T]> {
   trait.method @value() -> i64 {
-    %p = trait.assume 0 : !trait.claim<@Mark[!T]>
+    %p = trait.project %self[0] : !trait.claim<@Wrapped[!T]> -> !trait.claim<@Mark[!T]>
     %v = trait.method.call %p @Mark[!T]::@value() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @W for @Wrapped[i32] {}
-trait.proof private @W9 proves @W[] for @Wrapped[i32] given [@Nine]
-trait.proof private @O9 proves @O[] for @Outer[i32] given [@W9]
-trait.trait private @Outer[!T] where [@Wrapped[!T]] {}
-trait.impl private @O for @Outer[i32] {}
+trait.impl private @W(%self: !trait.claim<@Wrapped[i32]>) {
+  %req0 = trait.allege @Mark[i32]
+  trait.return %req0 : !trait.claim<@Mark[i32]>
+}
+trait.proof private @W9 {
+  %d = trait.derive @Wrapped[i32] from @W given()
+  trait.return %d : !trait.claim<@Wrapped[i32]>
+}
+trait.proof private @O9 {
+  %d = trait.derive @Outer[i32] from @O given()
+  trait.return %d : !trait.claim<@Outer[i32]>
+}
+trait.trait private @Outer(%self: !trait.claim<@Outer[!T]>) -> !trait.claim<@Wrapped[!T]> {}
+trait.impl private @O(%self: !trait.claim<@Outer[i32]>) {
+  %req0 = trait.allege @Wrapped[i32]
+  trait.return %req0 : !trait.claim<@Wrapped[i32]>
+}
 func.func private @f(%x: !T) -> i64 {
   %a = trait.allege @Outer[!T]
   %w = trait.project %a[0] : !trait.claim<@Outer[!T]> -> !trait.claim<@Wrapped[!T]>

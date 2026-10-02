@@ -8,27 +8,27 @@
 
 !L = !trait.poly<0>
 !R = !trait.poly<1>
-trait.trait private @Eq[!L, !R] {
+trait.trait private @Eq(%self: !trait.claim<@Eq[!L, !R]>) {
   trait.method @use()
 }
 
 !T = !trait.poly<2>
-trait.impl private @Eq_same for @Eq[!T, !T] {
+trait.impl private @Eq_same(%self: !trait.claim<@Eq[!T, !T]>) {
   trait.method @use() {
     trait.return
   }
 }
 
 !A = !trait.poly<3>
-trait.trait private @Has[!A] {
+trait.trait private @Has(%self: !trait.claim<@Has[!A]>) {
   trait.assoc_type @Shape
 }
 
-trait.impl private @Has_i32 for @Has[i32] {
+trait.impl private @Has_i32(%self: !trait.claim<@Has[i32]>) {
   trait.assoc_type @Shape = i32
 }
 
-trait.impl private @Has_f32 for @Has[f32] {
+trait.impl private @Has_f32(%self: !trait.claim<@Has[f32]>) {
   trait.assoc_type @Shape = i64
 }
 

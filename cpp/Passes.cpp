@@ -3,6 +3,7 @@
 #include "Specialization.hpp"
 #include "ImplResolution.hpp"
 #include "Passes.hpp"
+#include <llvm/ADT/ScopeExit.h>
 #include "TraitOps.hpp"
 #include "Trait.hpp"
 #include "TraitTypes.hpp"
@@ -211,6 +212,13 @@ static LogicalResult applyPatternsOverReachableOps(ModuleOp module,
   config.setListener(&events);
   config.setStrictness(GreedyRewriteStrictness::ExistingOps);
   config.setScope(&module.getBodyRegion());
+  // The stage retypes a claim in place once its proof is established, so
+  // between two rewrites a value and a user whose type must equal it -- a
+  // select's arms, a block argument, a return -- can name different proofs.
+  // The folder requires a replacement of the result's own type, which that
+  // interval does not offer; folding is left to the steps after the stage,
+  // which read the module it converged to.
+  config.enableFolding(false);
   int64_t budget = config.getMaxNumRewrites();
 
   bool anyChange = false;
@@ -320,14 +328,75 @@ LogicalResult verifyDeclaredClaimProofs(ModuleOp module) {
   return status;
 }
 
+/// Refuses a proof whose derivation stands too deep. A derivation is followed
+/// from each proof through the proof each application premise names, at the
+/// instance the proof cites it, and its depth is counted as impl selection
+/// counts an obligation chain and refused at the same depth, which is Rust's
+/// trait solver's overflow: a proof citing itself, or a ring of proofs citing
+/// one another, at ever larger arguments reaches a new application at every
+/// step and never ends. A proof cited again at an application on the chain is
+/// a coinductive citation and adds nothing; the height of the derivation below
+/// a (proof, application) pair, once followed, is kept and read wherever the
+/// pair is reached again, followed anew only where the chain reaching it
+/// makes it too deep, so the verdict depends neither on the order proofs stand
+/// in nor on the order a proof's premises do.
+static LogicalResult verifyProofDerivationsEnd(ModuleOp module) {
+  using Followed = std::pair<Operation *, TraitApplicationAttr>;
+  SmallVector<ObligationFrame> chain;
+  DenseSet<Followed> onChain;
+  DenseMap<Followed, unsigned> heights;
+  std::function<FailureOr<unsigned>(ProofOp, ClaimType)> follow =
+      [&](ProofOp proof, ClaimType at) -> FailureOr<unsigned> {
+    TraitApplicationAttr app = at.getTraitApplication();
+    Followed key{proof, app};
+    if (onChain.contains(key))
+      return 0u;
+    // The deepest frame below the pair stands `height - 1` below it.
+    if (auto known = heights.find(key);
+        known != heights.end() &&
+        chain.size() + known->second - 1 < kInstantiationDepthLimit)
+      return known->second;
+    if (failed(checkObligationChainDepth(chain, app, proof.getLoc())))
+      return failure();
+    // A citation the proof's verifier refuses is refused there.
+    auto premises = proof.getPremisesAt(at, /*err=*/nullptr);
+    if (failed(premises))
+      return 1u;
+    chain.push_back(
+        {app, FlatSymbolRefAttr::get(proof.getContext(), proof.getSymName())});
+    onChain.insert(key);
+    auto popped = llvm::scope_exit([&] {
+      chain.pop_back();
+      onChain.erase(key);
+    });
+    unsigned below = 0;
+    for (ClaimType premise : *premises) {
+      if (!premise.isApplication() || !premise.isProven())
+        continue;
+      if (auto cited = lookupSymbolFrom<ProofOp>(module, premise.getProof())) {
+        FailureOr<unsigned> height = follow(cited, premise);
+        if (failed(height))
+          return failure();
+        below = std::max(below, *height);
+      }
+    }
+    heights[key] = below + 1;
+    return below + 1;
+  };
+  for (ProofOp proof : module.getOps<ProofOp>())
+    if (failed(follow(proof, proof.getProvenClaim())))
+      return failure();
+  return success();
+}
+
 //===----------------------------------------------------------------------===//
 // VerifyAcyclicTraitsPass
 //===----------------------------------------------------------------------===//
 
 // The structural half of the acyclicity check, which runs before the module is
-// verified: it reads trait symbols by name and refuses a dangling `where`-clause
+// verified: it reads trait symbols by name and refuses a dangling requirement
 // reference through a diagnostic rather than reaching the aborting trait
-// accessor. The trait-to-trait edges it walks form the `where`-clause dependency
+// accessor. The trait-to-trait edges it walks form the requirement dependency
 // graph; a back-edge is a cycle.
 static LogicalResult verifyAcyclicTraitsStructure(ModuleOp module) {
   enum class Status : uint8_t { NotSeen = 0, InPath, Done };
@@ -351,23 +420,21 @@ static LogicalResult verifyAcyclicTraitsStructure(ModuleOp module) {
     s = Status::InPath;
     stack.push_back(u);
 
-    // The `where` clause is a mandatory property, so verifier-valid IR always
-    // carries at least an empty predicate array (a no-`where` trait prints
-    // `requirements = #trait<predicate_array[]>`). A null here is malformed
-    // input the screen faces before the full verifier -- refuse it rather than
-    // dereference the null attribute in the range below.
-    PredicateArrayAttr requirements = u.getRequirements();
+    // The requirements are the trait's result signature, so a missing or
+    // malformed list is input the screen faces before the full verifier --
+    // refuse it rather than read through it.
+    ArrayAttr requirements = u.getRequirementsAttr();
     if (!requirements)
-      return u.emitError("trait carries no `where`-clause requirements array");
+      return u.emitError("trait carries no requirements list");
 
-    for (Attribute pred : requirements) {
+    for (Attribute entry : requirements) {
       // Only application requirements form trait-to-trait edges; an equality
-      // requirement has no trait head and cannot close a `where`-clause cycle,
-      // and a bound requirement is never elaborated as a hypothesis -- it is
-      // selected at arguments -- so it closes none either.
-      auto app = dyn_cast<TraitApplicationAttr>(pred);
-      if (!app)
+      // requirement has no trait head and cannot close a requirement cycle.
+      auto typeAttr = dyn_cast<TypeAttr>(entry);
+      auto claim = typeAttr ? dyn_cast<ClaimType>(typeAttr.getValue()) : ClaimType();
+      if (!claim || !claim.isApplication())
         continue;
+      TraitApplicationAttr app = claim.getTraitApplication();
       // Resolve the edge's target by name. A `where` clause naming a trait the
       // module does not define is refused here -- a hostile blob reaches this
       // screen before the full verifier, so this must not reach the aborting
@@ -488,9 +555,12 @@ static uint64_t respellProvenClaimsInPlace(const ImplResolver &resolver,
 
   root->walk<WalkOrder::PreOrder>([&](Operation *op) -> WalkResult {
     // Nothing writes into a template: its spelling is resolved when it is
-    // cloned for a concrete instance, not by this sweep.
+    // cloned for a concrete instance, not by this sweep. Nor into a claim whose
+    // evidence its producer reads by position: its own rewrite proves it.
     if (isTemplate(op))
       return WalkResult::skip();
+    if (producesPositionalEvidence(op))
+      return WalkResult::advance();
 
     DemandFrame frame(op->getLoc());
 
@@ -534,332 +604,19 @@ static uint64_t respellProvenClaimsInPlace(const ImplResolver &resolver,
   return positionsRespelled;
 }
 
-/// An allegation a witness body rests on: the impl stating the witness, the
-/// bound requirement of its trait the witness is for, and the allegation.
-struct AllegationBehind {
-  ImplOp impl;
-  unsigned requirement;
-  AllegationAttr allegation;
-};
-
-static std::optional<AllegationBehind>
-allegationBehindBody(Attribute body, ClaimType source, ImplOp impl,
-                     unsigned requirement, ModuleOp module);
-
-/// The allegation requirement `index` of the proven claim `source` rests on:
-/// the one the witness of `source`'s impl for that requirement states or
-/// reads a requirement off, through requirement hops; `std::nullopt` where the
-/// requirement rests on none.
-static std::optional<AllegationBehind>
-allegedRequirementOf(ClaimType source, ModuleOp module, unsigned index) {
-  auto cited = ProofOp::getProofOpOrUnconditionalImplOp(module, source.getProof(),
-                                                        nullptr);
-  if (failed(cited))
-    return std::nullopt;
-  auto proof = dyn_cast<ProofOp>(*cited);
-  ImplOp impl = proof ? proof.getImpl() : dyn_cast<ImplOp>(*cited);
-  if (!impl || !impl.getWitnessesAttr())
-    return std::nullopt;
-  for (auto witness : impl.getWitnessesAttr().getAsRange<WitnessAttr>())
-    if (witness.getRequirement() == index)
-      return allegationBehindBody(witness.getBody(), source, impl, index,
-                                  module);
-  return std::nullopt;
-}
-
-/// The proven claim `body`, a witness body of `impl` read under the proven
-/// claim `source`, proves at the instance: a premise of the impl, as
-/// `source`'s proof discharges it, or a requirement of such a claim read by a
-/// hop, when a subproof provides it; `std::nullopt` otherwise.
-static std::optional<ClaimType> claimProvedBy(Attribute body, ClaimType source,
-                                              ImplOp impl, ModuleOp module) {
-  FailureOr<ClaimRequirement> read = failure();
-  if (auto premise = dyn_cast<ImplPremiseAttr>(body)) {
-    // The impl's premises are the claim's requirements after its trait's.
-    auto count = getClaimRequirementCount(source, module);
-    if (failed(count))
-      return std::nullopt;
-    unsigned position =
-        *count - impl.getAssumptions().size() + premise.getPosition();
-    read = getClaimRequirementAt(source, module, position, ArrayRef<Type>());
-  } else if (auto hop = dyn_cast<RequirementHopAttr>(body)) {
-    std::optional<ClaimType> of = claimProvedBy(hop.getOf(), source, impl,
-                                                module);
-    if (!of)
-      return std::nullopt;
-    read = getClaimRequirementAt(*of, module, hop.getPosition(),
-                                 hop.getTypeArgs());
-  }
-  if (failed(read) || !read->conclusion.isProven())
-    return std::nullopt;
-  return read->conclusion;
-}
-
-/// The allegation `body`, `impl`'s witness body for bound requirement
-/// `requirement` read under the proven claim `source`, rests on: the body
-/// itself when it alleges; for a hop off a body proving a claim at the
-/// instance, the allegation the hopped requirement of that claim rests on;
-/// for a hop off any other body, the allegation that body rests on.
-static std::optional<AllegationBehind>
-allegationBehindBody(Attribute body, ClaimType source, ImplOp impl,
-                     unsigned requirement, ModuleOp module) {
-  if (auto allegation = dyn_cast<AllegationAttr>(body))
-    return AllegationBehind{impl, requirement, allegation};
-  auto hop = dyn_cast<RequirementHopAttr>(body);
-  if (!hop)
-    return std::nullopt;
-  if (std::optional<ClaimType> of = claimProvedBy(hop.getOf(), source, impl,
-                                                  module))
-    return allegedRequirementOf(*of, module, hop.getPosition());
-  return allegationBehindBody(hop.getOf(), source, impl, requirement, module);
-}
-
-/// Whether `proof`, the proof `derive`'s claim names or selection holds for
-/// it, proves it through the impl `derive` cites, refusing through `err` where
-/// it does not.
-static LogicalResult verifyProofCitesDerivedImpl(
-    DeriveOp derive, FlatSymbolRefAttr proof,
-    llvm::function_ref<InFlightDiagnostic()> err) {
-  auto provenBy = ProofOp::getImplFromProof(getAnchorModule(derive), proof);
-  if (succeeded(provenBy) && *provenBy == derive.getImplOp())
-    return success();
-  auto claim = cast<ClaimType>(derive.getResult().getType()).asUnproven();
-  return err() << "derives " << claim << " from impl " << derive.getImplAttr()
-               << ", and impl selection proved it by " << proof;
-}
-
-/// Whether `proof`, the proof `op`'s claim names or selection holds for it, is
-/// one `op` committed to, refusing through `err` where it is not.
+/// Proves a claim-producing op and replaces it with a trait.witness, or a
+/// projection with the evidence it reads.
 ///
-/// A derive commits to a proof through the impl it cites and the operands it
-/// is given: the proof must cite that impl and, at each where-clause entry
-/// whose operand is proven, name the evidence that operand names. Any other op
-/// commits to nothing: an allegation is a trusted assertion, which any proof
-/// selection makes of its claim meets.
-static LogicalResult verifyProofKeepsCommitment(
-    Operation *op, FlatSymbolRefAttr proof,
-    llvm::function_ref<InFlightDiagnostic()> err) {
-  auto derive = dyn_cast<DeriveOp>(op);
-  if (!derive)
-    return success();
-  if (failed(verifyProofCitesDerivedImpl(derive, proof, err)))
-    return failure();
-  ModuleOp scope = getAnchorModule(op);
-
-  // The proof discharges the impl's where-clause entries, after its trait's
-  // requirements, by the subproofs it names; the derive discharges them by its
-  // operands. A proof naming another subproof at an entry than the proof the
-  // operand there names is evidence for another reason, which this derive does
-  // not hold: it is refused rather than witnessed over operands it did not
-  // come from. Two symbols of one evidence are one subproof. An unconditional
-  // impl has no entry to compare.
-  auto cited = ProofOp::getProofOpOrUnconditionalImplOp(scope, proof,
-                                                        /*errFn=*/nullptr);
-  auto proofOp = succeeded(cited) ? dyn_cast<ProofOp>(*cited) : ProofOp();
-  if (!proofOp)
-    return success();
-  ArrayRef<Attribute> given = proofOp.getSubproofNames().getValue();
-  size_t requirementCount =
-      derive.getImplOp().getTrait().getRequirements().size();
-  for (auto [index, operand] : llvm::enumerate(derive.getAssumptions())) {
-    auto premise = cast<ClaimType>(operand.getType());
-    size_t entry = requirementCount + index;
-    if (!premise.isApplication() || !premise.isProven() ||
-        entry >= given.size())
-      continue;
-    auto discharged = dyn_cast<FlatSymbolRefAttr>(given[entry]);
-    if (!discharged ||
-        !ProofOp::sameEvidence(scope, discharged, premise.getProof()))
-      return err() << "is given " << premise << " at where-clause entry "
-                   << index << ", which " << proof << " discharges by "
-                   << given[entry] << " instead";
-  }
-  return success();
-}
-
-/// Where the witness of a resolved projection reads the facts it cites: `hop`
-/// resolves one step of a monomorphic projection and `proofOf` proves an
-/// application claim, answering it proven. Each fails where it does not serve.
-/// `module` bounds the fixed-point resolution of an endpoint.
-struct ResolutionSource {
-  llvm::function_ref<FailureOr<ProjectionResolution>(ProjectionType)> hop;
-  llvm::function_ref<FailureOr<ClaimType>(ClaimType)> proofOf;
-  ModuleOp module;
-};
-
-/// One hop of an endpoint's resolution, as its witness cites it: the equality
-/// `projection = binding`, the witness naming the impl selection chose for the
-/// projection's application at the arguments its parameters take there, and
-/// one proven claim per application premise of that impl at those arguments,
-/// which the witness's verifier requires discharged.
-struct ResolutionHop {
-  TypeEqualityAttr equality;
-  WitnessAttr witness;
-  SmallVector<ClaimType> premises;
-};
-
-/// The hop resolving one step of `proj` through `source`. Fails where `source`
-/// resolves it through no impl or proves no premise of that impl.
-static FailureOr<ResolutionHop> resolutionHopOf(ProjectionType proj,
-                                                const ResolutionSource &source) {
-  FailureOr<ProjectionResolution> step = source.hop(proj);
-  if (failed(step))
-    return failure();
-  MLIRContext *ctx = proj.getContext();
-  ImplOp impl = step->getImpl();
-  const SpecializationMap &arguments = step->getArguments();
-  SmallVector<TypeBindingAttr> bindings;
-  for (GenericTypeInterface parameter : impl.getTypeParams()) {
-    std::optional<Type> argument = arguments.lookup(parameter);
-    if (!argument)
-      return failure();
-    bindings.push_back(TypeBindingAttr::get(ctx, Type(parameter), *argument));
-  }
-  ResolutionHop hop;
-  for (ClaimType assumption : impl.getAssumptionsAsClaims()) {
-    auto premise = cast<ClaimType>(instantiate(Type(assumption), arguments));
-    FailureOr<ClaimType> proven = source.proofOf(premise);
-    if (failed(proven))
-      return failure();
-    hop.premises.push_back(ClaimType::get(ctx, premise.getTraitApplication(),
-                                          proven->getProof()));
-  }
-  hop.equality = TypeEqualityAttr::get(ctx, Type(step->getProjection()),
-                                       step->getBinding());
-  hop.witness = WitnessAttr::get(ctx, Attribute(hop.equality),
-                                 FlatSymbolRefAttr::get(ctx, impl.getSymName()),
-                                 ArrayRef<TypeBindingAttr>(bindings));
-  return hop;
-}
-
-/// The ground spellings the endpoints of `eq` resolve to through `source`,
-/// appending one hop per distinct ground projection resolved on the way to
-/// `hops`; identical endpoints are read as spelled. The walk descends
-/// composites, so a projection nested inside one -- the resolved side of
-/// `type Out = Vec<Self::Item>` -- yields its hop just as a top-level projection
-/// does, and runs to a fixed point because a binding may itself spell a
-/// projection, the impl's own or one a generic associated type's argument
-/// carried into it. Fails where a hop fails or a ground projection still
-/// stands.
-static FailureOr<std::pair<Type, Type>>
-resolveEndpoints(TypeEqualityAttr eq, const ResolutionSource &source,
-                 SmallVectorImpl<ResolutionHop> &hops) {
-  if (eq.getLhs() == eq.getRhs())
-    return std::make_pair(eq.getLhs(), eq.getRhs());
-  // A projection whose hop fails is left standing; the failure is carried out
-  // past the fixed point so that it, and not the standing projection, is what
-  // refuses. One replacer serves both endpoints and every round of the fixed
-  // point, and it answers a projection it has already met from its cache, so a
-  // projection spelled twice is one hop.
-  bool hopFailed = false;
-  AttrTypeReplacer replacer = makeGroundProjectionReplacer(
-      [&](ProjectionType proj) -> std::optional<Type> {
-        FailureOr<ResolutionHop> hop = resolutionHopOf(proj, source);
-        if (failed(hop)) {
-          hopFailed = true;
-          return std::nullopt;
-        }
-        hops.push_back(*hop);
-        return hop->equality.getRhs();
-      });
-  // The shared normalizer owns the fixed point's bound and stops the
-  // compilation at a chain that never grounds out, the same refusal every
-  // ground resolver makes.
-  auto resolve = [&](Type endpoint) {
-    return normalizeProjectionsToFixedPoint(
-        endpoint, source.module,
-        [&](Type current) { return replacer.replace(current); });
-  };
-  Type lhs = resolve(eq.getLhs());
-  Type rhs = resolve(eq.getRhs());
-  bool standing = false;
-  for (Type side : {lhs, rhs})
-    side.walk([&](ProjectionType proj) {
-      standing |= !isPolymorphicType(Type(proj));
-    });
-  if (hopFailed || standing)
-    return failure();
-  return std::make_pair(lhs, rhs);
-}
-
-/// Builds at `builder`'s insertion point the witness of `eq` from `hops`, the
-/// hops resolving its endpoints to one ground spelling: refl for identical
-/// endpoints; the sole hop's witness where it proves `eq` as spelled; else the
-/// composition of every hop's witness, whose ground congruence closure carries
-/// the endpoints together across every hop. Each hop's witness carries a
-/// witness of each premise it discharges.
-static Value buildEqualityWitness(OpBuilder &builder, Location loc,
-                                  TypeEqualityAttr eq,
-                                  ArrayRef<ResolutionHop> hops) {
-  if (eq.getLhs() == eq.getRhs())
-    return WitnessOp::create(builder, loc, eq).getResult();
-  assert(!hops.empty() &&
-         "two spellings of one ground type differ in a projection they spell");
-  SmallVector<Value> witnesses;
-  for (const ResolutionHop &hop : hops) {
-    SmallVector<Value> premises =
-        llvm::map_to_vector(hop.premises, [&](ClaimType premise) -> Value {
-          return WitnessOp::create(builder, loc, premise.getProof(),
-                                   premise.getTraitApplication())
-              .getResult();
-        });
-    witnesses.push_back(
-        WitnessOp::create(builder, loc, hop.equality, hop.witness, premises)
-            .getResult());
-  }
-  if (witnesses.size() == 1 && hops.front().equality == eq)
-    return witnesses.front();
-  return WitnessOp::create(builder, loc, eq, ValueRange(witnesses)).getResult();
-}
-
-/// Whether `value` is still produced by a claim producer the driver has not
-/// yet replaced with a witness -- a `trait.allege`, `trait.derive` or
-/// `trait.project` -- directly or through the ops that carry a claim on: a
-/// coerce or a select through its operands, and an op with regions, such as
-/// `scf.if` or `scf.execute_region`, through what its regions' terminators
-/// yield as well. The proof such a value is spelled with is the stamp's guess
-/// until its producer is judged, so it confirms no consumer. An equality
-/// carries no proof for the stamp to guess, and a block argument takes its
-/// evidence by position: neither waits.
-static bool fedByUnwitnessedProducer(Value value) {
-  llvm::SmallPtrSet<Operation *, 8> seen;
-  SmallVector<Value> worklist{value};
-  auto followClaims = [&](OperandRange operands) {
-    for (Value operand : operands)
-      if (containsType<ClaimType>(operand.getType()))
-        worklist.push_back(operand);
-  };
-  while (!worklist.empty()) {
-    Value current = worklist.pop_back_val();
-    if (auto claim = dyn_cast<ClaimType>(current.getType());
-        claim && claim.isEquality())
-      continue;
-    Operation *producer = current.getDefiningOp();
-    if (!producer || !seen.insert(producer).second)
-      continue;
-    if (isa<AllegeOp, DeriveOp, ProjectOp>(producer))
-      return true;
-    followClaims(producer->getOperands());
-    // A region's result is one of the values its terminators hand back; all
-    // of them are followed, which can only make a consumer wait longer.
-    for (Region &region : producer->getRegions())
-      for (Block &block : region)
-        if (!block.empty() && block.back().hasTrait<OpTrait::IsTerminator>())
-          followClaims(block.back().getOperands());
-  }
-  return false;
-}
-
-/// Proves a claim-producing op and replaces it with a trait.witness.
-///
-/// The proving obligation is keyed on the result ClaimType, not the
-/// producing op: allege, derive, and project results all discharge through
-/// this one rule. Which producers it matches follows from which constructor
-/// built it: the fact-establishing use matches trait.allege alone, because a
-/// claim derived inside a still-polymorphic body is not yet its business,
-/// while the read-only driver use matches allege, derive and project results
-/// alike. An alleged equality is proved by resolving its projections through
-/// the impls selection chooses for their applications.
+/// An allegation is proven by selection on its claim, and an alleged equality
+/// by resolving its projections through the impls selection chooses for their
+/// applications; a derive is proven by the proof whose body it is, never by
+/// selecting again; a projection of a proven claim is replaced by the evidence
+/// the claim's impl returns at its index (`ProjectOp::inlineEvidence`), which
+/// this rule then proves where it stands. Which producers it matches follows
+/// from which constructor built it: the fact-establishing use matches
+/// trait.allege and trait.derive, because a claim projected inside a
+/// still-polymorphic body is not yet its business, while the read-only driver
+/// use matches projections besides.
 ///
 /// Both registrations are permanent. A claim result the driver's own rewrites
 /// produce is one no step before the driver could have seen, for the same reason
@@ -871,9 +628,8 @@ struct ProveClaimResultPattern : public RewritePattern {
   ImplResolver *minting;
   /// A read of what impl selection has settled, which every use has.
   ReadOnlyImplResolver reading;
-  /// The ops whose claim selection has already contradicted -- a derive
-  /// committed to another impl, an equality whose sides selection resolves to
-  /// two types -- each reported once.
+  /// The ops whose claim selection has already contradicted -- an equality
+  /// whose sides selection resolves to two types -- each reported once.
   mutable llvm::DenseSet<Operation *> contradicted;
   /// Set once this pattern refuses a claim. The stage that owns it fails on a
   /// refusal as it fails on a demand selection refused: a refused op is left
@@ -882,8 +638,8 @@ struct ProveClaimResultPattern : public RewritePattern {
   bool &refusedAClaim;
 
   /// The step that establishes the facts the rest of the stage reads. It
-  /// matches `trait.allege` alone: a claim derived inside a still-polymorphic
-  /// body is not yet its business.
+  /// matches `trait.allege` and `trait.derive`: a claim projected inside a
+  /// still-polymorphic body is not yet its business.
   ProveClaimResultPattern(MLIRContext *ctx, ImplResolver &resolver,
                           bool &refusedAClaim)
     : RewritePattern(MatchAnyOpTypeTag(), /*benefit=*/1, ctx),
@@ -906,7 +662,8 @@ struct ProveClaimResultPattern : public RewritePattern {
   }
 
   LogicalResult matchAndRewrite(Operation *op, PatternRewriter& rewriter) const override {
-    if (minting ? !isa<AllegeOp>(op) : !isa<AllegeOp, DeriveOp, ProjectOp>(op))
+    if (minting ? !isa<AllegeOp, DeriveOp>(op)
+                : !isa<AllegeOp, DeriveOp, ProjectOp>(op))
       return failure();
 
     // In-place retyping by proof propagation can prove a claim out from under
@@ -916,9 +673,16 @@ struct ProveClaimResultPattern : public RewritePattern {
     // legalizes wherever a consumer still wants its result.
     auto claim = cast<ClaimType>(op->getResult(0).getType());
 
-    // A projection hop to a trait's equality requirement is established by the
-    // requirement itself and discharged when its endpoints ground-resolve at the
-    // leftover check. An alleged equality is proved here once monomorphic.
+    // A projection of a proven source is replaced by the evidence the source's
+    // impl returns at its index, which the patterns then prove where it stands:
+    // a derive transcribed, an allegation decided, a coercion settled.
+    if (auto project = dyn_cast<ProjectOp>(op)) {
+      if (!project.getSourceClaim().isProven())
+        return rewriter.notifyMatchFailure(op, "waits for its source");
+      return project.inlineEvidence(rewriter);
+    }
+
+    // An alleged equality is proved here once monomorphic.
     if (claim.isEquality()) {
       auto allegation = dyn_cast<AllegeOp>(op);
       if (!allegation || !claim.isMonomorphic())
@@ -926,84 +690,15 @@ struct ProveClaimResultPattern : public RewritePattern {
       return proveAllegedEquality(allegation, claim.getEqualityAttr(), rewriter);
     }
 
-    // A derive is judged against the evidence it is given, so it waits until
-    // each application operand is proven by a producer already judged: an
-    // operand still spelled by a guess would confirm the guess, and the
-    // witness the derive becomes would drop the operand, erasing the guess's
-    // producer unjudged. While it waits, the proof of its claim -- the one its
-    // result names, else the one selection holds -- is judged by its impl
-    // alone, so a derive proved through another impl is refused whether or not
-    // its operands are ever proven.
-    if (auto derive = dyn_cast<DeriveOp>(op);
-        derive && claim.isMonomorphic() &&
-        llvm::any_of(derive.getAssumptions(), [](Value operand) {
-          auto premise = cast<ClaimType>(operand.getType());
-          return premise.isApplication() &&
-                 (!premise.isProven() || fedByUnwitnessedProducer(operand));
-        })) {
-      DemandFrame frame(op->getLoc());
-      FailureOr<ClaimType> candidate =
-          claim.isProven()
-              ? FailureOr<ClaimType>(claim)
-              : proofFor(claim, getAnchorModule(op), rewriter,
-                         [&] { return op->emitOpError(); });
-      if (succeeded(candidate) && !contradicted.contains(op) &&
-          failed(verifyProofCitesDerivedImpl(
-              derive, candidate->getProof(),
-              [&] { return op->emitOpError(); }))) {
-        (void)refuse(op);
-        return rewriter.notifyMatchFailure(op, "selection chose another impl");
-      }
-      return rewriter.notifyMatchFailure(op, "waits for its given evidence");
-    }
-
-    // An op committed to how its claim is proved refuses a proof other than the
-    // one it committed to, where the commitment was written: two answers to one
-    // question are not settled silently by the second. The driver offers an op
-    // it did not rewrite again, so a refusal is reported the first time only.
-    auto commitmentBroken = [&](FlatSymbolRefAttr proof) {
-      if (contradicted.contains(op))
-        return true;
-      if (succeeded(verifyProofKeepsCommitment(op, proof,
-                                               [&] { return op->emitOpError(); })))
-        return false;
-      (void)refuse(op);
-      return true;
-    };
-
     // A claim spelled unproven is proven by selection once it is monomorphic;
     // a polymorphic one waits for the instance that grounds it.
     if (!claim.isProven() && !claim.isMonomorphic())
       return rewriter.notifyMatchFailure(op, "polymorphic claim deferred");
 
-    // A projection's evidence is its source's. The substitution a cut stamps
-    // a body under spells a claim by the one proof the use supplied for it,
-    // whichever position supplied it, and selection answers a claim by its
-    // application alone, so neither names a projection's evidence: a
-    // projection is witnessed only once its source and premises are proven by
-    // producers already judged, and only with the evidence at its index -- the
-    // subproof the source's proof cites there, or, where the proof cites
-    // nothing (a bound requirement, which the impl's witness proves and no
-    // subproof names), the proof selection holds for the claim. A proof the
-    // source holds at another of its requirements is no evidence for this one.
-    // A projection whose spelling or whose selected proof names other evidence
-    // was not supplied at its index, and is refused. A projection off a source
-    // no position proves has no evidence at its index to read, and takes
-    // selection's proof.
-    //
-    // XXX TODO: this judgement of a projection, the derive's wait for judged
-    // operands above, the reading of its subproofs against them in
-    // verifyProofKeepsCommitment, and ProofOp::sameEvidence, which both
-    // compare by, are deleted with the respelling of a cut body's claims by
-    // their spelling, when declarations and proofs take their evidence as block
-    // arguments and a cut maps each claim value from the value that supplies
-    // it.
-    auto project = dyn_cast<ProjectOp>(op);
-    if (project &&
-        (fedByUnwitnessedProducer(project.getSource()) ||
-         llvm::any_of(project.getPremises(), fedByUnwitnessedProducer) ||
-         (claim.isProven() && !project.getSourceClaim().isProven())))
-      return rewriter.notifyMatchFailure(op, "waits for its source");
+    // A derive states its own decision: its claim is proven by the proof whose
+    // body is this derive over the evidence its operands carry.
+    if (auto derive = dyn_cast<DeriveOp>(op))
+      return transcribe(derive, rewriter);
 
     DemandFrame frame(op->getLoc());
     auto errFn = [&] { return op->emitOpError(); };
@@ -1013,7 +708,7 @@ struct ProveClaimResultPattern : public RewritePattern {
     // ones standing there.
     ModuleOp scope = getAnchorModule(op);
 
-    // The proof the op is spelled with, else the canonical evidence selection
+    // The proof the op is spelled with; else the canonical evidence selection
     // builds or reuses for its claim. A selected proof names the application
     // it was recorded under, which selection spelled with the claim's
     // projections resolved; the producer's source spelling would leave the
@@ -1023,46 +718,6 @@ struct ProveClaimResultPattern : public RewritePattern {
                          : proofFor(claim, scope, rewriter, errFn);
     if (failed(proven))
       return rewriter.notifyMatchFailure(op, "couldn't find proof of this claim");
-
-    if (project && project.getSourceClaim().isProven()) {
-      auto requirement = getClaimRequirementAt(
-          project.getSourceClaim(), scope, project.getIndex(),
-          project.getBinderArguments());
-      if (failed(requirement))
-        return rewriter.notifyMatchFailure(op, "requirement unreadable");
-      FlatSymbolRefAttr cited;
-      if (requirement->conclusion.isProven()) {
-        // A subproof that does not prove the claim is a defect of the source's
-        // proof, which the stage reports at that proof, and no evidence here.
-        EvidenceBindings accepted;
-        if (succeeded(verifyAndRecordProof(
-                claim.asUnproven(), requirement->conclusion, scope, accepted,
-                DemandOrigin::ProofRecording, &reading.getDerivationMemo(),
-                /*err=*/nullptr)) &&
-            accepted.bindingCount() != 0)
-          cited = requirement->conclusion.getProof();
-      } else {
-        FailureOr<ClaimType> selected =
-            claim.isProven() ? proofFor(claim.asUnproven(), scope, rewriter,
-                                        errFn)
-                             : proven;
-        if (failed(selected))
-          return rewriter.notifyMatchFailure(op, "waits for selection");
-        cited = selected->getProof();
-      }
-      if (cited && !ProofOp::sameEvidence(scope, cited, proven->getProof())) {
-        if (refuse(op))
-          op->emitOpError() << "names " << proven->getProof()
-                            << ", which its source does not supply at index "
-                            << project.getIndex() << ": the evidence there is "
-                            << cited;
-        return rewriter.notifyMatchFailure(
-            op, "names a proof its source does not supply");
-      }
-    }
-
-    if (commitmentBroken(proven->getProof()))
-      return rewriter.notifyMatchFailure(op, "selection chose another impl");
     rewriter.replaceOpWithNewOp<WitnessOp>(op, proven->getProof(),
                                            proven->getTraitApplication());
     return success();
@@ -1086,17 +741,20 @@ struct ProveClaimResultPattern : public RewritePattern {
 
   /// Proves the monomorphic equality `eq` `allegation` alleges: each projection
   /// its sides spell resolves through the impl selection chooses for the
-  /// projection's application, one hop at a time, and where both sides reach
-  /// one type the allegation becomes the witness of those hops. Sides that
+  /// projection's application, one step at a time, and where both sides reach
+  /// one type the allegation becomes the evidence of those steps. Sides that
   /// reach two types are refused where the allegation stands. A projection the
   /// record does not resolve is declined by the read-only use, which a later
   /// round serves, and refused by selection where selection itself cannot
   /// serve it.
-  LogicalResult proveAllegedEquality(AllegeOp allegation, TypeEqualityAttr eq,
-                                     PatternRewriter &rewriter) const {
-    DemandFrame frame(allegation.getLoc());
-    auto errFn = [&] { return allegation.emitOpError(); };
-    ModuleOp scope = getAnchorModule(allegation);
+  /// Calls `fn` with the source the evidence of an equality demanded in
+  /// `scope` reads: impl selection where this pattern may establish facts, the
+  /// record otherwise, which declines a projection it does not resolve for a
+  /// later round to serve.
+  template <typename Fn>
+  LogicalResult withEqualitySource(ModuleOp scope, PatternRewriter &rewriter,
+                                   llvm::function_ref<InFlightDiagnostic()> errFn,
+                                   Fn fn) const {
     ReadOnlyImplResolver here = reading.in(scope);
     auto hop = [&](ProjectionType proj) {
       FailureOr<ProjectionResolution> resolved =
@@ -1109,9 +767,122 @@ struct ProveClaimResultPattern : public RewritePattern {
     auto proofOf = [&](ClaimType claim) {
       return proofFor(claim, scope, rewriter, errFn);
     };
-    ResolutionSource source{hop, proofOf, scope};
-    SmallVector<ResolutionHop> hops;
-    auto sides = resolveEndpoints(eq, source, hops);
+    return fn(EqualitySource{hop, proofOf, scope});
+  }
+
+  /// Proves `derive` by the proof whose body it is: the impl it cites, at the
+  /// arguments its claim and operands determine, given the proof each
+  /// application operand names and the evidence of each equality operand at
+  /// those arguments. A proof standing with that body answers; otherwise one is
+  /// written. The derive waits while an application operand names no proof or
+  /// a projection it spells is not yet resolved, and is refused where an
+  /// equality's sides resolve apart.
+  LogicalResult transcribe(DeriveOp derive, PatternRewriter &rewriter) const {
+    // An operand is settled once an application names its proof and an
+    // equality stands on something other than an allegation still to be
+    // decided.
+    SmallVector<FlatSymbolRefAttr> subproofs;
+    for (Value operand : derive.getAssumptions()) {
+      auto premise = cast<ClaimType>(operand.getType());
+      bool settled = premise.isApplication()
+                         ? premise.isProven()
+                         : !operand.getDefiningOp<AllegeOp>();
+      if (!settled)
+        return rewriter.notifyMatchFailure(derive, "waits for its operands");
+      if (premise.isApplication())
+        subproofs.push_back(premise.getProof());
+    }
+
+    DemandFrame frame(derive.getLoc());
+    auto errFn = [&] { return derive.emitOpError(); };
+    ModuleOp scope = getAnchorModule(derive);
+    ClaimType claim = derive.getDerivedClaim();
+    // The verifier has read the citation already; what it accepted is read
+    // again here at the instance's spelling.
+    ImplOp impl = derive.getImplOp();
+    if (!impl)
+      return rewriter.notifyMatchFailure(derive, "cites no impl");
+    // An impl with no parameters and no where entries is its own proof, which
+    // a witness names directly, as selection names it.
+    if (impl.isUnconditional()) {
+      rewriter.replaceOpWithNewOp<WitnessOp>(
+          derive, FlatSymbolRefAttr::get(impl.getSymNameAttr()),
+          claim.getTraitApplication());
+      return success();
+    }
+    auto arguments = impl.readCitationArguments(
+        claim, derive.getAssumptions().getTypes(), errFn);
+    if (failed(arguments)) {
+      (void)refuse(derive);
+      return rewriter.notifyMatchFailure(derive, "cites its impl at no arguments");
+    }
+    SmallVector<ClaimType> entries = impl.getWhereClaimsAt(*arguments);
+
+    // The proof names its application with the projections it spells
+    // resolved, as selection records one; a projection still unresolved waits
+    // for the round that serves it.
+    ReadOnlyImplResolver here = reading.in(scope);
+    Type resolved = here.resolveProjectionsIn(Type(claim));
+    if (mentionsMonomorphicProjection(resolved))
+      return rewriter.notifyMatchFailure(derive, "waits for its projections");
+    TraitApplicationAttr app = cast<ClaimType>(resolved).getTraitApplication();
+
+    // A proof standing with this body answers, and is read rather than
+    // written again.
+    if (ClaimType standing = here.findProof(impl, app, subproofs)) {
+      rewriter.replaceOpWithNewOp<WitnessOp>(derive, standing.getProof(),
+                                             standing.getTraitApplication());
+      return success();
+    }
+
+    // An equality premise is ground here, and a ground equality has one
+    // answer: the evidence the steps resolving its projections build.
+    SmallVector<SmallVector<ResolutionStep>> equalitySteps;
+    for (ClaimType entry : entries) {
+      if (!entry.isEquality())
+        continue;
+      TypeEqualityAttr eq = entry.getEqualityAttr();
+      SmallVector<ResolutionStep> steps;
+      LogicalResult resolved = withEqualitySource(
+          scope, rewriter, errFn, [&](const EqualitySource &source) {
+            auto sides = resolveEquality(eq, source, steps);
+            if (failed(sides))
+              return rewriter.notifyMatchFailure(derive,
+                                                 "a projection is not resolved");
+            if (sides->first != sides->second) {
+              if (refuse(derive))
+                errFn() << "is given " << entry << ", and impl selection "
+                        << "resolves its sides to " << sides->first << " and "
+                        << sides->second;
+              return rewriter.notifyMatchFailure(
+                  derive, "selection resolves the sides apart");
+            }
+            return success();
+          });
+      if (failed(resolved))
+        return failure();
+      equalitySteps.push_back(std::move(steps));
+    }
+
+    ClaimType proven = here.writeProof(impl, app, *arguments, entries,
+                                       subproofs, equalitySteps, rewriter);
+    rewriter.replaceOpWithNewOp<WitnessOp>(derive, proven.getProof(),
+                                           proven.getTraitApplication());
+    return success();
+  }
+
+  LogicalResult proveAllegedEquality(AllegeOp allegation, TypeEqualityAttr eq,
+                                     PatternRewriter &rewriter) const {
+    DemandFrame frame(allegation.getLoc());
+    auto errFn = [&] { return allegation.emitOpError(); };
+    ModuleOp scope = getAnchorModule(allegation);
+    SmallVector<ResolutionStep> steps;
+    FailureOr<std::pair<Type, Type>> sides = failure();
+    (void)withEqualitySource(scope, rewriter, errFn,
+                             [&](const EqualitySource &source) {
+                               sides = resolveEquality(eq, source, steps);
+                               return success();
+                             });
     if (failed(sides))
       return rewriter.notifyMatchFailure(allegation,
                                          "a projection is not resolved");
@@ -1124,9 +895,9 @@ struct ProveClaimResultPattern : public RewritePattern {
                                          "selection resolves the sides apart");
     }
     rewriter.setInsertionPoint(allegation);
-    rewriter.replaceOp(allegation, buildEqualityWitness(rewriter,
-                                                        allegation.getLoc(), eq,
-                                                        hops));
+    rewriter.replaceOp(allegation, buildEqualityEvidence(rewriter,
+                                                         allegation.getLoc(),
+                                                         eq, steps));
     return success();
   }
 };
@@ -1150,6 +921,10 @@ FailureOr<ImplResolver> resolveImpls(ModuleOp module) {
 
   // verify that proofs named in declared signatures actually prove their claims
   if (failed(verifyDeclaredClaimProofs(module)))
+    return failure();
+
+  // refuse a proof whose derivation keeps reaching larger applications
+  if (failed(verifyProofDerivationsEnd(module)))
     return failure();
 
   // an ImplResolver for this module
@@ -1240,43 +1015,19 @@ void CallSubstitution::discoverProjectionBindings(
   }
 }
 
-/// Read the proven-claim bindings visible after applying the current
-/// substitution, replaying a pair the stage's derivation memo holds and
-/// deriving any other.
-LogicalResult CallSubstitution::readEvidenceBindings(
-    TypeRange types, ModuleOp module, const ReadOnlyImplResolver &reading,
-    llvm::function_ref<InFlightDiagnostic()> err) {
-  for (Type ty : types) {
-    Type rewritten = apply(ty);
-    if (failed(bindProofsIn(rewritten, module, evidenceBindings,
-                                     DemandOrigin::ProofRecording,
-                                     &reading.getDerivationMemo(), err)))
-      return failure();
-  }
-  return success();
-}
-
 FailureOr<CallSubstitution> CallSubstitution::forCall(
     SpecializationMap specialization, TypeRange operandTypes,
     TypeRange resultTypes, FunctionType formalTy, ModuleOp module,
-    const ReadOnlyImplResolver &reading,
-    llvm::function_ref<InFlightDiagnostic()> err) {
+    const ReadOnlyImplResolver &reading) {
   CallSubstitution subst(std::move(specialization));
-
-  // A projection over a claim argument is spelled one way while the argument is
-  // an obligation and another once it names its proof, so the proofs this call
-  // spells are read before any projection is put to the read.
-  if (failed(subst.readEvidenceBindings(operandTypes, module, reading, err)))
-    return failure();
-  if (failed(subst.readEvidenceBindings(resultTypes, module, reading, err)))
-    return failure();
 
   bool changed;
   bool declined;
   do {
-    // The component maps grow monotonically; `bindingCount()` is the raw component sum
-    // so it is not affected by fixed-point normalization of the merged map.
-    size_t before = subst.bindingCount();
+    // The component maps grow monotonically; the raw component sum is not
+    // affected by fixed-point normalization of the merged map.
+    size_t before = subst.specialization.bindingCount() +
+                    subst.projectionBindings.bindingCount();
 
     // A projection the read could not answer this time round may be answered
     // by the bindings this iteration goes on to add, so only the last
@@ -1291,12 +1042,9 @@ FailureOr<CallSubstitution> CallSubstitution::forCall(
                                        declined);
     }
 
-    if (failed(subst.readEvidenceBindings(operandTypes, module, reading, err)))
-      return failure();
-    if (failed(subst.readEvidenceBindings(resultTypes, module, reading, err)))
-      return failure();
-
-    changed = subst.bindingCount() != before;
+    changed = subst.specialization.bindingCount() +
+                  subst.projectionBindings.bindingCount() !=
+              before;
   } while (changed);
 
   // A substitution that cannot spell one of the call's projections would
@@ -1368,6 +1116,27 @@ static Attribute instantiationTemplateKey(MethodCallOp op) {
   return op.getMethodRefAttr();
 }
 
+/// The closed call-site substitution of `op` against its callee's signature
+/// `formalTy`, read through the record of what impl selection has settled in
+/// the module the call stands in, on top of the evidence the call itself
+/// carries.
+template <typename CallOpT>
+static FailureOr<CallSubstitution>
+buildCallSubstitution(CallOpT op, PatternRewriter &rewriter,
+                      const ReadOnlyImplResolver &reading,
+                      FunctionType formalTy) {
+  ModuleOp module = op.getOperation()->template getParentOfType<ModuleOp>();
+  ReadOnlyImplResolver here = reading.in(module);
+  auto specialization = op.buildParameterSpecialization(&here);
+  if (failed(specialization)) {
+    (void)rewriter.notifyMatchFailure(op, "couldn't build substitution");
+    return failure();
+  }
+  return CallSubstitution::forCall(std::move(*specialization),
+                                   op.getOperandTypes(), op.getResultTypes(),
+                                   formalTy, module, here);
+}
+
 /// Builds and closes the call-site substitution, uses it to specialize the
 /// callee against `formalTy`, and computes the concrete result types for the
 /// replacement call.
@@ -1381,8 +1150,6 @@ static FailureOr<SpecializedCallTarget>
 specializeCallTarget(CallOpT op, PatternRewriter &rewriter,
                      const ReadOnlyImplResolver &reading,
                      FunctionType formalTy) {
-  ModuleOp module = op.getOperation()->template getParentOfType<ModuleOp>();
-
   Operation *caller =
       op.getOperation()->template getParentOfType<func::FuncOp>();
   Attribute templateKey = instantiationTemplateKey(op);
@@ -1403,21 +1170,7 @@ specializeCallTarget(CallOpT op, PatternRewriter &rewriter,
     return failure();
   }
 
-  // Pass time: the comparison reads both signatures through the record of what
-  // impl selection has settled in the module the call stands in, on top of the
-  // evidence the call itself carries.
-  ReadOnlyImplResolver here = reading.in(module);
-  auto specialization = op.buildParameterSpecialization(&here);
-  if (failed(specialization)) {
-    (void)rewriter.notifyMatchFailure(op, "couldn't build substitution");
-    return failure();
-  }
-
-  auto errFn = [&] { return op.emitOpError(); };
-  auto subst = CallSubstitution::forCall(std::move(*specialization),
-                                        op.getOperandTypes(),
-                                        op.getResultTypes(), formalTy, module,
-                                        here, errFn);
+  auto subst = buildCallSubstitution(op, rewriter, reading, formalTy);
   if (failed(subst))
     return failure();
 
@@ -1438,30 +1191,6 @@ specializeCallTarget(CallOpT op, PatternRewriter &rewriter,
     return failure();
   }
   target.callee = *callee;
-
-  // A template's projection-resolution witness leaves a premise of its cited
-  // impl that still spells a type variable to the instances, and this instance
-  // is one. Its witnesses were rebuilt at the instance with the clone, and a
-  // later rewrite may fold one away before the module is verified again, so a
-  // fresh instance decides each whose cited impl states a where-equality here:
-  // through the evidence the instance holds and what impl selection has
-  // settled, the context the stage owns.
-  if (chain.depthAt(target.callee.getOperation(), templateKey) == 0 &&
-      !isPolymorphicType(Type(target.callee.getFunctionType()))) {
-    WalkResult refused = target.callee.walk([&](WitnessOp witness) {
-      WitnessAttr attr = witness.getWitnessAttr();
-      if (!attr)
-        return WalkResult::advance();
-      auto cited = lookupSymbolFrom<ImplOp>(module, attr.getImplRef());
-      if (!cited || !cited.getAssumptions().hasEqualities())
-        return WalkResult::advance();
-      return failed(witness.verifyResolution(module, &here))
-                 ? WalkResult::interrupt()
-                 : WalkResult::advance();
-    });
-    if (refused.wasInterrupted())
-      return failure();
-  }
 
   chain.note(target.callee.getOperation(), caller, templateKey);
   return target;
@@ -1501,6 +1230,17 @@ struct CallOpLowering : public OpRewritePattern<CallOpT> {
 
     DemandFrame frame(op.getLoc());
 
+    // A call computing evidence is replaced by the body the receiver's impl
+    // wrote for it: the evidence is read by position, never selected again.
+    if constexpr (std::is_same_v<CallOpT, MethodCallOp>) {
+      if (op.computesEvidence()) {
+        auto subst = buildCallSubstitution(op, rewriter, reading, *formalTy);
+        if (failed(subst))
+          return failure();
+        return op.inlineEvidence(rewriter, *subst);
+      }
+    }
+
     auto target = specializeCallTarget(op, rewriter, reading, *formalTy);
     if (failed(target))
       return failure();
@@ -1515,6 +1255,78 @@ struct CallOpLowering : public OpRewritePattern<CallOpT> {
       rewriter.replaceOpWithNewOp<FuncCallOp>(
           op, target->resultTypes, target->callee.getSymName(), args);
     }
+    return success();
+  }
+};
+
+/// Whether the evidence `value` computes stands on an allegation still to be
+/// decided: a `trait.allege`, or evidence the stage has yet to inline, which
+/// may be an allegation -- a projection (`ProjectOp::inlineEvidence`), however
+/// its source and result are spelled, since a source spelled without its
+/// proof may be a coercion the stage has yet to carry that proof through, or a
+/// call of a method computing evidence (`MethodCallOp::inlineEvidence`).
+/// Evidence flows through control flow as
+/// through any op: a result of an op holding regions stands on what those
+/// regions yield, and an argument of a region a control-flow op holds on what
+/// that op passes in. A function's argument is a hypothesis, decided by its
+/// caller.
+static bool standsOnAllegation(Value root) {
+  SmallVector<Value> pending{root};
+  DenseSet<Value> seen;
+  while (!pending.empty()) {
+    Value value = pending.pop_back_val();
+    if (!seen.insert(value).second)
+      continue;
+    if (auto argument = dyn_cast<BlockArgument>(value)) {
+      Operation *holder = argument.getOwner()->getParentOp();
+      if (holder && !isa<FunctionOpInterface>(holder))
+        llvm::append_range(pending, holder->getOperands());
+      continue;
+    }
+    Operation *producer = value.getDefiningOp();
+    if (isa<AllegeOp>(producer))
+      return true;
+    if (isa<ProjectOp>(producer))
+      return true;
+    if (auto call = dyn_cast<MethodCallOp>(producer))
+      if (call.computesEvidence())
+        return true;
+    llvm::append_range(pending, producer->getOperands());
+    for (Region &region : producer->getRegions())
+      for (Block &block : region)
+        if (!block.empty() && block.back().hasTrait<OpTrait::IsTerminator>())
+          llvm::append_range(pending, block.back().getOperands());
+  }
+  return false;
+}
+
+/// Settles a coerce whose types have met: a claim result takes its input's
+/// proof, which the coerce verifier holds to its input's -- a coerce changes
+/// how a claim is spelled, never the evidence it stands on -- and a coerce
+/// whose result is spelled as its input is replaced by the input, the fold the
+/// stage's drivers do not run (applyPatternsOverReachableOps). It is replaced
+/// only once every equality it cites is decided: the evidence it would leave
+/// dead is the one place a false allegation is refused.
+struct SettleCoercePattern : public OpRewritePattern<CoerceOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(CoerceOp coerce,
+                                PatternRewriter &rewriter) const override {
+    Type input = coerce.getInput().getType();
+    if (coerce.getResult().getType() == input) {
+      if (llvm::any_of(coerce.getEqualities(), standsOnAllegation))
+        return rewriter.notifyMatchFailure(coerce, "waits for its evidence");
+      rewriter.replaceOp(coerce, coerce.getInput());
+      return success();
+    }
+    auto result = dyn_cast<ClaimType>(coerce.getResult().getType());
+    ClaimType carrying = result && !result.isProven()
+                             ? result.carryingProofOf(dyn_cast<ClaimType>(input))
+                             : ClaimType();
+    if (!carrying)
+      return rewriter.notifyMatchFailure(coerce, "its types have not met");
+    rewriter.modifyOpInPlace(coerce,
+                             [&] { coerce.getResult().setType(carrying); });
     return success();
   }
 };
@@ -1624,6 +1436,11 @@ struct ResolveProjectionsPattern : public RewritePattern {
     // concrete instance, not here; the worklist never collects a template's
     // interior, so this pattern sees only code carried to a target.
     if (!opMentionsType<ProjectionType>(op))
+      return failure();
+    // A call computing evidence keeps its result spelling until it is replaced
+    // by its method's body: the variables of the requirement it computes are
+    // read there.
+    if (auto call = dyn_cast<MethodCallOp>(op); call && call.computesEvidence())
       return failure();
 
     DemandFrame frame(op->getLoc());
@@ -1768,14 +1585,14 @@ struct RoundInsertionCounts : public OpBuilder::Listener {
 /// The order is the ledger's first, then the walk's, and both are the order
 /// their own source produced: one run's rounds ask in the order another run's
 /// do.
-static SmallVector<Type>
+static SmallVector<Demand>
 collectUndrainedDemands(ModuleOp module, const DemandLedger &ledger,
-                        const DenseSet<Type> &drained,
-                        const DenseMap<Type, uint64_t> &attempted,
-                        uint64_t epoch, DenseMap<Type, Location> &origins) {
-  SmallVector<Type> collected;
-  DenseSet<Type> taken;
-  auto take = [&](Type demand) {
+                        const DenseSet<Demand> &drained,
+                        const DenseMap<Demand, uint64_t> &attempted,
+                        uint64_t epoch, DenseMap<Demand, Location> &origins) {
+  SmallVector<Demand> collected;
+  DenseSet<Demand> taken;
+  auto take = [&](Demand demand) {
     if (drained.contains(demand))
       return;
     auto it = attempted.find(demand);
@@ -1785,11 +1602,11 @@ collectUndrainedDemands(ModuleOp module, const DemandLedger &ledger,
       return;
     collected.push_back(demand);
   };
-  for (Type demand : ledger.getDrainableDemands())
+  for (Demand demand : ledger.getDrainableDemands())
     take(demand);
-  for (Type demand : demandsSpelledIn(module, /*inAttributes=*/true,
-                                      DemandSkip::Infrastructure,
-                                      DemandSkip::Infrastructure, &origins))
+  for (Demand demand : demandsSpelledIn(module, /*inAttributes=*/true,
+                                        DemandSkip::Infrastructure,
+                                        DemandSkip::Infrastructure, &origins))
     take(demand);
   return collected;
 }
@@ -1804,22 +1621,20 @@ collectUndrainedDemands(ModuleOp module, const DemandLedger &ledger,
 /// has one to fail on -- leaving the drain is what a refusal and a resolution
 /// have in common, and it is not what tells them apart.
 ///
-/// The drain holds spellings and not the ops that spelled them -- one spelling
-/// standing in two modules is one demand here -- so these are put to selection
-/// as demands of `module`, the root the stage runs over. What an op of a nested
-/// module spells is demanded again where that op stands, by the pattern that
-/// rewrites it, and answered from that module's own record.
+/// Each demand is put to selection in the module it stands in, where the
+/// pattern that rewrites the op spelling it reads the answer, and what serving
+/// it writes is written there.
 static void serveCollectedDemands(ImplResolver &resolver,
-                                  ModuleOp module,
-                                  ArrayRef<Type> collected,
-                                  const DenseMap<Type, Location> &origins,
+                                  ArrayRef<Demand> collected,
+                                  const DenseMap<Demand, Location> &origins,
                                   OpBuilder &builder,
-                                  DenseSet<Type> &drained,
-                                  DenseSet<Type> &served,
+                                  DenseSet<Demand> &drained,
+                                  DenseSet<Demand> &served,
                                   bool &refused,
-                                  DenseMap<Type, uint64_t> &attempted,
+                                  DenseMap<Demand, uint64_t> &attempted,
                                   RoundWork &work) {
-  for (Type demand : collected) {
+  for (Demand demand : collected) {
+    auto [spelling, anchor] = demand;
     // A demand found by walking the module is named while it is put to
     // selection, so what the ask raises underneath is attributed to the op
     // carrying the spelling. The frame a demand an engine recorded was raised
@@ -1840,11 +1655,13 @@ static void serveCollectedDemands(ImplResolver &resolver,
     // Every engine whose declining leaves a demand standing declines a
     // monomorphic projection or an unproven monomorphic claim, so this is
     // total over what the drain holds.
+    OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPointToEnd(anchor.getBody());
     ImplResolver::DemandDisposition disposition;
-    if (auto projection = dyn_cast<ProjectionType>(demand))
-      disposition = resolver.serveDemand(projection, module, builder);
-    else if (auto claim = dyn_cast<ClaimType>(demand))
-      disposition = resolver.serveDemand(claim, module, builder);
+    if (auto projection = dyn_cast<ProjectionType>(spelling))
+      disposition = resolver.serveDemand(projection, anchor, builder);
+    else if (auto claim = dyn_cast<ClaimType>(spelling))
+      disposition = resolver.serveDemand(claim, anchor, builder);
     else
       llvm_unreachable("a drainable demand is a projection or a claim an "
                        "engine left spelled");
@@ -1982,118 +1799,6 @@ static bool equalityClaimGroundResolvesToOneSpelling(
   return lhs == rhs && isGroundType(lhs);
 }
 
-/// Refuses `citation` where an equality premise of the impl it names does not
-/// hold at `cited`, read through what impl selection settled.
-///
-/// A premise says where the impl applies. A citation's own verifier decides one
-/// whose sides the impls the module holds settle, and leaves standing one
-/// projecting through an application those impls bind for nobody or for two
-/// candidates at once: the impls answer nothing about such an application, and
-/// only the impl selection chose for it says what the projection denotes. This
-/// is the reading that has that answer. Each side is carried to the citation
-/// and resolved through the record and then through selection, and the premise
-/// holds when the two meet at one type no projection stands in.
-///
-/// A premise still spelling a type variable belongs to a template, and the
-/// instances cut from it read it at the arguments they supply.
-static LogicalResult verifyCitedImplAppliesAt(
-    Operation *citation, ImplOp impl, ClaimType cited,
-    const ProjectionSettleContext &settle) {
-  if (!impl.getAssumptions().hasEqualities())
-    return success();
-
-  auto settled = [&](Type ty) -> Type {
-    return settleProjections(ty, settle);
-  };
-  auto err = [&] { return citation->emitError(); };
-  auto normalize = [&](Type ty) -> FailureOr<Type> { return settled(ty); };
-  auto arguments = impl.buildSubstitutionForSelfClaim(cited, normalize, err);
-  if (failed(arguments))
-    return failure();
-
-  for (TypeEqualityAttr equality : impl.getAssumptions().getEqualities()) {
-    Type lhs = settled(instantiate(equality.getLhs(), *arguments));
-    Type rhs = settled(instantiate(equality.getRhs(), *arguments));
-    if (premiseDefersToInstances(lhs, rhs))
-      continue;
-    if (lhs == rhs && !containsType<ProjectionType>(lhs))
-      continue;
-    return err() << "impl '@" << impl.getSymName() << "' applies where "
-                 << equality.getLhs() << " = " << equality.getRhs()
-                 << ", and after instantiate-monomorphs nothing makes " << lhs
-                 << " and " << rhs << " one type at " << cited;
-  }
-  return success();
-}
-
-/// Refuses `proof` where a citation in its given list discharges no obligation
-/// it states, read through what impl selection settled.
-///
-/// The proof's own verifier judges each citation by the impls standing around
-/// it, and declines one whose obligation still spells a projection those impls
-/// leave unresolved -- the obligation stands unproven for selection to derive.
-/// What selection settled for it is known here and nowhere earlier, so this is
-/// where a declined pair is decided: every obligation a proof states is
-/// discharged by the citation standing opposite it, read through that
-/// settlement, or the proof does not stand.
-static LogicalResult
-verifyProofDischargesItsObligations(ProofOp proof,
-                                    const ProjectionSettleContext &settle) {
-  auto module = proof->getParentOfType<ModuleOp>();
-  if (!module)
-    return success();
-  auto err = [&] { return proof.emitError(); };
-  auto subproofs = proof.verifyAndGetSubproofClaims(proof.getProvenClaim(), err);
-  if (failed(subproofs))
-    return failure();
-
-  auto reading = [&](Type ty) -> FailureOr<Type> {
-    return settleProjections(ty, settle);
-  };
-  for (ClaimType subproof : *subproofs) {
-    switch (verifyCitation(subproof.asUnproven(), subproof, module,
-                           DemandOrigin::ProofVerification, reading, err)) {
-    case Citation::Carries:
-      continue;
-    case Citation::Refused:
-      return failure();
-    case Citation::Declined:
-      return err() << "obligation " << subproof.asUnproven() << " of proof @"
-                   << proof.getSymName() << " is discharged by no evidence";
-    }
-  }
-  return success();
-}
-
-/// The impl a standing citation names and the claim it names it for, or nothing
-/// where the operation cites no impl at an application.
-///
-/// A witness of a proof cites the proof, which states its impl's premises at
-/// its own claim and is judged there; a refl or equality witness cites no impl
-/// at all.
-static std::optional<std::pair<ImplOp, ClaimType>>
-citedImplAndClaim(Operation *op) {
-  auto module = op->getParentOfType<ModuleOp>();
-  if (!module)
-    return std::nullopt;
-  if (auto proof = dyn_cast<ProofOp>(op)) {
-    if (ImplOp impl = proof.getImpl())
-      return std::make_pair(impl, proof.getProvenClaim());
-    return std::nullopt;
-  }
-  auto witness = dyn_cast<WitnessOp>(op);
-  if (!witness || witness.getRefl() || witness.getResultClaim().isEquality())
-    return std::nullopt;
-  auto cited = ProofOp::getProofOpOrUnconditionalImplOp(
-      module, witness.getProof(), /*err=*/nullptr);
-  if (failed(cited))
-    return std::nullopt;
-  auto impl = dyn_cast<ImplOp>(*cited);
-  if (!impl)
-    return std::nullopt;
-  return std::make_pair(impl, witness.getProvenClaim());
-}
-
 } // end namespace
 
 /// `askImplSelectionForImpls` adds the pattern that puts a declared claim to
@@ -2124,8 +1829,8 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
   // refusal where the demand stood. The stage-exit check reads the served set,
   // which tells a demand the stage answered from one the drainability rule
   // over-admitted.
-  DenseSet<Type> drained;
-  DenseSet<Type> served;
+  DenseSet<Demand> drained;
+  DenseSet<Demand> served;
   // Whether any round put a demand to selection and was told the application is
   // proven by no unique impl.
   bool refusedADemand = false;
@@ -2135,7 +1840,7 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
   bool refusedAClaim = false;
   // The fact epoch each unsettled demand was last put to selection at, which is
   // what says whether asking again could answer differently.
-  DenseMap<Type, uint64_t> attempted;
+  DenseMap<Demand, uint64_t> attempted;
 
   // The resolver was moved out of the sub-phase that built it, so its ledger is
   // reinstalled here to span this sub-phase's rounds and leftover walks.
@@ -2215,8 +1920,8 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
     }
 
     // COLLECT.
-    DenseMap<Type, Location> spelledAt;
-    SmallVector<Type> collected = collectUndrainedDemands(
+    DenseMap<Demand, Location> spelledAt;
+    SmallVector<Demand> collected = collectUndrainedDemands(
         module, resolver->getDemandLedger(), drained, attempted,
         resolver->getFactEpoch(), spelledAt);
     size_t drainAtCollect =
@@ -2227,10 +1932,8 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
       RoundInsertionCounts insertions;
       OpBuilder builder(ctx);
       builder.setListener(&insertions);
-      builder.setInsertionPointToEnd(module.getBody());
-      serveCollectedDemands(*resolver, module, collected, spelledAt, builder,
-                            drained, served, refusedADemand,
-                            attempted, work);
+      serveCollectedDemands(*resolver, collected, spelledAt, builder, drained,
+                            served, refusedADemand, attempted, work);
       work.insertedServingDemands = insertions.inserted;
     }
     writtenSinceBridge |= work.insertedServingDemands != 0;
@@ -2295,7 +1998,7 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
       ReadOnlyImplResolver reading(*resolver);
       RewritePatternSet patterns(ctx);
       patterns.add<ProveClaimResultPattern>(ctx, reading, refusedAClaim);
-      patterns.add<MonomorphizeResultTypesPattern>(ctx);
+      patterns.add<MonomorphizeResultTypesPattern, SettleCoercePattern>(ctx);
       patterns.add<CallOpLowering<FuncCallOp>, CallOpLowering<MethodCallOp>>(
           ctx, reading);
       patterns.add<ResolveProjectionsPattern>(ctx, reading);
@@ -2332,7 +2035,8 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
           return module.emitError(
               "instantiate-monomorphs did not converge: rewrite budget exceeded, "
               "which indicates a non-confluent pattern pair cycling on a type "
-              "spelling");
+              "spelling, or evidence impls return that projects their returns "
+              "back to itself");
       }
       atInstantiationFixedPoint = work.instantiateMinted == 0;
     }
@@ -2421,33 +2125,15 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
         op->emitError() << "unproven monomorphic claim " << claim
         << " after instantiate-monomorphs";
     // A hop off a proven claim reads its requirement's evidence out of the
-    // source's proof, and a citation nothing decides leaves the hop's claim
-    // unproven for selection. Where selection could not prove it either, the
-    // citation the proof names is what the report must point at.
+    // source's proof, and evidence the proof determines nothing for leaves the
+    // hop's claim unproven for selection. Where selection could not prove it
+    // either, the evidence the source names is what the report points at.
     if (auto project = dyn_cast<ProjectOp>(op))
-      if (ClaimType source = project.getSourceClaim(); source.isProven()) {
-        auto cited = getClaimRequirementAt(source, getAnchorModule(op),
-                                           project.getIndex(),
-                                           project.getBinderArguments());
-        if (succeeded(cited) && cited->conclusion.isProven())
-          report.attachNote()
-              << "proof " << source.getProof() << " cites "
-              << cited->conclusion.getProof() << " for requirement "
-              << project.getIndex() << ", which nothing decides here";
-        // A bound requirement's instance is proved here by selection; where
-        // the source's evidence for the requirement rests on an allegation
-        // rather than a proof, the allegation is what selection did not
-        // settle.
-        if (auto alleged = allegedRequirementOf(source, getAnchorModule(op),
-                                                project.getIndex()))
-          report.attachNote()
-              << "the witness of impl @" << alleged->impl.getSymName()
-              << " for requirement " << alleged->requirement
-              << " of its trait rests on the allegation "
-              << ClaimType::get(op->getContext(),
-                                alleged->allegation.getApplication())
-              << ", which nothing proves";
-      }
+      if (ClaimType source = project.getSourceClaim(); source.isProven())
+        report.attachNote() << "its source " << source << " names "
+                            << source.getProof() << ", whose evidence for "
+                               "requirement "
+                            << project.getIndex() << " nothing decides here";
   }
   if (hasLeftovers) return failure();
 
@@ -2503,43 +2189,6 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
   });
   if (sawSurvivingCall)
     return failure();
-
-  // Every citation standing here is read once more, through the record of what
-  // impl selection settled and through selection itself. The citations' own
-  // verifiers decide what the impls standing around them settle and leave the
-  // rest standing, because what a projection over a contested application
-  // denotes is decided by the impl selection chose for it and by nothing a
-  // verifier may read. This is the reading that has that answer, so an impl
-  // that does not apply where it is cited, and an obligation no evidence
-  // discharges, are refused where they stand rather than lowered.
-  //
-  // The citations are gathered under the walk and judged after it closes, for
-  // the same reason the claims above are: settling a projection may put an
-  // undemanded impl to selection and generate one.
-  SmallVector<std::pair<Operation *, std::pair<ImplOp, ClaimType>>> citations;
-  module.walk<WalkOrder::PreOrder>([&](Operation *op) {
-    // A template's own citations stand over its variables; the clones cut from
-    // it carry them to the instances. A proof is a template by that rule and is
-    // visited anyway: its claim is where its impl's premises are decided, and
-    // no clone carries them anywhere else.
-    if (isTemplate(op) && !isa<ProofOp>(op))
-      return WalkResult::skip();
-    if (auto cited = citedImplAndClaim(op))
-      citations.emplace_back(op, *cited);
-    return WalkResult::advance();
-  });
-  bool citationDoesNotStand = false;
-  for (auto [op, cited] : citations) {
-    ReadOnlyImplResolver here = reading.in(getAnchorModule(op));
-    ProjectionSettleContext settle{here, *resolver, settleBuilder,
-                                   getAnchorModule(op)};
-    if (failed(verifyCitedImplAppliesAt(op, cited.first, cited.second, settle)))
-      citationDoesNotStand = true;
-    else if (auto proof = dyn_cast<ProofOp>(op);
-             proof && failed(verifyProofDischargesItsObligations(proof, settle)))
-      citationDoesNotStand = true;
-  }
-  if (citationDoesNotStand) return failure();
 
   // The two walks above reject a demand still spelled on an op result or block
   // argument. A demand can also stand at a place they do not reach -- a claim on

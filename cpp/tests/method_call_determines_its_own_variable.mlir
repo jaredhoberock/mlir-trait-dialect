@@ -8,7 +8,7 @@
 //
 // RUN: mlir-opt %s | FileCheck %s
 
-trait.trait private @Tr[!trait.poly<0>] {
+trait.trait private @Tr(%self: !trait.claim<@Tr[!trait.poly<0>]>) {
   trait.method @m(!trait.poly<0>, !trait.poly<9>) -> !trait.poly<9>
 }
 

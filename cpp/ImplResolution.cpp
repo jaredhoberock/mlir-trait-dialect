@@ -20,16 +20,15 @@ unsigned InstantiationChain::depthAt(Operation *instance,
   return depth;
 }
 
-unsigned InstantiationChain::note(Operation *instance, Operation *parent,
-                                  Attribute templateKey) {
+void InstantiationChain::note(Operation *instance, Operation *parent,
+                              Attribute templateKey) {
   // An instance reached twice keeps the chain it was first cut on: the depth it
   // stands at is a property of the instance, not of whichever call asked for it
   // again. An instance that is its own parent is a call that reached the
   // function it stands in, which adds no frame.
   if (instance == parent || frames.count(instance))
-    return depthAt(instance, templateKey);
+    return;
   frames.insert({instance, Frame{parent, templateKey}});
-  return depthAt(instance, templateKey);
 }
 
 SmallVector<std::pair<Operation *, Attribute>>
@@ -81,13 +80,11 @@ ImplResolver::assumptionsSatisfiableFor(ImplOp impl,
   TypeArguments args = impl.readTypeArgumentsFor(concreteSelf, byResolver);
   SpecializationMap known = args.toSpecialization();
 
-  MLIRContext *ctx = impl.getContext();
-  for (Attribute premise : impl.getAssumptions()) {
+  for (ClaimType premise : impl.getWhereClaims()) {
     // An application premise is discharged by proving it: a unique impl whose
     // own premises hold in turn.
-    if (auto application = dyn_cast<TraitApplicationAttr>(premise)) {
-      auto assume = cast<ClaimType>(
-          instantiate(Type(ClaimType::get(ctx, application)), known));
+    if (premise.isApplication()) {
+      auto assume = cast<ClaimType>(instantiate(Type(premise), known));
       auto subImpl = resolveImplFor(assume, scope, builder);
       if (failed(subImpl))
         return failure();
@@ -104,9 +101,8 @@ ImplResolver::assumptionsSatisfiableFor(ImplOp impl,
     // associated-type bindings first -- a premise may project through the very
     // application being selected, which selection cannot ask itself about --
     // and then through what selection has settled elsewhere. A reading carrying
-    // a type variable is left to the instances that fill it, the same judgment
-    // a proof and a derive read their premises by.
-    auto equality = cast<TypeEqualityAttr>(premise);
+    // a type variable is left to the instances that fill it.
+    TypeEqualityAttr equality = premise.getEqualityAttr();
     NormalizationContext ownBindings;
     ownBindings.addLocalProjectionRule(impl, app, known);
     auto reduce = [&](Type ty) {
@@ -193,10 +189,7 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
   // exactly as their post-resolution demand. Declaration-spelled demands
   // (trait and impl headers still carry their source projections) join that
   // resolved vocabulary here; no other component resolves a demanded claim's
-  // spelling before impl selection and proof creation. (The obligation
-  // recorder in verifyAndRecordProof normalizes both the demanded obligation
-  // and the proven value's spelling before recording, so every spelling of one
-  // obligation discharged by one proof records as one pair.)
+  // spelling before impl selection and proof creation.
   ClaimType selected =
       cast<ClaimType>(resolveProjectionsIn(wanted, scope, builder));
 
@@ -314,7 +307,8 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
   return diagnoseImplResolutionFailure(trait, originalWanted, good, bad, err);
 }
 
-ImplResolver::StandingProofs &ImplResolver::getStandingProofs(ModuleOp scope) {
+ImplResolver::StandingProofs &
+ImplResolver::getStandingProofs(ModuleOp scope) const {
   auto [entry, inserted] = standingProofs.try_emplace(scope.getOperation());
   // Read once per module, in module order, so the first proof of an impl at an
   // application is the one found. The impl is matched by identity rather than
@@ -327,8 +321,107 @@ ImplResolver::StandingProofs &ImplResolver::getStandingProofs(ModuleOp scope) {
 }
 
 void ImplResolver::StandingProofs::note(ProofOp proof) {
-  byClaim.try_emplace({proof.getImpl(), proof.getTraitApplication()}, proof);
+  byClaim[{proof.getImpl(), proof.getTraitApplication()}].push_back(proof);
   byName.try_emplace(proof.getSymNameAttr(), proof);
+}
+
+/// Writes at the end of `scope` the proof `name` whose body derives `app` from
+/// `impl` over one premise per entry of `entries`, `impl`'s where entries at
+/// the citation: a witness of the next of `subproofs` for an application entry
+/// and the evidence the next of `equalitySteps` build for an equality entry.
+static ProofOp
+writeProofBody(OpBuilder &builder, ModuleOp scope, StringRef name, ImplOp impl,
+               TraitApplicationAttr app, ArrayRef<ClaimType> entries,
+               ArrayRef<FlatSymbolRefAttr> subproofs,
+               ArrayRef<SmallVector<ResolutionStep>> equalitySteps) {
+  // A created proof is IR nothing revisits unless someone hears about it, for
+  // the same reason a generated impl is.
+  assert(builder.getListener() &&
+         "proof creation requires a builder whose insertions someone observes");
+  MLIRContext *ctx = scope.getContext();
+  OpBuilder::InsertionGuard guard(builder);
+  builder.setInsertionPointToEnd(scope.getBody());
+  Location loc = builder.getUnknownLoc();
+  ProofOp proof = ProofOp::create(builder, loc, name);
+  builder.setInsertionPointToEnd(&proof.getBody().front());
+  SmallVector<Value> premises;
+  auto nextSubproof = subproofs.begin();
+  auto nextSteps = equalitySteps.begin();
+  for (ClaimType entry : entries) {
+    if (entry.isApplication())
+      premises.push_back(WitnessOp::create(builder, loc, *nextSubproof++,
+                                           entry.getTraitApplication()));
+    else
+      premises.push_back(buildEqualityEvidence(
+          builder, loc, entry.getEqualityAttr(), *nextSteps++));
+  }
+  auto derived = DeriveOp::create(builder, loc, ClaimType::get(ctx, app),
+                                  FlatSymbolRefAttr::get(ctx, impl.getSymName()),
+                                  premises);
+  ReturnOp::create(builder, loc, derived.getResult());
+  return proof;
+}
+
+ClaimType ImplResolver::findProof(ModuleOp scope, ImplOp impl,
+                                  TraitApplicationAttr app,
+                                  ArrayRef<FlatSymbolRefAttr> subproofs) const {
+  // A proof is identified by the evidence it derives its claim from: the impl,
+  // the application, and the proof each application premise names.
+  auto citesSubproofs = [&](ProofOp proof) {
+    auto next = subproofs.begin();
+    for (Value premise : proof.getDerive().getAssumptions()) {
+      auto claim = cast<ClaimType>(premise.getType());
+      if (claim.isApplication() && claim.getProof() != *next++)
+        return false;
+    }
+    return true;
+  };
+  StandingProofs &standing = getStandingProofs(scope);
+  MLIRContext *ctx = scope.getContext();
+  if (auto it = standing.byClaim.find({impl, app}); it != standing.byClaim.end())
+    for (ProofOp proof : it->second)
+      if (citesSubproofs(proof))
+        return ClaimType::get(
+            ctx, app, FlatSymbolRefAttr::get(ctx, proof.getSymNameAttr()));
+  return {};
+}
+
+StringAttr ImplResolver::freeProofName(ModuleOp scope, StringRef base,
+                                       StringRef salt) const {
+  MLIRContext *ctx = scope.getContext();
+  StandingProofs &standing = getStandingProofs(scope);
+  auto taken = [&](StringAttr name) {
+    return standing.byName.contains(name) ||
+           reservedProofNames.contains({scope, name}) ||
+           lookupSymbolFrom(scope, FlatSymbolRefAttr::get(name));
+  };
+  StringAttr name = StringAttr::get(ctx, base);
+  for (std::string salted = salt.str(); taken(name); salted += ";")
+    name = StringAttr::get(ctx, base + hashToSuffix(salted));
+  return name;
+}
+
+ClaimType ImplResolver::writeProof(
+    ModuleOp scope, ImplOp impl, TraitApplicationAttr app,
+    const SpecializationMap &arguments, ArrayRef<ClaimType> entries,
+    ArrayRef<FlatSymbolRefAttr> subproofs,
+    ArrayRef<SmallVector<ResolutionStep>> equalitySteps, OpBuilder &builder,
+    StringAttr name) const {
+  MLIRContext *ctx = scope.getContext();
+  // The name selection would give the proof, unless another proof holds or
+  // has reserved it; then the subproofs tell the two apart.
+  if (!name) {
+    std::string cited;
+    for (FlatSymbolRefAttr subproof : subproofs)
+      cited += subproof.getValue().str() + ";";
+    name = freeProofName(scope, impl.generateMangledName(arguments) + "_p",
+                         cited);
+  }
+  ProofOp proof = writeProofBody(builder, scope, name, impl, app, entries,
+                                 subproofs, equalitySteps);
+  getStandingProofs(scope).note(proof);
+  return ClaimType::get(ctx, app,
+                        FlatSymbolRefAttr::get(ctx, proof.getSymNameAttr()));
 }
 
 ImplResolver::ImplResolver(ModuleOp m, std::shared_ptr<DemandLedger> ledger)
@@ -443,7 +536,7 @@ ImplResolver::serveDemand(ProjectionType demand, ModuleOp scope,
   // recorded demands. So one selection could not serve yet is recorded here,
   // whether an engine recorded it before or the round found it spelled.
   if (disposition == DemandDisposition::Deferred)
-    recordResolverProjectionMiss(Type(demand));
+    recordResolverProjectionMiss(Type(demand), scope);
   return disposition;
 }
 
@@ -469,7 +562,7 @@ Type ImplResolver::resolveProjectionsIn(Type ty, ModuleOp scope,
     if (failed(resolved)) {
       // Preserve the unresolved demand for a later preparation boundary even
       // though this walk leaves its projection spelled as written.
-      recordResolverProjectionMiss(Type(proj));
+      recordResolverProjectionMiss(Type(proj), scope);
       return std::nullopt;
     }
     return resolved->getBinding();
@@ -527,7 +620,6 @@ FailureOr<ClaimType> ImplResolver::resolveAndEnsureProofFor(
   auto resolvedImpl = resolveImplFor(wanted, scope, builder, err, refusedOn);
   if (failed(resolvedImpl)) return failure();
   ImplOp impl = resolvedImpl->impl;
-  ClaimType selected = resolvedImpl->selectedClaim;
 
   auto subst = argumentsOf(*resolvedImpl, ReadOnlyImplResolver(*this, scope), err);
   if (failed(subst)) return failure();
@@ -548,101 +640,182 @@ FailureOr<ClaimType> ImplResolver::resolveAndEnsureProofFor(
     return recordProof(scope, app,
                        FlatSymbolRefAttr::get(ctx, impl.getSymName()));
 
-  // A proof already standing for this impl at this application answers for it
-  // only when deriving it succeeds. Naming the impl and the application is
-  // where a proof stands, not evidence that the subproofs it cites discharge
-  // the impl's obligations, and selection must not hand back a proof it has not
-  // seen derive. One that does not derive leaves selection to build its own
-  // below, and the standing proof is refused where it is written.
-  if (ProofOp proof = getStandingProofs(scope).byClaim.lookup({impl, app})) {
-    auto sym = FlatSymbolRefAttr::get(ctx, proof.getSymNameAttr());
-    ClaimType standing = ClaimType::get(ctx, app, sym);
-    EvidenceBindings bindings;
-    if (succeeded(verifyAndRecordProof(standing.asUnproven(), standing, scope,
-                                       bindings, DemandOrigin::ProofRecording,
-                                       &derivations, /*err=*/nullptr)))
-      return recordProof(scope, app, sym);
+  // Coinductive cycle guard: the memo holds a name for this proof while its
+  // premises are proven, so a premise that leads back to this claim cites it
+  // instead of diverging. That name is a standing proof of this claim under the
+  // name selection gives it, which any premise may cite; or else a name
+  // reserved for the proof written below, which nothing else may take while
+  // the premises are proven.
+  std::string base = impl.generateMangledName(*subst) + "_p";
+  ProofOp standingUnderBase =
+      getStandingProofs(scope).byName.lookup(StringAttr::get(ctx, base));
+  bool citesStanding = standingUnderBase &&
+                       standingUnderBase.getImpl() == impl &&
+                       standingUnderBase.getTraitApplication() == app;
+  StringAttr reserved;
+  if (!citesStanding) {
+    std::string spelled;
+    llvm::raw_string_ostream(spelled) << app;
+    reserved = freeProofName(scope, base, spelled);
+    reservedProofNames.insert({scope, reserved});
   }
-
-  // Compute the proof name early so we can use it as the coinductive memo entry.
-  std::string proofName = impl.generateMangledName(*subst) + "_p";
-  auto proofSym = FlatSymbolRefAttr::get(ctx, proofName);
-  if (getStandingProofs(scope).byName.contains(proofSym.getAttr())) {
-    ClaimType candidate = ClaimType::get(ctx, app, proofSym);
-    EvidenceBindings bindings;
-    if (succeeded(verifyAndRecordProof(candidate.asUnproven(), candidate,
-                                       scope, bindings,
-                                       DemandOrigin::ProofRecording,
-                                       &derivations, err)))
-      return recordProof(scope, app, proofSym);
-
-    if (err)
-      err() << "proof symbol collision for @" << proofName;
-    return failure();
-  }
-
-  // Coinductive cycle guard: optimistically populate the proof memo with the
-  // proof symbol before recursing into obligations.  If an obligation (after
-  // projection resolution) turns out to be the same claim we are currently
-  // proving, the recursive call will hit the memo instead of diverging.
+  auto proofSym = FlatSymbolRefAttr::get(
+      ctx, citesStanding ? standingUnderBase.getSymNameAttr() : reserved);
   recordProof(scope, app, proofSym);
   auto rollback =
       llvm::scope_exit([&] { memo.proofMemo.erase({scope, app}); });
+  auto released = llvm::scope_exit([&] {
+    if (reserved)
+      reservedProofNames.erase({scope, reserved});
+  });
 
-  // The obligations at the arguments selection chose, each proved in turn:
-  // the trait's application requirements and then the impl's application
-  // premises, which are the application entries of the proof's given list.
-  auto obligations = impl.specializeObligationsAt(selected, *subst, err);
-  if (failed(obligations)) return failure();
-  SmallVector<Attribute> subproofSymbols;
-  for (ClaimType ob : *obligations) {
-    auto subproof = resolveAndEnsureProofFor(ob, scope, builder, err);
-    if (failed(subproof)) return failure();
-    subproofSymbols.push_back(subproof->getProof());
-  }
-
-  // The proof states the arguments its impl's parameters take and holds one
-  // given entry per requirement and where-clause entry: the subproof at an
-  // application entry, `unit` at every other.
-  SmallVector<Attribute> arguments;
-  for (GenericTypeInterface parameter : impl.getTypeParams()) {
-    std::optional<Type> argument = subst->lookup(parameter);
-    if (!argument) {
-      if (err) err() << "selection read no argument for type parameter "
-                     << Type(parameter) << " of impl '@" << impl.getSymName()
-                     << "' at " << originalWanted;
+  // The evidence for each where entry at the arguments selection chose, in
+  // order: the proof of an application entry, and the resolution of an
+  // equality entry, whose sides selection carries to one spelling. The trait's
+  // requirements are the impl's to return, read at the proof's derive.
+  SmallVector<ClaimType> entries = impl.getWhereClaimsAt(*subst);
+  SmallVector<FlatSymbolRefAttr> subproofs;
+  SmallVector<SmallVector<ResolutionStep>> equalitySteps;
+  auto hop = [&](ProjectionType proj) {
+    return resolveProjection(proj, scope, builder);
+  };
+  auto proofOf = [&](ClaimType claim) {
+    return resolveAndEnsureProofFor(claim, scope, builder);
+  };
+  EqualitySource source{hop, proofOf, scope};
+  for (ClaimType entry : entries) {
+    if (entry.isApplication()) {
+      auto subproof = resolveAndEnsureProofFor(entry, scope, builder, err);
+      if (failed(subproof)) return failure();
+      subproofs.push_back(subproof->getProof());
+      continue;
+    }
+    SmallVector<ResolutionStep> steps;
+    auto sides = resolveEquality(entry.getEqualityAttr(), source, steps);
+    if (failed(sides) || sides->first != sides->second) {
+      if (err) err() << "impl '@" << impl.getSymName() << "' applies where "
+                     << entry << ", which selection does not settle at "
+                     << originalWanted;
       return failure();
     }
-    arguments.push_back(TypeBindingAttr::get(ctx, Type(parameter), *argument));
+    equalitySteps.push_back(std::move(steps));
   }
-  SmallVector<Attribute> given;
-  auto nextSubproof = subproofSymbols.begin();
-  auto giveEntry = [&](Attribute entry) {
-    given.push_back(isa<TraitApplicationAttr>(entry)
-                        ? *nextSubproof++
-                        : Attribute(UnitAttr::get(ctx)));
-  };
-  llvm::for_each(impl.getTrait().getRequirements(), giveEntry);
-  llvm::for_each(impl.getAssumptions(), giveEntry);
 
-  // create the proof and memoize by the monomorphic app
-  //
-  // A created proof is IR nothing revisits unless someone hears about it, for
-  // the same reason a generated impl is.
-  assert(builder.getListener() &&
-         "proof creation requires a builder whose insertions someone observes");
+  // A proof is identified by the evidence its derive cites: one standing over
+  // these premises answers, and otherwise the proof is written -- under the
+  // name reserved for it, which a premise may already cite -- and memoized by
+  // the monomorphic app.
   rollback.release();
-  OpBuilder::InsertionGuard guard(builder);
-  builder.setInsertionPointToEnd(scope.getBody());
+  if (ClaimType found = findProof(scope, impl, app, subproofs))
+    return recordProof(scope, app, found.getProof());
+  ClaimType written = writeProof(scope, impl, app, *subst, entries, subproofs,
+                                 equalitySteps, builder, reserved);
+  return recordProof(scope, app, written.getProof());
+}
 
-  ProofOp proof = ProofOp::create(
-      builder, builder.getUnknownLoc(), StringAttr::get(ctx, proofName),
-      FlatSymbolRefAttr::get(ctx, impl.getSymName()),
-      ArrayAttr::get(ctx, arguments), app, ArrayAttr::get(ctx, given));
+//===----------------------------------------------------------------------===//
+// Equality evidence
+//===----------------------------------------------------------------------===//
 
-  getStandingProofs(scope).note(proof);
-  return recordProof(scope, app,
-                     FlatSymbolRefAttr::get(ctx, proof.getSymNameAttr()));
+FailureOr<std::pair<Type, Type>>
+resolveEquality(TypeEqualityAttr eq, const EqualitySource &source,
+                SmallVectorImpl<ResolutionStep> &steps, unsigned depth) {
+  if (eq.getLhs() == eq.getRhs())
+    return std::make_pair(eq.getLhs(), eq.getRhs());
+  MLIRContext *ctx = eq.getContext();
+  // A step whose resolution fails is left standing; the failure is carried out
+  // past the fixed point so that it, and not the standing projection, is what
+  // refuses. One replacer serves both sides and every round of the fixed
+  // point, and it answers a projection it has already met from its cache, so a
+  // projection spelled twice is one step. An equality entry of a resolving
+  // impl recurses, bounded as every obligation chain is.
+  bool stepFailed = depth >= kInstantiationDepthLimit;
+  AttrTypeReplacer replacer = makeGroundProjectionReplacer(
+      [&](ProjectionType proj) -> std::optional<Type> {
+        if (stepFailed)
+          return std::nullopt;
+        FailureOr<ProjectionResolution> resolved = source.hop(proj);
+        if (failed(resolved)) {
+          stepFailed = true;
+          return std::nullopt;
+        }
+        ResolutionStep step;
+        step.equality = TypeEqualityAttr::get(ctx, Type(proj),
+                                              resolved->getBinding());
+        step.impl = FlatSymbolRefAttr::get(
+            ctx, resolved->getImpl().getSymNameAttr());
+        for (ClaimType entry :
+             resolved->getImpl().getWhereClaimsAt(resolved->getArguments())) {
+          if (entry.isApplication()) {
+            FailureOr<ClaimType> proven = source.proofOf(entry);
+            if (failed(proven)) {
+              stepFailed = true;
+              return std::nullopt;
+            }
+            step.premises.push_back(ClaimType::get(
+                ctx, entry.getTraitApplication(), proven->getProof()));
+            continue;
+          }
+          auto nested = std::make_shared<EqualityResolution>();
+          nested->equality = entry.getEqualityAttr();
+          auto sides = resolveEquality(nested->equality, source, nested->steps,
+                                       depth + 1);
+          if (failed(sides) || sides->first != sides->second) {
+            stepFailed = true;
+            return std::nullopt;
+          }
+          step.premises.push_back(std::move(nested));
+        }
+        steps.push_back(std::move(step));
+        return resolved->getBinding();
+      });
+  // The shared normalizer owns the fixed point's bound and stops the
+  // compilation at a chain that never grounds out, the same refusal every
+  // ground resolver makes.
+  auto resolve = [&](Type side) {
+    return normalizeProjectionsToFixedPoint(
+        side, source.module,
+        [&](Type current) { return replacer.replace(current); });
+  };
+  Type lhs = resolve(eq.getLhs());
+  Type rhs = resolve(eq.getRhs());
+  bool standing = false;
+  for (Type side : {lhs, rhs})
+    side.walk([&](ProjectionType proj) {
+      standing |= !isPolymorphicType(Type(proj));
+    });
+  if (stepFailed || standing)
+    return failure();
+  return std::make_pair(lhs, rhs);
+}
+
+Value buildEqualityEvidence(OpBuilder &builder, Location loc,
+                            TypeEqualityAttr eq,
+                            ArrayRef<ResolutionStep> steps) {
+  if (eq.getLhs() == eq.getRhs())
+    return WitnessOp::create(builder, loc, eq).getResult();
+  assert(!steps.empty() &&
+         "two spellings of one ground type differ in a projection they spell");
+  SmallVector<Value> witnesses;
+  for (const ResolutionStep &step : steps) {
+    SmallVector<Value> premises;
+    for (const auto &premise : step.premises) {
+      if (auto *proven = std::get_if<ClaimType>(&premise)) {
+        premises.push_back(WitnessOp::create(builder, loc, proven->getProof(),
+                                             proven->getTraitApplication()));
+        continue;
+      }
+      const auto &nested = std::get<std::shared_ptr<EqualityResolution>>(premise);
+      premises.push_back(buildEqualityEvidence(builder, loc, nested->equality,
+                                               nested->steps));
+    }
+    witnesses.push_back(
+        WitnessOp::create(builder, loc, step.equality, step.impl, premises)
+            .getResult());
+  }
+  if (witnesses.size() == 1 && steps.front().equality == eq)
+    return witnesses.front();
+  return WitnessOp::create(builder, loc, eq, ValueRange(witnesses)).getResult();
 }
 
 //===----------------------------------------------------------------------===//
@@ -707,12 +880,12 @@ FailureOr<ImplOp> ImplGenerationFreeze::generateImpl(TraitOp trait,
 //===----------------------------------------------------------------------===//
 
 LogicalResult ReadOnlyImplResolver::decline(ProjectionType demand) const {
-  recordReadOnlyResolverMiss(Type(demand));
+  recordReadOnlyResolverMiss(Type(demand), scope);
   return failure();
 }
 
 LogicalResult ReadOnlyImplResolver::decline(ClaimType demand) const {
-  recordReadOnlyResolverMiss(Type(demand));
+  recordReadOnlyResolverMiss(Type(demand), scope);
   return failure();
 }
 

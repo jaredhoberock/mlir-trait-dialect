@@ -17,14 +17,14 @@
 
 // CHECK-LABEL: trait private @Container
 !S = !trait.poly<0>
-trait.trait private @Container[!S] {
+trait.trait private @Container(%self: !trait.claim<@Container[!S]>) {
   trait.assoc_type @Elem
   trait.method @id(!S, !trait.proj<@Container[!S], "Elem">) -> !trait.proj<@Container[!S], "Elem">
 }
 
-// CHECK-LABEL: trait.impl private for @Container[i32]
+// CHECK-LABEL: trait.impl private @Container_impl(%self: !trait.claim<@Container[i32]>
 // CHECK: trait.method @id(%{{.*}}: i32, %{{.*}}: !trait.proj<@Container[i32], "Elem">) -> !trait.proj<@Container[i32], "Elem">
-trait.impl private for @Container[i32] {
+trait.impl private @Container_impl(%self_claim: !trait.claim<@Container[i32]>) {
   trait.assoc_type @Elem = i64
   // The method signature keeps the projection spelling instead of i64.
   trait.method @id(%self: i32, %e: !trait.proj<@Container[i32], "Elem">) -> !trait.proj<@Container[i32], "Elem"> {

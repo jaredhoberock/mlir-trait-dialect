@@ -14,12 +14,15 @@
 // proven_claim_sibling_projections_bind_two_parameters.mlir.
 
 module {
-  trait.trait private @D[!trait.poly<0>, !trait.poly<1>] {}
-  trait.trait private @A[!trait.poly<2>] { trait.assoc_type @Out }
-  trait.impl private @D_impl for @D[!trait.poly<3>, !trait.poly<3>] {}
-  trait.impl private @A_i32 for @A[i32] { trait.assoc_type @Out = i64 }
-  trait.impl private @A_f32 for @A[f32] { trait.assoc_type @Out = i64 }
-  trait.proof private @D_p proves @D_impl[!trait.poly<3> = i64] for @D[i64, i64] given []
+  trait.trait private @D(%self: !trait.claim<@D[!trait.poly<0>, !trait.poly<1>]>) {}
+  trait.trait private @A(%self: !trait.claim<@A[!trait.poly<2>]>) { trait.assoc_type @Out }
+  trait.impl private @D_impl(%self: !trait.claim<@D[!trait.poly<3>, !trait.poly<3>]>) {}
+  trait.impl private @A_i32(%self: !trait.claim<@A[i32]>) { trait.assoc_type @Out = i64 }
+  trait.impl private @A_f32(%self: !trait.claim<@A[f32]>) { trait.assoc_type @Out = i64 }
+  trait.proof private @D_p {
+    %d = trait.derive @D[i64, i64] from @D_impl given()
+    trait.return %d : !trait.claim<@D[i64, i64]>
+  }
 
   func.func @main() -> i32 {
     %d = trait.witness @D_p for @D[i64, i64]

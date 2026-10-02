@@ -11,11 +11,11 @@
 !S = !trait.poly<0>
 !Acc = !trait.poly<1>
 
-trait.trait private @FoldFn[!S, !Acc] {
+trait.trait private @FoldFn(%self: !trait.claim<@FoldFn[!S, !Acc]>) {
   trait.assoc_type @Output
 }
 
-// CHECK: trait.impl private @FoldFn_gen for @FoldFn[!trait.poly<0>, !trait.poly<1>] where [!trait.proj<@FoldFn[!trait.poly<0>, !trait.poly<1>], "Output"> = !trait.poly<1>]
-trait.impl private @FoldFn_gen for @FoldFn[!S, !Acc] where [!trait.proj<@FoldFn[!S, !Acc], "Output"> = !Acc] {
+// CHECK: trait.impl private @FoldFn_gen(%self: !trait.claim<@FoldFn[!trait.poly<0>, !trait.poly<1>]>
+trait.impl private @FoldFn_gen(%self: !trait.claim<@FoldFn[!S, !Acc]>, %output: !trait.claim<!trait.proj<@FoldFn[!S, !Acc], "Output"> = !Acc>) {
   trait.assoc_type @Output = !Acc
 }

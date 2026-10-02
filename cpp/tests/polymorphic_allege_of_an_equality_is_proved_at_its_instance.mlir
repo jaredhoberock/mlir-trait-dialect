@@ -13,11 +13,11 @@
 !G = !trait.poly<2>
 !X = !trait.poly<3>
 
-trait.trait private @Group[!S] {}
-trait.impl private @Group_i8 for @Group[i8] {}
+trait.trait private @Group(%self: !trait.claim<@Group[!S]>) {}
+trait.impl private @Group_i8(%self: !trait.claim<@Group[i8]>) {}
 
-trait.trait private @Carry[!S, !G] { trait.assoc_type @Payload }
-trait.impl private @Carry_any for @Carry[!T, !G] where [@Group[!G]] {
+trait.trait private @Carry(%self: !trait.claim<@Carry[!S, !G]>) { trait.assoc_type @Payload }
+trait.impl private @Carry_any(%self: !trait.claim<@Carry[!T, !G]>, %group: !trait.claim<@Group[!G]>) {
   trait.assoc_type @Payload = !T
 }
 
@@ -41,7 +41,7 @@ func.func @main() {
 // CHECK: trait.allege !trait.proj<@Carry[!trait.poly<3>, i8], "Payload"> = !trait.poly<3>
 // CHECK-LABEL: func.func private @send_
 // CHECK-NOT: trait.allege
-// CHECK: trait.witness proj_resolve !trait.proj<@Carry[i64, i8], "Payload"> resolves i64 by @Carry_any[!trait.poly<1> = i64, !trait.poly<2> = i8] given
+// CHECK: trait.witness proj_resolve !trait.proj<@Carry[i64, i8], "Payload"> resolves i64 by @Carry_any given
 
 // LOWERED-NOT: trait.
 // LOWERED-LABEL: func.func @main

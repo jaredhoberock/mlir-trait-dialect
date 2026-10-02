@@ -11,18 +11,18 @@
 
 !S = !trait.poly<0>
 
-trait.trait private @Eq[!S] {}
+trait.trait private @Eq(%self: !trait.claim<@Eq[!S]>) {}
 
-trait.trait private @FoldFn[!S] {
+trait.trait private @FoldFn(%self: !trait.claim<@FoldFn[!S]>) {
   trait.assoc_type @Output
 }
 
-// CHECK: trait.impl private for @FoldFn[!trait.poly<0>] where [@Eq[!trait.poly<0>], !trait.proj<@FoldFn[!trait.poly<0>], "Output"> = !trait.poly<0>]
-trait.impl private for @FoldFn[!S] where [@Eq[!S], !trait.proj<@FoldFn[!S], "Output"> = !S] {
+// CHECK: trait.impl private @FoldFn_impl(%self: !trait.claim<@FoldFn[!trait.poly<0>]>
+trait.impl private @FoldFn_impl(%self: !trait.claim<@FoldFn[!S]>, %eq: !trait.claim<@Eq[!S]>, %output: !trait.claim<!trait.proj<@FoldFn[!S], "Output"> = !S>) {
   trait.assoc_type @Output = !S
 }
 
-// CHECK: trait.impl private for @FoldFn[!trait.poly<0>] where [@Eq[!trait.poly<0>]] {
-trait.impl private for @FoldFn[!S] where [@Eq[!S]] {
+// CHECK: trait.impl private @FoldFn_impl1(%self: !trait.claim<@FoldFn[!trait.poly<0>]>
+trait.impl private @FoldFn_impl1(%self: !trait.claim<@FoldFn[!S]>, %eq: !trait.claim<@Eq[!S]>) {
   trait.assoc_type @Output = !S
 }

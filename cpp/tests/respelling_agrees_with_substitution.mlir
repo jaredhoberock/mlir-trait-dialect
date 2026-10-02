@@ -4,26 +4,25 @@
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' 2>&1 | FileCheck %s
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' | FileCheck %s --check-prefix=IR
 
-// A claim nested inside another claim must receive its proof throughout
-// specialization. The concrete Hold method and its generic caller must lower
-// with no claim types or unrealized conversion casts left behind.
+// A claim nested inside another claim receives its proof throughout
+// specialization. The generic caller's call of @Hold's method returns a claim,
+// so at the instance it computes evidence, which selection proves in place of a
+// call; the caller lowers with no claim types or unrealized conversion casts
+// left behind.
 
 !T = !trait.poly<0>
 
-trait.trait private @Ground[!T] {}
+trait.trait private @Ground(%self: !trait.claim<@Ground[!T]>) {}
 
-trait.impl private @Ground_all for @Ground[!T] {}
+trait.impl private @Ground_all(%self: !trait.claim<@Ground[!T]>) {}
 
-trait.trait private @Hold[!T] {
+trait.trait private @Hold(%self: !trait.claim<@Hold[!T]>) {
   trait.method @held() -> !T
 }
 
-trait.impl private @Hold_claim for @Hold[!trait.claim<@Ground[i32]>] where [
-  @Ground[i32]
-] {
+trait.impl private @Hold_claim(%self: !trait.claim<@Hold[!trait.claim<@Ground[i32]>]>, %ground: !trait.claim<@Ground[i32]>) {
   trait.method @held() -> !trait.claim<@Ground[i32]> {
-    %g = trait.assume 0 : !trait.claim<@Ground[i32]>
-    trait.return %g : !trait.claim<@Ground[i32]>
+    trait.return %ground : !trait.claim<@Ground[i32]>
   }
 }
 
@@ -42,9 +41,8 @@ func.func @test() {
 // IR-NOT: trait.claim
 // IR-NOT: builtin.unrealized_conversion_cast
 
-// CHECK-LABEL: func.func private @Hold_claim_{{h[0-9a-f]+}}_held()
-// CHECK: return
+// CHECK-NOT: @Hold_claim
 // CHECK-LABEL: func.func private @take_
-// CHECK: call @Hold_claim_{{h[0-9a-f]+}}_held() : () -> ()
+// CHECK-NEXT: return
 // CHECK-LABEL: func.func @test()
 // CHECK: call @take_

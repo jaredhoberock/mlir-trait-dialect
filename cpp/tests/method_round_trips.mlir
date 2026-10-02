@@ -11,16 +11,15 @@
 // same declarations.
 
 !T = !trait.poly<0>
-trait.trait private @Tr[!T] {
+trait.trait private @Tr(%self: !trait.claim<@Tr[!T]>) {
   trait.method @required(!T) -> i64
   trait.method @default(%x: !T) -> i64 {
-    %s = trait.assume self : !trait.claim<@Tr[!T]>
-    %r = trait.method.call %s @Tr[!T]::@required(%x) : (!T) -> i64
+    %r = trait.method.call %self @Tr[!T]::@required(%x) : (!T) -> i64
     trait.return %r : i64
   }
 }
 
-trait.impl private @Tr_i64 for @Tr[i64] {
+trait.impl private @Tr_i64(%self: !trait.claim<@Tr[i64]>) {
   trait.method @required(%x: i64) -> i64 {
     %zero = arith.constant 0 : i64
     %negative = arith.cmpi slt, %x, %zero : i64

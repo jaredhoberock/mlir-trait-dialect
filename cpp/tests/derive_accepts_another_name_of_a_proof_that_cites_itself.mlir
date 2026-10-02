@@ -13,25 +13,37 @@
 // CHECK: {{^}}9{{$}}
 
 !T = !trait.poly<0>
-trait.trait private @Trait[!T] where [@Trait[!trait.proj<@Trait[!T], "Sub">]] {
+trait.trait private @Trait(%self: !trait.claim<@Trait[!T]>) -> !trait.claim<@Trait[!trait.proj<@Trait[!T], "Sub">]> {
   trait.assoc_type @Sub
 }
-trait.impl private @I for @Trait[i32] {
+trait.impl private @I(%self: !trait.claim<@Trait[i32]>) {
   trait.assoc_type @Sub = i32
+  %req0 = trait.allege @Trait[!trait.proj<@Trait[i32], "Sub">]
+  trait.return %req0 : !trait.claim<@Trait[!trait.proj<@Trait[i32], "Sub">]>
 }
-trait.proof private @P1 proves @I[] for @Trait[i32] given [@P1]
-trait.proof private @P2 proves @I[] for @Trait[i32] given [@P2]
-trait.trait private @Other[!T] { trait.method @method() -> i64 }
-trait.impl private @W for @Other[!T] where [@Trait[!T]] {
+trait.proof private @P1 {
+  %d = trait.derive @Trait[i32] from @I given()
+  trait.return %d : !trait.claim<@Trait[i32]>
+}
+trait.proof private @P2 {
+  %d = trait.derive @Trait[i32] from @I given()
+  trait.return %d : !trait.claim<@Trait[i32]>
+}
+trait.trait private @Other(%self: !trait.claim<@Other[!T]>) { trait.method @method() -> i64 }
+trait.impl private @W(%self: !trait.claim<@Other[!T]>, %trait: !trait.claim<@Trait[!T]>) {
   trait.method @method() -> i64 {
     %v = arith.constant 9 : i64
     trait.return %v : i64
   }
 }
-trait.proof private @PW proves @W[!T = i32] for @Other[i32] given [@P1]
+trait.proof private @PW {
+  %p0 = trait.witness @P1 for @Trait[i32]
+  %d = trait.derive @Other[i32] from @W given(%p0) : (!trait.claim<@Trait[i32] by @P1>)
+  trait.return %d : !trait.claim<@Other[i32]>
+}
 func.func @main() -> i64 {
   %p = trait.witness @P2 for @Trait[i32]
-  %d = trait.derive @Other[i32] from @W[!T = i32] given(%p) : (!trait.claim<@Trait[i32] by @P2>)
+  %d = trait.derive @Other[i32] from @W given(%p) : (!trait.claim<@Trait[i32] by @P2>)
   %v = trait.method.call %d @Other[i32]::@method() : () -> i64
   return %v : i64
 }

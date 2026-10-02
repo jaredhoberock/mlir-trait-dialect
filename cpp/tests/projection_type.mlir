@@ -8,7 +8,7 @@
 // CHECK: trait.method @get(!trait.poly<0>) -> !trait.proj<@Get[!trait.poly<0>], "Output">
 
 !T = !trait.poly<0>
-trait.trait private @Get[!T] {
+trait.trait private @Get(%self: !trait.claim<@Get[!T]>) {
   trait.assoc_type @Output
   trait.method @get(!T) -> !trait.proj<@Get[!T], "Output">
 }

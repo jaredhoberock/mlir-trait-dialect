@@ -10,22 +10,30 @@
 // it discharges at the application the citation names, so both spell it at i8.
 // Split 2 swaps the operand order.
 
-trait.trait private @V[!trait.poly<0>] { trait.method @v() -> i64 }
-trait.trait private @U[!trait.poly<0>] where [@V[!trait.poly<0>]] { trait.method @u() -> i64 }
-trait.impl private @V_blanket for @V[!trait.poly<0>] {
+trait.trait private @V(%self: !trait.claim<@V[!trait.poly<0>]>) { trait.method @v() -> i64 }
+trait.trait private @U(%self: !trait.claim<@U[!trait.poly<0>]>) -> !trait.claim<@V[!trait.poly<0>]> { trait.method @u() -> i64 }
+trait.impl private @V_blanket(%self: !trait.claim<@V[!trait.poly<0>]>) {
   trait.method @v() -> i64 {
     %c = arith.constant 7 : i64
     trait.return %c : i64
   }
 }
-trait.impl private @U_blanket for @U[!trait.poly<0>] {
+trait.impl private @U_blanket(%self: !trait.claim<@U[!trait.poly<0>]>) {
   trait.method @u() -> i64 {
     %c = arith.constant 1 : i64
     trait.return %c : i64
   }
+  %req0 = trait.allege @V[!trait.poly<0>]
+  trait.return %req0 : !trait.claim<@V[!trait.poly<0>]>
 }
-trait.proof private @pv proves @V_blanket[!trait.poly<0> = !trait.poly<0>] for @V[!trait.poly<0>] given []
-trait.proof private @pu proves @U_blanket[!trait.poly<0> = !trait.poly<0>] for @U[!trait.poly<0>] given [@pv]
+trait.proof private @pv {
+  %d = trait.derive @V[!trait.poly<0>] from @V_blanket given()
+  trait.return %d : !trait.claim<@V[!trait.poly<0>]>
+}
+trait.proof private @pu {
+  %d = trait.derive @U[!trait.poly<0>] from @U_blanket given()
+  trait.return %d : !trait.claim<@U[!trait.poly<0>]>
+}
 
 // CHECK-NOT: trait.
 // CHECK: func.func private @[[V:V_blanket_[a-z0-9]+]]_v() -> i64
@@ -47,22 +55,30 @@ func.func @main() -> i64 {
 
 // -----
 
-trait.trait private @V[!trait.poly<0>] { trait.method @v() -> i64 }
-trait.trait private @U[!trait.poly<0>] where [@V[!trait.poly<0>]] { trait.method @u() -> i64 }
-trait.impl private @V_blanket for @V[!trait.poly<0>] {
+trait.trait private @V(%self: !trait.claim<@V[!trait.poly<0>]>) { trait.method @v() -> i64 }
+trait.trait private @U(%self: !trait.claim<@U[!trait.poly<0>]>) -> !trait.claim<@V[!trait.poly<0>]> { trait.method @u() -> i64 }
+trait.impl private @V_blanket(%self: !trait.claim<@V[!trait.poly<0>]>) {
   trait.method @v() -> i64 {
     %c = arith.constant 7 : i64
     trait.return %c : i64
   }
 }
-trait.impl private @U_blanket for @U[!trait.poly<0>] {
+trait.impl private @U_blanket(%self: !trait.claim<@U[!trait.poly<0>]>) {
   trait.method @u() -> i64 {
     %c = arith.constant 1 : i64
     trait.return %c : i64
   }
+  %req0 = trait.allege @V[!trait.poly<0>]
+  trait.return %req0 : !trait.claim<@V[!trait.poly<0>]>
 }
-trait.proof private @pv proves @V_blanket[!trait.poly<0> = !trait.poly<0>] for @V[!trait.poly<0>] given []
-trait.proof private @pu proves @U_blanket[!trait.poly<0> = !trait.poly<0>] for @U[!trait.poly<0>] given [@pv]
+trait.proof private @pv {
+  %d = trait.derive @V[!trait.poly<0>] from @V_blanket given()
+  trait.return %d : !trait.claim<@V[!trait.poly<0>]>
+}
+trait.proof private @pu {
+  %d = trait.derive @U[!trait.poly<0>] from @U_blanket given()
+  trait.return %d : !trait.claim<@U[!trait.poly<0>]>
+}
 
 // CHECK-NOT: trait.
 // CHECK: func.func private @[[V2:V_blanket_[a-z0-9]+]]_v() -> i64

@@ -3,28 +3,44 @@
 
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait,convert-arith-to-llvm,convert-func-to-llvm,reconcile-unrealized-casts)' | mlir-runner -e main --entry-point-result=i64 | FileCheck %s
 
-// @Wrapped's bound requirement has an equality premise, which @f discharges
-// with a reflexive witness rather than a projection. With @Nine the one impl
-// of @Mark[i32], selection's proof is the one the call spells the projection
-// with, and the instance runs @Nine.
+// @Wrapped's quantified requirement has an equality premise, which @f
+// discharges with a reflexive witness rather than a projection. The evidence
+// method @W implements derives @Mark from @Nine, the one impl of @Mark[i32],
+// and the instance runs @Nine.
 
 // CHECK: {{^}}9{{$}}
 
 !T = !trait.poly<0>
-trait.trait private @Mark[!T] { trait.method @value() -> i64 }
-trait.impl private @Nine for @Mark[!T] {
+!B = !trait.poly<1>
+trait.trait private @Mark(%self: !trait.claim<@Mark[!T]>) { trait.method @value() -> i64 }
+trait.impl private @Nine(%self: !trait.claim<@Mark[!T]>) {
   trait.method @value() -> i64 {
     %v = arith.constant 9 : i64
     trait.return %v : i64
   }
 }
-trait.trait private @Wrapped[!T] where [!T = !T, forall [!trait.bound<0>] where [!trait.bound<0> = !trait.bound<0>] -> @Mark[!trait.bound<0>]] {}
-trait.impl private @W for @Wrapped[!T] witnesses [#trait<witness requirement 1 by @Nine[!T = !trait.bound<0>]>] {}
-trait.proof private @PN proves @Nine[!T = i32] for @Mark[i32] given []
-trait.proof private @PW proves @W[!T = i32] for @Wrapped[i32] given [unit, unit]
+trait.trait private @Wrapped(%self: !trait.claim<@Wrapped[!T]>) -> !trait.claim<!T = !T> {
+  trait.method @requirement_1(!trait.claim<!B = !B>) -> !trait.claim<@Mark[!B]>
+}
+trait.impl private @W(%self: !trait.claim<@Wrapped[!T]>) {
+  trait.method @requirement_1(%e: !trait.claim<!B = !B>) -> !trait.claim<@Mark[!B]> {
+    %r = trait.derive @Mark[!B] from @Nine given()
+    trait.return %r : !trait.claim<@Mark[!B]>
+  }
+  %refl = trait.witness refl : !trait.claim<!T = !T>
+  trait.return %refl : !trait.claim<!T = !T>
+}
+trait.proof private @PN {
+  %d = trait.derive @Mark[i32] from @Nine given()
+  trait.return %d : !trait.claim<@Mark[i32]>
+}
+trait.proof private @PW {
+  %d = trait.derive @Wrapped[i32] from @W given()
+  trait.return %d : !trait.claim<@Wrapped[i32]>
+}
 func.func private @f(%w: !trait.claim<@Wrapped[!T]>, %p: !trait.claim<@Mark[!T]>) -> i64 {
   %e = trait.witness refl : !trait.claim<!T = !T>
-  %m = trait.project %w[1] for [!T] given(%e : !trait.claim<!T = !T>) : !trait.claim<@Wrapped[!T]> -> !trait.claim<@Mark[!T]>
+  %m = trait.method.call %w @Wrapped[!T]::@requirement_1(%e) : (!trait.claim<!T = !T>) -> !trait.claim<@Mark[!T]>
   %v = trait.method.call %m @Mark[!T]::@value() : () -> i64
   return %v : i64
 }

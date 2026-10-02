@@ -3,20 +3,20 @@
 !T = !trait.poly<0>
 !X = !trait.proj<@Broad[i64], "Output">
 
-trait.trait private @Unwrap[!T] {
+trait.trait private @Unwrap(%self: !trait.claim<@Unwrap[!T]>) {
   trait.assoc_type @Output
   trait.method @unwrap(!T) -> !trait.proj<@Unwrap[!T], "Output">
 }
 
-trait.trait private @Broad[!T] {
+trait.trait private @Broad(%self: !trait.claim<@Broad[!T]>) {
   trait.assoc_type @Output
 }
 
-trait.impl private @Broad_i64 for @Broad[i64] {
+trait.impl private @Broad_i64(%self: !trait.claim<@Broad[i64]>) {
   trait.assoc_type @Output = i64
 }
 
-trait.impl private @Unwrap_i64 for @Unwrap[i64] {
+trait.impl private @Unwrap_i64(%self_claim: !trait.claim<@Unwrap[i64]>) {
   trait.assoc_type @Output = !X
   trait.method @unwrap(%self: i64) -> !X {
     %result = ub.poison : !X

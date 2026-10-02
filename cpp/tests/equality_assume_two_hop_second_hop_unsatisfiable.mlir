@@ -12,20 +12,21 @@
 // the premise is what selection does, so @Run_gen is no candidate for the
 // demand and the allegation has no impl -- the equality is never settled on the
 // strength of @Mid_i64's binding alone. Supplying an @X[i64] impl is what
-// discharges the assumption and lets the premise hold.
+// discharges the where entry and lets the premise hold.
 
-// VERIFY: trait.assume 1 : !trait.claim<!trait.proj<@Wrap[!trait.poly<0>], "Item"> = i64>
+// VERIFY: trait.impl private @Run_gen({{.*}}, %item: !trait.claim<!trait.proj<@Wrap[!trait.poly<0>], "Item"> = i64>)
+// VERIFY: trait.func.call @need(%{{.*}}, %item)
 
 !S = !trait.poly<0>
 
-trait.trait private @X[!trait.poly<9>] {}
-trait.trait private @Mid[!S] { trait.assoc_type @Out }
-trait.impl private @Mid_i64 for @Mid[i64] where [@X[i64]] { trait.assoc_type @Out = i64 }
+trait.trait private @X(%self: !trait.claim<@X[!trait.poly<9>]>) {}
+trait.trait private @Mid(%self: !trait.claim<@Mid[!S]>) { trait.assoc_type @Out }
+trait.impl private @Mid_i64(%self: !trait.claim<@Mid[i64]>, %x: !trait.claim<@X[i64]>) { trait.assoc_type @Out = i64 }
 
-trait.trait private @Wrap[!S] { trait.assoc_type @Item }
-trait.impl private @Wrap_i64 for @Wrap[i64] { trait.assoc_type @Item = !trait.proj<@Mid[i64], "Out"> }
+trait.trait private @Wrap(%self: !trait.claim<@Wrap[!S]>) { trait.assoc_type @Item }
+trait.impl private @Wrap_i64(%self: !trait.claim<@Wrap[i64]>) { trait.assoc_type @Item = !trait.proj<@Mid[i64], "Out"> }
 
-trait.trait private @Run[!S] {
+trait.trait private @Run(%self: !trait.claim<@Run[!S]>) {
   trait.method @go(!S) -> i64
 }
 
@@ -33,11 +34,10 @@ func.func private @need(%v: i64, %e: !trait.claim<!trait.proj<@Wrap[!S], "Item">
   return %v : i64
 }
 
-trait.impl private @Run_gen for @Run[!S] where [@Wrap[!S], !trait.proj<@Wrap[!S], "Item"> = i64] {
+trait.impl private @Run_gen(%self: !trait.claim<@Run[!S]>, %wrap: !trait.claim<@Wrap[!S]>, %item: !trait.claim<!trait.proj<@Wrap[!S], "Item"> = i64>) {
   trait.method @go(%x: !S) -> i64 {
-    %e = trait.assume 1 : !trait.claim<!trait.proj<@Wrap[!S], "Item"> = i64>
     %v = arith.constant 7 : i64
-    %r = trait.func.call @need(%v, %e)
+    %r = trait.func.call @need(%v, %item)
       : (i64, !trait.claim<!trait.proj<@Wrap[!S], "Item"> = i64>) -> i64
     trait.return %r : i64
   }

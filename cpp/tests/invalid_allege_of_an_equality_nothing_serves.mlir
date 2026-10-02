@@ -9,7 +9,7 @@
 !S = !trait.poly<0>
 !G = !trait.poly<1>
 
-trait.trait private @Carry[!S, !G] { trait.assoc_type @Payload }
+trait.trait private @Carry(%self: !trait.claim<@Carry[!S, !G]>) { trait.assoc_type @Payload }
 
 func.func private @need(!trait.claim<!trait.proj<@Carry[i64, i8], "Payload"> = i64>)
 

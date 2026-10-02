@@ -15,11 +15,11 @@
 // IMPL-NEXT:      arith.constant 8 : i64
 
 !T = !trait.poly<0>
-trait.trait private @Tr[!T] {
+trait.trait private @Tr(%self: !trait.claim<@Tr[!T]>) {
   trait.method @a(!T) -> i64
 }
 
-trait.impl private @Tr_i64 for @Tr[i64] {
+trait.impl private @Tr_i64(%self: !trait.claim<@Tr[i64]>) {
   trait.method @a(%x: i64) -> i64 {
     %seven = arith.constant 7 : i64
     %one = arith.constant 1 : i64

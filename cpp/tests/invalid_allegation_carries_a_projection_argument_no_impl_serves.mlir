@@ -13,14 +13,14 @@
 !S = !trait.poly<0>
 !A = !trait.poly<1>
 
-trait.trait private @Arg[!S] {
+trait.trait private @Arg(%self: !trait.claim<@Arg[!S]>) {
   trait.assoc_type @Out
 }
 
-trait.trait private @Gat[!S] {
+trait.trait private @Gat(%self: !trait.claim<@Gat[!S]>) {
   trait.assoc_type @Item<[!A]>
 }
-trait.impl private @Gat_i64 for @Gat[i64] {
+trait.impl private @Gat_i64(%self: !trait.claim<@Gat[i64]>) {
   trait.assoc_type @Item<[!trait.poly<2>]> = f32
 }
 

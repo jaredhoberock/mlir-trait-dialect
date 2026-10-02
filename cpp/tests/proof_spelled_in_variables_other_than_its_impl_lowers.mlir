@@ -11,24 +11,31 @@
 // declaration instead, the clone of @B2_blanket at i32 would keep a claim over
 // poly<7>, poly<8> that no substitution reaches.
 
-trait.trait private @A2[!trait.poly<0>, !trait.poly<1>] { trait.method @a() -> i64 }
-trait.trait private @B2[!trait.poly<0>, !trait.poly<1>] where [@A2[!trait.poly<0>, !trait.poly<1>]] { trait.method @b() -> i64 }
-trait.impl private @A2_blanket for @A2[!trait.poly<2>, !trait.poly<3>] {
+trait.trait private @A2(%self: !trait.claim<@A2[!trait.poly<0>, !trait.poly<1>]>) { trait.method @a() -> i64 }
+trait.trait private @B2(%self: !trait.claim<@B2[!trait.poly<0>, !trait.poly<1>]>) -> !trait.claim<@A2[!trait.poly<0>, !trait.poly<1>]> { trait.method @b() -> i64 }
+trait.impl private @A2_blanket(%self: !trait.claim<@A2[!trait.poly<2>, !trait.poly<3>]>) {
   trait.method @a() -> i64 {
     %c = arith.constant 7 : i64
     trait.return %c : i64
   }
 }
-trait.impl private @B2_blanket for @B2[!trait.poly<0>, !trait.poly<1>] {
+trait.impl private @B2_blanket(%self: !trait.claim<@B2[!trait.poly<0>, !trait.poly<1>]>) {
   trait.method @b() -> i64 {
-    %s = trait.assume self : !trait.claim<@B2[!trait.poly<0>, !trait.poly<1>]>
-    %a = trait.project %s[0] : !trait.claim<@B2[!trait.poly<0>, !trait.poly<1>]> -> !trait.claim<@A2[!trait.poly<0>, !trait.poly<1>]>
+    %a = trait.project %self[0] : !trait.claim<@B2[!trait.poly<0>, !trait.poly<1>]> -> !trait.claim<@A2[!trait.poly<0>, !trait.poly<1>]>
     %r = trait.method.call %a @A2[!trait.poly<0>, !trait.poly<1>]::@a() : () -> i64
     trait.return %r : i64
   }
+  %req0 = trait.allege @A2[!trait.poly<0>, !trait.poly<1>]
+  trait.return %req0 : !trait.claim<@A2[!trait.poly<0>, !trait.poly<1>]>
 }
-trait.proof private @a2 proves @A2_blanket[!trait.poly<2> = !trait.poly<4>, !trait.poly<3> = !trait.poly<5>] for @A2[!trait.poly<4>, !trait.poly<5>] given []
-trait.proof private @p proves @B2_blanket[!trait.poly<0> = !trait.poly<7>, !trait.poly<1> = !trait.poly<8>] for @B2[!trait.poly<7>, !trait.poly<8>] given [@a2]
+trait.proof private @a2 {
+  %d = trait.derive @A2[!trait.poly<4>, !trait.poly<5>] from @A2_blanket given()
+  trait.return %d : !trait.claim<@A2[!trait.poly<4>, !trait.poly<5>]>
+}
+trait.proof private @p {
+  %d = trait.derive @B2[!trait.poly<7>, !trait.poly<8>] from @B2_blanket given()
+  trait.return %d : !trait.claim<@B2[!trait.poly<7>, !trait.poly<8>]>
+}
 
 // CHECK-NOT: trait.
 // CHECK: func.func private @[[A:A2_blanket_[a-z0-9]+]]_a() -> i64

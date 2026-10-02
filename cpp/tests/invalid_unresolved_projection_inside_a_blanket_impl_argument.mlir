@@ -9,13 +9,13 @@
 
 !T = !trait.poly<0>
 
-trait.trait private @T[!T] {
+trait.trait private @T(%self: !trait.claim<@T[!T]>) {
   trait.assoc_type @A
 }
 
-trait.trait private @Box[!T] {}
+trait.trait private @Box(%self: !trait.claim<@Box[!T]>) {}
 
-trait.impl private @Box_any for @Box[!T] {}
+trait.impl private @Box_any(%self: !trait.claim<@Box[!T]>) {}
 
 func.func private @callee(%c: !trait.claim<@Box[!trait.proj<@T[i64], "A">]>,
                   %x: !T) -> !T {

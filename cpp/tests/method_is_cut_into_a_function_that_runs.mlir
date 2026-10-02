@@ -6,40 +6,41 @@
 
 // An impl's method is cut into a module-level func.func, every trait.return of
 // its body becoming a func.return over the same operands: @pick returns from two
-// blocks. A trait's default is first copied into the impl as a method and then
-// cut the same way. main computes 100 * pick(-5) + 10 * pick(5) + twice(4)
-// = 100 * 1 + 10 * 2 + 2 * 2, so a return left standing or a return of the
-// wrong block changes the result or refuses the module.
+// blocks. A trait's default is cut from the trait itself the same way, its
+// %self taking the receiver's proof. main computes
+// 100 * pick(-5) + 10 * pick(5) + twice(4) = 100 * 1 + 10 * 2 + 2 * 2, so a
+// return left standing or a return of the wrong block changes the result or
+// refuses the module.
 
 // CHECK: {{^}}124{{$}}
 
+// CUT-LABEL: trait.trait private @Tr
+// CUT:         trait.method @twice(
+// CUT:           trait.return
+// CUT:       func.func private @Tr_{{h[0-9a-f]+}}_twice(%{{.*}}: !trait.claim<@Tr[i64] by @Tr_i64>
+// CUT-NOT:     trait.return
+// CUT:         {{^ *}}return
 // CUT-LABEL: trait.impl private @Tr_i64
 // CUT:         trait.method @pick(
 // CUT:           trait.return
-// CUT:           trait.return
-// CUT:         trait.method @twice(
 // CUT:           trait.return
 // CUT:       func.func private @Tr_i64_{{.*}}_pick(
 // CUT-NOT:     trait.return
 // CUT:         {{^ *}}return
 // CUT-NOT:     trait.return
 // CUT:         {{^ *}}return
-// CUT:       func.func private @Tr_i64_{{.*}}_twice(
-// CUT-NOT:     trait.return
-// CUT:         {{^ *}}return
 
 !T = !trait.poly<0>
-trait.trait private @Tr[!T] {
+trait.trait private @Tr(%self: !trait.claim<@Tr[!T]>) {
   trait.method @pick(!T) -> i64
   trait.method @twice(%x: !T) -> i64 {
-    %s = trait.assume self : !trait.claim<@Tr[!T]>
-    %p = trait.method.call %s @Tr[!T]::@pick(%x) : (!T) -> i64
+    %p = trait.method.call %self @Tr[!T]::@pick(%x) : (!T) -> i64
     %r = arith.addi %p, %p : i64
     trait.return %r : i64
   }
 }
 
-trait.impl private @Tr_i64 for @Tr[i64] {
+trait.impl private @Tr_i64(%self: !trait.claim<@Tr[i64]>) {
   trait.method @pick(%x: i64) -> i64 {
     %zero = arith.constant 0 : i64
     %negative = arith.cmpi slt, %x, %zero : i64

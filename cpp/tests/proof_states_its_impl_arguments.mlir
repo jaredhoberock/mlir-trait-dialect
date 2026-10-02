@@ -5,53 +5,66 @@
 // RUN: mlir-opt %s | mlir-opt | FileCheck %s --check-prefix=VERIFIED
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' | FileCheck %s
 
-// A proof states the argument its impl's parameter takes, and its given list
-// holds one entry per requirement of the trait and per entry of the impl's
-// where clause: a symbol for each application, unit for each equality,
-// decided at the proof's claim. A requirement is read off the proof at its own
-// position, carrying the symbol standing there.
+// A proof's derive supplies one claim per entry of the impl's where clause,
+// in order, and those claims together with the derived application determine
+// the argument the impl's parameter takes; nothing states it a second time.
+// The trait's requirements are the impl's to return. A projection off the proof
+// reads requirement k from the impl's return and, past the requirements, where
+// entry k - 2 from the derive's operand, carrying the symbol standing there.
 
-// VERIFIED: trait.proof private @p proves @B_tuple[!trait.poly<1> = i32] for @B[tuple<i32>] given [@A_tuple_p, unit, @A_i32, unit]
+// VERIFIED: trait.proof private @p {
+// VERIFIED: %[[A:.*]] = trait.witness @A_i32 for @A[i32]
+// VERIFIED: trait.derive @B[tuple<i32>] from @B_tuple given(%[[A]], %{{.*}})
 // VERIFIED: trait.project %{{.*}}[2] : <@B[tuple<i32>] by @p> -> <@A[i32] by @A_i32>
 
 !S = !trait.poly<0>
 !U = !trait.poly<1>
 
-trait.trait private @A[!S] {
+trait.trait private @A(%self: !trait.claim<@A[!S]>) {
   trait.method @a(!S) -> i64
 }
-trait.trait private @C[!S] {
+trait.trait private @C(%self: !trait.claim<@C[!S]>) {
   trait.assoc_type @Val
 }
-trait.trait private @B[!S] where [@A[!S], !trait.proj<@B[!S], "Out"> = i64] {
+trait.trait private @B(%self: !trait.claim<@B[!S]>) -> (!trait.claim<@A[!S]>, !trait.claim<!trait.proj<@B[!S], "Out"> = i64>) {
   trait.assoc_type @Out
   trait.method @b(!S) -> i64
 }
 
-trait.impl private @A_i32 for @A[i32] {
+trait.impl private @A_i32(%self: !trait.claim<@A[i32]>) {
   trait.method @a(%x: i32) -> i64 {
     %c = arith.constant 7 : i64
     trait.return %c : i64
   }
 }
-trait.impl private @A_tuple for @A[tuple<!U>] {
+trait.impl private @A_tuple(%self: !trait.claim<@A[tuple<!U>]>) {
   trait.method @a(%x: tuple<!U>) -> i64 {
     %c = arith.constant 11 : i64
     trait.return %c : i64
   }
 }
-trait.proof private @A_tuple_p proves @A_tuple[!U = i32] for @A[tuple<i32>] given []
-trait.impl private @C_i32 for @C[i32] {
+trait.impl private @C_i32(%self: !trait.claim<@C[i32]>) {
   trait.assoc_type @Val = i64
 }
-trait.impl private @B_tuple for @B[tuple<!U>] where [@A[!U], !trait.proj<@C[!U], "Val"> = i64] {
+trait.impl private @B_tuple(%self: !trait.claim<@B[tuple<!U>]>, %a: !trait.claim<@A[!U]>, %val: !trait.claim<!trait.proj<@C[!U], "Val"> = i64>) {
   trait.assoc_type @Out = i64
   trait.method @b(%x: tuple<!U>) -> i64 {
     %c = arith.constant 35 : i64
     trait.return %c : i64
   }
+  %req0 = trait.allege @A[tuple<!U>]
+  %out = trait.witness proj_resolve !trait.proj<@B[tuple<!U>], "Out"> resolves i64 by @B_tuple
+    given(%a, %val) : (!trait.claim<@A[!U]>, !trait.claim<!trait.proj<@C[!U], "Val"> = i64>)
+    : !trait.claim<!trait.proj<@B[tuple<!U>], "Out"> = i64>
+  trait.return %req0, %out : !trait.claim<@A[tuple<!U>]>, !trait.claim<!trait.proj<@B[tuple<!U>], "Out"> = i64>
 }
-trait.proof private @p proves @B_tuple[!U = i32] for @B[tuple<i32>] given [@A_tuple_p, unit, @A_i32, unit]
+trait.proof private @p {
+  %p0 = trait.witness @A_i32 for @A[i32]
+  %p1 = trait.witness proj_resolve !trait.proj<@C[i32], "Val"> resolves i64 by @C_i32
+    : !trait.claim<!trait.proj<@C[i32], "Val"> = i64>
+  %d = trait.derive @B[tuple<i32>] from @B_tuple given(%p0, %p1) : (!trait.claim<@A[i32] by @A_i32>, !trait.claim<!trait.proj<@C[i32], "Val"> = i64>)
+  trait.return %d : !trait.claim<@B[tuple<i32>]>
+}
 
 func.func @main(%x: tuple<i32>, %y: i32) -> i64 {
   %w = trait.witness @p for @B[tuple<i32>]

@@ -18,25 +18,29 @@
 // CHECK: call @[[B]]_b() : () -> i64
 // CHECK-NOT: trait.
 
-trait.trait private @Foo[!trait.poly<0>] { trait.assoc_type @Out }
-trait.impl private @Foo_any for @Foo[!trait.poly<0>] { trait.assoc_type @Out = i64 }
-trait.trait private @A[!trait.poly<0>] { trait.method @a() -> i64 }
-trait.trait private @B[!trait.poly<0>] where [@A[!trait.proj<@Foo[!trait.poly<0>], "Out">]] { trait.method @b() -> i64 }
-trait.impl private @A_i64 for @A[i64] {
+trait.trait private @Foo(%self: !trait.claim<@Foo[!trait.poly<0>]>) { trait.assoc_type @Out }
+trait.impl private @Foo_any(%self: !trait.claim<@Foo[!trait.poly<0>]>) { trait.assoc_type @Out = i64 }
+trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) { trait.method @a() -> i64 }
+trait.trait private @B(%self: !trait.claim<@B[!trait.poly<0>]>) -> !trait.claim<@A[!trait.proj<@Foo[!trait.poly<0>], "Out">]> { trait.method @b() -> i64 }
+trait.impl private @A_i64(%self: !trait.claim<@A[i64]>) {
   trait.method @a() -> i64 {
     %c = arith.constant 64 : i64
     trait.return %c : i64
   }
 }
-trait.impl private @B_blanket for @B[!trait.poly<0>] {
+trait.impl private @B_blanket(%self: !trait.claim<@B[!trait.poly<0>]>) {
   trait.method @b() -> i64 {
-    %s = trait.assume self : !trait.claim<@B[!trait.poly<0>]>
-    %a = trait.project %s[0] : !trait.claim<@B[!trait.poly<0>]> -> !trait.claim<@A[!trait.proj<@Foo[!trait.poly<0>], "Out">]>
+    %a = trait.project %self[0] : !trait.claim<@B[!trait.poly<0>]> -> !trait.claim<@A[!trait.proj<@Foo[!trait.poly<0>], "Out">]>
     %r = trait.method.call %a @A[!trait.proj<@Foo[!trait.poly<0>], "Out">]::@a() : () -> i64
     trait.return %r : i64
   }
+  %req0 = trait.allege @A[!trait.proj<@Foo[!trait.poly<0>], "Out">]
+  trait.return %req0 : !trait.claim<@A[!trait.proj<@Foo[!trait.poly<0>], "Out">]>
 }
-trait.proof private @P proves @B_blanket[!trait.poly<0> = !trait.poly<0>] for @B[!trait.poly<0>] given [@A_i64]
+trait.proof private @P {
+  %d = trait.derive @B[!trait.poly<0>] from @B_blanket given()
+  trait.return %d : !trait.claim<@B[!trait.poly<0>]>
+}
 func.func @main() -> i64 {
   %w = trait.witness @P for @B[i32]
   %r = trait.method.call %w @B[i32]::@b() : () -> i64 by @P

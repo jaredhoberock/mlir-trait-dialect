@@ -5,25 +5,23 @@
 
 !A = !trait.poly<0>
 // CHECK: trait.trait private @
-trait.trait private @A[!A] {}
+trait.trait private @A(%self: !trait.claim<@A[!A]>) {}
 
 !Ai = !trait.poly<1>
 // CHECK: trait.impl private @A_impl
-trait.impl private @A_impl for @A[!Ai] {}
+trait.impl private @A_impl(%self: !trait.claim<@A[!Ai]>) {}
 
 !B = !trait.poly<2>
 // CHECK: trait.trait private @B
-trait.trait private @B[!B] {}
+trait.trait private @B(%self: !trait.claim<@B[!B]>) {}
 
 !Bi = !trait.poly<3>
 // CHECK: trait.impl private @B_impl
-trait.impl private @B_impl for @B[!Bi] {}
+trait.impl private @B_impl(%self: !trait.claim<@B[!Bi]>) {}
 
 !C = !trait.poly<4>
 // CHECK: trait.trait private @C
-trait.trait private @C[!C] where [
-  @A[!C]
-] {
+trait.trait private @C(%self_claim: !trait.claim<@C[!C]>) -> !trait.claim<@A[!C]> {
   trait.method @method(%self: !C) -> i1 {
     %res = arith.constant 0 : i1
     trait.return %res : i1
@@ -32,9 +30,10 @@ trait.trait private @C[!C] where [
 
 !Ci = !trait.poly<5>
 // CHECK: trait.impl private @C_impl
-trait.impl private @C_impl for @C[!Ci] where [
-  @B[!Ci]
-] {}
+trait.impl private @C_impl(%self: !trait.claim<@C[!Ci]>, %b: !trait.claim<@B[!Ci]>) {
+  %req0 = trait.allege @A[!Ci]
+  trait.return %req0 : !trait.claim<@A[!Ci]>
+}
 
 func.func @foo(%x: i8) -> i1 {
   // CHECK: trait.witness @C_impl_{{.*}}_p for @C[i8]
@@ -44,6 +43,12 @@ func.func @foo(%x: i8) -> i1 {
   return %res : i1
 }
 
-// CHECK: trait.proof private @A_impl_{{.*}}_p proves @A_impl[!trait.poly<1> = i8] for @A[i8] given []
-// CHECK: trait.proof private @B_impl_{{.*}}_p proves @B_impl[!trait.poly<3> = i8] for @B[i8] given []
-// CHECK: trait.proof private @C_impl_{{.*}}_p proves @C_impl[!trait.poly<5> = i8] for @C[i8] given [@A_impl_{{.*}}_p, @B_impl_{{.*}}_p]
+// The proof of @C[i8] supplies @C_impl's where entry @B[i8] by a proof of its
+// own; @C's requirement @A[i8] is no premise of it: @C_impl returns that
+// evidence itself.
+// CHECK-NOT: trait.proof private @A_impl
+// CHECK: trait.proof private @B_impl_{{.*}}_p {
+// CHECK-NEXT: trait.derive @B[i8] from @B_impl given()
+// CHECK: trait.proof private @C_impl_{{.*}}_p {
+// CHECK-NEXT: %[[B:.*]] = trait.witness @B_impl_{{.*}}_p for @B[i8]
+// CHECK-NEXT: trait.derive @C[i8] from @C_impl given(%[[B]])

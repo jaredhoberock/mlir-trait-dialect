@@ -19,8 +19,8 @@
 
 !S = !trait.poly<0>
 
-trait.trait private @Inner[!S] { trait.assoc_type @Item }
-trait.impl private @Inner_i64 for @Inner[i64] { trait.assoc_type @Item = i64 }
+trait.trait private @Inner(%self: !trait.claim<@Inner[!S]>) { trait.assoc_type @Item }
+trait.impl private @Inner_i64(%self: !trait.claim<@Inner[i64]>) { trait.assoc_type @Item = i64 }
 
 // The composition witness, written out by hand so its shape and the verifier's
 // acceptance of a projection nested in a composite endpoint are both pinned. The coerce keeps the witness live so parse-time verification
@@ -36,7 +36,7 @@ func.func @evidence(%p: tuple<!trait.proj<@Inner[i64], "Item">>) -> tuple<i64> {
   return %v : tuple<i64>
 }
 
-trait.trait private @Run[!S] {
+trait.trait private @Run(%self: !trait.claim<@Run[!S]>) {
   trait.method @go(!S) -> i64
 }
 
@@ -51,11 +51,10 @@ func.func private @need(%v: i64, %e: !trait.claim<tuple<!trait.proj<@Inner[!S], 
 
 // The closure-like impl: its where-clause carries the inherited equality; the
 // method cites it by position and forwards it as the call operand.
-trait.impl private @Run_gen for @Run[!S] where [@Inner[!S], tuple<!trait.proj<@Inner[!S], "Item">> = tuple<i64>] {
+trait.impl private @Run_gen(%self: !trait.claim<@Run[!S]>, %inner: !trait.claim<@Inner[!S]>, %eq: !trait.claim<tuple<!trait.proj<@Inner[!S], "Item">> = tuple<i64>>) {
   trait.method @go(%x: !S) -> i64 {
-    %e = trait.assume 1 : !trait.claim<tuple<!trait.proj<@Inner[!S], "Item">> = tuple<i64>>
     %v = arith.constant 7 : i64
-    %r = trait.func.call @need(%v, %e)
+    %r = trait.func.call @need(%v, %eq)
       : (i64, !trait.claim<tuple<!trait.proj<@Inner[!S], "Item">> = tuple<i64>>) -> i64
     trait.return %r : i64
   }

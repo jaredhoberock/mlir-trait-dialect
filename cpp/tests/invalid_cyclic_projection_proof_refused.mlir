@@ -1,34 +1,50 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 
-// RUN: mlir-opt %s -verify-diagnostics -split-input-file
+// RUN: not mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' 2>&1 | FileCheck %s
 
 // A proof over a projection whose two impls bind each other's associated type
 // spells an associated-type binding cycle: @Loop[i32]'s Output is @Loop[i64]'s
-// Output and back. The projection has no normal form, and proof verification
-// resolves it through the ground-projection lookup as it records the obligation.
-// The nonconverging resolution is reported as a clean diagnostic on the proof
-// and refuses verification -- it neither aborts the process nor admits the
+// Output and back. The projection has no normal form. The proof's derive cites
+// an impl whose header spells the projection identically, so declaring it
+// normalizes nothing; the instance that uses it resolves the projection
+// through the module's impls, and the nonconverging resolution is reported as
+// a clean diagnostic at the use -- it neither aborts the process nor runs the
 // cyclic proof.
+
+// CHECK: error: 'trait.witness' op projection normalization did not converge within 64 iterations for type '!trait.claim<@Wants[!trait.proj<@Loop[i32], "Output">]>'
 
 !T = !trait.poly<0>
 
-trait.trait private @Loop[!T] {
+trait.trait private @Loop(%self: !trait.claim<@Loop[!T]>) {
   trait.assoc_type @Output
 }
 
-trait.impl private @Loop_i32 for @Loop[i32] {
+trait.impl private @Loop_i32(%self: !trait.claim<@Loop[i32]>) {
   trait.assoc_type @Output = !trait.proj<@Loop[i64], "Output">
 }
 
-trait.impl private @Loop_i64 for @Loop[i64] {
+trait.impl private @Loop_i64(%self: !trait.claim<@Loop[i64]>) {
   trait.assoc_type @Output = !trait.proj<@Loop[i32], "Output">
 }
 
 !W = !trait.poly<1>
-trait.trait private @Wants[!W] {}
+trait.trait private @Wants(%self: !trait.claim<@Wants[!W]>) { trait.method @m() -> i64 }
 
-trait.impl private @Wants_impl for @Wants[!trait.proj<@Loop[i32], "Output">] {}
+trait.impl private @Wants_impl(%self: !trait.claim<@Wants[!trait.proj<@Loop[i32], "Output">]>) {
+  trait.method @m() -> i64 {
+    %c = arith.constant 1 : i64
+    trait.return %c : i64
+  }
+}
 
-// expected-error @+1 {{projection normalization did not converge within 64 iterations}}
-trait.proof private @p proves @Wants_impl[] for @Wants[!trait.proj<@Loop[i32], "Output">] given []
+trait.proof private @p {
+  %d = trait.derive @Wants[!trait.proj<@Loop[i32], "Output">] from @Wants_impl given()
+  trait.return %d : !trait.claim<@Wants[!trait.proj<@Loop[i32], "Output">]>
+}
+
+func.func @main() -> i64 {
+  %w = trait.witness @p for @Wants[!trait.proj<@Loop[i32], "Output">]
+  %v = trait.method.call %w @Wants[!trait.proj<@Loop[i32], "Output">]::@m() : () -> i64 by @p
+  return %v : i64
+}

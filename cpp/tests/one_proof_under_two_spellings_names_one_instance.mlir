@@ -22,42 +22,45 @@
 
 !A = !trait.poly<0>
 !B = !trait.poly<1>
-trait.trait private @Tensor[!A] { trait.assoc_type @Element }
-trait.impl private @Tensor_i32 for @Tensor[i32] { trait.assoc_type @Element = i64 }
-trait.trait private @Vec[!A] {}
-trait.impl private @Vec_i32 for @Vec[i32] {}
-trait.trait private @Fold[!A] { trait.assoc_type @Item }
-trait.impl private @Fold_gen for @Fold[!B] where [@Vec[!B]] {
+trait.trait private @Tensor(%self: !trait.claim<@Tensor[!A]>) { trait.assoc_type @Element }
+trait.impl private @Tensor_i32(%self: !trait.claim<@Tensor[i32]>) { trait.assoc_type @Element = i64 }
+trait.trait private @Vec(%self: !trait.claim<@Vec[!A]>) {}
+trait.impl private @Vec_i32(%self: !trait.claim<@Vec[i32]>) {}
+trait.trait private @Fold(%self: !trait.claim<@Fold[!A]>) { trait.assoc_type @Item }
+trait.impl private @Fold_gen(%self: !trait.claim<@Fold[!B]>, %vec: !trait.claim<@Vec[!B]>) {
   trait.assoc_type @Item = !trait.proj<@Tensor[!B], "Element">
 }
-trait.trait private @Mark[!A] { trait.method @value() -> i64 }
-trait.impl private @Mark_i64 for @Mark[i64] {
+trait.trait private @Mark(%self: !trait.claim<@Mark[!A]>) { trait.method @value() -> i64 }
+trait.impl private @Mark_i64(%self: !trait.claim<@Mark[i64]>) {
   trait.method @value() -> i64 {
     %v = arith.constant 7 : i64
     trait.return %v : i64
   }
 }
-trait.trait private @Tr[!A] {
+trait.trait private @Tr(%self: !trait.claim<@Tr[!A]>) {
   trait.method @run(!trait.claim<@Mark[!A]>) -> i64
 }
-trait.impl private @Tr_i64 for @Tr[i64] {
+trait.impl private @Tr_i64(%self: !trait.claim<@Tr[i64]>) {
   trait.method @run(%m: !trait.claim<@Mark[i64]>) -> i64 {
     %v = trait.method.call %m @Mark[i64]::@value() : () -> i64
     trait.return %v : i64
   }
 }
-trait.trait private @Get[!A] { trait.method @get() -> i64 }
-trait.impl private @Tr_gen for @Get[!B] where [@Mark[!B]] {
+trait.trait private @Get(%self: !trait.claim<@Get[!A]>) { trait.method @get() -> i64 }
+trait.impl private @Tr_gen(%self: !trait.claim<@Get[!B]>, %mark: !trait.claim<@Mark[!B]>) {
   trait.method @get() -> i64 {
-    %m = trait.assume 0 : !trait.claim<@Mark[!B]>
-    %v = trait.method.call %m @Mark[!B]::@value() : () -> i64
+    %v = trait.method.call %mark @Mark[!B]::@value() : () -> i64
     trait.return %v : i64
   }
 }
-trait.proof private @P proves @Tr_gen[!B = i64] for @Get[i64] given [@Mark_i64]
+trait.proof private @P {
+  %p0 = trait.witness @Mark_i64 for @Mark[i64]
+  %d = trait.derive @Get[i64] from @Tr_gen given(%p0) : (!trait.claim<@Mark[i64] by @Mark_i64>)
+  trait.return %d : !trait.claim<@Get[i64]>
+}
 func.func @main() -> i64 {
   %vec = trait.witness @Vec_i32 for @Vec[i32]
-  %item = trait.witness proj_resolve !trait.proj<@Fold[i32], "Item"> resolves !trait.proj<@Tensor[i32], "Element"> by @Fold_gen[!B = i32] given(%vec) : (!trait.claim<@Vec[i32] by @Vec_i32>) : !trait.claim<!trait.proj<@Fold[i32], "Item"> = !trait.proj<@Tensor[i32], "Element">>
+  %item = trait.witness proj_resolve !trait.proj<@Fold[i32], "Item"> resolves !trait.proj<@Tensor[i32], "Element"> by @Fold_gen given(%vec) : (!trait.claim<@Vec[i32] by @Vec_i32>) : !trait.claim<!trait.proj<@Fold[i32], "Item"> = !trait.proj<@Tensor[i32], "Element">>
   %elem = trait.witness proj_resolve !trait.proj<@Tensor[i32], "Element"> resolves i64 by @Tensor_i32 : !trait.claim<!trait.proj<@Tensor[i32], "Element"> = i64>
 
   %tr = trait.witness @Tr_i64 for @Tr[i64]

@@ -13,10 +13,13 @@
 #include <llvm/Support/xxhash.h>
 #include <llvm/Support/Error.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
+#include <mlir/Interfaces/CallInterfaces.h>
 #include <mlir/Interfaces/FunctionImplementation.h>
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/IRMapping.h>
 #include <mlir/IR/RegionKindInterface.h>
+#include <mlir/Transforms/InliningUtils.h>
+#include <mlir/Transforms/RegionUtils.h>
 #include <optional>
 #include <variant>
 
@@ -39,95 +42,6 @@ static void printVisibilityKeyword(::mlir::OpAsmPrinter &printer,
                                    ::mlir::Operation *, ::mlir::StringAttr visibility) {
   if (visibility && visibility.getValue() != "public")
     printer << visibility.getValue();
-}
-
-/// The arguments a derive or proof states for its impl's parameters, in the
-/// grammar every impl citation shares, `[!P = T, ...]`, which both always
-/// state: the brackets are required, even for an impl binding no parameter.
-static ::mlir::ParseResult
-parseStatedImplArguments(::mlir::OpAsmParser &parser,
-                         ::mlir::ArrayAttr &arguments) {
-  ::llvm::SmallVector<TypeBindingAttr> bindings;
-  ::mlir::FailureOr<bool> present = parseImplArguments(parser, bindings);
-  if (::mlir::failed(present))
-    return ::mlir::failure();
-  if (!*present)
-    return parser.emitError(parser.getCurrentLocation(),
-                            "expected the arguments the impl's parameters take, "
-                            "`[!P = T, ...]`");
-  arguments = parser.getBuilder().getArrayAttr(
-      ::llvm::SmallVector<::mlir::Attribute>(bindings.begin(), bindings.end()));
-  return ::mlir::success();
-}
-
-static void printStatedImplArguments(::mlir::OpAsmPrinter &printer,
-                                     ::mlir::Operation *,
-                                     ::mlir::ArrayAttr arguments) {
-  printImplArguments(printer,
-                     ::llvm::to_vector(arguments.getAsRange<TypeBindingAttr>()));
-}
-
-/// A declaration's where clause, `where [predicate, ...]`: read as the empty
-/// clause where the keyword is absent, and printed, with the space before it,
-/// only where it states something.
-static ::mlir::ParseResult parseWhereClause(::mlir::OpAsmParser &parser,
-                                            PredicateArrayAttr &clause) {
-  if (::mlir::failed(parser.parseOptionalKeyword("where"))) {
-    clause = PredicateArrayAttr::get(parser.getContext(),
-                                     ::llvm::ArrayRef<::mlir::Attribute>());
-    return ::mlir::success();
-  }
-  clause = ::llvm::dyn_cast_or_null<PredicateArrayAttr>(
-      PredicateArrayAttr::parse(parser, {}));
-  if (!clause)
-    return parser.emitError(parser.getCurrentLocation(),
-                            "expected a predicate array");
-  return ::mlir::success();
-}
-
-static void printWhereClause(::mlir::OpAsmPrinter &printer, ::mlir::Operation *,
-                             PredicateArrayAttr clause) {
-  if (clause.empty())
-    return;
-  printer << " where ";
-  clause.print(printer);
-}
-
-/// An impl's header, `[@name] for @Trait[...] [where [...]]`. The name is read
-/// as the one synthesized from the application and the where clause where it is
-/// absent, and printed only where it is another.
-static ::mlir::ParseResult
-parseImplHeader(::mlir::OpAsmParser &parser, ::mlir::StringAttr &symName,
-                TraitApplicationAttr &selfApplication,
-                PredicateArrayAttr &assumptions) {
-  (void)parser.parseOptionalSymbolName(symName);
-  if (parser.parseKeyword("for"))
-    return ::mlir::failure();
-  selfApplication = ::llvm::dyn_cast_or_null<TraitApplicationAttr>(
-      TraitApplicationAttr::parse(parser, {}));
-  if (!selfApplication)
-    return parser.emitError(parser.getCurrentLocation(),
-                            "expected a TraitApplicationAttr");
-  if (parseWhereClause(parser, assumptions))
-    return ::mlir::failure();
-  if (!symName)
-    symName = parser.getBuilder().getStringAttr(
-        ImplOp::generateSymName(selfApplication, assumptions));
-  return ::mlir::success();
-}
-
-static void printImplHeader(::mlir::OpAsmPrinter &printer, ::mlir::Operation *op,
-                            ::mlir::StringAttr symName,
-                            TraitApplicationAttr selfApplication,
-                            PredicateArrayAttr assumptions) {
-  if (symName.getValue() !=
-      ImplOp::generateSymName(selfApplication, assumptions)) {
-    printer.printSymbolName(symName.getValue());
-    printer << ' ';
-  }
-  printer << "for ";
-  selfApplication.print(printer);
-  printWhereClause(printer, op, assumptions);
 }
 
 /// The unproven claim an op names by spelling the predicate it states: an
@@ -160,8 +74,6 @@ static void printClaimPredicate(::mlir::OpAsmPrinter &printer,
 using namespace mlir;
 using namespace mlir::trait;
 
-namespace mlir::trait { std::string hashToSuffix(StringRef input); }
-
 namespace {
 
 /// A trait, impl or proof is a template: monomorphization cuts its instances
@@ -179,21 +91,89 @@ LogicalResult verifyTemplateIsNotPublic(Operation *op) {
             "birth";
 }
 
-/// A trait's or impl's body takes no block arguments, so a method, which is not
-/// isolated from above, reads nothing from outside its own body: the
-/// declaration is isolated from above and its child list admits no operation
-/// with a result, so its block arguments are the only values a method could
-/// read from around it.
-///
-/// XXX TODO the commit that gives trait.trait and trait.impl their self claim
-/// and prerequisites as block arguments, read by their methods, deletes this
-/// check.
-LogicalResult verifyDeclarationBodyTakesNoArguments(Operation *op) {
+/// Parses a declaration's function-like header after its visibility,
+/// `@name(%a: T, ...) [-> results]`, into `result`'s symbol name, `arguments`
+/// and `results`. A declaration's arguments and results carry no attributes.
+ParseResult parseDeclarationHeader(OpAsmParser &parser, OperationState &result,
+                                   SmallVectorImpl<OpAsmParser::Argument> &arguments,
+                                   SmallVectorImpl<Type> &results) {
+  StringAttr visibility;
+  (void)parseVisibilityKeyword(parser, visibility);
+  if (visibility)
+    result.addAttribute(SymbolTable::getVisibilityAttrName(), visibility);
+  StringAttr name;
+  if (parser.parseSymbolName(name, SymbolTable::getSymbolAttrName(),
+                             result.attributes))
+    return failure();
+  bool isVariadic = false;
+  SmallVector<DictionaryAttr> resultAttrs;
+  SMLoc signatureLoc = parser.getCurrentLocation();
+  if (function_interface_impl::parseFunctionSignatureWithArguments(
+          parser, /*allowVariadic=*/false, arguments, isVariadic, results,
+          resultAttrs))
+    return failure();
+  bool attributed = llvm::any_of(arguments, [](const OpAsmParser::Argument &arg) {
+    return arg.attrs && !arg.attrs.empty();
+  }) || llvm::any_of(resultAttrs, [](DictionaryAttr attrs) {
+    return attrs && !attrs.empty();
+  });
+  if (attributed)
+    return parser.emitError(signatureLoc)
+           << "a declaration's arguments and results carry no attributes";
+  return parser.parseOptionalAttrDictWithKeyword(result.attributes);
+}
+
+/// Prints a declaration's header as `parseDeclarationHeader` reads it, the
+/// arguments named by `op`'s body, followed by the attributes no header
+/// position states.
+void printDeclarationHeader(OpAsmPrinter &p, Operation *op, TypeRange results,
+                            ArrayRef<StringRef> elided) {
+  p << ' ';
+  printVisibilityKeyword(p, op,
+                         op->getAttrOfType<StringAttr>(
+                             SymbolTable::getVisibilityAttrName()));
+  if (op->getAttrOfType<StringAttr>(SymbolTable::getVisibilityAttrName()))
+    p << ' ';
+  p.printSymbolName(
+      op->getAttrOfType<StringAttr>(SymbolTable::getSymbolAttrName()).getValue());
   Region &body = op->getRegion(0);
-  if (body.empty() || body.front().getNumArguments() == 0)
-    return success();
-  return op->emitOpError() << "body must take no block arguments: a method "
-                              "reads nothing from outside its own body";
+  call_interface_impl::printFunctionSignature(
+      p, body.front().getArgumentTypes(), /*argAttrs=*/nullptr,
+      /*isVariadic=*/false, results, /*resultAttrs=*/nullptr, &body,
+      /*printEmptyResult=*/false);
+  SmallVector<StringRef> omitted{SymbolTable::getSymbolAttrName(),
+                                 SymbolTable::getVisibilityAttrName()};
+  llvm::append_range(omitted, elided);
+  p.printOptionalAttrDictWithKeyword(op->getAttrs(), omitted);
+}
+
+/// Names a declaration's block arguments after the facts they hold: `self`
+/// for its own application, a premise after its trait, and an equality after
+/// the associated type it resolves. The names are the printer's; nothing
+/// stores them.
+void nameDeclarationArguments(Region &body, OpAsmSetValueNameFn setNameFn) {
+  if (body.empty())
+    return;
+  for (BlockArgument argument : body.front().getArguments()) {
+    if (argument.getArgNumber() == 0) {
+      setNameFn(argument, "self");
+      continue;
+    }
+    auto claim = dyn_cast<ClaimType>(argument.getType());
+    if (!claim)
+      continue;
+    std::string name;
+    if (TypeEqualityAttr equality = claim.getEqualityAttr()) {
+      auto projection = dyn_cast<ProjectionType>(equality.getLhs());
+      name = projection ? projection.getAssocName().getValue().lower() : "eq";
+    } else {
+      // A trait's symbol may carry a dotted prefix; the name is its last
+      // component.
+      StringRef trait = claim.getTraitApplication().getTraitName().getValue();
+      name = trait.substr(trait.rfind('.') + 1).lower();
+    }
+    setNameFn(argument, name);
+  }
 }
 
 /// The function type of a child method a parent's verifier is about to read.
@@ -222,8 +202,12 @@ static FailureOr<FunctionType> readChildFunctionType(FunctionOpInterface functio
 /// a trait method, are treated as already determined. Every other generic in a
 /// result must also appear in an input type, including claim inputs that encode
 /// ordinary where-clause evidence. Otherwise function monomorphization has no
-/// source of evidence for choosing that result type. This is intentionally a
-/// syntactic check: the verifier does not try to invert equality predicates or
+/// source of evidence for choosing that result type. A claim result is the one
+/// exception: a call of the function states its result types, and a claim it
+/// returns is evidence the stage proves where the call is monomorphic rather
+/// than an instance it cuts, so a generic only a claim result spells is
+/// determined by the call that spells it. This is intentionally a syntactic
+/// check: the verifier does not try to invert equality predicates or
 /// associated-type bindings to recover missing result generics.
 static LogicalResult verifyFunctionResultGenericsAreDetermined(
     FunctionOpInterface function, FunctionType functionType,
@@ -237,6 +221,8 @@ static LogicalResult verifyFunctionResultGenericsAreDetermined(
   DenseSet<Type> seenResultGenerics;
   SmallVector<GenericTypeInterface, 4> resultGenerics;
   for (Type result : functionType.getResults()) {
+    if (isa<ClaimType>(result))
+      continue;
     for (auto generic : getGenericTypesIn(result)) {
       if (seenResultGenerics.insert(generic).second)
         resultGenerics.push_back(generic);
@@ -254,6 +240,68 @@ static LogicalResult verifyFunctionResultGenericsAreDetermined(
   }
 
   return success();
+}
+
+/// Whether `value`, computed in a declaration's body, rests on `self`: whether
+/// it is `self` or an op defining it reads `self`, directly or through its own
+/// operands. The body is a dominance region, so the walk meets no cycle.
+bool restsOn(Value value, Value self) {
+  SmallVector<Value> pending{value};
+  DenseSet<Operation *> seen;
+  while (!pending.empty()) {
+    Value current = pending.pop_back_val();
+    if (current == self)
+      return true;
+    Operation *producer = current.getDefiningOp();
+    if (producer && seen.insert(producer).second)
+      llvm::append_range(pending, producer->getOperands());
+  }
+  return false;
+}
+
+/// Whether `value`, computed in `impl`'s body, rests on a projection of `impl`'s
+/// own application named by symbol: a witness or a derive of `impl` at its
+/// self application, whose requirement the projection reads. Such evidence is
+/// read back through the very return it stands in, so it has no base case
+/// (GHC's rule for instance superclasses); a derive or witness of the impl
+/// that nothing projects is a constructor and stays legal.
+bool projectsOwnApplication(Value value, ImplOp impl) {
+  TraitApplicationAttr own = impl.getSelfApplication();
+  auto namesOwnApplication = [&](Operation *op) {
+    if (auto derive = dyn_cast<DeriveOp>(op))
+      return derive.getImpl() == impl.getSymName() &&
+             derive.getTraitApplication() == own;
+    auto witness = dyn_cast<WitnessOp>(op);
+    if (!witness || !witness.getProof())
+      return false;
+    if (witness.getProof().getValue() == impl.getSymName())
+      return true;
+    auto proof = lookupSymbolFrom<ProofOp>(
+        impl->getParentOfType<ModuleOp>(), witness.getProof());
+    return proof && proof.getDerive().getImpl() == impl.getSymName() &&
+           proof.getTraitApplication() == own;
+  };
+  SmallVector<Value> pending{value};
+  DenseSet<Operation *> seen;
+  while (!pending.empty()) {
+    Operation *producer = pending.pop_back_val().getDefiningOp();
+    if (!producer || !seen.insert(producer).second)
+      continue;
+    if (auto project = dyn_cast<ProjectOp>(producer)) {
+      SmallVector<Value> sources{project.getSource()};
+      DenseSet<Operation *> read;
+      while (!sources.empty()) {
+        Operation *source = sources.pop_back_val().getDefiningOp();
+        if (!source || !read.insert(source).second)
+          continue;
+        if (namesOwnApplication(source))
+          return true;
+        llvm::append_range(sources, source->getOperands());
+      }
+    }
+    llvm::append_range(pending, producer->getOperands());
+  }
+  return false;
 }
 
 } // namespace
@@ -279,18 +327,9 @@ static bool spellsAProjection(Type ty) {
 }
 
 /// What a proven claim may be read through: the impl its proof names and, by
-/// index, the impls the subproofs discharging that impl's obligations name.
+/// index, the impls the evidence beneath it names.
 static NormalizationContext buildProofNormalizationContext(ClaimType provenClaim,
                                                            ModuleOp module);
-
-/// What the obligations of the impl `proof` stands on may be read through: the
-/// impls the proofs discharging them name, by index, at the application `at`
-/// carries those obligations to. A proof justifies nothing about itself, so its
-/// own rule is not among these.
-static NormalizationContext buildSubproofNormalizationContext(ProofOp proof,
-                                                              ClaimType at,
-                                                              ModuleOp module);
-
 
 //===----------------------------------------------------------------------===//
 // NormalizationContext
@@ -379,58 +418,10 @@ FailureOr<FunctionType> NormalizationContext::normalize(
 // TraitOp
 //===----------------------------------------------------------------------===//
 
-/// A bound requirement spells no parameter but the trait's own and its
-/// binder's variables, so no premise a hop supplies is satisfied by an
-/// unrelated same-labelled parameter of the caller. Its conclusion is a
-/// requirement like any other, so it may not name the trait itself except
-/// through a projection.
-static LogicalResult verifyBoundRequirements(TraitOp trait,
-                                             const DenseSet<Type> &traitParams) {
-  for (auto [index, entry] : llvm::enumerate(trait.getRequirements())) {
-    auto bound = dyn_cast<BoundPredicateAttr>(entry);
-    if (!bound)
-      continue;
-    SmallVector<Attribute> predicates(bound.getPremises());
-    predicates.push_back(bound.getConclusion());
-    for (Attribute predicate : predicates)
-      for (GenericTypeInterface parameter : getTypeParametersIn(
-               Type(ClaimType::get(trait.getContext(), predicate, nullptr))))
-        if (!isa<BoundVarType>(Type(parameter)) &&
-            !traitParams.contains(Type(parameter)))
-          return trait.emitOpError()
-                 << "bound requirement " << index << " spells "
-                 << Type(parameter) << ", which is neither a parameter of trait "
-                 << "'@" << trait.getSymName() << "' nor a variable of its binder";
-    if (auto app = dyn_cast<TraitApplicationAttr>(bound.getConclusion()))
-      if (app.getTraitName().getValue() == trait.getSymName() &&
-          !containsType<ProjectionType>(app.getTypeArgs().front()))
-        return trait.emitOpError()
-               << "bound requirement " << index << " concludes " << app
-               << ", which must not reference the current trait";
-  }
-  return success();
-}
-
-/// A binder variable stands only inside the bound predicate that binds it and
-/// the witness proving that predicate, never as a declaration's parameter:
-/// the two kinds of type variable are then disjoint, so an evidence body that
-/// compares a declaration's predicate with a binder's can never read one as
-/// the other.
-static LogicalResult verifyParameterIsNoBinderVariable(Operation *op,
-                                                       Type parameter) {
-  if (isa<BoundVarType>(parameter))
-    return op->emitOpError()
-           << "type parameter " << parameter
-           << " is a binder variable, which stands only inside a bound "
-              "predicate";
-  return success();
-}
-
 /// The type variable entry `declared` of `assoc`'s type parameter list
-/// declares, refused where it stands when the entry is not a type, not a type
-/// variable, or carries a binder variable. A child's own invariants are
-/// verified after its parent's, so the entry is read as an attribute that may
-/// be anything rather than cast.
+/// declares, refused where it stands when the entry is not a type or not a type
+/// variable. A child's own invariants are verified after its parent's, so the
+/// entry is read as an attribute that may be anything rather than cast.
 static FailureOr<Type> readAssociatedTypeParameter(AssocTypeOp assoc,
                                                    Attribute declared) {
   auto typeAttr = dyn_cast<TypeAttr>(declared);
@@ -442,33 +433,56 @@ static FailureOr<Type> readAssociatedTypeParameter(AssocTypeOp assoc,
     return assoc.emitOpError()
            << "type parameter list holds " << param
            << ", which is not a type variable";
-  for (GenericTypeInterface inside : getTypeParametersIn(param))
-    if (failed(verifyParameterIsNoBinderVariable(assoc, Type(inside))))
-      return failure();
   return param;
+}
+
+ParseResult TraitOp::parse(OpAsmParser &parser, OperationState &result) {
+  SmallVector<OpAsmParser::Argument> arguments;
+  SmallVector<Type> requirements;
+  if (parseDeclarationHeader(parser, result, arguments, requirements))
+    return failure();
+  result.addAttribute(getRequirementsAttrName(result.name),
+                      parser.getBuilder().getTypeArrayAttr(requirements));
+  return parser.parseRegion(*result.addRegion(), arguments,
+                            /*enableNameShadowing=*/false);
+}
+
+void TraitOp::print(OpAsmPrinter &p) {
+  SmallVector<Type> requirements(getRequirements().getAsValueRange<TypeAttr>());
+  printDeclarationHeader(p, *this, requirements,
+                         {getRequirementsAttrName().getValue()});
+  p << ' ';
+  p.printRegion(getBody(), /*printEntryBlockArgs=*/false);
+}
+
+void TraitOp::getAsmBlockArgumentNames(Region &region,
+                                       OpAsmSetValueNameFn setNameFn) {
+  nameDeclarationArguments(region, setNameFn);
 }
 
 LogicalResult TraitOp::verify() {
   if (failed(verifyTemplateIsNotPublic(getOperation())))
     return failure();
-  if (failed(verifyDeclarationBodyTakesNoArguments(getOperation())))
-    return failure();
 
-  auto typeParams = getTypeParams().getAsValueRange<TypeAttr>();
-
-  // types must be unique GenericTypeParameters
+  // The one block argument is the trait's own application, whose arguments are
+  // the trait's parameters: distinct type variables, at least one.
+  Block &body = getBody().front();
+  auto self = body.getNumArguments() == 1
+                  ? dyn_cast<ClaimType>(body.getArgument(0).getType())
+                  : ClaimType();
+  if (!self || !self.isApplication() || self.isProven() ||
+      self.getTraitApplication().getTraitName().getValue() != getSymName())
+    return emitOpError() << "takes one block argument, the unproven claim of "
+                            "its own application @"
+                         << getSymName() << "[...]";
   DenseSet<Type> uniqueParams;
-  for (Type ty : typeParams) {
+  for (Type ty : getTypeParams()) {
     if (!isa<GenericTypeInterface>(ty))
       return emitOpError() << "expected GenericTypeInterface (e.g., !trait.poly), found " << ty;
-    if (failed(verifyParameterIsNoBinderVariable(getOperation(), ty)))
-      return failure();
     if (!uniqueParams.insert(ty).second)
       return emitOpError() << "type parameters must be unique";
   }
-
-  // there must be at least one type parameter
-  if (uniqueParams.size() < 1)
+  if (uniqueParams.empty())
     return emitOpError() << "requires at least one type parameter";
 
   // Collect the GAT parameters from the AssocTypeOp type_params, each of which
@@ -482,7 +496,7 @@ LogicalResult TraitOp::verify() {
   // substituted for, so a ground type standing in the list would carry every
   // occurrence of that same type in the binding away with it.
   DenseSet<Type> gatParams;
-  for (Operation &op : getBody().front()) {
+  for (Operation &op : body) {
     auto assoc = dyn_cast<AssocTypeOp>(op);
     if (!assoc)
       continue;
@@ -505,58 +519,39 @@ LogicalResult TraitOp::verify() {
   // one of the trait's parameters or a GAT parameter; getGenericTypesIn descends
   // the attributes -- a trait application's arguments, an equality's endpoints --
   // that its own walk over immediate type sub-elements does not reach.
-  auto endpointMentionsParam = [&](Type endpoint) {
-    for (GenericTypeInterface g : getGenericTypesIn(endpoint))
+  auto mentionsParam = [&](Type ty) {
+    for (GenericTypeInterface g : getGenericTypesIn(ty))
       if (uniqueParams.contains(Type(g)) || gatParams.contains(Type(g)))
         return true;
     return false;
   };
 
-  // check requirements
-  for (Attribute pred : getRequirements()) {
-    if (auto app = dyn_cast<TraitApplicationAttr>(pred)) {
-      // each application requirement must use at least one of the trait's type
-      // parameters OR at least one GAT type parameter
-      bool mentionsTraitParam = llvm::any_of(uniqueParams, [&](Type param) {
-        return app.mentionsType(param);
-      });
-      bool mentionsGatParam = llvm::any_of(gatParams, [&](Type param) {
-        return app.mentionsType(param);
-      });
-
-      if (!mentionsTraitParam && !mentionsGatParam)
-        return emitOpError() << "'where' clause requirement " << app
-                             << " must mention at least one type parameter";
-
-      // A direct self-reference like @Trait[!S] would create a circular
-      // obligation that no impl can satisfy. However, a self-reference whose
-      // self argument goes through a projection (e.g. @Trait[!trait.proj<...>])
-      // is safe: the projection resolves to a concrete type during
-      // monomorphization, so the obligation is discharged against a different
-      // impl, not the one being defined.
-      if (app.getTraitName().getValue() == getSymName()) {
-        bool selfArgHasProjection = containsType<ProjectionType>(app.getTypeArgs().front());
-        if (!selfArgHasProjection)
-          return emitOpError() << "'where' clause requirement " << app
-                               << " must not reference the current trait";
-      }
-    } else if (auto eq = dyn_cast<TypeEqualityAttr>(pred)) {
-      // An equality requirement has no trait head, so there is no
-      // self-reference to forbid; it must still relate the trait's parameters,
-      // mentioning at least one through either endpoint.
-      if (!endpointMentionsParam(eq.getLhs()) &&
-          !endpointMentionsParam(eq.getRhs()))
-        return emitOpError() << "'where' clause equality requirement "
-                             << ClaimType::getEquality(getContext(), eq)
-                             << " must mention at least one type parameter";
+  // Each requirement is a claim relating the trait's parameters. A direct
+  // self-reference like @Trait[!S] would create a circular obligation that no
+  // impl can satisfy. However, a self-reference whose self argument goes
+  // through a projection (e.g. @Trait[!trait.proj<...>]) is safe: the
+  // projection resolves to a concrete type during monomorphization, so the
+  // obligation is discharged against a different impl, not the one being
+  // defined.
+  for (Type entry : getRequirements().getAsValueRange<TypeAttr>()) {
+    auto requirement = dyn_cast<ClaimType>(entry);
+    if (!requirement || requirement.isProven())
+      return emitOpError() << "requirement " << entry
+                           << " must be an unproven claim";
+    if (!mentionsParam(entry))
+      return emitOpError() << "requirement " << entry
+                           << " must mention at least one type parameter";
+    if (requirement.isApplication()) {
+      TraitApplicationAttr app = requirement.getTraitApplication();
+      if (app.getTraitName().getValue() == getSymName() &&
+          !containsType<ProjectionType>(app.getTypeArgs().front()))
+        return emitOpError() << "requirement " << entry
+                             << " must not reference the current trait";
     }
   }
 
-  if (failed(verifyBoundRequirements(*this, uniqueParams)))
-    return failure();
-
   // check trait method result generics
-  for (Operation &op : getBody().front()) {
+  for (Operation &op : body) {
     if (auto method = dyn_cast<FunctionOpInterface>(op)) {
       auto methodType = readChildFunctionType(method);
       if (failed(methodType))
@@ -575,16 +570,21 @@ LogicalResult TraitOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // the symbol tables the walk this is one step of has already built.
   SymbolLookupScope symbolAnswers(getOperation(), symbolTable);
 
-  // verify obligations
-  return getRequirements().verifySymbolUses(getOperation(), symbolTable);
+  // The requirements are types stored in an attribute, which the
+  // symbol-use driver does not reach.
+  for (Type requirement : getRequirements().getAsValueRange<TypeAttr>())
+    if (failed(cast<ClaimType>(requirement).verifySymbolUses(getOperation(),
+                                                             symbolTable)))
+      return failure();
+  return success();
 }
 
 FailureOr<SpecializationMap> TraitOp::buildSubstitutionForSelfClaim(ClaimType actualSelfClaim,
                                                                       llvm::function_ref<InFlightDiagnostic()> errFn) {
-  // A trait header's parameters are its type_params in array order, and its
-  // self application spells exactly those, in that order. So an application of
-  // this trait at the right arity determines every parameter by position:
-  // nothing is read out of the arguments and nothing is compared afterwards.
+  // A trait's parameters are its self application's arguments in order, so an
+  // application of this trait at the right arity determines every parameter by
+  // position: nothing is read out of the arguments and nothing is compared
+  // afterwards.
   TraitApplicationAttr application = actualSelfClaim.getTraitApplication();
   if (application.getTraitName().getValue() != getSymName()) {
     if (errFn)
@@ -593,7 +593,7 @@ FailureOr<SpecializationMap> TraitOp::buildSubstitutionForSelfClaim(ClaimType ac
     return failure();
   }
 
-  ArrayAttr parameters = getTypeParams();
+  ArrayRef<Type> parameters = getTypeParams();
   ArrayRef<Type> arguments = application.getTypeArgs();
   if (parameters.size() != arguments.size()) {
     if (errFn)
@@ -605,8 +605,7 @@ FailureOr<SpecializationMap> TraitOp::buildSubstitutionForSelfClaim(ClaimType ac
 
   SpecializationMap result;
   for (auto [parameter, argument] : llvm::zip(parameters, arguments)) {
-    auto generic = dyn_cast<GenericTypeInterface>(
-        cast<TypeAttr>(parameter).getValue());
+    auto generic = dyn_cast<GenericTypeInterface>(parameter);
     if (!generic) {
       if (errFn)
         errFn() << "trait '@" << getSymName()
@@ -618,57 +617,56 @@ FailureOr<SpecializationMap> TraitOp::buildSubstitutionForSelfClaim(ClaimType ac
   return result;
 }
 
-
 SmallVector<ClaimType> TraitOp::getRequirementsAsClaims() {
-  MLIRContext *ctx = getContext();
-  // Each requirement becomes a claim of its arm: an application claim for an
-  // application entry, an equality claim for an equality entry.
-  SmallVector<ClaimType> result;
-  for (Attribute pred : getRequirements()) {
-    if (auto app = dyn_cast<TraitApplicationAttr>(pred))
-      result.push_back(ClaimType::get(ctx, app));
-    else if (auto eq = dyn_cast<TypeEqualityAttr>(pred))
-      result.push_back(ClaimType::getEquality(ctx, eq));
-  }
-  return result;
+  return llvm::map_to_vector(getRequirements().getAsValueRange<TypeAttr>(),
+                             [](Type requirement) {
+                               return cast<ClaimType>(requirement);
+                             });
 }
 
 FailureOr<SmallVector<ClaimType>> TraitOp::specializeRequirementsAsClaimsFor(
     ClaimType actualSelfClaim,
     llvm::function_ref<InFlightDiagnostic()> errFn) {
+  // The instance reads the trait's self application, its requirement list and
+  // the application asked about, and nothing else, so the dialect answers one
+  // it recorded under those three.
+  auto *dialect = cast<TraitDialect>(getOperation()->getDialect());
+  TraitApplicationAttr actual = actualSelfClaim.getTraitApplication();
+  auto asClaims = [](ArrayRef<Type> instance) {
+    return llvm::map_to_vector(
+        instance, [](Type requirement) { return cast<ClaimType>(requirement); });
+  };
+  if (auto known = dialect->lookupRequirementInstance(getSelfApplication(),
+                                                      getRequirements(), actual))
+    return asClaims(*known);
+
   // build a specialized substitution for actualSelfClaim
   auto spec = buildSubstitutionForSelfClaim(actualSelfClaim, errFn);
   if (failed(spec)) return failure();
 
-  // apply the substitution to each requirement. A substitution rewrites the
-  // type arguments a claim carries, never the claim wrapper itself: its keys
-  // are this trait's type parameters, never a whole ClaimType, so the outer
-  // constructor is preserved and the result is always a claim. This holds
-  // structurally, independent of whether the module's symbols resolve, so it is
-  // safe on unverified IR -- the cast never fails.
-  return llvm::map_to_vector(getRequirementsAsClaims(), [&](ClaimType req) {
-    ClaimType specializedReq = dyn_cast_or_null<ClaimType>(instantiate(req, *spec));
-    if (!specializedReq)
-      llvm_unreachable("TraitOp::specializeRequirementsAsClaimsFor: expected ClaimType");
-    return specializedReq;
-  });
+  // A substitution rewrites the type arguments a claim carries, never the claim
+  // wrapper itself: its keys are this trait's type parameters, never a whole
+  // ClaimType, so the result is always a claim.
+  SmallVector<Type> instance = llvm::map_to_vector(
+      getRequirements().getAsValueRange<TypeAttr>(),
+      [&](Type requirement) { return instantiate(requirement, *spec); });
+  dialect->recordRequirementInstance(getSelfApplication(), getRequirements(),
+                                     actual, instance);
+  return asClaims(instance);
 }
 
 SmallVector<ImplOp> TraitOp::getImpls() {
   auto module = getModule();
   if (failed(module)) return {};
 
-  // Impls are top-level module children (ImplOp is HasParent<ModuleOp>), so scan
-  // them directly and match this trait's symbol name. This avoids a full-module
-  // symbol-use walk, which materializes every operation's attribute dictionary.
+  // Impls are top-level module children, so scan them directly and match this
+  // trait's symbol name. This avoids a full-module symbol-use walk, which
+  // materializes every operation's attribute dictionary.
   StringRef traitName = getSymName();
   SmallVector<ImplOp> result;
   for (Operation &op : *module->getBody()) {
     auto impl = dyn_cast<ImplOp>(op);
-    if (!impl)
-      continue;
-    TraitApplicationAttr selfApp = impl.getSelfApplication();
-    if (selfApp && selfApp.getTraitName().getValue() == traitName)
+    if (impl && impl.getTraitNameAttr().getValue() == traitName)
       result.push_back(impl);
   }
 
@@ -686,89 +684,65 @@ SmallVector<ImplOp> TraitOp::getCandidateImplsFor(ClaimType wanted,
   return result;
 }
 
-
 //===----------------------------------------------------------------------===//
 // ImplOp
 //===----------------------------------------------------------------------===//
 
-/// Verifies an impl's equality-armed witnesses and returns each as a local
-/// resolution rule. Such a witness certifies that a sibling impl binds the
-/// witnessed projection to a resolved type; a witness citing a conditional
-/// impl is legal exactly when the impl's own where clause covers the cited
-/// impl's assumptions or an application-armed witness supplies them. Each
-/// entry verifies with an EMPTY equality modulus: sibling witnesses never
-/// serve as each other's modulus, because an attribute array has no dominance
-/// and mutual justification could ground a false equality on nothing.
-///
-/// A witness projection carrying the impl's own parameters is verified like
-/// any other: the head comparison is rigid, so a variable in the projection
-/// equals only the same variable in the cited impl's head at the witness's
-/// arguments. A witness citing a single-instance impl for a projection
-/// quantified over the host impl's parameters fails that comparison -- it
-/// would accept a generic impl on the strength of one instance -- while one
-/// citing a blanket sibling at the host's parameters is the evidence a generic
-/// impl's own header equalities need.
-static FailureOr<SmallVector<LocalProjectionRule>> collectImplWitnessRules(
-    ImplOp impl, ModuleOp module,
-    llvm::function_ref<InFlightDiagnostic()> errFn) {
-  SmallVector<LocalProjectionRule> rules;
-  ArrayAttr witnesses = impl.getWitnessesAttr();
-  if (!witnesses)
-    return rules;
-
-  SmallVector<TraitApplicationAttr> obligationPremises(
-      impl.getAssumptions().getApplications());
-  // The application-armed witnesses cover a cited conditional impl's standing
-  // assumptions; gather them first so every equality-armed witness below
-  // verifies against the whole discharge set regardless of array order.
-  SmallVector<WitnessAttr> dischargeWitnesses;
-  for (Attribute entry : witnesses) {
-    auto witness = cast<WitnessAttr>(entry);
-    if (isa<TraitApplicationAttr>(witness.getPredicate()))
-      dischargeWitnesses.push_back(witness);
-  }
-  for (Attribute entry : witnesses) {
-    auto witness = cast<WitnessAttr>(entry);
-    if (!isa<TypeEqualityAttr>(witness.getPredicate()))
-      continue;
-    auto rule = verifyProjectionResolutionAtImpl(
-        module, witness, /*premises=*/{}, obligationPremises,
-        dischargeWitnesses, errFn);
-    if (failed(rule))
-      return failure();
-    rules.push_back(std::move(*rule));
-  }
-  return rules;
+ParseResult ImplOp::parse(OpAsmParser &parser, OperationState &result) {
+  SmallVector<OpAsmParser::Argument> arguments;
+  SmallVector<Type> results;
+  SMLoc headerLoc = parser.getCurrentLocation();
+  if (parseDeclarationHeader(parser, result, arguments, results))
+    return failure();
+  if (!results.empty())
+    return parser.emitError(headerLoc)
+           << "an impl states no results: it returns its trait's";
+  Region *body = result.addRegion();
+  if (parser.parseRegion(*body, arguments, /*enableNameShadowing=*/false))
+    return failure();
+  ensureTerminator(*body, parser.getBuilder(), result.location);
+  return success();
 }
 
-/// The context an impl's own obligations are judged under.
+void ImplOp::print(OpAsmPrinter &p) {
+  printDeclarationHeader(p, *this, /*results=*/{}, /*elided=*/{});
+  p << ' ';
+  // An impl of a trait requiring nothing returns nothing, and its empty return
+  // is the one the parser supplies.
+  p.printRegion(getBody(), /*printEntryBlockArgs=*/false,
+                /*printBlockTerminators=*/getReturn().getNumOperands() != 0);
+}
+
+void ImplOp::getAsmBlockArgumentNames(Region &region,
+                                      OpAsmSetValueNameFn setNameFn) {
+  nameDeclarationArguments(region, setNameFn);
+}
+
+ReturnOp ImplOp::getReturn() {
+  return cast<ReturnOp>(getBody().front().getTerminator());
+}
+
+/// The context an impl's own declarations are judged under.
 ///
-/// Three rules and no more: the impl's own associated type bindings, for a
-/// projection over its self application; the sibling bindings its declared
-/// witnesses certify, verified above and passed in as `witnessRules`; and its
-/// where clause's equalities as hypotheses, which are in scope wherever the
-/// impl's own obligations are checked -- a trait-header equality requirement
-/// and the impl's own method signature are both judged under the clause the
-/// impl declares. The verifier enumerates no candidate impls, so a projection
-/// none of these three reduces is equal to itself alone.
+/// Two rules and no more: the impl's own associated type bindings, for a
+/// projection over its self application, and its where clause's equalities as
+/// hypotheses, which are in scope wherever the impl's own declarations are read
+/// -- a method signature, a returned requirement. The verifier enumerates no
+/// candidate impls, so a projection neither reduces is equal to itself alone.
 ///
 /// The impl's own bindings are spelled over the impl's own parameters, so the
 /// substitution the first rule carries is what the impl's self claim says its
 /// parameters take, which is those parameters themselves.
 static FailureOr<NormalizationContext> buildImplOwnNormalizationContext(
-    ImplOp impl, ArrayRef<LocalProjectionRule> witnessRules,
-    llvm::function_ref<InFlightDiagnostic()> errFn) {
+    ImplOp impl, llvm::function_ref<InFlightDiagnostic()> errFn) {
   auto ownArguments = impl.buildSubstitutionForSelfClaim(impl.getSelfClaim(), errFn);
   if (failed(ownArguments))
     return failure();
 
   NormalizationContext ctx;
   ctx.addLocalProjectionRule(impl, impl.getSelfApplication(), *ownArguments);
-  for (const LocalProjectionRule &rule : witnessRules)
-    ctx.addLocalProjectionRule(rule.impl, rule.app, rule.subst);
-  for (Attribute predicate : impl.getAssumptions())
-    if (auto equality = dyn_cast<TypeEqualityAttr>(predicate))
-      ctx.assumeEqual(equality.getLhs(), equality.getRhs());
+  for (TypeEqualityAttr equality : impl.getEqualityPremises())
+    ctx.assumeEqual(equality.getLhs(), equality.getRhs());
   return ctx;
 }
 
@@ -808,23 +782,21 @@ static SmallVector<GenericTypeInterface, 4> getOwnTypeParameters(
 /// The type parameters a trait header supplies to the methods written in it.
 static DenseSet<Type> getTraitHeaderParameters(TraitOp traitOp) {
   DenseSet<Type> params;
-  for (Attribute declared : traitOp.getTypeParams())
-    if (auto typeAttr = dyn_cast<TypeAttr>(declared))
-      for (GenericTypeInterface parameter :
-           getTypeParametersIn(typeAttr.getValue()))
-        params.insert(Type(parameter));
+  for (Type declared : traitOp.getTypeParams())
+    for (GenericTypeInterface parameter : getTypeParametersIn(declared))
+      params.insert(Type(parameter));
   return params;
 }
 
 /// Builds the correspondence above and checks it: this is the impl's signature
 /// check and the rekeying a call lowering needs, which are one pairing. The
 /// check is that the trait's declaration instantiated through it is the impl's,
-/// and a binding a call names -- keyed by the trait's spelling, since a method
-/// call reads the trait's declaration -- rekeys through the same pairing to the
-/// copy of the method that is actually cloned.
+/// read through the impl's own bindings and where equalities, and a binding a
+/// call names -- keyed by the trait's spelling, since a method call reads the
+/// trait's declaration -- rekeys through the same pairing to the copy of the
+/// method that is actually cloned.
 static FailureOr<TraitMethodCorrespondence> buildTraitMethodCorrespondence(
     ImplOp impl, TraitOp traitOp, FunctionOpInterface implMethod,
-    ArrayRef<LocalProjectionRule> witnessRules,
     llvm::function_ref<InFlightDiagnostic()> errFn) {
   StringRef name = implMethod.getName();
   auto traitMethod = traitOp.getMethod(name, errFn);
@@ -891,12 +863,7 @@ static FailureOr<TraitMethodCorrespondence> buildTraitMethodCorrespondence(
     correspondence.implOwn.push_back(implVariable);
   }
 
-  // Substituting this impl's self application into the trait's declaration can
-  // mint a ground projection the impl's own bindings do not resolve -- a
-  // sibling impl's application, e.g. Group[coop.block]::Shape. A declared
-  // witness reduces exactly those, so both declarations reach the comparison at
-  // the same grade.
-  auto normalization = buildImplOwnNormalizationContext(impl, witnessRules, errFn);
+  auto normalization = buildImplOwnNormalizationContext(impl, errFn);
   if (failed(normalization))
     return failure();
   auto normalize = [&](Type ty) -> FailureOr<Type> {
@@ -919,9 +886,53 @@ static FailureOr<TraitMethodCorrespondence> buildTraitMethodCorrespondence(
   return correspondence;
 }
 
-static LogicalResult verifyEqualityObligations(
-    ImplOp impl, TraitOp traitOp, ArrayRef<LocalProjectionRule> witnessRules,
-    llvm::function_ref<InFlightDiagnostic()> errFn);
+/// Verifies the evidence this impl returns for its trait's requirements: one
+/// claim per requirement, in the trait's order, each the requirement at the
+/// impl's self arguments once both are read through the impl's own bindings and
+/// where equalities, and none resting on the impl's own application -- an
+/// impl's requirement evidence may not assume what it is evidence for (GHC's
+/// rule for instance superclasses). A derive of this impl at other arguments
+/// cites it by symbol and reads no argument, so it stays legal.
+static LogicalResult verifyRequirementEvidence(
+    ImplOp impl, TraitOp traitOp,
+    llvm::function_ref<InFlightDiagnostic()> errFn) {
+  auto requirements =
+      traitOp.specializeRequirementsAsClaimsFor(impl.getSelfClaim(), errFn);
+  if (failed(requirements))
+    return failure();
+  ReturnOp evidence = impl.getReturn();
+  if (evidence.getNumOperands() != requirements->size())
+    return errFn() << "returns " << evidence.getNumOperands()
+                   << " claims, and trait '@" << traitOp.getSymName()
+                   << "' requires " << requirements->size();
+
+  auto own = buildImplOwnNormalizationContext(impl, errFn);
+  if (failed(own))
+    return failure();
+  Value self = impl.getBody().front().getArgument(0);
+  for (auto [index, operand, requirement] :
+       llvm::enumerate(evidence.getOperands(), *requirements)) {
+    auto supplied = dyn_cast<ClaimType>(operand.getType());
+    if (!supplied)
+      return errFn() << "returns " << operand.getType() << " for requirement "
+                     << index << ", which is no claim";
+    FailureOr<Type> expected = own->normalize(Type(requirement), errFn);
+    FailureOr<Type> actual = own->normalize(Type(supplied), errFn);
+    if (failed(expected) || failed(actual))
+      return failure();
+    if (stripClaimProofs(*expected) != stripClaimProofs(*actual))
+      return errFn() << "returns " << supplied << " for requirement " << index
+                     << ", which trait '@" << traitOp.getSymName()
+                     << "' states as " << requirement;
+    if (restsOn(operand, self))
+      return errFn() << "returns evidence for requirement " << index
+                     << " that rests on the impl's own application";
+    if (projectsOwnApplication(operand, impl))
+      return errFn() << "returns evidence for requirement " << index
+                     << " that projects the impl's own application";
+  }
+  return success();
+}
 
 static LogicalResult verifyImplParametersAreConstrained(ImplOp impl);
 
@@ -985,27 +996,26 @@ static LogicalResult verifyAssociatedTypeBindingScopes(ImplOp impl) {
 LogicalResult ImplOp::verify() {
   if (failed(verifyTemplateIsNotPublic(getOperation())))
     return failure();
-  if (failed(verifyDeclarationBodyTakesNoArguments(getOperation())))
-    return failure();
-  // An impl's premises restrict the arguments it applies at; one quantified
-  // over variables of its own would restrict nothing any argument supplies.
-  for (auto [index, predicate] : llvm::enumerate(getAssumptions()))
-    if (isa<BoundPredicateAttr>(predicate))
-      return emitOpError() << "where-clause entry " << index
-                           << " binds variables of its own; only a trait's "
-                              "requirement is quantified";
-  for (GenericTypeInterface parameter : getTypeParams())
-    if (failed(verifyParameterIsNoBinderVariable(getOperation(),
-                                                 Type(parameter))))
-      return failure();
+  // The first block argument is the impl's own application and every other a
+  // where entry: an application it assumes or an equality it assumes.
+  Block &body = getBody().front();
+  auto self = body.getNumArguments() != 0
+                  ? dyn_cast<ClaimType>(body.getArgument(0).getType())
+                  : ClaimType();
+  if (!self || !self.isApplication() || self.isProven())
+    return emitOpError() << "takes the unproven claim of its own application "
+                            "as its first block argument";
+  for (BlockArgument entry : body.getArguments().drop_front()) {
+    auto claim = dyn_cast<ClaimType>(entry.getType());
+    if (!claim || claim.isProven())
+      return emitOpError() << "where entry " << entry.getArgNumber() - 1
+                           << " must be an unproven claim, found "
+                           << entry.getType();
+  }
   if (failed(verifyImplParametersAreConstrained(*this)))
     return failure();
   return verifyAssociatedTypeBindingScopes(*this);
 }
-
-static LogicalResult verifyBoundRequirementEvidence(
-    ImplOp impl, TraitOp traitOp, ArrayRef<LocalProjectionRule> witnessRules,
-    llvm::function_ref<InFlightDiagnostic()> errFn);
 
 LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // Verification writes nothing, so every name read under it resolves through
@@ -1014,33 +1024,13 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
   auto errFn = [&]{ return emitOpError(); };
 
-  auto module = getModule(errFn);
-  if (failed(module)) return failure();
-
-  // Verify self application attribute exists
-  auto selfApp = getSelfApplication();
-  if (!selfApp)
-    return emitOpError() << "requires a self application TraitApplicationAttr";
-
-  // Verify the self application
-  if (failed(selfApp.verifySymbolUses(getOperation(), symbolTable)))
-    return failure();
-
-  // Verify the where-clause predicates' symbol uses: application entries name a
-  // valid trait at the right arity; equality entries carry their symbol users
-  // nested in the endpoints. The automatic symbol-user driver skips inherent
-  // attributes, so the owning op delegates here, exactly as trait.trait does for
-  // its requirements.
-  if (failed(getAssumptions().verifySymbolUses(getOperation(), symbolTable)))
-    return failure();
-
-  // The verified witnesses become local resolution rules the comparisons below
-  // replay after their own-binding rule; the fixed-point walk applies them
-  // innermost-first, so a nested projection reduces its inner application
-  // before its outer one.
-  auto premiseRules = collectImplWitnessRules(*this, *module, errFn);
-  if (failed(premiseRules))
-    return failure();
+  // The self application and the where entries name traits by symbol; the
+  // block arguments holding them are types the symbol-use driver reads no
+  // further than their own attributes.
+  for (BlockArgument argument : getBody().front().getArguments())
+    if (failed(cast<ClaimType>(argument.getType())
+                   .verifySymbolUses(getOperation(), symbolTable)))
+      return failure();
 
   // Get the trait
   auto traitOp = getTrait();
@@ -1072,8 +1062,8 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
       // Verify that the impl method's declaration is the trait's declaration
       // of it, carried through the positional correspondence between them.
-      if (failed(buildTraitMethodCorrespondence(
-              *this, traitOp, implMethod, *premiseRules, errFn)))
+      if (failed(buildTraitMethodCorrespondence(*this, traitOp, implMethod,
+                                                errFn)))
         return failure();
     } else if (auto assocType = dyn_cast<AssocTypeOp>(op)) {
       StringRef name = assocType.getSymName();
@@ -1099,9 +1089,6 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
                                << "' has " << implArity << " type parameter(s) but trait declares "
                                << traitArity;
       }
-    } else {
-      return emitOpError() << "body may only contain 'trait.method' or "
-                              "'trait.assoc_type' operations";
     }
   }
 
@@ -1121,257 +1108,7 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     }
   }
 
-  if (failed(verifyEqualityObligations(*this, traitOp, *premiseRules, errFn)))
-    return failure();
-
-  if (failed(verifyBoundRequirementEvidence(*this, traitOp, *premiseRules,
-                                            errFn)))
-    return failure();
-
-  return success();
-}
-
-/// What a bound requirement's evidence may cite, in the impl stating it: the
-/// binder's premises and the impl's where clause by position, and every
-/// predicate read through the impl's own bindings.
-struct BoundEvidenceScope {
-  ImplOp impl;
-  ArrayRef<Attribute> premises;
-  NormalizationContext &own;
-  ModuleOp module;
-  llvm::function_ref<InFlightDiagnostic()> errFn;
-
-  /// `predicate` as a claim read through the impl's own bindings.
-  FailureOr<Type> read(Attribute predicate) {
-    return own.normalize(
-        Type(ClaimType::get(impl.getContext(), predicate, nullptr)), errFn);
-  }
-
-  /// Whether `a` and `b` state one predicate once each is read.
-  FailureOr<bool> same(Attribute a, Attribute b) {
-    FailureOr<Type> readA = read(a);
-    FailureOr<Type> readB = read(b);
-    if (failed(readA) || failed(readB))
-      return failure();
-    return *readA == *readB;
-  }
-};
-
-static LogicalResult verifyWitnessBody(BoundEvidenceScope &scope,
-                                       Attribute body, Attribute predicate);
-
-/// The predicate `body` proves in `scope`, read off the body itself: a binder
-/// premise or where-clause entry by position; an impl citation's header at its
-/// arguments, each of the cited impl's where-clause entries there discharged
-/// in turn; a requirement hop's requirement of the application its body
-/// proves, read by position as `trait.project` reads one, at its type
-/// arguments, each premise there discharged in turn; an allegation's stated
-/// application. Reflexivity states no predicate of its own -- it proves the
-/// equality its position names, which `verifyWitnessBody` reads -- so it is
-/// refused here. `refuse` reports under the predicate the outermost body is
-/// verified against.
-static FailureOr<Attribute>
-readWitnessBody(BoundEvidenceScope &scope, Attribute body,
-                llvm::function_ref<InFlightDiagnostic(const Twine &)> refuse) {
-  if (auto premise = dyn_cast<BinderPremiseAttr>(body)) {
-    if (premise.getPosition() >= scope.premises.size())
-      return refuse(Twine("the binder states ") +
-                    Twine(scope.premises.size()) + " premises");
-    return scope.premises[premise.getPosition()];
-  }
-  if (auto premise = dyn_cast<ImplPremiseAttr>(body)) {
-    PredicateArrayAttr where = scope.impl.getAssumptions();
-    if (premise.getPosition() >= where.size())
-      return refuse(Twine("the impl's where clause has ") +
-                    Twine(where.size()) + " entries");
-    return where.getPredicates()[premise.getPosition()];
-  }
-  if (isa<UnitAttr>(body))
-    return refuse(Twine("reflexivity proves only the equality its position "
-                        "names"));
-  if (auto allegation = dyn_cast<AllegationAttr>(body))
-    return Attribute(allegation.getApplication());
-  if (auto hop = dyn_cast<RequirementHopAttr>(body)) {
-    FailureOr<Attribute> of = readWitnessBody(scope, hop.getOf(), refuse);
-    if (failed(of))
-      return failure();
-    auto application = dyn_cast<TraitApplicationAttr>(*of);
-    if (!application)
-      return refuse(Twine("a requirement is read off a trait application"));
-    auto requirement = getClaimRequirementAt(
-        ClaimType::get(scope.impl.getContext(), application), scope.module,
-        hop.getPosition(), hop.getTypeArgs(), scope.errFn);
-    if (failed(requirement))
-      return failure();
-    if (hop.getPremises().size() != requirement->premises.size())
-      return refuse(Twine("requirement ") + Twine(hop.getPosition()) +
-                    " states " + Twine(requirement->premises.size()) +
-                    " premises, and the evidence discharges " +
-                    Twine(hop.getPremises().size()));
-    for (auto [premise, stated] :
-         llvm::zip(hop.getPremises(), requirement->premises))
-      if (failed(verifyWitnessBody(scope, premise, stated.getPredicate())))
-        return failure();
-    return requirement->conclusion.getPredicate();
-  }
-
-  auto citation = cast<ImplCitationAttr>(body);
-  ImplOp cited = lookupSymbolFrom<ImplOp>(scope.module, citation.getImplRef());
-  if (!cited)
-    return refuse(Twine("it names no impl"));
-  auto arguments = cited.substitutionFor(citation.getArguments(), scope.errFn);
-  if (failed(arguments))
-    return failure();
-  SmallVector<ClaimType> where = cited.getWhereClauseAt(*arguments);
-  if (citation.getDischarges().size() != where.size())
-    return refuse(Twine("the cited impl's where clause has ") +
-                  Twine(where.size()) + " entries, and the evidence discharges " +
-                  Twine(citation.getDischarges().size()));
-  for (auto [entry, discharge] : llvm::zip(where, citation.getDischarges()))
-    if (failed(verifyWitnessBody(scope, discharge, entry.getPredicate())))
-      return failure();
-  return Attribute(cited.getSelfApplicationAt(*arguments));
-}
-
-/// Whether `body` proves `predicate` in `scope`: reflexivity when the
-/// equality's two sides are one type read through the impl's own bindings;
-/// any other body when the predicate it proves (`readWitnessBody`) is
-/// `predicate` once both are read through those bindings.
-static LogicalResult verifyWitnessBody(BoundEvidenceScope &scope,
-                                       Attribute body, Attribute predicate) {
-  auto refuse = [&](const Twine &why) {
-    return scope.errFn() << "evidence does not prove " << predicate << ": "
-                         << why;
-  };
-
-  if (isa<UnitAttr>(body)) {
-    auto equality = dyn_cast<TypeEqualityAttr>(predicate);
-    if (!equality)
-      return refuse(Twine("reflexivity proves only an equality"));
-    FailureOr<Type> lhs = scope.own.normalize(equality.getLhs(), scope.errFn);
-    FailureOr<Type> rhs = scope.own.normalize(equality.getRhs(), scope.errFn);
-    if (failed(lhs) || failed(rhs))
-      return failure();
-    if (*lhs != *rhs)
-      return refuse(Twine("its two sides are two types"));
-    return success();
-  }
-  if (isa<ImplCitationAttr>(body) && !isa<TraitApplicationAttr>(predicate))
-    return refuse(Twine("an impl proves only a trait application"));
-
-  FailureOr<Attribute> proved = readWitnessBody(scope, body, refuse);
-  if (failed(proved))
-    return failure();
-  FailureOr<bool> same = scope.same(*proved, predicate);
-  if (failed(same))
-    return failure();
-  if (!*same)
-    return refuse(Twine("it states another predicate"));
-  return success();
-}
-
-/// Verifies the witnesses this impl states for the bound requirements of its
-/// trait: exactly one per such requirement, whose body proves the
-/// requirement's conclusion at the impl's arguments, under its binder.
-static LogicalResult verifyBoundRequirementEvidence(
-    ImplOp impl, TraitOp traitOp, ArrayRef<LocalProjectionRule> witnessRules,
-    llvm::function_ref<InFlightDiagnostic()> errFn) {
-  PredicateArrayAttr requirements = traitOp.getRequirements();
-  DenseMap<unsigned, WitnessAttr> byRequirement;
-  if (ArrayAttr witnesses = impl.getWitnessesAttr()) {
-    for (auto witness : witnesses.getAsRange<WitnessAttr>()) {
-      std::optional<unsigned> position = witness.getRequirement();
-      if (!position)
-        continue;
-      if (*position >= requirements.size() ||
-          !isa<BoundPredicateAttr>(requirements.getPredicates()[*position]))
-        return impl.emitOpError()
-               << "states a witness for requirement " << *position
-               << ", which is not a bound requirement of trait '@"
-               << traitOp.getSymName() << "'";
-      if (!byRequirement.try_emplace(*position, witness).second)
-        return impl.emitOpError() << "states a witness for requirement "
-                                  << *position << " twice";
-    }
-  }
-  if (!requirements.hasBoundPredicates())
-    return success();
-
-  auto module = impl.getModule(errFn);
-  if (failed(module))
-    return failure();
-  auto traitArguments = traitOp.buildSubstitutionForSelfClaim(impl.getSelfClaim(), errFn);
-  if (failed(traitArguments))
-    return failure();
-  auto own = buildImplOwnNormalizationContext(impl, witnessRules, errFn);
-  if (failed(own))
-    return failure();
-
-  for (auto [position, requirement] : llvm::enumerate(requirements)) {
-    auto bound = dyn_cast<BoundPredicateAttr>(requirement);
-    if (!bound)
-      continue;
-    auto witness = byRequirement.find(position);
-    if (witness == byRequirement.end())
-      return impl.emitOpError()
-             << "states no witness for bound requirement " << position
-             << " of trait '@" << traitOp.getSymName() << "'";
-
-    // The requirement at this impl's arguments: its binder's variables stay
-    // free, since the binder is still quantified here, and no parameter of
-    // this impl is one of them.
-    SmallVector<Attribute> premises =
-        llvm::map_to_vector(bound.getPremises(), [&](Attribute premise) {
-          return instantiatePredicate(premise, *traitArguments).getPredicate();
-        });
-    BoundEvidenceScope scope{impl, premises, *own, *module, errFn};
-    if (failed(verifyWitnessBody(
-            scope, witness->second.getBody(),
-            instantiatePredicate(bound.getConclusion(), *traitArguments)
-                .getPredicate())))
-      return failure();
-  }
-  return success();
-}
-
-/// Verifies the equality requirements the trait header states, specialized for
-/// this impl's self arguments (e.g. Self::Output = Self).
-///
-/// A requirement is an obligation the impl owes, so the two endpoints must be
-/// the same type: both are read through the impl's own bindings and its
-/// declared witness rules, and whatever stays standing after that is equal to
-/// itself alone. The impl's OWN where-clause equalities are not checked here --
-/// they are premises restricting when the impl applies, read at every citation
-/// that carries the impl to an application -- and application requirements are
-/// proved at selection too.
-static LogicalResult verifyEqualityObligations(
-    ImplOp impl, TraitOp traitOp, ArrayRef<LocalProjectionRule> witnessRules,
-    llvm::function_ref<InFlightDiagnostic()> errFn) {
-  // The guard keeps the self-claim specialization off an impl with nothing of
-  // the kind to check.
-  if (!traitOp.getRequirements().hasEqualities())
-    return success();
-
-  auto specReqs =
-      traitOp.specializeRequirementsAsClaimsFor(impl.getSelfClaim(), errFn);
-  if (failed(specReqs)) return failure();
-
-  auto eqNorm = buildImplOwnNormalizationContext(impl, witnessRules, errFn);
-  if (failed(eqNorm)) return failure();
-
-  for (ClaimType req : *specReqs) {
-    auto eq = req.getEqualityAttr();
-    if (!eq) continue;
-    auto lhsN = eqNorm->normalize(eq.getLhs(), errFn);
-    if (failed(lhsN)) return failure();
-    auto rhsN = eqNorm->normalize(eq.getRhs(), errFn);
-    if (failed(rhsN)) return failure();
-    if (*lhsN != *rhsN)
-      return impl.emitOpError()
-             << "does not satisfy trait-header equality requirement " << req
-             << ": " << *lhsN << " and " << *rhsN << " are not the same type";
-  }
-  return success();
+  return verifyRequirementEvidence(*this, traitOp, errFn);
 }
 
 namespace {
@@ -1405,7 +1142,7 @@ static SmallVector<EqualityReading> getEqualityReadings(ImplOp impl) {
     return projection && projection.getTraitApplication() == own;
   };
   SmallVector<EqualityReading> readings;
-  for (TypeEqualityAttr equality : impl.getAssumptions().getEqualities()) {
+  for (TypeEqualityAttr equality : impl.getEqualityPremises()) {
     if (!projectsOwnApplication(equality.getLhs()))
       readings.push_back({equality.getLhs(), equality.getRhs()});
     if (!projectsOwnApplication(equality.getRhs()))
@@ -1472,31 +1209,564 @@ static LogicalResult verifyImplParametersAreConstrained(ImplOp impl) {
   return success();
 }
 
+void mlir::trait::allegeRequirements(ImplOp impl, TraitOp trait,
+                                     OpBuilder &builder) {
+  auto requirements =
+      trait.specializeRequirementsAsClaimsFor(impl.getSelfClaim());
+  if (failed(requirements) || requirements->empty())
+    return;
+  ReturnOp evidence = impl.getReturn();
+  OpBuilder::InsertionGuard guard(builder);
+  builder.setInsertionPoint(evidence);
+  SmallVector<Value> alleged;
+  for (ClaimType requirement : *requirements)
+    alleged.push_back(
+        AllegeOp::create(builder, evidence.getLoc(), requirement).getResult());
+  evidence->setOperands(alleged);
+}
+
 bool ImplOp::isUnconditional() {
-  // An impl is unconditional when it stands for nothing a subproof would have
-  // to carry: it binds no type parameter, assumes no application, and its trait
-  // requires none. A citation may then name it directly, because the given list
-  // a proof would hold is empty.
-  //
-  // An equality predicate is not counted either way. A trait-HEADER equality is
-  // an obligation this impl discharges at its own verification
-  // (verifyEqualityObligations), the same for every application the impl
-  // covers. This impl's OWN where-clause equality restricts where the impl
-  // applies, and every citation naming it reads that premise at the application
-  // it names -- a witness, a proof's or a call's citation, a derive, impl
-  // selection -- so naming the impl directly leaves no premise unread.
-  return getTypeParams().empty() &&
-         !getAssumptions().hasApplications() &&
-         !getTrait().getRequirements().hasApplications();
+  // A citation supplies an impl its parameters' arguments and one claim per
+  // where entry; an impl taking neither stands for one application and assumes
+  // nothing there, so naming it is the whole citation. Its trait's requirements
+  // are not counted: the impl returns their evidence itself.
+  return getTypeParams().empty() && getWhereClaims().empty();
 }
 
 LogicalResult ImplOp::verifyIsUnconditional(llvm::function_ref<InFlightDiagnostic()> err) {
   if (!isUnconditional()) {
     if (err) err() << "impl '@" << getSymName()
-                   << "' binds type parameters, assumes an application, or implements a trait requiring an application, so it must be cited through a trait.proof";
+                   << "' binds type parameters or has a where clause, so it "
+                      "must be cited through a trait.proof";
     return failure();
   }
   return success();
+}
+
+SmallVector<GenericTypeInterface, 4> ImplOp::getTypeParams() {
+  // The types a type variable could hide in: the self claim, the where
+  // clause's applications, and then its equalities' endpoints, pushed directly,
+  // so a generic that appears only there (e.g. the accumulator in `F::Output =
+  // Acc`) is one of this impl's parameters and takes its position from where
+  // it is pushed.
+  SmallVector<Type> allOurTypes{getSelfClaim()};
+  for (ClaimType premise : getApplicationPremises())
+    allOurTypes.push_back(premise);
+  for (TypeEqualityAttr equality : getEqualityPremises()) {
+    allOurTypes.push_back(equality.getLhs());
+    allOurTypes.push_back(equality.getRhs());
+  }
+
+  // The parameters those spellings bind, in first-occurrence order: a kind-
+  // constraining wrapper is an occurrence of the parameter it wraps, not a
+  // parameter of its own.
+  return getTypeParametersIn(TupleType::get(getContext(), allOurTypes));
+}
+
+FailureOr<SpecializationMap> ImplOp::readCitationArguments(
+    ClaimType cited, TypeRange premises,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  SmallVector<ClaimType> where = getWhereClaims();
+  if (premises.size() != where.size()) {
+    if (err) err() << "impl '@" << getSymName() << "' has " << where.size()
+                   << " where entries, and the citation supplies "
+                   << premises.size() << " claims";
+    return failure();
+  }
+  // Every parameter stands in the header or a where entry outside a projection
+  // (`verifyImplParametersAreConstrained`), and the citation supplies a claim
+  // opposite each entry, so the reading fills every parameter.
+  TypeArguments args(getTypeParams());
+  extractTypeArguments(Type(getSelfClaim()), Type(cited.asUnproven()), args);
+  for (auto [entry, premise] : llvm::zip(where, premises))
+    extractTypeArguments(Type(entry), premise, args);
+  if (!args.complete()) {
+    if (err) {
+      InFlightDiagnostic diagnostic = err();
+      diagnostic << "the citation of impl '@" << getSymName()
+                 << "' determines no argument for";
+      for (GenericTypeInterface parameter : args.getParameters())
+        if (!args.lookup(parameter))
+          diagnostic << " " << Type(parameter);
+    }
+    return failure();
+  }
+  return args.toSpecialization();
+}
+
+//===----------------------------------------------------------------------===//
+// Method instances
+//===----------------------------------------------------------------------===//
+
+/// Clones at `rewriter`'s insertion point the ops of a declaration's or a
+/// proof's body that compute `root`, operands before their users, each op once:
+/// a value `mapping` already holds is read from it, so the caller maps the
+/// body's block arguments before asking. `stamp` respells every type and
+/// attribute the clones carry.
+static Value cloneDefiningTree(RewriterBase &rewriter, Value root,
+                               IRMapping &mapping, AttrTypeReplacer &stamp) {
+  if (Value mapped = mapping.lookupOrNull(root))
+    return mapped;
+  Operation *producer = root.getDefiningOp();
+  assert(producer && "a body's block arguments are mapped before it is read");
+  for (Value operand : producer->getOperands())
+    (void)cloneDefiningTree(rewriter, operand, mapping, stamp);
+  Operation *clone = rewriter.clone(*producer, mapping);
+  for (Value result : clone->getResults())
+    result.setType(stamp.replace(result.getType()));
+  for (NamedAttribute attr : clone->getAttrs())
+    clone->setAttr(attr.getName(), stamp.replace(attr.getValue()));
+  return mapping.lookup(root);
+}
+
+static FailureOr<SpecializationMap>
+instanceOfProofAt(ProofOp proof, ClaimType at,
+                  llvm::function_ref<InFlightDiagnostic()> err);
+
+/// Maps in `mapping` each value of `reads` -- the values read from the
+/// declaration `declaration`, by a method's body or by a projection of its
+/// return -- to the evidence the receiver's proof `selfProof` supplies there,
+/// cloning at `rewriter`'s insertion point what must be computed, each clone of
+/// the declaration's ops stamped by `stamp`: argument 0 to `self`; an impl's
+/// argument k to a clone of the claim the receiver's proof derives the impl
+/// from at position k - 1, its defining ops copied out of the proof's body and
+/// stamped at the proof's instance at `selfProof`; a value the declaration's
+/// body computes to a clone of its defining ops over those. A proof is closed,
+/// so the claims its derive is given are computed by its own body alone. An
+/// impl argument the receiver's proof supplies nothing for stays unmapped,
+/// which the isolation of whatever the body is cut or inlined into refuses.
+static void mapDeclarationReads(RewriterBase &rewriter, ModuleOp module,
+                                Operation *declaration,
+                                const llvm::SetVector<Value> &reads,
+                                Value self, ClaimType selfProof,
+                                AttrTypeReplacer &stamp, IRMapping &mapping) {
+  Block &declarationBody = declaration->getRegion(0).front();
+  mapping.map(declarationBody.getArgument(0), self);
+  if (declarationBody.getNumArguments() > 1)
+    if (auto proof = lookupSymbolFrom<ProofOp>(module, selfProof.getProof())) {
+      auto instance = instanceOfProofAt(proof, selfProof, /*err=*/nullptr);
+      if (succeeded(instance)) {
+        AttrTypeReplacer atInstance =
+            makeTypeReplacerFromSubstitution(instance->toTypeMap(), module);
+        IRMapping fromProof;
+        for (auto [argument, premise] :
+             llvm::zip(declarationBody.getArguments().drop_front(),
+                       proof.getDerive().getAssumptions()))
+          mapping.map(argument, cloneDefiningTree(rewriter, premise, fromProof,
+                                                  atInstance));
+      }
+    }
+  for (Value read : reads)
+    if (!isa<BlockArgument>(read) || mapping.contains(read))
+      (void)cloneDefiningTree(rewriter, read, mapping, stamp);
+}
+
+/// The values `method`'s body reads from outside it: its declaration's block
+/// arguments and the values the declaration's body computes. They are read off
+/// the template before anything is cloned: once a clone stands elsewhere, no
+/// query finds them again.
+static llvm::SetVector<Value> readsFromDeclaration(FunctionOpInterface method) {
+  llvm::SetVector<Value> reads;
+  getUsedValuesDefinedAbove(method.getFunctionBody(), reads);
+  return reads;
+}
+
+/// Cuts `method`, a method of the trait or impl `declaration`, into a
+/// module-level function `functionName` for the receiver whose proven claim is
+/// `selfProof`, its body stamped under `subst`.
+///
+/// The instance leads with the receiver's proof, and every value the method
+/// reads from its declaration is replaced in it by the evidence that proof
+/// supplies there (`mapDeclarationReads`). A value the replacement missed is
+/// refused by the module-level function's isolation.
+static func::FuncOp cutMethodInstance(PatternRewriter &rewriter, ModuleOp module,
+                                      Operation *declaration,
+                                      FunctionOpInterface method,
+                                      StringRef functionName,
+                                      ClaimType selfProof,
+                                      const DenseMap<Type, Type> &subst) {
+  llvm::SetVector<Value> reads = readsFromDeclaration(method);
+
+  PatternRewriter::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPointAfter(declaration);
+
+  // An external declaration has no body to clone; specialization has refused
+  // it. Cut at module scope, the instance is a `func.func`.
+  auto funcOp = cast_if_present<func::FuncOp>(
+      specializePolymorph(rewriter, method, functionName, subst).getOperation());
+  if (!funcOp)
+    return nullptr;
+  rewriter.modifyOpInPlace(funcOp, [&] {
+    (void)funcOp.insertArgument(/*idx=*/0, selfProof,
+                               /*argAttrs=*/mlir::DictionaryAttr(),
+                               method->getLoc());
+    funcOp.setVisibility(SymbolTable::Visibility::Private);
+  });
+  if (reads.empty())
+    return funcOp;
+
+  rewriter.setInsertionPointToStart(&funcOp.getBody().front());
+  IRMapping replacements;
+  AttrTypeReplacer stamp = makeTypeReplacerFromSubstitution(subst, module);
+  mapDeclarationReads(rewriter, module, declaration, reads,
+                      funcOp.getArgument(0), selfProof, stamp, replacements);
+  for (Value read : reads)
+    if (Value replacement = replacements.lookupOrNull(read))
+      rewriter.replaceUsesWithIf(read, replacement, [&](OpOperand &use) {
+        return funcOp->isProperAncestor(use.getOwner());
+      });
+  return funcOp;
+}
+
+bool mlir::trait::producesPositionalEvidence(Operation *op) {
+  if (isa<ProjectOp, DeriveOp, CoerceOp>(op))
+    return true;
+  auto call = dyn_cast<MethodCallOp>(op);
+  return call && call.computesEvidence();
+}
+
+namespace {
+
+/// Inlines a method's body at a call: every op is legal to inline, since the
+/// body's reads from outside it are mapped before it is cloned, and the call's
+/// results take the method's `trait.return` operands, announced to `rewriter`
+/// so their users are visited again. An operand spelled otherwise than the
+/// call's result is bridged by a coercion, as a projection's inlined evidence
+/// is (`ProjectOp::inlineEvidence`).
+struct MethodBodyInliner : public InlinerInterface {
+  MethodBodyInliner(MLIRContext *ctx, RewriterBase &rewriter)
+      : InlinerInterface(ctx), rewriter(rewriter) {}
+
+  bool isLegalToInline(Region *, Region *, bool, IRMapping &) const override {
+    return true;
+  }
+  bool isLegalToInline(Operation *, Region *, bool,
+                       IRMapping &) const override {
+    return true;
+  }
+  void handleTerminator(Operation *op,
+                        ValueRange valuesToRepl) const override {
+    OpBuilder::InsertionGuard guard(rewriter);
+    rewriter.setInsertionPoint(op);
+    for (auto [result, returned] : llvm::zip(valuesToRepl, op->getOperands())) {
+      Value replacement = returned;
+      if (returned.getType() != result.getType())
+        replacement = CoerceOp::create(rewriter, op->getLoc(), result.getType(),
+                                       returned, ValueRange{});
+      rewriter.replaceAllUsesWith(result, replacement);
+    }
+  }
+
+  RewriterBase &rewriter;
+};
+
+} // namespace
+
+/// Replaces `call`, a call of `method` of the trait or impl `declaration`
+/// through the receiver whose proven claim is `selfProof`, by the method's body
+/// stamped under `subst`: what the body reads from its declaration is mapped to
+/// the evidence the receiver's proof supplies there (`mapDeclarationReads`),
+/// its parameters to the call's arguments, and the call's result to the operand
+/// of its `trait.return`. Fails, leaving the call standing, where the method
+/// has no body or more than one block.
+static LogicalResult inlineMethodAt(PatternRewriter &rewriter, ModuleOp module,
+                                    Operation *declaration,
+                                    FunctionOpInterface method,
+                                    MethodCallOp call, ClaimType selfProof,
+                                    const DenseMap<Type, Type> &subst) {
+  Region &body = method.getFunctionBody();
+  if (body.empty() || !body.hasOneBlock())
+    return rewriter.notifyMatchFailure(call, "the method has no one-block body");
+
+  llvm::SetVector<Value> reads = readsFromDeclaration(method);
+  AttrTypeReplacer stamp = makeTypeReplacerFromSubstitution(subst, module);
+  AttrTypeReplacer spelling = makeSpellingReplacerFromSubstitution(subst);
+  PatternRewriter::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPoint(call);
+  IRMapping mapping;
+  mapDeclarationReads(rewriter, module, declaration, reads, call.getClaim(),
+                      selfProof, stamp, mapping);
+  for (auto [parameter, argument] :
+       llvm::zip(body.front().getArguments(), call.getArguments()))
+    mapping.map(parameter, argument);
+
+  // The body is cloned and then stamped, as a cut instance's is: a call
+  // computing evidence in it keeps its result spelling for its own inlining.
+  auto cloneBody = [&](OpBuilder &, Region *src, Block *, Block *postInsertBlock,
+                       IRMapping &mapper, bool) {
+    cloneRegionStampedBefore(rewriter, *src, *postInsertBlock->getParent(),
+                             postInsertBlock->getIterator(), mapper, stamp,
+                             spelling);
+  };
+  // The inlined ops are located at the call, called from it.
+  MethodBodyInliner interface(call.getContext(), rewriter);
+  if (failed(inlineRegion(interface, cloneBody, &body, call, mapping,
+                          call->getResults(), call->getResultTypes(),
+                          call.getLoc())))
+    return rewriter.notifyMatchFailure(call, "the method's body is not inlined");
+  rewriter.eraseOp(call);
+  return success();
+}
+
+/// The instance `method` of `declaration` names for a call through the proven
+/// receiver `provenSelfClaim` supplying `actualArguments` for the method's own
+/// parameters: the type arguments are `declarationArguments` for the
+/// declaration's parameters, then every parameter the method's signature
+/// spells, read through `subst`; the evidence the receiver's proof at the
+/// leading position, then what the call supplies, position by position.
+static FailureOr<func::FuncOp> getOrCutMethodInstance(
+    PatternRewriter &rewriter, ModuleOp module, Operation *declaration,
+    SymbolRefAttr templateRef, ArrayRef<Type> declarationArguments,
+    FunctionOpInterface method, ClaimType formalSelf, ClaimType provenSelfClaim,
+    TypeRange actualArguments, const DenseMap<Type, Type> &subst) {
+  SmallVector<Type> typeArguments(declarationArguments);
+  for (GenericTypeInterface parameter :
+       getTypeParametersIn(method.getFunctionType()))
+    typeArguments.push_back(applySubstitutionOnce(subst, parameter));
+  SmallVector<Type> formalInputs{formalSelf};
+  llvm::append_range(formalInputs, method.getArgumentTypes());
+  SmallVector<Type> actualInputs{provenSelfClaim};
+  llvm::append_range(actualInputs, actualArguments);
+  AttrTypeReplacer stamp = makeTypeReplacerFromSubstitution(subst, module);
+  auto key = InstanceKey::get(templateRef, typeArguments, formalInputs,
+                              actualInputs, stamp);
+  if (failed(key))
+    return method.emitOpError()
+           << "is supplied a claim that names no proof, which identifies no "
+              "instance";
+
+  // The leading self proof is read as the instance spells it.
+  auto selfProof = cast<ClaimType>(key->getEvidence().front());
+  func::FuncOp instance = getOrCutInstance(
+      rewriter, module, *key, [&](StringRef instanceName) {
+        return cutMethodInstance(rewriter, module, declaration, method,
+                                 instanceName, selfProof, subst);
+      });
+  if (!instance)
+    return failure();
+  return instance;
+}
+
+/// The substitution `method`, `impl`'s copy of a method of `trait`, is cut or
+/// inlined under for a call through `provenSelfClaim` whose method-generic
+/// bindings are `callSubst`'s: the arguments the impl's parameters take at the
+/// receiver, then the call's bindings. A call names its method-generic bindings
+/// under the trait method's own type variables, while the impl's copy carries
+/// its own; each binding is rekeyed through the correspondence between the
+/// two, so the result is monomorphic in the method's variables as well as the
+/// impl's. Answers the impl's arguments beside it.
+static FailureOr<std::pair<SpecializationMap, DenseMap<Type, Type>>>
+implMethodSubstitution(ImplOp impl, TraitOp trait, FunctionOpInterface method,
+                       ClaimType provenSelfClaim,
+                       const CallSubstitution &callSubst) {
+  auto implArguments = impl.buildImplSpecialization(
+      provenSelfClaim, DemandOrigin::ProofRecording);
+  if (failed(implArguments))
+    return failure();
+  DenseMap<Type, Type> subst = implArguments->toTypeMap();
+  auto errFn = [&] { return impl.emitOpError(); };
+  auto correspondence =
+      buildTraitMethodCorrespondence(impl, trait, method, errFn);
+  if (failed(correspondence))
+    return failure();
+  DenseMap<Type, Type> callBindings = callSubst.toTypeMap();
+  for (auto [traitVariable, implVariable] :
+       llvm::zip(correspondence->traitOwn, correspondence->implOwn)) {
+    auto binding = callBindings.find(Type(traitVariable));
+    if (binding != callBindings.end())
+      subst.try_emplace(Type(implVariable), binding->second);
+  }
+  for (const auto &[k, v] : callBindings)
+    subst.try_emplace(k, v);
+  return std::make_pair(std::move(*implArguments), std::move(subst));
+}
+
+FailureOr<func::FuncOp> ImplOp::getOrSpecializeFreeFunctionFromMethod(
+    PatternRewriter& rewriter,
+    ClaimType provenSelfClaim,
+    StringRef methodName,
+    TypeRange actualArguments,
+    const CallSubstitution &callSubst) {
+  TraitOp trait = getTrait();
+  if (!trait.hasMethod(methodName)) return failure();
+
+  // A method the impl does not define is the trait's default, cut from the
+  // trait with the receiver as its argument.
+  auto method = getMethod(methodName);
+  if (failed(method))
+    return trait.getOrSpecializeFreeFunctionFromDefault(
+        rewriter, provenSelfClaim, methodName, actualArguments, callSubst);
+
+  ModuleOp module = (*this)->getParentOfType<ModuleOp>();
+  auto substitution = implMethodSubstitution(*this, trait, *method,
+                                             provenSelfClaim, callSubst);
+  if (failed(substitution)) return failure();
+  auto &[implArguments, subst] = *substitution;
+
+  SmallVector<Type> declarationArguments;
+  for (GenericTypeInterface parameter : getTypeParams())
+    declarationArguments.push_back(implArguments.apply(parameter));
+  auto templateRef = SymbolRefAttr::get(
+      getSymNameAttr(), {FlatSymbolRefAttr::get(getContext(), methodName)});
+  return getOrCutMethodInstance(rewriter, module, *this, templateRef,
+                                declarationArguments, *method, getSelfClaim(),
+                                provenSelfClaim, actualArguments, subst);
+}
+
+LogicalResult MethodCallOp::inlineEvidence(PatternRewriter &rewriter,
+                                           const CallSubstitution &callSubst) {
+  ImplOp impl = getProvenImpl();
+  TraitOp trait = impl.getTrait();
+  ModuleOp module = impl->getParentOfType<ModuleOp>();
+  auto method = impl.getMethod(getMethodName());
+
+  // A method the impl does not define is the trait's default, inlined with the
+  // receiver as its declaration's argument, as it is cut
+  // (`getOrSpecializeFreeFunctionFromDefault`).
+  if (failed(method)) {
+    auto byDefault = trait.getOptionalMethod(getMethodName());
+    auto traitArguments = trait.buildSubstitutionForSelfClaim(getClaimType());
+    if (failed(byDefault) || failed(traitArguments))
+      return rewriter.notifyMatchFailure(*this, "no body defines the method");
+    DenseMap<Type, Type> subst = traitArguments->toTypeMap();
+    for (const auto &[k, v] : callSubst.toTypeMap())
+      subst.try_emplace(k, v);
+    return inlineMethodAt(rewriter, module, trait, *byDefault, *this,
+                          getClaimType(), subst);
+  }
+
+  auto substitution = implMethodSubstitution(impl, trait, *method,
+                                             getClaimType(), callSubst);
+  if (failed(substitution))
+    return failure();
+  return inlineMethodAt(rewriter, module, impl, *method, *this, getClaimType(),
+                        substitution->second);
+}
+
+LogicalResult ProjectOp::inlineEvidence(RewriterBase &rewriter) {
+  ClaimType source = getSourceClaim();
+  if (!source.isProven())
+    return failure();
+  ModuleOp module = getAnchorModule(getOperation());
+  auto cited = ProofOp::getProofOpOrUnconditionalImplOp(
+      module, source.getProof(), /*errFn=*/nullptr);
+  if (failed(cited))
+    return failure();
+  auto proof = dyn_cast<ProofOp>(*cited);
+  ImplOp impl = proof ? proof.getImpl() : cast<ImplOp>(*cited);
+  if (!impl)
+    return failure();
+  SpecializationMap arguments;
+  if (proof) {
+    auto atSource = proof.getImplArgumentsAt(source, /*err=*/nullptr);
+    if (failed(atSource))
+      return failure();
+    arguments = std::move(*atSource);
+  }
+
+  // A trait requirement is the impl's return operand at its index; a where
+  // entry, past them, is the impl's block argument there, which the source's
+  // proof supplies.
+  uint64_t traitCount = impl.getTrait().getRequirements().size();
+  Block &body = impl.getBody().front();
+  uint64_t index = getIndex();
+  if (index >= traitCount && index - traitCount + 1 >= body.getNumArguments())
+    return failure();
+  Value read = index < traitCount ? impl.getReturn().getOperand(index)
+                                  : Value(body.getArgument(index - traitCount + 1));
+
+  OpBuilder::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPoint(*this);
+  AttrTypeReplacer stamp =
+      makeTypeReplacerFromSubstitution(arguments.toTypeMap(), module);
+  IRMapping mapping;
+  llvm::SetVector<Value> reads;
+  reads.insert(read);
+  mapDeclarationReads(rewriter, module, impl, reads, getSource(), source, stamp,
+                      mapping);
+  Value inlined = mapping.lookupOrNull(read);
+  if (!inlined)
+    return failure();
+  // The inlined ops are located where the impl wrote them, called from the
+  // projection, as an inlined call's are.
+  for (auto [original, clone] : mapping.getOperationMap())
+    clone->setLoc(CallSiteLoc::get(clone->getLoc(), getLoc()));
+
+  // The evidence is spelled as the impl wrote it, which the result may spell
+  // otherwise: the two meet as their projections resolve, and a proof the
+  // result spells must be the one the evidence carries, which the coercion
+  // bridging them holds it to.
+  Value replacement = inlined;
+  if (inlined.getType() != getResult().getType())
+    replacement = CoerceOp::create(rewriter, getLoc(), getResult().getType(),
+                                   inlined, ValueRange{});
+  rewriter.replaceOp(*this, replacement);
+  return success();
+}
+
+FailureOr<func::FuncOp> TraitOp::getOrSpecializeFreeFunctionFromDefault(
+    PatternRewriter &rewriter, ClaimType provenSelfClaim, StringRef methodName,
+    TypeRange actualArguments, const CallSubstitution &callSubst) {
+  auto method = getOptionalMethod(methodName);
+  if (failed(method))
+    return failure();
+  auto traitArguments = buildSubstitutionForSelfClaim(provenSelfClaim);
+  if (failed(traitArguments))
+    return failure();
+
+  // A call names its method-generic bindings under the trait method's own type
+  // variables, which are the default's.
+  DenseMap<Type, Type> subst = traitArguments->toTypeMap();
+  for (const auto &[k, v] : callSubst.toTypeMap())
+    subst.try_emplace(k, v);
+
+  ModuleOp module = (*this)->getParentOfType<ModuleOp>();
+  auto templateRef = SymbolRefAttr::get(
+      getSymNameAttr(), {FlatSymbolRefAttr::get(getContext(), methodName)});
+  return getOrCutMethodInstance(
+      rewriter, module, *this, templateRef,
+      provenSelfClaim.getTraitApplication().getTypeArgs(), *method,
+      getSelfClaim(), provenSelfClaim, actualArguments, subst);
+}
+
+/// Generate a deterministic symbol name for an ImplOp.
+///
+/// The name has the form {TraitName}_impl_h{hash} where the hash is a
+/// 64-bit xxHash of the full type argument and where-clause signature. This
+/// keeps symbols short and bounded in length.
+std::string ImplOp::generateSymName(TraitApplicationAttr selfApp,
+                                    ArrayRef<ClaimType> where) {
+  // The equality entries follow the application entries, so two impls that
+  // differ only in an equality assumption synthesize distinct names.
+  std::string signature;
+  llvm::raw_string_ostream os(signature);
+  for (auto ty : selfApp.getTypeArgs())
+    os << "_" << ty;
+  bool anyApplication = false;
+  for (ClaimType entry : where) {
+    if (!entry.isApplication())
+      continue;
+    if (!anyApplication)
+      os << "_where";
+    anyApplication = true;
+    TraitApplicationAttr app = entry.getTraitApplication();
+    os << "_" << app.getTraitName().getValue();
+    for (auto typeArg : app.getTypeArgs())
+      os << "_" << typeArg;
+  }
+  os << "_eq";
+  for (ClaimType entry : where)
+    if (TypeEqualityAttr eq = entry.getEqualityAttr())
+      os << "_" << eq.getLhs() << "_" << eq.getRhs();
+  os.flush();
+
+  return selfApp.getTraitName().getValue().str() + "_impl" + hashToSuffix(signature);
+}
+
+std::string ImplOp::generateMangledName(const SpecializationMap &arguments) {
+  return getSymName().str() +
+         applySubstitutionAndGenerateMangledNameSuffix(arguments,
+                                                       getTypeParams());
 }
 
 TraitOp ImplOp::getTrait() {
@@ -1632,757 +1902,30 @@ FailureOr<SpecializationMap> ImplOp::buildImplSpecialization(
   return buildSubstitutionForSelfClaim(provenSelfClaim, normalize, err);
 }
 
-SmallVector<GenericTypeInterface, 4> ImplOp::getTypeParams() {
-  // collect all the types where a type variable could hide
-  SmallVector<Type> allOurTypes;
-  allOurTypes.push_back(getSelfClaim());
-  for (ClaimType a : getAssumptionsAsClaims()) {
-    allOurTypes.push_back(a);
-  }
-  // An assumed equality's endpoints are pushed directly, so a generic that
-  // appears only there (e.g. the accumulator in `F::Output = Acc`) is one of
-  // this impl's parameters and takes its position from where it is pushed.
-  for (Attribute pred : getAssumptions()) {
-    if (auto eq = dyn_cast<TypeEqualityAttr>(pred)) {
-      allOurTypes.push_back(eq.getLhs());
-      allOurTypes.push_back(eq.getRhs());
-    }
-  }
-
-  // tuple the types
-  TupleType tupled = TupleType::get(getContext(), allOurTypes);
-
-  // The parameters those spellings bind, in first-occurrence order: a kind-
-  // constraining wrapper is an occurrence of the parameter it wraps, not a
-  // parameter of its own.
-  return getTypeParametersIn(tupled);
-}
-
-FailureOr<SpecializationMap> ImplOp::substitutionFor(
-    ArrayRef<TypeBindingAttr> arguments,
-    llvm::function_ref<InFlightDiagnostic()> err) {
-  SmallVector<GenericTypeInterface, 4> params = getTypeParams();
-  SpecializationMap substitution;
-  for (TypeBindingAttr binding : arguments) {
-    auto parameter = dyn_cast<GenericTypeInterface>(binding.getParameter());
-    if (!parameter || !llvm::is_contained(params, parameter)) {
-      if (err) err() << "the citation binds " << binding.getParameter()
-                     << ", which is not a type parameter of impl '@"
-                     << getSymName() << "'";
-      return failure();
-    }
-    if (substitution.lookup(parameter)) {
-      if (err) err() << "the citation binds type parameter " << Type(parameter)
-                     << " of impl '@" << getSymName() << "' twice";
-      return failure();
-    }
-    substitution.bind(parameter, binding.getArgument());
-  }
-  for (GenericTypeInterface parameter : params)
-    if (!substitution.lookup(parameter)) {
-      if (err) err() << "the citation binds no argument for type parameter "
-                     << Type(parameter) << " of impl '@" << getSymName() << "'";
-      return failure();
-    }
-  return substitution;
-}
-
-FailureOr<FunctionOpInterface> ImplOp::getOrSpecializeMethod(RewriterBase& rewriter, StringRef methodName) {
-  auto trait = getTrait();
-
-  // check that we've named a valid trait method
-  if (!trait.hasMethod(methodName)) return failure();
-
-  // check if the method already exists in the ImplOp
-  auto method = getMethod(methodName);
-  if (succeeded(method)) return method;
-
-  // otherwise, we need to specialize the method from the default implementation in the trait
-  auto traitMethod = trait.getOptionalMethod(methodName);
-  if (failed(traitMethod)) return failure();
-
-  // build a substitution that maps trait PolyType parameters to impl type arguments
-  auto subst = trait.buildSubstitutionForSelfClaim(getSelfClaim());
-  if (failed(subst)) return failure();
-
-  PatternRewriter::InsertionGuard guard(rewriter);
-  rewriter.setInsertionPointToEnd(&getBody().front());
-  auto specialized =
-      specializePolymorph(rewriter, *traitMethod, methodName, subst->toTypeMap());
-  // A default method with no body to clone is refused where the clone was
-  // attempted; there is no method here to answer with.
-  if (!specialized)
-    return failure();
-
-  // A positional assume in the trait's method cites the trait's where clause,
-  // and in this impl a where-clause position names the impl's own entries. The
-  // trait's requirement at that position is the one this impl's self claim
-  // carries there, so the clone selects it off that claim: `self` still names
-  // the declaration's own application, which in this impl is its own.
-  SmallVector<AssumeOp> requirementAssumes;
-  specialized->walk([&](AssumeOp assume) {
-    if (assume.getWherePosition())
-      requirementAssumes.push_back(assume);
-  });
-  for (AssumeOp assume : requirementAssumes) {
-    OpBuilder::InsertionGuard assumeGuard(rewriter);
-    rewriter.setInsertionPoint(assume);
-    Value self = AssumeOp::create(rewriter, assume.getLoc(), getSelfClaim(),
-                                  rewriter.getUnitAttr());
-    Value requirement =
-        ProjectOp::create(rewriter, assume.getLoc(), assume.getClaim(), self,
-                          *assume.getWherePosition());
-    assume.getResult().replaceAllUsesWith(requirement);
-    assume.erase();
-  }
-  return specialized;
-}
-
-static func::FuncOp specializeMethodAsFreeFuncWithLeadingSelfProof(
-    PatternRewriter& rewriter,
-    ModuleOp module,
-    FunctionOpInterface method,
-    StringRef functionName,
-    ClaimType selfProofTy,
-    const DenseMap<Type,Type>& subst) {
-
-  // specialize the method into the grandparent with a mangled name
-  PatternRewriter::InsertionGuard guard(rewriter);
-
-  // clone the method into the method's grandparent
-  rewriter.setInsertionPointAfter(method->getParentOp());
-
-  // An external declaration has no body to clone; specialization has refused
-  // it. Cut at module scope, the instance is a `func.func`.
-  auto funcOp = cast_if_present<func::FuncOp>(
-      specializePolymorph(rewriter, method, functionName, subst).getOperation());
-  if (!funcOp)
-    return nullptr;
-
-  // The clone leads with the proven self claim the call carries: the self is
-  // ground and the impl's proof names it, in a template clone (a method with its
-  // own free generic) as in a monomorphic one. Its citations of the impl's
-  // where clause are read off that self proof by position below, and its
-  // assumed equalities project to the impl's equality where-clauses, so no
-  // assumption rides as a lifted claim parameter.
-  rewriter.modifyOpInPlace(funcOp, [&] {
-    (void)funcOp.insertArgument(/*idx=*/0, selfProofTy,
-                               /*argAttrs=*/mlir::DictionaryAttr(),
-                               method->getLoc());
-    funcOp.setVisibility(SymbolTable::Visibility::Private);
-  });
-  BlockArgument selfProofArg = funcOp.getArgument(0);
-
-  // Every citation the method makes of its declaration -- `self`, or entry N
-  // of the impl's where clause, in whichever region or block of the body it
-  // stands -- is replaced by the evidence the leading self proof supplies at
-  // that position, read off the proof by index and never found by the entry's
-  // spelling: two entries spelling one claim can be discharged by different
-  // proofs, and only the position says which. The self proof's requirements are
-  // its trait's, then the impl's where clause, so entry N is requirement
-  // traitRequirementCount + N. A proven application there is the witness of the
-  // subproof the self proof names at that index, spelled with its ground
-  // projections resolved as the rest of the instance is stamped; an equality
-  // carries no proof and is projected from the self proof. A citation the proof
-  // cannot read is left standing, and the AssumeOp verifier refuses it once
-  // this instance stands at module scope, where no declaration encloses it.
-  uint64_t traitRequirementCount = 0;
-  if (auto trait = selfProofTy.getTraitApplication().getTrait(module);
-      succeeded(trait))
-    traitRequirementCount = trait->getRequirements().size();
-
-  SmallVector<AssumeOp> toErase;
-  funcOp.walk([&](AssumeOp a) {
-    PatternRewriter::InsertionGuard guard(rewriter);
-    rewriter.setInsertionPoint(a);
-
-    Value replacement;
-    if (a.citesSelf()) {
-      replacement = selfProofArg;
-    } else {
-      uint64_t index = traitRequirementCount + *a.getWherePosition();
-      auto requirement = getClaimRequirementAt(selfProofTy, module, index);
-      if (failed(requirement))
-        return;
-      if (requirement->isProven()) {
-        auto spelled = cast<ClaimType>(resolveProjectionsByLookup(
-            *requirement, module, DemandOrigin::MonomorphStampOut,
-            LookupScope::Ground));
-        replacement = WitnessOp::create(rewriter, a.getLoc(),
-                                        spelled.getProof(),
-                                        spelled.getTraitApplication());
-      } else {
-        replacement = ProjectOp::create(rewriter, a.getLoc(), *requirement,
-                                        selfProofArg, index);
-      }
-    }
-
-    rewriter.replaceAllUsesWith(a.getResult(), replacement);
-    toErase.push_back(a);
-  });
-
-  // erase the AssumeOps
-  for (auto a : toErase)
-    rewriter.eraseOp(a);
-
-  return funcOp;
-}
-
-FailureOr<func::FuncOp> ImplOp::getOrSpecializeFreeFunctionFromMethod(
-    PatternRewriter& rewriter,
-    ClaimType provenSelfClaim,
-    StringRef methodName,
-    TypeRange actualArguments,
-    const CallSubstitution &callSubst) {
-  // check that methodName names a valid trait method
-  if (!getTrait().hasMethod(methodName)) return failure();
-
-  // The enclosing module: where a clone of the method is cut and where an
-  // existing clone is looked up.
-  ModuleOp module = (*this)->getParentOfType<ModuleOp>();
-
-  auto method = getOrSpecializeMethod(rewriter, methodName);
-  if (failed(method)) return failure();
-
-  auto implArguments =
-      buildImplSpecialization(provenSelfClaim, DemandOrigin::ProofRecording);
-  if (failed(implArguments)) return failure();
-
-  // The substitution the method body is cut under: the arguments the impl's
-  // parameters take at the receiver, then the method-generic bindings and the
-  // evidence of this call. The call reads the receiver's proof beside every
-  // claim argument's, so a claim two of them discharge by different proofs is
-  // held for both and bound for neither: no claim's spelling picks one source's
-  // proof over another's. Parameters and citations take their evidence by
-  // position; a value no position decides is refused where the cut finds it.
-  DenseMap<Type,Type> subst = implArguments->toTypeMap();
-
-  // A call names its method-generic bindings under the trait method's own type
-  // variables, while the method cloned below is the impl's copy, which carries
-  // its own. Rekey each binding through the correspondence between the two, so
-  // the clone is monomorphic in the method's variables as well as the impl's and
-  // no partly substituted template stands between the call and its instance.
-  auto errFn = [&] { return emitOpError(); };
-  auto witnessRules = collectImplWitnessRules(*this, module, errFn);
-  if (failed(witnessRules)) return failure();
-  auto correspondence = buildTraitMethodCorrespondence(
-      *this, getTrait(), *method, *witnessRules, errFn);
-  if (failed(correspondence)) return failure();
-
-  DenseMap<Type,Type> callBindings = callSubst.toTypeMap();
-  for (auto [traitVariable, implVariable] :
-       llvm::zip(correspondence->traitOwn, correspondence->implOwn)) {
-    auto binding = callBindings.find(Type(traitVariable));
-    if (binding != callBindings.end())
-      subst.try_emplace(Type(implVariable), binding->second);
-  }
-
-  for (const auto &[k, v] : callBindings)
-    subst.try_emplace(k, v);
-
-  // The instance is the one the impl's method names at these type arguments
-  // and this evidence: the receiver's proof at the leading position, then
-  // whatever the call supplies for each of the method's own parameters. The
-  // type arguments are the impl's, then every parameter the method's signature
-  // spells, so different method-generic calls name different instances too.
-  SmallVector<Type> typeArguments;
-  for (GenericTypeInterface parameter : getTypeParams())
-    typeArguments.push_back(implArguments->apply(parameter));
-  for (GenericTypeInterface parameter :
-       getTypeParametersIn((*method).getFunctionType()))
-    typeArguments.push_back(applySubstitutionOnce(subst, parameter));
-  SmallVector<Type> formalInputs{getSelfClaim()};
-  llvm::append_range(formalInputs, (*method).getArgumentTypes());
-  SmallVector<Type> actualInputs{provenSelfClaim};
-  llvm::append_range(actualInputs, actualArguments);
-  auto templateRef = SymbolRefAttr::get(
-      getSymNameAttr(), {FlatSymbolRefAttr::get(getContext(), methodName)});
-  AttrTypeReplacer stamp = makeTypeReplacerFromSubstitution(subst, module);
-  auto key = InstanceKey::get(templateRef, typeArguments, formalInputs,
-                              actualInputs, stamp);
-  if (failed(key))
-    return emitOpError() << "is supplied a claim that names no proof for '@"
-                         << methodName << "', which identifies no instance";
-
-  // The leading self proof is read as the instance spells it, so its
-  // requirements are read at the arguments its proof states them for.
-  auto selfProof = cast<ClaimType>(key->getEvidence().front());
-  func::FuncOp instance = getOrCutInstance(
-      rewriter, module, *key, [&](StringRef instanceName) {
-        // A method with no body to clone is refused where the clone was
-        // attempted; this call has no instance to name.
-        return specializeMethodAsFreeFuncWithLeadingSelfProof(
-            rewriter, module, *method, instanceName, selfProof, subst);
-      },
-      callSubst.getEvidence());
-  if (!instance)
-    return failure();
-  return instance;
-}
-
-/// Generate a deterministic symbol name for an ImplOp.
-/// 
-/// The name has the form {TraitName}_impl_h{hash} where the hash is a
-/// 64-bit xxHash of the full type argument and assumption signature. This
-/// keeps symbols short and bounded in length.
-std::string ImplOp::generateSymName(TraitApplicationAttr selfApp,
-                                    PredicateArrayAttr assumptions) {
-  // Build the full type-argument and where-clause signature for hashing. The
-  // equality entries follow the application entries, so two impls that differ
-  // only in an equality assumption synthesize distinct names.
-  std::string signature;
-  llvm::raw_string_ostream os(signature);
-  for (auto ty : selfApp.getTypeArgs()) {
-    os << "_" << ty;
-  }
-  SmallVector<TraitApplicationAttr> apps =
-      assumptions ? assumptions.getApplications()
-                  : SmallVector<TraitApplicationAttr>{};
-  if (!apps.empty()) {
-    os << "_where";
-    for (auto app : apps) {
-      os << "_" << app.getTraitName().getValue();
-      for (auto typeArg : app.getTypeArgs()) {
-        os << "_" << typeArg;
-      }
-    }
-  }
-  os << "_eq";
-  if (assumptions) {
-    for (Attribute pred : assumptions) {
-      auto eq = dyn_cast<TypeEqualityAttr>(pred);
-      if (!eq) continue;
-      os << "_" << eq.getLhs() << "_" << eq.getRhs();
-    }
-  }
-  os.flush();
-
-  return selfApp.getTraitName().getValue().str() + "_impl" + hashToSuffix(signature);
-}
-
-std::string ImplOp::generateMangledName(const SpecializationMap &arguments) {
-  return getSymName().str() +
-         applySubstitutionAndGenerateMangledNameSuffix(arguments,
-                                                       getTypeParams());
-}
-
-SmallVector<ClaimType> ImplOp::getAssumptionsAsClaims() {
-  MLIRContext *ctx = getContext();
-  // The proof/derive/satisfiability streams read application-arm assumptions
-  // only; an equality entry takes no subproof and is read at the application
-  // the citation names (verifyEqualityPremisesHoldAt), so equality entries are
-  // filtered out here at the one place every obligation consumer flows through.
-  return llvm::map_to_vector(getAssumptions().getApplications(),
-                             [ctx](TraitApplicationAttr app) {
-    return ClaimType::get(ctx, app);
-  });
-}
-
-FailureOr<SmallVector<ClaimType>> ImplOp::specializeObligationsAt(
-    ClaimType actualSelfClaim, const SpecializationMap &arguments,
-    llvm::function_ref<InFlightDiagnostic()> errFn) {
-  auto requirements =
-      getTrait().specializeRequirementsAsClaimsFor(actualSelfClaim, errFn);
-  if (failed(requirements))
-    return failure();
-
-  // The obligation stream is proved and derived through impl selection, an
-  // application-arm operation. Trait-header equality requirements are checked
-  // at impl verification against the impl's own bindings, never proved here, so
-  // they do not enter the obligation stream (the proof/derive zips would have
-  // no subproof for them).
-  llvm::erase_if(*requirements, [](ClaimType c) { return c.isEquality(); });
-
-  // Resolve projections in requirements using this impl's associated type
-  // bindings (e.g., `Coord[Tensor[Self]::Shape]` becomes `Coord[tuple<i64,i64>]`
-  // when the impl binds `Shape = S` and S is specialized to tuple<i64,i64>).
-  // Only projections over this impl's own (actual) trait application resolve
-  // through its bindings; a projection over a different trait application that
-  // merely shares an associated-type name stays symbolic.
-  NormalizationContext normalization;
-  normalization.addLocalProjectionRule(
-      *this, actualSelfClaim.getTraitApplication(), arguments);
-  SmallVector<ClaimType> obligations;
-  for (ClaimType requirement : *requirements) {
-    auto resolved = normalization.normalize(requirement, errFn);
-    if (failed(resolved))
-      return failure();
-    obligations.push_back(cast<ClaimType>(*resolved));
-  }
-  // obligations = requirements + the impl's application premises
-  for (ClaimType assumption : getAssumptionsAsClaims())
-    obligations.push_back(cast<ClaimType>(instantiate(Type(assumption), arguments)));
-  return obligations;
-}
-
-/// Whether every outermost projection `side` still spells is over one of
-/// `impl`'s where-clause applications at `arguments`, or a trait requirement
-/// one of them carries, each read through `evidence`: a projection whose
-/// evidence is the premise a citation of the impl supplies for that
-/// application, or the requirement that premise stands over.
-static bool projectionsStandOnPremises(Type side, ImplOp impl,
-                                       const SpecializationMap &arguments,
-                                       NormalizationContext &evidence) {
-  ModuleOp module = impl->getParentOfType<ModuleOp>();
-  SmallVector<TraitApplicationAttr> premises;
-  SmallVector<std::pair<ClaimType, unsigned>> pending;
-  for (TraitApplicationAttr app : impl.getAssumptions().getApplications())
-    pending.push_back(
-        {cast<ClaimType>(instantiate(Type(ClaimType::get(impl.getContext(), app)),
-                                     arguments)),
-         0});
-  while (!pending.empty()) {
-    auto [claim, depth] = pending.pop_back_val();
-    auto read = evidence.normalize(Type(claim), /*err=*/nullptr);
-    ClaimType premise = succeeded(read) ? cast<ClaimType>(*read) : claim;
-    if (llvm::is_contained(premises, premise.getTraitApplication()))
-      continue;
-    premises.push_back(premise.getTraitApplication());
-    if (depth == kInstantiationDepthLimit)
-      continue;
-    auto trait = premise.getTraitApplication().getTrait(module, /*err=*/nullptr);
-    if (failed(trait))
-      continue;
-    auto requirements =
-        trait->specializeRequirementsAsClaimsFor(premise, /*errFn=*/nullptr);
-    if (succeeded(requirements))
-      for (ClaimType requirement : *requirements)
-        if (requirement.isApplication())
-          pending.push_back({requirement, depth + 1});
-  }
-  bool standing = true;
-  AttrTypeWalker walker;
-  walker.addWalk([&](ProjectionType projection) {
-    if (!llvm::is_contained(premises, projection.getTraitApplication()))
-      standing = false;
-    return WalkResult::skip();
-  });
-  walker.walk<WalkOrder::PreOrder>(side);
-  return standing;
-}
-
-LogicalResult mlir::trait::verifyEqualityPremisesHoldAt(
-    ImplOp impl, ClaimType cited, const SpecializationMap &arguments,
-    NormalizationContext evidence, OpenPremise openPremise,
-    StandingPremise standingPremise,
-    llvm::function_ref<InFlightDiagnostic()> err) {
-  SmallVector<TypeEqualityAttr> equalities =
-      impl.getAssumptions().getEqualities();
-  if (equalities.empty())
-    return success();
-
-  evidence.addLocalProjectionRule(impl, cited.getTraitApplication(), arguments);
-  for (TypeEqualityAttr equality : equalities) {
-    auto reduce = [&](Type side) -> FailureOr<Type> {
-      return evidence.normalize(instantiate(side, arguments), err);
-    };
-    FailureOr<Type> lhs = reduce(equality.getLhs());
-    if (failed(lhs))
-      return failure();
-    FailureOr<Type> rhs = reduce(equality.getRhs());
-    if (failed(rhs))
-      return failure();
-    if (premiseDefersToInstances(*lhs, *rhs)) {
-      if (openPremise == OpenPremise::DecidedAtInstances)
-        continue;
-      if (err) err() << "a proof states its impl's premises at its own claim; "
-                        "one the claim leaves open is stated at the instance "
-                        "instead: "
-                     << equality.getLhs() << " = " << equality.getRhs()
-                     << " reads " << *lhs << " = " << *rhs << " at " << cited;
-      return failure();
-    }
-    // Sides read as one type hold, whatever they spell.
-    if (*lhs == *rhs)
-      continue;
-    // A side still spelling a projection after the reading is one this citation
-    // cannot decide. The impls the reading saw bind that projection for nobody
-    // or for two candidates at once; what it denotes is decided by the impl
-    // selection chose for its application, which a reader holding no record may
-    // not consult. So the premise is neither true nor false here, and
-    // `standingPremise` says where it is decided.
-    if (spellsAProjection(*lhs) || spellsAProjection(*rhs)) {
-      if (standingPremise == StandingPremise::DecidedAtStageExit ||
-          (projectionsStandOnPremises(*lhs, impl, arguments, evidence) &&
-           projectionsStandOnPremises(*rhs, impl, arguments, evidence)))
-        continue;
-      if (err) err() << "impl '@" << impl.getSymName() << "' applies where "
-                     << equality.getLhs() << " = " << equality.getRhs()
-                     << ", and nothing here settles " << *lhs << " = " << *rhs
-                     << " at " << cited;
-      return failure();
-    }
-    if (*lhs != *rhs) {
-      if (err) err() << "impl '@" << impl.getSymName() << "' applies where "
-                     << equality.getLhs() << " = " << equality.getRhs()
-                     << ", and nothing here makes " << *lhs << " and " << *rhs
-                     << " one type at " << cited;
-      return failure();
-    }
-  }
-  return success();
-}
-
-/// Reads `impl`'s equality premises at `cited`, through `evidence` and then the
-/// impls `module` holds under `origin`.
-///
-/// The arguments `cited` supplies for the impl's parameters are read through the
-/// same context the premises are, so a parameter the header leaves open and the
-/// where clause determines is read once, the way it is read.
-static LogicalResult verifyEqualityPremisesOfImplAt(
-    ImplOp impl, ClaimType cited, NormalizationContext evidence,
-    ModuleOp module, DemandOrigin origin, OpenPremise openPremise,
-    llvm::function_ref<InFlightDiagnostic()> err) {
-  evidence.setModuleLookup(module, LookupScope::Ground, origin);
-  auto throughEvidence = [&](Type ty) -> FailureOr<Type> {
-    return evidence.normalize(ty, err);
-  };
-  auto arguments = impl.buildSubstitutionForSelfClaim(cited, throughEvidence, err);
-  if (failed(arguments))
-    return failure();
-
-  return verifyEqualityPremisesHoldAt(impl, cited, *arguments, evidence,
-                                      openPremise,
-                                      StandingPremise::DecidedAtStageExit, err);
-}
-
-LogicalResult ImplOp::verifyEqualityPremisesAt(
-    ClaimType cited, DemandOrigin origin,
-    llvm::function_ref<InFlightDiagnostic()> err) {
-  if (!getAssumptions().hasEqualities())
-    return success();
-
-  auto module = getModule(err);
-  if (failed(module))
-    return failure();
-
-  // A citation naming an impl carries no subproofs, so the impls the module
-  // holds are the whole of what a premise endpoint reads through.
-  return verifyEqualityPremisesOfImplAt(*this, cited, NormalizationContext(),
-                                        *module, origin,
-                                        OpenPremise::DecidedAtInstances, err);
-}
-
 //===----------------------------------------------------------------------===//
 // ProofOp
 //===----------------------------------------------------------------------===//
-
-LogicalResult ProofOp::verifyEqualityPremisesAt(
-    ClaimType cited, DemandOrigin origin, OpenPremise openPremise,
-    llvm::function_ref<InFlightDiagnostic()> err) {
-  ImplOp implOp = getImpl();
-  if (!implOp) {
-    if (err) err() << "cannot find impl '" << getImplNameAttr() << "'";
-    return failure();
-  }
-  if (!implOp.getAssumptions().hasEqualities())
-    return success();
-
-  auto module = (*this)->getParentOfType<ModuleOp>();
-  if (!module) {
-    if (err) err() << "not inside a module";
-    return failure();
-  }
-
-  return verifyEqualityPremisesOfImplAt(
-      implOp, cited, buildSubproofNormalizationContext(*this, cited, module),
-      module, origin, openPremise, err);
-}
 
 LogicalResult ProofOp::verify() {
   if (failed(verifyTemplateIsNotPublic(getOperation())))
     return failure();
 
-  // Every entry names a symbol, or is `unit` where a requirement or premise is
-  // decided without one; which entries those are is read against the impl
-  // where its symbols are verified.
-  for (Attribute name : getSubproofNames())
-    if (!isa<FlatSymbolRefAttr, UnitAttr>(name))
-      return emitOpError() << "'subproof_names' must contain only symbols and unit";
+  // A proof is closed and returns the one claim it proves: the claim a derive
+  // in its body derives, which is the decision the proof records.
+  Block &body = getBody().front();
+  if (body.getNumArguments() != 0)
+    return emitOpError() << "takes no block arguments: a proof is closed";
+  auto returned = body.empty() ? ReturnOp() : dyn_cast<ReturnOp>(body.back());
+  if (!returned)
+    return emitOpError() << "must end with 'trait.return' of the claim it proves";
+  if (returned.getNumOperands() != 1 ||
+      !returned.getOperand(0).getDefiningOp<DeriveOp>())
+    return emitOpError() << "returns the one claim a derive in its body derives";
   return success();
 }
 
-FailureOr<SpecializationMap> ProofOp::getImplArgumentsAt(
-    ClaimType at, llvm::function_ref<InFlightDiagnostic()> err) {
-  ImplOp impl = getImpl();
-  if (!impl) {
-    if (err) err() << "cannot find impl '" << getImplNameAttr() << "'";
-    return failure();
-  }
-  SmallVector<TypeBindingAttr> bindings;
-  for (Attribute binding : getArgumentsAttr())
-    bindings.push_back(cast<TypeBindingAttr>(binding));
-  auto stated = impl.substitutionFor(bindings, err);
-  if (failed(stated))
-    return failure();
-
-  // The stated arguments spell this proof's own variables; the claim it is
-  // carried to is an instance of its own claim, which supplies them.
-  Type own = Type(getProvenClaim().asUnproven());
-  auto instance = matchDeclaration(getTypeParametersIn(own), own,
-                                   Type(at.asUnproven()), Normalizer(), err);
-  if (failed(instance))
-    return failure();
-  SpecializationMap atInstance;
-  for (GenericTypeInterface parameter : impl.getTypeParams())
-    atInstance.bind(parameter, instance->apply(*stated->lookup(parameter)));
-  return atInstance;
-}
-
-/// Re-verifies `impl`'s projection-resolution witnesses at `arguments`, the
-/// substitution a proof's claim makes for the impl's parameters. The impl
-/// verified each witness at its own parameters, where a premise of the cited
-/// impl that still spelled a type variable was left to the instances; the claim
-/// a proof stands over is such an instance, and each witness, rebuilt there,
-/// must hold -- its obligations covered by the impl's where clause at that
-/// claim, which the proof's subproofs discharge, or by its discharge citations.
-///
-/// XXX TODO: deleted when a citation carries the evidence for its cited impl's
-/// where-equalities by index (an application's premises admitting equalities,
-/// the evidence-terms plan's C7), so the impl's own verification decides every
-/// premise locally.
-static LogicalResult verifyDeclaredWitnessesAt(
-    ImplOp impl, const SpecializationMap &arguments, ModuleOp module,
-    llvm::function_ref<InFlightDiagnostic()> err) {
-  ArrayAttr declared = impl.getWitnessesAttr();
-  if (!declared)
-    return success();
-  MLIRContext *ctx = impl.getContext();
-  auto atClaim = [&](Type t) { return instantiate(t, arguments); };
-  SmallVector<TraitApplicationAttr> obligationPremises;
-  for (TraitApplicationAttr app : impl.getAssumptions().getApplications())
-    obligationPremises.push_back(
-        cast<ClaimType>(atClaim(Type(ClaimType::get(ctx, app))))
-            .getTraitApplication());
-  SmallVector<WitnessAttr> dischargeWitnesses;
-  for (auto witness : declared.getAsRange<WitnessAttr>())
-    if (isa<TraitApplicationAttr>(witness.getPredicate()))
-      dischargeWitnesses.push_back(WitnessAttr::get(
-          ctx,
-          Attribute(cast<ClaimType>(atClaim(Type(ClaimType::get(
-                                        ctx, witness.getApplication()))))
-                        .getTraitApplication()),
-          witness.getImplRef(), {}));
-  for (auto witness : declared.getAsRange<WitnessAttr>()) {
-    if (!isa<TypeEqualityAttr>(witness.getPredicate()))
-      continue;
-    auto rebuilt = respellWitness(witness, atClaim);
-    if (!rebuilt) {
-      if (err) err() << "the declaration witness of "
-                     << witness.getProjection() << " = "
-                     << witness.getResolved()
-                     << " does not construct at this proof's claim";
-      return failure();
-    }
-    if (failed(verifyProjectionResolutionAtImpl(
-            module, cast<WitnessAttr>(rebuilt->first), /*premises=*/{},
-            obligationPremises, dischargeWitnesses, err)))
-      return failure();
-  }
-  return success();
-}
-
-LogicalResult ProofOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  // Verification writes nothing, so every name read under it resolves through
-  // the symbol tables the walk this is one step of has already built.
-  SymbolLookupScope symbolAnswers(getOperation(), symbolTable);
-
-  auto module = (*this)->getParentOfType<ModuleOp>();
-  auto errFn = [&] { return emitOpError(); };
-
-  // The proven claim is synthesized from the inherent trait_application
-  // attribute, so it is not a type on this op's surface and the module-wide
-  // type walk never verifies it. Verify the trait application here.
-  if (failed(getTraitApplication().verifySymbolUses(getOperation(), symbolTable)))
-    return failure();
-
-  // check that the named impl exists
-  auto implOp = getImpl();
-  if (!implOp)
-    return emitOpError() << "cannot find impl '" << getImplNameAttr() << "'";
-
-  // The evidence this proof holds: the proofs discharging the impl's own
-  // obligations, by index, and the trees standing under them. The proof's own
-  // rule is not among them -- nothing here is justified by what it is checking.
-  // It is gathered on the first reading that meets a projection: a spelling
-  // that has none is rebuilt by substitution alone.
-  std::optional<NormalizationContext> subproofEvidence;
-  auto evidence = [&]() -> NormalizationContext & {
-    if (!subproofEvidence)
-      subproofEvidence =
-          buildSubproofNormalizationContext(*this, getProvenClaim(), module);
-    return *subproofEvidence;
-  };
-
-  // The impl's header at the arguments this proof states must be the claim it
-  // stands over. A header spelling a projection (`impl<T> Index<T::Shape,
-  // T::Element> for T`) is read at them through that evidence and then the
-  // impls the module holds, which is what carries it to a claim spelling the
-  // resolution.
-  auto arguments = getImplArgumentsAt(getProvenClaim(), errFn);
-  if (failed(arguments))
-    return failure();
-  TraitApplicationAttr header = implOp.getSelfApplicationAt(*arguments);
-  bool carries = header == getTraitApplication();
-  if (spellsAProjection(Type(implOp.getSelfClaim()))) {
-    NormalizationContext reading = evidence();
-    reading.setModuleLookup(module, LookupScope::Ground,
-                            DemandOrigin::ProofVerification);
-    // A reading with no normal form is refused where it is read.
-    auto read = [&](Type ty) {
-      return reading.normalize(stripClaimProofs(ty), errFn);
-    };
-    FailureOr<Type> rebuilt = read(instantiate(Type(implOp.getSelfClaim()), *arguments));
-    FailureOr<Type> wanted = read(Type(getProvenClaim()));
-    if (failed(rebuilt) || failed(wanted))
-      return failure();
-    carries = *rebuilt == *wanted;
-  }
-  if (!carries)
-    return emitOpError() << "impl '" << getImplNameAttr()
-                         << "' at its stated arguments is an impl of " << header
-                         << ", not of " << getTraitApplication();
-
-  // The impl's equality premises stand over this claim, and this claim is where
-  // they are decided: a citation of this proof reads nothing inside it, so a
-  // premise this claim leaves open is one no later reading decides.
-  if (failed(verifyEqualityPremisesAt(getProvenClaim(),
-                                      DemandOrigin::ProofVerification,
-                                      OpenPremise::RefusedHere, errFn)))
-    return failure();
-
-  if (failed(verifyDeclaredWitnessesAt(implOp, *arguments, module, errFn)))
-    return failure();
-
-  // One entry in the given list per obligation the impl states at this claim,
-  // each naming evidence that discharges the obligation at its index. What that
-  // evidence proves underneath is the business of its own verifier: a citation
-  // is read at the top level and no deeper.
-  auto subproofs = verifyAndGetSubproofClaims(getProvenClaim(), errFn);
-  if (failed(subproofs))
-    return failure();
-
-  // A citation is read through the evidence above and not through the impls
-  // standing around this proof. A projection an obligation spells over one of
-  // the impl's where-clause or trait-requirement applications reduces through
-  // the subproof at that application's index. One over an application no
-  // subproof discharges -- one an impl proves, not this proof -- is left
-  // standing, and the citation is declined for the stage to decide through what
-  // selection settles.
-  auto throughSubproofs = [&](Type ty) -> FailureOr<Type> {
-    if (!spellsAProjection(ty))
-      return ty;
-    return evidence().normalize(ty, /*err=*/nullptr);
-  };
-  for (ClaimType subproof : *subproofs)
-    // A citation nothing standing now decides leaves its obligation unproven,
-    // which impl selection derives and the leftover walk refuses.
-    if (verifyCitation(subproof.asUnproven(), subproof, module,
-                       DemandOrigin::ProofVerification, throughSubproofs,
-                       errFn) == Citation::Refused)
-      return failure();
-
-  return success();
+DeriveOp ProofOp::getDerive() {
+  return getBody().front().getTerminator()->getOperand(0).getDefiningOp<DeriveOp>();
 }
 
 TraitOp ProofOp::getTrait() {
@@ -2392,78 +1935,45 @@ TraitOp ProofOp::getTrait() {
   return getTraitApplication().getTraitOrAbort(module, "ProofOp::getTrait: couldn't find trait");
 }
 
-FailureOr<SmallVector<ClaimType>> ProofOp::verifyAndGetSubproofClaims(
+/// The substitution carrying this proof's own claim to `at`, a claim the proof
+/// is cited for: identity for a proof written at its one application, and the
+/// instance otherwise.
+static FailureOr<SpecializationMap> instanceOfProofAt(
+    ProofOp proof, ClaimType at, llvm::function_ref<InFlightDiagnostic()> err) {
+  Type own = Type(proof.getProvenClaim().asUnproven());
+  return matchDeclaration(getTypeParametersIn(own), own, Type(at.asUnproven()),
+                          Normalizer(), err);
+}
+
+FailureOr<SmallVector<ClaimType>> ProofOp::getPremisesAt(
     ClaimType at, llvm::function_ref<InFlightDiagnostic()> err) {
-  SmallVector<ClaimType> result;
+  auto instance = instanceOfProofAt(*this, at, err);
+  if (failed(instance))
+    return failure();
+  return llvm::map_to_vector(getDerive().getAssumptions(), [&](Value premise) {
+    return cast<ClaimType>(instantiate(premise.getType(), *instance));
+  });
+}
 
-  ModuleOp module = (*this)->getParentOfType<ModuleOp>();
-  if (!module) {
-    if (err) err() << "not in a module";
+FailureOr<SpecializationMap> ProofOp::getImplArgumentsAt(
+    ClaimType at, llvm::function_ref<InFlightDiagnostic()> err) {
+  DeriveOp derive = getDerive();
+  ImplOp impl = derive.getImplOp();
+  if (!impl) {
+    if (err) err() << "cannot find impl '" << derive.getImplAttr() << "'";
     return failure();
   }
-
-  auto implOp = getImpl();
-  if (!implOp) {
-    if (err) err() << "cannot find impl '" << getImplNameAttr() << "'";
+  auto stated = impl.readCitationArguments(
+      derive.getDerivedClaim(), derive.getAssumptions().getTypes(), err);
+  if (failed(stated))
     return failure();
-  }
-
-  // The obligations at the application this proof is being carried to, at the
-  // arguments it states carried there.
-  auto arguments = getImplArgumentsAt(at, err);
-  if (failed(arguments))
+  auto instance = instanceOfProofAt(*this, at, err);
+  if (failed(instance))
     return failure();
-  auto obligations = implOp.specializeObligationsAt(at, *arguments, err);
-  if (failed(obligations)) return failure();
-
-  // The given list holds one entry per requirement and where-clause entry and
-  // cites a symbol exactly at the application entries, which are the
-  // obligations in order.
-  SmallVector<Attribute> entries(implOp.getTrait().getRequirements().begin(),
-                                 implOp.getTrait().getRequirements().end());
-  llvm::append_range(entries, implOp.getAssumptions());
-  ArrayAttr given = getSubproofNames();
-  if (given.size() != entries.size()) {
-    if (err) err() << "arity mismatch: impl '" << getImplNameAttr()
-                   << "' and its trait state " << entries.size()
-                   << " requirements and where-clause entries, but found "
-                   << given.size() << " given entries";
-    return failure();
-  }
-  SmallVector<FlatSymbolRefAttr> citations;
-  for (auto [position, pair] : llvm::enumerate(llvm::zip(entries, given))) {
-    auto [entry, name] = pair;
-    bool application = isa<TraitApplicationAttr>(entry);
-    if (application != isa<FlatSymbolRefAttr>(name)) {
-      if (err) err() << "given entry " << position << " is " << name
-                     << ", and entry " << position << " is "
-                     << (application ? "an application a symbol discharges"
-                                     : "decided without a symbol, so its "
-                                       "given entry is unit");
-      return failure();
-    }
-    if (application)
-      citations.push_back(cast<FlatSymbolRefAttr>(name));
-  }
-  assert(citations.size() == obligations->size() &&
-         "the obligations are the application entries in order");
-
-  for (auto [obligation, subproofRef] : llvm::zip(*obligations, citations)) {
-    // A coinductive self-citation needs no arm of its own: looking the name up
-    // finds this proof, and whether its claim discharges the obligation is the
-    // same comparison every other citation answers.
-    if (failed(getProofOpOrUnconditionalImplOp(module, subproofRef, err)))
-      return failure();
-
-    // A subproof's claim is the obligation it discharges, spelled at `at`,
-    // carrying the cited symbol: evidence built from the obligation by
-    // position.
-    result.push_back(ClaimType::get(getContext(),
-                                    obligation.getTraitApplication(),
-                                    subproofRef));
-  }
-
-  return result;
+  SpecializationMap atInstance;
+  for (GenericTypeInterface parameter : impl.getTypeParams())
+    atInstance.bind(parameter, instance->apply(*stated->lookup(parameter)));
+  return atInstance;
 }
 
 /// Look up a proof symbol and return the raw Operation* (ProofOp or ImplOp).
@@ -2520,53 +2030,6 @@ FailureOr<Operation*> ProofOp::getProofOpOrUnconditionalImplOp(
   return *symOp;
 }
 
-bool ProofOp::sameEvidence(ModuleOp module, FlatSymbolRefAttr a,
-                           FlatSymbolRefAttr b) {
-  // A proof may cite itself, directly or around a cycle, so two proofs are
-  // compared coinductively: a pair already under comparison is assumed to
-  // name one evidence, and the answer is no only where some path through the
-  // two reaches a difference.
-  llvm::DenseSet<std::pair<Attribute, Attribute>> assumed;
-  SmallVector<std::pair<FlatSymbolRefAttr, FlatSymbolRefAttr>> pending{{a, b}};
-  while (!pending.empty()) {
-    auto [x, y] = pending.pop_back_val();
-    if (x == y || !assumed.insert({x, y}).second)
-      continue;
-    auto citedX = getProofOpOrUnconditionalImplOp(module, x);
-    auto citedY = getProofOpOrUnconditionalImplOp(module, y);
-    if (failed(citedX) || failed(citedY))
-      return false;
-    auto proofX = dyn_cast<ProofOp>(*citedX);
-    auto proofY = dyn_cast<ProofOp>(*citedY);
-    if (!proofX || !proofY) {
-      if (*citedX != *citedY)
-        return false;
-      continue;
-    }
-    if (proofX.getImplNameAttr() != proofY.getImplNameAttr() ||
-        proofX.getArguments() != proofY.getArguments())
-      return false;
-    ArrayRef<Attribute> givenX = proofX.getSubproofNames().getValue();
-    ArrayRef<Attribute> givenY = proofY.getSubproofNames().getValue();
-    if (givenX.size() != givenY.size())
-      return false;
-    // A bound requirement's entry is unit in every proof; an application's is
-    // the subproof discharging it.
-    for (auto [entryX, entryY] : llvm::zip(givenX, givenY)) {
-      auto subproofX = dyn_cast<FlatSymbolRefAttr>(entryX);
-      auto subproofY = dyn_cast<FlatSymbolRefAttr>(entryY);
-      if (!subproofX || !subproofY) {
-        if (entryX != entryY)
-          return false;
-        continue;
-      }
-      pending.push_back({subproofX, subproofY});
-    }
-  }
-  return true;
-}
-
-
 //===----------------------------------------------------------------------===//
 // WitnessOp
 //===----------------------------------------------------------------------===//
@@ -2619,36 +2082,36 @@ ParseResult WitnessOp::parse(OpAsmParser &p, OperationState& result) {
   };
 
   // Equality proj-resolve arm: `proj_resolve !projection resolves !resolved
-  // by @impl[!P = T, ...] [given(%premises...) : (types...)] : <result-type>`.
+  // by @impl [given(%premises...) : (types...)] : <result-type>`. The
+  // projection and the resolved type are the result equality's two sides,
+  // spelled ahead of the citation for the reader and stored once, in the
+  // result type.
   if (succeeded(p.parseOptionalKeyword("proj_resolve"))) {
     Type projection, resolved;
     FlatSymbolRefAttr citedImpl;
-    SmallVector<TypeBindingAttr> arguments;
     if (p.parseType(projection) || p.parseKeyword("resolves") ||
         p.parseType(resolved) || p.parseKeyword("by") ||
-        p.parseAttribute(citedImpl) ||
-        failed(parseImplArguments(p, arguments)))
+        p.parseAttribute(citedImpl))
       return failure();
-    auto err = [&] { return p.emitError(p.getCurrentLocation()); };
-    auto equality = TypeEqualityAttr::getChecked(err, ctx, projection, resolved);
-    if (!equality)
-      return failure();
-    auto witness = WitnessAttr::getChecked(err, ctx, Attribute(equality),
-                                           citedImpl,
-                                           ArrayRef<TypeBindingAttr>(arguments));
-    if (!witness)
-      return failure();
-    result.addAttribute("witness", witness);
-
+    result.addAttribute(getImplAttrName(result.name), citedImpl);
     if (succeeded(p.parseOptionalKeyword("given")) && parsePremises())
       return failure();
-
-    return parseResultType();
+    SMLoc resultLoc = p.getCurrentLocation();
+    if (parseResultType())
+      return failure();
+    auto claim = dyn_cast<ClaimType>(result.types.front());
+    TypeEqualityAttr equality = claim ? claim.getEqualityAttr() : TypeEqualityAttr();
+    if (!equality || equality.getLhs() != projection ||
+        equality.getRhs() != resolved)
+      return p.emitError(resultLoc)
+             << "expected the equality claim " << projection << " = "
+             << resolved;
+    return success();
   }
 
   // Equality refl arm: `refl : <result-type>`.
   if (succeeded(p.parseOptionalKeyword("refl"))) {
-    result.addAttribute("refl", UnitAttr::get(ctx));
+    result.addAttribute(getReflAttrName(result.name), UnitAttr::get(ctx));
     return parseResultType();
   }
 
@@ -2679,11 +2142,10 @@ ParseResult WitnessOp::parse(OpAsmParser &p, OperationState& result) {
 }
 
 void WitnessOp::print(OpAsmPrinter &p) {
-  if (auto witness = getWitnessAttr()) {
-    p << " proj_resolve " << witness.getProjection() << " resolves "
-      << witness.getResolved() << " by " << witness.getImplRef();
-    if (!witness.getArguments().empty())
-      printImplArguments(p, witness.getArguments());
+  if (isProjectionResolution()) {
+    TypeEqualityAttr equality = getResultClaim().getEqualityAttr();
+    p << " proj_resolve " << equality.getLhs() << " resolves "
+      << equality.getRhs() << " by " << getImplAttr();
     if (!getPremises().empty()) {
       p << " given";
       printTypedOperandList(p, getPremises());
@@ -2697,7 +2159,7 @@ void WitnessOp::print(OpAsmPrinter &p) {
     return;
   }
 
-  // Composition arm: an equality result with neither a witness nor a refl
+  // Composition arm: an equality result with neither an impl nor a refl
   // marker. Print the premises with their types and the spelled result equality.
   if (getResultClaim().isEquality()) {
     p << " compose";
@@ -2711,27 +2173,27 @@ void WitnessOp::print(OpAsmPrinter &p) {
   getResultClaim().getTraitApplication().print(p);
 
   p.printOptionalAttrDictWithKeyword((*this)->getAttrs(),
-                                     /*elidedAttrs=*/{"witness", "refl"});
+                                     /*elidedAttrs=*/{"impl", "refl"});
 }
 
 // The op's attributes must match the result claim's arm exactly. For the
 // application arm the result claim names the proof it cites. For the equality
-// arm, the result's equality must be the witness's own (proj-resolve), have
-// identical endpoints (refl), or be entailed by the premises' ground congruence
-// closure (compose).
+// arm, the result's left side is the projection a cited impl resolves
+// (proj-resolve), its endpoints are identical (refl), or the premises' ground
+// congruence closure entails it (compose).
 LogicalResult WitnessOp::verify() {
   ClaimType result = dyn_cast<ClaimType>(getResult().getType());
   if (!result)
     return emitOpError() << "result must be a !trait.claim";
 
-  bool hasWitness = static_cast<bool>(getWitnessAttr());
+  bool resolves = isProjectionResolution();
   bool hasRefl = getRefl();
 
   // Equality arm.
   if (result.isEquality()) {
-    if (hasWitness && hasRefl)
+    if (resolves && hasRefl)
       return emitOpError() << "an equality witness carries at most one of a "
-                              "proj-resolve leaf or a refl marker";
+                              "cited impl or a refl marker";
     TypeEqualityAttr eq = result.getEqualityAttr();
 
     if (hasRefl) {
@@ -2743,22 +2205,12 @@ LogicalResult WitnessOp::verify() {
       return success();
     }
 
-    if (hasWitness) {
-      // proj-resolve: the result is the witness's own equality. A clone
-      // rebuilds the witness and respells the claim under one substitution
-      // (`respellWitness`, `respellEqualityEndpoints`), so the two never part.
-      WitnessAttr witness = getWitnessAttr();
-      // The witness slot carries a proj-resolve leaf, so its predicate is an
-      // equality; a coerce discharge's application-headed witness has no place
-      // here. Guard before reading the endpoints off the equality.
-      if (!isa<TypeEqualityAttr>(witness.getPredicate()))
-        return emitOpError() << "a proj-resolve witness must carry an "
-                                "equality";
-      if (witness.getEquality() != eq)
-        return emitOpError() << "result endpoints " << eq.getLhs() << " = "
-                             << eq.getRhs() << " are not the witness's "
-                             << witness.getProjection() << " = "
-                             << witness.getResolved();
+    // proj-resolve: the impl the witness cites resolves the projection its
+    // result's left side spells, which its symbol uses verify.
+    if (resolves) {
+      if (!isa<ProjectionType>(eq.getLhs()))
+        return emitOpError() << "a proj-resolve witness resolves a projection, "
+                             << "found " << eq.getLhs();
       return success();
     }
 
@@ -2801,38 +2253,125 @@ LogicalResult WitnessOp::verify() {
     return success();
   }
 
+
   // Application arm.
-  if (hasWitness || hasRefl || !getPremises().empty())
-    return emitOpError() << "an application witness carries neither a "
-                            "proj-resolve leaf, a refl marker, nor premises";
+  if (resolves || hasRefl || !getPremises().empty())
+    return emitOpError() << "an application witness carries neither a cited "
+                            "impl, a refl marker, nor premises";
   if (!result.isProven())
     return emitOpError() << "an application witness's claim " << result
                          << " names the proof it cites";
   return success();
 }
 
+/// Refuses `supplied` unless it holds one claim per entry of `expected`, each
+/// that entry, read modulo the evidence it names and, where `normalize` is
+/// given, through it. `owner` names what states the entries and `supplier` the
+/// op supplying them, as a refusal reads them.
+static LogicalResult verifyPremisesSuppliedByPosition(
+    ValueRange supplied, ArrayRef<ClaimType> expected, const Twine &owner,
+    StringRef supplier, Normalizer normalize,
+    llvm::function_ref<InFlightDiagnostic()> errFn) {
+  if (supplied.size() != expected.size())
+    return errFn() << owner << " states " << expected.size()
+                   << " premises, and the " << supplier << " supplies "
+                   << supplied.size();
+  for (auto [position, pair] : llvm::enumerate(llvm::zip(supplied, expected))) {
+    auto [operand, premise] = pair;
+    Type claim = stripClaimProofs(operand.getType());
+    if (claim == Type(premise))
+      continue;
+    if (normalize) {
+      FailureOr<Type> readClaim = normalize(claim);
+      FailureOr<Type> readPremise = normalize(Type(premise));
+      if (succeeded(readClaim) && succeeded(readPremise) &&
+          stripClaimProofs(*readClaim) == stripClaimProofs(*readPremise))
+        continue;
+    }
+    return errFn() << "premise " << position << " of " << owner << " is "
+                   << premise << ", and the " << supplier << " supplies "
+                   << claim;
+  }
+  return success();
+}
+
+/// Whether the citation `op` makes of `impl` -- a derive or a
+/// projection-resolution witness -- states the header the arguments `arguments`
+/// give it, `cited`, and supplies its where entries there, positionally. The
+/// header is compared as written, and where either spells a projection, through
+/// `normalize`, the evidence the citation holds.
+static LogicalResult verifyCitationOf(
+    ImplOp impl, ClaimType cited, const SpecializationMap &arguments,
+    ValueRange premises, Normalizer normalize, StringRef supplier,
+    llvm::function_ref<InFlightDiagnostic()> errFn) {
+  if (impl.getSelfApplicationAt(arguments) != cited.getTraitApplication() &&
+      ((!spellsAProjection(Type(impl.getSelfClaim())) &&
+        !spellsAProjection(Type(cited))) ||
+       failed(verifyEqualAfterInstantiation(Type(impl.getSelfClaim()),
+                                            arguments, Type(cited.asUnproven()),
+                                            normalize, /*err=*/nullptr))))
+    return errFn() << "impl '@" << impl.getSymName()
+                   << "' at the arguments the citation gives it proves "
+                   << ClaimType::get(cited.getContext(),
+                                     impl.getSelfApplicationAt(arguments))
+                   << ", not " << cited.asUnproven();
+  return verifyPremisesSuppliedByPosition(
+      premises, impl.getWhereClaimsAt(arguments),
+      "impl '@" + impl.getSymName() + "'", supplier, normalize, errFn);
+}
+
 LogicalResult WitnessOp::verifyResolution(ModuleOp module,
                                           const ReadOnlyImplResolver *settled) {
-  SmallVector<TypeEqualityAttr> equalityPremises;
-  SmallVector<TraitApplicationAttr> applicationPremises;
-  for (Value premise : getPremises())
-    if (auto claim = dyn_cast<ClaimType>(premise.getType())) {
-      if (auto eq = claim.getEqualityAttr())
-        equalityPremises.push_back(eq);
-      else if (claim.isApplication())
-        applicationPremises.push_back(claim.getTraitApplication());
+  auto errFn = [&] { return emitOpError(); };
+  TypeEqualityAttr equality = getResultClaim().getEqualityAttr();
+  auto projection = cast<ProjectionType>(equality.getLhs());
+  auto impl = lookupSymbolFrom<ImplOp>(module, getImplAttr());
+  if (!impl)
+    return errFn() << "cannot find trait.impl '" << getImplAttr()
+                   << "' cited by the witness";
+
+  // The impl's arguments are read off the projection's application and the
+  // premises, one per where entry, as a derive's are.
+  ClaimType cited = projection.asClaim();
+  auto arguments =
+      impl.readCitationArguments(cited, getPremises().getTypes(), errFn);
+  if (failed(arguments))
+    return failure();
+
+  // What a spelling here may be read through: the hypotheses of the scope the
+  // witness stands in, the evidence its premises carry -- an equality premise
+  // relating its two sides -- then, at the stage, what selection settled, and
+  // the impls the module holds. Gathered only where a spelling differs.
+  std::optional<NormalizationContext> evidence;
+  auto normalize = [&](Type ty) -> FailureOr<Type> {
+    if (!evidence) {
+      evidence = buildLocalClaimNormalizationContext(getOperation(),
+                                                     getPremises(), module);
+      if (settled)
+        evidence->setRecordedFacts(settled);
+      evidence->setModuleLookup(module, LookupScope::Determined,
+                                DemandOrigin::CitationVerification);
     }
-  auto siteEvidence = [&] {
-    NormalizationContext evidence =
-        buildLocalClaimNormalizationContext(getOperation(), getPremises(), module);
-    if (settled)
-      evidence.setRecordedFacts(settled);
-    return evidence;
+    return evidence->normalize(ty, /*err=*/nullptr);
   };
-  return verifyProjectionResolutionAtUse(module, getWitnessAttr(),
-                                         equalityPremises, applicationPremises,
-                                         siteEvidence,
-                                         [&] { return emitOpError(); });
+  if (failed(verifyCitationOf(impl, cited, *arguments, getPremises(),
+                              normalize, "witness", errFn)))
+    return failure();
+
+  auto bound = impl.specializeAssociatedTypeBinding(
+      projection.getAssocName().getValue(), projection.getAssocTypeArgs(),
+      *arguments, errFn);
+  if (failed(bound))
+    return failure();
+  if (*bound == equality.getRhs())
+    return success();
+  FailureOr<Type> readBound = normalize(*bound);
+  FailureOr<Type> readResolved = normalize(equality.getRhs());
+  if (failed(readBound) || failed(readResolved) || *readBound != *readResolved)
+    return errFn() << "impl '" << getImplAttr() << "' binds the projection to "
+                   << *bound << ", not the certified resolution "
+                   << equality.getRhs();
+  return success();
 }
 
 LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
@@ -2846,25 +2385,14 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
   auto errFn = [&] { return emitOpError(); };
 
-  // Equality proj-resolve arm: verify the citation where its symbol uses are
-  // checked. The cited impl, at the type arguments the witness carries, must
-  // bind the associated type the witness's projection names to its resolved
-  // type, its where-clause equalities must hold there, AND the witness's
-  // premises must discharge the cited impl's own assumptions. The premises split
-  // by arm: equality claims are the comparison modulus, application claims
-  // discharge the assumptions. The where-clause equalities are read through
-  // what this op may read any spelling through: the hypotheses of the scope it
-  // stands in and the evidence its premises carry.
-  if (getWitnessAttr())
+  // Equality proj-resolve arm: the cited impl, at the arguments the
+  // projection's application and the premises give it, binds the projection
+  // as stated.
+  if (isProjectionResolution())
     return verifyResolution(module, /*settled=*/nullptr);
 
-  // Refl arm: nothing to verify here.
-  if (getRefl())
-    return success();
-
-  // Composition arm: an equality result with neither a witness nor a refl
-  // marker cites nothing by symbol -- its premises are SSA values -- so there is
-  // no citation to verify here.
+  // Refl and composition arms cite nothing by symbol: their evidence is the
+  // spelling, or the premises, which are SSA values.
   if (getResultClaim().isEquality())
     return success();
 
@@ -2883,46 +2411,25 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // evidence the witnessed claim names -- the proof tree it carries, by index
   // -- and then through the impls the module holds.
   NormalizationContext reading;
-  if (spellsAProjection(Type(impl.getSelfClaim())) ||
-      impl.getAssumptions().hasEqualities())
+  if (spellsAProjection(Type(impl.getSelfClaim())))
     reading = buildProofNormalizationContext(getProvenClaim(), module);
   reading.setModuleLookup(module, LookupScope::Ground,
-                          DemandOrigin::ProofVerification);
+                          DemandOrigin::CitationVerification);
   auto throughEvidence = [&](Type ty) -> FailureOr<Type> {
     return reading.normalize(ty, errFn);
   };
-  // A witness carries the claim the evidence it names stands over. A proof
-  // stands over one claim and its parameters take the arguments a use supplies,
-  // so the proof's claim is the declaration and this one is the use -- the
-  // comparison every citation of a proof is read by. Reading the impl's header
-  // alone would accept a witness for an application the proof does not prove,
-  // because a blanket impl's header carries to every application of its trait.
-  if (proof) {
-    auto citationErr = [&] {
-      return errFn() << "the proof " << getProof()
-                     << " this witness cites stands over another claim: ";
-    };
-    Type proofClaim = Type(proof.getProvenClaim());
-    if (failed(matchDeclaration(getTypeParametersIn(proofClaim), proofClaim,
-                                Type(getProvenClaim()), throughEvidence,
-                                citationErr)))
-      return failure();
-  }
-
-  auto subst = impl.buildSubstitutionForSelfClaim(getProvenClaim(),
-                                                  throughEvidence, errFn);
-  if (failed(subst))
-    return failure();
-
-  // A proof states its impl's equality premises at the claim it stands over,
-  // and one that claim leaves open is refused there, so a witness of a proof
-  // reads none. An impl named directly stands over no claim of its own, and it
-  // takes no subproof, so its premises are read here or nowhere.
-  if (proof)
-    return success();
-  return verifyEqualityPremisesHoldAt(impl, getProvenClaim(), *subst, reading,
-                                      OpenPremise::DecidedAtInstances,
-                                      StandingPremise::DecidedAtStageExit, errFn);
+  // A witness carries the claim the evidence it names stands over: the claim
+  // a proof derives, whose parameters take the arguments a use supplies, or an
+  // unconditional impl's header -- the comparison every citation is read by
+  // (`verifyCitation`). Reading the impl's header alone would accept a witness
+  // for an application the proof does not prove, because a blanket impl's
+  // header carries to every application of its trait. A spelling the evidence
+  // here leaves a projection in is one only selection's settlement decides,
+  // and is left to the stage.
+  ClaimType claim = getProvenClaim();
+  return success(verifyCitation(claim.asUnproven(), claim, module,
+                                DemandOrigin::CitationVerification,
+                                throughEvidence, errFn) != Citation::Refused);
 }
 
 
@@ -2937,31 +2444,12 @@ ImplOp DeriveOp::getImplOp() {
   return lookupSymbolFrom<ImplOp>(module, getImplAttr());
 }
 
-/// Refuses `supplied` unless it holds one claim per entry of `expected`, each
-/// that entry, read modulo the evidence it names. `owner` names what states the
-/// entries and `supplier` the op supplying them, as a refusal reads them.
-static LogicalResult verifyPremisesSuppliedByPosition(
-    ValueRange supplied, ArrayRef<ClaimType> expected, const Twine &owner,
-    StringRef supplier, llvm::function_ref<InFlightDiagnostic()> errFn) {
-  if (supplied.size() != expected.size())
-    return errFn() << owner << " states " << expected.size()
-                   << " premises, and the " << supplier << " supplies "
-                   << supplied.size();
-  for (auto [position, pair] : llvm::enumerate(llvm::zip(supplied, expected))) {
-    auto [operand, premise] = pair;
-    ClaimType claim = cast<ClaimType>(operand.getType()).asUnproven();
-    if (claim != premise)
-      return errFn() << "premise " << position << " of " << owner << " is "
-                     << premise << ", and the " << supplier << " supplies "
-                     << claim;
-  }
-  return success();
-}
-
-/// Verifies a derive: the derived application is the impl's header at the
-/// arguments the derive states, and each operand's claim is the impl's
-/// where-clause entry at them, in order. A substitution decides both, so no
-/// spelling is read through anything.
+/// Verifies a derive: the impl's arguments are read off the derived
+/// application and the operands, the derived application is the impl's header
+/// at them, and each operand's claim is the impl's where-clause entry at them,
+/// in order. A header spelling a projection reaches a derived application
+/// spelling its resolution through the evidence the operands carry and then
+/// the impls the module holds.
 LogicalResult DeriveOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // Verification writes nothing, so every name read under it resolves through
   // the symbol tables the walk this is one step of has already built.
@@ -2971,21 +2459,25 @@ LogicalResult DeriveOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   ImplOp impl = getImplOp();
   if (!impl)
     return errFn() << "cannot find trait.impl '" << getImplAttr() << "'";
-  auto arguments = impl.substitutionFor(getImplArguments(), errFn);
+  auto arguments = impl.readCitationArguments(
+      getDerivedClaim(), getAssumptions().getTypes(), errFn);
   if (failed(arguments))
     return failure();
 
-  TraitApplicationAttr header = impl.getSelfApplicationAt(*arguments);
-  if (header != getTraitApplication())
-    return errFn() << "impl '" << getImplAttr() << "' at its stated "
-                   << "arguments is an impl of " << header << ", not of "
-                   << getTraitApplication();
-
-  return verifyPremisesSuppliedByPosition(
-      getAssumptions(), impl.getWhereClauseAt(*arguments),
-      "impl '@" + getImpl() + "'", "derive", errFn);
+  ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
+  std::optional<NormalizationContext> evidence;
+  auto normalize = [&](Type ty) -> FailureOr<Type> {
+    if (!evidence) {
+      evidence = buildLocalClaimNormalizationContext(getOperation(),
+                                                     getAssumptions(), module);
+      evidence->setModuleLookup(module, LookupScope::Determined,
+                                DemandOrigin::CitationVerification);
+    }
+    return evidence->normalize(ty, /*err=*/nullptr);
+  };
+  return verifyCitationOf(impl, getDerivedClaim(), *arguments, getAssumptions(),
+                          normalize, "derive", errFn);
 }
-
 
 //===----------------------------------------------------------------------===//
 // MethodOp
@@ -3024,116 +2516,30 @@ LogicalResult MethodOp::verify() {
 //===----------------------------------------------------------------------===//
 
 LogicalResult ReturnOp::verify() {
-  auto method = cast<MethodOp>((*this)->getParentOp());
-  ArrayRef<Type> results = method.getResultTypes();
-  if (getNumOperands() != results.size())
-    return emitOpError() << "has " << getNumOperands()
-                         << " operands, but enclosing method (@"
-                         << method.getName() << ") returns " << results.size();
-  for (auto [index, operand, result] :
-       llvm::enumerate(getOperandTypes(), results))
-    if (operand != result)
-      return emitOpError() << "type of return operand " << index << " ("
-                           << operand << ") doesn't match method result type ("
-                           << result << ") in method @" << method.getName();
-  return success();
-}
-
-
-//===----------------------------------------------------------------------===//
-// AssumeOp
-//===----------------------------------------------------------------------===//
-
-ParseResult AssumeOp::parse(OpAsmParser &p, OperationState &st) {
-  // `self` or an entry index, then the claim the entry states as the result
-  // type.
-  if (succeeded(p.parseOptionalKeyword("self"))) {
-    st.addAttribute("entry", p.getBuilder().getUnitAttr());
-  } else {
-    uint64_t position;
-    if (p.parseInteger(position))
-      return failure();
-    st.addAttribute("entry", p.getBuilder().getI64IntegerAttr(position));
-  }
-  Type claim;
-  if (p.parseColonType(claim))
-    return failure();
-  st.addTypes(claim);
-  return success();
-}
-
-void AssumeOp::print(OpAsmPrinter &p) {
-  p << " ";
-  if (citesSelf())
-    p << "self";
-  else
-    p << *getWherePosition();
-  p << " : " << Type(getClaim());
-}
-
-static Operation *getScopeOwner(Operation *op);
-
-LogicalResult AssumeOp::verify() {
-  // An assume cites an entry of the declaration whose method it stands in, so
-  // the scope it stands in is that method's.
-  //
-  // XXX TODO the commit that gives trait.trait and trait.impl their self claim
-  // and prerequisites as block arguments, read by their methods, deletes this op
-  // and its verifier.
-  Operation *scope = getScopeOwner(getOperation());
-  if (!scope)
-    return emitOpError("must be within a function");
-  auto function = dyn_cast<FunctionOpInterface>(scope);
-  if (!function)
-    return emitOpError() << "must be within a function, found "
-                         << scope->getName();
-
-  // The entry it cites exists, is a claim the declaration holds as a
-  // hypothesis, and is exactly the claim the result type spells.
-  Operation *owner = function->getParentOp();
-  TraitApplicationAttr selfApplication;
-  PredicateArrayAttr where;
-  if (auto trait = dyn_cast_or_null<TraitOp>(owner)) {
-    selfApplication = trait.getSelfApplication();
-    where = trait.getRequirements();
-  } else if (auto impl = dyn_cast_or_null<ImplOp>(owner)) {
-    selfApplication = impl.getSelfApplication();
-    where = impl.getAssumptions();
-  } else {
-    return emitOpError()
-           << "cites an entry of the declaration its function is a method of, "
-              "but '@"
-           << function.getName() << "' is a method of no trait or impl";
+  // A method returns its results, by identity.
+  if (auto method = dyn_cast<MethodOp>((*this)->getParentOp())) {
+    ArrayRef<Type> results = method.getResultTypes();
+    if (getNumOperands() != results.size())
+      return emitOpError() << "has " << getNumOperands()
+                           << " operands, but enclosing method (@"
+                           << method.getName() << ") returns " << results.size();
+    for (auto [index, operand, result] :
+         llvm::enumerate(getOperandTypes(), results))
+      if (operand != result)
+        return emitOpError() << "type of return operand " << index << " ("
+                             << operand << ") doesn't match method result type ("
+                             << result << ") in method @" << method.getName();
+    return success();
   }
 
-  MLIRContext *ctx = getContext();
-  ClaimType stated;
-  if (citesSelf()) {
-    stated = ClaimType::get(ctx, selfApplication);
-  } else {
-    uint64_t position = *getWherePosition();
-    if (position >= where.size())
-      return emitOpError()
-             << "cites where-clause entry " << position << ", but the "
-             << "enclosing declaration's where clause has " << where.size()
-             << " entries";
-    Attribute entry = where.getPredicates()[position];
-    if (auto app = dyn_cast<TraitApplicationAttr>(entry))
-      stated = ClaimType::get(ctx, app);
-    else if (auto eq = dyn_cast<TypeEqualityAttr>(entry))
-      stated = ClaimType::getEquality(ctx, eq);
-    else
-      return emitOpError()
-             << "cites where-clause entry " << position
-             << ", which binds variables of its own; select it with "
-                "trait.project and its type arguments";
-  }
-
-  // The spelled claim is an annotation on the citation: the position decides
-  // which claim this op produces.
-  if (getClaim() != stated)
-    return emitOpError() << "the cited entry states " << stated
-                         << ", but the result type spells " << getClaim();
+  // An impl returns evidence, which its own verifier holds against its
+  // trait's requirements; a proof returns the one application it proves.
+  if (!llvm::all_of(getOperandTypes(), llvm::IsaPred<ClaimType>))
+    return emitOpError() << "returns claims only from a declaration or a proof";
+  if (isa<ProofOp>((*this)->getParentOp()) &&
+      (getNumOperands() != 1 ||
+       !cast<ClaimType>(getOperand(0).getType()).isApplication()))
+    return emitOpError() << "returns the one application claim its proof proves";
   return success();
 }
 
@@ -3362,35 +2768,6 @@ LogicalResult MethodCallOp::verify() {
   return success();
 }
 
-/// Whether the code `op` holds is judged on its own rather than in the scope
-/// `op` stands in. An operation isolated from above sees nothing of that scope,
-/// so a nested function, a trait, an impl and a proof each answer for what they
-/// hold where they are declared; a region an op runs at run time -- a
-/// conditional, a loop, a cooperative body -- is interior to the scope around
-/// it. A method is not isolated from above but reads nothing of its
-/// declaration (`verifyDeclarationBodyTakesNoArguments`), so it too answers for
-/// what it holds.
-///
-/// XXX TODO the commit that gives trait.trait and trait.impl their self claim
-/// and prerequisites as block arguments, read by their methods, extends a
-/// method's scope to its declaration's and deletes the method arm.
-static bool isJudgedOnItsOwn(Operation *op) {
-  return op->hasTrait<OpTrait::IsIsolatedFromAbove>() || isa<MethodOp>(op);
-}
-
-/// The declaration `op` stands in: the innermost ancestor judged on its own.
-///
-/// A region an op runs at run time -- a conditional, a loop, a cooperative body
-/// -- is interior to the scope around it, so the walk passes through it and
-/// stops at the callable, trait, impl or proof that binds what `op` may name.
-static Operation *getScopeOwner(Operation *op) {
-  for (Operation *parent = op->getParentOp(); parent;
-       parent = parent->getParentOp())
-    if (isJudgedOnItsOwn(parent))
-      return parent;
-  return nullptr;
-}
-
 /// Adds the rules one hypothesis in scope licenses.
 ///
 /// An equality hypothesis says its two types are one wherever it stands. An
@@ -3418,7 +2795,7 @@ static void addScopeHypothesis(NormalizationContext &ctx, ClaimType claim,
     return;
 
   auto trait = application.getTrait(module, /*err=*/nullptr);
-  if (failed(trait))
+  if (failed(trait) || trait->getRequirements().empty())
     return;
   auto requirements = trait->specializeRequirementsAsClaimsFor(
       claim.asUnproven(), /*errFn=*/nullptr);
@@ -3430,39 +2807,60 @@ static void addScopeHypothesis(NormalizationContext &ctx, ClaimType claim,
 
 /// Adds the hypotheses the scope `op` stands in holds.
 ///
-/// A declaration's claim parameters are its where clause, and a where clause is
-/// the parameter environment of everything its body holds: the caller discharged
-/// each one, so inside the body each is an axiom -- an equality parameter is a
-/// rewrite rule there and an application parameter carries its trait's
-/// requirements. They are read off the block arguments the scope owner binds,
-/// which is a parent read and not a search.
+/// A function's claim parameters and a declaration's block arguments are what
+/// its caller discharged, so inside the body each is an axiom -- an equality is
+/// a rewrite rule there and an application carries its trait's requirements.
+/// A method is not isolated from above: it holds its own parameters and then
+/// its declaration's arguments, so the walk reads the block arguments of every
+/// enclosing method and of the first ancestor isolated from above, and stops
+/// there. A region an op runs at run time -- a conditional, a loop, a
+/// cooperative body -- binds no hypothesis and is passed through. Each is a
+/// parent read and not a search.
+///
+/// An op standing in an impl's body outside every method computes the impl's
+/// requirement evidence, which may not assume the impl's own application or
+/// the requirements that application carries (GHC's rule for instance
+/// superclasses): there only the where arguments, from argument 1, are
+/// hypotheses. A method runs once the proof of the impl exists, so it holds
+/// argument 0 too.
 static void addScopeHypotheses(NormalizationContext &ctx, Operation *op,
                                ModuleOp module) {
-  Operation *scope = getScopeOwner(op);
-  if (!scope || scope->getNumRegions() == 0)
-    return;
-  Region &body = scope->getRegion(0);
-  if (body.empty())
-    return;
-
   DenseSet<TraitApplicationAttr> visited;
-  for (BlockArgument parameter : body.front().getArguments())
-    if (auto claim = dyn_cast<ClaimType>(parameter.getType()))
-      addScopeHypothesis(ctx, claim, module, visited, /*depth=*/0);
+  auto readArguments = [&](Operation *owner, unsigned from) {
+    if (owner->getNumRegions() == 0 || owner->getRegion(0).empty())
+      return;
+    for (BlockArgument parameter :
+         owner->getRegion(0).front().getArguments().drop_front(from))
+      if (auto claim = dyn_cast<ClaimType>(parameter.getType()))
+        addScopeHypothesis(ctx, claim, module, visited, /*depth=*/0);
+  };
+  bool inMethod = false;
+  for (Operation *parent = op->getParentOp(); parent;
+       parent = parent->getParentOp()) {
+    if (isa<MethodOp>(parent)) {
+      readArguments(parent, 0);
+      inMethod = true;
+      continue;
+    }
+    if (parent->hasTrait<OpTrait::IsIsolatedFromAbove>()) {
+      readArguments(parent, isa<ImplOp>(parent) && !inMethod ? 1 : 0);
+      return;
+    }
+  }
 }
 
-/// Adds the projection normalization rules a proven claim's proof tree
-/// justifies: the rules of its subproofs first, then its own.
+/// Adds the projection normalization rules a proven claim's evidence
+/// justifies: the rules of the evidence beneath it first, then its own.
 ///
-/// A proof stands over the obligations of the impl it names, each discharged by
-/// the subproof at the same index, so the impls those subproofs name are
-/// evidence at this site exactly as the impl the proof itself names is -- the
-/// same reading by index a derive gets from its given operands. The children go
-/// in first, and the head is read through the rules they contributed: an impl
-/// header that spells a projection over one of its own obligations reduces it
-/// through the rule that obligation's proof already contributed, and where a
-/// trait has two impls whose headers could each bind that application, that rule
-/// is the only thing that answers.
+/// A proof derives its claim from an impl over one claim per where entry, and
+/// the impl returns the evidence for its trait's requirements, so the claims
+/// those positions hold are evidence at this site exactly as the impl the
+/// proof cites is -- the same reading by index a derive gets from its given
+/// operands. The children go in first, and the head is read through the rules
+/// they contributed: an impl header that spells a projection over one of its
+/// own obligations reduces it through the rule that obligation's evidence
+/// already contributed, and where a trait has two impls whose headers could
+/// each bind that application, that rule is the only thing that answers.
 ///
 /// A claim whose own rule cannot be built contributes none: this reads the
 /// evidence an op holds, and a proof that does not check is refused where it is
@@ -3471,7 +2869,7 @@ static void addScopeHypotheses(NormalizationContext &ctx, Operation *op,
 static void addLocalProjectionRulesFromProvenClaim(
     NormalizationContext &ctx, ClaimType claim, ModuleOp module,
     llvm::SmallPtrSetImpl<Operation *> &visited) {
-  // The symbol this claim cites, read once: it is the proof whose subtree
+  // The symbol this claim cites, read once: it is the proof whose evidence
   // contributes first and it names the impl whose bindings justify the rule
   // below, or it is that impl itself where the citation is a leaf.
   Operation *cited = lookupSymbolFrom(module, claim.getProof());
@@ -3480,17 +2878,17 @@ static void addLocalProjectionRulesFromProvenClaim(
   if (!impl)
     return;
 
-  // The proof's own subtree. A coinductive proof names itself among its
-  // subproofs, so a proof already read contributes nothing a second time.
-  if (proof)
-    if (visited.insert(proof.getOperation()).second) {
-      auto subproofs = proof.verifyAndGetSubproofClaims(claim, /*err=*/nullptr);
-      if (succeeded(subproofs))
-        for (ClaimType subproof : *subproofs)
-          if (subproof.isProven())
-            addLocalProjectionRulesFromProvenClaim(ctx, subproof, module,
-                                                   visited);
+  // The evidence beneath the claim. Evidence may cite itself, so a symbol
+  // already read contributes nothing a second time.
+  if (visited.insert(cited).second) {
+    auto count = getClaimRequirementCount(claim, module);
+    for (uint64_t index = 0; succeeded(count) && index < *count; ++index) {
+      auto requirement = getClaimRequirementAt(claim, module, index);
+      if (succeeded(requirement) && requirement->isProven())
+        addLocalProjectionRulesFromProvenClaim(ctx, *requirement, module,
+                                               visited);
     }
+  }
 
   // Store rules against the unproven application because projection heads do
   // not include proof symbols; proof only explains why the application holds.
@@ -3588,22 +2986,6 @@ NormalizationContext buildProofNormalizationContext(ClaimType provenClaim,
   NormalizationContext ctx;
   llvm::SmallPtrSet<Operation *, 8> visited;
   addLocalProjectionRulesFromProvenClaim(ctx, provenClaim, module, visited);
-  return ctx;
-}
-
-NormalizationContext buildSubproofNormalizationContext(ProofOp proof,
-                                                       ClaimType at,
-                                                       ModuleOp module) {
-  NormalizationContext ctx;
-  llvm::SmallPtrSet<Operation *, 8> visited;
-  // The proof itself is marked read before the walk starts, so the tree it
-  // stands over contributes and it does not.
-  visited.insert(proof.getOperation());
-  auto subproofs = proof.verifyAndGetSubproofClaims(at, /*err=*/nullptr);
-  if (succeeded(subproofs))
-    for (ClaimType subproof : *subproofs)
-      if (subproof.isProven())
-        addLocalProjectionRulesFromProvenClaim(ctx, subproof, module, visited);
   return ctx;
 }
 
@@ -4038,8 +3420,7 @@ FailureOr<func::FuncOp> FuncCallOp::getOrSpecializeCallee(
             specializePolymorph(rewriter, *callee, instanceName,
                                 subst.toTypeMap())
                 .getOperation());
-      },
-      subst.getEvidence());
+      });
   if (!instance)
     return failure();
   return instance;
@@ -4060,25 +3441,23 @@ LogicalResult ProjectOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     return emitOpError() << "not in a module";
 
   auto errFn = [&] { return emitOpError(); };
-  auto requirement = getClaimRequirementAt(
-      getSourceClaim(), module, getIndex(), getBinderArguments(), errFn);
+  auto requirement =
+      getClaimRequirementAt(getSourceClaim(), module, getIndex(), errFn);
   if (failed(requirement))
     return failure();
 
-  // A bound requirement holds where its premises do, so the hop carries one
-  // claim per premise, each the premise at the arguments it supplies; a claim
-  // is read modulo the evidence it names.
-  if (failed(verifyPremisesSuppliedByPosition(
-          getPremises(), requirement->premises,
-          "requirement " + Twine(getIndex()), "hop", errFn)))
-    return failure();
-
   // The result type is an annotation on the selection: the index decides which
-  // claim this op produces, so the spelled one must be that claim.
-  if (requirement->conclusion != getResultClaim())
-    return emitOpError() << "type mismatch: expected "
-                         << requirement->conclusion << " but found "
-                         << getResultClaim();
+  // claim this op produces, so the spelled one must be that claim. A where
+  // entry carries the proof the source's proof gives it there; any other
+  // requirement is compared modulo the proof, which the evidence the stage
+  // inlines here decides (`inlineEvidence`).
+  bool selected = requirement->isProven()
+                      ? *requirement == getResultClaim()
+                      : stripClaimProofs(Type(*requirement)) ==
+                            stripClaimProofs(Type(getResultClaim()));
+  if (!selected)
+    return emitOpError() << "type mismatch: expected " << *requirement
+                         << " but found " << getResultClaim();
 
   return success();
 }

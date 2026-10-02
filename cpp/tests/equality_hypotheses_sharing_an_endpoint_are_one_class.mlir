@@ -16,13 +16,13 @@
 // CHECK: trait.func.call @callee
 
 !T = !trait.poly<0>
-trait.trait private @A[!T] {
+trait.trait private @A(%self: !trait.claim<@A[!T]>) {
   trait.assoc_type @Item
 }
-trait.trait private @B[!T] {
+trait.trait private @B(%self: !trait.claim<@B[!T]>) {
   trait.assoc_type @Item
 }
-trait.trait private @C[!T] {
+trait.trait private @C(%self: !trait.claim<@C[!T]>) {
   trait.assoc_type @Item
 }
 

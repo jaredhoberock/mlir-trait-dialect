@@ -51,44 +51,6 @@ def PolyType : TypeDef<TraitDialect, "Poly", [
   let hasCustomAssemblyFormat = 1;
 }
 
-// A variable a bound predicate binds, named by its position in the binder
-def BoundVarType : TypeDef<TraitDialect, "BoundVar", [
-  GenericTypeInterface,
-  PolymorphicTypeInterface
-]> {
-  let mnemonic = "bound";
-  let summary = "A variable of a bound predicate, by position";
-
-  let description = [{
-    The `!trait.bound<N>` type is the variable at position N of the binder of
-    the bound predicate (`#trait.bound`) it stands in, as `d0` is a dimension of
-    the affine map it stands in. It is positional, not a label, and a kind of
-    type variable apart from a declaration's `!trait.poly` parameters: the
-    trait and impl verifiers refuse one among a header's or an associated
-    type's parameters, and a predicate array refuses one in any entry but a
-    bound predicate, so no parameter of the impl whose evidence proves a bound
-    requirement can be read as that requirement's variable. It stands in the premises and
-    conclusion of the bound predicate that binds it and in the witness bodies
-    proving one; spelled anywhere else (a method's signature, a hop's type
-    arguments) it is a variable of that function like any other, and a hop
-    instantiates the binder and the claim in one substitution, so the two
-    never meet. Instantiating the binder at arguments substitutes argument N
-    for it.
-  }];
-
-  let extraClassDeclaration = [{
-    // for GenericTypeInterface
-    Type specializeWith(const ::mlir::trait::SpecializationMap &subst) const;
-
-    // for PolymorphicTypeInterface
-    bool isPolymorphic() const { return true; }
-  }];
-
-  let parameters = (ins "unsigned":$position);
-
-  let assemblyFormat = "`<` $position `>`";
-}
-
 // Represents a claim, possibly with direct proof, that a trait application is satisfied by some implementation
 def ClaimType : TypeDef<TraitDialect, "Claim", [
   PolymorphicTypeInterface,
@@ -216,6 +178,18 @@ def ClaimType : TypeDef<TraitDialect, "Claim", [
       if (isEquality())
         return *this;
       return ClaimType::get(getContext(), getTraitApplication());
+    }
+
+    /// This claim's application carrying the proof `from` names: the evidence
+    /// a value derived from `from` carries, a projection read off it or a
+    /// coerce of it. Null unless both are application claims and `from` is
+    /// proven.
+    ClaimType carryingProofOf(ClaimType from) const {
+      if (!from || !isApplication() || !from.isApplication() ||
+          !from.isProven())
+        return {};
+      return ClaimType::get(getContext(), getTraitApplication(),
+                            from.getProof());
     }
 
     // for PolymorphicTypeInterface

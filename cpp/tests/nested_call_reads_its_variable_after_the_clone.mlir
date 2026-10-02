@@ -13,11 +13,11 @@
 !S = !trait.poly<0>
 !V = !trait.poly<9>
 
-trait.trait private @Store[!S] {
+trait.trait private @Store(%self: !trait.claim<@Store[!S]>) {
   trait.method @keep(!S, !V) -> !V
 }
 
-trait.impl private @Store_impl_i64 for @Store[i64] {
+trait.impl private @Store_impl_i64(%self_claim: !trait.claim<@Store[i64]>) {
   trait.method @keep(%self: i64, %v: !trait.poly<5>) -> !trait.poly<5> {
     trait.return %v : !trait.poly<5>
   }
@@ -26,7 +26,7 @@ trait.impl private @Store_impl_i64 for @Store[i64] {
 // Forwards to the i64 impl's method under the same method generic: the nested
 // call spells this method's own variable in the argument position the trait
 // method's !V stands in.
-trait.impl private @Store_impl_i32 for @Store[i32] {
+trait.impl private @Store_impl_i32(%self_claim: !trait.claim<@Store[i32]>) {
   trait.method @keep(%self: i32, %v: !trait.poly<6>) -> !trait.poly<6> {
     %inner = arith.constant 0 : i64
     %p = trait.witness @Store_impl_i64 for @Store[i64]

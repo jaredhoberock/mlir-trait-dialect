@@ -20,6 +20,26 @@ namespace mlir::trait {
 AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &subst,
                                                   ModuleOp module);
 
+/// Builds a type replacer that stamps `subst`'s bindings of type variables and
+/// nothing else: no projection binding and no module lookup, so a spelling it
+/// stamps keeps every projection it spells. The result of a call computing
+/// evidence is stamped by it, since the variables of the requirement the call
+/// computes are read off that spelling (`MethodCallOp::inlineEvidence`).
+AttrTypeReplacer makeSpellingReplacerFromSubstitution(
+    const DenseMap<Type, Type> &subst);
+
+/// Clones `source`'s blocks into `dest` before `before` under `mapping`, then
+/// stamps every block argument, op result and attribute of the clones by
+/// `typeReplacer`, except the result of a call computing evidence, which
+/// `spellingReplacer` stamps: that resolves nothing, since the call's result
+/// spelling is where the variables of the requirement it computes are read
+/// (`MethodCallOp::inlineEvidence`). Block arguments are stamped before the
+/// ops reading them; `builder`'s listener hears of every clone.
+void cloneRegionStampedBefore(OpBuilder &builder, Region &source, Region &dest,
+                              Region::iterator before, IRMapping &mapping,
+                              AttrTypeReplacer &typeReplacer,
+                              AttrTypeReplacer &spellingReplacer);
+
 /// Clones `polymorph` at `rewriter`'s insertion point as `instanceName`, its
 /// signature, attributes and body stamped under `substitution`, and answers the
 /// clone, or null when `polymorph` has no body to clone.
@@ -105,18 +125,11 @@ private:
 /// A fresh instance takes, at each position that takes evidence, exactly the
 /// evidence the key holds there, and a value its body derives from an operand
 /// takes that operand's evidence where the reading is positional: a projection
-/// the subproof its source cites at its index (none where the proof cites
-/// nothing there), a coerce its input's proof. The substitution `cut` stamps
-/// the template under spells a claim the same way at every position, so where
-/// two positions receive one claim through different proofs only the position
-/// says which proof each parameter carries. `evidence` is what the use
-/// supplies, every proof with everything it binds underneath: a value the
-/// rules above leave unproven whose claim `evidence` holds two proofs of is one
-/// no position decided, and the instance is reported, erased and answered null.
-/// `cut` answers null when the template has no body to clone, and so does this.
+/// the evidence its source's proof determines at its index, a coerce its
+/// input's proof. `cut` answers null when the template has no body to clone,
+/// and so does this.
 func::FuncOp getOrCutInstance(RewriterBase &rewriter, ModuleOp module,
                               const InstanceKey &key,
-                              llvm::function_ref<func::FuncOp(StringRef)> cut,
-                              const EvidenceBindings &evidence);
+                              llvm::function_ref<func::FuncOp(StringRef)> cut);
 
 }

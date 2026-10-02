@@ -11,39 +11,52 @@
 // CHECK: {{^}}9{{$}}
 
 !T = !trait.poly<0>
-trait.trait private @Mark[!T] { trait.method @value() -> i64 }
-trait.impl private @Nine for @Mark[i32] {
+trait.trait private @Mark(%self: !trait.claim<@Mark[!T]>) { trait.method @value() -> i64 }
+trait.impl private @Nine(%self: !trait.claim<@Mark[i32]>) {
   trait.method @value() -> i64 {
     %v = arith.constant 9 : i64
     trait.return %v : i64
   }
 }
-trait.trait private @Wrapped[!T] { trait.method @value() -> i64 }
-trait.impl private @Wrapped_i32 for @Wrapped[i32] where [@Mark[i32]] {
+trait.trait private @Wrapped(%self: !trait.claim<@Wrapped[!T]>) { trait.method @value() -> i64 }
+trait.impl private @Wrapped_i32(%self: !trait.claim<@Wrapped[i32]>, %mark: !trait.claim<@Mark[i32]>) {
   trait.method @value() -> i64 {
-    %m = trait.assume 0 : !trait.claim<@Mark[i32]>
-    %v = trait.method.call %m @Mark[i32]::@value() : () -> i64
+    %v = trait.method.call %mark @Mark[i32]::@value() : () -> i64
     trait.return %v : i64
   }
 }
-trait.proof private @WR proves @Wrapped_i32[] for @Wrapped[i32] given [@Nine]
-trait.trait private @Outer[!T] where [@Mark[!T]] {}
-trait.impl private @O for @Outer[i32] {}
-trait.proof private @OP proves @O[] for @Outer[i32] given [@Nine]
-trait.trait private @Host[!T] { trait.method @run() -> i64 }
-trait.impl private @Host_i32 for @Host[i32] where [@Wrapped[i32]] {
+trait.proof private @WR {
+  %p0 = trait.witness @Nine for @Mark[i32]
+  %d = trait.derive @Wrapped[i32] from @Wrapped_i32 given(%p0) : (!trait.claim<@Mark[i32] by @Nine>)
+  trait.return %d : !trait.claim<@Wrapped[i32]>
+}
+trait.trait private @Outer(%self: !trait.claim<@Outer[!T]>) -> !trait.claim<@Mark[!T]> {}
+trait.impl private @O(%self: !trait.claim<@Outer[i32]>) {
+  %req0 = trait.allege @Mark[i32]
+  trait.return %req0 : !trait.claim<@Mark[i32]>
+}
+trait.proof private @OP {
+  %d = trait.derive @Outer[i32] from @O given()
+  trait.return %d : !trait.claim<@Outer[i32]>
+}
+trait.trait private @Host(%self: !trait.claim<@Host[!T]>) { trait.method @run() -> i64 }
+trait.impl private @Host_i32(%self: !trait.claim<@Host[i32]>, %wrapped: !trait.claim<@Wrapped[i32]>) {
   trait.method @run() -> i64 {
     %k = scf.execute_region -> !trait.claim<@Mark[i32]> {
       %a = trait.allege @Outer[i32]
       %m = trait.project %a[0] : !trait.claim<@Outer[i32]> -> !trait.claim<@Mark[i32]>
       scf.yield %m : !trait.claim<@Mark[i32]>
     }
-    %w = trait.derive @Wrapped[i32] from @Wrapped_i32[] given(%k) : (!trait.claim<@Mark[i32]>)
+    %w = trait.derive @Wrapped[i32] from @Wrapped_i32 given(%k) : (!trait.claim<@Mark[i32]>)
     %v = trait.method.call %w @Wrapped[i32]::@value() : () -> i64
     trait.return %v : i64
   }
 }
-trait.proof private @H proves @Host_i32[] for @Host[i32] given [@WR]
+trait.proof private @H {
+  %p0 = trait.witness @WR for @Wrapped[i32]
+  %d = trait.derive @Host[i32] from @Host_i32 given(%p0) : (!trait.claim<@Wrapped[i32] by @WR>)
+  trait.return %d : !trait.claim<@Host[i32]>
+}
 func.func @main() -> i64 {
   %h = trait.witness @H for @Host[i32]
   %v = trait.method.call %h @Host[i32]::@run() : () -> i64 by @H

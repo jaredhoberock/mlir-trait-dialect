@@ -1,79 +1,22 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 
-// RUN: mlir-opt %s -split-input-file -verify-diagnostics
+// RUN: mlir-opt %s -verify-diagnostics
 
-// A bound requirement is selected at one argument per variable it binds.
-
-!S = !trait.poly<0>
-!X = !trait.poly<1>
-trait.trait private @Marker[!S] {}
-trait.trait private @Has[!S] where [forall [!trait.bound<0>] where [@Marker[!trait.bound<0>]] -> @Marker[!trait.proj<@Has[!S], "A", [!trait.bound<0>]>]] {
-  trait.assoc_type @A<[!X]>
-}
-func.func private @f(%h: !trait.claim<@Has[!trait.poly<2>]>) {
-  // expected-error @below {{requirement 0 binds 1 variables, and 0 arguments are supplied}}
-  %m = trait.project %h[0] : !trait.claim<@Has[!trait.poly<2>]> -> !trait.claim<@Marker[!trait.proj<@Has[!trait.poly<2>], "A", [i1]>]>
-  return
-}
-
-// -----
-
-// A requirement that binds nothing takes no arguments.
-
-!S = !trait.poly<0>
-trait.trait private @Marker[!S] {}
-trait.trait private @Has[!S] where [@Marker[!S]] {}
-func.func private @f(%h: !trait.claim<@Has[!trait.poly<2>]>) {
-  // expected-error @below {{requirement 0 binds no variables, and 1 arguments are supplied}}
-  %m = trait.project %h[0] for [i1] : !trait.claim<@Has[!trait.poly<2>]> -> !trait.claim<@Marker[!trait.poly<2>]>
-  return
-}
-
-// -----
-
-// A bound requirement's premise travels with the hop.
+// A quantified requirement is an evidence method of its trait. Its type
+// arguments are read off the premises a call supplies, and the call's result
+// spells the conclusion at them: a result spelled at another argument is
+// refused.
 
 !S = !trait.poly<0>
 !X = !trait.poly<1>
-trait.trait private @Marker[!S] {}
-trait.trait private @Has[!S] where [forall [!trait.bound<0>] where [@Marker[!trait.bound<0>]] -> @Marker[!trait.proj<@Has[!S], "A", [!trait.bound<0>]>]] {
+trait.trait private @Marker(%self: !trait.claim<@Marker[!S]>) {}
+trait.trait private @Has(%self: !trait.claim<@Has[!S]>) {
   trait.assoc_type @A<[!X]>
-}
-func.func private @f(%h: !trait.claim<@Has[!trait.poly<2>]>) {
-  // expected-error @below {{requirement 0 states 1 premises, and the hop supplies 0}}
-  %m = trait.project %h[0] for [i1] : !trait.claim<@Has[!trait.poly<2>]> -> !trait.claim<@Marker[!trait.proj<@Has[!trait.poly<2>], "A", [i1]>]>
-  return
-}
-
-// -----
-
-// The premise claim is the premise at the hop's arguments.
-
-!S = !trait.poly<0>
-!X = !trait.poly<1>
-trait.trait private @Marker[!S] {}
-trait.trait private @Has[!S] where [forall [!trait.bound<0>] where [@Marker[!trait.bound<0>]] -> @Marker[!trait.proj<@Has[!S], "A", [!trait.bound<0>]>]] {
-  trait.assoc_type @A<[!X]>
+  trait.method @requirement_0(!trait.claim<@Marker[!X]>) -> !trait.claim<@Marker[!trait.proj<@Has[!S], "A", [!X]>]>
 }
 func.func private @f(%h: !trait.claim<@Has[!trait.poly<2>]>, %p: !trait.claim<@Marker[i64]>) {
-  // expected-error @below {{premise 0 of requirement 0 is '!trait.claim<@Marker[i1]>', and the hop supplies '!trait.claim<@Marker[i64]>'}}
-  %m = trait.project %h[0] for [i1] given(%p : !trait.claim<@Marker[i64]>) : !trait.claim<@Has[!trait.poly<2>]> -> !trait.claim<@Marker[!trait.proj<@Has[!trait.poly<2>], "A", [i1]>]>
-  return
-}
-
-// -----
-
-// The result type spells the conclusion at the hop's arguments.
-
-!S = !trait.poly<0>
-!X = !trait.poly<1>
-trait.trait private @Marker[!S] {}
-trait.trait private @Has[!S] where [forall [!trait.bound<0>] -> @Marker[!trait.proj<@Has[!S], "A", [!trait.bound<0>]>]] {
-  trait.assoc_type @A<[!X]>
-}
-func.func private @f(%h: !trait.claim<@Has[!trait.poly<2>]>) {
-  // expected-error @below {{type mismatch: expected '!trait.claim<@Marker[!trait.proj<@Has[!trait.poly<2>], "A", [i1]>]>' but found '!trait.claim<@Marker[!trait.proj<@Has[!trait.poly<2>], "A", [i64]>]>'}}
-  %m = trait.project %h[0] for [i1] : !trait.claim<@Has[!trait.poly<2>]> -> !trait.claim<@Marker[!trait.proj<@Has[!trait.poly<2>], "A", [i64]>]>
+  // expected-error @below {{type mismatch: expected '(!trait.claim<@Marker[i64]>) -> !trait.claim<@Marker[!trait.proj<@Has[!trait.poly<2>], "A", [i64]>]>' but found '(!trait.claim<@Marker[i64]>) -> !trait.claim<@Marker[!trait.proj<@Has[!trait.poly<2>], "A", [i1]>]>'}}
+  %m = trait.method.call %h @Has[!trait.poly<2>]::@requirement_0(%p) : (!trait.claim<@Marker[i64]>) -> !trait.claim<@Marker[!trait.proj<@Has[!trait.poly<2>], "A", [i1]>]>
   return
 }

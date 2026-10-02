@@ -7,31 +7,32 @@
 // selection discharges its requirement @A[i32] with @A_i32, and the call
 // @B_i32's body makes through that requirement reaches @A_i32's method.
 
-trait.trait private @A[!trait.poly<0>] {
+trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) {
   trait.method @a() -> i64
 }
-trait.trait private @B[!trait.poly<0>] where [@A[!trait.poly<0>]] {
+trait.trait private @B(%self: !trait.claim<@B[!trait.poly<0>]>) -> !trait.claim<@A[!trait.poly<0>]> {
   trait.method @b(!trait.poly<0>) -> i64
 }
-trait.impl private @A_i32 for @A[i32] {
+trait.impl private @A_i32(%self: !trait.claim<@A[i32]>) {
   trait.method @a() -> i64 {
     %c = arith.constant 32 : i64
     trait.return %c : i64
   }
 }
-trait.impl private @A_i64 for @A[i64] {
+trait.impl private @A_i64(%self: !trait.claim<@A[i64]>) {
   trait.method @a() -> i64 {
     %c = arith.constant 64 : i64
     trait.return %c : i64
   }
 }
-trait.impl private @B_i32 for @B[i32] {
+trait.impl private @B_i32(%self: !trait.claim<@B[i32]>) {
   trait.method @b(%x: i32) -> i64 {
-    %s = trait.assume self : !trait.claim<@B[i32]>
-    %a = trait.project %s[0] : !trait.claim<@B[i32]> -> !trait.claim<@A[i32]>
+    %a = trait.project %self[0] : !trait.claim<@B[i32]> -> !trait.claim<@A[i32]>
     %r = trait.method.call %a @A[i32]::@a() : () -> i64
     trait.return %r : i64
   }
+  %req0 = trait.allege @A[i32]
+  trait.return %req0 : !trait.claim<@A[i32]>
 }
 
 // CHECK: func.func private @[[A32:A_i32_h[0-9a-f]+_a]]() -> i64

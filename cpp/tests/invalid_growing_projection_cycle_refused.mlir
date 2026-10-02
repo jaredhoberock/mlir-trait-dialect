@@ -1,29 +1,45 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 
-// RUN: mlir-opt %s -verify-diagnostics -split-input-file
+// RUN: not mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' 2>&1 | FileCheck %s
 
 // A binding cycle that grows rather than oscillates: @Grow[i32]'s Output
 // resolves to a tuple that itself contains @Grow[i32]'s Output, so each
 // resolution pass nests the spelling one level deeper and it never settles. The
-// fixed-point driver's rewrite budget bounds the growth and proof verification
-// reports the nonconvergence cleanly, so the type never runs the process out of
-// stack.
+// instance that uses the proof resolves the projection through the module's
+// impls; the fixed-point driver's rewrite budget bounds the growth and the
+// nonconvergence is reported cleanly, so the type never runs the process out
+// of stack.
+
+// CHECK: error: 'trait.witness' op projection normalization did not converge within 64 iterations for type '!trait.claim<@Wants[tuple<tuple<
 
 !T = !trait.poly<0>
 
-trait.trait private @Grow[!T] {
+trait.trait private @Grow(%self: !trait.claim<@Grow[!T]>) {
   trait.assoc_type @Output
 }
 
-trait.impl private @Grow_i32 for @Grow[i32] {
+trait.impl private @Grow_i32(%self: !trait.claim<@Grow[i32]>) {
   trait.assoc_type @Output = tuple<!trait.proj<@Grow[i32], "Output">, i32>
 }
 
 !W = !trait.poly<1>
-trait.trait private @Wants[!W] {}
+trait.trait private @Wants(%self: !trait.claim<@Wants[!W]>) { trait.method @m() -> i64 }
 
-trait.impl private @Wants_impl for @Wants[!trait.proj<@Grow[i32], "Output">] {}
+trait.impl private @Wants_impl(%self: !trait.claim<@Wants[!trait.proj<@Grow[i32], "Output">]>) {
+  trait.method @m() -> i64 {
+    %c = arith.constant 1 : i64
+    trait.return %c : i64
+  }
+}
 
-// expected-error @+1 {{projection normalization did not converge within 64 iterations}}
-trait.proof private @p proves @Wants_impl[] for @Wants[!trait.proj<@Grow[i32], "Output">] given []
+trait.proof private @p {
+  %d = trait.derive @Wants[!trait.proj<@Grow[i32], "Output">] from @Wants_impl given()
+  trait.return %d : !trait.claim<@Wants[!trait.proj<@Grow[i32], "Output">]>
+}
+
+func.func @main() -> i64 {
+  %w = trait.witness @p for @Wants[!trait.proj<@Grow[i32], "Output">]
+  %v = trait.method.call %w @Wants[!trait.proj<@Grow[i32], "Output">]::@m() : () -> i64 by @p
+  return %v : i64
+}

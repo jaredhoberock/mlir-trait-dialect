@@ -3,62 +3,65 @@
 
 // RUN: mlir-opt %s -split-input-file -verify-diagnostics
 
-// A proof written over a type variable stands for every instance of it, so what
-// discharges its obligation must stand for every instance too. @A_i64 is
-// evidence at one instance, and a witness of this proof at another one would
-// dispatch @B_blanket's requirement through it: @B[i32]::@b would call
+// An impl written over a type variable stands for every instance of it, so the
+// evidence it returns for its requirement must stand for every instance too.
+// @A_i64 is evidence at one instance, and a witness of @B_blanket at another
+// one would dispatch its requirement through it: @B[i32]::@b would call
 // @A_i64's method where @A_i32's is the impl for i32.
 
-trait.trait private @A[!trait.poly<0>] { trait.method @a() -> i64 }
-trait.trait private @B[!trait.poly<0>] where [@A[!trait.poly<0>]] {
+trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) { trait.method @a() -> i64 }
+trait.trait private @B(%self: !trait.claim<@B[!trait.poly<0>]>) -> !trait.claim<@A[!trait.poly<0>]> {
   trait.method @b(!trait.poly<0>) -> i64
 }
-trait.impl private @A_i32 for @A[i32] {
+trait.impl private @A_i32(%self: !trait.claim<@A[i32]>) {
   trait.method @a() -> i64 {
     %c = arith.constant 32 : i64
     trait.return %c : i64
   }
 }
-trait.impl private @A_i64 for @A[i64] {
+trait.impl private @A_i64(%self: !trait.claim<@A[i64]>) {
   trait.method @a() -> i64 {
     %c = arith.constant 64 : i64
     trait.return %c : i64
   }
 }
-trait.impl private @B_blanket for @B[!trait.poly<0>] {
+// expected-error@+1 {{returns '!trait.claim<@A[i64] by @A_i64>' for requirement 0, which trait '@B' states as '!trait.claim<@A[!trait.poly<0>]>'}}
+trait.impl private @B_blanket(%self: !trait.claim<@B[!trait.poly<0>]>) {
   trait.method @b(%x: !trait.poly<0>) -> i64 {
-    %s = trait.assume self : !trait.claim<@B[!trait.poly<0>]>
-    %a = trait.project %s[0] : !trait.claim<@B[!trait.poly<0>]> -> !trait.claim<@A[!trait.poly<0>]>
+    %a = trait.project %self[0] : !trait.claim<@B[!trait.poly<0>]> -> !trait.claim<@A[!trait.poly<0>]>
     %r = trait.method.call %a @A[!trait.poly<0>]::@a() : () -> i64
     trait.return %r : i64
   }
+  %a = trait.witness @A_i64 for @A[i64]
+  trait.return %a : !trait.claim<@A[i64] by @A_i64>
 }
-// expected-error@+1 {{proof @A_i64 proves '!trait.claim<@A[i64]>', which does not discharge the obligation '!trait.claim<@A[!trait.poly<0>]>'}}
-trait.proof private @forged proves @B_blanket[!trait.poly<0> = !trait.poly<0>] for @B[!trait.poly<0>] given [@A_i64]
 
 // -----
 
-// The evidence a proof over a variable does take: a proof of a blanket impl,
-// standing over a variable of its own, rebuilds the obligation at whatever
-// that obligation spells.
+// The evidence an impl over a variable does take: a proof of a blanket impl,
+// standing over a variable of its own, rebuilds the requirement at whatever
+// that requirement spells.
 
-trait.trait private @A[!trait.poly<0>] { trait.method @a() -> i64 }
-trait.trait private @B[!trait.poly<0>] where [@A[!trait.poly<0>]] {
+trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) { trait.method @a() -> i64 }
+trait.trait private @B(%self: !trait.claim<@B[!trait.poly<0>]>) -> !trait.claim<@A[!trait.poly<0>]> {
   trait.method @b(!trait.poly<0>) -> i64
 }
-trait.impl private @A_blanket for @A[!trait.poly<1>] {
+trait.impl private @A_blanket(%self: !trait.claim<@A[!trait.poly<1>]>) {
   trait.method @a() -> i64 {
     %c = arith.constant 1 : i64
     trait.return %c : i64
   }
 }
-trait.impl private @B_blanket for @B[!trait.poly<0>] {
+trait.proof private @a_stands {
+  %d = trait.derive @A[!trait.poly<1>] from @A_blanket given()
+  trait.return %d : !trait.claim<@A[!trait.poly<1>]>
+}
+trait.impl private @B_blanket(%self: !trait.claim<@B[!trait.poly<0>]>) {
   trait.method @b(%x: !trait.poly<0>) -> i64 {
-    %s = trait.assume self : !trait.claim<@B[!trait.poly<0>]>
-    %a = trait.project %s[0] : !trait.claim<@B[!trait.poly<0>]> -> !trait.claim<@A[!trait.poly<0>]>
+    %a = trait.project %self[0] : !trait.claim<@B[!trait.poly<0>]> -> !trait.claim<@A[!trait.poly<0>]>
     %r = trait.method.call %a @A[!trait.poly<0>]::@a() : () -> i64
     trait.return %r : i64
   }
+  %a = trait.witness @a_stands for @A[!trait.poly<0>]
+  trait.return %a : !trait.claim<@A[!trait.poly<0>] by @a_stands>
 }
-trait.proof private @a_stands proves @A_blanket[!trait.poly<1> = !trait.poly<1>] for @A[!trait.poly<1>] given []
-trait.proof private @stands proves @B_blanket[!trait.poly<0> = !trait.poly<0>] for @B[!trait.poly<0>] given [@a_stands]

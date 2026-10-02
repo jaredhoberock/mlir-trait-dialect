@@ -9,11 +9,11 @@
 !S = !trait.poly<0>
 !T = !trait.poly<1>
 
-trait.trait private @Trait[!S, !T] {
+trait.trait private @Trait(%self: !trait.claim<@Trait[!S, !T]>) {
   trait.method @method(!S, !T) -> i64
 }
 
-trait.trait private @Outer[!S] {
+trait.trait private @Outer(%self: !trait.claim<@Outer[!S]>) {
   trait.assoc_type @Item
 }
 
@@ -29,11 +29,11 @@ func.func private @callee(%t: !T,
   return %result : i64
 }
 
-trait.impl private @Outer_i64 for @Outer[i64] {
+trait.impl private @Outer_i64(%self: !trait.claim<@Outer[i64]>) {
   trait.assoc_type @Item = i64
 }
 
-trait.impl private @Trait_i64 for @Trait[i64, i64] {
+trait.impl private @Trait_i64(%self_claim: !trait.claim<@Trait[i64, i64]>) {
   trait.method @method(%self: i64, %x: i64) -> i64 {
     trait.return %x : i64
   }

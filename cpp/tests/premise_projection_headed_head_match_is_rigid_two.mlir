@@ -3,40 +3,43 @@
 
 // RUN: mlir-opt %s -verify-diagnostics
 
-// Byte-identical to ..._sole except for ONE added, unrelated impl of @Other.
-// A projection standing in the head of the premise's own application is matched
-// where it stands and never resolved through the module, so the added impl
-// changes nothing: this impl reaches the SAME refusal its sole companion does.
-// An impl's verdict does not turn on unrelated module impls.
+// Two impls of @Other bind @Other[i64]::X. A projection standing in the head of
+// a proj_resolve witness's application is matched where it stands, so the
+// citation of @Sib_i32 (an impl of @Sib[i32]) is refused for the projection
+// @Sib[@Other[i64]::X]::Elem: a witness's verdict does not turn on resolving
+// that head through the module's impls.
 
 !S = !trait.poly<0>
 
-trait.trait private @Other[!S] {
+trait.trait private @Other(%self: !trait.claim<@Other[!S]>) {
   trait.assoc_type @X
 }
-trait.impl private @Other_i64 for @Other[i64] {
+trait.impl private @Other_i64(%self: !trait.claim<@Other[i64]>) {
   trait.assoc_type @X = i64
 }
-trait.impl private @Other_T for @Other[!S] {
+trait.impl private @Other_T(%self: !trait.claim<@Other[!S]>) {
   trait.assoc_type @X = i64
 }
 
-trait.trait private @Sib[!S] {
+trait.trait private @Sib(%self: !trait.claim<@Sib[!S]>) {
   trait.assoc_type @Elem
 }
-trait.impl private @Sib_i32 for @Sib[i32] {
+trait.impl private @Sib_i32(%self: !trait.claim<@Sib[i32]>) {
   trait.assoc_type @Elem = f32
 }
 
-trait.trait private @Host[!S] {
+trait.trait private @Host(%self: !trait.claim<@Host[!S]>) {
   trait.method @make(!S) -> !trait.proj<@Sib[!S], "Elem">
 }
 
-// expected-error @below {{impl '@Sib_i32' at the witness's arguments is an impl for '!trait.claim<@Sib[i32]>', not for the projection's application '!trait.claim<@Sib[!trait.proj<@Other[i64], "X">]>'}}
-trait.impl private @Host_p for @Host[!trait.proj<@Other[i64], "X">]
-    witnesses [#trait<witness !trait.proj<@Sib[!trait.proj<@Other[i64], "X">], "Elem"> = f32 by @Sib_i32>] {
-  trait.method @make(%x: !trait.proj<@Other[i64], "X">) -> f32 {
+trait.impl private @Host_p(%self: !trait.claim<@Host[!trait.proj<@Other[i64], "X">]>) {
+  trait.method @make(%x: !trait.proj<@Other[i64], "X">) -> !trait.proj<@Sib[!trait.proj<@Other[i64], "X">], "Elem"> {
     %r = ub.poison : f32
-    trait.return %r : f32
+    // expected-error @below {{impl '@Sib_i32' at the arguments the citation gives it proves '!trait.claim<@Sib[i32]>', not '!trait.claim<@Sib[!trait.proj<@Other[i64], "X">]>'}}
+    %e = trait.witness proj_resolve !trait.proj<@Sib[!trait.proj<@Other[i64], "X">], "Elem"> resolves f32 by @Sib_i32
+      : !trait.claim<!trait.proj<@Sib[!trait.proj<@Other[i64], "X">], "Elem"> = f32>
+    %c = trait.coerce %r : f32 to !trait.proj<@Sib[!trait.proj<@Other[i64], "X">], "Elem"> via (%e)
+      : (!trait.claim<!trait.proj<@Sib[!trait.proj<@Other[i64], "X">], "Elem"> = f32>)
+    trait.return %c : !trait.proj<@Sib[!trait.proj<@Other[i64], "X">], "Elem">
   }
 }

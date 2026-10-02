@@ -15,18 +15,18 @@
 !U = !trait.poly<2>
 !U1 = !trait.poly<5>
 
-trait.trait private @M0[!trait.poly<0>] {}
-trait.impl private @M0_i64 for @M0[i64] {}
-trait.trait private @M1[!trait.poly<6>] {}
-trait.impl private @M1_i1 for @M1[i1] {}
+trait.trait private @M0(%self: !trait.claim<@M0[!trait.poly<0>]>) {}
+trait.impl private @M0_i64(%self: !trait.claim<@M0[i64]>) {}
+trait.trait private @M1(%self: !trait.claim<@M1[!trait.poly<6>]>) {}
+trait.impl private @M1_i1(%self: !trait.claim<@M1[i1]>) {}
 
-trait.trait private @Has[!trait.poly<1>] {
+trait.trait private @Has(%self: !trait.claim<@Has[!trait.poly<1>]>) {
   trait.assoc_type @A<[!trait.poly<3>]>
 }
-trait.impl private @Has_tuple_m0 for @Has[tuple<!U>] where [@M0[!U]] {
+trait.impl private @Has_tuple_m0(%self: !trait.claim<@Has[tuple<!U>]>, %m0: !trait.claim<@M0[!U]>) {
   trait.assoc_type @A<[!trait.poly<4>]> = !trait.poly<4>
 }
-trait.impl private @Has_tuple_m1 for @Has[tuple<!U1>] where [@M1[!U1]] {
+trait.impl private @Has_tuple_m1(%self: !trait.claim<@Has[tuple<!U1>]>, %m1: !trait.claim<@M1[!U1]>) {
   trait.assoc_type @A<[!trait.poly<7>]> = !trait.poly<7>
 }
 
@@ -43,7 +43,7 @@ func.func private @g(%x: !T,
 // CHECK: call @g_
 func.func @main(%a: i64, %b: i1) -> i1 {
   %w = trait.witness @M0_i64 for @M0[i64]
-  %e = trait.witness proj_resolve !trait.proj<@Has[tuple<i64>], "A", [i1]> resolves i1 by @Has_tuple_m0[!U = i64] given(%w)
+  %e = trait.witness proj_resolve !trait.proj<@Has[tuple<i64>], "A", [i1]> resolves i1 by @Has_tuple_m0 given(%w)
     : (!trait.claim<@M0[i64] by @M0_i64>)
     : !trait.claim<!trait.proj<@Has[tuple<i64>], "A", [i1]> = i1>
   %p = trait.coerce %b : i1 to !trait.proj<@Has[tuple<i64>], "A", [i1]> via (%e)

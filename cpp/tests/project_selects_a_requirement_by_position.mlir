@@ -12,14 +12,10 @@
 
 !S = !trait.poly<0>
 
-trait.trait private @A[!trait.poly<1>] {}
-trait.trait private @B[!trait.poly<2>] {}
+trait.trait private @A(%self: !trait.claim<@A[!trait.poly<1>]>) {}
+trait.trait private @B(%self: !trait.claim<@B[!trait.poly<2>]>) {}
 
-trait.trait private @Has[!S] where [
-  @A[!S],
-  !trait.proj<@Has[!S], "Out"> = i64,
-  @B[!S]
-] {
+trait.trait private @Has(%self: !trait.claim<@Has[!S]>) -> (!trait.claim<@A[!S]>, !trait.claim<!trait.proj<@Has[!S], "Out"> = i64>, !trait.claim<@B[!S]>) {
   trait.assoc_type @Out
 }
 

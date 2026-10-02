@@ -13,12 +13,12 @@
 
 !S = !trait.poly<0>
 
-trait.trait private @T[!S] {
+trait.trait private @T(%self: !trait.claim<@T[!S]>) {
   trait.assoc_type @Out
   trait.method @m(!S) -> !trait.proj<@T[!S], "Out">
 }
 
-trait.impl private @T_i32 for @T[i32] {
+trait.impl private @T_i32(%self: !trait.claim<@T[i32]>) {
   trait.assoc_type @Out = i64
   trait.method @m(%x: i32) -> i64 {
     %c = arith.constant 7 : i64
@@ -57,12 +57,12 @@ func.func @by_allegation(%x: i32) -> !trait.proj<@T[i32], "Out"> {
 
 !S = !trait.poly<0>
 
-trait.trait private @T[!S] {
+trait.trait private @T(%self: !trait.claim<@T[!S]>) {
   trait.assoc_type @Out
   trait.method @m(!S) -> !trait.proj<@T[!S], "Out">
 }
 
-trait.impl private @T_f64 for @T[f64] {
+trait.impl private @T_f64(%self: !trait.claim<@T[f64]>) {
   trait.assoc_type @Out = i1
   trait.method @m(%x: f64) -> i1 {
     %c = arith.constant true
@@ -70,7 +70,7 @@ trait.impl private @T_f64 for @T[f64] {
   }
 }
 
-trait.impl private @T_i32 for @T[i32] {
+trait.impl private @T_i32(%self: !trait.claim<@T[i32]>) {
   trait.assoc_type @Out = i64
   trait.method @m(%x: i32) -> i64 {
     %c = arith.constant 7 : i64
@@ -119,12 +119,12 @@ func.func @selects_by_type(%x: f64) -> !trait.proj<@T[f64], "Out"> {
 
 !S = !trait.poly<0>
 
-trait.trait private @T[!S] {
+trait.trait private @T(%self: !trait.claim<@T[!S]>) {
   trait.assoc_type @Out
   trait.method @m(!S) -> !trait.proj<@T[!S], "Out">
 }
 
-trait.impl private @Chosen for @T[i32] {
+trait.impl private @Chosen(%self: !trait.claim<@T[i32]>) {
   trait.assoc_type @Out = i64
   trait.method @m(%x: i32) -> i64 {
     %c = arith.constant 7 : i64

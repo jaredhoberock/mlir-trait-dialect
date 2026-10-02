@@ -12,34 +12,40 @@
 // CHECK: {{^}}10{{$}}
 
 !T = !trait.poly<0>
-trait.trait private @Mark[!T] { trait.method @value() -> i64 }
-trait.impl private @Nine for @Mark[i32] {
+trait.trait private @Mark(%self: !trait.claim<@Mark[!T]>) { trait.method @value() -> i64 }
+trait.impl private @Nine(%self: !trait.claim<@Mark[i32]>) {
   trait.method @value() -> i64 {
     %v = arith.constant 9 : i64
     trait.return %v : i64
   }
 }
-trait.impl private @MT for @Mark[tuple<!T>] where [@Mark[!T]] {
+trait.impl private @MT(%self: !trait.claim<@Mark[tuple<!T>]>, %mark: !trait.claim<@Mark[!T]>) {
   trait.method @value() -> i64 {
-    %p = trait.assume 0 : !trait.claim<@Mark[!T]>
-    %v = trait.method.call %p @Mark[!T]::@value() : () -> i64
+    %v = trait.method.call %mark @Mark[!T]::@value() : () -> i64
     %one = arith.constant 1 : i64
     %r = arith.addi %v, %one : i64
     trait.return %r : i64
   }
 }
-trait.trait private @Wrapped[!T] { trait.method @value() -> i64 }
-trait.impl private @W for @Wrapped[!T] where [@Mark[!T]] {
+trait.trait private @Wrapped(%self: !trait.claim<@Wrapped[!T]>) { trait.method @value() -> i64 }
+trait.impl private @W(%self: !trait.claim<@Wrapped[!T]>, %mark: !trait.claim<@Mark[!T]>) {
   trait.method @value() -> i64 {
-    %p = trait.assume 0 : !trait.claim<@Mark[!T]>
-    %v = trait.method.call %p @Mark[!T]::@value() : () -> i64
+    %v = trait.method.call %mark @Mark[!T]::@value() : () -> i64
     trait.return %v : i64
   }
 }
-trait.proof private @PF proves @MT[!T = i32] for @Mark[tuple<i32>] given [@Nine]
-trait.proof private @PF2 proves @MT[!T = i32] for @Mark[tuple<i32>] given [@Nine]
+trait.proof private @PF {
+  %p0 = trait.witness @Nine for @Mark[i32]
+  %d = trait.derive @Mark[tuple<i32>] from @MT given(%p0) : (!trait.claim<@Mark[i32] by @Nine>)
+  trait.return %d : !trait.claim<@Mark[tuple<i32>]>
+}
+trait.proof private @PF2 {
+  %p0 = trait.witness @Nine for @Mark[i32]
+  %d = trait.derive @Mark[tuple<i32>] from @MT given(%p0) : (!trait.claim<@Mark[i32] by @Nine>)
+  trait.return %d : !trait.claim<@Mark[tuple<i32>]>
+}
 func.func private @f(%p: !trait.claim<@Mark[!T]>) -> i64 {
-  %w = trait.derive @Wrapped[!T] from @W[!T = !T] given(%p) : (!trait.claim<@Mark[!T]>)
+  %w = trait.derive @Wrapped[!T] from @W given(%p) : (!trait.claim<@Mark[!T]>)
   %v = trait.method.call %w @Wrapped[!T]::@value() : () -> i64
   return %v : i64
 }

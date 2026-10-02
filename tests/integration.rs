@@ -36,6 +36,19 @@ fn test_jit() {
     let other_ty = trait_::poly_type(&context, 1);
 
     let partial_eq = {
+        let partial_eq = trait_::trait_(
+            loc,
+            "PartialEq",
+            trait_::claim_type(
+                &context,
+                trait_::trait_application_attr(&context, "PartialEq", &[self_ty, other_ty]),
+            ).into(),
+            &[], // no requirements
+        );
+        let trait_block = partial_eq.region(0).unwrap().first_block().unwrap();
+        // the trait's one block argument is the claim of its own application
+        let self_claim: melior::ir::Value = trait_block.argument(0).unwrap().into();
+
         // (!S, !O) -> i1
         let eq_ty = FunctionType::new(&context, &[self_ty, other_ty], &[i1_ty]).into();
         let eq = trait_::method(loc, "eq", eq_ty, Region::new());
@@ -46,23 +59,11 @@ fn test_jit() {
             let neq = trait_::method(loc, "neq", neq_ty, Region::new());
 
             let block = Block::new(&[(self_ty, loc), (other_ty, loc)]);
-            let c = block.append_operation(trait_::assume_self(
-                loc,
-                trait_::claim_type(
-                  &context,
-                  trait_::trait_application_attr(
-                    &context,
-                    "PartialEq",
-                    &[self_ty, other_ty],
-                  ),
-                ).into(),
-            ));
-
             let equal = block.append_operation(trait_::method_call(
                 loc,
                 "PartialEq",
                 "eq",
-                c.result(0).unwrap().into(),           // claim
+                self_claim,                            // claim
                 &[
                     block.argument(0).unwrap().into(), // self
                     block.argument(1).unwrap().into(), // other
@@ -89,16 +90,8 @@ fn test_jit() {
             neq
         };
 
-        let partial_eq = trait_::trait_(
-            loc,
-            "PartialEq",
-            &[self_ty, other_ty],
-            &[], // no where-clause predicates
-        );
-
-        let block = partial_eq.region(0).unwrap().first_block().unwrap();
-        block.append_operation(eq);
-        block.append_operation(neq);
+        trait_block.append_operation(eq);
+        trait_block.append_operation(neq);
 
         partial_eq
     };
@@ -133,12 +126,11 @@ fn test_jit() {
         let partial_eq_impl_i32_i32 = trait_::impl_named(
             loc,
             "PartialEq_impl_i32_i32",
-            trait_::trait_application_attr(
+            trait_::claim_type(
                 &context,
-                "PartialEq",
-                &[i32_ty, i32_ty],
-            ),
-            &[], // no where-clause predicates
+                trait_::trait_application_attr(&context, "PartialEq", &[i32_ty, i32_ty]),
+            ).into(),
+            &[], // no where clause
         );
 
         let block = partial_eq_impl_i32_i32
@@ -147,6 +139,8 @@ fn test_jit() {
             .first_block()
             .unwrap();
         block.append_operation(eq);
+        // the trait requires nothing, so the impl returns no evidence
+        block.append_operation(trait_::return_(loc, &[]));
 
         partial_eq_impl_i32_i32
     };
@@ -509,16 +503,17 @@ fn the_project_builder_selects_a_requirement_by_position() {
     let i64_ty: melior::ir::Type = IntegerType::new(&context, 64).into();
 
     // @Has requires @A[Self] at position 0 and Self::Out = i64 at position 1.
+    let claim_of = |app| -> melior::ir::Type { trait_::claim_type(&context, app).into() };
+    let a_self = trait_::trait_application_attr(&context, "A", &[self_ty]);
     module
         .body()
-        .append_operation(trait_::trait_(loc, "A", &[self_ty], &[]));
+        .append_operation(trait_::trait_(loc, "A", claim_of(a_self), &[]));
 
     let has_self = trait_::trait_application_attr(&context, "Has", &[self_ty]);
-    let a_self = trait_::trait_application_attr(&context, "A", &[self_ty]);
     let out_of_self = trait_::projection_type(&context, has_self, "Out", &[]);
-    let out_is_i64 = trait_::type_equality_attr(&context, out_of_self, i64_ty)
+    let out_is_i64 = trait_::equality_claim_type(&context, out_of_self, i64_ty)
         .expect("the equality requirement constructs");
-    let has = trait_::trait_(loc, "Has", &[self_ty], &[a_self.into(), out_is_i64]);
+    let has = trait_::trait_(loc, "Has", claim_of(has_self), &[claim_of(a_self), out_is_i64]);
     has.region(0)
         .unwrap()
         .first_block()
@@ -666,11 +661,11 @@ fn instantiate_is_ready_only_while_a_rewritable_call_stands() {
     let source = "\
 !S = !trait.poly<0>\n\
 !V = !trait.poly<9>\n\
-trait.trait private @Store[!S] {\n\
+trait.trait private @Store(%self: !trait.claim<@Store[!S]>) {\n\
   trait.method @keep(!S, !V) -> !V\n\
 }\n\
-trait.impl private @Store_impl_i64 for @Store[i64] {\n\
-  trait.method @keep(%self: i64, %v: !trait.poly<5>) -> !trait.poly<5> {\n\
+trait.impl private @Store_impl_i64(%self: !trait.claim<@Store[i64]>) {\n\
+  trait.method @keep(%x: i64, %v: !trait.poly<5>) -> !trait.poly<5> {\n\
     trait.return %v : !trait.poly<5>\n\
   }\n\
 }\n\
@@ -726,10 +721,10 @@ fn instantiate_is_ready_on_a_standing_claim_obligation() {
     context.load_all_available_dialects();
 
     let source = "\
-trait.trait private @T[!trait.poly<0>] {\n\
+trait.trait private @T(%self: !trait.claim<@T[!trait.poly<0>]>) {\n\
   trait.method @m(!trait.poly<0>) -> i32\n\
 }\n\
-trait.impl private @T_i32 for @T[i32] {\n\
+trait.impl private @T_i32(%self: !trait.claim<@T[i32]>) {\n\
   trait.method @m(%a: i32) -> i32 {\n\
     %c = arith.constant 1 : i32\n\
     trait.return %c : i32\n\
@@ -760,149 +755,181 @@ func.func @host(%x: i32) -> i32 {\n\
     );
 }
 
-/// The method body of `@A_gen`, the last operation of `module`: a positional
-/// assume is placed where it cites that impl's entries.
-fn impl_method_body<'c, 'a>(module: &'a Module<'c>) -> melior::ir::BlockRef<'c, 'a> {
-    let mut last = module.body().first_operation().expect("the fixture holds operations");
-    while let Some(next) = last.next_in_block() {
-        last = next;
-    }
-    let method = last
-        .region(0)
-        .expect("an impl has a body")
-        .first_block()
-        .expect("an impl body has a block")
-        .first_operation()
-        .expect("the impl holds its method");
-    method
-        .region(0)
-        .expect("a method has a body")
-        .first_block()
-        .expect("the method body has a block")
-}
 
-#[test]
-fn the_positional_assume_builders_cite_the_entries_the_verifier_reads() {
+/// A context with every upstream dialect and the trait dialect loaded.
+fn trait_context() -> Context {
     let registry = DialectRegistry::new();
     register_all_dialects(&registry);
     let context = Context::new();
     context.append_dialect_registry(&registry);
     trait_::register(&context);
     context.load_all_available_dialects();
+    context
+}
 
-    // @A_gen's where clause states @B[T] at position 0 and @C[T] at position 1.
-    let source = "\
-trait.trait private @B[!trait.poly<0>] { trait.method @b(!trait.poly<0>) -> i64 }\n\
-trait.trait private @C[!trait.poly<0>] { trait.method @c(!trait.poly<0>) -> i64 }\n\
-trait.trait private @A[!trait.poly<0>] { trait.method @a(!trait.poly<0>) -> i64 }\n\
-trait.impl private @A_gen for @A[!trait.poly<0>] where [@B[!trait.poly<0>], @C[!trait.poly<0>]] {\n\
-  trait.method @a(%x: !trait.poly<0>) -> i64 {\n\
-    %c = arith.constant 0 : i64\n\
-    trait.return %c : i64\n\
-  }\n\
-}\n";
-    let loc = Location::unknown(&context);
-    let t = trait_::poly_type(&context, 0);
+/// `@A_gen`, an impl of `@A[T]` where `@B[T], @C[T]` whose method calls `@C`'s
+/// method through the impl's third block argument and whose return is the
+/// block argument at `returned`, appended to a module with the three traits;
+/// `@A` requires `@B[T]`.
+fn module_with_a_gen<'c>(context: &'c Context, returned: usize) -> Module<'c> {
+    let loc = Location::unknown(context);
+    let module = Module::new(loc);
+    let t = trait_::poly_type(context, 0);
+    let i64_ty: melior::ir::Type = IntegerType::new(context, 64).into();
     let claim = |name: &str| -> melior::ir::Type {
-        trait_::claim_type(&context, trait_::trait_application_attr(&context, name, &[t])).into()
+        trait_::claim_type(context, trait_::trait_application_attr(context, name, &[t])).into()
     };
+    let c_method_ty = FunctionType::new(context, &[t], &[i64_ty]).into();
 
-    // Each builder writes the entry the verifier reads, and the result type
-    // spells the claim that entry states.
-    let module = Module::parse(&context, source).expect("the fixture module parses");
-    let body = impl_method_body(&module);
-    body.insert_operation(0, trait_::assume_self(loc, claim("A")));
-    body.insert_operation(1, trait_::assume_entry(loc, 1, claim("C")));
+    module.body().append_operation(trait_::trait_(loc, "B", claim("B"), &[]));
+    let c = trait_::trait_(loc, "C", claim("C"), &[]);
+    c.region(0).unwrap().first_block().unwrap()
+        .append_operation(trait_::method(loc, "c", c_method_ty, Region::new()));
+    module.body().append_operation(c);
+    let a = trait_::trait_(loc, "A", claim("A"), &[claim("B")]);
+    a.region(0).unwrap().first_block().unwrap()
+        .append_operation(trait_::method(loc, "a", c_method_ty, Region::new()));
+    module.body().append_operation(a);
+
+    let a_gen = trait_::impl_named(loc, "A_gen", claim("A"), &[claim("B"), claim("C")]);
+    let impl_block = a_gen.region(0).unwrap().first_block().unwrap();
+    let method_block = Block::new(&[(t, loc)]);
+    let call = method_block.append_operation(trait_::method_call(
+        loc,
+        "C",
+        "c",
+        impl_block.argument(2).unwrap().into(),
+        &[method_block.argument(0).unwrap().into()],
+        &[i64_ty],
+    ));
+    method_block.append_operation(trait_::return_(loc, &[call.result(0).unwrap().into()]));
+    let method_body = Region::new();
+    method_body.append_block(method_block);
+    impl_block.append_operation(trait_::method(loc, "a", c_method_ty, method_body));
+    impl_block.append_operation(trait_::return_(
+        loc,
+        &[impl_block.argument(returned).unwrap().into()],
+    ));
+    module.body().append_operation(a_gen);
+    module
+}
+
+#[test]
+fn the_declaration_builders_take_their_claims_as_block_arguments() {
+    let context = trait_context();
+
+    // The impl's block arguments are its own claim and its where entries in
+    // order; it returns its where entry @B[T] as the evidence of @A's one
+    // requirement.
+    let module = module_with_a_gen(&context, 1);
     assert!(module.as_operation().verify());
     let rendered = module.as_operation().to_string();
     assert!(
-        rendered.contains("trait.assume self : !trait.claim<@A[!trait.poly<0>]>")
-            && rendered.contains("trait.assume 1 : !trait.claim<@C[!trait.poly<0>]>"),
-        "the citations print as position and claim: {rendered}"
+        rendered.contains(
+            "trait.impl private @A_gen(%self: !trait.claim<@A[!trait.poly<0>]>, \
+             %b: !trait.claim<@B[!trait.poly<0>]>, %c: !trait.claim<@C[!trait.poly<0>]>)"
+        ) && rendered.contains("trait.method.call %c @C[!trait.poly<0>]::@c(")
+            && rendered.contains("trait.return %b : !trait.claim<@B[!trait.poly<0>]>"),
+        "the arguments print as the claims they hold: {rendered}"
     );
 
-    // A claim other than the entry at the position is refused.
-    let module = Module::parse(&context, source).expect("the fixture module parses");
-    impl_method_body(&module).insert_operation(0, trait_::assume_entry(loc, 0, claim("C")));
+    // Returning the where entry @C[T] as the evidence of @B[T] is refused.
+    let module = module_with_a_gen(&context, 2);
     assert!(!module.as_operation().verify());
 }
 
-/// `forall X where Marker[X] -> Marker[Has[receiver]::A<X>]`, the bound of
-/// `type A<X>: Marker where X: Marker` at `receiver`.
-fn marker_bound_of_has<'c>(
+/// `@name`, an impl of `@Has[self_ty]` binding `A<x>` to `bound` whose
+/// evidence method proves `Marker[bound]` from `Marker[x]`: by the first
+/// requirement of its one where entry `where_claim` when it has one, and by
+/// an allegation when it has none.
+fn has_impl<'c>(
     context: &'c Context,
-    receiver: melior::ir::Type<'c>,
-) -> melior::ir::attribute::Attribute<'c> {
-    let x = trait_::bound_var_type(context, 0);
-    let has = trait_::trait_application_attr(context, "Has", &[receiver]);
-    let a_of_x = trait_::projection_type(context, has, "A", &[x]);
-    trait_::bound_predicate_attr(
-        context,
-        1,
-        &[trait_::trait_application_attr(context, "Marker", &[x]).into()],
-        trait_::trait_application_attr(context, "Marker", &[a_of_x]).into(),
-    )
-    .expect("the bound predicate constructs")
+    name: &str,
+    self_ty: melior::ir::Type<'c>,
+    where_claim: Option<melior::ir::Type<'c>>,
+    bound: melior::ir::Type<'c>,
+    x: melior::ir::Type<'c>,
+) -> melior::ir::Operation<'c> {
+    let loc = Location::unknown(context);
+    let app = |name: &str, ty| trait_::trait_application_attr(context, name, &[ty]);
+    let claim = |name: &str, ty| -> melior::ir::Type<'c> {
+        trait_::claim_type(context, app(name, ty)).into()
+    };
+    let where_claims: Vec<melior::ir::Type<'c>> = where_claim.into_iter().collect();
+    let impl_op = trait_::impl_named(loc, name, claim("Has", self_ty), &where_claims);
+    let impl_block = impl_op.region(0).unwrap().first_block().unwrap();
+    impl_block.append_operation(trait_::assoc_type(loc, "A", Some(bound), &[x]));
+    let method_block = Block::new(&[(claim("Marker", x), loc)]);
+    let evidence = if where_claims.is_empty() {
+        method_block.append_operation(trait_::allege(loc, app("Marker", bound).into()))
+    } else {
+        method_block.append_operation(trait_::project(
+            loc, impl_block.argument(1).unwrap().into(), 0, claim("Marker", bound)))
+    };
+    method_block.append_operation(trait_::return_(loc, &[evidence.result(0).unwrap().into()]));
+    let method_body = Region::new();
+    method_body.append_block(method_block);
+    let requirement =
+        FunctionType::new(context, &[claim("Marker", x)], &[claim("Marker", bound)]).into();
+    impl_block.append_operation(trait_::method(loc, "requirement_0", requirement, method_body));
+    impl_block.append_operation(trait_::return_(loc, &[]));
+    impl_op
 }
 
 #[test]
-fn the_bound_builders_state_and_select_a_quantified_requirement() {
-    let registry = DialectRegistry::new();
-    register_all_dialects(&registry);
-    let context = Context::new();
-    context.append_dialect_registry(&registry);
-    trait_::register(&context);
-    context.load_all_available_dialects();
-
+fn an_evidence_method_states_and_selects_a_quantified_requirement() {
+    let context = trait_context();
     let loc = Location::unknown(&context);
     let s = trait_::poly_type(&context, 0);
     let x = trait_::poly_type(&context, 1);
-    let t = trait_::poly_type(&context, 2);
+    let p = trait_::poly_type(&context, 2);
+    let t = trait_::poly_type(&context, 3);
     let i1: melior::ir::Type = IntegerType::new(&context, 1).into();
-    let i32_ty: melior::ir::Type = IntegerType::new(&context, 32).into();
+    let i64_ty: melior::ir::Type = IntegerType::new(&context, 64).into();
+    let tuple_p: melior::ir::Type = melior::ir::r#type::TupleType::new(&context, &[p]).into();
+    let app = |name: &str, ty| trait_::trait_application_attr(&context, name, &[ty]);
+    let claim = |name: &str, ty| -> melior::ir::Type {
+        trait_::claim_type(&context, app(name, ty)).into()
+    };
+    // `forall X where Marker[X] -> Marker[Has[receiver]::A<X>]`, the bound of
+    // `type A<X>: Marker where X: Marker`, as a function type over claims.
+    let requirement = |conclusion_arg| -> melior::ir::Type {
+        FunctionType::new(&context, &[claim("Marker", x)], &[claim("Marker", conclusion_arg)]).into()
+    };
 
-    // @Has states `forall X where Marker[X] -> Marker[Has[S]::A<X>]`, the bound
-    // of `type A<X>: Marker where X: Marker`.
-    let bound_at = |receiver| marker_bound_of_has(&context, receiver);
     let module = Module::new(loc);
-    module.body().append_operation(trait_::trait_(loc, "Marker", &[s], &[]));
-    let has = trait_::trait_(loc, "Has", &[s], &[bound_at(s)]);
-    has.region(0).unwrap().first_block().unwrap()
-        .append_operation(trait_::assoc_type(loc, "A", None, &[x]));
+    module.body().append_operation(trait_::trait_(loc, "Marker", claim("Marker", s), &[]));
+    module.body().append_operation(trait_::trait_(
+        loc, "Sub", claim("Sub", s), &[claim("Marker", s)]));
+
+    // @Has states the requirement as a bodiless evidence method.
+    let has = trait_::trait_(loc, "Has", claim("Has", s), &[]);
+    let has_block = has.region(0).unwrap().first_block().unwrap();
+    has_block.append_operation(trait_::assoc_type(loc, "A", None, &[x]));
+    let a_of_x = trait_::projection_type(&context, app("Has", s), "A", &[x]);
+    has_block.append_operation(trait_::method(
+        loc, "requirement_0", requirement(a_of_x), Region::new()));
     module.body().append_operation(has);
 
-    // `impl Has for i32 { type A<X> = X; }` proves the bound by its premise.
-    let has_i32 = trait_::trait_application_attr(&context, "Has", &[i32_ty]);
-    let evidence = |body| {
-        trait_::requirement_witness_attr(
-            &context, 0,
-            trait_::witness_body_attr(&context, body).expect("the body constructs"),
-        )
-        .expect("the witness constructs")
-    };
-    let impl_op = trait_::impl_named(loc, "Has_i32", has_i32, &[]);
-    impl_op.region(0).unwrap().first_block().unwrap()
-        .append_operation(trait_::assoc_type(loc, "A", Some(x), &[x]));
-    trait_::set_impl_witnesses(&impl_op, &[evidence(trait_::WitnessBody::BinderPremise(0))]);
-    module.body().append_operation(impl_op);
+    // `impl<P: Sub> Has for (P,) { type A<X> = P; }` reads the bound off its
+    // where entry's requirement; `impl Has for i64 { type A<X> = i64; }`
+    // alleges it.
+    module.body().append_operation(has_impl(&context, "Has_sub", tuple_p, Some(claim("Sub", p)), p, x));
+    module.body().append_operation(has_impl(&context, "Has_i64", i64_ty, None, i64_ty, x));
 
     // A generic function selects the requirement at i1 with a claim of its
     // premise there.
-    let has_t = trait_::trait_application_attr(&context, "Has", &[t]);
-    let has_t_claim: melior::ir::Type = trait_::claim_type(&context, has_t).into();
-    let marker_i1: melior::ir::Type = trait_::claim_type(
-        &context, trait_::trait_application_attr(&context, "Marker", &[i1])).into();
-    let a_of_i1 = trait_::projection_type(&context, has_t, "A", &[i1]);
-    let conclusion: melior::ir::Type = trait_::claim_type(
-        &context, trait_::trait_application_attr(&context, "Marker", &[a_of_i1])).into();
-    let block = Block::new(&[(has_t_claim, loc), (marker_i1, loc)]);
-    block.append_operation(trait_::project_bound(
+    let has_t = claim("Has", t);
+    let marker_i1 = claim("Marker", i1);
+    let a_of_i1 = trait_::projection_type(&context, app("Has", t), "A", &[i1]);
+    let block = Block::new(&[(has_t, loc), (marker_i1, loc)]);
+    block.append_operation(trait_::method_call(
         loc,
+        "Has",
+        "requirement_0",
         block.argument(0).unwrap().into(),
-        0,
-        &[i1],
         &[block.argument(1).unwrap().into()],
-        conclusion,
+        &[claim("Marker", a_of_i1)],
     ));
     block.append_operation(func::r#return(&[], loc));
     let body = Region::new();
@@ -912,7 +939,7 @@ fn the_bound_builders_state_and_select_a_quantified_requirement() {
     module.body().append_operation(func::func(
         &context,
         StringAttribute::new(&context, "f"),
-        TypeAttribute::new(FunctionType::new(&context, &[has_t_claim, marker_i1], &[]).into()),
+        TypeAttribute::new(FunctionType::new(&context, &[has_t, marker_i1], &[]).into()),
         body,
         &[(vis_id, private_attr)],
         loc,
@@ -920,154 +947,65 @@ fn the_bound_builders_state_and_select_a_quantified_requirement() {
     assert!(module.as_operation().verify());
     let rendered = module.as_operation().to_string();
     assert!(
-        rendered.contains("by premise 0") && rendered.contains("[0] for [i1] given("),
-        "the evidence and the hop print what they state: {rendered}"
-    );
-
-    // Evidence citing a where-clause entry the impl does not have is refused.
-    let impl_op = trait_::impl_named(loc, "Has_i32", has_i32, &[]);
-    impl_op.region(0).unwrap().first_block().unwrap()
-        .append_operation(trait_::assoc_type(loc, "A", Some(x), &[x]));
-    trait_::set_impl_witnesses(&impl_op, &[evidence(trait_::WitnessBody::ImplPremise(0))]);
-    let module = Module::new(loc);
-    module.body().append_operation(trait_::trait_(loc, "Marker", &[s], &[]));
-    let has = trait_::trait_(loc, "Has", &[s], &[bound_at(s)]);
-    has.region(0).unwrap().first_block().unwrap()
-        .append_operation(trait_::assoc_type(loc, "A", None, &[x]));
-    module.body().append_operation(has);
-    module.body().append_operation(impl_op);
-    assert!(!module.as_operation().verify());
-}
-
-#[test]
-fn the_body_builders_state_a_requirement_hop_and_an_allegation() {
-    let registry = DialectRegistry::new();
-    register_all_dialects(&registry);
-    let context = Context::new();
-    context.append_dialect_registry(&registry);
-    trait_::register(&context);
-    context.load_all_available_dialects();
-
-    let loc = Location::unknown(&context);
-    let s = trait_::poly_type(&context, 0);
-    let x = trait_::poly_type(&context, 1);
-    let p = trait_::poly_type(&context, 2);
-    let i64_ty: melior::ir::Type = IntegerType::new(&context, 64).into();
-    let x_bound = trait_::bound_var_type(&context, 0);
-
-    // @Has states `forall X -> Marker[Has[S]::A<X>]`; `@Sub` requires `Marker`.
-    let bound_at = |receiver| {
-        let has = trait_::trait_application_attr(&context, "Has", &[receiver]);
-        let a_of_x = trait_::projection_type(&context, has, "A", &[x_bound]);
-        trait_::bound_predicate_attr(
-            &context,
-            1,
-            &[],
-            trait_::trait_application_attr(&context, "Marker", &[a_of_x]).into(),
-        )
-        .expect("the bound predicate constructs")
-    };
-    let module = Module::new(loc);
-    module.body().append_operation(trait_::trait_(loc, "Marker", &[s], &[]));
-    module.body().append_operation(trait_::trait_(
-        loc,
-        "Sub",
-        &[s],
-        &[trait_::trait_application_attr(&context, "Marker", &[s]).into()],
-    ));
-    let has = trait_::trait_(loc, "Has", &[s], &[bound_at(s)]);
-    has.region(0).unwrap().first_block().unwrap()
-        .append_operation(trait_::assoc_type(loc, "A", None, &[x]));
-    module.body().append_operation(has);
-
-    let evidence = |body| {
-        trait_::requirement_witness_attr(
-            &context, 0,
-            trait_::witness_body_attr(&context, body).expect("the body constructs"),
-        )
-        .expect("the witness constructs")
-    };
-
-    // `impl<P: Sub> Has for (P,) { type A<X> = P; }` reads its bound off its
-    // premise's requirement.
-    let tuple_p: melior::ir::Type = melior::ir::r#type::TupleType::new(&context, &[p]).into();
-    let has_tuple = trait_::trait_application_attr(&context, "Has", &[tuple_p]);
-    let sub_p = trait_::trait_application_attr(&context, "Sub", &[p]);
-    let impl_op = trait_::impl_named(loc, "Has_sub", has_tuple, &[sub_p.into()]);
-    impl_op.region(0).unwrap().first_block().unwrap()
-        .append_operation(trait_::assoc_type(loc, "A", Some(p), &[x]));
-    let where_0 = trait_::witness_body_attr(&context, trait_::WitnessBody::ImplPremise(0))
-        .expect("the body constructs");
-    trait_::set_impl_witnesses(&impl_op, &[evidence(trait_::WitnessBody::RequirementHop {
-        position: 0,
-        of: where_0,
-        type_args: vec![],
-        premises: vec![],
-    })]);
-    module.body().append_operation(impl_op);
-
-    // `impl Has for i64 { type A<X> = i64; }` alleges `Marker[i64]`.
-    let has_i64 = trait_::trait_application_attr(&context, "Has", &[i64_ty]);
-    let impl_op = trait_::impl_named(loc, "Has_i64", has_i64, &[]);
-    impl_op.region(0).unwrap().first_block().unwrap()
-        .append_operation(trait_::assoc_type(loc, "A", Some(i64_ty), &[x]));
-    let marker_i64 = trait_::trait_application_attr(&context, "Marker", &[i64_ty]);
-    trait_::set_impl_witnesses(&impl_op, &[evidence(trait_::WitnessBody::Allegation(marker_i64))]);
-    module.body().append_operation(impl_op);
-
-    assert!(module.as_operation().verify());
-    let rendered = module.as_operation().to_string();
-    assert!(
-        rendered.contains("by requirement 0 of where 0") && rendered.contains("by allege @Marker[i64]"),
-        "the hop and the allegation print what they state: {rendered}"
+        rendered.contains("trait.project %sub[0]")
+            && rendered.contains("trait.allege @Marker[i64]")
+            && rendered.contains("@Has[!trait.poly<3>]::@requirement_0(%arg1)"),
+        "the evidence and its selection print what they state: {rendered}"
     );
 }
 
 #[test]
-fn the_builders_state_an_impls_arguments_on_a_derive_and_a_proof() {
-    let registry = DialectRegistry::new();
-    register_all_dialects(&registry);
-    let context = Context::new();
-    context.append_dialect_registry(&registry);
-    trait_::register(&context);
-    context.load_all_available_dialects();
+fn the_builders_state_a_proof_body_and_a_derive() {
+    let context = trait_context();
 
     // @Tr_tuple is an impl of @Tr[tuple<U>] where @Tr[U] and Tr[U]::Out = i64.
     let source = "\
-trait.trait private @Tr[!trait.poly<0>] { trait.assoc_type @Out }\n\
-trait.impl private @Tr_i32 for @Tr[i32] { trait.assoc_type @Out = i64 }\n\
-trait.impl private @Tr_tuple for @Tr[tuple<!trait.poly<1>>] where [@Tr[!trait.poly<1>], !trait.proj<@Tr[!trait.poly<1>], \"Out\"> = i64] {\n\
+trait.trait private @Tr(%self: !trait.claim<@Tr[!trait.poly<0>]>) { trait.assoc_type @Out }\n\
+trait.impl private @Tr_i32(%self: !trait.claim<@Tr[i32]>) { trait.assoc_type @Out = i64 }\n\
+trait.impl private @Tr_tuple(%self: !trait.claim<@Tr[tuple<!trait.poly<1>>]>, %tr: !trait.claim<@Tr[!trait.poly<1>]>, %out: !trait.claim<!trait.proj<@Tr[!trait.poly<1>], \"Out\"> = i64>) {\n\
   trait.assoc_type @Out = i64\n\
 }\n";
-    let module = Module::parse(&context, source).expect("the fixture module parses");
     let loc = Location::unknown(&context);
     let t = trait_::poly_type(&context, 0);
-    let u = trait_::poly_type(&context, 1);
     let i32_ty: melior::ir::Type = IntegerType::new(&context, 32).into();
     let i64_ty: melior::ir::Type = IntegerType::new(&context, 64).into();
     let tuple_of = |ty| melior::ir::r#type::TupleType::new(&context, &[ty]).into();
+    let tr = |ty| trait_::trait_application_attr(&context, "Tr", &[ty]);
+    let out_is_i64 = |ty| {
+        trait_::equality_claim_type(&context, trait_::projection_type(&context, tr(ty), "Out", &[]), i64_ty)
+            .expect("the equality claim constructs")
+    };
 
-    // The proof at i32: the trait states no requirement, and the impl's two
-    // entries are the application @Tr_i32 discharges and the equality.
-    let tr_tuple_i32 = trait_::trait_application_attr(&context, "Tr", &[tuple_of(i32_ty)]);
-    let proof = trait_::proof(
-        loc, "p", "Tr_tuple", &[(u, i32_ty)], tr_tuple_i32, &[Some("Tr_i32"), None])
-        .expect("the proof builds");
-    module.body().append_operation(proof);
+    // The proof at i32 cites @Tr_i32 for the application entry and its binding
+    // for the equality entry.
+    let build_proof = |premise_count: usize| {
+        let proof = trait_::proof(loc, "p");
+        let block = proof.region(0).unwrap().first_block().unwrap();
+        let tr_i32 = block.append_operation(trait_::witness(loc, "Tr_i32", tr(i32_ty)));
+        let out_i32 = block.append_operation(trait_::witness_proj_resolve(
+            loc, "Tr_i32", &[], out_is_i64(i32_ty)));
+        let premises: Vec<melior::ir::Value> =
+            [tr_i32.result(0).unwrap().into(), out_i32.result(0).unwrap().into()]
+                .into_iter()
+                .take(premise_count)
+                .collect();
+        let derive = block.append_operation(trait_::derive(
+            loc, tr(tuple_of(i32_ty)), "Tr_tuple", &premises));
+        block.append_operation(trait_::return_(loc, &[derive.result(0).unwrap().into()]));
+        proof
+    };
+    let module = Module::parse(&context, source).expect("the fixture module parses");
+    module.body().append_operation(build_proof(2));
 
-    // A derive at T with one premise per where-clause entry.
-    let tr_t = trait_::trait_application_attr(&context, "Tr", &[t]);
-    let tr_t_claim: melior::ir::Type = trait_::claim_type(&context, tr_t).into();
-    let out_of_t = trait_::projection_type(&context, tr_t, "Out", &[]);
-    let out_is_i64 = trait_::equality_claim_type(&context, out_of_t, i64_ty)
-        .expect("the equality claim constructs");
-    let block = Block::new(&[(tr_t_claim, loc), (out_is_i64, loc)]);
-    let tr_tuple_t = trait_::trait_application_attr(&context, "Tr", &[tuple_of(t)]);
-    block.append_operation(
-        trait_::derive(
-            loc, tr_tuple_t, "Tr_tuple", &[(u, t)],
-            &[block.argument(0).unwrap().into(), block.argument(1).unwrap().into()])
-            .expect("the derive builds"));
+    // A derive at T with one premise per where entry.
+    let tr_t_claim: melior::ir::Type = trait_::claim_type(&context, tr(t)).into();
+    let block = Block::new(&[(tr_t_claim, loc), (out_is_i64(t), loc)]);
+    block.append_operation(trait_::derive(
+        loc,
+        tr(tuple_of(t)),
+        "Tr_tuple",
+        &[block.argument(0).unwrap().into(), block.argument(1).unwrap().into()],
+    ));
     block.append_operation(func::r#return(&[], loc));
     let body = Region::new();
     body.append_block(block);
@@ -1076,7 +1014,7 @@ trait.impl private @Tr_tuple for @Tr[tuple<!trait.poly<1>>] where [@Tr[!trait.po
     module.body().append_operation(func::func(
         &context,
         StringAttribute::new(&context, "g"),
-        TypeAttribute::new(FunctionType::new(&context, &[tr_t_claim, out_is_i64], &[]).into()),
+        TypeAttribute::new(FunctionType::new(&context, &[tr_t_claim, out_is_i64(t)], &[]).into()),
         body,
         &[(vis_id, private_attr)],
         loc,
@@ -1085,25 +1023,26 @@ trait.impl private @Tr_tuple for @Tr[tuple<!trait.poly<1>>] where [@Tr[!trait.po
     assert!(module.as_operation().verify());
     let rendered = module.as_operation().to_string();
     assert!(
-        rendered.contains("proves @Tr_tuple[!trait.poly<1> = i32] for @Tr[tuple<i32>] given [@Tr_i32, unit]")
-            && rendered.contains("from @Tr_tuple[!trait.poly<1> = !trait.poly<0>] given(%arg0, %arg1)"),
-        "the proof and the derive print the arguments they state: {rendered}"
+        rendered.contains("trait.proof private @p {")
+            && rendered.contains("trait.derive @Tr[tuple<i32>] from @Tr_tuple given(")
+            && rendered.contains("from @Tr_tuple given(%arg0, %arg1)"),
+        "the proof and the derive print the premises they cite: {rendered}"
     );
+
+    // A derive citing one claim fewer than the impl's where entries is refused.
+    let module = Module::parse(&context, source).expect("the fixture module parses");
+    module.body().append_operation(build_proof(1));
+    assert!(!module.as_operation().verify());
 }
 
 #[test]
-fn an_impl_instantiates_at_the_arguments_a_derive_states() {
-    let registry = DialectRegistry::new();
-    register_all_dialects(&registry);
-    let context = Context::new();
-    context.append_dialect_registry(&registry);
-    trait_::register(&context);
-    context.load_all_available_dialects();
+fn an_impl_instantiates_at_the_arguments_a_caller_states() {
+    let context = trait_context();
 
     let source = "\
-trait.trait private @A[!trait.poly<0>] { trait.assoc_type @Out }\n\
-trait.trait private @Tr[!trait.poly<0>] {}\n\
-trait.impl private @Tr_tuple for @Tr[tuple<!trait.poly<1>, !trait.poly<0>>] where [@A[!trait.poly<1>], !trait.proj<@A[!trait.poly<1>], \"Out\"> = !trait.poly<0>] {}\n";
+trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) { trait.assoc_type @Out }\n\
+trait.trait private @Tr(%self: !trait.claim<@Tr[!trait.poly<0>]>) {}\n\
+trait.impl private @Tr_tuple(%self: !trait.claim<@Tr[tuple<!trait.poly<1>, !trait.poly<0>>]>, %a: !trait.claim<@A[!trait.poly<1>]>, %out: !trait.claim<!trait.proj<@A[!trait.poly<1>], \"Out\"> = !trait.poly<0>>) {}\n";
     let module = Module::parse(&context, source).expect("the fixture module parses");
     let i32_ty: melior::ir::Type = IntegerType::new(&context, 32).into();
     let i64_ty: melior::ir::Type = IntegerType::new(&context, 64).into();
@@ -1111,7 +1050,7 @@ trait.impl private @Tr_tuple for @Tr[tuple<!trait.poly<1>, !trait.poly<0>>] wher
 
     let arguments = [(trait_::poly_type(&context, 1), i32_ty), (trait_::poly_type(&context, 0), i64_ty)];
     assert_eq!(
-        trait_::instantiate_impl(&context, &module, "Tr_tuple", &arguments),
+        trait_::instantiate_impl(&module, "Tr_tuple", &arguments),
         Ok((
             claim("!trait.claim<@Tr[tuple<i32, i64>]>"),
             vec![claim("!trait.claim<@A[i32]>"), claim("!trait.claim<!trait.proj<@A[i32], \"Out\"> = i64>")],
@@ -1119,15 +1058,15 @@ trait.impl private @Tr_tuple for @Tr[tuple<!trait.poly<1>, !trait.poly<0>>] wher
     );
     let foreign = [(trait_::poly_type(&context, 5), i32_ty)];
     assert_eq!(
-        trait_::instantiate_impl(&context, &module, "Tr_tuple", &foreign),
+        trait_::instantiate_impl(&module, "Tr_tuple", &foreign),
         Err(trait_::ImplRefusal::NotItsParameters),
     );
     assert_eq!(
-        trait_::instantiate_impl(&context, &module, "Tr_missing", &arguments),
+        trait_::instantiate_impl(&module, "Tr_missing", &arguments),
         Err(trait_::ImplRefusal::Absent),
     );
     assert_eq!(
-        trait_::instantiate_impl(&context, &module, "Tr", &arguments),
+        trait_::instantiate_impl(&module, "Tr", &arguments),
         Err(trait_::ImplRefusal::Absent),
         "a trait is no impl"
     );

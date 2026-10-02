@@ -10,10 +10,10 @@
 // the ground-projection resolution, which would move a stored witness's own
 // equality out from under the claim it must match.
 
-trait.trait private @T[!trait.poly<0>] {
+trait.trait private @T(%self: !trait.claim<@T[!trait.poly<0>]>) {
 }
 
-trait.impl private @T_i32 for @T[i32] {
+trait.impl private @T_i32(%self: !trait.claim<@T[i32]>) {
 }
 
 // The stage records a proof for @T[i32] here, so the stamper has one to write.
@@ -31,11 +31,11 @@ func.func private @holds(%c: !trait.claim<tuple<!trait.claim<@T[i32]>> = tuple<!
 
 // -----
 
-trait.trait private @Has[!trait.poly<0>] {
+trait.trait private @Has(%self: !trait.claim<@Has[!trait.poly<0>]>) {
   trait.assoc_type @Out
 }
 
-trait.impl private @Has_i32 for @Has[i32] {
+trait.impl private @Has_i32(%self: !trait.claim<@Has[i32]>) {
   trait.assoc_type @Out = i64
 }
 

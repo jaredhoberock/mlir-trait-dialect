@@ -9,11 +9,11 @@
 
 !S = !trait.poly<0>
 
-trait.trait private @Trait[!S] {
+trait.trait private @Trait(%self: !trait.claim<@Trait[!S]>) {
   trait.assoc_type @Output
 }
 
-trait.impl private @Trait_impl for @Trait[i64] {
+trait.impl private @Trait_impl(%self: !trait.claim<@Trait[i64]>) {
   trait.assoc_type @Output = i64
 }
 

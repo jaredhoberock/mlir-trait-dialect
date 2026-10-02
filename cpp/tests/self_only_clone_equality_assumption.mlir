@@ -1,41 +1,50 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 
-// A blanket impl carries an equality where-clause, and one of its methods assumes
-// that equality in its body. When a call extracts the method into a free function
-// against a proven, ground self, the leading self-proof stands in for the impl:
-// each trait.assume of the where-clause equality becomes a trait.project selecting that
-// equality from the proven self, and no assume remains in the extracted body.
+// A blanket impl carries an equality where entry, and one of its methods passes
+// that entry's block argument to a function. When a call extracts the method
+// into a free function against a proven, ground self, the entry's argument is
+// replaced by the evidence the proof's derive supplies for it, cloned from the
+// proof's body, and no reference to the impl's arguments remains.
 
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(instantiate-monomorphs-trait)' | FileCheck %s
 
 !S = !trait.poly<1>
 
-trait.trait private @Assoc[!trait.poly<0>] { trait.assoc_type @Out }
-trait.impl private @Assoc_i64 for @Assoc[i64] { trait.assoc_type @Out = i32 }
+trait.trait private @Assoc(%self: !trait.claim<@Assoc[!trait.poly<0>]>) { trait.assoc_type @Out }
+trait.impl private @Assoc_i64(%self: !trait.claim<@Assoc[i64]>) { trait.assoc_type @Out = i32 }
 
-trait.trait private @T[!S] {
-  trait.method @m(!S) -> !trait.claim<!trait.proj<@Assoc[!S], "Out"> = i32>
+func.func private @spend(%e: !trait.claim<!trait.proj<@Assoc[!trait.poly<3>], "Out"> = i32>) -> i32 {
+  %c = arith.constant 1 : i32
+  return %c : i32
 }
-trait.impl private @T_impl for @T[!trait.poly<2>] where [!trait.proj<@Assoc[!trait.poly<2>], "Out"> = i32] {
-  trait.method @m(%self: !trait.poly<2>) -> !trait.claim<!trait.proj<@Assoc[!trait.poly<2>], "Out"> = i32> {
-    %e = trait.assume 0 : !trait.claim<!trait.proj<@Assoc[!trait.poly<2>], "Out"> = i32>
-    trait.return %e : !trait.claim<!trait.proj<@Assoc[!trait.poly<2>], "Out"> = i32>
+
+trait.trait private @T(%self: !trait.claim<@T[!S]>) {
+  trait.method @m(!S) -> i32
+}
+trait.impl private @T_impl(%self: !trait.claim<@T[!trait.poly<2>]>, %out: !trait.claim<!trait.proj<@Assoc[!trait.poly<2>], "Out"> = i32>) {
+  trait.method @m(%s: !trait.poly<2>) -> i32 {
+    %r = trait.func.call @spend(%out) : (!trait.claim<!trait.proj<@Assoc[!trait.poly<2>], "Out"> = i32>) -> i32
+    trait.return %r : i32
   }
 }
-trait.proof private @T_p proves @T_impl[!trait.poly<2> = i64] for @T[i64] given [unit]
+trait.proof private @T_p {
+  %p0 = trait.witness proj_resolve !trait.proj<@Assoc[i64], "Out"> resolves i32 by @Assoc_i64
+    : !trait.claim<!trait.proj<@Assoc[i64], "Out"> = i32>
+  %d = trait.derive @T[i64] from @T_impl given(%p0) : (!trait.claim<!trait.proj<@Assoc[i64], "Out"> = i32>)
+  trait.return %d : !trait.claim<@T[i64]>
+}
 
-// The extracted free function projects the equality from the proven self, with
-// no assume left behind.
+// The extracted free function holds the proof's evidence for the entry.
 // CHECK: func.func private @T_impl
-// CHECK: trait.project %{{.*}}[0] : <@T[i64] by @T_p> -> <!trait.proj<@Assoc[i64], "Out"> = i32>
-// CHECK-NOT: trait.assume
+// CHECK: %[[E:.*]] = trait.witness proj_resolve !trait.proj<@Assoc[i64], "Out"> resolves i32 by @Assoc_i64
+// CHECK: call @spend_{{.*}}(%[[E]])
 // CHECK: return
 
 // CHECK-LABEL: func.func @main
 // CHECK: call @T_impl
-func.func @main(%x: i64) -> !trait.claim<!trait.proj<@Assoc[i64], "Out"> = i32> {
+func.func @main(%x: i64) -> i32 {
   %w = trait.allege @T[i64]
-  %r = trait.method.call %w @T[i64]::@m(%x) : (i64) -> !trait.claim<!trait.proj<@Assoc[i64], "Out"> = i32>
-  return %r : !trait.claim<!trait.proj<@Assoc[i64], "Out"> = i32>
+  %r = trait.method.call %w @T[i64]::@m(%x) : (i64) -> i32
+  return %r : i32
 }

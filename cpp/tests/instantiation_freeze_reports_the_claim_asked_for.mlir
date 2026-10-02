@@ -29,7 +29,7 @@
 
 !T = !trait.poly<0>
 
-trait.trait private @Gen[!T] {}
+trait.trait private @Gen(%self: !trait.claim<@Gen[!T]>) {}
 
 func.func private @declares(!trait.claim<@Gen[i64]>, i64) -> i64
 

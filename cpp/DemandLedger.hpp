@@ -39,9 +39,9 @@ enum class DemandOrigin : uint8_t {
   RecordedFactRead,
   /// A call op's verifier comparing its formal and actual signatures.
   CallSignatureVerification,
-  /// A proof op's verifier reading the claim it stands over and the citations
-  /// its given list names.
-  ProofVerification,
+  /// A witness or derive verifier reading the impl it cites at the claim it
+  /// introduces.
+  CitationVerification,
 };
 
 /// Whether this origin can add a pending stage obligation.
@@ -57,11 +57,16 @@ inline bool recordsToLedger(DemandOrigin origin) {
   case DemandOrigin::RecordedFactRead:
     return true;
   case DemandOrigin::CallSignatureVerification:
-  case DemandOrigin::ProofVerification:
+  case DemandOrigin::CitationVerification:
     return false;
   }
   return false;
 }
+
+/// A spelling an engine could not settle, with the module it stands in: the
+/// module whose impls may serve it and whose record its answer is read from.
+/// One spelling standing in two modules is two demands.
+using Demand = std::pair<Type, ModuleOp>;
 
 enum class DemandSkip : uint8_t {
   /// Trait, impl and proof ops and their whole subtrees. What they spell -- a
@@ -87,21 +92,24 @@ enum class DemandSkip : uint8_t {
 /// The result is in the order the walk found them, so a caller putting these to
 /// impl selection asks in an order one run repeats.
 ///
+/// Each demand stands in the module that anchors the op spelling it.
+///
 /// `origins`, when given, receives where each demand was first found spelled.
 /// A caller that puts one to impl selection names that place while it does, so
 /// what the ask raises underneath is attributed to the op carrying the spelling
 /// rather than to the module.
-llvm::SetVector<Type> demandsSpelledIn(ModuleOp module, bool inAttributes,
-                                       DemandSkip projections,
-                                       DemandSkip claims,
-                                       DenseMap<Type, Location> *origins = nullptr);
+llvm::SetVector<Demand>
+demandsSpelledIn(ModuleOp module, bool inAttributes, DemandSkip projections,
+                 DemandSkip claims,
+                 DenseMap<Demand, Location> *origins = nullptr);
 
 /// Pending obligations and diagnostic frames owned by one instantiation.
 class DemandLedger {
 public:
-  void record(Type demand, unsigned missArms);
-  ArrayRef<Type> getDrainableDemands() const { return demands.getArrayRef(); }
-  unsigned getDrainableArms(Type demand) const { return arms.lookup(demand); }
+  void record(Demand demand, unsigned missArms);
+
+  ArrayRef<Demand> getDrainableDemands() const { return demands.getArrayRef(); }
+  unsigned getDrainableArms(Demand demand) const { return arms.lookup(demand); }
 
   /// Where `demand` was first raised, when a frame named a place then.
   ///
@@ -109,7 +117,7 @@ public:
   /// and that is where a refusal of it belongs. The rounds that put it to
   /// selection later stand nowhere in the program, so the place is kept here or
   /// nowhere.
-  std::optional<Location> getRaisedAt(Type demand) const {
+  std::optional<Location> getRaisedAt(Demand demand) const {
     auto it = raisedAt.find(demand);
     if (it == raisedAt.end())
       return std::nullopt;
@@ -142,12 +150,12 @@ public:
   /// surviving spelling the stage's leftover-op walks do not reach because it
   /// lives on a block argument or in an attribute.
   LogicalResult checkStandingDemandsServed(
-      ModuleOp module, const DenseSet<Type> &served) const;
+      ModuleOp module, const DenseSet<Demand> &served) const;
 
 private:
-  llvm::SetVector<Type> demands;
-  llvm::DenseMap<Type, unsigned> arms;
-  llvm::DenseMap<Type, Location> raisedAt;
+  llvm::SetVector<Demand> demands;
+  llvm::DenseMap<Demand, unsigned> arms;
+  llvm::DenseMap<Demand, Location> raisedAt;
   SmallVector<Location, 8> frames;
 };
 
@@ -223,9 +231,10 @@ private:
 };
 
 /// Queue only real stage demands; probes, speculation and verifiers stay local.
-void recordLookupMiss(Type demand, LookupMissReason reason, DemandOrigin origin,
-                      unsigned enclosingDepth);
-void recordResolverProjectionMiss(Type demand);
-void recordReadOnlyResolverMiss(Type demand);
+/// `anchor` is the module the engine read the demand in.
+void recordLookupMiss(Type demand, ModuleOp anchor, LookupMissReason reason,
+                      DemandOrigin origin, unsigned enclosingDepth);
+void recordResolverProjectionMiss(Type demand, ModuleOp anchor);
+void recordReadOnlyResolverMiss(Type demand, ModuleOp anchor);
 
 } // namespace mlir::trait

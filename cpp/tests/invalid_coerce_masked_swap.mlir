@@ -9,13 +9,19 @@
 // verifier refuses. Two impls of one application, each with its own proof, make
 // the swap spellable.
 
-trait.trait private @Safe[!trait.poly<0>, !trait.poly<1>] {}
+trait.trait private @Safe(%self: !trait.claim<@Safe[!trait.poly<0>, !trait.poly<1>]>) {}
 
-trait.impl private @Safe_impl for @Safe[i32, i64] {}
-trait.impl private @Safe_impl_alt for @Safe[i32, i64] {}
+trait.impl private @Safe_impl(%self: !trait.claim<@Safe[i32, i64]>) {}
+trait.impl private @Safe_impl_alt(%self: !trait.claim<@Safe[i32, i64]>) {}
 
-trait.proof private @Safe_proof proves @Safe_impl[] for @Safe[i32, i64] given []
-trait.proof private @Safe_proof_alt proves @Safe_impl_alt[] for @Safe[i32, i64] given []
+trait.proof private @Safe_proof {
+  %d = trait.derive @Safe[i32, i64] from @Safe_impl given()
+  trait.return %d : !trait.claim<@Safe[i32, i64]>
+}
+trait.proof private @Safe_proof_alt {
+  %d = trait.derive @Safe[i32, i64] from @Safe_impl_alt given()
+  trait.return %d : !trait.claim<@Safe[i32, i64]>
+}
 
 func.func @swap() -> !trait.claim<@Safe[i32, i64] by @Safe_proof_alt> {
   %s = trait.witness @Safe_proof for @Safe[i32, i64]
@@ -33,13 +39,19 @@ func.func @swap() -> !trait.claim<@Safe[i32, i64] by @Safe_proof_alt> {
 // tuple carries a different proof at its claim position than the input tuple, so
 // the position-wise check refuses it.
 
-trait.trait private @Safe[!trait.poly<0>, !trait.poly<1>] {}
+trait.trait private @Safe(%self: !trait.claim<@Safe[!trait.poly<0>, !trait.poly<1>]>) {}
 
-trait.impl private @Safe_impl for @Safe[i32, i64] {}
-trait.impl private @Safe_impl_alt for @Safe[i32, i64] {}
+trait.impl private @Safe_impl(%self: !trait.claim<@Safe[i32, i64]>) {}
+trait.impl private @Safe_impl_alt(%self: !trait.claim<@Safe[i32, i64]>) {}
 
-trait.proof private @Safe_proof proves @Safe_impl[] for @Safe[i32, i64] given []
-trait.proof private @Safe_proof_alt proves @Safe_impl_alt[] for @Safe[i32, i64] given []
+trait.proof private @Safe_proof {
+  %d = trait.derive @Safe[i32, i64] from @Safe_impl given()
+  trait.return %d : !trait.claim<@Safe[i32, i64]>
+}
+trait.proof private @Safe_proof_alt {
+  %d = trait.derive @Safe[i32, i64] from @Safe_impl_alt given()
+  trait.return %d : !trait.claim<@Safe[i32, i64]>
+}
 
 func.func @masked_swap(%s: tuple<!trait.claim<@Safe[i32, i64] by @Safe_proof>>)
     -> tuple<!trait.claim<@Safe[i32, i64] by @Safe_proof_alt>> {

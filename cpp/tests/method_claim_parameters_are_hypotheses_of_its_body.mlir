@@ -12,7 +12,7 @@
 // CHECK: trait.func.call @inner
 
 !T = !trait.poly<0>
-trait.trait private @Trait[!T] {
+trait.trait private @Trait(%self: !trait.claim<@Trait[!T]>) {
   trait.assoc_type @Item
 }
 
@@ -20,7 +20,7 @@ trait.trait private @Trait[!T] {
 func.func private @inner(!A, !trait.claim<@Trait[!A]>) -> !trait.proj<@Trait[!A], "Item">
 
 !U = !trait.poly<1>
-trait.trait private @User[!U] {
+trait.trait private @User(%self: !trait.claim<@User[!U]>) {
   trait.method @use(%x: !U, %t: !trait.claim<@Trait[!U]>,
       %eq: !trait.claim<!trait.proj<@Trait[!U], "Item"> = i64>) -> i64 {
     %r = trait.func.call @inner(%x, %t) : (!U, !trait.claim<@Trait[!U]>) -> i64

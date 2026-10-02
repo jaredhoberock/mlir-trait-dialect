@@ -10,8 +10,8 @@
 !T = !trait.poly<1>
 !G = !trait.poly<2>
 
-trait.trait private @Carry[!S, !G] { trait.assoc_type @Payload }
-trait.impl private @Carry_any for @Carry[!T, !G] {
+trait.trait private @Carry(%self: !trait.claim<@Carry[!S, !G]>) { trait.assoc_type @Payload }
+trait.impl private @Carry_any(%self: !trait.claim<@Carry[!T, !G]>) {
   trait.assoc_type @Payload = !T
 }
 

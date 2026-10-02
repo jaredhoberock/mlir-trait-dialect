@@ -3,13 +3,13 @@
 
 // RUN: mlir-opt -pass-pipeline='builtin.module(monomorphize-trait)' %s | FileCheck %s
 
-trait.trait private @Trait[!trait.poly<0>] {
+trait.trait private @Trait(%self_claim: !trait.claim<@Trait[!trait.poly<0>]>) {
   trait.method @method(%self: !trait.poly<0>, %value: !trait.poly<1>) -> !trait.poly<1> {
     trait.return %value : !trait.poly<1>
   }
 }
 
-trait.impl private @Trait_impl_i64 for @Trait[i64] {
+trait.impl private @Trait_impl_i64(%self: !trait.claim<@Trait[i64]>) {
 }
 
 func.func @main() -> i32 {
@@ -31,14 +31,14 @@ func.func @main() -> i32 {
   return %result : i32
 }
 
-// CHECK-LABEL: func.func private @Trait_impl_i64_{{h[0-9a-f]+}}_method(
+// CHECK-LABEL: func.func private @Trait_{{h[0-9a-f]+}}_method(
 // CHECK-SAME: i64) -> i64
-// CHECK-LABEL: func.func private @Trait_impl_i64_{{h[0-9a-f]+}}_method(
+// CHECK-LABEL: func.func private @Trait_{{h[0-9a-f]+}}_method(
 // CHECK-SAME: i1) -> i1
 // CHECK-LABEL: func.func @main()
-// CHECK: call @Trait_impl_i64_{{h[0-9a-f]+}}_method(
+// CHECK: call @Trait_{{h[0-9a-f]+}}_method(
 // CHECK-SAME: i64
-// CHECK: call @Trait_impl_i64_{{h[0-9a-f]+}}_method(
+// CHECK: call @Trait_{{h[0-9a-f]+}}_method(
 // CHECK-SAME: i1
 // CHECK-NOT: trait.method.call
 // CHECK-NOT: trait.func.call

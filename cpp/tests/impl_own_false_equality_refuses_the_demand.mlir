@@ -14,11 +14,11 @@
 
 !S = !trait.poly<0>
 
-trait.trait private @FoldFn[!S] {
+trait.trait private @FoldFn(%self: !trait.claim<@FoldFn[!S]>) {
   trait.assoc_type @Output
 }
 
-trait.impl private @FoldFn_bad for @FoldFn[i32] where [!trait.proj<@FoldFn[i32], "Output"> = i32] {
+trait.impl private @FoldFn_bad(%self: !trait.claim<@FoldFn[i32]>, %output: !trait.claim<!trait.proj<@FoldFn[i32], "Output"> = i32>) {
   trait.assoc_type @Output = i64
 }
 

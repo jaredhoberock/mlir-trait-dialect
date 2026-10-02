@@ -13,26 +13,36 @@
 // CHECK: {{^}}9{{$}}
 
 !T = !trait.poly<0>
-trait.trait private @Mark[!T] { trait.method @value() -> i64 }
-trait.impl private @Nine for @Mark[!T] {
+trait.trait private @Mark(%self: !trait.claim<@Mark[!T]>) { trait.method @value() -> i64 }
+trait.impl private @Nine(%self: !trait.claim<@Mark[!T]>) {
   trait.method @value() -> i64 {
     %v = arith.constant 9 : i64
     trait.return %v : i64
   }
 }
-trait.proof private @PN proves @Nine[!T = i32] for @Mark[i32] given []
-trait.proof private @Alias proves @Nine[!T = i32] for @Mark[i32] given []
-trait.trait private @Wrapped[!T] where [@Mark[!T]] { trait.method @value() -> i64 }
-trait.impl private @W for @Wrapped[!T] where [@Mark[!T]] {
+trait.proof private @PN {
+  %d = trait.derive @Mark[i32] from @Nine given()
+  trait.return %d : !trait.claim<@Mark[i32]>
+}
+trait.proof private @Alias {
+  %d = trait.derive @Mark[i32] from @Nine given()
+  trait.return %d : !trait.claim<@Mark[i32]>
+}
+trait.trait private @Wrapped(%self: !trait.claim<@Wrapped[!T]>) -> !trait.claim<@Mark[!T]> { trait.method @value() -> i64 }
+trait.impl private @W(%self: !trait.claim<@Wrapped[!T]>, %mark: !trait.claim<@Mark[!T]>) {
   trait.method @value() -> i64 {
-    %p = trait.assume 0 : !trait.claim<@Mark[!T]>
-    %v = trait.method.call %p @Mark[!T]::@value() : () -> i64
+    %v = trait.method.call %mark @Mark[!T]::@value() : () -> i64
     trait.return %v : i64
   }
+  trait.return %mark : !trait.claim<@Mark[!T]>
 }
-trait.proof private @PW proves @W[!T = i32] for @Wrapped[i32] given [@PN, @PN]
+trait.proof private @PW {
+  %p0 = trait.witness @PN for @Mark[i32]
+  %d = trait.derive @Wrapped[i32] from @W given(%p0) : (!trait.claim<@Mark[i32] by @PN>)
+  trait.return %d : !trait.claim<@Wrapped[i32]>
+}
 func.func private @f(%p: !trait.claim<@Mark[!T]>) -> i64 {
-  %w = trait.derive @Wrapped[!T] from @W[!T = !T] given(%p) : (!trait.claim<@Mark[!T]>)
+  %w = trait.derive @Wrapped[!T] from @W given(%p) : (!trait.claim<@Mark[!T]>)
   %v = trait.method.call %w @Wrapped[!T]::@value() : () -> i64
   return %v : i64
 }

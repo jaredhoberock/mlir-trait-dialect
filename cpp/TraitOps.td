@@ -32,16 +32,15 @@ include "TraitTypes.td"
 // 2. Verification is always local.  Because claims are SSA values,
 //    verifiers inspect operands directly — no searching op-def chains,
 //    no impl resolution, no global analysis.  This keeps verifiers simple
-//    and free of surprising dependencies on distant IR.  The one exception
-//    is trait.assume, which is semi-local (inspects the enclosing scope).
-//    Impl resolution is a separate global pass that runs before
-//    monomorphization.
+//    and free of surprising dependencies on distant IR.  Impl resolution
+//    is the work of the stage described under "How claims are proven".
 //
-// 3. Claims flow into polymorphic code through !trait.claim parameters,
-//    so polymorphic code relies on a trait only where its caller proves
-//    it.  A claim code fabricates is an allegation (trait.allege), a
-//    trusted assertion that impl selection proves where its types are
-//    concrete: resolve-impls proves a monomorphic one and
+// 3. Claims flow into polymorphic code through !trait.claim parameters --
+//    a function's, and a trait's or impl's block arguments, which its
+//    methods read -- so polymorphic code relies on a trait only where its
+//    caller proves it.  A claim code fabricates is an allegation
+//    (trait.allege), a trusted assertion that impl selection proves where
+//    its types are concrete: resolve-impls proves a monomorphic one and
 //    instantiate-monomorphs each instance of a polymorphic one, and one
 //    nothing proves is refused where it stands.
 //
@@ -49,6 +48,66 @@ include "TraitTypes.td"
 //    in the IR itself — no side tables, no external state.  Analysis
 //    passes read the IR; transformation passes update it.  This keeps
 //    the IR self-contained and makes correctness checkable by inspection.
+//
+//===----------------------------------------------------------------------===//
+// How claims are proven
+//===----------------------------------------------------------------------===//
+//
+// A claim's evidence is a value: a block argument of the function, trait or
+// impl that assumes it, or the result of an evidence op.  trait.witness cites
+// a proof, or an impl with no parameters and no where entries; for an
+// equality it cites a projection's resolution by an impl
+// (`proj_resolve P resolves T by @impl`), a composition of such steps
+// (`compose(...)`), or reflexivity (`refl`).  trait.derive applies an impl
+// to evidence for its where entries.  trait.project reads a claim's
+// requirement by position.  trait.coerce respells a value's type, and
+// accepts the respelling where the ground congruence closure of the
+// equalities it cites joins the two spellings.  trait.allege asserts a claim
+// for impl selection to prove.  A proven claim's type names its proof
+// (`!trait.claim<@T[i32] by @p>`), and a method call prints its receiver's
+// proof apart from the receiver's type, after its signature (`by @p`).
+//
+// The stage proving claims is the monomorphize-trait pipeline:
+// instantiate-monomorphs-trait, then erase-polymorphs-trait.  Instantiation
+// runs in rounds to a fixed point.  Impl selection proves each monomorphic
+// allegation and writes the proof as a trait.proof at the end of the module
+// the claim stands in.  What an engine cannot settle yet is recorded on a
+// demand ledger, one demand per spelling and module, and each round puts the
+// ledger's demands and the ones the module still spells to selection in the
+// module they stand in; selection asks the dialects' impl generators for an
+// impl where none binds a demand.  A sweep then writes each proven claim in
+// its proven form, and a greedy driver cuts one instance per template, type
+// arguments and evidence at each call whose operands are proven, lowering the
+// call to a func.call of the instance.  An instance's evidence parameters
+// take its caller's proofs, so a body reads the evidence it was given by
+// position.  A chain of instances holding 128 instances of one template is
+// refused, as Rust's monomorphization collector counts its limit per function;
+// a proof whose derivation stands 128 obligations deep is refused before any
+// instance is cut, as Rust's trait solver refuses an overflowing obligation,
+// which is what stops a proof citing itself, or a ring of proofs citing one
+// another, at ever larger arguments.
+//
+// The evidence an impl returns for its trait's requirements is read by
+// position: a projection of a proven claim is replaced by the ops the impl's
+// return computes there, cloned at the projection with the impl's where
+// arguments taken from the claim's proof, and a call of a method computing
+// evidence is replaced by the method's body, so the stage's patterns are the
+// only reading of either -- a derive there is transcribed, an allegation
+// decided where it stands, a coercion settled.  A coercion that would leave
+// its input in its place waits while the evidence it cites stands, through any
+// op, region yield or control-flow argument, on an allegation or on evidence
+// still to be inlined: a projection is pending until it is inlined, however
+// its result is spelled.  An allegation nothing reads is
+// never decided: Rust checks an impl's requirements at the impl, and a
+// frontend that needs that check makes it before it emits the impl.  Evidence
+// may cite its own impl through a derive or a witness, which builds evidence,
+// but an impl may not return a projection of its own application, which
+// would read the very return it stands in (GHC's rule for instance
+// superclasses); and an op in an impl's body outside its methods holds only
+// the impl's where arguments as hypotheses, never its own application.  A
+// proof is identified by its impl, its application and the proof each premise
+// names: one standing with that body answers wherever the stage would write
+// it.
 //
 //===----------------------------------------------------------------------===//
 
@@ -63,100 +122,90 @@ class HasChildren<list<string> ops>
     : ParamNativeOpTrait<"HasOnlyChildOps", !interleave(ops, ", ")>, StructuralOpTrait;
 
 
+// The operations a trait's or an impl's body may hold beside its methods and
+// associated types: the evidence ops, which compute evidence over the
+// declaration's block arguments for its methods to share and, in an impl, for
+// its return.
+defvar DeclarationEvidenceOps = ["trait::AllegeOp", "trait::CoerceOp",
+                                 "trait::DeriveOp", "trait::ProjectOp",
+                                 "trait::WitnessOp"];
+
 def TraitOp : TraitDialectOp<"trait", [
+  DeclareOpInterfaceMethods<OpAsmOpInterface, ["getAsmBlockArgumentNames"]>,
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
-  HasChildren<["trait::MethodOp", "trait::AssocTypeOp"]>,
+  HasChildren<!listconcat(["trait::MethodOp", "trait::AssocTypeOp"],
+                          DeclarationEvidenceOps)>,
   HasGetModule,
   IsolatedFromAbove,
+  NoTerminator,
   SingleBlock,
   Symbol,
   SymbolTable
-] # GraphRegionNoTerminator.traits
-> {
+]> {
   let summary = "Declares a trait interface";
   let description = [{
-    Declares a trait interface, similar to a Rust or Scala trait, or a Haskell typeclass.
-    A `trait.trait` operation defines a symbol that can be referenced by `!trait.claim`
-    types, `trait.impl`, and `trait.method.call`. It contains a region which holds
-    `trait.method` operations that define the method requirements for implementors. If any of
-    these `trait.method` operations have a body, then the method is optional for implementors.
-
-    Example:
+    Declares a trait interface, similar to a Rust or Scala trait, or a Haskell
+    typeclass, printed as a function signature. Its one block argument is the
+    trait's own application, the hypothesis every default method runs under;
+    the application's type arguments, distinct type variables, are the trait's
+    parameters in order. Its result signature states the trait's requirements:
+    one claim per fact every proof of the trait carries, in the one order
+    `trait.project` indexes them by and every impl returns their evidence in.
 
     ```mlir
     !S = !trait.poly<0>
     !O = !trait.poly<1>
 
-    trait.trait @PartialEq[!S,!O] {
+    trait.trait private @PartialOrd(%self: !trait.claim<@PartialOrd[!S, !O]>)
+        -> !trait.claim<@PartialEq[!S, !O]> {
       // a required method
-      trait.method @eq(!S, !O) -> i1
+      trait.method @partial_cmp(!S, !O) -> !opt_ord
 
-      // an optional method
-      trait.method @ne(%self: !S, %other: !O) -> i1 {
-        %a = trait.assume self : !trait.claim<@PartialEq[!S,!O]>
-        %eq = trait.method.call %a @PartialEq[!S,!O]::@eq(%self, %other)
-          : (!S, !O) -> i1
-        %true = arith.constant 1 : i1
-        %res = arith.xori %eq, %true : i1
+      // a default method, which reads the trait's argument
+      trait.method @lt(%a: !S, %b: !O) -> i1 {
+        %eq = trait.project %self[0] : !trait.claim<@PartialOrd[!S, !O]>
+                                    -> !trait.claim<@PartialEq[!S, !O]>
+        ...
         trait.return %res : i1
       }
     }
     ```
 
-    The `where` clause is one ordered `PredicateArrayAttr` whose entries are of two
-    arms: a one-hop trait application that must hold whenever the trait holds, or a
-    type equality two spellings must satisfy (checked at an impl's verification against the
-    impl's bindings, and projectable through `trait.project`'s equality hop). Each
-    requirement is written using the trait's type parameters and is stored in the
-    `requirements` argument.
+    A requirement is a trait application or a type equality the trait's
+    associated types satisfy (`!trait.proj<@FoldFn[!S], "Output"> = !S`). A
+    requirement quantified over variables of its own -- a generic associated
+    type's bound -- is a function from its premises to its conclusion, and is
+    declared as one: a required method of the trait whose type variables are the
+    requirement's, whose claim parameters are its premises and whose result is
+    its conclusion. Every impl defines it, and a use calls it.
 
-    Concretely, if you declare:
-
-    ```mlir
-    !S = !trait.poly<0>
-    !O = !trait.poly<1>
-
-    trait.trait @PartialOrd[!S,!O] where [@PartialOrd[!S,!O]] {
-      trait.method @partial_cmp(!S, !O) -> !opt_ord
-
-      trait.method @lt(%self: !S, %other: !O) -> !opt_ord {
-        ...
-      }
-    }
-    ```
-
-    Then any proof of `@PartialOrd[T,U]` must also discharge `@PartialEq[T,U]`.
-
-    A `where` clause may mix both arms; an equality entry names a type equality the
-    trait's associated types satisfy:
-
-    ```mlir
-    // @Callable[!S] must hold, and @FoldFn's "Output" projects to !S.
-    trait.trait @FoldFn[!S] where [
-      @Callable[!S],
-      !trait.proj<@FoldFn[!S], "Output"> = !S
-    ] { ... }
-    ```
+    The body holds methods, associated-type declarations, and evidence ops over
+    `%self` that default methods may share. It is a function body, so a value is
+    defined before the ops that read it, and it ends without a terminator. A
+    trait is a template that dies with monomorphization, so it is private.
   }];
 
   let arguments = (ins
     SymbolNameAttr:$sym_name,
-    TypeArrayAttr:$type_params,
-    PredicateArrayAttr:$requirements,
+    TypeArrayAttr:$requirements,
     OptionalAttr<StrAttr>:$sym_visibility
   );
 
   let regions = (region SizedRegion<1>:$body);
 
   let extraClassDeclaration = [{
-    TraitApplicationAttr getSelfApplication() {
-      MLIRContext* ctx = getContext();
-      FlatSymbolRefAttr selfRef = FlatSymbolRefAttr::get(ctx, getSymName());
-      return TraitApplicationAttr::get(ctx, selfRef, getTypeParams());
+    /// The trait's own application, the claim its one block argument holds.
+    ClaimType getSelfClaim() {
+      return ::llvm::cast<ClaimType>(getBody().front().getArgument(0).getType());
     }
 
-    ClaimType getSelfClaim() {
-      return ClaimType::get(getContext(), getSelfApplication());
+    TraitApplicationAttr getSelfApplication() {
+      return getSelfClaim().getTraitApplication();
+    }
+
+    /// The trait's parameters, its self application's arguments in order.
+    ArrayRef<Type> getTypeParams() {
+      return getSelfApplication().getTypeArgs();
     }
 
     FailureOr<FunctionOpInterface> getMethod(StringRef methodName, llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
@@ -210,6 +259,7 @@ def TraitOp : TraitDialectOp<"trait", [
     FailureOr<SpecializationMap> buildSubstitutionForSelfClaim(ClaimType actualSelfClaim,
                                                            llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
 
+    /// The trait's requirements, its result signature, in order.
     SmallVector<ClaimType> getRequirementsAsClaims();
 
     FailureOr<SmallVector<ClaimType>> specializeRequirementsAsClaimsFor(
@@ -236,235 +286,158 @@ def TraitOp : TraitDialectOp<"trait", [
     /// Return all the ImplOps for this TraitOp
     SmallVector<ImplOp> getImpls();
 
-    /// Return a list of ImplOps of this TraitOp whose self claim types
-    /// can be specialized against wanted
     /// The impls whose headers match `wanted`, read through the established
     /// context `normalize`: a header spelling a projection reproduces a demand
     /// spelling its resolution only where the caller's context can reduce it.
     SmallVector<ImplOp> getCandidateImplsFor(ClaimType wanted,
                                              Normalizer normalize = Normalizer());
+
+    /// Cuts the default method `methodName` of this trait into a module-level
+    /// function for the receiver `provenSelfClaim`, as an impl method is cut
+    /// (`ImplOp::getOrSpecializeFreeFunctionFromMethod`): the trait's argument
+    /// becomes the instance's leading self proof.
+    FailureOr<func::FuncOp> getOrSpecializeFreeFunctionFromDefault(
+        PatternRewriter &rewriter, ClaimType provenSelfClaim,
+        StringRef methodName, TypeRange actualArguments,
+        const CallSubstitution &callSubst);
   }];
 
-  // builders create one empty block in the body region
+  // The body's one block takes the self claim; a trait is a template that dies
+  // with monomorphization, so it is private from birth: erase collects it by
+  // liveness, never by kind.
   let skipDefaultBuilders = 1;
   let builders = [
-    // low-level builder
-    OpBuilder<(ins "::mlir::StringAttr":$sym_name,
-                   "::mlir::ArrayAttr":$type_params,
-                   "PredicateArrayAttr":$requirements), [{
-      $_state.addAttribute("sym_name", sym_name);
-      $_state.addAttribute("type_params", type_params);
-      $_state.addAttribute("requirements", requirements);
-      // A trait is a template that dies with monomorphization, so it is private
-      // from birth: erase collects it by liveness, never by kind.
+    OpBuilder<(ins "::llvm::StringRef":$name,
+                   "::mlir::ArrayRef<Type>":$typeParams,
+                   "::mlir::ArrayRef<Type>":$requirements), [{
+      ::mlir::MLIRContext *ctx = $_builder.getContext();
+      $_state.addAttribute("sym_name", $_builder.getStringAttr(name));
+      $_state.addAttribute("requirements", $_builder.getTypeArrayAttr(requirements));
       $_state.addAttribute("sym_visibility", $_builder.getStringAttr("private"));
+      ClaimType self = ClaimType::get(ctx, TraitApplicationAttr::get(ctx, name, typeParams));
       ::mlir::Region *region = $_state.addRegion();
-      region->emplaceBlock();
-    }]>,
-
-    // convenience accepts type_params as ArrayRef<Type>
-    OpBuilder<(ins "::mlir::StringAttr":$sym_name,
-                   "::mlir::ArrayRef<Type>":$type_params,
-                   "PredicateArrayAttr":$requirements), [{
-      MLIRContext* ctx = $_builder.getContext();
-      SmallVector<Attribute,8> typeAttrs;
-      typeAttrs.reserve(type_params.size());
-      for (Type ty : type_params) {
-        typeAttrs.push_back(TypeAttr::get(ty));
-      }
-      ArrayAttr typeParamsAttr = ArrayAttr::get(ctx, typeAttrs);
-      build($_builder, $_state, sym_name, typeParamsAttr, requirements);
-    }]>,
-
-    // convenience accepts requirements as an array of TraitApplicationAttr
-    OpBuilder<(ins "::mlir::StringAttr":$sym_name,
-                   "::mlir::ArrayRef<Type>":$type_params,
-                   "::mlir::ArrayRef<TraitApplicationAttr>":$requirements), [{
-      MLIRContext* ctx = $_builder.getContext();
-      auto reqsAttr = PredicateArrayAttr::get(ctx, requirements);
-      build($_builder, $_state, sym_name, type_params, reqsAttr);
+      region->emplaceBlock().addArgument(self, $_state.location);
     }]>
   ];
 
-  // `private @Name[params] where [...] {...}`; the where clause is printed only
-  // when it states something.
-  let assemblyFormat = [{
-    custom<VisibilityKeyword>($sym_visibility) $sym_name `` $type_params
-    `` custom<WhereClause>($requirements) attr-dict-with-keyword $body
-  }];
+  let hasCustomAssemblyFormat = 1;
   let hasVerifier = 1;
 }
 
-
 def ImplOp : TraitDialectOp<"impl", [
+  DeclareOpInterfaceMethods<OpAsmOpInterface, ["getAsmBlockArgumentNames"]>,
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
-  HasChildren<["trait::MethodOp", "trait::AssocTypeOp"]>,
+  HasChildren<!listconcat(["trait::MethodOp", "trait::AssocTypeOp",
+                           "trait::ReturnOp"],
+                          DeclarationEvidenceOps)>,
   HasGetModule,
   IsolatedFromAbove,
-  SingleBlock,
+  SingleBlockImplicitTerminator<"trait::ReturnOp">,
   Symbol,
   SymbolTable
-] # GraphRegionNoTerminator.traits
-> {
+]> {
   let summary = "Implements a trait for a list of types";
   let description = [{
-    Declares an implementation of a trait for a specific list of types.
+    Implements a trait, printed as a function. Its block arguments are its
+    self claim, the trait application it implements, whose arguments name the
+    types it implements the trait for, and then one claim per entry of its
+    where clause, in order: an application the impl assumes, or a type equality
+    it assumes about its own bindings. A citation of the impl -- `trait.derive`,
+    a proof's derive, a projection-resolution `trait.witness` -- supplies one
+    claim per where entry in that order, so a where entry exists once, as its
+    block argument, and its position is the argument's.
 
-    The `sym_name` attribute is a SymbolNameAttr allowing `trait.witness` operations
-    to refer to this implementation by name. If omitted from the textual IR, a unique
-    `sym_name` will be automatically synthesized from the other arguments.
-
-    The `self_application` attribute is the trait application the impl
-    implements: a `trait.trait` symbol (e.g., `@PartialEq`) applied to the types
-    that implement it (e.g., `[i32, i32]`).
-
-    This operation contains a region with `trait.method` operations, each
-    implementing one of the trait's methods.
-
-    Example:
-
-    ```mlir
-    trait.impl @PartialEq_impl_i32 for @PartialEq[i32,i32] {
-      trait.method @eq(%self: i32, %other: i32) -> i1 {
-        %res = arith.cmpi eq, %self, %other : i32
-        trait.return %res : i1
-      }
-    }
-    ```
-
-    Implementations may also declare **assumptions** that must hold for the impl
-    to be valid under its self application. These are listed in the `where [...]`
-    clause (stored in the `assumptions` argument). Assumptions are one-hop claims,
-    analogous to trait-level `where` requirements, and are materializable inside
-    method bodies via `trait.assume`.
-
-    Concretely, given a couple of traits:
+    The body holds the associated-type bindings, the methods, and the evidence
+    ops that compute, from the arguments, the evidence for each of the trait's
+    requirements, which `trait.return` returns in the trait's order. The
+    returned evidence is the trait's requirements at the self claim's
+    arguments, read through the impl's own bindings and its where equalities,
+    and none of it may rest on the impl's own application, argument 0. An impl
+    of a trait requiring nothing returns nothing, and its return is not printed.
 
     ```mlir
-    !T0 = !trait.poly<0>
-    trait.trait @A[!T0] {
-      trait.method @method_a(!T0) -> i32
-    }
-
-    !T1 = !trait.poly<1>
-    trait.trait @B[!T1] {
-      trait.method @method_B(!T1) -> i32
-    }
-    ```
-
-    you can write a polymorphic impl that depends on other claims:
-
-    ```mlir
-    // a concrete impl: @B[i32]
-    trait.impl for @B[i32] {
-      trait.method @method_b(%self: i32) -> i32 {
-        %res = arith.constant 42 : i32
-        trait.return %res : i32
+    trait.impl private @Into_impl(%self: !trait.claim<@Into[!T, !U]>,
+                                  %from: !trait.claim<@From[!U, !T]>) {
+      trait.method @into(%x: !T) -> !U {
+        %0 = trait.method.call %from @From[!U, !T]::@from(%x) : (!T) -> !U
+        trait.return %0 : !U
       }
     }
 
-    // this polymorphic impl matches any type T2 with an impl for @B[T2]
-    !T2 = !trait.poly<2>
-    trait.impl for @A[!T2] where [
-      @B[!T2]
-    ] {
-      trait.method @method_a(%self: !T2) -> i32 {
-        %a = trait.assume 0 : !trait.claim<@B[!T2]>
-        %res = trait.method.call %a @B[!T2]::@method_b(%self) : (!T2) -> i32
-        trait.return %res : i32
-      }
+    trait.impl private @Dense_array(%self: !trait.claim<@Dense[!array.array<!S, !E>]>,
+                                    %coord: !trait.claim<@Coord[!S]>) {
+      %tensor = trait.derive @Tensor[!array.array<!S, !E>] from @Tensor_array given(%coord)
+        : (!trait.claim<@Coord[!S]>)
+      trait.return %tensor : !trait.claim<@Tensor[!array.array<!S, !E>]>
     }
     ```
 
-    The `where` clause is one ordered `PredicateArrayAttr`, the same mixed shape
-    a `trait.trait` carries: each entry is either a trait application the impl
-    assumes as a proof obligation, or a type equality the impl asserts about its
-    own bindings. The two arms share one list in declaration order; there is no
-    second parallel array. Application entries are discharged when the impl is
-    selected; equality entries are checked at impl verification against the impl's own bindings
-    and drive the equality-arm `trait.assume` inside the impl's method bodies.
-
-    The optional `witnesses` array carries the impl's declaration-level
-    witnesses, each a `#trait.witness` read by its predicate arm. An
-    equality-armed witness is a projection-resolution witness: it names a
-    ground sibling projection this impl's own bindings cannot resolve, the type
-    it resolves to, and the impl that binds it. The verifier checks each against
-    its cited impl and replays it as a local resolution rule while comparing this
-    impl's method signatures and its equality endpoints, so a projection a sibling
-    impl resolves is reduced without the verifier enumerating candidate impls; the
-    replayed rules ride the same associated-type replacer the own bindings use,
-    which holds an equality's endpoints as a leaf, so they are blind inside one
-    and cure no equality-claim-parameter mismatch. When such a witness cites a
-    CONDITIONAL sibling impl, its own assumptions must be discharged for the
-    citation to be legal: an application-armed witness names, per obligation,
-    the impl that supplies it, and the discharge recursion resolves every
-    discharger by symbol without scanning the module.
-
-    A witness for a bound requirement of the trait -- a requirement quantified
-    over variables of its own, a generic associated type's bound -- names the
-    requirement by its position and proves its conclusion under its binder, for
-    every argument (see `#trait.witness`). An impl of a trait with a bound
-    requirement states exactly one for each:
-
-    ```mlir
-    trait.trait @Has[!S] where [forall [!trait.bound<0>] -> @Marker[!trait.proj<@Has[!S], "A", [!trait.bound<0>]>]] {
-      trait.assoc_type @A<[!X]>
-    }
-    trait.impl @Has_i32 for @Has[i32]
-        witnesses [#trait<witness requirement 0 by @Marker_i1>] {
-      trait.assoc_type @A<[!X]> = i1
-    }
-    ```
-
-    Example of the mixed `where` clause and the `witnesses` array:
-
-    ```mlir
-    trait.impl @T2_i64 for @T2[i64] where [!trait.proj<@Sib[i64], "Elem"> = i64]
-        witnesses [#trait<witness !trait.proj<@Sib[i64], "Elem"> = i64 by @Sib_cond>,
-                   #trait<witness @X[i64] by @X_i64>] {
-      // the equality-armed witness resolves the sibling projection to i64;
-      // the application-armed witness discharges the cited conditional impl's
-      // @X[i64] assumption.
-      ...
-    }
-    ```
+    A method of the impl reads the arguments and the evidence values the body
+    defines before it as ordinary SSA uses. An impl is a template that dies
+    with monomorphization, so it is private.
   }];
 
   let arguments = (ins
     SymbolNameAttr:$sym_name,
-    TraitApplicationAttr:$self_application,
-    PredicateArrayAttr:$assumptions,
-    OptionalAttr<TypedArrayAttrBase<WitnessAttr,
-        "array of impl witnesses">>:$witnesses,
     OptionalAttr<StrAttr>:$sym_visibility
   );
   let regions = (region SizedRegion<1>:$body);
 
   let extraClassDeclaration = [{
-    TraitApplicationAttr getSelfApplication() const {
-      return const_cast<ImplOp*>(this)->getSelfApplication();
+    /// The impl's own application, the claim its first block argument holds.
+    ClaimType getSelfClaim() {
+      return ::llvm::cast<ClaimType>(getBody().front().getArgument(0).getType());
     }
 
-    ClaimType getSelfClaim() {
-      return ClaimType::get(getContext(), getSelfApplication());
+    TraitApplicationAttr getSelfApplication() {
+      return getSelfClaim().getTraitApplication();
+    }
+
+    /// The claims the impl's where clause states, its block arguments after
+    /// the first, in order.
+    SmallVector<ClaimType> getWhereClaims() {
+      return llvm::map_to_vector(getBody().front().getArguments().drop_front(),
+                                 [](BlockArgument argument) {
+                                   return ::llvm::cast<ClaimType>(argument.getType());
+                                 });
     }
 
     /// The application this impl's header states at `arguments`, a
     /// substitution for its parameters.
     TraitApplicationAttr getSelfApplicationAt(const SpecializationMap &arguments) {
-      return instantiatePredicate(getSelfApplication(), arguments)
+      return ::llvm::cast<ClaimType>(instantiate(Type(getSelfClaim()), arguments))
           .getTraitApplication();
     }
 
     /// Each entry of this impl's where clause at `arguments`, a substitution
-    /// for its parameters, in order, as the unproven claim stating it.
-    SmallVector<ClaimType> getWhereClauseAt(const SpecializationMap &arguments) {
-      return llvm::map_to_vector(getAssumptions(), [&](Attribute entry) {
-        return instantiatePredicate(entry, arguments);
+    /// for its parameters, in order.
+    SmallVector<ClaimType> getWhereClaimsAt(const SpecializationMap &arguments) {
+      return llvm::map_to_vector(getWhereClaims(), [&](ClaimType entry) {
+        return ::llvm::cast<ClaimType>(instantiate(Type(entry), arguments));
       });
     }
 
-    FlatSymbolRefAttr getTraitNameAttr() const {
+    /// The where clause's application entries, in order: the claims a
+    /// proof's subproofs discharge.
+    SmallVector<ClaimType> getApplicationPremises() {
+      SmallVector<ClaimType> premises = getWhereClaims();
+      llvm::erase_if(premises, [](ClaimType claim) { return claim.isEquality(); });
+      return premises;
+    }
+
+    /// The where clause's equality entries, in order.
+    SmallVector<TypeEqualityAttr> getEqualityPremises() {
+      SmallVector<TypeEqualityAttr> equalities;
+      for (ClaimType claim : getWhereClaims())
+        if (TypeEqualityAttr equality = claim.getEqualityAttr())
+          equalities.push_back(equality);
+      return equalities;
+    }
+
+    /// The `trait.return` ending the body.
+    ReturnOp getReturn();
+
+    FlatSymbolRefAttr getTraitNameAttr() {
       return getSelfApplication().getTraitName();
     }
 
@@ -488,23 +461,18 @@ def ImplOp : TraitDialectOp<"impl", [
       return succeeded(getMethod(name));
     }
 
-    // returns all distinct generic types that occur in this ImplOp's self application and assumptions
+    // returns all distinct generic types that occur in this ImplOp's self application and where clause
     SmallVector<GenericTypeInterface, 4> getTypeParams();
 
-    /// The substitution a citation's `arguments` make for this impl: each
-    /// binding keyed by one of the impl's own parameters. Fails when a key is
-    /// not one of them, when two bind the same one, or when one takes no
-    /// argument.
-    FailureOr<SpecializationMap> substitutionFor(
-        ArrayRef<TypeBindingAttr> arguments,
+    /// The arguments a citation of this impl gives its parameters: read off
+    /// the application `cited` names against the header, and off each claim
+    /// `premises` supplies, one per where entry in order, against that entry.
+    /// Fails, naming it, where a parameter is read nowhere or the premises are
+    /// not one per where entry. Nothing is judged: the caller compares the
+    /// declaration rebuilt at the arguments with what the citation spells.
+    FailureOr<SpecializationMap> readCitationArguments(
+        ClaimType cited, TypeRange premises,
         llvm::function_ref<InFlightDiagnostic()> err = nullptr);
-
-    /// Returns the impl-local definition of `methodName`, synthesizing it from
-    /// the trait default method when the impl does not provide its own body.
-    ///
-    /// The synthesized method is specialized for this impl's self application
-    /// and inserted into the impl body so future lookups reuse the same symbol.
-    FailureOr<FunctionOpInterface> getOrSpecializeMethod(RewriterBase& rewriter, StringRef methodName);
 
     /// Extracts a method from this impl as a free function with a leading self parameter.
     ///
@@ -512,9 +480,9 @@ def ImplOp : TraitDialectOp<"impl", [
     /// call-site substitution, and monomorphizes the cloned method. The
     /// instance is named by the evidence it is made with: the proven self
     /// claim at the leading position, then `actualArguments`, what the call
-    /// supplies for the method's own parameters, position by position. The
-    /// evidence the body is stamped with is the call's, which holds the
-    /// receiver's proof and the arguments' together.
+    /// supplies for the method's own parameters, position by position. A
+    /// method this impl does not define is the trait's default, cut from the
+    /// trait.
     FailureOr<func::FuncOp> getOrSpecializeFreeFunctionFromMethod(PatternRewriter& rewriter, ClaimType provenSelfClaim, StringRef methodName,
                                                                    TypeRange actualArguments,
                                                                    const CallSubstitution &callSubst);
@@ -554,8 +522,7 @@ def ImplOp : TraitDialectOp<"impl", [
     /// The arguments this impl's parameters take at the proven self claim
     /// `provenSelfClaim`. A projection the header spells over one of the
     /// impl's obligations is read through the subproof the claim's proof names
-    /// for that obligation. The arguments carry no evidence: what the claim's
-    /// proof discharges is read off the claim by position wherever it is used.
+    /// for that obligation.
     ///
     /// `origin` names the caller: an application no subproof answers is read
     /// through the ground-projection lookup, so this raises demand.
@@ -564,7 +531,7 @@ def ImplOp : TraitDialectOp<"impl", [
                                                          llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     // Helper to generate unique symbol name for an ImplOp
-    static std::string generateSymName(TraitApplicationAttr selfApp, PredicateArrayAttr assumptions);
+    static std::string generateSymName(TraitApplicationAttr selfApp, ArrayRef<ClaimType> where);
 
     // The name this impl takes at one claim, which the proof selection mints
     // for it there is named after: its own symbol plus the arguments that
@@ -574,36 +541,11 @@ def ImplOp : TraitDialectOp<"impl", [
     // than the one the match was made under.
     std::string generateMangledName(const SpecializationMap &arguments);
 
+    /// Whether a citation may name this impl directly: it binds no parameter
+    /// and has no where clause, so a citation supplies it nothing.
     bool isUnconditional();
 
     LogicalResult verifyIsUnconditional(llvm::function_ref<InFlightDiagnostic()> errFn);
-
-    /// Refuses this impl at `cited` when one of its own where-clause equalities
-    /// does not hold there.
-    ///
-    /// `cited` is the application the citation names. A premise takes no
-    /// subproof -- the given list is indexed by the impl's application-arm
-    /// obligations -- so it is read at each citation or nowhere, and a premise
-    /// mentioning a variable the citation still spells is left standing for the
-    /// instances made of it.
-    ///
-    /// A citation naming an impl carries no evidence of its own, so what a
-    /// projection an endpoint spells reduces through is the impls the module
-    /// holds under `origin`.
-    LogicalResult verifyEqualityPremisesAt(ClaimType cited, DemandOrigin origin,
-                                           llvm::function_ref<InFlightDiagnostic()> err);
-
-    SmallVector<ClaimType> getAssumptionsAsClaims();
-
-    /// This impl's obligations at `actualSelfClaim` when the arguments its
-    /// parameters take there are `arguments`: the trait's application
-    /// requirements, read through this impl's own bindings, then the impl's
-    /// application premises, each instantiated. Nothing is read off the claim
-    /// and nothing through the module.
-    FailureOr<SmallVector<ClaimType>> specializeObligationsAt(
-        ClaimType actualSelfClaim,
-        const SpecializationMap &arguments,
-        llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
 
     /// Look up an associated type op by name
     FailureOr<AssocTypeOp> getAssociatedType(StringRef name) {
@@ -662,63 +604,38 @@ def ImplOp : TraitDialectOp<"impl", [
 
   }];
 
-  // builders create one empty block in the body region
+  // The body's one block takes the self claim and then one claim per where
+  // entry, and ends with an empty `trait.return` the caller fills or replaces.
+  // An impl is a template that dies with monomorphization, so it is private
+  // from birth: erase collects it by liveness, never by kind.
   let skipDefaultBuilders = 1;
   let builders = [
-    // override the default low-level builder to ensure that a block always exists.
-    // The where-clause is one mixed PredicateArrayAttr (application and equality
-    // arms in declaration order).
     OpBuilder<(ins "::mlir::StringRef":$sym_name,
                    "::mlir::trait::TraitApplicationAttr":$self_application,
-                   "PredicateArrayAttr":$assumptions), [{
+                   "::mlir::ArrayRef<::mlir::Type>":$where), [{
       $_state.addAttribute("sym_name", $_builder.getStringAttr(sym_name));
-      $_state.addAttribute("self_application", self_application);
-      $_state.addAttribute("assumptions", assumptions);
-      // An impl is a template that dies with monomorphization, so it is private
-      // from birth: erase collects it by liveness, never by kind.
       $_state.addAttribute("sym_visibility", $_builder.getStringAttr("private"));
       ::mlir::Region *region = $_state.addRegion();
-      region->emplaceBlock();
+      ::mlir::Block &body = region->emplaceBlock();
+      body.addArgument(ClaimType::get($_builder.getContext(), self_application),
+                       $_state.location);
+      for (::mlir::Type entry : where)
+        body.addArgument(entry, $_state.location);
+      ensureTerminator(*region, $_builder, $_state.location);
     }]>,
 
-    // this builder automatically generates $sym_name if it is not given
+    // this builder automatically generates $sym_name
     OpBuilder<(ins "::mlir::trait::TraitApplicationAttr":$self_application,
-                   "PredicateArrayAttr":$assumptions), [{
-      // Auto-generate unique symbol name
-      std::string symName = generateSymName(self_application, assumptions);
-      build($_builder, $_state, symName, self_application, assumptions);
-    }]>,
-
-    // convenience wraps application-only assumptions into the mixed
-    // PredicateArrayAttr and defers to the auto-naming builder
-    OpBuilder<(ins "::mlir::trait::TraitApplicationAttr":$self_application,
-                   "::mlir::ArrayRef<TraitApplicationAttr>":$assumptions), [{
-      MLIRContext *ctx = $_builder.getContext();
-      auto preds = PredicateArrayAttr::get(ctx, assumptions);
-      build($_builder, $_state, self_application, preds);
-    }]>,
-
-    // convenience accepts sym_name as StringRef and application-only assumptions
-    // as ArrayRef
-    OpBuilder<(ins "::mlir::StringRef":$sym_name,
-                   "::mlir::trait::TraitApplicationAttr":$self_application,
-                   "::mlir::ArrayRef<TraitApplicationAttr>":$assumptions), [{
-      MLIRContext *ctx = $_builder.getContext();
-      auto preds = PredicateArrayAttr::get(ctx, assumptions);
-      build($_builder, $_state, sym_name, self_application, preds);
+                   "::mlir::ArrayRef<ClaimType>":$where), [{
+      std::string symName = generateSymName(self_application, where);
+      build($_builder, $_state, symName, self_application,
+            ::llvm::SmallVector<::mlir::Type>(where.begin(), where.end()));
     }]>
   ];
 
-  // `private [@Name] for @Trait[...] where [...] witnesses [...] {...}`; the
-  // name is elided where it is the one synthesized from the header.
-  let assemblyFormat = [{
-    custom<VisibilityKeyword>($sym_visibility)
-    custom<ImplHeader>($sym_name, $self_application, $assumptions)
-    (`witnesses` $witnesses^)? attr-dict-with-keyword $body
-  }];
+  let hasCustomAssemblyFormat = 1;
   let hasVerifier = 1;
 }
-
 
 def AssocTypeOp : TraitDialectOp<"assoc_type", [
   ParentOneOf<["trait::TraitOp", "trait::ImplOp"]>,
@@ -728,7 +645,7 @@ def AssocTypeOp : TraitDialectOp<"assoc_type", [
   let description = [{
     Inside a `trait.trait`, declares an associated type by name:
     ```mlir
-    trait.trait @Iterator[!S] {
+    trait.trait private @Iterator(%self: !trait.claim<@Iterator[!S]>) {
       trait.assoc_type @Item
       trait.method @next(!S) -> !trait.proj<@Iterator[!S], "Item">
     }
@@ -736,9 +653,9 @@ def AssocTypeOp : TraitDialectOp<"assoc_type", [
 
     Inside a `trait.impl`, binds the associated type to a concrete type:
     ```mlir
-    trait.impl for @Iterator[i32] {
+    trait.impl private @Iterator_i32(%self: !trait.claim<@Iterator[i32]>) {
       trait.assoc_type @Item = i64
-      trait.method @next(%self: i32) -> i64 { ... }
+      trait.method @next(%x: i32) -> i64 { ... }
     }
     ```
   }];
@@ -770,11 +687,10 @@ def MethodOp : TraitDialectOp<"method", [
     of its name.
 
     ```mlir
-    trait.trait private @PartialEq[!S, !O] {
+    trait.trait private @PartialEq(%self: !trait.claim<@PartialEq[!S, !O]>) {
       trait.method @eq(!S, !O) -> i1
-      trait.method @ne(%self: !S, %other: !O) -> i1 {
-        %a = trait.assume self : !trait.claim<@PartialEq[!S, !O]>
-        %eq = trait.method.call %a @PartialEq[!S, !O]::@eq(%self, %other)
+      trait.method @ne(%a: !S, %b: !O) -> i1 {
+        %eq = trait.method.call %self @PartialEq[!S, !O]::@eq(%a, %b)
           : (!S, !O) -> i1
         %true = arith.constant 1 : i1
         %res = arith.xori %eq, %true : i1
@@ -789,16 +705,20 @@ def MethodOp : TraitDialectOp<"method", [
     rather than a declaration of something defined elsewhere (`isDeclaration` is
     the interface's default, false).
 
-    A method is not isolated from above, but its body reads nothing from outside
-    itself: its declaration is isolated from above, holds no operation with a
-    result (its child list), and takes no block arguments (its verifier).
-    The constants the folder materializes while simplifying a method's body are
-    placed in that body, as in an isolated function's: the dialect's
-    `DialectFoldInterface` claims a method's body as the region to materialize
-    into.
+    A method is not isolated from above: it reads its declaration's block
+    arguments and the evidence values the declaration's body defines before it
+    as ordinary SSA uses, and nothing else from outside itself, since its
+    declaration is isolated from above and its child list admits evidence ops
+    alone beside methods and associated types. A method that returns claims
+    only computes evidence -- a quantified requirement of its trait -- and is
+    called for that evidence rather than cut. The constants the folder
+    materializes while simplifying a method's body are placed in that body, as
+    in an isolated function's: the dialect's `DialectFoldInterface` claims a
+    method's body as the region to materialize into.
 
     A method is instantiated by cutting it into a module-level `func.func`, its
-    `trait.return`s becoming `func.return`s.
+    `trait.return`s becoming `func.return`s and every value it reads from its
+    declaration replaced by the evidence the receiver's proof supplies there.
   }];
 
   let arguments = (ins
@@ -840,20 +760,19 @@ def MethodOp : TraitDialectOp<"method", [
 
 
 def ReturnOp : TraitDialectOp<"return", [
-  // XXX TODO a method is the one parent until a trait.impl returns the evidence
-  // for its trait's requirements and a trait.proof the claim it proves, both
-  // with trait.return; the commit that gives the declarations block arguments
-  // and those returns adds them as parents.
-  HasParent<"MethodOp">,
+  ParentOneOf<["trait::MethodOp", "trait::ImplOp", "trait::ProofOp"]>,
   Pure,
   ReturnLike,
   Terminator
 ]> {
-  let summary = "Returns from a method";
+  let summary = "Returns from a method, an impl, or a proof";
   let description = [{
-    Ends a block of a `trait.method`'s body, returning its operands as the
-    method's results. Their number and types are the method's result types, by
-    identity.
+    The one terminator of the dialect's three function-like bodies. It ends a
+    block of a `trait.method`'s body, returning the method's results, whose
+    number and types are the method's result types, by identity; it ends a
+    `trait.impl`'s body, returning the evidence for each of the impl's trait's
+    requirements, in the trait's order; and it ends a `trait.proof`'s body,
+    returning the one claim the proof proves.
 
     ```mlir
     trait.method @into(%x: !T) -> !U {
@@ -899,24 +818,25 @@ def Projection : Type<
 // Claim-producing ops
 //===----------------------------------------------------------------------===//
 //
-// Five operations produce `!trait.claim` values. Together they cover every way
-// a claim can originate or be transformed:
+// Four operations produce `!trait.claim` values, and one source holds them
+// without an op. Together they cover every way a claim can originate or be
+// transformed:
 //
 //   Op              Role                                         Analogy
 //   ----------      ------------------------------------------   -----------
 //   trait.allege    Fabricate a claim, to be proven later by      Assertion
 //                   impl resolution where its types are concrete
-//   trait.assume    Materialize the enclosing trait/impl's        Hypothesis
-//                   self claim or a declared assumption
-//   trait.derive    Construct a new claim from a conditional      Introduction
-//                   impl plus existing claim operands
+//   trait.derive    Construct a new claim from an impl plus       Introduction
+//                   one claim operand per where entry
 //   trait.project   Extract a sub-claim from an existing claim    Elimination
-//                   via a trait requirement or impl assumption
+//                   via a trait requirement or impl premise
 //   trait.witness   Materialize a proven claim backed by a        Evidence
 //                   trait.proof or unconditional trait.impl
+//   (argument)      A function's, trait's or impl's claim         Hypothesis
+//                   block argument, which its caller supplies
 //
-// Claims also flow through function parameters as `!trait.claim` SSA values,
-// but that is plain SSA plumbing rather than a dedicated op.
+// `trait.coerce` respells a claim it is given under cited equalities, and a
+// claim-returning method call computes one from its claim operands.
 //===----------------------------------------------------------------------===//
 
 
@@ -978,122 +898,39 @@ def AllegeOp : TraitDialectOp<"allege", [
 }
 
 
-def AssumeOp : TraitDialectOp<"assume", [
-  Pure
-]>{
-  let summary = "Introduce a hypothesis of the enclosing declaration by position";
-  let description = [{
-    Creates a zero-sized SSA value of type `!trait.claim<...>` that introduces a
-    **hypothesis** of the declaration whose method the op stands in: `self`,
-    the declaration's own self application, or `N`, entry `N` of its `where`
-    clause -- a `trait.trait`'s `requirements`, a `trait.impl`'s
-    `assumptions`. The result type spells the claim the entry states, and the
-    verifier refuses an assume whose spelled claim is not exactly that entry,
-    so the text reads as the fact while the position is what the op means. Two
-    entries that spell one claim stay two citations. An entry that binds
-    variables of its own is selected with `trait.project` and its type
-    arguments instead.
-
-    Use `trait.project` to derive *consequences* of an application hypothesis
-    (e.g., trait requirements or impl assumptions). Use `trait.witness` for
-    claims backed by concrete impl evidence. A function that is no method takes
-    the claims it relies on as `!trait.claim` parameters.
-
-      trait.impl @A_gen for @A[!T] where [@B[!T], !trait.proj<@B[!T], "Out"> = i64] {
-        trait.method @method_a(%self: !T) -> i32 {
-          %s = trait.assume self : !trait.claim<@A[!T]>
-          %b = trait.assume 0 : !trait.claim<@B[!T]>
-          %e = trait.assume 1 : !trait.claim<!trait.proj<@B[!T], "Out"> = i64>
-          ...
-        }
-      }
-
-    Note that `trait.assume` is the *only* context-sensitive operation in this dialect.
-  }];
-
-  // `unit` for the enclosing declaration's self application; an index for an
-  // entry of its `where` clause.
-  let arguments = (ins
-    AnyAttrOf<[UnitAttr, ConfinedAttr<I64Attr, [IntNonNegative]>]>:$entry
-  );
-
-  let results = (outs Claim:$result);
-
-  let extraClassDeclaration = [{
-    ClaimType getClaim() {
-      return cast<ClaimType>(getResult().getType());
-    }
-
-    /// Whether this assume cites the enclosing declaration's self application.
-    bool citesSelf() {
-      return ::llvm::isa<UnitAttr>(getEntryAttr());
-    }
-
-    /// The `where`-clause entry this assume cites, if it cites one.
-    std::optional<uint64_t> getWherePosition() {
-      if (auto position = ::llvm::dyn_cast<IntegerAttr>(getEntryAttr()))
-        return position.getInt();
-      return std::nullopt;
-    }
-  }];
-
-  let skipDefaultBuilders = 1;
-  let builders = [
-    // citing the enclosing declaration's self application
-    OpBuilder<(ins "::mlir::Type":$claim, "::mlir::UnitAttr":$self), [{
-      $_state.addAttribute("entry", self);
-      $_state.addTypes(claim);
-    }]>,
-    // citing entry `position` of the enclosing declaration's where clause
-    OpBuilder<(ins "::mlir::Type":$claim, "uint64_t":$position), [{
-      $_state.addAttribute("entry", $_builder.getI64IntegerAttr(position));
-      $_state.addTypes(claim);
-    }]>
-  ];
-
-  let hasCustomAssemblyFormat = 1;
-  let hasVerifier = 1;
-}
-
-
 def DeriveOp : TraitDialectOp<"derive", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
   Pure
 ]>{
-  let summary = "Derive a claim from a conditional impl and assumption claims";
+  let summary = "Derive a claim from an impl and one claim per where entry";
   let description = [{
-    Produces a new claim by combining a conditional `trait.impl` with claim
-    operands that satisfy its assumptions. None of the other claim-producing
-    ops can construct a claim from a conditional impl; consider
-    `impl<U: Trait> Trait for Struct<U> where [@Trait[U]]`: given an
-    in-scope claim for `Trait[!T]`, there is no way to produce
-    `Trait[Struct<!T>]` without `trait.derive`.
+    Produces a new claim by applying a `trait.impl` to claim operands that
+    satisfy its where clause; it is a call of the impl with one operand per
+    block argument after the first. None of the other claim-producing ops can
+    construct a claim from a conditional impl; consider `impl<U: Trait> Trait
+    for Struct<U>`: given an in-scope claim for `Trait[!T]`, there is no way to
+    produce `Trait[Struct<!T>]` without `trait.derive`.
 
-    It names the impl and the argument each of the impl's own parameters
-    takes, `from @impl[!P = T, ...]`, and `given` then holds one claim per
-    entry of the impl's where clause in its order -- an application claim for
-    an application entry and an equality claim for an equality entry. The
-    derived application is the impl's header at those arguments, spelled
-    exactly, and each operand's claim is its entry at them, so verification is
-    a substitution: no module is read and no premise is decided again. The
-    brackets are printed even when the impl binds no parameter.
+    It names the impl, and `given` holds one claim per entry of the impl's where
+    clause in its order -- an application claim for an application entry and an
+    equality claim for an equality entry. The arguments the impl's parameters
+    take are read off the derived application against the impl's header and off
+    each operand against its entry, never stated; the derived application is the
+    header at those arguments and each operand's claim is its entry at them.
 
     ```mlir
-    // Given: impl<U> Trait for Struct<U> where [@Trait[U], Trait[U]::Out = i64]
-    %d = trait.derive @Trait[Struct<!T>] from @the_impl[!U = !T] given(%t, %e)
+    // Given: impl<U> Trait for Struct<U> where Trait[U], Trait[U]::Out = i64
+    %d = trait.derive @Trait[Struct<!T>] from @the_impl given(%t, %e)
       : (!trait.claim<@Trait[!T]>, !trait.claim<!trait.proj<@Trait[!T], "Out"> = i64>)
     ```
 
     Once monomorphic, a derive becomes a witness of the proof its claim names,
     or of the one impl selection holds for it, which must stand over the impl
-    the derive cites and discharge each where-clause entry whose operand is
-    proven by the proof that operand names; any other proof is refused.
+    the derive cites.
   }];
 
   let arguments = (ins
     FlatSymbolRefAttr:$impl,
-    TypedArrayAttrBase<TypeBindingAttr,
-        "the arguments the impl's parameters take">:$arguments,
     // One operand per where-clause entry; the verifier checks each against its
     // entry so a mismatched claim is diagnosed at its operand.
     Variadic<Claim>:$assumptions
@@ -1112,23 +949,17 @@ def DeriveOp : TraitDialectOp<"derive", [
     }
 
     ImplOp getImplOp();
-
-    /// The arguments this derive states for its impl's parameters.
-    SmallVector<TypeBindingAttr> getImplArguments() {
-      return llvm::to_vector(getArguments().getAsRange<TypeBindingAttr>());
-    }
   }];
 
-  // `@Trait[...] from @impl[!P = T, ...] given(%claims) : (types)`; the
-  // derived claim is read off the application and the operand types are
-  // printed only when there are operands.
+  // `@Trait[...] from @impl given(%claims) : (types)`; the derived claim is
+  // read off the application and the operand types are printed only when
+  // there are operands.
   let assemblyFormat = [{
-    custom<ClaimPredicate>(type($result)) `from` $impl ``
-    custom<StatedImplArguments>($arguments) `given` `(` $assumptions `)`
+    custom<ClaimPredicate>(type($result)) `from` $impl
+    `given` `(` $assumptions `)`
     (`:` `(` type($assumptions)^ `)`)? attr-dict-with-keyword
   }];
 }
-
 
 def ProjectOp : TraitDialectOp<"project", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
@@ -1138,77 +969,44 @@ def ProjectOp : TraitDialectOp<"project", [
   let description = [{
     Given a claim, select one of the requirements it carries -- a trait
     application or a type equality that follows from the claim -- by its
-    position in the claim's requirement list. While `trait.assume` introduces
-    axioms, `trait.project` reads a consequence off one.
+    position in the claim's requirement list. A claim's requirements are, in
+    this order:
 
-    A claim's requirements are, in this order:
-
-      1. the `where` predicates of the `trait.trait` the claim applies, in
-         declaration order. Supertraits, where-clause applications,
-         associated-type bounds and header equalities all stand in that one
-         list, so all of them are reachable by position;
-      2. for a **proven** claim, the `where` assumptions of the `trait.impl`
-         its proof cites, in declaration order -- the same order that
-         `trait.proof` names its subproofs in.
+      1. the requirements of the `trait.trait` the claim applies, its result
+         signature, in order;
+      2. for a **proven** claim whose proof stands over an impl, that impl's
+         where entries, its block arguments after the first, in order -- the
+         operands its proof's derive supplies.
 
     The result claim is derived, never spelled: requirement `index`
-    instantiated at the source claim's arguments. An application requirement of
-    a proven source carries the provider of the subproof discharging it, read
-    out of the proof by position; every other requirement is unproven, and an
-    equality requirement never carries a provider at all (the equality arm
-    seals its endpoints). So a proven source projects to a proven application
-    and an unproven one to an unproven application, without a parity rule
-    saying so.
+    instantiated at the source claim's arguments. A where entry of a proven
+    source carries the proof its proof's derive supplies at that position. A
+    trait requirement of a proven source is the evidence the impl returns at
+    that position, which the stage puts in the projection's place
+    (`inlineEvidence`), where the ops computing it are proven as anywhere else;
+    a proof the result spells is held to that evidence by the coercion bridging
+    the two. The printed result type is an annotation on that derivation:
+    verification compares it with the requirement the index selects, modulo the
+    proof where no where entry fixes one, and refuses a disagreement.
 
-    The printed result type is an annotation on that derivation: verification
-    compares it with the requirement the index selects and refuses a
-    disagreement.
-
-    A **bound** requirement -- one quantified over variables of its own, a
-    generic associated type's bound -- is selected at arguments for those
-    variables: `for [types]` supplies one per variable and `given(%claims)`
-    one claim per premise it states, each the premise instantiated at the
-    source's arguments and those types. The result is its conclusion
-    instantiated the same way, and is unproven: the bound is proved once for
-    every argument, by the impl's own evidence, and the instance is proved
-    where it is used. A requirement that binds nothing takes neither.
-
-      // trait.trait @Has[!S] where [forall [!trait.bound<0>] where [@Other[!trait.bound<0>]]
-      //                   -> @Marker[!trait.proj<@Has[!S], "A", [!trait.bound<0>]>]]
-      %m = trait.project %h[0] for [i1] given(%o : !trait.claim<@Other[i1]>)
-        : !trait.claim<@Has[!T]> -> !trait.claim<@Marker[!trait.proj<@Has[!T], "A", [i1]>]>
-
-    Notes:
-    * Only a **single hop** is performed; chain `trait.project` for transitive
-      consequences.
-    * A claim whose trait declares no `where` clause, and whose proof cites an
-      impl that assumes nothing, reaches no index at all.
-
-    Examples:
+    A requirement quantified over variables of its own is no result of the trait
+    but a method of it, and is called rather than projected.
 
     ```mlir
-    // a trait-level requirement (an unproven or a proven source claim)
-    // trait.trait @Ord[!S] where [@Eq[!S], @PartialOrd[!S,!S]]
-    %p = trait.assume self : !trait.claim<@Ord[!T]>
+    // trait.trait @Ord(%self: !trait.claim<@Ord[!S]>)
+    //     -> (!trait.claim<@Eq[!S]>, !trait.claim<@PartialOrd[!S, !S]>)
     %eq = trait.project %p[0] : !trait.claim<@Ord[!T]> -> !trait.claim<@Eq[!T]>
 
-    // an impl assumption: the requirement list continues past the trait's two
-    // into the impl's own, and the result carries the subproof that discharged it
+    // an impl's where entry: the requirement list continues past the trait's
+    // two into the impl's own, and the result carries the subproof the proof's
+    // derive was given there
     %wB = trait.project %wA[2]
       : !trait.claim<@A[i32] by @A_proof> -> !trait.claim<@B[i32] by @B_impl>
-
-    // an equality requirement (an unproven or a proven source claim)
-    // trait.trait @Has[!S] where [!trait.proj<@Has[!S], "Out"> = i64]
-    %he = trait.project %p[0]
-      : !trait.claim<@Has[i32] by @Has_i32>
-      -> !trait.claim<!trait.proj<@Has[i32], "Out"> = i64>
     ```
   }];
 
   let arguments = (ins Claim:$source,
-                       ConfinedAttr<I64Attr, [IntNonNegative]>:$index,
-                       OptionalAttr<TypeArrayAttr>:$type_args,
-                       Variadic<Claim>:$premises);
+                       ConfinedAttr<I64Attr, [IntNonNegative]>:$index);
   let results   = (outs Claim:$result);
 
   let extraClassDeclaration = [{
@@ -1220,37 +1018,20 @@ def ProjectOp : TraitDialectOp<"project", [
       return cast<ClaimType>(getResult().getType());
     }
 
-    /// The arguments this hop supplies for the parameters a bound requirement
-    /// binds; empty for any other requirement.
-    SmallVector<Type> getBinderArguments() {
-      SmallVector<Type> arguments;
-      if (ArrayAttr typeArgs = getTypeArgsAttr())
-        for (Attribute argument : typeArgs)
-          arguments.push_back(cast<TypeAttr>(argument).getValue());
-      return arguments;
-    }
+    /// Replaces this projection of a proven source by the evidence the
+    /// source's impl returns at its index, its defining ops cloned here with
+    /// the impl's arguments read through the source's proof (or, past the
+    /// trait's requirements, by the where-entry evidence that proof supplies),
+    /// bridged to the result's spelling by a coercion where the two differ.
+    /// Fails, leaving the projection standing, where the source names no
+    /// proof.
+    LogicalResult inlineEvidence(RewriterBase &rewriter);
   }];
 
-  let builders = [
-    // a hop to a requirement that binds nothing
-    OpBuilder<(ins "::mlir::Type":$result, "::mlir::Value":$source,
-                   "uint64_t":$index), [{
-      build($_builder, $_state, result, source, index, /*type_args=*/nullptr,
-            /*premises=*/::mlir::ValueRange{});
-    }]>
-  ];
-
-  // `%c[k]`, then for a bound requirement `for [types]` and `given(%claims)`,
-  // then the source and result claims. The operand types of `given` are read
-  // off the premises the requirement states, so they are printed with the
-  // claims.
   let assemblyFormat = [{
-    $source `[` $index `]` (`for` $type_args^)?
-    (`given` `(` $premises^ `:` type($premises) `)`)?
-    attr-dict `:` type($source) `->` type($result)
+    $source `[` $index `]` attr-dict `:` type($source) `->` type($result)
   }];
 }
-
 
 def WitnessOp : TraitDialectOp<"witness", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
@@ -1261,52 +1042,28 @@ def WitnessOp : TraitDialectOp<"witness", [
     The dialect's sole verified-evidence introduction. It has two arms, matched
     to the arm of the result claim.
 
-    This op is the value-producing carrier of a witness: it wraps the same
-    content a `#trait.witness` attribute holds and hands code a typed claim value
-    wherever evidence must be consumed as one -- call arguments, coercion
-    citations. The same content stands alone as a `#trait.witness` attribute at
-    declaration level -- the entries an impl's `witnesses` array carries
-    (detailed under `trait.impl`). The equality arm's compose leaf is
-    the one form that is irreducibly op-shaped, because it builds evidence from
-    other claim values.
-
     Application arm. Introduces a value of type
     `!trait.claim<@Trait[Types...] by @Symbol>` that represents a proof that the
     trait application is satisfied. The symbol may refer to either
-      * a `trait.proof` that transitively discharges the trait's requirements
-        and the impl's assumptions
-      * a `trait.impl` that is unconditional
+      * a `trait.proof`, whose body derives the claim
+      * a `trait.impl` that is unconditional: it binds no parameter and has no
+        where clause, so a citation supplies it nothing
 
     Example:
-      // @PartialEq has no obligations, so we refer directly to a trait.impl
       %partial_eq_w = trait.witness @PartialEq_impl_i32_i32 for @PartialEq[i32,i32]
-
-      // @Ord has obligations, so we refer to a trait.proof
       %ord_w = trait.witness @Ord_impl_i32_p for @Ord[i32]
 
     Equality arm. Introduces a value of type `!trait.claim<!A = !B>` that is
     evidence the two spellings name one type. There are three leaves:
 
-      * proj-resolve: cites an impl by symbol, at the arguments selection
-        chose for its parameters, and carries an immutable witness. The equality
-        holds because the cited impl, applied at those arguments, binds the
-        associated type the projection names to the resolved type. When the
-        cited impl's own Self application is itself spelled with projections,
-        structural matching cannot align it with the projection being resolved,
-        so verification reads the explicit equality `premises` and matches
-        modulo those cited equalities. This is the sole leaf form of equality
-        evidence: the refl and compose arms only combine equalities that
-        proj-resolve leaves establish.
+      * proj-resolve: cites an impl by symbol with one claim per entry of its
+        where clause, in order, as a derive cites one. The equality holds
+        because the cited impl, at the arguments the projection's application
+        and the premises give its parameters, binds the associated type the
+        projection names to the resolved type.
 
-        // @A[i64]::Item resolves to i64 through the binding of impl
-        // `@A_impl for @A[!trait.poly<1>]`, applied at !trait.poly<1> = i64.
-        %item_eq = trait.witness proj_resolve !trait.proj<@A[i64], "Item"> resolves i64 by @A_impl[!trait.poly<1> = i64]
-
-        Verifying the witness checks the cited impl at its arguments: its
-        header is the projection's application, its binding is the resolved
-        type, its where-clause equalities hold, and the witness's premises
-        discharge its own assumptions; `verifyProjectionResolutionAtUse`
-        (TraitOps.hpp) states the full contract.
+        %item_eq = trait.witness proj_resolve !trait.proj<@A[i64], "Item"> resolves i64 by @A_impl
+          : !trait.claim<!trait.proj<@A[i64], "Item"> = i64>
 
       * refl: proof-free, cites nothing; the endpoints are identical at
         construction. It exists because a concrete instantiation of an equality
@@ -1320,17 +1077,12 @@ def WitnessOp : TraitDialectOp<"witness", [
         entails. It builds a multi-hop equality without alleging it: the result
         is derived, not asserted.
 
-        // From @A[i64]::Item = i64 and @B[i64]::Item = i64, derive
-        // @A[i64]::Item = @B[i64]::Item without asserting it.
-        %a_eq = trait.witness proj_resolve !trait.proj<@A[i64], "Item"> resolves i64 by @A_impl[!trait.poly<1> = i64]
-        %b_eq = trait.witness proj_resolve !trait.proj<@B[i64], "Item"> resolves i64 by @B_impl[!trait.poly<1> = i64]
-        %item_eq = trait.witness compose(%a_eq, %b_eq)
+        %item_eq = trait.witness compose(%a_eq, %b_eq) : (...) : !trait.claim<...>
 
         Only the leaf premises are stored; the transitivity and congruence
         carrying them to the result are re-derived at verify by replaying the
         same ground congruence closure `trait.coerce` uses to decide equational
-        entailment. Storing only definitional leaves keeps every stored equality
-        leaf definitional while letting a caller name a derived equality.
+        entailment.
 
     Admissible leaves are only definitional equalities -- one type, two
     spellings. The three leaves above are exhaustive; none is representational (a
@@ -1339,23 +1091,16 @@ def WitnessOp : TraitDialectOp<"witness", [
     projection heads -- the combination that made GHC's unscoped newtype coercions
     unsound -- so admitting a representational leaf requires role machinery first.
 
-    The application arm is its result claim alone: the claim names the
-    application and the proof or impl proving it, and the op stores neither a
-    second time. Verification (verify() and verifySymbolUses) ensures the
-    present attributes match the result claim's arm, that an application
-    witness's claim names a proof, and, for the equality arm's proj-resolve
-    leaf, that the cited impl at the witness's arguments applies and binds
-    as stated and that the result's equality is the witness's own. For
-    the composition leaf verify() replays the ground congruence closure over the
-    premises and requires it to entail the result equality; the leaf cites no
-    symbol, so verifySymbolUses is a no-op for it.
+    The application arm is its result claim alone, and a proj-resolve leaf is
+    its result equality and the impl it cites: the op stores neither the claim
+    nor the impl's arguments a second time.
   }];
 
   // The application arm is its result claim alone, which names the proof or
   // impl it cites; the equality arm carries its leaf.
   let arguments = (ins
-    OptionalAttr<WitnessAttr>:$witness,               // proj-resolve leaf
-    UnitAttr:$refl,                                     // refl leaf
+    OptionalAttr<FlatSymbolRefAttr>:$impl,               // proj-resolve leaf
+    UnitAttr:$refl,                                      // refl leaf
     Variadic<Claim>:$premises
   );
 
@@ -1365,32 +1110,32 @@ def WitnessOp : TraitDialectOp<"witness", [
                    "::mlir::trait::TraitApplicationAttr":$trait_application), [{
       MLIRContext* ctx = $_builder.getContext();
       ClaimType claimTy = ClaimType::get(ctx, trait_application, proof);
-      build($_builder, $_state, claimTy, /*witness=*/nullptr, /*refl=*/nullptr,
+      build($_builder, $_state, claimTy, /*impl=*/nullptr, /*refl=*/nullptr,
             /*premises=*/{});
     }]>,
     // Equality proj-resolve arm.
     OpBuilder<(ins "::mlir::trait::TypeEqualityAttr":$equality,
-                   "::mlir::trait::WitnessAttr":$witness,
+                   "::mlir::FlatSymbolRefAttr":$impl,
                    "::mlir::ValueRange":$premises), [{
       MLIRContext* ctx = $_builder.getContext();
       ClaimType claimTy = ClaimType::getEquality(ctx, equality);
-      build($_builder, $_state, claimTy, witness, /*refl=*/nullptr, premises);
+      build($_builder, $_state, claimTy, impl, /*refl=*/nullptr, premises);
     }]>,
     // Equality refl arm.
     OpBuilder<(ins "::mlir::trait::TypeEqualityAttr":$equality), [{
       MLIRContext* ctx = $_builder.getContext();
       ClaimType claimTy = ClaimType::getEquality(ctx, equality);
-      build($_builder, $_state, claimTy, /*witness=*/nullptr,
+      build($_builder, $_state, claimTy, /*impl=*/nullptr,
             $_builder.getUnitAttr(), /*premises=*/{});
     }]>,
     // Equality composition arm. Distinct in arity from the proj-resolve builder
-    // (that one takes a witness too); it carries only the premises whose
-    // ground congruence closure entails the result equality.
+    // (that one takes an impl too); it carries only the premises whose ground
+    // congruence closure entails the result equality.
     OpBuilder<(ins "::mlir::trait::TypeEqualityAttr":$equality,
                    "::mlir::ValueRange":$premises), [{
       MLIRContext* ctx = $_builder.getContext();
       ClaimType claimTy = ClaimType::getEquality(ctx, equality);
-      build($_builder, $_state, claimTy, /*witness=*/nullptr, /*refl=*/nullptr,
+      build($_builder, $_state, claimTy, /*impl=*/nullptr, /*refl=*/nullptr,
             premises);
     }]>
   ];
@@ -1399,9 +1144,9 @@ def WitnessOp : TraitDialectOp<"witness", [
 
   let extraClassDeclaration = [{
     /// Verifies this projection-resolution witness: the cited impl, at the
-    /// arguments the witness carries, applies, binds as stated and has its
-    /// assumptions discharged (`verifyProjectionResolutionAtUse`). The site's
-    /// evidence is the scope's hypotheses and the premises' evidence and, when
+    /// arguments the projection's application and the premises give it, binds
+    /// the projection as stated. A header spelling a projection is read through
+    /// the evidence the premises carry, the equalities among them, and, when
     /// `settled` is given, what the stage's impl selection has settled -- the
     /// context an instance of a template is decided in.
     LogicalResult verifyResolution(ModuleOp module,
@@ -1410,6 +1155,9 @@ def WitnessOp : TraitDialectOp<"witness", [
     ClaimType getResultClaim() {
       return cast<ClaimType>(getResult().getType());
     }
+
+    /// Whether this witness resolves a projection through an impl's binding.
+    bool isProjectionResolution() { return static_cast<bool>(getImplAttr()); }
 
     // The claim an application witness proves, and the proof or impl it
     // cites; valid only on the application arm.
@@ -1420,7 +1168,6 @@ def WitnessOp : TraitDialectOp<"witness", [
   let hasCustomAssemblyFormat = 1;
   let hasVerifier = 1;
 }
-
 
 def CoerceOp : TraitDialectOp<"coerce", [
   Pure
@@ -1633,6 +1380,22 @@ def MethodCallOp : TraitDialectOp<"method.call", [
 
     ImplOp getProvenImpl();
 
+    /// Whether this call computes evidence: its one result is a claim, so its
+    /// method is a quantified requirement of the trait, and the call is
+    /// replaced by the method's body where it is monomorphic
+    /// (`inlineEvidence`) rather than cut into an instance.
+    bool computesEvidence() {
+      return getNumResults() == 1 && ::llvm::isa<ClaimType>(getResult(0).getType());
+    }
+
+    /// Replaces this call, one that computes evidence, by the body of the
+    /// method the receiver's proven impl defines, stamped under `subst`: the
+    /// body's reads from its impl take the evidence the receiver's proof
+    /// supplies there, its parameters this call's arguments, and this call's
+    /// result the operand the body returns. The claim it leaves is read by
+    /// position, never selected again.
+    LogicalResult inlineEvidence(PatternRewriter &rewriter,
+                                 const CallSubstitution &subst);
   }];
 
   let hasVerifier = 1;
@@ -1742,107 +1505,72 @@ def FuncCallOp : TraitDialectOp<"func.call", [
 
 
 def ProofOp : TraitDialectOp<"proof", [
-  DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+  HasChildren<["trait::CoerceOp", "trait::DeriveOp", "trait::ReturnOp",
+               "trait::WitnessOp"]>,
   IsolatedFromAbove,
-  Symbol,
-  Pure
+  SingleBlock,
+  Symbol
 ]>{
-  let summary = "Canonical proof tree node";
+  let summary = "A named, closed proof of one claim";
   let description = [{
-    Declares a named, canonical proof that a `trait.impl` satisfies a concrete trait application,
-    and that all one-hop trait requirements required by the trait under that application and
-    assumptions of the target impl are already proven by other symbols (either other `trait.proof`s or `trait.impl`s).
+    A closed evidence function that takes nothing and returns one claim: its
+    body derives the claim from an impl over evidence for each of the impl's
+    where entries, and `trait.return` returns the derived claim. The proven
+    claim is the returned derive's application, carrying this proof's name; the
+    impl, its arguments and its premises are read off that derive. The body
+    holds decided evidence only -- witnesses of other proofs and unconditional
+    impls, equality leaves, coercions, derives -- and never an allegation: a
+    proof records a decision already made. Nor does it hold a projection, whose
+    evidence is whatever the projected impl returns there, an allegation
+    included; a premise a projection would read is named by its own proof.
 
-    Leaf `trait.impl`s have nothing to discharge and may not be wrapped in a `trait.proof`; they are unconditional self-proofs.
-
-    `proves @impl[!P = T, ...]` carries the argument each of the impl's own
-    parameters takes; the proven application is the impl's header at those
-    arguments, read through the evidence the proof holds where the header
-    spells a projection. The `given` list then holds one entry per requirement
-    of the trait and per entry of the impl's where clause, in that order, so a
-    requirement's position is its position in the list: the symbol discharging
-    an application entry, and `unit` for an equality entry, decided at this
-    proof's claim, or a bound requirement, which the impl's own evidence proves
-    for every argument.
+    The trait's requirements of the proven claim are not in the proof: the
+    impl's own return holds their evidence, read at this proof's derive.
 
     ```mlir
-    // trait.trait @B[!S] where [@A[!S], !trait.proj<@B[!S], "Out"> = i64]
-    trait.proof private @p proves @B_gen[!trait.poly<3> = i32] for @B[i32]
-      given [@A_i32, unit]
+    trait.proof private @Into_f32_f64_p {
+      %from = trait.witness @From_f64_f32 for @From[f64, f32]
+      %p = trait.derive @Into[f32, f64] from @Into_impl given(%from)
+        : (!trait.claim<@From[f64, f32]>)
+      trait.return %p : !trait.claim<@Into[f32, f64]>
+    }
     ```
+
+    A proof is a template that dies with monomorphization, so it is private.
   }];
 
   let arguments = (ins
-    SymbolNameAttr:$sym_name,                // the name of this proof
-    FlatSymbolRefAttr:$impl_name,            // the name of the impl being proven
-    TypedArrayAttrBase<TypeBindingAttr,
-        "the arguments the impl's parameters take">:$arguments,
-    TraitApplicationAttr:$trait_application, // must match the impl's trait application
-    ArrayAttr:$subproof_names,               // the names of prerequisite proofs
+    SymbolNameAttr:$sym_name,
     OptionalAttr<StrAttr>:$sym_visibility
   );
+  let regions = (region SizedRegion<1>:$body);
 
   let extraClassDeclaration = [{
+    /// The derive the body returns, the decision this proof records.
+    DeriveOp getDerive();
+
+    ImplOp getImpl() { return getDerive().getImplOp(); }
+
+    TraitApplicationAttr getTraitApplication() {
+      return getDerive().getTraitApplication();
+    }
+
     ClaimType getProvenClaim() {
       MLIRContext* ctx = getContext();
       FlatSymbolRefAttr symRef = FlatSymbolRefAttr::get(ctx, getSymNameAttr());
       return ClaimType::get(ctx, getTraitApplication(), symRef);
     }
 
-    ImplOp getImpl() {
-      ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
-      if (!module)
-        return nullptr;
-      return lookupSymbolFrom<ImplOp>(module, getImplNameAttr());
-    }
-
     TraitOp getTrait();
 
-    /// Refuses this proof's impl at `cited` when one of the impl's own
-    /// where-clause equalities does not hold there.
-    ///
-    /// `cited` is the application this proof is being carried to: its own claim
-    /// where the proof is verified, and the instance a clone is cut at where
-    /// the stage carries it there. A premise takes no subproof -- the given
-    /// list is indexed by the impl's application-arm obligations -- so it is
-    /// read here or nowhere, and the claim this proof stands over is where it
-    /// is decided.
-    ///
-    /// What a projection an endpoint spells reduces through is the evidence
-    /// this proof holds: the proofs discharging the impl's obligations, by
-    /// index, and then the impls the module holds under `origin`. The proof's
-    /// own rule is not among them -- nothing here is justified by what it is
-    /// checking.
-    ///
-    /// `openPremise` says where a reading that still carries a type variable is
-    /// decided: this proof's own claim refuses one, since a citation of this
-    /// proof reads nothing inside it, and a citation at an instance leaves it
-    /// to the instances made of that one.
-    LogicalResult verifyEqualityPremisesAt(ClaimType cited, DemandOrigin origin,
-                                           OpenPremise openPremise,
-                                           llvm::function_ref<InFlightDiagnostic()> err);
-
-    /// The claims this proof's subproofs stand over, at `at`.
-    ///
-    /// A subproof's claim is the obligation it discharges, spelled at the
-    /// application the citation names, carrying the cited symbol. The given
-    /// list is indexed by the impl's obligations, so the obligation at each
-    /// index is what the name at that index answers for, and `at` is where
-    /// those obligations are read: a proof written over type variables states
-    /// them over those same variables, and a citation supplies the instance.
-    ///
-    FailureOr<SmallVector<ClaimType>> verifyAndGetSubproofClaims(
+    /// The claims the derive is given, one per where entry of the impl, as
+    /// carried to `at`, the claim this proof is cited for: a proof written
+    /// over type variables stands for every instance of them.
+    FailureOr<SmallVector<ClaimType>> getPremisesAt(
         ClaimType at, llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
-    SmallVector<ClaimType> getSubproofClaims() {
-      auto maybeResult = verifyAndGetSubproofClaims(getProvenClaim());
-      if (failed(maybeResult))
-        llvm_unreachable("ProofOp::getSubproofClaims: verifyAndGetSubproofClaims failed");
-      return *maybeResult;
-    }
-
     /// The arguments this proof's impl takes at `at`, the claim it is carried
-    /// to: the arguments it states, carried from its own claim to `at`.
+    /// to.
     FailureOr<SpecializationMap> getImplArgumentsAt(
         ClaimType at, llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
@@ -1859,37 +1587,21 @@ def ProofOp : TraitDialectOp<"proof", [
       ModuleOp module,
       FlatSymbolRefAttr name,
       llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
-
-    /// Whether `a` and `b` name one piece of evidence: one symbol, one
-    /// unconditional impl, or two proofs of one impl at one argument list
-    /// whose subproofs are, entry by entry, one piece of evidence again,
-    /// read coinductively where proofs cite themselves. A proof symbol names
-    /// evidence without interning it: the proof selection records for an impl
-    /// at an application and a proof written by hand for the same impl,
-    /// arguments and subproofs differ in name alone.
-    static bool sameEvidence(ModuleOp module, FlatSymbolRefAttr a,
-                             FlatSymbolRefAttr b);
   }];
 
+  // A proof is a template that dies with monomorphization, so it is private
+  // from birth: erase collects it by liveness, never by kind. Its body is one
+  // empty block the caller fills and ends with `trait.return`.
   let skipDefaultBuilders = 1;
   let builders = [
-    // A proof is a template that dies with monomorphization, so it is private
-    // from birth: erase collects it by liveness, never by kind.
-    OpBuilder<(ins "::mlir::StringAttr":$sym_name,
-                   "::mlir::FlatSymbolRefAttr":$impl_name,
-                   "::mlir::ArrayAttr":$arguments,
-                   "::mlir::trait::TraitApplicationAttr":$trait_application,
-                   "::mlir::ArrayAttr":$subproof_names), [{
-      $_state.addAttribute("sym_name", sym_name);
-      $_state.addAttribute("impl_name", impl_name);
-      $_state.addAttribute("arguments", arguments);
-      $_state.addAttribute("trait_application", trait_application);
-      $_state.addAttribute("subproof_names", subproof_names);
+    OpBuilder<(ins "::llvm::StringRef":$sym_name), [{
+      $_state.addAttribute("sym_name", $_builder.getStringAttr(sym_name));
       $_state.addAttribute("sym_visibility", $_builder.getStringAttr("private"));
+      $_state.addRegion()->emplaceBlock();
     }]>
   ];
 
-  let assemblyFormat = "custom<VisibilityKeyword>($sym_visibility) $sym_name `proves` $impl_name `` custom<StatedImplArguments>($arguments) `for` $trait_application `given` $subproof_names attr-dict";
+  let assemblyFormat = "custom<VisibilityKeyword>($sym_visibility) $sym_name attr-dict-with-keyword $body";
   let hasVerifier = 1;
 }
 

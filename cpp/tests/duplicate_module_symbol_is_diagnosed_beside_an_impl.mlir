@@ -15,10 +15,9 @@
 func.func private @dup() { return }
 func.func private @dup() { return }
 
-trait.trait private @T[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.impl private @T_i32 for @T[i32] {
+trait.trait private @T(%self: !trait.claim<@T[!trait.poly<0>]>) { trait.method @m() -> i64 }
+trait.impl private @T_i32(%self: !trait.claim<@T[i32]>) {
   trait.method @m() -> i64 {
-    %s = trait.assume self : !trait.claim<@T[i32]>
     %c = arith.constant 1 : i64
     trait.return %c : i64
   }

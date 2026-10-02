@@ -11,12 +11,14 @@
 
 !S = !trait.poly<0>
 
-trait.trait private @Has[!S] where [!trait.proj<@Has[!S], "Out"> = i64] {
+trait.trait private @Has(%self: !trait.claim<@Has[!S]>) -> !trait.claim<!trait.proj<@Has[!S], "Out"> = i64> {
   trait.assoc_type @Out
 }
 
-trait.impl private @Has_i32 for @Has[i32] {
+trait.impl private @Has_i32(%self: !trait.claim<@Has[i32]>) {
   trait.assoc_type @Out = i64
+  %req0 = trait.allege !trait.proj<@Has[i32], "Out"> = i64
+  trait.return %req0 : !trait.claim<!trait.proj<@Has[i32], "Out"> = i64>
 }
 
 // CHECK: func.func @m(%arg0: i64) -> i64

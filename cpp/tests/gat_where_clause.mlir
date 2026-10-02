@@ -11,11 +11,11 @@
 !T = !trait.poly<1>
 
 // CHECK-LABEL: trait private @Printable
-trait.trait private @Printable[!S] {}
+trait.trait private @Printable(%self: !trait.claim<@Printable[!S]>) {}
 
 // CHECK-LABEL: trait private @Container
 // CHECK: trait.assoc_type @Item<[!trait.poly<1>]>
-trait.trait private @Container[!S] where [@Printable[!T]] {
+trait.trait private @Container(%self: !trait.claim<@Container[!S]>) -> !trait.claim<@Printable[!T]> {
   trait.assoc_type @Item<[!T]>
 }
 
@@ -23,6 +23,6 @@ trait.trait private @Container[!S] where [@Printable[!T]] {
 // where Self::Item : Printable
 // CHECK-LABEL: trait private @Iterable
 // CHECK: trait.assoc_type @Item
-trait.trait private @Iterable[!S] where [@Printable[!trait.proj<@Iterable[!S], "Item">]] {
+trait.trait private @Iterable(%self: !trait.claim<@Iterable[!S]>) -> !trait.claim<@Printable[!trait.proj<@Iterable[!S], "Item">]> {
   trait.assoc_type @Item
 }

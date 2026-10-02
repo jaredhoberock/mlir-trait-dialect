@@ -7,11 +7,11 @@
 // that also needs @Q[i32]. Proof propagation must preserve both concrete call
 // chains: @user1 to @g, and @user2 to @h to @g2.
 
-trait.trait private @P[!trait.poly<0>] {}
-trait.impl private @P_impl for @P[!trait.poly<1>] {}
+trait.trait private @P(%self: !trait.claim<@P[!trait.poly<0>]>) {}
+trait.impl private @P_impl(%self: !trait.claim<@P[!trait.poly<1>]>) {}
 
-trait.trait private @Q[!trait.poly<2>] {}
-trait.impl private @Q_impl for @Q[!trait.poly<3>] {}
+trait.trait private @Q(%self: !trait.claim<@Q[!trait.poly<2>]>) {}
+trait.impl private @Q_impl(%self: !trait.claim<@Q[!trait.poly<3>]>) {}
 
 !T = !trait.poly<4>
 func.func private @g(%c: !trait.claim<@P[!T]>, %x: !T) -> !T {
@@ -25,7 +25,7 @@ func.func private @g2(%q: !trait.claim<@Q[!U]>, %c: !trait.claim<@P[!U]>, %x: !U
 
 !V = !trait.poly<6>
 func.func private @h(%c: !trait.claim<@P[!V]>, %x: !V) -> !V {
-  %q = trait.derive @Q[!V] from @Q_impl[!trait.poly<3> = !V] given()
+  %q = trait.derive @Q[!V] from @Q_impl given()
   %r = trait.func.call @g2(%q, %c, %x)
     : (!trait.claim<@Q[!V]>, !trait.claim<@P[!V]>, !V) -> !V
   return %r : !V

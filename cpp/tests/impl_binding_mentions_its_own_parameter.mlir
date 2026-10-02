@@ -11,11 +11,11 @@
 // which would rewrite the binding into tuple<poly<0>> and leave the impl's copy
 // of the method disagreeing with the trait's declaration.
 
-trait.trait private @Tr[!trait.poly<0>] {
+trait.trait private @Tr(%self: !trait.claim<@Tr[!trait.poly<0>]>) {
   trait.assoc_type @X
   trait.method @f(!trait.poly<0>) -> !trait.proj<@Tr[!trait.poly<0>], "X">
 }
-trait.impl private @I for @Tr[tuple<!trait.poly<0>>] {
+trait.impl private @I(%self: !trait.claim<@Tr[tuple<!trait.poly<0>>]>) {
   trait.assoc_type @X = !trait.poly<0>
   trait.method @f(%s: tuple<!trait.poly<0>>) -> !trait.poly<0> {
     %e = builtin.unrealized_conversion_cast %s : tuple<!trait.poly<0>> to !trait.poly<0>

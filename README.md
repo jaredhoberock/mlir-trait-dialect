@@ -22,59 +22,46 @@ The snippet below defines `PartialEq`, gives `i32` an implementation, and define
 <summary>Click to expand MLIR</summary>
 
 ```mlir
-// 1. Declare a trait
+// 1. Declare a trait. Its one block argument is the claim of its own
+//    application.
 !S = !trait.poly<0>
 !O = !trait.poly<1>
-trait.trait @PartialEq[!S,!O] {
+trait.trait private @PartialEq(%self: !trait.claim<@PartialEq[!S, !O]>) {
   // a required method
-  func.func private @eq(!S, !O) -> i1
+  trait.method @eq(!S, !O) -> i1
 
-  // an optional method with default implementation
-  func.func @ne(%self: !S, %other: !O) -> i1 {
-    // get a claim value for this trait
-    %partial_eq = trait.assume self : !trait.claim<@PartialEq[!S,!O]>
-
-    // call a method using the claim
-    %equal = trait.method.call %partial_eq @PartialEq[!S,!O]::@eq(%self, %other)
-      :  (!S, !O) -> i1
-      as (!S, !O) -> i1
-
+  // an optional method with a default implementation
+  trait.method @ne(%x: !S, %y: !O) -> i1 {
+    // call a method through the trait's own claim
+    %equal = trait.method.call %self @PartialEq[!S, !O]::@eq(%x, %y) : (!S, !O) -> i1
     %true = arith.constant 1 : i1
     %res = arith.xori %equal, %true : i1
-    return %res : i1
+    trait.return %res : i1
   }
 }
 
-// 2. Implementation for i32
-trait.impl for @PartialEq[i32,i32] {
-  func.func @eq(%self: i32, %other: i32) -> i1 {
-    %result = arith.cmpi eq, %self, %other : i32
-    return %result : i1
+// 2. An implementation for i32. Its block arguments are the claim it
+//    implements and one claim per where-clause entry (none here).
+trait.impl private @PartialEq_i32(%self: !trait.claim<@PartialEq[i32, i32]>) {
+  trait.method @eq(%x: i32, %y: i32) -> i1 {
+    %result = arith.cmpi eq, %x, %y : i32
+    trait.return %result : i1
   }
 }
 
-// 3. Generic functions: rely on the trait, not a concrete type
+// 3. A generic function relies on the trait through a claim parameter, not on
+//    a concrete type.
 !T = !trait.poly<2>
-!C = !trait.claim<@PartialEq[!T,!T]>
-func.func @foo(%a : !T, %b : !T, %c: !C) -> i1 {
-  // use our polymorphic claim value to call @eq
-  %res = trait.method.call %c @PartialEq[!T,!T]::@eq(%a, %b)
-    :  (!S, !O) -> i1
-    as (!T, !T) -> i1
-
+func.func private @foo(%c: !trait.claim<@PartialEq[!T, !T]>, %a: !T, %b: !T) -> i1 {
+  %res = trait.method.call %c @PartialEq[!T, !T]::@ne(%a, %b) : (!T, !T) -> i1
   return %res : i1
 }
 
-// 4. Concrete functions: call a trait-bounded polymorphic function with a concrete type
-func.func @baz(%a : i32, %b : i32) -> i1 {
-  // get a monomorphic claim for @PartialEq[i32,i32]
-  %c = trait.allege @PartialEq[i32,i32]
-
-  // call polymorphic @foo using our claim
-  %res = trait.func.call @foo(%a, %b, %c)
-    :  (!T,!T,!C) -> i1
-    as (i32,i32, !trait.claim<@PartialEq[i32,i32]>) -> i1
-
+// 4. A concrete function calls it with a claim of the concrete application;
+//    monomorphization proves the claim and instantiates the calls.
+func.func @baz(%a: i32, %b: i32) -> i1 {
+  %c = trait.allege @PartialEq[i32, i32]
+  %res = trait.func.call @foo(%c, %a, %b) : (!trait.claim<@PartialEq[i32, i32]>, i32, i32) -> i1
   return %res : i1
 }
 ```
@@ -84,16 +71,22 @@ func.func @baz(%a : i32, %b : i32) -> i1 {
 <summary>Lowered to LLVM dialect</summary>
 
 ```mlir
-llvm.func @PartialEq_impl_i32_i32_eq(%arg0: i32, %arg1: i32) -> i1 {
+llvm.func @PartialEq_hc1ee045a1cf60171_ne(%arg0: i32, %arg1: i32) -> i1 attributes {sym_visibility = "private"} {
+  %0 = llvm.call @PartialEq_i32_hc2dcd4c42b04f237_eq(%arg0, %arg1) : (i32, i32) -> i1
+  %1 = llvm.mlir.constant(true) : i1
+  %2 = llvm.xor %0, %1 : i1
+  llvm.return %2 : i1
+}
+llvm.func @PartialEq_i32_hc2dcd4c42b04f237_eq(%arg0: i32, %arg1: i32) -> i1 attributes {sym_visibility = "private"} {
   %0 = llvm.icmp "eq" %arg0, %arg1 : i32
   llvm.return %0 : i1
 }
-llvm.func @foo_i32(%arg0: i32, %arg1: i32) -> i1 {
-  %0 = llvm.call @PartialEq_impl_i32_i32_eq(%arg0, %arg1) : (i32, i32) -> i1
+llvm.func @foo_hde61e1ab813906bd(%arg0: i32, %arg1: i32) -> i1 attributes {sym_visibility = "private"} {
+  %0 = llvm.call @PartialEq_hc1ee045a1cf60171_ne(%arg0, %arg1) : (i32, i32) -> i1
   llvm.return %0 : i1
 }
 llvm.func @baz(%arg0: i32, %arg1: i32) -> i1 {
-  %0 = llvm.call @foo_i32(%arg0, %arg1) : (i32, i32) -> i1
+  %0 = llvm.call @foo_hde61e1ab813906bd(%arg0, %arg1) : (i32, i32) -> i1
   llvm.return %0 : i1
 }
 ```

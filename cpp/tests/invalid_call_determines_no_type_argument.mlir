@@ -11,10 +11,10 @@
 
 !V = !trait.poly<11>
 
-trait.trait private @Has[!trait.poly<1>] {
+trait.trait private @Has(%self: !trait.claim<@Has[!trait.poly<1>]>) {
   trait.assoc_type @A<[!trait.poly<3>]>
 }
-trait.impl private @Has_i64 for @Has[i64] {
+trait.impl private @Has_i64(%self: !trait.claim<@Has[i64]>) {
   trait.assoc_type @A<[!trait.poly<4>]> = i32
 }
 

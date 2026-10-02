@@ -5,12 +5,12 @@
 
 !T = !trait.poly<0>
 
-trait.trait private @Get[!T] {
+trait.trait private @Get(%self: !trait.claim<@Get[!T]>) {
   trait.assoc_type @Output
   trait.method @get(!T) -> !trait.proj<@Get[!T], "Output">
 }
 
-trait.impl private for @Get[i32] {
+trait.impl private @Get_impl(%self_claim: !trait.claim<@Get[i32]>) {
   trait.assoc_type @Output = i64
   trait.method @get(%self: i32) -> i64 {
     %c = arith.extsi %self : i32 to i64

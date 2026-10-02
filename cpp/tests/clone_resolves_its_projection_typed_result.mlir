@@ -9,18 +9,21 @@
 //
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(instantiate-monomorphs-trait)' | FileCheck %s
 
-trait.trait private @Producer[!trait.poly<0>] {
+trait.trait private @Producer(%self: !trait.claim<@Producer[!trait.poly<0>]>) {
   trait.assoc_type @Item
   trait.method @make(!trait.poly<0>) -> !trait.proj<@Producer[!trait.poly<0>], "Item">
 }
-trait.impl private @Producer_i64 for @Producer[i64] {
+trait.impl private @Producer_i64(%self: !trait.claim<@Producer[i64]>) {
   trait.assoc_type @Item = i32
   trait.method @make(%x: i64) -> i32 {
     %c = arith.constant 0 : i32
     trait.return %c : i32
   }
 }
-trait.proof private @Producer_i64_p proves @Producer_i64[] for @Producer[i64] given []
+trait.proof private @Producer_i64_p {
+  %d = trait.derive @Producer[i64] from @Producer_i64 given()
+  trait.return %d : !trait.claim<@Producer[i64]>
+}
 
 func.func private @tpl(%claim: !trait.claim<@Producer[!trait.poly<0>]>, %v: !trait.poly<0>)
     -> !trait.proj<@Producer[!trait.poly<0>], "Item"> {

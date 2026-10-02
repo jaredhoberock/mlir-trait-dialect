@@ -8,11 +8,15 @@
 
 // RUN: mlir-opt %s | FileCheck %s
 
-trait.trait private @U[!trait.poly<0>] {}
-trait.trait private @T[!trait.poly<1>] {}
-trait.impl private @U_impl for @U[i64] {}
-trait.impl private @T_impl for @T[!trait.poly<2>] where [@U[!trait.poly<2>]] {}
-trait.proof private @T_p proves @T_impl[!trait.poly<2> = i64] for @T[i64] given [@U_impl]
+trait.trait private @U(%self: !trait.claim<@U[!trait.poly<0>]>) {}
+trait.trait private @T(%self: !trait.claim<@T[!trait.poly<1>]>) {}
+trait.impl private @U_impl(%self: !trait.claim<@U[i64]>) {}
+trait.impl private @T_impl(%self: !trait.claim<@T[!trait.poly<2>]>, %u: !trait.claim<@U[!trait.poly<2>]>) {}
+trait.proof private @T_p {
+  %p0 = trait.witness @U_impl for @U[i64]
+  %d = trait.derive @T[i64] from @T_impl given(%p0) : (!trait.claim<@U[i64] by @U_impl>)
+  trait.return %d : !trait.claim<@T[i64]>
+}
 
 // CHECK: trait.project %{{.*}}[0] : <@T[i64] by @T_p> -> <@U[i64] by @U_impl>
 func.func @f(%s: !trait.claim<@T[i64] by @T_p>) -> !trait.claim<@U[i64] by @U_impl> {

@@ -3,30 +3,36 @@
 
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' | FileCheck %s
 
-// An impl alleges its bound requirement, and the use that projects it proves
-// the instance by selection: the impl of `@Rule` at the binding's type serves
-// the method call.
+// An impl's evidence method for a quantified requirement alleges the
+// requirement at its binding, and the use that calls the method proves the
+// allegation at the method's instance by selection: the impl of `@Rule` at the
+// binding's type serves the method call.
 
 !S = !trait.poly<0>
 !X = !trait.poly<1>
 !T = !trait.poly<2>
 !M = !trait.poly<3>
+!B = !trait.poly<4>
 
-trait.trait private @Rule[!S] {
+trait.trait private @Rule(%self: !trait.claim<@Rule[!S]>) {
   trait.method @size(!S) -> i64
 }
-trait.impl private @Rule_pair for @Rule[tuple<i64, i64>] {
+trait.impl private @Rule_pair(%self: !trait.claim<@Rule[tuple<i64, i64>]>) {
   trait.method @size(%x: tuple<i64, i64>) -> i64 {
     %c = arith.constant 2 : i64
     trait.return %c : i64
   }
 }
-trait.trait private @Holds[!S] where [forall [!trait.bound<0>] -> @Rule[!trait.proj<@Holds[!S], "C", [!trait.bound<0>]>]] {
+trait.trait private @Holds(%self: !trait.claim<@Holds[!S]>) {
   trait.assoc_type @C<[!X]>
+  trait.method @requirement_0() -> !trait.claim<@Rule[!trait.proj<@Holds[!S], "C", [!B]>]>
 }
-trait.impl private @Holds_i32 for @Holds[i32]
-    witnesses [#trait<witness requirement 0 by allege @Rule[tuple<i64, i64>]>] {
+trait.impl private @Holds_i32(%self: !trait.claim<@Holds[i32]>) {
   trait.assoc_type @C<[!X]> = tuple<i64, i64>
+  trait.method @requirement_0() -> !trait.claim<@Rule[!trait.proj<@Holds[i32], "C", [!B]>]> {
+    %r = trait.allege @Rule[!trait.proj<@Holds[i32], "C", [!B]>]
+    trait.return %r : !trait.claim<@Rule[!trait.proj<@Holds[i32], "C", [!B]>]>
+  }
 }
 
 func.func private @use_rule(%m: !trait.claim<@Rule[!M]>, %x: !M) -> i64 {
@@ -35,7 +41,7 @@ func.func private @use_rule(%m: !trait.claim<@Rule[!M]>, %x: !M) -> i64 {
 }
 
 func.func private @f(%h: !trait.claim<@Holds[!T]>, %x: !trait.proj<@Holds[!T], "C", [i1]>) -> i64 {
-  %m = trait.project %h[0] for [i1] : !trait.claim<@Holds[!T]> -> !trait.claim<@Rule[!trait.proj<@Holds[!T], "C", [i1]>]>
+  %m = trait.method.call %h @Holds[!T]::@requirement_0() : () -> !trait.claim<@Rule[!trait.proj<@Holds[!T], "C", [i1]>]>
   %r = trait.func.call @use_rule(%m, %x) : (!trait.claim<@Rule[!trait.proj<@Holds[!T], "C", [i1]>]>, !trait.proj<@Holds[!T], "C", [i1]>) -> i64
   return %r : i64
 }

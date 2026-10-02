@@ -19,10 +19,10 @@
 // CHECK: note: required by {{.*}}@Foo[tuple<i32>]
 // CHECK: note: {{.*}} more frame(s) elided
 
-trait.trait private @Foo[!trait.poly<0>] {
+trait.trait private @Foo(%self: !trait.claim<@Foo[!trait.poly<0>]>) {
 }
 
-trait.impl private @Foo_blanket for @Foo[!trait.poly<1>] where [@Foo[tuple<!trait.poly<1>>]] {
+trait.impl private @Foo_blanket(%self: !trait.claim<@Foo[!trait.poly<1>]>, %foo: !trait.claim<@Foo[tuple<!trait.poly<1>>]>) {
 }
 
 func.func private @needs(%c: !trait.claim<@Foo[i32]>) {

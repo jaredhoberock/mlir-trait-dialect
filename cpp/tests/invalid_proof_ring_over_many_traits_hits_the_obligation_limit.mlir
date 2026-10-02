@@ -4,2322 +4,3091 @@
 // RUN: not mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' 2>&1 | FileCheck %s
 
 // The same ring, two hundred and fifty-six traits wide, with a proof per impl
-// citing the next proof around: the derivation descends @P1[i32], @P2[i32],
-// ... @P256[i32], @P1[tuple<i32>], and around again forever. Each node is a
-// new application, so the early exit on a bound obligation never fires and the
-// derivation's own depth is what stops it, counted the same way impl selection
-// counts it.
+// citing the next proof around: the derivation descends @P1[T], @P2[T], ...
+// @P256[T], @P1[tuple<T>], and around again forever. Each node is a new
+// application, so no citation repeats and the derivation's own depth is what
+// stops it, counted the same way impl selection counts an obligation chain,
+// before any instance is cut.
 
 // CHECK: error: overflow evaluating the requirement {{.*}}: 128 obligations stand on the chain that reaches it
-// CHECK: note: required by {{.*}}@P1[i32]{{.*}}, stated by proof @p1
-// CHECK: note: required by {{.*}}@P2[i32]{{.*}}, stated by proof @p2
-// CHECK: note: required by {{.*}}@P3[i32]{{.*}}, stated by proof @p3
+// CHECK: note: required by {{.*}}@P1[!trait.poly<0>]{{.*}}, stated by proof @p1
+// CHECK: note: required by {{.*}}@P2[!trait.poly<0>]{{.*}}, stated by proof @p2
+// CHECK: note: required by {{.*}}@P3[!trait.poly<0>]{{.*}}, stated by proof @p3
 // CHECK: note: {{.*}} more frame(s) elided
 
-trait.trait private @P1[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P2[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P3[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P4[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P5[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P6[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P7[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P8[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P9[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P10[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P11[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P12[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P13[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P14[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P15[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P16[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P17[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P18[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P19[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P20[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P21[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P22[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P23[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P24[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P25[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P26[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P27[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P28[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P29[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P30[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P31[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P32[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P33[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P34[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P35[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P36[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P37[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P38[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P39[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P40[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P41[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P42[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P43[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P44[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P45[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P46[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P47[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P48[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P49[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P50[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P51[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P52[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P53[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P54[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P55[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P56[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P57[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P58[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P59[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P60[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P61[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P62[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P63[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P64[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P65[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P66[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P67[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P68[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P69[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P70[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P71[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P72[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P73[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P74[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P75[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P76[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P77[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P78[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P79[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P80[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P81[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P82[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P83[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P84[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P85[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P86[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P87[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P88[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P89[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P90[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P91[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P92[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P93[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P94[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P95[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P96[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P97[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P98[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P99[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P100[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P101[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P102[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P103[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P104[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P105[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P106[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P107[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P108[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P109[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P110[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P111[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P112[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P113[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P114[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P115[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P116[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P117[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P118[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P119[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P120[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P121[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P122[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P123[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P124[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P125[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P126[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P127[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P128[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P129[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P130[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P131[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P132[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P133[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P134[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P135[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P136[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P137[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P138[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P139[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P140[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P141[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P142[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P143[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P144[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P145[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P146[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P147[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P148[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P149[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P150[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P151[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P152[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P153[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P154[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P155[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P156[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P157[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P158[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P159[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P160[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P161[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P162[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P163[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P164[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P165[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P166[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P167[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P168[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P169[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P170[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P171[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P172[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P173[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P174[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P175[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P176[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P177[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P178[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P179[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P180[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P181[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P182[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P183[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P184[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P185[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P186[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P187[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P188[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P189[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P190[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P191[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P192[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P193[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P194[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P195[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P196[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P197[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P198[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P199[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P200[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P201[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P202[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P203[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P204[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P205[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P206[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P207[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P208[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P209[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P210[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P211[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P212[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P213[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P214[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P215[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P216[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P217[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P218[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P219[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P220[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P221[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P222[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P223[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P224[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P225[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P226[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P227[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P228[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P229[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P230[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P231[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P232[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P233[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P234[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P235[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P236[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P237[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P238[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P239[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P240[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P241[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P242[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P243[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P244[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P245[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P246[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P247[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P248[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P249[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P250[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P251[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P252[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P253[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P254[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P255[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.trait private @P256[!trait.poly<0>] { trait.method @m() -> i64 }
-trait.impl private @P1_all for @P1[!trait.poly<0>] where [@P2[!trait.poly<0>]] {
-  trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P2[!trait.poly<0>]>
-    %v = trait.method.call %a @P2[!trait.poly<0>]::@m() : () -> i64
-    trait.return %v : i64
-  }
-}
-trait.impl private @P2_all for @P2[!trait.poly<0>] where [@P3[!trait.poly<0>]] {
-  trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P3[!trait.poly<0>]>
-    %v = trait.method.call %a @P3[!trait.poly<0>]::@m() : () -> i64
-    trait.return %v : i64
-  }
-}
-trait.impl private @P3_all for @P3[!trait.poly<0>] where [@P4[!trait.poly<0>]] {
-  trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P4[!trait.poly<0>]>
-    %v = trait.method.call %a @P4[!trait.poly<0>]::@m() : () -> i64
-    trait.return %v : i64
-  }
-}
-trait.impl private @P4_all for @P4[!trait.poly<0>] where [@P5[!trait.poly<0>]] {
-  trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P5[!trait.poly<0>]>
-    %v = trait.method.call %a @P5[!trait.poly<0>]::@m() : () -> i64
+!T = !trait.poly<0>
+trait.trait private @P1(%self: !trait.claim<@P1[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P2(%self: !trait.claim<@P2[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P3(%self: !trait.claim<@P3[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P4(%self: !trait.claim<@P4[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P5(%self: !trait.claim<@P5[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P6(%self: !trait.claim<@P6[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P7(%self: !trait.claim<@P7[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P8(%self: !trait.claim<@P8[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P9(%self: !trait.claim<@P9[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P10(%self: !trait.claim<@P10[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P11(%self: !trait.claim<@P11[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P12(%self: !trait.claim<@P12[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P13(%self: !trait.claim<@P13[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P14(%self: !trait.claim<@P14[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P15(%self: !trait.claim<@P15[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P16(%self: !trait.claim<@P16[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P17(%self: !trait.claim<@P17[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P18(%self: !trait.claim<@P18[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P19(%self: !trait.claim<@P19[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P20(%self: !trait.claim<@P20[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P21(%self: !trait.claim<@P21[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P22(%self: !trait.claim<@P22[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P23(%self: !trait.claim<@P23[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P24(%self: !trait.claim<@P24[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P25(%self: !trait.claim<@P25[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P26(%self: !trait.claim<@P26[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P27(%self: !trait.claim<@P27[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P28(%self: !trait.claim<@P28[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P29(%self: !trait.claim<@P29[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P30(%self: !trait.claim<@P30[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P31(%self: !trait.claim<@P31[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P32(%self: !trait.claim<@P32[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P33(%self: !trait.claim<@P33[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P34(%self: !trait.claim<@P34[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P35(%self: !trait.claim<@P35[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P36(%self: !trait.claim<@P36[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P37(%self: !trait.claim<@P37[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P38(%self: !trait.claim<@P38[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P39(%self: !trait.claim<@P39[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P40(%self: !trait.claim<@P40[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P41(%self: !trait.claim<@P41[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P42(%self: !trait.claim<@P42[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P43(%self: !trait.claim<@P43[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P44(%self: !trait.claim<@P44[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P45(%self: !trait.claim<@P45[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P46(%self: !trait.claim<@P46[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P47(%self: !trait.claim<@P47[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P48(%self: !trait.claim<@P48[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P49(%self: !trait.claim<@P49[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P50(%self: !trait.claim<@P50[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P51(%self: !trait.claim<@P51[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P52(%self: !trait.claim<@P52[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P53(%self: !trait.claim<@P53[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P54(%self: !trait.claim<@P54[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P55(%self: !trait.claim<@P55[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P56(%self: !trait.claim<@P56[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P57(%self: !trait.claim<@P57[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P58(%self: !trait.claim<@P58[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P59(%self: !trait.claim<@P59[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P60(%self: !trait.claim<@P60[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P61(%self: !trait.claim<@P61[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P62(%self: !trait.claim<@P62[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P63(%self: !trait.claim<@P63[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P64(%self: !trait.claim<@P64[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P65(%self: !trait.claim<@P65[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P66(%self: !trait.claim<@P66[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P67(%self: !trait.claim<@P67[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P68(%self: !trait.claim<@P68[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P69(%self: !trait.claim<@P69[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P70(%self: !trait.claim<@P70[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P71(%self: !trait.claim<@P71[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P72(%self: !trait.claim<@P72[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P73(%self: !trait.claim<@P73[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P74(%self: !trait.claim<@P74[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P75(%self: !trait.claim<@P75[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P76(%self: !trait.claim<@P76[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P77(%self: !trait.claim<@P77[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P78(%self: !trait.claim<@P78[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P79(%self: !trait.claim<@P79[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P80(%self: !trait.claim<@P80[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P81(%self: !trait.claim<@P81[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P82(%self: !trait.claim<@P82[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P83(%self: !trait.claim<@P83[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P84(%self: !trait.claim<@P84[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P85(%self: !trait.claim<@P85[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P86(%self: !trait.claim<@P86[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P87(%self: !trait.claim<@P87[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P88(%self: !trait.claim<@P88[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P89(%self: !trait.claim<@P89[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P90(%self: !trait.claim<@P90[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P91(%self: !trait.claim<@P91[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P92(%self: !trait.claim<@P92[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P93(%self: !trait.claim<@P93[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P94(%self: !trait.claim<@P94[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P95(%self: !trait.claim<@P95[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P96(%self: !trait.claim<@P96[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P97(%self: !trait.claim<@P97[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P98(%self: !trait.claim<@P98[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P99(%self: !trait.claim<@P99[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P100(%self: !trait.claim<@P100[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P101(%self: !trait.claim<@P101[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P102(%self: !trait.claim<@P102[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P103(%self: !trait.claim<@P103[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P104(%self: !trait.claim<@P104[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P105(%self: !trait.claim<@P105[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P106(%self: !trait.claim<@P106[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P107(%self: !trait.claim<@P107[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P108(%self: !trait.claim<@P108[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P109(%self: !trait.claim<@P109[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P110(%self: !trait.claim<@P110[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P111(%self: !trait.claim<@P111[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P112(%self: !trait.claim<@P112[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P113(%self: !trait.claim<@P113[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P114(%self: !trait.claim<@P114[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P115(%self: !trait.claim<@P115[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P116(%self: !trait.claim<@P116[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P117(%self: !trait.claim<@P117[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P118(%self: !trait.claim<@P118[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P119(%self: !trait.claim<@P119[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P120(%self: !trait.claim<@P120[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P121(%self: !trait.claim<@P121[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P122(%self: !trait.claim<@P122[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P123(%self: !trait.claim<@P123[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P124(%self: !trait.claim<@P124[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P125(%self: !trait.claim<@P125[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P126(%self: !trait.claim<@P126[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P127(%self: !trait.claim<@P127[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P128(%self: !trait.claim<@P128[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P129(%self: !trait.claim<@P129[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P130(%self: !trait.claim<@P130[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P131(%self: !trait.claim<@P131[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P132(%self: !trait.claim<@P132[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P133(%self: !trait.claim<@P133[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P134(%self: !trait.claim<@P134[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P135(%self: !trait.claim<@P135[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P136(%self: !trait.claim<@P136[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P137(%self: !trait.claim<@P137[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P138(%self: !trait.claim<@P138[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P139(%self: !trait.claim<@P139[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P140(%self: !trait.claim<@P140[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P141(%self: !trait.claim<@P141[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P142(%self: !trait.claim<@P142[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P143(%self: !trait.claim<@P143[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P144(%self: !trait.claim<@P144[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P145(%self: !trait.claim<@P145[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P146(%self: !trait.claim<@P146[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P147(%self: !trait.claim<@P147[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P148(%self: !trait.claim<@P148[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P149(%self: !trait.claim<@P149[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P150(%self: !trait.claim<@P150[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P151(%self: !trait.claim<@P151[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P152(%self: !trait.claim<@P152[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P153(%self: !trait.claim<@P153[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P154(%self: !trait.claim<@P154[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P155(%self: !trait.claim<@P155[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P156(%self: !trait.claim<@P156[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P157(%self: !trait.claim<@P157[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P158(%self: !trait.claim<@P158[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P159(%self: !trait.claim<@P159[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P160(%self: !trait.claim<@P160[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P161(%self: !trait.claim<@P161[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P162(%self: !trait.claim<@P162[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P163(%self: !trait.claim<@P163[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P164(%self: !trait.claim<@P164[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P165(%self: !trait.claim<@P165[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P166(%self: !trait.claim<@P166[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P167(%self: !trait.claim<@P167[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P168(%self: !trait.claim<@P168[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P169(%self: !trait.claim<@P169[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P170(%self: !trait.claim<@P170[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P171(%self: !trait.claim<@P171[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P172(%self: !trait.claim<@P172[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P173(%self: !trait.claim<@P173[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P174(%self: !trait.claim<@P174[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P175(%self: !trait.claim<@P175[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P176(%self: !trait.claim<@P176[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P177(%self: !trait.claim<@P177[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P178(%self: !trait.claim<@P178[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P179(%self: !trait.claim<@P179[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P180(%self: !trait.claim<@P180[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P181(%self: !trait.claim<@P181[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P182(%self: !trait.claim<@P182[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P183(%self: !trait.claim<@P183[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P184(%self: !trait.claim<@P184[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P185(%self: !trait.claim<@P185[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P186(%self: !trait.claim<@P186[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P187(%self: !trait.claim<@P187[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P188(%self: !trait.claim<@P188[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P189(%self: !trait.claim<@P189[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P190(%self: !trait.claim<@P190[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P191(%self: !trait.claim<@P191[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P192(%self: !trait.claim<@P192[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P193(%self: !trait.claim<@P193[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P194(%self: !trait.claim<@P194[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P195(%self: !trait.claim<@P195[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P196(%self: !trait.claim<@P196[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P197(%self: !trait.claim<@P197[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P198(%self: !trait.claim<@P198[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P199(%self: !trait.claim<@P199[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P200(%self: !trait.claim<@P200[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P201(%self: !trait.claim<@P201[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P202(%self: !trait.claim<@P202[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P203(%self: !trait.claim<@P203[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P204(%self: !trait.claim<@P204[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P205(%self: !trait.claim<@P205[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P206(%self: !trait.claim<@P206[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P207(%self: !trait.claim<@P207[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P208(%self: !trait.claim<@P208[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P209(%self: !trait.claim<@P209[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P210(%self: !trait.claim<@P210[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P211(%self: !trait.claim<@P211[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P212(%self: !trait.claim<@P212[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P213(%self: !trait.claim<@P213[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P214(%self: !trait.claim<@P214[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P215(%self: !trait.claim<@P215[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P216(%self: !trait.claim<@P216[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P217(%self: !trait.claim<@P217[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P218(%self: !trait.claim<@P218[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P219(%self: !trait.claim<@P219[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P220(%self: !trait.claim<@P220[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P221(%self: !trait.claim<@P221[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P222(%self: !trait.claim<@P222[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P223(%self: !trait.claim<@P223[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P224(%self: !trait.claim<@P224[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P225(%self: !trait.claim<@P225[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P226(%self: !trait.claim<@P226[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P227(%self: !trait.claim<@P227[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P228(%self: !trait.claim<@P228[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P229(%self: !trait.claim<@P229[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P230(%self: !trait.claim<@P230[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P231(%self: !trait.claim<@P231[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P232(%self: !trait.claim<@P232[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P233(%self: !trait.claim<@P233[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P234(%self: !trait.claim<@P234[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P235(%self: !trait.claim<@P235[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P236(%self: !trait.claim<@P236[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P237(%self: !trait.claim<@P237[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P238(%self: !trait.claim<@P238[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P239(%self: !trait.claim<@P239[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P240(%self: !trait.claim<@P240[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P241(%self: !trait.claim<@P241[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P242(%self: !trait.claim<@P242[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P243(%self: !trait.claim<@P243[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P244(%self: !trait.claim<@P244[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P245(%self: !trait.claim<@P245[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P246(%self: !trait.claim<@P246[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P247(%self: !trait.claim<@P247[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P248(%self: !trait.claim<@P248[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P249(%self: !trait.claim<@P249[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P250(%self: !trait.claim<@P250[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P251(%self: !trait.claim<@P251[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P252(%self: !trait.claim<@P252[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P253(%self: !trait.claim<@P253[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P254(%self: !trait.claim<@P254[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P255(%self: !trait.claim<@P255[!T]>) { trait.method @m() -> i64 }
+trait.trait private @P256(%self: !trait.claim<@P256[!T]>) { trait.method @m() -> i64 }
+trait.impl private @P1_all(%self: !trait.claim<@P1[!T]>, %p: !trait.claim<@P2[!T]>) {
+  trait.method @m() -> i64 {
+    %v = trait.method.call %p @P2[!T]::@m() : () -> i64
+    trait.return %v : i64
+  }
+}
+trait.impl private @P2_all(%self: !trait.claim<@P2[!T]>, %p: !trait.claim<@P3[!T]>) {
+  trait.method @m() -> i64 {
+    %v = trait.method.call %p @P3[!T]::@m() : () -> i64
+    trait.return %v : i64
+  }
+}
+trait.impl private @P3_all(%self: !trait.claim<@P3[!T]>, %p: !trait.claim<@P4[!T]>) {
+  trait.method @m() -> i64 {
+    %v = trait.method.call %p @P4[!T]::@m() : () -> i64
+    trait.return %v : i64
+  }
+}
+trait.impl private @P4_all(%self: !trait.claim<@P4[!T]>, %p: !trait.claim<@P5[!T]>) {
+  trait.method @m() -> i64 {
+    %v = trait.method.call %p @P5[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P5_all for @P5[!trait.poly<0>] where [@P6[!trait.poly<0>]] {
+trait.impl private @P5_all(%self: !trait.claim<@P5[!T]>, %p: !trait.claim<@P6[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P6[!trait.poly<0>]>
-    %v = trait.method.call %a @P6[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P6[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P6_all for @P6[!trait.poly<0>] where [@P7[!trait.poly<0>]] {
+trait.impl private @P6_all(%self: !trait.claim<@P6[!T]>, %p: !trait.claim<@P7[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P7[!trait.poly<0>]>
-    %v = trait.method.call %a @P7[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P7[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P7_all for @P7[!trait.poly<0>] where [@P8[!trait.poly<0>]] {
+trait.impl private @P7_all(%self: !trait.claim<@P7[!T]>, %p: !trait.claim<@P8[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P8[!trait.poly<0>]>
-    %v = trait.method.call %a @P8[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P8[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P8_all for @P8[!trait.poly<0>] where [@P9[!trait.poly<0>]] {
+trait.impl private @P8_all(%self: !trait.claim<@P8[!T]>, %p: !trait.claim<@P9[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P9[!trait.poly<0>]>
-    %v = trait.method.call %a @P9[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P9[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P9_all for @P9[!trait.poly<0>] where [@P10[!trait.poly<0>]] {
+trait.impl private @P9_all(%self: !trait.claim<@P9[!T]>, %p: !trait.claim<@P10[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P10[!trait.poly<0>]>
-    %v = trait.method.call %a @P10[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P10[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P10_all for @P10[!trait.poly<0>] where [@P11[!trait.poly<0>]] {
+trait.impl private @P10_all(%self: !trait.claim<@P10[!T]>, %p: !trait.claim<@P11[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P11[!trait.poly<0>]>
-    %v = trait.method.call %a @P11[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P11[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P11_all for @P11[!trait.poly<0>] where [@P12[!trait.poly<0>]] {
+trait.impl private @P11_all(%self: !trait.claim<@P11[!T]>, %p: !trait.claim<@P12[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P12[!trait.poly<0>]>
-    %v = trait.method.call %a @P12[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P12[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P12_all for @P12[!trait.poly<0>] where [@P13[!trait.poly<0>]] {
+trait.impl private @P12_all(%self: !trait.claim<@P12[!T]>, %p: !trait.claim<@P13[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P13[!trait.poly<0>]>
-    %v = trait.method.call %a @P13[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P13[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P13_all for @P13[!trait.poly<0>] where [@P14[!trait.poly<0>]] {
+trait.impl private @P13_all(%self: !trait.claim<@P13[!T]>, %p: !trait.claim<@P14[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P14[!trait.poly<0>]>
-    %v = trait.method.call %a @P14[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P14[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P14_all for @P14[!trait.poly<0>] where [@P15[!trait.poly<0>]] {
+trait.impl private @P14_all(%self: !trait.claim<@P14[!T]>, %p: !trait.claim<@P15[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P15[!trait.poly<0>]>
-    %v = trait.method.call %a @P15[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P15[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P15_all for @P15[!trait.poly<0>] where [@P16[!trait.poly<0>]] {
+trait.impl private @P15_all(%self: !trait.claim<@P15[!T]>, %p: !trait.claim<@P16[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P16[!trait.poly<0>]>
-    %v = trait.method.call %a @P16[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P16[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P16_all for @P16[!trait.poly<0>] where [@P17[!trait.poly<0>]] {
+trait.impl private @P16_all(%self: !trait.claim<@P16[!T]>, %p: !trait.claim<@P17[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P17[!trait.poly<0>]>
-    %v = trait.method.call %a @P17[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P17[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P17_all for @P17[!trait.poly<0>] where [@P18[!trait.poly<0>]] {
+trait.impl private @P17_all(%self: !trait.claim<@P17[!T]>, %p: !trait.claim<@P18[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P18[!trait.poly<0>]>
-    %v = trait.method.call %a @P18[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P18[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P18_all for @P18[!trait.poly<0>] where [@P19[!trait.poly<0>]] {
+trait.impl private @P18_all(%self: !trait.claim<@P18[!T]>, %p: !trait.claim<@P19[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P19[!trait.poly<0>]>
-    %v = trait.method.call %a @P19[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P19[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P19_all for @P19[!trait.poly<0>] where [@P20[!trait.poly<0>]] {
+trait.impl private @P19_all(%self: !trait.claim<@P19[!T]>, %p: !trait.claim<@P20[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P20[!trait.poly<0>]>
-    %v = trait.method.call %a @P20[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P20[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P20_all for @P20[!trait.poly<0>] where [@P21[!trait.poly<0>]] {
+trait.impl private @P20_all(%self: !trait.claim<@P20[!T]>, %p: !trait.claim<@P21[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P21[!trait.poly<0>]>
-    %v = trait.method.call %a @P21[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P21[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P21_all for @P21[!trait.poly<0>] where [@P22[!trait.poly<0>]] {
+trait.impl private @P21_all(%self: !trait.claim<@P21[!T]>, %p: !trait.claim<@P22[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P22[!trait.poly<0>]>
-    %v = trait.method.call %a @P22[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P22[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P22_all for @P22[!trait.poly<0>] where [@P23[!trait.poly<0>]] {
+trait.impl private @P22_all(%self: !trait.claim<@P22[!T]>, %p: !trait.claim<@P23[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P23[!trait.poly<0>]>
-    %v = trait.method.call %a @P23[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P23[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P23_all for @P23[!trait.poly<0>] where [@P24[!trait.poly<0>]] {
+trait.impl private @P23_all(%self: !trait.claim<@P23[!T]>, %p: !trait.claim<@P24[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P24[!trait.poly<0>]>
-    %v = trait.method.call %a @P24[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P24[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P24_all for @P24[!trait.poly<0>] where [@P25[!trait.poly<0>]] {
+trait.impl private @P24_all(%self: !trait.claim<@P24[!T]>, %p: !trait.claim<@P25[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P25[!trait.poly<0>]>
-    %v = trait.method.call %a @P25[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P25[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P25_all for @P25[!trait.poly<0>] where [@P26[!trait.poly<0>]] {
+trait.impl private @P25_all(%self: !trait.claim<@P25[!T]>, %p: !trait.claim<@P26[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P26[!trait.poly<0>]>
-    %v = trait.method.call %a @P26[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P26[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P26_all for @P26[!trait.poly<0>] where [@P27[!trait.poly<0>]] {
+trait.impl private @P26_all(%self: !trait.claim<@P26[!T]>, %p: !trait.claim<@P27[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P27[!trait.poly<0>]>
-    %v = trait.method.call %a @P27[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P27[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P27_all for @P27[!trait.poly<0>] where [@P28[!trait.poly<0>]] {
+trait.impl private @P27_all(%self: !trait.claim<@P27[!T]>, %p: !trait.claim<@P28[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P28[!trait.poly<0>]>
-    %v = trait.method.call %a @P28[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P28[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P28_all for @P28[!trait.poly<0>] where [@P29[!trait.poly<0>]] {
+trait.impl private @P28_all(%self: !trait.claim<@P28[!T]>, %p: !trait.claim<@P29[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P29[!trait.poly<0>]>
-    %v = trait.method.call %a @P29[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P29[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P29_all for @P29[!trait.poly<0>] where [@P30[!trait.poly<0>]] {
+trait.impl private @P29_all(%self: !trait.claim<@P29[!T]>, %p: !trait.claim<@P30[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P30[!trait.poly<0>]>
-    %v = trait.method.call %a @P30[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P30[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P30_all for @P30[!trait.poly<0>] where [@P31[!trait.poly<0>]] {
+trait.impl private @P30_all(%self: !trait.claim<@P30[!T]>, %p: !trait.claim<@P31[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P31[!trait.poly<0>]>
-    %v = trait.method.call %a @P31[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P31[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P31_all for @P31[!trait.poly<0>] where [@P32[!trait.poly<0>]] {
+trait.impl private @P31_all(%self: !trait.claim<@P31[!T]>, %p: !trait.claim<@P32[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P32[!trait.poly<0>]>
-    %v = trait.method.call %a @P32[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P32[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P32_all for @P32[!trait.poly<0>] where [@P33[!trait.poly<0>]] {
+trait.impl private @P32_all(%self: !trait.claim<@P32[!T]>, %p: !trait.claim<@P33[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P33[!trait.poly<0>]>
-    %v = trait.method.call %a @P33[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P33[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P33_all for @P33[!trait.poly<0>] where [@P34[!trait.poly<0>]] {
+trait.impl private @P33_all(%self: !trait.claim<@P33[!T]>, %p: !trait.claim<@P34[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P34[!trait.poly<0>]>
-    %v = trait.method.call %a @P34[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P34[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P34_all for @P34[!trait.poly<0>] where [@P35[!trait.poly<0>]] {
+trait.impl private @P34_all(%self: !trait.claim<@P34[!T]>, %p: !trait.claim<@P35[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P35[!trait.poly<0>]>
-    %v = trait.method.call %a @P35[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P35[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P35_all for @P35[!trait.poly<0>] where [@P36[!trait.poly<0>]] {
+trait.impl private @P35_all(%self: !trait.claim<@P35[!T]>, %p: !trait.claim<@P36[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P36[!trait.poly<0>]>
-    %v = trait.method.call %a @P36[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P36[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P36_all for @P36[!trait.poly<0>] where [@P37[!trait.poly<0>]] {
+trait.impl private @P36_all(%self: !trait.claim<@P36[!T]>, %p: !trait.claim<@P37[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P37[!trait.poly<0>]>
-    %v = trait.method.call %a @P37[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P37[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P37_all for @P37[!trait.poly<0>] where [@P38[!trait.poly<0>]] {
+trait.impl private @P37_all(%self: !trait.claim<@P37[!T]>, %p: !trait.claim<@P38[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P38[!trait.poly<0>]>
-    %v = trait.method.call %a @P38[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P38[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P38_all for @P38[!trait.poly<0>] where [@P39[!trait.poly<0>]] {
+trait.impl private @P38_all(%self: !trait.claim<@P38[!T]>, %p: !trait.claim<@P39[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P39[!trait.poly<0>]>
-    %v = trait.method.call %a @P39[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P39[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P39_all for @P39[!trait.poly<0>] where [@P40[!trait.poly<0>]] {
+trait.impl private @P39_all(%self: !trait.claim<@P39[!T]>, %p: !trait.claim<@P40[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P40[!trait.poly<0>]>
-    %v = trait.method.call %a @P40[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P40[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P40_all for @P40[!trait.poly<0>] where [@P41[!trait.poly<0>]] {
+trait.impl private @P40_all(%self: !trait.claim<@P40[!T]>, %p: !trait.claim<@P41[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P41[!trait.poly<0>]>
-    %v = trait.method.call %a @P41[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P41[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P41_all for @P41[!trait.poly<0>] where [@P42[!trait.poly<0>]] {
+trait.impl private @P41_all(%self: !trait.claim<@P41[!T]>, %p: !trait.claim<@P42[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P42[!trait.poly<0>]>
-    %v = trait.method.call %a @P42[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P42[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P42_all for @P42[!trait.poly<0>] where [@P43[!trait.poly<0>]] {
+trait.impl private @P42_all(%self: !trait.claim<@P42[!T]>, %p: !trait.claim<@P43[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P43[!trait.poly<0>]>
-    %v = trait.method.call %a @P43[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P43[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P43_all for @P43[!trait.poly<0>] where [@P44[!trait.poly<0>]] {
+trait.impl private @P43_all(%self: !trait.claim<@P43[!T]>, %p: !trait.claim<@P44[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P44[!trait.poly<0>]>
-    %v = trait.method.call %a @P44[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P44[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P44_all for @P44[!trait.poly<0>] where [@P45[!trait.poly<0>]] {
+trait.impl private @P44_all(%self: !trait.claim<@P44[!T]>, %p: !trait.claim<@P45[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P45[!trait.poly<0>]>
-    %v = trait.method.call %a @P45[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P45[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P45_all for @P45[!trait.poly<0>] where [@P46[!trait.poly<0>]] {
+trait.impl private @P45_all(%self: !trait.claim<@P45[!T]>, %p: !trait.claim<@P46[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P46[!trait.poly<0>]>
-    %v = trait.method.call %a @P46[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P46[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P46_all for @P46[!trait.poly<0>] where [@P47[!trait.poly<0>]] {
+trait.impl private @P46_all(%self: !trait.claim<@P46[!T]>, %p: !trait.claim<@P47[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P47[!trait.poly<0>]>
-    %v = trait.method.call %a @P47[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P47[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P47_all for @P47[!trait.poly<0>] where [@P48[!trait.poly<0>]] {
+trait.impl private @P47_all(%self: !trait.claim<@P47[!T]>, %p: !trait.claim<@P48[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P48[!trait.poly<0>]>
-    %v = trait.method.call %a @P48[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P48[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P48_all for @P48[!trait.poly<0>] where [@P49[!trait.poly<0>]] {
+trait.impl private @P48_all(%self: !trait.claim<@P48[!T]>, %p: !trait.claim<@P49[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P49[!trait.poly<0>]>
-    %v = trait.method.call %a @P49[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P49[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P49_all for @P49[!trait.poly<0>] where [@P50[!trait.poly<0>]] {
+trait.impl private @P49_all(%self: !trait.claim<@P49[!T]>, %p: !trait.claim<@P50[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P50[!trait.poly<0>]>
-    %v = trait.method.call %a @P50[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P50[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P50_all for @P50[!trait.poly<0>] where [@P51[!trait.poly<0>]] {
+trait.impl private @P50_all(%self: !trait.claim<@P50[!T]>, %p: !trait.claim<@P51[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P51[!trait.poly<0>]>
-    %v = trait.method.call %a @P51[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P51[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P51_all for @P51[!trait.poly<0>] where [@P52[!trait.poly<0>]] {
+trait.impl private @P51_all(%self: !trait.claim<@P51[!T]>, %p: !trait.claim<@P52[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P52[!trait.poly<0>]>
-    %v = trait.method.call %a @P52[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P52[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P52_all for @P52[!trait.poly<0>] where [@P53[!trait.poly<0>]] {
+trait.impl private @P52_all(%self: !trait.claim<@P52[!T]>, %p: !trait.claim<@P53[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P53[!trait.poly<0>]>
-    %v = trait.method.call %a @P53[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P53[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P53_all for @P53[!trait.poly<0>] where [@P54[!trait.poly<0>]] {
+trait.impl private @P53_all(%self: !trait.claim<@P53[!T]>, %p: !trait.claim<@P54[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P54[!trait.poly<0>]>
-    %v = trait.method.call %a @P54[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P54[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P54_all for @P54[!trait.poly<0>] where [@P55[!trait.poly<0>]] {
+trait.impl private @P54_all(%self: !trait.claim<@P54[!T]>, %p: !trait.claim<@P55[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P55[!trait.poly<0>]>
-    %v = trait.method.call %a @P55[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P55[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P55_all for @P55[!trait.poly<0>] where [@P56[!trait.poly<0>]] {
+trait.impl private @P55_all(%self: !trait.claim<@P55[!T]>, %p: !trait.claim<@P56[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P56[!trait.poly<0>]>
-    %v = trait.method.call %a @P56[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P56[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P56_all for @P56[!trait.poly<0>] where [@P57[!trait.poly<0>]] {
+trait.impl private @P56_all(%self: !trait.claim<@P56[!T]>, %p: !trait.claim<@P57[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P57[!trait.poly<0>]>
-    %v = trait.method.call %a @P57[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P57[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P57_all for @P57[!trait.poly<0>] where [@P58[!trait.poly<0>]] {
+trait.impl private @P57_all(%self: !trait.claim<@P57[!T]>, %p: !trait.claim<@P58[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P58[!trait.poly<0>]>
-    %v = trait.method.call %a @P58[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P58[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P58_all for @P58[!trait.poly<0>] where [@P59[!trait.poly<0>]] {
+trait.impl private @P58_all(%self: !trait.claim<@P58[!T]>, %p: !trait.claim<@P59[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P59[!trait.poly<0>]>
-    %v = trait.method.call %a @P59[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P59[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P59_all for @P59[!trait.poly<0>] where [@P60[!trait.poly<0>]] {
+trait.impl private @P59_all(%self: !trait.claim<@P59[!T]>, %p: !trait.claim<@P60[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P60[!trait.poly<0>]>
-    %v = trait.method.call %a @P60[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P60[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P60_all for @P60[!trait.poly<0>] where [@P61[!trait.poly<0>]] {
+trait.impl private @P60_all(%self: !trait.claim<@P60[!T]>, %p: !trait.claim<@P61[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P61[!trait.poly<0>]>
-    %v = trait.method.call %a @P61[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P61[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P61_all for @P61[!trait.poly<0>] where [@P62[!trait.poly<0>]] {
+trait.impl private @P61_all(%self: !trait.claim<@P61[!T]>, %p: !trait.claim<@P62[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P62[!trait.poly<0>]>
-    %v = trait.method.call %a @P62[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P62[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P62_all for @P62[!trait.poly<0>] where [@P63[!trait.poly<0>]] {
+trait.impl private @P62_all(%self: !trait.claim<@P62[!T]>, %p: !trait.claim<@P63[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P63[!trait.poly<0>]>
-    %v = trait.method.call %a @P63[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P63[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P63_all for @P63[!trait.poly<0>] where [@P64[!trait.poly<0>]] {
+trait.impl private @P63_all(%self: !trait.claim<@P63[!T]>, %p: !trait.claim<@P64[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P64[!trait.poly<0>]>
-    %v = trait.method.call %a @P64[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P64[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P64_all for @P64[!trait.poly<0>] where [@P65[!trait.poly<0>]] {
+trait.impl private @P64_all(%self: !trait.claim<@P64[!T]>, %p: !trait.claim<@P65[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P65[!trait.poly<0>]>
-    %v = trait.method.call %a @P65[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P65[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P65_all for @P65[!trait.poly<0>] where [@P66[!trait.poly<0>]] {
+trait.impl private @P65_all(%self: !trait.claim<@P65[!T]>, %p: !trait.claim<@P66[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P66[!trait.poly<0>]>
-    %v = trait.method.call %a @P66[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P66[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P66_all for @P66[!trait.poly<0>] where [@P67[!trait.poly<0>]] {
+trait.impl private @P66_all(%self: !trait.claim<@P66[!T]>, %p: !trait.claim<@P67[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P67[!trait.poly<0>]>
-    %v = trait.method.call %a @P67[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P67[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P67_all for @P67[!trait.poly<0>] where [@P68[!trait.poly<0>]] {
+trait.impl private @P67_all(%self: !trait.claim<@P67[!T]>, %p: !trait.claim<@P68[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P68[!trait.poly<0>]>
-    %v = trait.method.call %a @P68[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P68[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P68_all for @P68[!trait.poly<0>] where [@P69[!trait.poly<0>]] {
+trait.impl private @P68_all(%self: !trait.claim<@P68[!T]>, %p: !trait.claim<@P69[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P69[!trait.poly<0>]>
-    %v = trait.method.call %a @P69[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P69[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P69_all for @P69[!trait.poly<0>] where [@P70[!trait.poly<0>]] {
+trait.impl private @P69_all(%self: !trait.claim<@P69[!T]>, %p: !trait.claim<@P70[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P70[!trait.poly<0>]>
-    %v = trait.method.call %a @P70[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P70[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P70_all for @P70[!trait.poly<0>] where [@P71[!trait.poly<0>]] {
+trait.impl private @P70_all(%self: !trait.claim<@P70[!T]>, %p: !trait.claim<@P71[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P71[!trait.poly<0>]>
-    %v = trait.method.call %a @P71[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P71[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P71_all for @P71[!trait.poly<0>] where [@P72[!trait.poly<0>]] {
+trait.impl private @P71_all(%self: !trait.claim<@P71[!T]>, %p: !trait.claim<@P72[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P72[!trait.poly<0>]>
-    %v = trait.method.call %a @P72[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P72[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P72_all for @P72[!trait.poly<0>] where [@P73[!trait.poly<0>]] {
+trait.impl private @P72_all(%self: !trait.claim<@P72[!T]>, %p: !trait.claim<@P73[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P73[!trait.poly<0>]>
-    %v = trait.method.call %a @P73[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P73[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P73_all for @P73[!trait.poly<0>] where [@P74[!trait.poly<0>]] {
+trait.impl private @P73_all(%self: !trait.claim<@P73[!T]>, %p: !trait.claim<@P74[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P74[!trait.poly<0>]>
-    %v = trait.method.call %a @P74[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P74[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P74_all for @P74[!trait.poly<0>] where [@P75[!trait.poly<0>]] {
+trait.impl private @P74_all(%self: !trait.claim<@P74[!T]>, %p: !trait.claim<@P75[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P75[!trait.poly<0>]>
-    %v = trait.method.call %a @P75[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P75[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P75_all for @P75[!trait.poly<0>] where [@P76[!trait.poly<0>]] {
+trait.impl private @P75_all(%self: !trait.claim<@P75[!T]>, %p: !trait.claim<@P76[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P76[!trait.poly<0>]>
-    %v = trait.method.call %a @P76[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P76[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P76_all for @P76[!trait.poly<0>] where [@P77[!trait.poly<0>]] {
+trait.impl private @P76_all(%self: !trait.claim<@P76[!T]>, %p: !trait.claim<@P77[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P77[!trait.poly<0>]>
-    %v = trait.method.call %a @P77[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P77[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P77_all for @P77[!trait.poly<0>] where [@P78[!trait.poly<0>]] {
+trait.impl private @P77_all(%self: !trait.claim<@P77[!T]>, %p: !trait.claim<@P78[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P78[!trait.poly<0>]>
-    %v = trait.method.call %a @P78[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P78[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P78_all for @P78[!trait.poly<0>] where [@P79[!trait.poly<0>]] {
+trait.impl private @P78_all(%self: !trait.claim<@P78[!T]>, %p: !trait.claim<@P79[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P79[!trait.poly<0>]>
-    %v = trait.method.call %a @P79[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P79[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P79_all for @P79[!trait.poly<0>] where [@P80[!trait.poly<0>]] {
+trait.impl private @P79_all(%self: !trait.claim<@P79[!T]>, %p: !trait.claim<@P80[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P80[!trait.poly<0>]>
-    %v = trait.method.call %a @P80[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P80[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P80_all for @P80[!trait.poly<0>] where [@P81[!trait.poly<0>]] {
+trait.impl private @P80_all(%self: !trait.claim<@P80[!T]>, %p: !trait.claim<@P81[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P81[!trait.poly<0>]>
-    %v = trait.method.call %a @P81[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P81[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P81_all for @P81[!trait.poly<0>] where [@P82[!trait.poly<0>]] {
+trait.impl private @P81_all(%self: !trait.claim<@P81[!T]>, %p: !trait.claim<@P82[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P82[!trait.poly<0>]>
-    %v = trait.method.call %a @P82[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P82[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P82_all for @P82[!trait.poly<0>] where [@P83[!trait.poly<0>]] {
+trait.impl private @P82_all(%self: !trait.claim<@P82[!T]>, %p: !trait.claim<@P83[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P83[!trait.poly<0>]>
-    %v = trait.method.call %a @P83[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P83[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P83_all for @P83[!trait.poly<0>] where [@P84[!trait.poly<0>]] {
+trait.impl private @P83_all(%self: !trait.claim<@P83[!T]>, %p: !trait.claim<@P84[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P84[!trait.poly<0>]>
-    %v = trait.method.call %a @P84[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P84[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P84_all for @P84[!trait.poly<0>] where [@P85[!trait.poly<0>]] {
+trait.impl private @P84_all(%self: !trait.claim<@P84[!T]>, %p: !trait.claim<@P85[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P85[!trait.poly<0>]>
-    %v = trait.method.call %a @P85[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P85[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P85_all for @P85[!trait.poly<0>] where [@P86[!trait.poly<0>]] {
+trait.impl private @P85_all(%self: !trait.claim<@P85[!T]>, %p: !trait.claim<@P86[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P86[!trait.poly<0>]>
-    %v = trait.method.call %a @P86[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P86[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P86_all for @P86[!trait.poly<0>] where [@P87[!trait.poly<0>]] {
+trait.impl private @P86_all(%self: !trait.claim<@P86[!T]>, %p: !trait.claim<@P87[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P87[!trait.poly<0>]>
-    %v = trait.method.call %a @P87[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P87[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P87_all for @P87[!trait.poly<0>] where [@P88[!trait.poly<0>]] {
+trait.impl private @P87_all(%self: !trait.claim<@P87[!T]>, %p: !trait.claim<@P88[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P88[!trait.poly<0>]>
-    %v = trait.method.call %a @P88[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P88[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P88_all for @P88[!trait.poly<0>] where [@P89[!trait.poly<0>]] {
+trait.impl private @P88_all(%self: !trait.claim<@P88[!T]>, %p: !trait.claim<@P89[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P89[!trait.poly<0>]>
-    %v = trait.method.call %a @P89[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P89[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P89_all for @P89[!trait.poly<0>] where [@P90[!trait.poly<0>]] {
+trait.impl private @P89_all(%self: !trait.claim<@P89[!T]>, %p: !trait.claim<@P90[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P90[!trait.poly<0>]>
-    %v = trait.method.call %a @P90[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P90[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P90_all for @P90[!trait.poly<0>] where [@P91[!trait.poly<0>]] {
+trait.impl private @P90_all(%self: !trait.claim<@P90[!T]>, %p: !trait.claim<@P91[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P91[!trait.poly<0>]>
-    %v = trait.method.call %a @P91[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P91[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P91_all for @P91[!trait.poly<0>] where [@P92[!trait.poly<0>]] {
+trait.impl private @P91_all(%self: !trait.claim<@P91[!T]>, %p: !trait.claim<@P92[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P92[!trait.poly<0>]>
-    %v = trait.method.call %a @P92[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P92[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P92_all for @P92[!trait.poly<0>] where [@P93[!trait.poly<0>]] {
+trait.impl private @P92_all(%self: !trait.claim<@P92[!T]>, %p: !trait.claim<@P93[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P93[!trait.poly<0>]>
-    %v = trait.method.call %a @P93[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P93[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P93_all for @P93[!trait.poly<0>] where [@P94[!trait.poly<0>]] {
+trait.impl private @P93_all(%self: !trait.claim<@P93[!T]>, %p: !trait.claim<@P94[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P94[!trait.poly<0>]>
-    %v = trait.method.call %a @P94[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P94[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P94_all for @P94[!trait.poly<0>] where [@P95[!trait.poly<0>]] {
+trait.impl private @P94_all(%self: !trait.claim<@P94[!T]>, %p: !trait.claim<@P95[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P95[!trait.poly<0>]>
-    %v = trait.method.call %a @P95[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P95[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P95_all for @P95[!trait.poly<0>] where [@P96[!trait.poly<0>]] {
+trait.impl private @P95_all(%self: !trait.claim<@P95[!T]>, %p: !trait.claim<@P96[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P96[!trait.poly<0>]>
-    %v = trait.method.call %a @P96[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P96[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P96_all for @P96[!trait.poly<0>] where [@P97[!trait.poly<0>]] {
+trait.impl private @P96_all(%self: !trait.claim<@P96[!T]>, %p: !trait.claim<@P97[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P97[!trait.poly<0>]>
-    %v = trait.method.call %a @P97[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P97[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P97_all for @P97[!trait.poly<0>] where [@P98[!trait.poly<0>]] {
+trait.impl private @P97_all(%self: !trait.claim<@P97[!T]>, %p: !trait.claim<@P98[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P98[!trait.poly<0>]>
-    %v = trait.method.call %a @P98[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P98[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P98_all for @P98[!trait.poly<0>] where [@P99[!trait.poly<0>]] {
+trait.impl private @P98_all(%self: !trait.claim<@P98[!T]>, %p: !trait.claim<@P99[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P99[!trait.poly<0>]>
-    %v = trait.method.call %a @P99[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P99[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P99_all for @P99[!trait.poly<0>] where [@P100[!trait.poly<0>]] {
+trait.impl private @P99_all(%self: !trait.claim<@P99[!T]>, %p: !trait.claim<@P100[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P100[!trait.poly<0>]>
-    %v = trait.method.call %a @P100[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P100[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P100_all for @P100[!trait.poly<0>] where [@P101[!trait.poly<0>]] {
+trait.impl private @P100_all(%self: !trait.claim<@P100[!T]>, %p: !trait.claim<@P101[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P101[!trait.poly<0>]>
-    %v = trait.method.call %a @P101[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P101[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P101_all for @P101[!trait.poly<0>] where [@P102[!trait.poly<0>]] {
+trait.impl private @P101_all(%self: !trait.claim<@P101[!T]>, %p: !trait.claim<@P102[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P102[!trait.poly<0>]>
-    %v = trait.method.call %a @P102[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P102[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P102_all for @P102[!trait.poly<0>] where [@P103[!trait.poly<0>]] {
+trait.impl private @P102_all(%self: !trait.claim<@P102[!T]>, %p: !trait.claim<@P103[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P103[!trait.poly<0>]>
-    %v = trait.method.call %a @P103[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P103[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P103_all for @P103[!trait.poly<0>] where [@P104[!trait.poly<0>]] {
+trait.impl private @P103_all(%self: !trait.claim<@P103[!T]>, %p: !trait.claim<@P104[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P104[!trait.poly<0>]>
-    %v = trait.method.call %a @P104[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P104[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P104_all for @P104[!trait.poly<0>] where [@P105[!trait.poly<0>]] {
+trait.impl private @P104_all(%self: !trait.claim<@P104[!T]>, %p: !trait.claim<@P105[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P105[!trait.poly<0>]>
-    %v = trait.method.call %a @P105[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P105[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P105_all for @P105[!trait.poly<0>] where [@P106[!trait.poly<0>]] {
+trait.impl private @P105_all(%self: !trait.claim<@P105[!T]>, %p: !trait.claim<@P106[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P106[!trait.poly<0>]>
-    %v = trait.method.call %a @P106[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P106[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P106_all for @P106[!trait.poly<0>] where [@P107[!trait.poly<0>]] {
+trait.impl private @P106_all(%self: !trait.claim<@P106[!T]>, %p: !trait.claim<@P107[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P107[!trait.poly<0>]>
-    %v = trait.method.call %a @P107[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P107[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P107_all for @P107[!trait.poly<0>] where [@P108[!trait.poly<0>]] {
+trait.impl private @P107_all(%self: !trait.claim<@P107[!T]>, %p: !trait.claim<@P108[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P108[!trait.poly<0>]>
-    %v = trait.method.call %a @P108[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P108[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P108_all for @P108[!trait.poly<0>] where [@P109[!trait.poly<0>]] {
+trait.impl private @P108_all(%self: !trait.claim<@P108[!T]>, %p: !trait.claim<@P109[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P109[!trait.poly<0>]>
-    %v = trait.method.call %a @P109[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P109[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P109_all for @P109[!trait.poly<0>] where [@P110[!trait.poly<0>]] {
+trait.impl private @P109_all(%self: !trait.claim<@P109[!T]>, %p: !trait.claim<@P110[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P110[!trait.poly<0>]>
-    %v = trait.method.call %a @P110[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P110[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P110_all for @P110[!trait.poly<0>] where [@P111[!trait.poly<0>]] {
+trait.impl private @P110_all(%self: !trait.claim<@P110[!T]>, %p: !trait.claim<@P111[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P111[!trait.poly<0>]>
-    %v = trait.method.call %a @P111[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P111[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P111_all for @P111[!trait.poly<0>] where [@P112[!trait.poly<0>]] {
+trait.impl private @P111_all(%self: !trait.claim<@P111[!T]>, %p: !trait.claim<@P112[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P112[!trait.poly<0>]>
-    %v = trait.method.call %a @P112[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P112[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P112_all for @P112[!trait.poly<0>] where [@P113[!trait.poly<0>]] {
+trait.impl private @P112_all(%self: !trait.claim<@P112[!T]>, %p: !trait.claim<@P113[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P113[!trait.poly<0>]>
-    %v = trait.method.call %a @P113[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P113[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P113_all for @P113[!trait.poly<0>] where [@P114[!trait.poly<0>]] {
+trait.impl private @P113_all(%self: !trait.claim<@P113[!T]>, %p: !trait.claim<@P114[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P114[!trait.poly<0>]>
-    %v = trait.method.call %a @P114[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P114[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P114_all for @P114[!trait.poly<0>] where [@P115[!trait.poly<0>]] {
+trait.impl private @P114_all(%self: !trait.claim<@P114[!T]>, %p: !trait.claim<@P115[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P115[!trait.poly<0>]>
-    %v = trait.method.call %a @P115[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P115[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P115_all for @P115[!trait.poly<0>] where [@P116[!trait.poly<0>]] {
+trait.impl private @P115_all(%self: !trait.claim<@P115[!T]>, %p: !trait.claim<@P116[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P116[!trait.poly<0>]>
-    %v = trait.method.call %a @P116[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P116[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P116_all for @P116[!trait.poly<0>] where [@P117[!trait.poly<0>]] {
+trait.impl private @P116_all(%self: !trait.claim<@P116[!T]>, %p: !trait.claim<@P117[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P117[!trait.poly<0>]>
-    %v = trait.method.call %a @P117[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P117[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P117_all for @P117[!trait.poly<0>] where [@P118[!trait.poly<0>]] {
+trait.impl private @P117_all(%self: !trait.claim<@P117[!T]>, %p: !trait.claim<@P118[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P118[!trait.poly<0>]>
-    %v = trait.method.call %a @P118[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P118[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P118_all for @P118[!trait.poly<0>] where [@P119[!trait.poly<0>]] {
+trait.impl private @P118_all(%self: !trait.claim<@P118[!T]>, %p: !trait.claim<@P119[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P119[!trait.poly<0>]>
-    %v = trait.method.call %a @P119[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P119[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P119_all for @P119[!trait.poly<0>] where [@P120[!trait.poly<0>]] {
+trait.impl private @P119_all(%self: !trait.claim<@P119[!T]>, %p: !trait.claim<@P120[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P120[!trait.poly<0>]>
-    %v = trait.method.call %a @P120[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P120[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P120_all for @P120[!trait.poly<0>] where [@P121[!trait.poly<0>]] {
+trait.impl private @P120_all(%self: !trait.claim<@P120[!T]>, %p: !trait.claim<@P121[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P121[!trait.poly<0>]>
-    %v = trait.method.call %a @P121[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P121[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P121_all for @P121[!trait.poly<0>] where [@P122[!trait.poly<0>]] {
+trait.impl private @P121_all(%self: !trait.claim<@P121[!T]>, %p: !trait.claim<@P122[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P122[!trait.poly<0>]>
-    %v = trait.method.call %a @P122[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P122[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P122_all for @P122[!trait.poly<0>] where [@P123[!trait.poly<0>]] {
+trait.impl private @P122_all(%self: !trait.claim<@P122[!T]>, %p: !trait.claim<@P123[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P123[!trait.poly<0>]>
-    %v = trait.method.call %a @P123[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P123[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P123_all for @P123[!trait.poly<0>] where [@P124[!trait.poly<0>]] {
+trait.impl private @P123_all(%self: !trait.claim<@P123[!T]>, %p: !trait.claim<@P124[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P124[!trait.poly<0>]>
-    %v = trait.method.call %a @P124[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P124[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P124_all for @P124[!trait.poly<0>] where [@P125[!trait.poly<0>]] {
+trait.impl private @P124_all(%self: !trait.claim<@P124[!T]>, %p: !trait.claim<@P125[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P125[!trait.poly<0>]>
-    %v = trait.method.call %a @P125[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P125[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P125_all for @P125[!trait.poly<0>] where [@P126[!trait.poly<0>]] {
+trait.impl private @P125_all(%self: !trait.claim<@P125[!T]>, %p: !trait.claim<@P126[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P126[!trait.poly<0>]>
-    %v = trait.method.call %a @P126[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P126[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P126_all for @P126[!trait.poly<0>] where [@P127[!trait.poly<0>]] {
+trait.impl private @P126_all(%self: !trait.claim<@P126[!T]>, %p: !trait.claim<@P127[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P127[!trait.poly<0>]>
-    %v = trait.method.call %a @P127[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P127[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P127_all for @P127[!trait.poly<0>] where [@P128[!trait.poly<0>]] {
+trait.impl private @P127_all(%self: !trait.claim<@P127[!T]>, %p: !trait.claim<@P128[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P128[!trait.poly<0>]>
-    %v = trait.method.call %a @P128[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P128[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P128_all for @P128[!trait.poly<0>] where [@P129[!trait.poly<0>]] {
+trait.impl private @P128_all(%self: !trait.claim<@P128[!T]>, %p: !trait.claim<@P129[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P129[!trait.poly<0>]>
-    %v = trait.method.call %a @P129[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P129[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P129_all for @P129[!trait.poly<0>] where [@P130[!trait.poly<0>]] {
+trait.impl private @P129_all(%self: !trait.claim<@P129[!T]>, %p: !trait.claim<@P130[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P130[!trait.poly<0>]>
-    %v = trait.method.call %a @P130[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P130[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P130_all for @P130[!trait.poly<0>] where [@P131[!trait.poly<0>]] {
+trait.impl private @P130_all(%self: !trait.claim<@P130[!T]>, %p: !trait.claim<@P131[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P131[!trait.poly<0>]>
-    %v = trait.method.call %a @P131[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P131[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P131_all for @P131[!trait.poly<0>] where [@P132[!trait.poly<0>]] {
+trait.impl private @P131_all(%self: !trait.claim<@P131[!T]>, %p: !trait.claim<@P132[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P132[!trait.poly<0>]>
-    %v = trait.method.call %a @P132[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P132[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P132_all for @P132[!trait.poly<0>] where [@P133[!trait.poly<0>]] {
+trait.impl private @P132_all(%self: !trait.claim<@P132[!T]>, %p: !trait.claim<@P133[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P133[!trait.poly<0>]>
-    %v = trait.method.call %a @P133[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P133[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P133_all for @P133[!trait.poly<0>] where [@P134[!trait.poly<0>]] {
+trait.impl private @P133_all(%self: !trait.claim<@P133[!T]>, %p: !trait.claim<@P134[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P134[!trait.poly<0>]>
-    %v = trait.method.call %a @P134[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P134[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P134_all for @P134[!trait.poly<0>] where [@P135[!trait.poly<0>]] {
+trait.impl private @P134_all(%self: !trait.claim<@P134[!T]>, %p: !trait.claim<@P135[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P135[!trait.poly<0>]>
-    %v = trait.method.call %a @P135[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P135[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P135_all for @P135[!trait.poly<0>] where [@P136[!trait.poly<0>]] {
+trait.impl private @P135_all(%self: !trait.claim<@P135[!T]>, %p: !trait.claim<@P136[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P136[!trait.poly<0>]>
-    %v = trait.method.call %a @P136[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P136[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P136_all for @P136[!trait.poly<0>] where [@P137[!trait.poly<0>]] {
+trait.impl private @P136_all(%self: !trait.claim<@P136[!T]>, %p: !trait.claim<@P137[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P137[!trait.poly<0>]>
-    %v = trait.method.call %a @P137[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P137[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P137_all for @P137[!trait.poly<0>] where [@P138[!trait.poly<0>]] {
+trait.impl private @P137_all(%self: !trait.claim<@P137[!T]>, %p: !trait.claim<@P138[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P138[!trait.poly<0>]>
-    %v = trait.method.call %a @P138[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P138[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P138_all for @P138[!trait.poly<0>] where [@P139[!trait.poly<0>]] {
+trait.impl private @P138_all(%self: !trait.claim<@P138[!T]>, %p: !trait.claim<@P139[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P139[!trait.poly<0>]>
-    %v = trait.method.call %a @P139[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P139[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P139_all for @P139[!trait.poly<0>] where [@P140[!trait.poly<0>]] {
+trait.impl private @P139_all(%self: !trait.claim<@P139[!T]>, %p: !trait.claim<@P140[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P140[!trait.poly<0>]>
-    %v = trait.method.call %a @P140[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P140[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P140_all for @P140[!trait.poly<0>] where [@P141[!trait.poly<0>]] {
+trait.impl private @P140_all(%self: !trait.claim<@P140[!T]>, %p: !trait.claim<@P141[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P141[!trait.poly<0>]>
-    %v = trait.method.call %a @P141[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P141[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P141_all for @P141[!trait.poly<0>] where [@P142[!trait.poly<0>]] {
+trait.impl private @P141_all(%self: !trait.claim<@P141[!T]>, %p: !trait.claim<@P142[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P142[!trait.poly<0>]>
-    %v = trait.method.call %a @P142[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P142[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P142_all for @P142[!trait.poly<0>] where [@P143[!trait.poly<0>]] {
+trait.impl private @P142_all(%self: !trait.claim<@P142[!T]>, %p: !trait.claim<@P143[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P143[!trait.poly<0>]>
-    %v = trait.method.call %a @P143[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P143[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P143_all for @P143[!trait.poly<0>] where [@P144[!trait.poly<0>]] {
+trait.impl private @P143_all(%self: !trait.claim<@P143[!T]>, %p: !trait.claim<@P144[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P144[!trait.poly<0>]>
-    %v = trait.method.call %a @P144[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P144[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P144_all for @P144[!trait.poly<0>] where [@P145[!trait.poly<0>]] {
+trait.impl private @P144_all(%self: !trait.claim<@P144[!T]>, %p: !trait.claim<@P145[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P145[!trait.poly<0>]>
-    %v = trait.method.call %a @P145[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P145[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P145_all for @P145[!trait.poly<0>] where [@P146[!trait.poly<0>]] {
+trait.impl private @P145_all(%self: !trait.claim<@P145[!T]>, %p: !trait.claim<@P146[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P146[!trait.poly<0>]>
-    %v = trait.method.call %a @P146[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P146[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P146_all for @P146[!trait.poly<0>] where [@P147[!trait.poly<0>]] {
+trait.impl private @P146_all(%self: !trait.claim<@P146[!T]>, %p: !trait.claim<@P147[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P147[!trait.poly<0>]>
-    %v = trait.method.call %a @P147[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P147[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P147_all for @P147[!trait.poly<0>] where [@P148[!trait.poly<0>]] {
+trait.impl private @P147_all(%self: !trait.claim<@P147[!T]>, %p: !trait.claim<@P148[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P148[!trait.poly<0>]>
-    %v = trait.method.call %a @P148[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P148[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P148_all for @P148[!trait.poly<0>] where [@P149[!trait.poly<0>]] {
+trait.impl private @P148_all(%self: !trait.claim<@P148[!T]>, %p: !trait.claim<@P149[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P149[!trait.poly<0>]>
-    %v = trait.method.call %a @P149[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P149[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P149_all for @P149[!trait.poly<0>] where [@P150[!trait.poly<0>]] {
+trait.impl private @P149_all(%self: !trait.claim<@P149[!T]>, %p: !trait.claim<@P150[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P150[!trait.poly<0>]>
-    %v = trait.method.call %a @P150[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P150[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P150_all for @P150[!trait.poly<0>] where [@P151[!trait.poly<0>]] {
+trait.impl private @P150_all(%self: !trait.claim<@P150[!T]>, %p: !trait.claim<@P151[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P151[!trait.poly<0>]>
-    %v = trait.method.call %a @P151[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P151[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P151_all for @P151[!trait.poly<0>] where [@P152[!trait.poly<0>]] {
+trait.impl private @P151_all(%self: !trait.claim<@P151[!T]>, %p: !trait.claim<@P152[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P152[!trait.poly<0>]>
-    %v = trait.method.call %a @P152[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P152[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P152_all for @P152[!trait.poly<0>] where [@P153[!trait.poly<0>]] {
+trait.impl private @P152_all(%self: !trait.claim<@P152[!T]>, %p: !trait.claim<@P153[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P153[!trait.poly<0>]>
-    %v = trait.method.call %a @P153[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P153[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P153_all for @P153[!trait.poly<0>] where [@P154[!trait.poly<0>]] {
+trait.impl private @P153_all(%self: !trait.claim<@P153[!T]>, %p: !trait.claim<@P154[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P154[!trait.poly<0>]>
-    %v = trait.method.call %a @P154[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P154[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P154_all for @P154[!trait.poly<0>] where [@P155[!trait.poly<0>]] {
+trait.impl private @P154_all(%self: !trait.claim<@P154[!T]>, %p: !trait.claim<@P155[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P155[!trait.poly<0>]>
-    %v = trait.method.call %a @P155[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P155[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P155_all for @P155[!trait.poly<0>] where [@P156[!trait.poly<0>]] {
+trait.impl private @P155_all(%self: !trait.claim<@P155[!T]>, %p: !trait.claim<@P156[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P156[!trait.poly<0>]>
-    %v = trait.method.call %a @P156[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P156[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P156_all for @P156[!trait.poly<0>] where [@P157[!trait.poly<0>]] {
+trait.impl private @P156_all(%self: !trait.claim<@P156[!T]>, %p: !trait.claim<@P157[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P157[!trait.poly<0>]>
-    %v = trait.method.call %a @P157[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P157[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P157_all for @P157[!trait.poly<0>] where [@P158[!trait.poly<0>]] {
+trait.impl private @P157_all(%self: !trait.claim<@P157[!T]>, %p: !trait.claim<@P158[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P158[!trait.poly<0>]>
-    %v = trait.method.call %a @P158[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P158[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P158_all for @P158[!trait.poly<0>] where [@P159[!trait.poly<0>]] {
+trait.impl private @P158_all(%self: !trait.claim<@P158[!T]>, %p: !trait.claim<@P159[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P159[!trait.poly<0>]>
-    %v = trait.method.call %a @P159[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P159[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P159_all for @P159[!trait.poly<0>] where [@P160[!trait.poly<0>]] {
+trait.impl private @P159_all(%self: !trait.claim<@P159[!T]>, %p: !trait.claim<@P160[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P160[!trait.poly<0>]>
-    %v = trait.method.call %a @P160[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P160[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P160_all for @P160[!trait.poly<0>] where [@P161[!trait.poly<0>]] {
+trait.impl private @P160_all(%self: !trait.claim<@P160[!T]>, %p: !trait.claim<@P161[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P161[!trait.poly<0>]>
-    %v = trait.method.call %a @P161[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P161[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P161_all for @P161[!trait.poly<0>] where [@P162[!trait.poly<0>]] {
+trait.impl private @P161_all(%self: !trait.claim<@P161[!T]>, %p: !trait.claim<@P162[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P162[!trait.poly<0>]>
-    %v = trait.method.call %a @P162[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P162[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P162_all for @P162[!trait.poly<0>] where [@P163[!trait.poly<0>]] {
+trait.impl private @P162_all(%self: !trait.claim<@P162[!T]>, %p: !trait.claim<@P163[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P163[!trait.poly<0>]>
-    %v = trait.method.call %a @P163[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P163[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P163_all for @P163[!trait.poly<0>] where [@P164[!trait.poly<0>]] {
+trait.impl private @P163_all(%self: !trait.claim<@P163[!T]>, %p: !trait.claim<@P164[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P164[!trait.poly<0>]>
-    %v = trait.method.call %a @P164[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P164[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P164_all for @P164[!trait.poly<0>] where [@P165[!trait.poly<0>]] {
+trait.impl private @P164_all(%self: !trait.claim<@P164[!T]>, %p: !trait.claim<@P165[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P165[!trait.poly<0>]>
-    %v = trait.method.call %a @P165[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P165[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P165_all for @P165[!trait.poly<0>] where [@P166[!trait.poly<0>]] {
+trait.impl private @P165_all(%self: !trait.claim<@P165[!T]>, %p: !trait.claim<@P166[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P166[!trait.poly<0>]>
-    %v = trait.method.call %a @P166[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P166[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P166_all for @P166[!trait.poly<0>] where [@P167[!trait.poly<0>]] {
+trait.impl private @P166_all(%self: !trait.claim<@P166[!T]>, %p: !trait.claim<@P167[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P167[!trait.poly<0>]>
-    %v = trait.method.call %a @P167[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P167[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P167_all for @P167[!trait.poly<0>] where [@P168[!trait.poly<0>]] {
+trait.impl private @P167_all(%self: !trait.claim<@P167[!T]>, %p: !trait.claim<@P168[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P168[!trait.poly<0>]>
-    %v = trait.method.call %a @P168[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P168[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P168_all for @P168[!trait.poly<0>] where [@P169[!trait.poly<0>]] {
+trait.impl private @P168_all(%self: !trait.claim<@P168[!T]>, %p: !trait.claim<@P169[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P169[!trait.poly<0>]>
-    %v = trait.method.call %a @P169[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P169[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P169_all for @P169[!trait.poly<0>] where [@P170[!trait.poly<0>]] {
+trait.impl private @P169_all(%self: !trait.claim<@P169[!T]>, %p: !trait.claim<@P170[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P170[!trait.poly<0>]>
-    %v = trait.method.call %a @P170[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P170[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P170_all for @P170[!trait.poly<0>] where [@P171[!trait.poly<0>]] {
+trait.impl private @P170_all(%self: !trait.claim<@P170[!T]>, %p: !trait.claim<@P171[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P171[!trait.poly<0>]>
-    %v = trait.method.call %a @P171[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P171[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P171_all for @P171[!trait.poly<0>] where [@P172[!trait.poly<0>]] {
+trait.impl private @P171_all(%self: !trait.claim<@P171[!T]>, %p: !trait.claim<@P172[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P172[!trait.poly<0>]>
-    %v = trait.method.call %a @P172[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P172[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P172_all for @P172[!trait.poly<0>] where [@P173[!trait.poly<0>]] {
+trait.impl private @P172_all(%self: !trait.claim<@P172[!T]>, %p: !trait.claim<@P173[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P173[!trait.poly<0>]>
-    %v = trait.method.call %a @P173[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P173[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P173_all for @P173[!trait.poly<0>] where [@P174[!trait.poly<0>]] {
+trait.impl private @P173_all(%self: !trait.claim<@P173[!T]>, %p: !trait.claim<@P174[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P174[!trait.poly<0>]>
-    %v = trait.method.call %a @P174[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P174[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P174_all for @P174[!trait.poly<0>] where [@P175[!trait.poly<0>]] {
+trait.impl private @P174_all(%self: !trait.claim<@P174[!T]>, %p: !trait.claim<@P175[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P175[!trait.poly<0>]>
-    %v = trait.method.call %a @P175[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P175[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P175_all for @P175[!trait.poly<0>] where [@P176[!trait.poly<0>]] {
+trait.impl private @P175_all(%self: !trait.claim<@P175[!T]>, %p: !trait.claim<@P176[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P176[!trait.poly<0>]>
-    %v = trait.method.call %a @P176[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P176[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P176_all for @P176[!trait.poly<0>] where [@P177[!trait.poly<0>]] {
+trait.impl private @P176_all(%self: !trait.claim<@P176[!T]>, %p: !trait.claim<@P177[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P177[!trait.poly<0>]>
-    %v = trait.method.call %a @P177[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P177[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P177_all for @P177[!trait.poly<0>] where [@P178[!trait.poly<0>]] {
+trait.impl private @P177_all(%self: !trait.claim<@P177[!T]>, %p: !trait.claim<@P178[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P178[!trait.poly<0>]>
-    %v = trait.method.call %a @P178[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P178[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P178_all for @P178[!trait.poly<0>] where [@P179[!trait.poly<0>]] {
+trait.impl private @P178_all(%self: !trait.claim<@P178[!T]>, %p: !trait.claim<@P179[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P179[!trait.poly<0>]>
-    %v = trait.method.call %a @P179[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P179[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P179_all for @P179[!trait.poly<0>] where [@P180[!trait.poly<0>]] {
+trait.impl private @P179_all(%self: !trait.claim<@P179[!T]>, %p: !trait.claim<@P180[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P180[!trait.poly<0>]>
-    %v = trait.method.call %a @P180[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P180[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P180_all for @P180[!trait.poly<0>] where [@P181[!trait.poly<0>]] {
+trait.impl private @P180_all(%self: !trait.claim<@P180[!T]>, %p: !trait.claim<@P181[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P181[!trait.poly<0>]>
-    %v = trait.method.call %a @P181[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P181[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P181_all for @P181[!trait.poly<0>] where [@P182[!trait.poly<0>]] {
+trait.impl private @P181_all(%self: !trait.claim<@P181[!T]>, %p: !trait.claim<@P182[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P182[!trait.poly<0>]>
-    %v = trait.method.call %a @P182[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P182[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P182_all for @P182[!trait.poly<0>] where [@P183[!trait.poly<0>]] {
+trait.impl private @P182_all(%self: !trait.claim<@P182[!T]>, %p: !trait.claim<@P183[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P183[!trait.poly<0>]>
-    %v = trait.method.call %a @P183[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P183[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P183_all for @P183[!trait.poly<0>] where [@P184[!trait.poly<0>]] {
+trait.impl private @P183_all(%self: !trait.claim<@P183[!T]>, %p: !trait.claim<@P184[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P184[!trait.poly<0>]>
-    %v = trait.method.call %a @P184[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P184[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P184_all for @P184[!trait.poly<0>] where [@P185[!trait.poly<0>]] {
+trait.impl private @P184_all(%self: !trait.claim<@P184[!T]>, %p: !trait.claim<@P185[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P185[!trait.poly<0>]>
-    %v = trait.method.call %a @P185[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P185[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P185_all for @P185[!trait.poly<0>] where [@P186[!trait.poly<0>]] {
+trait.impl private @P185_all(%self: !trait.claim<@P185[!T]>, %p: !trait.claim<@P186[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P186[!trait.poly<0>]>
-    %v = trait.method.call %a @P186[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P186[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P186_all for @P186[!trait.poly<0>] where [@P187[!trait.poly<0>]] {
+trait.impl private @P186_all(%self: !trait.claim<@P186[!T]>, %p: !trait.claim<@P187[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P187[!trait.poly<0>]>
-    %v = trait.method.call %a @P187[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P187[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P187_all for @P187[!trait.poly<0>] where [@P188[!trait.poly<0>]] {
+trait.impl private @P187_all(%self: !trait.claim<@P187[!T]>, %p: !trait.claim<@P188[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P188[!trait.poly<0>]>
-    %v = trait.method.call %a @P188[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P188[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P188_all for @P188[!trait.poly<0>] where [@P189[!trait.poly<0>]] {
+trait.impl private @P188_all(%self: !trait.claim<@P188[!T]>, %p: !trait.claim<@P189[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P189[!trait.poly<0>]>
-    %v = trait.method.call %a @P189[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P189[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P189_all for @P189[!trait.poly<0>] where [@P190[!trait.poly<0>]] {
+trait.impl private @P189_all(%self: !trait.claim<@P189[!T]>, %p: !trait.claim<@P190[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P190[!trait.poly<0>]>
-    %v = trait.method.call %a @P190[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P190[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P190_all for @P190[!trait.poly<0>] where [@P191[!trait.poly<0>]] {
+trait.impl private @P190_all(%self: !trait.claim<@P190[!T]>, %p: !trait.claim<@P191[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P191[!trait.poly<0>]>
-    %v = trait.method.call %a @P191[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P191[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P191_all for @P191[!trait.poly<0>] where [@P192[!trait.poly<0>]] {
+trait.impl private @P191_all(%self: !trait.claim<@P191[!T]>, %p: !trait.claim<@P192[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P192[!trait.poly<0>]>
-    %v = trait.method.call %a @P192[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P192[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P192_all for @P192[!trait.poly<0>] where [@P193[!trait.poly<0>]] {
+trait.impl private @P192_all(%self: !trait.claim<@P192[!T]>, %p: !trait.claim<@P193[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P193[!trait.poly<0>]>
-    %v = trait.method.call %a @P193[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P193[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P193_all for @P193[!trait.poly<0>] where [@P194[!trait.poly<0>]] {
+trait.impl private @P193_all(%self: !trait.claim<@P193[!T]>, %p: !trait.claim<@P194[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P194[!trait.poly<0>]>
-    %v = trait.method.call %a @P194[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P194[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P194_all for @P194[!trait.poly<0>] where [@P195[!trait.poly<0>]] {
+trait.impl private @P194_all(%self: !trait.claim<@P194[!T]>, %p: !trait.claim<@P195[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P195[!trait.poly<0>]>
-    %v = trait.method.call %a @P195[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P195[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P195_all for @P195[!trait.poly<0>] where [@P196[!trait.poly<0>]] {
+trait.impl private @P195_all(%self: !trait.claim<@P195[!T]>, %p: !trait.claim<@P196[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P196[!trait.poly<0>]>
-    %v = trait.method.call %a @P196[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P196[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P196_all for @P196[!trait.poly<0>] where [@P197[!trait.poly<0>]] {
+trait.impl private @P196_all(%self: !trait.claim<@P196[!T]>, %p: !trait.claim<@P197[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P197[!trait.poly<0>]>
-    %v = trait.method.call %a @P197[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P197[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P197_all for @P197[!trait.poly<0>] where [@P198[!trait.poly<0>]] {
+trait.impl private @P197_all(%self: !trait.claim<@P197[!T]>, %p: !trait.claim<@P198[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P198[!trait.poly<0>]>
-    %v = trait.method.call %a @P198[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P198[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P198_all for @P198[!trait.poly<0>] where [@P199[!trait.poly<0>]] {
+trait.impl private @P198_all(%self: !trait.claim<@P198[!T]>, %p: !trait.claim<@P199[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P199[!trait.poly<0>]>
-    %v = trait.method.call %a @P199[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P199[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P199_all for @P199[!trait.poly<0>] where [@P200[!trait.poly<0>]] {
+trait.impl private @P199_all(%self: !trait.claim<@P199[!T]>, %p: !trait.claim<@P200[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P200[!trait.poly<0>]>
-    %v = trait.method.call %a @P200[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P200[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P200_all for @P200[!trait.poly<0>] where [@P201[!trait.poly<0>]] {
+trait.impl private @P200_all(%self: !trait.claim<@P200[!T]>, %p: !trait.claim<@P201[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P201[!trait.poly<0>]>
-    %v = trait.method.call %a @P201[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P201[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P201_all for @P201[!trait.poly<0>] where [@P202[!trait.poly<0>]] {
+trait.impl private @P201_all(%self: !trait.claim<@P201[!T]>, %p: !trait.claim<@P202[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P202[!trait.poly<0>]>
-    %v = trait.method.call %a @P202[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P202[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P202_all for @P202[!trait.poly<0>] where [@P203[!trait.poly<0>]] {
+trait.impl private @P202_all(%self: !trait.claim<@P202[!T]>, %p: !trait.claim<@P203[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P203[!trait.poly<0>]>
-    %v = trait.method.call %a @P203[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P203[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P203_all for @P203[!trait.poly<0>] where [@P204[!trait.poly<0>]] {
+trait.impl private @P203_all(%self: !trait.claim<@P203[!T]>, %p: !trait.claim<@P204[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P204[!trait.poly<0>]>
-    %v = trait.method.call %a @P204[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P204[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P204_all for @P204[!trait.poly<0>] where [@P205[!trait.poly<0>]] {
+trait.impl private @P204_all(%self: !trait.claim<@P204[!T]>, %p: !trait.claim<@P205[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P205[!trait.poly<0>]>
-    %v = trait.method.call %a @P205[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P205[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P205_all for @P205[!trait.poly<0>] where [@P206[!trait.poly<0>]] {
+trait.impl private @P205_all(%self: !trait.claim<@P205[!T]>, %p: !trait.claim<@P206[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P206[!trait.poly<0>]>
-    %v = trait.method.call %a @P206[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P206[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P206_all for @P206[!trait.poly<0>] where [@P207[!trait.poly<0>]] {
+trait.impl private @P206_all(%self: !trait.claim<@P206[!T]>, %p: !trait.claim<@P207[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P207[!trait.poly<0>]>
-    %v = trait.method.call %a @P207[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P207[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P207_all for @P207[!trait.poly<0>] where [@P208[!trait.poly<0>]] {
+trait.impl private @P207_all(%self: !trait.claim<@P207[!T]>, %p: !trait.claim<@P208[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P208[!trait.poly<0>]>
-    %v = trait.method.call %a @P208[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P208[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P208_all for @P208[!trait.poly<0>] where [@P209[!trait.poly<0>]] {
+trait.impl private @P208_all(%self: !trait.claim<@P208[!T]>, %p: !trait.claim<@P209[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P209[!trait.poly<0>]>
-    %v = trait.method.call %a @P209[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P209[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P209_all for @P209[!trait.poly<0>] where [@P210[!trait.poly<0>]] {
+trait.impl private @P209_all(%self: !trait.claim<@P209[!T]>, %p: !trait.claim<@P210[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P210[!trait.poly<0>]>
-    %v = trait.method.call %a @P210[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P210[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P210_all for @P210[!trait.poly<0>] where [@P211[!trait.poly<0>]] {
+trait.impl private @P210_all(%self: !trait.claim<@P210[!T]>, %p: !trait.claim<@P211[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P211[!trait.poly<0>]>
-    %v = trait.method.call %a @P211[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P211[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P211_all for @P211[!trait.poly<0>] where [@P212[!trait.poly<0>]] {
+trait.impl private @P211_all(%self: !trait.claim<@P211[!T]>, %p: !trait.claim<@P212[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P212[!trait.poly<0>]>
-    %v = trait.method.call %a @P212[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P212[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P212_all for @P212[!trait.poly<0>] where [@P213[!trait.poly<0>]] {
+trait.impl private @P212_all(%self: !trait.claim<@P212[!T]>, %p: !trait.claim<@P213[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P213[!trait.poly<0>]>
-    %v = trait.method.call %a @P213[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P213[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P213_all for @P213[!trait.poly<0>] where [@P214[!trait.poly<0>]] {
+trait.impl private @P213_all(%self: !trait.claim<@P213[!T]>, %p: !trait.claim<@P214[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P214[!trait.poly<0>]>
-    %v = trait.method.call %a @P214[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P214[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P214_all for @P214[!trait.poly<0>] where [@P215[!trait.poly<0>]] {
+trait.impl private @P214_all(%self: !trait.claim<@P214[!T]>, %p: !trait.claim<@P215[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P215[!trait.poly<0>]>
-    %v = trait.method.call %a @P215[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P215[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P215_all for @P215[!trait.poly<0>] where [@P216[!trait.poly<0>]] {
+trait.impl private @P215_all(%self: !trait.claim<@P215[!T]>, %p: !trait.claim<@P216[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P216[!trait.poly<0>]>
-    %v = trait.method.call %a @P216[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P216[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P216_all for @P216[!trait.poly<0>] where [@P217[!trait.poly<0>]] {
+trait.impl private @P216_all(%self: !trait.claim<@P216[!T]>, %p: !trait.claim<@P217[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P217[!trait.poly<0>]>
-    %v = trait.method.call %a @P217[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P217[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P217_all for @P217[!trait.poly<0>] where [@P218[!trait.poly<0>]] {
+trait.impl private @P217_all(%self: !trait.claim<@P217[!T]>, %p: !trait.claim<@P218[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P218[!trait.poly<0>]>
-    %v = trait.method.call %a @P218[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P218[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P218_all for @P218[!trait.poly<0>] where [@P219[!trait.poly<0>]] {
+trait.impl private @P218_all(%self: !trait.claim<@P218[!T]>, %p: !trait.claim<@P219[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P219[!trait.poly<0>]>
-    %v = trait.method.call %a @P219[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P219[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P219_all for @P219[!trait.poly<0>] where [@P220[!trait.poly<0>]] {
+trait.impl private @P219_all(%self: !trait.claim<@P219[!T]>, %p: !trait.claim<@P220[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P220[!trait.poly<0>]>
-    %v = trait.method.call %a @P220[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P220[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P220_all for @P220[!trait.poly<0>] where [@P221[!trait.poly<0>]] {
+trait.impl private @P220_all(%self: !trait.claim<@P220[!T]>, %p: !trait.claim<@P221[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P221[!trait.poly<0>]>
-    %v = trait.method.call %a @P221[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P221[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P221_all for @P221[!trait.poly<0>] where [@P222[!trait.poly<0>]] {
+trait.impl private @P221_all(%self: !trait.claim<@P221[!T]>, %p: !trait.claim<@P222[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P222[!trait.poly<0>]>
-    %v = trait.method.call %a @P222[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P222[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P222_all for @P222[!trait.poly<0>] where [@P223[!trait.poly<0>]] {
+trait.impl private @P222_all(%self: !trait.claim<@P222[!T]>, %p: !trait.claim<@P223[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P223[!trait.poly<0>]>
-    %v = trait.method.call %a @P223[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P223[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P223_all for @P223[!trait.poly<0>] where [@P224[!trait.poly<0>]] {
+trait.impl private @P223_all(%self: !trait.claim<@P223[!T]>, %p: !trait.claim<@P224[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P224[!trait.poly<0>]>
-    %v = trait.method.call %a @P224[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P224[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P224_all for @P224[!trait.poly<0>] where [@P225[!trait.poly<0>]] {
+trait.impl private @P224_all(%self: !trait.claim<@P224[!T]>, %p: !trait.claim<@P225[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P225[!trait.poly<0>]>
-    %v = trait.method.call %a @P225[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P225[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P225_all for @P225[!trait.poly<0>] where [@P226[!trait.poly<0>]] {
+trait.impl private @P225_all(%self: !trait.claim<@P225[!T]>, %p: !trait.claim<@P226[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P226[!trait.poly<0>]>
-    %v = trait.method.call %a @P226[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P226[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P226_all for @P226[!trait.poly<0>] where [@P227[!trait.poly<0>]] {
+trait.impl private @P226_all(%self: !trait.claim<@P226[!T]>, %p: !trait.claim<@P227[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P227[!trait.poly<0>]>
-    %v = trait.method.call %a @P227[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P227[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P227_all for @P227[!trait.poly<0>] where [@P228[!trait.poly<0>]] {
+trait.impl private @P227_all(%self: !trait.claim<@P227[!T]>, %p: !trait.claim<@P228[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P228[!trait.poly<0>]>
-    %v = trait.method.call %a @P228[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P228[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P228_all for @P228[!trait.poly<0>] where [@P229[!trait.poly<0>]] {
+trait.impl private @P228_all(%self: !trait.claim<@P228[!T]>, %p: !trait.claim<@P229[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P229[!trait.poly<0>]>
-    %v = trait.method.call %a @P229[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P229[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P229_all for @P229[!trait.poly<0>] where [@P230[!trait.poly<0>]] {
+trait.impl private @P229_all(%self: !trait.claim<@P229[!T]>, %p: !trait.claim<@P230[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P230[!trait.poly<0>]>
-    %v = trait.method.call %a @P230[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P230[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P230_all for @P230[!trait.poly<0>] where [@P231[!trait.poly<0>]] {
+trait.impl private @P230_all(%self: !trait.claim<@P230[!T]>, %p: !trait.claim<@P231[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P231[!trait.poly<0>]>
-    %v = trait.method.call %a @P231[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P231[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P231_all for @P231[!trait.poly<0>] where [@P232[!trait.poly<0>]] {
+trait.impl private @P231_all(%self: !trait.claim<@P231[!T]>, %p: !trait.claim<@P232[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P232[!trait.poly<0>]>
-    %v = trait.method.call %a @P232[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P232[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P232_all for @P232[!trait.poly<0>] where [@P233[!trait.poly<0>]] {
+trait.impl private @P232_all(%self: !trait.claim<@P232[!T]>, %p: !trait.claim<@P233[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P233[!trait.poly<0>]>
-    %v = trait.method.call %a @P233[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P233[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P233_all for @P233[!trait.poly<0>] where [@P234[!trait.poly<0>]] {
+trait.impl private @P233_all(%self: !trait.claim<@P233[!T]>, %p: !trait.claim<@P234[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P234[!trait.poly<0>]>
-    %v = trait.method.call %a @P234[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P234[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P234_all for @P234[!trait.poly<0>] where [@P235[!trait.poly<0>]] {
+trait.impl private @P234_all(%self: !trait.claim<@P234[!T]>, %p: !trait.claim<@P235[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P235[!trait.poly<0>]>
-    %v = trait.method.call %a @P235[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P235[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P235_all for @P235[!trait.poly<0>] where [@P236[!trait.poly<0>]] {
+trait.impl private @P235_all(%self: !trait.claim<@P235[!T]>, %p: !trait.claim<@P236[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P236[!trait.poly<0>]>
-    %v = trait.method.call %a @P236[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P236[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P236_all for @P236[!trait.poly<0>] where [@P237[!trait.poly<0>]] {
+trait.impl private @P236_all(%self: !trait.claim<@P236[!T]>, %p: !trait.claim<@P237[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P237[!trait.poly<0>]>
-    %v = trait.method.call %a @P237[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P237[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P237_all for @P237[!trait.poly<0>] where [@P238[!trait.poly<0>]] {
+trait.impl private @P237_all(%self: !trait.claim<@P237[!T]>, %p: !trait.claim<@P238[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P238[!trait.poly<0>]>
-    %v = trait.method.call %a @P238[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P238[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P238_all for @P238[!trait.poly<0>] where [@P239[!trait.poly<0>]] {
+trait.impl private @P238_all(%self: !trait.claim<@P238[!T]>, %p: !trait.claim<@P239[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P239[!trait.poly<0>]>
-    %v = trait.method.call %a @P239[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P239[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P239_all for @P239[!trait.poly<0>] where [@P240[!trait.poly<0>]] {
+trait.impl private @P239_all(%self: !trait.claim<@P239[!T]>, %p: !trait.claim<@P240[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P240[!trait.poly<0>]>
-    %v = trait.method.call %a @P240[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P240[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P240_all for @P240[!trait.poly<0>] where [@P241[!trait.poly<0>]] {
+trait.impl private @P240_all(%self: !trait.claim<@P240[!T]>, %p: !trait.claim<@P241[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P241[!trait.poly<0>]>
-    %v = trait.method.call %a @P241[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P241[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P241_all for @P241[!trait.poly<0>] where [@P242[!trait.poly<0>]] {
+trait.impl private @P241_all(%self: !trait.claim<@P241[!T]>, %p: !trait.claim<@P242[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P242[!trait.poly<0>]>
-    %v = trait.method.call %a @P242[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P242[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P242_all for @P242[!trait.poly<0>] where [@P243[!trait.poly<0>]] {
+trait.impl private @P242_all(%self: !trait.claim<@P242[!T]>, %p: !trait.claim<@P243[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P243[!trait.poly<0>]>
-    %v = trait.method.call %a @P243[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P243[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P243_all for @P243[!trait.poly<0>] where [@P244[!trait.poly<0>]] {
+trait.impl private @P243_all(%self: !trait.claim<@P243[!T]>, %p: !trait.claim<@P244[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P244[!trait.poly<0>]>
-    %v = trait.method.call %a @P244[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P244[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P244_all for @P244[!trait.poly<0>] where [@P245[!trait.poly<0>]] {
+trait.impl private @P244_all(%self: !trait.claim<@P244[!T]>, %p: !trait.claim<@P245[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P245[!trait.poly<0>]>
-    %v = trait.method.call %a @P245[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P245[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P245_all for @P245[!trait.poly<0>] where [@P246[!trait.poly<0>]] {
+trait.impl private @P245_all(%self: !trait.claim<@P245[!T]>, %p: !trait.claim<@P246[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P246[!trait.poly<0>]>
-    %v = trait.method.call %a @P246[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P246[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P246_all for @P246[!trait.poly<0>] where [@P247[!trait.poly<0>]] {
+trait.impl private @P246_all(%self: !trait.claim<@P246[!T]>, %p: !trait.claim<@P247[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P247[!trait.poly<0>]>
-    %v = trait.method.call %a @P247[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P247[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P247_all for @P247[!trait.poly<0>] where [@P248[!trait.poly<0>]] {
+trait.impl private @P247_all(%self: !trait.claim<@P247[!T]>, %p: !trait.claim<@P248[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P248[!trait.poly<0>]>
-    %v = trait.method.call %a @P248[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P248[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P248_all for @P248[!trait.poly<0>] where [@P249[!trait.poly<0>]] {
+trait.impl private @P248_all(%self: !trait.claim<@P248[!T]>, %p: !trait.claim<@P249[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P249[!trait.poly<0>]>
-    %v = trait.method.call %a @P249[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P249[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P249_all for @P249[!trait.poly<0>] where [@P250[!trait.poly<0>]] {
+trait.impl private @P249_all(%self: !trait.claim<@P249[!T]>, %p: !trait.claim<@P250[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P250[!trait.poly<0>]>
-    %v = trait.method.call %a @P250[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P250[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P250_all for @P250[!trait.poly<0>] where [@P251[!trait.poly<0>]] {
+trait.impl private @P250_all(%self: !trait.claim<@P250[!T]>, %p: !trait.claim<@P251[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P251[!trait.poly<0>]>
-    %v = trait.method.call %a @P251[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P251[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P251_all for @P251[!trait.poly<0>] where [@P252[!trait.poly<0>]] {
+trait.impl private @P251_all(%self: !trait.claim<@P251[!T]>, %p: !trait.claim<@P252[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P252[!trait.poly<0>]>
-    %v = trait.method.call %a @P252[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P252[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P252_all for @P252[!trait.poly<0>] where [@P253[!trait.poly<0>]] {
+trait.impl private @P252_all(%self: !trait.claim<@P252[!T]>, %p: !trait.claim<@P253[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P253[!trait.poly<0>]>
-    %v = trait.method.call %a @P253[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P253[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P253_all for @P253[!trait.poly<0>] where [@P254[!trait.poly<0>]] {
+trait.impl private @P253_all(%self: !trait.claim<@P253[!T]>, %p: !trait.claim<@P254[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P254[!trait.poly<0>]>
-    %v = trait.method.call %a @P254[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P254[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P254_all for @P254[!trait.poly<0>] where [@P255[!trait.poly<0>]] {
+trait.impl private @P254_all(%self: !trait.claim<@P254[!T]>, %p: !trait.claim<@P255[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P255[!trait.poly<0>]>
-    %v = trait.method.call %a @P255[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P255[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P255_all for @P255[!trait.poly<0>] where [@P256[!trait.poly<0>]] {
+trait.impl private @P255_all(%self: !trait.claim<@P255[!T]>, %p: !trait.claim<@P256[!T]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P256[!trait.poly<0>]>
-    %v = trait.method.call %a @P256[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p @P256[!T]::@m() : () -> i64
     trait.return %v : i64
   }
 }
-trait.impl private @P256_all for @P256[!trait.poly<0>] where [@P1[tuple<!trait.poly<0>>]] {
+trait.impl private @P256_all(%self: !trait.claim<@P256[!T]>, %p: !trait.claim<@P1[tuple<!T>]>) {
   trait.method @m() -> i64 {
-    %a = trait.assume 0 : !trait.claim<@P1[tuple<!trait.poly<0>>]>
-    %v = trait.method.call %a @P1[tuple<!trait.poly<0>>]::@m() : () -> i64
+    %v = trait.method.call %p @P1[tuple<!T>]::@m() : () -> i64
     trait.return %v : i64
   }
+}
+trait.proof private @p1 {
+  %p0 = trait.witness @p2 for @P2[!T]
+  %d = trait.derive @P1[!T] from @P1_all given(%p0) : (!trait.claim<@P2[!T] by @p2>)
+  trait.return %d : !trait.claim<@P1[!T]>
+}
+trait.proof private @p2 {
+  %p0 = trait.witness @p3 for @P3[!T]
+  %d = trait.derive @P2[!T] from @P2_all given(%p0) : (!trait.claim<@P3[!T] by @p3>)
+  trait.return %d : !trait.claim<@P2[!T]>
+}
+trait.proof private @p3 {
+  %p0 = trait.witness @p4 for @P4[!T]
+  %d = trait.derive @P3[!T] from @P3_all given(%p0) : (!trait.claim<@P4[!T] by @p4>)
+  trait.return %d : !trait.claim<@P3[!T]>
+}
+trait.proof private @p4 {
+  %p0 = trait.witness @p5 for @P5[!T]
+  %d = trait.derive @P4[!T] from @P4_all given(%p0) : (!trait.claim<@P5[!T] by @p5>)
+  trait.return %d : !trait.claim<@P4[!T]>
+}
+trait.proof private @p5 {
+  %p0 = trait.witness @p6 for @P6[!T]
+  %d = trait.derive @P5[!T] from @P5_all given(%p0) : (!trait.claim<@P6[!T] by @p6>)
+  trait.return %d : !trait.claim<@P5[!T]>
+}
+trait.proof private @p6 {
+  %p0 = trait.witness @p7 for @P7[!T]
+  %d = trait.derive @P6[!T] from @P6_all given(%p0) : (!trait.claim<@P7[!T] by @p7>)
+  trait.return %d : !trait.claim<@P6[!T]>
+}
+trait.proof private @p7 {
+  %p0 = trait.witness @p8 for @P8[!T]
+  %d = trait.derive @P7[!T] from @P7_all given(%p0) : (!trait.claim<@P8[!T] by @p8>)
+  trait.return %d : !trait.claim<@P7[!T]>
+}
+trait.proof private @p8 {
+  %p0 = trait.witness @p9 for @P9[!T]
+  %d = trait.derive @P8[!T] from @P8_all given(%p0) : (!trait.claim<@P9[!T] by @p9>)
+  trait.return %d : !trait.claim<@P8[!T]>
+}
+trait.proof private @p9 {
+  %p0 = trait.witness @p10 for @P10[!T]
+  %d = trait.derive @P9[!T] from @P9_all given(%p0) : (!trait.claim<@P10[!T] by @p10>)
+  trait.return %d : !trait.claim<@P9[!T]>
+}
+trait.proof private @p10 {
+  %p0 = trait.witness @p11 for @P11[!T]
+  %d = trait.derive @P10[!T] from @P10_all given(%p0) : (!trait.claim<@P11[!T] by @p11>)
+  trait.return %d : !trait.claim<@P10[!T]>
+}
+trait.proof private @p11 {
+  %p0 = trait.witness @p12 for @P12[!T]
+  %d = trait.derive @P11[!T] from @P11_all given(%p0) : (!trait.claim<@P12[!T] by @p12>)
+  trait.return %d : !trait.claim<@P11[!T]>
+}
+trait.proof private @p12 {
+  %p0 = trait.witness @p13 for @P13[!T]
+  %d = trait.derive @P12[!T] from @P12_all given(%p0) : (!trait.claim<@P13[!T] by @p13>)
+  trait.return %d : !trait.claim<@P12[!T]>
+}
+trait.proof private @p13 {
+  %p0 = trait.witness @p14 for @P14[!T]
+  %d = trait.derive @P13[!T] from @P13_all given(%p0) : (!trait.claim<@P14[!T] by @p14>)
+  trait.return %d : !trait.claim<@P13[!T]>
+}
+trait.proof private @p14 {
+  %p0 = trait.witness @p15 for @P15[!T]
+  %d = trait.derive @P14[!T] from @P14_all given(%p0) : (!trait.claim<@P15[!T] by @p15>)
+  trait.return %d : !trait.claim<@P14[!T]>
+}
+trait.proof private @p15 {
+  %p0 = trait.witness @p16 for @P16[!T]
+  %d = trait.derive @P15[!T] from @P15_all given(%p0) : (!trait.claim<@P16[!T] by @p16>)
+  trait.return %d : !trait.claim<@P15[!T]>
+}
+trait.proof private @p16 {
+  %p0 = trait.witness @p17 for @P17[!T]
+  %d = trait.derive @P16[!T] from @P16_all given(%p0) : (!trait.claim<@P17[!T] by @p17>)
+  trait.return %d : !trait.claim<@P16[!T]>
+}
+trait.proof private @p17 {
+  %p0 = trait.witness @p18 for @P18[!T]
+  %d = trait.derive @P17[!T] from @P17_all given(%p0) : (!trait.claim<@P18[!T] by @p18>)
+  trait.return %d : !trait.claim<@P17[!T]>
+}
+trait.proof private @p18 {
+  %p0 = trait.witness @p19 for @P19[!T]
+  %d = trait.derive @P18[!T] from @P18_all given(%p0) : (!trait.claim<@P19[!T] by @p19>)
+  trait.return %d : !trait.claim<@P18[!T]>
+}
+trait.proof private @p19 {
+  %p0 = trait.witness @p20 for @P20[!T]
+  %d = trait.derive @P19[!T] from @P19_all given(%p0) : (!trait.claim<@P20[!T] by @p20>)
+  trait.return %d : !trait.claim<@P19[!T]>
+}
+trait.proof private @p20 {
+  %p0 = trait.witness @p21 for @P21[!T]
+  %d = trait.derive @P20[!T] from @P20_all given(%p0) : (!trait.claim<@P21[!T] by @p21>)
+  trait.return %d : !trait.claim<@P20[!T]>
+}
+trait.proof private @p21 {
+  %p0 = trait.witness @p22 for @P22[!T]
+  %d = trait.derive @P21[!T] from @P21_all given(%p0) : (!trait.claim<@P22[!T] by @p22>)
+  trait.return %d : !trait.claim<@P21[!T]>
+}
+trait.proof private @p22 {
+  %p0 = trait.witness @p23 for @P23[!T]
+  %d = trait.derive @P22[!T] from @P22_all given(%p0) : (!trait.claim<@P23[!T] by @p23>)
+  trait.return %d : !trait.claim<@P22[!T]>
+}
+trait.proof private @p23 {
+  %p0 = trait.witness @p24 for @P24[!T]
+  %d = trait.derive @P23[!T] from @P23_all given(%p0) : (!trait.claim<@P24[!T] by @p24>)
+  trait.return %d : !trait.claim<@P23[!T]>
+}
+trait.proof private @p24 {
+  %p0 = trait.witness @p25 for @P25[!T]
+  %d = trait.derive @P24[!T] from @P24_all given(%p0) : (!trait.claim<@P25[!T] by @p25>)
+  trait.return %d : !trait.claim<@P24[!T]>
+}
+trait.proof private @p25 {
+  %p0 = trait.witness @p26 for @P26[!T]
+  %d = trait.derive @P25[!T] from @P25_all given(%p0) : (!trait.claim<@P26[!T] by @p26>)
+  trait.return %d : !trait.claim<@P25[!T]>
+}
+trait.proof private @p26 {
+  %p0 = trait.witness @p27 for @P27[!T]
+  %d = trait.derive @P26[!T] from @P26_all given(%p0) : (!trait.claim<@P27[!T] by @p27>)
+  trait.return %d : !trait.claim<@P26[!T]>
+}
+trait.proof private @p27 {
+  %p0 = trait.witness @p28 for @P28[!T]
+  %d = trait.derive @P27[!T] from @P27_all given(%p0) : (!trait.claim<@P28[!T] by @p28>)
+  trait.return %d : !trait.claim<@P27[!T]>
+}
+trait.proof private @p28 {
+  %p0 = trait.witness @p29 for @P29[!T]
+  %d = trait.derive @P28[!T] from @P28_all given(%p0) : (!trait.claim<@P29[!T] by @p29>)
+  trait.return %d : !trait.claim<@P28[!T]>
+}
+trait.proof private @p29 {
+  %p0 = trait.witness @p30 for @P30[!T]
+  %d = trait.derive @P29[!T] from @P29_all given(%p0) : (!trait.claim<@P30[!T] by @p30>)
+  trait.return %d : !trait.claim<@P29[!T]>
+}
+trait.proof private @p30 {
+  %p0 = trait.witness @p31 for @P31[!T]
+  %d = trait.derive @P30[!T] from @P30_all given(%p0) : (!trait.claim<@P31[!T] by @p31>)
+  trait.return %d : !trait.claim<@P30[!T]>
+}
+trait.proof private @p31 {
+  %p0 = trait.witness @p32 for @P32[!T]
+  %d = trait.derive @P31[!T] from @P31_all given(%p0) : (!trait.claim<@P32[!T] by @p32>)
+  trait.return %d : !trait.claim<@P31[!T]>
+}
+trait.proof private @p32 {
+  %p0 = trait.witness @p33 for @P33[!T]
+  %d = trait.derive @P32[!T] from @P32_all given(%p0) : (!trait.claim<@P33[!T] by @p33>)
+  trait.return %d : !trait.claim<@P32[!T]>
+}
+trait.proof private @p33 {
+  %p0 = trait.witness @p34 for @P34[!T]
+  %d = trait.derive @P33[!T] from @P33_all given(%p0) : (!trait.claim<@P34[!T] by @p34>)
+  trait.return %d : !trait.claim<@P33[!T]>
+}
+trait.proof private @p34 {
+  %p0 = trait.witness @p35 for @P35[!T]
+  %d = trait.derive @P34[!T] from @P34_all given(%p0) : (!trait.claim<@P35[!T] by @p35>)
+  trait.return %d : !trait.claim<@P34[!T]>
+}
+trait.proof private @p35 {
+  %p0 = trait.witness @p36 for @P36[!T]
+  %d = trait.derive @P35[!T] from @P35_all given(%p0) : (!trait.claim<@P36[!T] by @p36>)
+  trait.return %d : !trait.claim<@P35[!T]>
+}
+trait.proof private @p36 {
+  %p0 = trait.witness @p37 for @P37[!T]
+  %d = trait.derive @P36[!T] from @P36_all given(%p0) : (!trait.claim<@P37[!T] by @p37>)
+  trait.return %d : !trait.claim<@P36[!T]>
+}
+trait.proof private @p37 {
+  %p0 = trait.witness @p38 for @P38[!T]
+  %d = trait.derive @P37[!T] from @P37_all given(%p0) : (!trait.claim<@P38[!T] by @p38>)
+  trait.return %d : !trait.claim<@P37[!T]>
+}
+trait.proof private @p38 {
+  %p0 = trait.witness @p39 for @P39[!T]
+  %d = trait.derive @P38[!T] from @P38_all given(%p0) : (!trait.claim<@P39[!T] by @p39>)
+  trait.return %d : !trait.claim<@P38[!T]>
+}
+trait.proof private @p39 {
+  %p0 = trait.witness @p40 for @P40[!T]
+  %d = trait.derive @P39[!T] from @P39_all given(%p0) : (!trait.claim<@P40[!T] by @p40>)
+  trait.return %d : !trait.claim<@P39[!T]>
+}
+trait.proof private @p40 {
+  %p0 = trait.witness @p41 for @P41[!T]
+  %d = trait.derive @P40[!T] from @P40_all given(%p0) : (!trait.claim<@P41[!T] by @p41>)
+  trait.return %d : !trait.claim<@P40[!T]>
+}
+trait.proof private @p41 {
+  %p0 = trait.witness @p42 for @P42[!T]
+  %d = trait.derive @P41[!T] from @P41_all given(%p0) : (!trait.claim<@P42[!T] by @p42>)
+  trait.return %d : !trait.claim<@P41[!T]>
+}
+trait.proof private @p42 {
+  %p0 = trait.witness @p43 for @P43[!T]
+  %d = trait.derive @P42[!T] from @P42_all given(%p0) : (!trait.claim<@P43[!T] by @p43>)
+  trait.return %d : !trait.claim<@P42[!T]>
+}
+trait.proof private @p43 {
+  %p0 = trait.witness @p44 for @P44[!T]
+  %d = trait.derive @P43[!T] from @P43_all given(%p0) : (!trait.claim<@P44[!T] by @p44>)
+  trait.return %d : !trait.claim<@P43[!T]>
+}
+trait.proof private @p44 {
+  %p0 = trait.witness @p45 for @P45[!T]
+  %d = trait.derive @P44[!T] from @P44_all given(%p0) : (!trait.claim<@P45[!T] by @p45>)
+  trait.return %d : !trait.claim<@P44[!T]>
+}
+trait.proof private @p45 {
+  %p0 = trait.witness @p46 for @P46[!T]
+  %d = trait.derive @P45[!T] from @P45_all given(%p0) : (!trait.claim<@P46[!T] by @p46>)
+  trait.return %d : !trait.claim<@P45[!T]>
+}
+trait.proof private @p46 {
+  %p0 = trait.witness @p47 for @P47[!T]
+  %d = trait.derive @P46[!T] from @P46_all given(%p0) : (!trait.claim<@P47[!T] by @p47>)
+  trait.return %d : !trait.claim<@P46[!T]>
+}
+trait.proof private @p47 {
+  %p0 = trait.witness @p48 for @P48[!T]
+  %d = trait.derive @P47[!T] from @P47_all given(%p0) : (!trait.claim<@P48[!T] by @p48>)
+  trait.return %d : !trait.claim<@P47[!T]>
+}
+trait.proof private @p48 {
+  %p0 = trait.witness @p49 for @P49[!T]
+  %d = trait.derive @P48[!T] from @P48_all given(%p0) : (!trait.claim<@P49[!T] by @p49>)
+  trait.return %d : !trait.claim<@P48[!T]>
+}
+trait.proof private @p49 {
+  %p0 = trait.witness @p50 for @P50[!T]
+  %d = trait.derive @P49[!T] from @P49_all given(%p0) : (!trait.claim<@P50[!T] by @p50>)
+  trait.return %d : !trait.claim<@P49[!T]>
+}
+trait.proof private @p50 {
+  %p0 = trait.witness @p51 for @P51[!T]
+  %d = trait.derive @P50[!T] from @P50_all given(%p0) : (!trait.claim<@P51[!T] by @p51>)
+  trait.return %d : !trait.claim<@P50[!T]>
+}
+trait.proof private @p51 {
+  %p0 = trait.witness @p52 for @P52[!T]
+  %d = trait.derive @P51[!T] from @P51_all given(%p0) : (!trait.claim<@P52[!T] by @p52>)
+  trait.return %d : !trait.claim<@P51[!T]>
+}
+trait.proof private @p52 {
+  %p0 = trait.witness @p53 for @P53[!T]
+  %d = trait.derive @P52[!T] from @P52_all given(%p0) : (!trait.claim<@P53[!T] by @p53>)
+  trait.return %d : !trait.claim<@P52[!T]>
+}
+trait.proof private @p53 {
+  %p0 = trait.witness @p54 for @P54[!T]
+  %d = trait.derive @P53[!T] from @P53_all given(%p0) : (!trait.claim<@P54[!T] by @p54>)
+  trait.return %d : !trait.claim<@P53[!T]>
+}
+trait.proof private @p54 {
+  %p0 = trait.witness @p55 for @P55[!T]
+  %d = trait.derive @P54[!T] from @P54_all given(%p0) : (!trait.claim<@P55[!T] by @p55>)
+  trait.return %d : !trait.claim<@P54[!T]>
+}
+trait.proof private @p55 {
+  %p0 = trait.witness @p56 for @P56[!T]
+  %d = trait.derive @P55[!T] from @P55_all given(%p0) : (!trait.claim<@P56[!T] by @p56>)
+  trait.return %d : !trait.claim<@P55[!T]>
+}
+trait.proof private @p56 {
+  %p0 = trait.witness @p57 for @P57[!T]
+  %d = trait.derive @P56[!T] from @P56_all given(%p0) : (!trait.claim<@P57[!T] by @p57>)
+  trait.return %d : !trait.claim<@P56[!T]>
+}
+trait.proof private @p57 {
+  %p0 = trait.witness @p58 for @P58[!T]
+  %d = trait.derive @P57[!T] from @P57_all given(%p0) : (!trait.claim<@P58[!T] by @p58>)
+  trait.return %d : !trait.claim<@P57[!T]>
+}
+trait.proof private @p58 {
+  %p0 = trait.witness @p59 for @P59[!T]
+  %d = trait.derive @P58[!T] from @P58_all given(%p0) : (!trait.claim<@P59[!T] by @p59>)
+  trait.return %d : !trait.claim<@P58[!T]>
+}
+trait.proof private @p59 {
+  %p0 = trait.witness @p60 for @P60[!T]
+  %d = trait.derive @P59[!T] from @P59_all given(%p0) : (!trait.claim<@P60[!T] by @p60>)
+  trait.return %d : !trait.claim<@P59[!T]>
+}
+trait.proof private @p60 {
+  %p0 = trait.witness @p61 for @P61[!T]
+  %d = trait.derive @P60[!T] from @P60_all given(%p0) : (!trait.claim<@P61[!T] by @p61>)
+  trait.return %d : !trait.claim<@P60[!T]>
+}
+trait.proof private @p61 {
+  %p0 = trait.witness @p62 for @P62[!T]
+  %d = trait.derive @P61[!T] from @P61_all given(%p0) : (!trait.claim<@P62[!T] by @p62>)
+  trait.return %d : !trait.claim<@P61[!T]>
+}
+trait.proof private @p62 {
+  %p0 = trait.witness @p63 for @P63[!T]
+  %d = trait.derive @P62[!T] from @P62_all given(%p0) : (!trait.claim<@P63[!T] by @p63>)
+  trait.return %d : !trait.claim<@P62[!T]>
+}
+trait.proof private @p63 {
+  %p0 = trait.witness @p64 for @P64[!T]
+  %d = trait.derive @P63[!T] from @P63_all given(%p0) : (!trait.claim<@P64[!T] by @p64>)
+  trait.return %d : !trait.claim<@P63[!T]>
+}
+trait.proof private @p64 {
+  %p0 = trait.witness @p65 for @P65[!T]
+  %d = trait.derive @P64[!T] from @P64_all given(%p0) : (!trait.claim<@P65[!T] by @p65>)
+  trait.return %d : !trait.claim<@P64[!T]>
+}
+trait.proof private @p65 {
+  %p0 = trait.witness @p66 for @P66[!T]
+  %d = trait.derive @P65[!T] from @P65_all given(%p0) : (!trait.claim<@P66[!T] by @p66>)
+  trait.return %d : !trait.claim<@P65[!T]>
+}
+trait.proof private @p66 {
+  %p0 = trait.witness @p67 for @P67[!T]
+  %d = trait.derive @P66[!T] from @P66_all given(%p0) : (!trait.claim<@P67[!T] by @p67>)
+  trait.return %d : !trait.claim<@P66[!T]>
+}
+trait.proof private @p67 {
+  %p0 = trait.witness @p68 for @P68[!T]
+  %d = trait.derive @P67[!T] from @P67_all given(%p0) : (!trait.claim<@P68[!T] by @p68>)
+  trait.return %d : !trait.claim<@P67[!T]>
+}
+trait.proof private @p68 {
+  %p0 = trait.witness @p69 for @P69[!T]
+  %d = trait.derive @P68[!T] from @P68_all given(%p0) : (!trait.claim<@P69[!T] by @p69>)
+  trait.return %d : !trait.claim<@P68[!T]>
+}
+trait.proof private @p69 {
+  %p0 = trait.witness @p70 for @P70[!T]
+  %d = trait.derive @P69[!T] from @P69_all given(%p0) : (!trait.claim<@P70[!T] by @p70>)
+  trait.return %d : !trait.claim<@P69[!T]>
+}
+trait.proof private @p70 {
+  %p0 = trait.witness @p71 for @P71[!T]
+  %d = trait.derive @P70[!T] from @P70_all given(%p0) : (!trait.claim<@P71[!T] by @p71>)
+  trait.return %d : !trait.claim<@P70[!T]>
+}
+trait.proof private @p71 {
+  %p0 = trait.witness @p72 for @P72[!T]
+  %d = trait.derive @P71[!T] from @P71_all given(%p0) : (!trait.claim<@P72[!T] by @p72>)
+  trait.return %d : !trait.claim<@P71[!T]>
+}
+trait.proof private @p72 {
+  %p0 = trait.witness @p73 for @P73[!T]
+  %d = trait.derive @P72[!T] from @P72_all given(%p0) : (!trait.claim<@P73[!T] by @p73>)
+  trait.return %d : !trait.claim<@P72[!T]>
+}
+trait.proof private @p73 {
+  %p0 = trait.witness @p74 for @P74[!T]
+  %d = trait.derive @P73[!T] from @P73_all given(%p0) : (!trait.claim<@P74[!T] by @p74>)
+  trait.return %d : !trait.claim<@P73[!T]>
+}
+trait.proof private @p74 {
+  %p0 = trait.witness @p75 for @P75[!T]
+  %d = trait.derive @P74[!T] from @P74_all given(%p0) : (!trait.claim<@P75[!T] by @p75>)
+  trait.return %d : !trait.claim<@P74[!T]>
+}
+trait.proof private @p75 {
+  %p0 = trait.witness @p76 for @P76[!T]
+  %d = trait.derive @P75[!T] from @P75_all given(%p0) : (!trait.claim<@P76[!T] by @p76>)
+  trait.return %d : !trait.claim<@P75[!T]>
+}
+trait.proof private @p76 {
+  %p0 = trait.witness @p77 for @P77[!T]
+  %d = trait.derive @P76[!T] from @P76_all given(%p0) : (!trait.claim<@P77[!T] by @p77>)
+  trait.return %d : !trait.claim<@P76[!T]>
+}
+trait.proof private @p77 {
+  %p0 = trait.witness @p78 for @P78[!T]
+  %d = trait.derive @P77[!T] from @P77_all given(%p0) : (!trait.claim<@P78[!T] by @p78>)
+  trait.return %d : !trait.claim<@P77[!T]>
+}
+trait.proof private @p78 {
+  %p0 = trait.witness @p79 for @P79[!T]
+  %d = trait.derive @P78[!T] from @P78_all given(%p0) : (!trait.claim<@P79[!T] by @p79>)
+  trait.return %d : !trait.claim<@P78[!T]>
+}
+trait.proof private @p79 {
+  %p0 = trait.witness @p80 for @P80[!T]
+  %d = trait.derive @P79[!T] from @P79_all given(%p0) : (!trait.claim<@P80[!T] by @p80>)
+  trait.return %d : !trait.claim<@P79[!T]>
+}
+trait.proof private @p80 {
+  %p0 = trait.witness @p81 for @P81[!T]
+  %d = trait.derive @P80[!T] from @P80_all given(%p0) : (!trait.claim<@P81[!T] by @p81>)
+  trait.return %d : !trait.claim<@P80[!T]>
+}
+trait.proof private @p81 {
+  %p0 = trait.witness @p82 for @P82[!T]
+  %d = trait.derive @P81[!T] from @P81_all given(%p0) : (!trait.claim<@P82[!T] by @p82>)
+  trait.return %d : !trait.claim<@P81[!T]>
+}
+trait.proof private @p82 {
+  %p0 = trait.witness @p83 for @P83[!T]
+  %d = trait.derive @P82[!T] from @P82_all given(%p0) : (!trait.claim<@P83[!T] by @p83>)
+  trait.return %d : !trait.claim<@P82[!T]>
+}
+trait.proof private @p83 {
+  %p0 = trait.witness @p84 for @P84[!T]
+  %d = trait.derive @P83[!T] from @P83_all given(%p0) : (!trait.claim<@P84[!T] by @p84>)
+  trait.return %d : !trait.claim<@P83[!T]>
+}
+trait.proof private @p84 {
+  %p0 = trait.witness @p85 for @P85[!T]
+  %d = trait.derive @P84[!T] from @P84_all given(%p0) : (!trait.claim<@P85[!T] by @p85>)
+  trait.return %d : !trait.claim<@P84[!T]>
+}
+trait.proof private @p85 {
+  %p0 = trait.witness @p86 for @P86[!T]
+  %d = trait.derive @P85[!T] from @P85_all given(%p0) : (!trait.claim<@P86[!T] by @p86>)
+  trait.return %d : !trait.claim<@P85[!T]>
+}
+trait.proof private @p86 {
+  %p0 = trait.witness @p87 for @P87[!T]
+  %d = trait.derive @P86[!T] from @P86_all given(%p0) : (!trait.claim<@P87[!T] by @p87>)
+  trait.return %d : !trait.claim<@P86[!T]>
+}
+trait.proof private @p87 {
+  %p0 = trait.witness @p88 for @P88[!T]
+  %d = trait.derive @P87[!T] from @P87_all given(%p0) : (!trait.claim<@P88[!T] by @p88>)
+  trait.return %d : !trait.claim<@P87[!T]>
+}
+trait.proof private @p88 {
+  %p0 = trait.witness @p89 for @P89[!T]
+  %d = trait.derive @P88[!T] from @P88_all given(%p0) : (!trait.claim<@P89[!T] by @p89>)
+  trait.return %d : !trait.claim<@P88[!T]>
+}
+trait.proof private @p89 {
+  %p0 = trait.witness @p90 for @P90[!T]
+  %d = trait.derive @P89[!T] from @P89_all given(%p0) : (!trait.claim<@P90[!T] by @p90>)
+  trait.return %d : !trait.claim<@P89[!T]>
+}
+trait.proof private @p90 {
+  %p0 = trait.witness @p91 for @P91[!T]
+  %d = trait.derive @P90[!T] from @P90_all given(%p0) : (!trait.claim<@P91[!T] by @p91>)
+  trait.return %d : !trait.claim<@P90[!T]>
+}
+trait.proof private @p91 {
+  %p0 = trait.witness @p92 for @P92[!T]
+  %d = trait.derive @P91[!T] from @P91_all given(%p0) : (!trait.claim<@P92[!T] by @p92>)
+  trait.return %d : !trait.claim<@P91[!T]>
+}
+trait.proof private @p92 {
+  %p0 = trait.witness @p93 for @P93[!T]
+  %d = trait.derive @P92[!T] from @P92_all given(%p0) : (!trait.claim<@P93[!T] by @p93>)
+  trait.return %d : !trait.claim<@P92[!T]>
+}
+trait.proof private @p93 {
+  %p0 = trait.witness @p94 for @P94[!T]
+  %d = trait.derive @P93[!T] from @P93_all given(%p0) : (!trait.claim<@P94[!T] by @p94>)
+  trait.return %d : !trait.claim<@P93[!T]>
+}
+trait.proof private @p94 {
+  %p0 = trait.witness @p95 for @P95[!T]
+  %d = trait.derive @P94[!T] from @P94_all given(%p0) : (!trait.claim<@P95[!T] by @p95>)
+  trait.return %d : !trait.claim<@P94[!T]>
+}
+trait.proof private @p95 {
+  %p0 = trait.witness @p96 for @P96[!T]
+  %d = trait.derive @P95[!T] from @P95_all given(%p0) : (!trait.claim<@P96[!T] by @p96>)
+  trait.return %d : !trait.claim<@P95[!T]>
+}
+trait.proof private @p96 {
+  %p0 = trait.witness @p97 for @P97[!T]
+  %d = trait.derive @P96[!T] from @P96_all given(%p0) : (!trait.claim<@P97[!T] by @p97>)
+  trait.return %d : !trait.claim<@P96[!T]>
+}
+trait.proof private @p97 {
+  %p0 = trait.witness @p98 for @P98[!T]
+  %d = trait.derive @P97[!T] from @P97_all given(%p0) : (!trait.claim<@P98[!T] by @p98>)
+  trait.return %d : !trait.claim<@P97[!T]>
+}
+trait.proof private @p98 {
+  %p0 = trait.witness @p99 for @P99[!T]
+  %d = trait.derive @P98[!T] from @P98_all given(%p0) : (!trait.claim<@P99[!T] by @p99>)
+  trait.return %d : !trait.claim<@P98[!T]>
+}
+trait.proof private @p99 {
+  %p0 = trait.witness @p100 for @P100[!T]
+  %d = trait.derive @P99[!T] from @P99_all given(%p0) : (!trait.claim<@P100[!T] by @p100>)
+  trait.return %d : !trait.claim<@P99[!T]>
+}
+trait.proof private @p100 {
+  %p0 = trait.witness @p101 for @P101[!T]
+  %d = trait.derive @P100[!T] from @P100_all given(%p0) : (!trait.claim<@P101[!T] by @p101>)
+  trait.return %d : !trait.claim<@P100[!T]>
+}
+trait.proof private @p101 {
+  %p0 = trait.witness @p102 for @P102[!T]
+  %d = trait.derive @P101[!T] from @P101_all given(%p0) : (!trait.claim<@P102[!T] by @p102>)
+  trait.return %d : !trait.claim<@P101[!T]>
+}
+trait.proof private @p102 {
+  %p0 = trait.witness @p103 for @P103[!T]
+  %d = trait.derive @P102[!T] from @P102_all given(%p0) : (!trait.claim<@P103[!T] by @p103>)
+  trait.return %d : !trait.claim<@P102[!T]>
+}
+trait.proof private @p103 {
+  %p0 = trait.witness @p104 for @P104[!T]
+  %d = trait.derive @P103[!T] from @P103_all given(%p0) : (!trait.claim<@P104[!T] by @p104>)
+  trait.return %d : !trait.claim<@P103[!T]>
+}
+trait.proof private @p104 {
+  %p0 = trait.witness @p105 for @P105[!T]
+  %d = trait.derive @P104[!T] from @P104_all given(%p0) : (!trait.claim<@P105[!T] by @p105>)
+  trait.return %d : !trait.claim<@P104[!T]>
+}
+trait.proof private @p105 {
+  %p0 = trait.witness @p106 for @P106[!T]
+  %d = trait.derive @P105[!T] from @P105_all given(%p0) : (!trait.claim<@P106[!T] by @p106>)
+  trait.return %d : !trait.claim<@P105[!T]>
+}
+trait.proof private @p106 {
+  %p0 = trait.witness @p107 for @P107[!T]
+  %d = trait.derive @P106[!T] from @P106_all given(%p0) : (!trait.claim<@P107[!T] by @p107>)
+  trait.return %d : !trait.claim<@P106[!T]>
+}
+trait.proof private @p107 {
+  %p0 = trait.witness @p108 for @P108[!T]
+  %d = trait.derive @P107[!T] from @P107_all given(%p0) : (!trait.claim<@P108[!T] by @p108>)
+  trait.return %d : !trait.claim<@P107[!T]>
+}
+trait.proof private @p108 {
+  %p0 = trait.witness @p109 for @P109[!T]
+  %d = trait.derive @P108[!T] from @P108_all given(%p0) : (!trait.claim<@P109[!T] by @p109>)
+  trait.return %d : !trait.claim<@P108[!T]>
+}
+trait.proof private @p109 {
+  %p0 = trait.witness @p110 for @P110[!T]
+  %d = trait.derive @P109[!T] from @P109_all given(%p0) : (!trait.claim<@P110[!T] by @p110>)
+  trait.return %d : !trait.claim<@P109[!T]>
+}
+trait.proof private @p110 {
+  %p0 = trait.witness @p111 for @P111[!T]
+  %d = trait.derive @P110[!T] from @P110_all given(%p0) : (!trait.claim<@P111[!T] by @p111>)
+  trait.return %d : !trait.claim<@P110[!T]>
+}
+trait.proof private @p111 {
+  %p0 = trait.witness @p112 for @P112[!T]
+  %d = trait.derive @P111[!T] from @P111_all given(%p0) : (!trait.claim<@P112[!T] by @p112>)
+  trait.return %d : !trait.claim<@P111[!T]>
+}
+trait.proof private @p112 {
+  %p0 = trait.witness @p113 for @P113[!T]
+  %d = trait.derive @P112[!T] from @P112_all given(%p0) : (!trait.claim<@P113[!T] by @p113>)
+  trait.return %d : !trait.claim<@P112[!T]>
+}
+trait.proof private @p113 {
+  %p0 = trait.witness @p114 for @P114[!T]
+  %d = trait.derive @P113[!T] from @P113_all given(%p0) : (!trait.claim<@P114[!T] by @p114>)
+  trait.return %d : !trait.claim<@P113[!T]>
+}
+trait.proof private @p114 {
+  %p0 = trait.witness @p115 for @P115[!T]
+  %d = trait.derive @P114[!T] from @P114_all given(%p0) : (!trait.claim<@P115[!T] by @p115>)
+  trait.return %d : !trait.claim<@P114[!T]>
+}
+trait.proof private @p115 {
+  %p0 = trait.witness @p116 for @P116[!T]
+  %d = trait.derive @P115[!T] from @P115_all given(%p0) : (!trait.claim<@P116[!T] by @p116>)
+  trait.return %d : !trait.claim<@P115[!T]>
+}
+trait.proof private @p116 {
+  %p0 = trait.witness @p117 for @P117[!T]
+  %d = trait.derive @P116[!T] from @P116_all given(%p0) : (!trait.claim<@P117[!T] by @p117>)
+  trait.return %d : !trait.claim<@P116[!T]>
+}
+trait.proof private @p117 {
+  %p0 = trait.witness @p118 for @P118[!T]
+  %d = trait.derive @P117[!T] from @P117_all given(%p0) : (!trait.claim<@P118[!T] by @p118>)
+  trait.return %d : !trait.claim<@P117[!T]>
+}
+trait.proof private @p118 {
+  %p0 = trait.witness @p119 for @P119[!T]
+  %d = trait.derive @P118[!T] from @P118_all given(%p0) : (!trait.claim<@P119[!T] by @p119>)
+  trait.return %d : !trait.claim<@P118[!T]>
+}
+trait.proof private @p119 {
+  %p0 = trait.witness @p120 for @P120[!T]
+  %d = trait.derive @P119[!T] from @P119_all given(%p0) : (!trait.claim<@P120[!T] by @p120>)
+  trait.return %d : !trait.claim<@P119[!T]>
+}
+trait.proof private @p120 {
+  %p0 = trait.witness @p121 for @P121[!T]
+  %d = trait.derive @P120[!T] from @P120_all given(%p0) : (!trait.claim<@P121[!T] by @p121>)
+  trait.return %d : !trait.claim<@P120[!T]>
+}
+trait.proof private @p121 {
+  %p0 = trait.witness @p122 for @P122[!T]
+  %d = trait.derive @P121[!T] from @P121_all given(%p0) : (!trait.claim<@P122[!T] by @p122>)
+  trait.return %d : !trait.claim<@P121[!T]>
+}
+trait.proof private @p122 {
+  %p0 = trait.witness @p123 for @P123[!T]
+  %d = trait.derive @P122[!T] from @P122_all given(%p0) : (!trait.claim<@P123[!T] by @p123>)
+  trait.return %d : !trait.claim<@P122[!T]>
+}
+trait.proof private @p123 {
+  %p0 = trait.witness @p124 for @P124[!T]
+  %d = trait.derive @P123[!T] from @P123_all given(%p0) : (!trait.claim<@P124[!T] by @p124>)
+  trait.return %d : !trait.claim<@P123[!T]>
+}
+trait.proof private @p124 {
+  %p0 = trait.witness @p125 for @P125[!T]
+  %d = trait.derive @P124[!T] from @P124_all given(%p0) : (!trait.claim<@P125[!T] by @p125>)
+  trait.return %d : !trait.claim<@P124[!T]>
+}
+trait.proof private @p125 {
+  %p0 = trait.witness @p126 for @P126[!T]
+  %d = trait.derive @P125[!T] from @P125_all given(%p0) : (!trait.claim<@P126[!T] by @p126>)
+  trait.return %d : !trait.claim<@P125[!T]>
+}
+trait.proof private @p126 {
+  %p0 = trait.witness @p127 for @P127[!T]
+  %d = trait.derive @P126[!T] from @P126_all given(%p0) : (!trait.claim<@P127[!T] by @p127>)
+  trait.return %d : !trait.claim<@P126[!T]>
+}
+trait.proof private @p127 {
+  %p0 = trait.witness @p128 for @P128[!T]
+  %d = trait.derive @P127[!T] from @P127_all given(%p0) : (!trait.claim<@P128[!T] by @p128>)
+  trait.return %d : !trait.claim<@P127[!T]>
+}
+trait.proof private @p128 {
+  %p0 = trait.witness @p129 for @P129[!T]
+  %d = trait.derive @P128[!T] from @P128_all given(%p0) : (!trait.claim<@P129[!T] by @p129>)
+  trait.return %d : !trait.claim<@P128[!T]>
+}
+trait.proof private @p129 {
+  %p0 = trait.witness @p130 for @P130[!T]
+  %d = trait.derive @P129[!T] from @P129_all given(%p0) : (!trait.claim<@P130[!T] by @p130>)
+  trait.return %d : !trait.claim<@P129[!T]>
+}
+trait.proof private @p130 {
+  %p0 = trait.witness @p131 for @P131[!T]
+  %d = trait.derive @P130[!T] from @P130_all given(%p0) : (!trait.claim<@P131[!T] by @p131>)
+  trait.return %d : !trait.claim<@P130[!T]>
+}
+trait.proof private @p131 {
+  %p0 = trait.witness @p132 for @P132[!T]
+  %d = trait.derive @P131[!T] from @P131_all given(%p0) : (!trait.claim<@P132[!T] by @p132>)
+  trait.return %d : !trait.claim<@P131[!T]>
+}
+trait.proof private @p132 {
+  %p0 = trait.witness @p133 for @P133[!T]
+  %d = trait.derive @P132[!T] from @P132_all given(%p0) : (!trait.claim<@P133[!T] by @p133>)
+  trait.return %d : !trait.claim<@P132[!T]>
+}
+trait.proof private @p133 {
+  %p0 = trait.witness @p134 for @P134[!T]
+  %d = trait.derive @P133[!T] from @P133_all given(%p0) : (!trait.claim<@P134[!T] by @p134>)
+  trait.return %d : !trait.claim<@P133[!T]>
+}
+trait.proof private @p134 {
+  %p0 = trait.witness @p135 for @P135[!T]
+  %d = trait.derive @P134[!T] from @P134_all given(%p0) : (!trait.claim<@P135[!T] by @p135>)
+  trait.return %d : !trait.claim<@P134[!T]>
+}
+trait.proof private @p135 {
+  %p0 = trait.witness @p136 for @P136[!T]
+  %d = trait.derive @P135[!T] from @P135_all given(%p0) : (!trait.claim<@P136[!T] by @p136>)
+  trait.return %d : !trait.claim<@P135[!T]>
+}
+trait.proof private @p136 {
+  %p0 = trait.witness @p137 for @P137[!T]
+  %d = trait.derive @P136[!T] from @P136_all given(%p0) : (!trait.claim<@P137[!T] by @p137>)
+  trait.return %d : !trait.claim<@P136[!T]>
+}
+trait.proof private @p137 {
+  %p0 = trait.witness @p138 for @P138[!T]
+  %d = trait.derive @P137[!T] from @P137_all given(%p0) : (!trait.claim<@P138[!T] by @p138>)
+  trait.return %d : !trait.claim<@P137[!T]>
+}
+trait.proof private @p138 {
+  %p0 = trait.witness @p139 for @P139[!T]
+  %d = trait.derive @P138[!T] from @P138_all given(%p0) : (!trait.claim<@P139[!T] by @p139>)
+  trait.return %d : !trait.claim<@P138[!T]>
+}
+trait.proof private @p139 {
+  %p0 = trait.witness @p140 for @P140[!T]
+  %d = trait.derive @P139[!T] from @P139_all given(%p0) : (!trait.claim<@P140[!T] by @p140>)
+  trait.return %d : !trait.claim<@P139[!T]>
+}
+trait.proof private @p140 {
+  %p0 = trait.witness @p141 for @P141[!T]
+  %d = trait.derive @P140[!T] from @P140_all given(%p0) : (!trait.claim<@P141[!T] by @p141>)
+  trait.return %d : !trait.claim<@P140[!T]>
+}
+trait.proof private @p141 {
+  %p0 = trait.witness @p142 for @P142[!T]
+  %d = trait.derive @P141[!T] from @P141_all given(%p0) : (!trait.claim<@P142[!T] by @p142>)
+  trait.return %d : !trait.claim<@P141[!T]>
+}
+trait.proof private @p142 {
+  %p0 = trait.witness @p143 for @P143[!T]
+  %d = trait.derive @P142[!T] from @P142_all given(%p0) : (!trait.claim<@P143[!T] by @p143>)
+  trait.return %d : !trait.claim<@P142[!T]>
+}
+trait.proof private @p143 {
+  %p0 = trait.witness @p144 for @P144[!T]
+  %d = trait.derive @P143[!T] from @P143_all given(%p0) : (!trait.claim<@P144[!T] by @p144>)
+  trait.return %d : !trait.claim<@P143[!T]>
+}
+trait.proof private @p144 {
+  %p0 = trait.witness @p145 for @P145[!T]
+  %d = trait.derive @P144[!T] from @P144_all given(%p0) : (!trait.claim<@P145[!T] by @p145>)
+  trait.return %d : !trait.claim<@P144[!T]>
+}
+trait.proof private @p145 {
+  %p0 = trait.witness @p146 for @P146[!T]
+  %d = trait.derive @P145[!T] from @P145_all given(%p0) : (!trait.claim<@P146[!T] by @p146>)
+  trait.return %d : !trait.claim<@P145[!T]>
+}
+trait.proof private @p146 {
+  %p0 = trait.witness @p147 for @P147[!T]
+  %d = trait.derive @P146[!T] from @P146_all given(%p0) : (!trait.claim<@P147[!T] by @p147>)
+  trait.return %d : !trait.claim<@P146[!T]>
+}
+trait.proof private @p147 {
+  %p0 = trait.witness @p148 for @P148[!T]
+  %d = trait.derive @P147[!T] from @P147_all given(%p0) : (!trait.claim<@P148[!T] by @p148>)
+  trait.return %d : !trait.claim<@P147[!T]>
+}
+trait.proof private @p148 {
+  %p0 = trait.witness @p149 for @P149[!T]
+  %d = trait.derive @P148[!T] from @P148_all given(%p0) : (!trait.claim<@P149[!T] by @p149>)
+  trait.return %d : !trait.claim<@P148[!T]>
+}
+trait.proof private @p149 {
+  %p0 = trait.witness @p150 for @P150[!T]
+  %d = trait.derive @P149[!T] from @P149_all given(%p0) : (!trait.claim<@P150[!T] by @p150>)
+  trait.return %d : !trait.claim<@P149[!T]>
+}
+trait.proof private @p150 {
+  %p0 = trait.witness @p151 for @P151[!T]
+  %d = trait.derive @P150[!T] from @P150_all given(%p0) : (!trait.claim<@P151[!T] by @p151>)
+  trait.return %d : !trait.claim<@P150[!T]>
+}
+trait.proof private @p151 {
+  %p0 = trait.witness @p152 for @P152[!T]
+  %d = trait.derive @P151[!T] from @P151_all given(%p0) : (!trait.claim<@P152[!T] by @p152>)
+  trait.return %d : !trait.claim<@P151[!T]>
+}
+trait.proof private @p152 {
+  %p0 = trait.witness @p153 for @P153[!T]
+  %d = trait.derive @P152[!T] from @P152_all given(%p0) : (!trait.claim<@P153[!T] by @p153>)
+  trait.return %d : !trait.claim<@P152[!T]>
+}
+trait.proof private @p153 {
+  %p0 = trait.witness @p154 for @P154[!T]
+  %d = trait.derive @P153[!T] from @P153_all given(%p0) : (!trait.claim<@P154[!T] by @p154>)
+  trait.return %d : !trait.claim<@P153[!T]>
+}
+trait.proof private @p154 {
+  %p0 = trait.witness @p155 for @P155[!T]
+  %d = trait.derive @P154[!T] from @P154_all given(%p0) : (!trait.claim<@P155[!T] by @p155>)
+  trait.return %d : !trait.claim<@P154[!T]>
+}
+trait.proof private @p155 {
+  %p0 = trait.witness @p156 for @P156[!T]
+  %d = trait.derive @P155[!T] from @P155_all given(%p0) : (!trait.claim<@P156[!T] by @p156>)
+  trait.return %d : !trait.claim<@P155[!T]>
+}
+trait.proof private @p156 {
+  %p0 = trait.witness @p157 for @P157[!T]
+  %d = trait.derive @P156[!T] from @P156_all given(%p0) : (!trait.claim<@P157[!T] by @p157>)
+  trait.return %d : !trait.claim<@P156[!T]>
+}
+trait.proof private @p157 {
+  %p0 = trait.witness @p158 for @P158[!T]
+  %d = trait.derive @P157[!T] from @P157_all given(%p0) : (!trait.claim<@P158[!T] by @p158>)
+  trait.return %d : !trait.claim<@P157[!T]>
+}
+trait.proof private @p158 {
+  %p0 = trait.witness @p159 for @P159[!T]
+  %d = trait.derive @P158[!T] from @P158_all given(%p0) : (!trait.claim<@P159[!T] by @p159>)
+  trait.return %d : !trait.claim<@P158[!T]>
+}
+trait.proof private @p159 {
+  %p0 = trait.witness @p160 for @P160[!T]
+  %d = trait.derive @P159[!T] from @P159_all given(%p0) : (!trait.claim<@P160[!T] by @p160>)
+  trait.return %d : !trait.claim<@P159[!T]>
+}
+trait.proof private @p160 {
+  %p0 = trait.witness @p161 for @P161[!T]
+  %d = trait.derive @P160[!T] from @P160_all given(%p0) : (!trait.claim<@P161[!T] by @p161>)
+  trait.return %d : !trait.claim<@P160[!T]>
+}
+trait.proof private @p161 {
+  %p0 = trait.witness @p162 for @P162[!T]
+  %d = trait.derive @P161[!T] from @P161_all given(%p0) : (!trait.claim<@P162[!T] by @p162>)
+  trait.return %d : !trait.claim<@P161[!T]>
+}
+trait.proof private @p162 {
+  %p0 = trait.witness @p163 for @P163[!T]
+  %d = trait.derive @P162[!T] from @P162_all given(%p0) : (!trait.claim<@P163[!T] by @p163>)
+  trait.return %d : !trait.claim<@P162[!T]>
+}
+trait.proof private @p163 {
+  %p0 = trait.witness @p164 for @P164[!T]
+  %d = trait.derive @P163[!T] from @P163_all given(%p0) : (!trait.claim<@P164[!T] by @p164>)
+  trait.return %d : !trait.claim<@P163[!T]>
+}
+trait.proof private @p164 {
+  %p0 = trait.witness @p165 for @P165[!T]
+  %d = trait.derive @P164[!T] from @P164_all given(%p0) : (!trait.claim<@P165[!T] by @p165>)
+  trait.return %d : !trait.claim<@P164[!T]>
+}
+trait.proof private @p165 {
+  %p0 = trait.witness @p166 for @P166[!T]
+  %d = trait.derive @P165[!T] from @P165_all given(%p0) : (!trait.claim<@P166[!T] by @p166>)
+  trait.return %d : !trait.claim<@P165[!T]>
+}
+trait.proof private @p166 {
+  %p0 = trait.witness @p167 for @P167[!T]
+  %d = trait.derive @P166[!T] from @P166_all given(%p0) : (!trait.claim<@P167[!T] by @p167>)
+  trait.return %d : !trait.claim<@P166[!T]>
+}
+trait.proof private @p167 {
+  %p0 = trait.witness @p168 for @P168[!T]
+  %d = trait.derive @P167[!T] from @P167_all given(%p0) : (!trait.claim<@P168[!T] by @p168>)
+  trait.return %d : !trait.claim<@P167[!T]>
+}
+trait.proof private @p168 {
+  %p0 = trait.witness @p169 for @P169[!T]
+  %d = trait.derive @P168[!T] from @P168_all given(%p0) : (!trait.claim<@P169[!T] by @p169>)
+  trait.return %d : !trait.claim<@P168[!T]>
+}
+trait.proof private @p169 {
+  %p0 = trait.witness @p170 for @P170[!T]
+  %d = trait.derive @P169[!T] from @P169_all given(%p0) : (!trait.claim<@P170[!T] by @p170>)
+  trait.return %d : !trait.claim<@P169[!T]>
+}
+trait.proof private @p170 {
+  %p0 = trait.witness @p171 for @P171[!T]
+  %d = trait.derive @P170[!T] from @P170_all given(%p0) : (!trait.claim<@P171[!T] by @p171>)
+  trait.return %d : !trait.claim<@P170[!T]>
+}
+trait.proof private @p171 {
+  %p0 = trait.witness @p172 for @P172[!T]
+  %d = trait.derive @P171[!T] from @P171_all given(%p0) : (!trait.claim<@P172[!T] by @p172>)
+  trait.return %d : !trait.claim<@P171[!T]>
+}
+trait.proof private @p172 {
+  %p0 = trait.witness @p173 for @P173[!T]
+  %d = trait.derive @P172[!T] from @P172_all given(%p0) : (!trait.claim<@P173[!T] by @p173>)
+  trait.return %d : !trait.claim<@P172[!T]>
+}
+trait.proof private @p173 {
+  %p0 = trait.witness @p174 for @P174[!T]
+  %d = trait.derive @P173[!T] from @P173_all given(%p0) : (!trait.claim<@P174[!T] by @p174>)
+  trait.return %d : !trait.claim<@P173[!T]>
+}
+trait.proof private @p174 {
+  %p0 = trait.witness @p175 for @P175[!T]
+  %d = trait.derive @P174[!T] from @P174_all given(%p0) : (!trait.claim<@P175[!T] by @p175>)
+  trait.return %d : !trait.claim<@P174[!T]>
+}
+trait.proof private @p175 {
+  %p0 = trait.witness @p176 for @P176[!T]
+  %d = trait.derive @P175[!T] from @P175_all given(%p0) : (!trait.claim<@P176[!T] by @p176>)
+  trait.return %d : !trait.claim<@P175[!T]>
+}
+trait.proof private @p176 {
+  %p0 = trait.witness @p177 for @P177[!T]
+  %d = trait.derive @P176[!T] from @P176_all given(%p0) : (!trait.claim<@P177[!T] by @p177>)
+  trait.return %d : !trait.claim<@P176[!T]>
+}
+trait.proof private @p177 {
+  %p0 = trait.witness @p178 for @P178[!T]
+  %d = trait.derive @P177[!T] from @P177_all given(%p0) : (!trait.claim<@P178[!T] by @p178>)
+  trait.return %d : !trait.claim<@P177[!T]>
+}
+trait.proof private @p178 {
+  %p0 = trait.witness @p179 for @P179[!T]
+  %d = trait.derive @P178[!T] from @P178_all given(%p0) : (!trait.claim<@P179[!T] by @p179>)
+  trait.return %d : !trait.claim<@P178[!T]>
+}
+trait.proof private @p179 {
+  %p0 = trait.witness @p180 for @P180[!T]
+  %d = trait.derive @P179[!T] from @P179_all given(%p0) : (!trait.claim<@P180[!T] by @p180>)
+  trait.return %d : !trait.claim<@P179[!T]>
+}
+trait.proof private @p180 {
+  %p0 = trait.witness @p181 for @P181[!T]
+  %d = trait.derive @P180[!T] from @P180_all given(%p0) : (!trait.claim<@P181[!T] by @p181>)
+  trait.return %d : !trait.claim<@P180[!T]>
+}
+trait.proof private @p181 {
+  %p0 = trait.witness @p182 for @P182[!T]
+  %d = trait.derive @P181[!T] from @P181_all given(%p0) : (!trait.claim<@P182[!T] by @p182>)
+  trait.return %d : !trait.claim<@P181[!T]>
+}
+trait.proof private @p182 {
+  %p0 = trait.witness @p183 for @P183[!T]
+  %d = trait.derive @P182[!T] from @P182_all given(%p0) : (!trait.claim<@P183[!T] by @p183>)
+  trait.return %d : !trait.claim<@P182[!T]>
+}
+trait.proof private @p183 {
+  %p0 = trait.witness @p184 for @P184[!T]
+  %d = trait.derive @P183[!T] from @P183_all given(%p0) : (!trait.claim<@P184[!T] by @p184>)
+  trait.return %d : !trait.claim<@P183[!T]>
+}
+trait.proof private @p184 {
+  %p0 = trait.witness @p185 for @P185[!T]
+  %d = trait.derive @P184[!T] from @P184_all given(%p0) : (!trait.claim<@P185[!T] by @p185>)
+  trait.return %d : !trait.claim<@P184[!T]>
+}
+trait.proof private @p185 {
+  %p0 = trait.witness @p186 for @P186[!T]
+  %d = trait.derive @P185[!T] from @P185_all given(%p0) : (!trait.claim<@P186[!T] by @p186>)
+  trait.return %d : !trait.claim<@P185[!T]>
+}
+trait.proof private @p186 {
+  %p0 = trait.witness @p187 for @P187[!T]
+  %d = trait.derive @P186[!T] from @P186_all given(%p0) : (!trait.claim<@P187[!T] by @p187>)
+  trait.return %d : !trait.claim<@P186[!T]>
+}
+trait.proof private @p187 {
+  %p0 = trait.witness @p188 for @P188[!T]
+  %d = trait.derive @P187[!T] from @P187_all given(%p0) : (!trait.claim<@P188[!T] by @p188>)
+  trait.return %d : !trait.claim<@P187[!T]>
+}
+trait.proof private @p188 {
+  %p0 = trait.witness @p189 for @P189[!T]
+  %d = trait.derive @P188[!T] from @P188_all given(%p0) : (!trait.claim<@P189[!T] by @p189>)
+  trait.return %d : !trait.claim<@P188[!T]>
+}
+trait.proof private @p189 {
+  %p0 = trait.witness @p190 for @P190[!T]
+  %d = trait.derive @P189[!T] from @P189_all given(%p0) : (!trait.claim<@P190[!T] by @p190>)
+  trait.return %d : !trait.claim<@P189[!T]>
+}
+trait.proof private @p190 {
+  %p0 = trait.witness @p191 for @P191[!T]
+  %d = trait.derive @P190[!T] from @P190_all given(%p0) : (!trait.claim<@P191[!T] by @p191>)
+  trait.return %d : !trait.claim<@P190[!T]>
+}
+trait.proof private @p191 {
+  %p0 = trait.witness @p192 for @P192[!T]
+  %d = trait.derive @P191[!T] from @P191_all given(%p0) : (!trait.claim<@P192[!T] by @p192>)
+  trait.return %d : !trait.claim<@P191[!T]>
+}
+trait.proof private @p192 {
+  %p0 = trait.witness @p193 for @P193[!T]
+  %d = trait.derive @P192[!T] from @P192_all given(%p0) : (!trait.claim<@P193[!T] by @p193>)
+  trait.return %d : !trait.claim<@P192[!T]>
+}
+trait.proof private @p193 {
+  %p0 = trait.witness @p194 for @P194[!T]
+  %d = trait.derive @P193[!T] from @P193_all given(%p0) : (!trait.claim<@P194[!T] by @p194>)
+  trait.return %d : !trait.claim<@P193[!T]>
+}
+trait.proof private @p194 {
+  %p0 = trait.witness @p195 for @P195[!T]
+  %d = trait.derive @P194[!T] from @P194_all given(%p0) : (!trait.claim<@P195[!T] by @p195>)
+  trait.return %d : !trait.claim<@P194[!T]>
+}
+trait.proof private @p195 {
+  %p0 = trait.witness @p196 for @P196[!T]
+  %d = trait.derive @P195[!T] from @P195_all given(%p0) : (!trait.claim<@P196[!T] by @p196>)
+  trait.return %d : !trait.claim<@P195[!T]>
+}
+trait.proof private @p196 {
+  %p0 = trait.witness @p197 for @P197[!T]
+  %d = trait.derive @P196[!T] from @P196_all given(%p0) : (!trait.claim<@P197[!T] by @p197>)
+  trait.return %d : !trait.claim<@P196[!T]>
+}
+trait.proof private @p197 {
+  %p0 = trait.witness @p198 for @P198[!T]
+  %d = trait.derive @P197[!T] from @P197_all given(%p0) : (!trait.claim<@P198[!T] by @p198>)
+  trait.return %d : !trait.claim<@P197[!T]>
+}
+trait.proof private @p198 {
+  %p0 = trait.witness @p199 for @P199[!T]
+  %d = trait.derive @P198[!T] from @P198_all given(%p0) : (!trait.claim<@P199[!T] by @p199>)
+  trait.return %d : !trait.claim<@P198[!T]>
+}
+trait.proof private @p199 {
+  %p0 = trait.witness @p200 for @P200[!T]
+  %d = trait.derive @P199[!T] from @P199_all given(%p0) : (!trait.claim<@P200[!T] by @p200>)
+  trait.return %d : !trait.claim<@P199[!T]>
+}
+trait.proof private @p200 {
+  %p0 = trait.witness @p201 for @P201[!T]
+  %d = trait.derive @P200[!T] from @P200_all given(%p0) : (!trait.claim<@P201[!T] by @p201>)
+  trait.return %d : !trait.claim<@P200[!T]>
+}
+trait.proof private @p201 {
+  %p0 = trait.witness @p202 for @P202[!T]
+  %d = trait.derive @P201[!T] from @P201_all given(%p0) : (!trait.claim<@P202[!T] by @p202>)
+  trait.return %d : !trait.claim<@P201[!T]>
+}
+trait.proof private @p202 {
+  %p0 = trait.witness @p203 for @P203[!T]
+  %d = trait.derive @P202[!T] from @P202_all given(%p0) : (!trait.claim<@P203[!T] by @p203>)
+  trait.return %d : !trait.claim<@P202[!T]>
+}
+trait.proof private @p203 {
+  %p0 = trait.witness @p204 for @P204[!T]
+  %d = trait.derive @P203[!T] from @P203_all given(%p0) : (!trait.claim<@P204[!T] by @p204>)
+  trait.return %d : !trait.claim<@P203[!T]>
+}
+trait.proof private @p204 {
+  %p0 = trait.witness @p205 for @P205[!T]
+  %d = trait.derive @P204[!T] from @P204_all given(%p0) : (!trait.claim<@P205[!T] by @p205>)
+  trait.return %d : !trait.claim<@P204[!T]>
+}
+trait.proof private @p205 {
+  %p0 = trait.witness @p206 for @P206[!T]
+  %d = trait.derive @P205[!T] from @P205_all given(%p0) : (!trait.claim<@P206[!T] by @p206>)
+  trait.return %d : !trait.claim<@P205[!T]>
+}
+trait.proof private @p206 {
+  %p0 = trait.witness @p207 for @P207[!T]
+  %d = trait.derive @P206[!T] from @P206_all given(%p0) : (!trait.claim<@P207[!T] by @p207>)
+  trait.return %d : !trait.claim<@P206[!T]>
+}
+trait.proof private @p207 {
+  %p0 = trait.witness @p208 for @P208[!T]
+  %d = trait.derive @P207[!T] from @P207_all given(%p0) : (!trait.claim<@P208[!T] by @p208>)
+  trait.return %d : !trait.claim<@P207[!T]>
+}
+trait.proof private @p208 {
+  %p0 = trait.witness @p209 for @P209[!T]
+  %d = trait.derive @P208[!T] from @P208_all given(%p0) : (!trait.claim<@P209[!T] by @p209>)
+  trait.return %d : !trait.claim<@P208[!T]>
+}
+trait.proof private @p209 {
+  %p0 = trait.witness @p210 for @P210[!T]
+  %d = trait.derive @P209[!T] from @P209_all given(%p0) : (!trait.claim<@P210[!T] by @p210>)
+  trait.return %d : !trait.claim<@P209[!T]>
+}
+trait.proof private @p210 {
+  %p0 = trait.witness @p211 for @P211[!T]
+  %d = trait.derive @P210[!T] from @P210_all given(%p0) : (!trait.claim<@P211[!T] by @p211>)
+  trait.return %d : !trait.claim<@P210[!T]>
+}
+trait.proof private @p211 {
+  %p0 = trait.witness @p212 for @P212[!T]
+  %d = trait.derive @P211[!T] from @P211_all given(%p0) : (!trait.claim<@P212[!T] by @p212>)
+  trait.return %d : !trait.claim<@P211[!T]>
+}
+trait.proof private @p212 {
+  %p0 = trait.witness @p213 for @P213[!T]
+  %d = trait.derive @P212[!T] from @P212_all given(%p0) : (!trait.claim<@P213[!T] by @p213>)
+  trait.return %d : !trait.claim<@P212[!T]>
+}
+trait.proof private @p213 {
+  %p0 = trait.witness @p214 for @P214[!T]
+  %d = trait.derive @P213[!T] from @P213_all given(%p0) : (!trait.claim<@P214[!T] by @p214>)
+  trait.return %d : !trait.claim<@P213[!T]>
+}
+trait.proof private @p214 {
+  %p0 = trait.witness @p215 for @P215[!T]
+  %d = trait.derive @P214[!T] from @P214_all given(%p0) : (!trait.claim<@P215[!T] by @p215>)
+  trait.return %d : !trait.claim<@P214[!T]>
+}
+trait.proof private @p215 {
+  %p0 = trait.witness @p216 for @P216[!T]
+  %d = trait.derive @P215[!T] from @P215_all given(%p0) : (!trait.claim<@P216[!T] by @p216>)
+  trait.return %d : !trait.claim<@P215[!T]>
+}
+trait.proof private @p216 {
+  %p0 = trait.witness @p217 for @P217[!T]
+  %d = trait.derive @P216[!T] from @P216_all given(%p0) : (!trait.claim<@P217[!T] by @p217>)
+  trait.return %d : !trait.claim<@P216[!T]>
+}
+trait.proof private @p217 {
+  %p0 = trait.witness @p218 for @P218[!T]
+  %d = trait.derive @P217[!T] from @P217_all given(%p0) : (!trait.claim<@P218[!T] by @p218>)
+  trait.return %d : !trait.claim<@P217[!T]>
+}
+trait.proof private @p218 {
+  %p0 = trait.witness @p219 for @P219[!T]
+  %d = trait.derive @P218[!T] from @P218_all given(%p0) : (!trait.claim<@P219[!T] by @p219>)
+  trait.return %d : !trait.claim<@P218[!T]>
+}
+trait.proof private @p219 {
+  %p0 = trait.witness @p220 for @P220[!T]
+  %d = trait.derive @P219[!T] from @P219_all given(%p0) : (!trait.claim<@P220[!T] by @p220>)
+  trait.return %d : !trait.claim<@P219[!T]>
+}
+trait.proof private @p220 {
+  %p0 = trait.witness @p221 for @P221[!T]
+  %d = trait.derive @P220[!T] from @P220_all given(%p0) : (!trait.claim<@P221[!T] by @p221>)
+  trait.return %d : !trait.claim<@P220[!T]>
+}
+trait.proof private @p221 {
+  %p0 = trait.witness @p222 for @P222[!T]
+  %d = trait.derive @P221[!T] from @P221_all given(%p0) : (!trait.claim<@P222[!T] by @p222>)
+  trait.return %d : !trait.claim<@P221[!T]>
+}
+trait.proof private @p222 {
+  %p0 = trait.witness @p223 for @P223[!T]
+  %d = trait.derive @P222[!T] from @P222_all given(%p0) : (!trait.claim<@P223[!T] by @p223>)
+  trait.return %d : !trait.claim<@P222[!T]>
+}
+trait.proof private @p223 {
+  %p0 = trait.witness @p224 for @P224[!T]
+  %d = trait.derive @P223[!T] from @P223_all given(%p0) : (!trait.claim<@P224[!T] by @p224>)
+  trait.return %d : !trait.claim<@P223[!T]>
+}
+trait.proof private @p224 {
+  %p0 = trait.witness @p225 for @P225[!T]
+  %d = trait.derive @P224[!T] from @P224_all given(%p0) : (!trait.claim<@P225[!T] by @p225>)
+  trait.return %d : !trait.claim<@P224[!T]>
+}
+trait.proof private @p225 {
+  %p0 = trait.witness @p226 for @P226[!T]
+  %d = trait.derive @P225[!T] from @P225_all given(%p0) : (!trait.claim<@P226[!T] by @p226>)
+  trait.return %d : !trait.claim<@P225[!T]>
+}
+trait.proof private @p226 {
+  %p0 = trait.witness @p227 for @P227[!T]
+  %d = trait.derive @P226[!T] from @P226_all given(%p0) : (!trait.claim<@P227[!T] by @p227>)
+  trait.return %d : !trait.claim<@P226[!T]>
+}
+trait.proof private @p227 {
+  %p0 = trait.witness @p228 for @P228[!T]
+  %d = trait.derive @P227[!T] from @P227_all given(%p0) : (!trait.claim<@P228[!T] by @p228>)
+  trait.return %d : !trait.claim<@P227[!T]>
+}
+trait.proof private @p228 {
+  %p0 = trait.witness @p229 for @P229[!T]
+  %d = trait.derive @P228[!T] from @P228_all given(%p0) : (!trait.claim<@P229[!T] by @p229>)
+  trait.return %d : !trait.claim<@P228[!T]>
+}
+trait.proof private @p229 {
+  %p0 = trait.witness @p230 for @P230[!T]
+  %d = trait.derive @P229[!T] from @P229_all given(%p0) : (!trait.claim<@P230[!T] by @p230>)
+  trait.return %d : !trait.claim<@P229[!T]>
+}
+trait.proof private @p230 {
+  %p0 = trait.witness @p231 for @P231[!T]
+  %d = trait.derive @P230[!T] from @P230_all given(%p0) : (!trait.claim<@P231[!T] by @p231>)
+  trait.return %d : !trait.claim<@P230[!T]>
+}
+trait.proof private @p231 {
+  %p0 = trait.witness @p232 for @P232[!T]
+  %d = trait.derive @P231[!T] from @P231_all given(%p0) : (!trait.claim<@P232[!T] by @p232>)
+  trait.return %d : !trait.claim<@P231[!T]>
+}
+trait.proof private @p232 {
+  %p0 = trait.witness @p233 for @P233[!T]
+  %d = trait.derive @P232[!T] from @P232_all given(%p0) : (!trait.claim<@P233[!T] by @p233>)
+  trait.return %d : !trait.claim<@P232[!T]>
+}
+trait.proof private @p233 {
+  %p0 = trait.witness @p234 for @P234[!T]
+  %d = trait.derive @P233[!T] from @P233_all given(%p0) : (!trait.claim<@P234[!T] by @p234>)
+  trait.return %d : !trait.claim<@P233[!T]>
+}
+trait.proof private @p234 {
+  %p0 = trait.witness @p235 for @P235[!T]
+  %d = trait.derive @P234[!T] from @P234_all given(%p0) : (!trait.claim<@P235[!T] by @p235>)
+  trait.return %d : !trait.claim<@P234[!T]>
+}
+trait.proof private @p235 {
+  %p0 = trait.witness @p236 for @P236[!T]
+  %d = trait.derive @P235[!T] from @P235_all given(%p0) : (!trait.claim<@P236[!T] by @p236>)
+  trait.return %d : !trait.claim<@P235[!T]>
+}
+trait.proof private @p236 {
+  %p0 = trait.witness @p237 for @P237[!T]
+  %d = trait.derive @P236[!T] from @P236_all given(%p0) : (!trait.claim<@P237[!T] by @p237>)
+  trait.return %d : !trait.claim<@P236[!T]>
+}
+trait.proof private @p237 {
+  %p0 = trait.witness @p238 for @P238[!T]
+  %d = trait.derive @P237[!T] from @P237_all given(%p0) : (!trait.claim<@P238[!T] by @p238>)
+  trait.return %d : !trait.claim<@P237[!T]>
+}
+trait.proof private @p238 {
+  %p0 = trait.witness @p239 for @P239[!T]
+  %d = trait.derive @P238[!T] from @P238_all given(%p0) : (!trait.claim<@P239[!T] by @p239>)
+  trait.return %d : !trait.claim<@P238[!T]>
+}
+trait.proof private @p239 {
+  %p0 = trait.witness @p240 for @P240[!T]
+  %d = trait.derive @P239[!T] from @P239_all given(%p0) : (!trait.claim<@P240[!T] by @p240>)
+  trait.return %d : !trait.claim<@P239[!T]>
+}
+trait.proof private @p240 {
+  %p0 = trait.witness @p241 for @P241[!T]
+  %d = trait.derive @P240[!T] from @P240_all given(%p0) : (!trait.claim<@P241[!T] by @p241>)
+  trait.return %d : !trait.claim<@P240[!T]>
+}
+trait.proof private @p241 {
+  %p0 = trait.witness @p242 for @P242[!T]
+  %d = trait.derive @P241[!T] from @P241_all given(%p0) : (!trait.claim<@P242[!T] by @p242>)
+  trait.return %d : !trait.claim<@P241[!T]>
+}
+trait.proof private @p242 {
+  %p0 = trait.witness @p243 for @P243[!T]
+  %d = trait.derive @P242[!T] from @P242_all given(%p0) : (!trait.claim<@P243[!T] by @p243>)
+  trait.return %d : !trait.claim<@P242[!T]>
+}
+trait.proof private @p243 {
+  %p0 = trait.witness @p244 for @P244[!T]
+  %d = trait.derive @P243[!T] from @P243_all given(%p0) : (!trait.claim<@P244[!T] by @p244>)
+  trait.return %d : !trait.claim<@P243[!T]>
+}
+trait.proof private @p244 {
+  %p0 = trait.witness @p245 for @P245[!T]
+  %d = trait.derive @P244[!T] from @P244_all given(%p0) : (!trait.claim<@P245[!T] by @p245>)
+  trait.return %d : !trait.claim<@P244[!T]>
+}
+trait.proof private @p245 {
+  %p0 = trait.witness @p246 for @P246[!T]
+  %d = trait.derive @P245[!T] from @P245_all given(%p0) : (!trait.claim<@P246[!T] by @p246>)
+  trait.return %d : !trait.claim<@P245[!T]>
+}
+trait.proof private @p246 {
+  %p0 = trait.witness @p247 for @P247[!T]
+  %d = trait.derive @P246[!T] from @P246_all given(%p0) : (!trait.claim<@P247[!T] by @p247>)
+  trait.return %d : !trait.claim<@P246[!T]>
+}
+trait.proof private @p247 {
+  %p0 = trait.witness @p248 for @P248[!T]
+  %d = trait.derive @P247[!T] from @P247_all given(%p0) : (!trait.claim<@P248[!T] by @p248>)
+  trait.return %d : !trait.claim<@P247[!T]>
+}
+trait.proof private @p248 {
+  %p0 = trait.witness @p249 for @P249[!T]
+  %d = trait.derive @P248[!T] from @P248_all given(%p0) : (!trait.claim<@P249[!T] by @p249>)
+  trait.return %d : !trait.claim<@P248[!T]>
+}
+trait.proof private @p249 {
+  %p0 = trait.witness @p250 for @P250[!T]
+  %d = trait.derive @P249[!T] from @P249_all given(%p0) : (!trait.claim<@P250[!T] by @p250>)
+  trait.return %d : !trait.claim<@P249[!T]>
+}
+trait.proof private @p250 {
+  %p0 = trait.witness @p251 for @P251[!T]
+  %d = trait.derive @P250[!T] from @P250_all given(%p0) : (!trait.claim<@P251[!T] by @p251>)
+  trait.return %d : !trait.claim<@P250[!T]>
+}
+trait.proof private @p251 {
+  %p0 = trait.witness @p252 for @P252[!T]
+  %d = trait.derive @P251[!T] from @P251_all given(%p0) : (!trait.claim<@P252[!T] by @p252>)
+  trait.return %d : !trait.claim<@P251[!T]>
+}
+trait.proof private @p252 {
+  %p0 = trait.witness @p253 for @P253[!T]
+  %d = trait.derive @P252[!T] from @P252_all given(%p0) : (!trait.claim<@P253[!T] by @p253>)
+  trait.return %d : !trait.claim<@P252[!T]>
+}
+trait.proof private @p253 {
+  %p0 = trait.witness @p254 for @P254[!T]
+  %d = trait.derive @P253[!T] from @P253_all given(%p0) : (!trait.claim<@P254[!T] by @p254>)
+  trait.return %d : !trait.claim<@P253[!T]>
+}
+trait.proof private @p254 {
+  %p0 = trait.witness @p255 for @P255[!T]
+  %d = trait.derive @P254[!T] from @P254_all given(%p0) : (!trait.claim<@P255[!T] by @p255>)
+  trait.return %d : !trait.claim<@P254[!T]>
+}
+trait.proof private @p255 {
+  %p0 = trait.witness @p256 for @P256[!T]
+  %d = trait.derive @P255[!T] from @P255_all given(%p0) : (!trait.claim<@P256[!T] by @p256>)
+  trait.return %d : !trait.claim<@P255[!T]>
+}
+trait.proof private @p256 {
+  %p0 = trait.witness @p1 for @P1[tuple<!T>]
+  %d = trait.derive @P256[!T] from @P256_all given(%p0) : (!trait.claim<@P1[tuple<!T>] by @p1>)
+  trait.return %d : !trait.claim<@P256[!T]>
 }
-trait.proof private @p1 proves @P1_all[!trait.poly<0> = !trait.poly<0>] for @P1[!trait.poly<0>] given [@p2]
-trait.proof private @p2 proves @P2_all[!trait.poly<0> = !trait.poly<0>] for @P2[!trait.poly<0>] given [@p3]
-trait.proof private @p3 proves @P3_all[!trait.poly<0> = !trait.poly<0>] for @P3[!trait.poly<0>] given [@p4]
-trait.proof private @p4 proves @P4_all[!trait.poly<0> = !trait.poly<0>] for @P4[!trait.poly<0>] given [@p5]
-trait.proof private @p5 proves @P5_all[!trait.poly<0> = !trait.poly<0>] for @P5[!trait.poly<0>] given [@p6]
-trait.proof private @p6 proves @P6_all[!trait.poly<0> = !trait.poly<0>] for @P6[!trait.poly<0>] given [@p7]
-trait.proof private @p7 proves @P7_all[!trait.poly<0> = !trait.poly<0>] for @P7[!trait.poly<0>] given [@p8]
-trait.proof private @p8 proves @P8_all[!trait.poly<0> = !trait.poly<0>] for @P8[!trait.poly<0>] given [@p9]
-trait.proof private @p9 proves @P9_all[!trait.poly<0> = !trait.poly<0>] for @P9[!trait.poly<0>] given [@p10]
-trait.proof private @p10 proves @P10_all[!trait.poly<0> = !trait.poly<0>] for @P10[!trait.poly<0>] given [@p11]
-trait.proof private @p11 proves @P11_all[!trait.poly<0> = !trait.poly<0>] for @P11[!trait.poly<0>] given [@p12]
-trait.proof private @p12 proves @P12_all[!trait.poly<0> = !trait.poly<0>] for @P12[!trait.poly<0>] given [@p13]
-trait.proof private @p13 proves @P13_all[!trait.poly<0> = !trait.poly<0>] for @P13[!trait.poly<0>] given [@p14]
-trait.proof private @p14 proves @P14_all[!trait.poly<0> = !trait.poly<0>] for @P14[!trait.poly<0>] given [@p15]
-trait.proof private @p15 proves @P15_all[!trait.poly<0> = !trait.poly<0>] for @P15[!trait.poly<0>] given [@p16]
-trait.proof private @p16 proves @P16_all[!trait.poly<0> = !trait.poly<0>] for @P16[!trait.poly<0>] given [@p17]
-trait.proof private @p17 proves @P17_all[!trait.poly<0> = !trait.poly<0>] for @P17[!trait.poly<0>] given [@p18]
-trait.proof private @p18 proves @P18_all[!trait.poly<0> = !trait.poly<0>] for @P18[!trait.poly<0>] given [@p19]
-trait.proof private @p19 proves @P19_all[!trait.poly<0> = !trait.poly<0>] for @P19[!trait.poly<0>] given [@p20]
-trait.proof private @p20 proves @P20_all[!trait.poly<0> = !trait.poly<0>] for @P20[!trait.poly<0>] given [@p21]
-trait.proof private @p21 proves @P21_all[!trait.poly<0> = !trait.poly<0>] for @P21[!trait.poly<0>] given [@p22]
-trait.proof private @p22 proves @P22_all[!trait.poly<0> = !trait.poly<0>] for @P22[!trait.poly<0>] given [@p23]
-trait.proof private @p23 proves @P23_all[!trait.poly<0> = !trait.poly<0>] for @P23[!trait.poly<0>] given [@p24]
-trait.proof private @p24 proves @P24_all[!trait.poly<0> = !trait.poly<0>] for @P24[!trait.poly<0>] given [@p25]
-trait.proof private @p25 proves @P25_all[!trait.poly<0> = !trait.poly<0>] for @P25[!trait.poly<0>] given [@p26]
-trait.proof private @p26 proves @P26_all[!trait.poly<0> = !trait.poly<0>] for @P26[!trait.poly<0>] given [@p27]
-trait.proof private @p27 proves @P27_all[!trait.poly<0> = !trait.poly<0>] for @P27[!trait.poly<0>] given [@p28]
-trait.proof private @p28 proves @P28_all[!trait.poly<0> = !trait.poly<0>] for @P28[!trait.poly<0>] given [@p29]
-trait.proof private @p29 proves @P29_all[!trait.poly<0> = !trait.poly<0>] for @P29[!trait.poly<0>] given [@p30]
-trait.proof private @p30 proves @P30_all[!trait.poly<0> = !trait.poly<0>] for @P30[!trait.poly<0>] given [@p31]
-trait.proof private @p31 proves @P31_all[!trait.poly<0> = !trait.poly<0>] for @P31[!trait.poly<0>] given [@p32]
-trait.proof private @p32 proves @P32_all[!trait.poly<0> = !trait.poly<0>] for @P32[!trait.poly<0>] given [@p33]
-trait.proof private @p33 proves @P33_all[!trait.poly<0> = !trait.poly<0>] for @P33[!trait.poly<0>] given [@p34]
-trait.proof private @p34 proves @P34_all[!trait.poly<0> = !trait.poly<0>] for @P34[!trait.poly<0>] given [@p35]
-trait.proof private @p35 proves @P35_all[!trait.poly<0> = !trait.poly<0>] for @P35[!trait.poly<0>] given [@p36]
-trait.proof private @p36 proves @P36_all[!trait.poly<0> = !trait.poly<0>] for @P36[!trait.poly<0>] given [@p37]
-trait.proof private @p37 proves @P37_all[!trait.poly<0> = !trait.poly<0>] for @P37[!trait.poly<0>] given [@p38]
-trait.proof private @p38 proves @P38_all[!trait.poly<0> = !trait.poly<0>] for @P38[!trait.poly<0>] given [@p39]
-trait.proof private @p39 proves @P39_all[!trait.poly<0> = !trait.poly<0>] for @P39[!trait.poly<0>] given [@p40]
-trait.proof private @p40 proves @P40_all[!trait.poly<0> = !trait.poly<0>] for @P40[!trait.poly<0>] given [@p41]
-trait.proof private @p41 proves @P41_all[!trait.poly<0> = !trait.poly<0>] for @P41[!trait.poly<0>] given [@p42]
-trait.proof private @p42 proves @P42_all[!trait.poly<0> = !trait.poly<0>] for @P42[!trait.poly<0>] given [@p43]
-trait.proof private @p43 proves @P43_all[!trait.poly<0> = !trait.poly<0>] for @P43[!trait.poly<0>] given [@p44]
-trait.proof private @p44 proves @P44_all[!trait.poly<0> = !trait.poly<0>] for @P44[!trait.poly<0>] given [@p45]
-trait.proof private @p45 proves @P45_all[!trait.poly<0> = !trait.poly<0>] for @P45[!trait.poly<0>] given [@p46]
-trait.proof private @p46 proves @P46_all[!trait.poly<0> = !trait.poly<0>] for @P46[!trait.poly<0>] given [@p47]
-trait.proof private @p47 proves @P47_all[!trait.poly<0> = !trait.poly<0>] for @P47[!trait.poly<0>] given [@p48]
-trait.proof private @p48 proves @P48_all[!trait.poly<0> = !trait.poly<0>] for @P48[!trait.poly<0>] given [@p49]
-trait.proof private @p49 proves @P49_all[!trait.poly<0> = !trait.poly<0>] for @P49[!trait.poly<0>] given [@p50]
-trait.proof private @p50 proves @P50_all[!trait.poly<0> = !trait.poly<0>] for @P50[!trait.poly<0>] given [@p51]
-trait.proof private @p51 proves @P51_all[!trait.poly<0> = !trait.poly<0>] for @P51[!trait.poly<0>] given [@p52]
-trait.proof private @p52 proves @P52_all[!trait.poly<0> = !trait.poly<0>] for @P52[!trait.poly<0>] given [@p53]
-trait.proof private @p53 proves @P53_all[!trait.poly<0> = !trait.poly<0>] for @P53[!trait.poly<0>] given [@p54]
-trait.proof private @p54 proves @P54_all[!trait.poly<0> = !trait.poly<0>] for @P54[!trait.poly<0>] given [@p55]
-trait.proof private @p55 proves @P55_all[!trait.poly<0> = !trait.poly<0>] for @P55[!trait.poly<0>] given [@p56]
-trait.proof private @p56 proves @P56_all[!trait.poly<0> = !trait.poly<0>] for @P56[!trait.poly<0>] given [@p57]
-trait.proof private @p57 proves @P57_all[!trait.poly<0> = !trait.poly<0>] for @P57[!trait.poly<0>] given [@p58]
-trait.proof private @p58 proves @P58_all[!trait.poly<0> = !trait.poly<0>] for @P58[!trait.poly<0>] given [@p59]
-trait.proof private @p59 proves @P59_all[!trait.poly<0> = !trait.poly<0>] for @P59[!trait.poly<0>] given [@p60]
-trait.proof private @p60 proves @P60_all[!trait.poly<0> = !trait.poly<0>] for @P60[!trait.poly<0>] given [@p61]
-trait.proof private @p61 proves @P61_all[!trait.poly<0> = !trait.poly<0>] for @P61[!trait.poly<0>] given [@p62]
-trait.proof private @p62 proves @P62_all[!trait.poly<0> = !trait.poly<0>] for @P62[!trait.poly<0>] given [@p63]
-trait.proof private @p63 proves @P63_all[!trait.poly<0> = !trait.poly<0>] for @P63[!trait.poly<0>] given [@p64]
-trait.proof private @p64 proves @P64_all[!trait.poly<0> = !trait.poly<0>] for @P64[!trait.poly<0>] given [@p65]
-trait.proof private @p65 proves @P65_all[!trait.poly<0> = !trait.poly<0>] for @P65[!trait.poly<0>] given [@p66]
-trait.proof private @p66 proves @P66_all[!trait.poly<0> = !trait.poly<0>] for @P66[!trait.poly<0>] given [@p67]
-trait.proof private @p67 proves @P67_all[!trait.poly<0> = !trait.poly<0>] for @P67[!trait.poly<0>] given [@p68]
-trait.proof private @p68 proves @P68_all[!trait.poly<0> = !trait.poly<0>] for @P68[!trait.poly<0>] given [@p69]
-trait.proof private @p69 proves @P69_all[!trait.poly<0> = !trait.poly<0>] for @P69[!trait.poly<0>] given [@p70]
-trait.proof private @p70 proves @P70_all[!trait.poly<0> = !trait.poly<0>] for @P70[!trait.poly<0>] given [@p71]
-trait.proof private @p71 proves @P71_all[!trait.poly<0> = !trait.poly<0>] for @P71[!trait.poly<0>] given [@p72]
-trait.proof private @p72 proves @P72_all[!trait.poly<0> = !trait.poly<0>] for @P72[!trait.poly<0>] given [@p73]
-trait.proof private @p73 proves @P73_all[!trait.poly<0> = !trait.poly<0>] for @P73[!trait.poly<0>] given [@p74]
-trait.proof private @p74 proves @P74_all[!trait.poly<0> = !trait.poly<0>] for @P74[!trait.poly<0>] given [@p75]
-trait.proof private @p75 proves @P75_all[!trait.poly<0> = !trait.poly<0>] for @P75[!trait.poly<0>] given [@p76]
-trait.proof private @p76 proves @P76_all[!trait.poly<0> = !trait.poly<0>] for @P76[!trait.poly<0>] given [@p77]
-trait.proof private @p77 proves @P77_all[!trait.poly<0> = !trait.poly<0>] for @P77[!trait.poly<0>] given [@p78]
-trait.proof private @p78 proves @P78_all[!trait.poly<0> = !trait.poly<0>] for @P78[!trait.poly<0>] given [@p79]
-trait.proof private @p79 proves @P79_all[!trait.poly<0> = !trait.poly<0>] for @P79[!trait.poly<0>] given [@p80]
-trait.proof private @p80 proves @P80_all[!trait.poly<0> = !trait.poly<0>] for @P80[!trait.poly<0>] given [@p81]
-trait.proof private @p81 proves @P81_all[!trait.poly<0> = !trait.poly<0>] for @P81[!trait.poly<0>] given [@p82]
-trait.proof private @p82 proves @P82_all[!trait.poly<0> = !trait.poly<0>] for @P82[!trait.poly<0>] given [@p83]
-trait.proof private @p83 proves @P83_all[!trait.poly<0> = !trait.poly<0>] for @P83[!trait.poly<0>] given [@p84]
-trait.proof private @p84 proves @P84_all[!trait.poly<0> = !trait.poly<0>] for @P84[!trait.poly<0>] given [@p85]
-trait.proof private @p85 proves @P85_all[!trait.poly<0> = !trait.poly<0>] for @P85[!trait.poly<0>] given [@p86]
-trait.proof private @p86 proves @P86_all[!trait.poly<0> = !trait.poly<0>] for @P86[!trait.poly<0>] given [@p87]
-trait.proof private @p87 proves @P87_all[!trait.poly<0> = !trait.poly<0>] for @P87[!trait.poly<0>] given [@p88]
-trait.proof private @p88 proves @P88_all[!trait.poly<0> = !trait.poly<0>] for @P88[!trait.poly<0>] given [@p89]
-trait.proof private @p89 proves @P89_all[!trait.poly<0> = !trait.poly<0>] for @P89[!trait.poly<0>] given [@p90]
-trait.proof private @p90 proves @P90_all[!trait.poly<0> = !trait.poly<0>] for @P90[!trait.poly<0>] given [@p91]
-trait.proof private @p91 proves @P91_all[!trait.poly<0> = !trait.poly<0>] for @P91[!trait.poly<0>] given [@p92]
-trait.proof private @p92 proves @P92_all[!trait.poly<0> = !trait.poly<0>] for @P92[!trait.poly<0>] given [@p93]
-trait.proof private @p93 proves @P93_all[!trait.poly<0> = !trait.poly<0>] for @P93[!trait.poly<0>] given [@p94]
-trait.proof private @p94 proves @P94_all[!trait.poly<0> = !trait.poly<0>] for @P94[!trait.poly<0>] given [@p95]
-trait.proof private @p95 proves @P95_all[!trait.poly<0> = !trait.poly<0>] for @P95[!trait.poly<0>] given [@p96]
-trait.proof private @p96 proves @P96_all[!trait.poly<0> = !trait.poly<0>] for @P96[!trait.poly<0>] given [@p97]
-trait.proof private @p97 proves @P97_all[!trait.poly<0> = !trait.poly<0>] for @P97[!trait.poly<0>] given [@p98]
-trait.proof private @p98 proves @P98_all[!trait.poly<0> = !trait.poly<0>] for @P98[!trait.poly<0>] given [@p99]
-trait.proof private @p99 proves @P99_all[!trait.poly<0> = !trait.poly<0>] for @P99[!trait.poly<0>] given [@p100]
-trait.proof private @p100 proves @P100_all[!trait.poly<0> = !trait.poly<0>] for @P100[!trait.poly<0>] given [@p101]
-trait.proof private @p101 proves @P101_all[!trait.poly<0> = !trait.poly<0>] for @P101[!trait.poly<0>] given [@p102]
-trait.proof private @p102 proves @P102_all[!trait.poly<0> = !trait.poly<0>] for @P102[!trait.poly<0>] given [@p103]
-trait.proof private @p103 proves @P103_all[!trait.poly<0> = !trait.poly<0>] for @P103[!trait.poly<0>] given [@p104]
-trait.proof private @p104 proves @P104_all[!trait.poly<0> = !trait.poly<0>] for @P104[!trait.poly<0>] given [@p105]
-trait.proof private @p105 proves @P105_all[!trait.poly<0> = !trait.poly<0>] for @P105[!trait.poly<0>] given [@p106]
-trait.proof private @p106 proves @P106_all[!trait.poly<0> = !trait.poly<0>] for @P106[!trait.poly<0>] given [@p107]
-trait.proof private @p107 proves @P107_all[!trait.poly<0> = !trait.poly<0>] for @P107[!trait.poly<0>] given [@p108]
-trait.proof private @p108 proves @P108_all[!trait.poly<0> = !trait.poly<0>] for @P108[!trait.poly<0>] given [@p109]
-trait.proof private @p109 proves @P109_all[!trait.poly<0> = !trait.poly<0>] for @P109[!trait.poly<0>] given [@p110]
-trait.proof private @p110 proves @P110_all[!trait.poly<0> = !trait.poly<0>] for @P110[!trait.poly<0>] given [@p111]
-trait.proof private @p111 proves @P111_all[!trait.poly<0> = !trait.poly<0>] for @P111[!trait.poly<0>] given [@p112]
-trait.proof private @p112 proves @P112_all[!trait.poly<0> = !trait.poly<0>] for @P112[!trait.poly<0>] given [@p113]
-trait.proof private @p113 proves @P113_all[!trait.poly<0> = !trait.poly<0>] for @P113[!trait.poly<0>] given [@p114]
-trait.proof private @p114 proves @P114_all[!trait.poly<0> = !trait.poly<0>] for @P114[!trait.poly<0>] given [@p115]
-trait.proof private @p115 proves @P115_all[!trait.poly<0> = !trait.poly<0>] for @P115[!trait.poly<0>] given [@p116]
-trait.proof private @p116 proves @P116_all[!trait.poly<0> = !trait.poly<0>] for @P116[!trait.poly<0>] given [@p117]
-trait.proof private @p117 proves @P117_all[!trait.poly<0> = !trait.poly<0>] for @P117[!trait.poly<0>] given [@p118]
-trait.proof private @p118 proves @P118_all[!trait.poly<0> = !trait.poly<0>] for @P118[!trait.poly<0>] given [@p119]
-trait.proof private @p119 proves @P119_all[!trait.poly<0> = !trait.poly<0>] for @P119[!trait.poly<0>] given [@p120]
-trait.proof private @p120 proves @P120_all[!trait.poly<0> = !trait.poly<0>] for @P120[!trait.poly<0>] given [@p121]
-trait.proof private @p121 proves @P121_all[!trait.poly<0> = !trait.poly<0>] for @P121[!trait.poly<0>] given [@p122]
-trait.proof private @p122 proves @P122_all[!trait.poly<0> = !trait.poly<0>] for @P122[!trait.poly<0>] given [@p123]
-trait.proof private @p123 proves @P123_all[!trait.poly<0> = !trait.poly<0>] for @P123[!trait.poly<0>] given [@p124]
-trait.proof private @p124 proves @P124_all[!trait.poly<0> = !trait.poly<0>] for @P124[!trait.poly<0>] given [@p125]
-trait.proof private @p125 proves @P125_all[!trait.poly<0> = !trait.poly<0>] for @P125[!trait.poly<0>] given [@p126]
-trait.proof private @p126 proves @P126_all[!trait.poly<0> = !trait.poly<0>] for @P126[!trait.poly<0>] given [@p127]
-trait.proof private @p127 proves @P127_all[!trait.poly<0> = !trait.poly<0>] for @P127[!trait.poly<0>] given [@p128]
-trait.proof private @p128 proves @P128_all[!trait.poly<0> = !trait.poly<0>] for @P128[!trait.poly<0>] given [@p129]
-trait.proof private @p129 proves @P129_all[!trait.poly<0> = !trait.poly<0>] for @P129[!trait.poly<0>] given [@p130]
-trait.proof private @p130 proves @P130_all[!trait.poly<0> = !trait.poly<0>] for @P130[!trait.poly<0>] given [@p131]
-trait.proof private @p131 proves @P131_all[!trait.poly<0> = !trait.poly<0>] for @P131[!trait.poly<0>] given [@p132]
-trait.proof private @p132 proves @P132_all[!trait.poly<0> = !trait.poly<0>] for @P132[!trait.poly<0>] given [@p133]
-trait.proof private @p133 proves @P133_all[!trait.poly<0> = !trait.poly<0>] for @P133[!trait.poly<0>] given [@p134]
-trait.proof private @p134 proves @P134_all[!trait.poly<0> = !trait.poly<0>] for @P134[!trait.poly<0>] given [@p135]
-trait.proof private @p135 proves @P135_all[!trait.poly<0> = !trait.poly<0>] for @P135[!trait.poly<0>] given [@p136]
-trait.proof private @p136 proves @P136_all[!trait.poly<0> = !trait.poly<0>] for @P136[!trait.poly<0>] given [@p137]
-trait.proof private @p137 proves @P137_all[!trait.poly<0> = !trait.poly<0>] for @P137[!trait.poly<0>] given [@p138]
-trait.proof private @p138 proves @P138_all[!trait.poly<0> = !trait.poly<0>] for @P138[!trait.poly<0>] given [@p139]
-trait.proof private @p139 proves @P139_all[!trait.poly<0> = !trait.poly<0>] for @P139[!trait.poly<0>] given [@p140]
-trait.proof private @p140 proves @P140_all[!trait.poly<0> = !trait.poly<0>] for @P140[!trait.poly<0>] given [@p141]
-trait.proof private @p141 proves @P141_all[!trait.poly<0> = !trait.poly<0>] for @P141[!trait.poly<0>] given [@p142]
-trait.proof private @p142 proves @P142_all[!trait.poly<0> = !trait.poly<0>] for @P142[!trait.poly<0>] given [@p143]
-trait.proof private @p143 proves @P143_all[!trait.poly<0> = !trait.poly<0>] for @P143[!trait.poly<0>] given [@p144]
-trait.proof private @p144 proves @P144_all[!trait.poly<0> = !trait.poly<0>] for @P144[!trait.poly<0>] given [@p145]
-trait.proof private @p145 proves @P145_all[!trait.poly<0> = !trait.poly<0>] for @P145[!trait.poly<0>] given [@p146]
-trait.proof private @p146 proves @P146_all[!trait.poly<0> = !trait.poly<0>] for @P146[!trait.poly<0>] given [@p147]
-trait.proof private @p147 proves @P147_all[!trait.poly<0> = !trait.poly<0>] for @P147[!trait.poly<0>] given [@p148]
-trait.proof private @p148 proves @P148_all[!trait.poly<0> = !trait.poly<0>] for @P148[!trait.poly<0>] given [@p149]
-trait.proof private @p149 proves @P149_all[!trait.poly<0> = !trait.poly<0>] for @P149[!trait.poly<0>] given [@p150]
-trait.proof private @p150 proves @P150_all[!trait.poly<0> = !trait.poly<0>] for @P150[!trait.poly<0>] given [@p151]
-trait.proof private @p151 proves @P151_all[!trait.poly<0> = !trait.poly<0>] for @P151[!trait.poly<0>] given [@p152]
-trait.proof private @p152 proves @P152_all[!trait.poly<0> = !trait.poly<0>] for @P152[!trait.poly<0>] given [@p153]
-trait.proof private @p153 proves @P153_all[!trait.poly<0> = !trait.poly<0>] for @P153[!trait.poly<0>] given [@p154]
-trait.proof private @p154 proves @P154_all[!trait.poly<0> = !trait.poly<0>] for @P154[!trait.poly<0>] given [@p155]
-trait.proof private @p155 proves @P155_all[!trait.poly<0> = !trait.poly<0>] for @P155[!trait.poly<0>] given [@p156]
-trait.proof private @p156 proves @P156_all[!trait.poly<0> = !trait.poly<0>] for @P156[!trait.poly<0>] given [@p157]
-trait.proof private @p157 proves @P157_all[!trait.poly<0> = !trait.poly<0>] for @P157[!trait.poly<0>] given [@p158]
-trait.proof private @p158 proves @P158_all[!trait.poly<0> = !trait.poly<0>] for @P158[!trait.poly<0>] given [@p159]
-trait.proof private @p159 proves @P159_all[!trait.poly<0> = !trait.poly<0>] for @P159[!trait.poly<0>] given [@p160]
-trait.proof private @p160 proves @P160_all[!trait.poly<0> = !trait.poly<0>] for @P160[!trait.poly<0>] given [@p161]
-trait.proof private @p161 proves @P161_all[!trait.poly<0> = !trait.poly<0>] for @P161[!trait.poly<0>] given [@p162]
-trait.proof private @p162 proves @P162_all[!trait.poly<0> = !trait.poly<0>] for @P162[!trait.poly<0>] given [@p163]
-trait.proof private @p163 proves @P163_all[!trait.poly<0> = !trait.poly<0>] for @P163[!trait.poly<0>] given [@p164]
-trait.proof private @p164 proves @P164_all[!trait.poly<0> = !trait.poly<0>] for @P164[!trait.poly<0>] given [@p165]
-trait.proof private @p165 proves @P165_all[!trait.poly<0> = !trait.poly<0>] for @P165[!trait.poly<0>] given [@p166]
-trait.proof private @p166 proves @P166_all[!trait.poly<0> = !trait.poly<0>] for @P166[!trait.poly<0>] given [@p167]
-trait.proof private @p167 proves @P167_all[!trait.poly<0> = !trait.poly<0>] for @P167[!trait.poly<0>] given [@p168]
-trait.proof private @p168 proves @P168_all[!trait.poly<0> = !trait.poly<0>] for @P168[!trait.poly<0>] given [@p169]
-trait.proof private @p169 proves @P169_all[!trait.poly<0> = !trait.poly<0>] for @P169[!trait.poly<0>] given [@p170]
-trait.proof private @p170 proves @P170_all[!trait.poly<0> = !trait.poly<0>] for @P170[!trait.poly<0>] given [@p171]
-trait.proof private @p171 proves @P171_all[!trait.poly<0> = !trait.poly<0>] for @P171[!trait.poly<0>] given [@p172]
-trait.proof private @p172 proves @P172_all[!trait.poly<0> = !trait.poly<0>] for @P172[!trait.poly<0>] given [@p173]
-trait.proof private @p173 proves @P173_all[!trait.poly<0> = !trait.poly<0>] for @P173[!trait.poly<0>] given [@p174]
-trait.proof private @p174 proves @P174_all[!trait.poly<0> = !trait.poly<0>] for @P174[!trait.poly<0>] given [@p175]
-trait.proof private @p175 proves @P175_all[!trait.poly<0> = !trait.poly<0>] for @P175[!trait.poly<0>] given [@p176]
-trait.proof private @p176 proves @P176_all[!trait.poly<0> = !trait.poly<0>] for @P176[!trait.poly<0>] given [@p177]
-trait.proof private @p177 proves @P177_all[!trait.poly<0> = !trait.poly<0>] for @P177[!trait.poly<0>] given [@p178]
-trait.proof private @p178 proves @P178_all[!trait.poly<0> = !trait.poly<0>] for @P178[!trait.poly<0>] given [@p179]
-trait.proof private @p179 proves @P179_all[!trait.poly<0> = !trait.poly<0>] for @P179[!trait.poly<0>] given [@p180]
-trait.proof private @p180 proves @P180_all[!trait.poly<0> = !trait.poly<0>] for @P180[!trait.poly<0>] given [@p181]
-trait.proof private @p181 proves @P181_all[!trait.poly<0> = !trait.poly<0>] for @P181[!trait.poly<0>] given [@p182]
-trait.proof private @p182 proves @P182_all[!trait.poly<0> = !trait.poly<0>] for @P182[!trait.poly<0>] given [@p183]
-trait.proof private @p183 proves @P183_all[!trait.poly<0> = !trait.poly<0>] for @P183[!trait.poly<0>] given [@p184]
-trait.proof private @p184 proves @P184_all[!trait.poly<0> = !trait.poly<0>] for @P184[!trait.poly<0>] given [@p185]
-trait.proof private @p185 proves @P185_all[!trait.poly<0> = !trait.poly<0>] for @P185[!trait.poly<0>] given [@p186]
-trait.proof private @p186 proves @P186_all[!trait.poly<0> = !trait.poly<0>] for @P186[!trait.poly<0>] given [@p187]
-trait.proof private @p187 proves @P187_all[!trait.poly<0> = !trait.poly<0>] for @P187[!trait.poly<0>] given [@p188]
-trait.proof private @p188 proves @P188_all[!trait.poly<0> = !trait.poly<0>] for @P188[!trait.poly<0>] given [@p189]
-trait.proof private @p189 proves @P189_all[!trait.poly<0> = !trait.poly<0>] for @P189[!trait.poly<0>] given [@p190]
-trait.proof private @p190 proves @P190_all[!trait.poly<0> = !trait.poly<0>] for @P190[!trait.poly<0>] given [@p191]
-trait.proof private @p191 proves @P191_all[!trait.poly<0> = !trait.poly<0>] for @P191[!trait.poly<0>] given [@p192]
-trait.proof private @p192 proves @P192_all[!trait.poly<0> = !trait.poly<0>] for @P192[!trait.poly<0>] given [@p193]
-trait.proof private @p193 proves @P193_all[!trait.poly<0> = !trait.poly<0>] for @P193[!trait.poly<0>] given [@p194]
-trait.proof private @p194 proves @P194_all[!trait.poly<0> = !trait.poly<0>] for @P194[!trait.poly<0>] given [@p195]
-trait.proof private @p195 proves @P195_all[!trait.poly<0> = !trait.poly<0>] for @P195[!trait.poly<0>] given [@p196]
-trait.proof private @p196 proves @P196_all[!trait.poly<0> = !trait.poly<0>] for @P196[!trait.poly<0>] given [@p197]
-trait.proof private @p197 proves @P197_all[!trait.poly<0> = !trait.poly<0>] for @P197[!trait.poly<0>] given [@p198]
-trait.proof private @p198 proves @P198_all[!trait.poly<0> = !trait.poly<0>] for @P198[!trait.poly<0>] given [@p199]
-trait.proof private @p199 proves @P199_all[!trait.poly<0> = !trait.poly<0>] for @P199[!trait.poly<0>] given [@p200]
-trait.proof private @p200 proves @P200_all[!trait.poly<0> = !trait.poly<0>] for @P200[!trait.poly<0>] given [@p201]
-trait.proof private @p201 proves @P201_all[!trait.poly<0> = !trait.poly<0>] for @P201[!trait.poly<0>] given [@p202]
-trait.proof private @p202 proves @P202_all[!trait.poly<0> = !trait.poly<0>] for @P202[!trait.poly<0>] given [@p203]
-trait.proof private @p203 proves @P203_all[!trait.poly<0> = !trait.poly<0>] for @P203[!trait.poly<0>] given [@p204]
-trait.proof private @p204 proves @P204_all[!trait.poly<0> = !trait.poly<0>] for @P204[!trait.poly<0>] given [@p205]
-trait.proof private @p205 proves @P205_all[!trait.poly<0> = !trait.poly<0>] for @P205[!trait.poly<0>] given [@p206]
-trait.proof private @p206 proves @P206_all[!trait.poly<0> = !trait.poly<0>] for @P206[!trait.poly<0>] given [@p207]
-trait.proof private @p207 proves @P207_all[!trait.poly<0> = !trait.poly<0>] for @P207[!trait.poly<0>] given [@p208]
-trait.proof private @p208 proves @P208_all[!trait.poly<0> = !trait.poly<0>] for @P208[!trait.poly<0>] given [@p209]
-trait.proof private @p209 proves @P209_all[!trait.poly<0> = !trait.poly<0>] for @P209[!trait.poly<0>] given [@p210]
-trait.proof private @p210 proves @P210_all[!trait.poly<0> = !trait.poly<0>] for @P210[!trait.poly<0>] given [@p211]
-trait.proof private @p211 proves @P211_all[!trait.poly<0> = !trait.poly<0>] for @P211[!trait.poly<0>] given [@p212]
-trait.proof private @p212 proves @P212_all[!trait.poly<0> = !trait.poly<0>] for @P212[!trait.poly<0>] given [@p213]
-trait.proof private @p213 proves @P213_all[!trait.poly<0> = !trait.poly<0>] for @P213[!trait.poly<0>] given [@p214]
-trait.proof private @p214 proves @P214_all[!trait.poly<0> = !trait.poly<0>] for @P214[!trait.poly<0>] given [@p215]
-trait.proof private @p215 proves @P215_all[!trait.poly<0> = !trait.poly<0>] for @P215[!trait.poly<0>] given [@p216]
-trait.proof private @p216 proves @P216_all[!trait.poly<0> = !trait.poly<0>] for @P216[!trait.poly<0>] given [@p217]
-trait.proof private @p217 proves @P217_all[!trait.poly<0> = !trait.poly<0>] for @P217[!trait.poly<0>] given [@p218]
-trait.proof private @p218 proves @P218_all[!trait.poly<0> = !trait.poly<0>] for @P218[!trait.poly<0>] given [@p219]
-trait.proof private @p219 proves @P219_all[!trait.poly<0> = !trait.poly<0>] for @P219[!trait.poly<0>] given [@p220]
-trait.proof private @p220 proves @P220_all[!trait.poly<0> = !trait.poly<0>] for @P220[!trait.poly<0>] given [@p221]
-trait.proof private @p221 proves @P221_all[!trait.poly<0> = !trait.poly<0>] for @P221[!trait.poly<0>] given [@p222]
-trait.proof private @p222 proves @P222_all[!trait.poly<0> = !trait.poly<0>] for @P222[!trait.poly<0>] given [@p223]
-trait.proof private @p223 proves @P223_all[!trait.poly<0> = !trait.poly<0>] for @P223[!trait.poly<0>] given [@p224]
-trait.proof private @p224 proves @P224_all[!trait.poly<0> = !trait.poly<0>] for @P224[!trait.poly<0>] given [@p225]
-trait.proof private @p225 proves @P225_all[!trait.poly<0> = !trait.poly<0>] for @P225[!trait.poly<0>] given [@p226]
-trait.proof private @p226 proves @P226_all[!trait.poly<0> = !trait.poly<0>] for @P226[!trait.poly<0>] given [@p227]
-trait.proof private @p227 proves @P227_all[!trait.poly<0> = !trait.poly<0>] for @P227[!trait.poly<0>] given [@p228]
-trait.proof private @p228 proves @P228_all[!trait.poly<0> = !trait.poly<0>] for @P228[!trait.poly<0>] given [@p229]
-trait.proof private @p229 proves @P229_all[!trait.poly<0> = !trait.poly<0>] for @P229[!trait.poly<0>] given [@p230]
-trait.proof private @p230 proves @P230_all[!trait.poly<0> = !trait.poly<0>] for @P230[!trait.poly<0>] given [@p231]
-trait.proof private @p231 proves @P231_all[!trait.poly<0> = !trait.poly<0>] for @P231[!trait.poly<0>] given [@p232]
-trait.proof private @p232 proves @P232_all[!trait.poly<0> = !trait.poly<0>] for @P232[!trait.poly<0>] given [@p233]
-trait.proof private @p233 proves @P233_all[!trait.poly<0> = !trait.poly<0>] for @P233[!trait.poly<0>] given [@p234]
-trait.proof private @p234 proves @P234_all[!trait.poly<0> = !trait.poly<0>] for @P234[!trait.poly<0>] given [@p235]
-trait.proof private @p235 proves @P235_all[!trait.poly<0> = !trait.poly<0>] for @P235[!trait.poly<0>] given [@p236]
-trait.proof private @p236 proves @P236_all[!trait.poly<0> = !trait.poly<0>] for @P236[!trait.poly<0>] given [@p237]
-trait.proof private @p237 proves @P237_all[!trait.poly<0> = !trait.poly<0>] for @P237[!trait.poly<0>] given [@p238]
-trait.proof private @p238 proves @P238_all[!trait.poly<0> = !trait.poly<0>] for @P238[!trait.poly<0>] given [@p239]
-trait.proof private @p239 proves @P239_all[!trait.poly<0> = !trait.poly<0>] for @P239[!trait.poly<0>] given [@p240]
-trait.proof private @p240 proves @P240_all[!trait.poly<0> = !trait.poly<0>] for @P240[!trait.poly<0>] given [@p241]
-trait.proof private @p241 proves @P241_all[!trait.poly<0> = !trait.poly<0>] for @P241[!trait.poly<0>] given [@p242]
-trait.proof private @p242 proves @P242_all[!trait.poly<0> = !trait.poly<0>] for @P242[!trait.poly<0>] given [@p243]
-trait.proof private @p243 proves @P243_all[!trait.poly<0> = !trait.poly<0>] for @P243[!trait.poly<0>] given [@p244]
-trait.proof private @p244 proves @P244_all[!trait.poly<0> = !trait.poly<0>] for @P244[!trait.poly<0>] given [@p245]
-trait.proof private @p245 proves @P245_all[!trait.poly<0> = !trait.poly<0>] for @P245[!trait.poly<0>] given [@p246]
-trait.proof private @p246 proves @P246_all[!trait.poly<0> = !trait.poly<0>] for @P246[!trait.poly<0>] given [@p247]
-trait.proof private @p247 proves @P247_all[!trait.poly<0> = !trait.poly<0>] for @P247[!trait.poly<0>] given [@p248]
-trait.proof private @p248 proves @P248_all[!trait.poly<0> = !trait.poly<0>] for @P248[!trait.poly<0>] given [@p249]
-trait.proof private @p249 proves @P249_all[!trait.poly<0> = !trait.poly<0>] for @P249[!trait.poly<0>] given [@p250]
-trait.proof private @p250 proves @P250_all[!trait.poly<0> = !trait.poly<0>] for @P250[!trait.poly<0>] given [@p251]
-trait.proof private @p251 proves @P251_all[!trait.poly<0> = !trait.poly<0>] for @P251[!trait.poly<0>] given [@p252]
-trait.proof private @p252 proves @P252_all[!trait.poly<0> = !trait.poly<0>] for @P252[!trait.poly<0>] given [@p253]
-trait.proof private @p253 proves @P253_all[!trait.poly<0> = !trait.poly<0>] for @P253[!trait.poly<0>] given [@p254]
-trait.proof private @p254 proves @P254_all[!trait.poly<0> = !trait.poly<0>] for @P254[!trait.poly<0>] given [@p255]
-trait.proof private @p255 proves @P255_all[!trait.poly<0> = !trait.poly<0>] for @P255[!trait.poly<0>] given [@p256]
-trait.proof private @p256 proves @P256_all[!trait.poly<0> = !trait.poly<0>] for @P256[!trait.poly<0>] given [@p1]
 func.func @main() -> i64 {
   %w = trait.witness @p1 for @P1[i32]
   %v = trait.method.call %w @P1[i32]::@m() : () -> i64 by @p1

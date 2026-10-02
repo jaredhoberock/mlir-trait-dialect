@@ -27,18 +27,18 @@
 
 !S = !trait.poly<0>
 
-trait.trait private @Show[!S] {
+trait.trait private @Show(%self: !trait.claim<@Show[!S]>) {
   trait.method @show(!S) -> i32
 }
 
-trait.impl private @Show_i32 for @Show[i32] {
+trait.impl private @Show_i32(%self: !trait.claim<@Show[i32]>) {
   trait.method @show(%x: i32) -> i32 {
     trait.return %x : i32
   }
 }
 
 // no call selects this impl, so its method is never cloned
-trait.impl private @Show_i64 for @Show[i64] {
+trait.impl private @Show_i64(%self: !trait.claim<@Show[i64]>) {
   trait.method @show(%x: i64) -> i32 {
     %c = arith.constant 0 : i32
     trait.return %c : i32
@@ -73,13 +73,16 @@ func.func private @dead_template(%x: !S) -> i32 {
 // spelling and the coerce's result type below are the whole of it, and the
 // barrier takes both, so the collector reads a module in which nothing mentions
 // them at all.
-trait.trait private @Tag[!S] {
+trait.trait private @Tag(%self: !trait.claim<@Tag[!S]>) {
 }
 
-trait.impl private @Tag_i32 for @Tag[i32] {
+trait.impl private @Tag_i32(%self: !trait.claim<@Tag[i32]>) {
 }
 
-trait.proof private @Tag_p proves @Tag_i32[] for @Tag[i32] given []
+trait.proof private @Tag_p {
+  %d = trait.derive @Tag[i32] from @Tag_i32 given()
+  trait.return %d : !trait.claim<@Tag[i32]>
+}
 
 func.func private @holds_evidence_in_its_type(%e: !trait.claim<@Tag[i32] by @Tag_p>) -> i32 {
   %same = trait.coerce %e : !trait.claim<@Tag[i32] by @Tag_p> to !trait.claim<@Tag[i32] by @Tag_p>
@@ -89,20 +92,30 @@ func.func private @holds_evidence_in_its_type(%e: !trait.claim<@Tag[i32] by @Tag
 
 // A coinductive pair: each proof discharges the other's obligation and nothing
 // outside the pair names either, so the two are an unrooted cycle.
-trait.trait private @Ping[!S] where [@Ping[!trait.proj<@Ping[!S], "Other">]] {
+trait.trait private @Ping(%self: !trait.claim<@Ping[!S]>) -> !trait.claim<@Ping[!trait.proj<@Ping[!S], "Other">]> {
   trait.assoc_type @Other
 }
 
-trait.impl private @Ping_i32 for @Ping[i32] {
+trait.impl private @Ping_i32(%self: !trait.claim<@Ping[i32]>) {
   trait.assoc_type @Other = i64
+  %req0 = trait.allege @Ping[!trait.proj<@Ping[i32], "Other">]
+  trait.return %req0 : !trait.claim<@Ping[!trait.proj<@Ping[i32], "Other">]>
 }
 
-trait.impl private @Ping_i64 for @Ping[i64] {
+trait.impl private @Ping_i64(%self: !trait.claim<@Ping[i64]>) {
   trait.assoc_type @Other = i32
+  %req0 = trait.allege @Ping[!trait.proj<@Ping[i64], "Other">]
+  trait.return %req0 : !trait.claim<@Ping[!trait.proj<@Ping[i64], "Other">]>
 }
 
-trait.proof private @Ping_i32_p proves @Ping_i32[] for @Ping[i32] given [@Ping_i64_p]
-trait.proof private @Ping_i64_p proves @Ping_i64[] for @Ping[i64] given [@Ping_i32_p]
+trait.proof private @Ping_i32_p {
+  %d = trait.derive @Ping[i32] from @Ping_i32 given()
+  trait.return %d : !trait.claim<@Ping[i32]>
+}
+trait.proof private @Ping_i64_p {
+  %d = trait.derive @Ping[i64] from @Ping_i64 given()
+  trait.return %d : !trait.claim<@Ping[i64]>
+}
 
 // The method clone, the helper the live clone reaches, the clone itself and
 // main are the whole of what stands; the implicit-check-nots on the RUN line

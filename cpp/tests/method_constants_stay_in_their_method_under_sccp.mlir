@@ -11,7 +11,7 @@
 // own 7 although @a also spelled one, and the 3 the trait's default proves.
 
 !T = !trait.poly<0>
-trait.trait private @Tr[!T] {
+trait.trait private @Tr(%self: !trait.claim<@Tr[!T]>) {
   trait.method @a(!T) -> i64
   trait.method @b(!T) -> i64
   trait.method @c(%x: !T) -> i64 {
@@ -22,7 +22,7 @@ trait.trait private @Tr[!T] {
   }
 }
 
-trait.impl private @Tr_i64 for @Tr[i64] {
+trait.impl private @Tr_i64(%self: !trait.claim<@Tr[i64]>) {
   trait.method @a(%x: i64) -> i64 {
     %r = scf.execute_region -> i64 {
       %seven = arith.constant 7 : i64

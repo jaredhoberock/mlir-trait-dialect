@@ -11,29 +11,29 @@
 
 // RUN: mlir-opt %s -split-input-file -verify-diagnostics
 
-trait.trait private @Collide[!trait.poly<0>] {
+trait.trait private @Collide(%self: !trait.claim<@Collide[!trait.poly<0>]>) {
   // expected-error@+1 {{type parameter '!trait.poly<0>' is already a parameter of trait '@Collide'}}
   trait.assoc_type @A<[!trait.poly<0>]>
 }
 
 // -----
 
-trait.trait private @Family[!trait.poly<0>] {
+trait.trait private @Family(%self: !trait.claim<@Family[!trait.poly<0>]>) {
   trait.assoc_type @A<[!trait.poly<1>]>
 }
 
-trait.impl private @Family_blanket for @Family[!trait.poly<0>] {
+trait.impl private @Family_blanket(%self: !trait.claim<@Family[!trait.poly<0>]>) {
   // expected-error@+1 {{type parameter '!trait.poly<0>' is already a parameter of impl '@Family_blanket'}}
   trait.assoc_type @A<[!trait.poly<0>]> = !trait.poly<0>
 }
 
 // -----
 
-trait.trait private @Container[!trait.poly<0>] {
+trait.trait private @Container(%self: !trait.claim<@Container[!trait.poly<0>]>) {
   trait.assoc_type @Item<[!trait.poly<1>]>
 }
 
-trait.impl private @Container_i32 for @Container[i32] {
+trait.impl private @Container_i32(%self: !trait.claim<@Container[i32]>) {
   // expected-error@+1 {{bound type mentions type parameter '!trait.poly<1>', which neither impl '@Container_i32' nor this associated type declares}}
   trait.assoc_type @Item<[!trait.poly<0>]> = !trait.poly<1>
 }

@@ -13,11 +13,11 @@
 !S = !trait.poly<0>
 !T = !trait.poly<1>
 
-trait.trait private @A[!S] {
+trait.trait private @A(%self: !trait.claim<@A[!S]>) {
   trait.assoc_type @Output
 }
 
 // expected-error @below {{type parameter '!trait.poly<1>' is not constrained by the impl's trait application or its where clause, so impl selection cannot determine it}}
-trait.impl private @A_gen for @A[!S] where [@A[!S], !trait.proj<@A[!S], "Output"> = !T] {
+trait.impl private @A_gen(%self: !trait.claim<@A[!S]>, %a: !trait.claim<@A[!S]>, %output: !trait.claim<!trait.proj<@A[!S], "Output"> = !T>) {
   trait.assoc_type @Output = !T
 }

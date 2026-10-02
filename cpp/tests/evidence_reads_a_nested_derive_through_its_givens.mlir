@@ -12,14 +12,14 @@
 // already settles.
 
 !T = !trait.poly<0>
-trait.trait private @Ten[!T] {
+trait.trait private @Ten(%self: !trait.claim<@Ten[!T]>) {
   trait.assoc_type @Shape
   trait.assoc_type @Element
 }
 
 // The box's element forwards to its base's.
 !B = !trait.poly<1>
-trait.impl private @Ten_box for @Ten[tuple<!B>] where [@Ten[!B]] {
+trait.impl private @Ten_box(%self: !trait.claim<@Ten[tuple<!B>]>, %ten: !trait.claim<@Ten[!B]>) {
   trait.assoc_type @Shape = i64
   trait.assoc_type @Element = !trait.proj<@Ten[!B], "Element">
 }
@@ -27,14 +27,12 @@ trait.impl private @Ten_box for @Ten[tuple<!B>] where [@Ten[!B]] {
 !S = !trait.poly<2>
 !I = !trait.poly<3>
 !E = !trait.poly<4>
-trait.trait private @Idx[!S, !I, !E] {
+trait.trait private @Idx(%self: !trait.claim<@Idx[!S, !I, !E]>) {
   trait.method @at(!S, !I) -> !E
 }
 
 !U = !trait.poly<5>
-trait.impl private @Idx_blanket
-    for @Idx[!U, !trait.proj<@Ten[!U], "Shape">, !trait.proj<@Ten[!U], "Element">]
-    where [@Ten[!U]] {
+trait.impl private @Idx_blanket(%self_claim: !trait.claim<@Idx[!U, !trait.proj<@Ten[!U], "Shape">, !trait.proj<@Ten[!U], "Element">]>, %ten: !trait.claim<@Ten[!U]>) {
   trait.method @at(%self: !U, %i: !trait.proj<@Ten[!U], "Shape">)
       -> !trait.proj<@Ten[!U], "Element"> {
     %r = ub.poison : !trait.proj<@Ten[!U], "Element">
@@ -48,12 +46,12 @@ trait.impl private @Idx_blanket
 func.func @reads_a_given_derive(%ten: !trait.claim<@Ten[!W]>,
                                 %self: tuple<!W>, %i: i64)
     -> !trait.proj<@Ten[tuple<!W>], "Element"> {
-  %view = trait.derive @Ten[tuple<!W>] from @Ten_box[!B = !W] given(%ten)
+  %view = trait.derive @Ten[tuple<!W>] from @Ten_box given(%ten)
     : (!trait.claim<@Ten[!W]>)
   %idx = trait.derive
     @Idx[tuple<!W>, !trait.proj<@Ten[tuple<!W>], "Shape">,
          !trait.proj<@Ten[tuple<!W>], "Element">]
-    from @Idx_blanket[!U = tuple<!W>] given(%view)
+    from @Idx_blanket given(%view)
     : (!trait.claim<@Ten[tuple<!W>]>)
   %e = trait.method.call %idx
     @Idx[tuple<!W>, !trait.proj<@Ten[tuple<!W>], "Shape">,

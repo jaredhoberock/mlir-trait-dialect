@@ -11,18 +11,18 @@
 
 // RUN: mlir-opt %s -split-input-file -verify-diagnostics
 
-trait.trait private @Family[!trait.poly<0>] {
+trait.trait private @Family(%self: !trait.claim<@Family[!trait.poly<0>]>) {
   // expected-error@+1 {{type parameter list holds 'i32', which is not a type variable}}
   trait.assoc_type @A<[i32]>
 }
 
 // -----
 
-trait.trait private @Family[!trait.poly<0>] {
+trait.trait private @Family(%self: !trait.claim<@Family[!trait.poly<0>]>) {
   trait.assoc_type @A<[!trait.poly<1>]>
 }
 
-trait.impl private @Family_i1 for @Family[i1] {
+trait.impl private @Family_i1(%self: !trait.claim<@Family[i1]>) {
   // expected-error@+1 {{type parameter list holds 'i32', which is not a type variable}}
   trait.assoc_type @A<[i32]> = tuple<i32, i32>
 }
