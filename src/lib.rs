@@ -43,11 +43,6 @@ unsafe extern "C" {
                               assoc_type_args: *const MlirType, num_assoc_type_args: isize) -> MlirType;
     fn traitTypeEqualityAttrGet(ctx: MlirContext,
                                 lhs: MlirType, rhs: MlirType) -> MlirAttribute;
-    fn traitModuleInstantiateImpl(module: mlir_sys::MlirModule, name: MlirStringRef,
-                                  parameters: *const MlirType, arguments: *const MlirType,
-                                  num_arguments: isize,
-                                  header: *mut MlirType, where_claims: *mut MlirType, max_where: isize,
-                                  num_where: *mut isize) -> u32;
 }
 
 pub fn register(ctx: &Context) {
@@ -577,60 +572,3 @@ pub fn assoc_type<'c>(loc: Location<'c>, name: &str, bound_type: Option<Type<'c>
     build_op(OperationBuilder::new("trait.assoc_type", loc).add_attributes(&attributes))
 }
 
-/// The outcomes `traitModuleInstantiateImpl` reports, `c_api.h`'s
-/// `TraitImplInstantiation`.
-const TRAIT_IMPL_INSTANTIATED: u32 = 0;
-const TRAIT_IMPL_ABSENT: u32 = 1;
-
-/// Why an impl a module names was not instantiated.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ImplRefusal {
-    /// The module holds no impl of that name.
-    Absent,
-    /// The arguments are not one per parameter of the impl.
-    NotItsParameters,
-}
-
-/// The claims the `trait.impl` named `name` at the top level of `module` states
-/// at `arguments`, each a parameter of the impl and the type it takes, one per
-/// parameter: the claim its header states, and those its where-clause entries
-/// state, in order. Refused with `Absent` when the module holds no impl of that
-/// name, and with `NotItsParameters` when the arguments are not one per
-/// parameter of it.
-pub fn instantiate_impl<'c>(
-    module: &melior::ir::Module<'c>,
-    name: &str,
-    arguments: &[(Type<'c>, Type<'c>)],
-) -> Result<(Type<'c>, Vec<Type<'c>>), ImplRefusal> {
-    let parameters: Vec<MlirType> = arguments.iter().map(|(parameter, _)| parameter.to_raw()).collect();
-    let values: Vec<MlirType> = arguments.iter().map(|(_, argument)| argument.to_raw()).collect();
-    let null = MlirType { ptr: std::ptr::null_mut() };
-    let mut header = null;
-    let mut count = 0isize;
-    let instantiate = |header: &mut MlirType, where_claims: &mut [MlirType], count: &mut isize| unsafe {
-        traitModuleInstantiateImpl(
-            module.to_raw(),
-            StringRef::new(name).to_raw(),
-            parameters.as_ptr(),
-            values.as_ptr(),
-            parameters.len() as isize,
-            header,
-            where_claims.as_mut_ptr(),
-            where_claims.len() as isize,
-            count,
-        )
-    };
-    // The first call counts the where clause; the second fills a buffer of
-    // that size.
-    match instantiate(&mut header, &mut [], &mut count) {
-        TRAIT_IMPL_INSTANTIATED => {}
-        TRAIT_IMPL_ABSENT => return Err(ImplRefusal::Absent),
-        _ => return Err(ImplRefusal::NotItsParameters),
-    }
-    let mut where_claims = vec![null; count as usize];
-    instantiate(&mut header, &mut where_claims, &mut count);
-    Ok((
-        unsafe { Type::from_raw(header) },
-        where_claims.into_iter().map(|claim| unsafe { Type::from_raw(claim) }).collect(),
-    ))
-}

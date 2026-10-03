@@ -82,27 +82,6 @@ MlirAttribute traitTypeEqualityAttrGet(MlirContext ctx,
 /// types found.
 intptr_t traitGetGenericTypesIn(MlirType type, MlirType *results, intptr_t maxResults);
 
-/// The outcome of instantiating an impl a module names.
-typedef enum {
-  TraitImplInstantiated = 0,
-  TraitImplAbsent = 1,
-  TraitImplNotItsParameters = 2,
-} TraitImplInstantiation;
-
-/// Instantiate the `trait.impl` named `name` at the top level of `module` at
-/// the arguments `arguments[i]` its parameters `parameters[i]` take, one per
-/// parameter: writes the claim the impl's header states there to `header`, and
-/// the claims its where-clause entries state there, in order, up to `maxWhere`
-/// of them, into `whereClaims`, with their number in `numWhere`. Writes nothing
-/// when `module` holds no impl of that name (`TraitImplAbsent`) or the
-/// parameters are not the impl's, each once (`TraitImplNotItsParameters`).
-TraitImplInstantiation traitModuleInstantiateImpl(MlirModule module, MlirStringRef name,
-                                MlirType const *parameters,
-                                MlirType const *arguments,
-                                intptr_t numArguments, MlirType *header,
-                                MlirType *whereClaims, intptr_t maxWhere,
-                                intptr_t *numWhere);
-
 #ifdef __cplusplus
 }
 #endif

@@ -281,25 +281,20 @@ bool projectsOwnApplication(Value value, ImplOp impl) {
     return proof && proof.getDerive().getImpl() == impl.getSymName() &&
            proof.getTraitApplication() == own;
   };
-  SmallVector<Value> pending{value};
-  DenseSet<Operation *> seen;
+  // A producer is visited once as reached and once more as reached from under
+  // a projection.
+  SmallVector<std::pair<Value, bool>> pending{{value, false}};
+  DenseSet<Operation *> seen[2];
   while (!pending.empty()) {
-    Operation *producer = pending.pop_back_val().getDefiningOp();
-    if (!producer || !seen.insert(producer).second)
+    auto [current, underProjection] = pending.pop_back_val();
+    Operation *producer = current.getDefiningOp();
+    if (!producer || !seen[underProjection].insert(producer).second)
       continue;
-    if (auto project = dyn_cast<ProjectOp>(producer)) {
-      SmallVector<Value> sources{project.getSource()};
-      DenseSet<Operation *> read;
-      while (!sources.empty()) {
-        Operation *source = sources.pop_back_val().getDefiningOp();
-        if (!source || !read.insert(source).second)
-          continue;
-        if (namesOwnApplication(source))
-          return true;
-        llvm::append_range(sources, source->getOperands());
-      }
-    }
-    llvm::append_range(pending, producer->getOperands());
+    if (underProjection && namesOwnApplication(producer))
+      return true;
+    bool below = underProjection || isa<ProjectOp>(producer);
+    for (Value operand : producer->getOperands())
+      pending.push_back({operand, below});
   }
   return false;
 }

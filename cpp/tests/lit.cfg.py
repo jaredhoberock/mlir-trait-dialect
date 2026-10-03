@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 # SPDX-License-Identifier: Apache-2.0
 import os
+import sys
 import lit.formats
 
 config.test_format = lit.formats.ShTest(True)
@@ -29,4 +30,7 @@ config.name = "Trait Dialect Tests"
 trait_plugin = plugin('TRAIT_DIALECT_PLUGIN', os.path.join(os.path.dirname(__file__), '..', 'build', 'libtrait_dialect.so'))
 config.substitutions.append(('mlir-opt', f'{tool('mlir-opt')} --load-dialect-plugin={trait_plugin}'))
 config.substitutions.append(('FileCheck', tool('FileCheck')))
+# A row whose module repeats one declaration shape many times is written out by
+# Inputs/expand_repeats.py before mlir-opt reads it.
+config.substitutions.append(('%python', sys.executable))
 config.substitutions.append(('mlir-runner', tool('mlir-runner')))

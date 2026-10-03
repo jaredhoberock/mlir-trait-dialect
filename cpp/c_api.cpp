@@ -129,38 +129,4 @@ intptr_t traitGetGenericTypesIn(MlirType type, MlirType *results, intptr_t maxRe
   return count;
 }
 
-TraitImplInstantiation traitModuleInstantiateImpl(MlirModule module, MlirStringRef name,
-                                MlirType const *parameters,
-                                MlirType const *arguments,
-                                intptr_t numArguments, MlirType *header,
-                                MlirType *whereClaims, intptr_t maxWhere,
-                                intptr_t *numWhere) {
-  ModuleOp moduleOp = unwrap(module);
-  auto impl = dyn_cast_or_null<ImplOp>(
-      SymbolTable::lookupSymbolIn(moduleOp, StringRef(name.data, name.length)));
-  if (!impl)
-    return TraitImplAbsent;
-  // The substitution the arguments make, one per parameter of the impl, which
-  // the impl's header and where clause are instantiated at.
-  SmallVector<GenericTypeInterface, 4> params = impl.getTypeParams();
-  SpecializationMap substitution;
-  for (intptr_t i = 0; i < numArguments; ++i) {
-    auto parameter = dyn_cast<GenericTypeInterface>(unwrap(parameters[i]));
-    if (!parameter || !llvm::is_contained(params, parameter) ||
-        substitution.lookup(parameter))
-      return TraitImplNotItsParameters;
-    substitution.bind(parameter, unwrap(arguments[i]));
-  }
-  if (substitution.bindingCount() != params.size())
-    return TraitImplNotItsParameters;
-  *header = wrap(Type(
-      ClaimType::get(impl.getContext(), impl.getSelfApplicationAt(substitution))));
-  SmallVector<ClaimType> where = impl.getWhereClaimsAt(substitution);
-  *numWhere = where.size();
-  for (auto [position, claim] : llvm::enumerate(where))
-    if (intptr_t(position) < maxWhere)
-      whereClaims[position] = wrap(Type(claim));
-  return TraitImplInstantiated;
-}
-
 } // end extern "C"

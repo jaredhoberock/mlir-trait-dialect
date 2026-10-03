@@ -322,13 +322,15 @@ ImplResolver::getStandingProofs(ModuleOp scope) const {
 
 void ImplResolver::StandingProofs::note(ProofOp proof) {
   byClaim[{proof.getImpl(), proof.getTraitApplication()}].push_back(proof);
-  byName.try_emplace(proof.getSymNameAttr(), proof);
 }
 
 /// Writes at the end of `scope` the proof `name` whose body derives `app` from
 /// `impl` over one premise per entry of `entries`, `impl`'s where entries at
 /// the citation: a witness of the next of `subproofs` for an application entry
 /// and the evidence the next of `equalitySteps` build for an equality entry.
+/// Where a symbol of `scope` holds `name` already, the proof is named as the
+/// module's symbol table renames it (`SymbolTable::insert`): mangled names are
+/// not one-to-one, so the table, not the mangling, makes a proof's name unique.
 static ProofOp
 writeProofBody(OpBuilder &builder, ModuleOp scope, StringRef name, ImplOp impl,
                TraitApplicationAttr app, ArrayRef<ClaimType> entries,
@@ -339,10 +341,14 @@ writeProofBody(OpBuilder &builder, ModuleOp scope, StringRef name, ImplOp impl,
   assert(builder.getListener() &&
          "proof creation requires a builder whose insertions someone observes");
   MLIRContext *ctx = scope.getContext();
+  // The table is read before the proof stands, so the proof's name is the one
+  // it checks.
+  SymbolTable symbols(scope);
   OpBuilder::InsertionGuard guard(builder);
   builder.setInsertionPointToEnd(scope.getBody());
   Location loc = builder.getUnknownLoc();
   ProofOp proof = ProofOp::create(builder, loc, name);
+  symbols.insert(proof);
   builder.setInsertionPointToEnd(&proof.getBody().front());
   SmallVector<Value> premises;
   auto nextSubproof = subproofs.begin();
@@ -365,6 +371,11 @@ writeProofBody(OpBuilder &builder, ModuleOp scope, StringRef name, ImplOp impl,
 ClaimType ImplResolver::findProof(ModuleOp scope, ImplOp impl,
                                   TraitApplicationAttr app,
                                   ArrayRef<FlatSymbolRefAttr> subproofs) const {
+  MLIRContext *ctx = scope.getContext();
+  // An impl with no parameters and no where entries is its own proof.
+  if (impl.isUnconditional())
+    return ClaimType::get(ctx, app,
+                          FlatSymbolRefAttr::get(ctx, impl.getSymName()));
   // A proof is identified by the evidence it derives its claim from: the impl,
   // the application, and the proof each application premise names.
   auto citesSubproofs = [&](ProofOp proof) {
@@ -377,7 +388,6 @@ ClaimType ImplResolver::findProof(ModuleOp scope, ImplOp impl,
     return true;
   };
   StandingProofs &standing = getStandingProofs(scope);
-  MLIRContext *ctx = scope.getContext();
   if (auto it = standing.byClaim.find({impl, app}); it != standing.byClaim.end())
     for (ProofOp proof : it->second)
       if (citesSubproofs(proof))
@@ -386,39 +396,16 @@ ClaimType ImplResolver::findProof(ModuleOp scope, ImplOp impl,
   return {};
 }
 
-StringAttr ImplResolver::freeProofName(ModuleOp scope, StringRef base,
-                                       StringRef salt) const {
-  MLIRContext *ctx = scope.getContext();
-  StandingProofs &standing = getStandingProofs(scope);
-  auto taken = [&](StringAttr name) {
-    return standing.byName.contains(name) ||
-           reservedProofNames.contains({scope, name}) ||
-           lookupSymbolFrom(scope, FlatSymbolRefAttr::get(name));
-  };
-  StringAttr name = StringAttr::get(ctx, base);
-  for (std::string salted = salt.str(); taken(name); salted += ";")
-    name = StringAttr::get(ctx, base + hashToSuffix(salted));
-  return name;
-}
-
 ClaimType ImplResolver::writeProof(
     ModuleOp scope, ImplOp impl, TraitApplicationAttr app,
     const SpecializationMap &arguments, ArrayRef<ClaimType> entries,
     ArrayRef<FlatSymbolRefAttr> subproofs,
-    ArrayRef<SmallVector<ResolutionStep>> equalitySteps, OpBuilder &builder,
-    StringAttr name) const {
+    ArrayRef<SmallVector<ResolutionStep>> equalitySteps,
+    OpBuilder &builder) const {
   MLIRContext *ctx = scope.getContext();
-  // The name selection would give the proof, unless another proof holds or
-  // has reserved it; then the subproofs tell the two apart.
-  if (!name) {
-    std::string cited;
-    for (FlatSymbolRefAttr subproof : subproofs)
-      cited += subproof.getValue().str() + ";";
-    name = freeProofName(scope, impl.generateMangledName(arguments) + "_p",
-                         cited);
-  }
-  ProofOp proof = writeProofBody(builder, scope, name, impl, app, entries,
-                                 subproofs, equalitySteps);
+  ProofOp proof =
+      writeProofBody(builder, scope, impl.generateMangledName(arguments) + "_p",
+                     impl, app, entries, subproofs, equalitySteps);
   getStandingProofs(scope).note(proof);
   return ClaimType::get(ctx, app,
                         FlatSymbolRefAttr::get(ctx, proof.getSymNameAttr()));
@@ -635,44 +622,13 @@ FailureOr<ClaimType> ImplResolver::resolveAndEnsureProofFor(
   if (auto it = memo.proofMemo.find({scope, app}); it != memo.proofMemo.end())
     return ClaimType::get(ctx, app, it->second);
 
-  // check for an unconditional impl
-  if (impl.isUnconditional())
-    return recordProof(scope, app,
-                       FlatSymbolRefAttr::get(ctx, impl.getSymName()));
-
-  // Coinductive cycle guard: the memo holds a name for this proof while its
-  // premises are proven, so a premise that leads back to this claim cites it
-  // instead of diverging. That name is a standing proof of this claim under the
-  // name selection gives it, which any premise may cite; or else a name
-  // reserved for the proof written below, which nothing else may take while
-  // the premises are proven.
-  std::string base = impl.generateMangledName(*subst) + "_p";
-  ProofOp standingUnderBase =
-      getStandingProofs(scope).byName.lookup(StringAttr::get(ctx, base));
-  bool citesStanding = standingUnderBase &&
-                       standingUnderBase.getImpl() == impl &&
-                       standingUnderBase.getTraitApplication() == app;
-  StringAttr reserved;
-  if (!citesStanding) {
-    std::string spelled;
-    llvm::raw_string_ostream(spelled) << app;
-    reserved = freeProofName(scope, base, spelled);
-    reservedProofNames.insert({scope, reserved});
-  }
-  auto proofSym = FlatSymbolRefAttr::get(
-      ctx, citesStanding ? standingUnderBase.getSymNameAttr() : reserved);
-  recordProof(scope, app, proofSym);
-  auto rollback =
-      llvm::scope_exit([&] { memo.proofMemo.erase({scope, app}); });
-  auto released = llvm::scope_exit([&] {
-    if (reserved)
-      reservedProofNames.erase({scope, reserved});
-  });
-
   // The evidence for each where entry at the arguments selection chose, in
   // order: the proof of an application entry, and the resolution of an
   // equality entry, whose sides selection carries to one spelling. The trait's
   // requirements are the impl's to return, read at the proof's derive.
+  // Selection chose `impl` only once these entries held through a chain that
+  // refuses an application it meets again (`assumptionsSatisfiableFor`), so
+  // proving them never asks for `app` itself.
   SmallVector<ClaimType> entries = impl.getWhereClaimsAt(*subst);
   SmallVector<FlatSymbolRefAttr> subproofs;
   SmallVector<SmallVector<ResolutionStep>> equalitySteps;
@@ -702,14 +658,12 @@ FailureOr<ClaimType> ImplResolver::resolveAndEnsureProofFor(
   }
 
   // A proof is identified by the evidence its derive cites: one standing over
-  // these premises answers, and otherwise the proof is written -- under the
-  // name reserved for it, which a premise may already cite -- and memoized by
-  // the monomorphic app.
-  rollback.release();
+  // these premises answers, and otherwise the proof is written; either is
+  // memoized by the monomorphic app.
   if (ClaimType found = findProof(scope, impl, app, subproofs))
     return recordProof(scope, app, found.getProof());
   ClaimType written = writeProof(scope, impl, app, *subst, entries, subproofs,
-                                 equalitySteps, builder, reserved);
+                                 equalitySteps, builder);
   return recordProof(scope, app, written.getProof());
 }
 

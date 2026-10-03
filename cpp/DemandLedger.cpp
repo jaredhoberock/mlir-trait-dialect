@@ -93,21 +93,15 @@ demandsSpelledIn(ModuleOp module, bool inAttributes, DemandSkip projections,
     return WalkResult::advance();
   });
 
+  // A claim demand is the type of a value: an unproven monomorphic application
+  // claim an op produces or a block takes. A claim spelled inside another type
+  // types no value there, and an equality claim is established by trait.witness,
+  // not by selecting an impl.
   auto collectClaims = [&](Type root) {
-    root.walk<WalkOrder::PreOrder>([&](Type sub) -> WalkResult {
-      auto claim = dyn_cast<ClaimType>(sub);
-      // Only application claims are impl-resolution demands. An equality claim is
-      // established by trait.witness, not by selecting an impl, so it is never a
-      // demand the resolver serves -- and it carries no trait application to
-      // resolve for. Its endpoints are types it equates, so a claim spelled
-      // there is the type of some evidence and no demand for it.
-      if (claim && claim.isEquality())
-        return WalkResult::skip();
-      if (claim && claim.isApplication() && !claim.isProven() &&
-          claim.isMonomorphic())
-        note(sub);
-      return WalkResult::advance();
-    });
+    auto claim = dyn_cast<ClaimType>(root);
+    if (claim && claim.isApplication() && !claim.isProven() &&
+        claim.isMonomorphic())
+      note(root);
   };
   module.walk<WalkOrder::PreOrder>([&](Operation *op) -> WalkResult {
     if (skips(claims, op))

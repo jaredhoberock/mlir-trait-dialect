@@ -11,7 +11,7 @@
 // CHECK: trait.proof private @A_i32_p {
 // CHECK:   trait.witness @b_custom for @B[i32]
 // CHECK: func.func @main
-// CHECK:   trait.witness @[[P:A_i32_p_h[0-9a-f]+]] for @A[i32]
+// CHECK:   trait.witness @[[P:A_i32_p_[0-9]+]] for @A[i32]
 // CHECK: trait.proof private @[[P]] {
 // CHECK:   trait.witness @B_i32 for @B[i32]
 // CHECK:   trait.derive @A[i32] from @A_i32

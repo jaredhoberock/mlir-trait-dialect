@@ -330,58 +330,80 @@ LogicalResult verifyDeclaredClaimProofs(ModuleOp module) {
 
 /// Refuses a proof whose derivation stands too deep. A derivation is followed
 /// from each proof through the proof each application premise names, at the
-/// instance the proof cites it, and its depth is counted as impl selection
-/// counts an obligation chain and refused at the same depth, which is Rust's
-/// trait solver's overflow: a proof citing itself, or a ring of proofs citing
-/// one another, at ever larger arguments reaches a new application at every
-/// step and never ends. A proof cited again at an application on the chain is
-/// a coinductive citation and adds nothing; the height of the derivation below
-/// a (proof, application) pair, once followed, is kept and read wherever the
-/// pair is reached again, followed anew only where the chain reaching it
-/// makes it too deep, so the verdict depends neither on the order proofs stand
-/// in nor on the order a proof's premises do.
+/// instance the proof cites it, and its depth is counted and refused as impl
+/// selection counts and refuses an obligation chain (Rust's trait solver's
+/// overflow): a proof citing itself, or a ring of proofs citing one another,
+/// at ever larger arguments reaches a new application at every step. A proof
+/// cited again at an application on the chain is a coinductive citation and
+/// counts zero.
+///
+/// The height below a (proof, application) pair is kept and read where the
+/// pair is reached again, and followed anew where the chain reaching it makes
+/// it too deep, so a refusal names a real chain. A height that counts pairs
+/// above it on the chain as zero holds while those pairs stand there, so it is
+/// kept with them and read only while each still stands at its depth (rustc's
+/// provisional cache); one that counts none holds on every chain. A height
+/// read is then never below the one a fresh walk computes, and the verdict
+/// depends on no order of proofs or premises.
 static LogicalResult verifyProofDerivationsEnd(ModuleOp module) {
   using Followed = std::pair<Operation *, TraitApplicationAttr>;
+  // A height, with the pairs above it on the chain, and their depths there,
+  // that the derivation below cites coinductively.
+  struct Height {
+    unsigned value;
+    SmallVector<std::pair<Followed, unsigned>, 1> cites;
+  };
   SmallVector<ObligationFrame> chain;
-  DenseSet<Followed> onChain;
-  DenseMap<Followed, unsigned> heights;
-  std::function<FailureOr<unsigned>(ProofOp, ClaimType)> follow =
-      [&](ProofOp proof, ClaimType at) -> FailureOr<unsigned> {
+  DenseMap<Followed, unsigned> depthOnChain;
+  DenseMap<Followed, Height> heights;
+  auto standsWhereCited = [&](const Height &height) {
+    return llvm::all_of(height.cites, [&](const auto &cited) {
+      auto onChain = depthOnChain.find(cited.first);
+      return onChain != depthOnChain.end() && onChain->second == cited.second;
+    });
+  };
+  std::function<FailureOr<Height>(ProofOp, ClaimType)> follow =
+      [&](ProofOp proof, ClaimType at) -> FailureOr<Height> {
     TraitApplicationAttr app = at.getTraitApplication();
     Followed key{proof, app};
-    if (onChain.contains(key))
-      return 0u;
+    if (auto onChain = depthOnChain.find(key); onChain != depthOnChain.end())
+      return Height{0, {{key, onChain->second}}};
     // The deepest frame below the pair stands `height - 1` below it.
     if (auto known = heights.find(key);
-        known != heights.end() &&
-        chain.size() + known->second - 1 < kInstantiationDepthLimit)
+        known != heights.end() && standsWhereCited(known->second) &&
+        chain.size() + known->second.value - 1 < kInstantiationDepthLimit)
       return known->second;
     if (failed(checkObligationChainDepth(chain, app, proof.getLoc())))
       return failure();
     // A citation the proof's verifier refuses is refused there.
     auto premises = proof.getPremisesAt(at, /*err=*/nullptr);
     if (failed(premises))
-      return 1u;
+      return Height{1, {}};
+    unsigned depth = chain.size();
     chain.push_back(
         {app, FlatSymbolRefAttr::get(proof.getContext(), proof.getSymName())});
-    onChain.insert(key);
+    depthOnChain[key] = depth;
     auto popped = llvm::scope_exit([&] {
       chain.pop_back();
-      onChain.erase(key);
+      depthOnChain.erase(key);
     });
-    unsigned below = 0;
+    Height below{0, {}};
     for (ClaimType premise : *premises) {
       if (!premise.isApplication() || !premise.isProven())
         continue;
       if (auto cited = lookupSymbolFrom<ProofOp>(module, premise.getProof())) {
-        FailureOr<unsigned> height = follow(cited, premise);
+        FailureOr<Height> height = follow(cited, premise);
         if (failed(height))
           return failure();
-        below = std::max(below, *height);
+        below.value = std::max(below.value, height->value);
+        for (const auto &above : height->cites)
+          if (above.second < depth && !llvm::is_contained(below.cites, above))
+            below.cites.push_back(above);
       }
     }
-    heights[key] = below + 1;
-    return below + 1;
+    ++below.value;
+    heights[key] = below;
+    return below;
   };
   for (ProofOp proof : module.getOps<ProofOp>())
     if (failed(follow(proof, proof.getProvenClaim())))
@@ -802,14 +824,6 @@ struct ProveClaimResultPattern : public RewritePattern {
     ImplOp impl = derive.getImplOp();
     if (!impl)
       return rewriter.notifyMatchFailure(derive, "cites no impl");
-    // An impl with no parameters and no where entries is its own proof, which
-    // a witness names directly, as selection names it.
-    if (impl.isUnconditional()) {
-      rewriter.replaceOpWithNewOp<WitnessOp>(
-          derive, FlatSymbolRefAttr::get(impl.getSymNameAttr()),
-          claim.getTraitApplication());
-      return success();
-    }
     auto arguments = impl.readCitationArguments(
         claim, derive.getAssumptions().getTypes(), errFn);
     if (failed(arguments)) {

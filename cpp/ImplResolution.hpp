@@ -568,25 +568,25 @@ class ImplResolver {
     /// The proof standing in `scope` whose body derives `app` from `impl`
     /// given, at its application entries in order, the proofs `subproofs`
     /// names; null where none stands. An equality entry is ground and has one
-    /// answer, so it identifies nothing.
+    /// answer, so it identifies nothing. An impl with no parameters and no
+    /// where entries is its own proof.
     ClaimType findProof(ModuleOp scope, ImplOp impl, TraitApplicationAttr app,
                         ArrayRef<FlatSymbolRefAttr> subproofs) const;
 
-    /// Writes at the end of `scope` the proof whose body derives `app` from
-    /// `impl` at `arguments` over one premise per entry of `entries`, `impl`'s
-    /// where entries at those arguments: a witness of the proof `subproofs`
-    /// names for each application entry, in order, and for each equality entry
-    /// the evidence its `equalitySteps` build. This is a derive transcribed,
-    /// not a selection: it records nothing a selection reads. The proof is
-    /// named `name` where given, a name reserved for it (`freeProofName`), and
-    /// otherwise by its impl and arguments, told apart by its subproofs where
-    /// that name is taken.
+    /// Writes in `scope` the proof whose body derives `app` from `impl` at
+    /// `arguments` over one premise per entry of `entries`, `impl`'s where
+    /// entries at those arguments: a witness of the proof `subproofs` names for
+    /// each application entry, in order, and for each equality entry the
+    /// evidence its `equalitySteps` build. This is a derive transcribed, not a
+    /// selection: it records nothing a selection reads. The proof stands at
+    /// the end of `scope`, named by its impl and arguments as the module's
+    /// symbol table admits.
     ClaimType writeProof(ModuleOp scope, ImplOp impl, TraitApplicationAttr app,
                          const SpecializationMap &arguments,
                          ArrayRef<ClaimType> entries,
                          ArrayRef<FlatSymbolRefAttr> subproofs,
                          ArrayRef<SmallVector<ResolutionStep>> equalitySteps,
-                         OpBuilder &builder, StringAttr name = {}) const;
+                         OpBuilder &builder) const;
 
   private:
     friend class ImplGenerationFreeze;
@@ -627,19 +627,17 @@ class ImplResolver {
     /// a fact.
     void noteRecordWritten() { ++recordEpoch; }
 
-    /// The proofs standing in one module: by the impl each stands over and the
-    /// application it proves, and by name. Read off the module at the first
-    /// mint in it and extended by every proof minted there, which is the one
-    /// site that writes a proof while the stage runs. Nothing the stage runs
-    /// erases a proof -- a rewrite driver never takes a symbol for dead, and
-    /// proofs go only in the erase pass after the stage -- so every op held
-    /// here stands.
+    /// The proofs standing in one module, by the impl each stands over and the
+    /// application it proves. Read off the module at the first mint in it and
+    /// extended by every proof minted there, which is the one site that writes
+    /// a proof while the stage runs. Nothing the stage runs erases a proof -- a
+    /// rewrite driver never takes a symbol for dead, and proofs go only in the
+    /// erase pass after the stage -- so every op held here stands.
     struct StandingProofs {
       /// Every proof of one impl at one application, in module order; two
       /// stand apart where their derives are given different premises.
       DenseMap<std::pair<ImplOp, TraitApplicationAttr>, SmallVector<ProofOp, 1>>
           byClaim;
-      DenseMap<StringAttr, ProofOp> byName;
 
       /// Adds `proof`.
       void note(ProofOp proof);
@@ -669,17 +667,6 @@ class ImplResolver {
     ProofResolutionMemo memo;
     mutable DenseMap<Operation *, StandingProofs> standingProofs;
 
-    /// `base` where no symbol of `scope` holds it and no proof being proven
-    /// there has reserved it; otherwise `base` told apart by a hash of `salt`,
-    /// rehashed until free. Mangled names are not one-to-one -- an impl may be
-    /// named what another's mangling at some arguments spells, and any symbol
-    /// may be -- so a name is free only once both are asked.
-    StringAttr freeProofName(ModuleOp scope, StringRef base,
-                             StringRef salt) const;
-
-    /// The names reserved in each scope for proofs whose premises are being
-    /// proven, which a premise may cite before the proof is written.
-    mutable DenseSet<std::pair<Operation *, StringAttr>> reservedProofNames;
     mutable InstantiationChain instantiations;
     ImplGeneratorSet generators;
     const ImplGenerator *installedOverride = nullptr;

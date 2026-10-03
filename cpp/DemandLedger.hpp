@@ -79,7 +79,8 @@ enum class DemandSkip : uint8_t {
 };
 
 /// The demands `root` spells: its monomorphic projections, and the unproven
-/// monomorphic claims something is still meant to prove.
+/// monomorphic claims that type its values, which something is still meant to
+/// prove.
 ///
 /// Result and block-argument types are what the stage's own leftover sweeps
 /// walk, and an operand type is its producer's result type, so between them they

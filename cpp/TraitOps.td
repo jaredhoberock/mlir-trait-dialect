@@ -93,12 +93,16 @@ include "TraitTypes.td"
 // arguments taken from the claim's proof, and a call of a method computing
 // evidence is replaced by the method's body, so the stage's patterns are the
 // only reading of either -- a derive there is transcribed, an allegation
-// decided where it stands, a coercion settled.  A coercion that would leave
-// its input in its place waits while the evidence it cites stands, through any
-// op, region yield or control-flow argument, on an allegation or on evidence
-// still to be inlined: a projection is pending until it is inlined, however
-// its result is spelled.  An allegation nothing reads is
-// never decided: Rust checks an impl's requirements at the impl, and a
+// decided where it stands, a coercion settled.  An instance is cut with the
+// projections off its proven parameters inlined, and those the inlined
+// returns compute in turn, so the claims it returns are proven in its
+// signature; returns that keep projecting one another are inlined there at
+// most 128 rounds and left to the stage's rewrite budget, which refuses them.
+// A coercion that would leave its input in its place waits while the evidence
+// it cites stands, through any op, region yield or control-flow argument, on
+// an allegation or on evidence still to be inlined: a projection is pending
+// until it is inlined, however its result is spelled.  An allegation nothing
+// reads is never decided: Rust checks an impl's requirements at the impl, and a
 // frontend that needs that check makes it before it emits the impl.  Evidence
 // may cite its own impl through a derive or a witness, which builds evidence,
 // but an impl may not return a projection of its own application, which
