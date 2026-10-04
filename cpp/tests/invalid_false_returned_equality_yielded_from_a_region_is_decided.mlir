@@ -5,10 +5,10 @@
 
 // @I binds @A[i8]::Out to i32 and returns an allegation that it is i64. The
 // projections reading that requirement stand inside the arms of an scf.if
-// whose result an identity coerce cites. The coerce waits for what the arms
-// yield, so the projections are replaced by the allegation, which is decided
-// there and refused, rather than erased with the coerce's only use. The true
-// control is false_equality_yielded_from_a_region_is_decided_where_it_holds.
+// whose result an identity coerce cites. The coerce settles at once, and the
+// projections, obligations outstanding, stand although nothing reads them:
+// they are replaced by the allegation, which is decided there and refused. The
+// true control is false_equality_yielded_from_a_region_is_decided_where_it_holds.
 // CHECK: :[[@LINE+8]]:{{[0-9]+}}: error: 'trait.allege' op alleges '!trait.proj<@A[i8], "Out">' = 'i64', and impl selection resolves its sides to 'i32' and 'i64'
 
 !T = !trait.poly<0>

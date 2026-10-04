@@ -90,6 +90,16 @@ struct HasOnlyChildOps {
 
 namespace mlir::trait {
 
+/// The obligations the stage has yet to discharge, as the resource of an
+/// effect: `trait.allege` and `trait.project` write it until the stage
+/// decides the allegation or inlines the projection, so neither is dead
+/// while it stands, as `cf.assert` is not. It is no memory, so no analysis of
+/// memory reads it.
+struct ObligationResource
+    : public SideEffects::Resource::Base<ObligationResource> {
+  StringRef getName() final { return "<Obligation>"; }
+};
+
 /// What the evidence a projection of a proven claim reads stands on
 /// (`ProjectOp::readEvidence`): the impls whose requirement returns it is read
 /// through, in order, each at the application it is read at, and how the

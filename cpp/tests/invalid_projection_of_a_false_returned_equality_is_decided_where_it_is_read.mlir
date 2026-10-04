@@ -7,8 +7,8 @@
 // trait's requirement. The projection reading that requirement is replaced by
 // that allegation, which is decided there and refused, even where the only use
 // of the projection is a coerce whose input and result are already one type:
-// the coerce cites the equality, so the equality must hold, and the coerce
-// waits for it rather than leaving it unread.
+// the coerce settles at once, and the projection, an obligation outstanding,
+// stands to be inlined and decided rather than being erased unread.
 
 !T = !trait.poly<0>
 trait.trait private @A(%self: !trait.claim<@A[!T]>) -> !trait.claim<!trait.proj<@A[!T], "Out"> = i64> {

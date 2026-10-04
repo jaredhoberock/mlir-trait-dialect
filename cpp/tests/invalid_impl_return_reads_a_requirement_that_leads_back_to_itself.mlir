@@ -90,6 +90,38 @@ func.func @main() -> i64 {
 
 // -----
 
+// The cycle through generic impls, each deriving the other at its own
+// parameter, read by a projection nothing reads: a projection states an
+// obligation until it is inlined, so it is decided where it stands, and its
+// evidence has no base.
+
+// CHECK: :[[@LINE+20]]:8: error: unproven monomorphic claim '!trait.claim<@B[i32]>' after instantiate-monomorphs
+// CHECK: note: its source '!trait.claim<@A[i32] by @A_gen_{{.*}}>' names @A_gen_{{.*}}, whose evidence for requirement 0 has no base: it is read through the returns of @A_gen, @C_gen, @A_gen back to a requirement it stands for
+
+!T = !trait.poly<0>
+!U = !trait.poly<1>
+trait.trait private @B(%self: !trait.claim<@B[!T]>) {}
+trait.trait private @A(%self: !trait.claim<@A[!T]>) -> !trait.claim<@B[!T]> {}
+trait.trait private @C(%self: !trait.claim<@C[!T]>) -> !trait.claim<@B[!T]> {}
+trait.impl private @A_gen(%self: !trait.claim<@A[!T]>) {
+  %c = trait.derive @C[!T] from @C_gen given()
+  %b = trait.project %c[0] : !trait.claim<@C[!T]> -> !trait.claim<@B[!T]>
+  trait.return %b : !trait.claim<@B[!T]>
+}
+trait.impl private @C_gen(%self: !trait.claim<@C[!U]>) {
+  %a = trait.derive @A[!U] from @A_gen given()
+  %b = trait.project %a[0] : !trait.claim<@A[!U]> -> !trait.claim<@B[!U]>
+  trait.return %b : !trait.claim<@B[!U]>
+}
+func.func @main() -> i64 {
+  %a = trait.derive @A[i32] from @A_gen given()
+  %b = trait.project %a[0] : !trait.claim<@A[i32]> -> !trait.claim<@B[i32]>
+  %c = arith.constant 1 : i64
+  return %c : i64
+}
+
+// -----
+
 // The cycle through where arguments: @A_i32's return projects its where
 // argument @C[i32], which proof @PA gives it as @PC's claim, and @C_i32's
 // return projects its where argument @A[i32], which @PC gives it as @PA's.

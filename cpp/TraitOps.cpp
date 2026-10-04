@@ -72,6 +72,24 @@ static void printClaimPredicate(::mlir::OpAsmPrinter &printer,
 #define GET_OP_CLASSES
 #include <TraitOps.cpp.inc>
 
+namespace mlir::trait {
+
+void AllegeOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Write::get(),
+                       ObligationResource::get());
+}
+
+void ProjectOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Write::get(),
+                       ObligationResource::get());
+}
+
+} // end mlir::trait
+
 using namespace mlir;
 using namespace mlir::trait;
 

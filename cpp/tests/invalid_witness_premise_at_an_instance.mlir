@@ -5,8 +5,9 @@
 
 // A template's projection-resolution witness supplies its cited impl's premises
 // as values, and a premise the template can only allege still spells a type
-// variable. Each monomorphic clone decides it there -- before any rewrite can
-// fold the witness away -- through what the stage's impl selection settles.
+// variable. Each monomorphic clone decides it there through what the stage's
+// impl selection settles: the allegation is an obligation outstanding, so it
+// stands to be decided whatever becomes of the witness citing it.
 
 // @S_blanket applies where Tensor[T]::Shape = i64; at T = i8 @Tensor_i8 binds
 // Shape to tuple<i64, i64>, so the clone's allegation is false -- and no impl

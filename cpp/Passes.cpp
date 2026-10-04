@@ -964,54 +964,13 @@ struct CallOpLowering : public OpRewritePattern<CallOpT> {
   }
 };
 
-/// Whether the evidence `value` computes stands on an allegation still to be
-/// decided: a `trait.allege`, or evidence the stage has yet to inline, which
-/// may be an allegation -- a projection (`ProjectOp::inlineEvidence`), however
-/// its source and result are spelled, since a source spelled without its
-/// proof may be a coercion the stage has yet to carry that proof through, or a
-/// call of a method computing evidence (`MethodCallOp::inlineEvidence`).
-/// Evidence flows through control flow as
-/// through any op: a result of an op holding regions stands on what those
-/// regions yield, and an argument of a region a control-flow op holds on what
-/// that op passes in. A function's argument is a hypothesis, decided by its
-/// caller.
-static bool standsOnAllegation(Value root) {
-  SmallVector<Value> pending{root};
-  DenseSet<Value> seen;
-  while (!pending.empty()) {
-    Value value = pending.pop_back_val();
-    if (!seen.insert(value).second)
-      continue;
-    if (auto argument = dyn_cast<BlockArgument>(value)) {
-      Operation *holder = argument.getOwner()->getParentOp();
-      if (holder && !isa<FunctionOpInterface>(holder))
-        llvm::append_range(pending, holder->getOperands());
-      continue;
-    }
-    Operation *producer = value.getDefiningOp();
-    if (isa<AllegeOp>(producer))
-      return true;
-    if (isa<ProjectOp>(producer))
-      return true;
-    if (auto call = dyn_cast<MethodCallOp>(producer))
-      if (call.computesEvidence())
-        return true;
-    llvm::append_range(pending, producer->getOperands());
-    for (Region &region : producer->getRegions())
-      for (Block &block : region)
-        if (!block.empty() && block.back().hasTrait<OpTrait::IsTerminator>())
-          llvm::append_range(pending, block.back().getOperands());
-  }
-  return false;
-}
-
 /// Settles a coerce whose types have met: a claim result takes its input's
 /// proof, which the coerce verifier holds to its input's -- a coerce changes
 /// how a claim is spelled, never the evidence it stands on -- and a coerce
 /// whose result is spelled as its input is replaced by the input, the fold the
-/// stage's drivers do not run (applyPatternsOverReachableOps). It is replaced
-/// only once every equality it cites is decided: the evidence it would leave
-/// dead is the one place a false allegation is refused.
+/// stage's drivers do not run (applyPatternsOverReachableOps). The evidence it
+/// cited stays standing for the stage to decide: an allegation or a projection
+/// is no dead op while its obligation stands (`ObligationResource`).
 struct SettleCoercePattern : public OpRewritePattern<CoerceOp> {
   using OpRewritePattern::OpRewritePattern;
 
@@ -1019,8 +978,6 @@ struct SettleCoercePattern : public OpRewritePattern<CoerceOp> {
                                 PatternRewriter &rewriter) const override {
     Type input = coerce.getInput().getType();
     if (coerce.getResult().getType() == input) {
-      if (llvm::any_of(coerce.getEqualities(), standsOnAllegation))
-        return rewriter.notifyMatchFailure(coerce, "waits for its evidence");
       rewriter.replaceOp(coerce, coerce.getInput());
       return success();
     }

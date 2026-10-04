@@ -9,8 +9,9 @@
 // cites it in an identity coerce. The outer projection is replaced by @I's
 // witness coerced to that unproven spelling, which the stage has yet to carry
 // @I's proof through when the coerce is first considered; the inner projection
-// is pending however its source is spelled, so the coerce waits, the inner
-// projection is replaced by the allegation, and the allegation is refused.
+// is an obligation outstanding however its source is spelled, so it stands
+// once the coerce settles, is replaced by the allegation, and the allegation
+// is refused.
 // The true control is
 // equality_read_through_a_projection_of_a_projection_holds.
 // CHECK: :[[@LINE+10]]:{{[0-9]+}}: error: 'trait.allege' op alleges '!trait.proj<@A[i8], "Out">' = 'i64', and impl selection resolves its sides to 'i32' and 'i64'

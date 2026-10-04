@@ -103,12 +103,13 @@ include "TraitTypes.td"
 // requirement they stand for has no base and is never inlined
 // (`ProjectOp::readEvidence`): the stage names the projection
 // reading it.
-// A coercion that would leave its input in its place waits while the evidence
-// it cites stands, through any op, region yield or control-flow argument, on
-// an allegation or on evidence still to be inlined: a projection is pending
-// until it is inlined, however its result is spelled.  An allegation nothing
-// reads is never decided: Rust checks an impl's requirements at the impl, and a
-// frontend that needs that check makes it before it emits the impl.  Evidence
+// An allegation and a projection each state an obligation the stage has yet
+// to discharge -- an allegation until it is decided, a projection until it is
+// inlined, however its result is spelled -- and say so as an effect on
+// `ObligationResource`, as `cf.assert` does, so no rewrite erases one as dead:
+// a coercion that leaves its input in its place leaves the evidence it cited
+// standing for the stage to decide, and an allegation nothing reads is decided
+// where it stands.  Evidence
 // may cite its own impl through a derive or a witness, which builds evidence,
 // but an impl may not return a projection of its own application, which
 // would read the very return it stands in (GHC's rule for instance
@@ -850,7 +851,7 @@ def Projection : Type<
 
 
 def AllegeOp : TraitDialectOp<"allege", [
-  Pure
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
   let summary = "Unverified claim that a trait application or a type equality holds";
   let description = [{
@@ -972,7 +973,7 @@ def DeriveOp : TraitDialectOp<"derive", [
 
 def ProjectOp : TraitDialectOp<"project", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
-  Pure
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
   let summary = "Select one of a claim's requirements by position";
   let description = [{
