@@ -5,12 +5,12 @@
 
 // An allegation asserts a claim and names no evidence: monomorphization must
 // find the impl that discharges it. Nothing implements @T for i32 here, so impl
-// selection refuses the allegation where it stands and the round that follows
-// reports it unresolved. An allegation that cannot be discharged is a compile
+// selection refuses the allegation where it stands and the stage's exit walk
+// reports it unproven. An allegation that cannot be discharged is a compile
 // error, never a claim admitted on its own say-so.
 
 // CHECK: 'trait.allege' op no impl with satisfiable assumptions for '!trait.claim<@T[i32]>'
-// CHECK: unresolved monomorphic trait.allege after resolve-impls
+// CHECK: unproven monomorphic claim '!trait.claim<@T[i32]>' after instantiate-monomorphs
 
 trait.trait private @T(%self: !trait.claim<@T[!trait.poly<0>]>) {
 }

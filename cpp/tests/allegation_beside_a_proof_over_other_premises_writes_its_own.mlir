@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 
-// RUN: mlir-opt %s -pass-pipeline='builtin.module(resolve-impls-trait)' | FileCheck %s
+// RUN: mlir-opt %s -pass-pipeline='builtin.module(instantiate-monomorphs-trait)' | FileCheck %s
 
 // A proof is identified by the evidence its derive cites. @A_i32_p derives
 // @A[i32] from @A_i32 over @b_custom, while selection proves the premise

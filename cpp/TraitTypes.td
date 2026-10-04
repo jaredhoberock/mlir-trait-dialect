@@ -107,8 +107,8 @@ def ClaimType : TypeDef<TraitDialect, "Claim", [
     The IR is the sole authority on proof provenance.  A claim's proof
     is resolvable from the module text alone: from the proof spelled in
     the type, or in principle by searching the module's impls and
-    introductions.  Every in-memory resolution structure (the record,
-    the ledger, any memo) is an acceleration of that search and is
+    introductions.  Every in-memory resolution structure (impl
+    selection's memo, any other) is an acceleration of that search and is
     never authoritative: no behavior may depend on memory state that
     the module text cannot reproduce.
 

@@ -161,28 +161,22 @@ static bool isTemplate(Operation *op) {
 
 /// Appends to `ops` the ops of `root`'s subtree a rewrite driver may reach,
 /// `root` itself included: every op outside a template. One pre-order walk skips
-/// a template whole -- its shell and its interior. With `includeTemplateShells`
-/// a template's shell op is kept while its interior is still skipped, for the
-/// one bridge pattern that anchors on a trait declaration.
-static void collectRewritableOpsIn(Operation *root, bool includeTemplateShells,
+/// a template whole -- its shell and its interior.
+static void collectRewritableOpsIn(Operation *root,
                                    SmallVectorImpl<Operation *> &ops) {
   root->walk<WalkOrder::PreOrder>([&](Operation *op) {
-    if (isTemplate(op)) {
-      if (includeTemplateShells)
-        ops.push_back(op);
+    if (isTemplate(op))
       return WalkResult::skip();
-    }
     ops.push_back(op);
     return WalkResult::advance();
   });
 }
 
 /// The ops in `module` a rewrite driver may reach, in the module's own order.
-static SmallVector<Operation *>
-collectRewritableOps(ModuleOp module, bool includeTemplateShells) {
+static SmallVector<Operation *> collectRewritableOps(ModuleOp module) {
   SmallVector<Operation *> ops;
   for (Operation &op : *module.getBody())
-    collectRewritableOpsIn(&op, includeTemplateShells, ops);
+    collectRewritableOpsIn(&op, ops);
   return ops;
 }
 
@@ -193,19 +187,18 @@ collectRewritableOps(ModuleOp module, bool includeTemplateShells) {
 /// what reaches it; the default strictness would follow a rewritten producer
 /// into a region, and `ExistingAndNewOps` would enqueue every op a clone's
 /// construction creates. A function no iteration wrote to stands where a
-/// previous iteration drove it to a fixed point, and what a pattern reads
-/// besides the op itself is the recorded facts, whose movement the round loop
-/// outside answers by running the driver again over the whole module; so
-/// carrying only the written functions forward is the same fixed point reached
-/// proportionally to the work rather than to the module. The rewrite budget
-/// spans the whole run: the listener counts applications across iterations, each
-/// iteration receives the remainder, and an exhausted remainder or a
-/// non-converged iteration fails as one whole-module run does.
+/// previous iteration drove it to a fixed point. What a pattern reads besides
+/// the op itself is impl selection, whose every answer is a function of the
+/// concrete types asked about and is asked for by the op that needs it, so no
+/// fact minted elsewhere changes what a pattern would do to an op no iteration
+/// wrote to; carrying only the written functions forward is the fixed point
+/// reached proportionally to the work rather than to the module. The rewrite
+/// budget spans the whole run: the listener counts applications across
+/// iterations, each iteration receives the remainder, and an exhausted
+/// remainder or a non-converged iteration fails as one whole-module run does.
 static LogicalResult applyPatternsOverReachableOps(ModuleOp module,
                                                    RewritePatternSet &&patterns,
-                                                   GreedyRewriteConfig config,
-                                                   bool *changed,
-                                                   bool includeTemplateShells) {
+                                                   GreedyRewriteConfig config) {
   FrozenRewritePatternSet frozen(std::move(patterns));
   RewriteEventCounts events;
   events.recordWritesUnder(module.getBody());
@@ -221,20 +214,19 @@ static LogicalResult applyPatternsOverReachableOps(ModuleOp module,
   config.enableFolding(false);
   int64_t budget = config.getMaxNumRewrites();
 
-  bool anyChange = false;
   LogicalResult result = success();
   bool firstIteration = true;
   while (succeeded(result)) {
     SmallVector<Operation *> ops;
     if (firstIteration) {
-      ops = collectRewritableOps(module, includeTemplateShells);
+      ops = collectRewritableOps(module);
     } else {
       // The module-level ops the previous iteration wrote to are the whole of
       // the work left for this one: a clone it minted, and every function a
       // rewrite landed in, whose neighbouring ops read what that rewrite
       // produced.
       for (Operation *op : events.takeWrittenModuleLevelOps(module.getBody()))
-        collectRewritableOpsIn(op, includeTemplateShells, ops);
+        collectRewritableOpsIn(op, ops);
     }
     firstIteration = false;
     if (ops.empty())
@@ -249,13 +241,9 @@ static LogicalResult applyPatternsOverReachableOps(ModuleOp module,
     }
     bool iterationChanged = false;
     result = applyOpPatternsGreedily(ops, frozen, config, &iterationChanged);
-    anyChange |= iterationChanged;
     if (!iterationChanged)
       break;
   }
-
-  if (changed)
-    *changed = anyChange;
   return result;
 }
 
@@ -271,32 +259,6 @@ bool isForeign(Operation *op) {
   return false;
 }
 
-LogicalResult convertToTrait(ModuleOp module, bool *changed = nullptr) {
-  MLIRContext* ctx = module.getContext();
-
-  RewritePatternSet patterns(ctx);
-
-  // collect patterns from participating dialects
-  for (Dialect *d : ctx->getLoadedDialects()) {
-    if (auto *iface = d->getRegisteredInterface<MonomorphizationInterface>())
-      iface->populateConvertToTraitPatterns(patterns);
-  }
-
-  GreedyRewriteConfig config;
-  config.setMaxNumRewrites(rewriteBudgetFor(module));
-
-  // apply patterns. Shells are included: tuple's mapper-trait bridge anchors on
-  // a trait declaration, the one place a pattern is handed a template shell.
-  if (failed(applyPatternsOverReachableOps(module, std::move(patterns), config,
-                                           changed,
-                                           /*includeTemplateShells=*/true)))
-    return module.emitError(
-        "convert-to-trait did not converge: rewrite budget exceeded, which "
-        "indicates a non-confluent pattern pair cycling on a type spelling");
-
-  return success();
-}
-
 /// Verify that every proven claim spelled in a top-level function signature
 /// names evidence whose declaration carries to it. A `by @proof` in a declared
 /// type is otherwise checked nowhere until a call reaches it, so a signature can
@@ -310,19 +272,12 @@ LogicalResult verifyDeclaredClaimProofs(ModuleOp module) {
     auto errFn = [&] {
       return f.emitOpError() << "declared claim in signature has an invalid proof: ";
     };
-    // The readings below normalize through the ground-projection lookup, so
-    // this check raises demand of its own. The frame gives that demand the
-    // signature it came from; without one it would be recorded unattributed
-    // even though this dialect knows exactly where it arose.
-    DemandFrame frame(f.getLoc());
     auto byGroundLookup = [&](Type ty) -> FailureOr<Type> {
-      return resolveProjectionsByLookup(ty, module, DemandOrigin::ProofRecording,
-                                        LookupScope::Ground,
+      return resolveProjectionsByLookup(ty, module, LookupScope::Ground,
                                         /*emitError=*/nullptr);
     };
     if (failed(verifyCitationsIn(Type(f.getFunctionType()), module,
-                                 DemandOrigin::ProofRecording, byGroundLookup,
-                                 errFn)))
+                                 byGroundLookup, errFn)))
       status = failure();
   }
   return status;
@@ -373,8 +328,10 @@ static LogicalResult verifyProofDerivationsEnd(ModuleOp module) {
         known != heights.end() && standsWhereCited(known->second) &&
         chain.size() + known->second.value - 1 < kInstantiationDepthLimit)
       return known->second;
-    if (failed(checkObligationChainDepth(chain, app, proof.getLoc())))
+    if (failed(checkObligationChainDepth(chain))) {
+      emitObligationOverflow(proof.getLoc(), app, chain);
       return failure();
+    }
     // A citation the proof's verifier refuses is refused there.
     auto premises = proof.getPremisesAt(at, /*err=*/nullptr);
     if (failed(premises))
@@ -501,7 +458,6 @@ LogicalResult verifyAcyclicTraits(ModuleOp module) {
   if (failed(verifyAcyclicTraitsStructure(module)))
     return failure();
 
-  DemandRecordingSuspension verifying;
   return module.verify();
 }
 
@@ -512,119 +468,10 @@ void VerifyAcyclicTraitsPass::runOnOperation() {
 
 
 //===----------------------------------------------------------------------===//
-// ResolveImplsPass
+// InstantiateMonomorphsPass
 //===----------------------------------------------------------------------===//
 
 namespace {
-
-/// Respells throughout `root` every claim `resolver` has recorded a proof for,
-/// and returns how many positions of `root` that sweep moved.
-///
-/// The replacer's recursive entry point is this walk, so driving the walk here
-/// costs nothing extra and is what lets an op the sweep respelled be told from
-/// one it left alone. A position is a result type, a block-argument type, or the
-/// attribute dictionary of one op. The count is what says whether this sweep
-/// wrote anything.
-///
-/// Each op is named while it is visited, so a demand raised under the sweep is
-/// attributed to the op carrying the type rather than to the whole module.
-///
-/// The sweep records no proof of its own, which is the precondition the
-/// replacer it holds across the whole walk asserts.
-///
-/// `anchor`, when given, receives where one op the sweep moved was written, for
-/// a diagnostic that must name somewhere the round's work landed. A location
-/// rather than the op, because the instantiation that follows the sweep may
-/// erase what the sweep just respelled.
-static uint64_t respellProvenClaimsInPlace(const ImplResolver &resolver,
-                                           Operation *root,
-                                           std::optional<Location> *anchor = nullptr) {
-  size_t recordedProofs = resolver.getRecordedProofCount();
-  size_t recordedImpls = resolver.getRecordedImplCount();
-  if (recordedProofs == 0 && recordedImpls == 0) return 0;
-  // A replacer respells the ops of one module: what it writes into a claim is a
-  // proof symbol that module resolves, and the record answers per module. So
-  // the sweep holds one replacer per module it reaches, built when it first
-  // reaches an op standing there, and each is read only by the ops it serves.
-  //
-  // Beside the proofs it respells, the sweep resolves recorded ground
-  // projections, so an interior op stays consistent with an outside value a
-  // pattern retyped -- a tuple.make or arith.select whose result the outside
-  // spells resolved. An equality's endpoints are a leaf to this replacer, so a
-  // projection standing in one is left untouched.
-  llvm::MapVector<Operation *, std::unique_ptr<AttrTypeReplacer>> replacers;
-  auto replacerFor = [&](ModuleOp scope) -> AttrTypeReplacer & {
-    std::unique_ptr<AttrTypeReplacer> &held = replacers[scope.getOperation()];
-    if (held)
-      return *held;
-    held = std::make_unique<AttrTypeReplacer>(
-        resolver.makeProvenClaimReplacer(scope));
-    held->addReplacement(
-        [reading = ReadOnlyImplResolver(resolver, scope)](Type t)
-            -> std::optional<Type> {
-          auto proj = dyn_cast<ProjectionType>(t);
-          if (!proj || isPolymorphicType(proj))
-            return std::nullopt;
-          auto resolved = reading.resolveProjection(proj);
-          if (succeeded(resolved))
-            return resolved->getBinding();
-          return std::nullopt;
-        });
-    return *held;
-  };
-
-  uint64_t positionsRespelled = 0;
-
-  root->walk<WalkOrder::PreOrder>([&](Operation *op) -> WalkResult {
-    // Nothing writes into a template: its spelling is resolved when it is
-    // cloned for a concrete instance, not by this sweep. Nor into a claim whose
-    // evidence its producer reads by position: its own rewrite proves it.
-    if (isTemplate(op))
-      return WalkResult::skip();
-    if (producesPositionalEvidence(op))
-      return WalkResult::advance();
-
-    DemandFrame frame(op->getLoc());
-
-    SmallVector<Type, 8> before;
-    auto eachTypePosition = [&](llvm::function_ref<void(Type)> visit) {
-      for (Type type : op->getResultTypes())
-        visit(type);
-      for (Region &region : op->getRegions())
-        for (Block &block : region)
-          for (BlockArgument argument : block.getArguments())
-            visit(argument.getType());
-    };
-    eachTypePosition([&](Type type) { before.push_back(type); });
-    DictionaryAttr attributesBefore = op->getAttrDictionary();
-
-    replacerFor(getAnchorModule(op))
-        .replaceElementsIn(op,
-                           /*replaceAttrs=*/true,
-                           /*replaceLocs=*/false,
-                           /*replaceTypes=*/true);
-
-    uint64_t movedHere = op->getAttrDictionary() == attributesBefore ? 0 : 1;
-    size_t position = 0;
-    eachTypePosition([&](Type type) {
-      if (type != before[position++])
-        ++movedHere;
-    });
-    positionsRespelled += movedHere;
-    if (movedHere && anchor)
-      *anchor = op->getLoc();
-    return WalkResult::advance();
-  });
-
-  // A sweep records no proof, so the count of facts does not move for it; what
-  // it moves is the module's spelling of them, which is what proof derivation
-  // reads. A sweep that respelled nothing leaves every derivation reading the
-  // module it read.
-  if (positionsRespelled != 0)
-    resolver.noteRespelling();
-
-  return positionsRespelled;
-}
 
 /// Proves a claim-producing op and replaces it with a trait.witness, or a
 /// projection with the evidence it reads.
@@ -634,58 +481,47 @@ static uint64_t respellProvenClaimsInPlace(const ImplResolver &resolver,
 /// applications; a derive is proven by the proof whose body it is, never by
 /// selecting again; a projection of a proven claim is replaced by the evidence
 /// the claim's impl returns at its index (`ProjectOp::inlineEvidence`), which
-/// this rule then proves where it stands. Which producers it matches follows
-/// from which constructor built it: the fact-establishing use matches
-/// trait.allege and trait.derive, because a claim projected inside a
-/// still-polymorphic body is not yet its business, while the read-only driver
-/// use matches projections besides.
-///
-/// Both registrations are permanent. A claim result the driver's own rewrites
-/// produce is one no step before the driver could have seen, for the same reason
-/// the projection resolution beside it is permanent: what the driver mints is
-/// not what the module spelled when the round's commit swept it.
+/// this rule then proves where it stands.
 struct ProveClaimResultPattern : public RewritePattern {
-  /// Impl selection itself, where this pattern may establish facts, and nothing
-  /// where it may only read them.
-  ImplResolver *minting;
-  /// A read of what impl selection has settled, which every use has.
-  ReadOnlyImplResolver reading;
-  /// The ops whose claim selection has already contradicted -- an equality
-  /// whose sides selection resolves to two types -- each reported once.
-  mutable llvm::DenseSet<Operation *> contradicted;
+  ImplResolver &resolver;
+  /// The ops this pattern has named a failure at -- an allegation selection
+  /// refuses, an equality whose sides selection resolves to two types -- each
+  /// named once: selection answers a refusal alike every time it is asked, and
+  /// the driver may reach an op again.
+  mutable llvm::DenseSet<Operation *> named;
+  /// The claims selection refused that this pattern has named why for, which
+  /// the stage's exit walk names nowhere again.
+  DenseSet<Type> &namedObligations;
   /// Set once this pattern refuses a claim. The stage that owns it fails on a
-  /// refusal as it fails on a demand selection refused: a refused op is left
-  /// standing, and a stage that succeeded past it would hand the steps after
-  /// it a module nothing proved.
+  /// refusal: a refused op is left standing, and a stage that succeeded past
+  /// it would hand the steps after it a module nothing proved.
   bool &refusedAClaim;
 
-  /// The step that establishes the facts the rest of the stage reads. It
-  /// matches `trait.allege` and `trait.derive`: a claim projected inside a
-  /// still-polymorphic body is not yet its business.
   ProveClaimResultPattern(MLIRContext *ctx, ImplResolver &resolver,
+                          DenseSet<Type> &namedObligations,
                           bool &refusedAClaim)
     : RewritePattern(MatchAnyOpTypeTag(), /*benefit=*/1, ctx),
-      minting(&resolver), reading(resolver), refusedAClaim(refusedAClaim) {}
-
-  /// The instantiation driver, which reads what earlier steps established. A
-  /// fact minted while the driver runs reaches nothing the driver's earlier
-  /// rewrites saw, so a claim the record does not prove is declined and left
-  /// for the step that can prove it.
-  ProveClaimResultPattern(MLIRContext *ctx, const ReadOnlyImplResolver &reading,
-                          bool &refusedAClaim)
-    : RewritePattern(MatchAnyOpTypeTag(), /*benefit=*/1, ctx),
-      minting(nullptr), reading(reading), refusedAClaim(refusedAClaim) {}
+      resolver(resolver), namedObligations(namedObligations),
+      refusedAClaim(refusedAClaim) {}
 
   /// Records that `op`'s claim is refused, answering whether it was not
-  /// refused before, so each refusal is reported once.
+  /// named before, so each refusal is reported once.
   bool refuse(Operation *op) const {
     refusedAClaim = true;
-    return contradicted.insert(op).second;
+    return named.insert(op).second;
+  }
+
+  /// `errFn` while nothing has been named at `op`, so selection names why it
+  /// refuses there the first time it is asked and only then.
+  llvm::function_ref<InFlightDiagnostic()>
+  firstAsk(Operation *op, llvm::function_ref<InFlightDiagnostic()> errFn) const {
+    if (named.contains(op))
+      return nullptr;
+    return errFn;
   }
 
   LogicalResult matchAndRewrite(Operation *op, PatternRewriter& rewriter) const override {
-    if (minting ? !isa<AllegeOp, DeriveOp>(op)
-                : !isa<AllegeOp, DeriveOp, ProjectOp>(op))
+    if (!isa<AllegeOp, DeriveOp, ProjectOp>(op))
       return failure();
 
     // In-place retyping by proof propagation can prove a claim out from under
@@ -701,6 +537,10 @@ struct ProveClaimResultPattern : public RewritePattern {
     if (auto project = dyn_cast<ProjectOp>(op)) {
       if (!project.getSourceClaim().isProven())
         return rewriter.notifyMatchFailure(op, "waits for its source");
+      // Evidence with no base, or read past the depth limit, is never
+      // inlined; the exit walk names it.
+      if (project.readEvidence().end != EvidenceReading::End::Base)
+        return rewriter.notifyMatchFailure(op, "its evidence has no base");
       return project.inlineEvidence(rewriter);
     }
 
@@ -722,74 +562,28 @@ struct ProveClaimResultPattern : public RewritePattern {
     if (auto derive = dyn_cast<DeriveOp>(op))
       return transcribe(derive, rewriter);
 
-    DemandFrame frame(op->getLoc());
-    auto errFn = [&] { return op->emitOpError(); };
-
-    // The claim is demanded where it stands: the proof this op will name is a
-    // symbol its own module resolves, and the impls that may serve it are the
-    // ones standing there.
-    ModuleOp scope = getAnchorModule(op);
-
     // The proof the op is spelled with; else the canonical evidence selection
-    // builds or reuses for its claim. A selected proof names the application
-    // it was recorded under, which selection spelled with the claim's
-    // projections resolved; the producer's source spelling would leave the
-    // witness and its proof disagreeing on those projections.
-    FailureOr<ClaimType> proven =
-        claim.isProven() ? FailureOr<ClaimType>(claim)
-                         : proofFor(claim, scope, rewriter, errFn);
-    if (failed(proven))
-      return rewriter.notifyMatchFailure(op, "couldn't find proof of this claim");
+    // builds or reuses for its claim, demanded where the op stands: the proof
+    // it names is a symbol its own module resolves, and the impls that may
+    // serve it are the ones standing there. A selected proof names the
+    // application it was recorded under, which selection spelled with the
+    // claim's projections resolved; the producer's source spelling would leave
+    // the witness and its proof disagreeing on those projections. A refusal is
+    // final, so it is named once.
+    Answer<ClaimType> proven = claim;
+    if (!claim.isProven()) {
+      auto errFn = [&] { return op->emitOpError(); };
+      proven = resolver.resolveAndEnsureProofFor(
+          claim, SelectionSite::of(op), rewriter, firstAsk(op, errFn));
+      if (!proven.isAnswer()) {
+        (void)refuse(op);
+        namedObligations.insert(Type(claim));
+        return rewriter.notifyMatchFailure(op, "couldn't find proof of this claim");
+      }
+    }
     rewriter.replaceOpWithNewOp<WitnessOp>(op, proven->getProof(),
                                            proven->getTraitApplication());
     return success();
-  }
-
-  /// The monomorphic application claim `claim` demanded in `scope`, proven:
-  /// by the proof selection makes where this pattern may establish facts, else
-  /// by the one the record holds, a claim the record does not prove being
-  /// declined for a later round.
-  FailureOr<ClaimType>
-  proofFor(ClaimType claim, ModuleOp scope, PatternRewriter &rewriter,
-           llvm::function_ref<InFlightDiagnostic()> errFn) const {
-    if (minting)
-      return minting->resolveAndEnsureProofFor(claim, scope, rewriter, errFn);
-    ReadOnlyImplResolver here = reading.in(scope);
-    FailureOr<ClaimType> proven = here.getRecordedProofFor(claim);
-    if (failed(proven))
-      (void)here.decline(claim);
-    return proven;
-  }
-
-  /// Proves the monomorphic equality `eq` `allegation` alleges: each projection
-  /// its sides spell resolves through the impl selection chooses for the
-  /// projection's application, one step at a time, and where both sides reach
-  /// one type the allegation becomes the evidence of those steps. Sides that
-  /// reach two types are refused where the allegation stands. A projection the
-  /// record does not resolve is declined by the read-only use, which a later
-  /// round serves, and refused by selection where selection itself cannot
-  /// serve it.
-  /// Calls `fn` with the source the evidence of an equality demanded in
-  /// `scope` reads: impl selection where this pattern may establish facts, the
-  /// record otherwise, which declines a projection it does not resolve for a
-  /// later round to serve.
-  template <typename Fn>
-  LogicalResult withEqualitySource(ModuleOp scope, PatternRewriter &rewriter,
-                                   llvm::function_ref<InFlightDiagnostic()> errFn,
-                                   Fn fn) const {
-    ReadOnlyImplResolver here = reading.in(scope);
-    auto hop = [&](ProjectionType proj) {
-      FailureOr<ProjectionResolution> resolved =
-          minting ? minting->resolveProjection(proj, scope, rewriter, errFn)
-                  : here.resolveProjection(proj);
-      if (failed(resolved) && !minting)
-        (void)here.decline(proj);
-      return resolved;
-    };
-    auto proofOf = [&](ClaimType claim) {
-      return proofFor(claim, scope, rewriter, errFn);
-    };
-    return fn(EqualitySource{hop, proofOf, scope});
   }
 
   /// Proves `derive` by the proof whose body it is: the impl it cites, at the
@@ -815,7 +609,6 @@ struct ProveClaimResultPattern : public RewritePattern {
         subproofs.push_back(premise.getProof());
     }
 
-    DemandFrame frame(derive.getLoc());
     auto errFn = [&] { return derive.emitOpError(); };
     ModuleOp scope = getAnchorModule(derive);
     ClaimType claim = derive.getDerivedClaim();
@@ -833,17 +626,21 @@ struct ProveClaimResultPattern : public RewritePattern {
     SmallVector<ClaimType> entries = impl.getWhereClaimsAt(*arguments);
 
     // The proof names its application with the projections it spells
-    // resolved, as selection records one; a projection still unresolved waits
-    // for the round that serves it.
-    ReadOnlyImplResolver here = reading.in(scope);
-    Type resolved = here.resolveProjectionsIn(Type(claim));
-    if (mentionsMonomorphicProjection(resolved))
-      return rewriter.notifyMatchFailure(derive, "waits for its projections");
-    TraitApplicationAttr app = cast<ClaimType>(resolved).getTraitApplication();
+    // resolved, as selection records one; a projection selection does not
+    // resolve leaves the derive standing for the stage's exit walk to name.
+    SelectionSite site = SelectionSite::of(derive);
+    Answer<Type> resolved =
+        resolver.resolveProjectionsIn(Type(claim), site, rewriter);
+    if (!resolved.isAnswer())
+      return rewriter.notifyMatchFailure(derive, "spells no normal form");
+    TraitApplicationAttr app = cast<ClaimType>(*resolved).getTraitApplication();
+    if (llvm::any_of(app.getTypeArgs(), carriesUndischargedObligation))
+      return rewriter.notifyMatchFailure(derive,
+                                         "waits for its arguments' obligations");
 
     // A proof standing with this body answers, and is read rather than
     // written again.
-    if (ClaimType standing = here.findProof(impl, app, subproofs)) {
+    if (ClaimType standing = resolver.findProof(scope, impl, app, subproofs)) {
       rewriter.replaceOpWithNewOp<WitnessOp>(derive, standing.getProof(),
                                              standing.getTraitApplication());
       return success();
@@ -857,49 +654,51 @@ struct ProveClaimResultPattern : public RewritePattern {
         continue;
       TypeEqualityAttr eq = entry.getEqualityAttr();
       SmallVector<ResolutionStep> steps;
-      LogicalResult resolved = withEqualitySource(
-          scope, rewriter, errFn, [&](const EqualitySource &source) {
-            auto sides = resolveEquality(eq, source, steps);
-            if (failed(sides))
-              return rewriter.notifyMatchFailure(derive,
-                                                 "a projection is not resolved");
-            if (sides->first != sides->second) {
-              if (refuse(derive))
-                errFn() << "is given " << entry << ", and impl selection "
-                        << "resolves its sides to " << sides->first << " and "
-                        << sides->second;
-              return rewriter.notifyMatchFailure(
-                  derive, "selection resolves the sides apart");
-            }
-            return success();
-          });
-      if (failed(resolved))
-        return failure();
+      auto sides = resolver.resolveEquality(eq, site, rewriter, steps,
+                                            firstAsk(derive, errFn));
+      if (!sides.isAnswer()) {
+        named.insert(derive);
+        return rewriter.notifyMatchFailure(derive,
+                                           "a projection is not resolved");
+      }
+      if (sides->first != sides->second) {
+        if (refuse(derive))
+          errFn() << "is given " << entry << ", and impl selection "
+                  << "resolves its sides to " << sides->first << " and "
+                  << sides->second;
+        return rewriter.notifyMatchFailure(
+            derive, "selection resolves the sides apart");
+      }
       equalitySteps.push_back(std::move(steps));
     }
 
-    ClaimType proven = here.writeProof(impl, app, *arguments, entries,
-                                       subproofs, equalitySteps, rewriter);
+    ClaimType proven = resolver.writeProof(scope, impl, app, *arguments,
+                                           entries, subproofs, equalitySteps,
+                                           rewriter);
     rewriter.replaceOpWithNewOp<WitnessOp>(derive, proven.getProof(),
                                            proven.getTraitApplication());
     return success();
   }
 
+  /// Proves the monomorphic equality `eq` `allegation` alleges: each projection
+  /// its sides spell resolves through the impl selection chooses for the
+  /// projection's application, one step at a time, and where both sides reach
+  /// one type the allegation becomes the evidence of those steps. Sides that
+  /// reach two types are refused where the allegation stands; a projection
+  /// selection does not resolve leaves the allegation standing for the stage's
+  /// exit walk to name.
   LogicalResult proveAllegedEquality(AllegeOp allegation, TypeEqualityAttr eq,
                                      PatternRewriter &rewriter) const {
-    DemandFrame frame(allegation.getLoc());
     auto errFn = [&] { return allegation.emitOpError(); };
-    ModuleOp scope = getAnchorModule(allegation);
     SmallVector<ResolutionStep> steps;
-    FailureOr<std::pair<Type, Type>> sides = failure();
-    (void)withEqualitySource(scope, rewriter, errFn,
-                             [&](const EqualitySource &source) {
-                               sides = resolveEquality(eq, source, steps);
-                               return success();
-                             });
-    if (failed(sides))
+    auto sides = resolver.resolveEquality(eq, SelectionSite::of(allegation),
+                                          rewriter, steps,
+                                          firstAsk(allegation, errFn));
+    if (!sides.isAnswer()) {
+      named.insert(allegation);
       return rewriter.notifyMatchFailure(allegation,
                                          "a projection is not resolved");
+    }
     if (sides->first != sides->second) {
       if (refuse(allegation))
         errFn() << "alleges " << eq.getLhs() << " = " << eq.getRhs()
@@ -918,85 +717,11 @@ struct ProveClaimResultPattern : public RewritePattern {
 
 } // end namespace
 
-FailureOr<ImplResolver> resolveImpls(ModuleOp module) {
-  // The ledger is installed before the first sub-phase that can raise a demand:
-  // conversion runs other dialects' patterns, and the declared-proof check
-  // reaches the ground projection lookup through the obligation recorder.
-  auto ledger = std::make_shared<DemandLedger>();
-  DemandLedgerScope recording(*ledger);
-
-  // run convert-to-trait patterns
-  if (failed(convertToTrait(module)))
-    return failure();
-
-  // verify traits are acyclic
-  if (failed(verifyAcyclicTraits(module)))
-    return failure();
-
-  // verify that proofs named in declared signatures actually prove their claims
-  if (failed(verifyDeclaredClaimProofs(module)))
-    return failure();
-
-  // refuse a proof whose derivation keeps reaching larger applications
-  if (failed(verifyProofDerivationsEnd(module)))
-    return failure();
-
-  // an ImplResolver for this module
-  ImplResolver resolver(module, ledger);
-
-  MLIRContext *ctx = module.getContext();
-
-  // apply rewrite patterns
-  bool refusedAClaim = false;
-  {
-    RewritePatternSet patterns(ctx);
-    patterns.add<ProveClaimResultPattern>(ctx, resolver, refusedAClaim);
-
-    // rewrite trait.allege -> trait.witness. Shells are excluded: an allege
-    // inside a polymorphic function is resolved when that function is cloned
-    // for a concrete instance, so this driver never turns one into a witness.
-    if (failed(applyPatternsOverReachableOps(module, std::move(patterns),
-                                             GreedyRewriteConfig(),
-                                             /*changed=*/nullptr,
-                                             /*includeTemplateShells=*/false)))
-      return failure();
-  }
-
-  // assert that no monomorphic trait.allege remain outside a template. A
-  // template's allege is resolved when the template is cloned for a concrete
-  // instance.
-  bool hasLeftovers = false;
-  module.walk([&](AllegeOp op) {
-    if (!op.getClaim().isMonomorphic() || isForeign(op)) return;
-    hasLeftovers = true;
-    op.emitError() << "unresolved monomorphic trait.allege after resolve-impls";
-  });
-  if (hasLeftovers || refusedAClaim) return failure();
-
-  // Normalize claim types: after allege→witness, a proof's type parameter
-  // may itself contain a claim that was just proven.  Respell all
-  // unproven claims in their proven forms so that downstream instantiation
-  // sees consistent types.
-  respellProvenClaimsInPlace(resolver, module);
-
-  return resolver;
-}
-
-void ResolveImplsPass::runOnOperation() {
-  if (failed(resolveImpls(getOperation())))
-    signalPassFailure();
-}
-
-
-//===----------------------------------------------------------------------===//
-// InstantiateMonomorphsPass
-//===----------------------------------------------------------------------===//
 
 /// Extend this substitution with bindings that resolve concrete `!trait.proj`
 /// types visible after applying the current substitution.
 void CallSubstitution::discoverProjectionBindings(
-    TypeRange types, ModuleOp module, const ReadOnlyImplResolver &reading,
-    bool &declined) {
+    TypeRange types, ProjectionResolver resolve, bool &declined) {
   for (Type ty : types) {
     apply(ty).walk([&](Type t) {
       auto proj = dyn_cast<ProjectionType>(t);
@@ -1004,35 +729,19 @@ void CallSubstitution::discoverProjectionBindings(
         return;
       if (projectionBindings.lookup(proj))
         return;
-      auto resolved = reading.resolveProjection(proj);
-      if (succeeded(resolved)) {
-        projectionBindings.bind(proj, resolved->getBinding());
-        return;
-      }
-      // The read answers from the impls selection has settled on, and it settles
-      // one only for an application some round put to it. A projection exactly
-      // one impl in the module binds is one selection would settle the same way
-      // whenever it were asked, so it is read from the module here instead of
-      // waited for: waiting costs a round and arrives at the same impl. Where
-      // the module binds it with no impl or with several, the lookup declines
-      // and records which, and the call closes over a projection it still
-      // cannot spell concretely -- so it lowers in the round that serves it.
-      Type byLookup = resolveProjectionsByLookup(
-          Type(proj), module, DemandOrigin::CallSiteSpecialization,
-          LookupScope::Ground);
-      if (byLookup == Type(proj)) {
+      FailureOr<Type> resolved = resolve(proj);
+      if (failed(resolved)) {
         declined = true;
         return;
       }
-      projectionBindings.bind(proj, byLookup);
+      projectionBindings.bind(proj, *resolved);
     });
   }
 }
 
 FailureOr<CallSubstitution> CallSubstitution::forCall(
     SpecializationMap specialization, TypeRange operandTypes,
-    TypeRange resultTypes, FunctionType formalTy, ModuleOp module,
-    const ReadOnlyImplResolver &reading) {
+    TypeRange resultTypes, FunctionType formalTy, ProjectionResolver resolve) {
   CallSubstitution subst(std::move(specialization));
 
   bool changed;
@@ -1043,16 +752,15 @@ FailureOr<CallSubstitution> CallSubstitution::forCall(
     size_t before = subst.specialization.bindingCount() +
                     subst.projectionBindings.bindingCount();
 
-    // A projection the read could not answer this time round may be answered
-    // by the bindings this iteration goes on to add, so only the last
-    // iteration's declines say what this substitution is missing.
+    // A projection the resolution could not answer in this iteration may be
+    // answered by the bindings this iteration goes on to add, so only the last
+    // iteration's refusals say what this substitution is missing.
     declined = false;
-    subst.discoverProjectionBindings(resultTypes, module, reading, declined);
-    subst.discoverProjectionBindings(operandTypes, module, reading, declined);
+    subst.discoverProjectionBindings(resultTypes, resolve, declined);
+    subst.discoverProjectionBindings(operandTypes, resolve, declined);
     if (formalTy) {
-      subst.discoverProjectionBindings(formalTy.getInputs(), module, reading,
-                                       declined);
-      subst.discoverProjectionBindings(formalTy.getResults(), module, reading,
+      subst.discoverProjectionBindings(formalTy.getInputs(), resolve, declined);
+      subst.discoverProjectionBindings(formalTy.getResults(), resolve,
                                        declined);
     }
 
@@ -1063,49 +771,12 @@ FailureOr<CallSubstitution> CallSubstitution::forCall(
 
   // A substitution that cannot spell one of the call's projections would
   // specialize the callee against a spelling the projection still stands in,
-  // and nothing afterwards revisits a callee already specialized. The demand is
-  // recorded, so this call lowers in the round that serves it.
+  // and nothing afterwards revisits a callee already specialized. The call
+  // stays standing, with the projection impl selection refused, for the
+  // stage's exit walk to name.
   if (declined)
     return failure();
   return subst;
-}
-
-/// Visits the sites of `root` at which instantiation can owe work: every
-/// sub-type except the endpoints of an equality claim.
-///
-/// An equality claim's endpoints hold a proposition, not work. What stands in
-/// one is a term the equation relates, discharged when the equality settles, so
-/// a scan that judges obligations sees the equality claim itself and never what
-/// it relates. Every such scan reads this walk, so the rule is stated once.
-static void walkObligationSites(Type root,
-                                llvm::function_ref<void(Type)> visit) {
-  root.walk<WalkOrder::PreOrder>([&](Type sub) -> WalkResult {
-    visit(sub);
-    if (auto claim = dyn_cast<ClaimType>(sub))
-      if (claim.isEquality())
-        return WalkResult::skip();
-    return WalkResult::advance();
-  });
-}
-
-/// True when `root` carries an obligation instantiation has not yet discharged:
-/// an unproven monomorphic application claim, or a ground projection (one whose
-/// base is concrete and so resolves in place). These are exactly the demands the
-/// two leftover checks refuse if one still stands on a result or block-argument
-/// type at instantiate's exit, and, standing outside a template, what keeps
-/// instantiation pending for the erase gate.
-static bool typeCarriesStandingObligation(Type root) {
-  bool found = false;
-  walkObligationSites(root, [&](Type sub) {
-    if (auto claim = dyn_cast<ClaimType>(sub)) {
-      if (claim.isApplication() && claim.isMonomorphic() && !claim.isProven())
-        found = true;
-    } else if (auto proj = dyn_cast<ProjectionType>(sub)) {
-      if (!isPolymorphicType(Type(proj)))
-        found = true;
-    }
-  });
-  return found;
 }
 
 namespace {
@@ -1130,25 +801,41 @@ static Attribute instantiationTemplateKey(MethodCallOp op) {
   return op.getMethodRefAttr();
 }
 
+/// Impl selection's reading of a type's ground projections at `site`: each
+/// resolved to its normal form, and a type whose projections have none left
+/// spelled, the overflow named where selection met it.
+static Type readThroughSelection(Type ty, ImplResolver &resolver,
+                                 const SelectionSite &site,
+                                 PatternRewriter &rewriter) {
+  Answer<Type> resolved = resolver.resolveProjectionsIn(ty, site, rewriter);
+  return resolved.isAnswer() ? *resolved : ty;
+}
+
 /// The closed call-site substitution of `op` against its callee's signature
-/// `formalTy`, read through the record of what impl selection has settled in
-/// the module the call stands in, on top of the evidence the call itself
-/// carries.
+/// `formalTy`, read through impl selection in the module the call stands in, on
+/// top of the evidence the call itself carries.
 template <typename CallOpT>
 static FailureOr<CallSubstitution>
 buildCallSubstitution(CallOpT op, PatternRewriter &rewriter,
-                      const ReadOnlyImplResolver &reading,
-                      FunctionType formalTy) {
-  ModuleOp module = op.getOperation()->template getParentOfType<ModuleOp>();
-  ReadOnlyImplResolver here = reading.in(module);
-  auto specialization = op.buildParameterSpecialization(&here);
+                      ImplResolver &resolver, FunctionType formalTy) {
+  SelectionSite site = SelectionSite::of(op);
+  auto selection = [&](Type ty) {
+    return readThroughSelection(ty, resolver, site, rewriter);
+  };
+  auto specialization = op.buildParameterSpecialization(selection);
   if (failed(specialization)) {
     (void)rewriter.notifyMatchFailure(op, "couldn't build substitution");
     return failure();
   }
+  auto resolve = [&](ProjectionType proj) -> FailureOr<Type> {
+    auto resolved = resolver.resolveProjection(proj, site, rewriter);
+    if (!resolved.isAnswer())
+      return failure();
+    return resolved->getBinding();
+  };
   return CallSubstitution::forCall(std::move(*specialization),
                                    op.getOperandTypes(), op.getResultTypes(),
-                                   formalTy, module, here);
+                                   formalTy, resolve);
 }
 
 /// Builds and closes the call-site substitution, uses it to specialize the
@@ -1162,12 +849,11 @@ buildCallSubstitution(CallOpT op, PatternRewriter &rewriter,
 template <typename CallOpT>
 static FailureOr<SpecializedCallTarget>
 specializeCallTarget(CallOpT op, PatternRewriter &rewriter,
-                     const ReadOnlyImplResolver &reading,
-                     FunctionType formalTy) {
+                     ImplResolver &resolver, FunctionType formalTy) {
   Operation *caller =
       op.getOperation()->template getParentOfType<func::FuncOp>();
   Attribute templateKey = instantiationTemplateKey(op);
-  InstantiationChain &chain = reading.getInstantiationChain();
+  InstantiationChain &chain = resolver.getInstantiationChain();
   if (chain.depthAt(caller, templateKey) >= kInstantiationDepthLimit) {
     chain.noteLimitReached();
     InFlightDiagnostic diagnostic =
@@ -1184,7 +870,7 @@ specializeCallTarget(CallOpT op, PatternRewriter &rewriter,
     return failure();
   }
 
-  auto subst = buildCallSubstitution(op, rewriter, reading, formalTy);
+  auto subst = buildCallSubstitution(op, rewriter, resolver, formalTy);
   if (failed(subst))
     return failure();
 
@@ -1198,8 +884,11 @@ specializeCallTarget(CallOpT op, PatternRewriter &rewriter,
     target.resultTypes.push_back(newR);
   }
 
-  auto callee =
-      op.getOrSpecializeCallee(rewriter, *subst);
+  SelectionSite site = SelectionSite::of(op);
+  auto selection = [&](Type ty) {
+    return readThroughSelection(ty, resolver, site, rewriter);
+  };
+  auto callee = op.getOrSpecializeCallee(rewriter, *subst, selection);
   if (failed(callee)) {
     (void)rewriter.notifyMatchFailure(op, "couldn't get or specialize callee");
     return failure();
@@ -1220,10 +909,10 @@ specializeCallTarget(CallOpT op, PatternRewriter &rewriter,
 /// leading argument.
 template <typename CallOpT>
 struct CallOpLowering : public OpRewritePattern<CallOpT> {
-  ReadOnlyImplResolver reading;
+  ImplResolver &resolver;
 
-  CallOpLowering(MLIRContext *ctx, const ReadOnlyImplResolver &reading)
-    : OpRewritePattern<CallOpT>(ctx), reading(reading) {}
+  CallOpLowering(MLIRContext *ctx, ImplResolver &resolver)
+    : OpRewritePattern<CallOpT>(ctx), resolver(resolver) {}
 
   LogicalResult matchAndRewrite(CallOpT op, PatternRewriter &rewriter) const override {
     // The one readiness law, checked before any demand is raised: monomorphic
@@ -1242,20 +931,22 @@ struct CallOpLowering : public OpRewritePattern<CallOpT> {
     if (failed(formalTy))
       return rewriter.notifyMatchFailure(op, "couldn't get the callee's function type");
 
-    DemandFrame frame(op.getLoc());
-
     // A call computing evidence is replaced by the body the receiver's impl
     // wrote for it: the evidence is read by position, never selected again.
     if constexpr (std::is_same_v<CallOpT, MethodCallOp>) {
       if (op.computesEvidence()) {
-        auto subst = buildCallSubstitution(op, rewriter, reading, *formalTy);
+        auto subst = buildCallSubstitution(op, rewriter, resolver, *formalTy);
         if (failed(subst))
           return failure();
-        return op.inlineEvidence(rewriter, *subst);
+        SelectionSite site = SelectionSite::of(op);
+        auto selection = [&](Type ty) {
+          return readThroughSelection(ty, resolver, site, rewriter);
+        };
+        return op.inlineEvidence(rewriter, *subst, selection);
       }
     }
 
-    auto target = specializeCallTarget(op, rewriter, reading, *formalTy);
+    auto target = specializeCallTarget(op, rewriter, resolver, *formalTy);
     if (failed(target))
       return failure();
 
@@ -1371,8 +1062,6 @@ struct MonomorphizeResultTypesPattern
         return rewriter.notifyMatchFailure(iface, "operands are still polymorphic");
     }
 
-    DemandFrame frame(iface->getLoc());
-
     // try to compute specialized result types; inference failure defers this op
     SmallVector<Type> specializedTypes;
     if (failed(iface.inferReturnTypes(iface->getContext(), iface->getLoc(),
@@ -1427,50 +1116,67 @@ static bool wouldReplace(AttrTypeReplacer &replacer, Operation *op,
   return false;
 }
 
-/// Resolves concrete `!trait.proj` types to their bound types by looking up
-/// the matching `trait.impl`'s associated type binding.
+/// Asks impl selection for the obligations an op spells and respells the op
+/// with the answers: each unproven monomorphic application claim becomes the
+/// claim proven, and each ground projection the type it resolves to.
 ///
-/// This runs in the driver rather than in the commit that sweeps the module, and
-/// that is where it belongs. A commit resolves what the module SPELLS; the
-/// projections this meets are the ones a substitution MINTS while the driver is
-/// running -- stamping a concrete argument into a projection spelling turns a
-/// symbolic projection into a ground one that no earlier sweep could have seen.
-/// Moving the work into the commit was built and measured: it cost 2-3% of a
-/// compile and still left this pattern applying 91 times -- once per operation
-/// it rewrote -- so it was refused and this is the resolution arm.
-struct ResolveProjectionsPattern : public RewritePattern {
-  ReadOnlyImplResolver reading;
+/// An op is the one place its own spelling is settled, so the obligation is
+/// asked for by the op that holds it, wherever it stands and whenever the op is
+/// reached -- a clone a substitution minted included -- as Rust's
+/// monomorphization collector asks `Instance::resolve` per use. Selection
+/// memoizes every answer, so every op spelling one claim names one proof. An
+/// equality's endpoints state a proposition and are left as spelled. A claim
+/// whose evidence its producer reads by position is that reading's to prove,
+/// never selection's, so such a result keeps its spelling, as does the result
+/// of an op that infers its result types from its operands, whose evidence is
+/// theirs (`MonomorphizeResultTypesPattern`); and a call computing evidence
+/// keeps its result's projections as well, since the variables of the
+/// requirement it computes are read off that spelling when it is replaced by
+/// its method's body. What selection refuses stays spelled for the stage's exit
+/// walk to name.
+struct SettleSpelledObligationsPattern : public RewritePattern {
+  ImplResolver &resolver;
 
-  ResolveProjectionsPattern(MLIRContext *ctx, const ReadOnlyImplResolver &reading)
-    : RewritePattern(MatchAnyOpTypeTag(), /*benefit=*/1, ctx), reading(reading) {}
+  SettleSpelledObligationsPattern(MLIRContext *ctx, ImplResolver &resolver)
+    : RewritePattern(MatchAnyOpTypeTag(), /*benefit=*/1, ctx),
+      resolver(resolver) {}
 
   LogicalResult matchAndRewrite(Operation *op,
                                 PatternRewriter &rewriter) const override {
-    // A template's projections are resolved when the template is cloned for a
-    // concrete instance, not here; the worklist never collects a template's
-    // interior, so this pattern sees only code carried to a target.
-    if (!opMentionsType<ProjectionType>(op))
-      return failure();
-    // A call computing evidence keeps its result spelling until it is replaced
-    // by its method's body: the variables of the requirement it computes are
-    // read there.
     if (auto call = dyn_cast<MethodCallOp>(op); call && call.computesEvidence())
       return failure();
+    bool provesClaims = !producesPositionalEvidence(op) &&
+                        !isa<InferTypeOpInterface>(op) &&
+                        opMentionsType<ClaimType>(op);
+    if (!provesClaims && !opMentionsType<ProjectionType>(op))
+      return failure();
 
-    DemandFrame frame(op->getLoc());
-
-    // What a projection resolves to is read in the module the op stands in,
-    // whose impls are what selection settled it from.
-    ReadOnlyImplResolver here = reading.in(getAnchorModule(op));
-    AttrTypeReplacer replacer = makeGroundProjectionReplacer(
-        [&](ProjectionType proj) -> std::optional<Type> {
-      auto resolved = here.resolveProjection(proj);
-      if (failed(resolved)) {
-        (void)here.decline(proj);
+    SelectionSite site = SelectionSite::of(op);
+    AttrTypeReplacer replacer = makeEndpointSealedReplacer();
+    // A ground projection is resolved to its normal form in one rewrite; one
+    // that has none is named once, and left as spelled.
+    replacer.addReplacement([&](ProjectionType proj) -> std::optional<Type> {
+      if (isPolymorphicType(proj))
         return std::nullopt;
-      }
-      return resolved->getBinding();
+      Answer<Type> resolved =
+          resolver.resolveProjectionsIn(Type(proj), site, rewriter);
+      if (!resolved.isAnswer() || *resolved == Type(proj))
+        return std::nullopt;
+      return *resolved;
     });
+    // The proven spelling names the same application, whose type arguments can
+    // spell claims and projections of their own, so the walk continues into the
+    // result instead of stopping at it.
+    replacer.addReplacement(
+        [&](ClaimType claim) -> std::optional<std::pair<Type, WalkResult>> {
+          if (!provesClaims || !claim.isApplication() || claim.isProven() ||
+              !claim.isMonomorphic())
+            return std::nullopt;
+          auto proven = resolver.resolveAndEnsureProofFor(claim, site, rewriter);
+          if (!proven.isAnswer())
+            return std::nullopt;
+          return std::make_pair(Type(*proven), WalkResult::advance());
+        });
     if (!wouldReplace(replacer, op,
                       /*replaceAttrs=*/true,
                       /*replaceLocs=*/false,
@@ -1483,343 +1189,52 @@ struct ResolveProjectionsPattern : public RewritePattern {
                                  /*replaceLocs=*/false,
                                  /*replaceTypes=*/true);
     });
+    // A call judges its callee's signature, so a respelled callee's calls are
+    // asked again.
+    if (auto function = dyn_cast<func::FuncOp>(op))
+      if (auto uses = SymbolTable::getSymbolUses(function, site.scope))
+        for (const SymbolTable::SymbolUse &use : *uses)
+          rewriter.modifyOpInPlace(use.getUser(), [] {});
     return success();
   }
 };
 
-/// Puts a claim a function's signature declares to impl selection, which the
-/// freeze standing over the instantiation driver forbids.
-///
-/// The driver's own patterns read the facts the steps before them recorded and
-/// put nothing to selection, so nothing the compiler builds reaches the freeze.
-/// This is what exercises it. A round collects the claims a result type or a
-/// block argument spells, so a claim on a function carrying a body is one a
-/// round has already collected; what is left for this pattern is a claim living
-/// in a function type alone, which is a declaration with no body to spell it.
-/// Selection meets that application for the first time here, finds no
-/// candidate, and asks the generators -- which is the ask the freeze turns into
-/// a fatal naming the claim and the span. Only the dialect's plugin adds this
-/// pattern; the passes the compiler creates never do.
-struct AskImplSelectionForADeclaredClaimPattern
-    : public OpRewritePattern<func::FuncOp> {
-  ImplResolver &resolver;
-
-  AskImplSelectionForADeclaredClaimPattern(MLIRContext *ctx,
-                                           ImplResolver &resolver)
-      : OpRewritePattern(ctx), resolver(resolver) {}
-
-  LogicalResult matchAndRewrite(func::FuncOp op,
-                                PatternRewriter &rewriter) const override {
-    for (Type input : op.getFunctionType().getInputs()) {
-      auto claim = dyn_cast<ClaimType>(input);
-      if (!claim || claim.isProven() || !claim.isMonomorphic())
-        continue;
-      (void)resolver.resolveAndEnsureProofFor(claim, getAnchorModule(op),
-                                              rewriter);
-    }
-    // Asking is all this does, so it rewrites nothing and the driver moves on.
-    return failure();
-  }
-};
-
-/// What one round did, which is what says whether another round has anything to
-/// do.
-///
-/// A round that wrote nothing minted no fact, found no demand nothing had seen
-/// and rewrote nothing, so the round after it would repeat it exactly. Asking
-/// again about a demand an earlier round already asked about is not writing: a
-/// loop that ran on questions rather than answers would run until its bound.
-struct RoundWork {
-  /// Whether the bridge into trait vocabulary rewrote anything.
-  bool bridged = false;
-  /// Demands impl selection resolved.
-  uint64_t served = 0;
-  /// Ops impl selection inserted serving them.
-  uint64_t insertedServingDemands = 0;
-  /// Type positions the round's commit respelled.
-  uint64_t respelled = 0;
-  /// Whether the instantiation driver rewrote anything.
-  bool instantiated = false;
-  /// Facts impl selection minted while the instantiation driver ran. A fact
-  /// minted there reaches nothing the driver's earlier rewrites saw, so the
-  /// round's own work is what this counts, and it counts writes rather than
-  /// entries: an optimistic proof a failed recursion takes back out still
-  /// moved the fact base the rewrites before it read.
-  uint64_t instantiateMinted = 0;
-  /// Whether impl selection minted a fact anywhere in the round.
-  bool mintedFacts = false;
-  /// Whether the drain grew after the round had already collected from it, so
-  /// that a demand raised late in the round has had no round put it to
-  /// selection.
-  bool drainGrewAfterCollect = false;
-
-  bool wrote() const {
-    return bridged || served || insertedServingDemands || respelled ||
-           instantiated || mintedFacts || drainGrewAfterCollect;
-  }
-};
-
-/// Counts the ops one round's own resolution inserts.
-///
-/// Resolution under a pattern driver reaches that driver's worklist through the
-/// rewriter's listener. A round resolves between its drivers and then runs the
-/// next one over the whole module, which reaches an op inserted here without it
-/// having been enqueued; the count is what the listener is for.
-struct RoundInsertionCounts : public OpBuilder::Listener {
-  void notifyOperationInserted(Operation *, OpBuilder::InsertPoint) override {
-    ++inserted;
-  }
-
-  uint64_t inserted = 0;
-};
-
-/// The demands a round puts to impl selection: what `module` spells, and what a
-/// recording engine declined and `ledger` therefore holds.
-///
-/// The two reach one population two ways, and neither reaches all of it. The
-/// module is where a demand a later round can still serve must be standing, so
-/// walking it finds every such demand wherever it was raised -- including the
-/// ones nothing declined, because the step that would have declined them never
-/// ran. What the module does not spell is what a component minted while it was
-/// working and did not write down: a spelling a substitution built, or one a
-/// candidate probe reached. Those exist only in what the engine that met them
-/// recorded.
-///
-/// A demand leaves the drain for good when nothing a later round could ask
-/// would settle it differently: impl selection resolved it, or refused it on
-/// the arm no later resolution overturns. `drained` holds those. One selection
-/// could not serve yet stays on the drain, and `attempted` carries the fact
-/// epoch it was last put to selection at, so a round asks about it again
-/// exactly where selection has minted something since -- which is the only
-/// thing that can make the answer differ, and the only thing that keeps asking
-/// again from asking the same question forever. Both halves of the union are
-/// held to that same discipline, so a key the walk keeps finding is asked about
-/// exactly as often as one an engine recorded once.
-///
-/// The order is the ledger's first, then the walk's, and both are the order
-/// their own source produced: one run's rounds ask in the order another run's
-/// do.
-static SmallVector<Demand>
-collectUndrainedDemands(ModuleOp module, const DemandLedger &ledger,
-                        const DenseSet<Demand> &drained,
-                        const DenseMap<Demand, uint64_t> &attempted,
-                        uint64_t epoch, DenseMap<Demand, Location> &origins) {
-  SmallVector<Demand> collected;
-  DenseSet<Demand> taken;
-  auto take = [&](Demand demand) {
-    if (drained.contains(demand))
-      return;
-    auto it = attempted.find(demand);
-    if (it != attempted.end() && it->second == epoch)
-      return;
-    if (!taken.insert(demand).second)
-      return;
-    collected.push_back(demand);
-  };
-  for (Demand demand : ledger.getDrainableDemands())
-    take(demand);
-  for (Demand demand : demandsSpelledIn(module, /*inAttributes=*/true,
-                                        DemandSkip::Infrastructure,
-                                        DemandSkip::Infrastructure, &origins))
-    take(demand);
-  return collected;
-}
-
-/// Puts every demand in `collected` to impl selection, which generates the impl
-/// the demand needs when none binds its application and partitions the
-/// candidates when several do, and records what each attempt settled.
-///
-/// A demand selection resolved or refused for good leaves the drain; one it
-/// could not serve yet stays, against the epoch it was asked at. A refusal is
-/// an error selection has already named, so `refused` records that the stage
-/// has one to fail on -- leaving the drain is what a refusal and a resolution
-/// have in common, and it is not what tells them apart.
-///
-/// Each demand is put to selection in the module it stands in, where the
-/// pattern that rewrites the op spelling it reads the answer, and what serving
-/// it writes is written there.
-static void serveCollectedDemands(ImplResolver &resolver,
-                                  ArrayRef<Demand> collected,
-                                  const DenseMap<Demand, Location> &origins,
-                                  OpBuilder &builder,
-                                  DenseSet<Demand> &drained,
-                                  DenseSet<Demand> &served,
-                                  bool &refused,
-                                  DenseMap<Demand, uint64_t> &attempted,
-                                  RoundWork &work) {
-  for (Demand demand : collected) {
-    auto [spelling, anchor] = demand;
-    // A demand found by walking the module is named while it is put to
-    // selection, so what the ask raises underneath is attributed to the op
-    // carrying the spelling. The frame a demand an engine recorded was raised
-    // under is gone by now, so the place that frame named is read back off the
-    // ledger: a demand spelled in no op has that place and no other.
-    std::optional<DemandFrame> spelledAt;
-    if (auto origin = origins.find(demand); origin != origins.end())
-      spelledAt.emplace(origin->second);
-    else if (std::optional<Location> raised =
-                 resolver.getDemandLedger().getRaisedAt(demand))
-      spelledAt.emplace(*raised);
-    // The epoch is read per demand rather than once per round: serving one
-    // demand mints facts the demands after it in this batch are resolved
-    // under, so a demand asked about before that is one the next round asks
-    // about again.
-    attempted[demand] = resolver.getFactEpoch();
-
-    // Every engine whose declining leaves a demand standing declines a
-    // monomorphic projection or an unproven monomorphic claim, so this is
-    // total over what the drain holds.
-    OpBuilder::InsertionGuard guard(builder);
-    builder.setInsertionPointToEnd(anchor.getBody());
-    ImplResolver::DemandDisposition disposition;
-    if (auto projection = dyn_cast<ProjectionType>(spelling))
-      disposition = resolver.serveDemand(projection, anchor, builder);
-    else if (auto claim = dyn_cast<ClaimType>(spelling))
-      disposition = resolver.serveDemand(claim, anchor, builder);
-    else
-      llvm_unreachable("a drainable demand is a projection or a claim an "
-                       "engine left spelled");
-
-    switch (disposition) {
-    case ImplResolver::DemandDisposition::Served:
-      ++work.served;
-      drained.insert(demand);
-      served.insert(demand);
-      break;
-    case ImplResolver::DemandDisposition::Refused:
-      drained.insert(demand);
-      refused = true;
-      break;
-    case ImplResolver::DemandDisposition::Deferred:
-      break;
-    }
-  }
-}
-
-/// Checks that impl selection left nothing part-way done.
-///
-/// Selection is entered at round zero and at the round's own serving step,
-/// where the drain puts demands to it; the instantiation driver only reads what
-/// those steps settled. A reader of its facts between any two of those points
-/// must find every application it opened closed, because a fact read part-way
-/// through is one that is not yet a fact.
-static void checkResolutionBoundary(const ImplResolver &resolver) {
-  assert(resolver.isQuiescent() &&
-         "impl selection must not be part-way through an application at a "
-         "boundary between the stage's steps");
-}
-
-/// The resolvers, module-body builder, and module every projection-settlement
-/// helper reads but never varies as it descends. Recorded facts and
-/// obligation-holding selection come from `reading` and `resolver`; the impls a
-/// resolution chain drives selection to generate insert at the module body
-/// through `proofBuilder`; `module` anchors the shared fixed-point normalization
-/// every resolution walk here runs, which owns the bound that cuts a chain that
-/// never grounds out.
-struct ProjectionSettleContext {
-  const ReadOnlyImplResolver &reading;
-  ImplResolver &resolver;
-  OpBuilder &proofBuilder;
-  ModuleOp module;
-};
-
-/// Resolve one hop of a monomorphic projection through an obligation-holding
-/// impl. The recorded facts answer first; a projection nothing recorded is put
-/// to impl selection, which resolves it only through an impl whose obligations
-/// hold and refuses it otherwise. Selection's own sub-resolutions are
-/// discardable probes of the module -- not demands this stage undertook to
-/// serve -- so they are marked speculative and never reach the drain. Nothing
-/// where the projection has no obligation-holding impl.
-static std::optional<Type>
-resolveProjectionHop(ProjectionType proj, const ProjectionSettleContext &settle) {
-  if (auto recorded = settle.reading.resolveProjection(proj);
-      succeeded(recorded))
-    return recorded->getBinding();
-  SpeculationScope speculation;
-  if (auto selected = settle.resolver.resolveProjection(
-          proj, settle.module, settle.proofBuilder);
-      succeeded(selected))
-    return selected->getBinding();
-  return std::nullopt;
-}
-
-/// Resolve one hop of a projection over a type variable through the impls the
-/// module holds.
-///
-/// Selection answers about one application, and a spelling carrying variables
-/// stands for as many applications as its variables have instances, so nothing
-/// selection settled says what it denotes. What does is an impl serving every
-/// one of those instances: a single impl of the trait that states no where clause
-/// and whose header carries to the application as written. The read is a probe of the module and
-/// not a demand this stage undertook to serve. Nothing where no such impl
-/// stands.
-static std::optional<Type> resolveProjectionOverVariableHop(ProjectionType proj,
-                                                            ModuleOp module) {
-  SpeculationScope speculation;
-  Type resolved =
-      resolveProjectionsByLookup(Type(proj), module,
-                                 DemandOrigin::RecordedFactRead,
-                                 LookupScope::Determined);
-  if (resolved == Type(proj))
-    return std::nullopt;
-  return resolved;
-}
-
-/// Resolves to a fixed point every projection standing anywhere in `ty` that
-/// something settles: a ground one through the record of what impl selection
-/// settled and then through selection itself, one over a type variable through
-/// the impls the module holds. A projection neither settles is left spelled as
-/// written.
-static Type settleProjections(Type ty,
-                              const ProjectionSettleContext &settle) {
-  return normalizeProjectionsToFixedPoint(ty, settle.module, [&](Type current) {
-    AttrTypeReplacer replacer = makeEndpointSealedReplacer();
-    replacer.addReplacement([&](ProjectionType proj) -> std::optional<Type> {
-      if (isPolymorphicType(proj))
-        return resolveProjectionOverVariableHop(proj, settle.module);
-      return resolveProjectionHop(proj, settle);
-    });
-    return replacer.replace(current);
-  });
-}
-
 /// Whether a monomorphic equality claim is settled at the leftover check: its
 /// two endpoints ground-resolve to one spelling through impls whose obligations
-/// hold.
+/// hold. Fails where an endpoint's resolution overflows, the overflow named
+/// at `carrier`.
 ///
 /// An equality claim carries no proof -- its evidence is the value
 /// itself -- so unlike an application claim it is never "proven"; it is
 /// discharged instead when the projections in its endpoints resolve and the two
-/// endpoints meet at one ground type. Each projection resolves first from what
-/// impl selection has recorded, the spelling every projection some round put to
-/// selection already carries. The rounds hold an equality's endpoints as a leaf
-/// and never put the projections inside them to selection, so a
-/// projection whose resolution chain runs through an impl nothing else demanded
-/// has no recorded outcome; such a projection is put to selection here instead.
-/// Selection resolves a projection only through an impl whose assumptions are
-/// satisfiable and refuses it otherwise, so a projection whose only candidate
-/// impl is conditional with an undischarged assumption stays spelled and the
-/// endpoints do not meet -- the settlement never resolves through an impl whose
-/// where-bounds do not hold. Resolution runs to a fixed point because one hop's
-/// binding may spell the next. The endpoints are read through the accessor and
-/// rebuilt atomically, the one sanctioned way to move one.
-static bool equalityClaimGroundResolvesToOneSpelling(
-    ClaimType claim, const ProjectionSettleContext &settle) {
+/// endpoints meet at one ground type. Selection resolves a projection only
+/// through an impl whose assumptions are satisfiable and refuses it otherwise,
+/// so a projection whose only candidate impl is conditional with an
+/// undischarged assumption stays spelled and the endpoints do not meet -- the
+/// settlement never resolves through an impl whose where-bounds do not hold.
+/// Resolution runs to a fixed point because one hop's binding may spell the
+/// next.
+static FailureOr<bool>
+equalityClaimGroundResolvesToOneSpelling(ClaimType claim,
+                                         ImplResolver &resolver,
+                                         Operation *carrier,
+                                         OpBuilder &builder) {
   auto eq = claim.getEqualityAttr();
   if (!eq)
     return false;
-  Type lhs = settleProjections(eq.getLhs(), settle);
-  Type rhs = settleProjections(eq.getRhs(), settle);
-  return lhs == rhs && isGroundType(lhs);
+  SelectionSite site = SelectionSite::of(carrier);
+  Answer<Type> lhs = resolver.resolveProjectionsIn(eq.getLhs(), site, builder);
+  if (!lhs.isAnswer())
+    return failure();
+  Answer<Type> rhs = resolver.resolveProjectionsIn(eq.getRhs(), site, builder);
+  if (!rhs.isAnswer())
+    return failure();
+  return *lhs == *rhs && isGroundType(*lhs);
 }
 
 } // end namespace
 
-/// `askImplSelectionForImpls` adds the pattern that puts a declared claim to
-/// impl selection from inside the instantiation driver, which is how the freeze
-/// over that driver is exercised. Only the dialect's plugin passes it.
-LogicalResult instantiateMonomorphs(ModuleOp module,
-                                    bool askImplSelectionForImpls) {
+LogicalResult instantiateMonomorphs(ModuleOp module) {
   // A symbol name this stage resolves is scanned for once and answered from
   // what was held after that. The stage appends symbols -- the impls it
   // generates, the proofs it records, the instances it cuts -- which leaves
@@ -1827,314 +1242,169 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
   // through a rewrite driver, whose listener reports the erasure.
   SymbolLookupScope symbolAnswers;
 
-  // Round zero: resolve the impls the module already spells and respell the
-  // claims they prove, before any round asks for an impl that is missing.
-  auto resolver = resolveImpls(module);
-  if (failed(resolver))
+  // verify traits are acyclic
+  if (failed(verifyAcyclicTraits(module)))
     return failure();
-  checkResolutionBoundary(*resolver);
+
+  // verify that proofs named in declared signatures actually prove their claims
+  if (failed(verifyDeclaredClaimProofs(module)))
+    return failure();
+
+  // refuse a proof whose derivation keeps reaching larger applications
+  if (failed(verifyProofDerivationsEnd(module)))
+    return failure();
 
   MLIRContext* ctx = module.getContext();
+  ImplResolver resolver(module);
 
-  // The demands the rounds below settled and the ones they served. A demand is
-  // settled when nothing a later round could ask would answer differently, so
-  // the served demands are a subset: a demand refused on the arm no later
-  // resolution overturns is settled and unserved, and selection named that
-  // refusal where the demand stood. The stage-exit check reads the served set,
-  // which tells a demand the stage answered from one the drainability rule
-  // over-admitted.
-  DenseSet<Demand> drained;
-  DenseSet<Demand> served;
-  // Whether any round put a demand to selection and was told the application is
-  // proven by no unique impl.
-  bool refusedADemand = false;
-  // Whether the instantiation driver refused a claim an op committed to or was
-  // spelled with: a derive given evidence its proof discharges otherwise, a
-  // projection naming evidence its source does not supply.
+  // One driver: prove claim producers (allege, derive, project), settle what
+  // each op spells, lower trait.func.call and trait.method.call to instances,
+  // and monomorphize any generic op whose results become monomorphic. Each
+  // pattern asks impl selection for what it needs where it needs it, and the
+  // driver re-walks every function a rewrite landed in, so a fact selection
+  // mints reaches every op that reads it.
+  //
+  // A claim the driver refuses -- a derive given evidence its proof discharges
+  // otherwise, an allegation nothing serves -- was named where it stood, and
+  // the driver and the walks below run on so that everything else standing is
+  // named too.
   bool refusedAClaim = false;
-  // The fact epoch each unsettled demand was last put to selection at, which is
-  // what says whether asking again could answer differently.
-  DenseMap<Demand, uint64_t> attempted;
+  DenseSet<Type> namedObligations;
+  {
+    RewritePatternSet patterns(ctx);
+    patterns.add<ProveClaimResultPattern>(ctx, resolver, namedObligations,
+                                          refusedAClaim);
+    patterns.add<SettleSpelledObligationsPattern>(ctx, resolver);
+    patterns.add<MonomorphizeResultTypesPattern, SettleCoercePattern>(ctx);
+    patterns.add<CallOpLowering<FuncCallOp>, CallOpLowering<MethodCallOp>>(
+        ctx, resolver);
 
-  // The resolver was moved out of the sub-phase that built it, so its ledger is
-  // reinstalled here to span this sub-phase's rounds and leftover walks.
-  DemandLedgerScope recording(resolver->getDemandLedger());
-
-  // A round forgets the refusals a later resolution could answer differently,
-  // bridges into trait vocabulary, takes the demands nothing has settled off
-  // the drain, puts them to impl selection, commits what selection proved to
-  // the module's spellings, and only then instantiates. Rounds run until one of
-  // them writes nothing, at which point the round after it would repeat it.
-  //
-  // The flush leads because everything after it asks questions: a round asking
-  // under a negative an earlier round recorded would be told what was true
-  // before the impls this stage has generated since existed.
-  //
-  // Only the demands an engine left standing are collected here. The
-  // obligations impl selection raises proving one claim are resolved on the
-  // same stack that raised them and never reach the drain. The projections and
-  // claims the instantiation driver meets it reads rather than resolves,
-  // declining any the recorded facts do not yet answer; each decline is a demand
-  // a later round collects and serves. Anything still standing at the end of the
-  // stage is pinned by the leftover walks.
-  //
-  // Each round's work is bounded by the module and a round that finds nothing
-  // ends the loop, so the count of rounds is the depth of the chain of impls
-  // the module needs generated. A module whose rounds keep finding work is
-  // cycling, and this bound is what makes that loud rather than endless.
-  constexpr unsigned maxRounds = 64;
-  unsigned round = 0;
-  // Whether anything has written to the module since the bridge last ran and
-  // since the commit last swept it. A step whose input has not moved since it
-  // last ran would produce what it produced then, which for both of these is
-  // nothing.
-  bool writtenSinceBridge = true;
-  bool writtenSinceSweep = false;
-  // What the record stood at when the commit last swept. The sweep reads the
-  // record and rewrites the module through it, so a record that has gained no
-  // answer since leaves the sweep with nothing the last one did not already do.
-  uint64_t recordAtSweep = resolver->getRecordEpoch();
-  // Whether the module stands where the instantiation driver last left it, at
-  // that driver's own fixed point. A driver run that minted nothing leaves it
-  // there; a run that minted is a run whose earlier rewrites read facts its
-  // later ones did not, so what it left is not a fixed point under the facts
-  // as they now stand. No round has run the driver yet, so the first one runs
-  // it unconditionally.
-  bool atInstantiationFixedPoint = false;
-  // Where the last commit moved something, so that the round bound's refusal
-  // names somewhere the stage's work landed.
-  std::optional<Location> lastRespelled;
-  for (bool wrote = true; wrote;) {
-    if (++round > maxRounds) {
-      InFlightDiagnostic diagnostic =
-          emitError(lastRespelled.value_or(module.getLoc()));
-      return diagnostic
-             << "instantiate-monomorphs did not converge: the stage ran its "
-                "rounds to the round bound, which indicates a round writing "
-                "work back for the next one to find";
+    // collect instantiate-monomorphs patterns from other dialects
+    for (Dialect *d : ctx->getLoadedDialects()) {
+      if (auto *iface = d->getRegisteredInterface<MonomorphizationInterface>())
+        iface->populateInstantiateMonomorphsPatterns(patterns);
     }
 
-    RoundWork work;
-    uint64_t epochAtRoundHead = resolver->getFactEpoch();
-    uint64_t recordAtRoundHead = resolver->getRecordEpoch();
-
-    // FLUSH. Every refusal a later resolution could answer differently is
-    // forgotten here, so that the questions the rest of the round asks are
-    // asked against the facts as they now stand.
-    resolver->forgetRetriableRefusals();
-
-    // BRIDGE. The patterns that lift another dialect's vocabulary into trait
-    // claims run whenever something has written to the module since they last
-    // ran, because that writing may have created the ops they lift.
-    if (writtenSinceBridge) {
-      if (failed(convertToTrait(module, &work.bridged)))
-        return failure();
-      writtenSinceBridge = false;
-      writtenSinceSweep |= work.bridged;
-    }
-
-    // COLLECT.
-    DenseMap<Demand, Location> spelledAt;
-    SmallVector<Demand> collected = collectUndrainedDemands(
-        module, resolver->getDemandLedger(), drained, attempted,
-        resolver->getFactEpoch(), spelledAt);
-    size_t drainAtCollect =
-        resolver->getDemandLedger().getDrainableDemands().size();
-
-    // GENERATE.
-    {
-      RoundInsertionCounts insertions;
-      OpBuilder builder(ctx);
-      builder.setListener(&insertions);
-      serveCollectedDemands(*resolver, collected, spelledAt, builder, drained,
-                            served, refusedADemand, attempted, work);
-      work.insertedServingDemands = insertions.inserted;
-    }
-    writtenSinceBridge |= work.insertedServingDemands != 0;
-    writtenSinceSweep |= work.insertedServingDemands != 0;
-
-    // COMMIT. Every claim the stage has proved is respelled in its proven form
-    // throughout the module, so the round that follows reads one spelling of
-    // each claim wherever it appears.
-    //
-    // The sweep rewrites where the module spells something the record answers
-    // for, so a module nothing has written to since the last sweep, under a
-    // record that has gained no answer since, has nothing left for it to move.
-    // The record rather than the count of proofs, because settling an
-    // application whose impl the module already held mints no proof and still
-    // gives the sweep an answer the last one did not have.
-    if (writtenSinceSweep || resolver->getRecordEpoch() != recordAtSweep) {
-      work.respelled =
-          respellProvenClaimsInPlace(*resolver, module, &lastRespelled);
-      // Sampled after the sweep, which moves the record itself wherever it
-      // respelled what a proof is read through.
-      recordAtSweep = resolver->getRecordEpoch();
-      writtenSinceSweep = false;
-      writtenSinceBridge |= work.respelled != 0;
-    }
-
-    checkResolutionBoundary(*resolver);
-
-    // INSTANTIATE. Rewrite trait.func.call and trait.method.call, prove claim
-    // producers (allege, derive, project), resolve projections, and monomorphize
-    // any generic op whose results become monomorphic.
-    // The driver reads what the steps before it established. Serving a demand
-    // is the round's own work, done where a round can see what it minted.
-    //
-    // Nothing the steps above did moved what the driver reads when the bridge
-    // lifted nothing and the record gained no answer. The driver's own patterns
-    // serve from the record, so one quantity stands for all of what the steps
-    // above could have given them: serving a demand settles an application there
-    // whether or not it mints, and the commit's respelling moves it too. The
-    // bridge is named beside it because it rewrites the module without the
-    // resolver hearing of it. Under both the driver would be handed the module
-    // its own last run left at that run's fixed point, together with the record
-    // that run read, so it would apply no pattern: the round skips it,
-    // `instantiated` stays false, and the loop ends unless something else this
-    // round wrote.
-    //
-    // Neither the flush nor a refusal is among them. A read fails on a refused
-    // application exactly as it fails on one selection has never been asked
-    // about, so neither writing the refusal nor dropping it again moves the
-    // record; a round whose only work was to refuse an application, or to forget
-    // that it had, hands the driver exactly what its last run left.
-    //
-    // What the driver reads beyond its own rewrites is the facts the module
-    // spells -- trait declarations, impl headers and their associated-type
-    // bindings, and proof ops -- and those move only where the steps above move
-    // them. No pattern written here rewrites any of them, and neither extension
-    // point that accepts a foreign pattern may contribute one that does:
-    // populateInstantiateMonomorphsPatterns below, and
-    // populateConvertToTraitPatterns in the bridge above.
-    bool instantiationInputMoved =
-        work.bridged || resolver->getRecordEpoch() != recordAtRoundHead;
-    if (!atInstantiationFixedPoint || instantiationInputMoved) {
-      ReadOnlyImplResolver reading(*resolver);
-      RewritePatternSet patterns(ctx);
-      patterns.add<ProveClaimResultPattern>(ctx, reading, refusedAClaim);
-      patterns.add<MonomorphizeResultTypesPattern, SettleCoercePattern>(ctx);
-      patterns.add<CallOpLowering<FuncCallOp>, CallOpLowering<MethodCallOp>>(
-          ctx, reading);
-      patterns.add<ResolveProjectionsPattern>(ctx, reading);
-      if (askImplSelectionForImpls)
-        patterns.add<AskImplSelectionForADeclaredClaimPattern>(ctx, *resolver);
-
-      // collect instantiate-monomorphs patterns from other dialects
-      for (Dialect *d : ctx->getLoadedDialects()) {
-        if (auto *iface = d->getRegisteredInterface<MonomorphizationInterface>())
-          iface->populateInstantiateMonomorphsPatterns(patterns);
-      }
-
-      GreedyRewriteConfig config;
-      config.setMaxNumRewrites(rewriteBudgetFor(module));
-
-      uint64_t epochAtInstantiate = resolver->getFactEpoch();
-      {
-        // Generating an impl is a round's own work, and one generated while the
-        // driver runs is a fact the run's earlier rewrites could not see. The
-        // driver's patterns read what the steps before them recorded and put
-        // nothing to impl selection, so nothing under this reaches the generator
-        // arm; the freeze is what says so.
-        ImplGenerationFreeze freeze(*resolver, "the instantiation driver");
-        LogicalResult instantiated = applyPatternsOverReachableOps(
-            module, std::move(patterns), config, &work.instantiated,
-            /*includeTemplateShells=*/false);
-        work.instantiateMinted = resolver->getFactEpoch() - epochAtInstantiate;
-        // A generation ask under the freeze already emitted its report; fail the
-        // stage rather than converge over the broken contract (the greedy driver
-        // treats the ask's failure as a pattern that did not apply).
-        if (freeze.wasAsked())
-          return failure();
-        if (failed(instantiated))
-          return module.emitError(
-              "instantiate-monomorphs did not converge: rewrite budget exceeded, "
-              "which indicates a non-confluent pattern pair cycling on a type "
-              "spelling, or evidence impls return that projects their returns "
-              "back to itself");
-      }
-      atInstantiationFixedPoint = work.instantiateMinted == 0;
-    }
-    writtenSinceBridge |= work.instantiated;
-    writtenSinceSweep |= work.instantiated;
-
-    checkResolutionBoundary(*resolver);
-
-    // A demand raised after this round collected has had no round put it to
-    // selection, and a fact minted anywhere in the round is one the round
-    // before could not have seen; either is work for a round after this one.
-    work.drainGrewAfterCollect =
-        resolver->getDemandLedger().getDrainableDemands().size() >
-        drainAtCollect;
-    work.mintedFacts = resolver->getFactEpoch() != epochAtRoundHead;
-
-    wrote = work.wrote();
+    GreedyRewriteConfig config;
+    config.setMaxNumRewrites(rewriteBudgetFor(module));
+    if (failed(applyPatternsOverReachableOps(module, std::move(patterns),
+                                             config)))
+      return module.emitError(
+          "instantiate-monomorphs did not converge: rewrite budget exceeded, "
+          "which indicates a non-confluent pattern pair cycling on a type "
+          "spelling");
   }
 
-  // A call refused on the instantiation depth limit has already reported
-  // itself, and the greedy driver took that refusal for a pattern that did not
-  // apply. The stage fails here rather than converging over a chain it stopped.
-  if (resolver->getInstantiationChain().wasLimitReached())
+  // A call refused on the instantiation depth limit, an obligation chain past
+  // it, and a demand whose projections still change after the limit's worth
+  // of steps have each named themselves, and the greedy driver took the
+  // refusal for a pattern that did not apply. An overflow is a hard error, as
+  // rustc's is: the stage fails here rather than naming what it left standing
+  // over a chain it stopped.
+  if (resolver.getInstantiationChain().wasLimitReached() ||
+      resolver.hasOverflowed())
     return failure();
 
+  // The walks below ask impl selection about what still stands, and selection
+  // may generate the impl a resolution chain runs through. A generated impl is
+  // a complete template the module verifier checks and nothing below
+  // revisits, inserted at the module body where it belongs; the builder's
+  // listener is the one selection requires and has nothing to do.
+  OpBuilder::Listener settleListener;
+  OpBuilder settleBuilder(ctx, &settleListener);
+
+  // An obligation still standing because selection refused it is named with
+  // the candidates selection recorded, once, at the first op the walks below
+  // reach spelling it: the leftover report says that it stands, not why. A
+  // claim the claim-proving pattern was refused was named where it first
+  // asked, and a claim a positional reading produces is no question of
+  // selection's.
+  auto nameRefusal = [&](Operation *op, Type obligation) {
+    // A refusal is selection's answer about an application, so a projection
+    // is named under its head's claim, and an application named once is not
+    // named again.
+    auto projection = dyn_cast<ProjectionType>(obligation);
+    Type application = projection ? Type(projection.asClaim()) : obligation;
+    if (!namedObligations.insert(application).second)
+      return;
+    if (auto claim = dyn_cast<ClaimType>(obligation))
+      if (!claim.isApplication() || producesPositionalEvidence(op))
+        return;
+    resolver.nameRefusal(obligation, getAnchorModule(op),
+                         [&] { return emitError(op->getLoc()); });
+  };
+
   // Assert that no op produced an unproven monomorphic claim that escaped
-  // proving. Keying this check on the result type rather than on the set of
-  // claim-producing ops makes it total over producers: an op whose claims the
-  // patterns above fail to discharge is an error here, never a silent gap. The
-  // one claim that passes unproven is an equality whose endpoints ground-resolve
-  // to one spelling, standing on an op erasure removes. The whole result type
-  // is walked, so a claim nested inside an aggregate is caught too, not only a
-  // claim that is the root type. Trait infrastructure regions are templates and
-  // keep their unproven claims.
+  // proving, nor takes an unproven application claim as a block argument; an
+  // equality a block takes is a hypothesis its predecessors supply. Keying this
+  // check on the types values carry rather than on the set of claim-producing
+  // ops makes it total over producers: an op whose claims the patterns above
+  // fail to discharge is an error here, never a silent gap. The one claim that
+  // passes unproven is an equality whose endpoints ground-resolve to one
+  // spelling, standing on an op erasure removes. The whole type is walked, so a
+  // claim nested inside an aggregate is caught too, not only a claim that is
+  // the root type. Trait infrastructure regions are templates and keep their
+  // unproven claims. The candidate claims are gathered under the walk and
+  // judged after it closes, because judging may insert into the module.
   bool hasLeftovers = false;
-  ReadOnlyImplResolver reading(*resolver);
-  // Settling an equality claim resolves the projections in its endpoints, which
-  // may put an undemanded impl to selection and generate the impl a resolution
-  // chain runs through. That inserts into the module, so the candidate claims
-  // are gathered under the walk and judged after it closes, never while the
-  // walk holds the module open.
   SmallVector<std::pair<Operation *, ClaimType>> monomorphicClaims;
   module.walk<WalkOrder::PreOrder>([&](Operation *op) {
     if (isTemplate(op))
       return WalkResult::skip();
-    for (Value result : op->getResults()) {
-      walkObligationSites(result.getType(), [&](Type sub) {
+    auto gather = [&](Type root, bool equalities) {
+      walkObligationSites(root, [&](Type sub) {
         auto claim = dyn_cast<ClaimType>(sub);
-        if (claim && !claim.isProven() && claim.isMonomorphic())
+        if (!claim)
+          return;
+        bool standingEquality = equalities && claim.isEquality() &&
+                                claim.isMonomorphic();
+        if (standingEquality || isUndischargedObligation(claim))
           monomorphicClaims.emplace_back(op, claim);
       });
-    }
+    };
+    for (Type t : op->getResultTypes())
+      gather(t, /*equalities=*/true);
+    for (Region &r : op->getRegions())
+      for (Block &b : r)
+        for (Value arg : b.getArguments())
+          gather(arg.getType(), /*equalities=*/false);
     return WalkResult::advance();
   });
-  // Settling an equality may reach impl generation -- for a resolution chain no
-  // round demanded, or a satisfiability probe of a conditional impl -- and impl
-  // generation requires a builder whose insertions are observed, so this builder
-  // must carry a listener. Its presence is the precondition; its tally is not
-  // read here, because unlike the round loop above (where the insertion count
-  // decides whether another round runs) no round follows this leftover check. A
-  // generated impl is a complete monomorphic definition the module verifier
-  // checks, inserted at the module body where it belongs.
-  RoundInsertionCounts settleInsertions;
-  OpBuilder settleBuilder(ctx);
-  settleBuilder.setListener(&settleInsertions);
-  settleBuilder.setInsertionPointToEnd(module.getBody());
   for (auto [op, claim] : monomorphicClaims) {
-    // What settles a claim is read in the module the op carrying it stands in,
-    // whose impls are what an endpoint resolves through.
-    ReadOnlyImplResolver here = reading.in(getAnchorModule(op));
-    ProjectionSettleContext settle{here, *resolver, settleBuilder,
-                                   getAnchorModule(op)};
     // An equality claim has no proof to await; it is settled when its endpoints
-    // ground-resolve to one spelling through impls whose obligations hold. A
-    // monomorphic equality that resolves is not a leftover; one whose projection
-    // has no obligation-holding impl stays unequal and is reported like an
-    // unprovable application claim. An allegation is proved by the claim-proving
-    // pattern alone, so one still standing here is a leftover however its
-    // endpoints resolve. A `trait.witness` or `trait.project` of an equality
-    // that resolves is removed by erasure.
-    if (claim.isEquality() && !isa<AllegeOp>(op) &&
-        equalityClaimGroundResolvesToOneSpelling(claim, settle))
-      continue;
+    // ground-resolve to one spelling through impls whose obligations hold, read
+    // in the module the op carrying it stands in. A monomorphic equality that
+    // resolves is not a leftover; one whose projection has no
+    // obligation-holding impl stays unequal and is reported like an unprovable
+    // application claim. An allegation is proved by the claim-proving pattern
+    // alone, so one still standing here is a leftover however its endpoints
+    // resolve. A `trait.witness` or `trait.project` of an equality that
+    // resolves is removed by erasure.
+    if (claim.isEquality() && !isa<AllegeOp>(op)) {
+      FailureOr<bool> settled = equalityClaimGroundResolvesToOneSpelling(
+          claim, resolver, op, settleBuilder);
+      if (succeeded(settled) && *settled)
+        continue;
+      // An endpoint whose resolution overflows is named where it was met, and
+      // alone.
+      if (failed(settled)) {
+        hasLeftovers = true;
+        continue;
+      }
+    }
     hasLeftovers = true;
+    // Evidence read past the depth limit is refused as any obligation chain
+    // that deep is, and named there alone.
+    if (auto project = dyn_cast<ProjectOp>(op);
+        project && project.getSourceClaim().isProven()) {
+      EvidenceReading reading = project.readEvidence();
+      if (reading.end == EvidenceReading::End::Overflow) {
+        emitObligationOverflow(op->getLoc(), reading.chain.back().application,
+                               reading.chain);
+        continue;
+      }
+    }
+    nameRefusal(op, claim);
     InFlightDiagnostic report =
         op->emitError() << "unproven monomorphic claim " << claim
         << " after instantiate-monomorphs";
@@ -2142,14 +1412,24 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
     // source's proof, and evidence the proof determines nothing for leaves the
     // hop's claim unproven for selection. Where selection could not prove it
     // either, the evidence the source names is what the report points at.
-    if (auto project = dyn_cast<ProjectOp>(op))
-      if (ClaimType source = project.getSourceClaim(); source.isProven())
-        report.attachNote() << "its source " << source << " names "
-                            << source.getProof() << ", whose evidence for "
-                               "requirement "
-                            << project.getIndex() << " nothing decides here";
+    if (auto project = dyn_cast<ProjectOp>(op)) {
+      if (ClaimType source = project.getSourceClaim(); source.isProven()) {
+        EvidenceReading reading = project.readEvidence();
+        Diagnostic &note = report.attachNote();
+        note << "its source " << source << " names " << source.getProof()
+             << ", whose evidence for requirement " << project.getIndex();
+        if (reading.end != EvidenceReading::End::Cycle) {
+          note << " nothing decides here";
+        } else {
+          note << " has no base: it is read through the returns of ";
+          llvm::interleaveComma(reading.impls, note, [&](StringAttr impl) {
+            note << "@" << impl.getValue();
+          });
+          note << " back to a requirement it stands for";
+        }
+      }
+    }
   }
-  if (hasLeftovers) return failure();
 
   // Reject each concrete-base projection that survived resolution. Walking the
   // result and block-argument types of every non-infrastructure op (operand
@@ -2164,32 +1444,75 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
   // and its whole subtree is skipped. The scan reads the obligation sites of a
   // type, so a projection standing in an equality's endpoints is the equality
   // settling's to discharge and is not reported here.
-  bool sawUnresolvedProjection = false;
+  SmallVector<std::pair<Operation *, ProjectionType>> standingProjections;
   module.walk<WalkOrder::PreOrder>([&](Operation *op) {
     if (isTemplate(op))
       return WalkResult::skip();
-    auto report = [&](Type root) {
+    auto gather = [&](Type root) {
       walkObligationSites(root, [&](Type sub) {
         auto proj = dyn_cast<ProjectionType>(sub);
-        if (!proj || isPolymorphicType(proj))
-          return;
-        op->emitError() << "unresolved projection " << proj
-                        << " after instantiate-monomorphs";
-        sawUnresolvedProjection = true;
+        if (proj && isUndischargedObligation(proj))
+          standingProjections.emplace_back(op, proj);
       });
     };
     for (Type t : op->getResultTypes())
-      report(t);
+      gather(t);
     for (Region &r : op->getRegions())
       for (Block &b : r)
         for (Value arg : b.getArguments())
-          report(arg.getType());
+          gather(arg.getType());
     return WalkResult::advance();
   });
+  for (auto [op, proj] : standingProjections) {
+    nameRefusal(op, proj);
+    op->emitError() << "unresolved projection " << proj
+                    << " after instantiate-monomorphs";
+  }
+  if (hasLeftovers || !standingProjections.empty())
+    return failure();
+
+  // A ground projection can also stand where the walk above does not read: in
+  // an attribute, or in an equality's endpoints, which state a proposition and
+  // are left as spelled. One there that selection resolves has a meaning; one
+  // selection refuses names a type no impl gives a meaning, which erasure would
+  // otherwise take away unread, so it is put to selection here and refused at
+  // the op carrying it.
+  SmallVector<std::pair<Operation *, ProjectionType>> spelledProjections;
+  module.walk<WalkOrder::PreOrder>([&](Operation *op) {
+    if (isTemplate(op))
+      return WalkResult::skip();
+    llvm::SetVector<ProjectionType> spelled;
+    auto collect = [&](auto root) {
+      root.walk([&](ProjectionType proj) {
+        if (!isPolymorphicType(Type(proj)))
+          spelled.insert(proj);
+      });
+    };
+    for (Type t : op->getResultTypes())
+      collect(t);
+    for (Region &r : op->getRegions())
+      for (Block &b : r)
+        for (Value arg : b.getArguments())
+          collect(arg.getType());
+    collect(Attribute(op->getAttrDictionary()));
+    for (ProjectionType proj : spelled)
+      spelledProjections.emplace_back(op, proj);
+    return WalkResult::advance();
+  });
+  bool sawUnresolvedProjection = false;
+  for (auto [op, proj] : spelledProjections) {
+    if (resolver.resolveProjection(proj, SelectionSite::of(op), settleBuilder)
+            .isAnswer())
+      continue;
+    nameRefusal(op, proj);
+    op->emitError() << "unresolved projection " << proj
+                    << " after instantiate-monomorphs";
+    sawUnresolvedProjection = true;
+  }
   if (sawUnresolvedProjection)
     return failure();
 
-  // A generic call the rounds could still rewrite but did not is a call whose
+  // A generic call the driver could still rewrite but did not is a call whose
   // callee specialization fail-closed -- an external polymorphic declaration has
   // no body to clone. Standing outside every template, it is named here rather
   // than left for a later step to meet a call it cannot lower.
@@ -2204,48 +1527,27 @@ LogicalResult instantiateMonomorphs(ModuleOp module,
   if (sawSurvivingCall)
     return failure();
 
-  // The two walks above reject a demand still spelled on an op result or block
-  // argument. A demand can also stand at a place they do not reach -- a claim on
-  // a block argument the leftover-claim walk passes over, or a projection stored
-  // in an attribute neither walk reads -- and a demand deferred to a round that
-  // never came stands with no spelling change to find. This backstops both: a
-  // drainable demand the stage never served that is still spelled anywhere is a
-  // demand the stage undertook to serve and did not.
-  if (failed(resolver->getDemandLedger().checkStandingDemandsServed(module,
-                                                                    served)))
-    return failure();
-
   // ModuleOp's own verifier hook runs here over the module shell -- it does not
   // recurse into the body, and this shallow tail judges no coerce. The bonded
   // erase pass refuses a coerce at its barrier where its endpoints stand apart:
   // they cannot be discharged and cannot cross.
-  DemandRecordingSuspension verifying;
   if (failed(module.verify()))
     return failure();
 
-  // A demand impl selection refused, or a claim the driver refused, was named
-  // where it stood, and the rounds and the walks above ran on so that
-  // everything else standing is named too. The stage fails on it here: a
-  // refusal no later resolution overturns is an error in the program, and a
-  // stage that reported one and then succeeded would let the steps after it
-  // run on a module nothing proved.
-  return success(!refusedADemand && !refusedAClaim);
+  // A claim the driver refused was named where it stood. The stage fails on it
+  // here: a refusal is an error in the program, and a stage that reported one
+  // and then succeeded would let the steps after it run on a module nothing
+  // proved.
+  return success(!refusedAClaim);
 }
 
 void InstantiateMonomorphsPass::runOnOperation() {
-  if (failed(instantiateMonomorphs(getOperation(),
-                                   /*askImplSelectionForImpls=*/false)))
+  if (failed(instantiateMonomorphs(getOperation())))
     signalPassFailure();
 }
 
 std::unique_ptr<Pass> createInstantiateMonomorphsPass() {
   return std::make_unique<InstantiateMonomorphsPass>();
-}
-
-void AskImplSelectionDuringInstantiationPass::runOnOperation() {
-  if (failed(instantiateMonomorphs(getOperation(),
-                                   /*askImplSelectionForImpls=*/true)))
-    signalPassFailure();
 }
 
 
@@ -2628,11 +1930,19 @@ bool isRewritableGenericCall(Operation *op) {
         return false;
     return true;
   };
+  // Every application claim an operand spells names its proof, the claims
+  // standing in another claim's arguments included: what an instance is keyed
+  // by is the evidence at each position, all of it (`InstanceKey`).
   auto operandClaimsProven = [](ValueRange operands) {
-    for (Value operand : operands)
-      if (auto claim = dyn_cast<ClaimType>(operand.getType()))
-        if (claim.isApplication() && claim.isMonomorphic() && !claim.isProven())
-          return false;
+    for (Value operand : operands) {
+      bool unproven = false;
+      walkObligationSites(operand.getType(), [&](Type sub) {
+        unproven = unproven ||
+                   (isa<ClaimType>(sub) && isUndischargedObligation(sub));
+      });
+      if (unproven)
+        return false;
+    }
     return true;
   };
   auto atModuleScope = [](Operation *op) {
@@ -2646,7 +1956,7 @@ bool isRewritableGenericCall(Operation *op) {
   if (auto call = dyn_cast<MethodCallOp>(op))
     return operandsMonomorphic(call.getOperands()) &&
            call.getClaimType().isProven() &&
-           operandClaimsProven(call.getArguments()) &&
+           operandClaimsProven(call.getOperands()) &&
            succeeded(call.getMethodFunctionType());
   return false;
 }
@@ -2661,12 +1971,12 @@ bool isRewritableGenericCall(Operation *op) {
 static bool opCarriesStandingObligation(Operation *op) {
   auto carriesObligation = [&] {
     for (Type t : op->getResultTypes())
-      if (typeCarriesStandingObligation(t))
+      if (carriesUndischargedObligation(t))
         return true;
     for (Region &region : op->getRegions())
       for (Block &block : region)
         for (BlockArgument arg : block.getArguments())
-          if (typeCarriesStandingObligation(arg.getType()))
+          if (carriesUndischargedObligation(arg.getType()))
             return true;
     return false;
   };

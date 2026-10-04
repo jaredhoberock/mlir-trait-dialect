@@ -34,4 +34,4 @@ func.func @main() {
 
 // CHECK-DAG: 'trait.allege' op incoherent impls (multiple satisfiable) for '!trait.claim<@Doubled[i64]>'
 // CHECK-DAG: 'trait.allege' op no impl with satisfiable assumptions for '!trait.claim<@Absent[i64]>'
-// CHECK: unresolved monomorphic trait.allege after resolve-impls
+// CHECK: unproven monomorphic claim {{.*}} after instantiate-monomorphs

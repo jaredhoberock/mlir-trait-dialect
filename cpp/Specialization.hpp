@@ -10,19 +10,23 @@
 
 namespace mlir::trait {
 
-/// Builds a type replacer that chases each stamped type to the substitution's
-/// fixed point. When `module` is non-null it also resolves the ground
-/// projections the substitution mints (a concrete argument substituted
-/// into a projection spelling) by module-visible impl lookup, so a specialized
-/// monomorph carries no ground projection that a unique module-visible impl
-/// resolves; generator-pending and multi-candidate ground projections survive
-/// unchanged. A null `module` performs no such lookup.
+/// What a clone is cut as: a template, whose spelling resolves when it is
+/// itself cloned for a concrete instance, or an instance.
+enum class CloneKind { Template, Instance };
+
+/// Builds a type replacer that stamps `subst` into a clone of kind `kind`: a
+/// template's clone receives each binding once, an instance's the closed call
+/// substitution chased to its fixed point. It resolves nothing: a ground
+/// projection the substitution mints (a concrete argument substituted into a
+/// projection spelling) stays spelled, and the op carrying it asks impl
+/// selection for it where it stands, so a clone is normalized by the one
+/// solver every other spelling is.
 AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &subst,
-                                                  ModuleOp module);
+                                                  CloneKind kind);
 
 /// Builds a type replacer that stamps `subst`'s bindings of type variables and
-/// nothing else: no projection binding and no module lookup, so a spelling it
-/// stamps keeps every projection it spells. The result of a call computing
+/// nothing else: no projection binding, so a spelling it stamps keeps every
+/// projection it spells. The result of a call computing
 /// evidence is stamped by it, since the variables of the requirement the call
 /// computes are read off that spelling (`MethodCallOp::inlineEvidence`).
 AttrTypeReplacer makeSpellingReplacerFromSubstitution(

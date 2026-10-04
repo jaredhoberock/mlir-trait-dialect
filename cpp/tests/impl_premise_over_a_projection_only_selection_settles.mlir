@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 
-// RUN: mlir-opt %s -pass-pipeline='builtin.module(resolve-impls-trait)' | FileCheck %s --check-prefix=SELECT
+// RUN: mlir-opt %s -pass-pipeline='builtin.module(instantiate-monomorphs-trait)' | FileCheck %s --check-prefix=SELECT
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' | FileCheck %s
 
 // @I applies where Has[i32]::Out is i64. Two impls of @Has bind @Has[i32], and

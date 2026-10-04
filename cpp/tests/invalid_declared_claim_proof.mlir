@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 
-// RUN: mlir-opt %s -pass-pipeline='builtin.module(resolve-impls-trait)' -verify-diagnostics
+// RUN: mlir-opt %s -pass-pipeline='builtin.module(instantiate-monomorphs-trait)' -verify-diagnostics
 
 // A `by @proof` spelled in a function signature is verified where it is
 // declared: the named proof must specialize to the claim it annotates. Here the

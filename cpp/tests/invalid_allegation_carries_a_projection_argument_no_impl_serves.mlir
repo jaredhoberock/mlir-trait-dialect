@@ -5,10 +5,10 @@
 
 // An allegation over a generic associated type whose argument is a projection
 // no impl serves. The binding that proves it never reads its argument, so no
-// hop resolves the argument, but the allegation's witness still spells it. The
-// stage puts that projection to impl selection, which has no impl of @Arg to
-// serve it, and refuses the demand it left standing rather than lowering a type
-// no impl gives a meaning.
+// hop resolves the argument, but the allegation's witness still spells it,
+// inside the equality's endpoints. The stage's exit walk puts that projection to
+// impl selection, which has no impl of @Arg to serve it, and refuses it where it
+// stands rather than lowering a type no impl gives a meaning.
 
 !S = !trait.poly<0>
 !A = !trait.poly<1>
@@ -26,7 +26,7 @@ trait.impl private @Gat_i64(%self: !trait.claim<@Gat[i64]>) {
 
 func.func private @need(!trait.claim<!trait.proj<@Gat[i64], "Item", [!trait.proj<@Arg[i64], "Out">]> = f32>)
 
-// CHECK: instantiate-monomorphs left the demand '!trait.proj<@Arg[i64], "Out">' standing and never served it
+// CHECK: unresolved projection '!trait.proj<@Arg[i64], "Out">' after instantiate-monomorphs
 func.func @main() {
   %e = trait.allege !trait.proj<@Gat[i64], "Item", [!trait.proj<@Arg[i64], "Out">]> = f32
   func.call @need(%e) : (!trait.claim<!trait.proj<@Gat[i64], "Item", [!trait.proj<@Arg[i64], "Out">]> = f32>) -> ()

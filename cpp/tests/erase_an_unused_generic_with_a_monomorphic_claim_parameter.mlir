@@ -3,8 +3,9 @@
 
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' 2>&1 | FileCheck %s
 
-// The initial demand collection reaches a monomorphic claim in an otherwise
-// polymorphic function signature. The unused template is erased successfully.
+// A monomorphic claim stands in an otherwise polymorphic function signature,
+// which the stage carries to no target. The unused template is erased
+// successfully.
 
 !T = !trait.poly<0>
 

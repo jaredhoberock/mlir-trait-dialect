@@ -16,7 +16,9 @@ struct ImplGenerator {
 
   // Creates exactly one new ImplOp for the wanted claim, or fails.
   // Upon success, returns the newly created ImplOp whose self claim, read for
-  // the arguments its own parameters take, must rebuild wanted.
+  // the arguments its own parameters take, must rebuild wanted. A declaration
+  // the impl names that the module lacks -- a trait its where entries apply --
+  // is the generator's to declare beside it.
   //
   // A generator only builds IR, so an OpBuilder suffices. The caller places
   // the builder where a generated impl belongs before calling: a generator
@@ -31,9 +33,7 @@ struct ImplGenerator {
   // passing the driver's active PatternRewriter itself rather than a builder of
   // its own: the driver's listener is what places generated ops on its
   // worklist, and a builder without it silently changes which ops the driver
-  // revisits. A caller with no driver running must instead scan what it
-  // generated itself, which is what a caller that counts insertions and then
-  // runs a driver over the whole module does.
+  // revisits.
   virtual FailureOr<ImplOp>
   generateImpl(TraitOp trait,
                ClaimType wanted,
@@ -74,86 +74,6 @@ class ImplGeneratorSet : public ImplGenerator {
     SmallVector<std::unique_ptr<ImplGenerator>,4> generators;
 };
 
-/// Why impl selection refused a trait application.
-///
-/// Selection wants exactly one candidate whose assumptions hold, and the two
-/// ways to miss that differ in whether the answer can still change: a generator
-/// can supply the impl that is missing, whereas a second satisfiable candidate
-/// can only ever be joined by more.
-enum class RefutationArm : uint8_t {
-  /// No candidate's assumptions were satisfiable and generation supplied none.
-  NoSatisfiableCandidate,
-  /// Two or more candidates' assumptions were satisfiable, so the application
-  /// is proven by no unique impl.
-  MultipleSatisfiableCandidates,
-};
-
-/// Why impl selection refused an application, for a caller that reports the
-/// refusal somewhere other than where selection was asked.
-///
-/// The satisfiable candidates ARE the ambiguity, so a refusal on that arm names
-/// them; the other arm has none to name. They are what selection had in hand
-/// when it refused, so a caller handed an application selection had already
-/// refused is given the arm alone.
-struct Refutation {
-  RefutationArm arm;
-  SmallVector<ImplOp> satisfiable;
-};
-
-/// What impl selection settled on for one trait application: the impl it chose,
-/// or the arm on which it refused.
-///
-/// A selection that carried both would name an impl it had refused to select,
-/// and one that carried neither would say nothing at all. The only constructor
-/// refuses either, so every outcome that exists names one of the two.
-class ResolutionOutcome {
-public:
-  /// True when exactly one of an impl and a refutation arm is present.
-  static bool isWellFormed(ImplOp impl, std::optional<RefutationArm> arm) {
-    return static_cast<bool>(impl) != arm.has_value();
-  }
-
-  /// The only constructor. It refuses a pair that is not one outcome.
-  static std::optional<ResolutionOutcome> get(ImplOp impl,
-                                              std::optional<RefutationArm> arm) {
-    if (!isWellFormed(impl, arm))
-      return std::nullopt;
-    return ResolutionOutcome(impl, arm);
-  }
-
-  // Each recording site knows which outcome it reached, so these name a pair
-  // that is well formed by construction.
-  static ResolutionOutcome selected(ImplOp impl) { return of(impl, std::nullopt); }
-  static ResolutionOutcome refused(RefutationArm arm) {
-    return of(ImplOp(), arm);
-  }
-
-  bool isRefusal() const { return arm.has_value(); }
-
-  ImplOp getImpl() const {
-    assert(!isRefusal() && "a refusal names no impl");
-    return impl;
-  }
-
-  RefutationArm getRefutationArm() const {
-    assert(isRefusal() && "a selection was refused on no arm");
-    return *arm;
-  }
-
-private:
-  ResolutionOutcome(ImplOp impl, std::optional<RefutationArm> arm)
-      : impl(impl), arm(arm) {}
-
-  static ResolutionOutcome of(ImplOp impl, std::optional<RefutationArm> arm) {
-    auto outcome = get(impl, arm);
-    assert(outcome && "an outcome is either a selected impl or a refusal");
-    return *outcome;
-  }
-
-  ImplOp impl;
-  std::optional<RefutationArm> arm;
-};
-
 /// A trait application as read in one module.
 ///
 /// A spelling names its symbols in one symbol table, and two modules can spell
@@ -162,18 +82,57 @@ private:
 /// and not for the spelling alone.
 using ScopedApplication = std::pair<Operation *, TraitApplicationAttr>;
 
-// Memoization state for pure impl resolution (no IR mutations).
+/// Why selection refused an application: the candidates it judged, those
+/// whose assumptions hold -- none, or two or more -- and those whose do not. A
+/// refusal is an answer like a selection, so asking again is told it, and a
+/// caller reporting it names the same candidates the first ask judged.
+struct Refusal {
+  SmallVector<ImplOp> satisfiable;
+  SmallVector<ImplOp> unsatisfiable;
+};
+
+/// An impl selection chose, with the height of the derivation it chose it by:
+/// the number of obligation frames the deepest chain under it stood on, the
+/// frame of the selection itself included.
+struct ChosenImpl {
+  ImplOp impl;
+  unsigned height;
+};
+
+// Memoization state for impl selection.
 struct ResolutionMemo {
   // Maps a fully-concrete trait application, as read in one module, to the impl
-  // selected for it, or to the arm on which selection was refused when no
-  // unique impl exists.
-  DenseMap<ScopedApplication, ResolutionOutcome> chosen;
+  // selected for it. A selection read here stands as high above the chain
+  // reading it as its derivation did, so the depth bound judges the
+  // derivation and not the order selections were asked in.
+  DenseMap<ScopedApplication, ChosenImpl> chosen;
+
+  // Maps an application selection refused, as read in one module, to why. A
+  // refusal is entered only where it is final -- reached without leaning on an
+  // application further down the obligation chain than the one refused
+  // (`provisionalBelow`) -- so an application in neither map is a question
+  // selection has not yet answered, never a refusal.
+  DenseMap<ScopedApplication, Refusal> refused;
 
   // The applications impl selection is part-way through, outermost first. A
   // repeat is a resolution cycle; the number of frames is how deep the
   // obligation chain has recursed, which is what bounds a chain whose every
   // step is a new application.
   SmallVector<ObligationFrame> visiting;
+
+  // The shallowest frame of `visiting` a cycle guard refused a candidate at
+  // since the innermost selection still running began, or UINT_MAX where none
+  // was. A refusal computed while this stands below the depth the refused
+  // application was asked at leans on a frame still part-way through, which
+  // may yet be answered otherwise -- rustc's provisional result -- so it is not
+  // entered in `refused`.
+  unsigned provisionalBelow = UINT_MAX;
+
+  // The greatest height of a selection answered under the candidate the
+  // innermost selection still running is judging -- under its headers, while
+  // it reads them -- which the height of a selection choosing that candidate
+  // is one above.
+  unsigned heightBelow = 0;
 
   // A memo for assumptionsSatisfiableFor
   // For every (ImplOp, TraitApplicationAttr) in this set, the ImplOp's
@@ -187,10 +146,98 @@ struct ResolutionMemo {
   // and a generated impl is a function of the application it was asked for, so
   // asking twice would publish a second op under the name the first already
   // holds. The impl supplied stands in the module, where the candidate scan
-  // reads it, so a later round judges it against the facts as they then stand
-  // without generation running again. Unlike a retriable refusal, this outlives
-  // the flush: what the module holds is not a question anything reopens.
+  // reads it.
   DenseSet<ScopedApplication> generatedFor;
+};
+
+/// What impl selection answers about one question: the answer; a refusal,
+/// which selection keeps and an obligation left standing names; or an
+/// overflow, the stage's hard error, which the resolver has already named
+/// where it was met.
+template <typename T>
+class Answer {
+public:
+  Answer(T value) : state(std::move(value)) {}
+  static Answer refusal() { return Answer(Refused{}); }
+  static Answer overflow() { return Answer(Overflowed{}); }
+
+  bool isAnswer() const { return std::holds_alternative<T>(state); }
+  bool isOverflow() const { return std::holds_alternative<Overflowed>(state); }
+
+  const T &operator*() const { return std::get<T>(state); }
+  T &operator*() { return std::get<T>(state); }
+  const T *operator->() const { return &std::get<T>(state); }
+  T *operator->() { return &std::get<T>(state); }
+
+  /// The answer, or failure where there is none: for a reader to whom a
+  /// refusal and an overflow differ in nothing.
+  FailureOr<T> orFailure() const {
+    if (isAnswer())
+      return **this;
+    return failure();
+  }
+
+  /// This answer's refusal or overflow, as the answer to another question
+  /// that stops where this one stopped. Holds no answer.
+  template <typename U>
+  Answer<U> stop() const {
+    assert(!isAnswer() && "carrying an answer as a stop");
+    return isOverflow() ? Answer<U>::overflow() : Answer<U>::refusal();
+  }
+
+private:
+  struct Refused {};
+  struct Overflowed {};
+  explicit Answer(Refused) : state(Refused{}) {}
+  explicit Answer(Overflowed) : state(Overflowed{}) {}
+
+  std::variant<T, Refused, Overflowed> state;
+};
+
+/// What stops impl selection for the rest of a stage run, as it is named.
+///
+/// Two kinds go past the depth limit (`kInstantiationDepthLimit`): an
+/// obligation chain, and the steps resolving a spelling's projections. rustc
+/// bounds selection and normalization alike by its one recursion limit, and
+/// names either as an overflow. The third is an impl a generator wrote for
+/// another application than the one it was asked for: the memo's refusals are
+/// final only because no impl generated later serves one, so no answer
+/// selection keeps can stand after it.
+class Overflow {
+public:
+  /// The obligation chain `chain` reaching `app`, with `height` frames
+  /// standing at and below the frame reaching it.
+  static Overflow obligations(TraitApplicationAttr app,
+                              ArrayRef<ObligationFrame> chain,
+                              unsigned height = 1) {
+    return Overflow(app, Type(), chain, height, ImplOp());
+  }
+
+  /// The projections `spelled` spells, still changing after the limit's
+  /// worth of resolution steps.
+  static Overflow projectionSteps(Type spelled) {
+    return Overflow(TraitApplicationAttr(), spelled, {}, 0, ImplOp());
+  }
+
+  /// `impl`, generated for `asked`, stating another application.
+  static Overflow inexactImpl(ImplOp impl, TraitApplicationAttr asked) {
+    return Overflow(asked, Type(), {}, 0, impl);
+  }
+
+  /// Names this overflow: at the generated impl it is about, or else at
+  /// `anchor`, the demand that met it.
+  void emit(Location anchor) const;
+
+private:
+  Overflow(TraitApplicationAttr app, Type spelled,
+           ArrayRef<ObligationFrame> chain, unsigned height, ImplOp impl)
+      : app(app), spelled(spelled), chain(chain), height(height), impl(impl) {}
+
+  TraitApplicationAttr app;
+  Type spelled;
+  ArrayRef<ObligationFrame> chain;
+  unsigned height;
+  ImplOp impl;
 };
 
 /// The impl selected for a claim, paired with the normalized claim used for
@@ -217,8 +264,7 @@ struct ResolvedImpl {
 /// asks selection about the projection's own application, reads the arguments
 /// off what selection settled, and specializes the binding itself, so a step
 /// that exists states what the impl selected for its projection binds at the
-/// arguments it takes there. Only the two owners of selection and its record
-/// construct one.
+/// arguments it takes there. Only impl selection constructs one.
 class ProjectionResolution {
 public:
   ProjectionType getProjection() const { return projection; }
@@ -228,18 +274,17 @@ public:
 
 private:
   friend class ImplResolver;
-  friend class ReadOnlyImplResolver;
 
   /// The step resolving `projection` through the impl `select` settles on for
-  /// the projection's application, read through `record`, the context
-  /// selection chose it under. Fails where selection settles on no impl, where
-  /// the impl's header does not carry to the claim selection chose it for, or
-  /// where the impl binds no such associated type at the projection's
-  /// associated-type arguments.
-  static FailureOr<ProjectionResolution>
+  /// the projection's application, the impl's header read through
+  /// `readHeader`, the context selection chose it under. Stops where selection
+  /// does, and is refused where the impl's header does not carry to the claim
+  /// selection chose it for, or where the impl binds no such associated type
+  /// at the projection's associated-type arguments.
+  static Answer<ProjectionResolution>
   get(ProjectionType projection,
-      llvm::function_ref<FailureOr<ResolvedImpl>(ClaimType)> select,
-      const ReadOnlyImplResolver &record,
+      llvm::function_ref<Answer<ResolvedImpl>(ClaimType)> select,
+      Normalizer readHeader,
       llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
   ProjectionResolution(ProjectionType projection, ImplOp impl,
@@ -251,16 +296,6 @@ private:
   ImplOp impl;
   SpecializationMap arguments;
   Type binding;
-};
-
-/// Where the evidence for a monomorphic equality reads the facts it cites:
-/// `hop` resolves one step of a monomorphic projection and `proofOf` proves an
-/// application claim, answering it proven. Each fails where it does not serve.
-/// `module` bounds the fixed-point resolution of an endpoint.
-struct EqualitySource {
-  llvm::function_ref<FailureOr<ProjectionResolution>(ProjectionType)> hop;
-  llvm::function_ref<FailureOr<ClaimType>(ClaimType)> proofOf;
-  ModuleOp module;
 };
 
 struct EqualityResolution;
@@ -283,18 +318,6 @@ struct EqualityResolution {
   TypeEqualityAttr equality;
   SmallVector<ResolutionStep> steps;
 };
-
-/// The ground spellings the sides of `eq` resolve to through `source`,
-/// appending one step per distinct ground projection resolved on the way to
-/// `steps`; identical sides are read as spelled. The walk descends composites,
-/// so a projection nested inside one yields its step just as a top-level
-/// projection does, and runs to a fixed point because a binding may itself
-/// spell a projection. An equality entry of a resolving impl is resolved the
-/// same way, and must reach one spelling. Fails where a step fails or a ground
-/// projection still stands.
-FailureOr<std::pair<Type, Type>>
-resolveEquality(TypeEqualityAttr eq, const EqualitySource &source,
-                SmallVectorImpl<ResolutionStep> &steps, unsigned depth = 0);
 
 /// Builds at `builder`'s insertion point the evidence for `eq` from `steps`,
 /// the steps resolving its sides to one ground spelling: refl for identical
@@ -372,50 +395,63 @@ struct ProofResolutionMemo {
   ResolutionMemo resolutionMemo;
 };
 
-/// ImplResolver coordinates trait impl resolution and proof construction
-/// within a given ModuleOp.
+/// Where impl selection is asked: the module whose symbol table the demand's
+/// spelling names its trait and impls in -- the one whose proofs an answer may
+/// cite, and the one a generated impl or a created proof belongs in -- and the
+/// location of the op that demands it, where a refusal of the whole obligation
+/// chain the demand opens is named. Built from the demanding op alone, so the
+/// two cannot come from different places.
+class SelectionSite {
+public:
+  /// The site of `demander`: the module anchoring its symbol uses, and its
+  /// location.
+  static SelectionSite of(Operation *demander) {
+    return SelectionSite(getAnchorModule(demander), demander->getLoc());
+  }
+
+  ModuleOp scope;
+  Location cause;
+
+private:
+  SelectionSite(ModuleOp scope, Location cause) : scope(scope), cause(cause) {}
+};
+
+/// ImplResolver is impl selection for one stage run: the one place that
+/// chooses an impl for a concrete trait application, generates the impl a
+/// module lacks, and writes the proofs of what it chose.
 ///
 /// On construction, it discovers all loaded dialects that provide the
 /// `GenerateImplsInterface` and asks them to populate its internal
-/// `ImplGeneratorSet`. These generators are used to synthesize or
-/// discover implementations when resolving trait claims.
+/// `ImplGeneratorSet`. These generators are asked for an impl when no candidate
+/// serves an application.
 ///
-/// The main entry point is `resolveAndEnsureProofFor`, which guarantees
-/// that a canonical proof exists for a fully-concrete trait application.
-/// Resolution proceeds by:
-///   1. Proving it by a self-proving `trait.impl` if one exists.
-///   2. Otherwise, recursively resolving and ensuring proofs for the impl's
-///      where entries, then creating or reusing a `trait.proof` operation.
-/// Memoization is used to avoid redundant resolution work and to ensure
-/// canonicalization of proofs across calls.
+/// A rewrite that meets an obligation it needs settled asks here directly, at
+/// the op that holds the obligation, as Rust's monomorphization collector asks
+/// `Instance::resolve`: an allegation's proof (`resolveAndEnsureProofFor`) and
+/// a ground projection's resolution (`resolveProjection`). Every answer is
+/// memoized, so asking again answers alike: a selection, a proof, or a refusal
+/// entered once it is final. A refusal is an answer -- an application nothing
+/// serves stays spelled where it stands, for the stage's exit walk to name.
+/// Answers are pure functions of the concrete types asked about and the
+/// module's impls, and a generated impl is exact in its types, so generating
+/// one never turns a unique candidate into an ambiguity.
 ///
-/// This class may mutate the IR (e.g. by inserting `trait.proof` or `trait.impl` ops)
-/// through the provided `OpBuilder`. It only builds ops, never erases or
-/// replaces them, so no rewriter capability is required. Callers running under
-/// a greedy pattern driver must still hand down that driver's active
-/// `PatternRewriter`, whose listener enqueues the inserted ops for the driver
-/// to revisit.
+/// This class may mutate the IR (e.g. by inserting `trait.proof` or
+/// `trait.impl` ops) through the provided `OpBuilder`. It only builds ops,
+/// never erases or replaces them, so no rewriter capability is required.
+/// Callers running under a greedy pattern driver must still hand down that
+/// driver's active `PatternRewriter`, whose listener enqueues the inserted ops
+/// for the driver to revisit.
 ///
-/// Every ask names the module the demand was read in. That module is the symbol
-/// table the demand's spelling names its trait and impls in, the one whose
-/// proofs an answer may cite, and the one a generated impl or a created proof
-/// belongs in; it is what the records are keyed under, so a demand raised
-/// inside a nested module is never answered with a symbol only the module
-/// around it resolves. A pass root asking about its own ops names itself.
+/// Every ask names the site it was demanded at (`SelectionSite`). Its module is
+/// what the records are keyed under, so a demand raised inside a nested module
+/// is never answered with a symbol only the module around it resolves.
 class ImplResolver {
   public:
-    /// Creates a new `ImplResolver` for the given `module`, recording the
-    /// demands it declines to serve in `ledger`.
+    /// Creates a new `ImplResolver` for the given `module`.
     /// Finds all loaded dialects that provide the `GenerateImplsInterface` and
     /// populates this `ImplResolver`'s `ImplGeneratorsSet`.
-    ///
-    /// The ledger is held by shared pointer because this resolver is moved out
-    /// of the sub-phase that builds it, and the thread-local sink installed
-    /// over both sub-phases points at the ledger's address.
-    ImplResolver(ModuleOp module, std::shared_ptr<DemandLedger> ledger);
-
-    /// The demands this resolver's stage declined to serve.
-    DemandLedger &getDemandLedger() const { return *ledger; }
+    explicit ImplResolver(ModuleOp module);
 
     /// Ensures canonical proof for a fully-concrete trait application `claim`.
     /// Resolution proceeds as follows:
@@ -426,144 +462,65 @@ class ImplResolver {
     ///      proves it. The trait's requirements are the impl's to return.
     /// This function may mutate the IR via `builder`.
     ///
-    /// Returns `claim` proven: the application its proof is recorded under,
+    /// Answers `claim` proven: the application its proof is recorded under,
     /// which is `claim`'s with its projections resolved as selection resolved
-    /// them, naming the symbol (ImplOp or ProofOp) that proves it. Fails if no
-    /// unique and satisfiable impl can be found.
-    ///
-    /// `refusedOn`, when given, receives what impl selection refused this
-    /// claim's application on, and is left alone where selection did not
-    /// refuse -- a proof that fails downstream of a selected impl names no
-    /// refutation.
-    FailureOr<ClaimType> resolveAndEnsureProofFor(ClaimType claim,
-                                                  ModuleOp scope,
-                                                  OpBuilder &builder,
-                                                  llvm::function_ref<InFlightDiagnostic()> err = nullptr,
-                                                  std::optional<Refutation> *refusedOn = nullptr);
+    /// them, naming the symbol (ImplOp or ProofOp) that proves it. Refused if
+    /// no unique and satisfiable impl can be found, naming why through `err`
+    /// when it is given, however often it was asked before.
+    Answer<ClaimType> resolveAndEnsureProofFor(ClaimType claim,
+                                               const SelectionSite &site,
+                                               OpBuilder &builder,
+                                               llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     /// Resolves one step of a concrete ProjectionType: the impl the internal
     /// impl resolution pipeline selects for its application, the arguments
     /// that impl takes there, and its associated-type binding specialized at
     /// them.
-    ///
-    /// `refusedOn`, when given, receives what impl selection refused this
-    /// projection's application on, and is left alone when selection did not
-    /// refuse -- a resolution that fails downstream of a selected impl names no
-    /// refutation.
-    FailureOr<ProjectionResolution> resolveProjection(
-        ProjectionType proj, ModuleOp scope, OpBuilder &builder,
-        llvm::function_ref<InFlightDiagnostic()> err = nullptr,
-        std::optional<Refutation> *refusedOn = nullptr);
+    Answer<ProjectionResolution> resolveProjection(
+        ProjectionType proj, const SelectionSite &site, OpBuilder &builder,
+        llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
-    /// What putting one demand to impl selection settled.
-    enum class DemandDisposition : uint8_t {
-      /// Selection resolved the projection.
-      Served,
-      /// Selection refused on the arm no later resolution overturns: two or
-      /// more candidates satisfy the application, and candidates are only
-      /// appended.
-      Refused,
-      /// Selection did not serve it, on facts a later resolution may move.
-      Deferred,
-    };
+    /// Walks `ty` and replaces every concrete (monomorphic) ProjectionType
+    /// selection resolves with its resolved type, to a fixed point; a
+    /// projection selection refuses is left spelled as written. Polymorphic
+    /// projections are left untouched. Overflows where the resolution still
+    /// changes after the depth limit's worth of projection steps (a binding
+    /// that grows under it has no normal form), or where a step does.
+    Answer<Type> resolveProjectionsIn(Type ty, const SelectionSite &site,
+                                      OpBuilder &builder);
 
-    /// Puts `demand` to impl selection and says what that settled.
-    ///
-    /// Whether asking again could ever answer differently is what a caller
-    /// scheduling rounds needs and what a bare resolution result does not say.
-    /// A claim is served by proving it, which mints the proof its demander
-    /// could only read; the two dispositions are read off the same refutation
-    /// arm. A projection deferred is recorded in the ledger, and the stage's
-    /// exit check (`DemandLedger::checkStandingDemandsServed`) refuses a
-    /// recorded demand still spelled and never served when the rounds end.
-    DemandDisposition serveDemand(ProjectionType demand, ModuleOp scope,
-                                  OpBuilder &builder);
-    DemandDisposition serveDemand(ClaimType demand, ModuleOp scope,
-                                  OpBuilder &builder);
+    /// The ground spellings the sides of `eq` resolve to through selection at
+    /// `site`, appending one step per distinct ground projection resolved on
+    /// the way to `steps`; identical sides are read as spelled. The walk
+    /// descends composites, so a projection nested inside one yields its step
+    /// just as a top-level projection does, and runs to a fixed point because
+    /// a binding may itself spell a projection. An equality entry of a
+    /// resolving impl is resolved the same way, and must reach one spelling.
+    /// Refused where a step is refused or a ground projection still stands;
+    /// overflows where selection does or a side does not settle within the
+    /// depth limit.
+    Answer<std::pair<Type, Type>>
+    resolveEquality(TypeEqualityAttr eq, const SelectionSite &site,
+                    OpBuilder &builder, SmallVectorImpl<ResolutionStep> &steps,
+                    llvm::function_ref<InFlightDiagnostic()> err = nullptr,
+                    unsigned depth = 0);
 
-    /// How many facts impl selection has minted: one for each impl it generated
-    /// and one for each proof it recorded.
-    ///
-    /// A refusal stands until the facts it was derived from move, and this is
-    /// the monotone quantity that says they have. It counts writes rather than
-    /// entries, so an optimistic proof entry a failed recursion takes back out
-    /// still counts: a quantity that fell could show a reader the same number
-    /// across a fact base that had changed in between.
-    uint64_t getFactEpoch() const { return factEpoch; }
+    /// Whether an overflow (`Overflow`) was met over this resolver's span;
+    /// the stage fails on it rather than naming what it left standing.
+    bool hasOverflowed() const { return overflowed; }
 
-    /// How many times what a read of this resolver answers from has changed.
-    ///
-    /// A read serves from the selections and the proofs recorded so far and
-    /// from the module those name, so two reads taken at one value of this
-    /// answer alike, and a caller holding an answer knows it still stands while
-    /// this stands. It moves wherever the fact base moves, and also where
-    /// nothing is minted and a read still gains an answer: selection settling an
-    /// application the module already had the impl for, and the commit
-    /// respelling what a proof is read through.
-    ///
-    /// Refusing an application is not such a change, and neither is forgetting
-    /// the refusal again. A read fails on a refused application exactly as it
-    /// fails on one selection has never been asked about, so writing the entry
-    /// and dropping it both leave every answer a read gives where it stood. What
-    /// they move is what asking selection itself would have to derive, which is
-    /// the negative memo's business and not this quantity's.
-    ///
-    /// It counts writes rather than entries, for the same reason the fact epoch
-    /// does: a count that fell could show a reader the same number across a
-    /// record that had changed in between.
-    uint64_t getRecordEpoch() const { return recordEpoch; }
-
-    /// A replacer that respells every unproven claim whose trait application
-    /// this resolver has recorded a proof for in `scope`.
-    ///
-    /// The proof a claim names is a symbol `scope` resolves, so a replacer
-    /// serves the ops of one module and a sweep over a module holding others
-    /// takes one replacer per module it visits.
-    ///
-    /// The replacer reads the memo rather than copying it, so it answers for
-    /// the memo as it stands each time it is asked. A caller must therefore not
-    /// record a proof while a replacer is in use: a replacer caches the answers
-    /// it has already given, so a memo that grew mid-sweep would respell some
-    /// occurrences of a claim and leave others alone. The replacer asserts that
-    /// precondition on every answer.
-    AttrTypeReplacer makeProvenClaimReplacer(ModuleOp scope) const;
-
-    /// How many trait applications this resolver has recorded a proof for.
-    size_t getRecordedProofCount() const { return memo.proofMemo.size(); }
-
-    /// How many trait applications this resolver has recorded an impl selection
-    /// for, the record a ground projection resolves through.
-    size_t getRecordedImplCount() const {
-      return memo.resolutionMemo.chosen.size();
-    }
+    /// Names, through `err`, why selection refused the application of
+    /// `obligation` -- a claim, or a projection's head -- in `scope`, over the
+    /// candidates it recorded: none whose assumptions hold, or two or more.
+    /// Names nothing where selection has entered no refusal. The refusal is
+    /// what an obligation left standing does not say by itself; this asks
+    /// selection nothing new.
+    void nameRefusal(Type obligation, ModuleOp scope,
+                     llvm::function_ref<InFlightDiagnostic()> err) const;
 
     /// The template instantiations cut over this resolver's span, which is one
-    /// stage run. This is a computation over the module rather than a fact of
-    /// its own, so a reader holding this resolver through a handle that may not
-    /// resolve still records into it.
-    InstantiationChain &getInstantiationChain() const { return instantiations; }
-
-    /// Says a sweep has respelled the module's copy of the recorded facts.
-    ///
-    /// A sweep records no proof, so the fact count does not move for it; what
-    /// a read answers from are spellings, so the record epoch moves.
-    void noteRespelling() const { ++recordEpoch; }
-
-    /// Forgets every refusal a later resolution could answer differently.
-    ///
-    /// Selection refuses on two arms and only one of them can move. A refusal
-    /// for want of a satisfiable candidate is one an impl generated since can
-    /// overturn, and the application it was recorded under is a spelling that
-    /// moves too -- respelling a proven claim inside an application's arguments
-    /// makes a different application -- so the entry is dropped rather than
-    /// re-keyed. A refusal for two or more satisfiable candidates cannot be
-    /// overturned: candidates are only ever appended, so a partition that
-    /// already had two of them keeps at least two, and re-deriving it would
-    /// refuse again at the price of the whole partition.
-    void forgetRetriableRefusals();
-
-    /// Whether impl selection is part-way through no application.
-    bool isQuiescent() const { return memo.resolutionMemo.visiting.empty(); }
+    /// stage run.
+    InstantiationChain &getInstantiationChain() { return instantiations; }
 
     /// The proof standing in `scope` whose body derives `app` from `impl`
     /// given, at its application entries in order, the proofs `subproofs`
@@ -589,43 +546,49 @@ class ImplResolver {
                          OpBuilder &builder) const;
 
   private:
-    friend class ImplGenerationFreeze;
-    friend class ReadOnlyImplResolver;
-
-    /// Walks `ty` and replaces every concrete (monomorphic) ProjectionType
-    /// with its resolved type via full impl lookup.  Polymorphic projections
-    /// are left untouched.  Returns the rewritten type.
-    Type resolveProjectionsIn(Type ty, ModuleOp scope, OpBuilder &builder);
-
     /// Finds the unique impl for the wanted claim and returns the normalized
-    /// claim that was actually used for selection. `refusedOn`, when given,
-    /// receives the refutation a refusal was refused on.
-    FailureOr<ResolvedImpl> resolveImplFor(
+    /// claim that was actually used for selection.
+    Answer<ResolvedImpl> resolveImplFor(
         ClaimType wanted,
-        ModuleOp scope,
+        const SelectionSite &site,
         OpBuilder &builder,
-        llvm::function_ref<InFlightDiagnostic()> err = nullptr,
-        std::optional<Refutation> *refusedOn = nullptr);
+        llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
-    /// Records `sym` as what proves `app` in `scope`, counting the fact, and
-    /// answers the claim of `app` that `sym` proves.
+    /// `ty` with every ground projection selection resolves resolved, to a
+    /// fixed point; none where the resolution still changes after the depth
+    /// limit's worth of projection steps, which this names nothing about: a
+    /// candidate's header is read through this, and a header with no normal
+    /// form makes its impl no candidate rather than the stage's overflow.
+    /// Overflows where a step does.
+    Answer<std::optional<Type>> settleThroughSelection(Type ty,
+                                                       const SelectionSite &site,
+                                                       OpBuilder &builder);
+
+    /// Stops selection at the overflow `what`, met at `site`: the stage's
+    /// hard error. Selection answers nothing more, nothing reached under it is
+    /// entered in the memo, and it is named once per demand site.
+    void overflow(const Overflow &what, const SelectionSite &site);
+
+    /// `ty` with every monomorphic projection selection has already settled in
+    /// `scope` resolved through what it settled; the rest left spelled as
+    /// written. It asks selection nothing, so the stage's exit walk reads
+    /// through it the key a refusal of a leftover obligation was entered
+    /// under.
+    Type readSettledProjectionsIn(Type ty, ModuleOp scope) const;
+
+    /// One step of `proj`'s resolution through the impl selection has already
+    /// settled on for its application in `scope`; fails where it has settled
+    /// none (`readSettledProjectionsIn`).
+    FailureOr<ProjectionResolution>
+    readSettledProjection(ProjectionType proj, ModuleOp scope) const;
+
+    /// Records `sym` as what proves `app` in `scope`, and answers the claim of
+    /// `app` that `sym` proves.
     ClaimType recordProof(ModuleOp scope, TraitApplicationAttr app,
                           FlatSymbolRefAttr sym) {
       memo.proofMemo[{scope, app}] = sym;
-      noteFactWritten();
       return ClaimType::get(scope.getContext(), app, sym);
     }
-
-    /// Counts one fact write, so that what was derived from the fact base
-    /// before it is no longer an answer about the fact base after it.
-    void noteFactWritten() {
-      ++factEpoch;
-      noteRecordWritten();
-    }
-
-    /// Counts one write to what a read answers from, whether or not it minted
-    /// a fact.
-    void noteRecordWritten() { ++recordEpoch; }
 
     /// The proofs standing in one module, by the impl each stands over and the
     /// application it proves. Read off the module at the first mint in it and
@@ -644,232 +607,27 @@ class ImplResolver {
     };
 
     /// The proofs standing in `scope`, read once. A view of the module the
-    /// stage extends wherever it writes a proof, so a reader holding the
-    /// resolver read-only still keeps it current.
+    /// stage extends wherever it writes a proof.
     StandingProofs &getStandingProofs(ModuleOp scope) const;
 
-    /// Checks whether all of `impl`'s where-clause assumptions are satisfiable
-    /// when specialized for `concreteSelf`, read in `scope`.
-    LogicalResult assumptionsSatisfiableFor(ImplOp impl,
-                                            ClaimType concreteSelf,
-                                            ModuleOp scope,
-                                            OpBuilder &builder);
+    /// Answers `impl` where all of its where-clause assumptions are
+    /// satisfiable when specialized for `concreteSelf`, asked at `site` by the
+    /// selection of `concreteSelf`, whose frame stands on the chain while it
+    /// runs; refused where one is not, and overflows where judging one does.
+    Answer<ImplOp> assumptionsSatisfiableFor(ImplOp impl,
+                                             ClaimType concreteSelf,
+                                             const SelectionSite &site,
+                                             OpBuilder &builder);
 
-    /// The generators impl selection asks when no candidate impl satisfies a
-    /// claim: this resolver's own set, or whatever stands in for them while
-    /// something is installed over a span.
-    const ImplGenerator &getImplGenerators() const {
-      return installedOverride ? *installedOverride : generators;
-    }
-
-    mutable ModuleOp module;
-    std::shared_ptr<DemandLedger> ledger;
+    ModuleOp module;
     ProofResolutionMemo memo;
     mutable DenseMap<Operation *, StandingProofs> standingProofs;
 
-    mutable InstantiationChain instantiations;
+    bool overflowed = false;
+    DenseSet<Location> overflowSites;
+
+    InstantiationChain instantiations;
     ImplGeneratorSet generators;
-    const ImplGenerator *installedOverride = nullptr;
-    uint64_t factEpoch = 0;
-    mutable uint64_t recordEpoch = 0;
-};
-
-/// Stands in for a resolver's impl generators over a span in which no impl may
-/// be generated, and fails the compilation where impl selection asks for one.
-///
-/// A span forbids generation when the work that would have to see a generated
-/// impl has already run: an impl built after that point reaches nothing that
-/// was waiting for it, and what the span produces is quietly incomplete rather
-/// than loudly wrong. A freeze names the claim that was demanded and the span
-/// whose contract the demand broke, at the point selection asked.
-///
-/// The stage stands one over its instantiation driver, whose patterns read the
-/// facts earlier steps recorded and put nothing to selection, so an ask from
-/// under it is a component reaching past the record it is meant to read.
-class ImplGenerationFreeze : public ImplGenerator {
-public:
-  /// Installs itself as `resolver`'s generators until it goes out of scope.
-  /// `span` names the work whose contract forbids generation, and is what the
-  /// failure reports as broken.
-  ImplGenerationFreeze(ImplResolver &resolver, StringRef span);
-  ~ImplGenerationFreeze();
-
-  ImplGenerationFreeze(const ImplGenerationFreeze &) = delete;
-  ImplGenerationFreeze &operator=(const ImplGenerationFreeze &) = delete;
-
-  /// Always fails: being asked to generate at all is the fault this reports,
-  /// through a diagnostic at the demanded trait rather than a process abort.
-  FailureOr<ImplOp> generateImpl(TraitOp trait,
-                                 ClaimType wanted,
-                                 OpBuilder &builder) const override;
-
-  /// Whether generation was demanded across this freeze's span. A greedy driver
-  /// treats the failure the ask returns as a pattern that did not apply and
-  /// keeps converging, so the span's owner reads this after the driver and
-  /// fails the stage: the ask emitted its diagnostic, and the stage must not
-  /// report success over a span whose contract was broken.
-  bool wasAsked() const { return generationAsked; }
-
-private:
-  ImplResolver &resolver;
-  std::string span;
-  const ImplGenerator *displaced;
-  mutable bool generationAsked = false;
-};
-
-/// A read of one resolver's recorded facts, for a caller that must serve from
-/// what impl selection has already settled.
-///
-/// What this handle withholds is the generator arm: a caller reading through it
-/// cannot make impl selection run, so no impl is generated and no proof is
-/// selected on its account; the one proof it writes is the one a derive states
-/// (`writeProof`). The facts themselves are not frozen -- whoever holds
-/// the resolver goes on recording selections and creating `trait.proof` ops --
-/// so an answer here is what the memo held when it was asked.
-///
-/// Impl selection keys its memo by the claim whose projections it resolved, so
-/// an application asked about here is one spelled as selection recorded it: a
-/// caller holding a source spelling with a projection still in it misses.
-///
-/// A read is a read in one module: what selection settled is settled for an
-/// application under the module it was demanded in, and the symbol an answer
-/// names is one that module's symbol table resolves. A reader built from a
-/// resolver alone reads in the module that resolver was built for; a caller
-/// holding an op reads in the op's own module, which `in` hands it.
-class ReadOnlyImplResolver {
-public:
-  explicit ReadOnlyImplResolver(const ImplResolver &resolver)
-      : resolver(resolver), scope(resolver.module) {}
-
-  ReadOnlyImplResolver(const ImplResolver &resolver, ModuleOp scope)
-      : resolver(resolver), scope(scope) {}
-
-  /// This read taken in `scope` instead.
-  ReadOnlyImplResolver in(ModuleOp scope) const {
-    return ReadOnlyImplResolver(resolver, scope);
-  }
-
-  /// What impl selection settled on for `app` here: the impl it chose, or the
-  /// arm it refused on. Nothing when selection has not been asked about `app`
-  /// in this module.
-  inline std::optional<ResolutionOutcome>
-  getRecordedOutcome(TraitApplicationAttr app) const {
-    const auto &chosen = resolver.memo.resolutionMemo.chosen;
-    auto it = chosen.find({scope, app});
-    if (it == chosen.end())
-      return std::nullopt;
-    return it->second;
-  }
-
-  /// The template instantiations cut over the resolver's span. Cutting one
-  /// takes no generator arm: the template is already in the module.
-  InstantiationChain &getInstantiationChain() const {
-    return resolver.getInstantiationChain();
-  }
-
-  /// The proof standing here that a derive states
-  /// (`ImplResolver::findProof`).
-  ClaimType findProof(ImplOp impl, TraitApplicationAttr app,
-                      ArrayRef<FlatSymbolRefAttr> subproofs) const {
-    return resolver.findProof(scope, impl, app, subproofs);
-  }
-
-  /// The proof a derive states, written here (`ImplResolver::writeProof`).
-  ClaimType writeProof(ImplOp impl, TraitApplicationAttr app,
-                       const SpecializationMap &arguments,
-                       ArrayRef<ClaimType> entries,
-                       ArrayRef<FlatSymbolRefAttr> subproofs,
-                       ArrayRef<SmallVector<ResolutionStep>> equalitySteps,
-                       OpBuilder &builder) const {
-    return resolver.writeProof(scope, impl, app, arguments, entries, subproofs,
-                               equalitySteps, builder);
-  }
-
-  /// How many times what this reads from has changed. Every answer here is read
-  /// off what selection has settled, so two reads taken at one value of this
-  /// answer alike.
-  uint64_t getRecordEpoch() const { return resolver.getRecordEpoch(); }
-
-  /// The symbol proving `app` here -- an impl's own for a self-proof, a
-  /// `trait.proof`'s otherwise. Nothing when no proof of `app` is recorded in
-  /// this module.
-  inline std::optional<FlatSymbolRefAttr>
-  getRecordedProof(TraitApplicationAttr app) const {
-    const auto &proofs = resolver.memo.proofMemo;
-    auto it = proofs.find({scope, app});
-    if (it == proofs.end())
-      return std::nullopt;
-    return it->second;
-  }
-
-  /// Declines `demand`, recording it as one this read did not serve, and fails.
-  ///
-  /// A caller that declines leaves the demanded projection or claim spelled as
-  /// written, which is what a reader of the recorded demand finds when it asks
-  /// whether an unserved demand is still there to serve.
-  LogicalResult decline(ProjectionType demand) const;
-  LogicalResult decline(ClaimType demand) const;
-
-  /// One step of `proj`'s resolution, from what impl selection has recorded.
-  ///
-  /// Reading the associated-type binding off the selected impl and specializing
-  /// it for the claim selection settled under are reads of the module, so all
-  /// that separates this from the resolution it stands in for is where the impl
-  /// comes from.
-  FailureOr<ProjectionResolution> resolveProjection(ProjectionType proj) const;
-
-  /// Walks `ty` and replaces every monomorphic projection this read can
-  /// resolve, leaving the rest spelled as written and recording each one.
-  Type resolveProjectionsIn(Type ty) const;
-
-  /// `claim` proven, from what impl selection has recorded: the application
-  /// its proof is recorded under, naming the symbol that proves it. Fails where
-  /// no proof of it is recorded, which is what a caller declines on.
-  ///
-  /// Proofs are recorded under the monomorphic application the selected impl's
-  /// self-claim substitution produces, so a source spelling is put through the
-  /// same two steps -- selection's own projection resolution, then that
-  /// substitution -- before it is looked up.
-  FailureOr<ClaimType> getRecordedProofFor(ClaimType claim) const;
-
-private:
-  /// The impl selection settled on for `wanted`, paired with the claim it
-  /// settled it under. Fails where selection was never asked, where it refused,
-  /// and where a projection in `wanted` cannot be resolved from what is
-  /// recorded.
-  ///
-  /// Selection keys what it records by the claim whose projections it resolved,
-  /// so the source spelling is put through the same resolution before it is
-  /// looked up.
-  FailureOr<ResolvedImpl> getRecordedImplFor(ClaimType wanted) const;
-
-  const ImplResolver &resolver;
-  ModuleOp scope;
-};
-
-/// A normalizer over what impl selection has settled, and then over the impls
-/// the module holds: `ReadOnlyImplResolver::resolveProjectionsIn` as a callable.
-///
-/// This is the reading every step that rebuilds an impl's header runs. A trait
-/// with two impls whose headers could each bind one application is a trait the
-/// module alone answers nothing about -- only the record says which of them
-/// selection chose -- so a header spelling a projection over such an
-/// application reaches the claim it was chosen for through this and through
-/// nothing weaker. A read takes no generator arm, so nothing is minted on its
-/// account.
-class RecordedProjectionLookup {
-public:
-  RecordedProjectionLookup(const ImplResolver &resolver, ModuleOp scope)
-      : reading(resolver, scope) {}
-  explicit RecordedProjectionLookup(const ReadOnlyImplResolver &reading)
-      : reading(reading) {}
-
-  FailureOr<Type> operator()(Type ty) const {
-    return reading.resolveProjectionsIn(ty);
-  }
-
-private:
-  ReadOnlyImplResolver reading;
 };
 
 } // end mlir::trait

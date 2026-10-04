@@ -21,6 +21,7 @@
 #include <mlir/Transforms/InliningUtils.h>
 #include <mlir/Transforms/RegionUtils.h>
 #include <optional>
+#include <set>
 #include <variant>
 
 namespace mlir::trait {
@@ -367,16 +368,15 @@ FailureOr<Type> NormalizationContext::normalize(
     root = replacer.replace(root);
     if (!toCanonicalMembers.empty())
       root = applySubstitutionOnce(toCanonicalMembers, root);
-    // The recorded facts are read after the local rules, so a projection this
-    // op's own evidence answers is answered from that evidence and only what it
-    // leaves standing reaches the record. Each pass runs both, and the driver
-    // below repeats them until the spelling settles.
-    if (recordedFacts)
-      root = recordedFacts->resolveProjectionsIn(root);
+    // Selection is asked after the local rules, so a projection this op's own
+    // evidence answers is answered from that evidence and only what it leaves
+    // standing reaches selection. Each pass runs both, and the driver below
+    // repeats them until the spelling settles.
+    if (selection)
+      root = selection(root);
     if (moduleLookup && !lookupRefused) {
       FailureOr<Type> byLookup =
-          resolveProjectionsByLookup(root, moduleLookup, moduleLookupOrigin,
-                                     moduleLookupScope, err);
+          resolveProjectionsByLookup(root, moduleLookup, moduleLookupScope, err);
       if (failed(byLookup))
         lookupRefused = true;
       else
@@ -1342,7 +1342,7 @@ static void mapDeclarationReads(RewriterBase &rewriter, ModuleOp module,
       auto instance = instanceOfProofAt(proof, selfProof, /*err=*/nullptr);
       if (succeeded(instance)) {
         AttrTypeReplacer atInstance =
-            makeTypeReplacerFromSubstitution(instance->toTypeMap(), module);
+            makeTypeReplacerFromSubstitution(instance->toTypeMap(), CloneKind::Instance);
         IRMapping fromProof;
         for (auto [argument, premise] :
              llvm::zip(declarationBody.getArguments().drop_front(),
@@ -1402,7 +1402,7 @@ static func::FuncOp cutMethodInstance(PatternRewriter &rewriter, ModuleOp module
 
   rewriter.setInsertionPointToStart(&funcOp.getBody().front());
   IRMapping replacements;
-  AttrTypeReplacer stamp = makeTypeReplacerFromSubstitution(subst, module);
+  AttrTypeReplacer stamp = makeTypeReplacerFromSubstitution(subst, CloneKind::Instance);
   mapDeclarationReads(rewriter, module, declaration, reads,
                       funcOp.getArgument(0), selfProof, stamp, replacements);
   for (Value read : reads)
@@ -1474,7 +1474,7 @@ static LogicalResult inlineMethodAt(PatternRewriter &rewriter, ModuleOp module,
     return rewriter.notifyMatchFailure(call, "the method has no one-block body");
 
   llvm::SetVector<Value> reads = readsFromDeclaration(method);
-  AttrTypeReplacer stamp = makeTypeReplacerFromSubstitution(subst, module);
+  AttrTypeReplacer stamp = makeTypeReplacerFromSubstitution(subst, CloneKind::Instance);
   AttrTypeReplacer spelling = makeSpellingReplacerFromSubstitution(subst);
   PatternRewriter::InsertionGuard guard(rewriter);
   rewriter.setInsertionPoint(call);
@@ -1522,7 +1522,7 @@ static FailureOr<func::FuncOp> getOrCutMethodInstance(
   llvm::append_range(formalInputs, method.getArgumentTypes());
   SmallVector<Type> actualInputs{provenSelfClaim};
   llvm::append_range(actualInputs, actualArguments);
-  AttrTypeReplacer stamp = makeTypeReplacerFromSubstitution(subst, module);
+  AttrTypeReplacer stamp = makeTypeReplacerFromSubstitution(subst, CloneKind::Instance);
   auto key = InstanceKey::get(templateRef, typeArguments, formalInputs,
                               actualInputs, stamp);
   if (failed(key))
@@ -1553,9 +1553,9 @@ static FailureOr<func::FuncOp> getOrCutMethodInstance(
 static FailureOr<std::pair<SpecializationMap, DenseMap<Type, Type>>>
 implMethodSubstitution(ImplOp impl, TraitOp trait, FunctionOpInterface method,
                        ClaimType provenSelfClaim,
-                       const CallSubstitution &callSubst) {
-  auto implArguments = impl.buildImplSpecialization(
-      provenSelfClaim, DemandOrigin::ProofRecording);
+                       const CallSubstitution &callSubst,
+                       llvm::function_ref<Type(Type)> selection) {
+  auto implArguments = impl.buildImplSpecialization(provenSelfClaim, selection);
   if (failed(implArguments))
     return failure();
   DenseMap<Type, Type> subst = implArguments->toTypeMap();
@@ -1581,7 +1581,8 @@ FailureOr<func::FuncOp> ImplOp::getOrSpecializeFreeFunctionFromMethod(
     ClaimType provenSelfClaim,
     StringRef methodName,
     TypeRange actualArguments,
-    const CallSubstitution &callSubst) {
+    const CallSubstitution &callSubst,
+    llvm::function_ref<Type(Type)> selection) {
   TraitOp trait = getTrait();
   if (!trait.hasMethod(methodName)) return failure();
 
@@ -1594,7 +1595,8 @@ FailureOr<func::FuncOp> ImplOp::getOrSpecializeFreeFunctionFromMethod(
 
   ModuleOp module = (*this)->getParentOfType<ModuleOp>();
   auto substitution = implMethodSubstitution(*this, trait, *method,
-                                             provenSelfClaim, callSubst);
+                                             provenSelfClaim, callSubst,
+                                             selection);
   if (failed(substitution)) return failure();
   auto &[implArguments, subst] = *substitution;
 
@@ -1608,8 +1610,9 @@ FailureOr<func::FuncOp> ImplOp::getOrSpecializeFreeFunctionFromMethod(
                                 provenSelfClaim, actualArguments, subst);
 }
 
-LogicalResult MethodCallOp::inlineEvidence(PatternRewriter &rewriter,
-                                           const CallSubstitution &callSubst) {
+LogicalResult MethodCallOp::inlineEvidence(
+    PatternRewriter &rewriter, const CallSubstitution &callSubst,
+    llvm::function_ref<Type(Type)> selection) {
   ImplOp impl = getProvenImpl();
   TraitOp trait = impl.getTrait();
   ModuleOp module = impl->getParentOfType<ModuleOp>();
@@ -1631,33 +1634,100 @@ LogicalResult MethodCallOp::inlineEvidence(PatternRewriter &rewriter,
   }
 
   auto substitution = implMethodSubstitution(impl, trait, *method,
-                                             getClaimType(), callSubst);
+                                             getClaimType(), callSubst,
+                                             selection);
   if (failed(substitution))
     return failure();
   return inlineMethodAt(rewriter, module, impl, *method, *this, getClaimType(),
                         substitution->second);
 }
 
-LogicalResult ProjectOp::inlineEvidence(RewriterBase &rewriter) {
-  ClaimType source = getSourceClaim();
-  if (!source.isProven())
-    return failure();
-  ModuleOp module = getAnchorModule(getOperation());
+namespace {
+/// The impl a claim value commits to: the impl, the application the value
+/// proves, and the impl's arguments there, with the derive committing it,
+/// whose given operands are the impl's where arguments, read in `enclosing`.
+struct CommittedImpl {
+  ImplOp impl;
+  TraitApplicationAttr application;
+  SpecializationMap arguments;
+  /// Null for an unconditional impl cited by name, which has no where clause.
+  DeriveOp derive;
+  /// The impl the derive stands in, as committed; null for a proof's derive,
+  /// which stands in no impl.
+  std::shared_ptr<const CommittedImpl> enclosing;
+};
+} // namespace
+
+/// The value a read computes, through the coercions that bridge spellings.
+static Value throughCoercions(Value value) {
+  while (auto coerce = value.getDefiningOp<CoerceOp>())
+    value = coerce.getInput();
+  return value;
+}
+
+/// The impl `value` commits to, read in `context`, the committed impl whose
+/// body `value` stands in (none for a value outside every impl): a proven
+/// claim's impl through its proof, a derived claim's through the derive, and
+/// one of `context`'s where arguments through what its derive was given there.
+/// None where the value commits to no impl yet.
+static std::optional<CommittedImpl>
+committedImplOf(Value value, std::shared_ptr<const CommittedImpl> context,
+                ModuleOp module) {
+  value = throughCoercions(value);
+  if (auto argument = dyn_cast<BlockArgument>(value);
+      argument && context &&
+      argument.getOwner()->getParentOp() == ImplOp(context->impl)) {
+    unsigned position = argument.getArgNumber();
+    DeriveOp derive = context->derive;
+    if (position == 0 || !derive ||
+        position > derive.getAssumptions().size())
+      return std::nullopt;
+    return committedImplOf(derive.getAssumptions()[position - 1],
+                           context->enclosing, module);
+  }
+  SpecializationMap none;
+  const SpecializationMap &outer = context ? context->arguments : none;
+  auto claim = dyn_cast_or_null<ClaimType>(instantiate(value.getType(), outer));
+  if (!claim)
+    return std::nullopt;
+  if (!claim.isProven()) {
+    auto derive = value.getDefiningOp<DeriveOp>();
+    ImplOp impl = derive ? derive.getImplOp() : ImplOp();
+    auto arguments = impl ? impl.buildSubstitutionForSelfClaim(claim)
+                          : FailureOr<SpecializationMap>(failure());
+    if (failed(arguments))
+      return std::nullopt;
+    return CommittedImpl{impl, claim.getTraitApplication(),
+                         std::move(*arguments), derive, std::move(context)};
+  }
   auto cited = ProofOp::getProofOpOrUnconditionalImplOp(
-      module, source.getProof(), /*errFn=*/nullptr);
+      module, claim.getProof(), /*errFn=*/nullptr);
   if (failed(cited))
-    return failure();
+    return std::nullopt;
   auto proof = dyn_cast<ProofOp>(*cited);
   ImplOp impl = proof ? proof.getImpl() : cast<ImplOp>(*cited);
   if (!impl)
-    return failure();
+    return std::nullopt;
   SpecializationMap arguments;
   if (proof) {
-    auto atSource = proof.getImplArgumentsAt(source, /*err=*/nullptr);
-    if (failed(atSource))
-      return failure();
-    arguments = std::move(*atSource);
+    auto atClaim = proof.getImplArgumentsAt(claim, /*err=*/nullptr);
+    if (failed(atClaim))
+      return std::nullopt;
+    arguments = std::move(*atClaim);
   }
+  return CommittedImpl{impl, claim.getTraitApplication(), std::move(arguments),
+                       proof ? proof.getDerive() : DeriveOp(), nullptr};
+}
+
+LogicalResult ProjectOp::inlineEvidence(RewriterBase &rewriter) {
+  if (!getSourceClaim().isProven())
+    return failure();
+  ModuleOp module = getAnchorModule(getOperation());
+  auto committed = committedImplOf(getSource(), nullptr, module);
+  if (!committed)
+    return failure();
+  ImplOp impl = committed->impl;
+  ClaimType source = getSourceClaim();
 
   // A trait requirement is the impl's return operand at its index; a where
   // entry, past them, is the impl's block argument there, which the source's
@@ -1673,7 +1743,7 @@ LogicalResult ProjectOp::inlineEvidence(RewriterBase &rewriter) {
   OpBuilder::InsertionGuard guard(rewriter);
   rewriter.setInsertionPoint(*this);
   AttrTypeReplacer stamp =
-      makeTypeReplacerFromSubstitution(arguments.toTypeMap(), module);
+      makeTypeReplacerFromSubstitution(committed->arguments.toTypeMap(), CloneKind::Instance);
   IRMapping mapping;
   llvm::SetVector<Value> reads;
   reads.insert(read);
@@ -1697,6 +1767,125 @@ LogicalResult ProjectOp::inlineEvidence(RewriterBase &rewriter) {
                                    inlined, ValueRange{});
   rewriter.replaceOp(*this, replacement);
   return success();
+}
+
+/// Whether `value`, standing in `impl`'s body, is computed from one of
+/// `impl`'s block arguments: its where arguments, or its own claim.
+static bool readsArgumentsOf(Value value, ImplOp impl) {
+  SmallVector<Value> pending{value};
+  DenseSet<Value> seen;
+  while (!pending.empty()) {
+    Value next = pending.pop_back_val();
+    if (!seen.insert(next).second)
+      continue;
+    if (auto argument = dyn_cast<BlockArgument>(next)) {
+      if (argument.getOwner()->getParentOp() == impl.getOperation())
+        return true;
+      continue;
+    }
+    llvm::append_range(pending, next.getDefiningOp()->getOperands());
+  }
+  return false;
+}
+
+/// The derivation `committed` stands for, at its application, as `identity`
+/// names it: the impl, where it is derived over no evidence -- cited by name,
+/// or derived given nothing, which its application alone determines -- and
+/// otherwise the derive committing it and, where what that derive is given
+/// depends on the impl it stands in, the derivation committing that impl in
+/// turn. Two readings meet one derivation when they name it alike.
+static void appendDerivation(const CommittedImpl &committed,
+                             SmallVectorImpl<const void *> &identity) {
+  ImplOp impl = committed.impl;
+  DeriveOp derive = committed.derive;
+  if (!derive || derive.getAssumptions().empty()) {
+    identity.push_back(impl.getOperation());
+    return;
+  }
+  identity.push_back(derive.getOperation());
+  if (!committed.enclosing)
+    return;
+  ImplOp enclosing = committed.enclosing->impl;
+  bool dependsOnEnclosing =
+      llvm::any_of(derive.getAssumptions(), [&](Value given) {
+        return isPolymorphicType(given.getType()) ||
+               readsArgumentsOf(given, enclosing);
+      });
+  if (dependsOnEnclosing)
+    appendDerivation(*committed.enclosing, identity);
+}
+
+EvidenceReading ProjectOp::readEvidence() {
+  ModuleOp module = getAnchorModule(getOperation());
+  EvidenceReading reading;
+  // A reading that meets one requirement of one derivation at one application
+  // again has no base. The derivation, not only its impl, is what repeats: one
+  // impl derived twice at one application over different evidence is two
+  // derivations, and reading through both is finite.
+  std::set<SmallVector<const void *, 8>> reached;
+  using Context = std::shared_ptr<const CommittedImpl>;
+  using Ending = std::pair<Value, Context>;
+
+  // The evidence `project`, read in `context`, reads: followed through the
+  // returns of the impls it is read through to the value it ends at -- one
+  // that is no projection -- with the committed impl that value stands in.
+  // None where the reading stops: at evidence that commits to no impl yet, at
+  // a where entry, whose evidence the derive or proof supplies, or at a cycle
+  // or the depth limit, which `reading.end` records.
+  std::function<std::optional<Ending>(ProjectOp, Context)> follow;
+
+  // The impl `value`, read in `context`, commits to. A value an unproven
+  // projection produces commits to whatever the evidence it reads commits to,
+  // so a projection standing on another is read through the inner one's
+  // evidence first; each hop of that reading is a hop of this one.
+  auto commit = [&](Value value,
+                    Context context) -> std::optional<CommittedImpl> {
+    value = throughCoercions(value);
+    if (auto inner = value.getDefiningOp<ProjectOp>();
+        inner && !inner.getResultClaim().isProven()) {
+      std::optional<Ending> ending = follow(inner, context);
+      if (!ending)
+        return std::nullopt;
+      return committedImplOf(ending->first, ending->second, module);
+    }
+    return committedImplOf(value, context, module);
+  };
+
+  follow = [&](ProjectOp project, Context context) -> std::optional<Ending> {
+    std::optional<CommittedImpl> current = commit(project.getSource(), context);
+    uint64_t index = project.getIndex();
+    // A where entry, past the trait's requirements, is evidence a proof or a
+    // derive supplies, which is a base; only a requirement is read through a
+    // return.
+    while (current &&
+           index < current->impl.getTrait().getRequirements().size()) {
+      ImplOp impl = current->impl;
+      reading.impls.push_back(impl.getSymNameAttr());
+      SmallVector<const void *, 8> key{current->application.getAsOpaquePointer(),
+                                       reinterpret_cast<const void *>(index)};
+      appendDerivation(*current, key);
+      if (!reached.insert(key).second) {
+        reading.end = EvidenceReading::End::Cycle;
+        return std::nullopt;
+      }
+      reading.chain.push_back({current->application, SymbolRefAttr()});
+      auto here = std::make_shared<const CommittedImpl>(std::move(*current));
+      Value returned = throughCoercions(impl.getReturn().getOperand(index));
+      auto next = returned.getDefiningOp<ProjectOp>();
+      if (!next)
+        return Ending{returned, here};
+      if (reading.chain.size() > kInstantiationDepthLimit) {
+        reading.end = EvidenceReading::End::Overflow;
+        return std::nullopt;
+      }
+      current = commit(next.getSource(), here);
+      index = next.getIndex();
+    }
+    return std::nullopt;
+  };
+
+  (void)follow(*this, nullptr);
+  return reading;
 }
 
 FailureOr<func::FuncOp> TraitOp::getOrSpecializeFreeFunctionFromDefault(
@@ -1872,8 +2061,7 @@ FailureOr<Type> ImplOp::specializeAssociatedTypeBinding(
 }
 
 FailureOr<SpecializationMap> ImplOp::buildImplSpecialization(
-    ClaimType provenSelfClaim,
-    DemandOrigin origin,
+    ClaimType provenSelfClaim, llvm::function_ref<Type(Type)> selection,
     llvm::function_ref<InFlightDiagnostic()> err) {
   if (!provenSelfClaim.isProven()) {
     if (err) err() << "expected proven self claim for " << getSymName();
@@ -1886,11 +2074,11 @@ FailureOr<SpecializationMap> ImplOp::buildImplSpecialization(
   // The self claim names the proof standing over this impl's obligations, so a
   // projection the header spells over one of them reduces through the impl that
   // obligation's subproof names -- the reading by index. Where the header spells
-  // an application no subproof answers, the impls the module holds stand in.
+  // an application no subproof answers, impl selection does.
   NormalizationContext throughProof;
   if (spellsAProjection(Type(getSelfClaim())))
     throughProof = buildProofNormalizationContext(provenSelfClaim, *module);
-  throughProof.setModuleLookup(*module, LookupScope::Ground, origin);
+  throughProof.setSelection(selection);
   auto normalize = [&](Type ty) -> FailureOr<Type> {
     return throughProof.normalize(ty, err);
   };
@@ -2315,8 +2503,7 @@ static LogicalResult verifyCitationOf(
       "impl '@" + impl.getSymName() + "'", supplier, normalize, errFn);
 }
 
-LogicalResult WitnessOp::verifyResolution(ModuleOp module,
-                                          const ReadOnlyImplResolver *settled) {
+LogicalResult WitnessOp::verifyResolution(ModuleOp module) {
   auto errFn = [&] { return emitOpError(); };
   TypeEqualityAttr equality = getResultClaim().getEqualityAttr();
   auto projection = cast<ProjectionType>(equality.getLhs());
@@ -2335,17 +2522,14 @@ LogicalResult WitnessOp::verifyResolution(ModuleOp module,
 
   // What a spelling here may be read through: the hypotheses of the scope the
   // witness stands in, the evidence its premises carry -- an equality premise
-  // relating its two sides -- then, at the stage, what selection settled, and
-  // the impls the module holds. Gathered only where a spelling differs.
+  // relating its two sides -- then the impls the module holds. Gathered only
+  // where a spelling differs.
   std::optional<NormalizationContext> evidence;
   auto normalize = [&](Type ty) -> FailureOr<Type> {
     if (!evidence) {
       evidence = buildLocalClaimNormalizationContext(getOperation(),
                                                      getPremises(), module);
-      if (settled)
-        evidence->setRecordedFacts(settled);
-      evidence->setModuleLookup(module, LookupScope::Determined,
-                                DemandOrigin::CitationVerification);
+      evidence->setModuleLookup(module, LookupScope::Determined);
     }
     return evidence->normalize(ty, /*err=*/nullptr);
   };
@@ -2384,7 +2568,7 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // projection's application and the premises give it, binds the projection
   // as stated.
   if (isProjectionResolution())
-    return verifyResolution(module, /*settled=*/nullptr);
+    return verifyResolution(module);
 
   // Refl and composition arms cite nothing by symbol: their evidence is the
   // spelling, or the premises, which are SSA values.
@@ -2408,8 +2592,7 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   NormalizationContext reading;
   if (spellsAProjection(Type(impl.getSelfClaim())))
     reading = buildProofNormalizationContext(getProvenClaim(), module);
-  reading.setModuleLookup(module, LookupScope::Ground,
-                          DemandOrigin::CitationVerification);
+  reading.setModuleLookup(module, LookupScope::Ground);
   auto throughEvidence = [&](Type ty) -> FailureOr<Type> {
     return reading.normalize(ty, errFn);
   };
@@ -2423,7 +2606,6 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // and is left to the stage.
   ClaimType claim = getProvenClaim();
   return success(verifyCitation(claim.asUnproven(), claim, module,
-                                DemandOrigin::CitationVerification,
                                 throughEvidence, errFn) != Citation::Refused);
 }
 
@@ -2465,8 +2647,7 @@ LogicalResult DeriveOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     if (!evidence) {
       evidence = buildLocalClaimNormalizationContext(getOperation(),
                                                      getAssumptions(), module);
-      evidence->setModuleLookup(module, LookupScope::Determined,
-                                DemandOrigin::CitationVerification);
+      evidence->setModuleLookup(module, LookupScope::Determined);
     }
     return evidence->normalize(ty, /*err=*/nullptr);
   };
@@ -3018,9 +3199,7 @@ static LogicalResult verifyProofsAtCall(Operation *call, ValueRange operands,
     FailureOr<Type> read = normalize(spelling);
     if (failed(read))
       return failure();
-    if (failed(verifyCitationsIn(*read, module,
-                                 DemandOrigin::CallSignatureVerification,
-                                 normalize, err)))
+    if (failed(verifyCitationsIn(*read, module, normalize, err)))
       return failure();
   }
   return success();
@@ -3039,48 +3218,53 @@ static LogicalResult verifyProofsAtCall(Operation *call, ValueRange operands,
 /// which is what licenses reading a ground projection through the module's
 /// impls.
 ///
-/// `reading` is the stage's record of what impl selection has settled, which
-/// the comparison reads both signatures through on top of that evidence. A
-/// verifier passes none and compares through the evidence alone, and then the
-/// proofs the call's claims name are read at their own claims as well.
+/// `selection` resolves a type's ground projections through the stage's impl
+/// selection, which the comparison reads both signatures through on top of that
+/// evidence. A verifier passes none and compares through the evidence alone,
+/// and then the proofs the call's claims name are read at their own claims as
+/// well.
 static FailureOr<SpecializationMap> readCallSpecialization(
     Operation *call, ModuleOp module, FunctionType formal,
     const SpecializationMap &known, ArrayRef<GenericTypeInterface> parameters,
     FunctionType actual, ValueRange localClaims, bool commitsToEvidence,
-    StringRef callee, const ReadOnlyImplResolver *reading,
+    StringRef callee, llvm::function_ref<Type(Type)> selection,
     llvm::function_ref<InFlightDiagnostic()> err) {
-  // Reading the evidence at this call resolves symbol names and writes nothing,
-  // so what a name answers is held for the read. Under a stage already holding
-  // answers this reads through those.
+  // Reading the evidence at this call resolves symbol names, so what a name
+  // answers is held for the read; a symbol selection appends meanwhile is found
+  // by the read after it. Under a stage already holding answers this reads
+  // through those.
   SymbolLookupScope symbolAnswers;
 
   NormalizationContext normalization =
       buildLocalClaimNormalizationContext(call, localClaims, module);
-  normalization.setRecordedFacts(reading);
+  // The stage reads through impl selection and nothing else; a verifier, which
+  // holds none, reads the impls the module holds in its place.
+  normalization.setSelection(selection);
   // XXX TODO A claim this call's own arguments spell can carry a ground
   // projection no evidence at this site reduces, because the impl serving it is
   // named nowhere the call can read. The module's impls stand in, and only
   // where the call commits to evidence -- an ordinary unproven claim grants
   // nothing. Deleted once the claim a call commits to carries the impls serving
   // the projections its arguments spell; see setModuleLookup.
-  if (commitsToEvidence)
+  if (commitsToEvidence && !selection)
     normalization.setModuleLookup(module, LookupScope::Ground);
   auto normalize = [&](Type ty) -> FailureOr<Type> {
     return normalization.normalize(ty, err);
   };
 
-  // The reading's own context, which differs from the comparison's in one way:
-  // it reduces a projection whose own spelling determines the impl serving it
+  // A verifier's reading context differs from its comparison's in one way: it
+  // reduces a projection whose own spelling determines the impl serving it
   // even where its associated-type arguments still hold a variable. A reading
   // compares a spelling and never serves one, which is what that scope licenses.
   NormalizationContext readingContext = normalization;
-  readingContext.setModuleLookup(module, LookupScope::Determined);
+  if (!selection)
+    readingContext.setModuleLookup(module, LookupScope::Determined);
   auto normalizeForReading = [&](Type ty) -> FailureOr<Type> {
     return readingContext.normalize(ty, err);
   };
 
   // At pass time the comparison reads softly: a call whose evidence is not yet
-  // recorded waits for a later round. A call whose operands are already
+  // proven waits for it. A call whose operands are already
   // monomorphic says everything it will ever say about the instance it wants,
   // so a parameter its types do not determine is refused here, named, rather
   // than surfacing later as a type variable nothing bound.
@@ -3111,7 +3295,7 @@ static FailureOr<SpecializationMap> readCallSpecialization(
   // the proof op holding it. The factory that closes the substitution walks the
   // same spellings where the call is lowered; a verifier has no lowering behind
   // it, so it reads them here or nowhere.
-  if (!reading &&
+  if (!selection &&
       failed(verifyProofsAtCall(call, call->getOperands(), normalize, module,
                                 err)))
     return failure();
@@ -3126,14 +3310,13 @@ LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable)
 
   auto errFn = [&]{ return emitOpError(); };
 
-  // A verifier holds no record of what impl selection has settled, so the
-  // comparison reads both signatures through the evidence this call carries and
-  // nothing else.
-  return buildParameterSpecialization(/*reading=*/nullptr, errFn);
+  // A verifier holds no impl selection, so the comparison reads both
+  // signatures through the evidence this call carries and nothing else.
+  return buildParameterSpecialization(/*selection=*/nullptr, errFn);
 }
 
 FailureOr<SpecializationMap> MethodCallOp::buildParameterSpecialization(
-    const ReadOnlyImplResolver *reading,
+    llvm::function_ref<Type(Type)> selection,
     llvm::function_ref<InFlightDiagnostic()> err) {
   auto module = getModule(err);
   if (failed(module)) return failure();
@@ -3166,7 +3349,7 @@ FailureOr<SpecializationMap> MethodCallOp::buildParameterSpecialization(
   return readCallSpecialization(getOperation(), *module, *methodFormalTy,
                                 *traitSubst, ownParams, getActualFunctionType(),
                                 localClaims, commitsToEvidence, getMethodName(),
-                                reading, err);
+                                selection, err);
 }
 
 ImplOp MethodCallOp::getProvenImpl() {
@@ -3190,12 +3373,13 @@ ImplOp MethodCallOp::getProvenImpl() {
 }
 
 FailureOr<func::FuncOp> MethodCallOp::getOrSpecializeCallee(
-    PatternRewriter &rewriter,
-    const CallSubstitution &subst) {
+    PatternRewriter &rewriter, const CallSubstitution &subst,
+    llvm::function_ref<Type(Type)> selection) {
   ClaimType claimTy = cast<ClaimType>(getClaim().getType());
   return getProvenImpl()
     .getOrSpecializeFreeFunctionFromMethod(rewriter, claimTy, getMethodName(),
-                                           getArguments().getTypes(), subst);
+                                           getArguments().getTypes(), subst,
+                                           selection);
 }
 
 ParseResult MethodCallOp::parse(OpAsmParser& p, OperationState &st) {
@@ -3325,14 +3509,13 @@ LogicalResult FuncCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
   auto errFn = [&] { return emitOpError(); };
 
-  // A verifier holds no record of what impl selection has settled, so the
-  // comparison reads both signatures through the evidence this call carries and
-  // nothing else.
-  return buildParameterSpecialization(/*reading=*/nullptr, errFn);
+  // A verifier holds no impl selection, so the comparison reads both
+  // signatures through the evidence this call carries and nothing else.
+  return buildParameterSpecialization(/*selection=*/nullptr, errFn);
 }
 
 FailureOr<SpecializationMap> FuncCallOp::buildParameterSpecialization(
-    const ReadOnlyImplResolver *reading,
+    llvm::function_ref<Type(Type)> selection,
     llvm::function_ref<InFlightDiagnostic()> err) {
   auto module = getModule(err);
   if (failed(module)) return failure();
@@ -3355,12 +3538,13 @@ FailureOr<SpecializationMap> FuncCallOp::buildParameterSpecialization(
   return readCallSpecialization(getOperation(), *module, *formal,
                                 SpecializationMap(), getCalleeTypeParams(),
                                 getActualFunctionType(), localClaims,
-                                commitsToEvidence, getCalleeName(), reading, err);
+                                commitsToEvidence, getCalleeName(), selection,
+                                err);
 }
 
 FailureOr<func::FuncOp> FuncCallOp::getOrSpecializeCallee(
-    PatternRewriter &rewriter,
-    const CallSubstitution &subst) {
+    PatternRewriter &rewriter, const CallSubstitution &subst,
+    llvm::function_ref<Type(Type)>) {
   auto module = getModule();
   if (failed(module)) return failure();
 
@@ -3373,6 +3557,13 @@ FailureOr<func::FuncOp> FuncCallOp::getOrSpecializeCallee(
   if (typeParams.empty()) {
     TypeRange parameters = callee->getFunctionType().getInputs();
     TypeRange operands = getOperandTypes();
+    // A callee cut as an instance can still spell an obligation the cut
+    // minted, and an operand's producer can still spell one too; the call
+    // waits for both spellings to be settled where they stand, so the two are
+    // compared only once each is.
+    if (llvm::any_of(parameters, carriesUndischargedObligation) ||
+        llvm::any_of(operands, carriesUndischargedObligation))
+      return failure();
     if (parameters.size() != operands.size())
       return emitOpError() << "passes " << operands.size()
                            << " operand(s) to '@" << getCalleeName()
@@ -3395,7 +3586,7 @@ FailureOr<func::FuncOp> FuncCallOp::getOrSpecializeCallee(
   for (GenericTypeInterface parameter : typeParams)
     typeArguments.push_back(subst.getSpecialization().apply(parameter));
   AttrTypeReplacer stamp =
-      makeTypeReplacerFromSubstitution(subst.toTypeMap(), *module);
+      makeTypeReplacerFromSubstitution(subst.toTypeMap(), CloneKind::Instance);
   auto key = InstanceKey::get(getCalleeNameAttr(), typeArguments,
                               callee->getFunctionType().getInputs(),
                               getOperandTypes(), stamp);

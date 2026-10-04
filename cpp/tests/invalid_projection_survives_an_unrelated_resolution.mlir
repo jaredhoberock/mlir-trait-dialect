@@ -53,6 +53,7 @@ func.func private @wrap(%x: !T) -> !trait.proj<@Absent[!T], "B"> {
 
 func.func @main() -> !trait.proj<@Absent[i64], "B"> {
   %x = arith.constant 1 : i64
+  // expected-error @below {{no impl with satisfiable assumptions for '!trait.proj<@Absent[i64], "B">'}}
   // expected-error @below {{unresolved projection '!trait.proj<@Absent[i64], "B">' after instantiate-monomorphs}}
   %r = trait.func.call @wrap(%x) : (i64) -> !trait.proj<@Absent[i64], "B">
   return %r : !trait.proj<@Absent[i64], "B">

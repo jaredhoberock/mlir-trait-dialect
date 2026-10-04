@@ -27,8 +27,9 @@ trait.impl private @I(%self: !trait.claim<@T[i32]>, %out: !trait.claim<!trait.pr
 
 func.func @main() -> i64 {
   // expected-error @below {{alleges '!trait.proj<@Has[i32], "Out">' = 'i64', and impl selection resolves its sides to 'i8' and 'i64'}}
-  // expected-error @below {{unresolved monomorphic trait.allege after resolve-impls}}
+  // expected-error @below {{unproven monomorphic claim '!trait.claim<!trait.proj<@Has[i32], "Out"> = i64>' after instantiate-monomorphs}}
   %eq = trait.allege !trait.proj<@Has[i32], "Out"> = i64
+  // expected-error @below {{unproven monomorphic claim '!trait.claim<@T[i32]>' after instantiate-monomorphs}}
   %w = trait.derive @T[i32] from @I given(%eq) : (!trait.claim<!trait.proj<@Has[i32], "Out"> = i64>)
   %r = trait.method.call %w @T[i32]::@m() : () -> i64
   return %r : i64
@@ -61,8 +62,9 @@ trait.impl private @I(%self: !trait.claim<@T[i32]>, %out: !trait.claim<!trait.pr
 
 func.func @main() -> i64 {
   // expected-error @below {{no impl with satisfiable assumptions for '!trait.claim<@Has[i32]>'}}
-  // expected-error @below {{unresolved monomorphic trait.allege after resolve-impls}}
+  // expected-error @below {{unproven monomorphic claim '!trait.claim<!trait.proj<@Has[i32], "Out"> = i64>' after instantiate-monomorphs}}
   %eq = trait.allege !trait.proj<@Has[i32], "Out"> = i64
+  // expected-error @below {{unproven monomorphic claim '!trait.claim<@T[i32]>' after instantiate-monomorphs}}
   %w = trait.derive @T[i32] from @I given(%eq) : (!trait.claim<!trait.proj<@Has[i32], "Out"> = i64>)
   %r = trait.method.call %w @T[i32]::@m() : () -> i64
   return %r : i64

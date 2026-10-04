@@ -9,7 +9,7 @@
 // that allegation, which selection decides where it stands and refuses as
 // ambiguous, as it refuses the unspelled projection.
 
-// CHECK: :[[@LINE+12]]:{{[0-9]+}}: error: incoherent impls (multiple satisfiable) for '!trait.claim<@Extra[i64]>'
+// CHECK: :[[@LINE+12]]:{{[0-9]+}}: error: 'trait.allege' op incoherent impls (multiple satisfiable) for '!trait.claim<@Extra[i64]>'
 
 !T = !trait.poly<0>
 trait.trait private @Extra(%self: !trait.claim<@Extra[!T]>) { trait.method @v() -> i64 }
@@ -37,7 +37,7 @@ func.func @main() -> i64 {
 // projection spelled by @P7, a proof of that derive over @Extra7, is replaced
 // by the derive, whose premise selection decides and refuses as ambiguous.
 
-// CHECK: :[[@LINE+24]]:{{[0-9]+}}: error: incoherent impls (multiple satisfiable) for '!trait.claim<@Extra[i64]>'
+// CHECK: :[[@LINE+24]]:{{[0-9]+}}: error: 'trait.allege' op incoherent impls (multiple satisfiable) for '!trait.claim<@Extra[i64]>'
 
 !T = !trait.poly<0>
 trait.trait private @Extra(%self: !trait.claim<@Extra[!T]>) { trait.method @v() -> i64 }

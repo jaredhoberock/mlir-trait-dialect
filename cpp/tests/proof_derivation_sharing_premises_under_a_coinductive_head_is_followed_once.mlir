@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 
-// RUN: %python %S/Inputs/expand_repeats.py %s | timeout 60 mlir-opt -pass-pipeline='builtin.module(resolve-impls-trait)' | FileCheck %s
+// RUN: %python %S/Inputs/expand_repeats.py %s | timeout 60 mlir-opt -pass-pipeline='builtin.module(instantiate-monomorphs-trait)' | FileCheck %s
 
 // @h derives @H[i32] over @d0, each @dk derives @Dk[i32] citing @d(k+1)
 // twice, and @d29 cites @h twice: thirty diamonds under a coinductive head.

@@ -23,6 +23,7 @@ func.func private @callee(%c: !trait.claim<@Box[!trait.proj<@T[i64], "A">]>,
 }
 
 func.func @main() -> i64 {
+  // expected-error @below {{no impl with satisfiable assumptions for '!trait.proj<@T[i64], "A">'}}
   // expected-error @below {{unresolved projection '!trait.proj<@T[i64], "A">' after instantiate-monomorphs}}
   %c = trait.allege @Box[!trait.proj<@T[i64], "A">]
   %x = arith.constant 0 : i64

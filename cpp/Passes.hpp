@@ -13,7 +13,8 @@ namespace mlir::trait {
 /// trait.func.call, monomorphic operands, proven operand claims, module scope,
 /// and a callee with a signature; for a trait.method.call, monomorphic operands,
 /// a proven receiver claim, proven argument claims, and a method with a
-/// signature. False for any other op. This is the predicate the instantiate step
+/// signature. A claim is proven when every application claim it spells names
+/// its proof, those in its arguments included. False for any other op. This is the predicate the instantiate step
 /// qualifies its discharge by, so the step is present exactly on the calls a
 /// pattern would fire on.
 bool isRewritableGenericCall(Operation *op);
@@ -99,41 +100,6 @@ struct ErasePolymorphsPass : PassWrapper<ErasePolymorphsPass, OperationPass<Modu
 };
 
 std::unique_ptr<Pass> createErasePolymorphsPass();
-
-/// Monomorph instantiation with a pattern that puts a claim a function's
-/// signature declares to impl selection from inside the instantiation driver.
-///
-/// The freeze standing over that driver turns any such ask into a fatal, and
-/// the driver's own patterns never make one, so this is what exercises the
-/// freeze. Only the dialect's plugin registers it: nothing the compiler creates
-/// can reach it, and nothing it does belongs in a compilation.
-struct AskImplSelectionDuringInstantiationPass
-    : PassWrapper<AskImplSelectionDuringInstantiationPass, OperationPass<ModuleOp>> {
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(AskImplSelectionDuringInstantiationPass);
-
-  inline StringRef getArgument() const final { return "ask-impl-selection-during-instantiation-trait"; }
-  inline StringRef getDescription() const final { return "Instantiate monomorphs, asking impl selection for an impl from inside the driver."; }
-
-  void runOnOperation() override;
-};
-
-/// Round zero on its own, for the rows that drive it through `mlir-opt`.
-///
-/// A compilation reaches round zero through instantiate-monomorphs, which runs
-/// it before its first round and keeps the resolver it built; this pass runs it
-/// alone and discards that resolver.
-///
-/// XXX TODO: this housing exists for those rows and for nothing the compiler
-/// builds. It goes when round zero dissolves into the round loop and the rows
-/// drive the loop instead.
-struct ResolveImplsPass : PassWrapper<ResolveImplsPass, OperationPass<ModuleOp>> {
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ResolveImplsPass);
-
-  inline StringRef getArgument() const final { return "resolve-impls-trait"; }
-  inline StringRef getDescription() const final { return "Elaborate claims into proofs of implementations by resolving impls."; }
-
-  void runOnOperation() override;
-};
 
 /// The acyclicity check: the trait-to-trait `where`-clause edges hold no cycle,
 /// followed by a full module verify. `verify-acyclic-traits` and the

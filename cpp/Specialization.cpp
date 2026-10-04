@@ -61,38 +61,26 @@ static void cloneRegionWithTypeReplacement(
                            mapping, typeReplacer, spellingReplacer);
 }
 
-// A template clone -- one stamped with no module -- receives the bindings of a
-// declaration's parameters alone, and each is stamped once: what a parameter
-// stands for is a term of whoever supplied it, so reading that term again as
-// though it were the declaration's own spelling would mistake a shared label for
-// the same variable and grow a parameter bound over itself one level per pass.
-// A monomorphic clone receives the closed call substitution, whose projection
-// and evidence bindings expose one another, so those are chased until they
-// settle. Substituting a concrete argument into a projection spelling can mint a
-// ground projection no substitution entry closes; when `module` is supplied the
-// replacer resolves those projections by module-visible impl lookup, so a
-// specialized monomorph carries no ground projection that a unique
-// module-visible impl resolves. Projections whose impl is generator-pending or
-// whose application matches several candidates survive stamp-out unchanged, to
-// be resolved once evidence exists.
+// A template clone receives the bindings of a declaration's parameters alone,
+// and each is stamped once: what a parameter stands for is a term of whoever
+// supplied it, so reading that term again as though it were the declaration's
+// own spelling would mistake a shared label for the same variable and grow a
+// parameter bound over itself one level per pass. An instance's clone receives
+// the closed call substitution, whose projection and evidence bindings expose
+// one another, so those are chased until they settle. Substituting a concrete
+// argument into a projection spelling can mint a ground projection no
+// substitution entry closes; it stays spelled, for the op carrying it to ask
+// impl selection about.
 AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &subst,
-                                                  ModuleOp module) {
+                                                  CloneKind kind) {
   // The seal keeps a bare equality immutable under this rewrite; the clone
   // rule below is the one mover, and it reaches an equality only through the
   // claim that wraps it.
   AttrTypeReplacer replacer = makeEndpointSealedReplacer();
-  // A replacer stamps one clone, which adds functions and no impl, so the impls
-  // every lookup below scans are the same for all of them: each application's
-  // candidates are read once per replacer.
-  auto candidates = std::make_shared<ImplCandidateMemo>();
-  // One type stamped whole: the substitution, then -- for a monomorphic clone --
-  // the ground projections it minted resolved.
+  bool isTemplate = kind == CloneKind::Template;
   auto stamp = [=](Type t) -> Type {
-    if (!module)
-      return applySubstitutionOnce(subst, t);
-    return resolveProjectionsByLookup(applySubstitutionToFixedPoint(subst, t),
-                                      module, DemandOrigin::MonomorphStampOut,
-                                      LookupScope::Ground, *candidates);
+    return isTemplate ? applySubstitutionOnce(subst, t)
+                      : applySubstitutionToFixedPoint(subst, t);
   };
   replacer.addReplacement(
       [=](Type t) -> std::optional<std::pair<Type, WalkResult>> {
@@ -101,7 +89,7 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &sub
     // re-enter it. Re-entering is what reads a parameter's argument as though it
     // were the declaration's own spelling again, which grows a parameter bound
     // over itself one level per visit.
-    if (!module)
+    if (isTemplate)
       return std::make_pair(stamp(t), WalkResult::skip());
 
     Type result = stamp(t);
@@ -123,8 +111,8 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &sub
   });
 
   // The clone rule for equality evidence: an equality claim's endpoints receive
-  // the variable bindings alone, stamped once -- no projection binding, and no
-  // module lookup, resolved inside them -- so the equality a clone holds is
+  // the variable bindings alone, stamped once -- no projection binding resolved
+  // inside them -- so the equality a clone holds is
   // rebuilt at the instance its claim is, under the one substitution.
   llvm::DenseMap<Type, Type> variableBindings;
   for (auto [key, value] : subst)
@@ -147,14 +135,13 @@ AttrTypeReplacer makeSpellingReplacerFromSubstitution(
   for (auto [key, value] : subst)
     if (isa<GenericTypeInterface>(key))
       variableBindings.try_emplace(key, value);
-  return makeTypeReplacerFromSubstitution(variableBindings, ModuleOp());
+  return makeTypeReplacerFromSubstitution(variableBindings, CloneKind::Template);
 }
 
 /// Whether the block a builder inserts into stands inside a trait, impl, or
 /// proof, or a still-polymorphic function -- a template, whose clone carries no
-/// projection binding, no evidence binding, and no module lookup, because its
-/// spelling is resolved when the template is itself cloned for a concrete
-/// instance.
+/// projection binding and no evidence binding, because its spelling is resolved
+/// when the template is itself cloned for a concrete instance.
 static bool insertionStandsInsideTemplate(OpBuilder &builder) {
   Block *block = builder.getInsertionBlock();
   if (!block)
@@ -205,10 +192,9 @@ FunctionOpInterface specializePolymorph(RewriterBase& rewriter,
   // A clone whose signature still spells a type variable under the generic-keyed
   // bindings alone, or that is inserted inside a trait, impl, or proof, is a
   // template: it is stamped under those bindings with no projection or evidence
-  // binding and no module lookup, so a substitution-invariant verifier accepts
-  // it as it accepts the source, and its spelling resolves when it is cloned for
-  // a concrete instance. A monomorphic clone receives the full call substitution
-  // and ground-projection normalization by module lookup.
+  // binding, so a substitution-invariant verifier accepts it as it accepts the
+  // source, and its spelling resolves when it is cloned for a concrete
+  // instance. A monomorphic clone receives the full call substitution.
   AttrTypeReplacer variableReplacer =
       makeSpellingReplacerFromSubstitution(substitution);
 
@@ -218,8 +204,8 @@ FunctionOpInterface specializePolymorph(RewriterBase& rewriter,
 
   bool cloneIsTemplate = isPolymorphicType(Type(substitutedType)) ||
                          insertionStandsInsideTemplate(builder);
-  AttrTypeReplacer fullReplacer = makeTypeReplacerFromSubstitution(
-      substitution, polymorph->getParentOfType<ModuleOp>());
+  AttrTypeReplacer fullReplacer =
+      makeTypeReplacerFromSubstitution(substitution, CloneKind::Instance);
   AttrTypeReplacer &replacer = cloneIsTemplate ? variableReplacer : fullReplacer;
 
   auto newFunctionType =
@@ -270,18 +256,12 @@ void specializePolymorphicRegion(OpBuilder& builder,
                                   const DenseMap<Type,Type> &subst) {
   assert(monomorph.empty() && "Region is not empty");
 
-  // A region cloned into a template carries no module lookup: its projections
-  // resolve when the template is cloned for a concrete instance, not here. A
-  // region cloned into monomorphic code resolves its ground projections by
-  // module-visible impl lookup, so the specialized region is stamped in normal
-  // form.
-  ModuleOp module =
-      insertionStandsInsideTemplate(builder)
-          ? ModuleOp()
-          : (polymorph.getParentOp()
-                 ? polymorph.getParentOp()->getParentOfType<ModuleOp>()
-                 : ModuleOp());
-  AttrTypeReplacer replacer = makeTypeReplacerFromSubstitution(subst, module);
+  // A region cloned into a template keeps its spelling: its projections
+  // resolve when the template is cloned for a concrete instance, not here.
+  CloneKind kind = insertionStandsInsideTemplate(builder)
+                       ? CloneKind::Template
+                       : CloneKind::Instance;
+  AttrTypeReplacer replacer = makeTypeReplacerFromSubstitution(subst, kind);
   AttrTypeReplacer spellingReplacer = makeSpellingReplacerFromSubstitution(subst);
 
   IRMapping mapping;
@@ -388,14 +368,15 @@ func::FuncOp getOrCutInstance(RewriterBase &rewriter, ModuleOp module,
   // proven is left as spelled, and one nothing here proves is the stage
   // patterns' to prove. Repeated so that a chain is read in dominance order
   // whatever order its blocks stand in, and so that a projection an inlined
-  // return computes is inlined in turn; returns that keep projecting one
-  // another stop at the instantiation limit and are left to the stage's rewrite
-  // budget.
+  // return computes is inlined in turn; evidence with no base
+  // (`ProjectOp::readEvidence`) is never inlined, so the rounds
+  // reach their bound only as a tripwire.
   for (unsigned round = 0; round < kInstantiationDepthLimit; ++round) {
     bool changed = false;
     SmallVector<ProjectOp> projections;
     instance.walk([&](ProjectOp project) {
-      if (project.getSourceClaim().isProven())
+      if (project.getSourceClaim().isProven() &&
+          project.readEvidence().end == EvidenceReading::End::Base)
         projections.push_back(project);
     });
     for (ProjectOp project : projections)

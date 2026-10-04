@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 
-// RUN: mlir-opt -pass-pipeline='builtin.module(resolve-impls-trait)' %s -verify-diagnostics
+// RUN: mlir-opt -pass-pipeline='builtin.module(instantiate-monomorphs-trait)' %s -verify-diagnostics
 
 // @A_gen's !T stands in no header position and two where-clause equalities
 // spell it. Selection reads !T off the second, @B[!S]::X, whose type at i64
@@ -33,7 +33,7 @@ func.func private @need(!trait.claim<@A[i64]>)
 
 func.func @main() {
   // expected-error @below {{impl '@A_gen' applies where '!trait.claim<!trait.proj<@A[i64], "Output"> = i1>', which selection does not settle at '!trait.claim<@A[i64]>'}}
-  // expected-error @below {{unresolved monomorphic trait.allege after resolve-impls}}
+  // expected-error @below {{unproven monomorphic claim '!trait.claim<@A[i64]>' after instantiate-monomorphs}}
   %c = trait.allege @A[i64]
   func.call @need(%c) : (!trait.claim<@A[i64]>) -> ()
   return

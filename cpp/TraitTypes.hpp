@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
-#include "DemandLedger.hpp"
 #include "TraitAttributes.hpp"
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/DenseSet.h>
@@ -21,7 +20,6 @@ class TraitOp;
 class SpecializationMap;
 class CallSubstitution;
 class ImplResolver;
-class ReadOnlyImplResolver;
 
 }
 
@@ -194,14 +192,18 @@ inline bool premiseDefersToInstances(Type lhs, Type rhs) {
   return isPolymorphicType(lhs) || isPolymorphicType(rhs);
 }
 
+/// What impl selection resolves a ground projection to, failing where it
+/// refuses the projection's application.
+using ProjectionResolver = llvm::function_ref<FailureOr<Type>(ProjectionType)>;
+
 /// CallSubstitution: SpecializationMap + ProjectionBindings.
 ///
 /// The complete set of type rewrites needed to lower one call site, closed under
 /// the projections those rewrites expose.
 ///
 /// The factory below is the only way to make one, so a substitution that exists
-/// is one the read closed: every monomorphic projection the call spells is bound
-/// to what impl selection settled for it. A claim's proof is no binding: each
+/// is one `resolve` closed: every monomorphic projection the call spells is
+/// bound to what impl selection resolves it to. A claim's proof is no binding: each
 /// parameter of the instance a call lowers to takes its evidence from the
 /// position it was supplied at, and a value its body computes from the value
 /// that supplies it.
@@ -214,12 +216,12 @@ public:
   /// A projection binding can expose another projection, so discovery runs
   /// until no binding is added.
   ///
-  /// Fails where the read cannot close it: a projection it cannot answer leaves
+  /// Fails where `resolve` cannot close it: a projection it refuses leaves
   /// the call spelling a type it cannot make concrete.
   static FailureOr<CallSubstitution>
   forCall(SpecializationMap specialization, TypeRange operandTypes,
-          TypeRange resultTypes, FunctionType formalTy, ModuleOp module,
-          const ReadOnlyImplResolver &reading);
+          TypeRange resultTypes, FunctionType formalTy,
+          ProjectionResolver resolve);
 
   const SpecializationMap &getSpecialization() const { return specialization; }
 
@@ -248,8 +250,7 @@ private:
   explicit CallSubstitution(SpecializationMap specialization)
       : specialization(std::move(specialization)) {}
 
-  void discoverProjectionBindings(TypeRange types, ModuleOp module,
-                                  const ReadOnlyImplResolver &reading,
+  void discoverProjectionBindings(TypeRange types, ProjectionResolver resolve,
                                   bool &declined);
 
   SpecializationMap specialization;
@@ -442,7 +443,9 @@ constexpr unsigned kSubstitutionFixedPointMaxPasses = 256;
 /// no cycle guard sees a repeat and the recursion runs until the machine stops
 /// it. A bound on how deep the chain runs is what tells such a chain from a
 /// finite one. Rust bounds the same two recursions the same way, at the same
-/// default (`recursion_limit`, 128).
+/// default (`recursion_limit`, 128). A projection whose binding spells another
+/// makes the same kind of progress, so the steps resolving a spelling's
+/// projections stand under the same bound, as rustc's normalization does.
 constexpr unsigned kInstantiationDepthLimit = 128;
 
 /// How many frames from each end of a chain a refusal names. A chain at the
@@ -480,26 +483,29 @@ struct ObligationFrame {
   SymbolRefAttr proof;
 };
 
-/// Refuses an obligation chain that has reached the depth limit, naming the
-/// chain that reaches `app`.
+/// Fails where an obligation chain has reached the depth limit: `chain`, the
+/// frames an obligation walk is part-way through, outermost first, under a
+/// derivation that stands `height` frames itself.
 ///
 /// Every frame on the chain can be a distinct application, so the cycle guard
 /// never fires on a chain whose obligations keep growing the type they ask
-/// about. The chain's length is what stops it, and the chain is what says where
-/// the growth came from. The refusal stands at the demand it was raised under,
-/// or at `anchor` where no demand names a place.
-///
-/// Every frame counts against the bound, whichever trait it names: a frame is a
-/// recursion the walk is standing in, and a chain that alternates traits stands
-/// as deep as one that repeats a single trait.
-///
-/// The chain holds the frames an obligation walk is part-way through, outermost
-/// first, whichever walk it is: impl selection deriving a candidate's where
-/// clause and a proof derivation descending its subproofs count frames the same
-/// way, so one obligation chain has one bound.
+/// about. The chain's length is what stops it. Every frame counts against the
+/// bound, whichever trait it names: a frame is a recursion the walk is standing
+/// in, and a chain that alternates traits stands as deep as one that repeats a
+/// single trait. Impl selection deriving a candidate's where clause and a proof
+/// derivation descending its subproofs count frames the same way, so one
+/// obligation chain has one bound. Where an answer read back carries the
+/// height of its derivation, the chain reaches as deep as that derivation
+/// reached under it.
 LogicalResult checkObligationChainDepth(ArrayRef<ObligationFrame> chain,
-                                        TraitApplicationAttr app,
-                                        Location anchor);
+                                        unsigned height = 1);
+
+/// Names at `anchor` the obligation chain `chain` reaching `app` past the
+/// depth limit (`checkObligationChainDepth`): the chain is what says where the
+/// growth came from, so its ends are named.
+void emitObligationOverflow(Location anchor, TraitApplicationAttr app,
+                            ArrayRef<ObligationFrame> chain,
+                            unsigned height = 1);
 
 /// Applies `subst` repeatedly until it reaches a fixed point, so the returned
 /// type carries no component that `subst` would still rewrite. The fixed
@@ -733,8 +739,7 @@ inline SmallVector<GenericTypeInterface, 4> getTypeParametersIn(Type ty) {
 unsigned firstUnusedPolyLabel(Operation *op);
 
 /// The established context a comparison reads both sides through: an impl's own
-/// bindings and premises inside a verifier, the recorded facts inside the
-/// stage. A caller with no context passes none, which leaves both sides spelled
+/// bindings and premises inside a verifier, impl selection inside the stage. A caller with no context passes none, which leaves both sides spelled
 /// as written. Failure means the rewrite has no normal form.
 using Normalizer = llvm::function_ref<FailureOr<Type>(Type)>;
 
@@ -858,25 +863,31 @@ FailureOr<SpecializationMap> matchDeclaration(
     ArrayRef<GenericTypeInterface> parameters, Type formal, Type actual,
     Normalizer normalize, llvm::function_ref<InFlightDiagnostic()> err);
 
-/// Whether `ty` spells a projection whose resolution is determined but not yet
-/// written: a `ProjectionType` with no type variable left inside it.
+/// Visits the sites of `root` at which instantiation can owe work: every
+/// sub-type except the endpoints of an equality claim.
+///
+/// An equality claim's endpoints hold a proposition, not work. What stands in
+/// one is a term the equation relates, discharged when the equality settles, so
+/// a scan that judges obligations sees the equality claim itself and never what
+/// it relates. Every such scan reads this walk, so the rule is stated once.
+void walkObligationSites(Type root, llvm::function_ref<void(Type)> visit);
+
+/// Whether `site`, a sub-type `walkObligationSites` visits, is an obligation
+/// instantiation has not discharged: an unproven monomorphic application claim,
+/// or a ground projection, whose base is concrete and so resolves in place.
+bool isUndischargedObligation(Type site);
+
+/// Whether `root` carries an undischarged obligation at one of its sites.
 ///
 /// A step that reads a spelling and cannot revisit what it read asks this
-/// first. Mangling a name is the case that matters: the name is computed from
-/// the spelling and nothing later recomputes it, so a name mangled while a
-/// projection still stands is a name for a type the module no longer has once
-/// the projection resolves.
-///
-/// The test is narrower than groundness on purpose. A type argument carrying a
-/// proven claim is not ground and never becomes ground, so a step deferring on
-/// groundness would defer forever; what it must wait for is the projection
-/// alone. Claim and projection types carry their trait application as an
-/// attribute, so this descends through those arguments explicitly rather than
-/// relying only on the structural type walk.
+/// first, and waits while it holds: a name mangled, or a signature compared,
+/// while an obligation still stands is read off a spelling the module no longer
+/// has once the obligation is settled. A proven claim is no obligation, so a
+/// type carrying one never holds a step back.
 ///
 /// Defined out of line so that a dialect asking it links one symbol rather than
 /// the type identities this dialect's own library carries.
-bool mentionsMonomorphicProjection(Type ty);
+bool carriesUndischargedObligation(Type root);
 
 /// How many requirements `claim` carries: the requirements of the trait it
 /// applies, plus -- when `claim` is proven by a proof -- the where entries of the
@@ -943,10 +954,8 @@ enum class Citation {
 /// cited declaration rebuilds the obligation is a function of the two claims,
 /// the declaration and that reading. A citation this declines under a weaker
 /// reading can carry under a stronger.
-///
-/// `origin` names the caller.
 Citation verifyCitation(ClaimType unproven, ClaimType proven, ModuleOp module,
-                        DemandOrigin origin, Normalizer normalize,
+                        Normalizer normalize,
                         llvm::function_ref<InFlightDiagnostic()> err);
 
 /// Refuses every citation the claims `ty` spells that does not discharge the
@@ -958,13 +967,12 @@ Citation verifyCitation(ClaimType unproven, ClaimType proven, ModuleOp module,
 /// holding it. Two spellings proving one claim by different symbols are two
 /// names for one fact, so nothing is carried across the claims here.
 ///
-/// A citation nothing standing now decides is left to the leftover walk, which
-/// refuses an obligation no round resolves.
+/// A citation nothing standing now decides is left to the stage's exit walk,
+/// which refuses an obligation selection does not resolve.
 ///
 /// `normalize` is the evidence the caller holds, which every citation is read
-/// through (`verifyCitation`). `origin` names the caller.
-LogicalResult verifyCitationsIn(Type ty, ModuleOp module, DemandOrigin origin,
-                                Normalizer normalize,
+/// through (`verifyCitation`).
+LogicalResult verifyCitationsIn(Type ty, ModuleOp module, Normalizer normalize,
                                 llvm::function_ref<InFlightDiagnostic()> err);
 
 /// The module that anchors symbol lookups for `anchor`: the operation itself
@@ -981,14 +989,13 @@ ModuleOp getAnchorModule(Operation *anchor);
 /// impl proves (`trait Foo where Bar[Wrap<Self>]::Assoc: Cd`). A verifier
 /// that reads such a projection through the impls the module holds decides by
 /// declarations outside the op it verifies. Those reads -- the
-/// `ImplProjectionLookup` the projection-resolution witness verifier's header
-/// comparison makes, and the verifier `DemandOrigin`s -- delete once every
-/// verifier holds evidence for every projection it reads: each declaration
-/// carrying, at a known position, the impl citation its well-formedness check
-/// found for each application it spells that no premise states -- the choice
-/// Rust's check makes and discards, recorded where it is made. The scopes stay: which
-/// projection the stage may rewrite while it instantiates and stamps is impl
-/// selection's own policy, which no evidence-holding reader replaces.
+/// projection-resolution witness verifier's header comparison among them --
+/// delete once every verifier holds evidence for every projection it reads:
+/// each declaration carrying, at a known position, the impl citation its
+/// well-formedness check found for each application it spells that no premise
+/// states -- the choice Rust's check makes and discards, recorded where it is
+/// made. The stage reads no projection through this lookup: impl selection is
+/// the one reading it makes.
 enum class LookupScope {
   /// Only a projection whose arguments are all concrete. Its resolution is a
   /// fact about the program: the spelling names one type, and rewriting it into
@@ -1013,7 +1020,8 @@ enum class LookupScope {
 };
 
 /// Resolve every projection in `ty` that `scope` licenses by module-visible impl
-/// lookup, leaving the rest spelled as written.
+/// lookup, leaving the rest spelled as written; the verifiers' reading of a
+/// spelling, which asks impl selection nothing.
 ///
 /// This is a read-only lookup: it selects the unique existing impl whose self
 /// application matches a projection's trait application, reads that impl's
@@ -1024,30 +1032,19 @@ enum class LookupScope {
 /// what its premise witnesses. A projection over a type variable resolves only
 /// through an impl that states no where clause, since only such an impl serves
 /// every instance of the variable. It never mints proofs, generates impls, or
-/// mutates IR, so it is safe to run inside a verifier.
-///
-/// `origin` names the caller, which the signature otherwise says nothing about.
-/// A verifier's demand stays local; a stage demand enters the preparation queue.
-/// It has no default, so each caller states which applies.
-///
-Type resolveProjectionsByLookup(Type ty, ModuleOp module, DemandOrigin origin,
-                                LookupScope scope);
-
-/// The fallible sibling of the resolver above, for a caller reached from
-/// untrusted IR that must refuse a nonconverging projection rather than decline
-/// on it. A projection whose resolution never grounds -- a cyclic
-/// associated-type binding across impls -- yields failure here (surfaced through
-/// `emitError` for a live demand, silent under a cross-check) instead of the
-/// infallible entry's spelled-as-written partial. The proof and call-signature
-/// verifiers thread it so a hostile cycle fails verification cleanly, never
-/// aborting the process. Success returns the ground normal form exactly as the
-/// infallible entry would.
+/// mutates IR, so it is safe to run inside a verifier. A projection whose
+/// resolution never grounds -- a cyclic associated-type binding across impls --
+/// fails here, surfaced through `emitError` where one is given, so a hostile
+/// cycle fails verification cleanly.
 FailureOr<Type> resolveProjectionsByLookup(
-    Type ty, ModuleOp module, DemandOrigin origin, LookupScope scope,
+    Type ty, ModuleOp module, LookupScope scope,
     llvm::function_ref<InFlightDiagnostic()> emitError);
 
-/// Rewrites `ty` with `step` until its spelling stops changing, handing back the
-/// driver's partial at a rewrite that never does.
+/// Rewrites `ty` with `step` until its spelling stops changing and reports
+/// success, or reports failure at a rewrite still changing after the depth
+/// limit's worth of steps (`kInstantiationDepthLimit`). `out` receives the fixed point on success and the
+/// still-changing partial normal form on failure, so the caller, which owns the
+/// diagnostic, names the type that would not settle.
 ///
 /// Resolving a projection substitutes the selected impl's associated-type
 /// binding, and that binding may itself be spelled as a projection -- an impl
@@ -1058,44 +1055,8 @@ FailureOr<Type> resolveProjectionsByLookup(
 /// the spelling one hands back is the spelling all of them do -- which is what
 /// lets a demand and an impl's self application be compared for equality at
 /// all.
-Type normalizeProjectionsToFixedPoint(Type ty, ModuleOp module,
-                                      llvm::function_ref<Type(Type)> step);
-
-/// The fallible driver `normalizeProjectionsToFixedPoint` wraps: rewrites `ty`
-/// with `step` until its spelling stops changing and reports success, or reports
-/// failure at a rewrite that never settles instead of stopping the compilation.
-/// `out` receives the fixed point on success and the still-changing partial
-/// normal form on failure, so a caller owning its own diagnostic -- an op-
-/// attached error over an impl-local rule step that must not reach the fatal
-/// module-level reporter -- names the type that would not converge.
 LogicalResult tryNormalizeProjectionsToFixedPoint(
     Type ty, llvm::function_ref<Type(Type)> step, Type &out);
-
-/// A normalizer over the impls a module holds: a projection exactly one of them
-/// binds reduces to what it binds, which is the same answer in every position
-/// that spells it. A projection over a type variable reduces the same way, under
-/// the determined rule -- the impl serving it serves every instance of that
-/// variable, so the answer holds wherever the spelling stands. This is a reading
-/// of committed facts and not of the evidence an operation carries, so a caller
-/// that may only read the latter does not build one.
-class ImplProjectionLookup {
-public:
-  /// `err`, when given, receives the diagnostic for a resolution chain with no
-  /// normal form, which is the one way this reading fails.
-  ImplProjectionLookup(ModuleOp module, DemandOrigin origin,
-                       llvm::function_ref<InFlightDiagnostic()> err = nullptr)
-      : module(module), origin(origin), err(err) {}
-
-  FailureOr<Type> operator()(Type ty) const {
-    return resolveProjectionsByLookup(ty, module, origin,
-                                      LookupScope::Determined, err);
-  }
-
-private:
-  ModuleOp module;
-  DemandOrigin origin;
-  llvm::function_ref<InFlightDiagnostic()> err;
-};
 
 /// The symbol suffix `_h` followed by sixteen hex digits of `input`'s hash.
 std::string hashToSuffix(StringRef input);

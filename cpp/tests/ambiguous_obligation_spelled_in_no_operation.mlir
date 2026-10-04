@@ -7,10 +7,10 @@
 // Two impls of @Foo bind @Foo[i32], so nothing resolves @Foo[i32]::Out. The
 // claim carrying that projection is @B's requirement read at @B[i32]: @B_i32
 // returns an allegation of it, which replaces the projection off @B[i32]'s
-// proof. Selection names the ambiguity where the projection that raised the
-// demand stood, and names the candidates that make it one; the stage's
-// leftover walk names the allegation, where the impl wrote it, whose claim
-// stays unproven.
+// proof. Selection refuses the allegation where the impl wrote it, and the
+// stage's exit walk names the claim it leaves unproven and the projection it
+// leaves unresolved there, with the candidates that make that projection
+// ambiguous.
 //
 // The stage fails on the refusal, so the steps after it never run on a module
 // nothing proved. The second run reads the exit status, which the diagnostic
@@ -42,7 +42,10 @@ trait.impl private @B_i32(%self: !trait.claim<@B[i32]>) {
     %c = arith.constant 13 : i64
     trait.return %c : i64
   }
+  // expected-error @below {{no impl with satisfiable assumptions for '!trait.claim<@A[!trait.proj<@Foo[i32], "Out">]>'}}
   // expected-error @below {{unproven monomorphic claim '!trait.claim<@A[!trait.proj<@Foo[i32], "Out">]>' after instantiate-monomorphs}}
+  // expected-error @below {{incoherent impls (multiple satisfiable) for '!trait.proj<@Foo[i32], "Out">'}}
+  // expected-error @below {{unresolved projection '!trait.proj<@Foo[i32], "Out">' after instantiate-monomorphs}}
   %req0 = trait.allege @A[!trait.proj<@Foo[i32], "Out">]
   trait.return %req0 : !trait.claim<@A[!trait.proj<@Foo[i32], "Out">]>
 }
@@ -52,7 +55,6 @@ trait.proof private @forged {
 }
 func.func @main() -> i64 {
   %w = trait.witness @forged for @B[i32]
-  // expected-error @below {{incoherent impls (multiple satisfiable) for '!trait.proj<@Foo[i32], "Out">'}}
   %a = trait.project %w[0] : !trait.claim<@B[i32] by @forged> -> !trait.claim<@A[!trait.proj<@Foo[i32], "Out">]>
   %r = trait.method.call %a @A[!trait.proj<@Foo[i32], "Out">]::@a() : () -> i64
   return %r : i64

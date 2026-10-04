@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 
-// RUN: %python %S/Inputs/expand_repeats.py %s | not mlir-opt -split-input-file -pass-pipeline='builtin.module(resolve-impls-trait)' 2>&1 | FileCheck %s
+// RUN: %python %S/Inputs/expand_repeats.py %s | not mlir-opt -split-input-file -pass-pipeline='builtin.module(instantiate-monomorphs-trait)' 2>&1 | FileCheck %s
 
 // @a and @b cite each other, a coinductive pair, and @c1 through @c127 chain
 // down to @b, so the derivation from @c1 holds @c1 ... @c127, @b and @a, one

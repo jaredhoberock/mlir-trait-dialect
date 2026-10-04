@@ -21,29 +21,17 @@ struct MonomorphizationInterface : DialectInterface {
     : DialectInterface(dialect, TypeID::get<MonomorphizationInterface>())
   {}
 
-  // Called during convert-to-traits
-  // Register patterns that lower a dialect's operations into polymorphic trait IR
-  //
-  // If a dialect has rewrite patterns that can be run while operands are polymorphic,
-  // then they should be registered by this method.
-  //
-  // Can emit any trait dialect operation.
-  virtual void populateConvertToTraitPatterns(RewritePatternSet& patterns) const {}
-
   /// Called during instantiate-monomorphs
   /// Register patterns that *prepare and specialize* your dialect’s IR
   /// for monomorphization (e.g., concretize polymorphic region signatures,
-  /// specialize helpers that carry !trait.claim values, etc.).
+  /// specialize helpers that carry !trait.claim values, etc.), and patterns
+  /// that lift a dialect's operations into trait vocabulary once their
+  /// operands are monomorphic.
   ///
-  /// If a dialect has rewrite patterns that cannot be run until operands are
-  /// monomorphic, then they should be registered by this method.
-  ///
-  /// Constraints:
-  ///   - MUST NOT introduce any of the following operations:
-  ///     * trait.trait
-  ///     * trait.impl
-  ///     * trait.allege
-  ///   - May assume proven claims / witnesses exist.
+  /// The patterns run in the stage's one driver beside the trait dialect's own,
+  /// over every op outside a template. An allegation one introduces is proven
+  /// where it stands by the same driver; a declaration one needs is the
+  /// business of the impl generator whose impl names it, not of a pattern.
   virtual void populateInstantiateMonomorphsPatterns(RewritePatternSet& patterns) const = 0;
 
   /// Called during erasePolymorphs, whose three phases run in sequence.  The

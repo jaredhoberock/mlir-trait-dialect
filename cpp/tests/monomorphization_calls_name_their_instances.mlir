@@ -5,7 +5,9 @@
 
 // Monomorphizing calls whose claims resolve several applications and their
 // premises gives each call its own instance: the two claims on one callee name
-// two instances, and every rewritten call names the instance created for it.
+// two instances, and every rewritten call names an instance created for it.
+// Instances are cut in the order the stage reaches their calls, which is no
+// part of what this pins.
 
 !T = !trait.poly<0>
 
@@ -42,10 +44,10 @@ func.func @main() {
   return
 }
 
-// CHECK: func.func private @hold_zero_[[FIRST:h[0-9a-f]+]]()
-// CHECK: func.func private @hold_zero_[[SECOND:h[0-9a-f]+]]()
-// CHECK: func.func private @hold_two_[[THIRD:h[0-9a-f]+]]()
+// CHECK-DAG: func.func private @hold_zero_[[FIRST:h[0-9a-f]+]]()
+// CHECK-DAG: func.func private @hold_zero_[[SECOND:h[0-9a-f]+]]()
+// CHECK-DAG: func.func private @hold_two_[[THIRD:h[0-9a-f]+]]()
 // CHECK-LABEL: func.func @main()
-// CHECK: call @hold_zero_[[FIRST]]() : () -> ()
-// CHECK: call @hold_zero_[[SECOND]]() : () -> ()
-// CHECK: call @hold_two_[[THIRD]]() : () -> ()
+// CHECK-DAG: call @hold_zero_[[FIRST]]() : () -> ()
+// CHECK-DAG: call @hold_zero_[[SECOND]]() : () -> ()
+// CHECK-DAG: call @hold_two_[[THIRD]]() : () -> ()

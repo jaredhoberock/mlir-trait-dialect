@@ -11,7 +11,7 @@
 // nonconvergence is reported cleanly, so the type never runs the process out
 // of stack.
 
-// CHECK: error: 'trait.witness' op projection normalization did not converge within 64 iterations for type '!trait.claim<@Wants[tuple<tuple<
+// CHECK: error: 'trait.witness' op projection normalization did not converge within 128 projection steps for type '!trait.claim<@Wants[tuple<tuple<
 
 !T = !trait.poly<0>
 

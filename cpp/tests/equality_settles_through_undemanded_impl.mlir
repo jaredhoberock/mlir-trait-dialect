@@ -11,11 +11,11 @@
 // composing the two proj-resolve premises names the equality their congruence
 // closure entails, @Has[tuple<i32>]::Out = @Has[tuple<i32, i32>]::Out. The
 // equality crosses the call to the generic callee and survives to the leftover
-// check, where the rounds recorded no outcome for any of the three impls,
-// because they hold an equality's endpoints as a leaf. Settlement puts the
-// endpoint projections to impl selection itself: each unique unconditional impl
-// is selected, the chain resolves to i64 on both sides, the endpoints meet, and
-// the whole module lowers clean.
+// check, where nothing had asked selection about any of the three impls,
+// because the stage holds an equality's endpoints as a leaf. Settlement puts
+// the endpoint projections to impl selection itself: each unique unconditional
+// impl is selected, the chain resolves to i64 on both sides, the endpoints
+// meet, and the whole module lowers clean.
 
 // VERIFY: trait.witness compose
 

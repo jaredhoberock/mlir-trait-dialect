@@ -88,31 +88,34 @@ struct HasOnlyChildOps {
 
 } // end mlir::OpTrait
 
+namespace mlir::trait {
+
+/// What the evidence a projection of a proven claim reads stands on
+/// (`ProjectOp::readEvidence`): the impls whose requirement returns it is read
+/// through, in order, each at the application it is read at, and how the
+/// reading ends.
+struct EvidenceReading {
+  enum class End {
+    /// At evidence that is no projection: a derive, a witness, an
+    /// allegation, a coercion of one -- a base, however long the reading.
+    Base,
+    /// At a requirement of an impl at an application read already: evidence
+    /// defined by itself, which has no base.
+    Cycle,
+    /// Still projecting past the instantiation depth limit.
+    Overflow,
+  };
+  End end = End::Base;
+  SmallVector<StringAttr> impls;
+  SmallVector<ObligationFrame> chain;
+};
+
+} // end mlir::trait
 
 #define GET_OP_CLASSES
 #include <TraitOps.hpp.inc>
 
 namespace mlir::trait {
-
-/// The impls of each trait application's trait whose headers carry to that
-/// application, as module-visible lookup under one scope found them.
-using ImplCandidateMemo =
-    llvm::DenseMap<TraitApplicationAttr, llvm::SmallVector<ImplOp>>;
-
-/// `resolveProjectionsByLookup`, reading each application's candidate impls
-/// through `memo` and adding those it scans for.
-///
-/// Lookup changes nothing it reads, so a caller that holds `module`'s impls
-/// unchanged across many lookups under one `scope` keeps one memo across all of
-/// them, and each application's impls are scanned once. The memo is the caller's
-/// and lives no longer than that: a stamping replacer holds one for the one
-/// clone it stamps, while impl generation between two stampings may add an
-/// impl. The trait stage stamps only under its instantiation driver, which
-/// stands an `ImplGenerationFreeze`: an impl-generation request raised there is
-/// a diagnostic and a failed stage, so no impl enters while such a memo is
-/// live.
-Type resolveProjectionsByLookup(Type ty, ModuleOp module, DemandOrigin origin,
-                                LookupScope scope, ImplCandidateMemo &memo);
 
 /// Whether `op` produces a claim whose evidence is read by position, off its
 /// operands or off the declarations they name: a projection, a derive, a
@@ -168,11 +171,13 @@ public:
   /// member the class stands for.
   void assumeEqual(Type a, Type b) { equalities.assumeEqual(a, b); }
 
-  /// Also reads what impl selection has settled, which is the context the stage
-  /// holds on top of the evidence an op carries. A verifier sets none: what it
-  /// may reduce a projection through is the evidence in front of it.
-  void setRecordedFacts(const ReadOnlyImplResolver *reading) {
-    recordedFacts = reading;
+  /// Also reads through impl selection, which is the context the stage holds
+  /// on top of the evidence an op carries: `selection` resolves every ground
+  /// projection selection resolves in a type. A verifier sets none: what it may
+  /// reduce a projection through is the evidence in front of it. `selection`
+  /// must outlive this context.
+  void setSelection(llvm::function_ref<Type(Type)> selection) {
+    this->selection = selection;
   }
 
   /// XXX TODO Also reads the impls `module` holds, under `scope`. A verifier
@@ -184,11 +189,9 @@ public:
   /// once the claim the call commits to carries the impls serving the
   /// projections its own arguments spell; and for a proof and a witness, once
   /// the declarations they read carry the evidence `LookupScope` names.
-  void setModuleLookup(ModuleOp module, LookupScope scope,
-                       DemandOrigin origin = DemandOrigin::DeclarationMatch) {
+  void setModuleLookup(ModuleOp module, LookupScope scope) {
     moduleLookup = module;
     moduleLookupScope = scope;
-    moduleLookupOrigin = origin;
   }
 
   /// Resolves projections in `ty` using this context's local rules.
@@ -207,10 +210,9 @@ public:
 private:
   SmallVector<LocalProjectionRule, 4> localProjectionRules;
   TypeEquivalence equalities;
-  const ReadOnlyImplResolver *recordedFacts = nullptr;
+  llvm::function_ref<Type(Type)> selection;
   ModuleOp moduleLookup;
   LookupScope moduleLookupScope = LookupScope::Ground;
-  DemandOrigin moduleLookupOrigin = DemandOrigin::DeclarationMatch;
 };
 
 } // end mlir::trait

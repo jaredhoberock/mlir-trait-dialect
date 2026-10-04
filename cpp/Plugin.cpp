@@ -57,7 +57,6 @@ struct ReportExpansionReadinessPass
 static void registerPlugin(mlir::DialectRegistry* registry) {
   registry->insert<mlir::trait::TraitDialect>();
   ::mlir::PassRegistration<::mlir::trait::VerifyAcyclicTraitsPass>();
-  ::mlir::PassRegistration<::mlir::trait::ResolveImplsPass>();
   ::mlir::PassRegistration<::mlir::trait::InstantiateMonomorphsPass>();
   ::mlir::PassRegistration<::mlir::trait::ErasePolymorphsPass>();
   // Monomorphization as a whole is a pipeline, not a pass: instantiate the
@@ -72,10 +71,6 @@ static void registerPlugin(mlir::DialectRegistry* registry) {
         pm.addPass(::mlir::trait::createInstantiateMonomorphsPass());
         pm.addPass(::mlir::trait::createErasePolymorphsPass());
       });
-  // The freeze over the instantiation driver has nothing in a compilation that
-  // asks it anything, so the pass that plants an ask is registered here and
-  // nowhere the compiler builds from.
-  ::mlir::PassRegistration<::mlir::trait::AskImplSelectionDuringInstantiationPass>();
   // Registered by the plugin alone: it reports the instantiate and erase steps' readiness
   // predicates for lit rows and has no place in a compilation.
   ::mlir::PassRegistration<::mlir::trait::ReportExpansionReadinessPass>();

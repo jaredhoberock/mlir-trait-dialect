@@ -30,6 +30,7 @@ func.func private @reads(%c: !trait.claim<@Box[!trait.proj<@Gen[i64], "A">]>,
 }
 
 func.func @asks() -> !trait.proj<@Other[i64], "X"> {
+  // expected-error @below {{no impl with satisfiable assumptions for '!trait.proj<@Other[i64], "X">'}}
   // expected-error @below {{unresolved projection '!trait.proj<@Other[i64], "X">' after instantiate-monomorphs}}
   %r = ub.poison : !trait.proj<@Other[i64], "X">
   return %r : !trait.proj<@Other[i64], "X">

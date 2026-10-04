@@ -14,6 +14,7 @@ trait.trait private @T(%self: !trait.claim<@T[!trait.poly<0>]>) {
 }
 
 func.func @main() -> !trait.proj<@T[i64], "A"> {
+  // expected-error @below {{no impl with satisfiable assumptions for '!trait.proj<@T[i64], "A">'}}
   // expected-error @below {{unresolved projection '!trait.proj<@T[i64], "A">' after instantiate-monomorphs}}
   %r = ub.poison : !trait.proj<@T[i64], "A">
   return %r : !trait.proj<@T[i64], "A">

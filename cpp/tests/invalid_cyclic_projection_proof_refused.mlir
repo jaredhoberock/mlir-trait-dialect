@@ -12,7 +12,7 @@
 // a clean diagnostic at the use -- it neither aborts the process nor runs the
 // cyclic proof.
 
-// CHECK: error: 'trait.witness' op projection normalization did not converge within 64 iterations for type '!trait.claim<@Wants[!trait.proj<@Loop[i32], "Output">]>'
+// CHECK: error: 'trait.witness' op projection normalization did not converge within 128 projection steps for type '!trait.claim<@Wants[!trait.proj<@Loop[i32], "Output">]>'
 
 !T = !trait.poly<0>
 

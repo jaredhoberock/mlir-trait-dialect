@@ -40,9 +40,9 @@ include "TraitTypes.td"
 //    methods read -- so polymorphic code relies on a trait only where its
 //    caller proves it.  A claim code fabricates is an allegation
 //    (trait.allege), a trusted assertion that impl selection proves where
-//    its types are concrete: resolve-impls proves a monomorphic one and
-//    instantiate-monomorphs each instance of a polymorphic one, and one
-//    nothing proves is refused where it stands.
+//    its types are concrete: instantiate-monomorphs proves a monomorphic one
+//    where it stands and each instance of a polymorphic one, and one nothing
+//    proves is refused where it stands.
 //
 // 4. The IR is the sole authority on claims.  All proof structure lives
 //    in the IR itself — no side tables, no external state.  Analysis
@@ -69,16 +69,19 @@ include "TraitTypes.td"
 //
 // The stage proving claims is the monomorphize-trait pipeline:
 // instantiate-monomorphs-trait, then erase-polymorphs-trait.  Instantiation
-// runs in rounds to a fixed point.  Impl selection proves each monomorphic
-// allegation and writes the proof as a trait.proof at the end of the module
-// the claim stands in.  What an engine cannot settle yet is recorded on a
-// demand ledger, one demand per spelling and module, and each round puts the
-// ledger's demands and the ones the module still spells to selection in the
-// module they stand in; selection asks the dialects' impl generators for an
-// impl where none binds a demand.  A sweep then writes each proven claim in
-// its proven form, and a greedy driver cuts one instance per template, type
-// arguments and evidence at each call whose operands are proven, lowering the
-// call to a func.call of the instance.  An instance's evidence parameters
+// is one greedy driver, which re-walks every function a rewrite landed in
+// until none moves.  Each op asks impl selection for what it needs where it
+// needs it, as Rust's monomorphization collector asks `Instance::resolve`:
+// an allegation its proof, an op spelling an unproven monomorphic claim or a
+// ground projection the proof or the type it resolves to.  Selection is
+// memoized in the module the op stands in -- a refusal included, entered once
+// nothing still part-way through could answer it otherwise -- asks the
+// dialects' impl generators for an impl where none binds an application, and
+// writes a proof as a trait.proof at the end of that module.  The driver cuts
+// one instance per template, type arguments and evidence at each call whose
+// operands are proven, lowering the call to a func.call of the instance.
+// What selection refuses stays spelled where it stands, and the stage's exit
+// walk names it there.  An instance's evidence parameters
 // take its caller's proofs, so a body reads the evidence it was given by
 // position.  A chain of instances holding 128 instances of one template is
 // refused, as Rust's monomorphization collector counts its limit per function;
@@ -96,8 +99,10 @@ include "TraitTypes.td"
 // decided where it stands, a coercion settled.  An instance is cut with the
 // projections off its proven parameters inlined, and those the inlined
 // returns compute in turn, so the claims it returns are proven in its
-// signature; returns that keep projecting one another are inlined there at
-// most 128 rounds and left to the stage's rewrite budget, which refuses them.
+// signature. Evidence whose returns project one another back to the
+// requirement they stand for has no base and is never inlined
+// (`ProjectOp::readEvidence`): the stage names the projection
+// reading it.
 // A coercion that would leave its input in its place waits while the evidence
 // it cites stands, through any op, region yield or control-flow argument, on
 // an allegation or on evidence still to be inlined: a projection is pending
@@ -486,10 +491,12 @@ def ImplOp : TraitDialectOp<"impl", [
     /// claim at the leading position, then `actualArguments`, what the call
     /// supplies for the method's own parameters, position by position. A
     /// method this impl does not define is the trait's default, cut from the
-    /// trait.
+    /// trait. `selection` is the stage's impl selection, which the impl's
+    /// arguments are read through.
     FailureOr<func::FuncOp> getOrSpecializeFreeFunctionFromMethod(PatternRewriter& rewriter, ClaimType provenSelfClaim, StringRef methodName,
                                                                    TypeRange actualArguments,
-                                                                   const CallSubstitution &callSubst);
+                                                                   const CallSubstitution &callSubst,
+                                                                   llvm::function_ref<Type(Type)> selection);
 
     /// The arguments carrying this impl's header to `actualSelfClaim`: read
     /// them off the demanded application by position, rebuild the header at
@@ -497,7 +504,7 @@ def ImplOp : TraitDialectOp<"impl", [
     /// read through `normalize`.
     ///
     /// `normalize` is the established context the caller holds -- a verifier's
-    /// evidence, the stage's recorded facts -- and is what lets a header
+    /// evidence, the stage's impl selection -- and is what lets a header
     /// spelling a projection (`impl<T> Index<T::Shape, T::Element> for T`)
     /// reproduce a demand spelling the resolution. A caller with no context
     /// passes none, and then a projection is equal to itself alone.
@@ -526,12 +533,10 @@ def ImplOp : TraitDialectOp<"impl", [
     /// The arguments this impl's parameters take at the proven self claim
     /// `provenSelfClaim`. A projection the header spells over one of the
     /// impl's obligations is read through the subproof the claim's proof names
-    /// for that obligation.
-    ///
-    /// `origin` names the caller: an application no subproof answers is read
-    /// through the ground-projection lookup, so this raises demand.
+    /// for that obligation; an application no subproof answers, through
+    /// `selection`, the stage's impl selection.
     FailureOr<SpecializationMap> buildImplSpecialization(ClaimType provenSelfClaim,
-                                                         DemandOrigin origin,
+                                                         llvm::function_ref<Type(Type)> selection,
                                                          llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     // Helper to generate unique symbol name for an ImplOp
@@ -855,17 +860,17 @@ def AllegeOp : TraitDialectOp<"allege", [
 
     `trait.allege` does not verify that a matching `trait.impl` exists at
     the point of emission. It is intended to be elaborated into verified
-    `trait.witness` operations by a claim-proving pass. The resolve-impls
-    pass resolves monomorphic alleges and skips polymorphic ones. The
-    instantiate-monomorphs pass resolves the remaining (now-concrete)
-    alleges. Unresolved monomorphic alleges after resolve-impls are errors.
+    `trait.witness` operations by the instantiate-monomorphs pass, which
+    proves a monomorphic allegation where it stands and a polymorphic one in
+    each instance that grounds it. A monomorphic allegation nothing proves is
+    an error.
     An equality is proved by resolving each projection its sides spell
     through the impl selection selects for the projection's application: the
     projection-resolution witness citing that impl at its arguments, or the
     composition of one such witness per projection resolved.
 
     Examples:
-      // monomorphic: resolved by resolve-impls
+      // monomorphic: proven where it stands
       %p = trait.allege @Ord[i32]
 
       // polymorphic: deferred to instantiate-monomorphs
@@ -1030,6 +1035,19 @@ def ProjectOp : TraitDialectOp<"project", [
     /// Fails, leaving the projection standing, where the source names no
     /// proof.
     LogicalResult inlineEvidence(RewriterBase &rewriter);
+
+    /// What this projection's evidence stands on. The evidence is the
+    /// source's impl's return at this index, and where that is a projection in
+    /// turn, the return of the impl its source commits to, at the arguments
+    /// each gives the next; a source that is one of an impl's where arguments
+    /// commits to what the derive or proof committing that impl was given
+    /// there, and a source an unproven projection produces commits to what
+    /// that projection's own evidence does. A reading that reaches a
+    /// requirement of an impl at an application twice has no base, and one
+    /// still projecting past the instantiation depth limit overflows:
+    /// inlining either would never finish (GHC's rule for instance
+    /// superclasses, read across impls).
+    EvidenceReading readEvidence();
   }];
 
   let assemblyFormat = [{
@@ -1150,11 +1168,8 @@ def WitnessOp : TraitDialectOp<"witness", [
     /// Verifies this projection-resolution witness: the cited impl, at the
     /// arguments the projection's application and the premises give it, binds
     /// the projection as stated. A header spelling a projection is read through
-    /// the evidence the premises carry, the equalities among them, and, when
-    /// `settled` is given, what the stage's impl selection has settled -- the
-    /// context an instance of a template is decided in.
-    LogicalResult verifyResolution(ModuleOp module,
-                                   const ReadOnlyImplResolver *settled);
+    /// the evidence the premises carry and the equalities among them.
+    LogicalResult verifyResolution(ModuleOp module);
 
     ClaimType getResultClaim() {
       return cast<ClaimType>(getResult().getType());
@@ -1339,18 +1354,21 @@ def MethodCallOp : TraitDialectOp<"method.call", [
 
     /// The type arguments this call supplies for its callee's parameters, once
     /// the callee's signature instantiated at them is the signature spelled
-    /// here. The projection and proof bindings that close it are read off the
-    /// record when the call is lowered.
+    /// here. The projection bindings that close it are asked of impl selection
+    /// when the call is lowered.
     ///
-    /// `reading` is the stage's record of what impl selection has settled,
-    /// which the comparison reads both signatures through on top of the
-    /// evidence this call holds. A verifier passes none and compares through
-    /// that evidence alone.
-    FailureOr<SpecializationMap> buildParameterSpecialization(const ReadOnlyImplResolver *reading, llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+    /// `selection` resolves a type's ground projections through the stage's
+    /// impl selection, which the comparison reads both signatures through on
+    /// top of the evidence this call holds. A verifier passes none and compares
+    /// through that evidence alone.
+    FailureOr<SpecializationMap> buildParameterSpecialization(llvm::function_ref<Type(Type)> selection, llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
-    /// Specializes the callee as a free function using a pre-built substitution.
+    /// Specializes the callee as a free function using a pre-built substitution,
+    /// reading the receiver impl's arguments through `selection`, the stage's
+    /// impl selection.
     FailureOr<func::FuncOp> getOrSpecializeCallee(PatternRewriter &rewriter,
-                                                  const CallSubstitution &subst);
+                                                  const CallSubstitution &subst,
+                                                  llvm::function_ref<Type(Type)> selection);
 
     ClaimType getClaimType() {
       return cast<ClaimType>(getClaim().getType());
@@ -1397,9 +1415,11 @@ def MethodCallOp : TraitDialectOp<"method.call", [
     /// body's reads from its impl take the evidence the receiver's proof
     /// supplies there, its parameters this call's arguments, and this call's
     /// result the operand the body returns. The claim it leaves is read by
-    /// position, never selected again.
+    /// position, never selected again. The receiver impl's arguments are read
+    /// through `selection`, the stage's impl selection.
     LogicalResult inlineEvidence(PatternRewriter &rewriter,
-                                 const CallSubstitution &subst);
+                                 const CallSubstitution &subst,
+                                 llvm::function_ref<Type(Type)> selection);
   }];
 
   let hasVerifier = 1;
@@ -1476,20 +1496,23 @@ def FuncCallOp : TraitDialectOp<"func.call", [
       return FunctionType::get(getContext(), getOperands().getTypes(), getResultTypes());
     }
 
-    /// Looks up or specializes the monomorphized callee using a pre-built substitution.
+    /// Looks up or specializes the monomorphized callee using a pre-built
+    /// substitution; `selection` is the stage's impl selection, which a method
+    /// call reads its receiver's impl through and this call has no use for.
     FailureOr<func::FuncOp> getOrSpecializeCallee(PatternRewriter &rewriter,
-                                                  const CallSubstitution &subst);
+                                                  const CallSubstitution &subst,
+                                                  llvm::function_ref<Type(Type)> selection);
 
     /// The type arguments this call supplies for its callee's parameters, once
     /// the callee's signature instantiated at them is the signature spelled
-    /// here. The projection and proof bindings that close it are read off the
-    /// record when the call is lowered.
+    /// here. The projection bindings that close it are asked of impl selection
+    /// when the call is lowered.
     ///
-    /// `reading` is the stage's record of what impl selection has settled,
-    /// which the comparison reads both signatures through on top of the
-    /// evidence this call holds. A verifier passes none and compares through
-    /// that evidence alone.
-    FailureOr<SpecializationMap> buildParameterSpecialization(const ReadOnlyImplResolver *reading, llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+    /// `selection` resolves a type's ground projections through the stage's
+    /// impl selection, which the comparison reads both signatures through on
+    /// top of the evidence this call holds. A verifier passes none and compares
+    /// through that evidence alone.
+    FailureOr<SpecializationMap> buildParameterSpecialization(llvm::function_ref<Type(Type)> selection, llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     // The type parameters the callee's signature binds, in first-occurrence
     // order.

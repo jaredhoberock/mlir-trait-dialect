@@ -44,10 +44,10 @@ InstantiationChain::chainTo(Operation *instance) const {
   return SmallVector<std::pair<Operation *, Attribute>>(llvm::reverse(reversed));
 }
 
-LogicalResult
+Answer<ImplOp>
 ImplResolver::assumptionsSatisfiableFor(ImplOp impl,
                                         ClaimType concreteSelf,
-                                        ModuleOp scope,
+                                        const SelectionSite &site,
                                         OpBuilder &builder) {
   ResolutionMemo &memo = this->memo.resolutionMemo;
   TraitApplicationAttr app = concreteSelf.getTraitApplication();
@@ -55,29 +55,19 @@ ImplResolver::assumptionsSatisfiableFor(ImplOp impl,
   // consult the per-(impl,claim) satisfiability memo
   auto key = std::make_pair(impl, app);
   if (memo.assumptionsKnownSatisfiable.contains(key))
-    return success();
-
-  // cycle guard: A(app) -> ... -> A(app) means unsatisfiable
-  if (llvm::any_of(memo.visiting, [&](ObligationFrame frame) {
-        return frame.application == app;
-      }))
-    return failure();
-
-  // growth bound: a chain whose every step asks about a bigger application
-  // repeats no frame, so only the depth stops it.
-  if (failed(checkObligationChainDepth(memo.visiting, app, impl.getLoc())))
-    return failure();
-
-  // Selection descends the candidate's where clause, which no proof mediates.
-  memo.visiting.push_back({app, SymbolRefAttr()});
-  auto guard = llvm::scope_exit([&]{ memo.visiting.pop_back(); });
+    return impl;
 
   // The candidate's arguments as the demanded application and its own where
-  // clause determine them, read through what selection has settled so far.
+  // clause determine them, each projection they spell read through selection.
+  bool readOverflowed = false;
   auto byResolver = [&](Type ty) -> FailureOr<Type> {
-    return resolveProjectionsIn(ty, scope, builder);
+    Answer<Type> read = resolveProjectionsIn(ty, site, builder);
+    readOverflowed |= read.isOverflow();
+    return read.orFailure();
   };
   TypeArguments args = impl.readTypeArgumentsFor(concreteSelf, byResolver);
+  if (readOverflowed)
+    return Answer<ImplOp>::overflow();
   SpecializationMap known = args.toSpecialization();
 
   for (ClaimType premise : impl.getWhereClaims()) {
@@ -85,13 +75,13 @@ ImplResolver::assumptionsSatisfiableFor(ImplOp impl,
     // own premises hold in turn.
     if (premise.isApplication()) {
       auto assume = cast<ClaimType>(instantiate(Type(premise), known));
-      auto subImpl = resolveImplFor(assume, scope, builder);
-      if (failed(subImpl))
-        return failure();
-      if (failed(assumptionsSatisfiableFor(subImpl->impl,
-                                           subImpl->selectedClaim, scope,
-                                           builder)))
-        return failure();
+      Answer<ResolvedImpl> subImpl = resolveImplFor(assume, site, builder);
+      if (!subImpl.isAnswer())
+        return subImpl.stop<ImplOp>();
+      Answer<ImplOp> held = assumptionsSatisfiableFor(
+          subImpl->impl, subImpl->selectedClaim, site, builder);
+      if (!held.isAnswer())
+        return held;
       continue;
     }
 
@@ -102,33 +92,42 @@ ImplResolver::assumptionsSatisfiableFor(ImplOp impl,
     // application being selected, which selection cannot ask itself about --
     // and then through what selection has settled elsewhere. A reading carrying
     // a type variable is left to the instances that fill it.
+    // A side whose projections still change after the depth limit's worth of
+    // steps is the premise's overflow.
     TypeEqualityAttr equality = premise.getEqualityAttr();
     NormalizationContext ownBindings;
     ownBindings.addLocalProjectionRule(impl, app, known);
     auto reduce = [&](Type ty) {
       Type instantiated = instantiate(ty, known);
       auto reduced = ownBindings.normalize(instantiated, /*err=*/nullptr);
-      return resolveProjectionsIn(succeeded(reduced) ? *reduced : instantiated,
-                                  scope, builder);
+      return settleThroughSelection(
+          succeeded(reduced) ? *reduced : instantiated, site, builder);
     };
-    Type lhs = reduce(equality.getLhs());
-    Type rhs = reduce(equality.getRhs());
-    if (premiseDefersToInstances(lhs, rhs))
+    Answer<std::optional<Type>> lhs = reduce(equality.getLhs());
+    Answer<std::optional<Type>> rhs = reduce(equality.getRhs());
+    if (lhs.isOverflow() || rhs.isOverflow())
+      return Answer<ImplOp>::overflow();
+    if (!*lhs || !*rhs) {
+      overflow(Overflow::projectionSteps(instantiate(Type(premise), known)),
+               site);
+      return Answer<ImplOp>::overflow();
+    }
+    if (premiseDefersToInstances(**lhs, **rhs))
       continue;
-    if (lhs != rhs)
-      return failure();
+    if (**lhs != **rhs)
+      return Answer<ImplOp>::refusal();
   }
 
   // An impl whose arguments the header and the where clause together leave
   // open is no candidate: selection would have nothing to specialize its
   // methods and associated-type bindings with.
   if (!args.complete())
-    return failure();
+    return Answer<ImplOp>::refusal();
 
   // record a positive result
   memo.assumptionsKnownSatisfiable.insert(key);
 
-  return success();
+  return impl;
 }
 
 /// How many candidates a refusal names one by one. Past this a reader learns
@@ -150,7 +149,7 @@ static void nameCandidates(InFlightDiagnostic &diagnostic,
 
 static LogicalResult diagnoseImplResolutionFailure(
     TraitOp trait,
-    ClaimType wanted,
+    Type wanted,
     ArrayRef<ImplOp> goodCandidates,
     ArrayRef<ImplOp> badCandidates,
     llvm::function_ref<InFlightDiagnostic()> err) {
@@ -172,15 +171,14 @@ static LogicalResult diagnoseImplResolutionFailure(
   return diag;
 }
 
-FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
+Answer<ResolvedImpl> ImplResolver::resolveImplFor(
     ClaimType wanted,
-    ModuleOp scope,
+    const SelectionSite &site,
     OpBuilder &builder,
-    llvm::function_ref<InFlightDiagnostic()> err,
-    std::optional<Refutation> *refusedOn) {
-  DemandFrame frame{Type(wanted)};
-
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  ModuleOp scope = site.scope;
   ClaimType originalWanted = wanted;
+  using Selected = Answer<ResolvedImpl>;
 
   // Resolution resolves a demanded claim's monomorphic projections before it
   // selects an impl and records a proof. Every downstream fact minted here --
@@ -190,23 +188,40 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
   // (trait and impl headers still carry their source projections) join that
   // resolved vocabulary here; no other component resolves a demanded claim's
   // spelling before impl selection and proof creation.
-  ClaimType selected =
-      cast<ClaimType>(resolveProjectionsIn(wanted, scope, builder));
+  // An overflow is a hard error: the stage fails on it, so once one is met
+  // selection answers nothing more, rather than search on under it.
+  if (overflowed)
+    return Selected::overflow();
+
+  Answer<Type> normalized = resolveProjectionsIn(wanted, site, builder);
+  if (!normalized.isAnswer())
+    return normalized.stop<ResolvedImpl>();
+  ClaimType selected = cast<ClaimType>(*normalized);
 
   ResolutionMemo &memo = this->memo.resolutionMemo;
   TraitApplicationAttr app = selected.getTraitApplication();
 
-  // first check the memo
+  // first check the memo. A refusal asked about again is named as the first
+  // ask named it, over the candidates that refused it: which op asks first is
+  // no part of what the program says. A selection read back stands as high
+  // above this chain as its derivation did.
   if (auto it = memo.chosen.find({scope, app}); it != memo.chosen.end()) {
-    if (it->second.isRefusal()) {
-      // The record keeps the arm and not the candidates: an application
-      // selection has already refused is one nothing asks the trait about
-      // again.
-      if (refusedOn)
-        *refusedOn = Refutation{it->second.getRefutationArm(), {}};
-      return failure();
+    if (failed(checkObligationChainDepth(memo.visiting, it->second.height))) {
+      overflow(Overflow::obligations(app, memo.visiting, it->second.height),
+               site);
+      return Selected::overflow();
     }
-    return ResolvedImpl{it->second.getImpl(), selected};
+    memo.heightBelow = std::max(memo.heightBelow, it->second.height);
+    return ResolvedImpl{it->second.impl, selected};
+  }
+  if (auto it = memo.refused.find({scope, app}); it != memo.refused.end()) {
+    if (err) {
+      if (auto trait = app.getTrait(scope, err); succeeded(trait))
+        (void)diagnoseImplResolutionFailure(*trait, originalWanted,
+                                            it->second.satisfiable,
+                                            it->second.unsatisfiable, err);
+    }
+    return Selected::refusal();
   }
 
   // get the trait. The demand's spelling names it in the module the demand was
@@ -219,43 +234,119 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
   // this scope keyed by that spelling.
   auto declaredTrait = app.getTrait(scope, err);
   if (failed(declaredTrait)) {
-    memo.chosen.insert_or_assign(
-        {scope, app},
-        ResolutionOutcome::refused(RefutationArm::NoSatisfiableCandidate));
-    if (refusedOn)
-      *refusedOn = Refutation{RefutationArm::NoSatisfiableCandidate, {}};
-    return failure();
+    memo.refused.try_emplace({scope, app});
+    return Selected::refusal();
   }
   TraitOp trait = *declaredTrait;
+
+  // cycle guard: a selection that meets its own application again -- through a
+  // candidate's where clause, or a projection a candidate's header spells --
+  // means unsatisfiable there. The refusal leans on the frame it met again,
+  // which is still part-way through.
+  if (auto repeat = llvm::find_if(memo.visiting, [&](ObligationFrame frame) {
+        return frame.application == app;
+      });
+      repeat != memo.visiting.end()) {
+    memo.provisionalBelow = std::min<unsigned>(
+        memo.provisionalBelow, repeat - memo.visiting.begin());
+    return Selected::refusal();
+  }
+
+  // growth bound: a chain whose every step asks about a bigger application
+  // repeats no frame, so only the depth stops it. The overflow stands at the
+  // demand: every impl on the chain was asked about because something wanted
+  // the application in hand, and naming one would name an impl with nothing
+  // wrong with it.
+  if (failed(checkObligationChainDepth(memo.visiting))) {
+    overflow(Overflow::obligations(app, memo.visiting), site);
+    return Selected::overflow();
+  }
+
+  // A refusal reached while a cycle guard refused a candidate at a frame below
+  // this one leans on that frame, which is still part-way through, so it is
+  // not entered (`provisionalBelow`). What the computation below learns is
+  // carried out to the selections around it, its height among it: the
+  // derivation of the candidate it chooses, or, refused, everything it
+  // explored.
+  unsigned depth = memo.visiting.size();
+  unsigned provisionalAround = memo.provisionalBelow;
+  unsigned heightAround = memo.heightBelow;
+  unsigned height = 0;
+  memo.provisionalBelow = UINT_MAX;
+  memo.heightBelow = 0;
+  auto restoreAround = llvm::scope_exit([&] {
+    memo.provisionalBelow = std::min(provisionalAround, memo.provisionalBelow);
+    memo.heightBelow = std::max(heightAround, height);
+  });
+
+  // The selection stands on the chain while it judges its candidates: their
+  // headers, their where clauses, and a generated impl's.
+  memo.visiting.push_back({app, SymbolRefAttr()});
+  auto guard = llvm::scope_exit([&] { memo.visiting.pop_back(); });
 
   // collect candidates for wanted from the trait and
   // partition them into good/bad by satisfiable assumptions
   //
-  // The partition probes candidates it may then discard, so the demands its
-  // sub-resolutions raise are marked speculative for as long as it runs.
-  //
-  // The context a candidate's header is read through: what selection has
-  // settled, and then the impls the module binds where exactly one does. A
-  // header spelling a projection reproduces a demand spelling the resolution
-  // through this, and it mints nothing.
-  RecordedProjectionLookup byRecord(*this, scope);
+  // A candidate's header is read as selection reads any spelling: each ground
+  // projection it spells is resolved through selection, which generates an
+  // impl where a generator serves that projection's application. A header is
+  // so settled before it is judged, so an answer entered below is one no later
+  // minting reads otherwise; a projection whose own selection leans on a frame
+  // still running leaves the refusal provisional.
+  // A header with no normal form makes its impl no candidate; where the
+  // selection is refused without it, the refusal is that overflow.
+  std::optional<Type> unsettledHeader;
+  bool headerOverflowed = false;
+  auto bySelection = [&](Type ty) -> FailureOr<Type> {
+    Answer<std::optional<Type>> read = settleThroughSelection(ty, site, builder);
+    headerOverflowed |= read.isOverflow();
+    if (read.isAnswer() && *read)
+      return **read;
+    if (read.isAnswer() && !unsettledHeader)
+      unsettledHeader = ty;
+    return failure();
+  };
+  SmallVector<ImplOp> candidates =
+      trait.getCandidateImplsFor(selected, bySelection);
+  if (headerOverflowed)
+    return Selected::overflow();
+  // The headers were read for every candidate, and the derivation of the one
+  // chosen stands on them.
+  unsigned headersHeight = memo.heightBelow;
+  unsigned exploredHeight = headersHeight;
 
+  // Each candidate's where clause is judged on its own: the height the chosen
+  // candidate's derivation reaches is what the memo carries, not that of a
+  // candidate refused beside it.
   SmallVector<ImplOp> good, bad;
-  {
-    SpeculationScope speculation;
-    for (ImplOp impl : trait.getCandidateImplsFor(selected, byRecord)) {
-      if (succeeded(assumptionsSatisfiableFor(impl, selected, scope, builder)))
-        good.push_back(impl);
-      else
-        bad.push_back(impl);
+  unsigned goodHeight = 0;
+  auto judge = [&](ImplOp impl) -> LogicalResult {
+    memo.heightBelow = 0;
+    Answer<ImplOp> held =
+        assumptionsSatisfiableFor(impl, selected, site, builder);
+    if (held.isOverflow())
+      return failure();
+    exploredHeight = std::max(exploredHeight, memo.heightBelow);
+    if (held.isAnswer()) {
+      good.push_back(impl);
+      goodHeight = memo.heightBelow;
+    } else {
+      bad.push_back(impl);
     }
-  }
+    return success();
+  };
+  for (ImplOp impl : candidates)
+    if (failed(judge(impl)))
+      return Selected::overflow();
 
   // if there aren't any good candidates, try to generate one. An application a
   // generator has already supplied an impl for is not asked again: that impl
   // stands in the module and the scan above has just judged it, so asking
-  // would only publish a second op under the name the first holds.
-  if (good.empty() && !memo.generatedFor.contains({scope, app})) {
+  // would only publish a second op under the name the first holds. A demand
+  // still carrying a type variable reaches no generator: a generator answers
+  // one application, which such a demand is not.
+  if (good.empty() && selected.isMonomorphic() &&
+      !memo.generatedFor.contains({scope, app})) {
     // Whoever hears about an inserted op is what decides whether anything
     // revisits it, and a generated impl that nothing revisits is IR the caller
     // never sees. What the listener has to do with the news is the caller's --
@@ -266,45 +357,43 @@ FailureOr<ResolvedImpl> ImplResolver::resolveImplFor(
            "observes");
     OpBuilder::InsertionGuard guard(builder);
     builder.setInsertionPointToEnd(scope.getBody());
-    if (auto impl = getImplGenerators().generateImpl(trait, selected, builder);
+    if (auto impl = generators.generateImpl(trait, selected, builder);
         succeeded(impl)) {
       memo.generatedFor.insert({scope, app});
-      noteFactWritten();
-      SpeculationScope speculation;
-      if (succeeded(assumptionsSatisfiableFor(*impl, selected, scope, builder)))
-        good.push_back(*impl);
-      else
-        bad.push_back(*impl);
+      // A generated impl answers the application asked and no other: its
+      // header is that application. A refusal the memo keeps is final only
+      // because no impl generated later serves an application refused
+      // earlier, so an impl whose header is any other stops selection where
+      // the generator wrote it.
+      ClaimType header = impl->getSelfClaim();
+      if (header.getTraitApplication() != app) {
+        overflow(Overflow::inexactImpl(*impl, app), site);
+        return Selected::overflow();
+      }
+      if (failed(judge(*impl)))
+        return Selected::overflow();
     }
   }
 
   // if exactly one good candidate exists, return it
-  //
-  // A nested resolution of this same application may already have settled it
-  // under the cycle guard, which refuses every candidate it re-enters; this
-  // call resolved it without that guard in the way, so its outcome replaces
-  // whatever the nested one left.
   if (good.size() == 1) {
-    memo.chosen.insert_or_assign({scope, app},
-                                 ResolutionOutcome::selected(good.front()));
-    noteRecordWritten();
+    height = std::max(headersHeight, goodHeight) + 1;
+    memo.chosen.insert_or_assign({scope, app}, ChosenImpl{good.front(), height});
     return ResolvedImpl{good.front(), selected};
   }
 
-  // otherwise, diagnose resolution failure, recording which of the two ways to
-  // miss a unique satisfiable candidate this application missed on.
-  //
-  // A refusal is what selection will not have to derive again, and no answer a
-  // read of the record is given: a read fails on a refused application exactly
-  // as it fails on one selection has never been asked about. So the record
-  // epoch stands still for it, as it does for the flush that drops it again.
-  RefutationArm arm = good.empty()
-                          ? RefutationArm::NoSatisfiableCandidate
-                          : RefutationArm::MultipleSatisfiableCandidates;
-  memo.chosen.insert_or_assign({scope, app}, ResolutionOutcome::refused(arm));
-  if (refusedOn)
-    *refusedOn = Refutation{arm, good};
-  return diagnoseImplResolutionFailure(trait, originalWanted, good, bad, err);
+  // otherwise, diagnose resolution failure, entering the refusal where it is
+  // final. A refusal leaning on a candidate header with no normal form is that
+  // header's overflow.
+  height = exploredHeight + 1;
+  if (unsettledHeader && good.empty()) {
+    overflow(Overflow::projectionSteps(*unsettledHeader), site);
+    return Selected::overflow();
+  }
+  if (memo.provisionalBelow >= depth)
+    memo.refused.insert_or_assign({scope, app}, Refusal{good, bad});
+  (void)diagnoseImplResolutionFailure(trait, originalWanted, good, bad, err);
+  return Selected::refusal();
 }
 
 ImplResolver::StandingProofs &
@@ -411,8 +500,7 @@ ClaimType ImplResolver::writeProof(
                         FlatSymbolRefAttr::get(ctx, proof.getSymNameAttr()));
 }
 
-ImplResolver::ImplResolver(ModuleOp m, std::shared_ptr<DemandLedger> ledger)
-    : module(m), ledger(std::move(ledger)) {
+ImplResolver::ImplResolver(ModuleOp m) : module(m) {
   // collect ImplGenerators from each dialect with the appropriate interface
   for (Dialect *dialect : module.getContext()->getLoadedDialects()) {
     if (auto *iface = dialect->getRegisteredInterface<GenerateImplsInterface>()) {
@@ -422,29 +510,33 @@ ImplResolver::ImplResolver(ModuleOp m, std::shared_ptr<DemandLedger> ledger)
 }
 
 /// The arguments carrying `resolved`'s impl header to the claim selection chose
-/// it for, read through `record`, the context selection chose it under.
+/// it for, the header read through `readHeader`, the context selection chose it
+/// under.
 static FailureOr<SpecializationMap>
-argumentsOf(const ResolvedImpl &resolved, const ReadOnlyImplResolver &record,
+argumentsOf(const ResolvedImpl &resolved, Normalizer readHeader,
             llvm::function_ref<InFlightDiagnostic()> err) {
   ImplOp impl = resolved.impl;
-  return impl.buildSubstitutionForSelfClaim(
-      resolved.selectedClaim, RecordedProjectionLookup(record), err);
+  return impl.buildSubstitutionForSelfClaim(resolved.selectedClaim, readHeader,
+                                            err);
 }
 
-FailureOr<ProjectionResolution> ProjectionResolution::get(
+Answer<ProjectionResolution> ProjectionResolution::get(
     ProjectionType projection,
-    llvm::function_ref<FailureOr<ResolvedImpl>(ClaimType)> select,
-    const ReadOnlyImplResolver &record,
+    llvm::function_ref<Answer<ResolvedImpl>(ClaimType)> select,
+    Normalizer readHeader,
     llvm::function_ref<InFlightDiagnostic()> err) {
-  auto resolved = select(projection.asClaim());
-  if (failed(resolved)) return failure();
-  auto arguments = argumentsOf(*resolved, record, err);
-  if (failed(arguments)) return failure();
+  Answer<ResolvedImpl> resolved = select(projection.asClaim());
+  if (!resolved.isAnswer())
+    return resolved.stop<ProjectionResolution>();
+  auto arguments = argumentsOf(*resolved, readHeader, err);
+  if (failed(arguments))
+    return Answer<ProjectionResolution>::refusal();
   ImplOp impl = resolved->impl;
   auto binding = impl.specializeAssociatedTypeBinding(
       projection.getAssocName().getValue(), projection.getAssocTypeArgs(),
       *arguments, err);
-  if (failed(binding)) return failure();
+  if (failed(binding))
+    return Answer<ProjectionResolution>::refusal();
   return ProjectionResolution(projection, impl, std::move(*arguments),
                               *binding);
 }
@@ -462,158 +554,104 @@ monomorphicApplicationOf(const ResolvedImpl &resolved,
   return instance.getTraitApplication();
 }
 
-FailureOr<ProjectionResolution> ImplResolver::resolveProjection(
+Answer<ProjectionResolution> ImplResolver::resolveProjection(
     ProjectionType proj,
-    ModuleOp scope,
+    const SelectionSite &site,
     OpBuilder &builder,
-    llvm::function_ref<InFlightDiagnostic()> err,
-    std::optional<Refutation> *refusedOn) {
-  DemandFrame frame{Type(proj)};
-
+    llvm::function_ref<InFlightDiagnostic()> err) {
   auto select = [&](ClaimType claim) {
-    return resolveImplFor(claim, scope, builder, err, refusedOn);
+    return resolveImplFor(claim, site, builder, err);
   };
-  return ProjectionResolution::get(proj, select,
-                                   ReadOnlyImplResolver(*this, scope), err);
+  auto readHeader = [&](Type ty) -> FailureOr<Type> {
+    return resolveProjectionsIn(ty, site, builder).orFailure();
+  };
+  return ProjectionResolution::get(proj, select, readHeader, err);
 }
 
-/// What putting `demand` to impl selection settled, given what selection
-/// refused it on when it did not serve it.
-///
-/// Two or more satisfiable candidates is the one refusal no later resolution
-/// overturns: candidates are only appended. Every other way of not serving --
-/// no candidate yet, or a binding whose own arguments have still to resolve --
-/// is one the facts can move under.
-///
-/// The ambiguity is named where the demand stands, and here and nowhere else.
-/// It is a refusal the demand's own spelling need not carry: an obligation read
-/// off a trait's where clause at a ground application is spelled in no
-/// operation, so the stage's leftover walks have nothing to find and the demand
-/// would go unreported.
-static ImplResolver::DemandDisposition
-refusalDisposition(Type demand, ModuleOp scope,
-                   const std::optional<Refutation> &refusedOn) {
-  if (!refusedOn ||
-      refusedOn->arm != RefutationArm::MultipleSatisfiableCandidates)
-    return ImplResolver::DemandDisposition::Deferred;
-  InFlightDiagnostic diagnostic =
-      emitError(currentDemandAnchor().value_or(scope.getLoc()))
-      << "incoherent impls (multiple satisfiable) for " << demand;
-  nameCandidates(diagnostic, refusedOn->satisfiable, scope.getLoc(),
-                 "candidate");
-  return ImplResolver::DemandDisposition::Refused;
-}
-
-ImplResolver::DemandDisposition
-ImplResolver::serveDemand(ProjectionType demand, ModuleOp scope,
-                          OpBuilder &builder) {
-  DemandFrame frame{Type(demand)};
-
-  // What selection settles is recorded by selection itself, so the resolved
-  // type is not wanted here -- the answer this call is for is whether asking
-  // again could settle it differently.
-  std::optional<Refutation> refusedOn;
-  if (succeeded(resolveProjection(demand, scope, builder, /*err=*/nullptr,
-                                  &refusedOn)))
-    return DemandDisposition::Served;
-  DemandDisposition disposition =
-      refusalDisposition(Type(demand), scope, refusedOn);
-  // A demand put to selection is one the stage has undertaken to serve,
-  // wherever it was found spelled, and the stage's exit check reads the
-  // recorded demands. So one selection could not serve yet is recorded here,
-  // whether an engine recorded it before or the round found it spelled.
-  if (disposition == DemandDisposition::Deferred)
-    recordResolverProjectionMiss(Type(demand), scope);
-  return disposition;
-}
-
-ImplResolver::DemandDisposition
-ImplResolver::serveDemand(ClaimType demand, ModuleOp scope,
-                          OpBuilder &builder) {
-  DemandFrame frame{Type(demand)};
-
-  // Proving the claim is what serves it: the demander could read the record
-  // and not write it, so what it was waiting for is the proof this mints.
-  std::optional<Refutation> refusedOn;
-  if (succeeded(resolveAndEnsureProofFor(demand, scope, builder,
-                                         /*err=*/nullptr, &refusedOn)))
-    return DemandDisposition::Served;
-  return refusalDisposition(Type(demand), scope, refusedOn);
-}
-
-Type ImplResolver::resolveProjectionsIn(Type ty, ModuleOp scope,
-                                        OpBuilder &builder) {
+Answer<std::optional<Type>>
+ImplResolver::settleThroughSelection(Type ty, const SelectionSite &site,
+                                     OpBuilder &builder) {
+  bool stepOverflowed = false;
   AttrTypeReplacer replacer = makeGroundProjectionReplacer(
-      [this, scope, &builder](ProjectionType proj) -> std::optional<Type> {
-    auto resolved = resolveProjection(proj, scope, builder);
-    if (failed(resolved)) {
-      // Preserve the unresolved demand for a later preparation boundary even
-      // though this walk leaves its projection spelled as written.
-      recordResolverProjectionMiss(Type(proj), scope);
+      [&](ProjectionType proj) -> std::optional<Type> {
+    Answer<ProjectionResolution> resolved =
+        resolveProjection(proj, site, builder);
+    stepOverflowed |= resolved.isOverflow();
+    if (!resolved.isAnswer())
       return std::nullopt;
-    }
     return resolved->getBinding();
   });
-  return normalizeProjectionsToFixedPoint(
-      ty, scope, [&](Type t) { return replacer.replace(t); });
+  Type out;
+  bool settles = succeeded(tryNormalizeProjectionsToFixedPoint(
+      ty, [&](Type t) { return replacer.replace(t); }, out));
+  if (stepOverflowed)
+    return Answer<std::optional<Type>>::overflow();
+  if (!settles)
+    return std::optional<Type>();
+  return std::optional<Type>(out);
 }
 
-AttrTypeReplacer ImplResolver::makeProvenClaimReplacer(ModuleOp scope) const {
-  MLIRContext *ctx = scope.getContext();
-  AttrTypeReplacer replacer = makeEndpointSealedReplacer();
-  replacer.addReplacement(
-      [this, ctx, scope, recorded = memo.proofMemo.size()](ClaimType claim)
-          -> std::optional<std::pair<Type, WalkResult>> {
-        assert(memo.proofMemo.size() == recorded &&
-               "a proof was recorded while a replacer reading the memo was in "
-               "use");
-        // A claim that already names its proof is what respelling produces, so
-        // it is left alone rather than looked up again.
-        if (claim.isProven())
-          return std::nullopt;
-        // The memo is keyed by trait application, and only the application arm
-        // carries one. An equality-arm claim holds a type equality, never an
-        // impl-resolution proof, so it is never respelled here; the arm is
-        // dispatched before the application is read, which would otherwise
-        // assert. It stands unchanged with its interior skipped: an endpoint
-        // that received a stamped proof is the state the equality constructor
-        // refuses.
-        if (!claim.isApplication())
-          return std::make_pair(Type(claim), WalkResult::skip());
-        auto it = memo.proofMemo.find({scope, claim.getTraitApplication()});
-        if (it == memo.proofMemo.end())
-          return std::nullopt;
-        // The proven spelling names the same application, whose type arguments
-        // can spell claims of their own, so the walk continues into the result
-        // instead of stopping at it.
-        return std::make_pair(
-            Type(ClaimType::get(ctx, it->first.second, it->second)),
-            WalkResult::advance());
-      });
-  return replacer;
+Answer<Type> ImplResolver::resolveProjectionsIn(Type ty,
+                                                const SelectionSite &site,
+                                                OpBuilder &builder) {
+  Answer<std::optional<Type>> settled = settleThroughSelection(ty, site, builder);
+  if (!settled.isAnswer())
+    return settled.stop<Type>();
+  if (!*settled) {
+    overflow(Overflow::projectionSteps(ty), site);
+    return Answer<Type>::overflow();
+  }
+  return **settled;
 }
 
-FailureOr<ClaimType> ImplResolver::resolveAndEnsureProofFor(
+void Overflow::emit(Location anchor) const {
+  if (ImplOp generated = impl) {
+    generated->emitError() << "an impl generated for " << app
+                           << " must state that application; it states "
+                           << generated.getSelfClaim().getTraitApplication();
+    return;
+  }
+  if (app) {
+    emitObligationOverflow(anchor, app, chain, height);
+    return;
+  }
+  emitError(anchor) << "overflow evaluating the requirement " << spelled
+                    << ": " << kInstantiationDepthLimit
+                    << " projection steps stand on the chain";
+}
+
+void ImplResolver::overflow(const Overflow &what, const SelectionSite &site) {
+  memo.resolutionMemo.provisionalBelow = 0;
+  overflowed = true;
+  if (overflowSites.insert(site.cause).second)
+    what.emit(site.cause);
+}
+
+Answer<ClaimType> ImplResolver::resolveAndEnsureProofFor(
     ClaimType wanted,
-    ModuleOp scope,
+    const SelectionSite &site,
     OpBuilder &builder,
-    llvm::function_ref<InFlightDiagnostic()> err,
-    std::optional<Refutation> *refusedOn) {
-  DemandFrame frame{Type(wanted)};
-
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  ModuleOp scope = site.scope;
   ClaimType originalWanted = wanted;
+  using Proven = Answer<ClaimType>;
 
   // resolve an impl for wanted first
-  auto resolvedImpl = resolveImplFor(wanted, scope, builder, err, refusedOn);
-  if (failed(resolvedImpl)) return failure();
+  Answer<ResolvedImpl> resolvedImpl = resolveImplFor(wanted, site, builder, err);
+  if (!resolvedImpl.isAnswer())
+    return resolvedImpl.stop<ClaimType>();
   ImplOp impl = resolvedImpl->impl;
 
-  auto subst = argumentsOf(*resolvedImpl, ReadOnlyImplResolver(*this, scope), err);
-  if (failed(subst)) return failure();
+  auto readHeader = [&](Type ty) -> FailureOr<Type> {
+    return resolveProjectionsIn(ty, site, builder).orFailure();
+  };
+  auto subst = argumentsOf(*resolvedImpl, readHeader, err);
+  if (failed(subst))
+    return Proven::refusal();
   auto monomorphic = monomorphicApplicationOf(*resolvedImpl, *subst);
   if (failed(monomorphic)) {
     if (err) err() << "could not monomorphize claim: " << originalWanted;
-    return failure();
+    return Proven::refusal();
   }
   TraitApplicationAttr app = *monomorphic;
   MLIRContext *ctx = scope.getContext();
@@ -627,32 +665,28 @@ FailureOr<ClaimType> ImplResolver::resolveAndEnsureProofFor(
   // equality entry, whose sides selection carries to one spelling. The trait's
   // requirements are the impl's to return, read at the proof's derive.
   // Selection chose `impl` only once these entries held through a chain that
-  // refuses an application it meets again (`assumptionsSatisfiableFor`), so
-  // proving them never asks for `app` itself.
+  // refuses an application it meets again (the cycle guard of
+  // `resolveImplFor`), so proving them never asks for `app` itself.
   SmallVector<ClaimType> entries = impl.getWhereClaimsAt(*subst);
   SmallVector<FlatSymbolRefAttr> subproofs;
   SmallVector<SmallVector<ResolutionStep>> equalitySteps;
-  auto hop = [&](ProjectionType proj) {
-    return resolveProjection(proj, scope, builder);
-  };
-  auto proofOf = [&](ClaimType claim) {
-    return resolveAndEnsureProofFor(claim, scope, builder);
-  };
-  EqualitySource source{hop, proofOf, scope};
   for (ClaimType entry : entries) {
     if (entry.isApplication()) {
-      auto subproof = resolveAndEnsureProofFor(entry, scope, builder, err);
-      if (failed(subproof)) return failure();
+      Proven subproof = resolveAndEnsureProofFor(entry, site, builder, err);
+      if (!subproof.isAnswer())
+        return subproof;
       subproofs.push_back(subproof->getProof());
       continue;
     }
     SmallVector<ResolutionStep> steps;
-    auto sides = resolveEquality(entry.getEqualityAttr(), source, steps);
-    if (failed(sides) || sides->first != sides->second) {
+    auto sides = resolveEquality(entry.getEqualityAttr(), site, builder, steps);
+    if (sides.isOverflow())
+      return Proven::overflow();
+    if (!sides.isAnswer() || sides->first != sides->second) {
       if (err) err() << "impl '@" << impl.getSymName() << "' applies where "
                      << entry << ", which selection does not settle at "
                      << originalWanted;
-      return failure();
+      return Proven::refusal();
     }
     equalitySteps.push_back(std::move(steps));
   }
@@ -671,9 +705,13 @@ FailureOr<ClaimType> ImplResolver::resolveAndEnsureProofFor(
 // Equality evidence
 //===----------------------------------------------------------------------===//
 
-FailureOr<std::pair<Type, Type>>
-resolveEquality(TypeEqualityAttr eq, const EqualitySource &source,
-                SmallVectorImpl<ResolutionStep> &steps, unsigned depth) {
+Answer<std::pair<Type, Type>>
+ImplResolver::resolveEquality(TypeEqualityAttr eq, const SelectionSite &site,
+                              OpBuilder &builder,
+                              SmallVectorImpl<ResolutionStep> &steps,
+                              llvm::function_ref<InFlightDiagnostic()> err,
+                              unsigned depth) {
+  using Sides = Answer<std::pair<Type, Type>>;
   if (eq.getLhs() == eq.getRhs())
     return std::make_pair(eq.getLhs(), eq.getRhs());
   MLIRContext *ctx = eq.getContext();
@@ -684,15 +722,20 @@ resolveEquality(TypeEqualityAttr eq, const EqualitySource &source,
   // projection spelled twice is one step. An equality entry of a resolving
   // impl recurses, bounded as every obligation chain is.
   bool stepFailed = depth >= kInstantiationDepthLimit;
+  bool stepOverflowed = false;
+  auto stop = [&](bool overflowedHere) {
+    stepFailed = true;
+    stepOverflowed |= overflowedHere;
+    return std::nullopt;
+  };
   AttrTypeReplacer replacer = makeGroundProjectionReplacer(
       [&](ProjectionType proj) -> std::optional<Type> {
         if (stepFailed)
           return std::nullopt;
-        FailureOr<ProjectionResolution> resolved = source.hop(proj);
-        if (failed(resolved)) {
-          stepFailed = true;
-          return std::nullopt;
-        }
+        Answer<ProjectionResolution> resolved =
+            resolveProjection(proj, site, builder, err);
+        if (!resolved.isAnswer())
+          return stop(resolved.isOverflow());
         ResolutionStep step;
         step.equality = TypeEqualityAttr::get(ctx, Type(proj),
                                               resolved->getBinding());
@@ -701,45 +744,50 @@ resolveEquality(TypeEqualityAttr eq, const EqualitySource &source,
         for (ClaimType entry :
              resolved->getImpl().getWhereClaimsAt(resolved->getArguments())) {
           if (entry.isApplication()) {
-            FailureOr<ClaimType> proven = source.proofOf(entry);
-            if (failed(proven)) {
-              stepFailed = true;
-              return std::nullopt;
-            }
+            Answer<ClaimType> proven =
+                resolveAndEnsureProofFor(entry, site, builder, err);
+            if (!proven.isAnswer())
+              return stop(proven.isOverflow());
             step.premises.push_back(ClaimType::get(
                 ctx, entry.getTraitApplication(), proven->getProof()));
             continue;
           }
           auto nested = std::make_shared<EqualityResolution>();
           nested->equality = entry.getEqualityAttr();
-          auto sides = resolveEquality(nested->equality, source, nested->steps,
-                                       depth + 1);
-          if (failed(sides) || sides->first != sides->second) {
-            stepFailed = true;
-            return std::nullopt;
-          }
+          Sides sides = resolveEquality(nested->equality, site, builder,
+                                        nested->steps, err, depth + 1);
+          if (!sides.isAnswer() || sides->first != sides->second)
+            return stop(sides.isOverflow());
           step.premises.push_back(std::move(nested));
         }
         steps.push_back(std::move(step));
         return resolved->getBinding();
       });
-  // The shared normalizer owns the fixed point's bound and stops the
-  // compilation at a chain that never grounds out, the same refusal every
-  // ground resolver makes.
+  // A side whose projections still change after the depth limit's worth of
+  // steps is an overflow, named once, as every resolution selection runs
+  // names its own.
+  bool settles = true;
   auto resolve = [&](Type side) {
-    return normalizeProjectionsToFixedPoint(
-        side, source.module,
-        [&](Type current) { return replacer.replace(current); });
+    Type out;
+    settles &= succeeded(tryNormalizeProjectionsToFixedPoint(
+        side, [&](Type current) { return replacer.replace(current); }, out));
+    return out;
   };
   Type lhs = resolve(eq.getLhs());
   Type rhs = resolve(eq.getRhs());
+  if (stepOverflowed)
+    return Sides::overflow();
+  if (!settles) {
+    overflow(Overflow::projectionSteps(ClaimType::getEquality(ctx, eq)), site);
+    return Sides::overflow();
+  }
   bool standing = false;
   for (Type side : {lhs, rhs})
     side.walk([&](ProjectionType proj) {
       standing |= !isPolymorphicType(Type(proj));
     });
   if (stepFailed || standing)
-    return failure();
+    return Sides::refusal();
   return std::make_pair(lhs, rhs);
 }
 
@@ -772,138 +820,66 @@ Value buildEqualityEvidence(OpBuilder &builder, Location loc,
   return WitnessOp::create(builder, loc, eq, ValueRange(witnesses)).getResult();
 }
 
-//===----------------------------------------------------------------------===//
-// Forgetting what a later resolution can answer differently
-//===----------------------------------------------------------------------===//
-
-void ImplResolver::forgetRetriableRefusals() {
-  auto &chosen = memo.resolutionMemo.chosen;
-  SmallVector<ScopedApplication> retriable;
-  for (const auto &entry : chosen)
-    if (entry.second.isRefusal() &&
-        entry.second.getRefutationArm() ==
-            RefutationArm::NoSatisfiableCandidate)
-      retriable.push_back(entry.first);
-  // The drops move no record epoch, for the same reason writing the refusal
-  // did not: what is erased here is a question impl selection will have to
-  // answer again, never an answer a read of the record was given.
-  for (const ScopedApplication &application : retriable)
-    chosen.erase(application);
+void ImplResolver::nameRefusal(
+    Type obligation, ModuleOp scope,
+    llvm::function_ref<InFlightDiagnostic()> err) const {
+  auto projection = dyn_cast<ProjectionType>(obligation);
+  ClaimType claim =
+      projection ? projection.asClaim() : cast<ClaimType>(obligation);
+  auto selected = cast<ClaimType>(readSettledProjectionsIn(claim, scope));
+  TraitApplicationAttr app = selected.getTraitApplication();
+  auto refusal = memo.resolutionMemo.refused.find({scope, app});
+  if (refusal == memo.resolutionMemo.refused.end())
+    return;
+  auto trait = app.getTrait(scope, /*errFn=*/nullptr);
+  if (succeeded(trait))
+    (void)diagnoseImplResolutionFailure(*trait, obligation,
+                                        refusal->second.satisfiable,
+                                        refusal->second.unsatisfiable, err);
 }
 
 //===----------------------------------------------------------------------===//
-// Freezing impl generation
+// Reading what selection has settled
 //===----------------------------------------------------------------------===//
-
-ImplGenerationFreeze::ImplGenerationFreeze(ImplResolver &resolver,
-                                          StringRef span)
-    : resolver(resolver), span(span.str()),
-      displaced(resolver.installedOverride) {
-  resolver.installedOverride = this;
-}
-
-ImplGenerationFreeze::~ImplGenerationFreeze() {
-  // Stand-ins nest, so the one going out of scope is the one now installed:
-  // restoring what this freeze displaced is only the previous state if nothing
-  // installed after it is still standing.
-  assert(resolver.installedOverride == this &&
-         "a freeze must be the innermost stand-in installed when it ends");
-  resolver.installedOverride = displaced;
-}
-
-FailureOr<ImplOp> ImplGenerationFreeze::generateImpl(TraitOp trait,
-                                                     ClaimType wanted,
-                                                     OpBuilder &builder) const {
-  // Being asked to generate at all is the fault this reports: the stage
-  // standing over the driver reads recorded facts and puts nothing to
-  // selection, so an ask from under it reached past the record it must read.
-  // Reported as a failure rather than a process abort so a demand raised on
-  // hostile IR refuses cleanly at the point selection asked. The span's owner
-  // reads `wasAsked` after its driver to fail the stage, since a greedy driver
-  // swallows this failure as a non-applied pattern.
-  generationAsked = true;
-  emitError(trait.getLoc())
-      << "impl generation is frozen for " << span
-      << ", but impl selection demanded an impl of @" << trait.getSymName()
-      << " for " << wanted;
-  return failure();
-}
-
-//===----------------------------------------------------------------------===//
-// Reading the recorded facts
-//===----------------------------------------------------------------------===//
-
-LogicalResult ReadOnlyImplResolver::decline(ProjectionType demand) const {
-  recordReadOnlyResolverMiss(Type(demand), scope);
-  return failure();
-}
-
-LogicalResult ReadOnlyImplResolver::decline(ClaimType demand) const {
-  recordReadOnlyResolverMiss(Type(demand), scope);
-  return failure();
-}
-
-FailureOr<ResolvedImpl>
-ReadOnlyImplResolver::getRecordedImplFor(ClaimType wanted) const {
-  DemandFrame frame{Type(wanted)};
-
-  ClaimType selected = cast<ClaimType>(resolveProjectionsIn(wanted));
-  auto outcome = getRecordedOutcome(selected.getTraitApplication());
-  if (!outcome || outcome->isRefusal())
-    return failure();
-  return ResolvedImpl{outcome->getImpl(), selected};
-}
 
 FailureOr<ProjectionResolution>
-ReadOnlyImplResolver::resolveProjection(ProjectionType proj) const {
-  DemandFrame frame{Type(proj)};
-
-  auto select = [this](ClaimType claim) { return getRecordedImplFor(claim); };
-  return ProjectionResolution::get(proj, select, *this, /*err=*/nullptr);
+ImplResolver::readSettledProjection(ProjectionType proj, ModuleOp scope) const {
+  auto select = [&](ClaimType wanted) -> Answer<ResolvedImpl> {
+    // Selection keys what it settles by the claim whose projections it
+    // resolved, so the spelling is put through the same resolution first.
+    ClaimType selected = cast<ClaimType>(readSettledProjectionsIn(wanted, scope));
+    auto it = memo.resolutionMemo.chosen.find(
+        {scope, selected.getTraitApplication()});
+    if (it == memo.resolutionMemo.chosen.end())
+      return Answer<ResolvedImpl>::refusal();
+    return ResolvedImpl{it->second.impl, selected};
+  };
+  auto readHeader = [&](Type ty) -> FailureOr<Type> {
+    return readSettledProjectionsIn(ty, scope);
+  };
+  return ProjectionResolution::get(proj, select, readHeader, /*err=*/nullptr)
+      .orFailure();
 }
 
-Type ReadOnlyImplResolver::resolveProjectionsIn(Type ty) const {
-  // A recorded fact answers a projection by its head: selection settled which
+Type ImplResolver::readSettledProjectionsIn(Type ty, ModuleOp scope) const {
+  // A settled fact answers a projection by its head: selection settled which
   // impl serves that application, and what that impl binds is a function of the
   // projection's own associated-type arguments. A head selection has settled is
   // therefore read here whatever those arguments still spell.
   AttrTypeReplacer replacer = makeGroundHeadProjectionReplacer(
-      [this](ProjectionType proj) -> std::optional<Type> {
-    auto resolved = resolveProjection(proj);
-    if (succeeded(resolved))
-      return resolved->getBinding();
-    // Selection settles a projection only for an application some round put to
-    // it, so a spelling nothing has asked about yet has no recorded fact to
-    // read. One exactly one impl in the module binds is one selection would
-    // settle the same way, so the module answers it here; where no impl or
-    // several bind it, the lookup declines and says which, and the projection
-    // stays spelled as written for the step that can make selection answer it.
-    Type byLookup = resolveProjectionsByLookup(
-        Type(proj), scope, DemandOrigin::RecordedFactRead,
-        LookupScope::Ground);
-    if (byLookup == Type(proj))
+      [this, scope](ProjectionType proj) -> std::optional<Type> {
+    auto resolved = readSettledProjection(proj, scope);
+    if (failed(resolved))
       return std::nullopt;
-    return byLookup;
+    return resolved->getBinding();
   });
-  return normalizeProjectionsToFixedPoint(
-      ty, scope, [&](Type t) { return replacer.replace(t); });
-}
-
-FailureOr<ClaimType>
-ReadOnlyImplResolver::getRecordedProofFor(ClaimType claim) const {
-  DemandFrame frame{Type(claim)};
-
-  auto resolvedImpl = getRecordedImplFor(claim);
-  if (failed(resolvedImpl)) return failure();
-
-  auto subst = argumentsOf(*resolvedImpl, *this, /*err=*/nullptr);
-  if (failed(subst)) return failure();
-  auto monomorphic = monomorphicApplicationOf(*resolvedImpl, *subst);
-  if (failed(monomorphic)) return failure();
-
-  auto proof = getRecordedProof(*monomorphic);
-  if (!proof) return failure();
-  return ClaimType::get(claim.getContext(), *monomorphic, *proof);
+  // A reading still changing at the depth limit is handed back as its partial
+  // normal form: it reads only answers selection settled, and selection named
+  // the overflow wherever it met one.
+  Type out;
+  (void)tryNormalizeProjectionsToFixedPoint(
+      ty, [&](Type t) { return replacer.replace(t); }, out);
+  return out;
 }
 
 } // end mlir::trait

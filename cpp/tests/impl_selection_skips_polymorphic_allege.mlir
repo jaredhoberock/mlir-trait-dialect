@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 
-// RUN: mlir-opt -pass-pipeline='builtin.module(resolve-impls-trait)' %s | FileCheck %s
+// RUN: mlir-opt -pass-pipeline='builtin.module(instantiate-monomorphs-trait)' %s | FileCheck %s
 
-// Test that resolve-impls skips polymorphic alleges (they are deferred
-// to post-monomorphization) while resolving monomorphic ones.
+// Impl selection proves a monomorphic allegation where it stands and leaves a
+// polymorphic one to the instance that grounds it.
 
 !T = !trait.poly<0>
 

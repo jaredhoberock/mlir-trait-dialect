@@ -5,8 +5,8 @@
 
 // Resolving the independent @Res[i64]::X projection cannot remove ambiguity
 // between two @Gen[i64] impls. The @Gen[i64]::A projection remains an error:
-// selection names the ambiguity, and the projection is diagnosed where it
-// survives.
+// the projection is diagnosed where it survives, with the ambiguity selection
+// refused it on.
 
 !T = !trait.poly<0>
 
@@ -32,8 +32,8 @@ trait.impl private @Res_i64(%self: !trait.claim<@Res[i64]>) {
   trait.assoc_type @X = i32
 }
 
-// expected-error @below {{incoherent impls (multiple satisfiable) for '!trait.proj<@Gen[i64], "A">'}}
 func.func @main() -> (!trait.proj<@Gen[i64], "A">, !trait.proj<@Res[i64], "X">) {
+  // expected-error @below {{incoherent impls (multiple satisfiable) for '!trait.proj<@Gen[i64], "A">'}}
   // expected-error @below {{unresolved projection '!trait.proj<@Gen[i64], "A">' after instantiate-monomorphs}}
   %r = ub.poison : !trait.proj<@Gen[i64], "A">
   %s = ub.poison : !trait.proj<@Res[i64], "X">

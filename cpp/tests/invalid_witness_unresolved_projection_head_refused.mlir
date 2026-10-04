@@ -26,6 +26,7 @@ trait.impl private @Box_i64(%self: !trait.claim<@Box[i64]>) {
 }
 
 func.func @main() -> i64 {
+  // expected-error @below {{no impl with satisfiable assumptions for '!trait.proj<@Gen[i64], "A">'}}
   // expected-error @below {{unresolved projection '!trait.proj<@Gen[i64], "A">' after instantiate-monomorphs}}
   %w = trait.witness @Box_i64 for @Box[!trait.proj<@Gen[i64], "A">]
   %r = trait.method.call %w @Box[!trait.proj<@Gen[i64], "A">]::@v() : () -> i64 by @Box_i64

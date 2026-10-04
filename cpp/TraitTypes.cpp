@@ -1,6 +1,5 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
-#include "DemandLedger.hpp"
 #include "Trait.hpp"
 #include "TraitOps.hpp"
 #include "TraitTypes.hpp"
@@ -105,59 +104,18 @@ std::string applySubstitutionAndGenerateMangledNameSuffix(
 // Ground projection resolution
 //===----------------------------------------------------------------------===//
 
-namespace {
-
-/// The rewrite budget the fixed-point driver spends before declaring a
-/// projection resolution nonterminating. One projection resolution exposes at
-/// most one more, so a chain that has not settled within this many passes is
-/// cyclic or oscillating.
-constexpr unsigned kProjectionFixedPointMaxIterations = 64;
-
-/// Reports a projection whose resolution does not terminate as a diagnostic at
-/// the demand it arose under, and returns without ending the process.
-///
-/// The rewrite this reports has no normal form. The infallible normalizer hands
-/// the driver's partial back spelled as written, so every spelling comparison
-/// downstream treats the projection as unresolved -- a decline in the safe
-/// direction. A caller that must refuse rather than decline threads the failure
-/// through `tryNormalizeProjectionsToFixedPoint` instead of this reporter; this
-/// entry only surfaces the diagnostic for the infallible normalizer's users.
-///
-/// The enclosing demand names where the projection was asked about; outside a
-/// stage span there is no enclosing demand and the module location is all there
-/// is to name. No in-tree program reaches this, and the checks in front of it
-/// are why: an impl whose own associated-type binding projects back through
-/// itself resolves to a spelling equal to the demand, so the lookup makes no
-/// progress and the leftover walk reports the projection as unresolved; a
-/// binding cycle across two impls either grows the type until the bounded
-/// substitution driver refuses it, or oscillates without growing and is caught
-/// by the rewrite budget of the driver that keeps re-deriving it.
-void reportUnnormalizableProjection(Type ty, unsigned iterations,
-                                    ModuleOp module) {
-  Location anchor = currentDemandAnchor().value_or(module.getLoc());
-  std::string message;
-  llvm::raw_string_ostream stream(message);
-  stream << "projection normalization did not converge within " << iterations
-         << " iterations for type " << ty;
-  emitError(anchor) << message;
+LogicalResult checkObligationChainDepth(ArrayRef<ObligationFrame> chain,
+                                        unsigned height) {
+  return success(chain.size() + height - 1 < kInstantiationDepthLimit);
 }
 
-} // namespace
-
-LogicalResult checkObligationChainDepth(ArrayRef<ObligationFrame> chain,
-                                        TraitApplicationAttr app,
-                                        Location anchor) {
-  if (chain.size() < kInstantiationDepthLimit)
-    return success();
-
-  // At the demand, not at the declaration the walk is reading: every frame on
-  // the chain is asked about because something wanted the application in hand,
-  // and the last one asked is no more at fault than the first. The demand is
-  // what a reader can act on.
+void emitObligationOverflow(Location anchor, TraitApplicationAttr app,
+                            ArrayRef<ObligationFrame> chain, unsigned height) {
+  size_t depth = chain.size() + height - 1;
   InFlightDiagnostic diagnostic =
-      emitError(currentDemandAnchor().value_or(anchor))
-      << "overflow evaluating the requirement '" << app << "': "
-      << chain.size() << " obligations stand on the chain that reaches it";
+      emitError(anchor)
+      << "overflow evaluating the requirement '" << app << "': " << depth
+      << " obligations stand on the chain that reaches it";
   nameChainEnds<ObligationFrame>(
       diagnostic, chain, [](InFlightDiagnostic &d, ObligationFrame frame) {
         Diagnostic &note = d.attachNote();
@@ -165,14 +123,12 @@ LogicalResult checkObligationChainDepth(ArrayRef<ObligationFrame> chain,
         if (frame.proof)
           note << ", stated by proof " << frame.proof;
       });
-  return failure();
 }
 
 LogicalResult tryNormalizeProjectionsToFixedPoint(
     Type ty, llvm::function_ref<Type(Type)> step, Type &out) {
   Type previous;
-  for (unsigned i = 0;
-       i != kProjectionFixedPointMaxIterations && ty != previous; ++i) {
+  for (unsigned i = 0; i != kInstantiationDepthLimit && ty != previous; ++i) {
     previous = ty;
     ty = step(ty);
   }
@@ -183,48 +139,29 @@ LogicalResult tryNormalizeProjectionsToFixedPoint(
   return success(ty == previous);
 }
 
-Type normalizeProjectionsToFixedPoint(Type ty, ModuleOp module,
-                                      llvm::function_ref<Type(Type)> step) {
-  // Reaching the iteration cap while the type is still changing means the
-  // rewrite has no fixed point (a cyclic or oscillating resolution). What the
-  // loop reached is a partial normal form; this infallible entry surfaces the
-  // nonconvergence as a diagnostic and hands the partial back spelled as
-  // written. Every caller here compares that spelling against another or stamps
-  // it, and an unresolved projection declines in the safe direction at each --
-  // a spelling mismatch, never a silent accept. A caller that must refuse the
-  // cycle rather than decline threads the failure through
-  // `tryNormalizeProjectionsToFixedPoint` instead.
-  Type out;
-  if (failed(tryNormalizeProjectionsToFixedPoint(ty, step, out)))
-    reportUnnormalizableProjection(out, kProjectionFixedPointMaxIterations,
-                                   module);
-  return out;
-}
-
-// Shared body of the projection-resolution entry points. `candidateCache` holds
-// the candidate impls each application's lookup has found, which this reading
-// and the header readings under it share. `converged` reports whether the
-// fixed-point driver reached a normal form: on false, `ty` carries the driver's
-// partial (the still-unresolved projection spelled as written), and the public
-// entries decide how to surface the nonconvergence -- the infallible ones
-// decline on the partial after a diagnostic, the fallible one refuses.
-static Type resolveProjectionsByLookupCore(Type ty, ModuleOp module,
-                                           DemandOrigin origin, LookupScope scope,
-                                           ImplCandidateMemo &candidateCache,
-                                           bool &converged) {
+// The body of `resolveProjectionsByLookup`. `candidates` holds, for one
+// reading, the candidate impls each application's lookup has found, which the
+// reading and the header readings under it share. `converged` reports whether
+// the fixed-point driver reached a normal form: on false, `ty` carries the
+// driver's partial (the still-unresolved projection spelled as written), which
+// the entry names as it refuses.
+static Type resolveProjectionsByLookupCore(
+    Type ty, ModuleOp module, LookupScope scope,
+    DenseMap<TraitApplicationAttr, SmallVector<ImplOp>> &candidates,
+    bool &converged) {
   converged = true;
   if (!module)
     return ty;
 
   // The context a candidate's header is read through here: this lookup itself,
-  // at the same scope and through the same candidates, so a header spelling a
+  // at the same scope, so a header spelling a
   // projection (`impl<T> Index<T::Shape, T::Element> for T`) reproduces a demand
   // spelling the resolution and is read by the rule the demand is read by. A
   // reading that does not converge is a header this reading cannot rebuild.
   auto byLookup = [&](Type ty) -> FailureOr<Type> {
     bool headerConverged;
-    Type read = resolveProjectionsByLookupCore(ty, module, origin, scope,
-                                               candidateCache, headerConverged);
+    Type read = resolveProjectionsByLookupCore(ty, module, scope, candidates,
+                                               headerConverged);
     if (!headerConverged)
       return failure();
     return read;
@@ -232,13 +169,6 @@ static Type resolveProjectionsByLookupCore(Type ty, ModuleOp module,
 
   AttrTypeReplacer replacer = makeEndpointSealedReplacer();
   replacer.addReplacement([&](ProjectionType proj) -> std::optional<Type> {
-    // Impl enumeration below matches each candidate's header, which normalizes,
-    // which re-enters this callback. The guard makes that re-entry visible, so
-    // a demand raised about a candidate is told apart from the demand this call
-    // was asked about.
-    LookupProbeScope probe;
-
-    const bool polymorphic = isPolymorphicType(proj);
     // Which impl serves a projection is decided by its head application alone:
     // the associated-type binding the impl states is a function of the
     // projection's own associated-type arguments, so a head naming one impl
@@ -246,19 +176,6 @@ static Type resolveProjectionsByLookupCore(Type ty, ModuleOp module,
     // variable stands for as many impls as that variable has instances, and no
     // one impl answers for it.
     const bool polymorphicHead = isPolymorphicType(Type(proj.asClaim()));
-
-    auto declineWith = [&](LookupMissReason reason) {
-      // A demand is a question put to the impl engine about one type, and only a
-      // ground projection asks one: a spelling that still carries variables
-      // stands for as many types as its variables have instances, so no engine
-      // owes it an answer and the ledger has nothing to record. The scope below
-      // reads such a spelling to compare it, never to serve it.
-      if (polymorphic)
-        return std::optional<Type>(std::nullopt);
-      recordLookupMiss(Type(proj), module, reason, origin,
-                       probe.getEnclosingDepth());
-      return std::optional<Type>(std::nullopt);
-    };
 
     // A projection whose head still carries variables resolves only under the
     // determined scope, and then only if its own spelling picks the impl (the
@@ -276,23 +193,24 @@ static Type resolveProjectionsByLookupCore(Type ty, ModuleOp module,
     // and a legal program has already discharged this ground projection's head
     // claim -- the premise the conditional impl carries.
     //
-    // The candidates are read once per application and held: this lookup
-    // mutates no impl. Reading them may read other applications' candidates
-    // into the same memo, so the count and the one candidate are taken before
-    // anything below reads further.
-    auto it = candidateCache.find(app);
-    if (it == candidateCache.end()) {
+    // The candidates are read once per application and reading, since this
+    // lookup mutates no impl. An application whose candidates are being read
+    // stands with none until they are read: a candidate header that reads the
+    // same application again -- an impl whose header projects through its own
+    // trait at the application asked -- finds no candidate there, as a cycle
+    // guard refuses an application it meets again.
+    auto it = candidates.find(app);
+    if (it == candidates.end()) {
       auto trait = app.getTrait(module, nullptr);
       if (failed(trait))
-        return declineWith(LookupMissReason::TraitSymbolNotFound);
+        return std::nullopt;
+      candidates.try_emplace(app);
       SmallVector<ImplOp> found = trait->getCandidateImplsFor(claim, byLookup);
-      it = candidateCache.try_emplace(app, std::move(found)).first;
+      it = candidates.find(app);
+      it->second = std::move(found);
     }
-    size_t candidateCount = it->second.size();
-    if (candidateCount != 1)
-      return declineWith(candidateCount == 0
-                             ? LookupMissReason::NoCandidateImpl
-                             : LookupMissReason::MultipleCandidateImpls);
+    if (it->second.size() != 1)
+      return std::nullopt;
     ImplOp impl = it->second.front();
 
     // A projection over a type variable in its head denotes one type at every
@@ -313,12 +231,12 @@ static Type resolveProjectionsByLookupCore(Type ty, ModuleOp module,
     auto subst = impl.buildSubstitutionForSelfClaim(claim, byLookup,
                                                     /*errFn=*/nullptr);
     if (failed(subst))
-      return declineWith(LookupMissReason::SelfClaimSubstitutionFailed);
+      return std::nullopt;
 
     auto binding = impl.specializeAssociatedTypeBinding(
         proj.getAssocName().getValue(), proj.getAssocTypeArgs(), *subst);
     if (failed(binding))
-      return declineWith(LookupMissReason::AssociatedTypeBindingFailed);
+      return std::nullopt;
 
     return *binding;
   });
@@ -331,40 +249,20 @@ static Type resolveProjectionsByLookupCore(Type ty, ModuleOp module,
   return ty;
 }
 
-Type resolveProjectionsByLookup(Type ty, ModuleOp module, DemandOrigin origin,
-                                LookupScope scope) {
-  ImplCandidateMemo memo;
-  return resolveProjectionsByLookup(ty, module, origin, scope, memo);
-}
-
-Type resolveProjectionsByLookup(Type ty, ModuleOp module, DemandOrigin origin,
-                                LookupScope scope, ImplCandidateMemo &memo) {
-  bool converged;
-  Type out = resolveProjectionsByLookupCore(ty, module, origin, scope, memo,
-                                            converged);
-  // The infallible entry cannot refuse. A projection that will not ground stays
-  // spelled as written in `out`, so every spelling comparison downstream
-  // declines on it in the safe direction; the reporter surfaces the diagnostic.
-  if (!converged)
-    reportUnnormalizableProjection(out, kProjectionFixedPointMaxIterations,
-                                   module);
-  return out;
-}
-
 FailureOr<Type> resolveProjectionsByLookup(
-    Type ty, ModuleOp module, DemandOrigin origin, LookupScope scope,
+    Type ty, ModuleOp module, LookupScope scope,
     llvm::function_ref<InFlightDiagnostic()> emitError) {
-  ImplCandidateMemo memo;
+  DenseMap<TraitApplicationAttr, SmallVector<ImplOp>> candidates;
   bool converged;
-  Type out = resolveProjectionsByLookupCore(ty, module, origin, scope, memo,
-                                            converged);
+  Type out =
+      resolveProjectionsByLookupCore(ty, module, scope, candidates, converged);
   // The fallible entry refuses a projection that will not ground so a verifier
   // reached from untrusted IR fails cleanly rather than admitting the cycle.
   if (!converged) {
     if (emitError)
       emitError() << "projection normalization did not converge within "
-                  << kProjectionFixedPointMaxIterations
-                  << " iterations for type " << out;
+                  << kInstantiationDepthLimit
+                  << " projection steps for type " << out;
     return failure();
   }
   return out;
@@ -654,7 +552,7 @@ bool ClaimType::isPolymorphic() const {
 }
 
 Citation verifyCitation(ClaimType unproven, ClaimType proven, ModuleOp module,
-                        DemandOrigin origin, Normalizer normalize,
+                        Normalizer normalize,
                         llvm::function_ref<InFlightDiagnostic()> err) {
   // inspect the proof symbol on the proven side
   auto symOp = ProofOp::getProofOpOrUnconditionalImplOp(module, proven.getProof(), err);
@@ -692,38 +590,31 @@ Citation verifyCitation(ClaimType unproven, ClaimType proven, ModuleOp module,
   return Citation::Refused;
 }
 
-bool mentionsMonomorphicProjection(Type ty) {
+void walkObligationSites(Type root, llvm::function_ref<void(Type)> visit) {
+  root.walk<WalkOrder::PreOrder>([&](Type sub) -> WalkResult {
+    visit(sub);
+    if (auto claim = dyn_cast<ClaimType>(sub))
+      if (claim.isEquality())
+        return WalkResult::skip();
+    return WalkResult::advance();
+  });
+}
+
+bool isUndischargedObligation(Type site) {
+  if (auto claim = dyn_cast<ClaimType>(site))
+    return claim.isApplication() && claim.isMonomorphic() && !claim.isProven();
+  return isa<ProjectionType>(site) && !isPolymorphicType(site);
+}
+
+bool carriesUndischargedObligation(Type root) {
   bool found = false;
-  DenseSet<Type> seen;
-
-  auto visit = [&](Type node, auto &visitRef) -> void {
-    if (found || !seen.insert(node).second)
-      return;
-    if (auto projection = dyn_cast<ProjectionType>(node)) {
-      if (isMonomorphicType(projection)) {
-        found = true;
-        return;
-      }
-      for (Type arg : projection.getTraitApplication().getTypeArgs())
-        visitRef(arg, visitRef);
-      for (Type arg : projection.getAssocTypeArgs())
-        visitRef(arg, visitRef);
-    } else if (auto claim = dyn_cast<ClaimType>(node)) {
-      for (Type arg : claim.getTraitApplication().getTypeArgs())
-        visitRef(arg, visitRef);
-    }
-
-    node.walkImmediateSubElements(
-        /*walkAttrsFn=*/[](Attribute) {},
-        /*walkTypesFn=*/[&](Type subTy) { visitRef(subTy, visitRef); });
-  };
-
-  visit(ty, visit);
+  walkObligationSites(root, [&](Type site) {
+    found = found || isUndischargedObligation(site);
+  });
   return found;
 }
 
-LogicalResult verifyCitationsIn(Type ty, ModuleOp module, DemandOrigin origin,
-                                Normalizer normalize,
+LogicalResult verifyCitationsIn(Type ty, ModuleOp module, Normalizer normalize,
                                 llvm::function_ref<InFlightDiagnostic()> err) {
   LogicalResult status = success();
 
@@ -734,8 +625,8 @@ LogicalResult verifyCitationsIn(Type ty, ModuleOp module, DemandOrigin origin,
     if (!claim || !claim.isProven())
       return;
 
-    if (verifyCitation(claim.asUnproven(), claim, module, origin, normalize,
-                       err) == Citation::Refused)
+    if (verifyCitation(claim.asUnproven(), claim, module, normalize, err) ==
+        Citation::Refused)
       status = failure();
   });
 

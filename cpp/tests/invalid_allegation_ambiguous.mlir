@@ -4,7 +4,7 @@
 // RUN: not mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' 2>&1 | FileCheck %s
 
 // Two unconditional impls satisfy @T[i32]. An allegation names no preferred
-// impl, so it must report incoherence and remain unresolved at the phase boundary.
+// impl, so it must report incoherence and stand unproven at the stage's exit.
 
 trait.trait private @T(%self: !trait.claim<@T[!trait.poly<0>]>) {
 }
@@ -26,4 +26,4 @@ func.func @main() {
 }
 
 // CHECK: 'trait.allege' op incoherent impls (multiple satisfiable) for '!trait.claim<@T[i32]>'
-// CHECK: unresolved monomorphic trait.allege after resolve-impls
+// CHECK: unproven monomorphic claim '!trait.claim<@T[i32]>' after instantiate-monomorphs
