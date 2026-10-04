@@ -69,16 +69,6 @@ MlirType traitClaimTypeGet(MlirContext wrappedCtx,
   return wrap(claim);
 }
 
-MlirType traitProvenClaimTypeGet(MlirAttribute wrappedTraitApp,
-                                 MlirStringRef proofName) {
-  auto traitApp = dyn_cast<TraitApplicationAttr>(unwrap(wrappedTraitApp));
-  if (!traitApp) return {};
-  MLIRContext *ctx = traitApp.getContext();
-  return wrap(ClaimType::get(
-      ctx, traitApp,
-      FlatSymbolRefAttr::get(ctx, StringRef(proofName.data, proofName.length))));
-}
-
 MlirType traitClaimTypeWithApplication(MlirType wrappedClaimType,
                                        MlirAttribute wrappedTraitApp) {
   ClaimType claimType = dyn_cast<ClaimType>(unwrap(wrappedClaimType));

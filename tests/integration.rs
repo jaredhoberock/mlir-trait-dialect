@@ -955,19 +955,27 @@ fn an_evidence_method_states_and_selects_a_quantified_requirement() {
 }
 
 #[test]
-fn the_builders_state_a_proof_body_and_a_derive() {
+fn the_derive_builder_states_the_premises_it_cites() {
     let context = trait_context();
 
     // @Tr_tuple is an impl of @Tr[tuple<U>] where @Tr[U] and Tr[U]::Out = i64.
-    let source = "\
-trait.trait private @Tr(%self: !trait.claim<@Tr[!trait.poly<0>]>) { trait.assoc_type @Out }\n\
-trait.impl private @Tr_i32(%self: !trait.claim<@Tr[i32]>) { trait.assoc_type @Out = i64 }\n\
-trait.impl private @Tr_tuple(%self: !trait.claim<@Tr[tuple<!trait.poly<1>>]>, %tr: !trait.claim<@Tr[!trait.poly<1>]>, %out: !trait.claim<!trait.proj<@Tr[!trait.poly<1>], \"Out\"> = i64>) {\n\
+    // The proof at i32 cites @Tr_i32 for the application entry and its binding
+    // for the equality entry, each derive premise written only where
+    // `premises` keeps it.
+    let source = |premises: &str, types: &str| format!("\
+trait.trait private @Tr(%self: !trait.claim<@Tr[!trait.poly<0>]>) {{ trait.assoc_type @Out }}\n\
+trait.impl private @Tr_i32(%self: !trait.claim<@Tr[i32]>) {{ trait.assoc_type @Out = i64 }}\n\
+trait.impl private @Tr_tuple(%self: !trait.claim<@Tr[tuple<!trait.poly<1>>]>, %tr: !trait.claim<@Tr[!trait.poly<1>]>, %out: !trait.claim<!trait.proj<@Tr[!trait.poly<1>], \"Out\"> = i64>) {{\n\
   trait.assoc_type @Out = i64\n\
-}\n";
+}}\n\
+trait.proof private @p {{\n\
+  %tr = trait.witness @Tr_i32 for @Tr[i32]\n\
+  %out = trait.witness proj_resolve !trait.proj<@Tr[i32], \"Out\"> resolves i64 by @Tr_i32 : !trait.claim<!trait.proj<@Tr[i32], \"Out\"> = i64>\n\
+  %d = trait.derive @Tr[tuple<i32>] from @Tr_tuple given({premises}) : ({types})\n\
+  trait.return %d : !trait.claim<@Tr[tuple<i32>]>\n\
+}}\n");
     let loc = Location::unknown(&context);
     let t = trait_::poly_type(&context, 0);
-    let i32_ty: melior::ir::Type = IntegerType::new(&context, 32).into();
     let i64_ty: melior::ir::Type = IntegerType::new(&context, 64).into();
     let tuple_of = |ty| melior::ir::r#type::TupleType::new(&context, &[ty]).into();
     let tr = |ty| trait_::trait_application_attr(&context, "Tr", &[ty]);
@@ -976,26 +984,14 @@ trait.impl private @Tr_tuple(%self: !trait.claim<@Tr[tuple<!trait.poly<1>>]>, %t
             .expect("the equality claim constructs")
     };
 
-    // The proof at i32 cites @Tr_i32 for the application entry and its binding
-    // for the equality entry.
-    let build_proof = |premise_count: usize| {
-        let proof = trait_::proof(loc, "p");
-        let block = proof.region(0).unwrap().first_block().unwrap();
-        let tr_i32 = block.append_operation(trait_::witness(loc, "Tr_i32", tr(i32_ty)));
-        let out_i32 = block.append_operation(trait_::witness_proj_resolve(
-            loc, "Tr_i32", &[], out_is_i64(i32_ty)));
-        let premises: Vec<melior::ir::Value> =
-            [tr_i32.result(0).unwrap().into(), out_i32.result(0).unwrap().into()]
-                .into_iter()
-                .take(premise_count)
-                .collect();
-        let derive = block.append_operation(trait_::derive(
-            loc, tr(tuple_of(i32_ty)), "Tr_tuple", &premises));
-        block.append_operation(trait_::return_(loc, &[derive.result(0).unwrap().into()]));
-        proof
-    };
-    let module = Module::parse(&context, source).expect("the fixture module parses");
-    module.body().append_operation(build_proof(2));
+    let module = Module::parse(
+        &context,
+        &source(
+            "%tr, %out",
+            "!trait.claim<@Tr[i32] by @Tr_i32>, !trait.claim<!trait.proj<@Tr[i32], \"Out\"> = i64>",
+        ),
+    )
+    .expect("the fixture module parses");
 
     // A derive at T with one premise per where entry.
     let tr_t_claim: melior::ir::Type = trait_::claim_type(&context, tr(t)).into();
@@ -1023,15 +1019,11 @@ trait.impl private @Tr_tuple(%self: !trait.claim<@Tr[tuple<!trait.poly<1>>]>, %t
     assert!(module.as_operation().verify());
     let rendered = module.as_operation().to_string();
     assert!(
-        rendered.contains("trait.proof private @p {")
-            && rendered.contains("trait.derive @Tr[tuple<i32>] from @Tr_tuple given(")
-            && rendered.contains("from @Tr_tuple given(%arg0, %arg1)"),
-        "the proof and the derive print the premises they cite: {rendered}"
+        rendered.contains("from @Tr_tuple given(%arg0, %arg1)"),
+        "the derive prints the premises it cites: {rendered}"
     );
 
     // A derive citing one claim fewer than the impl's where entries is refused.
-    let module = Module::parse(&context, source).expect("the fixture module parses");
-    module.body().append_operation(build_proof(1));
-    assert!(!module.as_operation().verify());
+    assert!(Module::parse(&context, &source("%tr", "!trait.claim<@Tr[i32] by @Tr_i32>")).is_none());
 }
 

@@ -43,12 +43,6 @@ MlirType traitPolyTypeGet(MlirContext ctx, unsigned int label);
 MlirType traitClaimTypeGet(MlirContext ctx,
                            MlirAttribute predicate);
 
-/// Return the !trait.claim<app by @proofName> proving the trait application
-/// `traitApp` by the symbol `proofName`. Returns a null type if `traitApp` is no
-/// trait application.
-MlirType traitProvenClaimTypeGet(MlirAttribute traitApp,
-                                 MlirStringRef proofName);
-
 /// Return a claim type with the same proof as `claimType` but
 /// with a different trait application.
 MlirType traitClaimTypeWithApplication(MlirType claimType,

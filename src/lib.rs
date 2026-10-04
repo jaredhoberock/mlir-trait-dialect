@@ -29,8 +29,6 @@ unsafe extern "C" {
 
     fn traitClaimTypeGet(ctx: MlirContext,
                          predicate: MlirAttribute) -> MlirType;
-    fn traitProvenClaimTypeGet(trait_app: MlirAttribute,
-                               proof_name: MlirStringRef) -> MlirType;
     fn traitClaimTypeWithApplication(claim_ty: MlirType,
                                      trait_app: MlirAttribute) -> MlirType;
     fn traitClaimTypeGetTraitApplication(claim_ty: MlirType) -> MlirAttribute;
@@ -334,18 +332,6 @@ pub fn allege<'c>(loc: Location<'c>,
     build_op(OperationBuilder::new("trait.allege", loc).add_results(&[claim]))
 }
 
-/// Build a `trait.witness` of `trait_app` proved by the proof or unconditional
-/// impl named `proof_name`.
-pub fn witness<'c>(loc: Location<'c>,
-                   proof_name: &str,
-                   trait_app: TraitApplicationAttribute<'c>,
-) -> Operation<'c> {
-    let claim = unsafe {
-        Type::from_raw(traitProvenClaimTypeGet(trait_app.to_raw(), StringRef::new(proof_name).to_raw()))
-    };
-    build_op(OperationBuilder::new("trait.witness", loc).add_results(&[claim]))
-}
-
 /// Create a `trait.project` op selecting requirement `index` of `src_claim`:
 /// its trait's requirements in order, then, when the claim is proven by a
 /// proof, the where entries of the impl that proof derives it from.
@@ -360,20 +346,6 @@ pub fn project<'c>(loc: Location<'c>,
         .add_operands(&[src_claim])
         .add_attributes(&[(identifier(loc, "index"), index_attr(loc, index))])
         .add_results(&[result_claim]))
-}
-
-/// Create a `trait.proof` named `sym_name` whose body, one empty block, the
-/// caller fills with the evidence it records and ends with `trait.return` of
-/// the claim a derive in it derives. A proof is a template that dies with
-/// monomorphization, so it is private from birth, as every other proof is
-/// minted.
-pub fn proof<'c>(loc: Location<'c>, sym_name: &str) -> Operation<'c> {
-    build_op(OperationBuilder::new("trait.proof", loc)
-        .add_attributes(&[
-            (identifier(loc, "sym_name"), string_attr(loc, sym_name)),
-            (identifier(loc, "sym_visibility"), string_attr(loc, "private")),
-        ])
-        .add_regions([declaration_body(loc, &[])]))
 }
 
 /// Create a `trait.derive` of `trait_app` from the impl `impl_name`, with
