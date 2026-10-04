@@ -272,8 +272,18 @@ def TraitOp : TraitDialectOp<"trait", [
     /// The trait's requirements, its result signature, in order.
     SmallVector<ClaimType> getRequirementsAsClaims();
 
+    /// The trait's requirements, in order, instantiated at the application
+    /// of `actualSelfClaim`: the substitution its arguments give the trait's
+    /// parameters, built once and applied to each.
     FailureOr<SmallVector<ClaimType>> specializeRequirementsAsClaimsFor(
         ClaimType actualSelfClaim,
+        llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
+
+    /// Requirement `index` of the trait instantiated at the application of
+    /// `actualSelfClaim`, the one requirement a reader by position needs.
+    /// `index` is below the trait's requirement count.
+    FailureOr<ClaimType> specializeRequirementAsClaimFor(
+        ClaimType actualSelfClaim, unsigned index,
         llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
 
     /// Return all AssocTypeOps declared in this trait

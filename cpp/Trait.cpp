@@ -97,25 +97,6 @@ struct MethodConstantPlacement : DialectFoldInterface {
 };
 } // namespace
 
-std::optional<SmallVector<Type>>
-TraitDialect::lookupRequirementInstance(Attribute self, Attribute requirements,
-                                        Attribute actual) const {
-  llvm::sys::SmartScopedLock<true> lock(requirementInstanceLock);
-  auto it = requirementInstances.find({self, requirements, actual});
-  if (it == requirementInstances.end())
-    return std::nullopt;
-  return SmallVector<Type>(it->second.begin(), it->second.end());
-}
-
-void TraitDialect::recordRequirementInstance(Attribute self,
-                                             Attribute requirements,
-                                             Attribute actual,
-                                             ArrayRef<Type> instance) const {
-  llvm::sys::SmartScopedLock<true> lock(requirementInstanceLock);
-  requirementInstances.try_emplace({self, requirements, actual},
-                                   SmallVector<Type, 2>(instance));
-}
-
 void TraitDialect::initialize() {
   registerAttributes();
 

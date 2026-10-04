@@ -640,32 +640,26 @@ SmallVector<ClaimType> TraitOp::getRequirementsAsClaims() {
 FailureOr<SmallVector<ClaimType>> TraitOp::specializeRequirementsAsClaimsFor(
     ClaimType actualSelfClaim,
     llvm::function_ref<InFlightDiagnostic()> errFn) {
-  // The instance reads the trait's self application, its requirement list and
-  // the application asked about, and nothing else, so the dialect answers one
-  // it recorded under those three.
-  auto *dialect = cast<TraitDialect>(getOperation()->getDialect());
-  TraitApplicationAttr actual = actualSelfClaim.getTraitApplication();
-  auto asClaims = [](ArrayRef<Type> instance) {
-    return llvm::map_to_vector(
-        instance, [](Type requirement) { return cast<ClaimType>(requirement); });
-  };
-  if (auto known = dialect->lookupRequirementInstance(getSelfApplication(),
-                                                      getRequirements(), actual))
-    return asClaims(*known);
-
-  // build a specialized substitution for actualSelfClaim
   auto spec = buildSubstitutionForSelfClaim(actualSelfClaim, errFn);
   if (failed(spec)) return failure();
-
   // A substitution rewrites the type arguments a claim carries, never the claim
   // wrapper itself: its keys are this trait's type parameters, never a whole
   // ClaimType, so the result is always a claim.
-  SmallVector<Type> instance = llvm::map_to_vector(
-      getRequirements().getAsValueRange<TypeAttr>(),
-      [&](Type requirement) { return instantiate(requirement, *spec); });
-  dialect->recordRequirementInstance(getSelfApplication(), getRequirements(),
-                                     actual, instance);
-  return asClaims(instance);
+  return llvm::map_to_vector(
+      getRequirements().getAsValueRange<TypeAttr>(), [&](Type requirement) {
+        return cast<ClaimType>(instantiate(requirement, *spec));
+      });
+}
+
+FailureOr<ClaimType> TraitOp::specializeRequirementAsClaimFor(
+    ClaimType actualSelfClaim, unsigned index,
+    llvm::function_ref<InFlightDiagnostic()> errFn) {
+  ArrayAttr requirements = getRequirements();
+  assert(index < requirements.size() && "requirement index out of range");
+  auto spec = buildSubstitutionForSelfClaim(actualSelfClaim, errFn);
+  if (failed(spec)) return failure();
+  Type requirement = cast<TypeAttr>(requirements[index]).getValue();
+  return cast<ClaimType>(instantiate(requirement, *spec));
 }
 
 SmallVector<ImplOp> TraitOp::getImpls() {

@@ -590,26 +590,6 @@ class ImplResolver {
       return ClaimType::get(scope.getContext(), app, sym);
     }
 
-    /// The proofs standing in one module, by the impl each stands over and the
-    /// application it proves. Read off the module at the first mint in it and
-    /// extended by every proof minted there, which is the one site that writes
-    /// a proof while the stage runs. Nothing the stage runs erases a proof -- a
-    /// rewrite driver never takes a symbol for dead, and proofs go only in the
-    /// erase pass after the stage -- so every op held here stands.
-    struct StandingProofs {
-      /// Every proof of one impl at one application, in module order; two
-      /// stand apart where their derives are given different premises.
-      DenseMap<std::pair<ImplOp, TraitApplicationAttr>, SmallVector<ProofOp, 1>>
-          byClaim;
-
-      /// Adds `proof`.
-      void note(ProofOp proof);
-    };
-
-    /// The proofs standing in `scope`, read once. A view of the module the
-    /// stage extends wherever it writes a proof.
-    StandingProofs &getStandingProofs(ModuleOp scope) const;
-
     /// Answers `impl` where all of its where-clause assumptions are
     /// satisfiable when specialized for `concreteSelf`, asked at `site` by the
     /// selection of `concreteSelf`, whose frame stands on the chain while it
@@ -621,7 +601,6 @@ class ImplResolver {
 
     ModuleOp module;
     ProofResolutionMemo memo;
-    mutable DenseMap<Operation *, StandingProofs> standingProofs;
 
     bool overflowed = false;
     DenseSet<Location> overflowSites;

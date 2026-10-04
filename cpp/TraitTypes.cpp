@@ -722,12 +722,8 @@ FailureOr<ClaimType> getClaimRequirementAt(
 
   // An unproven claim carries no evidence, so each requirement it reaches is
   // the trait's at its arguments, unproven.
-  if (!claim.isProven()) {
-    auto requirements = trait.specializeRequirementsAsClaimsFor(claim, errFn);
-    if (failed(requirements))
-      return failure();
-    return (*requirements)[index];
-  }
+  if (!claim.isProven())
+    return trait.specializeRequirementAsClaimFor(claim, index, errFn);
 
   auto evidence = readCitedEvidence(claim, module, errFn);
   if (failed(evidence))
@@ -748,11 +744,11 @@ FailureOr<ClaimType> getClaimRequirementAt(
   // evidence is the impl's return operand there, which the stage inlines where
   // a projection reads it (`ProjectOp::inlineEvidence`); this names the claim
   // alone, unproven.
-  auto requirements =
-      trait.specializeRequirementsAsClaimsFor(claim.asUnproven(), errFn);
-  if (failed(requirements))
+  auto requirement =
+      trait.specializeRequirementAsClaimFor(claim.asUnproven(), index, errFn);
+  if (failed(requirement))
     return failure();
-  ClaimType obligation = (*requirements)[index];
+  ClaimType obligation = *requirement;
   if (obligation.isEquality())
     return obligation;
   NormalizationContext own;

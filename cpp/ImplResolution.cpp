@@ -396,23 +396,6 @@ Answer<ResolvedImpl> ImplResolver::resolveImplFor(
   return Selected::refusal();
 }
 
-ImplResolver::StandingProofs &
-ImplResolver::getStandingProofs(ModuleOp scope) const {
-  auto [entry, inserted] = standingProofs.try_emplace(scope.getOperation());
-  // Read once per module, in module order, so the first proof of an impl at an
-  // application is the one found. The impl is matched by identity rather than
-  // by name: a name is resolved in one symbol table, and two modules can each
-  // hold an impl of that name meaning two different impls.
-  if (inserted)
-    for (ProofOp proof : scope.getOps<ProofOp>())
-      entry->second.note(proof);
-  return entry->second;
-}
-
-void ImplResolver::StandingProofs::note(ProofOp proof) {
-  byClaim[{proof.getImpl(), proof.getTraitApplication()}].push_back(proof);
-}
-
 /// Writes at the end of `scope` the proof `name` whose body derives `app` from
 /// `impl` over one premise per entry of `entries`, `impl`'s where entries at
 /// the citation: a witness of the next of `subproofs` for an application entry
@@ -466,7 +449,12 @@ ClaimType ImplResolver::findProof(ModuleOp scope, ImplOp impl,
     return ClaimType::get(ctx, app,
                           FlatSymbolRefAttr::get(ctx, impl.getSymName()));
   // A proof is identified by the evidence it derives its claim from: the impl,
-  // the application, and the proof each application premise names.
+  // the application, and the proof each application premise names. The
+  // module's proofs are read as they stand, in module order, so the first
+  // proof of an impl at an application over those premises is the one found.
+  // The impl is matched by identity rather than by name: a name is resolved
+  // in one symbol table, and two modules can each hold an impl of that name
+  // meaning two different impls.
   auto citesSubproofs = [&](ProofOp proof) {
     auto next = subproofs.begin();
     for (Value premise : proof.getDerive().getAssumptions()) {
@@ -476,12 +464,11 @@ ClaimType ImplResolver::findProof(ModuleOp scope, ImplOp impl,
     }
     return true;
   };
-  StandingProofs &standing = getStandingProofs(scope);
-  if (auto it = standing.byClaim.find({impl, app}); it != standing.byClaim.end())
-    for (ProofOp proof : it->second)
-      if (citesSubproofs(proof))
-        return ClaimType::get(
-            ctx, app, FlatSymbolRefAttr::get(ctx, proof.getSymNameAttr()));
+  for (ProofOp proof : scope.getOps<ProofOp>())
+    if (proof.getTraitApplication() == app && proof.getImpl() == impl &&
+        citesSubproofs(proof))
+      return ClaimType::get(
+          ctx, app, FlatSymbolRefAttr::get(ctx, proof.getSymNameAttr()));
   return {};
 }
 
@@ -495,7 +482,6 @@ ClaimType ImplResolver::writeProof(
   ProofOp proof =
       writeProofBody(builder, scope, impl.generateMangledName(arguments) + "_p",
                      impl, app, entries, subproofs, equalitySteps);
-  getStandingProofs(scope).note(proof);
   return ClaimType::get(ctx, app,
                         FlatSymbolRefAttr::get(ctx, proof.getSymNameAttr()));
 }
