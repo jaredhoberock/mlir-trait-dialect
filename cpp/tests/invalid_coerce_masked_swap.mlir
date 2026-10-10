@@ -34,10 +34,9 @@ func.func @swap() -> !trait.claim<@Safe[i32, i64] by @Safe_proof_alt> {
 
 // -----
 
-// The swap clause runs deep: wrapping each claim in a container does not hide
-// the swap. The two tuples reconcile once proofs are stripped, but the result
-// tuple carries a different proof at its claim position than the input tuple, so
-// the position-wise check refuses it.
+// Wrapping each claim in a container does not hide the swap: a coerce respells
+// a claim at its root or a type that holds no claim, so a coerce of a tuple
+// holding claims is refused before any proof is compared.
 
 trait.trait private @Safe(%self: !trait.claim<@Safe[!trait.poly<0>, !trait.poly<1>]>) {}
 
@@ -55,7 +54,7 @@ trait.proof private @Safe_proof_alt {
 
 func.func @masked_swap(%s: tuple<!trait.claim<@Safe[i32, i64] by @Safe_proof>>)
     -> tuple<!trait.claim<@Safe[i32, i64] by @Safe_proof_alt>> {
-  // expected-error @below {{may not swap the proof backing claim #trait<application@Safe[i32, i64]>}}
+  // expected-error @below {{may not respell the claim nested in 'tuple<!trait.claim<@Safe[i32, i64] by @Safe_proof>>'}}
   %c = trait.coerce %s
     : tuple<!trait.claim<@Safe[i32, i64] by @Safe_proof>>
     to tuple<!trait.claim<@Safe[i32, i64] by @Safe_proof_alt>>

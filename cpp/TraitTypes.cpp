@@ -549,6 +549,12 @@ LogicalResult ProjectionType::verifySymbolUses(Operation *op,
   // the symbol tables the walk this is one step of has already built.
   SymbolLookupScope symbolAnswers(op, symbolTable);
 
+  for (Type arg : getAssocTypeArgs())
+    if (containsClaim(arg))
+      return op->emitError()
+             << "projection " << *this
+             << " takes a claim as a type argument; a claim is a value's "
+                "evidence, never a type argument";
   return asClaim().verifySymbolUses(op, symbolTable);
 }
 

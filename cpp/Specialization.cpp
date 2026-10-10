@@ -309,13 +309,12 @@ InstanceKey::get(SymbolRefAttr templateRef, ArrayRef<Type> typeArguments,
     }
     Type actual = stamp.replace(supplied);
     // A proven application claim supplied under another spelling than the
-    // parameter's is carried there by its proof respelled; proofs nested in
-    // the two spellings are the supplied claim's own.
+    // parameter's is carried there by its proof respelled.
     auto declared = dyn_cast<ClaimType>(parameter);
     auto given = dyn_cast<ClaimType>(actual);
     if (declared && given && declared.isApplication() &&
         !declared.isProven() && given.isApplication() && given.isProven() &&
-        stripClaimProofs(Type(given)) != stripClaimProofs(Type(declared))) {
+        given.asUnproven() != declared) {
       FailureOr<ClaimType> respelled = respell(given, declared);
       if (failed(respelled))
         return failure();

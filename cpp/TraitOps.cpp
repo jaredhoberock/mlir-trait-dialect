@@ -686,7 +686,8 @@ agreeInOwnContext(ImplOp impl, Type expected, Type actual,
     hypotheses.push_back(
         TypeEqualityAttr::get(impl.getContext(), *left, *right));
   }
-  return entailedByGroundCongruence(*lhs, *rhs, hypotheses);
+  return entailedByGroundCongruence(stripClaimProofs(*lhs),
+                                    stripClaimProofs(*rhs), hypotheses);
 }
 
 /// The labels a member's own type parameters take in a declaration binding
@@ -2542,10 +2543,28 @@ LogicalResult ReturnOp::verify() {
 LogicalResult CoerceOp::verify() {
   // A verdict that is a pure function of op, operands, and attributes.
 
-  // 1. Strip application-claim proofs from the input and result. Comparison
-  // is modulo the proof, permanently.
-  Type input = stripClaimProofs(getInput().getType());
-  Type result = stripClaimProofs(getResult().getType());
+  // 1. A coerce respells one claim at its root or a type that holds no claim:
+  // a claim nested in another type stands there as a value's own type, which a
+  // coerce of the container never respells. So the root is the one position a
+  // proof can sit.
+  for (Type endpoint : {getInput().getType(), getResult().getType()})
+    if (!isa<ClaimType>(endpoint) && containsClaim(endpoint))
+      return emitOpError() << "may not respell the claim nested in " << endpoint
+                           << ": a coerce respells a claim at its root or a "
+                              "type that holds no claim";
+
+  // 2. No proof swap: a proof present on the result must be the input's.
+  // Otherwise comparison is modulo the proof, permanently.
+  auto fromClaim = dyn_cast<ClaimType>(getInput().getType());
+  auto toClaim = dyn_cast<ClaimType>(getResult().getType());
+  if (toClaim && toClaim.isProven() &&
+      (!fromClaim || fromClaim.getProof() != toClaim.getProof()))
+    return emitOpError() << "may not swap the proof backing claim "
+                         << toClaim.getTraitApplication()
+                         << ": a coerce compares modulo a proof but may not "
+                            "exchange it for another";
+  Type input = fromClaim ? Type(fromClaim.asUnproven()) : getInput().getType();
+  Type result = toClaim ? Type(toClaim.asUnproven()) : getResult().getType();
 
   // 3. Collect the cited equalities; each operand must be an equality claim.
   SmallVector<TypeEqualityAttr> cited;
@@ -2563,62 +2582,6 @@ LogicalResult CoerceOp::verify() {
     return emitOpError() << "input type " << getInput().getType()
                          << " and result type " << getResult().getType()
                          << " are not equal under the cited equalities";
-
-  // 2. The no-proof-swap clause runs deep. The endpoints denote one claim once
-  // the equalities reconcile them, so a proof present on the result and absent
-  // or different on the input is a swap the coerce may not perform -- at every
-  // position an application claim sits, not only the root. Positions are paired
-  // by walking the two endpoint trees in lockstep off the same decomposition the
-  // congruence closure keys on, over the unstripped types so the proofs are
-  // still present.
-  auto rejectProofSwap = [&](ClaimType fromClaim,
-                             ClaimType toClaim) -> LogicalResult {
-    if (!toClaim || !toClaim.isProven())
-      return success();
-    if (!fromClaim || !fromClaim.isProven() ||
-        fromClaim.getProof() != toClaim.getProof())
-      return emitOpError() << "may not swap the proof backing claim "
-                           << toClaim.getTraitApplication()
-                           << ": a coerce compares modulo a proof but may not "
-                              "exchange it for another";
-    return success();
-  };
-  // Does a proven application claim sit anywhere in this type?
-  std::function<bool(Type)> carriesProvenClaim = [&](Type t) -> bool {
-    if (auto c = dyn_cast<ClaimType>(t))
-      if (c.isApplication() && c.isProven())
-        return true;
-    for (Type child : decomposeTerm(t).children)
-      if (carriesProvenClaim(child))
-        return true;
-    return false;
-  };
-  std::function<LogicalResult(Type, Type)> checkNoSwap =
-      [&](Type in, Type out) -> LogicalResult {
-    if (failed(rejectProofSwap(dyn_cast<ClaimType>(in),
-                               dyn_cast<ClaimType>(out))))
-      return failure();
-    TermShape di = decomposeTerm(in);
-    TermShape dout = decomposeTerm(out);
-    if (di.key == dout.key && di.children.size() == dout.children.size()) {
-      for (auto [a, b] : llvm::zip(di.children, dout.children))
-        if (failed(checkNoSwap(a, b)))
-          return failure();
-      return success();
-    }
-    // The two trees diverge in shape here, so no further positions pair. A proof
-    // still standing on the result side has no input position to match and is a
-    // swap; a proof-free divergence is the reconciliation the equalities
-    // already licensed.
-    if (carriesProvenClaim(out))
-      return emitOpError() << "may not swap the proof backing a claim nested in "
-                           << getResult().getType()
-                           << ": a coerce compares modulo a proof but may not "
-                              "exchange it for another";
-    return success();
-  };
-  if (failed(checkNoSwap(getInput().getType(), getResult().getType())))
-    return failure();
 
   return success();
 }
@@ -3105,8 +3068,7 @@ LogicalResult ProjectOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // inlines here decides (`inlineEvidence`).
   bool selected = requirement->isProven()
                       ? *requirement == getResultClaim()
-                      : stripClaimProofs(Type(*requirement)) ==
-                            stripClaimProofs(Type(getResultClaim()));
+                      : *requirement == getResultClaim().asUnproven();
   if (!selected)
     return emitOpError() << "type mismatch: expected " << *requirement
                          << " but found " << getResultClaim();

@@ -145,7 +145,19 @@ LogicalResult TraitApplicationAttr::verifySymbolUses(
     return err() << "trait '" << getTraitName() << "' expects " << expectedArity
                  << " type arguments, found " << getTypeArgs().size();
 
+  for (Type arg : getTypeArgs())
+    if (containsClaim(arg))
+      return err() << "trait application " << *this
+                   << " takes a claim as a type argument; a claim is a value's "
+                      "evidence, never a type argument";
+
   return success();
+}
+
+bool containsClaim(Type type) {
+  return type
+      .walk([](ClaimType) { return WalkResult::interrupt(); })
+      .wasInterrupted();
 }
 
 // The single grammar for a trait application's `[!T1, !T2, ...]` body, shared by

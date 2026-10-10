@@ -31,4 +31,10 @@ namespace mlir::trait {
 FailureOr<TraitApplicationAttr>
 parseTraitApplicationBody(AsmParser &parser, FlatSymbolRefAttr traitName);
 
+/// Whether a claim type stands anywhere inside `type`. A proof lives at the root
+/// of a value's claim type, so a claim is never a type argument of a trait
+/// application or of a projection: their symbol-use verifiers refuse one at any
+/// depth, and a comparison modulo proofs strips only the root.
+bool containsClaim(Type type);
+
 } // end mlir::trait

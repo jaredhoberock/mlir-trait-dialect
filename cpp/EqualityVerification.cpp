@@ -256,36 +256,35 @@ private:
 
 // The one ground-entailment decision the witness composition arm and
 // trait.coerce's proven arm share: whether `lhs` and `rhs` fall in one class of
-// the ground congruence closure seeded by the premise equalities. Application-
-// claim proofs are stripped from every endpoint first (comparison is modulo
-// the proof, permanently). For the composition arm the transitivity and
+// the ground congruence closure seeded by the premise equalities. The
+// comparison is modulo application-claim proofs, permanently: a premise's
+// endpoints carry none (`TypeEqualityAttr::verify`), and the caller strips the
+// two compared types. For the composition arm the transitivity and
 // congruence that carry the premises to the result are derived here at verify
 // and never stored, so the witness holds only its leaf premises and only
 // definitional leaves are ever stored.
 bool mlir::trait::entailedByGroundCongruence(Type lhs, Type rhs,
                                              ArrayRef<TypeEqualityAttr> premises) {
-  lhs = stripClaimProofs(lhs);
-  rhs = stripClaimProofs(rhs);
-
   GroundCongruence closure;
   closure.intern(lhs);
   closure.intern(rhs);
   for (TypeEqualityAttr eq : premises)
-    closure.seed(stripClaimProofs(eq.getLhs()),
-                 stripClaimProofs(eq.getRhs()));
+    closure.seed(eq.getLhs(), eq.getRhs());
   closure.close();
 
   return closure.equal(lhs, rhs);
 }
 
 Type mlir::trait::stripClaimProofs(Type type) {
-  // An endpoint carries no proven claim by construction, so this rewrite finds
-  // nothing to strip inside one; the seal states that rather than relying on it.
+  if (auto claim = dyn_cast<ClaimType>(type))
+    return claim.asUnproven();
+  // A claim stands inside a container type -- a signature, a tuple of claims --
+  // only as a value's own type, never inside another claim's predicate (the
+  // trait application's symbol-use verifier refuses one there), so the rewrite
+  // strips each claim it reaches and never enters one.
   AttrTypeReplacer strip = makeEndpointSealedReplacer();
-  strip.addReplacement([](ClaimType claim) -> std::optional<Type> {
-    if (claim.isProven())
-      return Type(claim.asUnproven());
-    return std::nullopt;
+  strip.addReplacement([](ClaimType claim) -> std::pair<Type, WalkResult> {
+    return {claim.asUnproven(), WalkResult::skip()};
   });
   return strip.replace(type);
 }

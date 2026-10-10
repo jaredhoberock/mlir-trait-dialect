@@ -29,7 +29,9 @@ public:
 };
 
 /// Rewrite a type with every proven application claim stripped to its unproven
-/// form. Coerce comparison is modulo the proof, permanently.
+/// form: the claim the type is, or each claim it holds as a value's type, never
+/// a claim's interior, which holds no claim. Coerce comparison is modulo the
+/// proof, permanently.
 Type stripClaimProofs(Type type);
 
 /// A type's term decomposition for ground reasoning: an exact constructor
@@ -58,8 +60,9 @@ TermShape decomposeTerm(Type t);
 
 /// Whether `lhs` and `rhs` are equal under the ground congruence closure of the
 /// premise equalities -- the one entailment decision the witness composition arm
-/// and trait.coerce's proven arm share. Defined beside the closure; declared here
-/// for the composition arm's verifier.
+/// and trait.coerce's proven arm share. The two types are compared as given, so
+/// a caller comparing modulo proofs strips them first. Defined beside the
+/// closure; declared here for the composition arm's verifier.
 bool entailedByGroundCongruence(Type lhs, Type rhs,
                                 ArrayRef<TypeEqualityAttr> premises);
 
