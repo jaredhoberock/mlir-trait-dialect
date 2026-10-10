@@ -21,23 +21,11 @@
 
 namespace mlir::trait {
 
-AttrTypeReplacer makeEndpointSealedReplacer() {
-  AttrTypeReplacer replacer;
-  replacer.addReplacement(
-      [](Attribute sealed) -> std::optional<std::pair<Attribute, WalkResult>> {
-        if (!isa<TypeEqualityAttr, ImplArgumentsAttr>(sealed))
-          return std::nullopt;
-        return std::make_pair(sealed, WalkResult::skip());
-      });
-  return replacer;
-}
-
-/// The sealed replacer plus one projection rule, over the spellings `reads`
-/// admits.
+/// A replacer with one projection rule, over the spellings `reads` admits.
 static AttrTypeReplacer makeProjectionReplacer(
     bool (*reads)(ProjectionType),
     std::function<std::optional<Type>(ProjectionType)> hop) {
-  AttrTypeReplacer replacer = makeEndpointSealedReplacer();
+  AttrTypeReplacer replacer;
   replacer.addReplacement(
       [reads, hop = std::move(hop)](Type t) -> std::optional<Type> {
         auto projection = dyn_cast<ProjectionType>(t);

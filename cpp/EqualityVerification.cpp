@@ -282,7 +282,7 @@ Type mlir::trait::stripClaimProofs(Type type) {
   // only as a value's own type, never inside another claim's predicate (the
   // trait application's symbol-use verifier refuses one there), so the rewrite
   // strips each claim it reaches and never enters one.
-  AttrTypeReplacer strip = makeEndpointSealedReplacer();
+  AttrTypeReplacer strip;
   strip.addReplacement([](ClaimType claim) -> std::pair<Type, WalkResult> {
     return {claim.asUnproven(), WalkResult::skip()};
   });

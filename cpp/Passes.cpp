@@ -1313,7 +1313,7 @@ struct SettleSpelledObligationsPattern : public RewritePattern {
     auto keepClaim = [](ClaimType claim) {
       return std::make_pair(Type(claim), WalkResult::skip());
     };
-    AttrTypeReplacer replacer = makeEndpointSealedReplacer();
+    AttrTypeReplacer replacer;
     replacer.addReplacement(resolveProjection);
     replacer.addReplacement(
         [&](ClaimType claim) -> std::optional<std::pair<Type, WalkResult>> {
@@ -1325,7 +1325,7 @@ struct SettleSpelledObligationsPattern : public RewritePattern {
           return std::make_pair(proven.isAnswer() ? Type(*proven) : Type(claim),
                                 WalkResult::skip());
         });
-    AttrTypeReplacer views = makeEndpointSealedReplacer();
+    AttrTypeReplacer views;
     views.addReplacement(resolveProjection);
     views.addReplacement(keepClaim);
 
@@ -2027,10 +2027,9 @@ static LogicalResult erasePolymorphs(ModuleOp module) {
   // Phase 1: structural op rewrites via applyPartialConversion.
   TypeConverter opConverter = makeErasePolymorphsConverter();
 
-  // The sweep respells types wherever it reaches them, so it carries the seal:
-  // an equality's endpoints are a leaf to it, as they are to every replacer the
-  // dialect builds.
-  AttrTypeReplacer typeSweep = makeEndpointSealedReplacer();
+  // The sweep respells types wherever it reaches them; an equality's endpoints
+  // are a leaf to it, as they are to every replacer (`TypeEqualityAttr`).
+  AttrTypeReplacer typeSweep;
 
   // Collect from participating dialects
   RewritePatternSet patterns(ctx);

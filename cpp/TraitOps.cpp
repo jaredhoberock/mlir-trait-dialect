@@ -1925,7 +1925,7 @@ FailureOr<Type> ImplOp::specializeAssociatedTypeBinding(
 FailureOr<Type> ImplOp::readOwnBindings(Type ty,
                                         const SpecializationMap &arguments) {
   TraitApplicationAttr own = getSelfApplicationAt(arguments);
-  AttrTypeReplacer replacer = makeEndpointSealedReplacer();
+  AttrTypeReplacer replacer;
   replacer.addReplacement([&](ProjectionType proj) -> std::optional<Type> {
     if (proj.getTraitApplication() != own)
       return std::nullopt;

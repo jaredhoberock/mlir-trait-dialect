@@ -97,17 +97,29 @@ def TypeEqualityAttr : AttrDef<TraitDialect, "TypeEquality", []> {
     one. Global type rewrites — proof stamping foremost — rewrite claim types
     wherever they can see them; an endpoint that received a stamped proof would
     be exactly the state the constructor forbids, so two individually-correct
-    passes would kill a legal program. Every `AttrTypeReplacer` the dialect
-    builds therefore carries one attribute-level rule that returns this
-    attribute unchanged and skips its interior (`makeEndpointSealedReplacer`,
-    TraitTypes.hpp): endpoints are a leaf to a rewrite and reachable to a read.
-    The one sanctioned mover is the clone rule — one substitution applied to
-    both endpoints atomically, rebuilt through this constructor, re-checked.
+    passes would kill a legal program. The attribute's sub-element replacement
+    therefore answers it unchanged: endpoints are a leaf to every rewrite,
+    upstream's replacers included, and reachable to a read. The one mover is
+    the clone rule — one substitution applied to both endpoints atomically,
+    rebuilt through this constructor, re-checked (`respellClaimPredicate`).
   }];
 
   let parameters = (ins "::mlir::Type":$lhs, "::mlir::Type":$rhs);
 
   let genVerifyDecl = 1;
+
+  let extraClassDeclaration = [{
+    /// Replacement of the endpoints as sub-elements answers this attribute
+    /// unchanged, so no `AttrTypeReplacer` can move one; a writer constructs a
+    /// new attribute. Shadows the storage base's hook, which
+    /// `AbstractAttribute::get` reads off the concrete class.
+    static auto getReplaceImmediateSubElementsFn() {
+      return [](auto instance, ::llvm::ArrayRef<::mlir::Attribute>,
+                ::llvm::ArrayRef<::mlir::Type>) -> ::mlir::Attribute {
+        return instance;
+      };
+    }
+  }];
 
   // Prints `lhs = rhs`. The leading empty literal drops the space the
   // declarative printer emits before a leading parameter, so an equality
@@ -129,12 +141,11 @@ def ImplArgumentsAttr : AttrDef<TraitDialect, "ImplArguments", []> {
 
     A citation's claims move by their variables alone
     (`respellClaimPredicate`), and its arguments are spelled as those claims
-    are, so the arguments move by the same rule and by no other: every
-    `AttrTypeReplacer` the dialect builds carries an attribute-level rule that
-    returns this attribute unchanged and skips its interior
-    (`makeEndpointSealedReplacer`), and the one sanctioned mover is the clone
-    rule, which stamps each argument with the clone's variable bindings alone
-    (`makeTypeReplacerFromSubstitution`). A projection an argument spells is
+    are, so the arguments move by the same rule and by no other: the
+    attribute's sub-element replacement answers it unchanged, so no replacer
+    rewrites its interior, and the one mover is the clone rule, which builds a
+    new attribute stamping each argument with the clone's variable bindings
+    alone (`makeTypeReplacerFromSubstitution`). A projection an argument spells is
     never resolved in place; a template clone still stamps `@impl[!T]` to
     `@impl[i64]`. The arguments are ordinary sub-elements to a read, so a
     symbol one names is reached by the symbol-user driver.
@@ -145,6 +156,19 @@ def ImplArgumentsAttr : AttrDef<TraitDialect, "ImplArguments", []> {
   }];
 
   let parameters = (ins ArrayRefParameter<"Type">:$types);
+
+  let extraClassDeclaration = [{
+    /// Replacement of the arguments as sub-elements answers this attribute
+    /// unchanged, so no `AttrTypeReplacer` can write them; a writer constructs
+    /// a new attribute. Shadows the storage base's hook, which
+    /// `AbstractAttribute::get` reads off the concrete class.
+    static auto getReplaceImmediateSubElementsFn() {
+      return [](auto instance, ::llvm::ArrayRef<::mlir::Attribute>,
+                ::llvm::ArrayRef<::mlir::Type>) -> ::mlir::Attribute {
+        return instance;
+      };
+    }
+  }];
 
   let hasCustomAssemblyFormat = 1;
 }

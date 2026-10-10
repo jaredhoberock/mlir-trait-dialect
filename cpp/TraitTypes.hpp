@@ -77,34 +77,14 @@ inline std::optional<std::pair<Type, WalkResult>> respellClaimPredicate(
       WalkResult::skip());
 }
 
-/// A replacer whose equality endpoints and citation arguments are a leaf.
-///
-/// An equality's endpoints are ordinary sub-elements, so every walk reaches
-/// them -- which is what lets the framework's symbol-user driver see a
-/// reference standing in one. What no replacer may do is move one: an endpoint
-/// that received a stamped proof would be exactly the state
-/// `TypeEqualityAttr::get` refuses, so two individually-correct rewrites would
-/// kill a legal program. A citation's stated arguments (`ImplArgumentsAttr`)
-/// are spelled as its claims are, and a rewrite resolving a projection in one
-/// would break the identity its verifier checks between them. The one
-/// attribute-level rule this registers returns either attribute unchanged and
-/// skips its interior, which makes every replacer built from it a reader of
-/// both and never a writer. The rule sits on the attribute rather than on the
-/// claim or the op so that no attribute position holding one is reached
-/// either. The sanctioned movers are `respellClaimPredicate` and the clone's
-/// rule for stated arguments, which a clone registers
-/// (`makeTypeReplacerFromSubstitution`).
-AttrTypeReplacer makeEndpointSealedReplacer();
-
-/// The sealed replacer above plus the one rule every ground-projection rewrite
-/// registers: a polymorphic projection is left standing -- it stands for as many
-/// types as its variables have instances, so no resolver owes it an answer --
-/// and a ground one is resolved through `hop`, which declines by answering
-/// nullopt.
+/// A replacer with the one rule every ground-projection rewrite registers: a
+/// polymorphic projection is left standing -- it stands for as many types as
+/// its variables have instances, so no resolver owes it an answer -- and a
+/// ground one is resolved through `hop`, which declines by answering nullopt.
 AttrTypeReplacer makeGroundProjectionReplacer(
     std::function<std::optional<Type>(ProjectionType)> hop);
 
-/// The sealed replacer plus the head-keyed projection rule: which impl serves a
+/// A replacer with the head-keyed projection rule: which impl serves a
 /// projection is settled by its head application, and what that impl binds is a
 /// function of the projection's own associated-type arguments, so a projection
 /// whose head is ground is resolved through `hop` whatever those arguments still
@@ -437,7 +417,7 @@ inline bool isPurelyPolymorphicType(Type root) {
 inline Type applySubstitution(const SpecializationMap &specialization,
                               OtherBindings others, Type root,
                               ClaimPredicates claims) {
-  AttrTypeReplacer replacer = makeEndpointSealedReplacer();
+  AttrTypeReplacer replacer;
   replacer.addReplacement([&](Type t) -> std::optional<std::pair<Type, WalkResult>> {
     if (auto generic = dyn_cast<GenericTypeInterface>(t)) {
       // GenericTypeInterface types own generic specialization entirely;
@@ -461,7 +441,7 @@ inline Type applySubstitution(const SpecializationMap &specialization,
     return std::nullopt;
   });
 
-  // Move the equality endpoints the seal above holds as a leaf -- and under
+  // Move the equality endpoints every replacer holds as a leaf -- and under
   // `VariablesAlone` an application's arguments too -- applying the variable
   // bindings alone: such a predicate receives variable bindings, never a
   // projection or evidence binding resolved inside it (`respellClaimPredicate`).

@@ -73,10 +73,10 @@ static void cloneRegionWithTypeReplacement(
 AttrTypeReplacer makeTypeReplacerFromSubstitution(
     const SpecializationMap &variableBindings, CloneKind kind,
     const ProjectionBindings &projectionBindings) {
-  // The seal keeps a bare equality immutable under this rewrite; the clone
-  // rule below is the one mover, and it reaches an equality only through the
-  // claim that wraps it.
-  AttrTypeReplacer replacer = makeEndpointSealedReplacer();
+  // A bare equality is a leaf to this rewrite, as to every replacer
+  // (`TypeEqualityAttr`); the clone rule below is the one mover, and it
+  // reaches an equality only through the claim that wraps it.
+  AttrTypeReplacer replacer;
   bool isTemplate = kind == CloneKind::Template;
   // The replacer outlives its caller's maps, so it holds its own copies, and
   // every type the clone visits reads both.
@@ -126,8 +126,8 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(
   // claim a clone holds is the template's at the instance's arguments, and the
   // evidence a template wrote for it still meets it by identity
   // (`respellClaimPredicate`). A citation's stated arguments are spelled as
-  // its claims are and move by the same rule, past the seal that keeps every
-  // other rewrite out of them (`makeEndpointSealedReplacer`).
+  // its claims are and move by the same rule, a new attribute built here, as
+  // no replacer rewrites one in place (`ImplArgumentsAttr`).
   auto respell = [variables](Type t) {
     return applySubstitution(*variables, nullptr, t,
                              ClaimPredicates::Substituted);
