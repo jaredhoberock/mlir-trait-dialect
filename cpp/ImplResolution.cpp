@@ -396,18 +396,67 @@ Answer<ResolvedImpl> ImplResolver::resolveImplFor(
   return Selected::refusal();
 }
 
-/// Writes at the end of `scope` the proof `name` whose body derives `app` from
-/// `impl` over one premise per entry of `entries`, `impl`'s where entries at
-/// the citation: a witness of the next of `subproofs` for an application entry
-/// and the evidence the next of `equalitySteps` build for an equality entry.
-/// Where a symbol of `scope` holds `name` already, the proof is named as the
-/// module's symbol table renames it (`SymbolTable::insert`): mangled names are
-/// not one-to-one, so the table, not the mangling, makes a proof's name unique.
+/// The witness of each of `steps`, built at `builder`'s insertion point: each
+/// cites its impl with one claim per where entry, the evidence of the premise
+/// discharging an application entry and the evidence built for the equality at
+/// an equality entry.
+static SmallVector<Value> buildStepWitnesses(OpBuilder &builder, Location loc,
+                                             ArrayRef<ResolutionStep> steps) {
+  SmallVector<Value> witnesses;
+  for (const ResolutionStep &step : steps) {
+    SmallVector<Value> premises;
+    for (const auto &premise : step.premises) {
+      if (auto *proven = std::get_if<std::shared_ptr<ProvenPremise>>(&premise)) {
+        premises.push_back(buildPremiseEvidence(builder, loc, **proven));
+        continue;
+      }
+      const auto &nested = std::get<std::shared_ptr<EqualityResolution>>(premise);
+      premises.push_back(buildEqualityEvidence(builder, loc, nested->equality,
+                                               nested->steps));
+    }
+    witnesses.push_back(
+        WitnessOp::create(builder, loc, step.equality, step.impl, premises)
+            .getResult());
+  }
+  return witnesses;
+}
+
+/// `value` spelled as `spelling`: `value` itself where it is spelled so
+/// already, else its coercion citing the witness of each of `steps`, the steps
+/// carrying the one spelling to the other.
+static Value respell(OpBuilder &builder, Location loc, Value value,
+                     ClaimType spelling, ArrayRef<ResolutionStep> steps) {
+  if (value.getType() == Type(spelling))
+    return value;
+  return CoerceOp::create(builder, loc, spelling, value,
+                          buildStepWitnesses(builder, loc, steps))
+      .getResult();
+}
+
+Value buildPremiseEvidence(OpBuilder &builder, Location loc,
+                           const ProvenPremise &premise) {
+  Value witness =
+      WitnessOp::create(builder, loc, premise.proven.getProof(),
+                        premise.proven.getTraitApplication());
+  return respell(builder, loc, witness, premise.entry, premise.respelling);
+}
+
+/// Writes at the end of `scope` the proof `name` of `app`, whose body derives
+/// `header`, `impl`'s header at the citation, over one premise per entry of
+/// `entries`, `impl`'s where entries at the citation -- the evidence of the
+/// next of `applicationPremises` at an application entry and the evidence the
+/// next of `equalitySteps` build at an equality entry -- and returns it
+/// respelled as `app` by `headerSteps`. Where a symbol of `scope` holds `name`
+/// already, the proof is named as the module's symbol table renames it
+/// (`SymbolTable::insert`): mangled names are not one-to-one, so the table,
+/// not the mangling, makes a proof's name unique.
 static ProofOp
 writeProofBody(OpBuilder &builder, ModuleOp scope, StringRef name, ImplOp impl,
-               TraitApplicationAttr app, ArrayRef<ClaimType> entries,
-               ArrayRef<FlatSymbolRefAttr> subproofs,
-               ArrayRef<SmallVector<ResolutionStep>> equalitySteps) {
+               ClaimType header, TraitApplicationAttr app,
+               ArrayRef<ClaimType> entries,
+               ArrayRef<ProvenPremise> applicationPremises,
+               ArrayRef<SmallVector<ResolutionStep>> equalitySteps,
+               ArrayRef<ResolutionStep> headerSteps) {
   // A created proof is IR nothing revisits unless someone hears about it, for
   // the same reason a generated impl is.
   assert(builder.getListener() &&
@@ -423,20 +472,21 @@ writeProofBody(OpBuilder &builder, ModuleOp scope, StringRef name, ImplOp impl,
   symbols.insert(proof);
   builder.setInsertionPointToEnd(&proof.getBody().front());
   SmallVector<Value> premises;
-  auto nextSubproof = subproofs.begin();
+  auto nextPremise = applicationPremises.begin();
   auto nextSteps = equalitySteps.begin();
   for (ClaimType entry : entries) {
     if (entry.isApplication())
-      premises.push_back(WitnessOp::create(builder, loc, *nextSubproof++,
-                                           entry.getTraitApplication()));
+      premises.push_back(buildPremiseEvidence(builder, loc, *nextPremise++));
     else
       premises.push_back(buildEqualityEvidence(
           builder, loc, entry.getEqualityAttr(), *nextSteps++));
   }
-  auto derived = DeriveOp::create(builder, loc, ClaimType::get(ctx, app),
+  auto derived = DeriveOp::create(builder, loc, header,
                                   FlatSymbolRefAttr::get(ctx, impl.getSymName()),
                                   premises);
-  ReturnOp::create(builder, loc, derived.getResult());
+  ReturnOp::create(builder, loc,
+                   respell(builder, loc, derived.getResult(),
+                           ClaimType::get(ctx, app), headerSteps));
   return proof;
 }
 
@@ -472,18 +522,77 @@ ClaimType ImplResolver::findProof(ModuleOp scope, ImplOp impl,
   return {};
 }
 
-ClaimType ImplResolver::writeProof(
+Answer<ClaimType> ImplResolver::writeProof(
     ModuleOp scope, ImplOp impl, TraitApplicationAttr app,
     const SpecializationMap &arguments, ArrayRef<ClaimType> entries,
     ArrayRef<FlatSymbolRefAttr> subproofs,
     ArrayRef<SmallVector<ResolutionStep>> equalitySteps,
-    OpBuilder &builder) const {
+    const SelectionSite &site, OpBuilder &builder) {
   MLIRContext *ctx = scope.getContext();
-  ProofOp proof =
-      writeProofBody(builder, scope, impl.generateMangledName(arguments) + "_p",
-                     impl, app, entries, subproofs, equalitySteps);
+  // Every respelling is resolved before the proof is begun: resolving one can
+  // write the proofs its steps cite, and those stand before this one.
+  auto header = cast<ClaimType>(instantiate(Type(impl.getSelfClaim()), arguments));
+  Answer<SmallVector<ResolutionStep>> headerSteps = resolveRespelling(
+      header.getTraitApplication(), app, site, builder, /*depth=*/0);
+  if (!headerSteps.isAnswer())
+    return headerSteps.stop<ClaimType>();
+  SmallVector<ProvenPremise> applicationPremises;
+  auto nextSubproof = subproofs.begin();
+  for (ClaimType entry : entries) {
+    if (!entry.isApplication())
+      continue;
+    Answer<ProvenPremise> premise =
+        resolvePremise(entry, *nextSubproof++, site, builder, /*depth=*/0);
+    if (!premise.isAnswer())
+      return premise.stop<ClaimType>();
+    applicationPremises.push_back(std::move(*premise));
+  }
+  ProofOp proof = writeProofBody(
+      builder, scope, impl.generateMangledName(arguments) + "_p", impl, header,
+      app, entries, applicationPremises, equalitySteps, *headerSteps);
   return ClaimType::get(ctx, app,
                         FlatSymbolRefAttr::get(ctx, proof.getSymNameAttr()));
+}
+
+Answer<SmallVector<ResolutionStep>>
+ImplResolver::resolveRespelling(TraitApplicationAttr spelled,
+                                TraitApplicationAttr resolved,
+                                const SelectionSite &site, OpBuilder &builder,
+                                unsigned depth) {
+  SmallVector<ResolutionStep> steps;
+  for (auto [from, to] :
+       llvm::zip_equal(spelled.getTypeArgs(), resolved.getTypeArgs())) {
+    if (from == to)
+      continue;
+    auto sides =
+        resolveEquality(TypeEqualityAttr::get(from.getContext(), from, to),
+                        site, builder, steps, /*err=*/nullptr, depth);
+    if (!sides.isAnswer())
+      return sides.stop<SmallVector<ResolutionStep>>();
+    if (sides->first != sides->second)
+      return Answer<SmallVector<ResolutionStep>>::refusal();
+  }
+  return steps;
+}
+
+Answer<ProvenPremise>
+ImplResolver::resolvePremise(ClaimType entry, FlatSymbolRefAttr proof,
+                             const SelectionSite &site, OpBuilder &builder,
+                             unsigned depth) {
+  auto cited = ProofOp::getProofOpOrUnconditionalImplOp(site.scope, proof);
+  if (failed(cited))
+    return Answer<ProvenPremise>::refusal();
+  auto proofOp = dyn_cast<ProofOp>(*cited);
+  TraitApplicationAttr own = proofOp ? proofOp.getTraitApplication()
+                                     : cast<ImplOp>(*cited).getSelfApplication();
+  Answer<SmallVector<ResolutionStep>> respelling = resolveRespelling(
+      own, entry.getTraitApplication(), site, builder, depth);
+  if (!respelling.isAnswer())
+    return respelling.stop<ProvenPremise>();
+  MLIRContext *ctx = entry.getContext();
+  return ProvenPremise{ClaimType::get(ctx, own, proof),
+                       ClaimType::get(ctx, entry.getTraitApplication(), proof),
+                       std::move(*respelling)};
 }
 
 ImplResolver::ImplResolver(ModuleOp m) : module(m) {
@@ -684,9 +793,11 @@ Answer<ClaimType> ImplResolver::resolveAndEnsureProofFor(
   // memoized by the monomorphic app.
   if (ClaimType found = findProof(scope, impl, app, subproofs))
     return recordProof(scope, app, found.getProof());
-  ClaimType written = writeProof(scope, impl, app, *subst, entries, subproofs,
-                                 equalitySteps, builder);
-  return recordProof(scope, app, written.getProof());
+  Proven written = writeProof(scope, impl, app, *subst, entries, subproofs,
+                              equalitySteps, site, builder);
+  if (!written.isAnswer())
+    return written;
+  return recordProof(scope, app, written->getProof());
 }
 
 //===----------------------------------------------------------------------===//
@@ -724,8 +835,27 @@ ImplResolver::resolveEquality(TypeEqualityAttr eq, const SelectionSite &site,
             resolveProjection(proj, site, builder, err);
         if (!resolved.isAnswer())
           return stop(resolved.isOverflow());
+        // The step is stated at the application the impl's header spells at
+        // its arguments, which its witness's citation rebuilds; the steps
+        // resolving the projections either spelling holds carry the
+        // projection as spelled to it.
+        TraitApplicationAttr header =
+            cast<ClaimType>(instantiate(Type(resolved->getImpl().getSelfClaim()),
+                                        resolved->getArguments()))
+                .getTraitApplication();
+        ProjectionType stated = proj;
+        if (header != proj.getTraitApplication()) {
+          Answer<SmallVector<ResolutionStep>> respelling = resolveRespelling(
+              proj.getTraitApplication(), header, site, builder, depth + 1);
+          if (!respelling.isAnswer())
+            return stop(respelling.isOverflow());
+          for (ResolutionStep &carried : *respelling)
+            steps.push_back(std::move(carried));
+          stated = ProjectionType::get(ctx, header, proj.getAssocName(),
+                                       proj.getAssocTypeArgs());
+        }
         ResolutionStep step;
-        step.equality = TypeEqualityAttr::get(ctx, Type(proj),
+        step.equality = TypeEqualityAttr::get(ctx, Type(stated),
                                               resolved->getBinding());
         step.impl = FlatSymbolRefAttr::get(
             ctx, resolved->getImpl().getSymNameAttr());
@@ -736,8 +866,12 @@ ImplResolver::resolveEquality(TypeEqualityAttr eq, const SelectionSite &site,
                 resolveAndEnsureProofFor(entry, site, builder, err);
             if (!proven.isAnswer())
               return stop(proven.isOverflow());
-            step.premises.push_back(ClaimType::get(
-                ctx, entry.getTraitApplication(), proven->getProof()));
+            Answer<ProvenPremise> premise = resolvePremise(
+                entry, proven->getProof(), site, builder, depth + 1);
+            if (!premise.isAnswer())
+              return stop(premise.isOverflow());
+            step.premises.push_back(
+                std::make_shared<ProvenPremise>(std::move(*premise)));
             continue;
           }
           auto nested = std::make_shared<EqualityResolution>();
@@ -786,23 +920,7 @@ Value buildEqualityEvidence(OpBuilder &builder, Location loc,
     return WitnessOp::create(builder, loc, eq).getResult();
   assert(!steps.empty() &&
          "two spellings of one ground type differ in a projection they spell");
-  SmallVector<Value> witnesses;
-  for (const ResolutionStep &step : steps) {
-    SmallVector<Value> premises;
-    for (const auto &premise : step.premises) {
-      if (auto *proven = std::get_if<ClaimType>(&premise)) {
-        premises.push_back(WitnessOp::create(builder, loc, proven->getProof(),
-                                             proven->getTraitApplication()));
-        continue;
-      }
-      const auto &nested = std::get<std::shared_ptr<EqualityResolution>>(premise);
-      premises.push_back(buildEqualityEvidence(builder, loc, nested->equality,
-                                               nested->steps));
-    }
-    witnesses.push_back(
-        WitnessOp::create(builder, loc, step.equality, step.impl, premises)
-            .getResult());
-  }
+  SmallVector<Value> witnesses = buildStepWitnesses(builder, loc, steps);
   if (witnesses.size() == 1 && steps.front().equality == eq)
     return witnesses.front();
   return WitnessOp::create(builder, loc, eq, ValueRange(witnesses)).getResult();

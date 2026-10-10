@@ -1551,10 +1551,12 @@ def ProofOp : TraitDialectOp<"proof", [
   let summary = "A named, closed proof of one claim";
   let description = [{
     A closed evidence function that takes nothing and returns one claim: its
-    body derives the claim from an impl over evidence for each of the impl's
-    where entries, and `trait.return` returns the derived claim. The proven
-    claim is the returned derive's application, carrying this proof's name; the
-    impl, its arguments and its premises are read off that derive. The body
+    body derives the impl's header from an impl over evidence for each of the
+    impl's where entries, and `trait.return` returns the derived claim, or its
+    coercion to the application with the projections the header spells
+    resolved. The proven claim is the returned application, carrying this
+    proof's name; the impl, its arguments and its premises are read off the
+    derive. The body
     holds decided evidence only -- witnesses of other proofs and unconditional
     impls, equality leaves, coercions, derives -- and never an allegation: a
     proof records a decision already made. Nor does it hold a projection, whose
@@ -1583,13 +1585,17 @@ def ProofOp : TraitDialectOp<"proof", [
   let regions = (region SizedRegion<1>:$body);
 
   let extraClassDeclaration = [{
-    /// The derive the body returns, the decision this proof records.
+    /// The claim the body returns: the derive, or its respelling.
+    Value getProven();
+
+    /// The derive the body returns, read through its respelling: the decision
+    /// this proof records.
     DeriveOp getDerive();
 
     ImplOp getImpl() { return getDerive().getImplOp(); }
 
     TraitApplicationAttr getTraitApplication() {
-      return getDerive().getTraitApplication();
+      return cast<ClaimType>(getProven().getType()).getTraitApplication();
     }
 
     ClaimType getProvenClaim() {

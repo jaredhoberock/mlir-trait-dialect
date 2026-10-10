@@ -299,6 +299,7 @@ private:
 };
 
 struct EqualityResolution;
+struct ProvenPremise;
 
 /// One step of an endpoint's resolution, as its witness cites it: the equality
 /// `projection = binding`, the impl selection chose for the projection's
@@ -308,7 +309,8 @@ struct EqualityResolution;
 struct ResolutionStep {
   TypeEqualityAttr equality;
   FlatSymbolRefAttr impl;
-  SmallVector<std::variant<ClaimType, std::shared_ptr<EqualityResolution>>>
+  SmallVector<std::variant<std::shared_ptr<ProvenPremise>,
+                           std::shared_ptr<EqualityResolution>>>
       premises;
 };
 
@@ -318,6 +320,22 @@ struct EqualityResolution {
   TypeEqualityAttr equality;
   SmallVector<ResolutionStep> steps;
 };
+
+/// An application where entry discharged by a proof, as the evidence citing it
+/// is written: `proven`, the proof's claim at the application its declaration
+/// proves, and `entry`, the where entry's spelling carrying that proof, which
+/// `respelling` carries `proven` to -- no step where the two are spelled alike.
+struct ProvenPremise {
+  ClaimType proven;
+  ClaimType entry;
+  SmallVector<ResolutionStep> respelling;
+};
+
+/// Builds at `builder`'s insertion point the witness of `premise`'s proof at
+/// its own application, coerced to the entry's spelling by the witnesses of
+/// its respelling steps where the two differ.
+Value buildPremiseEvidence(OpBuilder &builder, Location loc,
+                           const ProvenPremise &premise);
 
 /// Builds at `builder`'s insertion point the evidence for `eq` from `steps`,
 /// the steps resolving its sides to one ground spelling: refl for identical
@@ -534,20 +552,26 @@ class ImplResolver {
     ClaimType findProof(ModuleOp scope, ImplOp impl, TraitApplicationAttr app,
                         ArrayRef<FlatSymbolRefAttr> subproofs) const;
 
-    /// Writes in `scope` the proof whose body derives `app` from `impl` at
-    /// `arguments` over one premise per entry of `entries`, `impl`'s where
-    /// entries at those arguments: a witness of the proof `subproofs` names for
-    /// each application entry, in order, and for each equality entry the
-    /// evidence its `equalitySteps` build. This is a derive transcribed, not a
-    /// selection: it records nothing a selection reads. The proof stands at
-    /// the end of `scope`, named by its impl and arguments as the module's
-    /// symbol table admits.
-    ClaimType writeProof(ModuleOp scope, ImplOp impl, TraitApplicationAttr app,
-                         const SpecializationMap &arguments,
-                         ArrayRef<ClaimType> entries,
-                         ArrayRef<FlatSymbolRefAttr> subproofs,
-                         ArrayRef<SmallVector<ResolutionStep>> equalitySteps,
-                         OpBuilder &builder) const;
+    /// Writes in `scope` the proof of `app` whose body derives `impl`'s header
+    /// at `arguments` over one premise per entry of `entries`, `impl`'s where
+    /// entries at those arguments: for each application entry, in order, a
+    /// witness of the proof the next of `subproofs` names at the application
+    /// that proof proves, and for each equality entry the evidence its `equalitySteps` build.
+    /// Each spelling is written once, where it is decided: a witness whose
+    /// application its entry spells otherwise, and a header spelling `app`
+    /// otherwise, are coerced to the spelling they meet by the witnesses of the
+    /// steps selection at `site` resolves their projections through. This is a
+    /// derive transcribed, not a selection: it records nothing a selection
+    /// reads. The proof stands at the end of `scope`, named by its impl and
+    /// arguments as the module's symbol table admits. Refused where selection
+    /// does not carry two such spellings to one; overflows where it does.
+    Answer<ClaimType> writeProof(ModuleOp scope, ImplOp impl,
+                                 TraitApplicationAttr app,
+                                 const SpecializationMap &arguments,
+                                 ArrayRef<ClaimType> entries,
+                                 ArrayRef<FlatSymbolRefAttr> subproofs,
+                                 ArrayRef<SmallVector<ResolutionStep>> equalitySteps,
+                                 const SelectionSite &site, OpBuilder &builder);
 
   private:
     /// Finds the unique impl for the wanted claim and returns the normalized
@@ -557,6 +581,27 @@ class ImplResolver {
         const SelectionSite &site,
         OpBuilder &builder,
         llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+
+    /// The steps carrying `spelled`'s type arguments to `resolved`'s through
+    /// selection at `site`: those resolving the equality of each argument the
+    /// two spell apart, whose sides selection must carry to one spelling,
+    /// bounded below `depth` as `resolveEquality` is. Refused where it does
+    /// not; overflows where selection does.
+    Answer<SmallVector<ResolutionStep>>
+    resolveRespelling(TraitApplicationAttr spelled,
+                      TraitApplicationAttr resolved, const SelectionSite &site,
+                      OpBuilder &builder, unsigned depth);
+
+    /// The premise discharging the application entry `entry` by the proof
+    /// `proof` names in `site`'s scope: that proof at the application its
+    /// declaration proves -- a proof's own, an unconditional impl's header --
+    /// and the steps respelling it as `entry`. Refused where the name resolves
+    /// to no proof, or selection does not carry the two spellings together;
+    /// overflows where selection does.
+    Answer<ProvenPremise> resolvePremise(ClaimType entry,
+                                         FlatSymbolRefAttr proof,
+                                         const SelectionSite &site,
+                                         OpBuilder &builder, unsigned depth);
 
     /// `ty` with every projection `replacerFor` admits that selection
     /// resolves resolved, to a fixed point; none where the resolution still

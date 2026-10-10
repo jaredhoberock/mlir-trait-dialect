@@ -2089,12 +2089,21 @@ FailureOr<SpecializationMap> ImplOp::buildImplSpecialization(
 // ProofOp
 //===----------------------------------------------------------------------===//
 
+/// The derive `proven` is, or the derive a coercion `proven` is respells: a
+/// proof returns its derive at the header's spelling or respelled once.
+static DeriveOp derivedThroughRespelling(Value proven) {
+  if (auto coerce = proven.getDefiningOp<CoerceOp>())
+    proven = coerce.getInput();
+  return proven.getDefiningOp<DeriveOp>();
+}
+
 LogicalResult ProofOp::verify() {
   if (failed(verifyTemplateIsNotPublic(getOperation())))
     return failure();
 
   // A proof is closed and returns the one claim it proves: the claim a derive
-  // in its body derives, which is the decision the proof records.
+  // in its body derives, which is the decision the proof records, spelled as
+  // the derive spells it or respelled by one coercion.
   Block &body = getBody().front();
   if (body.getNumArguments() != 0)
     return emitOpError() << "takes no block arguments: a proof is closed";
@@ -2102,13 +2111,18 @@ LogicalResult ProofOp::verify() {
   if (!returned)
     return emitOpError() << "must end with 'trait.return' of the claim it proves";
   if (returned.getNumOperands() != 1 ||
-      !returned.getOperand(0).getDefiningOp<DeriveOp>())
-    return emitOpError() << "returns the one claim a derive in its body derives";
+      !derivedThroughRespelling(returned.getOperand(0)))
+    return emitOpError() << "returns the one claim a derive in its body "
+                            "derives, or that claim respelled";
   return success();
 }
 
+Value ProofOp::getProven() {
+  return getBody().front().getTerminator()->getOperand(0);
+}
+
 DeriveOp ProofOp::getDerive() {
-  return getBody().front().getTerminator()->getOperand(0).getDefiningOp<DeriveOp>();
+  return derivedThroughRespelling(getProven());
 }
 
 TraitOp ProofOp::getTrait() {

@@ -672,11 +672,16 @@ struct ProveClaimResultPattern : public RewritePattern {
       equalitySteps.push_back(std::move(steps));
     }
 
-    ClaimType proven = resolver.writeProof(scope, impl, app, *arguments,
-                                           entries, subproofs, equalitySteps,
-                                           rewriter);
-    rewriter.replaceOpWithNewOp<WitnessOp>(derive, proven.getProof(),
-                                           proven.getTraitApplication());
+    Answer<ClaimType> proven =
+        resolver.writeProof(scope, impl, app, *arguments, entries, subproofs,
+                            equalitySteps, site, rewriter);
+    if (!proven.isAnswer()) {
+      named.insert(derive);
+      return rewriter.notifyMatchFailure(derive,
+                                         "a projection is not resolved");
+    }
+    rewriter.replaceOpWithNewOp<WitnessOp>(derive, proven->getProof(),
+                                           proven->getTraitApplication());
     return success();
   }
 
