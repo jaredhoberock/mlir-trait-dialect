@@ -4,12 +4,14 @@
 // RUN: not mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' 2>&1 | FileCheck %s
 
 // @g selects between its two parameters, each @Mark[!T], and the call supplies
-// them through two impls of @Mark[i32]: @Seven and @Nine. A claim's proof is
-// part of its type, so the instance's two arms are of two types, and the
-// select, whose arms and result share one type, refuses the instance: which
-// impl the select's result runs is decided by no position.
+// them through two impls of @Mark[i32]: @Seven and @Nine. A select's result is
+// a join of the two values it chooses between, and a claim names one proof,
+// so the instance's select, whose proof would depend on the condition, has no
+// type: it is refused where it stands, naming what each value carries, and
+// neither value's proof is chosen.
 
-// CHECK: error: 'arith.select' op failed to verify that all of {true_value, false_value, result} have same type
+// CHECK: error: unproven monomorphic claim '!trait.claim<@Mark[i32]>' after instantiate-monomorphs
+// CHECK: note: control flow joins it from '!trait.claim<@Mark[i32] by @Seven>' and '!trait.claim<@Mark[i32] by @Nine>'
 
 !T = !trait.poly<0>
 trait.trait private @Mark(%self: !trait.claim<@Mark[!T]>) { trait.method @value() -> i64 }

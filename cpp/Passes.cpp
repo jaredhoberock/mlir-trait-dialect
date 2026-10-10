@@ -3,12 +3,14 @@
 #include "Specialization.hpp"
 #include "ImplResolution.hpp"
 #include "Passes.hpp"
+#include <llvm/ADT/MapVector.h>
 #include <llvm/ADT/ScopeExit.h>
 #include <llvm/ADT/SetVector.h>
 #include "TraitOps.hpp"
 #include "Trait.hpp"
 #include "TraitTypes.hpp"
 #include <cstdlib>
+#include <thread>
 #include <mlir/Dialect/Arith/IR/Arith.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/Dialect/Func/Transforms/FuncConversions.h>
@@ -22,6 +24,7 @@
 #include <mlir/Transforms/DialectConversion.h>
 #include <mlir/Transforms/GreedyPatternRewriteDriver.h>
 #include <mlir/Transforms/Passes.h>
+#include <mlir/Transforms/RegionUtils.h>
 
 namespace mlir::trait {
 
@@ -1140,12 +1143,16 @@ struct SettleCoercePattern : public OpRewritePattern<CoerceOp> {
 /// A position control flow writes, with the values the edges reaching it carry
 /// there: a successor input of a region-branch op -- one of its results, or an
 /// entry argument of one of its regions -- takes the successor operands the
-/// op's edges forward to it (`RegionBranchOpInterface`), and the argument of a
+/// op's edges forward to it (`RegionBranchOpInterface`), the argument of a
 /// non-entry block the operand each predecessor's branch forwards to it
-/// (`BranchOpInterface`). An edge carrying the position's own value back, a
-/// loop's unchanged iteration value, carries no other type and is not listed.
-/// `named` is false where a predecessor is no branch or makes the operand
-/// itself, so an edge reaches the position carrying no value the IR names.
+/// (`BranchOpInterface`), and a select-like op's result its true and false
+/// values, the condition choosing between them and forwarding neither
+/// (`SelectLikeOpInterface`, read as upstream's `getControlFlowPredecessors`
+/// reads it). A position holds one of the values its edges carry, as the op's
+/// boundary delivers it; one whose boundary transforms what it delivers has no
+/// edge whose type settles it, and the op's own dialect writes it. `named` is
+/// false where a predecessor is no branch or makes the operand itself, so an
+/// edge reaches the position carrying no value the IR names.
 struct Join {
   Value position;
   SmallVector<Value> producers;
@@ -1156,6 +1163,9 @@ struct Join {
 /// state them.
 static SmallVector<Join> joinsOf(Operation *op) {
   SmallVector<Join> joins;
+  if (auto select = dyn_cast<SelectLikeOpInterface>(op))
+    joins.push_back(
+        {op->getResult(0), {select.getTrueValue(), select.getFalseValue()}});
   if (auto branch = dyn_cast<RegionBranchOpInterface>(op)) {
     RegionBranchInverseSuccessorMapping edges;
     branch.getSuccessorInputOperandMapping(edges);
@@ -1165,8 +1175,7 @@ static SmallVector<Join> joinsOf(Operation *op) {
         return;
       Join join{position};
       for (OpOperand *operand : forwarded->second)
-        if (operand->get() != position)
-          join.producers.push_back(operand->get());
+        join.producers.push_back(operand->get());
       joins.push_back(std::move(join));
     };
     for (Value result : op->getResults())
@@ -1192,12 +1201,114 @@ static SmallVector<Join> joinsOf(Operation *op) {
             join.named = false;
             continue;
           }
-          if (Value value = forwarded[argument.getArgNumber()]; value != argument)
-            join.producers.push_back(value);
+          join.producers.push_back(forwarded[argument.getArgNumber()]);
         }
         joins.push_back(std::move(join));
       }
   return joins;
+}
+
+/// The op whose spelling holds `value`'s type: its defining op, or the op
+/// whose region holds the block taking it.
+static Operation *ownerOf(Value value) {
+  if (auto result = dyn_cast<OpResult>(value))
+    return result.getOwner();
+  return cast<BlockArgument>(value).getOwner()->getParentOp();
+}
+
+/// The unsettled joins a join's value can come around through, and the values
+/// entering them from outside. A join holds what its edges deliver, so
+/// whatever stands at one entered along a chain of edges whose first value is
+/// no unsettled join: the backward closure of `root` over the edges carrying
+/// unsettled joins is its component, and the values met that are none are its
+/// entries, the only values any position of the component holds. A cycle of
+/// joins -- a loop's iteration argument handed back unchanged, or through an
+/// inner `scf.if`, or around an `scf.while`'s two regions -- is a component
+/// with the entries that start it; an edge carrying a position's own value
+/// back is an edge inside it. This is the lattice of upstream's sparse
+/// dataflow analysis (unknown, one proof, conflict) with its unknown state
+/// held in the closure alone, never in a type. `named` is false where some
+/// position's edge carries no value the IR names. Derived afresh from
+/// `joinsOf` at every query.
+struct JoinComponent {
+  SmallVector<Value> positions;
+  llvm::SetVector<Value> entries;
+  bool named = true;
+
+  /// The closure of `root`, an unsettled position `joinsOf` lists.
+  static JoinComponent of(Value root) {
+    auto unsettled = [](Value value) {
+      return carriesUndischargedObligation(value.getType());
+    };
+    DenseMap<Value, Join> joins;
+    DenseSet<Operation *> read;
+    auto joinAt = [&](Value value) -> const Join * {
+      if (Operation *owner = ownerOf(value); read.insert(owner).second)
+        for (Join &join : joinsOf(owner))
+          joins.try_emplace(join.position, std::move(join));
+      auto found = joins.find(value);
+      return found == joins.end() ? nullptr : &found->second;
+    };
+    JoinComponent component;
+    DenseSet<Value> met{root};
+    SmallVector<Value> unvisited{root};
+    while (!unvisited.empty()) {
+      Value position = unvisited.pop_back_val();
+      component.positions.push_back(position);
+      Join join = *joinAt(position);
+      component.named &= join.named;
+      for (Value producer : join.producers) {
+        if (unsettled(producer) && joinAt(producer)) {
+          if (met.insert(producer).second)
+            unvisited.push_back(producer);
+          continue;
+        }
+        component.entries.insert(producer);
+      }
+    }
+    return component;
+  }
+
+  /// The one type every entry carries, where it is proven and settles every
+  /// position (`settles`); null where an entry still awaits its proof, two
+  /// entries carry two types, an edge names no value, or a boundary between
+  /// them transforms what it delivers.
+  Type agreedType() const {
+    llvm::SmallSetVector<Type, 1> supplied;
+    for (Value entry : entries)
+      supplied.insert(entry.getType());
+    if (!named || supplied.size() != 1 ||
+        !llvm::all_of(positions, [&](Value position) {
+          return settles(supplied.front(), position.getType());
+        }))
+      return Type();
+    return supplied.front();
+  }
+};
+
+/// Whether `op`'s own invariants hold with its results typed `types`: its
+/// traits, the constraints it declares, and its verifier, its regions
+/// unjudged. The types are set for the judgment and the results' own restored
+/// after it, and the judgment reports nothing -- the diagnostics this thread
+/// raises while it runs are taken, every other thread's pass on -- so a
+/// refusal leaves `op` as it stood and tells no one.
+static bool admitsResultTypes(Operation *op, TypeRange types) {
+  SmallVector<Type> standing(op->getResultTypes());
+  auto retype = [&](TypeRange to) {
+    for (auto [result, type] : llvm::zip(op->getResults(), to))
+      result.setType(type);
+  };
+  retype(types);
+  bool admitted;
+  {
+    ScopedDiagnosticHandler quiet(
+        op->getContext(), [judging = std::this_thread::get_id()](Diagnostic &) {
+          return success(std::this_thread::get_id() == judging);
+        });
+    admitted = succeeded(op->getName().verifyInvariants(op));
+  }
+  retype(standing);
+  return admitted;
 }
 
 /// Monomorphizes result types for any op implementing
@@ -1207,8 +1318,8 @@ static SmallVector<Join> joinsOf(Operation *op) {
 /// `inferReturnTypes` computes the specialized result types, or, for a result
 /// stating what no operand determines, its `refineReturnTypes` merges the
 /// result as written with what they do. If they differ from the op's current
-/// result types after normalization, the pattern updates them in-place under
-/// the rewriter.
+/// result types after normalization and the op admits them beside its operands
+/// as they stand, the pattern updates them in-place under the rewriter.
 struct MonomorphizeResultTypesPattern
     : public OpInterfaceRewritePattern<InferTypeOpInterface> {
   using OpInterfaceRewritePattern::OpInterfaceRewritePattern;
@@ -1230,8 +1341,9 @@ struct MonomorphizeResultTypesPattern
 
     // A result more than one edge reaches is a join, written from every
     // producer or not at all (`ProveJoinsPattern`). An op's inference reads
-    // one of them -- upstream's `scf.if` its then-region's yield -- which is
-    // right for a builder and no writer of a join.
+    // one of them -- upstream's `scf.if` its then-region's yield, its
+    // `arith.select` its false value -- which is right for a builder and no
+    // writer of a join.
     if (llvm::any_of(joinsOf(iface), [](const Join &join) {
           return isa<OpResult>(join.position) && join.producers.size() > 1;
         }))
@@ -1272,6 +1384,17 @@ struct MonomorphizeResultTypesPattern
     // check if anything actually changes
     if (llvm::equal(iface->getResultTypes(), specializedTypes))
       return rewriter.notifyMatchFailure(iface, "result types unchanged");
+
+    // Inference may read one representative of the operands an op ties to its
+    // result -- upstream's generated inference for `AllTypesMatch` and
+    // `SameOperandsAndResultType` reads one -- so the op judges the types
+    // beside its operands as they stand: a result written while another
+    // operand tied to it carries another proof is no type of the op, and stays
+    // unproven for the stage's exit walk to name, whichever operand inference
+    // read. The judgment notifies the driver of nothing, so a deferral is no
+    // rewrite.
+    if (!admitsResultTypes(iface, specializedTypes))
+      return rewriter.notifyMatchFailure(iface, "the op refuses the inferred types");
 
     // mutate result types in-place
     rewriter.modifyOpInPlace(iface, [&] {
@@ -1467,53 +1590,63 @@ struct ProveFunctionResultsPattern : public OpRewritePattern<func::FuncOp> {
   }
 };
 
-/// Gives a join the proofs control flow carries into it: where every edge
-/// reaching the position carries one type that settles it (`settles`), the
-/// position takes it, as a function's result takes what its returns hand back.
-/// A claim names one proof, so edges carrying two leave the position unproven,
-/// a value whose proof would depend on the path taken having no type, and the
-/// stage's exit walk names it with what each edge carries. Nothing selects
-/// for a join.
+/// Gives a join the proofs control flow carries into it: where every value
+/// entering its component (`JoinComponent`) carries one proven type that
+/// settles each of its positions (`settles`), every position of the component
+/// takes it, as a function's result takes what its returns hand back. A claim
+/// names one proof, so entries carrying two leave the component unproven, a
+/// value whose proof would depend on the path taken having no type, and the
+/// stage's exit walk names it with what each entry carries; an entry still
+/// awaiting its proof holds the component back until it has one, so no
+/// position is written with a proof another entry could still contradict.
+/// Nothing selects for a join.
 struct ProveJoinsPattern : public RewritePattern {
   ProveJoinsPattern(MLIRContext *ctx)
     : RewritePattern(MatchAnyOpTypeTag(), /*benefit=*/1, ctx) {}
 
   LogicalResult matchAndRewrite(Operation *op,
                                 PatternRewriter &rewriter) const override {
-    // The positions `joinsOf` lists: a region-branch op's results and its
-    // regions' arguments, and any op's later blocks' arguments. Only an op
-    // holding regions holds one.
-    if (op->getNumRegions() == 0)
+    // The positions `joinsOf` lists: a select-like op's result, a
+    // region-branch op's results and its regions' arguments, and any op's
+    // later blocks' arguments.
+    bool selects = isa<SelectLikeOpInterface>(op);
+    if (op->getNumRegions() == 0 && !selects)
       return failure();
     auto unsettled = [](Value value) {
       return carriesUndischargedObligation(value.getType());
     };
     bool branches = isa<RegionBranchOpInterface>(op);
     bool holdsAnObligation =
-        branches && llvm::any_of(op->getResults(), unsettled);
+        (selects || branches) && llvm::any_of(op->getResults(), unsettled);
     for (Region &region : op->getRegions())
       for (Block &block : region)
         if (branches || !block.isEntryBlock())
           holdsAnObligation |= llvm::any_of(block.getArguments(), unsettled);
     if (!holdsAnObligation)
       return rewriter.notifyMatchFailure(op, "no join to settle");
-    SmallVector<std::pair<Value, Type>> retyped;
+    // A component is written whole in this one application, each op holding
+    // a position of it under one modification, so nothing reads it half
+    // written.
+    llvm::MapVector<Operation *, SmallVector<std::pair<Value, Type>>> retyped;
+    DenseSet<Value> written;
     for (const Join &join : joinsOf(op)) {
-      if (!join.named || !unsettled(join.position))
+      if (!unsettled(join.position) || written.contains(join.position))
         continue;
-      llvm::SmallSetVector<Type, 1> supplied;
-      for (Value producer : join.producers)
-        supplied.insert(producer.getType());
-      if (supplied.size() == 1 &&
-          settles(supplied.front(), join.position.getType()))
-        retyped.emplace_back(join.position, supplied.front());
+      JoinComponent component = JoinComponent::of(join.position);
+      Type agreed = component.agreedType();
+      if (!agreed)
+        continue;
+      for (Value position : component.positions)
+        if (written.insert(position).second)
+          retyped[ownerOf(position)].emplace_back(position, agreed);
     }
     if (retyped.empty())
       return rewriter.notifyMatchFailure(op, "no join settles");
-    rewriter.modifyOpInPlace(op, [&] {
-      for (auto [position, type] : retyped)
-        position.setType(type);
-    });
+    for (auto &written : retyped)
+      rewriter.modifyOpInPlace(written.first, [&] {
+        for (auto [position, type] : written.second)
+          position.setType(type);
+      });
     return success();
   }
 };
@@ -1774,20 +1907,18 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
         continue;
       }
     }
-    // A join is written from what control flow carries into it, never by
-    // selection, so it is named with what each edge carries.
-    SmallVector<Join> joins = joinsOf(op);
+    // A join is written from what enters its component, never by selection,
+    // so it is named with what each entering edge carries.
     Value at = position;
-    auto join = llvm::find_if(
-        joins, [&](const Join &each) { return each.position == at; });
-    if (join != joins.end()) {
+    if (llvm::any_of(joinsOf(op),
+                     [&](const Join &each) { return each.position == at; })) {
       InFlightDiagnostic report =
           emitError(position.getLoc())
           << "unproven monomorphic claim " << claim
           << " after instantiate-monomorphs";
       llvm::SmallSetVector<Type, 2> carried;
-      for (Value producer : join->producers)
-        carried.insert(producer.getType());
+      for (Value entry : JoinComponent::of(position).entries)
+        carried.insert(entry.getType());
       Diagnostic &note = report.attachNote();
       note << "control flow joins it from ";
       llvm::interleave(
@@ -2026,6 +2157,23 @@ struct EraseCoerceOp : public OpConversionPattern<CoerceOp> {
   }
 };
 
+/// Erases a select-like op whose result erases to nothing, as a claim does:
+/// the values it chooses between carry the same claim and leave with it, so
+/// its condition chooses nothing that survives (`SelectLikeOpInterface`).
+struct EraseSelectOfClaims
+    : public OpInterfaceConversionPattern<SelectLikeOpInterface> {
+  using OpInterfaceConversionPattern::OpInterfaceConversionPattern;
+
+  LogicalResult matchAndRewrite(SelectLikeOpInterface op, ArrayRef<ValueRange>,
+                                ConversionPatternRewriter &rewriter) const override {
+    SmallVector<Type> converted;
+    if (failed(getTypeConverter()->convertTypes(op->getResultTypes(), converted)) ||
+        !converted.empty())
+      return rewriter.notifyMatchFailure(op, "its result survives erasure");
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
 
 /// The first type of the trait dialect reachable in `root` that `admitted` does
 /// not accept, or a null type when every one it finds is admitted. `root` is a
@@ -2175,6 +2323,15 @@ static LogicalResult checkNothingOutsideATemplateCarriesTheory(ModuleOp module) 
 static LogicalResult erasePolymorphs(ModuleOp module) {
   MLIRContext* ctx = module.getContext();
 
+  // A block no edge reaches never runs, and the structural conversions below
+  // convert a later block with the branches that reach it, so one no branch
+  // reaches leaves before them (upstream's `eraseUnreachableBlocks`). Nothing
+  // writes into a template.
+  IRRewriter unreachable(ctx);
+  for (Operation &op : *module.getBody())
+    if (!isTemplate(&op))
+      (void)eraseUnreachableBlocks(unreachable, op.getRegions());
+
   // Materialize the monomorphic symbol definitions the type sweep below will
   // reference.  This runs while the generic templates and concrete type
   // arguments are still present, because the sweep only mangles references to
@@ -2201,7 +2358,7 @@ static LogicalResult erasePolymorphs(ModuleOp module) {
 
   // Add trait dialect's own patterns
   patterns.add<EraseProjectOp, EraseWitnessOp>(ctx);
-  patterns.add<EraseCoerceOp>(opConverter, ctx);
+  patterns.add<EraseCoerceOp, EraseSelectOfClaims>(opConverter, ctx);
 
   populateFunctionOpInterfaceTypeConversionPattern<func::FuncOp>(patterns, opConverter);
   populateCallOpTypeConversionPattern(patterns, opConverter);
