@@ -542,10 +542,10 @@ def ImplOp : TraitDialectOp<"impl", [
                                        Normalizer normalize);
 
     /// The arguments this impl's parameters take at the proven self claim
-    /// `provenSelfClaim`. A projection the header spells over one of the
-    /// impl's obligations is read through the subproof the claim's proof names
-    /// for that obligation; an application no subproof answers, through
-    /// `selection`, the stage's impl selection.
+    /// `provenSelfClaim`, the header read through `selection`, the stage's
+    /// impl selection: a projection the header spells is read only once the
+    /// arguments it is spelled over are in, when it is ground and selection
+    /// answers it.
     FailureOr<SpecializationMap> buildImplSpecialization(ClaimType provenSelfClaim,
                                                          llvm::function_ref<Type(Type)> selection,
                                                          llvm::function_ref<InFlightDiagnostic()> err = nullptr);
@@ -1368,10 +1368,9 @@ def MethodCallOp : TraitDialectOp<"method.call", [
     /// here. The projection bindings that close it are asked of impl selection
     /// when the call is lowered.
     ///
-    /// `selection` resolves a type's ground projections through the stage's
-    /// impl selection, which the comparison reads both signatures through on
-    /// top of the evidence this call holds. A verifier passes none and compares
-    /// through that evidence alone.
+    /// `selection` resolves a type's projections through the stage's impl
+    /// selection, which is all the stage reads both signatures through. A
+    /// verifier passes none and compares through the evidence this call holds.
     FailureOr<SpecializationMap> buildParameterSpecialization(llvm::function_ref<Type(Type)> selection, llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     /// Specializes the callee as a free function using a pre-built substitution,
@@ -1507,9 +1506,10 @@ def FuncCallOp : TraitDialectOp<"func.call", [
       return FunctionType::get(getContext(), getOperands().getTypes(), getResultTypes());
     }
 
-    /// Looks up or specializes the monomorphized callee using a pre-built
-    /// substitution; `selection` is the stage's impl selection, which a method
-    /// call reads its receiver's impl through and this call has no use for.
+    /// Looks up or specializes the monomorphized callee, a template binding at
+    /// least one type parameter, using a pre-built substitution; `selection`
+    /// is the stage's impl selection, which a method call reads its receiver's
+    /// impl through and this call has no use for.
     FailureOr<func::FuncOp> getOrSpecializeCallee(PatternRewriter &rewriter,
                                                   const CallSubstitution &subst,
                                                   llvm::function_ref<Type(Type)> selection);
@@ -1519,10 +1519,9 @@ def FuncCallOp : TraitDialectOp<"func.call", [
     /// here. The projection bindings that close it are asked of impl selection
     /// when the call is lowered.
     ///
-    /// `selection` resolves a type's ground projections through the stage's
-    /// impl selection, which the comparison reads both signatures through on
-    /// top of the evidence this call holds. A verifier passes none and compares
-    /// through that evidence alone.
+    /// `selection` resolves a type's projections through the stage's impl
+    /// selection, which is all the stage reads both signatures through. A
+    /// verifier passes none and compares through the evidence this call holds.
     FailureOr<SpecializationMap> buildParameterSpecialization(llvm::function_ref<Type(Type)> selection, llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     // The type parameters the callee's signature binds, in first-occurrence

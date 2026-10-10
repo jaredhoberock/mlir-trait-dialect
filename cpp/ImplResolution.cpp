@@ -555,10 +555,11 @@ Answer<ProjectionResolution> ImplResolver::resolveProjection(
 }
 
 Answer<std::optional<Type>>
-ImplResolver::settleThroughSelection(Type ty, const SelectionSite &site,
-                                     OpBuilder &builder) {
+ImplResolver::settleThroughSelection(
+    Type ty, const SelectionSite &site, OpBuilder &builder,
+    decltype(&makeGroundProjectionReplacer) replacerFor) {
   bool stepOverflowed = false;
-  AttrTypeReplacer replacer = makeGroundProjectionReplacer(
+  AttrTypeReplacer replacer = replacerFor(
       [&](ProjectionType proj) -> std::optional<Type> {
     Answer<ProjectionResolution> resolved =
         resolveProjection(proj, site, builder);
@@ -577,10 +578,11 @@ ImplResolver::settleThroughSelection(Type ty, const SelectionSite &site,
   return std::optional<Type>(out);
 }
 
-Answer<Type> ImplResolver::resolveProjectionsIn(Type ty,
-                                                const SelectionSite &site,
-                                                OpBuilder &builder) {
-  Answer<std::optional<Type>> settled = settleThroughSelection(ty, site, builder);
+Answer<Type> ImplResolver::resolveProjectionsIn(
+    Type ty, const SelectionSite &site, OpBuilder &builder,
+    decltype(&makeGroundProjectionReplacer) replacerFor) {
+  Answer<std::optional<Type>> settled =
+      settleThroughSelection(ty, site, builder, replacerFor);
   if (!settled.isAnswer())
     return settled.stop<Type>();
   if (!*settled) {

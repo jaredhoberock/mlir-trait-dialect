@@ -2080,20 +2080,8 @@ FailureOr<SpecializationMap> ImplOp::buildImplSpecialization(
     return failure();
   }
 
-  auto module = getModule(err);
-  if (failed(module)) return failure();
-
-  // The self claim names the proof standing over this impl's obligations, so a
-  // projection the header spells over one of them reduces through the impl that
-  // obligation's subproof names -- the reading by index. Where the header spells
-  // an application no subproof answers, impl selection does.
-  NormalizationContext throughProof;
-  if (spellsAProjection(Type(getSelfClaim())))
-    throughProof = buildProofNormalizationContext(provenSelfClaim, *module);
-  throughProof.setSelection(selection);
-  auto normalize = [&](Type ty) -> FailureOr<Type> {
-    return throughProof.normalize(ty, err);
-  };
+  // Projections at instantiation are the stage's solver's to answer.
+  auto normalize = [&](Type ty) -> FailureOr<Type> { return selection(ty); };
   return buildSubstitutionForSelfClaim(provenSelfClaim, normalize, err);
 }
 
@@ -3230,11 +3218,12 @@ static LogicalResult verifyProofsAtCall(Operation *call, ValueRange operands,
 /// which is what licenses reading a ground projection through the module's
 /// impls.
 ///
-/// `selection` resolves a type's ground projections through the stage's impl
-/// selection, which the comparison reads both signatures through on top of that
-/// evidence. A verifier passes none and compares through the evidence alone,
-/// and then the proofs the call's claims name are read at their own claims as
-/// well.
+/// `selection` resolves a type's projections through the stage's impl
+/// selection, which at pass time is all both signatures are read through:
+/// projections at instantiation are the stage's solver's to answer, and the
+/// evidence the call holds is not read. A verifier passes none and compares
+/// through that evidence alone, and then the proofs the call's claims name are
+/// read at their own claims as well.
 static FailureOr<SpecializationMap> readCallSpecialization(
     Operation *call, ModuleOp module, FunctionType formal,
     const SpecializationMap &known, ArrayRef<GenericTypeInterface> parameters,
@@ -3248,7 +3237,8 @@ static FailureOr<SpecializationMap> readCallSpecialization(
   SymbolLookupScope symbolAnswers;
 
   NormalizationContext normalization =
-      buildLocalClaimNormalizationContext(call, localClaims, module);
+      selection ? NormalizationContext()
+                : buildLocalClaimNormalizationContext(call, localClaims, module);
   // The stage reads through impl selection and nothing else; a verifier, which
   // holds none, reads the impls the module holds in its place.
   normalization.setSelection(selection);
@@ -3563,32 +3553,9 @@ FailureOr<func::FuncOp> FuncCallOp::getOrSpecializeCallee(
   auto callee = getCallee();
   if (failed(callee)) return failure();
 
-  // A callee whose signature binds no type parameter is no template: the call
-  // reaches it as written, so what the call supplies must be what it declares.
   SmallVector<GenericTypeInterface, 4> typeParams = getCalleeTypeParams();
-  if (typeParams.empty()) {
-    TypeRange parameters = callee->getFunctionType().getInputs();
-    TypeRange operands = getOperandTypes();
-    // A callee cut as an instance can still spell an obligation the cut
-    // minted, and an operand's producer can still spell one too; the call
-    // waits for both spellings to be settled where they stand, so the two are
-    // compared only once each is.
-    if (llvm::any_of(parameters, carriesUndischargedObligation) ||
-        llvm::any_of(operands, carriesUndischargedObligation))
-      return failure();
-    if (parameters.size() != operands.size())
-      return emitOpError() << "passes " << operands.size()
-                           << " operand(s) to '@" << getCalleeName()
-                           << "', which takes " << parameters.size();
-    for (auto [index, types] : llvm::enumerate(llvm::zip(parameters, operands))) {
-      auto [parameter, operand] = types;
-      if (parameter != operand)
-        return emitOpError() << "passes " << operand << " as operand #"
-                             << index << " to '@" << getCalleeName()
-                             << "', which takes " << parameter;
-    }
-    return *callee;
-  }
+  assert(!typeParams.empty() &&
+         "a call of a callee binding no type parameter lowers as written");
 
   // The instance is the one this call's type arguments and evidence name. The
   // specialization map is written when the substitution is built and is not

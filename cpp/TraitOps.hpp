@@ -181,11 +181,10 @@ public:
   /// member the class stands for.
   void assumeEqual(Type a, Type b) { equalities.assumeEqual(a, b); }
 
-  /// Also reads through impl selection, which is the context the stage holds
-  /// on top of the evidence an op carries: `selection` resolves every ground
-  /// projection selection resolves in a type. A verifier sets none: what it may
-  /// reduce a projection through is the evidence in front of it. `selection`
-  /// must outlive this context.
+  /// Also reads through impl selection, the context the stage holds:
+  /// `selection` resolves the projections selection resolves in a type. A
+  /// verifier sets none: what it may reduce a projection through is the
+  /// evidence in front of it. `selection` must outlive this context.
   void setSelection(llvm::function_ref<Type(Type)> selection) {
     this->selection = selection;
   }

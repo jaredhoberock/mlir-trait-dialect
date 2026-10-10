@@ -480,14 +480,18 @@ class ImplResolver {
         ProjectionType proj, const SelectionSite &site, OpBuilder &builder,
         llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
-    /// Walks `ty` and replaces every concrete (monomorphic) ProjectionType
+    /// Walks `ty` and replaces every projection `replacerFor` admits that
     /// selection resolves with its resolved type, to a fixed point; a
-    /// projection selection refuses is left spelled as written. Polymorphic
-    /// projections are left untouched. Overflows where the resolution still
-    /// changes after the depth limit's worth of projection steps (a binding
-    /// that grows under it has no normal form), or where a step does.
-    Answer<Type> resolveProjectionsIn(Type ty, const SelectionSite &site,
-                                      OpBuilder &builder);
+    /// projection selection refuses is left spelled as written. By default a
+    /// projection is admitted once it is ground; under
+    /// `makeGroundHeadProjectionReplacer`, once its head application is.
+    /// Overflows where the resolution still changes after the depth limit's
+    /// worth of projection steps (a binding that grows under it has no normal
+    /// form), or where a step does.
+    Answer<Type> resolveProjectionsIn(
+        Type ty, const SelectionSite &site, OpBuilder &builder,
+        decltype(&makeGroundProjectionReplacer) replacerFor =
+            makeGroundProjectionReplacer);
 
     /// The ground spellings the sides of `eq` resolve to through selection at
     /// `site`, appending one step per distinct ground projection resolved on
@@ -554,15 +558,16 @@ class ImplResolver {
         OpBuilder &builder,
         llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
-    /// `ty` with every ground projection selection resolves resolved, to a
-    /// fixed point; none where the resolution still changes after the depth
-    /// limit's worth of projection steps, which this names nothing about: a
-    /// candidate's header is read through this, and a header with no normal
-    /// form makes its impl no candidate rather than the stage's overflow.
-    /// Overflows where a step does.
-    Answer<std::optional<Type>> settleThroughSelection(Type ty,
-                                                       const SelectionSite &site,
-                                                       OpBuilder &builder);
+    /// `ty` with every projection `replacerFor` admits that selection
+    /// resolves resolved, to a fixed point; none where the resolution still
+    /// changes after the depth limit's worth of projection steps, which this
+    /// names nothing about: a candidate's header is read through this, and a
+    /// header with no normal form makes its impl no candidate rather than the
+    /// stage's overflow. Overflows where a step does.
+    Answer<std::optional<Type>> settleThroughSelection(
+        Type ty, const SelectionSite &site, OpBuilder &builder,
+        decltype(&makeGroundProjectionReplacer) replacerFor =
+            makeGroundProjectionReplacer);
 
     /// Stops selection at the overflow `what`, met at `site`: the stage's
     /// hard error. Selection answers nothing more, nothing reached under it is

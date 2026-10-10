@@ -801,13 +801,18 @@ static Attribute instantiationTemplateKey(MethodCallOp op) {
   return op.getMethodRefAttr();
 }
 
-/// Impl selection's reading of a type's ground projections at `site`: each
-/// resolved to its normal form, and a type whose projections have none left
-/// spelled, the overflow named where selection met it.
+/// Impl selection's reading of a type's projections at `site`: each whose head
+/// application is ground resolved to its normal form, and a type whose
+/// projections have none left spelled, the overflow named where selection met
+/// it. Which impl serves a projection is settled by its head, and what that
+/// impl binds is a function of the projection's own associated-type arguments,
+/// so a call's reading of a variable that stands only inside those arguments
+/// reads it off the binding.
 static Type readThroughSelection(Type ty, ImplResolver &resolver,
                                  const SelectionSite &site,
                                  PatternRewriter &rewriter) {
-  Answer<Type> resolved = resolver.resolveProjectionsIn(ty, site, rewriter);
+  Answer<Type> resolved = resolver.resolveProjectionsIn(
+      ty, site, rewriter, makeGroundHeadProjectionReplacer);
   return resolved.isAnswer() ? *resolved : ty;
 }
 
@@ -899,6 +904,39 @@ specializeCallTarget(CallOpT op, PatternRewriter &rewriter,
   return target;
 }
 
+/// Lowers a call of `op`'s callee, which binds no type parameter and so is no
+/// template: the call reaches it as written, so what the call supplies must be
+/// what it declares, and no specialization is built. A callee cut as an
+/// instance can still spell an obligation the cut minted, and an operand's
+/// producer or a result can still spell one too; the call waits for each
+/// spelling to be settled where it stands, so the two are compared only once
+/// each is.
+static LogicalResult lowerCallOfNonTemplate(FuncCallOp op,
+                                            PatternRewriter &rewriter) {
+  func::FuncOp callee = *op.getCallee();
+  TypeRange parameters = callee.getFunctionType().getInputs();
+  TypeRange operands = op.getOperandTypes();
+  if (llvm::any_of(parameters, carriesUndischargedObligation) ||
+      llvm::any_of(operands, carriesUndischargedObligation) ||
+      llvm::any_of(op.getResultTypes(), carriesUndischargedObligation))
+    return rewriter.notifyMatchFailure(op, "an obligation stands unsettled");
+  if (parameters.size() != operands.size())
+    return op.emitOpError() << "passes " << operands.size()
+                            << " operand(s) to '@" << op.getCalleeName()
+                            << "', which takes " << parameters.size();
+  for (auto [index, types] : llvm::enumerate(llvm::zip(parameters, operands))) {
+    auto [parameter, operand] = types;
+    if (parameter != operand)
+      return op.emitOpError() << "passes " << operand << " as operand #"
+                              << index << " to '@" << op.getCalleeName()
+                              << "', which takes " << parameter;
+  }
+  rewriter.replaceOpWithNewOp<func::CallOp>(op, callee.getSymName(),
+                                            op.getResultTypes(),
+                                            op.getOperands());
+  return success();
+}
+
 /// Lowers a trait call whose instance is ready to a call of that instance.
 ///
 /// A `trait.func.call` becomes a `func.call` of the specialized callee, its
@@ -944,6 +982,11 @@ struct CallOpLowering : public OpRewritePattern<CallOpT> {
         };
         return op.inlineEvidence(rewriter, *subst, selection);
       }
+    }
+
+    if constexpr (std::is_same_v<CallOpT, FuncCallOp>) {
+      if (op.getCalleeTypeParams().empty())
+        return lowerCallOfNonTemplate(op, rewriter);
     }
 
     auto target = specializeCallTarget(op, rewriter, resolver, *formalTy);
