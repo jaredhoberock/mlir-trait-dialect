@@ -619,20 +619,23 @@ unsigned getLabelBound(ArrayRef<Type> spellings) {
   return bound;
 }
 
-FailureOr<unsigned> countDenseLabelsFrom(ArrayRef<Type> spellings,
+std::optional<unsigned> findSkippedLabel(ArrayRef<Type> spellings,
                                          unsigned first) {
   llvm::SmallDenseSet<unsigned, 8> labels;
   for (Type ty : spellings)
-    forEachLabel(ty, [&](unsigned label) {
-      if (label >= first)
-        labels.insert(label);
-    });
-  unsigned bound = first;
-  for (unsigned label : labels)
-    bound = std::max(bound, label + 1);
-  if (bound - first != labels.size())
+    forEachLabel(ty, [&](unsigned label) { labels.insert(label); });
+  unsigned bound = std::max(first, getLabelBound(spellings));
+  for (unsigned label = first; label < bound; ++label)
+    if (!labels.contains(label))
+      return label;
+  return std::nullopt;
+}
+
+FailureOr<unsigned> countDenseLabelsFrom(ArrayRef<Type> spellings,
+                                         unsigned first) {
+  if (findSkippedLabel(spellings, first))
     return failure();
-  return static_cast<unsigned>(labels.size());
+  return std::max(first, getLabelBound(spellings)) - first;
 }
 
 LogicalResult TypeArguments::assign(

@@ -3046,6 +3046,19 @@ LogicalResult FuncCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
   auto errFn = [&] { return emitOpError(); };
 
+  // A free function's labels are its parameters' positions, so a signature
+  // skipping one binds a parameter no call determines: the callee is refused
+  // where it is declared, naming the label it skips.
+  auto callee = getCallee(errFn);
+  if (failed(callee))
+    return failure();
+  Type signature = callee->getFunctionType();
+  if (std::optional<unsigned> skipped = findSkippedLabel(signature, 0))
+    return callee->emitOpError()
+           << "labels its type parameters 0, 1, ... by position, and its "
+              "signature skips "
+           << Type(PolyType::get(getContext(), *skipped));
+
   // A verifier holds no impl selection, so the comparison reads both
   // signatures as written.
   return buildParameterSpecialization(/*selection=*/nullptr, errFn);

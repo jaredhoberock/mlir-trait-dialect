@@ -715,6 +715,11 @@ unsigned getLabelBound(ArrayRef<Type> spellings);
 FailureOr<unsigned> countDenseLabelsFrom(ArrayRef<Type> spellings,
                                          unsigned first);
 
+/// The first label from `first` up to the largest `spellings` spell that none
+/// of them spells; none where they spell those labels without a gap.
+std::optional<unsigned> findSkippedLabel(ArrayRef<Type> spellings,
+                                         unsigned first);
+
 /// The type parameters `ty` binds, in first-occurrence order.
 ///
 /// The distinct parameters the generics `ty` spells are occurrences of, each

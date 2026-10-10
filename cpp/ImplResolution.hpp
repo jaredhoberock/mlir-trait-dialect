@@ -99,8 +99,10 @@ struct ChosenImpl {
   ImplOp impl;
   SpecializationMap arguments;
   unsigned height;
-  /// The proof of the application, deriving it from `impl` over the proofs
-  /// selection chose for its where entries, once one stands; null before.
+  /// The symbol selection's own write for this application was materialized
+  /// as: the proof deriving it from `impl` over the proofs selection chose for
+  /// its where entries, once one stands; null before. It is selection's record
+  /// of its own write, as `generatedFor` is of the impls selection generated.
   FlatSymbolRefAttr proof = {};
 };
 
