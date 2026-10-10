@@ -44,7 +44,9 @@ trait.impl private @Marker_i1(%self: !trait.claim<@Marker[i1]>) {
 trait.impl private @Has_i32(%self: !trait.claim<@Has[i32]>) {
   trait.assoc_type @A<[!X]> = i1
   trait.method @requirement_0(%p: !trait.claim<@Marker[!B]>) -> !trait.claim<@Marker[!trait.proj<@Has[i32], "A", [!B]>]> {
-    %r = trait.derive @Marker[!trait.proj<@Has[i32], "A", [!B]>] from @Marker_i1 given()
+    %w = trait.derive @Marker[i1] from @Marker_i1 given()
+    %a = trait.witness proj_resolve !trait.proj<@Has[i32], "A", [!B]> resolves i1 by @Has_i32 : !trait.claim<!trait.proj<@Has[i32], "A", [!B]> = i1>
+    %r = trait.coerce %w : !trait.claim<@Marker[i1]> to !trait.claim<@Marker[!trait.proj<@Has[i32], "A", [!B]>]> via (%a) : (!trait.claim<!trait.proj<@Has[i32], "A", [!B]> = i1>)
     trait.return %r : !trait.claim<@Marker[!trait.proj<@Has[i32], "A", [!B]>]>
   }
 }

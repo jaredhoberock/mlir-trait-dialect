@@ -28,8 +28,6 @@ public:
   }
 };
 
-class NormalizationContext;
-
 /// Rewrite a type with every proven application claim stripped to its unproven
 /// form. Coerce comparison is modulo the proof, permanently.
 Type stripClaimProofs(Type type);
@@ -131,9 +129,9 @@ namespace mlir::trait {
 /// operands or off the declarations they name: a projection, a derive, a
 /// coercion, or a call computing evidence. The stage proves such a result by
 /// that reading -- the impl's returned evidence inlined at the projection, the
-/// proof whose body the derive is, the input's proof, the method's body
-/// inlined at the call -- and never by selecting on the result's spelling, so
-/// neither its demand walk nor its respelling sweep reads that result.
+/// proof whose body the derive is, the input's proof respelled, the method's
+/// body inlined at the call -- and never by selecting on the result's
+/// spelling, so the stage's sweep proves no claim that result spells.
 bool producesPositionalEvidence(Operation *op);
 
 /// Ends `impl`'s body, an impl of `trait`, with a return of an allegation of
@@ -142,70 +140,5 @@ bool producesPositionalEvidence(Operation *op);
 /// selection proves where a use reads it. The allegations stand before the
 /// return, whose operands they become.
 void allegeRequirements(ImplOp impl, TraitOp trait, OpBuilder &builder);
-
-/// One local associated-type resolution rule available while normalizing a type.
-///
-/// The rule says that projections whose trait application is exactly `app` may
-/// be resolved through `impl` after applying `subst` to the impl's associated
-/// type binding. It represents evidence already present at the current IR
-/// boundary; it does not perform global impl lookup.
-struct LocalProjectionRule {
-  ImplOp impl;
-  TraitApplicationAttr app;
-  SpecializationMap subst;
-};
-
-/// Context controlling how far `normalize` may resolve projection types.
-///
-/// The small core of normalization is deliberately local: callers add explicit
-/// evidence-derived rules, and projection heads not justified by those rules are
-/// preserved. Global resolver-backed normalization remains a separate lowering
-/// concern.
-class NormalizationContext {
-public:
-  void addLocalProjectionRule(ImplOp impl, TraitApplicationAttr app,
-                              const SpecializationMap &subst) {
-    localProjectionRules.push_back({impl, app, subst});
-  }
-
-  /// A hypothesis in scope: `a` and `b` are the same type. An impl's own
-  /// where-clause equalities are exactly these while its own obligations are
-  /// checked -- an impl whose clause says `F::Output = Acc` satisfies a
-  /// trait-header requirement spelled `F::Output = Acc` by that hypothesis and
-  /// by nothing else, and a projection no hypothesis and no binding reduces is
-  /// equal to itself alone.
-  ///
-  /// A hypothesis relates its two types; it does not rewrite the one into the
-  /// other. Hypotheses spelled in opposite orientations put their endpoints in
-  /// one class, and normalizing rewrites every member of a class to the one
-  /// member the class stands for.
-  void assumeEqual(Type a, Type b) { equalities.assumeEqual(a, b); }
-
-  /// Also reads through impl selection, the context the stage holds:
-  /// `selection` resolves the projections selection resolves in a type. A
-  /// verifier sets none: what it may reduce a projection through is the
-  /// evidence in front of it. `selection` must outlive this context.
-  void setSelection(llvm::function_ref<Type(Type)> selection) {
-    this->selection = selection;
-  }
-
-  /// Resolves projections in `ty` using this context's local rules.
-  ///
-  /// The walk runs to a fixed point so a resolved associated type can expose
-  /// another projection resolvable by the same local evidence.
-  FailureOr<Type> normalize(
-      Type ty,
-      llvm::function_ref<InFlightDiagnostic()> err);
-
-  /// Resolves projections in each input and result type of `functionType`.
-  FailureOr<FunctionType> normalize(
-      FunctionType functionType,
-      llvm::function_ref<InFlightDiagnostic()> err);
-
-private:
-  SmallVector<LocalProjectionRule, 4> localProjectionRules;
-  TypeEquivalence equalities;
-  llvm::function_ref<Type(Type)> selection;
-};
 
 } // end mlir::trait

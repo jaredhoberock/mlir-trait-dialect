@@ -330,7 +330,7 @@ static LogicalResult verifyProofDerivationsEnd(ModuleOp module) {
       emitObligationOverflow(proof.getLoc(), app, chain);
       return failure();
     }
-    SmallVector<ClaimType> premises = proof.getPremises();
+    SmallVector<ClaimType> premises = proof.getSubproofs();
     unsigned depth = chain.size();
     chain.push_back(
         {app, FlatSymbolRefAttr::get(proof.getContext(), proof.getSymName())});
@@ -560,11 +560,10 @@ struct ProveClaimResultPattern : public RewritePattern {
     // The proof the op is spelled with; else the canonical evidence selection
     // builds or reuses for its claim, demanded where the op stands: the proof
     // it names is a symbol its own module resolves, and the impls that may
-    // serve it are the ones standing there. A selected proof names the
-    // application it was recorded under, which selection spelled with the
-    // claim's projections resolved; the producer's source spelling would leave
-    // the witness and its proof disagreeing on those projections. A refusal is
-    // final, so it is named once.
+    // serve it are the ones standing there. The proof is minted at the
+    // application the claim spells (`resolveAndEnsureProofFor`), so the
+    // witness and its proof agree by identity. A refusal is final, so it is
+    // named once.
     Answer<ClaimType> proven = claim;
     if (!claim.isProven()) {
       auto errFn = [&] { return op->emitOpError(); };
@@ -592,7 +591,6 @@ struct ProveClaimResultPattern : public RewritePattern {
     // An operand is settled once an application names its proof and an
     // equality stands on something other than an allegation still to be
     // decided.
-    SmallVector<FlatSymbolRefAttr> subproofs;
     for (Value operand : derive.getAssumptions()) {
       auto premise = cast<ClaimType>(operand.getType());
       bool settled = premise.isApplication()
@@ -600,76 +598,99 @@ struct ProveClaimResultPattern : public RewritePattern {
                          : !operand.getDefiningOp<AllegeOp>();
       if (!settled)
         return rewriter.notifyMatchFailure(derive, "waits for its operands");
-      if (premise.isApplication())
-        subproofs.push_back(premise.getProof());
     }
 
     auto errFn = [&] { return derive.emitOpError(); };
     ModuleOp scope = getAnchorModule(derive);
     ClaimType claim = derive.getDerivedClaim();
-    // The verifier has read the citation already; what it accepted is read
-    // again here at the instance's spelling.
     ImplOp impl = derive.getImplOp();
     if (!impl)
       return rewriter.notifyMatchFailure(derive, "cites no impl");
-    auto arguments = impl.readCitationArguments(
-        claim, derive.getAssumptions().getTypes(), errFn);
+
+    // The proof is identified at the application selection resolves the
+    // derive's to, over the proofs of its application premises at theirs, as
+    // every proof is (`ImplResolver::respellProof`): a premise's proof
+    // respelled there, so a premise keeps the evidence it was given. The
+    // derive's own spelling names that proof respelled. A projection selection
+    // does not resolve leaves the derive standing for the stage's exit walk to
+    // name.
+    SelectionSite site = SelectionSite::of(derive);
+    auto resolve = [&](ClaimType spelled) -> std::optional<ClaimType> {
+      Answer<Type> resolved =
+          resolver.resolveProjectionsIn(Type(spelled), site, rewriter);
+      if (!resolved.isAnswer())
+        return std::nullopt;
+      return cast<ClaimType>(*resolved);
+    };
+    SmallVector<FlatSymbolRefAttr> subproofs;
+    SmallVector<Type> premises;
+    for (Value operand : derive.getAssumptions()) {
+      auto premise = cast<ClaimType>(operand.getType());
+      if (premise.isEquality()) {
+        premises.push_back(Type(premise));
+        continue;
+      }
+      std::optional<ClaimType> at = resolve(premise.asUnproven());
+      if (!at)
+        return rewriter.notifyMatchFailure(derive, "spells no normal form");
+      Answer<ClaimType> subproof = resolver.respellProof(
+          premise, at->getTraitApplication(), site, rewriter);
+      if (!subproof.isAnswer()) {
+        named.insert(derive);
+        return rewriter.notifyMatchFailure(derive,
+                                           "a projection is not resolved");
+      }
+      subproofs.push_back(subproof->getProof());
+      premises.push_back(Type(*at));
+    }
+    std::optional<ClaimType> resolvedClaim = resolve(claim);
+    if (!resolvedClaim)
+      return rewriter.notifyMatchFailure(derive, "spells no normal form");
+    TraitApplicationAttr app = resolvedClaim->getTraitApplication();
+    // The verifier has read the citation already; what it accepted is read
+    // again here at the resolution.
+    auto arguments = impl.readCitationArguments(*resolvedClaim, premises, errFn);
     if (failed(arguments)) {
       (void)refuse(derive);
       return rewriter.notifyMatchFailure(derive, "cites its impl at no arguments");
     }
     SmallVector<ClaimType> entries = impl.getWhereClaimsAt(*arguments);
 
-    // The proof names its application with the projections it spells
-    // resolved, as selection records one; a projection selection does not
-    // resolve leaves the derive standing for the stage's exit walk to name.
-    SelectionSite site = SelectionSite::of(derive);
-    Answer<Type> resolved =
-        resolver.resolveProjectionsIn(Type(claim), site, rewriter);
-    if (!resolved.isAnswer())
-      return rewriter.notifyMatchFailure(derive, "spells no normal form");
-    TraitApplicationAttr app = cast<ClaimType>(*resolved).getTraitApplication();
-    if (llvm::any_of(app.getTypeArgs(), carriesUndischargedObligation))
-      return rewriter.notifyMatchFailure(derive,
-                                         "waits for its arguments' obligations");
-
     // A proof standing with this body answers, and is read rather than
     // written again.
-    if (ClaimType standing = resolver.findProof(scope, impl, app, subproofs)) {
-      rewriter.replaceOpWithNewOp<WitnessOp>(derive, standing.getProof(),
-                                             standing.getTraitApplication());
-      return success();
-    }
-
-    // An equality premise is ground here, and a ground equality has one
-    // answer: the evidence the steps resolving its projections build.
-    SmallVector<SmallVector<ResolutionStep>> equalitySteps;
-    for (ClaimType entry : entries) {
-      if (!entry.isEquality())
-        continue;
-      TypeEqualityAttr eq = entry.getEqualityAttr();
-      SmallVector<ResolutionStep> steps;
-      auto sides = resolver.resolveEquality(eq, site, rewriter, steps,
-                                            firstAsk(derive, errFn));
-      if (!sides.isAnswer()) {
-        named.insert(derive);
-        return rewriter.notifyMatchFailure(derive,
-                                           "a projection is not resolved");
+    Answer<ClaimType> proven = resolver.findProof(scope, impl, app, subproofs);
+    if (!*proven) {
+      // An equality premise is ground here, and a ground equality has one
+      // answer: the evidence the steps resolving its projections build.
+      SmallVector<SmallVector<ResolutionStep>> equalitySteps;
+      for (ClaimType entry : entries) {
+        if (!entry.isEquality())
+          continue;
+        TypeEqualityAttr eq = entry.getEqualityAttr();
+        SmallVector<ResolutionStep> steps;
+        auto sides = resolver.resolveEquality(eq, site, rewriter, steps,
+                                              firstAsk(derive, errFn));
+        if (!sides.isAnswer()) {
+          named.insert(derive);
+          return rewriter.notifyMatchFailure(derive,
+                                             "a projection is not resolved");
+        }
+        if (sides->first != sides->second) {
+          if (refuse(derive))
+            errFn() << "is given " << entry << ", and impl selection "
+                    << "resolves its sides to " << sides->first << " and "
+                    << sides->second;
+          return rewriter.notifyMatchFailure(
+              derive, "selection resolves the sides apart");
+        }
+        equalitySteps.push_back(std::move(steps));
       }
-      if (sides->first != sides->second) {
-        if (refuse(derive))
-          errFn() << "is given " << entry << ", and impl selection "
-                  << "resolves its sides to " << sides->first << " and "
-                  << sides->second;
-        return rewriter.notifyMatchFailure(
-            derive, "selection resolves the sides apart");
-      }
-      equalitySteps.push_back(std::move(steps));
+      proven = resolver.writeProof(scope, impl, app, *arguments, entries,
+                                   subproofs, equalitySteps, site, rewriter);
     }
-
-    Answer<ClaimType> proven =
-        resolver.writeProof(scope, impl, app, *arguments, entries, subproofs,
-                            equalitySteps, site, rewriter);
+    if (proven.isAnswer())
+      proven = resolver.respellProof(*proven, claim.getTraitApplication(), site,
+                                     rewriter);
     if (!proven.isAnswer()) {
       named.insert(derive);
       return rewriter.notifyMatchFailure(derive,
@@ -884,9 +905,13 @@ specializeCallTarget(CallOpT op, PatternRewriter &rewriter,
   if (failed(subst))
     return failure();
 
+  // The results are stamped as the instance is (`CloneKind::Instance`), so a
+  // claim among them keeps its predicate as the instance's signature does.
   SpecializedCallTarget target;
+  AttrTypeReplacer stamp =
+      makeTypeReplacerFromSubstitution(subst->toTypeMap(), CloneKind::Instance);
   for (Type r : op.getResultTypes()) {
-    Type newR = subst->apply(r);
+    Type newR = stamp.replace(r);
     if (isPolymorphicType(newR)) {
       (void)rewriter.notifyMatchFailure(op, "result type is still polymorphic");
       return failure();
@@ -895,10 +920,12 @@ specializeCallTarget(CallOpT op, PatternRewriter &rewriter,
   }
 
   SelectionSite site = SelectionSite::of(op);
-  auto selection = [&](Type ty) {
-    return readThroughSelection(ty, resolver, site, rewriter);
+  auto respell = [&](ClaimType proven, ClaimType spelling) -> FailureOr<ClaimType> {
+    return resolver
+        .respellProof(proven, spelling.getTraitApplication(), site, rewriter)
+        .orFailure();
   };
-  auto callee = op.getOrSpecializeCallee(rewriter, *subst, selection);
+  auto callee = op.getOrSpecializeCallee(rewriter, *subst, respell);
   if (failed(callee)) {
     (void)rewriter.notifyMatchFailure(op, "couldn't get or specialize callee");
     return failure();
@@ -942,6 +969,28 @@ static LogicalResult lowerCallOfNonTemplate(FuncCallOp op,
   return success();
 }
 
+/// The operands a call passes an instance whose parameters are `parameters`:
+/// `operands` as supplied, but for a claim supplied under another spelling than
+/// the proven claim its parameter takes, the witness of the proof that
+/// parameter names, built at `rewriter`'s insertion point. The instance's key
+/// chose that proof for the parameter's spelling (`InstanceKey::get`); a claim
+/// carries its proof's spelling, so the supplied one is no evidence there.
+static SmallVector<Value> passAsDeclared(PatternRewriter &rewriter,
+                                         Location loc, ValueRange operands,
+                                         TypeRange parameters) {
+  SmallVector<Value> passed(operands);
+  for (auto [value, parameter] : llvm::zip(passed, parameters)) {
+    auto declared = dyn_cast<ClaimType>(parameter);
+    if (value.getType() == parameter || !declared ||
+        !declared.isApplication() || !declared.isProven())
+      continue;
+    value = WitnessOp::create(rewriter, loc, declared.getProof(),
+                              declared.getTraitApplication())
+                .getResult();
+  }
+  return passed;
+}
+
 /// Lowers a trait call whose instance is ready to a call of that instance.
 ///
 /// A `trait.func.call` becomes a `func.call` of the specialized callee, its
@@ -981,11 +1030,7 @@ struct CallOpLowering : public OpRewritePattern<CallOpT> {
         auto subst = buildCallSubstitution(op, rewriter, resolver, *formalTy);
         if (failed(subst))
           return failure();
-        SelectionSite site = SelectionSite::of(op);
-        auto selection = [&](Type ty) {
-          return readThroughSelection(ty, resolver, site, rewriter);
-        };
-        return op.inlineEvidence(rewriter, *subst, selection);
+        return op.inlineEvidence(rewriter, *subst);
       }
     }
 
@@ -998,13 +1043,19 @@ struct CallOpLowering : public OpRewritePattern<CallOpT> {
     if (failed(target))
       return failure();
 
-    if constexpr (std::is_same_v<CallOpT, FuncCallOp>) {
-      rewriter.replaceOpWithNewOp<func::CallOp>(
-          op, target->callee.getSymName(), target->resultTypes, op.getOperands());
-    } else {
-      SmallVector<Value> args;
+    SmallVector<Value> args;
+    if constexpr (std::is_same_v<CallOpT, MethodCallOp>) {
       args.push_back(op.getClaim());
       llvm::append_range(args, op.getArguments());
+    } else {
+      llvm::append_range(args, op.getOperands());
+    }
+    args = passAsDeclared(rewriter, op.getLoc(), args,
+                          target->callee.getFunctionType().getInputs());
+    if constexpr (std::is_same_v<CallOpT, FuncCallOp>) {
+      rewriter.replaceOpWithNewOp<func::CallOp>(
+          op, target->callee.getSymName(), target->resultTypes, args);
+    } else {
       rewriter.replaceOpWithNewOp<FuncCallOp>(
           op, target->resultTypes, target->callee.getSymName(), args);
     }
@@ -1012,15 +1063,23 @@ struct CallOpLowering : public OpRewritePattern<CallOpT> {
   }
 };
 
-/// Settles a coerce whose types have met: a claim result takes its input's
-/// proof, which the coerce verifier holds to its input's -- a coerce changes
-/// how a claim is spelled, never the evidence it stands on -- and a coerce
-/// whose result is spelled as its input is replaced by the input, the fold the
-/// stage's drivers do not run (applyPatternsOverReachableOps). The evidence it
-/// cited stays standing for the stage to decide: an allegation or a projection
-/// is no dead op while its obligation stands (`ObligationResource`).
+/// Settles a coerce once its input is evidence: a coerce whose result is
+/// spelled as its input is replaced by the input, the fold the stage's drivers
+/// do not run (applyPatternsOverReachableOps), and a coerce of a proven claim
+/// to another spelling is replaced by the witness of the input's proof
+/// respelled at the spelling the result states (`ImplResolver::respellProof`).
+/// A claim names the proof of exactly its own spelling (`verifyCitation`), so
+/// the evidence at the result's spelling is a proof of that spelling, whose
+/// body bridges the impl's header to it; the input's proof proves another
+/// one, and a claim spelled one way and carrying it would cite a proof of
+/// something else. The evidence the coerce cited stays standing for the stage
+/// to decide: an allegation or a projection is no dead op while its obligation
+/// stands (`ObligationResource`).
 struct SettleCoercePattern : public OpRewritePattern<CoerceOp> {
-  using OpRewritePattern::OpRewritePattern;
+  ImplResolver &resolver;
+
+  SettleCoercePattern(MLIRContext *ctx, ImplResolver &resolver)
+    : OpRewritePattern<CoerceOp>(ctx), resolver(resolver) {}
 
   LogicalResult matchAndRewrite(CoerceOp coerce,
                                 PatternRewriter &rewriter) const override {
@@ -1029,14 +1088,17 @@ struct SettleCoercePattern : public OpRewritePattern<CoerceOp> {
       rewriter.replaceOp(coerce, coerce.getInput());
       return success();
     }
+    auto from = dyn_cast<ClaimType>(input);
     auto result = dyn_cast<ClaimType>(coerce.getResult().getType());
-    ClaimType carrying = result && !result.isProven()
-                             ? result.carryingProofOf(dyn_cast<ClaimType>(input))
-                             : ClaimType();
-    if (!carrying)
-      return rewriter.notifyMatchFailure(coerce, "its types have not met");
-    rewriter.modifyOpInPlace(coerce,
-                             [&] { coerce.getResult().setType(carrying); });
+    if (!from || !from.isApplication() || !from.isProven() || !result ||
+        !result.isApplication() || result.isProven())
+      return rewriter.notifyMatchFailure(coerce, "its input is no evidence yet");
+    Answer<ClaimType> proven = resolver.respellProof(
+        from, result.getTraitApplication(), SelectionSite::of(coerce), rewriter);
+    if (!proven.isAnswer())
+      return rewriter.notifyMatchFailure(coerce, "its input's proof is not respelled");
+    rewriter.replaceOpWithNewOp<WitnessOp>(coerce, proven->getProof(),
+                                           proven->getTraitApplication());
     return success();
   }
 };
@@ -1123,7 +1185,9 @@ static bool wouldReplace(AttrTypeReplacer &replacer, Operation *op,
 
 /// Asks impl selection for the obligations an op spells and respells the op
 /// with the answers: each unproven monomorphic application claim becomes the
-/// claim proven, and each ground projection the type it resolves to.
+/// claim proven at its own spelling, and each ground projection standing
+/// outside a claim the type it resolves to. A claim's predicate is never
+/// respelled (`respellClaimPredicate`).
 ///
 /// An op is the one place its own spelling is settled, so the obligation is
 /// asked for by the op that holds it, wherever it stands and whenever the op is
@@ -1169,18 +1233,20 @@ struct SettleSpelledObligationsPattern : public RewritePattern {
         return std::nullopt;
       return *resolved;
     });
-    // The proven spelling names the same application, whose type arguments can
-    // spell claims and projections of their own, so the walk continues into the
-    // result instead of stopping at it.
+    // A claim's predicate is never respelled: the proof is minted at the
+    // application the claim spells, so `X by @p` holds because `p` proves `X`
+    // as spelled, and nothing citing it reads through a respelling. A claim
+    // standing in another's arguments is a type argument of that application,
+    // part of what it states, and is left as spelled with it.
     replacer.addReplacement(
         [&](ClaimType claim) -> std::optional<std::pair<Type, WalkResult>> {
           if (!provesClaims || !claim.isApplication() || claim.isProven() ||
               !claim.isMonomorphic())
-            return std::nullopt;
-          auto proven = resolver.resolveAndEnsureProofFor(claim, site, rewriter);
-          if (!proven.isAnswer())
-            return std::nullopt;
-          return std::make_pair(Type(*proven), WalkResult::advance());
+            return std::make_pair(Type(claim), WalkResult::skip());
+          Answer<ClaimType> proven =
+              resolver.resolveAndEnsureProofFor(claim, site, rewriter);
+          return std::make_pair(proven.isAnswer() ? Type(*proven) : Type(claim),
+                                WalkResult::skip());
         });
     if (!wouldReplace(replacer, op,
                       /*replaceAttrs=*/true,
@@ -1280,7 +1346,8 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
     patterns.add<ProveClaimResultPattern>(ctx, resolver, namedObligations,
                                           refusedAClaim);
     patterns.add<SettleSpelledObligationsPattern>(ctx, resolver);
-    patterns.add<MonomorphizeResultTypesPattern, SettleCoercePattern>(ctx);
+    patterns.add<MonomorphizeResultTypesPattern>(ctx);
+    patterns.add<SettleCoercePattern>(ctx, resolver);
     patterns.add<CallOpLowering<FuncCallOp>, CallOpLowering<MethodCallOp>>(
         ctx, resolver);
 
@@ -1410,6 +1477,16 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
       }
     }
     nameRefusal(op, claim);
+    // A projection the claim's predicate spells stays spelled there; where
+    // selection refused it, that refusal is why the claim stands unproven,
+    // and it is named beside it.
+    if (claim.isApplication()) {
+      Operation *carrier = op;
+      Type(claim).walk([&](ProjectionType proj) {
+        if (!isPolymorphicType(Type(proj)))
+          nameRefusal(carrier, proj);
+      });
+    }
     InFlightDiagnostic report =
         op->emitError() << "unproven monomorphic claim " << claim
         << " after instantiate-monomorphs";
@@ -1935,9 +2012,10 @@ bool isRewritableGenericCall(Operation *op) {
         return false;
     return true;
   };
-  // Every application claim an operand spells names its proof, the claims
-  // standing in another claim's arguments included: what an instance is keyed
-  // by is the evidence at each position, all of it (`InstanceKey`).
+  // Every application claim an operand spells names its proof, except one
+  // standing in another claim's arguments, which is part of what that claim
+  // states: what an instance is keyed by is the evidence at each position
+  // (`InstanceKey`).
   auto operandClaimsProven = [](ValueRange operands) {
     for (Value operand : operands) {
       bool unproven = false;

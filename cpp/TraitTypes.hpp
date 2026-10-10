@@ -41,23 +41,39 @@ namespace mlir::trait {
 /// endpoints are ill-formed.
 FailureOr<Attribute> parseApplicationOrEqualityPredicate(AsmParser &p);
 
-/// The clone rule for equality evidence: rebuild an equality claim with
-/// `respell` applied to each endpoint, atomically, through the checked
-/// constructor. Answers nullopt when `claim` is not an equality claim, and
-/// otherwise always skips the result's interior -- an endpoint moves through
-/// this rule or not at all, so a replacer registering it must not let its own
-/// walk reach the endpoints afterwards.
-inline std::optional<std::pair<Type, WalkResult>> respellEqualityEndpoints(
+/// The clone rule for a claim's predicate: rebuild `claim` with `respell`
+/// applied to each endpoint of an equality, or to each type argument of an
+/// application, atomically, through the checked constructor; an application
+/// keeps the proof it names. Always skips the result's interior -- a predicate
+/// moves through this rule or not at all, so a replacer registering it must
+/// not let its own walk reach the predicate afterwards.
+///
+/// A claim states a proposition and names the proof of exactly that spelling
+/// (`verifyCitation`), so a rewrite resolving a projection inside one would
+/// leave the proof naming a spelling the claim no longer has. A clone moves a
+/// predicate by its variables alone; the evidence for another spelling is a
+/// proof of that spelling.
+inline std::optional<std::pair<Type, WalkResult>> respellClaimPredicate(
     ClaimType claim, llvm::function_ref<Type(Type)> respell) {
-  auto eq = claim.getEqualityAttr();
-  if (!eq)
-    return std::nullopt;
-  Type newLhs = respell(eq.getLhs());
-  Type newRhs = respell(eq.getRhs());
-  if (newLhs == eq.getLhs() && newRhs == eq.getRhs())
+  MLIRContext *ctx = claim.getContext();
+  if (auto eq = claim.getEqualityAttr()) {
+    Type newLhs = respell(eq.getLhs());
+    Type newRhs = respell(eq.getRhs());
+    if (newLhs == eq.getLhs() && newRhs == eq.getRhs())
+      return std::make_pair(Type(claim), WalkResult::skip());
+    return std::make_pair(Type(ClaimType::getEquality(ctx, newLhs, newRhs)),
+                          WalkResult::skip());
+  }
+  TraitApplicationAttr app = claim.getTraitApplication();
+  SmallVector<Type> args;
+  for (Type arg : app.getTypeArgs())
+    args.push_back(respell(arg));
+  if (llvm::equal(args, app.getTypeArgs()))
     return std::make_pair(Type(claim), WalkResult::skip());
   return std::make_pair(
-      Type(ClaimType::getEquality(claim.getContext(), newLhs, newRhs)),
+      Type(ClaimType::get(ctx,
+                          TraitApplicationAttr::get(ctx, app.getTraitName(), args),
+                          claim.getProof())),
       WalkResult::skip());
 }
 
@@ -73,7 +89,7 @@ inline std::optional<std::pair<Type, WalkResult>> respellEqualityEndpoints(
 /// built from it a reader of endpoints and never a writer. The rule sits on the
 /// attribute rather than on the claim so that no attribute position holding a
 /// bare equality is reached either. The sanctioned mover is
-/// `respellEqualityEndpoints`, which a clone registers.
+/// `respellClaimPredicate`, which a clone registers.
 AttrTypeReplacer makeEndpointSealedReplacer();
 
 /// The sealed replacer above plus the one rule every ground-projection rewrite
@@ -94,10 +110,17 @@ AttrTypeReplacer makeGroundHeadProjectionReplacer(
     std::function<std::optional<Type>(ProjectionType)> hop);
 
 inline bool isPolymorphicType(Type root);
-inline Type applySubstitutionOnce(const llvm::DenseMap<Type,Type> &subst,
-                                  Type root);
-inline Type applySubstitutionToFixedPoint(const llvm::DenseMap<Type,Type> &subst,
-                                          Type ty);
+/// How a substitution reaches a claim's predicate: through every binding it
+/// holds, or through its variable bindings alone (`respellClaimPredicate`), as
+/// a clone stamps one.
+enum class ClaimPredicates { Substituted, VariablesAlone };
+
+inline Type applySubstitutionOnce(
+    const llvm::DenseMap<Type, Type> &subst, Type root,
+    ClaimPredicates claims = ClaimPredicates::Substituted);
+inline Type applySubstitutionToFixedPoint(
+    const llvm::DenseMap<Type, Type> &subst, Type ty,
+    ClaimPredicates claims = ClaimPredicates::Substituted);
 
 /// A substitution keyed by one kind of type: each key bound to the one value it
 /// stands for. A key is bound once, and binding it again to a different value
@@ -375,8 +398,8 @@ inline bool isPurelyPolymorphicType(Type root) {
   return allParticipatingArePoly && sawPoly;
 }
 
-inline Type applySubstitutionOnce(const llvm::DenseMap<Type,Type> &subst,
-                              Type root) {
+inline Type applySubstitutionOnce(const llvm::DenseMap<Type, Type> &subst,
+                                  Type root, ClaimPredicates claims) {
   SpecializationMap specialization;
   for (auto [key, value] : subst)
     if (auto generic = dyn_cast<GenericTypeInterface>(key))
@@ -406,14 +429,18 @@ inline Type applySubstitutionOnce(const llvm::DenseMap<Type,Type> &subst,
     return std::nullopt;
   });
 
-  // Move the equality endpoints the seal above holds as a leaf, applying the
-  // generic-keyed part of the map alone: an endpoint receives variable
-  // bindings, never a projection or evidence binding resolved inside it.
+  // Move the equality endpoints the seal above holds as a leaf -- and under
+  // `VariablesAlone` an application's arguments too -- applying the
+  // generic-keyed part of the map alone: such a predicate receives variable
+  // bindings, never a projection or evidence binding resolved inside it
+  // (`respellClaimPredicate`).
   llvm::DenseMap<Type, Type> genericKeyed = specialization.toTypeMap();
   replacer.addReplacement(
-      [genericKeyed](ClaimType claim)
+      [genericKeyed, claims](ClaimType claim)
           -> std::optional<std::pair<Type, WalkResult>> {
-    return respellEqualityEndpoints(claim, [&](Type t) {
+    if (claim.isApplication() && claims == ClaimPredicates::Substituted)
+      return std::nullopt;
+    return respellClaimPredicate(claim, [&](Type t) {
       return applySubstitutionOnce(genericKeyed, t);
     });
   });
@@ -520,11 +547,11 @@ void emitObligationOverflow(Location anchor, TraitApplicationAttr app,
 /// whose argument mentions that parameter grows one level per pass. What such a
 /// map hands back here is the partial the budget stopped at, spelled as
 /// written, which every comparison downstream declines on.
-inline Type applySubstitutionToFixedPoint(const llvm::DenseMap<Type,Type> &subst,
-                                          Type ty) {
+inline Type applySubstitutionToFixedPoint(
+    const llvm::DenseMap<Type, Type> &subst, Type ty, ClaimPredicates claims) {
   Type cur = ty;
   for (unsigned pass = 0; pass != kSubstitutionFixedPointMaxPasses; ++pass) {
-    Type next = applySubstitutionOnce(subst, cur);
+    Type next = applySubstitutionOnce(subst, cur, claims);
     if (!next || next == cur)
       break;
     cur = next;
@@ -532,35 +559,19 @@ inline Type applySubstitutionToFixedPoint(const llvm::DenseMap<Type,Type> &subst
   return cur;
 }
 
-/// The classes a set of type equalities carves out of the types they mention.
-///
-/// An equality is not a directed rule: `A = B` and `B = A` say one thing, and a
-/// set of equalities relates types symmetrically and transitively. Each class
-/// has one canonical member -- the least under the structural order below -- and
-/// a normalizer reads the equalities by rewriting every member of a class to
-/// that one member. The rewrite settles because the member it lands on is fixed
-/// for the class, where a directed rule carries `A` to `B` and back forever as
-/// soon as both orientations stand.
-///
-/// The canonical member of a class is its least under this order, in this
-/// sequence: fewer projections first, then fewer types named, then a type
-/// mentioning no type variable before one that does, then the spelling itself.
-/// Each key reads only the types' own structure, so the member a class is
-/// headed by is the same in every process and under every allocation. Fewer
-/// projections first is what makes the rewrite resolve projections rather than
-/// introduce them, and fewer types next is what keeps a rewrite from growing
-/// what it rewrites.
+/// The classes a set of type equalities carves out of the types they mention:
+/// a union-find over interned types. An equality is not a directed rule --
+/// `A = B` and `B = A` say one thing -- and a class is read only for whether
+/// two members share it, so no member heads a class by any choice a verdict
+/// could observe.
 class TypeEquivalence {
 public:
-  /// Records that `a` and `b` are the same type, interning both.
-  void assumeEqual(Type a, Type b) { unite(intern(a), intern(b)); }
-
   unsigned size() const { return terms.size(); }
 
   /// The index this structure knows `t` by, interning it if it is new.
   unsigned intern(Type t);
 
-  /// The index of the canonical member of the class `id` falls in.
+  /// The index of the member the class `id` falls in is represented by.
   unsigned findCanonical(unsigned id);
 
   /// Joins the classes of `a` and `b`.
@@ -568,34 +579,10 @@ public:
 
   Type termAt(unsigned id) const { return terms[id]; }
 
-  /// Every member that is not its class's canonical one, mapped to that one:
-  /// the substitution a normalizer applies to rewrite a spelling to the one
-  /// spelling its class stands for.
-  llvm::DenseMap<Type, Type> substitutionToCanonicalMembers();
-
 private:
-  /// Whether `a` precedes `b` under the order the class doc states. The keys
-  /// are computed on demand and kept, because a union asks for them at most
-  /// once per member and the spelling key is the expensive one.
-  bool precedes(unsigned a, unsigned b);
-
-  /// How a member orders against the others: how many projections it spells,
-  /// how many types its spelling names, whether it mentions a type variable,
-  /// and the spelling itself. A type prints as something, so an empty
-  /// `spelling` is one not yet printed -- the three keys before it decide every
-  /// comparison but the one between two types of the same shape.
-  struct OrderKey {
-    unsigned projections;
-    unsigned types;
-    bool mentionsVariable;
-    std::string spelling;
-  };
-  OrderKey &orderKeyOf(unsigned id);
-
   llvm::DenseMap<Type, unsigned> ids;
   SmallVector<Type> terms;
   SmallVector<unsigned> parent;
-  SmallVector<std::optional<OrderKey>> orderKeys;
 };
 
 // this walks an Attribute and looks for any occurrence of the given NeedleType
@@ -864,12 +851,16 @@ FailureOr<SpecializationMap> matchDeclaration(
     Normalizer normalize, llvm::function_ref<InFlightDiagnostic()> err);
 
 /// Visits the sites of `root` at which instantiation can owe work: every
-/// sub-type except the endpoints of an equality claim.
+/// sub-type except the interior of a claim.
 ///
-/// An equality claim's endpoints hold a proposition, not work. What stands in
-/// one is a term the equation relates, discharged when the equality settles, so
-/// a scan that judges obligations sees the equality claim itself and never what
-/// it relates. Every such scan reads this walk, so the rule is stated once.
+/// A claim's predicate holds a proposition, not work. An equality's endpoints
+/// are a term the equation relates, discharged when the equality settles; an
+/// application's arguments are the spelling its proof is minted at, which is
+/// never respelled (`respellClaimPredicate`), so a projection standing in one
+/// is the proof's to bridge in its own body and a claim standing in one is
+/// proven before the claim around it. A scan that judges obligations sees the
+/// claim itself and never what it states. Every such scan reads this walk, so
+/// the rule is stated once.
 void walkObligationSites(Type root, llvm::function_ref<void(Type)> visit);
 
 /// Whether `site`, a sub-type `walkObligationSites` visits, is an obligation

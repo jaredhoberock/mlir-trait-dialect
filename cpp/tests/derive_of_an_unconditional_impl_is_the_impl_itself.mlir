@@ -6,9 +6,11 @@
 // @Tr_i64 takes no parameters and no where entries, so it is its own proof,
 // and the evidence it returns for its trait's requirement is a derive of
 // itself coerced through its own binding. A derive of such an impl is
-// witnessed by the impl's own symbol, as selection names it, so the call
-// through the projected requirement and the call through the witness reach one
-// instance of @v rather than two under two names for one evidence.
+// witnessed by the impl's own symbol, as selection names it, and the
+// projected requirement, spelled through the binding, is that evidence
+// respelled, which the instance key carries back to the impl's header: the
+// call through the projected requirement and the call through the witness
+// reach one instance of @v rather than two under two names for one evidence.
 //
 // The checks read the instances the module holds: the defect this pins cuts a
 // second copy of @v under a second name for one proof, which runs the same
@@ -39,8 +41,8 @@ trait.impl private @Tr_i64(%self: !trait.claim<@Tr[i64]>) {
 func.func @main() -> i64 {
   %t = trait.witness @Tr_i64 for @Tr[i64]
   %a = trait.method.call %t @Tr[i64]::@v() : () -> i64 by @Tr_i64
-  %o = trait.project %t[0] : !trait.claim<@Tr[i64] by @Tr_i64> -> !trait.claim<@Tr[i64]>
-  %b = trait.method.call %o @Tr[i64]::@v() : () -> i64
+  %o = trait.project %t[0] : !trait.claim<@Tr[i64] by @Tr_i64> -> !trait.claim<@Tr[!trait.proj<@Tr[i64], "Out">]>
+  %b = trait.method.call %o @Tr[!trait.proj<@Tr[i64], "Out">]::@v() : () -> i64
   %s = arith.addi %a, %b : i64
   return %s : i64
 }

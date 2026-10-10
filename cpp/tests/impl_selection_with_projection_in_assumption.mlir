@@ -58,10 +58,12 @@ func.func @test() -> i32 {
 }
 
 // The proof witnesses @Marker_unit at the application it proves and coerces
-// it to the where entry's spelling by the entry's projection resolved.
+// it to the where entry's spelling by the entry's projection resolved; the
+// coercion's result names no proof, since @Marker_unit proves another
+// spelling.
 // CHECK: trait.proof private @Marker_via_assoc_{{.*}}_p {
 // CHECK-NEXT: %[[T:.*]] = trait.witness @Trait_i32 for @Trait[i32]
 // CHECK-NEXT: %[[U:.*]] = trait.witness @Marker_unit for @Marker[tuple<>]
 // CHECK-NEXT: %[[E:.*]] = trait.witness proj_resolve !trait.proj<@Trait[i32], "Assoc"> resolves tuple<> by @Trait_i32
-// CHECK-NEXT: %[[M:.*]] = trait.coerce %[[U]] : {{.*}} to !trait.claim<@Marker[!trait.proj<@Trait[i32], "Assoc">] by @Marker_unit> via (%[[E]])
+// CHECK-NEXT: %[[M:.*]] = trait.coerce %[[U]] : {{.*}} to !trait.claim<@Marker[!trait.proj<@Trait[i32], "Assoc">]> via (%[[E]])
 // CHECK-NEXT: trait.derive @Marker[i32] from @Marker_via_assoc given(%[[T]], %[[M]])

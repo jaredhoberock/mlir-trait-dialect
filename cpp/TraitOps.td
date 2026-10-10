@@ -319,7 +319,8 @@ def TraitOp : TraitDialectOp<"trait", [
     FailureOr<func::FuncOp> getOrSpecializeFreeFunctionFromDefault(
         PatternRewriter &rewriter, ClaimType provenSelfClaim,
         StringRef methodName, TypeRange actualArguments,
-        const CallSubstitution &callSubst);
+        const CallSubstitution &callSubst,
+        llvm::function_ref<FailureOr<ClaimType>(ClaimType, ClaimType)> respell);
   }];
 
   // The body's one block takes the self claim; a trait is a template that dies
@@ -502,12 +503,12 @@ def ImplOp : TraitDialectOp<"impl", [
     /// claim at the leading position, then `actualArguments`, what the call
     /// supplies for the method's own parameters, position by position. A
     /// method this impl does not define is the trait's default, cut from the
-    /// trait. `selection` is the stage's impl selection, which the impl's
-    /// arguments are read through.
+    /// trait. `respell` carries a proven claim the call supplies to the
+    /// spelling the instance's parameter has (`InstanceKey::get`).
     FailureOr<func::FuncOp> getOrSpecializeFreeFunctionFromMethod(PatternRewriter& rewriter, ClaimType provenSelfClaim, StringRef methodName,
                                                                    TypeRange actualArguments,
                                                                    const CallSubstitution &callSubst,
-                                                                   llvm::function_ref<Type(Type)> selection);
+                                                                   llvm::function_ref<FailureOr<ClaimType>(ClaimType, ClaimType)> respell);
 
     /// The arguments carrying this impl's header to `actualSelfClaim`: read
     /// them off the demanded application by position, rebuild the header at
@@ -542,12 +543,10 @@ def ImplOp : TraitDialectOp<"impl", [
                                        Normalizer normalize);
 
     /// The arguments this impl's parameters take at the proven self claim
-    /// `provenSelfClaim`, the header read through `selection`, the stage's
-    /// impl selection: a projection the header spells is read only once the
-    /// arguments it is spelled over are in, when it is ground and selection
-    /// answers it.
+    /// `provenSelfClaim`: the ones its proof's derive states this impl's
+    /// header at, read by position off the proof, whatever spelling the claim
+    /// citing it has. An impl named as its own proof binds no parameter.
     FailureOr<SpecializationMap> buildImplSpecialization(ClaimType provenSelfClaim,
-                                                         llvm::function_ref<Type(Type)> selection,
                                                          llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     // Helper to generate unique symbol name for an ImplOp
@@ -621,6 +620,16 @@ def ImplOp : TraitDialectOp<"impl", [
         ArrayRef<Type> assocTypeArgs,
         const SpecializationMap &headerArguments,
         llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+
+    /// `ty` with every projection over this impl's header at `arguments`
+    /// resolved through this impl's associated-type bindings at those
+    /// arguments, to a fixed point: the facts the impl states of its own
+    /// application, which hold anywhere it is read at those arguments. A
+    /// projection over any other application, and an equality's endpoints,
+    /// stand as spelled. Fails where the bindings do not settle within the
+    /// projection-step bound.
+    FailureOr<Type> readOwnBindings(Type ty,
+                                    const SpecializationMap &arguments);
 
   }];
 
@@ -944,9 +953,9 @@ def DeriveOp : TraitDialectOp<"derive", [
       : (!trait.claim<@Trait[!T]>, !trait.claim<!trait.proj<@Trait[!T], "Out"> = i64>)
     ```
 
-    Once monomorphic, a derive becomes a witness of the proof its claim names,
-    or of the one impl selection holds for it, which must stand over the impl
-    the derive cites.
+    Once monomorphic, a derive becomes a witness of the proof whose body it is,
+    at the application selection resolves its claim to, respelled as the derive
+    spells it.
   }];
 
   let arguments = (ins
@@ -1000,7 +1009,7 @@ def ProjectOp : TraitDialectOp<"project", [
 
     The result claim is derived, never spelled: requirement `index`
     instantiated at the source claim's arguments. A where entry of a proven
-    source carries the proof its proof's derive supplies at that position. A
+    source is the claim its proof's derive is given at that position. A
     trait requirement of a proven source is the evidence the impl returns at
     that position, which the stage puts in the projection's place
     (`inlineEvidence`), where the ops computing it are proven as anywhere else;
@@ -1178,8 +1187,7 @@ def WitnessOp : TraitDialectOp<"witness", [
   let extraClassDeclaration = [{
     /// Verifies this projection-resolution witness: the cited impl, at the
     /// arguments the projection's application and the premises give it, binds
-    /// the projection as stated. A header spelling a projection is read through
-    /// the evidence the premises carry and the equalities among them.
+    /// the projection as stated, each compared as written.
     LogicalResult verifyResolution(ModuleOp module);
 
     ClaimType getResultClaim() {
@@ -1370,15 +1378,15 @@ def MethodCallOp : TraitDialectOp<"method.call", [
     ///
     /// `selection` resolves a type's projections through the stage's impl
     /// selection, which is all the stage reads both signatures through. A
-    /// verifier passes none and compares through the evidence this call holds.
+    /// verifier passes none and compares the two signatures as written.
     FailureOr<SpecializationMap> buildParameterSpecialization(llvm::function_ref<Type(Type)> selection, llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
-    /// Specializes the callee as a free function using a pre-built substitution,
-    /// reading the receiver impl's arguments through `selection`, the stage's
-    /// impl selection.
+    /// Specializes the callee as a free function using a pre-built
+    /// substitution; `respell` carries a proven claim this call supplies to the
+    /// spelling the instance's parameter has (`InstanceKey::get`).
     FailureOr<func::FuncOp> getOrSpecializeCallee(PatternRewriter &rewriter,
                                                   const CallSubstitution &subst,
-                                                  llvm::function_ref<Type(Type)> selection);
+                                                  llvm::function_ref<FailureOr<ClaimType>(ClaimType, ClaimType)> respell);
 
     ClaimType getClaimType() {
       return cast<ClaimType>(getClaim().getType());
@@ -1425,11 +1433,10 @@ def MethodCallOp : TraitDialectOp<"method.call", [
     /// body's reads from its impl take the evidence the receiver's proof
     /// supplies there, its parameters this call's arguments, and this call's
     /// result the operand the body returns. The claim it leaves is read by
-    /// position, never selected again. The receiver impl's arguments are read
-    /// through `selection`, the stage's impl selection.
+    /// position, never selected again. The receiver impl's arguments are the
+    /// ones its proof states (`ImplOp::buildImplSpecialization`).
     LogicalResult inlineEvidence(PatternRewriter &rewriter,
-                                 const CallSubstitution &subst,
-                                 llvm::function_ref<Type(Type)> selection);
+                                 const CallSubstitution &subst);
   }];
 
   let hasVerifier = 1;
@@ -1507,12 +1514,12 @@ def FuncCallOp : TraitDialectOp<"func.call", [
     }
 
     /// Looks up or specializes the monomorphized callee, a template binding at
-    /// least one type parameter, using a pre-built substitution; `selection`
-    /// is the stage's impl selection, which a method call reads its receiver's
-    /// impl through and this call has no use for.
+    /// least one type parameter, using a pre-built substitution; `respell`
+    /// carries a proven claim this call supplies to the spelling the instance's
+    /// parameter has (`InstanceKey::get`).
     FailureOr<func::FuncOp> getOrSpecializeCallee(PatternRewriter &rewriter,
                                                   const CallSubstitution &subst,
-                                                  llvm::function_ref<Type(Type)> selection);
+                                                  llvm::function_ref<FailureOr<ClaimType>(ClaimType, ClaimType)> respell);
 
     /// The type arguments this call supplies for its callee's parameters, once
     /// the callee's signature instantiated at them is the signature spelled
@@ -1521,7 +1528,7 @@ def FuncCallOp : TraitDialectOp<"func.call", [
     ///
     /// `selection` resolves a type's projections through the stage's impl
     /// selection, which is all the stage reads both signatures through. A
-    /// verifier passes none and compares through the evidence this call holds.
+    /// verifier passes none and compares the two signatures as written.
     FailureOr<SpecializationMap> buildParameterSpecialization(llvm::function_ref<Type(Type)> selection, llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     // The type parameters the callee's signature binds, in first-occurrence
@@ -1608,6 +1615,11 @@ def ProofOp : TraitDialectOp<"proof", [
 
     /// The claims the derive is given, one per where entry of the impl.
     SmallVector<ClaimType> getPremises();
+
+    /// The proof each application premise of the derive rests on, in order:
+    /// the witness beneath the premise's respelling to its where entry, at the
+    /// application that proof proves. An equality premise rests on none.
+    SmallVector<ClaimType> getSubproofs();
 
     /// The arguments this proof's impl takes at the derive.
     FailureOr<SpecializationMap> getImplArguments(

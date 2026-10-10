@@ -5,8 +5,10 @@
 //   * as a requirement of another proof
 //   * as an explicit where-clause argument whose type preserves a projection
 //
-// One proof symbol reaching that obligation both ways is one fact under two
-// spellings, and the substitution the clone is cut with reads it as one.
+// One proof reaching that obligation both ways is one fact under two
+// spellings: the coercion carrying it to the projection's spelling settles to
+// that proof respelled there, and the substitution the clone is cut with reads
+// the two as one.
 
 module {
   trait.trait private @T0(%self: !trait.claim<@T0[!trait.poly<0>]>) {
@@ -53,12 +55,12 @@ module {
       : !trait.claim<!trait.proj<@T0[i64], "A"> = i64>
     %t1_projected = trait.coerce %t1
       : !trait.claim<@T1[i64] by @T1_i64>
-      to !trait.claim<@T1[!trait.proj<@T0[i64], "A">] by @T1_i64>
+      to !trait.claim<@T1[!trait.proj<@T0[i64], "A">]>
       via (%eq) : (!trait.claim<!trait.proj<@T0[i64], "A"> = i64>)
     %r = trait.func.call @f(%x, %t2, %t1_projected)
       : (i64,
          !trait.claim<@T2[i64] by @T2_i64_p>,
-         !trait.claim<@T1[!trait.proj<@T0[i64], "A">] by @T1_i64>)
+         !trait.claim<@T1[!trait.proj<@T0[i64], "A">]>)
       -> i32
     return %r : i32
   }

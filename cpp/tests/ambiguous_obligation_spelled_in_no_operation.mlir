@@ -8,9 +8,8 @@
 // claim carrying that projection is @B's requirement read at @B[i32]: @B_i32
 // returns an allegation of it, which replaces the projection off @B[i32]'s
 // proof. Selection refuses the allegation where the impl wrote it, and the
-// stage's exit walk names the claim it leaves unproven and the projection it
-// leaves unresolved there, with the candidates that make that projection
-// ambiguous.
+// stage's exit walk names the claim it leaves unproven there and, beside it,
+// the candidates that make the projection its predicate spells ambiguous.
 //
 // The stage fails on the refusal, so the steps after it never run on a module
 // nothing proved. The second run reads the exit status, which the diagnostic
@@ -45,7 +44,6 @@ trait.impl private @B_i32(%self: !trait.claim<@B[i32]>) {
   // expected-error @below {{no impl with satisfiable assumptions for '!trait.claim<@A[!trait.proj<@Foo[i32], "Out">]>'}}
   // expected-error @below {{unproven monomorphic claim '!trait.claim<@A[!trait.proj<@Foo[i32], "Out">]>' after instantiate-monomorphs}}
   // expected-error @below {{incoherent impls (multiple satisfiable) for '!trait.proj<@Foo[i32], "Out">'}}
-  // expected-error @below {{unresolved projection '!trait.proj<@Foo[i32], "Out">' after instantiate-monomorphs}}
   %req0 = trait.allege @A[!trait.proj<@Foo[i32], "Out">]
   trait.return %req0 : !trait.claim<@A[!trait.proj<@Foo[i32], "Out">]>
 }

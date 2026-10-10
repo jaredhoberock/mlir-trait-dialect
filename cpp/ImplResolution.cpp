@@ -95,11 +95,9 @@ ImplResolver::assumptionsSatisfiableFor(ImplOp impl,
     // A side whose projections still change after the depth limit's worth of
     // steps is the premise's overflow.
     TypeEqualityAttr equality = premise.getEqualityAttr();
-    NormalizationContext ownBindings;
-    ownBindings.addLocalProjectionRule(impl, app, known);
     auto reduce = [&](Type ty) {
       Type instantiated = instantiate(ty, known);
-      auto reduced = ownBindings.normalize(instantiated, /*err=*/nullptr);
+      FailureOr<Type> reduced = impl.readOwnBindings(instantiated, known);
       return settleThroughSelection(
           succeeded(reduced) ? *reduced : instantiated, site, builder);
     };
@@ -421,12 +419,14 @@ static SmallVector<Value> buildStepWitnesses(OpBuilder &builder, Location loc,
   return witnesses;
 }
 
-/// `value` spelled as `spelling`: `value` itself where it is spelled so
-/// already, else its coercion citing the witness of each of `steps`, the steps
-/// carrying the one spelling to the other.
+/// `value` spelled as `spelling`, an unproven claim: `value` itself where it
+/// is spelled so already, else its coercion citing the witness of each of
+/// `steps`, the steps carrying the one spelling to the other. The coercion's
+/// result names no proof: a claim names the proof of exactly its spelling, and
+/// the proof `value` carries proves another one.
 static Value respell(OpBuilder &builder, Location loc, Value value,
                      ClaimType spelling, ArrayRef<ResolutionStep> steps) {
-  if (value.getType() == Type(spelling))
+  if (cast<ClaimType>(value.getType()).asUnproven() == spelling)
     return value;
   return CoerceOp::create(builder, loc, spelling, value,
                           buildStepWitnesses(builder, loc, steps))
@@ -508,13 +508,10 @@ ClaimType ImplResolver::findProof(ModuleOp scope, ImplOp impl,
   // in one symbol table, and two modules can each hold an impl of that name
   // meaning two different impls.
   auto citesSubproofs = [&](ProofOp proof) {
-    auto next = subproofs.begin();
-    for (Value premise : proof.getDerive().getAssumptions()) {
-      auto claim = cast<ClaimType>(premise.getType());
-      if (claim.isApplication() && claim.getProof() != *next++)
-        return false;
-    }
-    return true;
+    return llvm::equal(
+        llvm::map_range(proof.getSubproofs(),
+                        [](ClaimType subproof) { return subproof.getProof(); }),
+        subproofs);
   };
   for (ProofOp proof : scope.getOps<ProofOp>())
     if (proof.getTraitApplication() == app && proof.getImpl() == impl &&
@@ -556,6 +553,55 @@ Answer<ClaimType> ImplResolver::writeProof(
                         FlatSymbolRefAttr::get(ctx, proof.getSymNameAttr()));
 }
 
+Answer<ClaimType> ImplResolver::respellProof(ClaimType proven,
+                                             TraitApplicationAttr to,
+                                             const SelectionSite &site,
+                                             OpBuilder &builder) {
+  if (proven.getTraitApplication() == to)
+    return proven;
+  using Respelled = Answer<ClaimType>;
+  ModuleOp scope = site.scope;
+  auto cited = ProofOp::getProofOpOrUnconditionalImplOp(scope, proven.getProof());
+  if (failed(cited))
+    return Respelled::refusal();
+  // The evidence the cited proof's derive was given: its impl, the proof each
+  // application premise names, and the arguments its header is derived at.
+  auto proof = dyn_cast<ProofOp>(*cited);
+  ImplOp impl = proof ? proof.getImpl() : cast<ImplOp>(*cited);
+  if (!impl)
+    return Respelled::refusal();
+  SmallVector<FlatSymbolRefAttr> subproofs;
+  if (proof)
+    for (ClaimType subproof : proof.getSubproofs())
+      subproofs.push_back(subproof.getProof());
+  if (ClaimType standing = findProof(scope, impl, to, subproofs))
+    return standing;
+  SpecializationMap arguments;
+  if (proof) {
+    auto stated = proof.getImplArguments();
+    if (failed(stated))
+      return Respelled::refusal();
+    arguments = std::move(*stated);
+  }
+  // An equality premise is ground and has one answer: the evidence the steps
+  // resolving its projections build.
+  SmallVector<ClaimType> entries = impl.getWhereClaimsAt(arguments);
+  SmallVector<SmallVector<ResolutionStep>> equalitySteps;
+  for (ClaimType entry : entries) {
+    if (!entry.isEquality())
+      continue;
+    SmallVector<ResolutionStep> steps;
+    auto sides = resolveEquality(entry.getEqualityAttr(), site, builder, steps);
+    if (!sides.isAnswer())
+      return sides.stop<ClaimType>();
+    if (sides->first != sides->second)
+      return Respelled::refusal();
+    equalitySteps.push_back(std::move(steps));
+  }
+  return writeProof(scope, impl, to, arguments, entries, subproofs,
+                    equalitySteps, site, builder);
+}
+
 Answer<SmallVector<ResolutionStep>>
 ImplResolver::resolveRespelling(TraitApplicationAttr spelled,
                                 TraitApplicationAttr resolved,
@@ -592,8 +638,7 @@ ImplResolver::resolvePremise(ClaimType entry, FlatSymbolRefAttr proof,
   if (!respelling.isAnswer())
     return respelling.stop<ProvenPremise>();
   MLIRContext *ctx = entry.getContext();
-  return ProvenPremise{ClaimType::get(ctx, own, proof),
-                       ClaimType::get(ctx, entry.getTraitApplication(), proof),
+  return ProvenPremise{ClaimType::get(ctx, own, proof), entry.asUnproven(),
                        std::move(*respelling)};
 }
 
@@ -752,26 +797,58 @@ Answer<ClaimType> ImplResolver::resolveAndEnsureProofFor(
     if (err) err() << "could not monomorphize claim: " << originalWanted;
     return Proven::refusal();
   }
-  TraitApplicationAttr app = *monomorphic;
+  // A proof is identified by the evidence its derive cites at the application
+  // selection resolves the claim to, `resolved`, as rustc and GHC key evidence
+  // by the normalized predicate. A claim spelled otherwise names that proof
+  // respelled at its own spelling (`respellProof`): a claim names the proof of
+  // exactly its spelling (`verifyCitation`), and every spelling of one
+  // application names one proof.
+  TraitApplicationAttr resolved = *monomorphic;
+  TraitApplicationAttr spelled = wanted.getTraitApplication();
   MLIRContext *ctx = scope.getContext();
 
   // check the proof memo for this monomorphic app, as read here
+  if (auto it = memo.proofMemo.find({scope, spelled});
+      it != memo.proofMemo.end())
+    return ClaimType::get(ctx, spelled, it->second);
+  Proven atResolution = proofAtResolution(impl, resolved, *subst, site,
+                                          builder, originalWanted, err);
+  if (!atResolution.isAnswer() || spelled == resolved)
+    return atResolution;
+  Proven respelled = respellProof(*atResolution, spelled, site, builder);
+  if (!respelled.isAnswer())
+    return respelled;
+  return recordProof(scope, spelled, respelled->getProof());
+}
+
+Answer<ClaimType> ImplResolver::proofAtResolution(
+    ImplOp impl, TraitApplicationAttr app, const SpecializationMap &arguments,
+    const SelectionSite &site, OpBuilder &builder, ClaimType wanted,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  using Proven = Answer<ClaimType>;
+  ModuleOp scope = site.scope;
+  MLIRContext *ctx = scope.getContext();
   if (auto it = memo.proofMemo.find({scope, app}); it != memo.proofMemo.end())
     return ClaimType::get(ctx, app, it->second);
 
   // The evidence for each where entry at the arguments selection chose, in
-  // order: the proof of an application entry, and the resolution of an
-  // equality entry, whose sides selection carries to one spelling. The trait's
-  // requirements are the impl's to return, read at the proof's derive.
-  // Selection chose `impl` only once these entries held through a chain that
-  // refuses an application it meets again (the cycle guard of
-  // `resolveImplFor`), so proving them never asks for `app` itself.
-  SmallVector<ClaimType> entries = impl.getWhereClaimsAt(*subst);
+  // order: the proof of an application entry at the application selection
+  // resolves it to, and the resolution of an equality entry, whose sides
+  // selection carries to one spelling. The trait's requirements are the
+  // impl's to return, read at the proof's derive. Selection chose `impl` only
+  // once these entries held through a chain that refuses an application it
+  // meets again (the cycle guard of `resolveImplFor`), so proving them never
+  // asks for `app` itself.
+  SmallVector<ClaimType> entries = impl.getWhereClaimsAt(arguments);
   SmallVector<FlatSymbolRefAttr> subproofs;
   SmallVector<SmallVector<ResolutionStep>> equalitySteps;
   for (ClaimType entry : entries) {
     if (entry.isApplication()) {
-      Proven subproof = resolveAndEnsureProofFor(entry, site, builder, err);
+      Answer<Type> resolvedEntry = resolveProjectionsIn(entry, site, builder);
+      if (!resolvedEntry.isAnswer())
+        return resolvedEntry.stop<ClaimType>();
+      Proven subproof = resolveAndEnsureProofFor(
+          cast<ClaimType>(*resolvedEntry), site, builder, err);
       if (!subproof.isAnswer())
         return subproof;
       subproofs.push_back(subproof->getProof());
@@ -784,7 +861,7 @@ Answer<ClaimType> ImplResolver::resolveAndEnsureProofFor(
     if (!sides.isAnswer() || sides->first != sides->second) {
       if (err) err() << "impl '@" << impl.getSymName() << "' applies where "
                      << entry << ", which selection does not settle at "
-                     << originalWanted;
+                     << wanted;
       return Proven::refusal();
     }
     equalitySteps.push_back(std::move(steps));
@@ -795,7 +872,7 @@ Answer<ClaimType> ImplResolver::resolveAndEnsureProofFor(
   // memoized by the monomorphic app.
   if (ClaimType found = findProof(scope, impl, app, subproofs))
     return recordProof(scope, app, found.getProof());
-  Proven written = writeProof(scope, impl, app, *subst, entries, subproofs,
+  Proven written = writeProof(scope, impl, app, arguments, entries, subproofs,
                               equalitySteps, site, builder);
   if (!written.isAnswer())
     return written;
@@ -864,8 +941,12 @@ ImplResolver::resolveEquality(TypeEqualityAttr eq, const SelectionSite &site,
         for (ClaimType entry :
              resolved->getImpl().getWhereClaimsAt(resolved->getArguments())) {
           if (entry.isApplication()) {
-            Answer<ClaimType> proven =
-                resolveAndEnsureProofFor(entry, site, builder, err);
+            Answer<Type> resolvedEntry =
+                resolveProjectionsIn(entry, site, builder);
+            if (!resolvedEntry.isAnswer())
+              return stop(resolvedEntry.isOverflow());
+            Answer<ClaimType> proven = resolveAndEnsureProofFor(
+                cast<ClaimType>(*resolvedEntry), site, builder, err);
             if (!proven.isAnswer())
               return stop(proven.isOverflow());
             Answer<ProvenPremise> premise = resolvePremise(

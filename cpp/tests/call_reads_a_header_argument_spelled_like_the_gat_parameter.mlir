@@ -6,7 +6,9 @@
 // The caller's variable X carries the label of the impl's associated-type
 // parameter W. At T := X the callee's operand @Has[tuple<T>]::A<V> reads the
 // binding tuple<U, W> through one substitution carrying U to X and W to V, so
-// it denotes tuple<X, V>, and the operand the caller spells fills V with i1.
+// it denotes tuple<X, V>: the caller's coercion of its tuple<X, i1> to
+// @Has[tuple<X>]::A<i1> cites that binding, and the call fills V with i1 off
+// the projection's own argument.
 
 !X = !trait.poly<4>
 !T = !trait.poly<10>
@@ -29,8 +31,12 @@ func.func private @g(%x: !T,
 
 func.func private @k(%x: !X, %v: tuple<!X, i1>) -> !X {
   %c = trait.derive @Has[tuple<!X>] from @Has_tuple given()
-  %r = trait.func.call @g(%x, %v, %c)
-    : (!X, tuple<!X, i1>, !trait.claim<@Has[tuple<!X>]>) -> !X
+  %a = trait.witness proj_resolve !trait.proj<@Has[tuple<!X>], "A", [i1]> resolves tuple<!X, i1> by @Has_tuple
+    : !trait.claim<!trait.proj<@Has[tuple<!X>], "A", [i1]> = tuple<!X, i1>>
+  %w = trait.coerce %v : tuple<!X, i1> to !trait.proj<@Has[tuple<!X>], "A", [i1]> via (%a)
+    : (!trait.claim<!trait.proj<@Has[tuple<!X>], "A", [i1]> = tuple<!X, i1>>)
+  %r = trait.func.call @g(%x, %w, %c)
+    : (!X, !trait.proj<@Has[tuple<!X>], "A", [i1]>, !trait.claim<@Has[tuple<!X>]>) -> !X
   return %r : !X
 }
 

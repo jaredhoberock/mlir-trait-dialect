@@ -180,18 +180,6 @@ def ClaimType : TypeDef<TraitDialect, "Claim", [
       return ClaimType::get(getContext(), getTraitApplication());
     }
 
-    /// This claim's application carrying the proof `from` names: the evidence
-    /// a value derived from `from` carries, a projection read off it or a
-    /// coerce of it. Null unless both are application claims and `from` is
-    /// proven.
-    ClaimType carryingProofOf(ClaimType from) const {
-      if (!from || !isApplication() || !from.isApplication() ||
-          !from.isProven())
-        return {};
-      return ClaimType::get(getContext(), getTraitApplication(),
-                            from.getProof());
-    }
-
     // for PolymorphicTypeInterface
     bool isPolymorphic() const;
   }];

@@ -24,8 +24,8 @@ trait.trait private @Holds(%self: !trait.claim<@Holds[!S]>) {
 trait.impl private @Holds_i32(%self: !trait.claim<@Holds[i32]>) {
   trait.assoc_type @C<[!X]> = tuple<i64, i64>
   trait.method @requirement_0() -> !trait.claim<@Rule[!trait.proj<@Holds[i32], "C", [!X]>]> {
-    // expected-error @below {{no impl with satisfiable assumptions for '!trait.claim<@Rule[tuple<i64, i64>]>'}}
-    // expected-error @below {{unproven monomorphic claim '!trait.claim<@Rule[tuple<i64, i64>]>' after instantiate-monomorphs}}
+    // expected-error @below {{no impl with satisfiable assumptions for '!trait.claim<@Rule[!trait.proj<@Holds[i32], "C", [i1]>]>'}}
+    // expected-error @below {{unproven monomorphic claim '!trait.claim<@Rule[!trait.proj<@Holds[i32], "C", [i1]>]>' after instantiate-monomorphs}}
     %r = trait.allege @Rule[!trait.proj<@Holds[i32], "C", [!X]>]
     trait.return %r : !trait.claim<@Rule[!trait.proj<@Holds[i32], "C", [!X]>]>
   }
@@ -52,7 +52,8 @@ func.func @main(%x: !trait.proj<@Holds[i32], "C", [i1]>) -> i64 {
 
 // An impl's evidence method calls its where argument's, whose impl alleges the
 // conclusion: both calls are replaced by their methods' bodies, and the
-// allegation the inner one inlines is refused where it is written.
+// allegation the inner one inlines is refused where it is written, and the
+// coercion respelling it stands unproven with it.
 
 !S = !trait.poly<0>
 !X = !trait.poly<1>
@@ -69,8 +70,8 @@ trait.trait private @Base(%self: !trait.claim<@Base[!S]>) {
 trait.impl private @Base_i32(%self: !trait.claim<@Base[i32]>) {
   trait.assoc_type @A<[!X]> = i64
   trait.method @requirement_0() -> !trait.claim<@Mark[!trait.proj<@Base[i32], "A", [!X]>]> {
-    // expected-error @below {{no impl with satisfiable assumptions for '!trait.claim<@Mark[i64]>'}}
-    // expected-error @below {{unproven monomorphic claim '!trait.claim<@Mark[i64]>' after instantiate-monomorphs}}
+    // expected-error @below {{no impl with satisfiable assumptions for '!trait.claim<@Mark[!trait.proj<@Base[i32], "A", [i1]>]>'}}
+    // expected-error @below {{unproven monomorphic claim '!trait.claim<@Mark[!trait.proj<@Base[i32], "A", [i1]>]>' after instantiate-monomorphs}}
     %r = trait.allege @Mark[!trait.proj<@Base[i32], "A", [!X]>]
     trait.return %r : !trait.claim<@Mark[!trait.proj<@Base[i32], "A", [!X]>]>
   }
@@ -86,6 +87,7 @@ trait.impl private @Outer_i32(%self: !trait.claim<@Outer[i32]>, %base: !trait.cl
     %e = trait.witness proj_resolve !trait.proj<@Outer[i32], "A", [!X]> resolves !trait.proj<@Base[i32], "A", [!X]> by @Outer_i32 given(%base)
       : (!trait.claim<@Base[i32]>)
       : !trait.claim<!trait.proj<@Outer[i32], "A", [!X]> = !trait.proj<@Base[i32], "A", [!X]>>
+    // expected-error @below {{unproven monomorphic claim '!trait.claim<@Mark[!trait.proj<@Outer[i32], "A", [i1]>]>' after instantiate-monomorphs}}
     %c = trait.coerce %r : !trait.claim<@Mark[!trait.proj<@Base[i32], "A", [!X]>]> to !trait.claim<@Mark[!trait.proj<@Outer[i32], "A", [!X]>]> via (%e)
       : (!trait.claim<!trait.proj<@Outer[i32], "A", [!X]> = !trait.proj<@Base[i32], "A", [!X]>>)
     trait.return %c : !trait.claim<@Mark[!trait.proj<@Outer[i32], "A", [!X]>]>
@@ -131,10 +133,10 @@ trait.trait private @Has(%self: !trait.claim<@Has[!S]>) {
 trait.impl private @Has_i32(%self: !trait.claim<@Has[i32]>) {
   trait.assoc_type @A<[!X]> = i64
   trait.method @requirement_0() -> !trait.claim<@Sup0[!trait.proj<@Has[i32], "A", [!X]>]> {
-    // expected-error @below {{no impl with satisfiable assumptions for '!trait.claim<@Sub0[i64]>'}}
-    // expected-error @below {{unproven monomorphic claim '!trait.claim<@Sub0[i64]>' after instantiate-monomorphs}}
+    // expected-error @below {{no impl with satisfiable assumptions for '!trait.claim<@Sub0[!trait.proj<@Has[i32], "A", [i1]>]>'}}
+    // expected-error @below {{unproven monomorphic claim '!trait.claim<@Sub0[!trait.proj<@Has[i32], "A", [i1]>]>' after instantiate-monomorphs}}
     %s = trait.allege @Sub0[!trait.proj<@Has[i32], "A", [!X]>]
-    // expected-error @below {{unproven monomorphic claim '!trait.claim<@Sup0[i64]>' after instantiate-monomorphs}}
+    // expected-error @below {{unproven monomorphic claim '!trait.claim<@Sup0[!trait.proj<@Has[i32], "A", [i1]>]>' after instantiate-monomorphs}}
     %r = trait.project %s[0] : !trait.claim<@Sub0[!trait.proj<@Has[i32], "A", [!X]>]> -> !trait.claim<@Sup0[!trait.proj<@Has[i32], "A", [!X]>]>
     trait.return %r : !trait.claim<@Sup0[!trait.proj<@Has[i32], "A", [!X]>]>
   }

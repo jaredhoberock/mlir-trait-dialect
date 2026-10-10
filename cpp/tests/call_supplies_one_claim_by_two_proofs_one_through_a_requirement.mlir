@@ -44,9 +44,9 @@ trait.impl private @T2_i64(%self: !trait.claim<@T2[i64]>) {
     : !trait.claim<!trait.proj<@T0[i64], "A"> = i64>
   %req0 = trait.coerce %t1
     : !trait.claim<@T1[i64] by @T1_i64_a>
-    to !trait.claim<@T1[!trait.proj<@T0[i64], "A">] by @T1_i64_a>
+    to !trait.claim<@T1[!trait.proj<@T0[i64], "A">]>
     via (%eq) : (!trait.claim<!trait.proj<@T0[i64], "A"> = i64>)
-  trait.return %req0 : !trait.claim<@T1[!trait.proj<@T0[i64], "A">] by @T1_i64_a>
+  trait.return %req0 : !trait.claim<@T1[!trait.proj<@T0[i64], "A">]>
 }
 
 trait.proof private @T2_i64_p {
@@ -76,12 +76,12 @@ func.func @main() -> i64 {
     : !trait.claim<!trait.proj<@T0[i64], "A"> = i64>
   %t1_projected = trait.coerce %t1
     : !trait.claim<@T1[i64] by @T1_i64_b>
-    to !trait.claim<@T1[!trait.proj<@T0[i64], "A">] by @T1_i64_b>
+    to !trait.claim<@T1[!trait.proj<@T0[i64], "A">]>
     via (%eq) : (!trait.claim<!trait.proj<@T0[i64], "A"> = i64>)
   %r = trait.func.call @f(%x, %t2, %t1_projected)
     : (i64,
        !trait.claim<@T2[i64] by @T2_i64_p>,
-       !trait.claim<@T1[!trait.proj<@T0[i64], "A">] by @T1_i64_b>)
+       !trait.claim<@T1[!trait.proj<@T0[i64], "A">]>)
     -> i64
   return %r : i64
 }

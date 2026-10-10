@@ -151,7 +151,6 @@ unsigned TypeEquivalence::intern(Type t) {
   ids[t] = id;
   terms.push_back(t);
   parent.push_back(id);
-  orderKeys.emplace_back();
   return id;
 }
 
@@ -166,59 +165,8 @@ unsigned TypeEquivalence::findCanonical(unsigned id) {
 void TypeEquivalence::unite(unsigned a, unsigned b) {
   a = findCanonical(a);
   b = findCanonical(b);
-  if (a == b)
-    return;
-  // The joined class keeps the lesser of the two canonical members, so a class
-  // is headed by its least member however its equalities were oriented and in
-  // whatever order they arrived.
-  if (precedes(b, a))
-    std::swap(a, b);
-  parent[b] = a;
-}
-
-llvm::DenseMap<Type, Type> TypeEquivalence::substitutionToCanonicalMembers() {
-  llvm::DenseMap<Type, Type> subst;
-  for (unsigned id = 0, n = terms.size(); id != n; ++id) {
-    unsigned canonical = findCanonical(id);
-    if (canonical != id)
-      subst[terms[id]] = terms[canonical];
-  }
-  return subst;
-}
-
-TypeEquivalence::OrderKey &TypeEquivalence::orderKeyOf(unsigned id) {
-  if (orderKeys[id])
-    return *orderKeys[id];
-  OrderKey key{/*projections=*/0, /*types=*/0,
-               isPolymorphicType(terms[id]), std::string()};
-  terms[id].walk([&](Type sub) {
-    ++key.types;
-    if (isa<ProjectionType>(sub))
-      ++key.projections;
-  });
-  orderKeys[id] = std::move(key);
-  return *orderKeys[id];
-}
-
-bool TypeEquivalence::precedes(unsigned a, unsigned b) {
-  OrderKey &first = orderKeyOf(a);
-  OrderKey &second = orderKeyOf(b);
-  if (first.projections != second.projections)
-    return first.projections < second.projections;
-  if (first.types != second.types)
-    return first.types < second.types;
-  if (first.mentionsVariable != second.mentionsVariable)
-    return !first.mentionsVariable;
-  // Two types of the same shape are told apart by their spellings, which is the
-  // one key that must print and so is printed only here.
-  auto spell = [&](OrderKey &key, Type ty) -> const std::string & {
-    if (key.spelling.empty()) {
-      llvm::raw_string_ostream stream(key.spelling);
-      stream << ty;
-    }
-    return key.spelling;
-  };
-  return spell(first, terms[a]) < spell(second, terms[b]);
+  if (a != b)
+    parent[b] = a;
 }
 
 //===----------------------------------------------------------------------===//
@@ -431,14 +379,14 @@ LogicalResult verifyCitation(ClaimType proven, ModuleOp module,
   TraitApplicationAttr declared =
       isa<ImplOp>(*symOp) ? cast<ImplOp>(*symOp).getSelfApplication()
                           : cast<ProofOp>(*symOp).getTraitApplication();
-  // Compared modulo the proofs claims nested in the arguments carry, as every
-  // claim comparison is (`stripClaimProofs`).
-  Type declaredClaim = Type(ClaimType::get(proven.getContext(), declared));
-  if (declared == proven.getTraitApplication() ||
-      stripClaimProofs(declaredClaim) == stripClaimProofs(Type(proven.asUnproven())))
+  // A claim names the proof of exactly its own spelling: every writer mints a
+  // proof at the application the claim it proves spells, so the citation is
+  // one comparison.
+  if (declared == proven.getTraitApplication())
     return success();
   if (err)
-    err() << "proof " << proven.getProof() << " proves " << declaredClaim
+    err() << "proof " << proven.getProof() << " proves "
+          << Type(ClaimType::get(proven.getContext(), declared))
           << ", which does not discharge the obligation "
           << Type(proven.asUnproven());
   return failure();
@@ -447,10 +395,7 @@ LogicalResult verifyCitation(ClaimType proven, ModuleOp module,
 void walkObligationSites(Type root, llvm::function_ref<void(Type)> visit) {
   root.walk<WalkOrder::PreOrder>([&](Type sub) -> WalkResult {
     visit(sub);
-    if (auto claim = dyn_cast<ClaimType>(sub))
-      if (claim.isEquality())
-        return WalkResult::skip();
-    return WalkResult::advance();
+    return isa<ClaimType>(sub) ? WalkResult::skip() : WalkResult::advance();
   });
 }
 
@@ -511,52 +456,26 @@ FailureOr<ClaimType> getClaimRequirementAt(
       module, "getClaimRequirementAt: the counted trait vanished");
   uint64_t traitCount = trait.getRequirements().size();
 
-  // An unproven claim carries no evidence, so each requirement it reaches is
-  // the trait's at its arguments, unproven.
-  if (!claim.isProven())
-    return trait.specializeRequirementAsClaimFor(claim, index, errFn);
-
-  auto cited =
-      ProofOp::getProofOpOrUnconditionalImplOp(module, claim.getProof(), errFn);
-  if (failed(cited))
-    return failure();
-  auto proof = dyn_cast<ProofOp>(*cited);
+  // A requirement of the trait -- every requirement an unproven claim
+  // reaches -- is the trait's at the claim's arguments, as the claim spells
+  // them, unproven. Of a proven claim, the evidence is the impl's return
+  // operand there, which the stage inlines where a projection reads it
+  // (`ProjectOp::inlineEvidence`); this names the claim alone.
+  if (index < traitCount)
+    return trait.specializeRequirementAsClaimFor(claim.asUnproven(), index,
+                                                 errFn);
 
   // A where entry of the impl: the claim the proof's derive is given at that
   // position, read by index. Only a proof has where entries to read: an impl
   // named directly is unconditional.
-  if (index >= traitCount)
-    return cast<ClaimType>(
-        proof.getDerive().getAssumptions()[index - traitCount].getType());
-
-  ImplOp impl = proof ? proof.getImpl() : cast<ImplOp>(*cited);
-  SpecializationMap arguments;
-  if (proof) {
-    auto stated = proof.getImplArguments(errFn);
-    if (failed(stated))
-      return failure();
-    arguments = std::move(*stated);
-  }
-
-  // A requirement of the trait: the requirement at the claim's arguments, read
-  // through the impl's own binding as the impl's return is spelled. The
-  // evidence is the impl's return operand there, which the stage inlines where
-  // a projection reads it (`ProjectOp::inlineEvidence`); this names the claim
-  // alone, unproven.
-  auto requirement =
-      trait.specializeRequirementAsClaimFor(claim.asUnproven(), index, errFn);
-  if (failed(requirement))
+  auto cited =
+      ProofOp::getProofOpOrUnconditionalImplOp(module, claim.getProof(), errFn);
+  if (failed(cited))
     return failure();
-  ClaimType obligation = *requirement;
-  if (obligation.isEquality())
-    return obligation;
-  NormalizationContext own;
-  own.addLocalProjectionRule(impl, claim.asUnproven().getTraitApplication(),
-                             arguments);
-  auto read = own.normalize(Type(obligation), errFn);
-  if (failed(read))
-    return failure();
-  return cast<ClaimType>(*read);
+  return cast<ClaimType>(cast<ProofOp>(*cited)
+                             .getDerive()
+                             .getAssumptions()[index - traitCount]
+                             .getType());
 }
 
 //===----------------------------------------------------------------------===//

@@ -4,10 +4,10 @@
 // RUN: mlir-opt %s -verify-diagnostics
 
 // The caller's variable X carries the label of the impl's associated-type
-// parameter W. At T := X the callee's operand @Has[tuple<T>]::A<V> denotes
-// tuple<X, V>, so no argument for V makes it tuple<i1, i1> and the call is
-// ill-typed. tuple<i1, i1> is what the binding would denote if the argument X,
-// stamped in for the header parameter U, were then read as an occurrence of W.
+// parameter W. @Has[tuple<X>]::A<i1> denotes tuple<X, i1>, so a witness that
+// it resolves to tuple<i1, i1> is refused. tuple<i1, i1> is what the binding
+// would denote if the argument X, stamped in for the header parameter U, were
+// then read as an occurrence of W.
 
 !X = !trait.poly<4>
 !T = !trait.poly<10>
@@ -30,9 +30,13 @@ func.func private @g(%x: !T,
 
 func.func private @k(%x: !X, %v: tuple<i1, i1>) -> !X {
   %c = trait.derive @Has[tuple<!X>] from @Has_tuple given()
-  // expected-error @below {{type mismatch: expected '(!trait.poly<4>, tuple<!trait.poly<4>, i1>, !trait.claim<@Has[tuple<!trait.poly<4>>]>) -> !trait.poly<4>' but found '(!trait.poly<4>, tuple<i1, i1>, !trait.claim<@Has[tuple<!trait.poly<4>>]>) -> !trait.poly<4>'}}
-  %r = trait.func.call @g(%x, %v, %c)
-    : (!X, tuple<i1, i1>, !trait.claim<@Has[tuple<!X>]>) -> !X
+  // expected-error @below {{impl '@Has_tuple' binds the projection to 'tuple<!trait.poly<4>, i1>', not the certified resolution 'tuple<i1, i1>'}}
+  %a = trait.witness proj_resolve !trait.proj<@Has[tuple<!X>], "A", [i1]> resolves tuple<i1, i1> by @Has_tuple
+    : !trait.claim<!trait.proj<@Has[tuple<!X>], "A", [i1]> = tuple<i1, i1>>
+  %w = trait.coerce %v : tuple<i1, i1> to !trait.proj<@Has[tuple<!X>], "A", [i1]> via (%a)
+    : (!trait.claim<!trait.proj<@Has[tuple<!X>], "A", [i1]> = tuple<i1, i1>>)
+  %r = trait.func.call @g(%x, %w, %c)
+    : (!X, !trait.proj<@Has[tuple<!X>], "A", [i1]>, !trait.claim<@Has[tuple<!X>]>) -> !X
   return %r : !X
 }
 

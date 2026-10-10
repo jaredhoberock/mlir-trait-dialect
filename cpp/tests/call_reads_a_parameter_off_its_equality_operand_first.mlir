@@ -5,12 +5,13 @@
 // `Producer[i64]::Item` twice: in the `@Has` claim, a coercion of the witness of
 // `@Has[i32]` citing the projection's binding, and in the equality operand,
 // whose endpoints nothing resolves. Where the call is lowered the coercion has
-// settled to `@Has[i32]`. The clone's equality parameter rebinds the variables
-// inside its endpoints and nothing else, so it matches the operand only when
-// `!Y` is read off the equality; the `@Has` position compares through
-// normalization, which reduces that spelling to `i32`. Reading `!Y` off `@Has`
-// first bound it to `i32`, the clone's equality parameter differed from the
-// operand, and the call was never lowered.
+// settled to the witness of `@Has_i32_p` respelled at the projection. The
+// clone's claim parameters rebind the variables inside their predicates and
+// nothing else, so they match the operands only when `!Y` is read off the
+// equality; the `@Has` position compares through selection, which reduces that
+// spelling to `i32`. Reading `!Y` off `@Has` first bound it to `i32`, the
+// clone's parameters differed from the operands, and the call was never
+// lowered.
 //
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(instantiate-monomorphs-trait)' | FileCheck %s
 
@@ -33,13 +34,13 @@ func.func private @tpl(%h: !trait.claim<@Has[!trait.poly<1>]>,
 }
 
 // CHECK-LABEL: func.func @main
-// CHECK: call @tpl_{{.*}}(%{{.*}}, %{{.*}}) : (!trait.claim<@Has[i32] by @Has_i32_p>, !trait.claim<!trait.proj<@Producer[i64], "Item"> = !trait.proj<@Producer[i64], "Item">>) -> ()
+// CHECK: call @tpl_{{.*}}(%{{.*}}, %{{.*}}) : (!trait.claim<@Has[!trait.proj<@Producer[i64], "Item">] by @Has_i32_{{.*}}>, !trait.claim<!trait.proj<@Producer[i64], "Item"> = !trait.proj<@Producer[i64], "Item">>) -> ()
 func.func @main(%e: !trait.claim<!trait.proj<@Producer[i64], "Item"> = !trait.proj<@Producer[i64], "Item">>) {
   %w = trait.witness @Has_i32_p for @Has[i32]
   %item = trait.witness proj_resolve !trait.proj<@Producer[i64], "Item"> resolves i32 by @Producer_i64 : !trait.claim<!trait.proj<@Producer[i64], "Item"> = i32>
-  %h = trait.coerce %w : !trait.claim<@Has[i32] by @Has_i32_p> to !trait.claim<@Has[!trait.proj<@Producer[i64], "Item">] by @Has_i32_p> via (%item) : (!trait.claim<!trait.proj<@Producer[i64], "Item"> = i32>)
+  %h = trait.coerce %w : !trait.claim<@Has[i32] by @Has_i32_p> to !trait.claim<@Has[!trait.proj<@Producer[i64], "Item">]> via (%item) : (!trait.claim<!trait.proj<@Producer[i64], "Item"> = i32>)
   trait.func.call @tpl(%h, %e)
-    : (!trait.claim<@Has[!trait.proj<@Producer[i64], "Item">] by @Has_i32_p>,
+    : (!trait.claim<@Has[!trait.proj<@Producer[i64], "Item">]>,
        !trait.claim<!trait.proj<@Producer[i64], "Item"> = !trait.proj<@Producer[i64], "Item">>) -> ()
   return
 }

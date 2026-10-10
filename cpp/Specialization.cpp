@@ -79,8 +79,10 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &sub
   AttrTypeReplacer replacer = makeEndpointSealedReplacer();
   bool isTemplate = kind == CloneKind::Template;
   auto stamp = [=](Type t) -> Type {
-    return isTemplate ? applySubstitutionOnce(subst, t)
-                      : applySubstitutionToFixedPoint(subst, t);
+    return isTemplate ? applySubstitutionOnce(subst, t,
+                                              ClaimPredicates::VariablesAlone)
+                      : applySubstitutionToFixedPoint(
+                            subst, t, ClaimPredicates::VariablesAlone);
   };
   replacer.addReplacement(
       [=](Type t) -> std::optional<std::pair<Type, WalkResult>> {
@@ -110,10 +112,11 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &sub
                : std::nullopt;
   });
 
-  // The clone rule for equality evidence: an equality claim's endpoints receive
-  // the variable bindings alone, stamped once -- no projection binding resolved
-  // inside them -- so the equality a clone holds is
-  // rebuilt at the instance its claim is, under the one substitution.
+  // The clone rule for a claim: its predicate receives the variable bindings
+  // alone, stamped once -- no projection binding resolved inside it -- so the
+  // claim a clone holds is the template's at the instance's arguments, and the
+  // evidence a template wrote for it still meets it by identity
+  // (`respellClaimPredicate`).
   llvm::DenseMap<Type, Type> variableBindings;
   for (auto [key, value] : subst)
     if (isa<GenericTypeInterface>(key))
@@ -123,7 +126,7 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &sub
   };
   replacer.addReplacement(
       [respell](ClaimType claim) -> std::optional<std::pair<Type, WalkResult>> {
-    return respellEqualityEndpoints(claim, respell);
+    return respellClaimPredicate(claim, respell);
   });
 
   return replacer;
@@ -273,11 +276,11 @@ void specializePolymorphicRegion(OpBuilder& builder,
                                  spellingReplacer);
 }
 
-FailureOr<InstanceKey> InstanceKey::get(SymbolRefAttr templateRef,
-                                        ArrayRef<Type> typeArguments,
-                                        TypeRange formalInputs,
-                                        TypeRange actualInputs,
-                                        AttrTypeReplacer &stamp) {
+FailureOr<InstanceKey>
+InstanceKey::get(SymbolRefAttr templateRef, ArrayRef<Type> typeArguments,
+                 TypeRange formalInputs, TypeRange actualInputs,
+                 AttrTypeReplacer &stamp,
+                 llvm::function_ref<FailureOr<ClaimType>(ClaimType, ClaimType)> respell) {
   if (formalInputs.size() != actualInputs.size())
     return failure();
 
@@ -290,23 +293,32 @@ FailureOr<InstanceKey> InstanceKey::get(SymbolRefAttr templateRef,
     // Whether a position takes evidence is read off its formal as the instance
     // spells it: a formal spelled as a projection that resolves to a claim
     // takes evidence exactly as one spelled as that claim does.
-    if (!containsType<ClaimType>(stamp.replace(formal))) {
+    Type parameter = stamp.replace(formal);
+    if (!containsType<ClaimType>(parameter)) {
       evidence.push_back(Type());
       continue;
     }
     Type actual = stamp.replace(supplied);
-    // An equality's endpoints are a proposition, never evidence, so the walk
-    // judges the equality claim and not what stands inside it.
+    // A proven application claim supplied under another spelling than the
+    // parameter's is carried there by its proof respelled; proofs nested in
+    // the two spellings are the supplied claim's own.
+    auto declared = dyn_cast<ClaimType>(parameter);
+    auto given = dyn_cast<ClaimType>(actual);
+    if (declared && given && declared.isApplication() &&
+        !declared.isProven() && given.isApplication() && given.isProven() &&
+        stripClaimProofs(Type(given)) != stripClaimProofs(Type(declared))) {
+      FailureOr<ClaimType> respelled = respell(given, declared);
+      if (failed(respelled))
+        return failure();
+      evidence.push_back(*respelled);
+      continue;
+    }
+    // A claim's predicate is a proposition, never evidence, so the walk
+    // judges each claim and not what stands inside it (`walkObligationSites`).
     bool everyApplicationProven = true;
-    actual.walk<WalkOrder::PreOrder>([&](Type sub) -> WalkResult {
-      auto claim = dyn_cast<ClaimType>(sub);
-      if (!claim)
-        return WalkResult::advance();
-      if (claim.isEquality())
-        return WalkResult::skip();
-      if (!claim.isProven())
+    walkObligationSites(actual, [&](Type sub) {
+      if (isa<ClaimType>(sub) && isUndischargedObligation(sub))
         everyApplicationProven = false;
-      return WalkResult::advance();
     });
     if (!everyApplicationProven)
       return failure();
@@ -360,17 +372,14 @@ func::FuncOp getOrCutInstance(RewriterBase &rewriter, ModuleOp module,
         instance.getContext(), inputs, signature.getResults()));
   });
 
-  // A value an op derives from an operand carries that operand's evidence: a
-  // projection off a proven source is replaced by the evidence the source's
-  // impl returns at its index (`ProjectOp::inlineEvidence`), and a coerce's
-  // result takes its input's proof at the application the result spells, which
-  // the coerce verifier holds to its input's. A value the substitution spelled
-  // proven is left as spelled, and one nothing here proves is the stage
-  // patterns' to prove. Repeated so that a chain is read in dominance order
-  // whatever order its blocks stand in, and so that a projection an inlined
-  // return computes is inlined in turn; evidence with no base
-  // (`ProjectOp::readEvidence`) is never inlined, so the rounds
-  // reach their bound only as a tripwire.
+  // A projection off a proven source is replaced by the evidence the source's
+  // impl returns at its index (`ProjectOp::inlineEvidence`). A value the
+  // substitution spelled proven is left as spelled, and one nothing here
+  // proves is the stage patterns' to prove. Repeated so that a chain is read
+  // in dominance order whatever order its blocks stand in, and so that a
+  // projection an inlined return computes is inlined in turn; evidence with no
+  // base (`ProjectOp::readEvidence`) is never inlined, so the rounds reach
+  // their bound only as a tripwire.
   for (unsigned round = 0; round < kInstantiationDepthLimit; ++round) {
     bool changed = false;
     SmallVector<ProjectOp> projections;
@@ -381,18 +390,6 @@ func::FuncOp getOrCutInstance(RewriterBase &rewriter, ModuleOp module,
     });
     for (ProjectOp project : projections)
       changed |= succeeded(project.inlineEvidence(rewriter));
-    instance.walk([&](CoerceOp coerce) {
-      auto input = dyn_cast<ClaimType>(coerce.getInput().getType());
-      auto result = dyn_cast<ClaimType>(coerce.getResult().getType());
-      ClaimType carrying =
-          result && !result.isProven() ? result.carryingProofOf(input)
-                                       : ClaimType();
-      if (!carrying)
-        return;
-      rewriter.modifyOpInPlace(coerce,
-                               [&] { coerce.getResult().setType(carrying); });
-      changed = true;
-    });
     if (!changed)
       break;
   }

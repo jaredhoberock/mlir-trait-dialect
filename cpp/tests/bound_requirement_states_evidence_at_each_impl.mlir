@@ -29,7 +29,9 @@ trait.impl private @Marker_wrap(%self: !trait.claim<@Marker[tuple<!P>]>, %marker
 trait.impl private @Has_i32(%self: !trait.claim<@Has[i32]>) {
   trait.assoc_type @A<[!X]> = i1
   trait.method @requirement_0(%p: !trait.claim<@Marker[!B]>) -> !trait.claim<@Marker[!trait.proj<@Has[i32], "A", [!B]>]> {
-    %r = trait.derive @Marker[!trait.proj<@Has[i32], "A", [!B]>] from @Marker_i1 given()
+    %w = trait.derive @Marker[i1] from @Marker_i1 given()
+    %a = trait.witness proj_resolve !trait.proj<@Has[i32], "A", [!B]> resolves i1 by @Has_i32 : !trait.claim<!trait.proj<@Has[i32], "A", [!B]> = i1>
+    %r = trait.coerce %w : !trait.claim<@Marker[i1]> to !trait.claim<@Marker[!trait.proj<@Has[i32], "A", [!B]>]> via (%a) : (!trait.claim<!trait.proj<@Has[i32], "A", [!B]> = i1>)
     trait.return %r : !trait.claim<@Marker[!trait.proj<@Has[i32], "A", [!B]>]>
   }
 }
@@ -93,7 +95,7 @@ trait.impl private @Same_i32(%self: !trait.claim<@Same[i32]>) {
 // CHECK: trait.trait private @Has(%self: !trait.claim<@Has[!trait.poly<0>]>) {
 // CHECK: trait.method @requirement_0(!trait.claim<@Marker[!trait.poly<3>]>) -> !trait.claim<@Marker[!trait.proj<@Has[!trait.poly<0>], "A", [!trait.poly<3>]>]>
 // CHECK-LABEL: trait.impl private @Has_i32
-// CHECK: trait.derive @Marker[!trait.proj<@Has[i32], "A", [!trait.poly<3>]>] from @Marker_i1 given()
+// CHECK: trait.derive @Marker[i1] from @Marker_i1 given()
 // CHECK-LABEL: trait.impl private @Has_i64
 // CHECK: trait.coerce %arg0 : !trait.claim<@Marker[!trait.poly<3>]>
 // CHECK-LABEL: trait.impl private @Has_tuple

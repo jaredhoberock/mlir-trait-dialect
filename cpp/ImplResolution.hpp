@@ -323,7 +323,7 @@ struct EqualityResolution {
 
 /// An application where entry discharged by a proof, as the evidence citing it
 /// is written: `proven`, the proof's claim at the application its declaration
-/// proves, and `entry`, the where entry's spelling carrying that proof, which
+/// proves, and `entry`, the where entry's spelling, unproven, which
 /// `respelling` carries `proven` to -- no step where the two are spelled alike.
 struct ProvenPremise {
   ClaimType proven;
@@ -480,15 +480,30 @@ class ImplResolver {
     ///      proves it. The trait's requirements are the impl's to return.
     /// This function may mutate the IR via `builder`.
     ///
-    /// Answers `claim` proven: the application its proof is recorded under,
-    /// which is `claim`'s with its projections resolved as selection resolved
-    /// them, naming the symbol (ImplOp or ProofOp) that proves it. Refused if
-    /// no unique and satisfiable impl can be found, naming why through `err`
-    /// when it is given, however often it was asked before.
+    /// Answers `claim` proven at the application it spells, naming the symbol
+    /// (ImplOp or ProofOp) that proves exactly that spelling: the proof at
+    /// the application selection resolves `claim` to, respelled as `claim`
+    /// spells it where the two differ (`respellProof`). Refused if no unique
+    /// and satisfiable impl can be found, naming why through `err` when it is
+    /// given, however often it was asked before.
     Answer<ClaimType> resolveAndEnsureProofFor(ClaimType claim,
                                                const SelectionSite &site,
                                                OpBuilder &builder,
                                                llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+
+    /// The proof of `to` resting on the evidence `proven` names: the same
+    /// impl at the same arguments over the same premises, its header
+    /// respelled as `to` spells it -- `proven` itself where it spells `to`
+    /// already, else the proof standing with that body, else one written
+    /// (`writeProof`). A cast on evidence, not a selection: the impl the
+    /// cited proof chose is kept, so a value crossing to another spelling
+    /// carries the evidence it was given. Every proof's premises cite proofs
+    /// at the applications selection resolves them to, so every respelling of
+    /// one proof at one spelling is one proof. Refused where selection does
+    /// not carry the two spellings together; overflows where it does.
+    Answer<ClaimType> respellProof(ClaimType proven, TraitApplicationAttr to,
+                                   const SelectionSite &site,
+                                   OpBuilder &builder);
 
     /// Resolves one step of a concrete ProjectionType: the impl the internal
     /// impl resolution pipeline selects for its application, the arguments
@@ -574,6 +589,16 @@ class ImplResolver {
                                  const SelectionSite &site, OpBuilder &builder);
 
   private:
+    /// The proof of `app`, the application selection resolved `wanted` to,
+    /// through `impl` at `arguments`: the one memoized for `app`, else the
+    /// proof standing over the proofs of `impl`'s where entries at their
+    /// resolutions, else one written. Refused where an entry is.
+    Answer<ClaimType> proofAtResolution(
+        ImplOp impl, TraitApplicationAttr app,
+        const SpecializationMap &arguments, const SelectionSite &site,
+        OpBuilder &builder, ClaimType wanted,
+        llvm::function_ref<InFlightDiagnostic()> err);
+
     /// Finds the unique impl for the wanted claim and returns the normalized
     /// claim that was actually used for selection.
     Answer<ResolvedImpl> resolveImplFor(

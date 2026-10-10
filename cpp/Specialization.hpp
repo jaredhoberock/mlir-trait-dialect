@@ -16,7 +16,8 @@ enum class CloneKind { Template, Instance };
 
 /// Builds a type replacer that stamps `subst` into a clone of kind `kind`: a
 /// template's clone receives each binding once, an instance's the closed call
-/// substitution chased to its fixed point. It resolves nothing: a ground
+/// substitution chased to its fixed point; a claim's predicate receives the
+/// variable bindings alone (`respellClaimPredicate`). It resolves nothing: a ground
 /// projection the substitution mints (a concrete argument substituted into a
 /// projection spelling) stays spelled, and the op carrying it asks impl
 /// selection for it where it stands, so a clone is normalized by the one
@@ -78,11 +79,16 @@ void specializePolymorphicRegion(OpBuilder& builder,
 /// claim is the whole of the evidence there, compared by interned identity. A
 /// position whose formal type mentions no claim takes no evidence.
 ///
-/// Type arguments and evidence are read at the spelling the instance is
-/// stamped in -- the substitution its body is cut under, with ground
-/// projections resolved -- so one type or one proof supplied under two
-/// spellings is one argument or one piece of evidence, and the parameters of
-/// the instance a key names are spelled as the key holds them.
+/// Type arguments are read at the spelling the instance is stamped in -- the
+/// substitution its body is cut under, with ground projections resolved -- so
+/// one type supplied under two spellings is one argument. Evidence is read at
+/// the spelling the instance's parameter has: the formal stamped, whose claim
+/// keeps its predicate (`respellClaimPredicate`). A claim supplied under that
+/// spelling is the evidence there; one supplied under another is carried to
+/// it by its proof respelled (`ImplResolver::respellProof`), which the call
+/// passes in its place: a claim names the proof of its own spelling, so the
+/// supplied proof proves another one. The parameters of the instance a key
+/// names are spelled as the key holds them.
 ///
 /// A key exists only for a use whose every application claim names its proof:
 /// an unproven claim states a fact without a reason, which identifies no
@@ -92,14 +98,15 @@ public:
   /// The key of a use supplying `actualInputs` to the template `templateRef`,
   /// whose formal inputs are `formalInputs` and whose type parameters take
   /// `typeArguments`, each argument and input read through `stamp`, the type
-  /// replacement the instance is cut under. Fails when the two input lists
-  /// differ in length, or when what the use supplies at a position that takes a
-  /// claim holds an unproven application.
-  static FailureOr<InstanceKey> get(SymbolRefAttr templateRef,
-                                    ArrayRef<Type> typeArguments,
-                                    TypeRange formalInputs,
-                                    TypeRange actualInputs,
-                                    AttrTypeReplacer &stamp);
+  /// replacement the instance is cut under; `respell` carries a proven claim
+  /// to another spelling of its application. Fails when the two input lists
+  /// differ in length, when what the use supplies at a position that takes a
+  /// claim holds an unproven application, or when a claim the use supplies
+  /// under another spelling is not carried to the parameter's.
+  static FailureOr<InstanceKey>
+  get(SymbolRefAttr templateRef, ArrayRef<Type> typeArguments,
+      TypeRange formalInputs, TypeRange actualInputs, AttrTypeReplacer &stamp,
+      llvm::function_ref<FailureOr<ClaimType>(ClaimType, ClaimType)> respell);
 
   /// The symbol the instance is cut under: the template's root name, a hash of
   /// the type arguments followed by the evidence, then for a method the
@@ -127,11 +134,10 @@ private:
 /// it, or the one `cut` makes under the key's symbol name.
 ///
 /// A fresh instance takes, at each position that takes evidence, exactly the
-/// evidence the key holds there, and a value its body derives from an operand
-/// takes that operand's evidence where the reading is positional: a projection
-/// the evidence its source's proof determines at its index, a coerce its
-/// input's proof. `cut` answers null when the template has no body to clone,
-/// and so does this.
+/// evidence the key holds there, and a projection its body reads off an
+/// operand takes the evidence the source's proof determines at its index.
+/// `cut` answers null when the template has no body to clone, and so does
+/// this.
 func::FuncOp getOrCutInstance(RewriterBase &rewriter, ModuleOp module,
                               const InstanceKey &key,
                               llvm::function_ref<func::FuncOp(StringRef)> cut);

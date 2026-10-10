@@ -19,7 +19,7 @@ trait.trait private @Container(%self: !trait.claim<@Container[!S]>) {
   trait.method @id(!S, !S) -> !S
 }
 
-// CHECK: method 'id' has incompatible signature: expected '(i32, i32) -> i32' but found '(i32, i64) -> i32'
+// CHECK: method 'id' has incompatible signature: expected '(i32, i32) -> i32' but found '(i32, !trait.proj<@Container[i32], "Elem">) -> i32'
 trait.impl private @Container_impl(%self_claim: !trait.claim<@Container[i32]>) {
   trait.assoc_type @Elem = i64
   trait.method @id(%self: i32, %e: !trait.proj<@Container[i32], "Elem">) -> i32 {
