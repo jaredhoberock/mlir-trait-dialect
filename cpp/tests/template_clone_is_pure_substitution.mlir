@@ -3,7 +3,7 @@
 
 // Cloning a method into a free function substitutes the self binding through the
 // body, but an equality claim's endpoints receive the variable bindings alone --
-// no module lookup resolves the projection inside them. The same clone shows
+// no projection resolution reaches inside them. The same clone shows
 // both rules at once: a bare projection parameter resolves to its impl's
 // associated type i32, while the projection standing as an equality endpoint on
 // the evidence cloned from the proof keeps its spelling proj<@Assoc[i64], "Out">.

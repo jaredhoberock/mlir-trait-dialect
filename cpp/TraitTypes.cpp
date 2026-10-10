@@ -139,135 +139,6 @@ LogicalResult tryNormalizeProjectionsToFixedPoint(
   return success(ty == previous);
 }
 
-// The body of `resolveProjectionsByLookup`. `candidates` holds, for one
-// reading, the candidate impls each application's lookup has found, which the
-// reading and the header readings under it share. `converged` reports whether
-// the fixed-point driver reached a normal form: on false, `ty` carries the
-// driver's partial (the still-unresolved projection spelled as written), which
-// the entry names as it refuses.
-static Type resolveProjectionsByLookupCore(
-    Type ty, ModuleOp module, LookupScope scope,
-    DenseMap<TraitApplicationAttr, SmallVector<ImplOp>> &candidates,
-    bool &converged) {
-  converged = true;
-  if (!module)
-    return ty;
-
-  // The context a candidate's header is read through here: this lookup itself,
-  // at the same scope, so a header spelling a
-  // projection (`impl<T> Index<T::Shape, T::Element> for T`) reproduces a demand
-  // spelling the resolution and is read by the rule the demand is read by. A
-  // reading that does not converge is a header this reading cannot rebuild.
-  auto byLookup = [&](Type ty) -> FailureOr<Type> {
-    bool headerConverged;
-    Type read = resolveProjectionsByLookupCore(ty, module, scope, candidates,
-                                               headerConverged);
-    if (!headerConverged)
-      return failure();
-    return read;
-  };
-
-  AttrTypeReplacer replacer = makeEndpointSealedReplacer();
-  replacer.addReplacement([&](ProjectionType proj) -> std::optional<Type> {
-    // Which impl serves a projection is decided by its head application alone:
-    // the associated-type binding the impl states is a function of the
-    // projection's own associated-type arguments, so a head naming one impl
-    // answers whatever those arguments still spell. A head still carrying a
-    // variable stands for as many impls as that variable has instances, and no
-    // one impl answers for it.
-    const bool polymorphicHead = isPolymorphicType(Type(proj.asClaim()));
-
-    // A projection whose head still carries variables resolves only under the
-    // determined scope, and then only if its own spelling picks the impl (the
-    // one-way match below).
-    if (polymorphicHead && scope == LookupScope::Ground)
-      return std::nullopt;
-
-    ClaimType claim = proj.asClaim();
-    TraitApplicationAttr app = claim.getTraitApplication();
-
-    // Read-only selection: resolve only when exactly one existing impl binds
-    // this application. Two or more matches, and impl generation, are left to
-    // the resolver. The single match may be conditional (a nonempty assumptions
-    // list): selecting it is mechanical name resolution, not premise evaluation,
-    // and a legal program has already discharged this ground projection's head
-    // claim -- the premise the conditional impl carries.
-    //
-    // The candidates are read once per application and reading, since this
-    // lookup mutates no impl. An application whose candidates are being read
-    // stands with none until they are read: a candidate header that reads the
-    // same application again -- an impl whose header projects through its own
-    // trait at the application asked -- finds no candidate there, as a cycle
-    // guard refuses an application it meets again.
-    auto it = candidates.find(app);
-    if (it == candidates.end()) {
-      auto trait = app.getTrait(module, nullptr);
-      if (failed(trait))
-        return std::nullopt;
-      candidates.try_emplace(app);
-      SmallVector<ImplOp> found = trait->getCandidateImplsFor(claim, byLookup);
-      it = candidates.find(app);
-      it->second = std::move(found);
-    }
-    if (it->second.size() != 1)
-      return std::nullopt;
-    ImplOp impl = it->second.front();
-
-    // A projection over a type variable in its head denotes one type at every
-    // instance of that variable, so the impl serving it must serve every
-    // instance: it may carry no premise. An impl with a where clause serves the
-    // instances its premises admit and no others, and which those are is settled
-    // per instance, so it answers for none of them here. The head claim that
-    // licenses reading such an impl for a ground head is discharged at an
-    // instance, not at this spelling.
-    if (polymorphicHead && !impl.getWhereClaims().empty())
-      return std::nullopt;
-
-    // Nothing the projection spells is narrowed to fit the impl: the impl's own
-    // parameters take the arguments standing opposite them and the header
-    // rebuilt at those must be the projection's application. So an impl the
-    // projection could only reach by narrowing one of its variables is refused
-    // here, and no separate one-way test stands over this one.
-    auto subst = impl.buildSubstitutionForSelfClaim(claim, byLookup,
-                                                    /*errFn=*/nullptr);
-    if (failed(subst))
-      return std::nullopt;
-
-    auto binding = impl.specializeAssociatedTypeBinding(
-        proj.getAssocName().getValue(), proj.getAssocTypeArgs(), *subst);
-    if (failed(binding))
-      return std::nullopt;
-
-    return *binding;
-  });
-
-  // A resolved binding may itself expose a ground projection, so run to a
-  // fixed point. A chain that never grounds leaves `ty` at the driver's partial
-  // normal form and reports nonconvergence to the caller.
-  converged = succeeded(tryNormalizeProjectionsToFixedPoint(
-      ty, [&](Type t) { return replacer.replace(t); }, ty));
-  return ty;
-}
-
-FailureOr<Type> resolveProjectionsByLookup(
-    Type ty, ModuleOp module, LookupScope scope,
-    llvm::function_ref<InFlightDiagnostic()> emitError) {
-  DenseMap<TraitApplicationAttr, SmallVector<ImplOp>> candidates;
-  bool converged;
-  Type out =
-      resolveProjectionsByLookupCore(ty, module, scope, candidates, converged);
-  // The fallible entry refuses a projection that will not ground so a verifier
-  // reached from untrusted IR fails cleanly rather than admitting the cycle.
-  if (!converged) {
-    if (emitError)
-      emitError() << "projection normalization did not converge within "
-                  << kInstantiationDepthLimit
-                  << " projection steps for type " << out;
-    return failure();
-  }
-  return out;
-}
-
 //===----------------------------------------------------------------------===//
 // TypeEquivalence
 //===----------------------------------------------------------------------===//
@@ -597,49 +468,6 @@ bool carriesUndischargedObligation(Type root) {
   return found;
 }
 
-namespace {
-
-/// The evidence one proven claim stands on: the impl its proof derives it from
-/// -- or the unconditional impl it names directly -- the arguments that impl's
-/// parameters take at the claim, and the claims the proof's derive supplies its
-/// where entries, carried to the claim.
-struct CitedEvidence {
-  ImplOp impl;
-  SpecializationMap arguments;
-  SmallVector<ClaimType> premises;
-};
-
-} // namespace
-
-/// Reads the evidence `claim`'s proof stands on, failing when a symbol the
-/// claim names is absent.
-static FailureOr<CitedEvidence> readCitedEvidence(
-    ClaimType claim, ModuleOp module,
-    llvm::function_ref<InFlightDiagnostic()> errFn) {
-  auto cited =
-      ProofOp::getProofOpOrUnconditionalImplOp(module, claim.getProof(), errFn);
-  if (failed(cited))
-    return failure();
-  CitedEvidence evidence;
-  auto proof = dyn_cast<ProofOp>(*cited);
-  if (!proof) {
-    evidence.impl = cast<ImplOp>(*cited);
-    return evidence;
-  }
-  evidence.impl = proof.getImpl();
-  if (!evidence.impl) {
-    if (errFn)
-      errFn() << "proof '" << claim.getProof() << "' cites no impl";
-    return failure();
-  }
-  auto arguments = proof.getImplArguments(errFn);
-  if (failed(arguments))
-    return failure();
-  evidence.arguments = std::move(*arguments);
-  evidence.premises = proof.getPremises();
-  return evidence;
-}
-
 FailureOr<uint64_t> getClaimRequirementCount(
     ClaimType claim,
     ModuleOp module,
@@ -688,18 +516,26 @@ FailureOr<ClaimType> getClaimRequirementAt(
   if (!claim.isProven())
     return trait.specializeRequirementAsClaimFor(claim, index, errFn);
 
-  auto evidence = readCitedEvidence(claim, module, errFn);
-  if (failed(evidence))
+  auto cited =
+      ProofOp::getProofOpOrUnconditionalImplOp(module, claim.getProof(), errFn);
+  if (failed(cited))
     return failure();
+  auto proof = dyn_cast<ProofOp>(*cited);
 
-  // A where entry of the impl: the entry at the impl's arguments, carrying the
-  // proof the citation supplies there.
-  if (index >= traitCount) {
-    unsigned position = index - traitCount;
-    auto entry = cast<ClaimType>(instantiate(
-        Type(evidence->impl.getWhereClaims()[position]), evidence->arguments));
-    ClaimType carrying = entry.carryingProofOf(evidence->premises[position]);
-    return carrying ? carrying : entry;
+  // A where entry of the impl: the claim the proof's derive is given at that
+  // position, read by index. Only a proof has where entries to read: an impl
+  // named directly is unconditional.
+  if (index >= traitCount)
+    return cast<ClaimType>(
+        proof.getDerive().getAssumptions()[index - traitCount].getType());
+
+  ImplOp impl = proof ? proof.getImpl() : cast<ImplOp>(*cited);
+  SpecializationMap arguments;
+  if (proof) {
+    auto stated = proof.getImplArguments(errFn);
+    if (failed(stated))
+      return failure();
+    arguments = std::move(*stated);
   }
 
   // A requirement of the trait: the requirement at the claim's arguments, read
@@ -715,9 +551,8 @@ FailureOr<ClaimType> getClaimRequirementAt(
   if (obligation.isEquality())
     return obligation;
   NormalizationContext own;
-  own.addLocalProjectionRule(evidence->impl,
-                             claim.asUnproven().getTraitApplication(),
-                             evidence->arguments);
+  own.addLocalProjectionRule(impl, claim.asUnproven().getTraitApplication(),
+                             arguments);
   auto read = own.normalize(Type(obligation), errFn);
   if (failed(read))
     return failure();

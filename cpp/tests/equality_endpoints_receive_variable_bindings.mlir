@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // An equality claim's endpoints receive only the generic-keyed part of a clone's
-// substitution -- the variable bindings -- never a projection resolution or a
-// module lookup, because a witness verifier requires the endpoints to stay a
+// substitution -- the variable bindings -- never a projection resolution,
+// because a witness verifier requires the endpoints to stay a
 // single-substitution instance of the witness's own equality. So a monomorphic
 // clone whose equality endpoint is a ground projection keeps that projection
 // spelled, where the same projection standing bare on a parameter would resolve

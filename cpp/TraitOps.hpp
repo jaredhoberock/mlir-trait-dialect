@@ -189,20 +189,6 @@ public:
     this->selection = selection;
   }
 
-  /// XXX TODO Also reads the impls `module` holds, under `scope`. A verifier
-  /// that sets this decides by the impls standing around it rather than by the
-  /// evidence in front of it, which is what makes one verifier's verdict depend
-  /// on an unrelated impl. Deleted once the evidence an op carries covers every
-  /// spelling it must reduce: for `trait.derive`, once a claim operand that is
-  /// neither proven nor derived carries the impl serving it; for a call,
-  /// once the claim the call commits to carries the impls serving the
-  /// projections its own arguments spell; and for a proof and a witness, once
-  /// the declarations they read carry the evidence `LookupScope` names.
-  void setModuleLookup(ModuleOp module, LookupScope scope) {
-    moduleLookup = module;
-    moduleLookupScope = scope;
-  }
-
   /// Resolves projections in `ty` using this context's local rules.
   ///
   /// The walk runs to a fixed point so a resolved associated type can expose
@@ -220,8 +206,6 @@ private:
   SmallVector<LocalProjectionRule, 4> localProjectionRules;
   TypeEquivalence equalities;
   llvm::function_ref<Type(Type)> selection;
-  ModuleOp moduleLookup;
-  LookupScope moduleLookupScope = LookupScope::Ground;
 };
 
 } // end mlir::trait
