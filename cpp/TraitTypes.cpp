@@ -433,7 +433,7 @@ FailureOr<uint64_t> getClaimRequirementCount(
   if (failed(cited))
     return failure();
   if (auto proof = dyn_cast<ProofOp>(*cited))
-    count += proof.getDerive().getAssumptions().size();
+    count += proof.getPremises().size();
   return count;
 }
 
@@ -472,10 +472,7 @@ FailureOr<ClaimType> getClaimRequirementAt(
       ProofOp::getProofOpOrUnconditionalImplOp(module, claim.getProof(), errFn);
   if (failed(cited))
     return failure();
-  return cast<ClaimType>(cast<ProofOp>(*cited)
-                             .getDerive()
-                             .getAssumptions()[index - traitCount]
-                             .getType());
+  return cast<ProofOp>(*cited).getPremises()[index - traitCount];
 }
 
 //===----------------------------------------------------------------------===//

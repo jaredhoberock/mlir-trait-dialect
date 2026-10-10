@@ -99,6 +99,9 @@ struct ChosenImpl {
   ImplOp impl;
   SpecializationMap arguments;
   unsigned height;
+  /// The proof of the application, deriving it from `impl` over the proofs
+  /// selection chose for its where entries, once one stands; null before.
+  FlatSymbolRefAttr proof = {};
 };
 
 // Memoization state for impl selection.
@@ -407,18 +410,6 @@ private:
   bool limitReached = false;
 };
 
-// Aggregates memoization for both impl resolution and proof creation.
-struct ProofResolutionMemo {
-  // Maps a concrete trait application, as read in one module, to the canonical
-  // proof symbol there (either an ImplOp's symbol for self-proofs, or a ProofOp
-  // symbol). The symbol is one that module's symbol table resolves, which is
-  // why the module is part of the key.
-  llvm::DenseMap<ScopedApplication, FlatSymbolRefAttr> proofMemo;
-
-  // Tracks impl resolution results to avoid redundant analysis.
-  ResolutionMemo resolutionMemo;
-};
-
 /// Where impl selection is asked: the module whose symbol table the demand's
 /// spelling names its trait and impls in -- the one whose proofs an answer may
 /// cite, and the one a generated impl or a created proof belongs in -- and the
@@ -497,19 +488,43 @@ class ImplResolver {
                                                OpBuilder &builder,
                                                llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
-    /// The proof of `to` resting on the evidence `proven` names: the same
-    /// impl at the same arguments over the same premises, its header
-    /// respelled as `to` spells it -- `proven` itself where it spells `to`
-    /// already, else the proof standing with that body, else one written
-    /// (`writeProof`). A cast on evidence, not a selection: the impl the
-    /// cited proof chose is kept, so a value crossing to another spelling
-    /// carries the evidence it was given. Every proof's premises cite proofs
-    /// at the applications selection resolves them to, so every respelling of
-    /// one proof at one spelling is one proof. Refused where selection does
-    /// not carry the two spellings together; overflows where it does.
+    /// The proof of `to` resting on the evidence `proven` names: `proven`
+    /// itself where it spells `to` already, else a cast of what it names to
+    /// `to` (GHC's `$dX' = $dX |> co`), whose body is the witness of that proof
+    /// or unconditional impl coerced by the steps selection resolves the two
+    /// spellings' projections through -- the cast standing with that source
+    /// and spelling, else one written. A cast is taken of the proof a cast
+    /// names, never of the cast, so every spelling of one proof is one cast
+    /// of it. Not a selection: the impl the cited proof chose is kept, so a
+    /// value crossing to another spelling carries the evidence it was given.
+    /// Refused where selection does not carry the two spellings together;
+    /// overflows where it does.
     Answer<ClaimType> respellProof(ClaimType proven, TraitApplicationAttr to,
                                    const SelectionSite &site,
                                    OpBuilder &builder);
+
+    /// The evidence for `claim`, monomorphic, as a use spells it: the proof of
+    /// the application selection resolves `claim` to, with the steps respelling
+    /// that application as `claim` spells it, none where the two agree. A use
+    /// builds from it the witness of that proof coerced by the steps
+    /// (`buildPremiseEvidence`), so no proof is written at the use's own
+    /// spelling: one is, by `respellProof`, only where a type names the
+    /// spelling. Refused where selection refuses `claim`, naming why through
+    /// `err` when it is given; overflows where selection does.
+    Answer<ProvenPremise> resolveEvidenceFor(
+        ClaimType claim, const SelectionSite &site, OpBuilder &builder,
+        llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+
+    /// The premise discharging the application entry `entry` by the proof
+    /// `proof` names in `site`'s scope: that proof at the application its
+    /// declaration proves -- a proof's own, an unconditional impl's header --
+    /// and the steps respelling it as `entry`. Refused where the name resolves
+    /// to no proof, or selection does not carry the two spellings together;
+    /// overflows where selection does.
+    Answer<ProvenPremise> resolvePremise(ClaimType entry,
+                                         FlatSymbolRefAttr proof,
+                                         const SelectionSite &site,
+                                         OpBuilder &builder, unsigned depth);
 
     /// Resolves one step of a concrete ProjectionType: the impl the internal
     /// impl resolution pipeline selects for its application, the arguments
@@ -569,9 +584,10 @@ class ImplResolver {
     /// given, at its application entries in order, the proofs `subproofs`
     /// names; null where none stands. An equality entry is ground and has one
     /// answer, so it identifies nothing. An impl with no parameters and no
-    /// where entries whose header spells `app` is its own proof.
+    /// where entries whose header spells `app` is its own proof. A read of
+    /// `proofs`, the index of what each proof cites.
     ClaimType findProof(ModuleOp scope, ImplOp impl, TraitApplicationAttr app,
-                        ArrayRef<FlatSymbolRefAttr> subproofs) const;
+                        ArrayRef<FlatSymbolRefAttr> subproofs);
 
     /// Writes in `scope` the proof of `app` whose body derives `impl`'s header
     /// at `arguments` over one premise per entry of `entries`, `impl`'s where
@@ -595,10 +611,33 @@ class ImplResolver {
                                  const SelectionSite &site, OpBuilder &builder);
 
   private:
+    /// What a proof in one module is identified by: the impl its derive cites,
+    /// the application it proves and the proofs its application premises name
+    /// -- or, for a cast, the proof or unconditional impl it casts and the
+    /// application it respells it to, with no premise list.
+    using ProofIdentity =
+        std::tuple<Operation *, Operation *, TraitApplicationAttr, ArrayAttr>;
+
+    /// The proof `identity` names in its module, null where none stands. The
+    /// module's proofs are indexed on its first read, in module order, so the
+    /// first proof of an identity is the one found; a proof written later is
+    /// indexed as it is written (`indexProof`).
+    FlatSymbolRefAttr lookupProof(const ProofIdentity &identity);
+
+    /// Enters `proof`, standing in `scope`, under what it cites, unless a proof
+    /// of that identity is entered already.
+    void indexProof(ModuleOp scope, ProofOp proof);
+
+    /// The proof of the application selection resolves `wanted` to, naming why
+    /// selection refuses `wanted` through `err` when it is given.
+    Answer<ClaimType> proveResolution(
+        ClaimType wanted, const SelectionSite &site, OpBuilder &builder,
+        llvm::function_ref<InFlightDiagnostic()> err);
+
     /// The proof of `app`, the application selection resolved `wanted` to,
-    /// through `impl` at `arguments`: the one memoized for `app`, else the
-    /// proof standing over the proofs of `impl`'s where entries at their
-    /// resolutions, else one written. Refused where an entry is.
+    /// through `impl` at `arguments`: the proof standing over the proofs of
+    /// `impl`'s where entries at their resolutions, else one written. Refused
+    /// where an entry is.
     Answer<ClaimType> proofAtResolution(
         ImplOp impl, TraitApplicationAttr app,
         const SpecializationMap &arguments, const SelectionSite &site,
@@ -623,16 +662,6 @@ class ImplResolver {
                       TraitApplicationAttr resolved, const SelectionSite &site,
                       OpBuilder &builder, unsigned depth);
 
-    /// The premise discharging the application entry `entry` by the proof
-    /// `proof` names in `site`'s scope: that proof at the application its
-    /// declaration proves -- a proof's own, an unconditional impl's header --
-    /// and the steps respelling it as `entry`. Refused where the name resolves
-    /// to no proof, or selection does not carry the two spellings together;
-    /// overflows where selection does.
-    Answer<ProvenPremise> resolvePremise(ClaimType entry,
-                                         FlatSymbolRefAttr proof,
-                                         const SelectionSite &site,
-                                         OpBuilder &builder, unsigned depth);
 
     /// `ty` with every projection `replacerFor` admits that selection
     /// resolves resolved, to a fixed point; none where the resolution still
@@ -663,14 +692,6 @@ class ImplResolver {
     FailureOr<ProjectionResolution>
     readSettledProjection(ProjectionType proj, ModuleOp scope) const;
 
-    /// Records `sym` as what proves `app` in `scope`, and answers the claim of
-    /// `app` that `sym` proves.
-    ClaimType recordProof(ModuleOp scope, TraitApplicationAttr app,
-                          FlatSymbolRefAttr sym) {
-      memo.proofMemo[{scope, app}] = sym;
-      return ClaimType::get(scope.getContext(), app, sym);
-    }
-
     /// Answers the arguments `impl`'s parameters take at `concreteSelf` where
     /// all of its where-clause assumptions are satisfiable when specialized
     /// for it, asked at `site` by the selection of `concreteSelf`, whose frame
@@ -682,7 +703,13 @@ class ImplResolver {
                                                         OpBuilder &builder);
 
     ModuleOp module;
-    ProofResolutionMemo memo;
+    ResolutionMemo memo;
+
+    /// Every proof standing in a module the resolver has read proofs in, by
+    /// what it cites (`ProofIdentity`): the index a lookup of a proof reads in
+    /// place of a scan of the module's proofs.
+    DenseMap<ProofIdentity, FlatSymbolRefAttr> proofs;
+    DenseSet<Operation *> indexedScopes;
 
     bool overflowed = false;
     DenseSet<Location> overflowSites;

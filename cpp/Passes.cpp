@@ -468,6 +468,24 @@ void VerifyAcyclicTraitsPass::runOnOperation() {
 
 namespace {
 
+/// The evidence `value` carries: its proven application claim, or, where it
+/// is a coercion's result, the evidence the coerced value carries. A use that
+/// reads evidence -- a derive's premise, a coercion's input -- reads it through
+/// any coercion, so no proof is written at a spelling only such uses meet.
+static ClaimType evidenceOf(Value value) {
+  for (;;) {
+    auto claim = dyn_cast<ClaimType>(value.getType());
+    if (!claim || !claim.isApplication())
+      return {};
+    if (claim.isProven())
+      return claim;
+    auto coerce = value.getDefiningOp<CoerceOp>();
+    if (!coerce)
+      return {};
+    value = coerce.getInput();
+  }
+}
+
 /// Proves a claim-producing op and replaces it with a trait.witness, or a
 /// projection with the evidence it reads.
 ///
@@ -557,26 +575,26 @@ struct ProveClaimResultPattern : public RewritePattern {
     if (auto derive = dyn_cast<DeriveOp>(op))
       return transcribe(derive, rewriter);
 
-    // The proof the op is spelled with; else the canonical evidence selection
-    // builds or reuses for its claim, demanded where the op stands: the proof
-    // it names is a symbol its own module resolves, and the impls that may
-    // serve it are the ones standing there. The proof is minted at the
-    // application the claim spells (`resolveAndEnsureProofFor`), so the
-    // witness and its proof agree by identity. A refusal is final, so it is
-    // named once.
-    Answer<ClaimType> proven = claim;
-    if (!claim.isProven()) {
-      auto errFn = [&] { return op->emitOpError(); };
-      proven = resolver.resolveAndEnsureProofFor(
-          claim, SelectionSite::of(op), rewriter, firstAsk(op, errFn));
-      if (!proven.isAnswer()) {
-        (void)refuse(op);
-        namedObligations.insert(Type(claim));
-        return rewriter.notifyMatchFailure(op, "couldn't find proof of this claim");
-      }
+    // The proof the op is spelled with; else the evidence selection builds or
+    // reuses for its claim, demanded where the op stands: the proof it names
+    // is a symbol its own module resolves, and the impls that may serve it are
+    // the ones standing there. The evidence is the proof of the application
+    // selection resolves the claim to, coerced to the claim's spelling
+    // (`resolveEvidenceFor`). A refusal is final, so it is named once.
+    if (claim.isProven()) {
+      rewriter.replaceOpWithNewOp<WitnessOp>(op, claim.getProof(),
+                                             claim.getTraitApplication());
+      return success();
     }
-    rewriter.replaceOpWithNewOp<WitnessOp>(op, proven->getProof(),
-                                           proven->getTraitApplication());
+    auto errFn = [&] { return op->emitOpError(); };
+    Answer<ProvenPremise> evidence = resolver.resolveEvidenceFor(
+        claim, SelectionSite::of(op), rewriter, firstAsk(op, errFn));
+    if (!evidence.isAnswer()) {
+      (void)refuse(op);
+      namedObligations.insert(Type(claim));
+      return rewriter.notifyMatchFailure(op, "couldn't find proof of this claim");
+    }
+    rewriter.replaceOp(op, buildPremiseEvidence(rewriter, op->getLoc(), *evidence));
     return success();
   }
 
@@ -594,7 +612,7 @@ struct ProveClaimResultPattern : public RewritePattern {
     for (Value operand : derive.getAssumptions()) {
       auto premise = cast<ClaimType>(operand.getType());
       bool settled = premise.isApplication()
-                         ? premise.isProven()
+                         ? static_cast<bool>(evidenceOf(operand))
                          : !operand.getDefiningOp<AllegeOp>();
       if (!settled)
         return rewriter.notifyMatchFailure(derive, "waits for its operands");
@@ -631,7 +649,7 @@ struct ProveClaimResultPattern : public RewritePattern {
       if (!at)
         return rewriter.notifyMatchFailure(derive, "spells no normal form");
       Answer<ClaimType> subproof = resolver.respellProof(
-          premise, at->getTraitApplication(), site, rewriter);
+          evidenceOf(operand), at->getTraitApplication(), site, rewriter);
       if (!subproof.isAnswer()) {
         named.insert(derive);
         return rewriter.notifyMatchFailure(derive,
@@ -687,16 +705,20 @@ struct ProveClaimResultPattern : public RewritePattern {
       proven = resolver.writeProof(scope, impl, app, arguments, entries,
                                    subproofs, equalitySteps, site, rewriter);
     }
-    if (proven.isAnswer())
-      proven = resolver.respellProof(*proven, claim.getTraitApplication(), site,
-                                     rewriter);
-    if (!proven.isAnswer()) {
+    // The derive's own spelling is the proof coerced there, as a use reads it
+    // (`resolveEvidenceFor`).
+    Answer<ProvenPremise> evidence =
+        proven.isAnswer()
+            ? resolver.resolvePremise(claim, proven->getProof(), site, rewriter,
+                                      /*depth=*/0)
+            : proven.stop<ProvenPremise>();
+    if (!evidence.isAnswer()) {
       named.insert(derive);
       return rewriter.notifyMatchFailure(derive,
                                          "a projection is not resolved");
     }
-    rewriter.replaceOpWithNewOp<WitnessOp>(derive, proven->getProof(),
-                                           proven->getTraitApplication());
+    rewriter.replaceOp(derive,
+                       buildPremiseEvidence(rewriter, derive.getLoc(), *evidence));
     return success();
   }
 
@@ -1064,9 +1086,11 @@ struct CallOpLowering : public OpRewritePattern<CallOpT> {
 
 /// Settles a coerce once its input is evidence: a coerce whose result is
 /// spelled as its input is replaced by the input, the fold the stage's drivers
-/// do not run (applyPatternsOverReachableOps), and a coerce of a proven claim
-/// to another spelling is replaced by the witness of the input's proof
-/// respelled at the spelling the result states (`ImplResolver::respellProof`).
+/// do not run (applyPatternsOverReachableOps), and a coerce of evidence to
+/// another spelling that a use names is replaced by the witness of the input's
+/// proof respelled at the spelling the result states
+/// (`ImplResolver::respellProof`); a coerce whose uses read evidence through it
+/// is left for them (`evidenceOf`).
 /// A claim names the proof of exactly its own spelling (`verifyCitation`), so
 /// the evidence at the result's spelling is a proof of that spelling, whose
 /// body bridges the impl's header to it; the input's proof proves another
@@ -1087,11 +1111,17 @@ struct SettleCoercePattern : public OpRewritePattern<CoerceOp> {
       rewriter.replaceOp(coerce, coerce.getInput());
       return success();
     }
-    auto from = dyn_cast<ClaimType>(input);
+    ClaimType from = evidenceOf(coerce.getInput());
     auto result = dyn_cast<ClaimType>(coerce.getResult().getType());
-    if (!from || !from.isApplication() || !from.isProven() || !result ||
-        !result.isApplication() || result.isProven())
+    if (!from || !result || !result.isApplication() || result.isProven())
       return rewriter.notifyMatchFailure(coerce, "its input is no evidence yet");
+    // A use that reads evidence reads it through this coercion (`evidenceOf`),
+    // so the proof at the result's spelling is written only for a use that
+    // names that spelling.
+    if (llvm::all_of(coerce.getResult().getUsers(), [](Operation *user) {
+          return isa<DeriveOp, CoerceOp>(user);
+        }))
+      return rewriter.notifyMatchFailure(coerce, "its uses read its evidence");
     Answer<ClaimType> proven = resolver.respellProof(
         from, result.getTraitApplication(), SelectionSite::of(coerce), rewriter);
     if (!proven.isAnswer())
@@ -1213,9 +1243,11 @@ struct SettleSpelledObligationsPattern : public RewritePattern {
                                 PatternRewriter &rewriter) const override {
     if (auto call = dyn_cast<MethodCallOp>(op); call && call.computesEvidence())
       return failure();
-    // A citation spells its claims and the arguments it states for its impl,
-    // all left as spelled (`statesImplArguments`), and nothing else.
-    if (isa<DeriveOp>(op) ||
+    // An allegation's claim is proven by the evidence that replaces it
+    // (`ProveClaimResultPattern`). A citation spells its claims and the
+    // arguments it states for its impl, all left as spelled
+    // (`statesImplArguments`), and nothing else.
+    if (isa<AllegeOp, DeriveOp>(op) ||
         (isa<WitnessOp>(op) && cast<WitnessOp>(op).isProjectionResolution()))
       return failure();
     bool provesClaims = !producesPositionalEvidence(op) &&

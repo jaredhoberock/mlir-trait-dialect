@@ -1568,9 +1568,12 @@ def ProofOp : TraitDialectOp<"proof", [
     body derives the impl's header from an impl over evidence for each of the
     impl's where entries, and `trait.return` returns the derived claim, or its
     coercion to the application with the projections the header spells
-    resolved. The proven claim is the returned application, carrying this
-    proof's name; the impl, its arguments and its premises are read off the
-    derive. The body
+    resolved. A proof of another spelling of an application a proof already
+    proves is a cast of that proof (GHC's `$dX' = $dX |> co`): its body
+    returns the witness of the proof it casts, coerced to its own spelling.
+    The proven claim is the returned application, carrying this proof's name;
+    the impl, its arguments and its premises are read off the derive, a cast's
+    off the derive of the proof it casts. The body
     holds decided evidence only -- witnesses of other proofs and unconditional
     impls, equality leaves, coercions, derives -- and never an allegation: a
     proof records a decision already made. Nor does it hold a projection, whose
@@ -1602,11 +1605,18 @@ def ProofOp : TraitDialectOp<"proof", [
     /// The claim the body returns: the derive, or its respelling.
     Value getProven();
 
-    /// The derive the body returns, read through its respelling: the decision
-    /// this proof records.
+    /// The derive the body returns, read through its respelling, or the derive
+    /// of the proof this one casts: the decision this proof records. Null for
+    /// a cast of an unconditional impl, which derives from nothing.
     DeriveOp getDerive();
 
-    ImplOp getImpl() { return getDerive().getImplOp(); }
+    /// The proof or unconditional impl this proof casts to its own spelling;
+    /// null for a proof whose body holds its derive.
+    Operation *getCastSource();
+
+    /// The impl the derive this proof records cites, or the unconditional impl
+    /// it casts.
+    ImplOp getImpl();
 
     TraitApplicationAttr getTraitApplication() {
       return cast<ClaimType>(getProven().getType()).getTraitApplication();
@@ -1628,8 +1638,12 @@ def ProofOp : TraitDialectOp<"proof", [
     /// application that proof proves. An equality premise rests on none.
     SmallVector<ClaimType> getSubproofs();
 
-    /// The arguments this proof's impl takes, as its derive states them.
-    SpecializationMap getImplArguments() { return getDerive().getImplArguments(); }
+    /// The arguments this proof's impl takes, as its derive states them; none
+    /// for a cast of an unconditional impl.
+    SpecializationMap getImplArguments() {
+      DeriveOp derive = getDerive();
+      return derive ? derive.getImplArguments() : SpecializationMap();
+    }
 
     /// Resolve a proof symbol to the impl it is backed by: a trait.proof yields
     /// its impl, a directly-named trait.impl yields itself. Whether the symbol

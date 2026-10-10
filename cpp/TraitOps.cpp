@@ -326,7 +326,7 @@ bool projectsOwnApplication(Value value, ImplOp impl) {
       return true;
     auto proof = lookupSymbolFrom<ProofOp>(
         impl->getParentOfType<ModuleOp>(), witness.getProof());
-    return proof && proof.getDerive().getImpl() == impl.getSymName() &&
+    return proof && proof.getImpl() == impl &&
            proof.getTraitApplication() == own;
   };
   // A producer is visited once as reached and once more as reached from under
@@ -1213,7 +1213,8 @@ static void mapDeclarationReads(RewriterBase &rewriter, ModuleOp module,
   Block &declarationBody = declaration->getRegion(0).front();
   mapping.map(declarationBody.getArgument(0), self);
   if (declarationBody.getNumArguments() > 1)
-    if (auto proof = lookupSymbolFrom<ProofOp>(module, selfProof.getProof())) {
+    if (auto proof = lookupSymbolFrom<ProofOp>(module, selfProof.getProof());
+        proof && proof.getDerive()) {
       AttrTypeReplacer asWritten;
       IRMapping fromProof;
       for (auto [argument, premise] :
@@ -1975,12 +1976,18 @@ FailureOr<SpecializationMap> ImplOp::buildImplSpecialization(
 // ProofOp
 //===----------------------------------------------------------------------===//
 
-/// The derive `proven` is, or the derive a coercion `proven` is respells: a
-/// proof returns its derive at the header's spelling or respelled once.
-static DeriveOp derivedThroughRespelling(Value proven) {
+/// What a proof's returned claim rests on, read through its one respelling:
+/// the derive it records, or the application witness of the proof it casts.
+static Operation *respelledFrom(Value proven) {
   if (auto coerce = proven.getDefiningOp<CoerceOp>())
     proven = coerce.getInput();
-  return proven.getDefiningOp<DeriveOp>();
+  if (auto derive = proven.getDefiningOp<DeriveOp>())
+    return derive;
+  auto witness = proven.getDefiningOp<WitnessOp>();
+  if (witness && witness.getResultClaim().isApplication() &&
+      witness.getProof())
+    return witness;
+  return nullptr;
 }
 
 LogicalResult ProofOp::verify() {
@@ -1997,9 +2004,10 @@ LogicalResult ProofOp::verify() {
   if (!returned)
     return emitOpError() << "must end with 'trait.return' of the claim it proves";
   if (returned.getNumOperands() != 1 ||
-      !derivedThroughRespelling(returned.getOperand(0)))
+      !respelledFrom(returned.getOperand(0)))
     return emitOpError() << "returns the one claim a derive in its body "
-                            "derives, or that claim respelled";
+                            "derives, or that claim or another proof's "
+                            "respelled";
   // A proof is ground: the stage writes one only at a monomorphic application,
   // so a citation of it is one comparison (`verifyCitation`). A claim over
   // type variables is proven by a derive in the template that holds them.
@@ -2013,8 +2021,27 @@ Value ProofOp::getProven() {
   return getBody().front().getTerminator()->getOperand(0);
 }
 
+Operation *ProofOp::getCastSource() {
+  auto witness = dyn_cast_or_null<WitnessOp>(respelledFrom(getProven()));
+  if (!witness)
+    return nullptr;
+  return lookupSymbolFrom((*this)->getParentOfType<ModuleOp>(),
+                          witness.getProof());
+}
+
 DeriveOp ProofOp::getDerive() {
-  return derivedThroughRespelling(getProven());
+  Operation *source = getCastSource();
+  if (auto proof = dyn_cast_or_null<ProofOp>(source))
+    return proof.getDerive();
+  if (source)
+    return DeriveOp();
+  return dyn_cast_or_null<DeriveOp>(respelledFrom(getProven()));
+}
+
+ImplOp ProofOp::getImpl() {
+  if (DeriveOp derive = getDerive())
+    return derive.getImplOp();
+  return dyn_cast_or_null<ImplOp>(getCastSource());
 }
 
 TraitOp ProofOp::getTrait() {
@@ -2025,14 +2052,20 @@ TraitOp ProofOp::getTrait() {
 }
 
 SmallVector<ClaimType> ProofOp::getPremises() {
-  return llvm::map_to_vector(getDerive().getAssumptions(), [](Value premise) {
+  DeriveOp derive = getDerive();
+  if (!derive)
+    return {};
+  return llvm::map_to_vector(derive.getAssumptions(), [](Value premise) {
     return cast<ClaimType>(premise.getType());
   });
 }
 
 SmallVector<ClaimType> ProofOp::getSubproofs() {
   SmallVector<ClaimType> subproofs;
-  for (Value premise : getDerive().getAssumptions()) {
+  DeriveOp derive = getDerive();
+  if (!derive)
+    return subproofs;
+  for (Value premise : derive.getAssumptions()) {
     if (cast<ClaimType>(premise.getType()).isEquality())
       continue;
     subproofs.push_back(cast<ClaimType>(throughCoercions(premise).getType()));

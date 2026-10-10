@@ -49,7 +49,6 @@ ImplResolver::assumptionsSatisfiableFor(ImplOp impl,
                                         ClaimType concreteSelf,
                                         const SelectionSite &site,
                                         OpBuilder &builder) {
-  ResolutionMemo &memo = this->memo.resolutionMemo;
   TraitApplicationAttr app = concreteSelf.getTraitApplication();
 
   // consult the per-(impl,claim) satisfiability memo
@@ -197,7 +196,6 @@ Answer<ResolvedImpl> ImplResolver::resolveImplFor(
     return normalized.stop<ResolvedImpl>();
   ClaimType selected = cast<ClaimType>(*normalized);
 
-  ResolutionMemo &memo = this->memo.resolutionMemo;
   TraitApplicationAttr app = selected.getTraitApplication();
 
   // first check the memo. A refusal asked about again is named as the first
@@ -445,15 +443,32 @@ Value buildPremiseEvidence(OpBuilder &builder, Location loc,
   return respell(builder, loc, witness, premise.entry, premise.respelling);
 }
 
+/// A proof named `name` standing empty at the end of `scope`, its body's
+/// block the insertion point `builder` is left at. Where a symbol of `scope`
+/// holds `name` already, the proof is named as the module's symbol table
+/// renames it (`SymbolTable::insert`): mangled names are not one-to-one, so the
+/// table, not the mangling, makes a proof's name unique.
+static ProofOp createProof(OpBuilder &builder, ModuleOp scope, StringRef name) {
+  // A created proof is IR nothing revisits unless someone hears about it, for
+  // the same reason a generated impl is.
+  assert(builder.getListener() &&
+         "proof creation requires a builder whose insertions someone observes");
+  // The table is read before the proof stands, so the proof's name is the one
+  // it checks.
+  SymbolTable symbols(scope);
+  builder.setInsertionPointToEnd(scope.getBody());
+  ProofOp proof = ProofOp::create(builder, builder.getUnknownLoc(), name);
+  symbols.insert(proof);
+  builder.setInsertionPointToEnd(&proof.getBody().front());
+  return proof;
+}
+
 /// Writes at the end of `scope` the proof `name` of `app`, whose body derives
 /// `header`, `impl`'s header at `arguments`, citing `impl` at them over one
 /// premise per entry of `entries`, `impl`'s where entries there -- the
 /// evidence of the next of `applicationPremises` at an application entry and
 /// the evidence the next of `equalitySteps` build at an equality entry -- and
-/// returns it respelled as `app` by `headerSteps`. Where a symbol of `scope`
-/// holds `name` already, the proof is named as the module's symbol table
-/// renames it (`SymbolTable::insert`): mangled names are not one-to-one, so
-/// the table, not the mangling, makes a proof's name unique.
+/// returns it respelled as `app` by `headerSteps`.
 static ProofOp
 writeProofBody(OpBuilder &builder, ModuleOp scope, StringRef name, ImplOp impl,
                const SpecializationMap &arguments, ClaimType header,
@@ -462,20 +477,10 @@ writeProofBody(OpBuilder &builder, ModuleOp scope, StringRef name, ImplOp impl,
                ArrayRef<ProvenPremise> applicationPremises,
                ArrayRef<SmallVector<ResolutionStep>> equalitySteps,
                ArrayRef<ResolutionStep> headerSteps) {
-  // A created proof is IR nothing revisits unless someone hears about it, for
-  // the same reason a generated impl is.
-  assert(builder.getListener() &&
-         "proof creation requires a builder whose insertions someone observes");
   MLIRContext *ctx = scope.getContext();
-  // The table is read before the proof stands, so the proof's name is the one
-  // it checks.
-  SymbolTable symbols(scope);
   OpBuilder::InsertionGuard guard(builder);
-  builder.setInsertionPointToEnd(scope.getBody());
-  Location loc = builder.getUnknownLoc();
-  ProofOp proof = ProofOp::create(builder, loc, name);
-  symbols.insert(proof);
-  builder.setInsertionPointToEnd(&proof.getBody().front());
+  ProofOp proof = createProof(builder, scope, name);
+  Location loc = proof.getLoc();
   SmallVector<Value> premises;
   auto nextPremise = applicationPremises.begin();
   auto nextSteps = equalitySteps.begin();
@@ -495,34 +500,47 @@ writeProofBody(OpBuilder &builder, ModuleOp scope, StringRef name, ImplOp impl,
   return proof;
 }
 
+FlatSymbolRefAttr ImplResolver::lookupProof(const ProofIdentity &identity) {
+  auto scope = cast<ModuleOp>(std::get<0>(identity));
+  if (indexedScopes.insert(scope).second)
+    for (ProofOp proof : scope.getOps<ProofOp>())
+      indexProof(scope, proof);
+  return proofs.lookup(identity);
+}
+
+void ImplResolver::indexProof(ModuleOp scope, ProofOp proof) {
+  // A proof is identified by what it cites. The impl is held by identity
+  // rather than by name: a name is resolved in one symbol table, and two
+  // modules can each hold an impl of that name meaning two different impls.
+  TraitApplicationAttr app = proof.getTraitApplication();
+  FlatSymbolRefAttr name =
+      FlatSymbolRefAttr::get(proof.getContext(), proof.getSymNameAttr());
+  if (Operation *source = proof.getCastSource()) {
+    proofs.try_emplace({scope, source, app, ArrayAttr()}, name);
+    return;
+  }
+  SmallVector<Attribute> subproofs = llvm::map_to_vector(
+      proof.getSubproofs(),
+      [](ClaimType subproof) -> Attribute { return subproof.getProof(); });
+  proofs.try_emplace({scope, proof.getImpl(), app,
+                      ArrayAttr::get(proof.getContext(), subproofs)},
+                     name);
+}
+
 ClaimType ImplResolver::findProof(ModuleOp scope, ImplOp impl,
                                   TraitApplicationAttr app,
-                                  ArrayRef<FlatSymbolRefAttr> subproofs) const {
+                                  ArrayRef<FlatSymbolRefAttr> subproofs) {
   MLIRContext *ctx = scope.getContext();
   // An impl with no parameters and no where entries is its own proof where its
   // header spells the application; one whose header spells it otherwise is
-  // proven by a proof respelling its header.
+  // proven by a cast of it.
   if (impl.isUnconditional() && impl.getSelfApplication() == app)
     return ClaimType::get(ctx, app,
                           FlatSymbolRefAttr::get(ctx, impl.getSymName()));
-  // A proof is identified by the evidence it derives its claim from: the impl,
-  // the application, and the proof each application premise names. The
-  // module's proofs are read as they stand, in module order, so the first
-  // proof of an impl at an application over those premises is the one found.
-  // The impl is matched by identity rather than by name: a name is resolved
-  // in one symbol table, and two modules can each hold an impl of that name
-  // meaning two different impls.
-  auto citesSubproofs = [&](ProofOp proof) {
-    return llvm::equal(
-        llvm::map_range(proof.getSubproofs(),
-                        [](ClaimType subproof) { return subproof.getProof(); }),
-        subproofs);
-  };
-  for (ProofOp proof : scope.getOps<ProofOp>())
-    if (proof.getTraitApplication() == app && proof.getImpl() == impl &&
-        citesSubproofs(proof))
-      return ClaimType::get(
-          ctx, app, FlatSymbolRefAttr::get(ctx, proof.getSymNameAttr()));
+  SmallVector<Attribute> cited(subproofs.begin(), subproofs.end());
+  if (FlatSymbolRefAttr proof =
+          lookupProof({scope, impl, app, ArrayAttr::get(ctx, cited)}))
+    return ClaimType::get(ctx, app, proof);
   return {};
 }
 
@@ -555,6 +573,7 @@ Answer<ClaimType> ImplResolver::writeProof(
       builder, scope, impl.generateMangledName(arguments) + "_p", impl,
       arguments, header, app, entries, applicationPremises, equalitySteps,
       *headerSteps);
+  indexProof(scope, proof);
   return ClaimType::get(ctx, app,
                         FlatSymbolRefAttr::get(ctx, proof.getSymNameAttr()));
 }
@@ -567,40 +586,43 @@ Answer<ClaimType> ImplResolver::respellProof(ClaimType proven,
     return proven;
   using Respelled = Answer<ClaimType>;
   ModuleOp scope = site.scope;
+  MLIRContext *ctx = scope.getContext();
   auto cited = ProofOp::getProofOpOrUnconditionalImplOp(scope, proven.getProof());
   if (failed(cited))
     return Respelled::refusal();
-  // The evidence the cited proof's derive was given: its impl, the proof each
-  // application premise names, and the arguments its header is derived at.
-  auto proof = dyn_cast<ProofOp>(*cited);
-  ImplOp impl = proof ? proof.getImpl() : cast<ImplOp>(*cited);
-  if (!impl)
-    return Respelled::refusal();
-  SmallVector<FlatSymbolRefAttr> subproofs;
-  if (proof)
-    for (ClaimType subproof : proof.getSubproofs())
-      subproofs.push_back(subproof.getProof());
-  if (ClaimType standing = findProof(scope, impl, to, subproofs))
-    return standing;
-  SpecializationMap arguments =
-      proof ? proof.getImplArguments() : SpecializationMap();
-  // An equality premise is ground and has one answer: the evidence the steps
-  // resolving its projections build.
-  SmallVector<ClaimType> entries = impl.getWhereClaimsAt(arguments);
-  SmallVector<SmallVector<ResolutionStep>> equalitySteps;
-  for (ClaimType entry : entries) {
-    if (!entry.isEquality())
-      continue;
-    SmallVector<ResolutionStep> steps;
-    auto sides = resolveEquality(entry.getEqualityAttr(), site, builder, steps);
-    if (!sides.isAnswer())
-      return sides.stop<ClaimType>();
-    if (sides->first != sides->second)
-      return Respelled::refusal();
-    equalitySteps.push_back(std::move(steps));
-  }
-  return writeProof(scope, impl, to, arguments, entries, subproofs,
-                    equalitySteps, site, builder);
+  // The source of the cast: the proof or unconditional impl `proven` names,
+  // or the one it casts in turn.
+  Operation *source = *cited;
+  if (auto proof = dyn_cast<ProofOp>(source))
+    if (Operation *castOf = proof.getCastSource())
+      source = castOf;
+  auto proof = dyn_cast<ProofOp>(source);
+  TraitApplicationAttr from = proof ? proof.getTraitApplication()
+                                    : cast<ImplOp>(source).getSelfApplication();
+  FlatSymbolRefAttr sourceName = FlatSymbolRefAttr::get(
+      ctx, cast<SymbolOpInterface>(source).getNameAttr());
+  if (from == to)
+    return ClaimType::get(ctx, to, sourceName);
+  if (FlatSymbolRefAttr standing = lookupProof({scope, source, to, ArrayAttr()}))
+    return ClaimType::get(ctx, to, standing);
+
+  // Every respelling step is resolved before the cast is begun: resolving one
+  // can write the proofs its steps cite, and those stand before this one.
+  Answer<SmallVector<ResolutionStep>> steps =
+      resolveRespelling(from, to, site, builder, /*depth=*/0);
+  if (!steps.isAnswer())
+    return steps.stop<ClaimType>();
+  OpBuilder::InsertionGuard guard(builder);
+  ProofOp cast = createProof(builder, scope,
+                             (sourceName.getValue() + "_as").str());
+  Location loc = cast.getLoc();
+  Value witness = WitnessOp::create(builder, loc, sourceName, from).getResult();
+  ReturnOp::create(builder, loc,
+                   respell(builder, loc, witness, ClaimType::get(ctx, to),
+                           *steps));
+  indexProof(scope, cast);
+  return ClaimType::get(ctx, to,
+                        FlatSymbolRefAttr::get(ctx, cast.getSymNameAttr()));
 }
 
 Answer<SmallVector<ResolutionStep>>
@@ -747,10 +769,27 @@ void Overflow::emit(Location anchor) const {
 }
 
 void ImplResolver::overflow(const Overflow &what, const SelectionSite &site) {
-  memo.resolutionMemo.provisionalBelow = 0;
+  memo.provisionalBelow = 0;
   overflowed = true;
   if (overflowSites.insert(site.cause).second)
     what.emit(site.cause);
+}
+
+Answer<ClaimType> ImplResolver::proveResolution(
+    ClaimType wanted, const SelectionSite &site, OpBuilder &builder,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  using Proven = Answer<ClaimType>;
+  Answer<ResolvedImpl> resolvedImpl = resolveImplFor(wanted, site, builder, err);
+  if (!resolvedImpl.isAnswer())
+    return resolvedImpl.stop<ClaimType>();
+  const SpecializationMap &subst = resolvedImpl->arguments;
+  auto monomorphic = monomorphicApplicationOf(*resolvedImpl, subst);
+  if (failed(monomorphic)) {
+    if (err) err() << "could not monomorphize claim: " << wanted;
+    return Proven::refusal();
+  }
+  return proofAtResolution(resolvedImpl->impl, *monomorphic, subst, site,
+                           builder, wanted, err);
 }
 
 Answer<ClaimType> ImplResolver::resolveAndEnsureProofFor(
@@ -758,44 +797,27 @@ Answer<ClaimType> ImplResolver::resolveAndEnsureProofFor(
     const SelectionSite &site,
     OpBuilder &builder,
     llvm::function_ref<InFlightDiagnostic()> err) {
-  ModuleOp scope = site.scope;
-  ClaimType originalWanted = wanted;
-  using Proven = Answer<ClaimType>;
-
-  // resolve an impl for wanted first
-  Answer<ResolvedImpl> resolvedImpl = resolveImplFor(wanted, site, builder, err);
-  if (!resolvedImpl.isAnswer())
-    return resolvedImpl.stop<ClaimType>();
-  ImplOp impl = resolvedImpl->impl;
-
-  const SpecializationMap &subst = resolvedImpl->arguments;
-  auto monomorphic = monomorphicApplicationOf(*resolvedImpl, subst);
-  if (failed(monomorphic)) {
-    if (err) err() << "could not monomorphize claim: " << originalWanted;
-    return Proven::refusal();
-  }
   // A proof is identified by the evidence its derive cites at the application
-  // selection resolves the claim to, `resolved`, as rustc and GHC key evidence
-  // by the normalized predicate. A claim spelled otherwise names that proof
-  // respelled at its own spelling (`respellProof`): a claim names the proof of
-  // exactly its spelling (`verifyCitation`), and every spelling of one
-  // application names one proof.
-  TraitApplicationAttr resolved = *monomorphic;
-  TraitApplicationAttr spelled = wanted.getTraitApplication();
-  MLIRContext *ctx = scope.getContext();
-
-  // check the proof memo for this monomorphic app, as read here
-  if (auto it = memo.proofMemo.find({scope, spelled});
-      it != memo.proofMemo.end())
-    return ClaimType::get(ctx, spelled, it->second);
-  Proven atResolution = proofAtResolution(impl, resolved, subst, site,
-                                          builder, originalWanted, err);
-  if (!atResolution.isAnswer() || spelled == resolved)
+  // selection resolves the claim to, as rustc and GHC key evidence by the
+  // normalized predicate. A claim spelled otherwise names a cast of that proof
+  // to its own spelling (`respellProof`): a claim names the proof of exactly
+  // its spelling (`verifyCitation`), and every spelling of one application
+  // names one proof.
+  Answer<ClaimType> atResolution = proveResolution(wanted, site, builder, err);
+  if (!atResolution.isAnswer())
     return atResolution;
-  Proven respelled = respellProof(*atResolution, spelled, site, builder);
-  if (!respelled.isAnswer())
-    return respelled;
-  return recordProof(scope, spelled, respelled->getProof());
+  return respellProof(*atResolution, wanted.getTraitApplication(), site,
+                      builder);
+}
+
+Answer<ProvenPremise> ImplResolver::resolveEvidenceFor(
+    ClaimType claim, const SelectionSite &site, OpBuilder &builder,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  Answer<ClaimType> atResolution = proveResolution(claim, site, builder, err);
+  if (!atResolution.isAnswer())
+    return atResolution.stop<ProvenPremise>();
+  return resolvePremise(claim, atResolution->getProof(), site, builder,
+                        /*depth=*/0);
 }
 
 Answer<ClaimType> ImplResolver::proofAtResolution(
@@ -804,9 +826,10 @@ Answer<ClaimType> ImplResolver::proofAtResolution(
     llvm::function_ref<InFlightDiagnostic()> err) {
   using Proven = Answer<ClaimType>;
   ModuleOp scope = site.scope;
-  MLIRContext *ctx = scope.getContext();
-  if (auto it = memo.proofMemo.find({scope, app}); it != memo.proofMemo.end())
-    return ClaimType::get(ctx, app, it->second);
+  // Selection's record of the application holds its proof once one stands.
+  auto chosen = memo.chosen.find({scope, app});
+  if (chosen != memo.chosen.end() && chosen->second.proof)
+    return ClaimType::get(scope.getContext(), app, chosen->second.proof);
 
   // The evidence for each where entry at the arguments selection chose, in
   // order: the proof of an application entry at the application selection
@@ -845,15 +868,15 @@ Answer<ClaimType> ImplResolver::proofAtResolution(
   }
 
   // A proof is identified by the evidence its derive cites: one standing over
-  // these premises answers, and otherwise the proof is written; either is
-  // memoized by the monomorphic app.
-  if (ClaimType found = findProof(scope, impl, app, subproofs))
-    return recordProof(scope, app, found.getProof());
-  Proven written = writeProof(scope, impl, app, arguments, entries, subproofs,
-                              equalitySteps, site, builder);
-  if (!written.isAnswer())
-    return written;
-  return recordProof(scope, app, written->getProof());
+  // these premises answers, and otherwise the proof is written.
+  Proven proven = findProof(scope, impl, app, subproofs);
+  if (!*proven)
+    proven = writeProof(scope, impl, app, arguments, entries, subproofs,
+                        equalitySteps, site, builder);
+  if (proven.isAnswer())
+    if (auto entry = memo.chosen.find({scope, app}); entry != memo.chosen.end())
+      entry->second.proof = proven->getProof();
+  return proven;
 }
 
 //===----------------------------------------------------------------------===//
@@ -996,8 +1019,8 @@ void ImplResolver::nameRefusal(
       projection ? projection.asClaim() : cast<ClaimType>(obligation);
   auto selected = cast<ClaimType>(readSettledProjectionsIn(claim, scope));
   TraitApplicationAttr app = selected.getTraitApplication();
-  auto refusal = memo.resolutionMemo.refused.find({scope, app});
-  if (refusal == memo.resolutionMemo.refused.end())
+  auto refusal = memo.refused.find({scope, app});
+  if (refusal == memo.refused.end())
     return;
   auto trait = app.getTrait(scope, /*errFn=*/nullptr);
   if (succeeded(trait))
@@ -1016,9 +1039,8 @@ ImplResolver::readSettledProjection(ProjectionType proj, ModuleOp scope) const {
     // Selection keys what it settles by the claim whose projections it
     // resolved, so the spelling is put through the same resolution first.
     ClaimType selected = cast<ClaimType>(readSettledProjectionsIn(wanted, scope));
-    auto it = memo.resolutionMemo.chosen.find(
-        {scope, selected.getTraitApplication()});
-    if (it == memo.resolutionMemo.chosen.end())
+    auto it = memo.chosen.find({scope, selected.getTraitApplication()});
+    if (it == memo.chosen.end())
       return Answer<ResolvedImpl>::refusal();
     return ResolvedImpl{it->second.impl, selected, it->second.arguments};
   };
