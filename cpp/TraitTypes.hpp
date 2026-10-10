@@ -917,63 +917,15 @@ FailureOr<ClaimType> getClaimRequirementAt(
     uint64_t index,
     llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
 
-/// The verdict of reading one citation.
-enum class Citation {
-  /// The declaration the cited symbol holds, read at the arguments the
-  /// obligation supplies, rebuilds the obligation, and an impl named directly
-  /// applies there.
-  Carries,
-
-  /// A side still spells a projection the impls standing now leave unresolved,
-  /// so nothing decides this citation yet: the obligation stands unproven for
-  /// impl selection to derive and for the leftover walk to refuse.
-  Declined,
-
-  /// The declaration rebuilds some other application, or an impl named directly
-  /// does not apply at this one. `err` carries the reason.
-  Refused
-};
-
-/// Whether the evidence `proven` names discharges the obligation `unproven`,
-/// judged at that one claim and no deeper.
-///
-/// An obligation is discharged only by evidence for that same application, and
-/// the evidence is the DECLARATION the cited symbol holds -- a blanket impl and
-/// a proof written over type variables each stand for every instance of theirs.
-/// So the judgment is whether that declaration, read at the arguments this
-/// obligation supplies, rebuilds the obligation. The claim the citation is
-/// spelled with is built from the obligation, so it says nothing here; only the
-/// declaration does. An impl named directly is unconditional, so it assumes
-/// nothing there.
-///
-/// Nothing is read inside a cited proof. A proof op's body decides its own
-/// premises and its own citations, so a citation of it needs this top-level
-/// match alone.
-///
-/// Both sides are read through `normalize` and nothing else, so whether the
-/// cited declaration rebuilds the obligation is a function of the two claims,
-/// the declaration and that reading. A citation this declines under a weaker
-/// reading can carry under a stronger.
-Citation verifyCitation(ClaimType unproven, ClaimType proven, ModuleOp module,
-                        Normalizer normalize,
-                        llvm::function_ref<InFlightDiagnostic()> err);
-
-/// Refuses every citation the claims `ty` spells that does not discharge the
-/// obligation it stands on, each read at its own claim and no deeper.
-///
-/// A proven claim spells evidence for one application, and what the spelling
-/// asserts is that the declaration the evidence holds carries to that
-/// application. What the evidence proves underneath was decided at the proof op
-/// holding it. Two spellings proving one claim by different symbols are two
-/// names for one fact, so nothing is carried across the claims here.
-///
-/// A citation nothing standing now decides is left to the stage's exit walk,
-/// which refuses an obligation selection does not resolve.
-///
-/// `normalize` is the evidence the caller holds, which every citation is read
-/// through (`verifyCitation`).
-LogicalResult verifyCitationsIn(Type ty, ModuleOp module, Normalizer normalize,
-                                llvm::function_ref<InFlightDiagnostic()> err);
+/// Whether the evidence `proven` names is evidence for its application: the
+/// declaration the cited symbol holds -- a proof's proven application, which
+/// `ProofOp::verify` holds ground, or an unconditional impl's header -- is that
+/// application, by interned identity. Every writer witnesses a proof at the
+/// application it proves and respells it by a coercion, so a citation is one
+/// comparison. Nothing is read inside a cited proof: a proof op's body decides
+/// its own premises and citations.
+LogicalResult verifyCitation(ClaimType proven, ModuleOp module,
+                             llvm::function_ref<InFlightDiagnostic()> err);
 
 /// The module that anchors symbol lookups for `anchor`: the operation itself
 /// when it is the module, otherwise its enclosing module (null if it has none).

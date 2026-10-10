@@ -33,8 +33,8 @@ trait.impl private @B_blanket(%self: !trait.claim<@B[!trait.poly<0>]>) {
   trait.return %a64 : !trait.claim<@A[i64] by @A_i64>
 }
 trait.proof private @forged {
-  %d = trait.derive @B[!trait.poly<0>] from @B_blanket given()
-  trait.return %d : !trait.claim<@B[!trait.poly<0>]>
+  %d = trait.derive @B[i32] from @B_blanket given()
+  trait.return %d : !trait.claim<@B[i32]>
 }
 func.func @main() -> i64 {
   %w = trait.witness @forged for @B[i32]

@@ -548,7 +548,7 @@ class ImplResolver {
     /// given, at its application entries in order, the proofs `subproofs`
     /// names; null where none stands. An equality entry is ground and has one
     /// answer, so it identifies nothing. An impl with no parameters and no
-    /// where entries is its own proof.
+    /// where entries whose header spells `app` is its own proof.
     ClaimType findProof(ModuleOp scope, ImplOp impl, TraitApplicationAttr app,
                         ArrayRef<FlatSymbolRefAttr> subproofs) const;
 

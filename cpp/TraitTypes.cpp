@@ -551,43 +551,26 @@ bool ClaimType::isPolymorphic() const {
   });
 }
 
-Citation verifyCitation(ClaimType unproven, ClaimType proven, ModuleOp module,
-                        Normalizer normalize,
-                        llvm::function_ref<InFlightDiagnostic()> err) {
-  // inspect the proof symbol on the proven side
-  auto symOp = ProofOp::getProofOpOrUnconditionalImplOp(module, proven.getProof(), err);
-  if (failed(symOp)) return Citation::Refused;
-
-  // The declaration the cited symbol holds: an unconditional impl's header, or
-  // the claim a proof derives. A proof op may be written over type variables
-  // and stand for every instance of them, so its parameters take the arguments
-  // the obligation supplies and the claim it rebuilds must be that obligation.
-  // What a proof proves underneath was decided at its own body, so nothing here
-  // reads inside it.
-  Type declaration = isa<ImplOp>(*symOp)
-                         ? Type(cast<ImplOp>(*symOp).getSelfClaim())
-                         : Type(cast<ProofOp>(*symOp).getProvenClaim().asUnproven());
-
-  // A side still spelling a projection once the caller's evidence has been read
-  // is one nothing here can decide: impl selection resolves it through the
-  // candidate it settles on, which a reader holding no record cannot. Such an
-  // obligation is declined rather than discharged, so the claim stands unproven
-  // for selection to derive and for the leftover walk to refuse.
-  if (succeeded(matchDeclaration(getTypeParametersIn(declaration), declaration,
-                                 Type(unproven), normalize, /*err=*/nullptr)))
-    return Citation::Carries;
-
-  FailureOr<Type> readObligation = normalize(Type(unproven));
-  FailureOr<Type> readDeclared = normalize(declaration);
-  if (failed(readObligation) || failed(readDeclared) ||
-      containsType<ProjectionType>(*readObligation) ||
-      containsType<ProjectionType>(*readDeclared))
-    return Citation::Declined;
-
-  if (err) err() << "proof " << proven.getProof() << " proves " << declaration
-                 << ", which does not discharge the obligation "
-                 << *readObligation;
-  return Citation::Refused;
+LogicalResult verifyCitation(ClaimType proven, ModuleOp module,
+                             llvm::function_ref<InFlightDiagnostic()> err) {
+  auto symOp =
+      ProofOp::getProofOpOrUnconditionalImplOp(module, proven.getProof(), err);
+  if (failed(symOp))
+    return failure();
+  TraitApplicationAttr declared =
+      isa<ImplOp>(*symOp) ? cast<ImplOp>(*symOp).getSelfApplication()
+                          : cast<ProofOp>(*symOp).getTraitApplication();
+  // Compared modulo the proofs claims nested in the arguments carry, as every
+  // claim comparison is (`stripClaimProofs`).
+  Type declaredClaim = Type(ClaimType::get(proven.getContext(), declared));
+  if (declared == proven.getTraitApplication() ||
+      stripClaimProofs(declaredClaim) == stripClaimProofs(Type(proven.asUnproven())))
+    return success();
+  if (err)
+    err() << "proof " << proven.getProof() << " proves " << declaredClaim
+          << ", which does not discharge the obligation "
+          << Type(proven.asUnproven());
+  return failure();
 }
 
 void walkObligationSites(Type root, llvm::function_ref<void(Type)> visit) {
@@ -612,25 +595,6 @@ bool carriesUndischargedObligation(Type root) {
     found = found || isUndischargedObligation(site);
   });
   return found;
-}
-
-LogicalResult verifyCitationsIn(Type ty, ModuleOp module, Normalizer normalize,
-                                llvm::function_ref<InFlightDiagnostic()> err) {
-  LogicalResult status = success();
-
-  ty.walk([&](Type node) {
-    if (status.failed()) return;
-
-    auto claim = dyn_cast<ClaimType>(node);
-    if (!claim || !claim.isProven())
-      return;
-
-    if (verifyCitation(claim.asUnproven(), claim, module, normalize, err) ==
-        Citation::Refused)
-      status = failure();
-  });
-
-  return status;
 }
 
 namespace {
@@ -668,12 +632,11 @@ static FailureOr<CitedEvidence> readCitedEvidence(
       errFn() << "proof '" << claim.getProof() << "' cites no impl";
     return failure();
   }
-  auto arguments = proof.getImplArgumentsAt(claim, errFn);
-  auto premises = proof.getPremisesAt(claim, errFn);
-  if (failed(arguments) || failed(premises))
+  auto arguments = proof.getImplArguments(errFn);
+  if (failed(arguments))
     return failure();
   evidence.arguments = std::move(*arguments);
-  evidence.premises = std::move(*premises);
+  evidence.premises = proof.getPremises();
   return evidence;
 }
 
@@ -959,6 +922,8 @@ LogicalResult verifyEqualAfterInstantiation(
     Normalizer normalize, llvm::function_ref<InFlightDiagnostic()> err) {
   Type rebuilt = stripClaimProofs(instantiate(formal, args));
   Type wanted = stripClaimProofs(actual);
+  if (rebuilt == wanted)
+    return success();
   if (normalize) {
     FailureOr<Type> normalizedRebuilt = normalize(rebuilt);
     if (failed(normalizedRebuilt))

@@ -20,10 +20,6 @@ trait.trait private @Has(%self: !trait.claim<@Has[!trait.poly<1>]>) {
 trait.impl private @Has_tuple(%self: !trait.claim<@Has[tuple<!U>]>) {
   trait.assoc_type @A<[!W]> = tuple<!U, !W>
 }
-trait.proof private @Has_tuple_p {
-  %d = trait.derive @Has[tuple<!trait.poly<4>>] from @Has_tuple given()
-  trait.return %d : !trait.claim<@Has[tuple<!trait.poly<4>>]>
-}
 
 func.func private @g(%x: !T,
                      %v: !trait.proj<@Has[tuple<!T>], "A", [!V]>,
@@ -32,9 +28,9 @@ func.func private @g(%x: !T,
 }
 
 func.func private @k(%x: !X, %v: tuple<!X, i1>) -> !X {
-  %c = trait.witness @Has_tuple_p for @Has[tuple<!X>]
+  %c = trait.derive @Has[tuple<!X>] from @Has_tuple given()
   %r = trait.func.call @g(%x, %v, %c)
-    : (!X, tuple<!X, i1>, !trait.claim<@Has[tuple<!X>] by @Has_tuple_p>) -> !X
+    : (!X, tuple<!X, i1>, !trait.claim<@Has[tuple<!X>]>) -> !X
   return %r : !X
 }
 

@@ -5,8 +5,9 @@
 
 // The sibling of the refusal row: once @Gen binds @Gen[i64]::A to i64, the
 // claim spelled through the projection and the claim spelled at its resolution
-// are one claim. A witness for either verifies against @Box_i64, and impl
-// selection serves an allege spelled through the projection from the same impl.
+// are one claim. The witness of @Box_i64 is respelled through the projection
+// by a coercion citing the binding, and impl selection serves an allege
+// spelled through the projection from the same impl.
 
 trait.trait private @Gen(%self: !trait.claim<@Gen[!trait.poly<0>]>) {
   trait.assoc_type @A
@@ -24,17 +25,17 @@ func.func private @holds(!trait.claim<@Box[i64]>,
                          !trait.claim<@Box[!trait.proj<@Gen[i64], "A">]>,
                          !trait.claim<@Box[!trait.proj<@Gen[i64], "A">]>)
 
-// The witness spelled at the resolution, the witness spelled through the
-// projection, and the allege selection serves all stand as one witness of
-// @Box[i64].
+// The coercion settles to the witness it respells, and the allege selection
+// serves stands as a witness of @Box[i64] too.
 // CHECK-LABEL: func.func @main
-// CHECK: trait.witness @Box_i64 for @Box[i64]
-// CHECK: trait.witness @Box_i64 for @Box[i64]
-// CHECK: trait.witness @Box_i64 for @Box[i64]
+// CHECK: %[[D:.*]] = trait.witness @Box_i64 for @Box[i64]
+// CHECK: %[[S:.*]] = trait.witness @Box_i64 for @Box[i64]
+// CHECK: call @holds(%[[D]], %[[D]], %[[S]])
 // CHECK-NOT: trait.allege
 func.func @main() {
   %direct = trait.witness @Box_i64 for @Box[i64]
-  %through = trait.witness @Box_i64 for @Box[!trait.proj<@Gen[i64], "A">]
+  %a = trait.witness proj_resolve !trait.proj<@Gen[i64], "A"> resolves i64 by @Gen_i64 : !trait.claim<!trait.proj<@Gen[i64], "A"> = i64>
+  %through = trait.coerce %direct : !trait.claim<@Box[i64] by @Box_i64> to !trait.claim<@Box[!trait.proj<@Gen[i64], "A">] by @Box_i64> via (%a) : (!trait.claim<!trait.proj<@Gen[i64], "A"> = i64>)
   %selected = trait.allege @Box[!trait.proj<@Gen[i64], "A">]
   trait.func.call @holds(%direct, %through, %selected)
     : (!trait.claim<@Box[i64] by @Box_i64>,

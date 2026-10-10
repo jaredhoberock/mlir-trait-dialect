@@ -260,25 +260,23 @@ bool isForeign(Operation *op) {
 }
 
 /// Verify that every proven claim spelled in a top-level function signature
-/// names evidence whose declaration carries to it. A `by @proof` in a declared
-/// type is otherwise checked nowhere until a call reaches it, so a signature can
-/// name a proof that does not specialize to its claim and go undiagnosed. What
-/// that proof cites underneath was decided at the proof op holding it. Only
-/// module-level `func.func` signatures are walked; signatures nested inside
-/// trait/impl method bodies are not yet covered.
+/// names evidence for its application (`verifyCitation`). A `by @proof` in a
+/// declared type is otherwise checked nowhere, so a signature can name a proof
+/// of another application and go undiagnosed. What that proof cites underneath
+/// was decided at the proof op holding it. Only module-level `func.func`
+/// signatures are walked; signatures nested inside trait/impl method bodies are
+/// not yet covered.
 LogicalResult verifyDeclaredClaimProofs(ModuleOp module) {
   LogicalResult status = success();
   for (auto f : module.getOps<func::FuncOp>()) {
     auto errFn = [&] {
       return f.emitOpError() << "declared claim in signature has an invalid proof: ";
     };
-    auto byGroundLookup = [&](Type ty) -> FailureOr<Type> {
-      return resolveProjectionsByLookup(ty, module, LookupScope::Ground,
-                                        /*emitError=*/nullptr);
-    };
-    if (failed(verifyCitationsIn(Type(f.getFunctionType()), module,
-                                 byGroundLookup, errFn)))
-      status = failure();
+    f.getFunctionType().walk([&](ClaimType claim) {
+      if (claim.isApplication() && claim.isProven() &&
+          failed(verifyCitation(claim, module, errFn)))
+        status = failure();
+    });
   }
   return status;
 }
@@ -332,10 +330,7 @@ static LogicalResult verifyProofDerivationsEnd(ModuleOp module) {
       emitObligationOverflow(proof.getLoc(), app, chain);
       return failure();
     }
-    // A citation the proof's verifier refuses is refused there.
-    auto premises = proof.getPremisesAt(at, /*err=*/nullptr);
-    if (failed(premises))
-      return Height{1, {}};
+    SmallVector<ClaimType> premises = proof.getPremises();
     unsigned depth = chain.size();
     chain.push_back(
         {app, FlatSymbolRefAttr::get(proof.getContext(), proof.getSymName())});
@@ -345,7 +340,7 @@ static LogicalResult verifyProofDerivationsEnd(ModuleOp module) {
       depthOnChain.erase(key);
     });
     Height below{0, {}};
-    for (ClaimType premise : *premises) {
+    for (ClaimType premise : premises) {
       if (!premise.isApplication() || !premise.isProven())
         continue;
       if (auto cited = lookupSymbolFrom<ProofOp>(module, premise.getProof())) {
@@ -837,7 +832,12 @@ buildCallSubstitution(CallOpT op, PatternRewriter &rewriter,
     (void)rewriter.notifyMatchFailure(op, "couldn't build substitution");
     return failure();
   }
+  // A projection is bound to its one step only where it has a normal form: one
+  // whose binding spells it again without end has none, which selection names
+  // as its overflow, and a substitution binding it would stamp without end.
   auto resolve = [&](ProjectionType proj) -> FailureOr<Type> {
+    if (!resolver.resolveProjectionsIn(Type(proj), site, rewriter).isAnswer())
+      return failure();
     auto resolved = resolver.resolveProjection(proj, site, rewriter);
     if (!resolved.isAnswer())
       return failure();

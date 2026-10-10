@@ -6,13 +6,13 @@
 // A proof over a projection whose two impls bind each other's associated type
 // spells an associated-type binding cycle: @Loop[i32]'s Output is @Loop[i64]'s
 // Output and back. The projection has no normal form. The proof's derive cites
-// an impl whose header spells the projection identically, so declaring it
-// normalizes nothing; the instance that uses it resolves the projection
-// through the module's impls, and the nonconverging resolution is reported as
-// a clean diagnostic at the use -- it neither aborts the process nor runs the
-// cyclic proof.
+// an impl whose header spells the projection identically, and its witness
+// spells the proof's own application, so verification compares spellings and
+// resolves nothing; the stage that resolves the projection where the call is
+// lowered reports the nonconverging resolution as its overflow at the use --
+// it neither aborts the process nor runs the cyclic proof.
 
-// CHECK: error: 'trait.witness' op projection normalization did not converge within 128 projection steps for type '!trait.claim<@Wants[!trait.proj<@Loop[i32], "Output">]>'
+// CHECK: error: overflow evaluating the requirement '!trait.proj<@Loop[i32], "Output">': 128 projection steps stand on the chain
 
 !T = !trait.poly<0>
 

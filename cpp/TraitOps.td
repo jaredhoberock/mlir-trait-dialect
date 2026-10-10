@@ -1606,16 +1606,12 @@ def ProofOp : TraitDialectOp<"proof", [
 
     TraitOp getTrait();
 
-    /// The claims the derive is given, one per where entry of the impl, as
-    /// carried to `at`, the claim this proof is cited for: a proof written
-    /// over type variables stands for every instance of them.
-    FailureOr<SmallVector<ClaimType>> getPremisesAt(
-        ClaimType at, llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+    /// The claims the derive is given, one per where entry of the impl.
+    SmallVector<ClaimType> getPremises();
 
-    /// The arguments this proof's impl takes at `at`, the claim it is carried
-    /// to.
-    FailureOr<SpecializationMap> getImplArgumentsAt(
-        ClaimType at, llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+    /// The arguments this proof's impl takes at the derive.
+    FailureOr<SpecializationMap> getImplArguments(
+        llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     /// Resolve a proof symbol to the impl it is backed by: a trait.proof yields
     /// its impl, a directly-named trait.impl yields itself. Whether the symbol

@@ -11,7 +11,7 @@
 // the allegation where the impl wrote it, called from the hop in the instance.
 
 // VERIFIED: trait.proof private @forged {
-// VERIFIED: trait.derive @B[!trait.poly<0>] from @B_blanket
+// VERIFIED: trait.derive @B[i32] from @B_blanket
 // INSTANCE: :33:{{[0-9]+}}: error: unproven monomorphic claim '!trait.claim<@A[!trait.proj<@Foo[i32], "Out">]>' after instantiate-monomorphs
 // INSTANCE: :29:{{[0-9]+}}: note: called from
 
@@ -34,8 +34,8 @@ trait.impl private @B_blanket(%self: !trait.claim<@B[!trait.poly<0>]>) {
   trait.return %req0 : !trait.claim<@A[!trait.proj<@Foo[!trait.poly<0>], "Out">]>
 }
 trait.proof private @forged {
-  %d = trait.derive @B[!trait.poly<0>] from @B_blanket given()
-  trait.return %d : !trait.claim<@B[!trait.poly<0>]>
+  %d = trait.derive @B[i32] from @B_blanket given()
+  trait.return %d : !trait.claim<@B[i32]>
 }
 func.func @main() -> i64 {
   %w = trait.witness @forged for @B[i32]

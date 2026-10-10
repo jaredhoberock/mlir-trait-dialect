@@ -6,12 +6,11 @@
 // A binding cycle that grows rather than oscillates: @Grow[i32]'s Output
 // resolves to a tuple that itself contains @Grow[i32]'s Output, so each
 // resolution pass nests the spelling one level deeper and it never settles. The
-// instance that uses the proof resolves the projection through the module's
-// impls; the fixed-point driver's rewrite budget bounds the growth and the
-// nonconvergence is reported cleanly, so the type never runs the process out
-// of stack.
+// stage resolves the projection where the call is lowered; the fixed-point
+// driver's rewrite budget bounds the growth and the nonconvergence is reported
+// as the stage's overflow, so the type never runs the process out of stack.
 
-// CHECK: error: 'trait.witness' op projection normalization did not converge within 128 projection steps for type '!trait.claim<@Wants[tuple<tuple<
+// CHECK: error: overflow evaluating the requirement '!trait.proj<@Grow[i32], "Output">': 128 projection steps stand on the chain
 
 !T = !trait.poly<0>
 

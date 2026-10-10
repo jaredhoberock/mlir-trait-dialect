@@ -340,11 +340,6 @@ static bool spellsAProjection(Type ty) {
   return found;
 }
 
-/// What a proven claim may be read through: the impl its proof names and, by
-/// index, the impls the evidence beneath it names.
-static NormalizationContext buildProofNormalizationContext(ClaimType provenClaim,
-                                                           ModuleOp module);
-
 //===----------------------------------------------------------------------===//
 // NormalizationContext
 //===----------------------------------------------------------------------===//
@@ -1326,18 +1321,14 @@ static Value cloneDefiningTree(RewriterBase &rewriter, Value root,
   return mapping.lookup(root);
 }
 
-static FailureOr<SpecializationMap>
-instanceOfProofAt(ProofOp proof, ClaimType at,
-                  llvm::function_ref<InFlightDiagnostic()> err);
-
 /// Maps in `mapping` each value of `reads` -- the values read from the
 /// declaration `declaration`, by a method's body or by a projection of its
 /// return -- to the evidence the receiver's proof `selfProof` supplies there,
 /// cloning at `rewriter`'s insertion point what must be computed, each clone of
 /// the declaration's ops stamped by `stamp`: argument 0 to `self`; an impl's
 /// argument k to a clone of the claim the receiver's proof derives the impl
-/// from at position k - 1, its defining ops copied out of the proof's body and
-/// stamped at the proof's instance at `selfProof`; a value the declaration's
+/// from at position k - 1, its defining ops copied out of the proof's body,
+/// which is ground; a value the declaration's
 /// body computes to a clone of its defining ops over those. A proof is closed,
 /// so the claims its derive is given are computed by its own body alone. An
 /// impl argument the receiver's proof supplies nothing for stays unmapped,
@@ -1351,17 +1342,13 @@ static void mapDeclarationReads(RewriterBase &rewriter, ModuleOp module,
   mapping.map(declarationBody.getArgument(0), self);
   if (declarationBody.getNumArguments() > 1)
     if (auto proof = lookupSymbolFrom<ProofOp>(module, selfProof.getProof())) {
-      auto instance = instanceOfProofAt(proof, selfProof, /*err=*/nullptr);
-      if (succeeded(instance)) {
-        AttrTypeReplacer atInstance =
-            makeTypeReplacerFromSubstitution(instance->toTypeMap(), CloneKind::Instance);
-        IRMapping fromProof;
-        for (auto [argument, premise] :
-             llvm::zip(declarationBody.getArguments().drop_front(),
-                       proof.getDerive().getAssumptions()))
-          mapping.map(argument, cloneDefiningTree(rewriter, premise, fromProof,
-                                                  atInstance));
-      }
+      AttrTypeReplacer asWritten;
+      IRMapping fromProof;
+      for (auto [argument, premise] :
+           llvm::zip(declarationBody.getArguments().drop_front(),
+                     proof.getDerive().getAssumptions()))
+        mapping.map(argument, cloneDefiningTree(rewriter, premise, fromProof,
+                                                asWritten));
     }
   for (Value read : reads)
     if (!isa<BlockArgument>(read) || mapping.contains(read))
@@ -1722,10 +1709,10 @@ committedImplOf(Value value, std::shared_ptr<const CommittedImpl> context,
     return std::nullopt;
   SpecializationMap arguments;
   if (proof) {
-    auto atClaim = proof.getImplArgumentsAt(claim, /*err=*/nullptr);
-    if (failed(atClaim))
+    auto stated = proof.getImplArguments(/*err=*/nullptr);
+    if (failed(stated))
       return std::nullopt;
-    arguments = std::move(*atClaim);
+    arguments = std::move(*stated);
   }
   return CommittedImpl{impl, claim.getTraitApplication(), std::move(arguments),
                        proof ? proof.getDerive() : DeriveOp(), nullptr};
@@ -2114,6 +2101,12 @@ LogicalResult ProofOp::verify() {
       !derivedThroughRespelling(returned.getOperand(0)))
     return emitOpError() << "returns the one claim a derive in its body "
                             "derives, or that claim respelled";
+  // A proof is ground: the stage writes one only at a monomorphic application,
+  // so a citation of it is one comparison (`verifyCitation`). A claim over
+  // type variables is proven by a derive in the template that holds them.
+  if (getProvenClaim().isPolymorphic())
+    return emitOpError() << "proves " << getTraitApplication()
+                         << ", which spells a type variable: a proof is ground";
   return success();
 }
 
@@ -2132,45 +2125,22 @@ TraitOp ProofOp::getTrait() {
   return getTraitApplication().getTraitOrAbort(module, "ProofOp::getTrait: couldn't find trait");
 }
 
-/// The substitution carrying this proof's own claim to `at`, a claim the proof
-/// is cited for: identity for a proof written at its one application, and the
-/// instance otherwise.
-static FailureOr<SpecializationMap> instanceOfProofAt(
-    ProofOp proof, ClaimType at, llvm::function_ref<InFlightDiagnostic()> err) {
-  Type own = Type(proof.getProvenClaim().asUnproven());
-  return matchDeclaration(getTypeParametersIn(own), own, Type(at.asUnproven()),
-                          Normalizer(), err);
-}
-
-FailureOr<SmallVector<ClaimType>> ProofOp::getPremisesAt(
-    ClaimType at, llvm::function_ref<InFlightDiagnostic()> err) {
-  auto instance = instanceOfProofAt(*this, at, err);
-  if (failed(instance))
-    return failure();
-  return llvm::map_to_vector(getDerive().getAssumptions(), [&](Value premise) {
-    return cast<ClaimType>(instantiate(premise.getType(), *instance));
+SmallVector<ClaimType> ProofOp::getPremises() {
+  return llvm::map_to_vector(getDerive().getAssumptions(), [](Value premise) {
+    return cast<ClaimType>(premise.getType());
   });
 }
 
-FailureOr<SpecializationMap> ProofOp::getImplArgumentsAt(
-    ClaimType at, llvm::function_ref<InFlightDiagnostic()> err) {
+FailureOr<SpecializationMap> ProofOp::getImplArguments(
+    llvm::function_ref<InFlightDiagnostic()> err) {
   DeriveOp derive = getDerive();
   ImplOp impl = derive.getImplOp();
   if (!impl) {
     if (err) err() << "cannot find impl '" << derive.getImplAttr() << "'";
     return failure();
   }
-  auto stated = impl.readCitationArguments(
-      derive.getDerivedClaim(), derive.getAssumptions().getTypes(), err);
-  if (failed(stated))
-    return failure();
-  auto instance = instanceOfProofAt(*this, at, err);
-  if (failed(instance))
-    return failure();
-  SpecializationMap atInstance;
-  for (GenericTypeInterface parameter : impl.getTypeParams())
-    atInstance.bind(parameter, instance->apply(*stated->lookup(parameter)));
-  return atInstance;
+  return impl.readCitationArguments(derive.getDerivedClaim(),
+                                    derive.getAssumptions().getTypes(), err);
 }
 
 /// Look up a proof symbol and return the raw Operation* (ProofOp or ImplOp).
@@ -2589,38 +2559,12 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (getResultClaim().isEquality())
     return success();
 
-  // Application arm: one lookup of the cited symbol; a directly-named impl must
-  // be unconditional, and a proof names the impl it stands over.
-  auto cited = ProofOp::getProofOpOrUnconditionalImplOp(module, getProof(),
-                                                        errFn);
-  if (failed(cited)) return failure();
-  auto proof = dyn_cast<ProofOp>(*cited);
-  ImplOp impl = proof ? proof.getImpl() : cast<ImplOp>(*cited);
-  if (!impl)
-    return emitOpError() << "proof '" << getProof()
-                         << "' does not resolve to an impl";
-
-  // As at a proof: a projection the impl's header spells reduces through the
-  // evidence the witnessed claim names -- the proof tree it carries, by index
-  // -- and then through the impls the module holds.
-  NormalizationContext reading;
-  if (spellsAProjection(Type(impl.getSelfClaim())))
-    reading = buildProofNormalizationContext(getProvenClaim(), module);
-  reading.setModuleLookup(module, LookupScope::Ground);
-  auto throughEvidence = [&](Type ty) -> FailureOr<Type> {
-    return reading.normalize(ty, errFn);
-  };
-  // A witness carries the claim the evidence it names stands over: the claim
-  // a proof derives, whose parameters take the arguments a use supplies, or an
-  // unconditional impl's header -- the comparison every citation is read by
+  // Application arm: a witness carries the application the declaration it
+  // names proves -- a proof's proven claim or an unconditional impl's header
   // (`verifyCitation`). Reading the impl's header alone would accept a witness
   // for an application the proof does not prove, because a blanket impl's
-  // header carries to every application of its trait. A spelling the evidence
-  // here leaves a projection in is one only selection's settlement decides,
-  // and is left to the stage.
-  ClaimType claim = getProvenClaim();
-  return success(verifyCitation(claim.asUnproven(), claim, module,
-                                throughEvidence, errFn) != Citation::Refused);
+  // header carries to every application of its trait.
+  return verifyCitation(getProvenClaim(), module, errFn);
 }
 
 
@@ -3171,14 +3115,6 @@ static void addLocalProjectionRulesFromClaim(
   }
 }
 
-NormalizationContext buildProofNormalizationContext(ClaimType provenClaim,
-                                                    ModuleOp module) {
-  NormalizationContext ctx;
-  llvm::SmallPtrSet<Operation *, 8> visited;
-  addLocalProjectionRulesFromProvenClaim(ctx, provenClaim, module, visited);
-  return ctx;
-}
-
 NormalizationContext buildLocalClaimNormalizationContext(Operation *op,
                                                          ValueRange values,
                                                          ModuleOp module) {
@@ -3192,31 +3128,6 @@ NormalizationContext buildLocalClaimNormalizationContext(Operation *op,
   for (Value value : values)
     addLocalProjectionRulesFromClaim(ctx, value, module, visited);
   return ctx;
-}
-
-/// Checks every proof the claims a call carries name, each at its own claim:
-/// the declaration the named evidence holds must carry to the application the
-/// claim spells, and what that evidence proves underneath was decided at the
-/// proof op holding it.
-///
-/// Each spelling is read through the call's own context first: a coerce
-/// respells a claim through an equality it cites, and the proof standing on the
-/// respelled claim is the proof of the spelling that equality carries it back
-/// to.
-static LogicalResult verifyProofsAtCall(Operation *call, ValueRange operands,
-                                        Normalizer normalize, ModuleOp module,
-                                        llvm::function_ref<InFlightDiagnostic()> err) {
-  SmallVector<Type> spellings(operands.getTypes());
-  llvm::append_range(spellings, call->getResultTypes());
-
-  for (Type spelling : spellings) {
-    FailureOr<Type> read = normalize(spelling);
-    if (failed(read))
-      return failure();
-    if (failed(verifyCitationsIn(*read, module, normalize, err)))
-      return failure();
-  }
-  return success();
 }
 
 /// The type arguments a call supplies for the declaration it calls, once that
@@ -3236,8 +3147,7 @@ static LogicalResult verifyProofsAtCall(Operation *call, ValueRange operands,
 /// selection, which at pass time is all both signatures are read through:
 /// projections at instantiation are the stage's solver's to answer, and the
 /// evidence the call holds is not read. A verifier passes none and compares
-/// through that evidence alone, and then the proofs the call's claims name are
-/// read at their own claims as well.
+/// through that evidence alone.
 static FailureOr<SpecializationMap> readCallSpecialization(
     Operation *call, ModuleOp module, FunctionType formal,
     const SpecializationMap &known, ArrayRef<GenericTypeInterface> parameters,
@@ -3303,17 +3213,6 @@ static FailureOr<SpecializationMap> readCallSpecialization(
   // the signature spelled here.
   if (failed(verifyEqualAfterInstantiation(Type(formal), arguments,
                                            Type(actual), normalize, err)))
-    return failure();
-
-  // The proofs this call's claims name are read at their own claims: each
-  // spells evidence for one application, and the declaration that evidence
-  // holds must carry to it. What the evidence proves underneath was decided at
-  // the proof op holding it. The factory that closes the substitution walks the
-  // same spellings where the call is lowered; a verifier has no lowering behind
-  // it, so it reads them here or nowhere.
-  if (!selection &&
-      failed(verifyProofsAtCall(call, call->getOperands(), normalize, module,
-                                err)))
     return failure();
 
   return arguments;

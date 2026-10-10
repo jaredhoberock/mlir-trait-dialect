@@ -6,9 +6,9 @@
 // @V_blanket applies where @Has[T]::Out is i64. Two conditional impls could
 // bind @Has[i8], and only @Has_m holds there; @pv supplies the equality entry
 // with a proj_resolve witness citing @Has_m over the proof @ma of its premise.
-// A proof whose premises are decided in its own body stands at every instance
-// of it. Split 1 carries the proof to an instance at a witness; split 2 takes
-// the proven claim through a function parameter.
+// The proof's premises are decided in its own body. Split 1 carries the proof
+// to an instance at a witness; split 2 takes the proven claim through a
+// function parameter.
 
 trait.trait private @Marker(%self: !trait.claim<@Marker[!trait.poly<0>]>) {}
 trait.trait private @Other(%self: !trait.claim<@Other[!trait.poly<0>]>) {}
@@ -25,22 +25,22 @@ trait.impl private @V_blanket(%self: !trait.claim<@V[!trait.poly<0>]>, %has: !tr
   }
 }
 trait.proof private @ma {
-  %d = trait.derive @Marker[!trait.poly<0>] from @Marker_any given()
-  trait.return %d : !trait.claim<@Marker[!trait.poly<0>]>
+  %d = trait.derive @Marker[i8] from @Marker_any given()
+  trait.return %d : !trait.claim<@Marker[i8]>
 }
 trait.proof private @hm {
-  %p0 = trait.witness @ma for @Marker[!trait.poly<0>]
-  %d = trait.derive @Has[!trait.poly<0>] from @Has_m given(%p0) : (!trait.claim<@Marker[!trait.poly<0>] by @ma>)
-  trait.return %d : !trait.claim<@Has[!trait.poly<0>]>
+  %p0 = trait.witness @ma for @Marker[i8]
+  %d = trait.derive @Has[i8] from @Has_m given(%p0) : (!trait.claim<@Marker[i8] by @ma>)
+  trait.return %d : !trait.claim<@Has[i8]>
 }
 trait.proof private @pv {
-  %p0 = trait.witness @hm for @Has[!trait.poly<0>]
-  %m = trait.witness @ma for @Marker[!trait.poly<0>]
-  %p1 = trait.witness proj_resolve !trait.proj<@Has[!trait.poly<0>], "Out"> resolves i64 by @Has_m
-    given(%m) : (!trait.claim<@Marker[!trait.poly<0>] by @ma>)
-    : !trait.claim<!trait.proj<@Has[!trait.poly<0>], "Out"> = i64>
-  %d = trait.derive @V[!trait.poly<0>] from @V_blanket given(%p0, %p1) : (!trait.claim<@Has[!trait.poly<0>] by @hm>, !trait.claim<!trait.proj<@Has[!trait.poly<0>], "Out"> = i64>)
-  trait.return %d : !trait.claim<@V[!trait.poly<0>]>
+  %p0 = trait.witness @hm for @Has[i8]
+  %m = trait.witness @ma for @Marker[i8]
+  %p1 = trait.witness proj_resolve !trait.proj<@Has[i8], "Out"> resolves i64 by @Has_m
+    given(%m) : (!trait.claim<@Marker[i8] by @ma>)
+    : !trait.claim<!trait.proj<@Has[i8], "Out"> = i64>
+  %d = trait.derive @V[i8] from @V_blanket given(%p0, %p1) : (!trait.claim<@Has[i8] by @hm>, !trait.claim<!trait.proj<@Has[i8], "Out"> = i64>)
+  trait.return %d : !trait.claim<@V[i8]>
 }
 
 // CHECK-NOT: trait.
@@ -71,22 +71,22 @@ trait.impl private @V_blanket(%self: !trait.claim<@V[!trait.poly<0>]>, %has: !tr
   }
 }
 trait.proof private @ma {
-  %d = trait.derive @Marker[!trait.poly<0>] from @Marker_any given()
-  trait.return %d : !trait.claim<@Marker[!trait.poly<0>]>
+  %d = trait.derive @Marker[i8] from @Marker_any given()
+  trait.return %d : !trait.claim<@Marker[i8]>
 }
 trait.proof private @hm {
-  %p0 = trait.witness @ma for @Marker[!trait.poly<0>]
-  %d = trait.derive @Has[!trait.poly<0>] from @Has_m given(%p0) : (!trait.claim<@Marker[!trait.poly<0>] by @ma>)
-  trait.return %d : !trait.claim<@Has[!trait.poly<0>]>
+  %p0 = trait.witness @ma for @Marker[i8]
+  %d = trait.derive @Has[i8] from @Has_m given(%p0) : (!trait.claim<@Marker[i8] by @ma>)
+  trait.return %d : !trait.claim<@Has[i8]>
 }
 trait.proof private @pv {
-  %p0 = trait.witness @hm for @Has[!trait.poly<0>]
-  %m = trait.witness @ma for @Marker[!trait.poly<0>]
-  %p1 = trait.witness proj_resolve !trait.proj<@Has[!trait.poly<0>], "Out"> resolves i64 by @Has_m
-    given(%m) : (!trait.claim<@Marker[!trait.poly<0>] by @ma>)
-    : !trait.claim<!trait.proj<@Has[!trait.poly<0>], "Out"> = i64>
-  %d = trait.derive @V[!trait.poly<0>] from @V_blanket given(%p0, %p1) : (!trait.claim<@Has[!trait.poly<0>] by @hm>, !trait.claim<!trait.proj<@Has[!trait.poly<0>], "Out"> = i64>)
-  trait.return %d : !trait.claim<@V[!trait.poly<0>]>
+  %p0 = trait.witness @hm for @Has[i8]
+  %m = trait.witness @ma for @Marker[i8]
+  %p1 = trait.witness proj_resolve !trait.proj<@Has[i8], "Out"> resolves i64 by @Has_m
+    given(%m) : (!trait.claim<@Marker[i8] by @ma>)
+    : !trait.claim<!trait.proj<@Has[i8], "Out"> = i64>
+  %d = trait.derive @V[i8] from @V_blanket given(%p0, %p1) : (!trait.claim<@Has[i8] by @hm>, !trait.claim<!trait.proj<@Has[i8], "Out"> = i64>)
+  trait.return %d : !trait.claim<@V[i8]>
 }
 
 // CHECK-NOT: trait.

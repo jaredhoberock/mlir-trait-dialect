@@ -38,9 +38,8 @@ trait.impl private @B_blanket(%self: !trait.claim<@B[!trait.poly<0>]>) {
 
 // -----
 
-// The evidence an impl over a variable does take: a proof of a blanket impl,
-// standing over a variable of its own, rebuilds the requirement at whatever
-// that requirement spells.
+// The evidence an impl over a variable does take: a derive of a blanket impl
+// at the requirement's own spelling, which stands for every instance of it.
 
 trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) { trait.method @a() -> i64 }
 trait.trait private @B(%self: !trait.claim<@B[!trait.poly<0>]>) -> !trait.claim<@A[!trait.poly<0>]> {
@@ -52,16 +51,12 @@ trait.impl private @A_blanket(%self: !trait.claim<@A[!trait.poly<1>]>) {
     trait.return %c : i64
   }
 }
-trait.proof private @a_stands {
-  %d = trait.derive @A[!trait.poly<1>] from @A_blanket given()
-  trait.return %d : !trait.claim<@A[!trait.poly<1>]>
-}
 trait.impl private @B_blanket(%self: !trait.claim<@B[!trait.poly<0>]>) {
   trait.method @b(%x: !trait.poly<0>) -> i64 {
     %a = trait.project %self[0] : !trait.claim<@B[!trait.poly<0>]> -> !trait.claim<@A[!trait.poly<0>]>
     %r = trait.method.call %a @A[!trait.poly<0>]::@a() : () -> i64
     trait.return %r : i64
   }
-  %a = trait.witness @a_stands for @A[!trait.poly<0>]
-  trait.return %a : !trait.claim<@A[!trait.poly<0>] by @a_stands>
+  %a = trait.derive @A[!trait.poly<0>] from @A_blanket given()
+  trait.return %a : !trait.claim<@A[!trait.poly<0>]>
 }

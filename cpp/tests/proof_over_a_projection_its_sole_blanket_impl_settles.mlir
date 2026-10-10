@@ -4,11 +4,11 @@
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' | FileCheck %s
 
 // @B's requirement projects through @Foo, whose one impl carries no premise and
-// binds Out = i64 for every argument. That impl serves every instance of @P's
-// variable, so the obligation @P states is @A[i64] wherever @P stands, and the
-// citation of @A_i64 discharges it at @P's own claim -- not only at the
-// instances a witness names. A reading that left the projection standing would
-// leave a valid proof with an obligation nothing discharges.
+// binds Out = i64 for every argument. That impl serves @P's claim, so the
+// obligation @B_blanket's requirement states at @P is @A[i64], and the
+// requirement it alleges is proved there by @A_i64. A reading that left the
+// projection standing would leave a valid proof with an obligation nothing
+// discharges.
 
 // CHECK-NOT: trait.
 // CHECK: func.func private @[[A:A_i64_h[0-9a-f]+_a]]() -> i64
@@ -38,8 +38,8 @@ trait.impl private @B_blanket(%self: !trait.claim<@B[!trait.poly<0>]>) {
   trait.return %req0 : !trait.claim<@A[!trait.proj<@Foo[!trait.poly<0>], "Out">]>
 }
 trait.proof private @P {
-  %d = trait.derive @B[!trait.poly<0>] from @B_blanket given()
-  trait.return %d : !trait.claim<@B[!trait.poly<0>]>
+  %d = trait.derive @B[i32] from @B_blanket given()
+  trait.return %d : !trait.claim<@B[i32]>
 }
 func.func @main() -> i64 {
   %w = trait.witness @P for @B[i32]

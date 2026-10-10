@@ -494,8 +494,10 @@ ClaimType ImplResolver::findProof(ModuleOp scope, ImplOp impl,
                                   TraitApplicationAttr app,
                                   ArrayRef<FlatSymbolRefAttr> subproofs) const {
   MLIRContext *ctx = scope.getContext();
-  // An impl with no parameters and no where entries is its own proof.
-  if (impl.isUnconditional())
+  // An impl with no parameters and no where entries is its own proof where its
+  // header spells the application; one whose header spells it otherwise is
+  // proven by a proof respelling its header.
+  if (impl.isUnconditional() && impl.getSelfApplication() == app)
     return ClaimType::get(ctx, app,
                           FlatSymbolRefAttr::get(ctx, impl.getSymName()));
   // A proof is identified by the evidence it derives its claim from: the impl,

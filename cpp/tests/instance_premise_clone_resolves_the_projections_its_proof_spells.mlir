@@ -4,8 +4,9 @@
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(instantiate-monomorphs-trait)' 2>&1 | FileCheck %s --check-prefix=INSTANCE --implicit-check-not=error:
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait,convert-arith-to-llvm,convert-func-to-llvm,reconcile-unrealized-casts)' | mlir-runner -e main --entry-point-result=i64 | FileCheck %s
 
-// A proof may spell a premise through a ground projection: @p cites @Zero_f32
-// for Zero[Tensor[i32]::Element]. The method instance cut at that proof
+// A proof may spell a premise through a ground projection: @p respells its
+// witness of @Zero_f32 as Zero[Tensor[i32]::Element], citing the projection's
+// binding. The method instance cut at that proof
 // clones the premise into its entry spelled as the rest of the instance is,
 // with the projection resolved, so the call it reaches takes the claim the
 // callee's instance declares.
@@ -34,7 +35,9 @@ trait.impl private @A_gen(%self: !trait.claim<@A[!P]>, %zero: !trait.claim<@Zero
   }
 }
 trait.proof private @p {
-  %z = trait.witness @Zero_f32 for @Zero[!trait.proj<@Tensor[i32], "Element">]
+  %w = trait.witness @Zero_f32 for @Zero[f32]
+  %e = trait.witness proj_resolve !trait.proj<@Tensor[i32], "Element"> resolves f32 by @Tensor_i32 : !trait.claim<!trait.proj<@Tensor[i32], "Element"> = f32>
+  %z = trait.coerce %w : !trait.claim<@Zero[f32] by @Zero_f32> to !trait.claim<@Zero[!trait.proj<@Tensor[i32], "Element">] by @Zero_f32> via (%e) : (!trait.claim<!trait.proj<@Tensor[i32], "Element"> = f32>)
   %d = trait.derive @A[f32] from @A_gen given(%z) : (!trait.claim<@Zero[!trait.proj<@Tensor[i32], "Element">] by @Zero_f32>)
   trait.return %d : !trait.claim<@A[f32]>
 }
