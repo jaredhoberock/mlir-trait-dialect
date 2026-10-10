@@ -1381,12 +1381,13 @@ static FailureOr<func::FuncOp> getOrCutMethodInstance(
   SmallVector<Type> actualInputs{provenSelfClaim};
   llvm::append_range(actualInputs, actualArguments);
   AttrTypeReplacer stamp = makeTypeReplacerFromSubstitution(subst, CloneKind::Instance);
+  // A position whose evidence is not yet proven names no instance yet: the
+  // call waits for it, and one that never gets it is named by the stage's exit
+  // walk.
   auto key = InstanceKey::get(templateRef, typeArguments, formalInputs,
                               actualInputs, stamp, respell);
   if (failed(key))
-    return method.emitOpError()
-           << "is supplied a claim that names no proof, which identifies no "
-              "instance";
+    return failure();
 
   // The leading self proof is read as the instance spells it.
   auto selfProof = cast<ClaimType>(key->getEvidence().front());
@@ -3030,13 +3031,14 @@ FailureOr<func::FuncOp> FuncCallOp::getOrSpecializeCallee(
     typeArguments.push_back(subst.getSpecialization().apply(parameter));
   AttrTypeReplacer stamp =
       makeTypeReplacerFromSubstitution(subst.toTypeMap(), CloneKind::Instance);
+  // A position whose evidence is not yet proven names no instance yet: the
+  // call waits for it, and one that never gets it is named by the stage's exit
+  // walk.
   auto key = InstanceKey::get(getCalleeNameAttr(), typeArguments,
                               callee->getFunctionType().getInputs(),
                               getOperandTypes(), stamp, respell);
   if (failed(key))
-    return emitOpError() << "supplies '@" << getCalleeName()
-                         << "' a claim that names no proof, which identifies "
-                            "no instance";
+    return failure();
 
   func::FuncOp instance = getOrCutInstance(
       rewriter, *module, *key, [&](StringRef instanceName) {

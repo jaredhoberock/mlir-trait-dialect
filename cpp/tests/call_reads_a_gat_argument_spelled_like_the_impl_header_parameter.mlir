@@ -10,7 +10,7 @@
 // the operand the call spells.
 
 !T = !trait.poly<10>
-!V = !trait.poly<2>
+!V = !trait.poly<0>
 !U = !trait.poly<2>
 
 trait.trait private @M0(%self: !trait.claim<@M0[!trait.poly<0>]>) {}
