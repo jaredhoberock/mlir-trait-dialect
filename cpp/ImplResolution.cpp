@@ -446,19 +446,16 @@ Value buildPremiseEvidence(OpBuilder &builder, Location loc,
 /// A proof named `name` standing empty at the end of `scope`, its body's
 /// block the insertion point `builder` is left at. Where a symbol of `scope`
 /// holds `name` already, the proof is named as the module's symbol table
-/// renames it (`SymbolTable::insert`): mangled names are not one-to-one, so the
-/// table, not the mangling, makes a proof's name unique.
+/// renames it when the builder's listener enters it there
+/// (`SymbolTableKeeper`): mangled names are not one-to-one, so the table, not
+/// the mangling, makes a proof's name unique.
 static ProofOp createProof(OpBuilder &builder, ModuleOp scope, StringRef name) {
   // A created proof is IR nothing revisits unless someone hears about it, for
   // the same reason a generated impl is.
   assert(builder.getListener() &&
          "proof creation requires a builder whose insertions someone observes");
-  // The table is read before the proof stands, so the proof's name is the one
-  // it checks.
-  SymbolTable symbols(scope);
   builder.setInsertionPointToEnd(scope.getBody());
   ProofOp proof = ProofOp::create(builder, builder.getUnknownLoc(), name);
-  symbols.insert(proof);
   builder.setInsertionPointToEnd(&proof.getBody().front());
   return proof;
 }

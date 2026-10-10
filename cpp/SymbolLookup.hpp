@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
-#include <memory>
 #include <mlir/IR/BuiltinOps.h>
+#include <mlir/IR/PatternMatch.h>
 #include <mlir/IR/SymbolTable.h>
 
 namespace mlir::trait {
@@ -14,11 +14,9 @@ namespace mlir::trait {
 /// that spells a name the module around it also spells means its own, and a
 /// name `module` does not bind is unresolved here.
 ///
-/// A symbol table holds no index of its names, so each read is a scan of the
-/// whole module, and reading the evidence at one site resolves the same handful
-/// of names once per call site and once per node of every proof tree it walks.
-/// Under a `SymbolLookupScope` the answers `module`'s own table gives are held
-/// for that scope's span, so a name is scanned for once there.
+/// A module holds no index of its names, so a read with no table to ask is a
+/// scan of the whole module. Under a `SymbolLookupScope` the read asks the
+/// scope's symbol table collection instead.
 Operation *lookupSymbolFrom(ModuleOp module, FlatSymbolRefAttr name);
 
 /// The above, as the operation kind the caller expects, null where the name
@@ -28,38 +26,38 @@ OpT lookupSymbolFrom(ModuleOp module, FlatSymbolRefAttr name) {
   return dyn_cast_or_null<OpT>(lookupSymbolFrom(module, name));
 }
 
-/// The answers a symbol lookup scope holds.
-struct HeldSymbolAnswers;
+/// Keeps the module tables of `tables` true across a span that writes: a
+/// symbol inserted into a module through a builder or rewriter this listens to
+/// is entered into the module's table, which names it afresh where the module
+/// binds its name already (`SymbolTable::insert`), and one erased from a module
+/// is taken out of it.
+class SymbolTableKeeper : public RewriterBase::Listener {
+public:
+  explicit SymbolTableKeeper(SymbolTableCollection &tables) : tables(tables) {}
 
-/// Forgets every answer the installed scope holds, for a caller that has taken
-/// a symbol out of the IR or renamed one.
-///
-/// A rewrite driver reports every operation it erases, and that report is where
-/// this is called from, so a scope spanning a stage that rewrites holds nothing
-/// an erasure has moved.
-void forgetHeldSymbols();
+  void notifyOperationInserted(Operation *op,
+                               OpBuilder::InsertPoint previous) override;
+  void notifyOperationErased(Operation *op) override;
 
-/// Holds the name-to-operation answers taken over a span of reads.
+private:
+  SymbolTableCollection &tables;
+};
+
+/// The symbol tables reads on this thread ask while it stands.
+struct InstalledSymbolTables;
+
+/// Installs a symbol table collection for the reads of a span.
 ///
-/// A symbol table's names are unique, so the operation a name binds there is
-/// what it binds until something erases that operation, renames it, or moves it
-/// elsewhere. Appending a symbol moves no answer: a name a table already binds
-/// keeps binding what it bound, and a read that found nothing is held by
-/// nothing, so a symbol appended under a name nothing bound is found by the
-/// read after it. That is what lets a scope span a stage that writes. A held
-/// answer is given back only while the operation it names still stands in that
-/// module under that name, which is read off the operation itself; a stage
-/// takes a symbol back out only through a rewrite driver, which reports the
-/// erasure to `forgetHeldSymbols`.
-///
-/// Scopes nest, and one entered under another reads and writes the answers
-/// already installed, so what a caller took serves the reads its callees make.
-/// The install is per thread, so a verifier running on a worker thread holds
-/// its own and shares none.
+/// Scopes nest, and one entered under another reads the tables already
+/// installed, so what a caller built serves the reads its callees make. The
+/// install is per thread, so a verifier running on a worker thread holds its
+/// own and shares none.
 class SymbolLookupScope {
 public:
-  /// A scope that holds what it reads, for a span that may append symbols.
-  SymbolLookupScope();
+  /// A scope whose every read asks `tables`, for a span that writes symbols
+  /// only through a builder or rewriter a `SymbolTableKeeper` of `tables`
+  /// listens to.
+  explicit SymbolLookupScope(SymbolTableCollection &tables);
 
   /// A scope that reads through `tables`, for a span in which nothing at all is
   /// written. A verifier is handed `op` and the tables its driver built for the
@@ -80,9 +78,9 @@ public:
   SymbolLookupScope &operator=(const SymbolLookupScope &) = delete;
 
 private:
-  /// The answers this scope installed, null when a scope was already installed
+  /// The tables this scope installed, null when a scope was already installed
   /// and this one reads through that one.
-  std::unique_ptr<HeldSymbolAnswers> held;
+  std::unique_ptr<InstalledSymbolTables> held;
 };
 
 } // namespace mlir::trait

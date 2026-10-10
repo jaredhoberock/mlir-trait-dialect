@@ -1,59 +1,49 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 #include "SymbolLookup.hpp"
-#include <llvm/ADT/DenseMap.h>
 
 namespace mlir::trait {
 
-/// A symbol table operation and a name it was asked about, paired with what it
-/// answered.
-///
-/// Under a verifier this stays: a name read in a module standing above the
-/// table the walk is over is read in a table whose names the verifier has not
-/// yet checked to be unique, and a `SymbolTable` built over it asserts on the
-/// duplicate the verifier is about to diagnose, so a `SymbolTableCollection`
-/// may answer for the walked table alone.
-///
-/// XXX TODO: across a stage this is what MLIR's `SymbolTableCollection`
-/// already is, kept true across writes by `SymbolTable::insert`, `erase` and
-/// `invalidateSymbolTable`. The stage's use of it goes when every site that
-/// mints a symbol inserts through one such collection instead of appending to
-/// a module body: the consumer dialects' generators, `ProofOp::create` in
-/// ImplResolution.cpp and `func::FuncOp` specialization in Specialization.cpp.
-/// That is the same change as the resolver publishing the impls it generates.
-struct HeldSymbolAnswers {
-  llvm::DenseMap<std::pair<Operation *, StringAttr>, Operation *> answers;
+struct InstalledSymbolTables {
+  SymbolTableCollection *tables;
 
-  /// The symbol tables a caller handed this scope, which are indexed and so
-  /// answer in place of a scan, a name no table binds included.
-  SymbolTableCollection *tables = nullptr;
-
-  /// The one symbol table `tables` is asked about: the table the verifier's
-  /// walk is over, whose names it checked to be unique before walking it. A
-  /// read anchored anywhere else is a scan.
+  /// The one symbol table `tables` is asked about under a verifier: the table
+  /// the verifier's walk is over, whose names it checked to be unique before
+  /// walking it. A read anchored anywhere else is a scan. Null where every
+  /// table is asked.
   Operation *checkedTable = nullptr;
 };
 
 namespace {
-/// The answers reads on this thread go through, null where no scope is
-/// installed and every read is a scan.
-thread_local HeldSymbolAnswers *installed = nullptr;
+/// The tables reads on this thread ask, null where no scope is installed and
+/// every read is a scan.
+thread_local InstalledSymbolTables *installed = nullptr;
 
-/// Whether `answer` is what `table` binds `leaf` to: the operation still stands
-/// in `table` and still carries that name. An answer held from before its
-/// operation moved or was renamed fails this, so what a name once bound is
-/// never given back as what it binds.
-bool stillBinds(Operation *answer, Operation *table, StringAttr leaf) {
-  return answer->getParentOp() == table &&
-         answer->getAttrOfType<StringAttr>(SymbolTable::getSymbolAttrName()) ==
-             leaf;
+/// The module whose table `op` is an entry of, null where `op` is no symbol
+/// standing directly in a module.
+ModuleOp moduleTableOf(Operation *op) {
+  if (!op->hasAttrOfType<StringAttr>(SymbolTable::getSymbolAttrName()))
+    return {};
+  return dyn_cast_or_null<ModuleOp>(op->getParentOp());
 }
 } // namespace
 
-SymbolLookupScope::SymbolLookupScope() {
+void SymbolTableKeeper::notifyOperationInserted(Operation *op,
+                                                OpBuilder::InsertPoint) {
+  if (ModuleOp module = moduleTableOf(op))
+    tables.getSymbolTable(module).insert(op);
+}
+
+void SymbolTableKeeper::notifyOperationErased(Operation *op) {
+  if (ModuleOp module = moduleTableOf(op))
+    tables.getSymbolTable(module).remove(op);
+}
+
+SymbolLookupScope::SymbolLookupScope(SymbolTableCollection &tables) {
   if (installed)
     return;
-  held = std::make_unique<HeldSymbolAnswers>();
+  held = std::make_unique<InstalledSymbolTables>(
+      InstalledSymbolTables{&tables, nullptr});
   installed = held.get();
 }
 
@@ -61,10 +51,14 @@ SymbolLookupScope::SymbolLookupScope(Operation *op,
                                      SymbolTableCollection &tables) {
   if (installed)
     return;
-  held = std::make_unique<HeldSymbolAnswers>();
-  held->tables = &tables;
-  if (Operation *around = op ? op->getParentOp() : nullptr)
-    held->checkedTable = SymbolTable::getNearestSymbolTable(around);
+  Operation *around = op ? op->getParentOp() : nullptr;
+  // A verifier reaching an op outside every symbol table asks no table.
+  Operation *checked =
+      around ? SymbolTable::getNearestSymbolTable(around) : nullptr;
+  if (!checked)
+    return;
+  held = std::make_unique<InstalledSymbolTables>(
+      InstalledSymbolTables{&tables, checked});
   installed = held.get();
 }
 
@@ -73,35 +67,14 @@ SymbolLookupScope::~SymbolLookupScope() {
     installed = nullptr;
 }
 
-void forgetHeldSymbols() {
-  if (installed)
-    installed->answers.clear();
-}
-
 Operation *lookupSymbolFrom(ModuleOp module, FlatSymbolRefAttr name) {
   if (!module || !name)
     return nullptr;
-
   Operation *table = module.getOperation();
-  StringAttr leaf = name.getAttr();
-
-  if (installed && installed->tables && installed->checkedTable == table)
-    return installed->tables->lookupSymbolIn(table, leaf);
-
-  std::pair<Operation *, StringAttr> asked{table, leaf};
-  if (installed) {
-    auto held = installed->answers.find(asked);
-    if (held != installed->answers.end()) {
-      if (stillBinds(held->second, table, leaf))
-        return held->second;
-      installed->answers.erase(held);
-    }
-  }
-
-  Operation *here = SymbolTable::lookupSymbolIn(table, leaf);
-  if (here && installed)
-    installed->answers.insert({asked, here});
-  return here;
+  if (installed &&
+      (!installed->checkedTable || installed->checkedTable == table))
+    return installed->tables->lookupSymbolIn(table, name.getAttr());
+  return SymbolTable::lookupSymbolIn(table, name.getAttr());
 }
 
 } // namespace mlir::trait

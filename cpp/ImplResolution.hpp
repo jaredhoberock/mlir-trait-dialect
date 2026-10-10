@@ -468,6 +468,11 @@ class ImplResolver {
     /// populates this `ImplResolver`'s `ImplGeneratorsSet`.
     explicit ImplResolver(ModuleOp module);
 
+    /// The symbol tables every name the stage resolves is read in. A builder
+    /// or rewriter the stage writes symbols through keeps them true
+    /// (`SymbolTableKeeper`).
+    SymbolTableCollection &getSymbolTables() { return symbolTables; }
+
     /// Ensures canonical proof for a fully-concrete trait application `claim`.
     /// Resolution proceeds as follows:
     ///   1. If an unconditional ImplOp exists, its symbol proves the claim.
@@ -706,6 +711,7 @@ class ImplResolver {
 
     ModuleOp module;
     ResolutionMemo memo;
+    SymbolTableCollection symbolTables;
 
     /// Every proof standing in a module the resolver has read proofs in, by
     /// what it cites (`ProofIdentity`): the index a lookup of a proof reads in

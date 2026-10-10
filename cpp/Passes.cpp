@@ -29,10 +29,13 @@ namespace mlir::trait {
 namespace {
 
 /// Tracks rewritten roots and enforces the total greedy rewrite budget.
-struct RewriteEventCounts : public RewriterBase::Listener {
+struct RewriteEventCounts : public SymbolTableKeeper {
   using RewriterBase::Listener::notifyOperationReplaced;
+  using SymbolTableKeeper::SymbolTableKeeper;
 
-  void notifyOperationInserted(Operation *op, OpBuilder::InsertPoint) override {
+  void notifyOperationInserted(Operation *op,
+                               OpBuilder::InsertPoint previous) override {
+    SymbolTableKeeper::notifyOperationInserted(op, previous);
     noteWritten(op);
   }
   void notifyOperationModified(Operation *op) override {
@@ -42,11 +45,8 @@ struct RewriteEventCounts : public RewriterBase::Listener {
     noteWritten(op);
   }
   void notifyOperationErased(Operation *op) override {
+    SymbolTableKeeper::notifyOperationErased(op);
     liveWritten.erase(op);
-    // A symbol lookup scope holds what a symbol table answered, so taking a
-    // symbol out of the IR is what takes those answers back.
-    if (op->hasAttrOfType<StringAttr>(SymbolTable::getSymbolAttrName()))
-      forgetHeldSymbols();
   }
 
   void notifyPatternEnd(const Pattern &, LogicalResult status) override {
@@ -197,11 +197,13 @@ static SmallVector<Operation *> collectRewritableOps(ModuleOp module) {
 /// budget spans the whole run: the listener counts applications across
 /// iterations, each iteration receives the remainder, and an exhausted
 /// remainder or a non-converged iteration fails as one whole-module run does.
+/// The listener keeps `tables` true across every write the run makes.
 static LogicalResult applyPatternsOverReachableOps(ModuleOp module,
                                                    RewritePatternSet &&patterns,
-                                                   GreedyRewriteConfig config) {
+                                                   GreedyRewriteConfig config,
+                                                   SymbolTableCollection &tables) {
   FrozenRewritePatternSet frozen(std::move(patterns));
-  RewriteEventCounts events;
+  RewriteEventCounts events(tables);
   events.recordWritesUnder(module.getBody());
   config.setListener(&events);
   config.setStrictness(GreedyRewriteStrictness::ExistingOps);
@@ -1462,12 +1464,12 @@ equalityClaimGroundResolvesToOneSpelling(ClaimType claim,
 } // end namespace
 
 LogicalResult instantiateMonomorphs(ModuleOp module) {
-  // A symbol name this stage resolves is scanned for once and answered from
-  // what was held after that. The stage appends symbols -- the impls it
-  // generates, the proofs it records, the instances it cuts -- which leaves
-  // what a table already answered standing, and it takes none away except
-  // through a rewrite driver, whose listener reports the erasure.
-  SymbolLookupScope symbolAnswers;
+  // Every symbol name this stage resolves is answered by the resolver's
+  // symbol tables, which every builder and rewriter the stage writes through
+  // keeps true (`SymbolTableKeeper`): the impls selection generates, the proofs
+  // it records, the instances calls cut, and what a rewrite erases.
+  ImplResolver resolver(module);
+  SymbolLookupScope symbolAnswers(resolver.getSymbolTables());
 
   // verify traits are acyclic
   if (failed(verifyAcyclicTraits(module)))
@@ -1482,7 +1484,6 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
     return failure();
 
   MLIRContext* ctx = module.getContext();
-  ImplResolver resolver(module);
 
   // One driver: prove claim producers (allege, derive, project), settle what
   // each op spells, lower trait.func.call and trait.method.call to instances,
@@ -1518,7 +1519,8 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
     GreedyRewriteConfig config;
     config.setMaxNumRewrites(rewriteBudgetFor(module));
     if (failed(applyPatternsOverReachableOps(module, std::move(patterns),
-                                             config)))
+                                             config,
+                                             resolver.getSymbolTables())))
       return module.emitError(
           "instantiate-monomorphs did not converge: rewrite budget exceeded, "
           "which indicates a non-confluent pattern pair cycling on a type "
@@ -1539,8 +1541,9 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
   // may generate the impl a resolution chain runs through. A generated impl is
   // a complete template the module verifier checks and nothing below
   // revisits, inserted at the module body where it belongs; the builder's
-  // listener is the one selection requires and has nothing to do.
-  OpBuilder::Listener settleListener;
+  // listener is the one selection requires, and enters it in the module's
+  // symbol table.
+  SymbolTableKeeper settleListener(resolver.getSymbolTables());
   OpBuilder settleBuilder(ctx, &settleListener);
 
   // An obligation still standing because selection refused it is named with
