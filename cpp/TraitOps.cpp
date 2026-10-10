@@ -2016,9 +2016,11 @@ Operation *ProofOp::getCastSource() {
 }
 
 DeriveOp ProofOp::getDerive() {
+  // A cast's source is a root (`WitnessOp::verifySymbolUses`), so the derive is
+  // this proof's own or its source's, one hop away.
   Operation *source = getCastSource();
   if (auto proof = dyn_cast_or_null<ProofOp>(source))
-    return proof.getDerive();
+    return dyn_cast_or_null<DeriveOp>(respelledFrom(proof.getProven()));
   if (source)
     return DeriveOp();
   return dyn_cast_or_null<DeriveOp>(respelledFrom(getProven()));
@@ -2111,6 +2113,18 @@ FailureOr<Operation*> ProofOp::getProofOpOrUnconditionalImplOp(
   }
 
   return *symOp;
+}
+
+FailureOr<Operation *> ProofOp::getRootOf(
+    ModuleOp module, FlatSymbolRefAttr name,
+    llvm::function_ref<InFlightDiagnostic()> errFn) {
+  auto cited = getProofOpOrUnconditionalImplOp(module, name, errFn);
+  if (failed(cited))
+    return failure();
+  if (auto proof = dyn_cast<ProofOp>(*cited))
+    if (Operation *source = proof.getCastSource())
+      return source;
+  return *cited;
 }
 
 //===----------------------------------------------------------------------===//
@@ -2457,7 +2471,23 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // (`verifyCitation`). Reading the impl's header alone would accept a witness
   // for an application the proof does not prove, because a blanket impl's
   // header carries to every application of its trait.
-  return verifyCitation(getProvenClaim(), module, errFn);
+  if (failed(verifyCitation(getProvenClaim(), module, errFn)))
+    return failure();
+
+  // A witness in a proof's body names a root: a proof whose body holds its
+  // derive, or an unconditional impl. A cast is then one hop from the derive
+  // it records and a premise names the proof its evidence rests on, so a chain
+  // of casts -- a proof casting itself, two casting each other -- is never
+  // written: a respelling of a respelling is one coercion of the root citing
+  // both steps' equalities.
+  if (isa<ProofOp>(getOperation()->getParentOp()))
+    if (auto cited = lookupSymbolFrom<ProofOp>(module, getProof());
+        cited && cited.getCastSource())
+      return emitOpError() << "names the cast " << getProof()
+                           << ": a witness in a proof's body names a root, a "
+                              "proof whose body holds its derive or an "
+                              "unconditional impl";
+  return success();
 }
 
 
@@ -2561,6 +2591,17 @@ LogicalResult ReturnOp::verify() {
 
 LogicalResult CoerceOp::verify() {
   // A verdict that is a pure function of op, operands, and attributes.
+
+  // 0. A coerce stands in a region that enforces SSA dominance, as a
+  // composition witness does, so its input is defined before it and the chain
+  // of coercions defining a value is acyclic. A coercion is the only trait op
+  // whose result a reader of evidence passes through to the value beneath, so
+  // every such walk ends. In a graph region (a module body) two coerces may
+  // each be the other's input, and that walk would never end.
+  if (Region *parent = getOperation()->getParentRegion();
+      parent && !mlir::mayHaveSSADominance(*parent))
+    return emitOpError() << "must be in a region that enforces SSA dominance, "
+                            "so the chain of coercions defining its input ends";
 
   // 1. A coerce respells one claim at its root or a type that holds no claim:
   // a claim nested in another type stands there as a value's own type, which a

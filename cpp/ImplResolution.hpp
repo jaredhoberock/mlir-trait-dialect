@@ -494,9 +494,11 @@ class ImplResolver {
     /// or unconditional impl coerced by the steps selection resolves the two
     /// spellings' projections through -- the cast standing with that source
     /// and spelling, else one written. A cast is taken of the proof a cast
-    /// names, never of the cast, so every spelling of one proof is one cast
-    /// of it. Not a selection: the impl the cited proof chose is kept, so a
-    /// value crossing to another spelling carries the evidence it was given.
+    /// names, never of the cast (`WitnessOp::verifySymbolUses` refuses a
+    /// witness in a proof's body that names a cast), so every spelling of one
+    /// proof is one cast of it. Not a selection: the impl the cited proof
+    /// chose is kept, so a value crossing to another spelling carries the
+    /// evidence it was given.
     /// Refused where selection does not carry the two spellings together;
     /// overflows where it does.
     Answer<ClaimType> respellProof(ClaimType proven, TraitApplicationAttr to,

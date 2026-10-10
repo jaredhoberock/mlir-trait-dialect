@@ -626,12 +626,12 @@ struct ProveClaimResultPattern : public RewritePattern {
       return rewriter.notifyMatchFailure(derive, "cites no impl");
 
     // The proof is identified at the application selection resolves the
-    // derive's to, over the proofs of its application premises at theirs, as
-    // every proof is (`ImplResolver::respellProof`): a premise's proof
-    // respelled there, so a premise keeps the evidence it was given. The
-    // derive's own spelling names that proof respelled. A projection selection
-    // does not resolve leaves the derive standing for the stage's exit walk to
-    // name.
+    // derive's to, over the roots its application premises' evidence rests on:
+    // the proof's body respells each root to its where entry
+    // (`ImplResolver::resolvePremise`), so a premise keeps the evidence it was
+    // given. The derive's own spelling names that proof respelled. A
+    // projection selection does not resolve leaves the derive standing for the
+    // stage's exit walk to name.
     SelectionSite site = SelectionSite::of(derive);
     auto resolve = [&](ClaimType spelled) -> std::optional<ClaimType> {
       Answer<Type> resolved =
@@ -645,17 +645,13 @@ struct ProveClaimResultPattern : public RewritePattern {
       auto premise = cast<ClaimType>(operand.getType());
       if (premise.isEquality())
         continue;
-      std::optional<ClaimType> at = resolve(premise.asUnproven());
-      if (!at)
+      if (!resolve(premise.asUnproven()))
         return rewriter.notifyMatchFailure(derive, "spells no normal form");
-      Answer<ClaimType> subproof = resolver.respellProof(
-          evidenceOf(operand), at->getTraitApplication(), site, rewriter);
-      if (!subproof.isAnswer()) {
-        named.insert(derive);
-        return rewriter.notifyMatchFailure(derive,
-                                           "a projection is not resolved");
-      }
-      subproofs.push_back(subproof->getProof());
+      auto root = ProofOp::getRootOf(scope, evidenceOf(operand).getProof());
+      if (failed(root))
+        return rewriter.notifyMatchFailure(derive, "names no proof");
+      subproofs.push_back(
+          FlatSymbolRefAttr::get(cast<SymbolOpInterface>(*root).getNameAttr()));
     }
     std::optional<ClaimType> resolvedClaim = resolve(claim);
     if (!resolvedClaim)

@@ -1577,6 +1577,9 @@ def ProofOp : TraitDialectOp<"proof", [
     resolved. A proof of another spelling of an application a proof already
     proves is a cast of that proof (GHC's `$dX' = $dX |> co`): its body
     returns the witness of the proof it casts, coerced to its own spelling.
+    Every witness in a proof's body names a root, a proof whose body holds its
+    derive or an unconditional impl, never a cast: a respelling of a
+    respelling is one coercion of the root.
     The proven claim is the returned application, carrying this proof's name;
     the impl, its arguments and its premises are read off the derive, a cast's
     off the derive of the proof it casts. The body
@@ -1616,8 +1619,9 @@ def ProofOp : TraitDialectOp<"proof", [
     /// a cast of an unconditional impl, which derives from nothing.
     DeriveOp getDerive();
 
-    /// The proof or unconditional impl this proof casts to its own spelling;
-    /// null for a proof whose body holds its derive.
+    /// The proof or unconditional impl this proof casts to its own spelling, a
+    /// root whose body holds its derive where it is a proof; null for a proof
+    /// whose body holds its derive.
     Operation *getCastSource();
 
     /// The impl the derive this proof records cites, or the unconditional impl
@@ -1661,6 +1665,13 @@ def ProofOp : TraitDialectOp<"proof", [
 
     // look up a proof by name. It must be either a ProofOp or an unconditional impl
     static FailureOr<Operation*> getProofOpOrUnconditionalImplOp(
+      ModuleOp module,
+      FlatSymbolRefAttr name,
+      llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
+
+    /// The root the proof or unconditional impl `name` names rests on: that
+    /// declaration, or the one it casts where it is a cast.
+    static FailureOr<Operation*> getRootOf(
       ModuleOp module,
       FlatSymbolRefAttr name,
       llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);

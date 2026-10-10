@@ -587,15 +587,11 @@ Answer<ClaimType> ImplResolver::respellProof(ClaimType proven,
   using Respelled = Answer<ClaimType>;
   ModuleOp scope = site.scope;
   MLIRContext *ctx = scope.getContext();
-  auto cited = ProofOp::getProofOpOrUnconditionalImplOp(scope, proven.getProof());
-  if (failed(cited))
+  // The source of the cast: the root `proven` rests on.
+  auto root = ProofOp::getRootOf(scope, proven.getProof());
+  if (failed(root))
     return Respelled::refusal();
-  // The source of the cast: the proof or unconditional impl `proven` names,
-  // or the one it casts in turn.
-  Operation *source = *cited;
-  if (auto proof = dyn_cast<ProofOp>(source))
-    if (Operation *castOf = proof.getCastSource())
-      source = castOf;
+  Operation *source = *root;
   auto proof = dyn_cast<ProofOp>(source);
   TraitApplicationAttr from = proof ? proof.getTraitApplication()
                                     : cast<ImplOp>(source).getSelfApplication();
