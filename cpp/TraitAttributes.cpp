@@ -154,6 +154,28 @@ LogicalResult TraitApplicationAttr::verifySymbolUses(
   return success();
 }
 
+Attribute ImplArgumentsAttr::parse(AsmParser &parser, Type) {
+  SmallVector<Type> types;
+  if (parser.parseLess() ||
+      parser.parseCommaSeparatedList(AsmParser::Delimiter::Square,
+                                     [&]() -> ParseResult {
+                                       Type type;
+                                       if (parser.parseType(type))
+                                         return failure();
+                                       types.push_back(type);
+                                       return success();
+                                     }) ||
+      parser.parseGreater())
+    return {};
+  return ImplArgumentsAttr::get(parser.getContext(), types);
+}
+
+void ImplArgumentsAttr::print(AsmPrinter &printer) const {
+  printer << "<[";
+  llvm::interleaveComma(getTypes(), printer);
+  printer << "]>";
+}
+
 bool containsClaim(Type type) {
   return type
       .walk([](ClaimType) { return WalkResult::interrupt(); })

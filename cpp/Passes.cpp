@@ -664,7 +664,7 @@ struct ProveClaimResultPattern : public RewritePattern {
     // The arguments the derive states, each at the resolution, as its claim
     // and its premises are read.
     SmallVector<Type> resolvedArguments;
-    for (Type argument : derive.getImplArgs().getAsValueRange<TypeAttr>()) {
+    for (Type argument : derive.getImplArgs().getTypes()) {
       Answer<Type> at = resolver.resolveProjectionsIn(argument, site, rewriter);
       if (!at.isAnswer())
         return rewriter.notifyMatchFailure(derive, "spells no normal form");
@@ -1244,11 +1244,8 @@ struct SettleSpelledObligationsPattern : public RewritePattern {
     if (auto call = dyn_cast<MethodCallOp>(op); call && call.computesEvidence())
       return failure();
     // An allegation's claim is proven by the evidence that replaces it
-    // (`ProveClaimResultPattern`). A citation spells its claims and the
-    // arguments it states for its impl, all left as spelled
-    // (`statesImplArguments`), and nothing else.
-    if (isa<AllegeOp, DeriveOp>(op) ||
-        (isa<WitnessOp>(op) && cast<WitnessOp>(op).isProjectionResolution()))
+    // (`ProveClaimResultPattern`).
+    if (isa<AllegeOp>(op))
       return failure();
     bool provesClaims = !producesPositionalEvidence(op) &&
                         !isa<InferTypeOpInterface>(op) &&

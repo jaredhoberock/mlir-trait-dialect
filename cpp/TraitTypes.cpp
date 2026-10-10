@@ -24,9 +24,10 @@ namespace mlir::trait {
 AttrTypeReplacer makeEndpointSealedReplacer() {
   AttrTypeReplacer replacer;
   replacer.addReplacement(
-      [](TypeEqualityAttr eq)
-          -> std::optional<std::pair<Attribute, WalkResult>> {
-        return std::make_pair(Attribute(eq), WalkResult::skip());
+      [](Attribute sealed) -> std::optional<std::pair<Attribute, WalkResult>> {
+        if (!isa<TypeEqualityAttr, ImplArgumentsAttr>(sealed))
+          return std::nullopt;
+        return std::make_pair(sealed, WalkResult::skip());
       });
   return replacer;
 }

@@ -35,12 +35,8 @@ void cloneRegionStampedBefore(OpBuilder &builder, Region &source, Region &dest,
                                                             : typeReplacer;
         for (Value result : op.getResults())
           result.setType(resultReplacer.replace(result.getType()));
-        for (NamedAttribute attr : op.getAttrs()) {
-          AttrTypeReplacer &attrReplacer =
-              statesImplArguments(&op, attr.getName()) ? spellingReplacer
-                                                       : typeReplacer;
-          op.setAttr(attr.getName(), attrReplacer.replace(attr.getValue()));
-        }
+        for (NamedAttribute attr : op.getAttrs())
+          op.setAttr(attr.getName(), typeReplacer.replace(attr.getValue()));
         for (Region &nested : op.getRegions())
           recurse(llvm::make_range(nested.begin(), nested.end()), recurse);
       }
@@ -128,7 +124,9 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &sub
   // alone, stamped once -- no projection binding resolved inside it -- so the
   // claim a clone holds is the template's at the instance's arguments, and the
   // evidence a template wrote for it still meets it by identity
-  // (`respellClaimPredicate`).
+  // (`respellClaimPredicate`). A citation's stated arguments are spelled as
+  // its claims are and move by the same rule, past the seal that keeps every
+  // other rewrite out of them (`makeEndpointSealedReplacer`).
   auto respell = [variables](Type t) {
     return applySubstitution(*variables, nullptr, t,
                              ClaimPredicates::Substituted);
@@ -137,6 +135,14 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &sub
       [respell](ClaimType claim) -> std::optional<std::pair<Type, WalkResult>> {
     return respellClaimPredicate(claim, respell);
   });
+  replacer.addReplacement(
+      [respell](ImplArgumentsAttr stated)
+          -> std::optional<std::pair<Attribute, WalkResult>> {
+        SmallVector<Type> moved = llvm::map_to_vector(stated.getTypes(), respell);
+        return std::make_pair(
+            Attribute(ImplArgumentsAttr::get(stated.getContext(), moved)),
+            WalkResult::skip());
+      });
 
   return replacer;
 }

@@ -137,14 +137,6 @@ namespace mlir::trait {
 /// spelling, so the stage's sweep proves no claim that result spells.
 bool producesPositionalEvidence(Operation *op);
 
-/// Whether `name` names the attribute in which `op` states the arguments of
-/// the impl it cites: a derive's, or a projection-resolution witness's. The
-/// arguments are spelled as the citation's claims are, so a rewrite gives them
-/// what it gives a claim's predicate -- variable bindings alone, never a
-/// projection resolved in place (`respellClaimPredicate`) -- and the verifier's
-/// identity between the two holds across it.
-bool statesImplArguments(Operation *op, StringAttr name);
-
 /// Ends `impl`'s body, an impl of `trait`, with a return of an allegation of
 /// each of the trait's requirements at the impl's self application: the
 /// evidence an impl generator that knows none of it supplies, which impl

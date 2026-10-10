@@ -41,6 +41,8 @@ unsafe extern "C" {
                               assoc_type_args: *const MlirType, num_assoc_type_args: isize) -> MlirType;
     fn traitTypeEqualityAttrGet(ctx: MlirContext,
                                 lhs: MlirType, rhs: MlirType) -> MlirAttribute;
+    fn traitImplArgumentsAttrGet(ctx: MlirContext,
+                                 types: *const MlirType, num_types: isize) -> MlirAttribute;
 }
 
 pub fn register(ctx: &Context) {
@@ -114,6 +116,19 @@ fn type_array_attr<'c>(loc: Location<'c>, types: &[Type<'c>]) -> Attribute<'c> {
     let raw: Vec<MlirAttribute> =
         types.iter().map(|t| unsafe { mlirTypeAttrGet(t.to_raw()) }).collect();
     array_attr(loc, &raw)
+}
+
+/// The `#trait.impl_args<[...]>` a citation states for its impl's parameters,
+/// `types` by position.
+fn impl_arguments_attr<'c>(loc: Location<'c>, types: &[Type<'c>]) -> Attribute<'c> {
+    let raw: Vec<MlirType> = types.iter().map(|t| t.to_raw()).collect();
+    unsafe {
+        Attribute::from_raw(traitImplArgumentsAttrGet(
+            mlirLocationGetContext(loc.to_raw()),
+            raw.as_ptr(),
+            raw.len() as isize,
+        ))
+    }
 }
 
 /// The unit attribute in the location's context (the value of a present
@@ -363,7 +378,7 @@ pub fn derive<'c>(loc: Location<'c>,
         .add_operands(premises)
         .add_attributes(&[
             (identifier(loc, "impl"), symbol_ref_attr(loc, impl_name)),
-            (identifier(loc, "impl_args"), type_array_attr(loc, impl_args)),
+            (identifier(loc, "impl_args"), impl_arguments_attr(loc, impl_args)),
         ])
         .add_results(&[claim]))
 }
@@ -507,7 +522,7 @@ pub fn witness_proj_resolve<'c>(loc: Location<'c>, impl_name: &str, impl_args: &
     build_op(OperationBuilder::new("trait.witness", loc)
         .add_attributes(&[
             (identifier(loc, "impl"), symbol_ref_attr(loc, impl_name)),
-            (identifier(loc, "impl_args"), type_array_attr(loc, impl_args)),
+            (identifier(loc, "impl_args"), impl_arguments_attr(loc, impl_args)),
         ])
         .add_operands(premises)
         .add_results(&[result_type]))

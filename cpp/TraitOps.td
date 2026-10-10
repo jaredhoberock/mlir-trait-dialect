@@ -488,7 +488,7 @@ def ImplOp : TraitDialectOp<"impl", [
 
     /// The argument list a citation of this impl states for `arguments`: the
     /// argument of each parameter, by position.
-    ArrayAttr stateArguments(const SpecializationMap &arguments);
+    ImplArgumentsAttr stateArguments(const SpecializationMap &arguments);
 
     /// Extracts a method from this impl as a free function with a leading self parameter.
     ///
@@ -944,15 +944,15 @@ def DeriveOp : TraitDialectOp<"derive", [
       : (!trait.claim<@Trait[!T]>, !trait.claim<!trait.proj<@Trait[!T], "Out"> = i64>)
     ```
 
-    Once monomorphic, a derive becomes a witness of the proof whose body it is,
-    at the application selection resolves its claim to, respelled as the derive
-    spells it.
+    Once monomorphic, a derive becomes the witness of the proof whose body it
+    is, at the application selection resolves its claim to, coerced to the
+    derive's own spelling.
   }];
 
   let arguments = (ins
     FlatSymbolRefAttr:$impl,
     // The argument of each of the impl's parameters, by position.
-    TypeArrayAttr:$impl_args,
+    ImplArgumentsAttr:$impl_args,
     // One operand per where-clause entry; the verifier checks each against its
     // entry so a mismatched claim is diagnosed at its operand.
     Variadic<Claim>:$assumptions
@@ -967,7 +967,7 @@ def DeriveOp : TraitDialectOp<"derive", [
 
     /// The arguments this derive states for its impl's parameters.
     SpecializationMap getImplArguments() {
-      return SpecializationMap::fromPositions(getImplArgs().getAsValueRange<TypeAttr>());
+      return SpecializationMap::fromPositions(getImplArgs().getTypes());
     }
 
     /// The application this derive derives, which its result claim states.
@@ -1139,7 +1139,7 @@ def WitnessOp : TraitDialectOp<"witness", [
   // impl it cites; the equality arm carries its leaf.
   let arguments = (ins
     OptionalAttr<FlatSymbolRefAttr>:$impl,               // proj-resolve leaf
-    OptionalAttr<TypeArrayAttr>:$impl_args,              // proj-resolve leaf
+    OptionalAttr<ImplArgumentsAttr>:$impl_args,          // proj-resolve leaf
     UnitAttr:$refl,                                      // refl leaf
     Variadic<Claim>:$premises
   );
@@ -1156,7 +1156,7 @@ def WitnessOp : TraitDialectOp<"witness", [
     // Equality proj-resolve arm.
     OpBuilder<(ins "::mlir::trait::TypeEqualityAttr":$equality,
                    "::mlir::FlatSymbolRefAttr":$impl,
-                   "::mlir::ArrayAttr":$impl_args,
+                   "::mlir::trait::ImplArgumentsAttr":$impl_args,
                    "::mlir::ValueRange":$premises), [{
       MLIRContext* ctx = $_builder.getContext();
       ClaimType claimTy = ClaimType::getEquality(ctx, equality);
@@ -1194,7 +1194,7 @@ def WitnessOp : TraitDialectOp<"witness", [
     /// The arguments a projection-resolution witness states for its impl's
     /// parameters.
     SpecializationMap getImplArguments() {
-      return SpecializationMap::fromPositions(getImplArgsAttr().getAsValueRange<TypeAttr>());
+      return SpecializationMap::fromPositions(getImplArgsAttr().getTypes());
     }
 
     ClaimType getResultClaim() {

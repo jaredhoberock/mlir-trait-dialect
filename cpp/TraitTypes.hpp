@@ -77,19 +77,23 @@ inline std::optional<std::pair<Type, WalkResult>> respellClaimPredicate(
       WalkResult::skip());
 }
 
-/// A replacer whose equality endpoints are a leaf.
+/// A replacer whose equality endpoints and citation arguments are a leaf.
 ///
 /// An equality's endpoints are ordinary sub-elements, so every walk reaches
 /// them -- which is what lets the framework's symbol-user driver see a
 /// reference standing in one. What no replacer may do is move one: an endpoint
 /// that received a stamped proof would be exactly the state
 /// `TypeEqualityAttr::get` refuses, so two individually-correct rewrites would
-/// kill a legal program. The one attribute-level rule this registers returns
-/// the equality unchanged and skips its interior, which makes every replacer
-/// built from it a reader of endpoints and never a writer. The rule sits on the
-/// attribute rather than on the claim so that no attribute position holding a
-/// bare equality is reached either. The sanctioned mover is
-/// `respellClaimPredicate`, which a clone registers.
+/// kill a legal program. A citation's stated arguments (`ImplArgumentsAttr`)
+/// are spelled as its claims are, and a rewrite resolving a projection in one
+/// would break the identity its verifier checks between them. The one
+/// attribute-level rule this registers returns either attribute unchanged and
+/// skips its interior, which makes every replacer built from it a reader of
+/// both and never a writer. The rule sits on the attribute rather than on the
+/// claim or the op so that no attribute position holding one is reached
+/// either. The sanctioned movers are `respellClaimPredicate` and the clone's
+/// rule for stated arguments, which a clone registers
+/// (`makeTypeReplacerFromSubstitution`).
 AttrTypeReplacer makeEndpointSealedReplacer();
 
 /// The sealed replacer above plus the one rule every ground-projection rewrite

@@ -71,29 +71,28 @@ static void printClaimPredicate(::mlir::OpAsmPrinter &printer,
 /// The arguments a citation states for its impl's parameters, `[T0, T1]`
 /// after the impl's symbol, or nothing for an impl taking none.
 static ::mlir::ParseResult parseImplArguments(::mlir::OpAsmParser &parser,
-                                              ::mlir::ArrayAttr &arguments) {
-  ::llvm::SmallVector<::mlir::Attribute> types;
+                                              ImplArgumentsAttr &arguments) {
+  ::llvm::SmallVector<::mlir::Type> types;
   if (parser.parseCommaSeparatedList(
           ::mlir::OpAsmParser::Delimiter::OptionalSquare,
           [&]() -> ::mlir::ParseResult {
             ::mlir::Type type;
             if (parser.parseType(type))
               return ::mlir::failure();
-            types.push_back(::mlir::TypeAttr::get(type));
+            types.push_back(type);
             return ::mlir::success();
           }))
     return ::mlir::failure();
-  arguments = ::mlir::ArrayAttr::get(parser.getContext(), types);
+  arguments = ImplArgumentsAttr::get(parser.getContext(), types);
   return ::mlir::success();
 }
 
 static void printImplArguments(::mlir::OpAsmPrinter &printer,
-                               ::mlir::Operation *, ::mlir::ArrayAttr arguments) {
-  if (arguments.empty())
+                               ::mlir::Operation *, ImplArgumentsAttr arguments) {
+  if (arguments.getTypes().empty())
     return;
   printer << "[";
-  ::llvm::interleaveComma(arguments.getAsValueRange<::mlir::TypeAttr>(),
-                          printer);
+  ::llvm::interleaveComma(arguments.getTypes(), printer);
   printer << "]";
 }
 } // namespace mlir::trait
@@ -1147,19 +1146,11 @@ SmallVector<GenericTypeInterface, 4> ImplOp::getTypeParams() {
   return parameters;
 }
 
-bool mlir::trait::statesImplArguments(Operation *op, StringAttr name) {
-  if (auto derive = dyn_cast<DeriveOp>(op))
-    return name == derive.getImplArgsAttrName();
-  if (auto witness = dyn_cast<WitnessOp>(op))
-    return name == witness.getImplArgsAttrName();
-  return false;
-}
-
-ArrayAttr ImplOp::stateArguments(const SpecializationMap &arguments) {
-  SmallVector<Attribute> stated;
+ImplArgumentsAttr ImplOp::stateArguments(const SpecializationMap &arguments) {
+  SmallVector<Type> stated;
   for (GenericTypeInterface parameter : getTypeParams())
-    stated.push_back(TypeAttr::get(instantiate(Type(parameter), arguments)));
-  return ArrayAttr::get(getContext(), stated);
+    stated.push_back(instantiate(Type(parameter), arguments));
+  return ImplArgumentsAttr::get(getContext(), stated);
 }
 
 //===----------------------------------------------------------------------===//
@@ -1172,22 +1163,18 @@ ArrayAttr ImplOp::stateArguments(const SpecializationMap &arguments) {
 /// body's block arguments before asking. `stamp` respells every type and
 /// attribute the clones carry.
 static Value cloneDefiningTree(RewriterBase &rewriter, Value root,
-                               IRMapping &mapping, AttrTypeReplacer &stamp,
-                               AttrTypeReplacer &spelling) {
+                               IRMapping &mapping, AttrTypeReplacer &stamp) {
   if (Value mapped = mapping.lookupOrNull(root))
     return mapped;
   Operation *producer = root.getDefiningOp();
   assert(producer && "a body's block arguments are mapped before it is read");
   for (Value operand : producer->getOperands())
-    (void)cloneDefiningTree(rewriter, operand, mapping, stamp, spelling);
+    (void)cloneDefiningTree(rewriter, operand, mapping, stamp);
   Operation *clone = rewriter.clone(*producer, mapping);
   for (Value result : clone->getResults())
     result.setType(stamp.replace(result.getType()));
-  for (NamedAttribute attr : clone->getAttrs()) {
-    AttrTypeReplacer &replacer =
-        statesImplArguments(clone, attr.getName()) ? spelling : stamp;
-    clone->setAttr(attr.getName(), replacer.replace(attr.getValue()));
-  }
+  for (NamedAttribute attr : clone->getAttrs())
+    clone->setAttr(attr.getName(), stamp.replace(attr.getValue()));
   return mapping.lookup(root);
 }
 
@@ -1207,9 +1194,7 @@ static void mapDeclarationReads(RewriterBase &rewriter, ModuleOp module,
                                 Operation *declaration,
                                 const llvm::SetVector<Value> &reads,
                                 Value self, ClaimType selfProof,
-                                AttrTypeReplacer &stamp,
-                                AttrTypeReplacer &spelling,
-                                IRMapping &mapping) {
+                                AttrTypeReplacer &stamp, IRMapping &mapping) {
   Block &declarationBody = declaration->getRegion(0).front();
   mapping.map(declarationBody.getArgument(0), self);
   if (declarationBody.getNumArguments() > 1)
@@ -1220,12 +1205,12 @@ static void mapDeclarationReads(RewriterBase &rewriter, ModuleOp module,
       for (auto [argument, premise] :
            llvm::zip(declarationBody.getArguments().drop_front(),
                      proof.getDerive().getAssumptions()))
-        mapping.map(argument, cloneDefiningTree(rewriter, premise, fromProof,
-                                                asWritten, asWritten));
+        mapping.map(argument,
+                    cloneDefiningTree(rewriter, premise, fromProof, asWritten));
     }
   for (Value read : reads)
     if (!isa<BlockArgument>(read) || mapping.contains(read))
-      (void)cloneDefiningTree(rewriter, read, mapping, stamp, spelling);
+      (void)cloneDefiningTree(rewriter, read, mapping, stamp);
 }
 
 /// The values `method`'s body reads from outside it: its declaration's block
@@ -1275,10 +1260,8 @@ static func::FuncOp cutMethodInstance(PatternRewriter &rewriter, ModuleOp module
   rewriter.setInsertionPointToStart(&funcOp.getBody().front());
   IRMapping replacements;
   AttrTypeReplacer stamp = makeTypeReplacerFromSubstitution(subst, CloneKind::Instance);
-  AttrTypeReplacer spelling = makeSpellingReplacerFromSubstitution(subst);
   mapDeclarationReads(rewriter, module, declaration, reads,
-                      funcOp.getArgument(0), selfProof, stamp, spelling,
-                      replacements);
+                      funcOp.getArgument(0), selfProof, stamp, replacements);
   for (Value read : reads)
     if (Value replacement = replacements.lookupOrNull(read))
       rewriter.replaceUsesWithIf(read, replacement, [&](OpOperand &use) {
@@ -1354,7 +1337,7 @@ static LogicalResult inlineMethodAt(PatternRewriter &rewriter, ModuleOp module,
   rewriter.setInsertionPoint(call);
   IRMapping mapping;
   mapDeclarationReads(rewriter, module, declaration, reads, call.getClaim(),
-                      selfProof, stamp, spelling, mapping);
+                      selfProof, stamp, mapping);
   for (auto [parameter, argument] :
        llvm::zip(body.front().getArguments(), call.getArguments()))
     mapping.map(parameter, argument);
@@ -1573,7 +1556,7 @@ committedImplOf(Value value, std::shared_ptr<const CommittedImpl> context,
     if (!impl)
       return std::nullopt;
     auto arguments = SpecializationMap::fromPositions(llvm::map_range(
-        derive.getImplArgs().getAsValueRange<TypeAttr>(),
+        derive.getImplArgs().getTypes(),
         [&](Type argument) { return instantiate(argument, outer); }));
     return CommittedImpl{impl, claim.getTraitApplication(),
                          std::move(arguments), derive, std::move(context)};
@@ -1617,13 +1600,11 @@ LogicalResult ProjectOp::inlineEvidence(RewriterBase &rewriter) {
   rewriter.setInsertionPoint(*this);
   AttrTypeReplacer stamp =
       makeTypeReplacerFromSubstitution(committed->arguments.toTypeMap(), CloneKind::Instance);
-  AttrTypeReplacer spelling =
-      makeSpellingReplacerFromSubstitution(committed->arguments.toTypeMap());
   IRMapping mapping;
   llvm::SetVector<Value> reads;
   reads.insert(read);
   mapDeclarationReads(rewriter, module, impl, reads, getSource(), source, stamp,
-                      spelling, mapping);
+                      mapping);
   Value inlined = mapping.lookupOrNull(read);
   if (!inlined)
     return failure();
@@ -2186,7 +2167,7 @@ ParseResult WitnessOp::parse(OpAsmParser &p, OperationState& result) {
   if (succeeded(p.parseOptionalKeyword("proj_resolve"))) {
     Type projection, resolved;
     FlatSymbolRefAttr citedImpl;
-    ArrayAttr citedArguments;
+    ImplArgumentsAttr citedArguments;
     if (p.parseType(projection) || p.parseKeyword("resolves") ||
         p.parseType(resolved) || p.parseKeyword("by") ||
         p.parseAttribute(citedImpl) ||
@@ -2396,14 +2377,14 @@ static LogicalResult verifyPremisesSuppliedByPosition(
 /// `arguments`, the header `cited` and the where entries `premises` supply,
 /// positionally, each compared by identity.
 static LogicalResult verifyCitationOf(
-    ImplOp impl, ClaimType cited, ArrayAttr stated,
+    ImplOp impl, ClaimType cited, ImplArgumentsAttr stated,
     const SpecializationMap &arguments, ValueRange premises,
     StringRef supplier, llvm::function_ref<InFlightDiagnostic()> errFn) {
   size_t parameterCount = impl.getTypeParams().size();
-  if (stated.size() != parameterCount)
+  if (stated.getTypes().size() != parameterCount)
     return errFn() << "impl '@" << impl.getSymName() << "' takes "
                    << parameterCount << " type arguments, and the " << supplier
-                   << " states " << stated.size();
+                   << " states " << stated.getTypes().size();
   if (impl.getSelfApplicationAt(arguments) != cited.getTraitApplication())
     return errFn() << "impl '@" << impl.getSymName()
                    << "' at the arguments the citation gives it proves "

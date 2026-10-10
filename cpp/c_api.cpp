@@ -108,6 +108,14 @@ MlirAttribute traitTypeEqualityAttrGet(MlirContext wrappedCtx,
   return wrap(eq);
 }
 
+MlirAttribute traitImplArgumentsAttrGet(MlirContext ctx, const MlirType *types,
+                                        intptr_t numTypes) {
+  SmallVector<Type> unwrapped;
+  for (intptr_t i = 0; i < numTypes; ++i)
+    unwrapped.push_back(unwrap(types[i]));
+  return wrap(ImplArgumentsAttr::get(unwrap(ctx), unwrapped));
+}
+
 intptr_t traitGetGenericTypesIn(MlirType type, MlirType *results, intptr_t maxResults) {
   auto generics = getGenericTypesIn(unwrap(type));
   intptr_t count = static_cast<intptr_t>(generics.size());

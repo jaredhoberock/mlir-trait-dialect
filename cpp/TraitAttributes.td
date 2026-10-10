@@ -115,4 +115,38 @@ def TypeEqualityAttr : AttrDef<TraitDialect, "TypeEquality", []> {
   let assemblyFormat = "`` $lhs `=` $rhs";
 }
 
+// The arguments a citation states for its impl's parameters, by position: a
+// derive's, and a projection-resolution witness's.
+def ImplArgumentsAttr : AttrDef<TraitDialect, "ImplArguments", []> {
+  let mnemonic = "impl_args";
+  let summary = "The arguments a citation states for its impl's parameters";
+  let description = [{
+    The type each of a cited impl's parameters takes at one citation, in the
+    order of the impl's parameters: argument `i` is what `!trait.poly<i>`
+    stands for there. The citation's verifier instantiates the impl's header at
+    them and compares the result with the claim the citation derives or
+    resolves by identity, so the two must move together.
+
+    A citation's claims move by their variables alone
+    (`respellClaimPredicate`), and its arguments are spelled as those claims
+    are, so the arguments move by the same rule and by no other: every
+    `AttrTypeReplacer` the dialect builds carries an attribute-level rule that
+    returns this attribute unchanged and skips its interior
+    (`makeEndpointSealedReplacer`), and the one sanctioned mover is the clone
+    rule, which stamps each argument with the clone's variable bindings alone
+    (`makeTypeReplacerFromSubstitution`). A projection an argument spells is
+    never resolved in place; a template clone still stamps `@impl[!T]` to
+    `@impl[i64]`. The arguments are ordinary sub-elements to a read, so a
+    symbol one names is reached by the symbol-user driver.
+
+    Its custom assembly form is the bracketed list after the impl's symbol,
+    `@impl[i32, i64]`, elided where empty; standing alone it prints as
+    `#trait.impl_args<[i32, i64]>`.
+  }];
+
+  let parameters = (ins ArrayRefParameter<"Type">:$types);
+
+  let hasCustomAssemblyFormat = 1;
+}
+
 #endif // TRAIT_ATTRIBUTES_TD

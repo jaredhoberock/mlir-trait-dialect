@@ -65,6 +65,11 @@ MlirType traitProjectionTypeGet(MlirContext ctx,
 MlirAttribute traitTypeEqualityAttrGet(MlirContext ctx,
                                        MlirType lhs, MlirType rhs);
 
+/// Return the #trait.impl_args<[...]> attribute stating `types`, the argument
+/// of each of a cited impl's parameters by position.
+MlirAttribute traitImplArgumentsAttrGet(MlirContext ctx, const MlirType *types,
+                                        intptr_t numTypes);
+
 /// Collect all unique types implementing GenericTypeInterface found in `type`.
 ///
 /// This walks `type` recursively and returns every distinct generic type

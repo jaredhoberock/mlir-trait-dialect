@@ -12,6 +12,6 @@ trait.impl private @B_i32(%self: !trait.claim<@B[i32]>) {}
 
 func.func @derives_an_equality() {
   // expected-error @+1 {{result #0 must be a '!trait.claim' of a trait application, but got '!trait.claim<i32 = i32>'}}
-  %c = "trait.derive"() <{impl = @B_i32, impl_args = []}> : () -> !trait.claim<i32 = i32>
+  %c = "trait.derive"() <{impl = @B_i32, impl_args = #trait.impl_args<[]>}> : () -> !trait.claim<i32 = i32>
   return
 }

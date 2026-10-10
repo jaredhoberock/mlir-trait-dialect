@@ -317,7 +317,7 @@ struct ProvenPremise;
 struct ResolutionStep {
   TypeEqualityAttr equality;
   FlatSymbolRefAttr impl;
-  ArrayAttr arguments;
+  ImplArgumentsAttr arguments;
   SmallVector<std::variant<std::shared_ptr<ProvenPremise>,
                            std::shared_ptr<EqualityResolution>>>
       premises;
