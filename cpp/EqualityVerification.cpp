@@ -289,3 +289,8 @@ Type mlir::trait::stripClaimProofs(Type type) {
   return strip.replace(type);
 }
 
+bool mlir::trait::settles(Type view, Type spelled) {
+  return view != spelled && !carriesUndischargedObligation(view) &&
+         stripClaimProofs(view) == stripClaimProofs(spelled);
+}
+

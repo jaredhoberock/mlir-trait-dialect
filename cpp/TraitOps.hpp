@@ -34,6 +34,13 @@ public:
 /// proof, permanently.
 Type stripClaimProofs(Type type);
 
+/// Whether `view`, the type a producer gives a position, settles `spelled`,
+/// the type the position is spelled with: the two state one type modulo the
+/// proofs their claims carry, and `view` names a proof at every application it
+/// spells. A position settled so repeats its producer's evidence, and nothing
+/// selects for it.
+bool settles(Type view, Type spelled);
+
 /// The evidence `value` carries: its proven application claim, or, where it is
 /// a coercion's result, the evidence the coerced value carries; null where it
 /// carries none yet. A coercion respells evidence and makes none, so a reader

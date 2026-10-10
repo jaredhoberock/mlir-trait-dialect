@@ -1138,9 +1138,11 @@ struct SettleCoercePattern : public OpRewritePattern<CoerceOp> {
 /// InferTypeOpInterface once all operands are monomorphic.
 ///
 /// When all operands have concrete (non-polymorphic) types, the op's
-/// `inferReturnTypes` computes the specialized result types. If they
-/// differ from the op's current result types after normalization, the
-/// pattern updates them in-place under the rewriter.
+/// `inferReturnTypes` computes the specialized result types, or, for a result
+/// stating what no operand determines, its `refineReturnTypes` merges the
+/// result as written with what they do. If they differ from the op's current
+/// result types after normalization, the pattern updates them in-place under
+/// the rewriter.
 struct MonomorphizeResultTypesPattern
     : public OpInterfaceRewritePattern<InferTypeOpInterface> {
   using OpInterfaceRewritePattern::OpInterfaceRewritePattern;
@@ -1166,8 +1168,20 @@ struct MonomorphizeResultTypesPattern
                                       iface->getOperands(),
                                       iface->getAttrDictionary(),
                                       iface->getPropertiesStorage(),
-                                      iface->getRegions(), specializedTypes)))
-      return rewriter.notifyMatchFailure(iface, "cannot infer result types from operands");
+                                      iface->getRegions(), specializedTypes))) {
+      // A result can state what no operand determines, and inference cannot
+      // build it; the op merges the result as written with what its operands
+      // determine (`refineReturnTypes`, which upstream's verifier also calls
+      // with the result as written).
+      specializedTypes.assign(iface->getResultTypes().begin(),
+                              iface->getResultTypes().end());
+      if (failed(iface.refineReturnTypes(
+              iface->getContext(), /*location=*/std::nullopt,
+              iface->getOperands(), iface->getAttrDictionary(),
+              iface->getPropertiesStorage(), iface->getRegions(),
+              specializedTypes)))
+        return rewriter.notifyMatchFailure(iface, "cannot infer result types from operands");
+    }
 
     // the arity of results must match
     if (specializedTypes.size() != iface->getNumResults())
@@ -1340,15 +1354,6 @@ struct SettleSpelledObligationsPattern : public RewritePattern {
     return success();
   }
 };
-
-/// Whether `view`, the type a producer gives a result position, settles
-/// `spelled`, the type the position is spelled with: the two state one type
-/// modulo the proofs their claims carry, and `view` names a proof at every
-/// application it spells.
-static bool settles(Type view, Type spelled) {
-  return view != spelled && !carriesUndischargedObligation(view) &&
-         stripClaimProofs(view) == stripClaimProofs(spelled);
-}
 
 /// Gives a function's result type the proofs its returns hand back: where
 /// every return supplies one type at a position that settles the signature's
