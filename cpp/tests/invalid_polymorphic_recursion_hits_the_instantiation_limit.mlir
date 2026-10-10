@@ -24,8 +24,8 @@ func.func private @f(%x: !trait.poly<0>) -> i64 {
   return %r : i64
 }
 
-func.func private @g(%y: !trait.poly<1>) -> i64 {
-  %r = trait.func.call @f(%y) : (!trait.poly<1>) -> i64
+func.func private @g(%y: !trait.poly<0>) -> i64 {
+  %r = trait.func.call @f(%y) : (!trait.poly<0>) -> i64
   return %r : i64
 }
 

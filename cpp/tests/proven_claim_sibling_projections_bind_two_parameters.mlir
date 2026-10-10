@@ -26,8 +26,8 @@ module {
     trait.return %d : !trait.claim<@D[i64, i64]>
   }
 
-  func.func nested @f(%x: !trait.poly<4>, %y: !trait.poly<5>,
-    %d: !trait.claim<@D[!trait.proj<@A[!trait.poly<4>], "Out">, !trait.proj<@A[!trait.poly<5>], "Out">]>
+  func.func nested @f(%x: !trait.poly<0>, %y: !trait.poly<1>,
+    %d: !trait.claim<@D[!trait.proj<@A[!trait.poly<0>], "Out">, !trait.proj<@A[!trait.poly<1>], "Out">]>
   ) -> i32 { %0 = arith.constant 0 : i32 return %0 : i32 }
 
   // CHECK-LABEL: func.func @main

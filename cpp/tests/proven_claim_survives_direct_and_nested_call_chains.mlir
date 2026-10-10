@@ -14,21 +14,21 @@ trait.trait private @Q(%self: !trait.claim<@Q[!trait.poly<0>]>) {}
 trait.impl private @Q_impl(%self: !trait.claim<@Q[!trait.poly<0>]>) {}
 
 !T = !trait.poly<4>
-func.func private @g(%c: !trait.claim<@P[!T]>, %x: !T) -> !T {
-  return %x : !T
+func.func private @g(%c: !trait.claim<@P[!trait.poly<0>]>, %x: !trait.poly<0>) -> !trait.poly<0> {
+  return %x : !trait.poly<0>
 }
 
 !U = !trait.poly<5>
-func.func private @g2(%q: !trait.claim<@Q[!U]>, %c: !trait.claim<@P[!U]>, %x: !U) -> !U {
-  return %x : !U
+func.func private @g2(%q: !trait.claim<@Q[!trait.poly<0>]>, %c: !trait.claim<@P[!trait.poly<0>]>, %x: !trait.poly<0>) -> !trait.poly<0> {
+  return %x : !trait.poly<0>
 }
 
 !V = !trait.poly<6>
-func.func private @h(%c: !trait.claim<@P[!V]>, %x: !V) -> !V {
-  %q = trait.derive @Q[!V] from @Q_impl[!trait.poly<6>] given()
+func.func private @h(%c: !trait.claim<@P[!trait.poly<0>]>, %x: !trait.poly<0>) -> !trait.poly<0> {
+  %q = trait.derive @Q[!trait.poly<0>] from @Q_impl[!trait.poly<0>] given()
   %r = trait.func.call @g2(%q, %c, %x)
-    : (!trait.claim<@Q[!V]>, !trait.claim<@P[!V]>, !V) -> !V
-  return %r : !V
+    : (!trait.claim<@Q[!trait.poly<0>]>, !trait.claim<@P[!trait.poly<0>]>, !trait.poly<0>) -> !trait.poly<0>
+  return %r : !trait.poly<0>
 }
 
 func.func @user1(%x: i32) -> i32 {

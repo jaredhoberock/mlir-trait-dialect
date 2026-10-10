@@ -68,17 +68,17 @@ trait.trait private @S(%self: !trait.claim<@S[!S]>) {
 trait.impl private @S_i64(%self: !trait.claim<@S[i64]>, %m: !trait.claim<!trait.proj<@Marker[i64], "M"> = !trait.poly<0>>) {
   trait.assoc_type @Out = !trait.poly<0>
 }
-func.func private @gen(%v: !trait.proj<@S[i64], "Out">, %x: !T) -> !T {
+func.func private @gen(%v: !trait.proj<@S[i64], "Out">, %x: !trait.poly<0>) -> !trait.poly<0> {
   // expected-error @below {{alleges '!trait.proj<@Marker[i64], "M">' = 'i64', and impl selection resolves its sides to 'i1' and 'i64'}}
   // expected-error @below {{unproven monomorphic claim '!trait.claim<!trait.proj<@Marker[i64], "M"> = i64>' after instantiate-monomorphs}}
-  %m = trait.allege !trait.proj<@Marker[i64], "M"> = !T
+  %m = trait.allege !trait.proj<@Marker[i64], "M"> = !trait.poly<0>
   // expected-error @below {{unproven monomorphic claim '!trait.claim<!trait.proj<@S[i64], "Out"> = i64>' after instantiate-monomorphs}}
-  %e = trait.witness proj_resolve !trait.proj<@S[i64], "Out"> resolves !T by @S_i64[!trait.poly<2>] given(%m)
-    : (!trait.claim<!trait.proj<@Marker[i64], "M"> = !T>)
-    : !trait.claim<!trait.proj<@S[i64], "Out"> = !T>
-  %r = trait.coerce %v : !trait.proj<@S[i64], "Out"> to !T via (%e)
-    : (!trait.claim<!trait.proj<@S[i64], "Out"> = !T>)
-  return %r : !T
+  %e = trait.witness proj_resolve !trait.proj<@S[i64], "Out"> resolves !trait.poly<0> by @S_i64[!trait.poly<0>] given(%m)
+    : (!trait.claim<!trait.proj<@Marker[i64], "M"> = !trait.poly<0>>)
+    : !trait.claim<!trait.proj<@S[i64], "Out"> = !trait.poly<0>>
+  %r = trait.coerce %v : !trait.proj<@S[i64], "Out"> to !trait.poly<0> via (%e)
+    : (!trait.claim<!trait.proj<@S[i64], "Out"> = !trait.poly<0>>)
+  return %r : !trait.poly<0>
 }
 // Instance at T := i64 -- WRONG: @S[i64]::Out is i1.
 func.func @caller(%v: !trait.proj<@S[i64], "Out">) -> i64 {

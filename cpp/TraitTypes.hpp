@@ -131,16 +131,10 @@ inline Type applySubstitution(const SpecializationMap &specialization,
 inline Type applySubstitutionToFixedPoint(
     const SpecializationMap &specialization, OtherBindings others, Type ty,
     ClaimPredicates claims);
-inline Type applySubstitutionOnce(
-    const llvm::DenseMap<Type, Type> &subst, Type root,
-    ClaimPredicates claims = ClaimPredicates::Substituted);
-inline Type applySubstitutionToFixedPoint(
-    const llvm::DenseMap<Type, Type> &subst, Type ty,
-    ClaimPredicates claims = ClaimPredicates::Substituted);
 
-/// A substitution keyed by one kind of type: each key bound to the one value it
-/// stands for. A key is bound once, and binding it again to a different value
-/// is a caller bug the assertion names.
+/// The values a substitution binds to keys of one kind: each key bound to the
+/// one value it stands for. A key is bound once, and binding it again to a
+/// different value is a caller bug the assertion names.
 template <typename KeyT, typename ValueT = Type>
 class TypeBindings {
 public:
@@ -157,22 +151,44 @@ public:
     bindings[key] = value;
   }
 
-  llvm::DenseMap<Type, Type> toTypeMap() const {
-    llvm::DenseMap<Type, Type> result;
-    for (auto [key, value] : bindings)
-      result[key] = value;
-    return result;
-  }
-
   size_t bindingCount() const { return bindings.size(); }
 
 protected:
   llvm::DenseMap<KeyT, ValueT> bindings;
 };
 
-/// The type arguments chosen for a declaration's type parameters.
-class SpecializationMap : public TypeBindings<GenericTypeInterface> {
+/// The type arguments chosen for a declaration's type parameters, by label: slot
+/// `i` holds the argument of the parameter `!trait.poly<i>`, which every
+/// occurrence of that label stands for (`GenericTypeInterface::getParameterAtom`),
+/// or nothing where none is chosen. A label is a position in the declaration
+/// that binds it, so a lookup is an index.
+class SpecializationMap {
 public:
+  std::optional<Type> lookup(GenericTypeInterface key) const {
+    unsigned label = labelOf(key);
+    if (label >= arguments.size() || !arguments[label])
+      return std::nullopt;
+    return arguments[label];
+  }
+
+  /// Binds `key`'s label to `value`. A label is bound once, and binding it
+  /// again to a different value is a caller bug the assertion names.
+  void bind(GenericTypeInterface key, Type value) {
+    unsigned label = labelOf(key);
+    if (label >= arguments.size())
+      arguments.resize(label + 1);
+    assert((!arguments[label] || arguments[label] == value) &&
+           "a binding must not be replaced with a different value");
+    arguments[label] = value;
+  }
+
+  size_t bindingCount() const {
+    return llvm::count_if(arguments, [](Type argument) { return argument; });
+  }
+
+  /// The argument of each label below the bound, null where none is chosen.
+  ArrayRef<Type> getArguments() const { return arguments; }
+
   // A specialization is fully composed by construction, so one structural
   // substitution pass is enough.
   //
@@ -190,15 +206,13 @@ public:
   template <typename RangeT>
   static SpecializationMap fromPositions(RangeT &&arguments);
 
-  static SpecializationMap fromTypeMap(const llvm::DenseMap<Type, Type> &subst) {
-    SpecializationMap result;
-    for (auto [key, value] : subst) {
-      auto generic = dyn_cast<GenericTypeInterface>(key);
-      assert(generic && "specialization keys must be generic types");
-      result.bind(generic, value);
-    }
-    return result;
+private:
+  /// The label of the parameter `key` is an occurrence of.
+  static unsigned labelOf(GenericTypeInterface key) {
+    return cast<PolyType>(key.getParameterAtom()).getLabel();
   }
+
+  SmallVector<Type, 4> arguments;
 };
 
 /// The concrete associated types projections stand for.
@@ -287,16 +301,8 @@ public:
         ty, ClaimPredicates::Substituted);
   }
 
-  // The two components key disjoint kinds of type -- a parameter, a projection
-  // -- so the union holds every binding each one made under the key it was made
-  // for. A variable therefore keeps the value bound to it, which is what an
-  // equality endpoint reading it must see; a chain through a projection key
-  // resolves because readers apply this map to a fixed point.
-  llvm::DenseMap<Type, Type> toTypeMap() const {
-    llvm::DenseMap<Type, Type> result = specialization.toTypeMap();
-    for (auto [key, value] : projectionBindings.toTypeMap())
-      result[key] = value;
-    return result;
+  const ProjectionBindings &getProjectionBindings() const {
+    return projectionBindings;
   }
 
 private:
@@ -472,25 +478,6 @@ inline Type applySubstitution(const SpecializationMap &specialization,
   return replacer.replace(root);
 }
 
-/// The variable bindings of `subst`, keyed by the parameters they bind.
-inline SpecializationMap
-variableBindingsOf(const llvm::DenseMap<Type, Type> &subst) {
-  SpecializationMap specialization;
-  for (auto [key, value] : subst)
-    if (auto generic = dyn_cast<GenericTypeInterface>(key))
-      specialization.bind(generic, value);
-  return specialization;
-}
-
-inline Type applySubstitutionOnce(const llvm::DenseMap<Type, Type> &subst,
-                                  Type root, ClaimPredicates claims) {
-  auto others = [&](Type key) -> std::optional<Type> {
-    auto it = subst.find(key);
-    return it == subst.end() ? std::nullopt : std::optional<Type>(it->second);
-  };
-  return applySubstitution(variableBindingsOf(subst), others, root, claims);
-}
-
 /// The pass budget the substitution fixed point spends before it gives up.
 ///
 /// The chase settles in as many passes as the longest chain of keys it binds
@@ -603,15 +590,6 @@ inline Type applySubstitutionToFixedPoint(
   return cur;
 }
 
-inline Type applySubstitutionToFixedPoint(
-    const llvm::DenseMap<Type, Type> &subst, Type ty, ClaimPredicates claims) {
-  auto others = [&](Type key) -> std::optional<Type> {
-    auto it = subst.find(key);
-    return it == subst.end() ? std::nullopt : std::optional<Type>(it->second);
-  };
-  return applySubstitutionToFixedPoint(variableBindingsOf(subst), others, ty,
-                                       claims);
-}
 
 /// The classes a set of type equalities carves out of the types they mention:
 /// a union-find over interned types. An equality is not a directed rule --
@@ -739,10 +717,8 @@ inline GenericTypeInterface getParameterOccurrence(Type ty) {
 template <typename RangeT>
 SpecializationMap SpecializationMap::fromPositions(RangeT &&arguments) {
   SpecializationMap result;
-  for (auto [position, argument] : llvm::enumerate(arguments)) {
-    Type label = PolyType::get(argument.getContext(), position);
-    result.bind(cast<GenericTypeInterface>(label), argument);
-  }
+  for (Type argument : arguments)
+    result.arguments.push_back(argument);
   return result;
 }
 
@@ -800,8 +776,9 @@ unsigned firstUnusedPolyLabel(Operation *op);
 /// as written. Failure means the rewrite has no normal form.
 using Normalizer = llvm::function_ref<FailureOr<Type>(Type)>;
 
-/// One optional type argument per parameter of a declaration, dense by the
-/// declaration's own parameter order.
+/// One optional type argument per parameter of a declaration, by label: slot
+/// `i` is the argument of `!trait.poly<i>`, for the labels below the bound the
+/// declaration spells (`getLabelBound`).
 ///
 /// A slot is filled at the first position that determines it and compared for
 /// identity at every later one, so a parameter occurring twice admits only an
@@ -810,15 +787,14 @@ using Normalizer = llvm::function_ref<FailureOr<Type>(Type)>;
 /// which the comparison refuses.
 class TypeArguments {
 public:
-  explicit TypeArguments(ArrayRef<GenericTypeInterface> parameters)
-      : parameters(parameters.begin(), parameters.end()),
-        slots(parameters.size()) {}
+  explicit TypeArguments(unsigned bound) : slots(bound) {}
 
-  ArrayRef<GenericTypeInterface> getParameters() const { return parameters; }
+  /// One past the largest label the declaration binds.
+  unsigned getBound() const { return slots.size(); }
 
   /// Whether the declaration binds `parameter`.
   bool binds(GenericTypeInterface parameter) const {
-    return indexOf(parameter).has_value();
+    return labelOf(parameter) < slots.size();
   }
 
   /// Fills `parameter`'s slot with `value`, or checks that it already holds
@@ -830,9 +806,11 @@ public:
   /// The argument `parameter` took, or nothing when it took none or when the
   /// declaration does not bind it.
   std::optional<Type> lookup(GenericTypeInterface parameter) const {
-    auto index = indexOf(parameter);
-    return index ? slots[*index] : std::nullopt;
+    return binds(parameter) ? slots[labelOf(parameter)] : std::nullopt;
   }
+
+  /// The argument the parameter labelled `label` took, or nothing.
+  std::optional<Type> at(unsigned label) const { return slots[label]; }
 
   /// Whether every parameter has an argument.
   bool complete() const {
@@ -841,25 +819,20 @@ public:
     });
   }
 
-  /// The substitution these arguments spell: each filled slot keyed by its
-  /// parameter. An empty slot leaves its parameter standing.
+  /// The substitution these arguments spell: each filled slot at its label. An
+  /// empty slot leaves its parameter standing.
   SpecializationMap toSpecialization() const {
-    SpecializationMap result;
-    for (auto [index, parameter] : llvm::enumerate(parameters))
-      if (slots[index])
-        result.bind(parameter, *slots[index]);
-    return result;
+    SmallVector<Type> arguments;
+    for (const std::optional<Type> &slot : slots)
+      arguments.push_back(slot.value_or(Type()));
+    return SpecializationMap::fromPositions(arguments);
   }
 
 private:
-  std::optional<size_t> indexOf(GenericTypeInterface parameter) const {
-    for (auto [index, declared] : llvm::enumerate(parameters))
-      if (declared == parameter)
-        return index;
-    return std::nullopt;
+  static unsigned labelOf(GenericTypeInterface parameter) {
+    return cast<PolyType>(parameter.getParameterAtom()).getLabel();
   }
 
-  SmallVector<GenericTypeInterface, 4> parameters;
   SmallVector<std::optional<Type>, 4> slots;
 };
 
@@ -913,12 +886,12 @@ LogicalResult verifyEqualAfterInstantiation(
     Type formal, const SpecializationMap &args, Type actual,
     Normalizer normalize, llvm::function_ref<InFlightDiagnostic()> err);
 
-/// The arguments carrying `formal` to `actual`, where `parameters` are the
-/// parameters the declaration `formal` comes from binds: read them off the
-/// actual, then check the instantiated declaration is the actual.
+/// The arguments carrying `formal` to `actual`, where the declaration `formal`
+/// comes from binds the labels below `bound`: read them off the actual, then
+/// check the instantiated declaration is the actual.
 FailureOr<SpecializationMap> matchDeclaration(
-    ArrayRef<GenericTypeInterface> parameters, Type formal, Type actual,
-    Normalizer normalize, llvm::function_ref<InFlightDiagnostic()> err);
+    unsigned bound, Type formal, Type actual, Normalizer normalize,
+    llvm::function_ref<InFlightDiagnostic()> err);
 
 /// Visits the sites of `root` at which instantiation can owe work: every
 /// sub-type except the interior of a claim.

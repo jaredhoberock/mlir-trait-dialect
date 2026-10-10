@@ -14,7 +14,7 @@
 trait.trait private @Assoc(%self: !trait.claim<@Assoc[!trait.poly<0>]>) { trait.assoc_type @Out }
 trait.impl private @Assoc_i64(%self: !trait.claim<@Assoc[i64]>) { trait.assoc_type @Out = i32 }
 
-func.func private @spend(%e: !trait.claim<!trait.proj<@Assoc[!trait.poly<3>], "Out"> = i32>) -> i32 {
+func.func private @spend(%e: !trait.claim<!trait.proj<@Assoc[!trait.poly<0>], "Out"> = i32>) -> i32 {
   %c = arith.constant 1 : i32
   return %c : i32
 }

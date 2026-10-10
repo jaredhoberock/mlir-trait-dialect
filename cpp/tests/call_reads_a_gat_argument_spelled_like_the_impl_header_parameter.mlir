@@ -9,7 +9,7 @@
 // substitution, so V stays the caller's variable and the reading fills it from
 // the operand the call spells.
 
-!T = !trait.poly<10>
+!T = !trait.poly<1>
 !V = !trait.poly<0>
 !U = !trait.poly<2>
 

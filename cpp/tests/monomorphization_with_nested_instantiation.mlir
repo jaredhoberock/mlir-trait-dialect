@@ -36,17 +36,17 @@ trait.impl private @Tr_any(%self_claim: !trait.claim<@Tr[!trait.poly<0>]>) {
 
 // Takes a claim, calls method through it
 !F = !trait.poly<2>
-func.func private @inner(%x: !F, %c: !trait.claim<@Tr[!F]>) -> i32 {
-  %r = trait.method.call %c @Tr[!F]::@method(%x) : (!F) -> i32
+func.func private @inner(%x: !trait.poly<0>, %c: !trait.claim<@Tr[!trait.poly<0>]>) -> i32 {
+  %r = trait.method.call %c @Tr[!trait.poly<0>]::@method(%x) : (!trait.poly<0>) -> i32
   return %r : i32
 }
 
 // Derives Tr[!G] (unconditional impl), passes claim to @inner
 !G = !trait.poly<3>
-func.func private @outer(%x: !G) -> i32 {
-  %c = trait.derive @Tr[!G] from @Tr_any[!trait.poly<3>] given()
+func.func private @outer(%x: !trait.poly<0>) -> i32 {
+  %c = trait.derive @Tr[!trait.poly<0>] from @Tr_any[!trait.poly<0>] given()
   %r = trait.func.call @inner(%x, %c)
-    : (!G, !trait.claim<@Tr[!G]>) -> i32
+    : (!trait.poly<0>, !trait.claim<@Tr[!trait.poly<0>]>) -> i32
   return %r : i32
 }
 

@@ -19,8 +19,8 @@ trait.impl private @Doubled_narrow(%self: !trait.claim<@Doubled[i64]>) {}
 
 !P = !trait.poly<1>
 
-func.func private @hold(%absent: !trait.claim<@Absent[!P]>,
-                %doubled: !trait.claim<@Doubled[!P]>) {
+func.func private @hold(%absent: !trait.claim<@Absent[!trait.poly<0>]>,
+                %doubled: !trait.claim<@Doubled[!trait.poly<0>]>) {
   return
 }
 

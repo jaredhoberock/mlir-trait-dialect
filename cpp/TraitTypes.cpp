@@ -650,14 +650,13 @@ FailureOr<unsigned> countDenseLabelsFrom(ArrayRef<Type> spellings,
 LogicalResult TypeArguments::assign(
     GenericTypeInterface parameter, Type value,
     llvm::function_ref<InFlightDiagnostic()> err) {
-  auto index = indexOf(parameter);
-  if (!index) {
+  if (!binds(parameter)) {
     if (err)
       err() << "type parameter " << Type(parameter)
             << " is not bound by this declaration";
     return failure();
   }
-  std::optional<Type> &slot = slots[*index];
+  std::optional<Type> &slot = slots[labelOf(parameter)];
   if (!slot) {
     slot = value;
     return success();
@@ -752,9 +751,9 @@ LogicalResult verifyEqualAfterInstantiation(
 }
 
 FailureOr<SpecializationMap> matchDeclaration(
-    ArrayRef<GenericTypeInterface> parameters, Type formal, Type actual,
-    Normalizer normalize, llvm::function_ref<InFlightDiagnostic()> err) {
-  TypeArguments args(parameters);
+    unsigned bound, Type formal, Type actual, Normalizer normalize,
+    llvm::function_ref<InFlightDiagnostic()> err) {
+  TypeArguments args(bound);
   extractTypeArguments(formal, actual, args);
   SpecializationMap specialization = args.toSpecialization();
   if (failed(verifyEqualAfterInstantiation(formal, specialization, actual,

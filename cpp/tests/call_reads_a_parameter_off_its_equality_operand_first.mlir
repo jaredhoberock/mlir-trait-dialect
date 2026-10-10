@@ -28,8 +28,8 @@ trait.proof private @Has_i32_p {
   trait.return %d : !trait.claim<@Has[i32]>
 }
 
-func.func private @tpl(%h: !trait.claim<@Has[!trait.poly<1>]>,
-                       %e: !trait.claim<!trait.proj<@Producer[i64], "Item"> = !trait.poly<1>>) {
+func.func private @tpl(%h: !trait.claim<@Has[!trait.poly<0>]>,
+                       %e: !trait.claim<!trait.proj<@Producer[i64], "Item"> = !trait.poly<0>>) {
   return
 }
 

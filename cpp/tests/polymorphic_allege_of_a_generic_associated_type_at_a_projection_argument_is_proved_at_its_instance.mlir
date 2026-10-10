@@ -25,13 +25,13 @@ trait.impl private @Gat_any(%self: !trait.claim<@Gat[!trait.poly<0>]>) {
   trait.assoc_type @Item<[!trait.poly<1>]> = !trait.poly<1>
 }
 
-func.func private @sink(%e: !trait.claim<!trait.proj<@Gat[!X], "Item", [!trait.proj<@Arg[!X], "Out">]> = i32>) {
+func.func private @sink(%e: !trait.claim<!trait.proj<@Gat[!trait.poly<0>], "Item", [!trait.proj<@Arg[!trait.poly<0>], "Out">]> = i32>) {
   return
 }
 
-func.func private @send(%x: !X) {
-  %e = trait.allege !trait.proj<@Gat[!X], "Item", [!trait.proj<@Arg[!X], "Out">]> = i32
-  trait.func.call @sink(%e) : (!trait.claim<!trait.proj<@Gat[!X], "Item", [!trait.proj<@Arg[!X], "Out">]> = i32>) -> ()
+func.func private @send(%x: !trait.poly<0>) {
+  %e = trait.allege !trait.proj<@Gat[!trait.poly<0>], "Item", [!trait.proj<@Arg[!trait.poly<0>], "Out">]> = i32
+  trait.func.call @sink(%e) : (!trait.claim<!trait.proj<@Gat[!trait.poly<0>], "Item", [!trait.proj<@Arg[!trait.poly<0>], "Out">]> = i32>) -> ()
   return
 }
 
@@ -42,7 +42,7 @@ func.func @main() {
 }
 
 // CHECK-LABEL: func.func private @send(
-// CHECK: trait.allege !trait.proj<@Gat[!trait.poly<4>], "Item", [!trait.proj<@Arg[!trait.poly<4>], "Out">]> = i32
+// CHECK: trait.allege !trait.proj<@Gat[!trait.poly<0>], "Item", [!trait.proj<@Arg[!trait.poly<0>], "Out">]> = i32
 // CHECK-LABEL: func.func private @send_
 // CHECK-NOT: trait.allege
 // CHECK: %[[GAT:.*]] = trait.witness proj_resolve !trait.proj<@Gat[i64], "Item", [!trait.proj<@Arg[i64], "Out">]> resolves !trait.proj<@Arg[i64], "Out"> by @Gat_any

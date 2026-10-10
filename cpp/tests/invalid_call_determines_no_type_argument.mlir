@@ -18,13 +18,13 @@ trait.impl private @Has_i64(%self: !trait.claim<@Has[i64]>) {
   trait.assoc_type @A<[!trait.poly<0>]> = i32
 }
 
-func.func private @g(%v: !trait.proj<@Has[i64], "A", [!V]>) -> i64 {
+func.func private @g(%v: !trait.proj<@Has[i64], "A", [!trait.poly<0>]>) -> i64 {
   %z = arith.constant 0 : i64
   return %z : i64
 }
 
 func.func @main(%b: i32) -> i64 {
-  // expected-error @below {{call to @g determines no type argument for '!trait.poly<11>'}}
+  // expected-error @below {{call to @g determines no type argument for '!trait.poly<0>'}}
   %r = trait.func.call @g(%b) : (i32) -> i64
   return %r : i64
 }

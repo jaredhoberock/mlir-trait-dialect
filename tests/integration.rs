@@ -148,14 +148,14 @@ fn test_jit() {
     module.body().append_operation(partial_eq_impl_i32_i32);
     assert!(module.as_operation().verify(), "MLIR module verification failed");
 
-    // !T = trait.poly<2>
+    // !T = trait.poly<0>
     // func.func @foo(%c: !trait.claim<@PartialEq[!T,!T]>, %x: !T, %y: !T) -> i1 {
     //   %res = trait.method.call %c @PartialEq[!T,!T]::@eq(%x, %y)
     //     :  (!S,!O) -> i1
     //     as (!T, !T) -> i1
     //   return %res : i1
     // }
-    let poly_ty = trait_::poly_type(&context, 2);
+    let poly_ty = trait_::poly_type(&context, 0);
     let claim_ty = trait_::claim_type(
         &context,
         trait_::trait_application_attr(

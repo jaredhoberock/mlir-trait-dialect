@@ -689,19 +689,6 @@ agreeInOwnContext(ImplOp impl, Type expected, Type actual,
                                     stripClaimProofs(*rhs), hypotheses);
 }
 
-/// The labels a member's own type parameters take in a declaration binding
-/// `declarationCount` of its own: `declarationCount` onward, up to the bound
-/// the member's signature spells.
-static SmallVector<GenericTypeInterface, 4>
-getOwnTypeParameters(Type signature, unsigned declarationCount) {
-  MLIRContext *ctx = signature.getContext();
-  SmallVector<GenericTypeInterface, 4> own;
-  for (unsigned label = declarationCount, bound = getLabelBound(signature);
-       label < bound; ++label)
-    own.push_back(cast<GenericTypeInterface>(Type(PolyType::get(ctx, label))));
-  return own;
-}
-
 /// Verifies that `implMethod`, `impl`'s copy of a method of `traitOp`, is the
 /// trait's declaration of it carried to the impl: rustc's
 /// `compare_impl_method`, run once per impl method.
@@ -1236,7 +1223,8 @@ static func::FuncOp cutMethodInstance(PatternRewriter &rewriter, ModuleOp module
                                       FunctionOpInterface method,
                                       StringRef functionName,
                                       ClaimType selfProof,
-                                      const DenseMap<Type, Type> &subst) {
+                                      const SpecializationMap &variables,
+                                      const ProjectionBindings &projections) {
   llvm::SetVector<Value> reads = readsFromDeclaration(method);
 
   PatternRewriter::InsertionGuard guard(rewriter);
@@ -1245,7 +1233,8 @@ static func::FuncOp cutMethodInstance(PatternRewriter &rewriter, ModuleOp module
   // An external declaration has no body to clone; specialization has refused
   // it. Cut at module scope, the instance is a `func.func`.
   auto funcOp = cast_if_present<func::FuncOp>(
-      specializePolymorph(rewriter, method, functionName, subst).getOperation());
+      specializePolymorph(rewriter, method, functionName, variables, projections)
+          .getOperation());
   if (!funcOp)
     return nullptr;
   rewriter.modifyOpInPlace(funcOp, [&] {
@@ -1259,7 +1248,8 @@ static func::FuncOp cutMethodInstance(PatternRewriter &rewriter, ModuleOp module
 
   rewriter.setInsertionPointToStart(&funcOp.getBody().front());
   IRMapping replacements;
-  AttrTypeReplacer stamp = makeTypeReplacerFromSubstitution(subst, CloneKind::Instance);
+  AttrTypeReplacer stamp = makeTypeReplacerFromSubstitution(
+      variables, CloneKind::Instance, projections);
   mapDeclarationReads(rewriter, module, declaration, reads,
                       funcOp.getArgument(0), selfProof, stamp, replacements);
   for (Value read : reads)
@@ -1325,14 +1315,16 @@ static LogicalResult inlineMethodAt(PatternRewriter &rewriter, ModuleOp module,
                                     Operation *declaration,
                                     FunctionOpInterface method,
                                     MethodCallOp call, ClaimType selfProof,
-                                    const DenseMap<Type, Type> &subst) {
+                                    const SpecializationMap &variables,
+                                    const ProjectionBindings &projections) {
   Region &body = method.getFunctionBody();
   if (body.empty() || !body.hasOneBlock())
     return rewriter.notifyMatchFailure(call, "the method has no one-block body");
 
   llvm::SetVector<Value> reads = readsFromDeclaration(method);
-  AttrTypeReplacer stamp = makeTypeReplacerFromSubstitution(subst, CloneKind::Instance);
-  AttrTypeReplacer spelling = makeSpellingReplacerFromSubstitution(subst);
+  AttrTypeReplacer stamp = makeTypeReplacerFromSubstitution(
+      variables, CloneKind::Instance, projections);
+  AttrTypeReplacer spelling = makeSpellingReplacerFromSubstitution(variables);
   PatternRewriter::InsertionGuard guard(rewriter);
   rewriter.setInsertionPoint(call);
   IRMapping mapping;
@@ -1363,24 +1355,28 @@ static LogicalResult inlineMethodAt(PatternRewriter &rewriter, ModuleOp module,
 /// The instance `method` of `declaration` names for a call through the proven
 /// receiver `provenSelfClaim` supplying `actualArguments` for the method's own
 /// parameters: the type arguments are `declarationArguments` for the
-/// declaration's parameters, then every parameter the method's signature
-/// spells, read through `subst`; the evidence the receiver's proof at the
+/// declaration's parameters, then the method's own parameters, labelled past
+/// them, read through `variables`; the evidence the receiver's proof at the
 /// leading position, then what the call supplies, position by position.
 static FailureOr<func::FuncOp> getOrCutMethodInstance(
     PatternRewriter &rewriter, ModuleOp module, Operation *declaration,
     SymbolRefAttr templateRef, ArrayRef<Type> declarationArguments,
     FunctionOpInterface method, ClaimType formalSelf, ClaimType provenSelfClaim,
-    TypeRange actualArguments, const DenseMap<Type, Type> &subst,
+    TypeRange actualArguments, const SpecializationMap &variables,
+    const ProjectionBindings &projections,
     llvm::function_ref<FailureOr<ClaimType>(ClaimType, ClaimType)> respell) {
   SmallVector<Type> typeArguments(declarationArguments);
-  for (GenericTypeInterface parameter :
-       getTypeParametersIn(method.getFunctionType()))
-    typeArguments.push_back(applySubstitutionOnce(subst, parameter));
+  for (unsigned label = declarationArguments.size(),
+                bound = getLabelBound(method.getFunctionType());
+       label < bound; ++label)
+    typeArguments.push_back(
+        variables.apply(PolyType::get(method.getContext(), label)));
   SmallVector<Type> formalInputs{formalSelf};
   llvm::append_range(formalInputs, method.getArgumentTypes());
   SmallVector<Type> actualInputs{provenSelfClaim};
   llvm::append_range(actualInputs, actualArguments);
-  AttrTypeReplacer stamp = makeTypeReplacerFromSubstitution(subst, CloneKind::Instance);
+  AttrTypeReplacer stamp = makeTypeReplacerFromSubstitution(
+      variables, CloneKind::Instance, projections);
   // A position whose evidence is not yet proven names no instance yet: the
   // call waits for it, and one that never gets it is named by the stage's exit
   // walk.
@@ -1394,7 +1390,8 @@ static FailureOr<func::FuncOp> getOrCutMethodInstance(
   func::FuncOp instance = getOrCutInstance(
       rewriter, module, *key, [&](StringRef instanceName) {
         return cutMethodInstance(rewriter, module, declaration, method,
-                                 instanceName, selfProof, subst);
+                                 instanceName, selfProof, variables,
+                                 projections);
       });
   if (!instance)
     return failure();
@@ -1409,32 +1406,40 @@ static FailureOr<func::FuncOp> getOrCutMethodInstance(
 /// own: own parameter `j` is the trait's label `traitCount + j` and the copy's
 /// `implCount + j` (`verifyImplMethodSignature`), so each binding moves by the
 /// difference, rustc's `rebase_onto`. The call's projection bindings ride
-/// along; its bindings of the trait's parameters are the impl's arguments
-/// already. Answers the impl's arguments beside it.
-static FailureOr<std::pair<SpecializationMap, DenseMap<Type, Type>>>
+/// along unchanged; its bindings of the trait's parameters are the impl's
+/// arguments already. Answers the impl's arguments beside it.
+static FailureOr<std::pair<SpecializationMap, SpecializationMap>>
 implMethodSubstitution(ImplOp impl, TraitOp trait, FunctionOpInterface method,
                        ClaimType provenSelfClaim,
                        const CallSubstitution &callSubst) {
   auto implArguments = impl.buildImplSpecialization(provenSelfClaim);
   if (failed(implArguments))
     return failure();
-  DenseMap<Type, Type> subst = implArguments->toTypeMap();
   unsigned traitCount = trait.getTypeParams().size();
   unsigned implCount = impl.getTypeParams().size();
-  MLIRContext *ctx = impl.getContext();
-  for (const auto &[key, value] : callSubst.toTypeMap()) {
-    if (!isa<GenericTypeInterface>(key)) {
-      subst.try_emplace(key, value);
-      continue;
+  SmallVector<Type> rebased(implArguments->getArguments());
+  rebased.resize(implCount);
+  for (auto [label, value] :
+       llvm::enumerate(callSubst.getSpecialization().getArguments()))
+    if (label >= traitCount) {
+      if (rebased.size() <= label - traitCount + implCount)
+        rebased.resize(label - traitCount + implCount + 1);
+      rebased[label - traitCount + implCount] = value;
     }
-    auto label = dyn_cast_or_null<PolyType>(
-        Type(getParameterOccurrence(key)));
-    if (label && static_cast<unsigned>(label.getLabel()) >= traitCount)
-      subst.try_emplace(
-          PolyType::get(ctx, label.getLabel() - traitCount + implCount),
-          value);
-  }
-  return std::make_pair(std::move(*implArguments), std::move(subst));
+  return std::make_pair(std::move(*implArguments),
+                        SpecializationMap::fromPositions(rebased));
+}
+
+/// `first`, with each label it leaves unbound bound as `second` binds it.
+static SpecializationMap bindingsBeside(const SpecializationMap &first,
+                                        const SpecializationMap &second) {
+  SmallVector<Type> merged(first.getArguments());
+  if (merged.size() < second.getArguments().size())
+    merged.resize(second.getArguments().size());
+  for (auto [label, value] : llvm::enumerate(second.getArguments()))
+    if (!merged[label])
+      merged[label] = value;
+  return SpecializationMap::fromPositions(merged);
 }
 
 FailureOr<func::FuncOp> ImplOp::getOrSpecializeFreeFunctionFromMethod(
@@ -1468,7 +1473,8 @@ FailureOr<func::FuncOp> ImplOp::getOrSpecializeFreeFunctionFromMethod(
       getSymNameAttr(), {FlatSymbolRefAttr::get(getContext(), methodName)});
   return getOrCutMethodInstance(rewriter, module, *this, templateRef,
                                 declarationArguments, *method, getSelfClaim(),
-                                provenSelfClaim, actualArguments, subst, respell);
+                                provenSelfClaim, actualArguments, subst,
+                                callSubst.getProjectionBindings(), respell);
 }
 
 LogicalResult MethodCallOp::inlineEvidence(
@@ -1486,11 +1492,10 @@ LogicalResult MethodCallOp::inlineEvidence(
     auto traitArguments = trait.buildSubstitutionForSelfClaim(getClaimType());
     if (failed(byDefault) || failed(traitArguments))
       return rewriter.notifyMatchFailure(*this, "no body defines the method");
-    DenseMap<Type, Type> subst = traitArguments->toTypeMap();
-    for (const auto &[k, v] : callSubst.toTypeMap())
-      subst.try_emplace(k, v);
-    return inlineMethodAt(rewriter, module, trait, *byDefault, *this,
-                          getClaimType(), subst);
+    return inlineMethodAt(
+        rewriter, module, trait, *byDefault, *this, getClaimType(),
+        bindingsBeside(*traitArguments, callSubst.getSpecialization()),
+        callSubst.getProjectionBindings());
   }
 
   auto substitution = implMethodSubstitution(impl, trait, *method,
@@ -1498,7 +1503,8 @@ LogicalResult MethodCallOp::inlineEvidence(
   if (failed(substitution))
     return failure();
   return inlineMethodAt(rewriter, module, impl, *method, *this, getClaimType(),
-                        substitution->second);
+                        substitution->second,
+                        callSubst.getProjectionBindings());
 }
 
 namespace {
@@ -1600,7 +1606,7 @@ LogicalResult ProjectOp::inlineEvidence(RewriterBase &rewriter) {
   OpBuilder::InsertionGuard guard(rewriter);
   rewriter.setInsertionPoint(*this);
   AttrTypeReplacer stamp =
-      makeTypeReplacerFromSubstitution(committed->arguments.toTypeMap(), CloneKind::Instance);
+      makeTypeReplacerFromSubstitution(committed->arguments, CloneKind::Instance);
   IRMapping mapping;
   llvm::SetVector<Value> reads;
   reads.insert(read);
@@ -1758,9 +1764,6 @@ FailureOr<func::FuncOp> TraitOp::getOrSpecializeFreeFunctionFromDefault(
 
   // A call names its method-generic bindings under the trait method's own type
   // variables, which are the default's.
-  DenseMap<Type, Type> subst = traitArguments->toTypeMap();
-  for (const auto &[k, v] : callSubst.toTypeMap())
-    subst.try_emplace(k, v);
 
   ModuleOp module = (*this)->getParentOfType<ModuleOp>();
   auto templateRef = SymbolRefAttr::get(
@@ -1768,7 +1771,9 @@ FailureOr<func::FuncOp> TraitOp::getOrSpecializeFreeFunctionFromDefault(
   return getOrCutMethodInstance(
       rewriter, module, *this, templateRef,
       provenSelfClaim.getTraitApplication().getTypeArgs(), *method,
-      getSelfClaim(), provenSelfClaim, actualArguments, subst, respell);
+      getSelfClaim(), provenSelfClaim, actualArguments,
+      bindingsBeside(*traitArguments, callSubst.getSpecialization()),
+      callSubst.getProjectionBindings(), respell);
 }
 
 /// Generate a deterministic symbol name for an ImplOp.
@@ -1820,7 +1825,7 @@ TraitOp ImplOp::getTrait() {
 
 TypeArguments ImplOp::readTypeArgumentsFor(ClaimType actualSelfClaim,
                                            Normalizer normalize) {
-  TypeArguments args(getTypeParams());
+  TypeArguments args(getTypeParams().size());
   extractTypeArguments(Type(getSelfClaim()), Type(actualSelfClaim), args);
 
   // A parameter the header leaves open is one an equality reading determines
@@ -1836,10 +1841,9 @@ TypeArguments ImplOp::readTypeArgumentsFor(ClaimType actualSelfClaim,
                         });
   };
   auto settledCount = [&] {
-    return llvm::count_if(args.getParameters(),
-                          [&](GenericTypeInterface parameter) {
-                            return args.lookup(parameter).has_value();
-                          });
+    return llvm::count_if(llvm::seq(args.getBound()), [&](unsigned label) {
+      return args.at(label).has_value();
+    });
   };
   SmallVector<EqualityReading> readings = getEqualityReadings(*this);
   for (bool grew = true; grew;) {
@@ -2660,11 +2664,9 @@ static FailureOr<SpecializationMap> readTypeArguments(
     llvm::function_ref<Type(Type)> normalize, StringRef callee,
     llvm::function_ref<InFlightDiagnostic()> err) {
   auto filled = [&] {
-    unsigned count = 0;
-    for (GenericTypeInterface parameter : args.getParameters())
-      if (args.lookup(parameter))
-        ++count;
-    return count;
+    return llvm::count_if(llvm::seq(args.getBound()), [&](unsigned label) {
+      return args.at(label).has_value();
+    });
   };
 
   // An equality claim's endpoints are the one position an instance does not
@@ -2702,9 +2704,9 @@ static FailureOr<SpecializationMap> readTypeArguments(
       InFlightDiagnostic diagnostic = err();
       diagnostic << "call to @" << callee
                  << " determines no type argument for";
-      for (GenericTypeInterface parameter : args.getParameters())
-        if (!args.lookup(parameter))
-          diagnostic << " " << Type(parameter);
+      for (unsigned label : llvm::seq(args.getBound()))
+        if (!args.at(label))
+          diagnostic << " " << Type(PolyType::get(formal.getContext(), label));
     }
     return failure();
   }
@@ -2815,15 +2817,13 @@ FailureOr<SpecializationMap> MethodCallOp::buildParameterSpecialization(
   if (failed(trait->buildSubstitutionForSelfClaim(getClaimType(), err)))
     return failure();
   ArrayRef<Type> traitArguments = getClaimType().getTraitApplication().getTypeArgs();
-  SmallVector<GenericTypeInterface, 4> parameters;
-  for (Type parameter : trait->getTypeParams())
-    parameters.push_back(getParameterOccurrence(parameter));
-  llvm::append_range(parameters,
-                     getOwnTypeParameters(Type(*methodFormalTy),
-                                          trait->getTypeParams().size()));
-  TypeArguments args(parameters);
-  for (auto [parameter, argument] : llvm::zip(parameters, traitArguments))
-    (void)args.assign(parameter, argument, /*err=*/nullptr);
+  unsigned traitCount = trait->getTypeParams().size();
+  TypeArguments args(
+      std::max(traitCount, getLabelBound(Type(*methodFormalTy))));
+  for (auto [label, argument] : llvm::enumerate(traitArguments))
+    (void)args.assign(cast<GenericTypeInterface>(Type(PolyType::get(
+                          getContext(), label))),
+                      argument, /*err=*/nullptr);
 
   return readCallSpecialization(getOperation(), *methodFormalTy,
                                 std::move(args), getActualFunctionType(),
@@ -3004,7 +3004,7 @@ FailureOr<SpecializationMap> FuncCallOp::buildParameterSpecialization(
   // The callee's declaration binds the parameters its signature spells, and
   // this call's own types determine each of them.
   return readCallSpecialization(getOperation(), *formal,
-                                TypeArguments(getCalleeTypeParams()),
+                                TypeArguments(getLabelBound(Type(*formal))),
                                 getActualFunctionType(), getCalleeName(),
                                 selection, err);
 }
@@ -3029,8 +3029,9 @@ FailureOr<func::FuncOp> FuncCallOp::getOrSpecializeCallee(
   SmallVector<Type> typeArguments;
   for (GenericTypeInterface parameter : typeParams)
     typeArguments.push_back(subst.getSpecialization().apply(parameter));
-  AttrTypeReplacer stamp =
-      makeTypeReplacerFromSubstitution(subst.toTypeMap(), CloneKind::Instance);
+  AttrTypeReplacer stamp = makeTypeReplacerFromSubstitution(
+      subst.getSpecialization(), CloneKind::Instance,
+      subst.getProjectionBindings());
   // A position whose evidence is not yet proven names no instance yet: the
   // call waits for it, and one that never gets it is named by the stage's exit
   // walk.
@@ -3049,7 +3050,8 @@ FailureOr<func::FuncOp> FuncCallOp::getOrSpecializeCallee(
         // Cut at module scope, the instance is a `func.func`.
         return cast_if_present<func::FuncOp>(
             specializePolymorph(rewriter, *callee, instanceName,
-                                subst.toTypeMap())
+                                subst.getSpecialization(),
+                                subst.getProjectionBindings())
                 .getOperation());
       });
   if (!instance)

@@ -55,15 +55,15 @@ trait.proof private @T2_i64_p {
 }
 
 func.func private @f(
-  %x: !trait.poly<3>,
-  %t2: !trait.claim<@T2[!trait.poly<3>]>,
-  %t1: !trait.claim<@T1[!trait.proj<@T0[!trait.poly<3>], "A">]>
+  %x: !trait.poly<0>,
+  %t2: !trait.claim<@T2[!trait.poly<0>]>,
+  %t1: !trait.claim<@T1[!trait.proj<@T0[!trait.poly<0>], "A">]>
 ) -> i64 {
   %r = trait.project %t2[0]
-    : !trait.claim<@T2[!trait.poly<3>]>
-    -> !trait.claim<@T1[!trait.proj<@T0[!trait.poly<3>], "A">]>
-  %u = trait.method.call %r @T1[!trait.proj<@T0[!trait.poly<3>], "A">]::@value() : () -> i64
-  %v = trait.method.call %t1 @T1[!trait.proj<@T0[!trait.poly<3>], "A">]::@value() : () -> i64
+    : !trait.claim<@T2[!trait.poly<0>]>
+    -> !trait.claim<@T1[!trait.proj<@T0[!trait.poly<0>], "A">]>
+  %u = trait.method.call %r @T1[!trait.proj<@T0[!trait.poly<0>], "A">]::@value() : () -> i64
+  %v = trait.method.call %t1 @T1[!trait.proj<@T0[!trait.poly<0>], "A">]::@value() : () -> i64
   %s = arith.addi %u, %v : i64
   return %s : i64
 }

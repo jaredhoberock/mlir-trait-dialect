@@ -14,24 +14,26 @@ namespace mlir::trait {
 /// itself cloned for a concrete instance, or an instance.
 enum class CloneKind { Template, Instance };
 
-/// Builds a type replacer that stamps `subst` into a clone of kind `kind`: a
-/// template's clone receives each binding once, an instance's the closed call
-/// substitution chased to its fixed point; a claim's predicate receives the
-/// variable bindings alone (`respellClaimPredicate`). It resolves nothing: a ground
-/// projection the substitution mints (a concrete argument substituted into a
-/// projection spelling) stays spelled, and the op carrying it asks impl
-/// selection for it where it stands, so a clone is normalized by the one
-/// solver every other spelling is.
-AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &subst,
-                                                  CloneKind kind);
+/// Builds a type replacer that stamps `variables`, and `projections` the
+/// ground projections a call's substitution closes over, into a clone of kind
+/// `kind`: a template's clone receives each binding once, an instance's the
+/// closed call substitution chased to its fixed point; a claim's predicate
+/// receives the variable bindings alone (`respellClaimPredicate`). It resolves
+/// nothing: a ground projection the substitution mints (a concrete argument
+/// substituted into a projection spelling) stays spelled, and the op carrying
+/// it asks impl selection for it where it stands, so a clone is normalized by
+/// the one solver every other spelling is.
+AttrTypeReplacer makeTypeReplacerFromSubstitution(
+    const SpecializationMap &variables, CloneKind kind,
+    const ProjectionBindings &projections = ProjectionBindings());
 
-/// Builds a type replacer that stamps `subst`'s bindings of type variables and
-/// nothing else: no projection binding, so a spelling it stamps keeps every
-/// projection it spells. The result of a call computing
-/// evidence is stamped by it, since the variables of the requirement the call
-/// computes are read off that spelling (`MethodCallOp::inlineEvidence`).
+/// Builds a type replacer that stamps `variables` and nothing else: no
+/// projection binding, so a spelling it stamps keeps every projection it
+/// spells. The result of a call computing evidence is stamped by it, since the
+/// variables of the requirement the call computes are read off that spelling
+/// (`MethodCallOp::inlineEvidence`).
 AttrTypeReplacer makeSpellingReplacerFromSubstitution(
-    const DenseMap<Type, Type> &subst);
+    const SpecializationMap &variables);
 
 /// Clones `source`'s blocks into `dest` before `before` under `mapping`, then
 /// stamps every block argument, op result and attribute of the clones by
@@ -55,15 +57,16 @@ void cloneRegionStampedBefore(OpBuilder &builder, Region &source, Region &dest,
 /// body become a `func.return` over the same operands; nothing else in the body
 /// changes kind. A method carries no visibility, so a clone into a trait or impl
 /// takes none, and a `func.func` takes the polymorph's.
-FunctionOpInterface specializePolymorph(RewriterBase& rewriter,
-                                        FunctionOpInterface polymorph,
-                                        StringRef instanceName,
-                                        const DenseMap<Type,Type> &substitution);
+FunctionOpInterface specializePolymorph(
+    RewriterBase &rewriter, FunctionOpInterface polymorph,
+    StringRef instanceName, const SpecializationMap &variables,
+    const ProjectionBindings &projections = ProjectionBindings());
 
-void specializePolymorphicRegion(OpBuilder& builder,
-                                 Region& polymorph,
-                                 Region& monomorph,
-                                 const DenseMap<Type,Type> &substitution);
+/// Clones `polymorph` into the empty `monomorph`, stamped under `variables`: as
+/// an instance's body, or as a template's where the builder stands inside one.
+void specializePolymorphicRegion(OpBuilder &builder, Region &polymorph,
+                                 Region &monomorph,
+                                 const SpecializationMap &variables);
 
 /// The identity of one instance a template is cut into: the template, the
 /// arguments its type parameters take, and the evidence each of its formal

@@ -71,20 +71,22 @@ static void cloneRegionWithTypeReplacement(
 // argument into a projection spelling can mint a ground projection no
 // substitution entry closes; it stays spelled, for the op carrying it to ask
 // impl selection about.
-AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &subst,
-                                                  CloneKind kind) {
+AttrTypeReplacer makeTypeReplacerFromSubstitution(
+    const SpecializationMap &variableBindings, CloneKind kind,
+    const ProjectionBindings &projectionBindings) {
   // The seal keeps a bare equality immutable under this rewrite; the clone
   // rule below is the one mover, and it reaches an equality only through the
   // claim that wraps it.
   AttrTypeReplacer replacer = makeEndpointSealedReplacer();
   bool isTemplate = kind == CloneKind::Template;
-  // The substitution is split once, into its variable bindings and the
-  // bindings of every other key, and every type the clone visits reads both.
-  auto variables = std::make_shared<SpecializationMap>(variableBindingsOf(subst));
+  // The replacer outlives its caller's maps, so it holds its own copies, and
+  // every type the clone visits reads both.
+  auto variables = std::make_shared<SpecializationMap>(variableBindings);
+  auto projections = std::make_shared<ProjectionBindings>(projectionBindings);
   auto stamp = [=](Type t) -> Type {
     auto others = [&](Type key) -> std::optional<Type> {
-      auto it = subst.find(key);
-      return it == subst.end() ? std::nullopt : std::optional<Type>(it->second);
+      auto projection = dyn_cast<ProjectionType>(key);
+      return projection ? projections->lookup(projection) : std::nullopt;
     };
     return isTemplate
                ? applySubstitution(*variables, others, t,
@@ -148,12 +150,8 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &sub
 }
 
 AttrTypeReplacer makeSpellingReplacerFromSubstitution(
-    const DenseMap<Type, Type> &subst) {
-  llvm::DenseMap<Type, Type> variableBindings;
-  for (auto [key, value] : subst)
-    if (isa<GenericTypeInterface>(key))
-      variableBindings.try_emplace(key, value);
-  return makeTypeReplacerFromSubstitution(variableBindings, CloneKind::Template);
+    const SpecializationMap &variables) {
+  return makeTypeReplacerFromSubstitution(variables, CloneKind::Template);
 }
 
 /// Whether the block a builder inserts into stands inside a trait, impl, or
@@ -195,10 +193,11 @@ static void endWithFunctionReturns(RewriterBase &rewriter,
   }
 }
 
-FunctionOpInterface specializePolymorph(RewriterBase& rewriter,
+FunctionOpInterface specializePolymorph(RewriterBase &rewriter,
                                         FunctionOpInterface polymorph,
                                         StringRef instanceName,
-                                        const DenseMap<Type,Type> &substitution) {
+                                        const SpecializationMap &variables,
+                                        const ProjectionBindings &projections) {
   if (polymorph.isExternal()) {
     polymorph.emitError("cannot specialize external function");
     return nullptr;
@@ -214,7 +213,7 @@ FunctionOpInterface specializePolymorph(RewriterBase& rewriter,
   // source, and its spelling resolves when it is cloned for a concrete
   // instance. A monomorphic clone receives the full call substitution.
   AttrTypeReplacer variableReplacer =
-      makeSpellingReplacerFromSubstitution(substitution);
+      makeSpellingReplacerFromSubstitution(variables);
 
   auto oldFunctionType = cast<FunctionType>(polymorph.getFunctionType());
   auto substitutedType =
@@ -222,8 +221,8 @@ FunctionOpInterface specializePolymorph(RewriterBase& rewriter,
 
   bool cloneIsTemplate = isPolymorphicType(Type(substitutedType)) ||
                          insertionStandsInsideTemplate(builder);
-  AttrTypeReplacer fullReplacer =
-      makeTypeReplacerFromSubstitution(substitution, CloneKind::Instance);
+  AttrTypeReplacer fullReplacer = makeTypeReplacerFromSubstitution(
+      variables, CloneKind::Instance, projections);
   AttrTypeReplacer &replacer = cloneIsTemplate ? variableReplacer : fullReplacer;
 
   auto newFunctionType =
@@ -268,10 +267,9 @@ FunctionOpInterface specializePolymorph(RewriterBase& rewriter,
   return instance;
 }
 
-void specializePolymorphicRegion(OpBuilder& builder,
-                                  Region& polymorph,
-                                  Region& monomorph,
-                                  const DenseMap<Type,Type> &subst) {
+void specializePolymorphicRegion(OpBuilder &builder, Region &polymorph,
+                                 Region &monomorph,
+                                 const SpecializationMap &subst) {
   assert(monomorph.empty() && "Region is not empty");
 
   // A region cloned into a template keeps its spelling: its projections

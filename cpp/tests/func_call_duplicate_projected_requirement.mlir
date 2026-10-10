@@ -36,9 +36,9 @@ module {
   }
 
   func.func private @f(
-    %x: !trait.poly<3>,
-    %t2: !trait.claim<@T2[!trait.poly<3>]>,
-    %t1: !trait.claim<@T1[!trait.proj<@T0[!trait.poly<3>], "A">]>
+    %x: !trait.poly<0>,
+    %t2: !trait.claim<@T2[!trait.poly<0>]>,
+    %t1: !trait.claim<@T1[!trait.proj<@T0[!trait.poly<0>], "A">]>
   ) -> i32 {
     %c0 = arith.constant 0 : i32
     return %c0 : i32

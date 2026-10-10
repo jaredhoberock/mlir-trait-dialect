@@ -20,8 +20,8 @@ trait.impl private @Assoc_i64(%self: !trait.claim<@Assoc[i64]>) { trait.assoc_ty
 // not resolved: it stays proj<@Assoc[i64], "Out">, not i32.
 // CHECK: func.func private @tpl_
 // CHECK-SAME: !trait.claim<!trait.proj<@Assoc[i64], "Out"> = i32>
-func.func private @tpl(%c: !trait.claim<!trait.proj<@Assoc[!S], "Out"> = i32>, %x: !S) -> !S {
-  return %x : !S
+func.func private @tpl(%c: !trait.claim<!trait.proj<@Assoc[!trait.poly<0>], "Out"> = i32>, %x: !trait.poly<0>) -> !trait.poly<0> {
+  return %x : !trait.poly<0>
 }
 
 // CHECK-LABEL: func.func @main

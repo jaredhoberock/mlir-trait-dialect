@@ -54,10 +54,10 @@ trait.impl private @Trait_impl_tuple(%self_claim: !trait.claim<@Trait[tuple<!tra
 
 !T2 = !trait.poly<2>
 
-func.func private @poly_fn(%arg: tuple<!T2>, %t_claim: !trait.claim<@Trait[!T2]>) -> i32 {
-  %d = trait.derive @Trait[tuple<!T2>] from @Trait_impl_tuple[!trait.poly<2>] given(%t_claim) : (!trait.claim<@Trait[!T2]>)
-  %res = trait.method.call %d @Trait[tuple<!T2>]::@method(%arg)
-    : (tuple<!T2>) -> i32
+func.func private @poly_fn(%arg: tuple<!trait.poly<0>>, %t_claim: !trait.claim<@Trait[!trait.poly<0>]>) -> i32 {
+  %d = trait.derive @Trait[tuple<!trait.poly<0>>] from @Trait_impl_tuple[!trait.poly<0>] given(%t_claim) : (!trait.claim<@Trait[!trait.poly<0>]>)
+  %res = trait.method.call %d @Trait[tuple<!trait.poly<0>>]::@method(%arg)
+    : (tuple<!trait.poly<0>>) -> i32
   return %res : i32
 }
 
@@ -76,11 +76,11 @@ func.func @test_basic_derive(%arg: tuple<i32>) -> i32 {
 
 !T3 = !trait.poly<3>
 
-func.func private @double_wrap(%arg: tuple<tuple<!T3>>, %t_claim: !trait.claim<@Trait[!T3]>) -> i32 {
-  %d1 = trait.derive @Trait[tuple<!T3>] from @Trait_impl_tuple[!trait.poly<3>] given(%t_claim) : (!trait.claim<@Trait[!T3]>)
-  %d2 = trait.derive @Trait[tuple<tuple<!T3>>] from @Trait_impl_tuple[tuple<!trait.poly<3>>] given(%d1) : (!trait.claim<@Trait[tuple<!T3>]>)
-  %res = trait.method.call %d2 @Trait[tuple<tuple<!T3>>]::@method(%arg)
-    : (tuple<tuple<!T3>>) -> i32
+func.func private @double_wrap(%arg: tuple<tuple<!trait.poly<0>>>, %t_claim: !trait.claim<@Trait[!trait.poly<0>]>) -> i32 {
+  %d1 = trait.derive @Trait[tuple<!trait.poly<0>>] from @Trait_impl_tuple[!trait.poly<0>] given(%t_claim) : (!trait.claim<@Trait[!trait.poly<0>]>)
+  %d2 = trait.derive @Trait[tuple<tuple<!trait.poly<0>>>] from @Trait_impl_tuple[tuple<!trait.poly<0>>] given(%d1) : (!trait.claim<@Trait[tuple<!trait.poly<0>>]>)
+  %res = trait.method.call %d2 @Trait[tuple<tuple<!trait.poly<0>>>]::@method(%arg)
+    : (tuple<tuple<!trait.poly<0>>>) -> i32
   return %res : i32
 }
 
@@ -128,10 +128,10 @@ trait.impl private @TraitB_from_TraitA(%self_claim: !trait.claim<@TraitB[!trait.
 
 !T7 = !trait.poly<7>
 
-func.func private @cross_trait(%arg: !T7, %a_claim: !trait.claim<@TraitA[!T7]>) -> i32 {
-  %b = trait.derive @TraitB[!T7] from @TraitB_from_TraitA[!trait.poly<7>] given(%a_claim) : (!trait.claim<@TraitA[!T7]>)
-  %res = trait.method.call %b @TraitB[!T7]::@method_b(%arg)
-    : (!T7) -> i32
+func.func private @cross_trait(%arg: !trait.poly<0>, %a_claim: !trait.claim<@TraitA[!trait.poly<0>]>) -> i32 {
+  %b = trait.derive @TraitB[!trait.poly<0>] from @TraitB_from_TraitA[!trait.poly<0>] given(%a_claim) : (!trait.claim<@TraitA[!trait.poly<0>]>)
+  %res = trait.method.call %b @TraitB[!trait.poly<0>]::@method_b(%arg)
+    : (!trait.poly<0>) -> i32
   return %res : i32
 }
 
@@ -172,13 +172,13 @@ trait.impl private @TraitC_impl_tuple(%self_claim: !trait.claim<@TraitC[tuple<!t
 
 !T10 = !trait.poly<10>
 
-func.func private @multi_assumption(%arg: tuple<!T10>,
-                             %a_claim: !trait.claim<@TraitA[!T10]>,
-                             %c_claim: !trait.claim<@TraitC[!T10]>) -> i32 {
-  %d = trait.derive @TraitC[tuple<!T10>] from @TraitC_impl_tuple[!trait.poly<10>] given(%a_claim, %c_claim)
-    : (!trait.claim<@TraitA[!T10]>, !trait.claim<@TraitC[!T10]>)
-  %res = trait.method.call %d @TraitC[tuple<!T10>]::@method_c(%arg)
-    : (tuple<!T10>) -> i32
+func.func private @multi_assumption(%arg: tuple<!trait.poly<0>>,
+                             %a_claim: !trait.claim<@TraitA[!trait.poly<0>]>,
+                             %c_claim: !trait.claim<@TraitC[!trait.poly<0>]>) -> i32 {
+  %d = trait.derive @TraitC[tuple<!trait.poly<0>>] from @TraitC_impl_tuple[!trait.poly<0>] given(%a_claim, %c_claim)
+    : (!trait.claim<@TraitA[!trait.poly<0>]>, !trait.claim<@TraitC[!trait.poly<0>]>)
+  %res = trait.method.call %d @TraitC[tuple<!trait.poly<0>>]::@method_c(%arg)
+    : (tuple<!trait.poly<0>>) -> i32
   return %res : i32
 }
 

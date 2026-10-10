@@ -30,11 +30,11 @@ trait.impl private @Has_tuple_m1(%self: !trait.claim<@Has[tuple<!trait.poly<0>>]
   trait.assoc_type @A<[!trait.poly<1>]> = !trait.poly<1>
 }
 
-func.func private @g(%x: !T,
-                     %v: !trait.proj<@Has[tuple<!T>], "A", [!V]>,
-                     %c: !trait.claim<@M0[!T]>)
-    -> !trait.proj<@Has[tuple<!T>], "A", [!V]> {
-  return %v : !trait.proj<@Has[tuple<!T>], "A", [!V]>
+func.func private @g(%x: !trait.poly<0>,
+                     %v: !trait.proj<@Has[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]>,
+                     %c: !trait.claim<@M0[!trait.poly<0>]>)
+    -> !trait.proj<@Has[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]> {
+  return %v : !trait.proj<@Has[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]>
 }
 
 // The clone is monomorphic: T := i64 from the first operand, V := i1 from the

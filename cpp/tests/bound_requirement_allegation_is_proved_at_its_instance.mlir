@@ -35,14 +35,14 @@ trait.impl private @Holds_i32(%self: !trait.claim<@Holds[i32]>) {
   }
 }
 
-func.func private @use_rule(%m: !trait.claim<@Rule[!M]>, %x: !M) -> i64 {
-  %r = trait.method.call %m @Rule[!M]::@size(%x) : (!M) -> i64
+func.func private @use_rule(%m: !trait.claim<@Rule[!trait.poly<0>]>, %x: !trait.poly<0>) -> i64 {
+  %r = trait.method.call %m @Rule[!trait.poly<0>]::@size(%x) : (!trait.poly<0>) -> i64
   return %r : i64
 }
 
-func.func private @f(%h: !trait.claim<@Holds[!T]>, %x: !trait.proj<@Holds[!T], "C", [i1]>) -> i64 {
-  %m = trait.method.call %h @Holds[!T]::@requirement_0() : () -> !trait.claim<@Rule[!trait.proj<@Holds[!T], "C", [i1]>]>
-  %r = trait.func.call @use_rule(%m, %x) : (!trait.claim<@Rule[!trait.proj<@Holds[!T], "C", [i1]>]>, !trait.proj<@Holds[!T], "C", [i1]>) -> i64
+func.func private @f(%h: !trait.claim<@Holds[!trait.poly<0>]>, %x: !trait.proj<@Holds[!trait.poly<0>], "C", [i1]>) -> i64 {
+  %m = trait.method.call %h @Holds[!trait.poly<0>]::@requirement_0() : () -> !trait.claim<@Rule[!trait.proj<@Holds[!trait.poly<0>], "C", [i1]>]>
+  %r = trait.func.call @use_rule(%m, %x) : (!trait.claim<@Rule[!trait.proj<@Holds[!trait.poly<0>], "C", [i1]>]>, !trait.proj<@Holds[!trait.poly<0>], "C", [i1]>) -> i64
   return %r : i64
 }
 

@@ -27,7 +27,7 @@ trait.impl private @Has_w1(%self: !trait.claim<@Has[tuple<!trait.poly<0>>]>) { t
 trait.impl private @Has_w2(%self: !trait.claim<@Has[tuple<!trait.poly<0>, !trait.poly<0>>]>) { trait.assoc_type @Out = !trait.proj<@Has[!trait.poly<0>], "Out"> }
 trait.impl private @Has_mid(%self: !trait.claim<@Has[i32]>) { trait.assoc_type @Out = i64 }
 
-func.func private @gen(%c: !trait.claim<!trait.proj<@Has[tuple<!U>], "Out"> = !trait.proj<@Has[tuple<!U, !U>], "Out">>) -> () {
+func.func private @gen(%c: !trait.claim<!trait.proj<@Has[tuple<!trait.poly<0>>], "Out"> = !trait.proj<@Has[tuple<!trait.poly<0>, !trait.poly<0>>], "Out">>) -> () {
   return
 }
 

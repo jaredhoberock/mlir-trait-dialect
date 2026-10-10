@@ -20,9 +20,9 @@ trait.impl private @Same_i32(%self: !trait.claim<@Same[i32]>) {
   %a = trait.witness proj_resolve !trait.proj<@Same[i32], "A"> resolves i64 by @Same_i32 : !trait.claim<!trait.proj<@Same[i32], "A"> = i64>
   trait.return %a : !trait.claim<!trait.proj<@Same[i32], "A"> = i64>
 }
-func.func private @read(%s: !trait.claim<@Same[!T]>, %v: !trait.proj<@Same[!T], "A">) -> i64 {
-  %e = trait.project %s[0] : !trait.claim<@Same[!T]> -> !trait.claim<!trait.proj<@Same[!T], "A"> = i64>
-  %r = trait.coerce %v : !trait.proj<@Same[!T], "A"> to i64 via (%e) : (!trait.claim<!trait.proj<@Same[!T], "A"> = i64>)
+func.func private @read(%s: !trait.claim<@Same[!trait.poly<0>]>, %v: !trait.proj<@Same[!trait.poly<0>], "A">) -> i64 {
+  %e = trait.project %s[0] : !trait.claim<@Same[!trait.poly<0>]> -> !trait.claim<!trait.proj<@Same[!trait.poly<0>], "A"> = i64>
+  %r = trait.coerce %v : !trait.proj<@Same[!trait.poly<0>], "A"> to i64 via (%e) : (!trait.claim<!trait.proj<@Same[!trait.poly<0>], "A"> = i64>)
   return %r : i64
 }
 func.func @main() -> i64 {

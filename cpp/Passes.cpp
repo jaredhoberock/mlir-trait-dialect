@@ -929,8 +929,9 @@ specializeCallTarget(CallOpT op, PatternRewriter &rewriter,
   // The results are stamped as the instance is (`CloneKind::Instance`), so a
   // claim among them keeps its predicate as the instance's signature does.
   SpecializedCallTarget target;
-  AttrTypeReplacer stamp =
-      makeTypeReplacerFromSubstitution(subst->toTypeMap(), CloneKind::Instance);
+  AttrTypeReplacer stamp = makeTypeReplacerFromSubstitution(
+      subst->getSpecialization(), CloneKind::Instance,
+      subst->getProjectionBindings());
   for (Type r : op.getResultTypes()) {
     Type newR = stamp.replace(r);
     if (isPolymorphicType(newR)) {

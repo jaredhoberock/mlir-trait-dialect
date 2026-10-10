@@ -25,20 +25,20 @@ trait.trait private @Other(%self: !trait.claim<@Other[!trait.poly<0>]>) {
 }
 
 !A = !trait.poly<2>
-func.func private @inner(!A, !trait.claim<@Trait[!A]>, !trait.claim<@Other[!A]>,
-    !trait.claim<!trait.proj<@Other[!A], "Item"> = !trait.proj<@Trait[!A], "Item">>)
-    -> !trait.proj<@Other[!A], "Item">
+func.func private @inner(!trait.poly<0>, !trait.claim<@Trait[!trait.poly<0>]>, !trait.claim<@Other[!trait.poly<0>]>,
+    !trait.claim<!trait.proj<@Other[!trait.poly<0>], "Item"> = !trait.proj<@Trait[!trait.poly<0>], "Item">>)
+    -> !trait.proj<@Other[!trait.poly<0>], "Item">
 
 !B = !trait.poly<3>
-func.func @outer(%x: !B, %t: !trait.claim<@Trait[!B]>, %o: !trait.claim<@Other[!B]>,
-    %eq: !trait.claim<!trait.proj<@Trait[!B], "Item"> = !trait.proj<@Other[!B], "Item">>)
-    -> !trait.proj<@Other[!B], "Item"> {
+func.func @outer(%x: !trait.poly<0>, %t: !trait.claim<@Trait[!trait.poly<0>]>, %o: !trait.claim<@Other[!trait.poly<0>]>,
+    %eq: !trait.claim<!trait.proj<@Trait[!trait.poly<0>], "Item"> = !trait.proj<@Other[!trait.poly<0>], "Item">>)
+    -> !trait.proj<@Other[!trait.poly<0>], "Item"> {
   %rev = trait.witness compose(%eq)
-    : (!trait.claim<!trait.proj<@Trait[!B], "Item"> = !trait.proj<@Other[!B], "Item">>)
-    : !trait.claim<!trait.proj<@Other[!B], "Item"> = !trait.proj<@Trait[!B], "Item">>
+    : (!trait.claim<!trait.proj<@Trait[!trait.poly<0>], "Item"> = !trait.proj<@Other[!trait.poly<0>], "Item">>)
+    : !trait.claim<!trait.proj<@Other[!trait.poly<0>], "Item"> = !trait.proj<@Trait[!trait.poly<0>], "Item">>
   %r = trait.func.call @inner(%x, %t, %o, %rev)
-    : (!B, !trait.claim<@Trait[!B]>, !trait.claim<@Other[!B]>,
-       !trait.claim<!trait.proj<@Other[!B], "Item"> = !trait.proj<@Trait[!B], "Item">>)
-    -> !trait.proj<@Other[!B], "Item">
-  return %r : !trait.proj<@Other[!B], "Item">
+    : (!trait.poly<0>, !trait.claim<@Trait[!trait.poly<0>]>, !trait.claim<@Other[!trait.poly<0>]>,
+       !trait.claim<!trait.proj<@Other[!trait.poly<0>], "Item"> = !trait.proj<@Trait[!trait.poly<0>], "Item">>)
+    -> !trait.proj<@Other[!trait.poly<0>], "Item">
+  return %r : !trait.proj<@Other[!trait.poly<0>], "Item">
 }

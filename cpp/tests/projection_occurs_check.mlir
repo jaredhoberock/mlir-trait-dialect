@@ -36,23 +36,23 @@ trait.impl private @Callable_i64(%self_claim: !trait.claim<@Callable[i64]>) {
 }
 
 // fn apply<F: Callable>(f: F, claim) -> Callable[F]::Output
-func.func private @apply(%f: !trait.poly<10>,
-                 %claim: !trait.claim<@Callable[!trait.poly<10>]>)
-    -> !trait.proj<@Callable[!trait.poly<10>], "Output"> {
-  %r = trait.method.call %claim @Callable[!trait.poly<10>]::@call(%f)
-    : (!trait.poly<10>) -> !trait.proj<@Callable[!trait.poly<10>], "Output">
-  return %r : !trait.proj<@Callable[!trait.poly<10>], "Output">
+func.func private @apply(%f: !trait.poly<0>,
+                 %claim: !trait.claim<@Callable[!trait.poly<0>]>)
+    -> !trait.proj<@Callable[!trait.poly<0>], "Output"> {
+  %r = trait.method.call %claim @Callable[!trait.poly<0>]::@call(%f)
+    : (!trait.poly<0>) -> !trait.proj<@Callable[!trait.poly<0>], "Output">
+  return %r : !trait.proj<@Callable[!trait.poly<0>], "Output">
 }
 
 // fn wrap_and_apply<T: Callable>(x: T, claim) -> Callable[T]::Output
-func.func private @wrap_and_apply(%x: !trait.poly<20>,
-                          %claim: !trait.claim<@Callable[!trait.poly<20>]>)
-    -> !trait.proj<@Callable[!trait.poly<20>], "Output"> {
+func.func private @wrap_and_apply(%x: !trait.poly<0>,
+                          %claim: !trait.claim<@Callable[!trait.poly<0>]>)
+    -> !trait.proj<@Callable[!trait.poly<0>], "Output"> {
   %r = trait.func.call @apply(%x, %claim)
-      : (!trait.poly<20>,
-         !trait.claim<@Callable[!trait.poly<20>]>)
-      -> !trait.proj<@Callable[!trait.poly<20>], "Output">
-  return %r : !trait.proj<@Callable[!trait.poly<20>], "Output">
+      : (!trait.poly<0>,
+         !trait.claim<@Callable[!trait.poly<0>]>)
+      -> !trait.proj<@Callable[!trait.poly<0>], "Output">
+  return %r : !trait.proj<@Callable[!trait.poly<0>], "Output">
 }
 
 // The call keeps @wrap_and_apply's declared @Callable::Output projection

@@ -1538,10 +1538,16 @@ def FuncCallOp : TraitDialectOp<"func.call", [
     /// verifier passes none and compares the two signatures as written.
     FailureOr<SpecializationMap> buildParameterSpecialization(llvm::function_ref<Type(Type)> selection, llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
-    // The type parameters the callee's signature binds, in first-occurrence
-    // order.
+    // The type parameters the callee's signature binds: the labels below the
+    // bound it spells, a label being a position in the declaration.
     SmallVector<GenericTypeInterface, 4> getCalleeTypeParams() {
-      return getTypeParametersIn(*getCalleeFunctionType());
+      SmallVector<GenericTypeInterface, 4> parameters;
+      for (unsigned label = 0,
+                    bound = getLabelBound(Type(*getCalleeFunctionType()));
+           label < bound; ++label)
+        parameters.push_back(cast<GenericTypeInterface>(
+            Type(PolyType::get(getContext(), label))));
+      return parameters;
     }
 
   }];

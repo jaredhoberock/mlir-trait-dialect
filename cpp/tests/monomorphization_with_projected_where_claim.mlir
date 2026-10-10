@@ -45,12 +45,12 @@ trait.impl private @Has_impl(%self: !trait.claim<@Has[f64]>) {
 // CHECK: %[[ID:.*]] = call @Has_impl_{{h[0-9a-f]+}}_get
 // CHECK: %[[RES:.*]] = call @MyEq_impl_{{h[0-9a-f]+}}_eq(%[[ID]], %[[ID]])
 // CHECK: return %[[RES]]
-func.func nested @f(%arg0: !trait.poly<3>, %arg1: !trait.claim<@Has[!trait.poly<3>]>) -> i1 {
-  %0 = trait.method.call %arg1 @Has[!trait.poly<3>]::@get(%arg0)
-    : (!trait.poly<3>) -> !trait.proj<@Has[!trait.poly<3>], "A">
-  %1 = trait.project %arg1[0] : !trait.claim<@Has[!trait.poly<3>]> -> !trait.claim<@MyEq[!trait.proj<@Has[!trait.poly<3>], "A">, !trait.proj<@Has[!trait.poly<3>], "A">]>
-  %2 = trait.method.call %1 @MyEq[!trait.proj<@Has[!trait.poly<3>], "A">, !trait.proj<@Has[!trait.poly<3>], "A">]::@eq(%0, %0)
-    : (!trait.proj<@Has[!trait.poly<3>], "A">, !trait.proj<@Has[!trait.poly<3>], "A">) -> i1
+func.func nested @f(%arg0: !trait.poly<0>, %arg1: !trait.claim<@Has[!trait.poly<0>]>) -> i1 {
+  %0 = trait.method.call %arg1 @Has[!trait.poly<0>]::@get(%arg0)
+    : (!trait.poly<0>) -> !trait.proj<@Has[!trait.poly<0>], "A">
+  %1 = trait.project %arg1[0] : !trait.claim<@Has[!trait.poly<0>]> -> !trait.claim<@MyEq[!trait.proj<@Has[!trait.poly<0>], "A">, !trait.proj<@Has[!trait.poly<0>], "A">]>
+  %2 = trait.method.call %1 @MyEq[!trait.proj<@Has[!trait.poly<0>], "A">, !trait.proj<@Has[!trait.poly<0>], "A">]::@eq(%0, %0)
+    : (!trait.proj<@Has[!trait.poly<0>], "A">, !trait.proj<@Has[!trait.poly<0>], "A">) -> i1
   return %2 : i1
 }
 

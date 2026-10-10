@@ -17,15 +17,15 @@ trait.trait private @Outer(%self: !trait.claim<@Outer[!S]>) {
   trait.assoc_type @Item
 }
 
-func.func private @callee(%t: !T,
+func.func private @callee(%t: !trait.poly<0>,
     %outer: !trait.claim<@Outer[i64]>,
-    %claim: !trait.claim<@Trait[!T, !trait.proj<@Outer[i64], "Item">]>) -> i64 {
+    %claim: !trait.claim<@Trait[!trait.poly<0>, !trait.proj<@Outer[i64], "Item">]>) -> i64 {
   %x = arith.constant 1 : i64
   %eq = trait.allege !trait.proj<@Outer[i64], "Item"> = i64
   %px = trait.coerce %x : i64 to !trait.proj<@Outer[i64], "Item">
     via (%eq) : (!trait.claim<!trait.proj<@Outer[i64], "Item"> = i64>)
-  %result = trait.method.call %claim @Trait[!T, !trait.proj<@Outer[i64], "Item">]::@method(%t, %px)
-    : (!T, !trait.proj<@Outer[i64], "Item">) -> i64
+  %result = trait.method.call %claim @Trait[!trait.poly<0>, !trait.proj<@Outer[i64], "Item">]::@method(%t, %px)
+    : (!trait.poly<0>, !trait.proj<@Outer[i64], "Item">) -> i64
   return %result : i64
 }
 

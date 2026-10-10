@@ -21,13 +21,13 @@ trait.impl private @Carry_any(%self: !trait.claim<@Carry[!trait.poly<0>, !trait.
   trait.assoc_type @Payload = !trait.poly<0>
 }
 
-func.func private @sink(%e: !trait.claim<!trait.proj<@Carry[!X, i8], "Payload"> = !X>) {
+func.func private @sink(%e: !trait.claim<!trait.proj<@Carry[!trait.poly<0>, i8], "Payload"> = !trait.poly<0>>) {
   return
 }
 
-func.func private @send(%x: !X) {
-  %e = trait.allege !trait.proj<@Carry[!X, i8], "Payload"> = !X
-  trait.func.call @sink(%e) : (!trait.claim<!trait.proj<@Carry[!X, i8], "Payload"> = !X>) -> ()
+func.func private @send(%x: !trait.poly<0>) {
+  %e = trait.allege !trait.proj<@Carry[!trait.poly<0>, i8], "Payload"> = !trait.poly<0>
+  trait.func.call @sink(%e) : (!trait.claim<!trait.proj<@Carry[!trait.poly<0>, i8], "Payload"> = !trait.poly<0>>) -> ()
   return
 }
 
@@ -38,7 +38,7 @@ func.func @main() {
 }
 
 // CHECK-LABEL: func.func private @send(
-// CHECK: trait.allege !trait.proj<@Carry[!trait.poly<3>, i8], "Payload"> = !trait.poly<3>
+// CHECK: trait.allege !trait.proj<@Carry[!trait.poly<0>, i8], "Payload"> = !trait.poly<0>
 // CHECK-LABEL: func.func private @send_
 // CHECK-NOT: trait.allege
 // CHECK: trait.witness proj_resolve !trait.proj<@Carry[i64, i8], "Payload"> resolves i64 by @Carry_any[i64, i8] given

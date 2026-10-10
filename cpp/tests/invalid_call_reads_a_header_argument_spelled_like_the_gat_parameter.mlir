@@ -9,6 +9,9 @@
 // would denote if the argument X, stamped in for the header parameter U, were
 // then read as an occurrence of W.
 
+// @k labels its parameters by position, so its first, Y, takes label 0 and X
+// takes label 1, the GAT parameter's.
+!Y = !trait.poly<0>
 !X = !trait.poly<1>
 !T = !trait.poly<10>
 !V = !trait.poly<11>
@@ -22,13 +25,13 @@ trait.impl private @Has_tuple(%self: !trait.claim<@Has[tuple<!trait.poly<0>>]>) 
   trait.assoc_type @A<[!trait.poly<1>]> = tuple<!trait.poly<0>, !trait.poly<1>>
 }
 
-func.func private @g(%x: !T,
-                     %v: !trait.proj<@Has[tuple<!T>], "A", [!V]>,
-                     %c: !trait.claim<@Has[tuple<!T>]>) -> !T {
-  return %x : !T
+func.func private @g(%x: !trait.poly<0>,
+                     %v: !trait.proj<@Has[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]>,
+                     %c: !trait.claim<@Has[tuple<!trait.poly<0>>]>) -> !trait.poly<0> {
+  return %x : !trait.poly<0>
 }
 
-func.func private @k(%x: !X, %v: tuple<i1, i1>) -> !X {
+func.func private @k(%y: !Y, %x: !X, %v: tuple<i1, i1>) -> !X {
   %c = trait.derive @Has[tuple<!X>] from @Has_tuple[!trait.poly<1>] given()
   // expected-error @below {{impl '@Has_tuple' binds the projection to 'tuple<!trait.poly<1>, i1>', not the certified resolution 'tuple<i1, i1>'}}
   %a = trait.witness proj_resolve !trait.proj<@Has[tuple<!X>], "A", [i1]> resolves tuple<i1, i1> by @Has_tuple[!trait.poly<1>]
@@ -41,6 +44,6 @@ func.func private @k(%x: !X, %v: tuple<i1, i1>) -> !X {
 }
 
 func.func @main(%a: i64, %b: tuple<i1, i1>) -> i64 {
-  %r = trait.func.call @k(%a, %b) : (i64, tuple<i1, i1>) -> i64
+  %r = trait.func.call @k(%a, %a, %b) : (i64, i64, tuple<i1, i1>) -> i64
   return %r : i64
 }
