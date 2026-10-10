@@ -12,6 +12,9 @@
 #include <mlir/Dialect/Arith/IR/Arith.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/Dialect/Func/Transforms/FuncConversions.h>
+#include <mlir/Dialect/ControlFlow/Transforms/StructuralTypeConversions.h>
+#include <mlir/Dialect/SCF/Transforms/Patterns.h>
+#include <mlir/Interfaces/ControlFlowInterfaces.h>
 #include <mlir/IR/PatternMatch.h>
 #include <mlir/Interfaces/InferTypeOpInterface.h>
 #include <mlir/Pass/Pass.h>
@@ -1134,6 +1137,69 @@ struct SettleCoercePattern : public OpRewritePattern<CoerceOp> {
   }
 };
 
+/// A position control flow writes, with the values the edges reaching it carry
+/// there: a successor input of a region-branch op -- one of its results, or an
+/// entry argument of one of its regions -- takes the successor operands the
+/// op's edges forward to it (`RegionBranchOpInterface`), and the argument of a
+/// non-entry block the operand each predecessor's branch forwards to it
+/// (`BranchOpInterface`). An edge carrying the position's own value back, a
+/// loop's unchanged iteration value, carries no other type and is not listed.
+/// `named` is false where a predecessor is no branch or makes the operand
+/// itself, so an edge reaches the position carrying no value the IR names.
+struct Join {
+  Value position;
+  SmallVector<Value> producers;
+  bool named = true;
+};
+
+/// The joins `op` holds, in the order its results and its regions' blocks
+/// state them.
+static SmallVector<Join> joinsOf(Operation *op) {
+  SmallVector<Join> joins;
+  if (auto branch = dyn_cast<RegionBranchOpInterface>(op)) {
+    RegionBranchInverseSuccessorMapping edges;
+    branch.getSuccessorInputOperandMapping(edges);
+    auto take = [&](Value position) {
+      auto forwarded = edges.find(position);
+      if (forwarded == edges.end())
+        return;
+      Join join{position};
+      for (OpOperand *operand : forwarded->second)
+        if (operand->get() != position)
+          join.producers.push_back(operand->get());
+      joins.push_back(std::move(join));
+    };
+    for (Value result : op->getResults())
+      take(result);
+    for (Region &region : op->getRegions())
+      if (!region.empty())
+        for (BlockArgument argument : region.front().getArguments())
+          take(argument);
+  }
+  for (Region &region : op->getRegions())
+    for (Block &block : llvm::drop_begin(region))
+      for (BlockArgument argument : block.getArguments()) {
+        Join join{argument};
+        for (auto pred = block.pred_begin(); pred != block.pred_end(); ++pred) {
+          auto branch = dyn_cast<BranchOpInterface>((*pred)->getTerminator());
+          if (!branch) {
+            join.named = false;
+            continue;
+          }
+          SuccessorOperands forwarded =
+              branch.getSuccessorOperands(pred.getSuccessorIndex());
+          if (forwarded.isOperandProduced(argument.getArgNumber())) {
+            join.named = false;
+            continue;
+          }
+          if (Value value = forwarded[argument.getArgNumber()]; value != argument)
+            join.producers.push_back(value);
+        }
+        joins.push_back(std::move(join));
+      }
+  return joins;
+}
+
 /// Monomorphizes result types for any op implementing
 /// InferTypeOpInterface once all operands are monomorphic.
 ///
@@ -1161,6 +1227,15 @@ struct MonomorphizeResultTypesPattern
       if (isPolymorphicType(ty))
         return rewriter.notifyMatchFailure(iface, "operands are still polymorphic");
     }
+
+    // A result more than one edge reaches is a join, written from every
+    // producer or not at all (`ProveJoinsPattern`). An op's inference reads
+    // one of them -- upstream's `scf.if` its then-region's yield -- which is
+    // right for a builder and no writer of a join.
+    if (llvm::any_of(joinsOf(iface), [](const Join &join) {
+          return isa<OpResult>(join.position) && join.producers.size() > 1;
+        }))
+      return rewriter.notifyMatchFailure(iface, "a result is a join");
 
     // try to compute specialized result types; inference failure defers this op
     SmallVector<Type> specializedTypes;
@@ -1208,22 +1283,15 @@ struct MonomorphizeResultTypesPattern
   }
 };
 
-/// Whether the result claims of `op` are views a pattern writes from the
-/// producer they repeat, never selection: a function's, of the values its
-/// returns hand back (`ProveFunctionResultsPattern`), and a call's, of its
-/// callee's signature (`ProveCallResultsPattern`). A function without a body
-/// has no returns, and its results are positions no producer writes.
-static bool resultClaimsAreViews(Operation *op) {
-  if (auto function = dyn_cast<func::FuncOp>(op))
-    return !function.isExternal();
-  return isa<func::CallOp, FuncCallOp, MethodCallOp>(op);
-}
-
-/// Respells `op` under `rewriter`: its attributes and its regions' block
-/// arguments by `replacer`, its results by `results` -- a function's result
-/// types stand in its signature, an attribute. Fails where nothing changes.
-static LogicalResult respellOp(Operation *op, AttrTypeReplacer &replacer,
-                               AttrTypeReplacer &results,
+/// Respells `op` under `rewriter`, each position by its writer's replacer.
+/// Selection, `selecting`, writes a declaration's positions, which no
+/// producer writes: a function's parameters, as its signature states them and
+/// its entry block receives them, and an external function's results. Every
+/// other position -- an op's result, a block's argument, a body's result, an
+/// op's own attribute -- is written by a producer or by the op stating it, and
+/// takes `views`, which proves no claim. Fails where nothing changes.
+static LogicalResult respellOp(Operation *op, AttrTypeReplacer &selecting,
+                               AttrTypeReplacer &views,
                                PatternRewriter &rewriter) {
   auto function = dyn_cast<func::FuncOp>(op);
   StringAttr signature =
@@ -1234,13 +1302,14 @@ static LogicalResult respellOp(Operation *op, AttrTypeReplacer &replacer,
     Attribute value = attr.getValue();
     if (attr.getName() == signature) {
       FunctionType type = function.getFunctionType();
+      AttrTypeReplacer &results = function.isExternal() ? selecting : views;
       auto inputs = llvm::map_to_vector(
-          type.getInputs(), [&](Type input) { return replacer.replace(input); });
+          type.getInputs(), [&](Type input) { return selecting.replace(input); });
       auto outputs = llvm::map_to_vector(
           type.getResults(), [&](Type output) { return results.replace(output); });
       value = TypeAttr::get(FunctionType::get(op->getContext(), inputs, outputs));
     } else {
-      value = replacer.replace(value);
+      value = views.replace(value);
     }
     attributesChanged |= value != attr.getValue();
     attributes.emplace_back(attr.getName(), value);
@@ -1251,11 +1320,11 @@ static LogicalResult respellOp(Operation *op, AttrTypeReplacer &replacer,
       retyped.emplace_back(value, type);
   };
   for (Value result : op->getResults())
-    retype(result, results);
+    retype(result, views);
   for (Region &region : op->getRegions())
     for (Block &block : region)
       for (BlockArgument argument : block.getArguments())
-        retype(argument, replacer);
+        retype(argument, function && block.isEntryBlock() ? selecting : views);
   if (!attributesChanged && retyped.empty())
     return failure();
   rewriter.modifyOpInPlace(op, [&] {
@@ -1267,26 +1336,29 @@ static LogicalResult respellOp(Operation *op, AttrTypeReplacer &replacer,
   return success();
 }
 
-/// Asks impl selection for the obligations an op spells and respells the op
-/// with the answers: each unproven monomorphic application claim becomes the
-/// claim proven at its own spelling, and each ground projection standing
-/// outside a claim the type it resolves to. A claim's predicate is never
-/// respelled (`respellClaimPredicate`).
+/// Asks impl selection for the claims a declaration spells and respells the
+/// op with the answers, and resolves the ground projections every op spells:
+/// each unproven monomorphic application claim at a declaration position
+/// becomes the claim proven at its own spelling, and each ground projection
+/// standing outside a claim the type it resolves to. A claim's predicate is
+/// never respelled (`respellClaimPredicate`).
 ///
-/// An op is the one place its own spelling is settled, so the obligation is
-/// asked for by the op that holds it, wherever it stands and whenever the op is
-/// reached -- a clone a substitution minted included -- as Rust's
-/// monomorphization collector asks `Instance::resolve` per use. Selection
-/// memoizes every answer, so every op spelling one claim names one proof. An
-/// equality's endpoints state a proposition and are left as spelled. Selection
-/// decides only a position no producer writes: a claim whose evidence its
-/// producer reads by position is that reading's to prove, so such a result
-/// keeps its spelling, as do the results of an op that infers its result types
-/// from its operands, whose evidence is theirs
-/// (`MonomorphizeResultTypesPattern`), and the result claims of a function and
-/// of a call, which repeat what a function returns and what a callee's
-/// signature says (`resultClaimsAreViews`). What selection refuses stays
-/// spelled for the stage's exit walk to name.
+/// Every claim-typed position has one writer, fixed by its kind. An op's
+/// result is its op's: inferred from its operands
+/// (`MonomorphizeResultTypesPattern`), a call's read off its callee's
+/// signature (`ProveCallResultsPattern`), or transcribed by the patterns that
+/// prove and coerce. A join is written from what control flow carries into it
+/// (`ProveJoinsPattern`), or by its op's dialect where the op transforms what
+/// it carries, and a body's result from what its returns hand back
+/// (`ProveFunctionResultsPattern`). Selection writes the positions no producer
+/// writes (`respellOp`), asked by the function that declares them whenever it
+/// is reached -- an instance a substitution minted included -- as Rust's
+/// monomorphization collector asks `Instance::resolve` per use. An op whose
+/// result law is undeclared leaves its claim unproven, and the stage's exit
+/// walk names it. Selection memoizes every answer, so every position spelling
+/// one claim names one proof. An equality's endpoints state a proposition and
+/// are left as spelled. What selection refuses stays spelled for the stage's
+/// exit walk to name.
 struct SettleSpelledObligationsPattern : public RewritePattern {
   ImplResolver &resolver;
 
@@ -1300,10 +1372,9 @@ struct SettleSpelledObligationsPattern : public RewritePattern {
     // (`ProveClaimResultPattern`).
     if (isa<AllegeOp>(op))
       return failure();
-    bool provesClaims = !producesPositionalEvidence(op) &&
-                        !isa<InferTypeOpInterface>(op) &&
-                        opMentionsType<ClaimType>(op);
-    if (!provesClaims && !opMentionsType<ProjectionType>(op))
+    bool declaresClaims =
+        isa<func::FuncOp>(op) && opMentionsType<ClaimType>(op);
+    if (!declaresClaims && !opMentionsType<ProjectionType>(op))
       return failure();
 
     SelectionSite site = SelectionSite::of(op);
@@ -1326,11 +1397,11 @@ struct SettleSpelledObligationsPattern : public RewritePattern {
     auto keepClaim = [](ClaimType claim) {
       return std::make_pair(Type(claim), WalkResult::skip());
     };
-    AttrTypeReplacer replacer;
-    replacer.addReplacement(resolveProjection);
-    replacer.addReplacement(
+    AttrTypeReplacer selecting;
+    selecting.addReplacement(resolveProjection);
+    selecting.addReplacement(
         [&](ClaimType claim) -> std::optional<std::pair<Type, WalkResult>> {
-          if (!provesClaims || !claim.isApplication() || claim.isProven() ||
+          if (!claim.isApplication() || claim.isProven() ||
               !claim.isMonomorphic())
             return keepClaim(claim);
           Answer<ClaimType> proven =
@@ -1342,8 +1413,7 @@ struct SettleSpelledObligationsPattern : public RewritePattern {
     views.addReplacement(resolveProjection);
     views.addReplacement(keepClaim);
 
-    if (failed(respellOp(op, replacer,
-                         resultClaimsAreViews(op) ? views : replacer, rewriter)))
+    if (failed(respellOp(op, selecting, views, rewriter)))
       return failure();
     // A call judges its callee's signature, so a respelled callee's calls are
     // asked again.
@@ -1393,6 +1463,57 @@ struct ProveFunctionResultsPattern : public OpRewritePattern<func::FuncOp> {
     if (auto uses = SymbolTable::getSymbolUses(function, getAnchorModule(function)))
       for (const SymbolTable::SymbolUse &use : *uses)
         rewriter.modifyOpInPlace(use.getUser(), [] {});
+    return success();
+  }
+};
+
+/// Gives a join the proofs control flow carries into it: where every edge
+/// reaching the position carries one type that settles it (`settles`), the
+/// position takes it, as a function's result takes what its returns hand back.
+/// A claim names one proof, so edges carrying two leave the position unproven,
+/// a value whose proof would depend on the path taken having no type, and the
+/// stage's exit walk names it with what each edge carries. Nothing selects
+/// for a join.
+struct ProveJoinsPattern : public RewritePattern {
+  ProveJoinsPattern(MLIRContext *ctx)
+    : RewritePattern(MatchAnyOpTypeTag(), /*benefit=*/1, ctx) {}
+
+  LogicalResult matchAndRewrite(Operation *op,
+                                PatternRewriter &rewriter) const override {
+    // The positions `joinsOf` lists: a region-branch op's results and its
+    // regions' arguments, and any op's later blocks' arguments. Only an op
+    // holding regions holds one.
+    if (op->getNumRegions() == 0)
+      return failure();
+    auto unsettled = [](Value value) {
+      return carriesUndischargedObligation(value.getType());
+    };
+    bool branches = isa<RegionBranchOpInterface>(op);
+    bool holdsAnObligation =
+        branches && llvm::any_of(op->getResults(), unsettled);
+    for (Region &region : op->getRegions())
+      for (Block &block : region)
+        if (branches || !block.isEntryBlock())
+          holdsAnObligation |= llvm::any_of(block.getArguments(), unsettled);
+    if (!holdsAnObligation)
+      return rewriter.notifyMatchFailure(op, "no join to settle");
+    SmallVector<std::pair<Value, Type>> retyped;
+    for (const Join &join : joinsOf(op)) {
+      if (!join.named || !unsettled(join.position))
+        continue;
+      llvm::SmallSetVector<Type, 1> supplied;
+      for (Value producer : join.producers)
+        supplied.insert(producer.getType());
+      if (supplied.size() == 1 &&
+          settles(supplied.front(), join.position.getType()))
+        retyped.emplace_back(join.position, supplied.front());
+    }
+    if (retyped.empty())
+      return rewriter.notifyMatchFailure(op, "no join settles");
+    rewriter.modifyOpInPlace(op, [&] {
+      for (auto [position, type] : retyped)
+        position.setType(type);
+    });
     return success();
   }
 };
@@ -1510,7 +1631,7 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
     patterns.add<SettleSpelledObligationsPattern>(ctx, resolver);
     patterns.add<MonomorphizeResultTypesPattern, ProveFunctionResultsPattern,
                  ProveCallResultsPattern<func::CallOp>,
-                 ProveCallResultsPattern<FuncCallOp>>(ctx);
+                 ProveCallResultsPattern<FuncCallOp>, ProveJoinsPattern>(ctx);
     patterns.add<SettleCoercePattern>(ctx, resolver);
     patterns.add<CallOpLowering<FuncCallOp>, CallOpLowering<MethodCallOp>>(
         ctx, resolver);
@@ -1589,32 +1710,37 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
   // walk and judged after it closes, because judging may insert into the
   // module.
   bool hasLeftovers = false;
-  SmallVector<std::pair<Operation *, ClaimType>> monomorphicClaims;
+  struct StandingClaim {
+    Operation *op;
+    ClaimType claim;
+    Value position;
+  };
+  SmallVector<StandingClaim> monomorphicClaims;
   module.walk<WalkOrder::PreOrder>([&](Operation *op) {
     if (isTemplate(op))
       return WalkResult::skip();
     if (auto coerce = dyn_cast<CoerceOp>(op); coerce && readThrough(coerce))
       return WalkResult::advance();
-    auto gather = [&](Type root, bool equalities) {
-      walkObligationSites(root, [&](Type sub) {
+    auto gather = [&](Value position, bool equalities) {
+      walkObligationSites(position.getType(), [&](Type sub) {
         auto claim = dyn_cast<ClaimType>(sub);
         if (!claim)
           return;
         bool standingEquality = equalities && claim.isEquality() &&
                                 claim.isMonomorphic();
         if (standingEquality || isUndischargedObligation(claim))
-          monomorphicClaims.emplace_back(op, claim);
+          monomorphicClaims.push_back({op, claim, position});
       });
     };
-    for (Type t : op->getResultTypes())
-      gather(t, /*equalities=*/true);
+    for (Value result : op->getResults())
+      gather(result, /*equalities=*/true);
     for (Region &r : op->getRegions())
       for (Block &b : r)
         for (Value arg : b.getArguments())
-          gather(arg.getType(), /*equalities=*/false);
+          gather(arg, /*equalities=*/false);
     return WalkResult::advance();
   });
-  for (auto [op, claim] : monomorphicClaims) {
+  for (auto [op, claim, position] : monomorphicClaims) {
     // An equality claim has no proof to await; it is settled when its endpoints
     // ground-resolve to one spelling through impls whose obligations hold, read
     // in the module the op carrying it stands in. A monomorphic equality that
@@ -1647,6 +1773,26 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
                                reading.chain);
         continue;
       }
+    }
+    // A join is written from what control flow carries into it, never by
+    // selection, so it is named with what each edge carries.
+    SmallVector<Join> joins = joinsOf(op);
+    Value at = position;
+    auto join = llvm::find_if(
+        joins, [&](const Join &each) { return each.position == at; });
+    if (join != joins.end()) {
+      InFlightDiagnostic report =
+          emitError(position.getLoc())
+          << "unproven monomorphic claim " << claim
+          << " after instantiate-monomorphs";
+      llvm::SmallSetVector<Type, 2> carried;
+      for (Value producer : join->producers)
+        carried.insert(producer.getType());
+      Diagnostic &note = report.attachNote();
+      note << "control flow joins it from ";
+      llvm::interleave(
+          carried, [&](Type type) { note << type; }, [&] { note << " and "; });
+      continue;
     }
     nameRefusal(op, claim);
     // A projection the claim's predicate spells stays spelled there; where
@@ -2060,6 +2206,12 @@ static LogicalResult erasePolymorphs(ModuleOp module) {
   populateFunctionOpInterfaceTypeConversionPattern<func::FuncOp>(patterns, opConverter);
   populateCallOpTypeConversionPattern(patterns, opConverter);
   populateReturnOpTypeConversionPattern(patterns, opConverter);
+  // A claim a join carries leaves with the claims control flow carries into
+  // it: upstream's structural conversions drop it along every edge, an scf
+  // op's results and region arguments with its yields, and a block's argument
+  // with each branch's operand.
+  scf::populateSCFStructuralTypeConversions(opConverter, patterns);
+  cf::populateCFStructuralTypeConversions(opConverter, patterns);
 
   ConversionTarget target(*ctx);
   populateErasePolymorphsLegality(target);
@@ -2132,8 +2284,13 @@ void populateErasePolymorphsLegality(ConversionTarget &target,
   }
   target.addDynamicallyLegalOp<func::FuncOp>([templatesIllegal](func::FuncOp func) {
     bool isTemplateFunc = isPolymorphicType(Type(func.getFunctionType()));
-    bool clean = !opMentionsType<ClaimType>(func) &&
-                 !opMentionsType<ProjectionType>(func);
+    // A function's own spelling is its attributes, its signature among them,
+    // which its entry block receives; a later block's arguments are converted
+    // with the branches that reach it (upstream's structural conversions).
+    bool clean = llvm::none_of(func->getAttrs(), [](NamedAttribute attr) {
+      return containsType<ClaimType>(attr.getValue()) ||
+             containsType<ProjectionType>(attr.getValue());
+    });
     // a template function is illegal in the readiness target, legal (and
     // recursively legal, below) in the pass's own
     if (templatesIllegal)

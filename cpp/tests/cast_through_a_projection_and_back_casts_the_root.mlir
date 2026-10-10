@@ -6,7 +6,8 @@
 // @p casts the unconditional impl @I from @T[i32] to @T[@A[i32]::Out]. Carrying
 // @I on to a further spelling is one cast of the root, not a cast of @p: @q
 // coerces the witness of @I through both steps' equalities, there and back, and
-// the call it serves runs @I's method.
+// the call it serves runs @I's method. The row pins a shape, not a change: the
+// stage ran it as well before a witness in a proof's body had to name a root.
 
 // CHECK: {{^}}37{{$}}
 

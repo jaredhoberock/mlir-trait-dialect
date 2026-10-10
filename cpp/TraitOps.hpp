@@ -153,7 +153,7 @@ namespace mlir::trait {
 /// that reading -- the impl's returned evidence inlined at the projection, the
 /// proof whose body the derive is, the input's proof respelled, the method's
 /// body inlined at the call -- and never by selecting on the result's
-/// spelling, so the stage's sweep proves no claim that result spells.
+/// spelling.
 bool producesPositionalEvidence(Operation *op);
 
 /// Ends `impl`'s body, an impl of `trait`, with a return of an allegation of

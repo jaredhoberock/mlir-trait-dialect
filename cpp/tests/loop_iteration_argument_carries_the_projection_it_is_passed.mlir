@@ -1,18 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 
-// RUN: not mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' 2>&1 | FileCheck %s
+// RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait,convert-scf-to-cf,convert-cf-to-llvm,convert-arith-to-llvm,convert-func-to-llvm,reconcile-unrealized-casts)' | mlir-runner -e main --entry-point-result=i64 | FileCheck %s
 
 // @run projects @Mark[i32] off its parameter, whose impl @Wrapped_i32 returns
 // @Nine's witness for it, and carries the projection through an scf.for. The
 // receiver's proof @H discharges the impl's own @Mark[i32] entry with @Seven.
-// The loop's iteration argument is a claim no proof spells, so the instance
-// asks selection for it and meets two impls of @Mark[i32]: the program is
-// refused rather than run through either.
+// The loop's iteration argument and result repeat what enters the loop, the
+// body handing the iteration value back unchanged, so they carry the
+// projection's evidence and the method called through the result runs
+// @Nine's; selection, which would meet two impls of @Mark[i32], is never asked
+// for them.
 
-// CHECK: error: incoherent impls (multiple satisfiable) for '!trait.claim<@Mark[i32]>'
-// CHECK: note: candidate
-// CHECK: note: candidate
+// CHECK: {{^}}9{{$}}
 
 !T = !trait.poly<0>
 trait.trait private @Mark(%self: !trait.claim<@Mark[!T]>) { trait.method @value() -> i64 }
