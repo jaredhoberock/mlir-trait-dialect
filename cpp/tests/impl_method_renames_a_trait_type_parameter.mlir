@@ -12,8 +12,8 @@ trait.trait private @T(%self: !trait.claim<@T[!trait.poly<0>]>) {
 }
 
 trait.impl private @I(%self: !trait.claim<@T[i32]>) {
-  trait.method @f(%x: i32, %m: !trait.poly<7>, %n: !trait.poly<8>) -> !trait.poly<7> {
-    trait.return %m : !trait.poly<7>
+  trait.method @f(%x: i32, %m: !trait.poly<0>, %n: !trait.poly<1>) -> !trait.poly<0> {
+    trait.return %m : !trait.poly<0>
   }
 }
 

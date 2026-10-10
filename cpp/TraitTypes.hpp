@@ -115,6 +115,18 @@ inline bool isPolymorphicType(Type root);
 /// a clone stamps one.
 enum class ClaimPredicates { Substituted, VariablesAlone };
 
+class SpecializationMap;
+
+/// The value a substitution binds to a key that is no type variable -- a
+/// projection, a proven claim -- or nothing where it binds none.
+using OtherBindings = llvm::function_ref<std::optional<Type>(Type)>;
+
+inline Type applySubstitution(const SpecializationMap &specialization,
+                              OtherBindings others, Type root,
+                              ClaimPredicates claims);
+inline Type applySubstitutionToFixedPoint(
+    const SpecializationMap &specialization, OtherBindings others, Type ty,
+    ClaimPredicates claims);
 inline Type applySubstitutionOnce(
     const llvm::DenseMap<Type, Type> &subst, Type root,
     ClaimPredicates claims = ClaimPredicates::Substituted);
@@ -165,7 +177,9 @@ public:
   // the result carries that projection still spelled as written: what resolves
   // it is a later reading through the caller's established context, or a stamp
   // through the module-capable replacer.
-  Type apply(Type ty) const { return applySubstitutionOnce(toTypeMap(), ty); }
+  Type apply(Type ty) const {
+    return applySubstitution(*this, nullptr, ty, ClaimPredicates::Substituted);
+  }
 
   static SpecializationMap fromTypeMap(const llvm::DenseMap<Type, Type> &subst) {
     SpecializationMap result;
@@ -254,7 +268,14 @@ public:
   // own value; the parameter bindings ride along under keys nothing the chase
   // mints spells again.
   Type apply(Type ty) const {
-    return applySubstitutionToFixedPoint(toTypeMap(), ty);
+    return applySubstitutionToFixedPoint(
+        specialization,
+        [&](Type key) -> std::optional<Type> {
+          auto projection = dyn_cast<ProjectionType>(key);
+          return projection ? projectionBindings.lookup(projection)
+                            : std::nullopt;
+        },
+        ty, ClaimPredicates::Substituted);
   }
 
   // The two components key disjoint kinds of type -- a parameter, a projection
@@ -398,13 +419,9 @@ inline bool isPurelyPolymorphicType(Type root) {
   return allParticipatingArePoly && sawPoly;
 }
 
-inline Type applySubstitutionOnce(const llvm::DenseMap<Type, Type> &subst,
-                                  Type root, ClaimPredicates claims) {
-  SpecializationMap specialization;
-  for (auto [key, value] : subst)
-    if (auto generic = dyn_cast<GenericTypeInterface>(key))
-      specialization.bind(generic, value);
-
+inline Type applySubstitution(const SpecializationMap &specialization,
+                              OtherBindings others, Type root,
+                              ClaimPredicates claims) {
   AttrTypeReplacer replacer = makeEndpointSealedReplacer();
   replacer.addReplacement([&](Type t) -> std::optional<std::pair<Type, WalkResult>> {
     if (auto generic = dyn_cast<GenericTypeInterface>(t)) {
@@ -420,32 +437,49 @@ inline Type applySubstitutionOnce(const llvm::DenseMap<Type, Type> &subst,
       return std::make_pair(specialized, WalkResult::skip());
     }
 
-    // Otherwise, check the full mixed map for non-generic bindings such as
-    // projections and evidence claims.
-    if (auto it = subst.find(t); it != subst.end()) {
-      return std::make_pair(it->second, WalkResult::advance());
-    }
+    // Otherwise, check the bindings of non-generic keys such as projections
+    // and evidence claims.
+    if (others)
+      if (std::optional<Type> value = others(t))
+        return std::make_pair(*value, WalkResult::advance());
 
     return std::nullopt;
   });
 
   // Move the equality endpoints the seal above holds as a leaf -- and under
-  // `VariablesAlone` an application's arguments too -- applying the
-  // generic-keyed part of the map alone: such a predicate receives variable
-  // bindings, never a projection or evidence binding resolved inside it
-  // (`respellClaimPredicate`).
-  llvm::DenseMap<Type, Type> genericKeyed = specialization.toTypeMap();
+  // `VariablesAlone` an application's arguments too -- applying the variable
+  // bindings alone: such a predicate receives variable bindings, never a
+  // projection or evidence binding resolved inside it (`respellClaimPredicate`).
   replacer.addReplacement(
-      [genericKeyed, claims](ClaimType claim)
-          -> std::optional<std::pair<Type, WalkResult>> {
+      [&](ClaimType claim) -> std::optional<std::pair<Type, WalkResult>> {
     if (claim.isApplication() && claims == ClaimPredicates::Substituted)
       return std::nullopt;
     return respellClaimPredicate(claim, [&](Type t) {
-      return applySubstitutionOnce(genericKeyed, t);
+      return applySubstitution(specialization, nullptr, t,
+                               ClaimPredicates::Substituted);
     });
   });
 
   return replacer.replace(root);
+}
+
+/// The variable bindings of `subst`, keyed by the parameters they bind.
+inline SpecializationMap
+variableBindingsOf(const llvm::DenseMap<Type, Type> &subst) {
+  SpecializationMap specialization;
+  for (auto [key, value] : subst)
+    if (auto generic = dyn_cast<GenericTypeInterface>(key))
+      specialization.bind(generic, value);
+  return specialization;
+}
+
+inline Type applySubstitutionOnce(const llvm::DenseMap<Type, Type> &subst,
+                                  Type root, ClaimPredicates claims) {
+  auto others = [&](Type key) -> std::optional<Type> {
+    auto it = subst.find(key);
+    return it == subst.end() ? std::nullopt : std::optional<Type>(it->second);
+  };
+  return applySubstitution(variableBindingsOf(subst), others, root, claims);
 }
 
 /// The pass budget the substitution fixed point spends before it gives up.
@@ -548,15 +582,26 @@ void emitObligationOverflow(Location anchor, TraitApplicationAttr app,
 /// map hands back here is the partial the budget stopped at, spelled as
 /// written, which every comparison downstream declines on.
 inline Type applySubstitutionToFixedPoint(
-    const llvm::DenseMap<Type, Type> &subst, Type ty, ClaimPredicates claims) {
+    const SpecializationMap &specialization, OtherBindings others, Type ty,
+    ClaimPredicates claims) {
   Type cur = ty;
   for (unsigned pass = 0; pass != kSubstitutionFixedPointMaxPasses; ++pass) {
-    Type next = applySubstitutionOnce(subst, cur, claims);
+    Type next = applySubstitution(specialization, others, cur, claims);
     if (!next || next == cur)
       break;
     cur = next;
   }
   return cur;
+}
+
+inline Type applySubstitutionToFixedPoint(
+    const llvm::DenseMap<Type, Type> &subst, Type ty, ClaimPredicates claims) {
+  auto others = [&](Type key) -> std::optional<Type> {
+    auto it = subst.find(key);
+    return it == subst.end() ? std::nullopt : std::optional<Type>(it->second);
+  };
+  return applySubstitutionToFixedPoint(variableBindingsOf(subst), others, ty,
+                                       claims);
 }
 
 /// The classes a set of type equalities carves out of the types they mention:
@@ -670,31 +715,37 @@ inline SmallVector<GenericTypeInterface,4> getGenericTypesIn(Type ty) {
 /// The declaration parameter `ty` is an occurrence of, or null when it is none.
 ///
 /// A type answers for itself through `getParameterAtom`; the parameter is the
-/// one label that answer carries. A label carries only itself; a kind-
-/// constraining wrapper carries the label it constrains; a computed type such
-/// as `!coord.weak_product<A,B>` carries two, which makes it a composite the
-/// caller decomposes rather than a parameter it binds.
+/// label that answer is. A label is an occurrence of itself, and a
+/// kind-constraining wrapper of the label it wraps; a type whose atom is no
+/// label is no occurrence of a parameter.
 inline GenericTypeInterface getParameterOccurrence(Type ty) {
   auto generic = dyn_cast<GenericTypeInterface>(ty);
   if (!generic)
     return {};
-  Type atom = generic.getParameterAtom();
-  GenericTypeInterface label;
-  for (GenericTypeInterface inside : getGenericTypesIn(atom)) {
-    if (getGenericTypesIn(Type(inside)).size() != 1)
-      continue;
-    if (label)
-      return {};
-    label = inside;
-  }
-  return label;
+  if (auto label = dyn_cast<PolyType>(generic.getParameterAtom()))
+    return cast<GenericTypeInterface>(Type(label));
+  return {};
 }
+
+/// The parameter count of a declaration whose header and where clause spell
+/// `spellings`: one past the largest label they spell. A declaration's labels
+/// are its parameters' positions (`verifyDenseLabels`), so this is the count
+/// without a reading of the order the parameters first occur in.
+unsigned getLabelBound(ArrayRef<Type> spellings);
+
+/// The number of parameters `spellings` bind at labels `first` and past.
+/// Fails where those labels skip a position: a declaration's parameters are
+/// labelled 0, 1, ..., and a member's own continue its declaration's without a
+/// gap.
+FailureOr<unsigned> countDenseLabelsFrom(ArrayRef<Type> spellings,
+                                         unsigned first);
 
 /// The type parameters `ty` binds, in first-occurrence order.
 ///
-/// This is the reader every declaration's parameter list comes from: the
-/// distinct parameters the generics `ty` spells are occurrences of, each
-/// counted once at the position it first appears.
+/// The distinct parameters the generics `ty` spells are occurrences of, each
+/// counted once at the position it first appears: the parameter list of a
+/// declaration that states none beyond the labels it spells, a function's
+/// signature.
 inline SmallVector<GenericTypeInterface, 4> getTypeParametersIn(Type ty) {
   SmallVector<GenericTypeInterface, 4> result;
   DenseSet<Type> seen;

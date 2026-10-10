@@ -24,8 +24,8 @@ trait.trait private @ConstMapper(%self: !trait.claim<@ConstMapper[!S]>) {
 }
 
 trait.impl private @ConstMapper_impl(%self_claim: !trait.claim<@ConstMapper[i32]>) {
-  trait.assoc_type @Result<[!T]> = i64
-  trait.method @map(%self: i32, %x: !T) -> i64 {
+  trait.assoc_type @Result<[!trait.poly<0>]> = i64
+  trait.method @map(%self: i32, %x: !trait.poly<0>) -> i64 {
     %c = arith.extsi %self : i32 to i64
     trait.return %c : i64
   }

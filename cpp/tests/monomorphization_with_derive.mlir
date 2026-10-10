@@ -41,8 +41,8 @@ trait.impl private @Trait_impl_i32(%self_claim: !trait.claim<@Trait[i32]>) {
 
 // Conditional impl: Trait[tuple<U>] given Trait[U]
 !T1 = !trait.poly<1>
-trait.impl private @Trait_impl_tuple(%self_claim: !trait.claim<@Trait[tuple<!T1>]>, %trait: !trait.claim<@Trait[!T1]>) {
-  trait.method @method(%self: tuple<!T1>) -> i32 {
+trait.impl private @Trait_impl_tuple(%self_claim: !trait.claim<@Trait[tuple<!trait.poly<0>>]>, %trait: !trait.claim<@Trait[!trait.poly<0>]>) {
+  trait.method @method(%self: tuple<!trait.poly<0>>) -> i32 {
     %res = arith.constant 1 : i32
     trait.return %res : i32
   }
@@ -99,14 +99,14 @@ func.func @test_chained_derive(%arg: tuple<tuple<i32>>) -> i32 {
 
 !T4 = !trait.poly<4>
 
-trait.trait private @TraitA(%self: !trait.claim<@TraitA[!T4]>) {
-  trait.method @method_a(!T4) -> i32
+trait.trait private @TraitA(%self: !trait.claim<@TraitA[!trait.poly<0>]>) {
+  trait.method @method_a(!trait.poly<0>) -> i32
 }
 
 !T5 = !trait.poly<5>
 
-trait.trait private @TraitB(%self: !trait.claim<@TraitB[!T5]>) {
-  trait.method @method_b(!T5) -> i32
+trait.trait private @TraitB(%self: !trait.claim<@TraitB[!trait.poly<0>]>) {
+  trait.method @method_b(!trait.poly<0>) -> i32
 }
 
 trait.impl private @TraitA_impl_i32(%self_claim: !trait.claim<@TraitA[i32]>) {
@@ -118,10 +118,10 @@ trait.impl private @TraitA_impl_i32(%self_claim: !trait.claim<@TraitA[i32]>) {
 
 // TraitB[U] holds whenever TraitA[U] holds
 !T6 = !trait.poly<6>
-trait.impl private @TraitB_from_TraitA(%self_claim: !trait.claim<@TraitB[!T6]>, %traita: !trait.claim<@TraitA[!T6]>) {
-  trait.method @method_b(%self: !T6) -> i32 {
-    %res = trait.method.call %traita @TraitA[!T6]::@method_a(%self)
-      : (!T6) -> i32
+trait.impl private @TraitB_from_TraitA(%self_claim: !trait.claim<@TraitB[!trait.poly<0>]>, %traita: !trait.claim<@TraitA[!trait.poly<0>]>) {
+  trait.method @method_b(%self: !trait.poly<0>) -> i32 {
+    %res = trait.method.call %traita @TraitA[!trait.poly<0>]::@method_a(%self)
+      : (!trait.poly<0>) -> i32
     trait.return %res : i32
   }
 }
@@ -150,8 +150,8 @@ func.func @test_cross_trait_derive(%arg: i32) -> i32 {
 
 !T8 = !trait.poly<8>
 
-trait.trait private @TraitC(%self: !trait.claim<@TraitC[!T8]>) {
-  trait.method @method_c(!T8) -> i32
+trait.trait private @TraitC(%self: !trait.claim<@TraitC[!trait.poly<0>]>) {
+  trait.method @method_c(!trait.poly<0>) -> i32
 }
 
 trait.impl private @TraitC_impl_i32(%self_claim: !trait.claim<@TraitC[i32]>) {
@@ -163,8 +163,8 @@ trait.impl private @TraitC_impl_i32(%self_claim: !trait.claim<@TraitC[i32]>) {
 
 // TraitC[tuple<U>] holds whenever both TraitA[U] and TraitC[U] hold
 !T9 = !trait.poly<9>
-trait.impl private @TraitC_impl_tuple(%self_claim: !trait.claim<@TraitC[tuple<!T9>]>, %traita: !trait.claim<@TraitA[!T9]>, %traitc: !trait.claim<@TraitC[!T9]>) {
-  trait.method @method_c(%self: tuple<!T9>) -> i32 {
+trait.impl private @TraitC_impl_tuple(%self_claim: !trait.claim<@TraitC[tuple<!trait.poly<0>>]>, %traita: !trait.claim<@TraitA[!trait.poly<0>]>, %traitc: !trait.claim<@TraitC[!trait.poly<0>]>) {
+  trait.method @method_c(%self: tuple<!trait.poly<0>>) -> i32 {
     %res = arith.constant 30 : i32
     trait.return %res : i32
   }

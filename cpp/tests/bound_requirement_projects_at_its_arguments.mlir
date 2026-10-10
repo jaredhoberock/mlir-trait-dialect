@@ -26,7 +26,7 @@ trait.trait private @Marker(%self: !trait.claim<@Marker[!S]>) {
 
 trait.trait private @Has(%self: !trait.claim<@Has[!S]>) {
   trait.assoc_type @A<[!X]>
-  trait.method @requirement_0(!trait.claim<@Marker[!B]>) -> !trait.claim<@Marker[!trait.proj<@Has[!S], "A", [!B]>]>
+  trait.method @requirement_0(!trait.claim<@Marker[!trait.poly<1>]>) -> !trait.claim<@Marker[!trait.proj<@Has[!trait.poly<0>], "A", [!trait.poly<1>]>]>
   trait.method @use(%x: !trait.proj<@Has[!S], "A", [i1]>, %p: !trait.claim<@Marker[i1]>) -> i64 {
     %m = trait.method.call %self @Has[!S]::@requirement_0(%p) : (!trait.claim<@Marker[i1]>) -> !trait.claim<@Marker[!trait.proj<@Has[!S], "A", [i1]>]>
     %r = trait.method.call %m @Marker[!trait.proj<@Has[!S], "A", [i1]>]::@mark(%x) : (!trait.proj<@Has[!S], "A", [i1]>) -> i64
@@ -42,12 +42,12 @@ trait.impl private @Marker_i1(%self: !trait.claim<@Marker[i1]>) {
 }
 
 trait.impl private @Has_i32(%self: !trait.claim<@Has[i32]>) {
-  trait.assoc_type @A<[!X]> = i1
-  trait.method @requirement_0(%p: !trait.claim<@Marker[!B]>) -> !trait.claim<@Marker[!trait.proj<@Has[i32], "A", [!B]>]> {
+  trait.assoc_type @A<[!trait.poly<0>]> = i1
+  trait.method @requirement_0(%p: !trait.claim<@Marker[!trait.poly<0>]>) -> !trait.claim<@Marker[!trait.proj<@Has[i32], "A", [!trait.poly<0>]>]> {
     %w = trait.derive @Marker[i1] from @Marker_i1 given()
-    %a = trait.witness proj_resolve !trait.proj<@Has[i32], "A", [!B]> resolves i1 by @Has_i32 : !trait.claim<!trait.proj<@Has[i32], "A", [!B]> = i1>
-    %r = trait.coerce %w : !trait.claim<@Marker[i1]> to !trait.claim<@Marker[!trait.proj<@Has[i32], "A", [!B]>]> via (%a) : (!trait.claim<!trait.proj<@Has[i32], "A", [!B]> = i1>)
-    trait.return %r : !trait.claim<@Marker[!trait.proj<@Has[i32], "A", [!B]>]>
+    %a = trait.witness proj_resolve !trait.proj<@Has[i32], "A", [!trait.poly<0>]> resolves i1 by @Has_i32 : !trait.claim<!trait.proj<@Has[i32], "A", [!trait.poly<0>]> = i1>
+    %r = trait.coerce %w : !trait.claim<@Marker[i1]> to !trait.claim<@Marker[!trait.proj<@Has[i32], "A", [!trait.poly<0>]>]> via (%a) : (!trait.claim<!trait.proj<@Has[i32], "A", [!trait.poly<0>]> = i1>)
+    trait.return %r : !trait.claim<@Marker[!trait.proj<@Has[i32], "A", [!trait.poly<0>]>]>
   }
 }
 

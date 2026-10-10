@@ -25,8 +25,8 @@ trait.impl private @Marker_i64(%self: !trait.claim<@Marker[i64]>) {
 trait.trait private @S(%self: !trait.claim<@S[!S]>) {
   trait.assoc_type @Out
 }
-trait.impl private @S_i64(%self: !trait.claim<@S[i64]>, %m: !trait.claim<!trait.proj<@Marker[i64], "M"> = !U>) {
-  trait.assoc_type @Out = !U
+trait.impl private @S_i64(%self: !trait.claim<@S[i64]>, %m: !trait.claim<!trait.proj<@Marker[i64], "M"> = !trait.poly<0>>) {
+  trait.assoc_type @Out = !trait.poly<0>
 }
 
 trait.trait private @Foo(%self: !trait.claim<@Foo[!S]>) {

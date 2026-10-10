@@ -21,8 +21,8 @@ trait.impl private @Arg_i64(%self: !trait.claim<@Arg[i64]>) {
 }
 
 trait.trait private @Gat(%self: !trait.claim<@Gat[!S]>) { trait.assoc_type @Item<[!A]> }
-trait.impl private @Gat_any(%self: !trait.claim<@Gat[!T]>) {
-  trait.assoc_type @Item<[!B]> = !B
+trait.impl private @Gat_any(%self: !trait.claim<@Gat[!trait.poly<0>]>) {
+  trait.assoc_type @Item<[!trait.poly<1>]> = !trait.poly<1>
 }
 
 func.func private @sink(%e: !trait.claim<!trait.proj<@Gat[!X], "Item", [!trait.proj<@Arg[!X], "Out">]> = i32>) {

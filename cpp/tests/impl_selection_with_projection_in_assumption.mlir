@@ -37,8 +37,8 @@ trait.impl private @Marker_unit(%self: !trait.claim<@Marker[tuple<>]>) {
 
 // impl<T: Trait> Marker for T where T::Assoc: Marker {}
 !U = !trait.poly<1>
-trait.impl private @Marker_via_assoc(%self: !trait.claim<@Marker[!U]>, %trait: !trait.claim<@Trait[!U]>, %marker: !trait.claim<@Marker[!trait.proj<@Trait[!U], "Assoc">]>) {
-  trait.method @mark(%arg: !U) -> i32 {
+trait.impl private @Marker_via_assoc(%self: !trait.claim<@Marker[!trait.poly<0>]>, %trait: !trait.claim<@Trait[!trait.poly<0>]>, %marker: !trait.claim<@Marker[!trait.proj<@Trait[!trait.poly<0>], "Assoc">]>) {
+  trait.method @mark(%arg: !trait.poly<0>) -> i32 {
     %c = arith.constant 2 : i32
     trait.return %c : i32
   }

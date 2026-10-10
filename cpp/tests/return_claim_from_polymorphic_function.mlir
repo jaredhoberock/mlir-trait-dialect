@@ -11,10 +11,10 @@ trait.trait private @Get(%self: !trait.claim<@Get[!R]>) {
 
 // this trait will be used in an impl where below
 !A = !trait.poly<1>
-trait.trait private @Assumption(%self: !trait.claim<@Assumption[!A]>) {}
+trait.trait private @Assumption(%self: !trait.claim<@Assumption[!trait.poly<0>]>) {}
 
 // a blanket impl for @Assumption for all types
-trait.impl private @Assumption_impl(%self: !trait.claim<@Assumption[!A]>) {}
+trait.impl private @Assumption_impl(%self: !trait.claim<@Assumption[!trait.poly<0>]>) {}
 
 // this impl returns an assumption claim from @get
 trait.impl private @Get_impl_claim(%self: !trait.claim<@Get[!trait.claim<@Assumption[i32]>]>, %assumption: !trait.claim<@Assumption[i32]>) {

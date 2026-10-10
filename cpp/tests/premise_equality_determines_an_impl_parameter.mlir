@@ -20,17 +20,17 @@ trait.impl private @Out_i32(%self: !trait.claim<@Out[i32]>) {
 }
 
 !G = !trait.poly<1>
-trait.trait private @Fold(%self: !trait.claim<@Fold[!G]>) {
+trait.trait private @Fold(%self: !trait.claim<@Fold[!trait.poly<0>]>) {
   trait.assoc_type @Sum
-  trait.method @run(!G) -> !trait.proj<@Fold[!G], "Sum">
+  trait.method @run(!trait.poly<0>) -> !trait.proj<@Fold[!trait.poly<0>], "Sum">
 }
 
 !Acc = !trait.poly<2>
-trait.impl private @Fold_gen(%self: !trait.claim<@Fold[!G]>, %output: !trait.claim<!trait.proj<@Out[!G], "Output"> = !Acc>) {
-  trait.assoc_type @Sum = !Acc
-  trait.method @run(%x: !G) -> !Acc {
-    %r = builtin.unrealized_conversion_cast %x : !G to !Acc
-    trait.return %r : !Acc
+trait.impl private @Fold_gen(%self: !trait.claim<@Fold[!trait.poly<0>]>, %output: !trait.claim<!trait.proj<@Out[!trait.poly<0>], "Output"> = !trait.poly<1>>) {
+  trait.assoc_type @Sum = !trait.poly<1>
+  trait.method @run(%x: !trait.poly<0>) -> !trait.poly<1> {
+    %r = builtin.unrealized_conversion_cast %x : !trait.poly<0> to !trait.poly<1>
+    trait.return %r : !trait.poly<1>
   }
 }
 

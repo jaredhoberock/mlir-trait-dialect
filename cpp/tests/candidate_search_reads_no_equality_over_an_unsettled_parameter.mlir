@@ -36,8 +36,8 @@ trait.impl private @other_i8(%self: !trait.claim<@Other[i8]>) {
 trait.impl private @direct(%self: !trait.claim<@Call[i32, i64]>) {
   trait.assoc_type @Output = f32
 }
-trait.impl private @chain(%self: !trait.claim<@Pair[!F, !B]>, %output: !trait.claim<!trait.proj<@Call[!G, !B], "Output"> = !Y>, %out: !trait.claim<!trait.proj<@Other[!F], "Out"> = !G>) {
-  trait.assoc_type @Res = !Y
+trait.impl private @chain(%self: !trait.claim<@Pair[!trait.poly<0>, !trait.poly<1>]>, %output: !trait.claim<!trait.proj<@Call[!trait.poly<2>, !trait.poly<1>], "Output"> = !trait.poly<3>>, %out: !trait.claim<!trait.proj<@Other[!trait.poly<0>], "Out"> = !trait.poly<2>>) {
+  trait.assoc_type @Res = !trait.poly<3>
 }
 
 func.func private @need(!trait.claim<@Pair[i8, i64]>)

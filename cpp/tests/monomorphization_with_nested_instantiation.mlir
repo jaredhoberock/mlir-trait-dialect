@@ -27,8 +27,8 @@ trait.trait private @Tr(%self: !trait.claim<@Tr[!T0]>) {
 // impl's header must be spelled over one too -- an impl for a single concrete
 // type justifies nothing about a variable.
 !B = !trait.poly<9>
-trait.impl private @Tr_any(%self_claim: !trait.claim<@Tr[!B]>) {
-  trait.method @method(%self: !B) -> i32 {
+trait.impl private @Tr_any(%self_claim: !trait.claim<@Tr[!trait.poly<0>]>) {
+  trait.method @method(%self: !trait.poly<0>) -> i32 {
     %c = arith.constant 0 : i32
     trait.return %c : i32
   }

@@ -14,12 +14,12 @@
 !V = !trait.poly<9>
 
 trait.trait private @Store(%self: !trait.claim<@Store[!S]>) {
-  trait.method @keep(!S, !V) -> !V
+  trait.method @keep(!trait.poly<0>, !trait.poly<1>) -> !trait.poly<1>
 }
 
 trait.impl private @Store_impl_i64(%self_claim: !trait.claim<@Store[i64]>) {
-  trait.method @keep(%self: i64, %v: !trait.poly<5>) -> !trait.poly<5> {
-    trait.return %v : !trait.poly<5>
+  trait.method @keep(%self: i64, %v: !trait.poly<0>) -> !trait.poly<0> {
+    trait.return %v : !trait.poly<0>
   }
 }
 

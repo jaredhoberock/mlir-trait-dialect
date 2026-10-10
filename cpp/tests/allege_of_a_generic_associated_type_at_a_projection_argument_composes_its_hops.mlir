@@ -23,7 +23,7 @@ trait.trait private @Gat(%self: !trait.claim<@Gat[!S]>) {
   trait.assoc_type @Item<[!A]>
 }
 trait.impl private @Gat_i64(%self: !trait.claim<@Gat[i64]>) {
-  trait.assoc_type @Item<[!trait.poly<2>]> = !trait.poly<2>
+  trait.assoc_type @Item<[!trait.poly<0>]> = !trait.poly<0>
 }
 
 func.func private @need(!trait.claim<!trait.proj<@Gat[i64], "Item", [!trait.proj<@Arg[i64], "Out">]> = i32>)

@@ -15,8 +15,8 @@
 !F = !trait.poly<1>
 !X = !trait.poly<2>
 
-trait.trait private @Fn(%self: !trait.claim<@Fn[!F, !X]>) {
-  trait.method @call(!F, !X) -> i64
+trait.trait private @Fn(%self: !trait.claim<@Fn[!trait.poly<0>, !trait.poly<1>]>) {
+  trait.method @call(!trait.poly<0>, !trait.poly<1>) -> i64
 }
 
 trait.impl private @Fn_i8(%self: !trait.claim<@Fn[i8, i64]>) {
@@ -32,7 +32,7 @@ trait.trait private @Tr(%self: !trait.claim<@Tr[!S]>) {
 
 trait.impl private @Tr_i32(%self: !trait.claim<@Tr[i32]>) {
   trait.assoc_type @Root = i64
-  trait.method @go(%s: i32, %f: !F, %c: !trait.claim<@Fn[!F, i64]>) -> i64 {
+  trait.method @go(%s: i32, %f: !trait.poly<0>, %c: !trait.claim<@Fn[!trait.poly<0>, i64]>) -> i64 {
     %seven = arith.constant 7 : i64
     trait.return %seven : i64
   }

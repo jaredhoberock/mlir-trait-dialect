@@ -16,17 +16,17 @@ trait.impl private @SameAs_i32_i32(%self: !trait.claim<@SameAs[i32, i32]>) {
 // Trait @Chooser whose method has a where-clause requiring @SameAs
 !T = !trait.poly<2>
 !U = !trait.poly<3>
-trait.trait private @Chooser(%self: !trait.claim<@Chooser[!T]>) {
-  trait.method @choose(!T, !U, !trait.claim<@SameAs[!T, !U]>) -> !T
+trait.trait private @Chooser(%self: !trait.claim<@Chooser[!trait.poly<0>]>) {
+  trait.method @choose(!trait.poly<0>, !trait.poly<1>, !trait.claim<@SameAs[!trait.poly<0>, !trait.poly<1>]>) -> !trait.poly<0>
 }
 // The impl's copy of @choose binds a variable of its own for each the trait's
 // declaration of it binds: a copy with fewer would be a different declaration.
 !V = !trait.poly<4>
 trait.impl private @Chooser_i32(%self: !trait.claim<@Chooser[i32]>) {
-  trait.method @choose(%a: i32, %b: !V, %same: !trait.claim<@SameAs[i32, !V]>) -> i32 {
+  trait.method @choose(%a: i32, %b: !trait.poly<0>, %same: !trait.claim<@SameAs[i32, !trait.poly<0>]>) -> i32 {
     // inner method call uses the where-clause claim
-    %converted = trait.method.call %same @SameAs[i32, !V]::@convert(%b)
-      : (!V) -> i32
+    %converted = trait.method.call %same @SameAs[i32, !trait.poly<0>]::@convert(%b)
+      : (!trait.poly<0>) -> i32
     trait.return %converted : i32
   }
 }

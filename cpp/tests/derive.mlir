@@ -23,9 +23,9 @@ trait.impl private @Trait_impl_i32(%self_claim: !trait.claim<@Trait[i32]>) {
 
 // A conditional impl: for any U where Trait[U], Trait holds for tuple<U>
 !T1 = !trait.poly<1>
-// CHECK: trait.impl private @Trait_impl_tuple(%self: !trait.claim<@Trait[tuple<!trait.poly<1>>]>
-trait.impl private @Trait_impl_tuple(%self_claim: !trait.claim<@Trait[tuple<!T1>]>, %trait: !trait.claim<@Trait[!T1]>) {
-  trait.method @method(%self: tuple<!T1>) -> i32 {
+// CHECK: trait.impl private @Trait_impl_tuple(%self: !trait.claim<@Trait[tuple<!trait.poly<0>>]>
+trait.impl private @Trait_impl_tuple(%self_claim: !trait.claim<@Trait[tuple<!trait.poly<0>>]>, %trait: !trait.claim<@Trait[!trait.poly<0>]>) {
+  trait.method @method(%self: tuple<!trait.poly<0>>) -> i32 {
     %res = arith.constant 1 : i32
     trait.return %res : i32
   }

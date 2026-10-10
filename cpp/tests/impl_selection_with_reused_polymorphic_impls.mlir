@@ -13,23 +13,23 @@ trait.trait private @A(%self: !trait.claim<@A[!A]>) {
 trait.impl private @A_impl(%self: !trait.claim<@A[i1]>) {}
 
 !B = !trait.poly<1>
-trait.trait private @B(%self: !trait.claim<@B[!B]>) {}
+trait.trait private @B(%self: !trait.claim<@B[!trait.poly<0>]>) {}
 
 // 0-tuple impl for @B
 trait.impl private @B_tuple_impl_arity_0(%self: !trait.claim<@B[tuple<>]>) {}
 
 // 1-tuple impl for @B
 !C = !trait.poly<2>
-trait.impl private @B_tuple_impl_arity_1(%self: !trait.claim<@B[tuple<!C>]>, %a: !trait.claim<@A[!C]>) {}
+trait.impl private @B_tuple_impl_arity_1(%self: !trait.claim<@B[tuple<!trait.poly<0>>]>, %a: !trait.claim<@A[!trait.poly<0>]>) {}
 
 // 2-tuple impl for @B
 !D = !trait.poly<3>
 !E = !trait.poly<4>
-trait.impl private @B_tuple_impl_arity_2(%self: !trait.claim<@B[tuple<!D, !E>]>, %a: !trait.claim<@A[!D]>, %a_1: !trait.claim<@A[!E]>) {}
+trait.impl private @B_tuple_impl_arity_2(%self: !trait.claim<@B[tuple<!trait.poly<0>, !trait.poly<1>>]>, %a: !trait.claim<@A[!trait.poly<0>]>, %a_1: !trait.claim<@A[!trait.poly<1>]>) {}
 
 // polymorphic impl for @A
 !F = !trait.poly<5>
-trait.impl private @A_polymorphic_impl(%self: !trait.claim<@A[!F]>, %b: !trait.claim<@B[!F]>) {
+trait.impl private @A_polymorphic_impl(%self: !trait.claim<@A[!trait.poly<0>]>, %b: !trait.claim<@B[!trait.poly<0>]>) {
   trait.method @a() {
     trait.return
   }

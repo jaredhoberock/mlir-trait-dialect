@@ -19,7 +19,7 @@
 
 !S = !trait.poly<0>
 
-trait.trait private @X(%self: !trait.claim<@X[!trait.poly<9>]>) {}
+trait.trait private @X(%self: !trait.claim<@X[!trait.poly<0>]>) {}
 trait.trait private @Mid(%self: !trait.claim<@Mid[!S]>) { trait.assoc_type @Out }
 trait.impl private @Mid_i64(%self: !trait.claim<@Mid[i64]>, %x: !trait.claim<@X[i64]>) { trait.assoc_type @Out = i64 }
 

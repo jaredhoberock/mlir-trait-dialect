@@ -18,13 +18,13 @@ trait.trait private @Test(%self: !trait.claim<@Test[!S]>) {
 }
 
 // CHECK-LABEL: trait.impl private @Test_impl(%self: !trait.claim<@Test[i1]>
-// CHECK: trait.assoc_type @Wrapper<[!trait.poly<1>]> = !trait.poly<1>
+// CHECK: trait.assoc_type @Wrapper<[!trait.poly<0>]> = !trait.poly<0>
 // CHECK: trait.method @test
 
 trait.impl private @Test_impl(%self_claim: !trait.claim<@Test[i1]>) {
-  trait.assoc_type @Wrapper<[!T]> = !T
-  trait.method @test(%self: i1, %value: !T) -> !T {
-    trait.return %value : !T
+  trait.assoc_type @Wrapper<[!trait.poly<0>]> = !trait.poly<0>
+  trait.method @test(%self: i1, %value: !trait.poly<0>) -> !trait.poly<0> {
+    trait.return %value : !trait.poly<0>
   }
 }
 

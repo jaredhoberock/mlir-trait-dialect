@@ -54,13 +54,13 @@ trait.impl private @Inner_i32(%self_claim: !trait.claim<@Inner[i32]>) {
 }
 
 // Forwarding impl: Outer for tuple<U> where Inner[U], Assoc = Inner[U]::Assoc
-trait.impl private @Outer_tuple(%self_claim: !trait.claim<@Outer[tuple<!U>]>, %inner: !trait.claim<@Inner[!U]>) {
-  trait.assoc_type @Assoc = !trait.proj<@Inner[!U], "Assoc">
-  trait.method @method(%self: tuple<!U>) -> !trait.proj<@Inner[!U], "Assoc"> {
-    %elem = "test.extract"(%self) : (tuple<!U>) -> !U
-    %res = trait.method.call %inner @Inner[!U]::@method(%elem)
-      : (!U) -> !trait.proj<@Inner[!U], "Assoc">
-    trait.return %res : !trait.proj<@Inner[!U], "Assoc">
+trait.impl private @Outer_tuple(%self_claim: !trait.claim<@Outer[tuple<!trait.poly<0>>]>, %inner: !trait.claim<@Inner[!trait.poly<0>]>) {
+  trait.assoc_type @Assoc = !trait.proj<@Inner[!trait.poly<0>], "Assoc">
+  trait.method @method(%self: tuple<!trait.poly<0>>) -> !trait.proj<@Inner[!trait.poly<0>], "Assoc"> {
+    %elem = "test.extract"(%self) : (tuple<!trait.poly<0>>) -> !trait.poly<0>
+    %res = trait.method.call %inner @Inner[!trait.poly<0>]::@method(%elem)
+      : (!trait.poly<0>) -> !trait.proj<@Inner[!trait.poly<0>], "Assoc">
+    trait.return %res : !trait.proj<@Inner[!trait.poly<0>], "Assoc">
   }
 }
 

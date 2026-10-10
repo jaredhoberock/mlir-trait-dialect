@@ -23,7 +23,7 @@ trait.impl private @Grow_i32(%self: !trait.claim<@Grow[i32]>) {
 }
 
 !W = !trait.poly<1>
-trait.trait private @Wants(%self: !trait.claim<@Wants[!W]>) { trait.method @m() -> i64 }
+trait.trait private @Wants(%self: !trait.claim<@Wants[!trait.poly<0>]>) { trait.method @m() -> i64 }
 
 trait.impl private @Wants_impl(%self: !trait.claim<@Wants[!trait.proj<@Grow[i32], "Output">]>) {
   trait.method @m() -> i64 {

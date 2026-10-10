@@ -16,13 +16,13 @@
 
 !T = !trait.poly<0>
 
-trait.trait private @Tensor(%self: !trait.claim<@Tensor[!T]>) { trait.assoc_type @Shape }
+trait.trait private @Tensor(%self: !trait.claim<@Tensor[!trait.poly<0>]>) { trait.assoc_type @Shape }
 trait.impl private @Tensor_i8(%self: !trait.claim<@Tensor[i8]>) {
   trait.assoc_type @Shape = tuple<i64, i64>
 }
-trait.trait private @S(%self: !trait.claim<@S[!T]>) { trait.assoc_type @Out }
+trait.trait private @S(%self: !trait.claim<@S[!trait.poly<0>]>) { trait.assoc_type @Out }
 // expected-note @+1 {{unsatisfiable candidate}}
-trait.impl private @S_blanket(%self: !trait.claim<@S[!T]>, %tensor: !trait.claim<@Tensor[!T]>, %shape: !trait.claim<!trait.proj<@Tensor[!T], "Shape"> = i64>) {
+trait.impl private @S_blanket(%self: !trait.claim<@S[!trait.poly<0>]>, %tensor: !trait.claim<@Tensor[!trait.poly<0>]>, %shape: !trait.claim<!trait.proj<@Tensor[!trait.poly<0>], "Shape"> = i64>) {
   trait.assoc_type @Out = i64
 }
 
@@ -65,8 +65,8 @@ trait.impl private @Marker_i64(%self: !trait.claim<@Marker[i64]>) {
 trait.trait private @S(%self: !trait.claim<@S[!S]>) {
   trait.assoc_type @Out
 }
-trait.impl private @S_i64(%self: !trait.claim<@S[i64]>, %m: !trait.claim<!trait.proj<@Marker[i64], "M"> = !U>) {
-  trait.assoc_type @Out = !U
+trait.impl private @S_i64(%self: !trait.claim<@S[i64]>, %m: !trait.claim<!trait.proj<@Marker[i64], "M"> = !trait.poly<0>>) {
+  trait.assoc_type @Out = !trait.poly<0>
 }
 func.func private @gen(%v: !trait.proj<@S[i64], "Out">, %x: !T) -> !T {
   // expected-error @below {{alleges '!trait.proj<@Marker[i64], "M">' = 'i64', and impl selection resolves its sides to 'i1' and 'i64'}}

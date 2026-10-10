@@ -9,7 +9,7 @@
 !T = !trait.poly<0>
 !U = !trait.poly<1>
 trait.trait private @Tr(%self: !trait.claim<@Tr[!T]>) {}
-trait.impl private @Tr_tuple(%self: !trait.claim<@Tr[tuple<!U>]>, %tr: !trait.claim<@Tr[!U]>) {}
+trait.impl private @Tr_tuple(%self: !trait.claim<@Tr[tuple<!trait.poly<0>>]>, %tr: !trait.claim<@Tr[!trait.poly<0>]>) {}
 func.func private @g(%t: !trait.claim<@Tr[!T]>) {
   // expected-error @below {{impl '@Tr_tuple' at the arguments the citation gives it proves '!trait.claim<@Tr[tuple<!trait.poly<0>>]>', not '!trait.claim<@Tr[i64]>'}}
   %d = trait.derive @Tr[i64] from @Tr_tuple given(%t) : (!trait.claim<@Tr[!T]>)
@@ -23,7 +23,7 @@ func.func private @g(%t: !trait.claim<@Tr[!T]>) {
 !T = !trait.poly<0>
 !U = !trait.poly<1>
 trait.trait private @Tr(%self: !trait.claim<@Tr[!T]>) { trait.assoc_type @Out }
-trait.impl private @Tr_tuple(%self: !trait.claim<@Tr[tuple<!U>]>, %tr: !trait.claim<@Tr[!U]>, %out: !trait.claim<!trait.proj<@Tr[!U], "Out"> = i64>) {
+trait.impl private @Tr_tuple(%self: !trait.claim<@Tr[tuple<!trait.poly<0>>]>, %tr: !trait.claim<@Tr[!trait.poly<0>]>, %out: !trait.claim<!trait.proj<@Tr[!trait.poly<0>], "Out"> = i64>) {
   trait.assoc_type @Out = i64
 }
 func.func private @g(%t: !trait.claim<@Tr[!T]>) {
@@ -39,7 +39,7 @@ func.func private @g(%t: !trait.claim<@Tr[!T]>) {
 !T = !trait.poly<0>
 !U = !trait.poly<1>
 trait.trait private @Tr(%self: !trait.claim<@Tr[!T]>) { trait.assoc_type @Out }
-trait.impl private @Tr_tuple(%self: !trait.claim<@Tr[tuple<!U>]>, %tr: !trait.claim<@Tr[!U]>, %out: !trait.claim<!trait.proj<@Tr[!U], "Out"> = i64>) {
+trait.impl private @Tr_tuple(%self: !trait.claim<@Tr[tuple<!trait.poly<0>>]>, %tr: !trait.claim<@Tr[!trait.poly<0>]>, %out: !trait.claim<!trait.proj<@Tr[!trait.poly<0>], "Out"> = i64>) {
   trait.assoc_type @Out = i64
 }
 func.func private @g(%t: !trait.claim<@Tr[!T]>) {

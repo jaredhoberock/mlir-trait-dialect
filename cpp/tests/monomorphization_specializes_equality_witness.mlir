@@ -19,8 +19,8 @@ trait.trait private @Trait(%self: !trait.claim<@Trait[!S]>) {
   trait.assoc_type @Output
 }
 
-trait.impl private @Trait_impl(%self: !trait.claim<@Trait[!U]>) {
-  trait.assoc_type @Output = !U
+trait.impl private @Trait_impl(%self: !trait.claim<@Trait[!trait.poly<0>]>) {
+  trait.assoc_type @Output = !trait.poly<0>
 }
 
 trait.proof private @Trait_i64_p {

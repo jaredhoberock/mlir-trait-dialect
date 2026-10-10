@@ -33,9 +33,9 @@ trait.trait private @Wrapped(%self: !trait.claim<@Wrapped[!T]>) {
   trait.method @requirement_0() -> !trait.claim<@Mark[!B]>
 }
 trait.impl private @W(%self: !trait.claim<@Wrapped[i32]>) {
-  trait.method @requirement_0() -> !trait.claim<@Mark[!B]> {
-    %r = trait.derive @Mark[!B] from @Nine given()
-    trait.return %r : !trait.claim<@Mark[!B]>
+  trait.method @requirement_0() -> !trait.claim<@Mark[!trait.poly<0>]> {
+    %r = trait.derive @Mark[!trait.poly<0>] from @Nine given()
+    trait.return %r : !trait.claim<@Mark[!trait.poly<0>]>
   }
 }
 trait.proof private @PW {

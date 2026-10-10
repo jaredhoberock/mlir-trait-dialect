@@ -7,21 +7,21 @@ trait.trait private @Trait0(%self: !trait.claim<@Trait0[!trait.poly<0>, !trait.p
   trait.assoc_type @Output
 }
 
-trait.trait private @Trait1(%self: !trait.claim<@Trait1[!trait.poly<2>]>) {
+trait.trait private @Trait1(%self: !trait.claim<@Trait1[!trait.poly<0>]>) {
   // expected-error @+1 {{function 'method' result type contains type parameter '!trait.poly<4>' that is not determined by any input type}}
   trait.method @method(
-    !trait.poly<2>,
+    !trait.poly<0>,
     !trait.poly<3>
-  ) -> tuple<!trait.proj<@Trait0[!trait.poly<4>, !trait.poly<2>], "Output">>
+  ) -> tuple<!trait.proj<@Trait0[!trait.poly<4>, !trait.poly<0>], "Output">>
 }
 
 // -----
 
 trait.trait private @Trait0(%self: !trait.claim<@Trait0[!trait.poly<0>, !trait.poly<1>]>) {}
 
-trait.trait private @Trait1(%self: !trait.claim<@Trait1[!trait.poly<2>]>) {
+trait.trait private @Trait1(%self: !trait.claim<@Trait1[!trait.poly<0>]>) {
   trait.method @method(
-    !trait.poly<2>,
-    !trait.claim<@Trait0[!trait.poly<3>, !trait.poly<2>]>
+    !trait.poly<0>,
+    !trait.claim<@Trait0[!trait.poly<3>, !trait.poly<0>]>
   ) -> !trait.poly<3>
 }

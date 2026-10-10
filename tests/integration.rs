@@ -660,13 +660,13 @@ fn instantiate_is_ready_only_while_a_rewritable_call_stands() {
 
     let source = "\
 !S = !trait.poly<0>\n\
-!V = !trait.poly<9>\n\
+!V = !trait.poly<1>\n\
 trait.trait private @Store(%self: !trait.claim<@Store[!S]>) {\n\
   trait.method @keep(!S, !V) -> !V\n\
 }\n\
 trait.impl private @Store_impl_i64(%self: !trait.claim<@Store[i64]>) {\n\
-  trait.method @keep(%x: i64, %v: !trait.poly<5>) -> !trait.poly<5> {\n\
-    trait.return %v : !trait.poly<5>\n\
+  trait.method @keep(%x: i64, %v: !trait.poly<0>) -> !trait.poly<0> {\n\
+    trait.return %v : !trait.poly<0>\n\
   }\n\
 }\n\
 func.func private @tpl(%p: !trait.claim<@Store[i64]>, %x: i64, %v: !trait.poly<7>) -> !trait.poly<7> {\n\
@@ -880,9 +880,12 @@ fn has_impl<'c>(
 fn an_evidence_method_states_and_selects_a_quantified_requirement() {
     let context = trait_context();
     let loc = Location::unknown(&context);
+    // Labels are positions in the declaration binding them: the trait's
+    // receiver and the impl's one parameter are each 0, and a generic
+    // associated type's parameter follows its declaration's.
     let s = trait_::poly_type(&context, 0);
     let x = trait_::poly_type(&context, 1);
-    let p = trait_::poly_type(&context, 2);
+    let p = trait_::poly_type(&context, 0);
     let t = trait_::poly_type(&context, 3);
     let i1: melior::ir::Type = IntegerType::new(&context, 1).into();
     let i64_ty: melior::ir::Type = IntegerType::new(&context, 64).into();
@@ -915,7 +918,7 @@ fn an_evidence_method_states_and_selects_a_quantified_requirement() {
     // where entry's requirement; `impl Has for i64 { type A<X> = i64; }`
     // alleges it.
     module.body().append_operation(has_impl(&context, "Has_sub", tuple_p, Some(claim("Sub", p)), p, x));
-    module.body().append_operation(has_impl(&context, "Has_i64", i64_ty, None, i64_ty, x));
+    module.body().append_operation(has_impl(&context, "Has_i64", i64_ty, None, i64_ty, s));
 
     // A generic function selects the requirement at i1 with a claim of its
     // premise there.
@@ -965,7 +968,7 @@ fn the_derive_builder_states_the_premises_it_cites() {
     let source = |premises: &str, types: &str| format!("\
 trait.trait private @Tr(%self: !trait.claim<@Tr[!trait.poly<0>]>) {{ trait.assoc_type @Out }}\n\
 trait.impl private @Tr_i32(%self: !trait.claim<@Tr[i32]>) {{ trait.assoc_type @Out = i64 }}\n\
-trait.impl private @Tr_tuple(%self: !trait.claim<@Tr[tuple<!trait.poly<1>>]>, %tr: !trait.claim<@Tr[!trait.poly<1>]>, %out: !trait.claim<!trait.proj<@Tr[!trait.poly<1>], \"Out\"> = i64>) {{\n\
+trait.impl private @Tr_tuple(%self: !trait.claim<@Tr[tuple<!trait.poly<0>>]>, %tr: !trait.claim<@Tr[!trait.poly<0>]>, %out: !trait.claim<!trait.proj<@Tr[!trait.poly<0>], \"Out\"> = i64>) {{\n\
   trait.assoc_type @Out = i64\n\
 }}\n\
 trait.proof private @p {{\n\

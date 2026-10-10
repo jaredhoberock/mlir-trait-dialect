@@ -78,11 +78,19 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &sub
   // claim that wraps it.
   AttrTypeReplacer replacer = makeEndpointSealedReplacer();
   bool isTemplate = kind == CloneKind::Template;
+  // The substitution is split once, into its variable bindings and the
+  // bindings of every other key, and every type the clone visits reads both.
+  auto variables = std::make_shared<SpecializationMap>(variableBindingsOf(subst));
   auto stamp = [=](Type t) -> Type {
-    return isTemplate ? applySubstitutionOnce(subst, t,
-                                              ClaimPredicates::VariablesAlone)
-                      : applySubstitutionToFixedPoint(
-                            subst, t, ClaimPredicates::VariablesAlone);
+    auto others = [&](Type key) -> std::optional<Type> {
+      auto it = subst.find(key);
+      return it == subst.end() ? std::nullopt : std::optional<Type>(it->second);
+    };
+    return isTemplate
+               ? applySubstitution(*variables, others, t,
+                                   ClaimPredicates::VariablesAlone)
+               : applySubstitutionToFixedPoint(*variables, others, t,
+                                               ClaimPredicates::VariablesAlone);
   };
   replacer.addReplacement(
       [=](Type t) -> std::optional<std::pair<Type, WalkResult>> {
@@ -117,12 +125,9 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(const DenseMap<Type,Type> &sub
   // claim a clone holds is the template's at the instance's arguments, and the
   // evidence a template wrote for it still meets it by identity
   // (`respellClaimPredicate`).
-  llvm::DenseMap<Type, Type> variableBindings;
-  for (auto [key, value] : subst)
-    if (isa<GenericTypeInterface>(key))
-      variableBindings.try_emplace(key, value);
-  auto respell = [variableBindings](Type t) {
-    return applySubstitutionOnce(variableBindings, t);
+  auto respell = [variables](Type t) {
+    return applySubstitution(*variables, nullptr, t,
+                             ClaimPredicates::Substituted);
   };
   replacer.addReplacement(
       [respell](ClaimType claim) -> std::optional<std::pair<Type, WalkResult>> {

@@ -40,7 +40,7 @@ trait.trait private @Wrap(%self: !trait.claim<@Wrap[!T]>) {
 }
 
 trait.impl private @Wrap_i1(%self: !trait.claim<@Wrap[i1]>) {
-  trait.assoc_type @Out<[!U]> = !U
+  trait.assoc_type @Out<[!trait.poly<0>]> = !trait.poly<0>
 }
 
 // CHECK-LABEL: func.func @gat_projection_arg

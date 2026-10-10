@@ -29,7 +29,7 @@ trait.impl private @Loop_i64(%self: !trait.claim<@Loop[i64]>) {
 }
 
 !W = !trait.poly<1>
-trait.trait private @Wants(%self: !trait.claim<@Wants[!W]>) { trait.method @m() -> i64 }
+trait.trait private @Wants(%self: !trait.claim<@Wants[!trait.poly<0>]>) { trait.method @m() -> i64 }
 
 trait.impl private @Wants_impl(%self: !trait.claim<@Wants[!trait.proj<@Loop[i32], "Output">]>) {
   trait.method @m() -> i64 {

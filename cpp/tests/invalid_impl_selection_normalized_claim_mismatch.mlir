@@ -13,14 +13,14 @@ trait.trait private @Eq(%self: !trait.claim<@Eq[!L, !R]>) {
 }
 
 !T = !trait.poly<2>
-trait.impl private @Eq_same(%self: !trait.claim<@Eq[!T, !T]>) {
+trait.impl private @Eq_same(%self: !trait.claim<@Eq[!trait.poly<0>, !trait.poly<0>]>) {
   trait.method @use() {
     trait.return
   }
 }
 
 !A = !trait.poly<3>
-trait.trait private @Has(%self: !trait.claim<@Has[!A]>) {
+trait.trait private @Has(%self: !trait.claim<@Has[!trait.poly<0>]>) {
   trait.assoc_type @Shape
 }
 

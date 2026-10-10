@@ -11,8 +11,8 @@ trait.impl private @A_impl_i1(%self: !trait.claim<@A[i1]>) {
     trait.return %arg0 : i1
   }
 }
-trait.trait private @B(%self: !trait.claim<@B[!trait.poly<1>]>) {
-  trait.method @b(%arg0: !trait.poly<1>) -> i1
+trait.trait private @B(%self: !trait.claim<@B[!trait.poly<0>]>) {
+  trait.method @b(%arg0: !trait.poly<0>) -> i1
 }
 trait.impl private @B_impl_i1(%self: !trait.claim<@B[i1]>) {
   trait.method @b(%arg0: i1) -> i1 {

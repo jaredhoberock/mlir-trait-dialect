@@ -37,8 +37,8 @@ trait.impl private @A_i32(%self: !trait.claim<@A[i32]>) {
     trait.return %c : i64
   }
 }
-trait.impl private @A_tuple(%self: !trait.claim<@A[tuple<!U>]>) {
-  trait.method @a(%x: tuple<!U>) -> i64 {
+trait.impl private @A_tuple(%self: !trait.claim<@A[tuple<!trait.poly<0>>]>) {
+  trait.method @a(%x: tuple<!trait.poly<0>>) -> i64 {
     %c = arith.constant 11 : i64
     trait.return %c : i64
   }
@@ -46,17 +46,17 @@ trait.impl private @A_tuple(%self: !trait.claim<@A[tuple<!U>]>) {
 trait.impl private @C_i32(%self: !trait.claim<@C[i32]>) {
   trait.assoc_type @Val = i64
 }
-trait.impl private @B_tuple(%self: !trait.claim<@B[tuple<!U>]>, %a: !trait.claim<@A[!U]>, %val: !trait.claim<!trait.proj<@C[!U], "Val"> = i64>) {
+trait.impl private @B_tuple(%self: !trait.claim<@B[tuple<!trait.poly<0>>]>, %a: !trait.claim<@A[!trait.poly<0>]>, %val: !trait.claim<!trait.proj<@C[!trait.poly<0>], "Val"> = i64>) {
   trait.assoc_type @Out = i64
-  trait.method @b(%x: tuple<!U>) -> i64 {
+  trait.method @b(%x: tuple<!trait.poly<0>>) -> i64 {
     %c = arith.constant 35 : i64
     trait.return %c : i64
   }
-  %req0 = trait.allege @A[tuple<!U>]
-  %out = trait.witness proj_resolve !trait.proj<@B[tuple<!U>], "Out"> resolves i64 by @B_tuple
-    given(%a, %val) : (!trait.claim<@A[!U]>, !trait.claim<!trait.proj<@C[!U], "Val"> = i64>)
-    : !trait.claim<!trait.proj<@B[tuple<!U>], "Out"> = i64>
-  trait.return %req0, %out : !trait.claim<@A[tuple<!U>]>, !trait.claim<!trait.proj<@B[tuple<!U>], "Out"> = i64>
+  %req0 = trait.allege @A[tuple<!trait.poly<0>>]
+  %out = trait.witness proj_resolve !trait.proj<@B[tuple<!trait.poly<0>>], "Out"> resolves i64 by @B_tuple
+    given(%a, %val) : (!trait.claim<@A[!trait.poly<0>]>, !trait.claim<!trait.proj<@C[!trait.poly<0>], "Val"> = i64>)
+    : !trait.claim<!trait.proj<@B[tuple<!trait.poly<0>>], "Out"> = i64>
+  trait.return %req0, %out : !trait.claim<@A[tuple<!trait.poly<0>>]>, !trait.claim<!trait.proj<@B[tuple<!trait.poly<0>>], "Out"> = i64>
 }
 trait.proof private @p {
   %p0 = trait.witness @A_i32 for @A[i32]

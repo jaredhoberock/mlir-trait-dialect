@@ -11,11 +11,11 @@
 
 !V = !trait.poly<11>
 
-trait.trait private @Has(%self: !trait.claim<@Has[!trait.poly<1>]>) {
-  trait.assoc_type @A<[!trait.poly<3>]>
+trait.trait private @Has(%self: !trait.claim<@Has[!trait.poly<0>]>) {
+  trait.assoc_type @A<[!trait.poly<1>]>
 }
 trait.impl private @Has_i64(%self: !trait.claim<@Has[i64]>) {
-  trait.assoc_type @A<[!trait.poly<4>]> = i32
+  trait.assoc_type @A<[!trait.poly<0>]> = i32
 }
 
 func.func private @g(%v: !trait.proj<@Has[i64], "A", [!V]>) -> i64 {

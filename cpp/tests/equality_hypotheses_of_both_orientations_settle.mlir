@@ -20,7 +20,7 @@ trait.trait private @Trait(%self: !trait.claim<@Trait[!T]>) {
 }
 
 !U = !trait.poly<1>
-trait.trait private @Other(%self: !trait.claim<@Other[!U]>) {
+trait.trait private @Other(%self: !trait.claim<@Other[!trait.poly<0>]>) {
   trait.assoc_type @Item
 }
 

@@ -9,20 +9,20 @@ trait.trait private @A(%self: !trait.claim<@A[!A]>) {}
 
 !Ai = !trait.poly<1>
 // CHECK: trait.impl private @A_impl
-trait.impl private @A_impl(%self: !trait.claim<@A[!Ai]>) {}
+trait.impl private @A_impl(%self: !trait.claim<@A[!trait.poly<0>]>) {}
 
 !B = !trait.poly<2>
 // CHECK: trait.trait private @B
-trait.trait private @B(%self: !trait.claim<@B[!B]>) {}
+trait.trait private @B(%self: !trait.claim<@B[!trait.poly<0>]>) {}
 
 !Bi = !trait.poly<3>
 // CHECK: trait.impl private @B_impl
-trait.impl private @B_impl(%self: !trait.claim<@B[!Bi]>) {}
+trait.impl private @B_impl(%self: !trait.claim<@B[!trait.poly<0>]>) {}
 
 !C = !trait.poly<4>
 // CHECK: trait.trait private @C
-trait.trait private @C(%self_claim: !trait.claim<@C[!C]>) -> !trait.claim<@A[!C]> {
-  trait.method @method(%self: !C) -> i1 {
+trait.trait private @C(%self_claim: !trait.claim<@C[!trait.poly<0>]>) -> !trait.claim<@A[!trait.poly<0>]> {
+  trait.method @method(%self: !trait.poly<0>) -> i1 {
     %res = arith.constant 0 : i1
     trait.return %res : i1
   }
@@ -30,9 +30,9 @@ trait.trait private @C(%self_claim: !trait.claim<@C[!C]>) -> !trait.claim<@A[!C]
 
 !Ci = !trait.poly<5>
 // CHECK: trait.impl private @C_impl
-trait.impl private @C_impl(%self: !trait.claim<@C[!Ci]>, %b: !trait.claim<@B[!Ci]>) {
-  %req0 = trait.allege @A[!Ci]
-  trait.return %req0 : !trait.claim<@A[!Ci]>
+trait.impl private @C_impl(%self: !trait.claim<@C[!trait.poly<0>]>, %b: !trait.claim<@B[!trait.poly<0>]>) {
+  %req0 = trait.allege @A[!trait.poly<0>]
+  trait.return %req0 : !trait.claim<@A[!trait.poly<0>]>
 }
 
 func.func @foo(%x: i8) -> i1 {

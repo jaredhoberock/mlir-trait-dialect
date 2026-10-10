@@ -45,7 +45,7 @@ trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) { trait.method @
 trait.trait private @B(%self: !trait.claim<@B[!trait.poly<0>]>) -> !trait.claim<@A[!trait.poly<0>]> {
   trait.method @b(!trait.poly<0>) -> i64
 }
-trait.impl private @A_blanket(%self: !trait.claim<@A[!trait.poly<1>]>) {
+trait.impl private @A_blanket(%self: !trait.claim<@A[!trait.poly<0>]>) {
   trait.method @a() -> i64 {
     %c = arith.constant 1 : i64
     trait.return %c : i64

@@ -22,7 +22,7 @@
 trait.trait private @Foo(%self: !trait.claim<@Foo[!trait.poly<0>]>) {
 }
 
-trait.impl private @Foo_blanket(%self: !trait.claim<@Foo[!trait.poly<1>]>, %foo: !trait.claim<@Foo[tuple<!trait.poly<1>>]>) {
+trait.impl private @Foo_blanket(%self: !trait.claim<@Foo[!trait.poly<0>]>, %foo: !trait.claim<@Foo[tuple<!trait.poly<0>>]>) {
 }
 
 func.func private @needs(%c: !trait.claim<@Foo[i32]>) {

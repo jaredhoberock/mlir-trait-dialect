@@ -17,7 +17,7 @@ trait.impl private @Gen_i64(%self: !trait.claim<@Gen[i64]>) {
   trait.assoc_type @A = i64
 }
 
-trait.trait private @Box(%self: !trait.claim<@Box[!trait.poly<1>]>) {}
+trait.trait private @Box(%self: !trait.claim<@Box[!trait.poly<0>]>) {}
 
 trait.impl private @Box_i64(%self: !trait.claim<@Box[i64]>) {}
 

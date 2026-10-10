@@ -19,8 +19,8 @@ trait.trait private @Trait(%self: !trait.claim<@Trait[!S]>) {
   trait.assoc_type @Output
 }
 
-trait.impl private @Trait_impl(%self: !trait.claim<@Trait[!U]>, %eq: !trait.claim<!U = tuple<!U>>) {
-  trait.assoc_type @Output = !U
+trait.impl private @Trait_impl(%self: !trait.claim<@Trait[!trait.poly<0>]>, %eq: !trait.claim<!trait.poly<0> = tuple<!trait.poly<0>>>) {
+  trait.assoc_type @Output = !trait.poly<0>
 }
 
 func.func @f(%pre: !trait.claim<!S = tuple<!S>>) -> !trait.claim<!trait.proj<@Trait[!S], "Output"> = !S> {
@@ -44,8 +44,8 @@ trait.trait private @Trait(%self: !trait.claim<@Trait[!S]>) {
   trait.assoc_type @Output
 }
 
-trait.impl private @Trait_impl(%self: !trait.claim<@Trait[!U]>, %eq: !trait.claim<!U = tuple<!U>>) {
-  trait.assoc_type @Output = !U
+trait.impl private @Trait_impl(%self: !trait.claim<@Trait[!trait.poly<0>]>, %eq: !trait.claim<!trait.poly<0> = tuple<!trait.poly<0>>>) {
+  trait.assoc_type @Output = !trait.poly<0>
 }
 
 func.func @f(%pre: !trait.claim<!S = tuple<!S>>) -> !trait.claim<!trait.proj<@Trait[!S], "Output"> = i32> {

@@ -17,20 +17,20 @@ trait.trait private @Item(%self: !trait.claim<@Item[!T]>) {
 }
 
 !S = !trait.poly<1>
-trait.trait private @Small(%self: !trait.claim<@Small[!S]>) {
+trait.trait private @Small(%self: !trait.claim<@Small[!trait.poly<0>]>) {
 }
 
 !B = !trait.poly<2>
-trait.trait private @Big(%self: !trait.claim<@Big[!B]>) {
+trait.trait private @Big(%self: !trait.claim<@Big[!trait.poly<0>]>) {
 }
 
 !A = !trait.poly<3>
-trait.impl private @Item_small(%self: !trait.claim<@Item[!A]>, %small: !trait.claim<@Small[!A]>) {
+trait.impl private @Item_small(%self: !trait.claim<@Item[!trait.poly<0>]>, %small: !trait.claim<@Small[!trait.poly<0>]>) {
   trait.assoc_type @Of = i64
 }
 
 !C = !trait.poly<4>
-trait.impl private @Item_big(%self: !trait.claim<@Item[!C]>, %big: !trait.claim<@Big[!C]>) {
+trait.impl private @Item_big(%self: !trait.claim<@Item[!trait.poly<0>]>, %big: !trait.claim<@Big[!trait.poly<0>]>) {
   trait.assoc_type @Of = f32
 }
 
@@ -39,15 +39,15 @@ trait.impl private @Small_i32(%self: !trait.claim<@Small[i32]>) {
 
 !U = !trait.poly<5>
 !V = !trait.poly<6>
-trait.trait private @Takes(%self: !trait.claim<@Takes[!U, !V]>) {
-  trait.method @go(!U) -> !V
+trait.trait private @Takes(%self: !trait.claim<@Takes[!trait.poly<0>, !trait.poly<1>]>) {
+  trait.method @go(!trait.poly<0>) -> !trait.poly<1>
 }
 
 !W = !trait.poly<7>
-trait.impl private @Takes_blanket(%self: !trait.claim<@Takes[!W, !trait.proj<@Item[!W], "Of">]>, %item: !trait.claim<@Item[!W]>) {
-  trait.method @go(%x: !W) -> !trait.proj<@Item[!W], "Of"> {
-    %r = ub.poison : !trait.proj<@Item[!W], "Of">
-    trait.return %r : !trait.proj<@Item[!W], "Of">
+trait.impl private @Takes_blanket(%self: !trait.claim<@Takes[!trait.poly<0>, !trait.proj<@Item[!trait.poly<0>], "Of">]>, %item: !trait.claim<@Item[!trait.poly<0>]>) {
+  trait.method @go(%x: !trait.poly<0>) -> !trait.proj<@Item[!trait.poly<0>], "Of"> {
+    %r = ub.poison : !trait.proj<@Item[!trait.poly<0>], "Of">
+    trait.return %r : !trait.proj<@Item[!trait.poly<0>], "Of">
   }
 }
 

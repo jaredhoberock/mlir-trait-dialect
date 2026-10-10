@@ -23,7 +23,7 @@ trait.impl private @Ten_i32(%self: !trait.claim<@Ten[i32]>) {
 trait.trait private @X(%self: !trait.claim<@X[!T]>) {}
 
 !U = !trait.poly<1>
-trait.impl private @X_gen(%self: !trait.claim<@X[!U]>, %shape: !trait.claim<!trait.proj<@Ten[!U], "Shape"> = i64>) {}
+trait.impl private @X_gen(%self: !trait.claim<@X[!trait.poly<0>]>, %shape: !trait.claim<!trait.proj<@Ten[!trait.poly<0>], "Shape"> = i64>) {}
 
 func.func private @needs(!trait.claim<@X[i32]>)
 

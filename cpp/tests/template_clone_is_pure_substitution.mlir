@@ -20,12 +20,12 @@ func.func private @spend(%e: !trait.claim<!trait.proj<@Assoc[!trait.poly<3>], "O
   return %c : i32
 }
 
-trait.trait private @T(%self: !trait.claim<@T[!S]>) {
-  trait.method @m(!S, !trait.proj<@Assoc[!S], "Out">) -> i32
+trait.trait private @T(%self: !trait.claim<@T[!trait.poly<0>]>) {
+  trait.method @m(!trait.poly<0>, !trait.proj<@Assoc[!trait.poly<0>], "Out">) -> i32
 }
-trait.impl private @T_impl(%self: !trait.claim<@T[!trait.poly<2>]>, %out: !trait.claim<!trait.proj<@Assoc[!trait.poly<2>], "Out"> = i32>) {
-  trait.method @m(%s: !trait.poly<2>, %p: !trait.proj<@Assoc[!trait.poly<2>], "Out">) -> i32 {
-    %r = trait.func.call @spend(%out) : (!trait.claim<!trait.proj<@Assoc[!trait.poly<2>], "Out"> = i32>) -> i32
+trait.impl private @T_impl(%self: !trait.claim<@T[!trait.poly<0>]>, %out: !trait.claim<!trait.proj<@Assoc[!trait.poly<0>], "Out"> = i32>) {
+  trait.method @m(%s: !trait.poly<0>, %p: !trait.proj<@Assoc[!trait.poly<0>], "Out">) -> i32 {
+    %r = trait.func.call @spend(%out) : (!trait.claim<!trait.proj<@Assoc[!trait.poly<0>], "Out"> = i32>) -> i32
     trait.return %r : i32
   }
 }

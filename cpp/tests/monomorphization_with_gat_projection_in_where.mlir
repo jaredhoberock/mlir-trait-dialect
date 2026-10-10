@@ -37,9 +37,9 @@ trait.impl private @Printable_impl(%self_claim: !trait.claim<@Printable[i32]>) {
 }
 
 trait.impl private @Transform_impl(%self_claim: !trait.claim<@Transform[i64]>) {
-  trait.assoc_type @Output<[!T]> = !T
-  trait.method @apply(%self: i64, %x: !T) -> !T {
-    trait.return %x : !T
+  trait.assoc_type @Output<[!trait.poly<0>]> = !trait.poly<0>
+  trait.method @apply(%self: i64, %x: !trait.poly<0>) -> !trait.poly<0> {
+    trait.return %x : !trait.poly<0>
   }
   %req0 = trait.allege @Printable[!trait.proj<@Transform[i64], "Output", [i32]>]
   trait.return %req0 : !trait.claim<@Printable[!trait.proj<@Transform[i64], "Output", [i32]>]>

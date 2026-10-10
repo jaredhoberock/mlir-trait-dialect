@@ -19,11 +19,11 @@
 
 !U = !trait.poly<1>
 
-trait.trait private @X(%self: !trait.claim<@X[!trait.poly<9>]>) {}
+trait.trait private @X(%self: !trait.claim<@X[!trait.poly<0>]>) {}
 trait.trait private @Has(%self: !trait.claim<@Has[!trait.poly<0>]>) { trait.assoc_type @Out }
 
-trait.impl private @Has_w1(%self: !trait.claim<@Has[tuple<!U>]>) { trait.assoc_type @Out = !trait.proj<@Has[!U], "Out"> }
-trait.impl private @Has_w2(%self: !trait.claim<@Has[tuple<!U, !U>]>) { trait.assoc_type @Out = !trait.proj<@Has[!U], "Out"> }
+trait.impl private @Has_w1(%self: !trait.claim<@Has[tuple<!trait.poly<0>>]>) { trait.assoc_type @Out = !trait.proj<@Has[!trait.poly<0>], "Out"> }
+trait.impl private @Has_w2(%self: !trait.claim<@Has[tuple<!trait.poly<0>, !trait.poly<0>>]>) { trait.assoc_type @Out = !trait.proj<@Has[!trait.poly<0>], "Out"> }
 trait.impl private @Has_mid(%self: !trait.claim<@Has[i32]>, %x: !trait.claim<@X[i32]>) { trait.assoc_type @Out = i64 }
 
 func.func private @gen(%c: !trait.claim<!trait.proj<@Has[tuple<!U>], "Out"> = !trait.proj<@Has[tuple<!U, !U>], "Out">>) -> () {

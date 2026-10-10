@@ -26,12 +26,12 @@ trait.impl private @Ten_view(%self: !trait.claim<@Ten[f32]>) {
 
 !S = !trait.poly<1>
 !O = !trait.poly<2>
-trait.trait private @Get(%self: !trait.claim<@Get[!S, !O]>) {
+trait.trait private @Get(%self: !trait.claim<@Get[!trait.poly<0>, !trait.poly<1>]>) {
   trait.method @use()
 }
 
 !U = !trait.poly<3>
-trait.impl private @Get_blanket(%self: !trait.claim<@Get[!U, !trait.proj<@Ten[!U], "Element">]>, %ten: !trait.claim<@Ten[!U]>) {
+trait.impl private @Get_blanket(%self: !trait.claim<@Get[!trait.poly<0>, !trait.proj<@Ten[!trait.poly<0>], "Element">]>, %ten: !trait.claim<@Ten[!trait.poly<0>]>) {
   trait.method @use() {
     trait.return
   }

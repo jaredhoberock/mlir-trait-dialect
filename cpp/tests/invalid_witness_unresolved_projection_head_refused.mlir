@@ -12,7 +12,7 @@ trait.trait private @Gen(%self: !trait.claim<@Gen[!trait.poly<0>]>) {
   trait.assoc_type @A
 }
 
-trait.trait private @Box(%self: !trait.claim<@Box[!trait.poly<1>]>) {
+trait.trait private @Box(%self: !trait.claim<@Box[!trait.poly<0>]>) {
   trait.method @v() -> i64
 }
 

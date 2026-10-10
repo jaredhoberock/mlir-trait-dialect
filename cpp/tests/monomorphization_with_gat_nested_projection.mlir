@@ -41,9 +41,9 @@ trait.impl private @Inner_impl(%self_claim: !trait.claim<@Inner[i32]>) {
 }
 
 trait.impl private @Outer_impl(%self_claim: !trait.claim<@Outer[i1]>) {
-  trait.assoc_type @Wrap<[!T]> = !T
-  trait.method @wrap(%self: i1, %x: !T) -> !T {
-    trait.return %x : !T
+  trait.assoc_type @Wrap<[!trait.poly<0>]> = !trait.poly<0>
+  trait.method @wrap(%self: i1, %x: !trait.poly<0>) -> !trait.poly<0> {
+    trait.return %x : !trait.poly<0>
   }
 }
 

@@ -20,8 +20,8 @@ trait.impl private @Marker_i64(%self: !trait.claim<@Marker[i64]>) {
 trait.trait private @S(%self: !trait.claim<@S[!S]>) {
   trait.assoc_type @Out
 }
-trait.impl private @S_i64(%self: !trait.claim<@S[i64]>, %m: !trait.claim<!trait.proj<@Marker[i64], "M"> = !U>) {
-  trait.assoc_type @Out = !U
+trait.impl private @S_i64(%self: !trait.claim<@S[i64]>, %m: !trait.claim<!trait.proj<@Marker[i64], "M"> = !trait.poly<0>>) {
+  trait.assoc_type @Out = !trait.poly<0>
 }
 
 func.func @missing_premise(%v: !trait.proj<@S[i64], "Out">) -> i1 {
@@ -51,8 +51,8 @@ trait.impl private @Marker_i64(%self: !trait.claim<@Marker[i64]>) {
 trait.trait private @S(%self: !trait.claim<@S[!S]>) {
   trait.assoc_type @Out
 }
-trait.impl private @S_i64(%self: !trait.claim<@S[i64]>, %m: !trait.claim<!trait.proj<@Marker[i64], "M"> = !U>) {
-  trait.assoc_type @Out = !U
+trait.impl private @S_i64(%self: !trait.claim<@S[i64]>, %m: !trait.claim<!trait.proj<@Marker[i64], "M"> = !trait.poly<0>>) {
+  trait.assoc_type @Out = !trait.poly<0>
 }
 
 func.func @contradicts_the_where_clause(%v: !trait.proj<@S[i64], "Out">) -> i64 {
@@ -84,8 +84,8 @@ trait.impl private @Marker_i64(%self: !trait.claim<@Marker[i64]>) {
 trait.trait private @S(%self: !trait.claim<@S[!S]>) {
   trait.assoc_type @Out
 }
-trait.impl private @S_i64(%self: !trait.claim<@S[i64]>, %m: !trait.claim<!trait.proj<@Marker[i64], "M"> = !U>) {
-  trait.assoc_type @Out = !U
+trait.impl private @S_i64(%self: !trait.claim<@S[i64]>, %m: !trait.claim<!trait.proj<@Marker[i64], "M"> = !trait.poly<0>>) {
+  trait.assoc_type @Out = !trait.poly<0>
 }
 
 func.func @binding_disagrees(%v: !trait.proj<@S[i64], "Out">) -> i64 {
@@ -110,8 +110,8 @@ func.func @binding_disagrees(%v: !trait.proj<@S[i64], "Out">) -> i64 {
 trait.trait private @A(%self: !trait.claim<@A[!S]>) {
   trait.assoc_type @Item
 }
-trait.impl private @A_tuple(%self: !trait.claim<@A[tuple<!U>]>) {
-  trait.assoc_type @Item = !U
+trait.impl private @A_tuple(%self: !trait.claim<@A[tuple<!trait.poly<0>>]>) {
+  trait.assoc_type @Item = !trait.poly<0>
 }
 
 func.func @header_disagrees(%v: !trait.proj<@A[tuple<i64>], "Item">) -> i32 {

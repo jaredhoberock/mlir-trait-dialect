@@ -24,11 +24,16 @@ def PolyType : TypeDef<TraitDialect, "Poly", [
 
     ### Identity
 
-    A `!trait.poly` carries a non-negative integer label. Labels are
-    declaration-local: a declaration's parameters are read off its own header in
-    position order, so a callee's `!trait.poly<0>` is its own first parameter
-    and never the caller's, and two declarations may spell the same label
-    without relating their parameters. A negative label is refused.
+    A `!trait.poly` carries a non-negative integer label: the position of the
+    parameter it stands for in the declaration binding it. A trait's parameter
+    `i` (its `Self` first) is `!trait.poly<i>`, an impl's `n` parameters are
+    labelled `0` to `n - 1`, and a member's own parameters -- a method's, a
+    generic associated type's -- continue at `n`, `n + 1`, ... after its
+    declaration's, as rustc numbers a method's generics after its impl's
+    (`TraitOp::verify`, `ImplOp::verify` and the impl's method-signature check
+    hold declarations to this). So a callee's `!trait.poly<0>` is its own first
+    parameter and never the caller's, and two declarations spell the same
+    labels without relating their parameters. A negative label is refused.
 
     ### Interfaces
 

@@ -22,7 +22,7 @@ trait.impl private @Marker_i64(%self: !trait.claim<@Marker[i64]>) {
 trait.trait private @S(%self: !trait.claim<@S[!S]>) {
   trait.assoc_type @Out
 }
-trait.impl private @S_gen(%self: !trait.claim<@S[!T]>, %m: !trait.claim<!trait.proj<@Marker[!T], "M"> = !U>) {
+trait.impl private @S_gen(%self: !trait.claim<@S[!trait.poly<0>]>, %m: !trait.claim<!trait.proj<@Marker[!trait.poly<0>], "M"> = !trait.poly<1>>) {
   trait.assoc_type @Out = !U
 }
 

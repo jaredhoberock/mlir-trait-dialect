@@ -16,9 +16,9 @@
 trait.trait private @Group(%self: !trait.claim<@Group[!S]>) {}
 trait.impl private @Group_i8(%self: !trait.claim<@Group[i8]>) {}
 
-trait.trait private @Carry(%self: !trait.claim<@Carry[!S, !G]>) { trait.assoc_type @Payload }
-trait.impl private @Carry_any(%self: !trait.claim<@Carry[!T, !G]>, %group: !trait.claim<@Group[!G]>) {
-  trait.assoc_type @Payload = !T
+trait.trait private @Carry(%self: !trait.claim<@Carry[!trait.poly<0>, !trait.poly<1>]>) { trait.assoc_type @Payload }
+trait.impl private @Carry_any(%self: !trait.claim<@Carry[!trait.poly<0>, !trait.poly<1>]>, %group: !trait.claim<@Group[!trait.poly<1>]>) {
+  trait.assoc_type @Payload = !trait.poly<0>
 }
 
 func.func private @sink(%e: !trait.claim<!trait.proj<@Carry[!X, i8], "Payload"> = !X>) {

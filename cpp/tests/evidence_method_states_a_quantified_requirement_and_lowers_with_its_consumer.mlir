@@ -37,8 +37,8 @@ trait.impl private @Marker_i64(%self: !trait.claim<@Marker[i64]>) {
   }
 }
 trait.impl private @Has_i32(%self: !trait.claim<@Has[i32]>) {
-  trait.assoc_type @A<[!X]> = i64
-  trait.method @requirement_0(%m: !trait.claim<@Marker[!X]>) -> !trait.claim<@Marker[i64] by @Marker_i64> {
+  trait.assoc_type @A<[!trait.poly<0>]> = i64
+  trait.method @requirement_0(%m: !trait.claim<@Marker[!trait.poly<0>]>) -> !trait.claim<@Marker[i64] by @Marker_i64> {
     %r = trait.witness @Marker_i64 for @Marker[i64]
     trait.return %r : !trait.claim<@Marker[i64] by @Marker_i64>
   }

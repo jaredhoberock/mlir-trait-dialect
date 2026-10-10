@@ -20,8 +20,8 @@
 trait.trait private @A(%self: !trait.claim<@A[!S]>) { trait.assoc_type @Item }
 trait.trait private @B(%self: !trait.claim<@B[!S]>) { trait.assoc_type @Item }
 
-trait.impl private @A_impl(%self: !trait.claim<@A[!U]>) { trait.assoc_type @Item = !U }
-trait.impl private @B_impl(%self: !trait.claim<@B[!U]>) { trait.assoc_type @Item = !U }
+trait.impl private @A_impl(%self: !trait.claim<@A[!trait.poly<0>]>) { trait.assoc_type @Item = !trait.poly<0> }
+trait.impl private @B_impl(%self: !trait.claim<@B[!trait.poly<0>]>) { trait.assoc_type @Item = !trait.poly<0> }
 
 func.func @use(%pa: !trait.proj<@A[i64], "Item">) -> !trait.proj<@B[i64], "Item"> {
   %w1 = trait.witness proj_resolve !trait.proj<@A[i64], "Item"> resolves i64 by @A_impl

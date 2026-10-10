@@ -9,7 +9,7 @@
 
 trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) {}
 
-trait.trait private @B(%self: !trait.claim<@B[!trait.poly<1>]>) -> !trait.claim<@A[!trait.poly<1>]> {}
+trait.trait private @B(%self: !trait.claim<@B[!trait.poly<0>]>) -> !trait.claim<@A[!trait.poly<0>]> {}
 
 trait.impl private @B_impl(%self: !trait.claim<@B[i32]>, %a: !trait.claim<@A[i32]>) {
   trait.return %a : !trait.claim<@A[i32]>

@@ -29,9 +29,9 @@ trait.impl private @Tr_i32(%self: !trait.claim<@Tr[i32]>) {
   }
 }
 
-trait.impl private @Tr_tuple(%self: !trait.claim<@Tr[tuple<!U>]>, %tr: !trait.claim<@Tr[!U]>, %out: !trait.claim<!trait.proj<@Tr[!U], "Out"> = i64>) {
+trait.impl private @Tr_tuple(%self: !trait.claim<@Tr[tuple<!trait.poly<0>>]>, %tr: !trait.claim<@Tr[!trait.poly<0>]>, %out: !trait.claim<!trait.proj<@Tr[!trait.poly<0>], "Out"> = i64>) {
   trait.assoc_type @Out = i64
-  trait.method @get(%x: tuple<!U>) -> i64 {
+  trait.method @get(%x: tuple<!trait.poly<0>>) -> i64 {
     %c = arith.constant 35 : i64
     trait.return %c : i64
   }

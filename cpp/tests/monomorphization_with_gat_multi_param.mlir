@@ -30,13 +30,13 @@ trait.trait private @BiMap(%self: !trait.claim<@BiMap[!S]>) {
 }
 
 trait.impl private @BiMap_impl(%self_claim: !trait.claim<@BiMap[i1]>) {
-  trait.assoc_type @Left<[!T, !U]> = !T
-  trait.assoc_type @Right<[!T, !U]> = !U
-  trait.method @left(%self: i1, %a: !T, %b: !U) -> !T {
-    trait.return %a : !T
+  trait.assoc_type @Left<[!trait.poly<0>, !trait.poly<1>]> = !trait.poly<0>
+  trait.assoc_type @Right<[!trait.poly<0>, !trait.poly<1>]> = !trait.poly<1>
+  trait.method @left(%self: i1, %a: !trait.poly<0>, %b: !trait.poly<1>) -> !trait.poly<0> {
+    trait.return %a : !trait.poly<0>
   }
-  trait.method @right(%self: i1, %a: !T, %b: !U) -> !U {
-    trait.return %b : !U
+  trait.method @right(%self: i1, %a: !trait.poly<0>, %b: !trait.poly<1>) -> !trait.poly<1> {
+    trait.return %b : !trait.poly<1>
   }
 }
 

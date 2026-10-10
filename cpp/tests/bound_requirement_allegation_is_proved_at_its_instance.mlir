@@ -25,13 +25,13 @@ trait.impl private @Rule_pair(%self: !trait.claim<@Rule[tuple<i64, i64>]>) {
 }
 trait.trait private @Holds(%self: !trait.claim<@Holds[!S]>) {
   trait.assoc_type @C<[!X]>
-  trait.method @requirement_0() -> !trait.claim<@Rule[!trait.proj<@Holds[!S], "C", [!B]>]>
+  trait.method @requirement_0() -> !trait.claim<@Rule[!trait.proj<@Holds[!trait.poly<0>], "C", [!trait.poly<1>]>]>
 }
 trait.impl private @Holds_i32(%self: !trait.claim<@Holds[i32]>) {
-  trait.assoc_type @C<[!X]> = tuple<i64, i64>
-  trait.method @requirement_0() -> !trait.claim<@Rule[!trait.proj<@Holds[i32], "C", [!B]>]> {
-    %r = trait.allege @Rule[!trait.proj<@Holds[i32], "C", [!B]>]
-    trait.return %r : !trait.claim<@Rule[!trait.proj<@Holds[i32], "C", [!B]>]>
+  trait.assoc_type @C<[!trait.poly<0>]> = tuple<i64, i64>
+  trait.method @requirement_0() -> !trait.claim<@Rule[!trait.proj<@Holds[i32], "C", [!trait.poly<0>]>]> {
+    %r = trait.allege @Rule[!trait.proj<@Holds[i32], "C", [!trait.poly<0>]>]
+    trait.return %r : !trait.claim<@Rule[!trait.proj<@Holds[i32], "C", [!trait.poly<0>]>]>
   }
 }
 

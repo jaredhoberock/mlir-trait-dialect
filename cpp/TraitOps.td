@@ -482,7 +482,8 @@ def ImplOp : TraitDialectOp<"impl", [
       return succeeded(getMethod(name));
     }
 
-    // returns all distinct generic types that occur in this ImplOp's self application and where clause
+    /// The impl's type parameters, labels 0 to n - 1: a parameter's label is
+    /// its position, and the header and where clause spell each.
     SmallVector<GenericTypeInterface, 4> getTypeParams();
 
     /// The arguments a citation of this impl gives its parameters: read off

@@ -28,9 +28,9 @@ trait.proof private @PB {
   trait.return %d : !trait.claim<@Mark[i32]>
 }
 trait.impl private @W(%self: !trait.claim<@Wrapped[i32]>) {
-  trait.method @requirement_1() -> !trait.claim<@Mark[!B]> {
-    %r = trait.derive @Mark[!B] from @Blanket given()
-    trait.return %r : !trait.claim<@Mark[!B]>
+  trait.method @requirement_1() -> !trait.claim<@Mark[!trait.poly<0>]> {
+    %r = trait.derive @Mark[!trait.poly<0>] from @Blanket given()
+    trait.return %r : !trait.claim<@Mark[!trait.poly<0>]>
   }
   %mark = trait.witness @PB for @Mark[i32]
   trait.return %mark : !trait.claim<@Mark[i32] by @PB>

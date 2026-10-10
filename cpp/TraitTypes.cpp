@@ -591,6 +591,58 @@ unsigned firstUnusedPolyLabel(Operation *op) {
   return next;
 }
 
+/// Calls `fn` with each label `ty` spells, as often as it spells it. Claims and
+/// projections hold their type arguments in an attribute, so those are read
+/// through the predicate; every other type through its type sub-elements.
+static void forEachLabel(Type ty, llvm::function_ref<void(unsigned)> fn) {
+  if (auto label = dyn_cast<PolyType>(ty)) {
+    fn(label.getLabel());
+    return;
+  }
+  if (auto claim = dyn_cast<ClaimType>(ty)) {
+    if (auto equality = claim.getEqualityAttr()) {
+      forEachLabel(equality.getLhs(), fn);
+      forEachLabel(equality.getRhs(), fn);
+    } else {
+      for (Type argument : claim.getTraitApplication().getTypeArgs())
+        forEachLabel(argument, fn);
+    }
+    return;
+  }
+  if (auto projection = dyn_cast<ProjectionType>(ty)) {
+    for (Type argument : projection.getTraitApplication().getTypeArgs())
+      forEachLabel(argument, fn);
+    for (Type argument : projection.getAssocTypeArgs())
+      forEachLabel(argument, fn);
+    return;
+  }
+  ty.walkImmediateSubElements([](Attribute) {},
+                              [&](Type sub) { forEachLabel(sub, fn); });
+}
+
+unsigned getLabelBound(ArrayRef<Type> spellings) {
+  unsigned bound = 0;
+  for (Type ty : spellings)
+    forEachLabel(ty, [&](unsigned label) { bound = std::max(bound, label + 1); });
+  return bound;
+}
+
+FailureOr<unsigned> countDenseLabelsFrom(ArrayRef<Type> spellings,
+                                         unsigned first) {
+  llvm::SmallDenseSet<unsigned, 8> labels;
+  for (Type ty : spellings)
+    forEachLabel(ty, [&](unsigned label) {
+      if (label >= first)
+        labels.insert(label);
+    });
+  unsigned bound = first;
+  for (unsigned label : labels)
+    bound = std::max(bound, label + 1);
+  if (bound - first != labels.size())
+    return failure();
+  return static_cast<unsigned>(labels.size());
+}
+
 LogicalResult TypeArguments::assign(
     GenericTypeInterface parameter, Type value,
     llvm::function_ref<InFlightDiagnostic()> err) {

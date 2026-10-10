@@ -10,9 +10,9 @@
 !T = !trait.poly<1>
 !G = !trait.poly<2>
 
-trait.trait private @Carry(%self: !trait.claim<@Carry[!S, !G]>) { trait.assoc_type @Payload }
-trait.impl private @Carry_any(%self: !trait.claim<@Carry[!T, !G]>) {
-  trait.assoc_type @Payload = !T
+trait.trait private @Carry(%self: !trait.claim<@Carry[!trait.poly<0>, !trait.poly<1>]>) { trait.assoc_type @Payload }
+trait.impl private @Carry_any(%self: !trait.claim<@Carry[!trait.poly<0>, !trait.poly<1>]>) {
+  trait.assoc_type @Payload = !trait.poly<0>
 }
 
 func.func private @need(!trait.claim<!trait.proj<@Carry[i64, i8], "Payload"> = i32>)

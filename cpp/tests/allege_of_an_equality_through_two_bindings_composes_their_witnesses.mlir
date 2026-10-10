@@ -18,9 +18,9 @@ trait.impl private @Other_i64(%self: !trait.claim<@Other[i64]>) {
   trait.assoc_type @Out = i32
 }
 
-trait.trait private @Carry(%self: !trait.claim<@Carry[!S, !G]>) { trait.assoc_type @Payload }
-trait.impl private @Carry_any(%self: !trait.claim<@Carry[!T, !G]>) {
-  trait.assoc_type @Payload = !trait.proj<@Other[!T], "Out">
+trait.trait private @Carry(%self: !trait.claim<@Carry[!trait.poly<0>, !trait.poly<1>]>) { trait.assoc_type @Payload }
+trait.impl private @Carry_any(%self: !trait.claim<@Carry[!trait.poly<0>, !trait.poly<1>]>) {
+  trait.assoc_type @Payload = !trait.proj<@Other[!trait.poly<0>], "Out">
 }
 
 func.func private @need(!trait.claim<!trait.proj<@Carry[i64, i8], "Payload"> = i32>)

@@ -17,8 +17,8 @@ trait.trait private @Trait(%self: !trait.claim<@Trait[!T0, !T1]>) {
 }
 
 !T2 = !trait.poly<2>
-trait.impl private @Trait_impl(%self_claim: !trait.claim<@Trait[i64, !T2]>) {
-  trait.method @method(%self: i64, %arg: !T2) -> i64 {
+trait.impl private @Trait_impl(%self_claim: !trait.claim<@Trait[i64, !trait.poly<0>]>) {
+  trait.method @method(%self: i64, %arg: !trait.poly<0>) -> i64 {
     trait.return %self : i64
   }
 }

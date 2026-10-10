@@ -108,10 +108,10 @@ trait.impl private @A_gen(%self: !trait.claim<@A[!T]>) {
   %b = trait.project %c[0] : !trait.claim<@C[!T]> -> !trait.claim<@B[!T]>
   trait.return %b : !trait.claim<@B[!T]>
 }
-trait.impl private @C_gen(%self: !trait.claim<@C[!U]>) {
-  %a = trait.derive @A[!U] from @A_gen given()
-  %b = trait.project %a[0] : !trait.claim<@A[!U]> -> !trait.claim<@B[!U]>
-  trait.return %b : !trait.claim<@B[!U]>
+trait.impl private @C_gen(%self: !trait.claim<@C[!trait.poly<0>]>) {
+  %a = trait.derive @A[!trait.poly<0>] from @A_gen given()
+  %b = trait.project %a[0] : !trait.claim<@A[!trait.poly<0>]> -> !trait.claim<@B[!trait.poly<0>]>
+  trait.return %b : !trait.claim<@B[!trait.poly<0>]>
 }
 func.func @main() -> i64 {
   %a = trait.derive @A[i32] from @A_gen given()

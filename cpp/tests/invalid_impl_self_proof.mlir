@@ -5,11 +5,11 @@
 
 trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) {}
 
-trait.impl private @A_impl(%self: !trait.claim<@A[!trait.poly<1>]>) {}
+trait.impl private @A_impl(%self: !trait.claim<@A[!trait.poly<0>]>) {}
 
-trait.trait private @B(%self: !trait.claim<@B[!trait.poly<2>]>) {}
+trait.trait private @B(%self: !trait.claim<@B[!trait.poly<0>]>) {}
 
-trait.impl private @B_impl(%self: !trait.claim<@B[!trait.poly<3>]>, %a: !trait.claim<@A[!trait.poly<3>]>) {}
+trait.impl private @B_impl(%self: !trait.claim<@B[!trait.poly<0>]>, %a: !trait.claim<@A[!trait.poly<0>]>) {}
 
 // A proof's body cites a generic impl by name; an impl binding type parameters
 // is cited only through a proof of its own.

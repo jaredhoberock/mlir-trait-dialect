@@ -27,7 +27,7 @@ trait.impl private @Marker_i64(%self: !trait.claim<@Marker[i64]>) {
   trait.method @mark(%x: i64) -> i64 { %c = arith.constant 1 : i64 %r = arith.addi %x, %c : i64 trait.return %r : i64 }
 }
 trait.impl private @Has_i32(%self: !trait.claim<@Has[i32]>) {
-  trait.assoc_type @A<[!X]> = i64
+  trait.assoc_type @A<[!trait.poly<0>]> = i64
 }
 func.func @main() -> i64 {
   %x = arith.constant 41 : i64

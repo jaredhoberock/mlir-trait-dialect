@@ -20,11 +20,11 @@ trait.trait private @Base(%self: !trait.claim<@Base[!S]>) {
   trait.assoc_type @Assoc
 }
 
-trait.trait private @Fn(%self: !trait.claim<@Fn[!F, !R]>) {
+trait.trait private @Fn(%self: !trait.claim<@Fn[!trait.poly<0>, !trait.poly<1>]>) {
   trait.assoc_type @Output
 }
 
-trait.trait private @SameAs(%self: !trait.claim<@SameAs[!S, !R]>) {
+trait.trait private @SameAs(%self: !trait.claim<@SameAs[!trait.poly<0>, !trait.poly<1>]>) {
 }
 
 trait.trait private @Trait(%self: !trait.claim<@Trait[!S]>) -> !trait.claim<@Base[!S]> {
@@ -46,11 +46,11 @@ trait.impl private @Base_i32(%self: !trait.claim<@Base[i32]>) {
 trait.impl private @Trait_i32(%self_claim: !trait.claim<@Trait[i32]>, %assoc: !trait.claim<!trait.proj<@Base[i32], "Assoc"> = i64>) {
   trait.method @method(
     %self: i32,
-    %f: !F,
-    %fn: !trait.claim<@Fn[!F, tuple<i64>]>,
+    %f: !trait.poly<0>,
+    %fn: !trait.claim<@Fn[!trait.poly<0>, tuple<i64>]>,
     %same: !trait.claim<@SameAs[
-      !trait.proj<@Fn[!F, tuple<i64>], "Output">,
-      !trait.proj<@Fn[!F, tuple<i64>], "Output">
+      !trait.proj<@Fn[!trait.poly<0>, tuple<i64>], "Output">,
+      !trait.proj<@Fn[!trait.poly<0>, tuple<i64>], "Output">
     ]>
   ) -> i32 {
     %c0 = arith.constant 0 : i32

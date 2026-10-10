@@ -35,7 +35,7 @@ trait.trait private @OneParam(%self: !trait.claim<@OneParam[!S]>) {
 
 // expected-error @+1 {{'trait.impl' op associated type 'Item' has 2 type parameter(s) but trait declares 1}}
 trait.impl private @OneParam_impl(%self_claim: !trait.claim<@OneParam[i32]>) {
-  trait.assoc_type @Item<[!T, !U]> = !T
+  trait.assoc_type @Item<[!trait.poly<0>, !trait.poly<1>]> = !trait.poly<0>
   trait.method @get(%self: i32, %value: i64) -> i64 {
     %c = arith.extsi %self : i32 to i64
     trait.return %c : i64

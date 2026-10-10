@@ -21,8 +21,8 @@ trait.trait private @Tr(%self: !trait.claim<@Tr[!T]>) {
   trait.method @get(!T) -> i64
 }
 
-trait.impl private @Tr_any(%self: !trait.claim<@Tr[tuple<!U>]>, %mark: !trait.claim<@Mark[!U]>) {
-  trait.method @get(%x: tuple<!U>) -> i64 {
+trait.impl private @Tr_any(%self: !trait.claim<@Tr[tuple<!trait.poly<0>>]>, %mark: !trait.claim<@Mark[!trait.poly<0>]>) {
+  trait.method @get(%x: tuple<!trait.poly<0>>) -> i64 {
     %c = arith.constant 1 : i64
     trait.return %c : i64
   }

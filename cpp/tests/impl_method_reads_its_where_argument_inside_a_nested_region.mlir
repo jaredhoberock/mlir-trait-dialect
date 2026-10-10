@@ -22,8 +22,8 @@
 
 !T = !trait.poly<0>
 !U = !trait.poly<1>
-trait.trait private @From(%self: !trait.claim<@From[!U, !T]>) {
-  trait.method @from(!T) -> !U
+trait.trait private @From(%self: !trait.claim<@From[!trait.poly<0>, !trait.poly<1>]>) {
+  trait.method @from(!trait.poly<1>) -> !trait.poly<0>
 }
 trait.trait private @Into(%self: !trait.claim<@Into[!T, !U]>) {
   trait.method @into(!T) -> !U

@@ -15,8 +15,8 @@
 
 module {
   trait.trait private @D(%self: !trait.claim<@D[!trait.poly<0>, !trait.poly<1>]>) {}
-  trait.trait private @A(%self: !trait.claim<@A[!trait.poly<2>]>) { trait.assoc_type @Out }
-  trait.impl private @D_impl(%self: !trait.claim<@D[!trait.poly<3>, !trait.poly<3>]>) {}
+  trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) { trait.assoc_type @Out }
+  trait.impl private @D_impl(%self: !trait.claim<@D[!trait.poly<0>, !trait.poly<0>]>) {}
   trait.impl private @A_i32(%self: !trait.claim<@A[i32]>) { trait.assoc_type @Out = i64 }
   trait.impl private @A_f32(%self: !trait.claim<@A[f32]>) { trait.assoc_type @Out = i64 }
   trait.proof private @D_p {

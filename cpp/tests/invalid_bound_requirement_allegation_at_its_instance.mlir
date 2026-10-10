@@ -22,12 +22,12 @@ trait.trait private @Holds(%self: !trait.claim<@Holds[!S]>) {
   trait.method @requirement_0() -> !trait.claim<@Rule[!trait.proj<@Holds[!S], "C", [!X]>]>
 }
 trait.impl private @Holds_i32(%self: !trait.claim<@Holds[i32]>) {
-  trait.assoc_type @C<[!X]> = tuple<i64, i64>
-  trait.method @requirement_0() -> !trait.claim<@Rule[!trait.proj<@Holds[i32], "C", [!X]>]> {
+  trait.assoc_type @C<[!trait.poly<0>]> = tuple<i64, i64>
+  trait.method @requirement_0() -> !trait.claim<@Rule[!trait.proj<@Holds[i32], "C", [!trait.poly<0>]>]> {
     // expected-error @below {{no impl with satisfiable assumptions for '!trait.claim<@Rule[!trait.proj<@Holds[i32], "C", [i1]>]>'}}
     // expected-error @below {{unproven monomorphic claim '!trait.claim<@Rule[!trait.proj<@Holds[i32], "C", [i1]>]>' after instantiate-monomorphs}}
-    %r = trait.allege @Rule[!trait.proj<@Holds[i32], "C", [!X]>]
-    trait.return %r : !trait.claim<@Rule[!trait.proj<@Holds[i32], "C", [!X]>]>
+    %r = trait.allege @Rule[!trait.proj<@Holds[i32], "C", [!trait.poly<0>]>]
+    trait.return %r : !trait.claim<@Rule[!trait.proj<@Holds[i32], "C", [!trait.poly<0>]>]>
   }
 }
 
@@ -68,12 +68,12 @@ trait.trait private @Base(%self: !trait.claim<@Base[!S]>) {
   trait.method @requirement_0() -> !trait.claim<@Mark[!trait.proj<@Base[!S], "A", [!X]>]>
 }
 trait.impl private @Base_i32(%self: !trait.claim<@Base[i32]>) {
-  trait.assoc_type @A<[!X]> = i64
-  trait.method @requirement_0() -> !trait.claim<@Mark[!trait.proj<@Base[i32], "A", [!X]>]> {
+  trait.assoc_type @A<[!trait.poly<0>]> = i64
+  trait.method @requirement_0() -> !trait.claim<@Mark[!trait.proj<@Base[i32], "A", [!trait.poly<0>]>]> {
     // expected-error @below {{no impl with satisfiable assumptions for '!trait.claim<@Mark[!trait.proj<@Base[i32], "A", [i1]>]>'}}
     // expected-error @below {{unproven monomorphic claim '!trait.claim<@Mark[!trait.proj<@Base[i32], "A", [i1]>]>' after instantiate-monomorphs}}
-    %r = trait.allege @Mark[!trait.proj<@Base[i32], "A", [!X]>]
-    trait.return %r : !trait.claim<@Mark[!trait.proj<@Base[i32], "A", [!X]>]>
+    %r = trait.allege @Mark[!trait.proj<@Base[i32], "A", [!trait.poly<0>]>]
+    trait.return %r : !trait.claim<@Mark[!trait.proj<@Base[i32], "A", [!trait.poly<0>]>]>
   }
 }
 trait.trait private @Outer(%self: !trait.claim<@Outer[!S]>) {
@@ -81,16 +81,16 @@ trait.trait private @Outer(%self: !trait.claim<@Outer[!S]>) {
   trait.method @requirement_0() -> !trait.claim<@Mark[!trait.proj<@Outer[!S], "A", [!X]>]>
 }
 trait.impl private @Outer_i32(%self: !trait.claim<@Outer[i32]>, %base: !trait.claim<@Base[i32]>) {
-  trait.assoc_type @A<[!X]> = !trait.proj<@Base[i32], "A", [!X]>
-  trait.method @requirement_0() -> !trait.claim<@Mark[!trait.proj<@Outer[i32], "A", [!X]>]> {
-    %r = trait.method.call %base @Base[i32]::@requirement_0() : () -> !trait.claim<@Mark[!trait.proj<@Base[i32], "A", [!X]>]>
-    %e = trait.witness proj_resolve !trait.proj<@Outer[i32], "A", [!X]> resolves !trait.proj<@Base[i32], "A", [!X]> by @Outer_i32 given(%base)
+  trait.assoc_type @A<[!trait.poly<0>]> = !trait.proj<@Base[i32], "A", [!trait.poly<0>]>
+  trait.method @requirement_0() -> !trait.claim<@Mark[!trait.proj<@Outer[i32], "A", [!trait.poly<0>]>]> {
+    %r = trait.method.call %base @Base[i32]::@requirement_0() : () -> !trait.claim<@Mark[!trait.proj<@Base[i32], "A", [!trait.poly<0>]>]>
+    %e = trait.witness proj_resolve !trait.proj<@Outer[i32], "A", [!trait.poly<0>]> resolves !trait.proj<@Base[i32], "A", [!trait.poly<0>]> by @Outer_i32 given(%base)
       : (!trait.claim<@Base[i32]>)
-      : !trait.claim<!trait.proj<@Outer[i32], "A", [!X]> = !trait.proj<@Base[i32], "A", [!X]>>
+      : !trait.claim<!trait.proj<@Outer[i32], "A", [!trait.poly<0>]> = !trait.proj<@Base[i32], "A", [!trait.poly<0>]>>
     // expected-error @below {{unproven monomorphic claim '!trait.claim<@Mark[!trait.proj<@Outer[i32], "A", [i1]>]>' after instantiate-monomorphs}}
-    %c = trait.coerce %r : !trait.claim<@Mark[!trait.proj<@Base[i32], "A", [!X]>]> to !trait.claim<@Mark[!trait.proj<@Outer[i32], "A", [!X]>]> via (%e)
-      : (!trait.claim<!trait.proj<@Outer[i32], "A", [!X]> = !trait.proj<@Base[i32], "A", [!X]>>)
-    trait.return %c : !trait.claim<@Mark[!trait.proj<@Outer[i32], "A", [!X]>]>
+    %c = trait.coerce %r : !trait.claim<@Mark[!trait.proj<@Base[i32], "A", [!trait.poly<0>]>]> to !trait.claim<@Mark[!trait.proj<@Outer[i32], "A", [!trait.poly<0>]>]> via (%e)
+      : (!trait.claim<!trait.proj<@Outer[i32], "A", [!trait.poly<0>]> = !trait.proj<@Base[i32], "A", [!trait.poly<0>]>>)
+    trait.return %c : !trait.claim<@Mark[!trait.proj<@Outer[i32], "A", [!trait.poly<0>]>]>
   }
 }
 
@@ -131,14 +131,14 @@ trait.trait private @Has(%self: !trait.claim<@Has[!S]>) {
   trait.method @requirement_0() -> !trait.claim<@Sup0[!trait.proj<@Has[!S], "A", [!X]>]>
 }
 trait.impl private @Has_i32(%self: !trait.claim<@Has[i32]>) {
-  trait.assoc_type @A<[!X]> = i64
-  trait.method @requirement_0() -> !trait.claim<@Sup0[!trait.proj<@Has[i32], "A", [!X]>]> {
+  trait.assoc_type @A<[!trait.poly<0>]> = i64
+  trait.method @requirement_0() -> !trait.claim<@Sup0[!trait.proj<@Has[i32], "A", [!trait.poly<0>]>]> {
     // expected-error @below {{no impl with satisfiable assumptions for '!trait.claim<@Sub0[!trait.proj<@Has[i32], "A", [i1]>]>'}}
     // expected-error @below {{unproven monomorphic claim '!trait.claim<@Sub0[!trait.proj<@Has[i32], "A", [i1]>]>' after instantiate-monomorphs}}
-    %s = trait.allege @Sub0[!trait.proj<@Has[i32], "A", [!X]>]
+    %s = trait.allege @Sub0[!trait.proj<@Has[i32], "A", [!trait.poly<0>]>]
     // expected-error @below {{unproven monomorphic claim '!trait.claim<@Sup0[!trait.proj<@Has[i32], "A", [i1]>]>' after instantiate-monomorphs}}
-    %r = trait.project %s[0] : !trait.claim<@Sub0[!trait.proj<@Has[i32], "A", [!X]>]> -> !trait.claim<@Sup0[!trait.proj<@Has[i32], "A", [!X]>]>
-    trait.return %r : !trait.claim<@Sup0[!trait.proj<@Has[i32], "A", [!X]>]>
+    %r = trait.project %s[0] : !trait.claim<@Sub0[!trait.proj<@Has[i32], "A", [!trait.poly<0>]>]> -> !trait.claim<@Sup0[!trait.proj<@Has[i32], "A", [!trait.poly<0>]>]>
+    trait.return %r : !trait.claim<@Sup0[!trait.proj<@Has[i32], "A", [!trait.poly<0>]>]>
   }
 }
 

@@ -15,9 +15,9 @@ module {
     trait.assoc_type @A
   }
 
-  trait.trait private @T1(%self: !trait.claim<@T1[!trait.poly<1>]>) {}
+  trait.trait private @T1(%self: !trait.claim<@T1[!trait.poly<0>]>) {}
 
-  trait.trait private @T2(%self: !trait.claim<@T2[!trait.poly<2>]>) -> !trait.claim<@T1[!trait.proj<@T0[!trait.poly<2>], "A">]> {}
+  trait.trait private @T2(%self: !trait.claim<@T2[!trait.poly<0>]>) -> !trait.claim<@T1[!trait.proj<@T0[!trait.poly<0>], "A">]> {}
 
   trait.impl private @T1_i64(%self: !trait.claim<@T1[i64]>) {}
 

@@ -21,9 +21,9 @@
 trait.trait private @MyEq(%self: !trait.claim<@MyEq[!trait.poly<0>, !trait.poly<1>]>) {
   trait.method @eq(!trait.poly<0>, !trait.poly<1>) -> i1
 }
-trait.trait private @Has(%self: !trait.claim<@Has[!trait.poly<2>]>) -> !trait.claim<@MyEq[!trait.proj<@Has[!trait.poly<2>], "A">, !trait.proj<@Has[!trait.poly<2>], "A">]> {
+trait.trait private @Has(%self: !trait.claim<@Has[!trait.poly<0>]>) -> !trait.claim<@MyEq[!trait.proj<@Has[!trait.poly<0>], "A">, !trait.proj<@Has[!trait.poly<0>], "A">]> {
   trait.assoc_type @A
-  trait.method @get(!trait.poly<2>) -> !trait.proj<@Has[!trait.poly<2>], "A">
+  trait.method @get(!trait.poly<0>) -> !trait.proj<@Has[!trait.poly<0>], "A">
 }
 trait.impl private @MyEq_impl(%self: !trait.claim<@MyEq[i64, i64]>) {
   trait.method @eq(%arg0: i64, %arg1: i64) -> i1 {

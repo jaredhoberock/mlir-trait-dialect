@@ -9,7 +9,7 @@
 
 trait.trait private @A2(%self: !trait.claim<@A2[!trait.poly<0>, !trait.poly<1>]>) { trait.method @a() -> i64 }
 trait.trait private @B2(%self: !trait.claim<@B2[!trait.poly<0>, !trait.poly<1>]>) -> !trait.claim<@A2[!trait.poly<0>, !trait.poly<1>]> { trait.method @b() -> i64 }
-trait.impl private @A2_blanket(%self: !trait.claim<@A2[!trait.poly<2>, !trait.poly<3>]>) {
+trait.impl private @A2_blanket(%self: !trait.claim<@A2[!trait.poly<0>, !trait.poly<1>]>) {
   trait.method @a() -> i64 {
     %c = arith.constant 7 : i64
     trait.return %c : i64

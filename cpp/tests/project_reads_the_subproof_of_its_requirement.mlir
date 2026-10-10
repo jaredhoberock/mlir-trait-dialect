@@ -10,8 +10,8 @@
 // RUN: mlir-opt %s | FileCheck %s
 
 trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) {}
-trait.trait private @B(%self: !trait.claim<@B[!trait.poly<1>]>) {}
-trait.trait private @T(%self: !trait.claim<@T[!trait.poly<2>]>) -> (!trait.claim<@A[!trait.poly<2>]>, !trait.claim<@B[!trait.poly<2>]>) {}
+trait.trait private @B(%self: !trait.claim<@B[!trait.poly<0>]>) {}
+trait.trait private @T(%self: !trait.claim<@T[!trait.poly<0>]>) -> (!trait.claim<@A[!trait.poly<0>]>, !trait.claim<@B[!trait.poly<0>]>) {}
 
 trait.impl private @A_i64(%self: !trait.claim<@A[i64]>) {}
 trait.impl private @B_i64(%self: !trait.claim<@B[i64]>) {}

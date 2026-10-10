@@ -14,12 +14,12 @@
 !V = !trait.poly<9>
 
 trait.trait private @Store(%self: !trait.claim<@Store[!S]>) {
-  trait.method @keep(!S, !V) -> !V
+  trait.method @keep(!trait.poly<0>, !trait.poly<1>) -> !trait.poly<1>
 }
 
 trait.impl private @Store_impl_i64(%self_claim: !trait.claim<@Store[i64]>) {
-  trait.method @keep(%self: i64, %v: !trait.poly<5>) -> !trait.poly<5> {
-    trait.return %v : !trait.poly<5>
+  trait.method @keep(%self: i64, %v: !trait.poly<0>) -> !trait.poly<0> {
+    trait.return %v : !trait.poly<0>
   }
 }
 
@@ -27,13 +27,13 @@ trait.impl private @Store_impl_i64(%self_claim: !trait.claim<@Store[i64]>) {
 // call spells this method's own variable in the argument position the trait
 // method's !V stands in.
 trait.impl private @Store_impl_i32(%self_claim: !trait.claim<@Store[i32]>) {
-  trait.method @keep(%self: i32, %v: !trait.poly<6>) -> !trait.poly<6> {
+  trait.method @keep(%self: i32, %v: !trait.poly<0>) -> !trait.poly<0> {
     %inner = arith.constant 0 : i64
     %p = trait.witness @Store_impl_i64 for @Store[i64]
     %r = trait.method.call %p @Store[i64]::@keep(%inner, %v)
-      : (i64, !trait.poly<6>) -> !trait.poly<6>
+      : (i64, !trait.poly<0>) -> !trait.poly<0>
       by @Store_impl_i64
-    trait.return %r : !trait.poly<6>
+    trait.return %r : !trait.poly<0>
   }
 }
 

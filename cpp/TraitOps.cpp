@@ -371,7 +371,8 @@ LogicalResult TraitOp::verify() {
     return failure();
 
   // The one block argument is the trait's own application, whose arguments are
-  // the trait's parameters: distinct type variables, at least one.
+  // the trait's parameters, at least one: parameter `i` is an occurrence of
+  // label `i`, its position.
   Block &body = getBody().front();
   auto self = body.getNumArguments() == 1
                   ? dyn_cast<ClaimType>(body.getArgument(0).getType())
@@ -381,15 +382,15 @@ LogicalResult TraitOp::verify() {
     return emitOpError() << "takes one block argument, the unproven claim of "
                             "its own application @"
                          << getSymName() << "[...]";
-  DenseSet<Type> uniqueParams;
-  for (Type ty : getTypeParams()) {
-    if (!isa<GenericTypeInterface>(ty))
-      return emitOpError() << "expected GenericTypeInterface (e.g., !trait.poly), found " << ty;
-    if (!uniqueParams.insert(ty).second)
-      return emitOpError() << "type parameters must be unique";
+  for (auto [position, ty] : llvm::enumerate(getTypeParams())) {
+    auto label = dyn_cast_or_null<PolyType>(Type(getParameterOccurrence(ty)));
+    if (!label || static_cast<size_t>(label.getLabel()) != position)
+      return emitOpError() << "parameter " << position << " must be labelled "
+                           << position << ", its position, found " << ty;
   }
-  if (uniqueParams.empty())
+  if (getTypeParams().empty())
     return emitOpError() << "requires at least one type parameter";
+  DenseSet<Type> uniqueParams(getTypeParams().begin(), getTypeParams().end());
 
   // Collect the GAT parameters from the AssocTypeOp type_params, each of which
   // is a parameter of its own declaration: a projection through the associated
@@ -659,124 +660,81 @@ agreeInOwnContext(ImplOp impl, Type expected, Type actual,
   return entailedByGroundCongruence(*lhs, *rhs, hypotheses);
 }
 
-/// The pairing carrying a trait's declaration of a method onto the impl's copy
-/// of it.
-///
-/// A method's declaration binds its header's parameters and then its own, in
-/// that order, and the two declarations of one method must bind equally many of
-/// their own: the trait states how many a caller supplies, and an impl copy
-/// with a different count is a different declaration. So the correspondence is
-/// positional -- the trait's j-th own variable is the impl's j-th -- and the
-/// check is the one identity it makes true.
-struct TraitMethodCorrespondence {
-  /// The trait method's own type variables, in first-occurrence order. A call
-  /// names its type arguments under these.
-  SmallVector<GenericTypeInterface, 4> traitOwn;
-  /// The impl method's own type variables, paired with `traitOwn` by position.
-  /// The clone a call is lowered to binds these.
-  SmallVector<GenericTypeInterface, 4> implOwn;
-  /// The whole substitution carrying the trait's declaration to the impl's: the
-  /// impl's self arguments for the trait's parameters, then the pairing above.
-  SpecializationMap substitution;
-};
-
-/// The type parameters `signature` binds beyond `headerParams`, in
-/// first-occurrence order: a method's own variables, as against the ones the
-/// declaration it is written in supplies.
-static SmallVector<GenericTypeInterface, 4> getOwnTypeParameters(
-    Type signature, const DenseSet<Type> &headerParams) {
+/// The labels a member's own type parameters take in a declaration binding
+/// `declarationCount` of its own: `declarationCount` onward, up to the bound
+/// the member's signature spells.
+static SmallVector<GenericTypeInterface, 4>
+getOwnTypeParameters(Type signature, unsigned declarationCount) {
+  MLIRContext *ctx = signature.getContext();
   SmallVector<GenericTypeInterface, 4> own;
-  for (GenericTypeInterface parameter : getTypeParametersIn(signature))
-    if (!headerParams.contains(Type(parameter)))
-      own.push_back(parameter);
+  for (unsigned label = declarationCount, bound = getLabelBound(signature);
+       label < bound; ++label)
+    own.push_back(cast<GenericTypeInterface>(Type(PolyType::get(ctx, label))));
   return own;
 }
 
-/// The type parameters a trait header supplies to the methods written in it.
-static DenseSet<Type> getTraitHeaderParameters(TraitOp traitOp) {
-  DenseSet<Type> params;
-  for (Type declared : traitOp.getTypeParams())
-    for (GenericTypeInterface parameter : getTypeParametersIn(declared))
-      params.insert(Type(parameter));
-  return params;
-}
-
-/// Builds the correspondence above and checks it: this is the impl's signature
-/// check and the rekeying a call lowering needs, which are one pairing. The
-/// check is that the trait's declaration instantiated through it is the impl's,
-/// read through the impl's own bindings and where equalities, and a binding a
-/// call names -- keyed by the trait's spelling, since a method call reads the
-/// trait's declaration -- rekeys through the same pairing to the copy of the
-/// method that is actually cloned.
-static FailureOr<TraitMethodCorrespondence> buildTraitMethodCorrespondence(
+/// Verifies that `implMethod`, `impl`'s copy of a method of `traitOp`, is the
+/// trait's declaration of it carried to the impl: rustc's
+/// `compare_impl_method`, run once per impl method.
+///
+/// A method's declaration binds its declaration's parameters and then its own,
+/// labelled after the declaration's without a gap, and the two declarations of
+/// one method bind equally many of their own: the trait states how many a
+/// caller supplies, and a copy with a different count is a different
+/// declaration. So the carrying substitution is positional -- the trait's
+/// parameters take the impl's self arguments, and the trait method's own
+/// parameter `traitCount + j` becomes the impl method's `implCount + j`, the
+/// rebase rustc's `rebase_onto` performs -- and the check is the one identity
+/// it makes true, read through the impl's own bindings and where equalities.
+static LogicalResult verifyImplMethodSignature(
     ImplOp impl, TraitOp traitOp, FunctionOpInterface implMethod,
     llvm::function_ref<InFlightDiagnostic()> errFn) {
   StringRef name = implMethod.getName();
   auto traitMethod = traitOp.getMethod(name, errFn);
   if (failed(traitMethod)) return failure();
 
-  // The prefix: the trait's parameters take this impl's self arguments, by
-  // position.
-  auto traitSubst =
+  auto rebase =
       traitOp.buildSubstitutionForSelfClaim(impl.getSelfClaim(), errFn);
-  if (failed(traitSubst)) return failure();
+  if (failed(rebase)) return failure();
 
-  DenseSet<Type> implHeaderParams;
-  for (GenericTypeInterface parameter : impl.getTypeParams())
-    implHeaderParams.insert(Type(parameter));
-
-  TraitMethodCorrespondence correspondence;
+  unsigned traitCount = traitOp.getTypeParams().size();
+  unsigned implCount = impl.getTypeParams().size();
   Type traitMethodTy = Type(traitMethod->getFunctionType());
   Type implMethodTy = Type(implMethod.getFunctionType());
-  correspondence.traitOwn =
-      getOwnTypeParameters(traitMethodTy, getTraitHeaderParameters(traitOp));
-  SmallVector<GenericTypeInterface, 4> implOwn =
-      getOwnTypeParameters(implMethodTy, implHeaderParams);
-  if (correspondence.traitOwn.size() != implOwn.size()) {
+  FailureOr<unsigned> traitOwn = countDenseLabelsFrom(traitMethodTy, traitCount);
+  FailureOr<unsigned> implOwn = countDenseLabelsFrom(implMethodTy, implCount);
+  if (failed(traitOwn) || failed(implOwn)) {
     if (errFn)
-      errFn() << "method '" << name << "' binds " << implOwn.size()
+      errFn() << "method '" << name << "' labels its own type parameters "
+              << "after its declaration's, without a gap";
+    return failure();
+  }
+  if (*traitOwn != *implOwn) {
+    if (errFn)
+      errFn() << "method '" << name << "' binds " << *implOwn
               << " type parameter(s) of its own, but trait '"
               << traitOp.getSymNameAttr() << "' declares it with "
-              << correspondence.traitOwn.size();
+              << *traitOwn;
     return failure();
   }
 
-  // What the impl's copy spells for each of the trait's own variables, read off
-  // the position it stands in. The copy may rename a variable and may constrain
-  // its kind -- so it is the occurrence and not the bare parameter that carries
-  // over -- but it may not instantiate one: a caller supplies an argument for
-  // every variable the trait declares, and a copy standing only at some of them
-  // is a method no call to the trait's declaration can reach. Each spelling is
-  // therefore one parameter occurrence, and distinct ones, which makes the
-  // pairing a renaming the clone below can rekey a call's bindings through.
-  correspondence.substitution = *traitSubst;
-  TypeArguments ownArguments(correspondence.traitOwn);
-  extractTypeArguments(instantiate(traitMethodTy, *traitSubst), implMethodTy,
-                       ownArguments);
-  DenseSet<Type> spelled;
-  for (GenericTypeInterface traitVariable : correspondence.traitOwn) {
-    std::optional<Type> spelling = ownArguments.lookup(traitVariable);
-    if (!spelling) {
-      if (errFn)
-        errFn() << "method '" << name << "' does not say what its copy of "
-                << Type(traitVariable) << " is";
-      return failure();
-    }
-    GenericTypeInterface implVariable = getParameterOccurrence(*spelling);
-    if (!implVariable || !spelled.insert(Type(implVariable)).second) {
-      if (errFn)
-        errFn() << "method '" << name << "' spells " << *spelling
-                << " where trait '@" << traitOp.getSymName()
-                << "' declares the type parameter " << Type(traitVariable)
-                << ": an impl's copy of a method renames the trait's type"
-                   " parameters, one for one";
-      return failure();
-    }
-    correspondence.substitution.bind(traitVariable, *spelling);
-    correspondence.implOwn.push_back(implVariable);
+  // The copy may constrain the kind of an own parameter, so what the trait's
+  // parameter becomes is the copy's spelling of its label: its first
+  // occurrence in the copy's signature, a kind-constraining wrapper or the
+  // label itself.
+  MLIRContext *ctx = impl.getContext();
+  SmallVector<GenericTypeInterface, 4> implGenerics =
+      getGenericTypesIn(implMethodTy);
+  for (unsigned j = 0; j < *traitOwn; ++j) {
+    Type label = PolyType::get(ctx, implCount + j);
+    auto spelling = llvm::find_if(implGenerics, [&](GenericTypeInterface g) {
+      return Type(getParameterOccurrence(Type(g))) == label;
+    });
+    rebase->bind(cast<GenericTypeInterface>(
+                     Type(PolyType::get(ctx, traitCount + j))),
+                 Type(*spelling));
   }
-
-  Type expected = instantiate(traitMethodTy, correspondence.substitution);
+  Type expected = instantiate(traitMethodTy, *rebase);
   FailureOr<bool> agree =
       agreeInOwnContext(impl, expected, implMethodTy, errFn);
   if (failed(agree))
@@ -787,7 +745,7 @@ static FailureOr<TraitMethodCorrespondence> buildTraitMethodCorrespondence(
               << "expected " << expected << " but found " << implMethodTy;
     return failure();
   }
-  return correspondence;
+  return success();
 }
 
 /// Verifies the evidence this impl returns for its trait's requirements: one
@@ -913,6 +871,11 @@ LogicalResult ImplOp::verify() {
                            << " must be an unproven claim, found "
                            << entry.getType();
   }
+  // A parameter's label is its position, so the header and the where clause
+  // together spell labels 0 to n - 1 without a gap.
+  if (failed(countDenseLabelsFrom(llvm::to_vector(body.getArgumentTypes()), 0)))
+    return emitOpError() << "labels its type parameters 0, 1, ... by position, "
+                            "and its header and where clause skip one";
   if (failed(verifyImplParametersAreConstrained(*this)))
     return failure();
   return verifyAssociatedTypeBindingScopes(*this);
@@ -963,8 +926,7 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
       // Verify that the impl method's declaration is the trait's declaration
       // of it, carried through the positional correspondence between them.
-      if (failed(buildTraitMethodCorrespondence(*this, traitOp, implMethod,
-                                                errFn)))
+      if (failed(verifyImplMethodSignature(*this, traitOp, implMethod, errFn)))
         return failure();
     } else if (auto assocType = dyn_cast<AssocTypeOp>(op)) {
       StringRef name = assocType.getSymName();
@@ -1145,23 +1107,14 @@ LogicalResult ImplOp::verifyIsUnconditional(llvm::function_ref<InFlightDiagnosti
 }
 
 SmallVector<GenericTypeInterface, 4> ImplOp::getTypeParams() {
-  // The types a type variable could hide in: the self claim, the where
-  // clause's applications, and then its equalities' endpoints, pushed directly,
-  // so a generic that appears only there (e.g. the accumulator in `F::Output =
-  // Acc`) is one of this impl's parameters and takes its position from where
-  // it is pushed.
-  SmallVector<Type> allOurTypes{getSelfClaim()};
-  for (ClaimType premise : getApplicationPremises())
-    allOurTypes.push_back(premise);
-  for (TypeEqualityAttr equality : getEqualityPremises()) {
-    allOurTypes.push_back(equality.getLhs());
-    allOurTypes.push_back(equality.getRhs());
-  }
-
-  // The parameters those spellings bind, in first-occurrence order: a kind-
-  // constraining wrapper is an occurrence of the parameter it wraps, not a
-  // parameter of its own.
-  return getTypeParametersIn(TupleType::get(getContext(), allOurTypes));
+  // The parameters are labelled by position (`ImplOp::verify`), so they are
+  // the labels below the bound the header and the where clause spell.
+  unsigned count = getLabelBound(llvm::to_vector(getBody().front().getArgumentTypes()));
+  SmallVector<GenericTypeInterface, 4> parameters;
+  for (unsigned label = 0; label < count; ++label)
+    parameters.push_back(
+        cast<GenericTypeInterface>(Type(PolyType::get(getContext(), label))));
+  return parameters;
 }
 
 FailureOr<SpecializationMap> ImplOp::readCitationArguments(
@@ -1444,11 +1397,13 @@ static FailureOr<func::FuncOp> getOrCutMethodInstance(
 /// The substitution `method`, `impl`'s copy of a method of `trait`, is cut or
 /// inlined under for a call through `provenSelfClaim` whose method-generic
 /// bindings are `callSubst`'s: the arguments the impl's parameters take at the
-/// receiver, then the call's bindings. A call names its method-generic bindings
-/// under the trait method's own type variables, while the impl's copy carries
-/// its own; each binding is rekeyed through the correspondence between the
-/// two, so the result is monomorphic in the method's variables as well as the
-/// impl's. Answers the impl's arguments beside it.
+/// receiver, then the call's bindings of the method's own parameters, which a
+/// call names at the trait method's labels and the impl's copy binds at its
+/// own: own parameter `j` is the trait's label `traitCount + j` and the copy's
+/// `implCount + j` (`verifyImplMethodSignature`), so each binding moves by the
+/// difference, rustc's `rebase_onto`. The call's projection bindings ride
+/// along; its bindings of the trait's parameters are the impl's arguments
+/// already. Answers the impl's arguments beside it.
 static FailureOr<std::pair<SpecializationMap, DenseMap<Type, Type>>>
 implMethodSubstitution(ImplOp impl, TraitOp trait, FunctionOpInterface method,
                        ClaimType provenSelfClaim,
@@ -1457,20 +1412,21 @@ implMethodSubstitution(ImplOp impl, TraitOp trait, FunctionOpInterface method,
   if (failed(implArguments))
     return failure();
   DenseMap<Type, Type> subst = implArguments->toTypeMap();
-  auto errFn = [&] { return impl.emitOpError(); };
-  auto correspondence =
-      buildTraitMethodCorrespondence(impl, trait, method, errFn);
-  if (failed(correspondence))
-    return failure();
-  DenseMap<Type, Type> callBindings = callSubst.toTypeMap();
-  for (auto [traitVariable, implVariable] :
-       llvm::zip(correspondence->traitOwn, correspondence->implOwn)) {
-    auto binding = callBindings.find(Type(traitVariable));
-    if (binding != callBindings.end())
-      subst.try_emplace(Type(implVariable), binding->second);
+  unsigned traitCount = trait.getTypeParams().size();
+  unsigned implCount = impl.getTypeParams().size();
+  MLIRContext *ctx = impl.getContext();
+  for (const auto &[key, value] : callSubst.toTypeMap()) {
+    if (!isa<GenericTypeInterface>(key)) {
+      subst.try_emplace(key, value);
+      continue;
+    }
+    auto label = dyn_cast_or_null<PolyType>(
+        Type(getParameterOccurrence(key)));
+    if (label && static_cast<unsigned>(label.getLabel()) >= traitCount)
+      subst.try_emplace(
+          PolyType::get(ctx, label.getLabel() - traitCount + implCount),
+          value);
   }
-  for (const auto &[k, v] : callBindings)
-    subst.try_emplace(k, v);
   return std::make_pair(std::move(*implArguments), std::move(subst));
 }
 
@@ -2682,8 +2638,9 @@ FailureOr<FunctionOpInterface> MethodCallOp::getMethod(llvm::function_ref<InFlig
   return func;
 }
 
-/// The type arguments a generic call supplies for `parameters`, read off the
-/// call's own types.
+/// The type arguments a generic call supplies for the parameters `args` holds
+/// slots for, read off the call's own types; a slot already filled is an
+/// argument fixed before the call is read.
 ///
 /// A call spells its operand, claim and result types and the callee's
 /// declaration spells the same positions with its parameters standing in them,
@@ -2693,23 +2650,24 @@ FailureOr<FunctionOpInterface> MethodCallOp::getMethod(llvm::function_ref<InFlig
 /// and a second differing reading keeps the first.
 ///
 /// A parameter standing only inside a projection's associated-type arguments is
-/// determined by a later round: the declaration is rebuilt at what has been read
-/// and normalized through impl selection where the stage reads it, which
-/// reduces a projection whose head the reading has grounded and exposes the
-/// positions its arguments stand in. Rounds stop when one fills nothing new, and a parameter
-/// no position determines is refused, named.
+/// determined by a later round where the stage reads the call through impl
+/// selection (`normalize`): the declaration is rebuilt at what has been read
+/// and normalized, which reduces a projection whose head the reading has
+/// grounded and exposes the positions its arguments stand in. Rounds stop when
+/// one fills nothing new, and a parameter no position determines is refused,
+/// named. Without selection a round would reread the positions the first one
+/// read, so none runs.
 ///
 /// Nothing here decides the verdict: filling a slot wrongly can only make the
 /// rebuilt declaration differ from what the call spells, which
 /// `verifyEqualAfterInstantiation` refuses.
 static FailureOr<SpecializationMap> readTypeArguments(
-    ArrayRef<GenericTypeInterface> parameters, Type formal, Type actual,
-    Normalizer normalize, StringRef callee,
+    TypeArguments args, Type formal, Type actual,
+    llvm::function_ref<Type(Type)> normalize, StringRef callee,
     llvm::function_ref<InFlightDiagnostic()> err) {
-  TypeArguments args(parameters);
   auto filled = [&] {
     unsigned count = 0;
-    for (GenericTypeInterface parameter : parameters)
+    for (GenericTypeInterface parameter : args.getParameters())
       if (args.lookup(parameter))
         ++count;
     return count;
@@ -2733,15 +2691,12 @@ static FailureOr<SpecializationMap> readTypeArguments(
         extractTypeArguments(formalInput, actualInput, args);
     }
   extractTypeArguments(formal, actual, args);
-  for (unsigned before = filled(); !args.complete(); ) {
-    // A round that will not normalize has learned nothing, so it stops the
-    // reading rather than refusing the call: what it could not reduce is the
-    // spelling already read, and the comparison downstream owns the verdict.
-    FailureOr<Type> exposed =
-        normalize(instantiate(formal, args.toSpecialization()));
-    if (failed(exposed))
-      break;
-    extractTypeArguments(*exposed, actual, args);
+  for (unsigned before = filled(); normalize && !args.complete(); ) {
+    // The rebuilt declaration is read again as normalized: what normalization
+    // could not reduce is the spelling already read, so a round learning
+    // nothing stops the reading and the comparison downstream owns the verdict.
+    Type exposed = normalize(instantiate(formal, args.toSpecialization()));
+    extractTypeArguments(exposed, actual, args);
     unsigned after = filled();
     if (after == before)
       break;
@@ -2753,7 +2708,7 @@ static FailureOr<SpecializationMap> readTypeArguments(
       InFlightDiagnostic diagnostic = err();
       diagnostic << "call to @" << callee
                  << " determines no type argument for";
-      for (GenericTypeInterface parameter : parameters)
+      for (GenericTypeInterface parameter : args.getParameters())
         if (!args.lookup(parameter))
           diagnostic << " " << Type(parameter);
     }
@@ -2790,11 +2745,12 @@ LogicalResult MethodCallOp::verify() {
 /// The type arguments a call supplies for the declaration it calls, once that
 /// declaration instantiated at them is the signature the call spells.
 ///
-/// `formal` is the callee's signature and `known` the arguments already fixed
-/// before the call's own types are read -- a method's trait arguments, which
-/// ride in its receiver claim; `parameters` are the ones this call's types
-/// determine, read against `formal` instantiated at `known`. `actual` is the
-/// signature the call spells.
+/// `formal` is the callee's signature and `args` holds a slot for each of its
+/// parameters, filled for the ones fixed before the call's own types are read
+/// -- a method's trait arguments, which ride in its receiver claim. The rest
+/// are read off `actual`, the signature the call spells, against `formal` as
+/// declared: the declaration's parameters and the caller's labels are read in
+/// one pass and never meet in one spelling.
 ///
 /// `selection` resolves a type's projections through the stage's impl
 /// selection, which at pass time is all both signatures are read through:
@@ -2803,9 +2759,9 @@ LogicalResult MethodCallOp::verify() {
 /// declaration's signature at its arguments, and a value spelled otherwise
 /// reaches it through a coercion.
 static FailureOr<SpecializationMap> readCallSpecialization(
-    Operation *call, FunctionType formal, const SpecializationMap &known,
-    ArrayRef<GenericTypeInterface> parameters, FunctionType actual,
-    StringRef callee, llvm::function_ref<Type(Type)> selection,
+    Operation *call, FunctionType formal, TypeArguments args,
+    FunctionType actual, StringRef callee,
+    llvm::function_ref<Type(Type)> selection,
     llvm::function_ref<InFlightDiagnostic()> err) {
   auto normalize = [&](Type ty) -> FailureOr<Type> {
     return selection ? selection(ty) : ty;
@@ -2821,18 +2777,13 @@ static FailureOr<SpecializationMap> readCallSpecialization(
   if (!refusal && llvm::all_of(call->getOperandTypes(), isMonomorphicType))
     refusal = reportHere;
 
-  auto read = readTypeArguments(parameters, instantiate(Type(formal), known),
-                                Type(actual), normalize, callee, refusal);
-  if (failed(read)) return failure();
-
-  SpecializationMap arguments = known;
-  for (GenericTypeInterface parameter : parameters)
-    if (auto argument = read->lookup(parameter))
-      arguments.bind(parameter, *argument);
+  auto arguments = readTypeArguments(std::move(args), Type(formal),
+                                     Type(actual), selection, callee, refusal);
+  if (failed(arguments)) return failure();
 
   // One identity: the callee's declaration instantiated at those arguments is
   // the signature spelled here.
-  if (failed(verifyEqualAfterInstantiation(Type(formal), arguments,
+  if (failed(verifyEqualAfterInstantiation(Type(formal), *arguments,
                                            Type(actual), normalize, err)))
     return failure();
 
@@ -2863,17 +2814,25 @@ FailureOr<SpecializationMap> MethodCallOp::buildParameterSpecialization(
   auto methodFormalTy = getMethodFunctionType(err);
   if (failed(methodFormalTy)) return failure();
 
-  // A method's declaration binds the trait header's parameters and then its
-  // own. The prefix comes from the receiver claim by position -- the trait's
-  // arguments ride in the application -- and this call's types determine the
-  // method's own variables, the ones its declaration binds beyond the header's.
-  auto traitSubst = trait->buildSubstitutionForSelfClaim(getClaimType(), err);
-  if (failed(traitSubst)) return failure();
-  SmallVector<GenericTypeInterface, 4> ownParams = getOwnTypeParameters(
-      Type(*methodFormalTy), getTraitHeaderParameters(*trait));
+  // A method's declaration binds the trait's parameters, labels 0 to n - 1,
+  // and then its own, labelled from n. The trait's come from the receiver
+  // claim by position -- the trait's arguments ride in the application -- and
+  // this call's types determine the method's own.
+  if (failed(trait->buildSubstitutionForSelfClaim(getClaimType(), err)))
+    return failure();
+  ArrayRef<Type> traitArguments = getClaimType().getTraitApplication().getTypeArgs();
+  SmallVector<GenericTypeInterface, 4> parameters;
+  for (Type parameter : trait->getTypeParams())
+    parameters.push_back(getParameterOccurrence(parameter));
+  llvm::append_range(parameters,
+                     getOwnTypeParameters(Type(*methodFormalTy),
+                                          trait->getTypeParams().size()));
+  TypeArguments args(parameters);
+  for (auto [parameter, argument] : llvm::zip(parameters, traitArguments))
+    (void)args.assign(parameter, argument, /*err=*/nullptr);
 
-  return readCallSpecialization(getOperation(), *methodFormalTy, *traitSubst,
-                                ownParams, getActualFunctionType(),
+  return readCallSpecialization(getOperation(), *methodFormalTy,
+                                std::move(args), getActualFunctionType(),
                                 getMethodName(), selection, err);
 }
 
@@ -3050,9 +3009,10 @@ FailureOr<SpecializationMap> FuncCallOp::buildParameterSpecialization(
 
   // The callee's declaration binds the parameters its signature spells, and
   // this call's own types determine each of them.
-  return readCallSpecialization(getOperation(), *formal, SpecializationMap(),
-                                getCalleeTypeParams(), getActualFunctionType(),
-                                getCalleeName(), selection, err);
+  return readCallSpecialization(getOperation(), *formal,
+                                TypeArguments(getCalleeTypeParams()),
+                                getActualFunctionType(), getCalleeName(),
+                                selection, err);
 }
 
 FailureOr<func::FuncOp> FuncCallOp::getOrSpecializeCallee(

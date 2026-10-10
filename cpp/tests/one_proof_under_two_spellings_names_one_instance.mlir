@@ -28,8 +28,8 @@ trait.impl private @Tensor_i32(%self: !trait.claim<@Tensor[i32]>) { trait.assoc_
 trait.trait private @Vec(%self: !trait.claim<@Vec[!A]>) {}
 trait.impl private @Vec_i32(%self: !trait.claim<@Vec[i32]>) {}
 trait.trait private @Fold(%self: !trait.claim<@Fold[!A]>) { trait.assoc_type @Item }
-trait.impl private @Fold_gen(%self: !trait.claim<@Fold[!B]>, %vec: !trait.claim<@Vec[!B]>) {
-  trait.assoc_type @Item = !trait.proj<@Tensor[!B], "Element">
+trait.impl private @Fold_gen(%self: !trait.claim<@Fold[!trait.poly<0>]>, %vec: !trait.claim<@Vec[!trait.poly<0>]>) {
+  trait.assoc_type @Item = !trait.proj<@Tensor[!trait.poly<0>], "Element">
 }
 trait.trait private @Mark(%self: !trait.claim<@Mark[!A]>) { trait.method @value() -> i64 }
 trait.impl private @Mark_i64(%self: !trait.claim<@Mark[i64]>) {
@@ -48,9 +48,9 @@ trait.impl private @Tr_i64(%self: !trait.claim<@Tr[i64]>) {
   }
 }
 trait.trait private @Get(%self: !trait.claim<@Get[!A]>) { trait.method @get() -> i64 }
-trait.impl private @Tr_gen(%self: !trait.claim<@Get[!B]>, %mark: !trait.claim<@Mark[!B]>) {
+trait.impl private @Tr_gen(%self: !trait.claim<@Get[!trait.poly<0>]>, %mark: !trait.claim<@Mark[!trait.poly<0>]>) {
   trait.method @get() -> i64 {
-    %v = trait.method.call %mark @Mark[!B]::@value() : () -> i64
+    %v = trait.method.call %mark @Mark[!trait.poly<0>]::@value() : () -> i64
     trait.return %v : i64
   }
 }

@@ -14,11 +14,11 @@
 // CHECK: func.func {{.*}}@foo_{{[a-z0-9]+}}(%{{.*}}: i64, %{{.*}}: i1,
 // CHECK: call @foo_
 
-trait.trait private @Trait(%self: !trait.claim<@Trait[!trait.poly<79>]>) {
-  trait.assoc_type @Assoc<[!trait.poly<80>]>
+trait.trait private @Trait(%self: !trait.claim<@Trait[!trait.poly<0>]>) {
+  trait.assoc_type @Assoc<[!trait.poly<1>]>
 }
 trait.impl private @Trait_impl(%self: !trait.claim<@Trait[i64]>) {
-  trait.assoc_type @Assoc<[!trait.poly<177>]> = !trait.poly<177>
+  trait.assoc_type @Assoc<[!trait.poly<0>]> = !trait.poly<0>
 }
 func.func private @foo(%arg0: !trait.poly<182>, %arg1: !trait.proj<@Trait[!trait.poly<182>], "Assoc", [!trait.poly<183>]>, %arg2: !trait.claim<@Trait[!trait.poly<182>]>) -> !trait.proj<@Trait[!trait.poly<182>], "Assoc", [!trait.poly<183>]> {
   return %arg1 : !trait.proj<@Trait[!trait.poly<182>], "Assoc", [!trait.poly<183>]>

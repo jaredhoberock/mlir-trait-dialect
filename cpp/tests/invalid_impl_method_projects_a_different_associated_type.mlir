@@ -3,7 +3,7 @@
 !S = !trait.poly<0>
 !F = !trait.poly<1>
 
-trait.trait private @Fn(%self: !trait.claim<@Fn[!F]>) {
+trait.trait private @Fn(%self: !trait.claim<@Fn[!trait.poly<0>]>) {
   trait.assoc_type @Output
   trait.assoc_type @Other
 }
