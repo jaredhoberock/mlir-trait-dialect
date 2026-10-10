@@ -469,24 +469,6 @@ void VerifyAcyclicTraitsPass::runOnOperation() {
 
 namespace {
 
-/// The evidence `value` carries: its proven application claim, or, where it
-/// is a coercion's result, the evidence the coerced value carries. A use that
-/// reads evidence -- a derive's premise, a coercion's input -- reads it through
-/// any coercion, so no proof is written at a spelling only such uses meet.
-static ClaimType evidenceOf(Value value) {
-  for (;;) {
-    auto claim = dyn_cast<ClaimType>(value.getType());
-    if (!claim || !claim.isApplication())
-      return {};
-    if (claim.isProven())
-      return claim;
-    auto coerce = value.getDefiningOp<CoerceOp>();
-    if (!coerce)
-      return {};
-    value = coerce.getInput();
-  }
-}
-
 /// Proves a claim-producing op and replaces it with a trait.witness, or a
 /// projection with the evidence it reads.
 ///
@@ -549,7 +531,7 @@ struct ProveClaimResultPattern : public RewritePattern {
     // impl returns at its index, which the patterns then prove where it stands:
     // a derive transcribed, an allegation decided, a coercion settled.
     if (auto project = dyn_cast<ProjectOp>(op)) {
-      if (!project.getSourceClaim().isProven())
+      if (!project.getSourceEvidence())
         return rewriter.notifyMatchFailure(op, "waits for its source");
       // Evidence with no base, or read past the depth limit, is never
       // inlined; the exit walk names it.
@@ -955,45 +937,13 @@ specializeCallTarget(CallOpT op, PatternRewriter &rewriter,
   return target;
 }
 
-/// Lowers a call of `op`'s callee, which binds no type parameter and so is no
-/// template: the call reaches it as written, so what the call supplies must be
-/// what it declares, and no specialization is built. A callee cut as an
-/// instance can still spell an obligation the cut minted, and an operand's
-/// producer or a result can still spell one too; the call waits for each
-/// spelling to be settled where it stands, so the two are compared only once
-/// each is.
-static LogicalResult lowerCallOfNonTemplate(FuncCallOp op,
-                                            PatternRewriter &rewriter) {
-  func::FuncOp callee = *op.getCallee();
-  TypeRange parameters = callee.getFunctionType().getInputs();
-  TypeRange operands = op.getOperandTypes();
-  if (llvm::any_of(parameters, carriesUndischargedObligation) ||
-      llvm::any_of(operands, carriesUndischargedObligation) ||
-      llvm::any_of(op.getResultTypes(), carriesUndischargedObligation))
-    return rewriter.notifyMatchFailure(op, "an obligation stands unsettled");
-  if (parameters.size() != operands.size())
-    return op.emitOpError() << "passes " << operands.size()
-                            << " operand(s) to '@" << op.getCalleeName()
-                            << "', which takes " << parameters.size();
-  for (auto [index, types] : llvm::enumerate(llvm::zip(parameters, operands))) {
-    auto [parameter, operand] = types;
-    if (parameter != operand)
-      return op.emitOpError() << "passes " << operand << " as operand #"
-                              << index << " to '@" << op.getCalleeName()
-                              << "', which takes " << parameter;
-  }
-  rewriter.replaceOpWithNewOp<func::CallOp>(op, callee.getSymName(),
-                                            op.getResultTypes(),
-                                            op.getOperands());
-  return success();
-}
-
-/// The operands a call passes an instance whose parameters are `parameters`:
-/// `operands` as supplied, but for a claim supplied under another spelling than
-/// the proven claim its parameter takes, the witness of the proof that
-/// parameter names, built at `rewriter`'s insertion point. The instance's key
-/// chose that proof for the parameter's spelling (`InstanceKey::get`); a claim
-/// carries its proof's spelling, so the supplied one is no evidence there.
+/// The operands a call passes a function whose parameters are `parameters`:
+/// `operands` as supplied, but for a claim supplied under another type than the
+/// proven claim its parameter takes, the witness of the proof that parameter
+/// names, built at `rewriter`'s insertion point. The parameter's proof is the
+/// operand's evidence respelled to the parameter's spelling (`InstanceKey::get`,
+/// `lowerCallOfNonTemplate`); a claim carries its proof's spelling, so the
+/// supplied value, read through its coercions, is no evidence there.
 static SmallVector<Value> passAsDeclared(PatternRewriter &rewriter,
                                          Location loc, ValueRange operands,
                                          TypeRange parameters) {
@@ -1008,6 +958,52 @@ static SmallVector<Value> passAsDeclared(PatternRewriter &rewriter,
                 .getResult();
   }
   return passed;
+}
+
+/// Lowers a call of `op`'s callee, which binds no type parameter and so is no
+/// template: the call reaches it as written, so what the call supplies must be
+/// what it declares, and no specialization is built. A callee cut as an
+/// instance can still spell an obligation the cut minted, and an operand's
+/// producer or a result can still spell one too; the call waits for each
+/// spelling to be settled where it stands, so the two are compared only once
+/// each is. An operand is read at the evidence it carries (`evidenceTypeOf`),
+/// and a claim parameter is supplied where its proof rests on the root that
+/// evidence rests on: the parameter's proof is that evidence respelled.
+static LogicalResult lowerCallOfNonTemplate(FuncCallOp op,
+                                            PatternRewriter &rewriter) {
+  func::FuncOp callee = *op.getCallee();
+  TypeRange parameters = callee.getFunctionType().getInputs();
+  auto supplied = llvm::map_to_vector(op.getOperands(), evidenceTypeOf);
+  if (llvm::any_of(parameters, carriesUndischargedObligation) ||
+      llvm::any_of(supplied, carriesUndischargedObligation) ||
+      llvm::any_of(op.getResultTypes(), carriesUndischargedObligation))
+    return rewriter.notifyMatchFailure(op, "an obligation stands unsettled");
+  if (parameters.size() != supplied.size())
+    return op.emitOpError() << "passes " << supplied.size()
+                            << " operand(s) to '@" << op.getCalleeName()
+                            << "', which takes " << parameters.size();
+  ModuleOp module = getAnchorModule(op);
+  auto rootOf = [&](Type type) -> Operation * {
+    auto claim = dyn_cast<ClaimType>(type);
+    if (!claim || !claim.isApplication() || !claim.isProven())
+      return nullptr;
+    auto root = ProofOp::getRootOf(module, claim.getProof());
+    return succeeded(root) ? *root : nullptr;
+  };
+  for (auto [index, types] : llvm::enumerate(llvm::zip(parameters, supplied))) {
+    auto [parameter, evidence] = types;
+    if (parameter == evidence)
+      continue;
+    if (Operation *root = rootOf(evidence); root && root == rootOf(parameter))
+      continue;
+    return op.emitOpError() << "passes " << evidence << " as operand #"
+                            << index << " to '@" << op.getCalleeName()
+                            << "', which takes " << parameter;
+  }
+  rewriter.replaceOpWithNewOp<func::CallOp>(
+      op, callee.getSymName(), op.getResultTypes(),
+      passAsDeclared(rewriter, op.getLoc(), op.getOperands(), parameters));
+  return success();
 }
 
 /// Lowers a trait call whose instance is ready to a call of that instance.
@@ -1082,13 +1078,24 @@ struct CallOpLowering : public OpRewritePattern<CallOpT> {
   }
 };
 
+/// Whether every use of `coerce` reads its evidence through it: each is an op
+/// of this dialect (`evidenceOf`).
+static bool readThrough(CoerceOp coerce) {
+  Dialect *trait = coerce->getDialect();
+  return llvm::all_of(coerce.getResult().getUsers(), [&](Operation *user) {
+    return user->getDialect() == trait;
+  });
+}
+
 /// Settles a coerce once its input is evidence: a coerce whose result is
 /// spelled as its input is replaced by the input, the fold the stage's drivers
 /// do not run (applyPatternsOverReachableOps), and a coerce of evidence to
-/// another spelling that a use names is replaced by the witness of the input's
-/// proof respelled at the spelling the result states
-/// (`ImplResolver::respellProof`); a coerce whose uses read evidence through it
-/// is left for them (`evidenceOf`).
+/// another spelling that an op outside this dialect uses is replaced by the
+/// witness of the input's proof respelled at the spelling the result states
+/// (`ImplResolver::respellProof`), since such an op reads the proof off the
+/// type. Every op of this dialect reads evidence through a coercion
+/// (`evidenceOf`), so a coerce whose uses are all its ops is left for them and
+/// no proof is written at its spelling.
 /// A claim names the proof of exactly its own spelling (`verifyCitation`), so
 /// the evidence at the result's spelling is a proof of that spelling, whose
 /// body bridges the impl's header to it; the input's proof proves another
@@ -1113,12 +1120,7 @@ struct SettleCoercePattern : public OpRewritePattern<CoerceOp> {
     auto result = dyn_cast<ClaimType>(coerce.getResult().getType());
     if (!from || !result || !result.isApplication() || result.isProven())
       return rewriter.notifyMatchFailure(coerce, "its input is no evidence yet");
-    // A use that reads evidence reads it through this coercion (`evidenceOf`),
-    // so the proof at the result's spelling is written only for a use that
-    // names that spelling.
-    if (llvm::all_of(coerce.getResult().getUsers(), [](Operation *user) {
-          return isa<DeriveOp, CoerceOp>(user);
-        }))
+    if (readThrough(coerce))
       return rewriter.notifyMatchFailure(coerce, "its uses read its evidence");
     Answer<ClaimType> proven = resolver.respellProof(
         from, result.getTraitApplication(), SelectionSite::of(coerce), rewriter);
@@ -1267,11 +1269,8 @@ static LogicalResult respellOp(Operation *op, AttrTypeReplacer &replacer,
 /// from its operands, whose evidence is theirs
 /// (`MonomorphizeResultTypesPattern`), and the result claims of a function and
 /// of a call, which repeat what a function returns and what a callee's
-/// signature says (`resultClaimsAreViews`); and a call computing evidence keeps
-/// its result's projections as well, since the variables of the requirement it
-/// computes are read off that spelling when it is replaced by its method's
-/// body. What selection refuses stays spelled for the stage's exit walk to
-/// name.
+/// signature says (`resultClaimsAreViews`). What selection refuses stays
+/// spelled for the stage's exit walk to name.
 struct SettleSpelledObligationsPattern : public RewritePattern {
   ImplResolver &resolver;
 
@@ -1281,8 +1280,6 @@ struct SettleSpelledObligationsPattern : public RewritePattern {
 
   LogicalResult matchAndRewrite(Operation *op,
                                 PatternRewriter &rewriter) const override {
-    if (auto call = dyn_cast<MethodCallOp>(op); call && call.computesEvidence())
-      return failure();
     // An allegation's claim is proven by the evidence that replaces it
     // (`ProveClaimResultPattern`).
     if (isa<AllegeOp>(op))
@@ -1574,16 +1571,22 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
   // ops makes it total over producers: an op whose claims the patterns above
   // fail to discharge is an error here, never a silent gap. The one claim that
   // passes unproven is an equality whose endpoints ground-resolve to one
-  // spelling, standing on an op erasure removes. The whole type is walked, so a
-  // claim nested inside an aggregate is caught too, not only a claim that is
-  // the root type. Trait infrastructure regions are templates and keep their
-  // unproven claims. The candidate claims are gathered under the walk and
-  // judged after it closes, because judging may insert into the module.
+  // spelling, standing on an op erasure removes. A coerce every use of which
+  // reads its evidence through it (`readThrough`) carries its input's evidence,
+  // so its claim is judged where its input is produced, and an obligation is
+  // named once, under the spelling it was produced at. The whole type is
+  // walked, so a claim nested inside an aggregate is caught too, not only a
+  // claim that is the root type. Trait infrastructure regions are templates
+  // and keep their unproven claims. The candidate claims are gathered under the
+  // walk and judged after it closes, because judging may insert into the
+  // module.
   bool hasLeftovers = false;
   SmallVector<std::pair<Operation *, ClaimType>> monomorphicClaims;
   module.walk<WalkOrder::PreOrder>([&](Operation *op) {
     if (isTemplate(op))
       return WalkResult::skip();
+    if (auto coerce = dyn_cast<CoerceOp>(op); coerce && readThrough(coerce))
+      return WalkResult::advance();
     auto gather = [&](Type root, bool equalities) {
       walkObligationSites(root, [&](Type sub) {
         auto claim = dyn_cast<ClaimType>(sub);
@@ -1629,7 +1632,7 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
     // Evidence read past the depth limit is refused as any obligation chain
     // that deep is, and named there alone.
     if (auto project = dyn_cast<ProjectOp>(op);
-        project && project.getSourceClaim().isProven()) {
+        project && project.getSourceEvidence()) {
       EvidenceReading reading = project.readEvidence();
       if (reading.end == EvidenceReading::End::Overflow) {
         emitObligationOverflow(op->getLoc(), reading.chain.back().application,
@@ -1656,7 +1659,7 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
     // hop's claim unproven for selection. Where selection could not prove it
     // either, the evidence the source names is what the report points at.
     if (auto project = dyn_cast<ProjectOp>(op)) {
-      if (ClaimType source = project.getSourceClaim(); source.isProven()) {
+      if (ClaimType source = project.getSourceEvidence()) {
         EvidenceReading reading = project.readEvidence();
         Diagnostic &note = report.attachNote();
         note << "its source " << source << " names " << source.getProof()
@@ -1838,11 +1841,15 @@ struct EraseCoerceOp : public OpConversionPattern<CoerceOp> {
     // verifier does: a coerce compares modulo the proof permanently, so
     // exchanging a proof label alone is not a surviving difference. (The
     // value-carrying arm below needs no strip; the values it forwards carry no
-    // proof.)
+    // proof.) A claim's predicate is never respelled, so a coerce respelling
+    // evidence (`evidenceOf`) keeps its two spellings to the barrier; it is
+    // discharged by the equalities it cites (`CoerceOp::verify`), each of which
+    // instantiate-monomorphs settled or refused at its exit.
     ValueRange input = adaptor.getInput();
     if (input.empty() || op.getResult().use_empty()) {
       if (stripClaimProofs(op.getInput().getType()) !=
-          stripClaimProofs(op.getResult().getType()))
+              stripClaimProofs(op.getResult().getType()) &&
+          !evidenceOf(op.getInput()))
         return rewriter.notifyMatchFailure(
             op, "a coerce whose endpoints still differ after conversion is not "
                 "discharged and cannot cross the erase barrier");
@@ -2172,14 +2179,14 @@ bool isRewritableGenericCall(Operation *op) {
         return false;
     return true;
   };
-  // Every application claim an operand spells names its proof, except one
-  // standing in another claim's arguments, which is part of what that claim
-  // states: what an instance is keyed by is the evidence at each position
-  // (`InstanceKey`).
+  // Every application claim an operand carries names its proof, read through
+  // the coercions that respell it (`evidenceOf`), except one standing in
+  // another claim's arguments, which is part of what that claim states: what an
+  // instance is keyed by is the evidence at each position (`InstanceKey`).
   auto operandClaimsProven = [](ValueRange operands) {
     for (Value operand : operands) {
       bool unproven = false;
-      walkObligationSites(operand.getType(), [&](Type sub) {
+      walkObligationSites(evidenceTypeOf(operand), [&](Type sub) {
         unproven = unproven ||
                    (isa<ClaimType>(sub) && isUndischargedObligation(sub));
       });
@@ -2198,7 +2205,7 @@ bool isRewritableGenericCall(Operation *op) {
            succeeded(call.getCalleeFunctionType());
   if (auto call = dyn_cast<MethodCallOp>(op))
     return operandsMonomorphic(call.getOperands()) &&
-           call.getClaimType().isProven() &&
+           call.getReceiverEvidence() &&
            operandClaimsProven(call.getOperands()) &&
            succeeded(call.getMethodFunctionType());
   return false;
@@ -2208,10 +2215,13 @@ bool isRewritableGenericCall(Operation *op) {
 // block-argument types carries a standing obligation -- an unproven monomorphic
 // application claim or an unresolved ground projection the leftover checks refuse --
 // and that stands outside a template. Reused so the pending-op predicate reads the
-// same demand they do. The type shape is tested before the template-ancestor walk,
-// so an op carrying no such type never pays for the walk. File-local: only isPendingOp
-// reads it.
+// same demand they do. A coerce whose uses read its evidence through it carries its
+// input's (`readThrough`), and its input's producer is judged instead. The type shape
+// is tested before the template-ancestor walk, so an op carrying no such type never
+// pays for the walk. File-local: only isPendingOp reads it.
 static bool opCarriesStandingObligation(Operation *op) {
+  if (auto coerce = dyn_cast<CoerceOp>(op); coerce && readThrough(coerce))
+    return false;
   auto carriesObligation = [&] {
     for (Type t : op->getResultTypes())
       if (carriesUndischargedObligation(t))

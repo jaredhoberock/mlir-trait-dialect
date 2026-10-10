@@ -1324,7 +1324,6 @@ static LogicalResult inlineMethodAt(PatternRewriter &rewriter, ModuleOp module,
   llvm::SetVector<Value> reads = readsFromDeclaration(method);
   AttrTypeReplacer stamp = makeTypeReplacerFromSubstitution(
       variables, CloneKind::Instance, projections);
-  AttrTypeReplacer spelling = makeSpellingReplacerFromSubstitution(variables);
   PatternRewriter::InsertionGuard guard(rewriter);
   rewriter.setInsertionPoint(call);
   IRMapping mapping;
@@ -1334,13 +1333,11 @@ static LogicalResult inlineMethodAt(PatternRewriter &rewriter, ModuleOp module,
        llvm::zip(body.front().getArguments(), call.getArguments()))
     mapping.map(parameter, argument);
 
-  // The body is cloned and then stamped, as a cut instance's is: a call
-  // computing evidence in it keeps its result spelling for its own inlining.
+  // The body is cloned and then stamped, as a cut instance's is.
   auto cloneBody = [&](OpBuilder &, Region *src, Block *, Block *postInsertBlock,
                        IRMapping &mapper, bool) {
     cloneRegionStampedBefore(rewriter, *src, *postInsertBlock->getParent(),
-                             postInsertBlock->getIterator(), mapper, stamp,
-                             spelling);
+                             postInsertBlock->getIterator(), mapper, stamp);
   };
   // The inlined ops are located at the call, called from it.
   MethodBodyInliner interface(call.getContext(), rewriter);
@@ -1493,17 +1490,17 @@ LogicalResult MethodCallOp::inlineEvidence(
     if (failed(byDefault) || failed(traitArguments))
       return rewriter.notifyMatchFailure(*this, "no body defines the method");
     return inlineMethodAt(
-        rewriter, module, trait, *byDefault, *this, getClaimType(),
+        rewriter, module, trait, *byDefault, *this, getReceiverEvidence(),
         bindingsBeside(*traitArguments, callSubst.getSpecialization()),
         callSubst.getProjectionBindings());
   }
 
   auto substitution = implMethodSubstitution(impl, trait, *method,
-                                             getClaimType(), callSubst);
+                                             getReceiverEvidence(), callSubst);
   if (failed(substitution))
     return failure();
-  return inlineMethodAt(rewriter, module, impl, *method, *this, getClaimType(),
-                        substitution->second,
+  return inlineMethodAt(rewriter, module, impl, *method, *this,
+                        getReceiverEvidence(), substitution->second,
                         callSubst.getProjectionBindings());
 }
 
@@ -1528,6 +1525,24 @@ static Value throughCoercions(Value value) {
   while (auto coerce = value.getDefiningOp<CoerceOp>())
     value = coerce.getInput();
   return value;
+}
+
+ClaimType mlir::trait::evidenceOf(Value value) {
+  for (;;) {
+    auto claim = dyn_cast<ClaimType>(value.getType());
+    if (claim && claim.isApplication() && claim.isProven())
+      return claim;
+    auto coerce = value.getDefiningOp<CoerceOp>();
+    if (!coerce)
+      return {};
+    value = coerce.getInput();
+  }
+}
+
+Type mlir::trait::evidenceTypeOf(Value value) {
+  if (ClaimType evidence = evidenceOf(value))
+    return evidence;
+  return value.getType();
 }
 
 /// The impl `value` commits to, read in `context`, the committed impl whose
@@ -1583,14 +1598,14 @@ committedImplOf(Value value, std::shared_ptr<const CommittedImpl> context,
 }
 
 LogicalResult ProjectOp::inlineEvidence(RewriterBase &rewriter) {
-  if (!getSourceClaim().isProven())
+  ClaimType source = getSourceEvidence();
+  if (!source)
     return failure();
   ModuleOp module = getAnchorModule(getOperation());
   auto committed = committedImplOf(getSource(), nullptr, module);
   if (!committed)
     return failure();
   ImplOp impl = committed->impl;
-  ClaimType source = getSourceClaim();
 
   // A trait requirement is the impl's return operand at its index; a where
   // entry, past them, is the impl's block argument there, which the source's
@@ -2872,12 +2887,12 @@ FailureOr<SpecializationMap> MethodCallOp::buildParameterSpecialization(
 }
 
 ImplOp MethodCallOp::getProvenImpl() {
-  ClaimType claimTy = cast<ClaimType>(getClaim().getType());
-  assert(claimTy.isProven());
+  ClaimType claimTy = getReceiverEvidence();
+  assert(claimTy && "the receiver carries evidence");
 
   // This reads a proven claim's impl during lowering, which runs on a verified
   // module: the op is nested in it (so `getModule` finds it), and the proof the
-  // claim carries was checked by `ProofOp::verifySymbolUses` (so its impl
+  // evidence names was checked where it is cited (`verifyCitation`, so its impl
   // symbol resolves). Neither guard fires on a module that reached lowering; a
   // hostile blob is refused at the verify rung before any pass reads a proof.
   auto module = getModule();
@@ -2894,10 +2909,13 @@ ImplOp MethodCallOp::getProvenImpl() {
 FailureOr<func::FuncOp> MethodCallOp::getOrSpecializeCallee(
     PatternRewriter &rewriter, const CallSubstitution &subst,
     llvm::function_ref<FailureOr<ClaimType>(ClaimType, ClaimType)> respell) {
-  ClaimType claimTy = cast<ClaimType>(getClaim().getType());
+  // The receiver and each argument are read at the evidence they carry, so
+  // the instance is keyed by that evidence and not by a proof written at the
+  // call's own spelling of it.
+  auto arguments = llvm::map_to_vector(getArguments(), evidenceTypeOf);
   return getProvenImpl()
-    .getOrSpecializeFreeFunctionFromMethod(rewriter, claimTy, getMethodName(),
-                                           getArguments().getTypes(), subst,
+    .getOrSpecializeFreeFunctionFromMethod(rewriter, getReceiverEvidence(),
+                                           getMethodName(), arguments, subst,
                                            respell);
 }
 
@@ -3076,9 +3094,11 @@ FailureOr<func::FuncOp> FuncCallOp::getOrSpecializeCallee(
   // A position whose evidence is not yet proven names no instance yet: the
   // call waits for it, and one that never gets it is named by the stage's exit
   // walk.
+  // Each operand is read at the evidence it carries (`evidenceTypeOf`).
   auto key = InstanceKey::get(getCalleeNameAttr(), typeArguments,
                               callee->getFunctionType().getInputs(),
-                              getOperandTypes(), stamp, respell);
+                              llvm::map_to_vector(getOperands(), evidenceTypeOf),
+                              stamp, respell);
   if (failed(key))
     return failure();
 

@@ -27,25 +27,13 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(
     const SpecializationMap &variables, CloneKind kind,
     const ProjectionBindings &projections = ProjectionBindings());
 
-/// Builds a type replacer that stamps `variables` and nothing else: no
-/// projection binding, so a spelling it stamps keeps every projection it
-/// spells. The result of a call computing evidence is stamped by it, since the
-/// variables of the requirement the call computes are read off that spelling
-/// (`MethodCallOp::inlineEvidence`).
-AttrTypeReplacer makeSpellingReplacerFromSubstitution(
-    const SpecializationMap &variables);
-
 /// Clones `source`'s blocks into `dest` before `before` under `mapping`, then
 /// stamps every block argument, op result and attribute of the clones by
-/// `typeReplacer`, except the result of a call computing evidence, which
-/// `spellingReplacer` stamps: that resolves nothing, since the call's result
-/// spelling is where the variables of the requirement it computes are read
-/// (`MethodCallOp::inlineEvidence`). Block arguments are stamped before the
-/// ops reading them; `builder`'s listener hears of every clone.
+/// `typeReplacer`. Block arguments are stamped before the ops reading them;
+/// `builder`'s listener hears of every clone.
 void cloneRegionStampedBefore(OpBuilder &builder, Region &source, Region &dest,
                               Region::iterator before, IRMapping &mapping,
-                              AttrTypeReplacer &typeReplacer,
-                              AttrTypeReplacer &spellingReplacer);
+                              AttrTypeReplacer &typeReplacer);
 
 /// Clones `polymorph` at `rewriter`'s insertion point as `instanceName`, its
 /// signature, attributes and body stamped under `substitution`, and answers the

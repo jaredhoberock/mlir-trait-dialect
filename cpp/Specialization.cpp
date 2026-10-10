@@ -12,8 +12,7 @@ namespace mlir::trait {
 
 void cloneRegionStampedBefore(OpBuilder &builder, Region &source, Region &dest,
                               Region::iterator before, IRMapping &mapping,
-                              AttrTypeReplacer &typeReplacer,
-                              AttrTypeReplacer &spellingReplacer) {
+                              AttrTypeReplacer &typeReplacer) {
   if (source.empty())
     return;
   // The clones stand from the block after the one preceding `before` up to
@@ -28,12 +27,8 @@ void cloneRegionStampedBefore(OpBuilder &builder, Region &source, Region &dest,
         arg.setType(typeReplacer.replace(arg.getType()));
     for (Block &block : blocks) {
       for (Operation &op : block) {
-        auto evidenceCall = dyn_cast<MethodCallOp>(&op);
-        AttrTypeReplacer &resultReplacer =
-            evidenceCall && evidenceCall.computesEvidence() ? spellingReplacer
-                                                            : typeReplacer;
         for (Value result : op.getResults())
-          result.setType(resultReplacer.replace(result.getType()));
+          result.setType(typeReplacer.replace(result.getType()));
         for (NamedAttribute attr : op.getAttrs())
           op.setAttr(attr.getName(), typeReplacer.replace(attr.getValue()));
         for (Region &nested : op.getRegions())
@@ -45,19 +40,6 @@ void cloneRegionStampedBefore(OpBuilder &builder, Region &source, Region &dest,
                                         : dest.begin(),
                               before),
              substitute);
-}
-
-/// Clones `oldRegion` into the end of `newRegion`, stamped
-/// (`cloneRegionStampedBefore`).
-static void cloneRegionWithTypeReplacement(
-    OpBuilder& builder,
-    Region &oldRegion,
-    Region &newRegion,
-    IRMapping &mapping,
-    AttrTypeReplacer &typeReplacer,
-    AttrTypeReplacer &spellingReplacer) {
-  cloneRegionStampedBefore(builder, oldRegion, newRegion, newRegion.end(),
-                           mapping, typeReplacer, spellingReplacer);
 }
 
 // A template clone receives the bindings of a declaration's parameters alone,
@@ -148,11 +130,6 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(
   return replacer;
 }
 
-AttrTypeReplacer makeSpellingReplacerFromSubstitution(
-    const SpecializationMap &variables) {
-  return makeTypeReplacerFromSubstitution(variables, CloneKind::Template);
-}
-
 /// Whether the block a builder inserts into stands inside a trait, impl, or
 /// proof, or a still-polymorphic function -- a template, whose clone carries no
 /// projection binding and no evidence binding, because its spelling is resolved
@@ -212,7 +189,7 @@ FunctionOpInterface specializePolymorph(RewriterBase &rewriter,
   // source, and its spelling resolves when it is cloned for a concrete
   // instance. A monomorphic clone receives the full call substitution.
   AttrTypeReplacer variableReplacer =
-      makeSpellingReplacerFromSubstitution(variables);
+      makeTypeReplacerFromSubstitution(variables, CloneKind::Template);
 
   auto oldFunctionType = cast<FunctionType>(polymorph.getFunctionType());
   auto substitutedType =
@@ -255,12 +232,9 @@ FunctionOpInterface specializePolymorph(RewriterBase &rewriter,
   }
 
   IRMapping mapping;
-  cloneRegionWithTypeReplacement(builder,
-                                 polymorph.getFunctionBody(),
-                                 instance.getFunctionBody(),
-                                 mapping,
-                                 replacer,
-                                 variableReplacer);
+  Region &body = instance.getFunctionBody();
+  cloneRegionStampedBefore(builder, polymorph.getFunctionBody(), body,
+                           body.end(), mapping, replacer);
   endWithFunctionReturns(rewriter, instance);
 
   return instance;
@@ -277,15 +251,10 @@ void specializePolymorphicRegion(OpBuilder &builder, Region &polymorph,
                        ? CloneKind::Template
                        : CloneKind::Instance;
   AttrTypeReplacer replacer = makeTypeReplacerFromSubstitution(subst, kind);
-  AttrTypeReplacer spellingReplacer = makeSpellingReplacerFromSubstitution(subst);
 
   IRMapping mapping;
-  cloneRegionWithTypeReplacement(builder,
-                                 polymorph,
-                                 monomorph,
-                                 mapping,
-                                 replacer,
-                                 spellingReplacer);
+  cloneRegionStampedBefore(builder, polymorph, monomorph, monomorph.end(),
+                           mapping, replacer);
 }
 
 FailureOr<InstanceKey>
@@ -395,7 +364,7 @@ func::FuncOp getOrCutInstance(RewriterBase &rewriter, ModuleOp module,
     bool changed = false;
     SmallVector<ProjectOp> projections;
     instance.walk([&](ProjectOp project) {
-      if (project.getSourceClaim().isProven() &&
+      if (project.getSourceEvidence() &&
           project.readEvidence().end == EvidenceReading::End::Base)
         projections.push_back(project);
     });

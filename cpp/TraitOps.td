@@ -1042,6 +1042,10 @@ def ProjectOp : TraitDialectOp<"project", [
       return cast<ClaimType>(getSource().getType());
     }
 
+    /// The evidence the source carries (`evidenceOf`); null while it carries
+    /// none.
+    ClaimType getSourceEvidence() { return evidenceOf(getSource()); }
+
     ClaimType getResultClaim() {
       return cast<ClaimType>(getResult().getType());
     }
@@ -1398,6 +1402,10 @@ def MethodCallOp : TraitDialectOp<"method.call", [
     ClaimType getClaimType() {
       return cast<ClaimType>(getClaim().getType());
     }
+
+    /// The evidence the receiver carries (`evidenceOf`); null while it carries
+    /// none.
+    ClaimType getReceiverEvidence() { return evidenceOf(getClaim()); }
 
     TraitApplicationAttr getTraitApplication() {
       return getClaimType().getTraitApplication();

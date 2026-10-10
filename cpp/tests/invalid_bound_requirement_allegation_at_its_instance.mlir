@@ -52,8 +52,8 @@ func.func @main(%x: !trait.proj<@Holds[i32], "C", [i1]>) -> i64 {
 
 // An impl's evidence method calls its where argument's, whose impl alleges the
 // conclusion: both calls are replaced by their methods' bodies, and the
-// allegation the inner one inlines is refused where it is written, and the
-// coercion respelling it stands unproven with it.
+// allegation the inner one inlines is refused where it is written. The
+// coercion respelling it carries its evidence and is not named again.
 
 !S = !trait.poly<0>
 !X = !trait.poly<1>
@@ -87,7 +87,6 @@ trait.impl private @Outer_i32(%self: !trait.claim<@Outer[i32]>, %base: !trait.cl
     %e = trait.witness proj_resolve !trait.proj<@Outer[i32], "A", [!trait.poly<0>]> resolves !trait.proj<@Base[i32], "A", [!trait.poly<0>]> by @Outer_i32 given(%base)
       : (!trait.claim<@Base[i32]>)
       : !trait.claim<!trait.proj<@Outer[i32], "A", [!trait.poly<0>]> = !trait.proj<@Base[i32], "A", [!trait.poly<0>]>>
-    // expected-error @below {{unproven monomorphic claim '!trait.claim<@Mark[!trait.proj<@Outer[i32], "A", [i1]>]>' after instantiate-monomorphs}}
     %c = trait.coerce %r : !trait.claim<@Mark[!trait.proj<@Base[i32], "A", [!trait.poly<0>]>]> to !trait.claim<@Mark[!trait.proj<@Outer[i32], "A", [!trait.poly<0>]>]> via (%e)
       : (!trait.claim<!trait.proj<@Outer[i32], "A", [!trait.poly<0>]> = !trait.proj<@Base[i32], "A", [!trait.poly<0>]>>)
     trait.return %c : !trait.claim<@Mark[!trait.proj<@Outer[i32], "A", [!trait.poly<0>]>]>

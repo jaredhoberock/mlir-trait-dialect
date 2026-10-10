@@ -34,6 +34,18 @@ public:
 /// proof, permanently.
 Type stripClaimProofs(Type type);
 
+/// The evidence `value` carries: its proven application claim, or, where it is
+/// a coercion's result, the evidence the coerced value carries; null where it
+/// carries none yet. A coercion respells evidence and makes none, so a reader
+/// of evidence reads it through every coercion, and no proof is written at a
+/// spelling only such readers meet. The walk ends: a coerce stands where SSA
+/// dominance holds (`CoerceOp::verify`).
+ClaimType evidenceOf(Value value);
+
+/// The type a reader of evidence takes `value` at: the evidence it carries,
+/// else its own type.
+Type evidenceTypeOf(Value value);
+
 /// A type's term decomposition for ground reasoning: an exact constructor
 /// identity together with the positional type children the constructor is
 /// applied to. Two types denote the same constructor exactly when their keys are
