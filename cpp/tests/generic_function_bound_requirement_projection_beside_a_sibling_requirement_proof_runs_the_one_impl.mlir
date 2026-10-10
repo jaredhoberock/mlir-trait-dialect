@@ -24,12 +24,12 @@ trait.trait private @Wrapped(%self: !trait.claim<@Wrapped[!T]>) -> !trait.claim<
   trait.method @requirement_1() -> !trait.claim<@Mark[!B]>
 }
 trait.proof private @PB {
-  %d = trait.derive @Mark[i32] from @Blanket given()
+  %d = trait.derive @Mark[i32] from @Blanket[i32] given()
   trait.return %d : !trait.claim<@Mark[i32]>
 }
 trait.impl private @W(%self: !trait.claim<@Wrapped[i32]>) {
   trait.method @requirement_1() -> !trait.claim<@Mark[!trait.poly<0>]> {
-    %r = trait.derive @Mark[!trait.poly<0>] from @Blanket given()
+    %r = trait.derive @Mark[!trait.poly<0>] from @Blanket[!trait.poly<0>] given()
     trait.return %r : !trait.claim<@Mark[!trait.poly<0>]>
   }
   %mark = trait.witness @PB for @Mark[i32]

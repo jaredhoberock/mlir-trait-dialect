@@ -57,6 +57,6 @@ trait.impl private @B_blanket(%self: !trait.claim<@B[!trait.poly<0>]>) {
     %r = trait.method.call %a @A[!trait.poly<0>]::@a() : () -> i64
     trait.return %r : i64
   }
-  %a = trait.derive @A[!trait.poly<0>] from @A_blanket given()
+  %a = trait.derive @A[!trait.poly<0>] from @A_blanket[!trait.poly<0>] given()
   trait.return %a : !trait.claim<@A[!trait.poly<0>]>
 }

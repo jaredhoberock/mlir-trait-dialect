@@ -974,7 +974,7 @@ trait.impl private @Tr_tuple(%self: !trait.claim<@Tr[tuple<!trait.poly<0>>]>, %t
 trait.proof private @p {{\n\
   %tr = trait.witness @Tr_i32 for @Tr[i32]\n\
   %out = trait.witness proj_resolve !trait.proj<@Tr[i32], \"Out\"> resolves i64 by @Tr_i32 : !trait.claim<!trait.proj<@Tr[i32], \"Out\"> = i64>\n\
-  %d = trait.derive @Tr[tuple<i32>] from @Tr_tuple given({premises}) : ({types})\n\
+  %d = trait.derive @Tr[tuple<i32>] from @Tr_tuple[i32] given({premises}) : ({types})\n\
   trait.return %d : !trait.claim<@Tr[tuple<i32>]>\n\
 }}\n");
     let loc = Location::unknown(&context);
@@ -1003,6 +1003,7 @@ trait.proof private @p {{\n\
         loc,
         tr(tuple_of(t)),
         "Tr_tuple",
+        &[t],
         &[block.argument(0).unwrap().into(), block.argument(1).unwrap().into()],
     ));
     block.append_operation(func::r#return(&[], loc));
@@ -1022,7 +1023,7 @@ trait.proof private @p {{\n\
     assert!(module.as_operation().verify());
     let rendered = module.as_operation().to_string();
     assert!(
-        rendered.contains("from @Tr_tuple given(%arg0, %arg1)"),
+        rendered.contains("from @Tr_tuple[!trait.poly<0>] given(%arg0, %arg1)"),
         "the derive prints the premises it cites: {rendered}"
     );
 

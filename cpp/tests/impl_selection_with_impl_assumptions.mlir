@@ -63,7 +63,7 @@ func.func @test() -> i32 {
 
 // CHECK: trait.proof private @A_impl_poly_{{.*}}_p {
 // CHECK-NEXT: %[[B8:.*]] = trait.witness @B_impl_i8 for @B[i8]
-// CHECK-NEXT: trait.derive @A[i8] from @A_impl_poly given(%[[B8]])
+// CHECK-NEXT: trait.derive @A[i8] from @A_impl_poly[i8] given(%[[B8]])
 // CHECK: trait.proof private @A_impl_poly_{{.*}}_p {
 // CHECK-NEXT: %[[B32:.*]] = trait.witness @B_impl_i32 for @B[i32]
-// CHECK-NEXT: trait.derive @A[i32] from @A_impl_poly given(%[[B32]])
+// CHECK-NEXT: trait.derive @A[i32] from @A_impl_poly[i32] given(%[[B32]])

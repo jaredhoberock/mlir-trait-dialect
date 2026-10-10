@@ -33,12 +33,12 @@ trait.impl private @A_gen(%self: !trait.claim<@A[!P]>, %b: !trait.claim<@B[!P]>)
 }
 trait.proof private @by_one {
   %b = trait.witness @B_one for @B[i64]
-  %d = trait.derive @A[i64] from @A_gen given(%b) : (!trait.claim<@B[i64] by @B_one>)
+  %d = trait.derive @A[i64] from @A_gen[i64] given(%b) : (!trait.claim<@B[i64] by @B_one>)
   trait.return %d : !trait.claim<@A[i64]>
 }
 trait.proof private @by_ten {
   %b = trait.witness @B_ten for @B[i64]
-  %d = trait.derive @A[i64] from @A_gen given(%b) : (!trait.claim<@B[i64] by @B_ten>)
+  %d = trait.derive @A[i64] from @A_gen[i64] given(%b) : (!trait.claim<@B[i64] by @B_ten>)
   trait.return %d : !trait.claim<@A[i64]>
 }
 func.func @main() -> i64 {

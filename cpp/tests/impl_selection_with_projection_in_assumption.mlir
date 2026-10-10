@@ -66,4 +66,4 @@ func.func @test() -> i32 {
 // CHECK-NEXT: %[[U:.*]] = trait.witness @Marker_unit for @Marker[tuple<>]
 // CHECK-NEXT: %[[E:.*]] = trait.witness proj_resolve !trait.proj<@Trait[i32], "Assoc"> resolves tuple<> by @Trait_i32
 // CHECK-NEXT: %[[M:.*]] = trait.coerce %[[U]] : {{.*}} to !trait.claim<@Marker[!trait.proj<@Trait[i32], "Assoc">]> via (%[[E]])
-// CHECK-NEXT: trait.derive @Marker[i32] from @Marker_via_assoc given(%[[T]], %[[M]])
+// CHECK-NEXT: trait.derive @Marker[i32] from @Marker_via_assoc[i32] given(%[[T]], %[[M]])

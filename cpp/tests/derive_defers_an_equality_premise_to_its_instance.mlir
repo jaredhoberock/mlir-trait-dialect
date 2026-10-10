@@ -24,7 +24,7 @@ func.func private @needs(%v: !trait.claim<@Vector[!trait.poly<0>]>) {
 
 func.func private @f(%t: !trait.claim<@Tensor[!trait.poly<0>]>) {
   %e = trait.allege !trait.proj<@Tensor[!trait.poly<0>], "Shape"> = i64
-  %v = trait.derive @Vector[!trait.poly<0>] from @Vector_blanket given(%t, %e)
+  %v = trait.derive @Vector[!trait.poly<0>] from @Vector_blanket[!trait.poly<0>] given(%t, %e)
     : (!trait.claim<@Tensor[!trait.poly<0>]>, !trait.claim<!trait.proj<@Tensor[!trait.poly<0>], "Shape"> = i64>)
   trait.func.call @needs(%v) : (!trait.claim<@Vector[!trait.poly<0>]>) -> ()
   return

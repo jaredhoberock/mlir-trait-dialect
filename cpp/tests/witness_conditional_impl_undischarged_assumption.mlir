@@ -22,9 +22,9 @@ trait.impl private @Has_tuple(%self: !trait.claim<@Has[tuple<!U>]>, %x: !trait.c
   trait.assoc_type @Out = i64
 }
 
-// CHECK: error: 'trait.witness' op impl '@Has_tuple' has 1 where entries, and the citation supplies 0 claims
+// CHECK: error: 'trait.witness' op impl '@Has_tuple' states 1 premises, and the witness supplies 0
 func.func @f(%v: !trait.proj<@Has[tuple<i32>], "Out">) -> i64 {
-  %eq = trait.witness proj_resolve !trait.proj<@Has[tuple<i32>], "Out"> resolves i64 by @Has_tuple
+  %eq = trait.witness proj_resolve !trait.proj<@Has[tuple<i32>], "Out"> resolves i64 by @Has_tuple[i32]
     : !trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = i64>
   %c = trait.coerce %v : !trait.proj<@Has[tuple<i32>], "Out"> to i64 via (%eq)
     : (!trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = i64>)

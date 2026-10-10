@@ -20,7 +20,7 @@ module {
   trait.impl private @A_i32(%self: !trait.claim<@A[i32]>) { trait.assoc_type @Out = i64 }
   trait.impl private @A_f32(%self: !trait.claim<@A[f32]>) { trait.assoc_type @Out = i64 }
   trait.proof private @D_p {
-    %d = trait.derive @D[i64, i64] from @D_impl given()
+    %d = trait.derive @D[i64, i64] from @D_impl[i64] given()
     trait.return %d : !trait.claim<@D[i64, i64]>
   }
 

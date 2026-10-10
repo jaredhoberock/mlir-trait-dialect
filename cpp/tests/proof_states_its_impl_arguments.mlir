@@ -14,7 +14,7 @@
 
 // VERIFIED: trait.proof private @p {
 // VERIFIED: %[[A:.*]] = trait.witness @A_i32 for @A[i32]
-// VERIFIED: trait.derive @B[tuple<i32>] from @B_tuple given(%[[A]], %{{.*}})
+// VERIFIED: trait.derive @B[tuple<i32>] from @B_tuple[i32] given(%[[A]], %{{.*}})
 // VERIFIED: trait.project %{{.*}}[2] : <@B[tuple<i32>] by @p> -> <@A[i32] by @A_i32>
 
 !S = !trait.poly<0>
@@ -53,7 +53,7 @@ trait.impl private @B_tuple(%self: !trait.claim<@B[tuple<!trait.poly<0>>]>, %a: 
     trait.return %c : i64
   }
   %req0 = trait.allege @A[tuple<!trait.poly<0>>]
-  %out = trait.witness proj_resolve !trait.proj<@B[tuple<!trait.poly<0>>], "Out"> resolves i64 by @B_tuple
+  %out = trait.witness proj_resolve !trait.proj<@B[tuple<!trait.poly<0>>], "Out"> resolves i64 by @B_tuple[!trait.poly<0>]
     given(%a, %val) : (!trait.claim<@A[!trait.poly<0>]>, !trait.claim<!trait.proj<@C[!trait.poly<0>], "Val"> = i64>)
     : !trait.claim<!trait.proj<@B[tuple<!trait.poly<0>>], "Out"> = i64>
   trait.return %req0, %out : !trait.claim<@A[tuple<!trait.poly<0>>]>, !trait.claim<!trait.proj<@B[tuple<!trait.poly<0>>], "Out"> = i64>
@@ -62,7 +62,7 @@ trait.proof private @p {
   %p0 = trait.witness @A_i32 for @A[i32]
   %p1 = trait.witness proj_resolve !trait.proj<@C[i32], "Val"> resolves i64 by @C_i32
     : !trait.claim<!trait.proj<@C[i32], "Val"> = i64>
-  %d = trait.derive @B[tuple<i32>] from @B_tuple given(%p0, %p1) : (!trait.claim<@A[i32] by @A_i32>, !trait.claim<!trait.proj<@C[i32], "Val"> = i64>)
+  %d = trait.derive @B[tuple<i32>] from @B_tuple[i32] given(%p0, %p1) : (!trait.claim<@A[i32] by @A_i32>, !trait.claim<!trait.proj<@C[i32], "Val"> = i64>)
   trait.return %d : !trait.claim<@B[tuple<i32>]>
 }
 

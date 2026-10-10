@@ -24,12 +24,12 @@ trait.impl private @Trait_impl(%self: !trait.claim<@Trait[!trait.poly<0>]>) {
 }
 
 trait.proof private @Trait_i64_p {
-  %d = trait.derive @Trait[i64] from @Trait_impl given()
+  %d = trait.derive @Trait[i64] from @Trait_impl[i64] given()
   trait.return %d : !trait.claim<@Trait[i64]>
 }
 
 func.func private @gen(%p: !trait.proj<@Trait[!S], "Output">, %c: !trait.claim<@Trait[!S]>) -> !S {
-  %e = trait.witness proj_resolve !trait.proj<@Trait[!S], "Output"> resolves !S by @Trait_impl
+  %e = trait.witness proj_resolve !trait.proj<@Trait[!S], "Output"> resolves !S by @Trait_impl[!trait.poly<0>]
     : !trait.claim<!trait.proj<@Trait[!S], "Output"> = !S>
   %v = trait.coerce %p : !trait.proj<@Trait[!S], "Output"> to !S via (%e) : (!trait.claim<!trait.proj<@Trait[!S], "Output"> = !S>)
   return %v : !S
@@ -42,7 +42,7 @@ func.func private @gen(%p: !trait.proj<@Trait[!S], "Output">, %c: !trait.claim<@
 func.func @caller() -> i64 {
   %x = arith.constant 7 : i64
   %w = trait.witness @Trait_i64_p for @Trait[i64]
-  %e = trait.witness proj_resolve !trait.proj<@Trait[i64], "Output"> resolves i64 by @Trait_impl
+  %e = trait.witness proj_resolve !trait.proj<@Trait[i64], "Output"> resolves i64 by @Trait_impl[i64]
     : !trait.claim<!trait.proj<@Trait[i64], "Output"> = i64>
   %pw = trait.coerce %x : i64 to !trait.proj<@Trait[i64], "Output"> via (%e) : (!trait.claim<!trait.proj<@Trait[i64], "Output"> = i64>)
   %r = trait.func.call @gen(%pw, %w) : (!trait.proj<@Trait[i64], "Output">, !trait.claim<@Trait[i64] by @Trait_i64_p>) -> i64

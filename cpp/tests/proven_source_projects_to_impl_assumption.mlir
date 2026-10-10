@@ -14,7 +14,7 @@ trait.impl private @U_impl(%self: !trait.claim<@U[i64]>) {}
 trait.impl private @T_impl(%self: !trait.claim<@T[!trait.poly<0>]>, %u: !trait.claim<@U[!trait.poly<0>]>) {}
 trait.proof private @T_p {
   %p0 = trait.witness @U_impl for @U[i64]
-  %d = trait.derive @T[i64] from @T_impl given(%p0) : (!trait.claim<@U[i64] by @U_impl>)
+  %d = trait.derive @T[i64] from @T_impl[i64] given(%p0) : (!trait.claim<@U[i64] by @U_impl>)
   trait.return %d : !trait.claim<@T[i64]>
 }
 

@@ -77,8 +77,8 @@ trait.trait private @Has(%self: !trait.claim<@Has[!S]>) {
 trait.impl private @Has_i32(%self: !trait.claim<@Has[i32]>) {
   trait.assoc_type @A<[!trait.poly<0>]> = tuple<!trait.poly<0>>
   trait.method @requirement_0(%m: !trait.claim<@Marker[!trait.poly<0>]>) -> !trait.claim<@Marker[tuple<!trait.poly<0>>]> {
-    // expected-error @below {{impl '@Marker_wrap' has 1 where entries, and the citation supplies 0 claims}}
-    %d = trait.derive @Marker[tuple<!trait.poly<0>>] from @Marker_wrap given()
+    // expected-error @below {{impl '@Marker_wrap' states 1 premises, and the derive supplies 0}}
+    %d = trait.derive @Marker[tuple<!trait.poly<0>>] from @Marker_wrap[!trait.poly<0>] given()
     trait.return %d : !trait.claim<@Marker[tuple<!trait.poly<0>>]>
   }
 }

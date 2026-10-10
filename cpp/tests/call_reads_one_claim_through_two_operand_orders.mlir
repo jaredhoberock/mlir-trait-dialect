@@ -27,11 +27,11 @@ trait.impl private @U_blanket(%self: !trait.claim<@U[!trait.poly<0>]>) {
   trait.return %req0 : !trait.claim<@V[!trait.poly<0>]>
 }
 trait.proof private @pv {
-  %d = trait.derive @V[i8] from @V_blanket given()
+  %d = trait.derive @V[i8] from @V_blanket[i8] given()
   trait.return %d : !trait.claim<@V[i8]>
 }
 trait.proof private @pu {
-  %d = trait.derive @U[i8] from @U_blanket given()
+  %d = trait.derive @U[i8] from @U_blanket[i8] given()
   trait.return %d : !trait.claim<@U[i8]>
 }
 
@@ -72,11 +72,11 @@ trait.impl private @U_blanket(%self: !trait.claim<@U[!trait.poly<0>]>) {
   trait.return %req0 : !trait.claim<@V[!trait.poly<0>]>
 }
 trait.proof private @pv {
-  %d = trait.derive @V[i8] from @V_blanket given()
+  %d = trait.derive @V[i8] from @V_blanket[i8] given()
   trait.return %d : !trait.claim<@V[i8]>
 }
 trait.proof private @pu {
-  %d = trait.derive @U[i8] from @U_blanket given()
+  %d = trait.derive @U[i8] from @U_blanket[i8] given()
   trait.return %d : !trait.claim<@U[i8]>
 }
 

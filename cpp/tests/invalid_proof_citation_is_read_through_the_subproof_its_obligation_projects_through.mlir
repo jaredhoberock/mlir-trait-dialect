@@ -30,6 +30,6 @@ trait.proof private @forged {
   %foo = trait.witness @Foo_i32 for @Foo[i32]
   %a = trait.witness @A_i32 for @A[i32]
   // expected-error @below {{premise 1 of impl '@B_blanket' is '!trait.claim<@A[!trait.proj<@Foo[i32], "Out">]>', and the derive supplies '!trait.claim<@A[i32]>'}}
-  %d = trait.derive @B[i32] from @B_blanket given(%foo, %a) : (!trait.claim<@Foo[i32] by @Foo_i32>, !trait.claim<@A[i32] by @A_i32>)
+  %d = trait.derive @B[i32] from @B_blanket[i32] given(%foo, %a) : (!trait.claim<@Foo[i32] by @Foo_i32>, !trait.claim<@A[i32] by @A_i32>)
   trait.return %d : !trait.claim<@B[i32]>
 }

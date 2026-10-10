@@ -37,7 +37,7 @@ trait.impl private @Tr_i32(%self: !trait.claim<@Tr[tuple<i32>]>) {
 
 func.func private @g(%x: tuple<!T>) -> i64 {
   %m = trait.allege @Mark[!T]
-  %d = trait.derive @Tr[tuple<!T>] from @Tr_any given(%m) : (!trait.claim<@Mark[!T]>)
+  %d = trait.derive @Tr[tuple<!T>] from @Tr_any[!trait.poly<0>] given(%m) : (!trait.claim<@Mark[!T]>)
   %r = trait.method.call %d @Tr[tuple<!T>]::@get(%x) : (tuple<!T>) -> i64
   return %r : i64
 }

@@ -13,7 +13,7 @@
 // Has[i32]::Out = i64.
 
 // SELECT: trait.proof private @I_p {
-// SELECT: trait.witness proj_resolve !trait.proj<@Has[i32], "Out"> resolves i64 by @Has_m given
+// SELECT: trait.witness proj_resolve !trait.proj<@Has[i32], "Out"> resolves i64 by @Has_m[i32] given
 // SELECT: trait.derive @T[i32] from @I given
 
 // CHECK-LABEL: func.func @main

@@ -25,7 +25,7 @@ func.func private @g2(%q: !trait.claim<@Q[!U]>, %c: !trait.claim<@P[!U]>, %x: !U
 
 !V = !trait.poly<6>
 func.func private @h(%c: !trait.claim<@P[!V]>, %x: !V) -> !V {
-  %q = trait.derive @Q[!V] from @Q_impl given()
+  %q = trait.derive @Q[!V] from @Q_impl[!trait.poly<6>] given()
   %r = trait.func.call @g2(%q, %c, %x)
     : (!trait.claim<@Q[!V]>, !trait.claim<@P[!V]>, !V) -> !V
   return %r : !V

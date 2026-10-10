@@ -17,7 +17,7 @@ trait.impl private @A_gen(%self: !trait.claim<@A[!P]>, %b: !trait.claim<@B[!P]>)
 // expected-note @+1 {{required by region isolation constraints}}
 trait.proof private @p {
   // expected-error @+1 {{using value defined outside the region}}
-  %d = trait.derive @A[i64] from @A_gen given(%outside) : (!trait.claim<@B[i64] by @B_i64>)
+  %d = trait.derive @A[i64] from @A_gen[i64] given(%outside) : (!trait.claim<@B[i64] by @B_i64>)
   trait.return %d : !trait.claim<@A[i64]>
 }
 

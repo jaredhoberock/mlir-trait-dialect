@@ -48,7 +48,7 @@ func.func @foo(%x: i8) -> i1 {
 // evidence itself.
 // CHECK-NOT: trait.proof private @A_impl
 // CHECK: trait.proof private @B_impl_{{.*}}_p {
-// CHECK-NEXT: trait.derive @B[i8] from @B_impl given()
+// CHECK-NEXT: trait.derive @B[i8] from @B_impl[i8] given()
 // CHECK: trait.proof private @C_impl_{{.*}}_p {
 // CHECK-NEXT: %[[B:.*]] = trait.witness @B_impl_{{.*}}_p for @B[i8]
-// CHECK-NEXT: trait.derive @C[i8] from @C_impl given(%[[B]])
+// CHECK-NEXT: trait.derive @C[i8] from @C_impl[i8] given(%[[B]])

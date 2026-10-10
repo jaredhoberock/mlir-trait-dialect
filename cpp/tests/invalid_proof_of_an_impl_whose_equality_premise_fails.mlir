@@ -22,6 +22,6 @@ trait.proof private @p {
   %t = trait.witness @Tensor_i8 for @Tensor[i8]
   %s = trait.witness proj_resolve !trait.proj<@Tensor[i8], "Shape"> resolves tuple<i64, i64> by @Tensor_i8 : !trait.claim<!trait.proj<@Tensor[i8], "Shape"> = tuple<i64, i64>>
   // expected-error @below {{premise 1 of impl '@Vector_blanket' is '!trait.claim<!trait.proj<@Tensor[i8], "Shape"> = i64>', and the derive supplies '!trait.claim<!trait.proj<@Tensor[i8], "Shape"> = tuple<i64, i64>>'}}
-  %d = trait.derive @Vector[i8] from @Vector_blanket given(%t, %s) : (!trait.claim<@Tensor[i8] by @Tensor_i8>, !trait.claim<!trait.proj<@Tensor[i8], "Shape"> = tuple<i64, i64>>)
+  %d = trait.derive @Vector[i8] from @Vector_blanket[i8] given(%t, %s) : (!trait.claim<@Tensor[i8] by @Tensor_i8>, !trait.claim<!trait.proj<@Tensor[i8], "Shape"> = tuple<i64, i64>>)
   trait.return %d : !trait.claim<@Vector[i8]>
 }

@@ -44,7 +44,7 @@ InstantiationChain::chainTo(Operation *instance) const {
   return SmallVector<std::pair<Operation *, Attribute>>(llvm::reverse(reversed));
 }
 
-Answer<ImplOp>
+Answer<SpecializationMap>
 ImplResolver::assumptionsSatisfiableFor(ImplOp impl,
                                         ClaimType concreteSelf,
                                         const SelectionSite &site,
@@ -54,8 +54,9 @@ ImplResolver::assumptionsSatisfiableFor(ImplOp impl,
 
   // consult the per-(impl,claim) satisfiability memo
   auto key = std::make_pair(impl, app);
-  if (memo.assumptionsKnownSatisfiable.contains(key))
-    return impl;
+  if (auto known = memo.assumptionsKnownSatisfiable.find(key);
+      known != memo.assumptionsKnownSatisfiable.end())
+    return known->second;
 
   // The candidate's arguments as the demanded application and its own where
   // clause determine them, each projection they spell read through selection.
@@ -67,7 +68,7 @@ ImplResolver::assumptionsSatisfiableFor(ImplOp impl,
   };
   TypeArguments args = impl.readTypeArgumentsFor(concreteSelf, byResolver);
   if (readOverflowed)
-    return Answer<ImplOp>::overflow();
+    return Answer<SpecializationMap>::overflow();
   SpecializationMap known = args.toSpecialization();
 
   for (ClaimType premise : impl.getWhereClaims()) {
@@ -77,8 +78,8 @@ ImplResolver::assumptionsSatisfiableFor(ImplOp impl,
       auto assume = cast<ClaimType>(instantiate(Type(premise), known));
       Answer<ResolvedImpl> subImpl = resolveImplFor(assume, site, builder);
       if (!subImpl.isAnswer())
-        return subImpl.stop<ImplOp>();
-      Answer<ImplOp> held = assumptionsSatisfiableFor(
+        return subImpl.stop<SpecializationMap>();
+      Answer<SpecializationMap> held = assumptionsSatisfiableFor(
           subImpl->impl, subImpl->selectedClaim, site, builder);
       if (!held.isAnswer())
         return held;
@@ -104,28 +105,28 @@ ImplResolver::assumptionsSatisfiableFor(ImplOp impl,
     Answer<std::optional<Type>> lhs = reduce(equality.getLhs());
     Answer<std::optional<Type>> rhs = reduce(equality.getRhs());
     if (lhs.isOverflow() || rhs.isOverflow())
-      return Answer<ImplOp>::overflow();
+      return Answer<SpecializationMap>::overflow();
     if (!*lhs || !*rhs) {
       overflow(Overflow::projectionSteps(instantiate(Type(premise), known)),
                site);
-      return Answer<ImplOp>::overflow();
+      return Answer<SpecializationMap>::overflow();
     }
     if (premiseDefersToInstances(**lhs, **rhs))
       continue;
     if (**lhs != **rhs)
-      return Answer<ImplOp>::refusal();
+      return Answer<SpecializationMap>::refusal();
   }
 
   // An impl whose arguments the header and the where clause together leave
   // open is no candidate: selection would have nothing to specialize its
   // methods and associated-type bindings with.
   if (!args.complete())
-    return Answer<ImplOp>::refusal();
+    return Answer<SpecializationMap>::refusal();
 
   // record a positive result
-  memo.assumptionsKnownSatisfiable.insert(key);
+  memo.assumptionsKnownSatisfiable.try_emplace(key, known);
 
-  return impl;
+  return known;
 }
 
 /// How many candidates a refusal names one by one. Past this a reader learns
@@ -210,7 +211,7 @@ Answer<ResolvedImpl> ImplResolver::resolveImplFor(
       return Selected::overflow();
     }
     memo.heightBelow = std::max(memo.heightBelow, it->second.height);
-    return ResolvedImpl{it->second.impl, selected};
+    return ResolvedImpl{it->second.impl, selected, it->second.arguments};
   }
   if (auto it = memo.refused.find({scope, app}); it != memo.refused.end()) {
     if (err) {
@@ -318,9 +319,10 @@ Answer<ResolvedImpl> ImplResolver::resolveImplFor(
   // candidate refused beside it.
   SmallVector<ImplOp> good, bad;
   unsigned goodHeight = 0;
+  SpecializationMap goodArguments;
   auto judge = [&](ImplOp impl) -> LogicalResult {
     memo.heightBelow = 0;
-    Answer<ImplOp> held =
+    Answer<SpecializationMap> held =
         assumptionsSatisfiableFor(impl, selected, site, builder);
     if (held.isOverflow())
       return failure();
@@ -328,6 +330,7 @@ Answer<ResolvedImpl> ImplResolver::resolveImplFor(
     if (held.isAnswer()) {
       good.push_back(impl);
       goodHeight = memo.heightBelow;
+      goodArguments = std::move(*held);
     } else {
       bad.push_back(impl);
     }
@@ -376,8 +379,9 @@ Answer<ResolvedImpl> ImplResolver::resolveImplFor(
   // if exactly one good candidate exists, return it
   if (good.size() == 1) {
     height = std::max(headersHeight, goodHeight) + 1;
-    memo.chosen.insert_or_assign({scope, app}, ChosenImpl{good.front(), height});
-    return ResolvedImpl{good.front(), selected};
+    memo.chosen.insert_or_assign({scope, app},
+                                 ChosenImpl{good.front(), goodArguments, height});
+    return ResolvedImpl{good.front(), selected, std::move(goodArguments)};
   }
 
   // otherwise, diagnose resolution failure, entering the refusal where it is
@@ -412,9 +416,9 @@ static SmallVector<Value> buildStepWitnesses(OpBuilder &builder, Location loc,
       premises.push_back(buildEqualityEvidence(builder, loc, nested->equality,
                                                nested->steps));
     }
-    witnesses.push_back(
-        WitnessOp::create(builder, loc, step.equality, step.impl, premises)
-            .getResult());
+    witnesses.push_back(WitnessOp::create(builder, loc, step.equality,
+                                          step.impl, step.arguments, premises)
+                            .getResult());
   }
   return witnesses;
 }
@@ -442,17 +446,18 @@ Value buildPremiseEvidence(OpBuilder &builder, Location loc,
 }
 
 /// Writes at the end of `scope` the proof `name` of `app`, whose body derives
-/// `header`, `impl`'s header at the citation, over one premise per entry of
-/// `entries`, `impl`'s where entries at the citation -- the evidence of the
-/// next of `applicationPremises` at an application entry and the evidence the
-/// next of `equalitySteps` build at an equality entry -- and returns it
-/// respelled as `app` by `headerSteps`. Where a symbol of `scope` holds `name`
-/// already, the proof is named as the module's symbol table renames it
-/// (`SymbolTable::insert`): mangled names are not one-to-one, so the table,
-/// not the mangling, makes a proof's name unique.
+/// `header`, `impl`'s header at `arguments`, citing `impl` at them over one
+/// premise per entry of `entries`, `impl`'s where entries there -- the
+/// evidence of the next of `applicationPremises` at an application entry and
+/// the evidence the next of `equalitySteps` build at an equality entry -- and
+/// returns it respelled as `app` by `headerSteps`. Where a symbol of `scope`
+/// holds `name` already, the proof is named as the module's symbol table
+/// renames it (`SymbolTable::insert`): mangled names are not one-to-one, so
+/// the table, not the mangling, makes a proof's name unique.
 static ProofOp
 writeProofBody(OpBuilder &builder, ModuleOp scope, StringRef name, ImplOp impl,
-               ClaimType header, TraitApplicationAttr app,
+               const SpecializationMap &arguments, ClaimType header,
+               TraitApplicationAttr app,
                ArrayRef<ClaimType> entries,
                ArrayRef<ProvenPremise> applicationPremises,
                ArrayRef<SmallVector<ResolutionStep>> equalitySteps,
@@ -483,7 +488,7 @@ writeProofBody(OpBuilder &builder, ModuleOp scope, StringRef name, ImplOp impl,
   }
   auto derived = DeriveOp::create(builder, loc, header,
                                   FlatSymbolRefAttr::get(ctx, impl.getSymName()),
-                                  premises);
+                                  impl.stateArguments(arguments), premises);
   ReturnOp::create(builder, loc,
                    respell(builder, loc, derived.getResult(),
                            ClaimType::get(ctx, app), headerSteps));
@@ -547,8 +552,9 @@ Answer<ClaimType> ImplResolver::writeProof(
     applicationPremises.push_back(std::move(*premise));
   }
   ProofOp proof = writeProofBody(
-      builder, scope, impl.generateMangledName(arguments) + "_p", impl, header,
-      app, entries, applicationPremises, equalitySteps, *headerSteps);
+      builder, scope, impl.generateMangledName(arguments) + "_p", impl,
+      arguments, header, app, entries, applicationPremises, equalitySteps,
+      *headerSteps);
   return ClaimType::get(ctx, app,
                         FlatSymbolRefAttr::get(ctx, proof.getSymNameAttr()));
 }
@@ -576,13 +582,8 @@ Answer<ClaimType> ImplResolver::respellProof(ClaimType proven,
       subproofs.push_back(subproof.getProof());
   if (ClaimType standing = findProof(scope, impl, to, subproofs))
     return standing;
-  SpecializationMap arguments;
-  if (proof) {
-    auto stated = proof.getImplArguments();
-    if (failed(stated))
-      return Respelled::refusal();
-    arguments = std::move(*stated);
-  }
+  SpecializationMap arguments =
+      proof ? proof.getImplArguments() : SpecializationMap();
   // An equality premise is ground and has one answer: the evidence the steps
   // resolving its projections build.
   SmallVector<ClaimType> entries = impl.getWhereClaimsAt(arguments);
@@ -651,36 +652,20 @@ ImplResolver::ImplResolver(ModuleOp m) : module(m) {
   }
 }
 
-/// The arguments carrying `resolved`'s impl header to the claim selection chose
-/// it for, the header read through `readHeader`, the context selection chose it
-/// under.
-static FailureOr<SpecializationMap>
-argumentsOf(const ResolvedImpl &resolved, Normalizer readHeader,
-            llvm::function_ref<InFlightDiagnostic()> err) {
-  ImplOp impl = resolved.impl;
-  return impl.buildSubstitutionForSelfClaim(resolved.selectedClaim, readHeader,
-                                            err);
-}
-
 Answer<ProjectionResolution> ProjectionResolution::get(
     ProjectionType projection,
     llvm::function_ref<Answer<ResolvedImpl>(ClaimType)> select,
-    Normalizer readHeader,
     llvm::function_ref<InFlightDiagnostic()> err) {
   Answer<ResolvedImpl> resolved = select(projection.asClaim());
   if (!resolved.isAnswer())
     return resolved.stop<ProjectionResolution>();
-  auto arguments = argumentsOf(*resolved, readHeader, err);
-  if (failed(arguments))
-    return Answer<ProjectionResolution>::refusal();
   ImplOp impl = resolved->impl;
   auto binding = impl.specializeAssociatedTypeBinding(
       projection.getAssocName().getValue(), projection.getAssocTypeArgs(),
-      *arguments, err);
+      resolved->arguments, err);
   if (failed(binding))
     return Answer<ProjectionResolution>::refusal();
-  return ProjectionResolution(projection, impl, std::move(*arguments),
-                              *binding);
+  return ProjectionResolution(projection, impl, resolved->arguments, *binding);
 }
 
 /// The monomorphic application `resolved`'s impl header states at `arguments`,
@@ -704,10 +689,7 @@ Answer<ProjectionResolution> ImplResolver::resolveProjection(
   auto select = [&](ClaimType claim) {
     return resolveImplFor(claim, site, builder, err);
   };
-  auto readHeader = [&](Type ty) -> FailureOr<Type> {
-    return resolveProjectionsIn(ty, site, builder).orFailure();
-  };
-  return ProjectionResolution::get(proj, select, readHeader, err);
+  return ProjectionResolution::get(proj, select, err);
 }
 
 Answer<std::optional<Type>>
@@ -786,13 +768,8 @@ Answer<ClaimType> ImplResolver::resolveAndEnsureProofFor(
     return resolvedImpl.stop<ClaimType>();
   ImplOp impl = resolvedImpl->impl;
 
-  auto readHeader = [&](Type ty) -> FailureOr<Type> {
-    return resolveProjectionsIn(ty, site, builder).orFailure();
-  };
-  auto subst = argumentsOf(*resolvedImpl, readHeader, err);
-  if (failed(subst))
-    return Proven::refusal();
-  auto monomorphic = monomorphicApplicationOf(*resolvedImpl, *subst);
+  const SpecializationMap &subst = resolvedImpl->arguments;
+  auto monomorphic = monomorphicApplicationOf(*resolvedImpl, subst);
   if (failed(monomorphic)) {
     if (err) err() << "could not monomorphize claim: " << originalWanted;
     return Proven::refusal();
@@ -811,7 +788,7 @@ Answer<ClaimType> ImplResolver::resolveAndEnsureProofFor(
   if (auto it = memo.proofMemo.find({scope, spelled});
       it != memo.proofMemo.end())
     return ClaimType::get(ctx, spelled, it->second);
-  Proven atResolution = proofAtResolution(impl, resolved, *subst, site,
+  Proven atResolution = proofAtResolution(impl, resolved, subst, site,
                                           builder, originalWanted, err);
   if (!atResolution.isAnswer() || spelled == resolved)
     return atResolution;
@@ -938,6 +915,8 @@ ImplResolver::resolveEquality(TypeEqualityAttr eq, const SelectionSite &site,
                                               resolved->getBinding());
         step.impl = FlatSymbolRefAttr::get(
             ctx, resolved->getImpl().getSymNameAttr());
+        step.arguments =
+            resolved->getImpl().stateArguments(resolved->getArguments());
         for (ClaimType entry :
              resolved->getImpl().getWhereClaimsAt(resolved->getArguments())) {
           if (entry.isApplication()) {
@@ -1041,13 +1020,9 @@ ImplResolver::readSettledProjection(ProjectionType proj, ModuleOp scope) const {
         {scope, selected.getTraitApplication()});
     if (it == memo.resolutionMemo.chosen.end())
       return Answer<ResolvedImpl>::refusal();
-    return ResolvedImpl{it->second.impl, selected};
+    return ResolvedImpl{it->second.impl, selected, it->second.arguments};
   };
-  auto readHeader = [&](Type ty) -> FailureOr<Type> {
-    return readSettledProjectionsIn(ty, scope);
-  };
-  return ProjectionResolution::get(proj, select, readHeader, /*err=*/nullptr)
-      .orFailure();
+  return ProjectionResolution::get(proj, select, /*err=*/nullptr).orFailure();
 }
 
 Type ImplResolver::readSettledProjectionsIn(Type ty, ModuleOp scope) const {

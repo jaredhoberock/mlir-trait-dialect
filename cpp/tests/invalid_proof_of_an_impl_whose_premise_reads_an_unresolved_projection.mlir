@@ -28,7 +28,7 @@ trait.impl private @Tensor_i8(%self: !trait.claim<@Tensor[i8]>) {
 trait.proof private @p {
   %t = trait.witness @Tensor_i8 for @Tensor[i8]
   %e = trait.project %t[0] : !trait.claim<@Tensor[i8] by @Tensor_i8> -> !trait.claim<!trait.proj<@Foo[i8], "Out"> = i64>
-  %d = trait.derive @Vector[i8] from @Vector_blanket given(%t, %e) : (!trait.claim<@Tensor[i8] by @Tensor_i8>, !trait.claim<!trait.proj<@Foo[i8], "Out"> = i64>)
+  %d = trait.derive @Vector[i8] from @Vector_blanket[i8] given(%t, %e) : (!trait.claim<@Tensor[i8] by @Tensor_i8>, !trait.claim<!trait.proj<@Foo[i8], "Out"> = i64>)
   trait.return %d : !trait.claim<@Vector[i8]>
 }
 func.func @main() -> i64 {
@@ -67,6 +67,6 @@ trait.proof private @p {
   %t = trait.witness @Tensor_i8 for @Tensor[i8]
   // expected-error @below {{impl '@Foo_i8' binds the projection to 'i32', not the certified resolution 'i64'}}
   %e = trait.witness proj_resolve !trait.proj<@Foo[i8], "Out"> resolves i64 by @Foo_i8 : !trait.claim<!trait.proj<@Foo[i8], "Out"> = i64>
-  %d = trait.derive @Vector[i8] from @Vector_a given(%t, %e) : (!trait.claim<@Tensor[i8] by @Tensor_i8>, !trait.claim<!trait.proj<@Foo[i8], "Out"> = i64>)
+  %d = trait.derive @Vector[i8] from @Vector_a[i8] given(%t, %e) : (!trait.claim<@Tensor[i8] by @Tensor_i8>, !trait.claim<!trait.proj<@Foo[i8], "Out"> = i64>)
   trait.return %d : !trait.claim<@Vector[i8]>
 }

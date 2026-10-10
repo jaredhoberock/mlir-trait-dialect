@@ -25,7 +25,7 @@ trait.impl private @B2_i32(%self: !trait.claim<@B2[i32, i32]>) {
   trait.return %req0 : !trait.claim<@A2[i32, i32]>
 }
 trait.proof private @a2 {
-  %d = trait.derive @A2[i32, i32] from @A2_blanket given()
+  %d = trait.derive @A2[i32, i32] from @A2_blanket[i32, i32] given()
   trait.return %d : !trait.claim<@A2[i32, i32]>
 }
 trait.proof private @pb {

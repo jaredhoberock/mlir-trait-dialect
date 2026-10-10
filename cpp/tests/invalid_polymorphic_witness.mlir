@@ -27,6 +27,6 @@ trait.impl private @Trait_impl(%self_claim: !trait.claim<@Trait[i64, !trait.poly
 
 // expected-error @below {{proves '!trait.claim<@Trait[i64, tuple<!trait.poly<3>>]>', which spells a type variable: a proof is ground}}
 trait.proof private @Trait_proof {
-  %d = trait.derive @Trait[i64, tuple<!T3>] from @Trait_impl given()
+  %d = trait.derive @Trait[i64, tuple<!T3>] from @Trait_impl[tuple<!trait.poly<3>>] given()
   trait.return %d : !trait.claim<@Trait[i64, tuple<!T3>]>
 }

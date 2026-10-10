@@ -26,7 +26,7 @@ trait.proof private @p {
   %p0 = trait.witness @Tensor_i8 for @Tensor[i8]
   %p1 = trait.witness proj_resolve !trait.proj<@Tensor[i8], "Shape"> resolves i64 by @Tensor_i8
     : !trait.claim<!trait.proj<@Tensor[i8], "Shape"> = i64>
-  %d = trait.derive @Vector[i8] from @Vector_blanket given(%p0, %p1) : (!trait.claim<@Tensor[i8] by @Tensor_i8>, !trait.claim<!trait.proj<@Tensor[i8], "Shape"> = i64>)
+  %d = trait.derive @Vector[i8] from @Vector_blanket[i8] given(%p0, %p1) : (!trait.claim<@Tensor[i8] by @Tensor_i8>, !trait.claim<!trait.proj<@Tensor[i8], "Shape"> = i64>)
   trait.return %d : !trait.claim<@Vector[i8]>
 }
 

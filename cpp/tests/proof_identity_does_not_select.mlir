@@ -44,7 +44,7 @@ trait.impl private @T_f64(%self: !trait.claim<@T[f64]>) {
 
 trait.proof private @P {
   %p0 = trait.witness @U_i32 for @U[i32]
-  %d = trait.derive @T[i32] from @T_cond given(%p0) : (!trait.claim<@U[i32] by @U_i32>)
+  %d = trait.derive @T[i32] from @T_cond[i32] given(%p0) : (!trait.claim<@U[i32] by @U_i32>)
   trait.return %d : !trait.claim<@T[i32]>
 }
 

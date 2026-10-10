@@ -623,13 +623,10 @@ struct ProveClaimResultPattern : public RewritePattern {
       return cast<ClaimType>(*resolved);
     };
     SmallVector<FlatSymbolRefAttr> subproofs;
-    SmallVector<Type> premises;
     for (Value operand : derive.getAssumptions()) {
       auto premise = cast<ClaimType>(operand.getType());
-      if (premise.isEquality()) {
-        premises.push_back(Type(premise));
+      if (premise.isEquality())
         continue;
-      }
       std::optional<ClaimType> at = resolve(premise.asUnproven());
       if (!at)
         return rewriter.notifyMatchFailure(derive, "spells no normal form");
@@ -641,20 +638,22 @@ struct ProveClaimResultPattern : public RewritePattern {
                                            "a projection is not resolved");
       }
       subproofs.push_back(subproof->getProof());
-      premises.push_back(Type(*at));
     }
     std::optional<ClaimType> resolvedClaim = resolve(claim);
     if (!resolvedClaim)
       return rewriter.notifyMatchFailure(derive, "spells no normal form");
     TraitApplicationAttr app = resolvedClaim->getTraitApplication();
-    // The verifier has read the citation already; what it accepted is read
-    // again here at the resolution.
-    auto arguments = impl.readCitationArguments(*resolvedClaim, premises, errFn);
-    if (failed(arguments)) {
-      (void)refuse(derive);
-      return rewriter.notifyMatchFailure(derive, "cites its impl at no arguments");
+    // The arguments the derive states, each at the resolution, as its claim
+    // and its premises are read.
+    SmallVector<Type> resolvedArguments;
+    for (Type argument : derive.getImplArgs().getAsValueRange<TypeAttr>()) {
+      Answer<Type> at = resolver.resolveProjectionsIn(argument, site, rewriter);
+      if (!at.isAnswer())
+        return rewriter.notifyMatchFailure(derive, "spells no normal form");
+      resolvedArguments.push_back(*at);
     }
-    SmallVector<ClaimType> entries = impl.getWhereClaimsAt(*arguments);
+    auto arguments = SpecializationMap::fromPositions(resolvedArguments);
+    SmallVector<ClaimType> entries = impl.getWhereClaimsAt(arguments);
 
     // A proof standing with this body answers, and is read rather than
     // written again.
@@ -685,7 +684,7 @@ struct ProveClaimResultPattern : public RewritePattern {
         }
         equalitySteps.push_back(std::move(steps));
       }
-      proven = resolver.writeProof(scope, impl, app, *arguments, entries,
+      proven = resolver.writeProof(scope, impl, app, arguments, entries,
                                    subproofs, equalitySteps, site, rewriter);
     }
     if (proven.isAnswer())
@@ -1213,6 +1212,11 @@ struct SettleSpelledObligationsPattern : public RewritePattern {
   LogicalResult matchAndRewrite(Operation *op,
                                 PatternRewriter &rewriter) const override {
     if (auto call = dyn_cast<MethodCallOp>(op); call && call.computesEvidence())
+      return failure();
+    // A citation spells its claims and the arguments it states for its impl,
+    // all left as spelled (`statesImplArguments`), and nothing else.
+    if (isa<DeriveOp>(op) ||
+        (isa<WitnessOp>(op) && cast<WitnessOp>(op).isProjectionResolution()))
       return failure();
     bool provesClaims = !producesPositionalEvidence(op) &&
                         !isa<InferTypeOpInterface>(op) &&

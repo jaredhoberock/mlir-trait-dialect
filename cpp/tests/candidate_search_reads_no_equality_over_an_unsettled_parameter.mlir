@@ -47,7 +47,7 @@ func.func private @need(!trait.claim<@Pair[i8, i64]>)
 // CHECK: trait.proof private @[[PROOF]] {
 // CHECK: %[[OUTPUT:.*]] = trait.witness proj_resolve !trait.proj<@Call[i32, i64], "Output"> resolves f32 by @direct
 // CHECK: %[[OUT:.*]] = trait.witness proj_resolve !trait.proj<@Other[i8], "Out"> resolves i32 by @other_i8
-// CHECK: trait.derive @Pair[i8, i64] from @chain given(%[[OUTPUT]], %[[OUT]])
+// CHECK: trait.derive @Pair[i8, i64] from @chain[i8, i64, i32, f32] given(%[[OUTPUT]], %[[OUT]])
 func.func @main() {
   %c = trait.allege @Pair[i8, i64]
   func.call @need(%c) : (!trait.claim<@Pair[i8, i64]>) -> ()

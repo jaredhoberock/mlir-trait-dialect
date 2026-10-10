@@ -30,8 +30,8 @@ func.func private @g(%x: !T,
 }
 
 func.func private @k(%x: !X, %v: tuple<!X, i1>) -> !X {
-  %c = trait.derive @Has[tuple<!X>] from @Has_tuple given()
-  %a = trait.witness proj_resolve !trait.proj<@Has[tuple<!X>], "A", [i1]> resolves tuple<!X, i1> by @Has_tuple
+  %c = trait.derive @Has[tuple<!X>] from @Has_tuple[!trait.poly<4>] given()
+  %a = trait.witness proj_resolve !trait.proj<@Has[tuple<!X>], "A", [i1]> resolves tuple<!X, i1> by @Has_tuple[!trait.poly<4>]
     : !trait.claim<!trait.proj<@Has[tuple<!X>], "A", [i1]> = tuple<!X, i1>>
   %w = trait.coerce %v : tuple<!X, i1> to !trait.proj<@Has[tuple<!X>], "A", [i1]> via (%a)
     : (!trait.claim<!trait.proj<@Has[tuple<!X>], "A", [i1]> = tuple<!X, i1>>)

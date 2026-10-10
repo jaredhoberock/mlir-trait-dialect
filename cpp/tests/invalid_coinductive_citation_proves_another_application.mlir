@@ -14,6 +14,6 @@ trait.impl private @Foo_tuple(%self: !trait.claim<@Foo[tuple<!trait.poly<0>>]>, 
 trait.proof private @p {
   // expected-error @below {{proof @p proves '!trait.claim<@Foo[tuple<i32>]>', which does not discharge the obligation '!trait.claim<@Foo[i32]>'}}
   %p0 = trait.witness @p for @Foo[i32]
-  %d = trait.derive @Foo[tuple<i32>] from @Foo_tuple given(%p0) : (!trait.claim<@Foo[i32] by @p>)
+  %d = trait.derive @Foo[tuple<i32>] from @Foo_tuple[i32] given(%p0) : (!trait.claim<@Foo[i32] by @p>)
   trait.return %d : !trait.claim<@Foo[tuple<i32>]>
 }

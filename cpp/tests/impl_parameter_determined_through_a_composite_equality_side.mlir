@@ -34,7 +34,7 @@ func.func private @need(!trait.claim<@S[i64]>)
 // CHECK-LABEL: func.func @main
 // CHECK: trait.witness @[[PROOF:.*]] for @S[i64]
 // CHECK: trait.proof private @[[PROOF]] {
-// CHECK: trait.derive @S[i64] from @S_gen given({{.*}}) : (!trait.claim<@Marker[i64] by @Marker_i64>, !trait.claim<!trait.proj<@Marker[i64], "M"> = tuple<i1>>)
+// CHECK: trait.derive @S[i64] from @S_gen[i64, i1] given({{.*}}) : (!trait.claim<@Marker[i64] by @Marker_i64>, !trait.claim<!trait.proj<@Marker[i64], "M"> = tuple<i1>>)
 func.func @main() {
   %c = trait.allege @S[i64]
   func.call @need(%c) : (!trait.claim<@S[i64]>) -> ()

@@ -33,14 +33,14 @@ trait.impl private @B_blanket(%self: !trait.claim<@B[!trait.poly<0>]>, %foo: !tr
   }
 }
 trait.proof private @Foo_any_p {
-  %d = trait.derive @Foo[i32] from @Foo_any given()
+  %d = trait.derive @Foo[i32] from @Foo_any[i32] given()
   trait.return %d : !trait.claim<@Foo[i32]>
 }
 trait.proof private @forged {
   %foo = trait.witness @Foo_any_p for @Foo[i32]
   %a = trait.witness @A_i64 for @A[i64]
   // expected-error @below {{premise 1 of impl '@B_blanket' is '!trait.claim<@A[!trait.proj<@Foo[i32], "Out">]>', and the derive supplies '!trait.claim<@A[i64]>'}}
-  %d = trait.derive @B[i32] from @B_blanket given(%foo, %a) : (!trait.claim<@Foo[i32] by @Foo_any_p>, !trait.claim<@A[i64] by @A_i64>)
+  %d = trait.derive @B[i32] from @B_blanket[i32] given(%foo, %a) : (!trait.claim<@Foo[i32] by @Foo_any_p>, !trait.claim<@A[i64] by @A_i64>)
   trait.return %d : !trait.claim<@B[i32]>
 }
 func.func @main() -> i64 {

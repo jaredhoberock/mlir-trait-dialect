@@ -36,16 +36,16 @@ trait.impl private @W(%self: !trait.claim<@Wrapped[!T]>, %mark: !trait.claim<@Ma
 }
 trait.proof private @PF {
   %p0 = trait.witness @Nine for @Mark[i32]
-  %d = trait.derive @Mark[tuple<i32>] from @MT given(%p0) : (!trait.claim<@Mark[i32] by @Nine>)
+  %d = trait.derive @Mark[tuple<i32>] from @MT[i32] given(%p0) : (!trait.claim<@Mark[i32] by @Nine>)
   trait.return %d : !trait.claim<@Mark[tuple<i32>]>
 }
 trait.proof private @PF2 {
   %p0 = trait.witness @Nine for @Mark[i32]
-  %d = trait.derive @Mark[tuple<i32>] from @MT given(%p0) : (!trait.claim<@Mark[i32] by @Nine>)
+  %d = trait.derive @Mark[tuple<i32>] from @MT[i32] given(%p0) : (!trait.claim<@Mark[i32] by @Nine>)
   trait.return %d : !trait.claim<@Mark[tuple<i32>]>
 }
 func.func private @f(%p: !trait.claim<@Mark[!T]>) -> i64 {
-  %w = trait.derive @Wrapped[!T] from @W given(%p) : (!trait.claim<@Mark[!T]>)
+  %w = trait.derive @Wrapped[!T] from @W[!trait.poly<0>] given(%p) : (!trait.claim<@Mark[!T]>)
   %v = trait.method.call %w @Wrapped[!T]::@value() : () -> i64
   return %v : i64
 }

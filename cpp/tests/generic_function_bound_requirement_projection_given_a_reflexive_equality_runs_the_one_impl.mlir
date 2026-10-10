@@ -24,18 +24,18 @@ trait.trait private @Wrapped(%self: !trait.claim<@Wrapped[!T]>) -> !trait.claim<
 }
 trait.impl private @W(%self: !trait.claim<@Wrapped[!T]>) {
   trait.method @requirement_1(%e: !trait.claim<!B = !B>) -> !trait.claim<@Mark[!B]> {
-    %r = trait.derive @Mark[!B] from @Nine given()
+    %r = trait.derive @Mark[!B] from @Nine[!trait.poly<1>] given()
     trait.return %r : !trait.claim<@Mark[!B]>
   }
   %refl = trait.witness refl : !trait.claim<!T = !T>
   trait.return %refl : !trait.claim<!T = !T>
 }
 trait.proof private @PN {
-  %d = trait.derive @Mark[i32] from @Nine given()
+  %d = trait.derive @Mark[i32] from @Nine[i32] given()
   trait.return %d : !trait.claim<@Mark[i32]>
 }
 trait.proof private @PW {
-  %d = trait.derive @Wrapped[i32] from @W given()
+  %d = trait.derive @Wrapped[i32] from @W[i32] given()
   trait.return %d : !trait.claim<@Wrapped[i32]>
 }
 func.func private @f(%w: !trait.claim<@Wrapped[!T]>, %p: !trait.claim<@Mark[!T]>) -> i64 {

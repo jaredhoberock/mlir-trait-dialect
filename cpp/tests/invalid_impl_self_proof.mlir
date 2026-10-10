@@ -16,6 +16,6 @@ trait.impl private @B_impl(%self: !trait.claim<@B[!trait.poly<0>]>, %a: !trait.c
 trait.proof private @B_impl_p {
   // expected-error @below {{impl '@A_impl' binds type parameters or has a where clause, so it must be cited through a trait.proof}}
   %p0 = trait.witness @A_impl for @A[i8]
-  %d = trait.derive @B[i8] from @B_impl given(%p0) : (!trait.claim<@A[i8] by @A_impl>)
+  %d = trait.derive @B[i8] from @B_impl[i8] given(%p0) : (!trait.claim<@A[i8] by @A_impl>)
   trait.return %d : !trait.claim<@B[i8]>
 }

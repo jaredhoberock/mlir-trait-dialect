@@ -38,14 +38,14 @@ trait.impl private @Foo_T(%self: !trait.claim<@Foo[!trait.poly<0>]>) {
   }
 }
 trait.proof private @Foo_i64_p {
-  %d = trait.derive @Foo[i64] from @Foo_T given()
+  %d = trait.derive @Foo[i64] from @Foo_T[i64] given()
   trait.return %d : !trait.claim<@Foo[i64]>
 }
 func.func @main(%x: i64) -> i1 {
   %w = trait.witness @Foo_i64_p for @Foo[i64]
   %r = trait.method.call %w @Foo[i64]::@f(%x) : (i64) -> !trait.proj<@S[i64], "Out"> by @Foo_i64_p
   %m = trait.witness proj_resolve !trait.proj<@Marker[i64], "M"> resolves i1 by @Marker_i64 : !trait.claim<!trait.proj<@Marker[i64], "M"> = i1>
-  %e = trait.witness proj_resolve !trait.proj<@S[i64], "Out"> resolves i1 by @S_i64 given(%m) : (!trait.claim<!trait.proj<@Marker[i64], "M"> = i1>)
+  %e = trait.witness proj_resolve !trait.proj<@S[i64], "Out"> resolves i1 by @S_i64[i1] given(%m) : (!trait.claim<!trait.proj<@Marker[i64], "M"> = i1>)
     : !trait.claim<!trait.proj<@S[i64], "Out"> = i1>
   %c = trait.coerce %r : !trait.proj<@S[i64], "Out"> to i1 via (%e)
     : (!trait.claim<!trait.proj<@S[i64], "Out"> = i1>)

@@ -29,7 +29,7 @@ trait.impl private @Wrapped_any(%self: !trait.claim<@Wrapped[!T]>, %mark: !trait
 trait.trait private @Host(%self: !trait.claim<@Host[!T]>) {
   trait.method @run(%p: !trait.claim<@Mark[!T]>) -> i64 {
     %c = arith.constant false
-    %w = trait.derive @Wrapped[!T] from @Wrapped_any given(%p) : (!trait.claim<@Mark[!T]>)
+    %w = trait.derive @Wrapped[!T] from @Wrapped_any[!trait.poly<0>] given(%p) : (!trait.claim<@Mark[!T]>)
     %m = trait.project %w[0] : !trait.claim<@Wrapped[!T]> -> !trait.claim<@Mark[!T]>
     %s = arith.select %c, %p, %m : !trait.claim<@Mark[!T]>
     %v = trait.method.call %s @Mark[!T]::@value() : () -> i64

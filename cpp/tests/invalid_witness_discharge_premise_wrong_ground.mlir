@@ -25,7 +25,7 @@ trait.impl private @Fn_impl(%self: !trait.claim<@Fn[!G]>, %hg: !trait.claim<@HG[
 }
 func.func @f(%v: !trait.proj<@Fn[i64], "Out">, %hg: !trait.claim<@HG[i64] by @HG_i64>, %cf: !trait.claim<@CF[i8] by @CF_i8>) -> i1 {
   // expected-error@+1 {{premise 1 of impl '@Fn_impl' is '!trait.claim<@CF[!trait.proj<@HG[i64], "Sub">]>', and the witness supplies '!trait.claim<@CF[i8]>'}}
-  %eq = trait.witness proj_resolve !trait.proj<@Fn[i64], "Out"> resolves i1 by @Fn_impl given(%hg, %cf)
+  %eq = trait.witness proj_resolve !trait.proj<@Fn[i64], "Out"> resolves i1 by @Fn_impl[i64] given(%hg, %cf)
     : (!trait.claim<@HG[i64] by @HG_i64>, !trait.claim<@CF[i8] by @CF_i8>)
     : !trait.claim<!trait.proj<@Fn[i64], "Out"> = i1>
   %c = trait.coerce %v : !trait.proj<@Fn[i64], "Out"> to i1 via (%eq)

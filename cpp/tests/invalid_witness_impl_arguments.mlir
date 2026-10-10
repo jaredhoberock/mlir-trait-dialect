@@ -3,10 +3,10 @@
 
 // RUN: mlir-opt %s -verify-diagnostics -split-input-file
 
-// A projection-resolution witness reads the cited impl's arguments off the
-// projection's application and the premises it supplies, one per where-clause
-// entry, and the verifier holds the impl to them: the entries it states, the
-// binding it makes, and the header it has at them.
+// A projection-resolution witness states the cited impl's arguments and
+// supplies one premise per where-clause entry, and the verifier holds the impl
+// to them: the entries it states, the binding it makes, and the header it has
+// at them.
 
 !S = !trait.poly<0>
 !U = !trait.poly<1>
@@ -25,8 +25,8 @@ trait.impl private @S_i64(%self: !trait.claim<@S[i64]>, %m: !trait.claim<!trait.
 }
 
 func.func @missing_premise(%v: !trait.proj<@S[i64], "Out">) -> i1 {
-  // expected-error @below {{impl '@S_i64' has 1 where entries, and the citation supplies 0 claims}}
-  %e = trait.witness proj_resolve !trait.proj<@S[i64], "Out"> resolves i1 by @S_i64
+  // expected-error @below {{impl '@S_i64' states 1 premises, and the witness supplies 0}}
+  %e = trait.witness proj_resolve !trait.proj<@S[i64], "Out"> resolves i1 by @S_i64[i1]
     : !trait.claim<!trait.proj<@S[i64], "Out"> = i1>
   %r = trait.coerce %v : !trait.proj<@S[i64], "Out"> to i1 via (%e)
     : (!trait.claim<!trait.proj<@S[i64], "Out"> = i1>)
@@ -59,7 +59,7 @@ func.func @contradicts_the_where_clause(%v: !trait.proj<@S[i64], "Out">) -> i64 
   // expected-error @below {{impl '@Marker_i64' binds the projection to 'i1', not the certified resolution 'i64'}}
   %m = trait.witness proj_resolve !trait.proj<@Marker[i64], "M"> resolves i64 by @Marker_i64
     : !trait.claim<!trait.proj<@Marker[i64], "M"> = i64>
-  %e = trait.witness proj_resolve !trait.proj<@S[i64], "Out"> resolves i64 by @S_i64 given(%m)
+  %e = trait.witness proj_resolve !trait.proj<@S[i64], "Out"> resolves i64 by @S_i64[i64] given(%m)
     : (!trait.claim<!trait.proj<@Marker[i64], "M"> = i64>)
     : !trait.claim<!trait.proj<@S[i64], "Out"> = i64>
   %r = trait.coerce %v : !trait.proj<@S[i64], "Out"> to i64 via (%e)
@@ -92,7 +92,7 @@ func.func @binding_disagrees(%v: !trait.proj<@S[i64], "Out">) -> i64 {
   %m = trait.witness proj_resolve !trait.proj<@Marker[i64], "M"> resolves i1 by @Marker_i64
     : !trait.claim<!trait.proj<@Marker[i64], "M"> = i1>
   // expected-error @below {{impl '@S_i64' binds the projection to 'i1', not the certified resolution 'i64'}}
-  %e = trait.witness proj_resolve !trait.proj<@S[i64], "Out"> resolves i64 by @S_i64 given(%m)
+  %e = trait.witness proj_resolve !trait.proj<@S[i64], "Out"> resolves i64 by @S_i64[i1] given(%m)
     : (!trait.claim<!trait.proj<@Marker[i64], "M"> = i1>)
     : !trait.claim<!trait.proj<@S[i64], "Out"> = i64>
   %r = trait.coerce %v : !trait.proj<@S[i64], "Out"> to i64 via (%e)
@@ -116,7 +116,7 @@ trait.impl private @A_tuple(%self: !trait.claim<@A[tuple<!trait.poly<0>>]>) {
 
 func.func @header_disagrees(%v: !trait.proj<@A[tuple<i64>], "Item">) -> i32 {
   // expected-error @below {{impl '@A_tuple' binds the projection to 'i64', not the certified resolution 'i32'}}
-  %e = trait.witness proj_resolve !trait.proj<@A[tuple<i64>], "Item"> resolves i32 by @A_tuple
+  %e = trait.witness proj_resolve !trait.proj<@A[tuple<i64>], "Item"> resolves i32 by @A_tuple[i64]
     : !trait.claim<!trait.proj<@A[tuple<i64>], "Item"> = i32>
   %r = trait.coerce %v : !trait.proj<@A[tuple<i64>], "Item"> to i32 via (%e)
     : (!trait.claim<!trait.proj<@A[tuple<i64>], "Item"> = i32>)

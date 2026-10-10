@@ -14,6 +14,6 @@ trait.impl private @Trait_impl_tuple(%self: !trait.claim<@Trait[tuple<!T0>]>, %t
 
 func.func @f(%e: !trait.claim<i32 = i32>) -> !trait.claim<@Trait[tuple<i32>]> {
   // expected-error @below {{premise 0 of impl '@Trait_impl_tuple' is '!trait.claim<@Trait[i32]>', and the derive supplies '!trait.claim<i32 = i32>'}}
-  %d = trait.derive @Trait[tuple<i32>] from @Trait_impl_tuple given(%e) : (!trait.claim<i32 = i32>)
+  %d = trait.derive @Trait[tuple<i32>] from @Trait_impl_tuple[i32] given(%e) : (!trait.claim<i32 = i32>)
   return %d : !trait.claim<@Trait[tuple<i32>]>
 }

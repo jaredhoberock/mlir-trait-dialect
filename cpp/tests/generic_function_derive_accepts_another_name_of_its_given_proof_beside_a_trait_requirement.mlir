@@ -21,11 +21,11 @@ trait.impl private @Nine(%self: !trait.claim<@Mark[!T]>) {
   }
 }
 trait.proof private @PN {
-  %d = trait.derive @Mark[i32] from @Nine given()
+  %d = trait.derive @Mark[i32] from @Nine[i32] given()
   trait.return %d : !trait.claim<@Mark[i32]>
 }
 trait.proof private @Alias {
-  %d = trait.derive @Mark[i32] from @Nine given()
+  %d = trait.derive @Mark[i32] from @Nine[i32] given()
   trait.return %d : !trait.claim<@Mark[i32]>
 }
 trait.trait private @Wrapped(%self: !trait.claim<@Wrapped[!T]>) -> !trait.claim<@Mark[!T]> { trait.method @value() -> i64 }
@@ -38,11 +38,11 @@ trait.impl private @W(%self: !trait.claim<@Wrapped[!T]>, %mark: !trait.claim<@Ma
 }
 trait.proof private @PW {
   %p0 = trait.witness @PN for @Mark[i32]
-  %d = trait.derive @Wrapped[i32] from @W given(%p0) : (!trait.claim<@Mark[i32] by @PN>)
+  %d = trait.derive @Wrapped[i32] from @W[i32] given(%p0) : (!trait.claim<@Mark[i32] by @PN>)
   trait.return %d : !trait.claim<@Wrapped[i32]>
 }
 func.func private @f(%p: !trait.claim<@Mark[!T]>) -> i64 {
-  %w = trait.derive @Wrapped[!T] from @W given(%p) : (!trait.claim<@Mark[!T]>)
+  %w = trait.derive @Wrapped[!T] from @W[!trait.poly<0>] given(%p) : (!trait.claim<@Mark[!T]>)
   %v = trait.method.call %w @Wrapped[!T]::@value() : () -> i64
   return %v : i64
 }

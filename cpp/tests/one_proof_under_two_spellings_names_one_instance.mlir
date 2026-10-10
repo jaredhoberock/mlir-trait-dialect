@@ -56,12 +56,12 @@ trait.impl private @Tr_gen(%self: !trait.claim<@Get[!trait.poly<0>]>, %mark: !tr
 }
 trait.proof private @P {
   %p0 = trait.witness @Mark_i64 for @Mark[i64]
-  %d = trait.derive @Get[i64] from @Tr_gen given(%p0) : (!trait.claim<@Mark[i64] by @Mark_i64>)
+  %d = trait.derive @Get[i64] from @Tr_gen[i64] given(%p0) : (!trait.claim<@Mark[i64] by @Mark_i64>)
   trait.return %d : !trait.claim<@Get[i64]>
 }
 func.func @main() -> i64 {
   %vec = trait.witness @Vec_i32 for @Vec[i32]
-  %item = trait.witness proj_resolve !trait.proj<@Fold[i32], "Item"> resolves !trait.proj<@Tensor[i32], "Element"> by @Fold_gen given(%vec) : (!trait.claim<@Vec[i32] by @Vec_i32>) : !trait.claim<!trait.proj<@Fold[i32], "Item"> = !trait.proj<@Tensor[i32], "Element">>
+  %item = trait.witness proj_resolve !trait.proj<@Fold[i32], "Item"> resolves !trait.proj<@Tensor[i32], "Element"> by @Fold_gen[i32] given(%vec) : (!trait.claim<@Vec[i32] by @Vec_i32>) : !trait.claim<!trait.proj<@Fold[i32], "Item"> = !trait.proj<@Tensor[i32], "Element">>
   %elem = trait.witness proj_resolve !trait.proj<@Tensor[i32], "Element"> resolves i64 by @Tensor_i32 : !trait.claim<!trait.proj<@Tensor[i32], "Element"> = i64>
 
   %tr = trait.witness @Tr_i64 for @Tr[i64]

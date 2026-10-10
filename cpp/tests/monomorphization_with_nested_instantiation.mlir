@@ -44,7 +44,7 @@ func.func private @inner(%x: !F, %c: !trait.claim<@Tr[!F]>) -> i32 {
 // Derives Tr[!G] (unconditional impl), passes claim to @inner
 !G = !trait.poly<3>
 func.func private @outer(%x: !G) -> i32 {
-  %c = trait.derive @Tr[!G] from @Tr_any given()
+  %c = trait.derive @Tr[!G] from @Tr_any[!trait.poly<3>] given()
   %r = trait.func.call @inner(%x, %c)
     : (!G, !trait.claim<@Tr[!G]>) -> i32
   return %r : i32

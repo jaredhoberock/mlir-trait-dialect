@@ -33,7 +33,7 @@ trait.impl private @Has_sub(%self: !trait.claim<@Has[tuple<!trait.poly<0>>]>, %s
   trait.assoc_type @A<[!trait.poly<1>]> = !trait.poly<0>
   trait.method @requirement_0() -> !trait.claim<@Sup0[!trait.proj<@Has[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]>]> {
     %sup = trait.project %sub0[0] : !trait.claim<@Sub0[!trait.poly<0>]> -> !trait.claim<@Sup0[!trait.poly<0>]>
-    %a = trait.witness proj_resolve !trait.proj<@Has[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]> resolves !trait.poly<0> by @Has_sub given(%sub0) : (!trait.claim<@Sub0[!trait.poly<0>]>) : !trait.claim<!trait.proj<@Has[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]> = !trait.poly<0>>
+    %a = trait.witness proj_resolve !trait.proj<@Has[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]> resolves !trait.poly<0> by @Has_sub[!trait.poly<0>] given(%sub0) : (!trait.claim<@Sub0[!trait.poly<0>]>) : !trait.claim<!trait.proj<@Has[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]> = !trait.poly<0>>
     %r = trait.coerce %sup : !trait.claim<@Sup0[!trait.poly<0>]> to !trait.claim<@Sup0[!trait.proj<@Has[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]>]> via (%a) : (!trait.claim<!trait.proj<@Has[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]> = !trait.poly<0>>)
     trait.return %r : !trait.claim<@Sup0[!trait.proj<@Has[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]>]>
   }
@@ -45,7 +45,7 @@ trait.impl private @Has_fwd(%self: !trait.claim<@Has[tuple<!trait.poly<0>, !trai
   trait.assoc_type @A<[!trait.poly<1>]> = !trait.proj<@Has[!trait.poly<0>], "A", [!trait.poly<1>]>
   trait.method @requirement_0() -> !trait.claim<@Sup0[!trait.proj<@Has[tuple<!trait.poly<0>, !trait.poly<0>>], "A", [!trait.poly<1>]>]> {
     %sup = trait.method.call %has @Has[!trait.poly<0>]::@requirement_0() : () -> !trait.claim<@Sup0[!trait.proj<@Has[!trait.poly<0>], "A", [!trait.poly<1>]>]>
-    %a = trait.witness proj_resolve !trait.proj<@Has[tuple<!trait.poly<0>, !trait.poly<0>>], "A", [!trait.poly<1>]> resolves !trait.proj<@Has[!trait.poly<0>], "A", [!trait.poly<1>]> by @Has_fwd given(%has) : (!trait.claim<@Has[!trait.poly<0>]>) : !trait.claim<!trait.proj<@Has[tuple<!trait.poly<0>, !trait.poly<0>>], "A", [!trait.poly<1>]> = !trait.proj<@Has[!trait.poly<0>], "A", [!trait.poly<1>]>>
+    %a = trait.witness proj_resolve !trait.proj<@Has[tuple<!trait.poly<0>, !trait.poly<0>>], "A", [!trait.poly<1>]> resolves !trait.proj<@Has[!trait.poly<0>], "A", [!trait.poly<1>]> by @Has_fwd[!trait.poly<0>] given(%has) : (!trait.claim<@Has[!trait.poly<0>]>) : !trait.claim<!trait.proj<@Has[tuple<!trait.poly<0>, !trait.poly<0>>], "A", [!trait.poly<1>]> = !trait.proj<@Has[!trait.poly<0>], "A", [!trait.poly<1>]>>
     %r = trait.coerce %sup : !trait.claim<@Sup0[!trait.proj<@Has[!trait.poly<0>], "A", [!trait.poly<1>]>]> to !trait.claim<@Sup0[!trait.proj<@Has[tuple<!trait.poly<0>, !trait.poly<0>>], "A", [!trait.poly<1>]>]> via (%a) : (!trait.claim<!trait.proj<@Has[tuple<!trait.poly<0>, !trait.poly<0>>], "A", [!trait.poly<1>]> = !trait.proj<@Has[!trait.poly<0>], "A", [!trait.poly<1>]>>)
     trait.return %r : !trait.claim<@Sup0[!trait.proj<@Has[tuple<!trait.poly<0>, !trait.poly<0>>], "A", [!trait.poly<1>]>]>
   }
@@ -61,7 +61,7 @@ trait.impl private @Gen_fwd(%self: !trait.claim<@Gen[tuple<!trait.poly<0>>]>, %g
   trait.assoc_type @B<[!trait.poly<1>]> = !trait.proj<@Gen[!trait.poly<0>], "B", [!trait.poly<1>]>
   trait.method @requirement_0(%m: !trait.claim<@Marker[!trait.poly<1>]>) -> !trait.claim<@Marker[!trait.proj<@Gen[tuple<!trait.poly<0>>], "B", [!trait.poly<1>]>]> {
     %marker = trait.method.call %gen @Gen[!trait.poly<0>]::@requirement_0(%m) : (!trait.claim<@Marker[!trait.poly<1>]>) -> !trait.claim<@Marker[!trait.proj<@Gen[!trait.poly<0>], "B", [!trait.poly<1>]>]>
-    %b = trait.witness proj_resolve !trait.proj<@Gen[tuple<!trait.poly<0>>], "B", [!trait.poly<1>]> resolves !trait.proj<@Gen[!trait.poly<0>], "B", [!trait.poly<1>]> by @Gen_fwd given(%gen) : (!trait.claim<@Gen[!trait.poly<0>]>) : !trait.claim<!trait.proj<@Gen[tuple<!trait.poly<0>>], "B", [!trait.poly<1>]> = !trait.proj<@Gen[!trait.poly<0>], "B", [!trait.poly<1>]>>
+    %b = trait.witness proj_resolve !trait.proj<@Gen[tuple<!trait.poly<0>>], "B", [!trait.poly<1>]> resolves !trait.proj<@Gen[!trait.poly<0>], "B", [!trait.poly<1>]> by @Gen_fwd[!trait.poly<0>] given(%gen) : (!trait.claim<@Gen[!trait.poly<0>]>) : !trait.claim<!trait.proj<@Gen[tuple<!trait.poly<0>>], "B", [!trait.poly<1>]> = !trait.proj<@Gen[!trait.poly<0>], "B", [!trait.poly<1>]>>
     %r = trait.coerce %marker : !trait.claim<@Marker[!trait.proj<@Gen[!trait.poly<0>], "B", [!trait.poly<1>]>]> to !trait.claim<@Marker[!trait.proj<@Gen[tuple<!trait.poly<0>>], "B", [!trait.poly<1>]>]> via (%b) : (!trait.claim<!trait.proj<@Gen[tuple<!trait.poly<0>>], "B", [!trait.poly<1>]> = !trait.proj<@Gen[!trait.poly<0>], "B", [!trait.poly<1>]>>)
     trait.return %r : !trait.claim<@Marker[!trait.proj<@Gen[tuple<!trait.poly<0>>], "B", [!trait.poly<1>]>]>
   }
@@ -92,7 +92,7 @@ trait.trait private @Base(%self: !trait.claim<@Base[!S]>) {
 trait.impl private @Base_p(%self: !trait.claim<@Base[tuple<!trait.poly<0>>]>, %mid: !trait.claim<@Mid[!trait.poly<0>]>) {
   trait.assoc_type @A<[!trait.poly<1>]> = !trait.poly<0>
   trait.method @requirement_0() -> !trait.claim<@Mid[!trait.proj<@Base[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]>]> {
-    %a = trait.witness proj_resolve !trait.proj<@Base[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]> resolves !trait.poly<0> by @Base_p given(%mid) : (!trait.claim<@Mid[!trait.poly<0>]>) : !trait.claim<!trait.proj<@Base[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]> = !trait.poly<0>>
+    %a = trait.witness proj_resolve !trait.proj<@Base[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]> resolves !trait.poly<0> by @Base_p[!trait.poly<0>] given(%mid) : (!trait.claim<@Mid[!trait.poly<0>]>) : !trait.claim<!trait.proj<@Base[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]> = !trait.poly<0>>
     %r = trait.coerce %mid : !trait.claim<@Mid[!trait.poly<0>]> to !trait.claim<@Mid[!trait.proj<@Base[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]>]> via (%a) : (!trait.claim<!trait.proj<@Base[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]> = !trait.poly<0>>)
     trait.return %r : !trait.claim<@Mid[!trait.proj<@Base[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]>]>
   }
@@ -104,10 +104,10 @@ trait.trait private @Dst(%self: !trait.claim<@Dst[!S]>) {
 trait.impl private @Dst_p(%self: !trait.claim<@Dst[tuple<!trait.poly<0>>]>, %mid: !trait.claim<@Mid[!trait.poly<0>]>) {
   trait.assoc_type @A<[!trait.poly<1>]> = !trait.proj<@Base[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]>
   trait.method @requirement_0() -> !trait.claim<@Goal[!trait.proj<@Dst[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]>]> {
-    %base = trait.derive @Base[tuple<!trait.poly<0>>] from @Base_p given(%mid) : (!trait.claim<@Mid[!trait.poly<0>]>)
+    %base = trait.derive @Base[tuple<!trait.poly<0>>] from @Base_p[!trait.poly<0>] given(%mid) : (!trait.claim<@Mid[!trait.poly<0>]>)
     %m = trait.method.call %base @Base[tuple<!trait.poly<0>>]::@requirement_0() : () -> !trait.claim<@Mid[!trait.proj<@Base[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]>]>
     %goal = trait.project %m[0] : !trait.claim<@Mid[!trait.proj<@Base[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]>]> -> !trait.claim<@Goal[!trait.proj<@Base[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]>]>
-    %a = trait.witness proj_resolve !trait.proj<@Dst[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]> resolves !trait.proj<@Base[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]> by @Dst_p given(%mid) : (!trait.claim<@Mid[!trait.poly<0>]>) : !trait.claim<!trait.proj<@Dst[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]> = !trait.proj<@Base[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]>>
+    %a = trait.witness proj_resolve !trait.proj<@Dst[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]> resolves !trait.proj<@Base[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]> by @Dst_p[!trait.poly<0>] given(%mid) : (!trait.claim<@Mid[!trait.poly<0>]>) : !trait.claim<!trait.proj<@Dst[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]> = !trait.proj<@Base[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]>>
     %r = trait.coerce %goal : !trait.claim<@Goal[!trait.proj<@Base[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]>]> to !trait.claim<@Goal[!trait.proj<@Dst[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]>]> via (%a) : (!trait.claim<!trait.proj<@Dst[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]> = !trait.proj<@Base[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]>>)
     trait.return %r : !trait.claim<@Goal[!trait.proj<@Dst[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]>]>
   }
@@ -124,6 +124,6 @@ trait.impl private @Dst_p(%self: !trait.claim<@Dst[tuple<!trait.poly<0>>]>, %mid
 // CHECK-LABEL: trait.impl private @Base_p
 // CHECK: trait.coerce %mid
 // CHECK-LABEL: trait.impl private @Dst_p
-// CHECK: %[[BASE:.*]] = trait.derive @Base[tuple<!trait.poly<0>>] from @Base_p given(%mid)
+// CHECK: %[[BASE:.*]] = trait.derive @Base[tuple<!trait.poly<0>>] from @Base_p[!trait.poly<0>] given(%mid)
 // CHECK: %[[MID:.*]] = trait.method.call %[[BASE]] @Base[tuple<!trait.poly<0>>]::@requirement_0()
 // CHECK: trait.project %[[MID]][0]

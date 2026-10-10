@@ -31,7 +31,7 @@ func.func @f(
     %e: !trait.claim<!trait.proj<@Other[i32], "A"> = i32>
 ) -> i64 {
   // expected-error @below {{premise 0 of impl '@Has_tuple' is '!trait.claim<@X[i32]>', and the witness supplies '!trait.claim<@X[!trait.proj<@Other[i32], "A">]>'}}
-  %eq = trait.witness proj_resolve !trait.proj<@Has[tuple<i32>], "Out"> resolves i64 by @Has_tuple given(%x)
+  %eq = trait.witness proj_resolve !trait.proj<@Has[tuple<i32>], "Out"> resolves i64 by @Has_tuple[i32] given(%x)
     : (!trait.claim<@X[!trait.proj<@Other[i32], "A">]>)
     : !trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = i64>
   %c = trait.coerce %v : !trait.proj<@Has[tuple<i32>], "Out"> to i64 via (%eq)

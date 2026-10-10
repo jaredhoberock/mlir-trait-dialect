@@ -35,8 +35,12 @@ void cloneRegionStampedBefore(OpBuilder &builder, Region &source, Region &dest,
                                                             : typeReplacer;
         for (Value result : op.getResults())
           result.setType(resultReplacer.replace(result.getType()));
-        for (NamedAttribute attr : op.getAttrs())
-          op.setAttr(attr.getName(), typeReplacer.replace(attr.getValue()));
+        for (NamedAttribute attr : op.getAttrs()) {
+          AttrTypeReplacer &attrReplacer =
+              statesImplArguments(&op, attr.getName()) ? spellingReplacer
+                                                       : typeReplacer;
+          op.setAttr(attr.getName(), attrReplacer.replace(attr.getValue()));
+        }
         for (Region &nested : op.getRegions())
           recurse(llvm::make_range(nested.begin(), nested.end()), recurse);
       }

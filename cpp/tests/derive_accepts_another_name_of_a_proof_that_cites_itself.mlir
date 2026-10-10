@@ -38,12 +38,12 @@ trait.impl private @W(%self: !trait.claim<@Other[!T]>, %trait: !trait.claim<@Tra
 }
 trait.proof private @PW {
   %p0 = trait.witness @P1 for @Trait[i32]
-  %d = trait.derive @Other[i32] from @W given(%p0) : (!trait.claim<@Trait[i32] by @P1>)
+  %d = trait.derive @Other[i32] from @W[i32] given(%p0) : (!trait.claim<@Trait[i32] by @P1>)
   trait.return %d : !trait.claim<@Other[i32]>
 }
 func.func @main() -> i64 {
   %p = trait.witness @P2 for @Trait[i32]
-  %d = trait.derive @Other[i32] from @W given(%p) : (!trait.claim<@Trait[i32] by @P2>)
+  %d = trait.derive @Other[i32] from @W[i32] given(%p) : (!trait.claim<@Trait[i32] by @P2>)
   %v = trait.method.call %d @Other[i32]::@method() : () -> i64
   return %v : i64
 }

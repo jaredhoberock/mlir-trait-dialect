@@ -48,7 +48,7 @@ trait.impl private @Has_i64(%self: !trait.claim<@Has[i64]>) {
 trait.impl private @Has_tuple(%self: !trait.claim<@Has[tuple<!trait.poly<0>>]>, %marker: !trait.claim<@Marker[!trait.poly<0>]>) {
   trait.assoc_type @A<[!trait.poly<1>]> = !trait.poly<0>
   trait.method @requirement_0(%p: !trait.claim<@Marker[!trait.poly<1>]>) -> !trait.claim<@Marker[!trait.proj<@Has[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]>]> {
-    %a = trait.witness proj_resolve !trait.proj<@Has[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]> resolves !trait.poly<0> by @Has_tuple given(%marker) : (!trait.claim<@Marker[!trait.poly<0>]>) : !trait.claim<!trait.proj<@Has[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]> = !trait.poly<0>>
+    %a = trait.witness proj_resolve !trait.proj<@Has[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]> resolves !trait.poly<0> by @Has_tuple[!trait.poly<0>] given(%marker) : (!trait.claim<@Marker[!trait.poly<0>]>) : !trait.claim<!trait.proj<@Has[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]> = !trait.poly<0>>
     %r = trait.coerce %marker : !trait.claim<@Marker[!trait.poly<0>]> to !trait.claim<@Marker[!trait.proj<@Has[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]>]> via (%a) : (!trait.claim<!trait.proj<@Has[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]> = !trait.poly<0>>)
     trait.return %r : !trait.claim<@Marker[!trait.proj<@Has[tuple<!trait.poly<0>>], "A", [!trait.poly<1>]>]>
   }
@@ -57,7 +57,7 @@ trait.impl private @Has_tuple(%self: !trait.claim<@Has[tuple<!trait.poly<0>>]>, 
 trait.impl private @Has_f32(%self: !trait.claim<@Has[f32]>) {
   trait.assoc_type @A<[!trait.poly<0>]> = tuple<!trait.poly<0>>
   trait.method @requirement_0(%p: !trait.claim<@Marker[!trait.poly<0>]>) -> !trait.claim<@Marker[!trait.proj<@Has[f32], "A", [!trait.poly<0>]>]> {
-    %w = trait.derive @Marker[tuple<!trait.poly<0>>] from @Marker_wrap given(%p) : (!trait.claim<@Marker[!trait.poly<0>]>)
+    %w = trait.derive @Marker[tuple<!trait.poly<0>>] from @Marker_wrap[!trait.poly<0>] given(%p) : (!trait.claim<@Marker[!trait.poly<0>]>)
     %a = trait.witness proj_resolve !trait.proj<@Has[f32], "A", [!trait.poly<0>]> resolves tuple<!trait.poly<0>> by @Has_f32 : !trait.claim<!trait.proj<@Has[f32], "A", [!trait.poly<0>]> = tuple<!trait.poly<0>>>
     %r = trait.coerce %w : !trait.claim<@Marker[tuple<!trait.poly<0>>]> to !trait.claim<@Marker[!trait.proj<@Has[f32], "A", [!trait.poly<0>]>]> via (%a) : (!trait.claim<!trait.proj<@Has[f32], "A", [!trait.poly<0>]> = tuple<!trait.poly<0>>>)
     trait.return %r : !trait.claim<@Marker[!trait.proj<@Has[f32], "A", [!trait.poly<0>]>]>
@@ -101,7 +101,7 @@ trait.impl private @Same_i32(%self: !trait.claim<@Same[i32]>) {
 // CHECK-LABEL: trait.impl private @Has_tuple
 // CHECK: trait.coerce %marker : !trait.claim<@Marker[!trait.poly<0>]>
 // CHECK-LABEL: trait.impl private @Has_f32
-// CHECK: trait.derive @Marker[tuple<!trait.poly<0>>] from @Marker_wrap given(%arg0)
+// CHECK: trait.derive @Marker[tuple<!trait.poly<0>>] from @Marker_wrap[!trait.poly<0>] given(%arg0)
 // CHECK-LABEL: trait.impl private @Self_i32
 // CHECK: trait.witness @Self_i32 for @Self[i32]
 // CHECK-LABEL: trait.impl private @Same_i32

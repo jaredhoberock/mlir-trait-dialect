@@ -3,8 +3,8 @@
 
 // RUN: mlir-opt %s -split-input-file -verify-diagnostics
 
-// The derived application fixes the impl's arguments: its header at them is
-// the derived claim, and each premise is read at them.
+// A derive states its impl's arguments: the impl's header at them is the
+// derived claim, and each premise is its where entry at them.
 
 !S = !trait.poly<0>
 !U = !trait.poly<1>
@@ -15,7 +15,7 @@ trait.impl private @B_tuple(%self: !trait.claim<@B[tuple<!trait.poly<0>>]>, %a: 
 trait.proof private @p {
   %a = trait.witness @A_i32 for @A[i32]
   // expected-error @below {{premise 0 of impl '@B_tuple' is '!trait.claim<@A[i64]>', and the derive supplies '!trait.claim<@A[i32]>'}}
-  %d = trait.derive @B[tuple<i64>] from @B_tuple given(%a) : (!trait.claim<@A[i32] by @A_i32>)
+  %d = trait.derive @B[tuple<i64>] from @B_tuple[i64] given(%a) : (!trait.claim<@A[i32] by @A_i32>)
   trait.return %d : !trait.claim<@B[tuple<i64>]>
 }
 
@@ -33,8 +33,8 @@ trait.trait private @B(%self: !trait.claim<@B[!S]>) {}
 trait.impl private @B_tuple(%self: !trait.claim<@B[tuple<!trait.poly<0>>]>, %a: !trait.claim<@A[!trait.poly<0>]>, %val: !trait.claim<!trait.proj<@C[!trait.poly<0>], "Val"> = i64>) {}
 trait.proof private @p {
   %a = trait.witness @A_i32 for @A[i32]
-  // expected-error @below {{impl '@B_tuple' has 2 where entries, and the citation supplies 1 claims}}
-  %d = trait.derive @B[tuple<i32>] from @B_tuple given(%a) : (!trait.claim<@A[i32] by @A_i32>)
+  // expected-error @below {{impl '@B_tuple' states 2 premises, and the derive supplies 1}}
+  %d = trait.derive @B[tuple<i32>] from @B_tuple[i32] given(%a) : (!trait.claim<@A[i32] by @A_i32>)
   trait.return %d : !trait.claim<@B[tuple<i32>]>
 }
 
@@ -51,6 +51,6 @@ trait.impl private @B_tuple(%self: !trait.claim<@B[tuple<!trait.poly<0>>]>, %val
 trait.proof private @p {
   %c = trait.witness @C_i32 for @C[i32]
   // expected-error @below {{premise 0 of impl '@B_tuple' is '!trait.claim<!trait.proj<@C[i32], "Val"> = i64>', and the derive supplies '!trait.claim<@C[i32]>'}}
-  %d = trait.derive @B[tuple<i32>] from @B_tuple given(%c) : (!trait.claim<@C[i32] by @C_i32>)
+  %d = trait.derive @B[tuple<i32>] from @B_tuple[i32] given(%c) : (!trait.claim<@C[i32] by @C_i32>)
   trait.return %d : !trait.claim<@B[tuple<i32>]>
 }

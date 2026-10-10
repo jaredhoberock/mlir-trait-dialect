@@ -23,7 +23,7 @@ func.func private @f(%t: !trait.claim<@Tensor[!trait.poly<0>]>) -> i64 {
   // expected-error@+1 {{unproven monomorphic claim '!trait.claim<!trait.proj<@Tensor[i8], "Shape"> = i64>' after instantiate-monomorphs}}
   %e = trait.allege !trait.proj<@Tensor[!trait.poly<0>], "Shape"> = i64
   // expected-error@+1 {{unproven monomorphic claim '!trait.claim<@Vector[i8]>' after instantiate-monomorphs}}
-  %v = trait.derive @Vector[!trait.poly<0>] from @Vector_blanket given(%t, %e)
+  %v = trait.derive @Vector[!trait.poly<0>] from @Vector_blanket[!trait.poly<0>] given(%t, %e)
     : (!trait.claim<@Tensor[!trait.poly<0>]>, !trait.claim<!trait.proj<@Tensor[!trait.poly<0>], "Shape"> = i64>)
   %r = trait.method.call %v @Vector[!trait.poly<0>]::@v() : () -> i64
   return %r : i64

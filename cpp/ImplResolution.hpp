@@ -91,11 +91,13 @@ struct Refusal {
   SmallVector<ImplOp> unsatisfiable;
 };
 
-/// An impl selection chose, with the height of the derivation it chose it by:
-/// the number of obligation frames the deepest chain under it stood on, the
+/// An impl selection chose, the arguments its parameters take at the
+/// application it was chosen for, and the height of the derivation it chose it
+/// by: the number of obligation frames the deepest chain under it stood on, the
 /// frame of the selection itself included.
 struct ChosenImpl {
   ImplOp impl;
+  SpecializationMap arguments;
   unsigned height;
 };
 
@@ -135,11 +137,13 @@ struct ResolutionMemo {
   unsigned heightBelow = 0;
 
   // A memo for assumptionsSatisfiableFor
-  // For every (ImplOp, TraitApplicationAttr) in this set, the ImplOp's
-  // assumptions are known to be satisfiable for the given TraitApplicationAttr
+  // For every (ImplOp, TraitApplicationAttr) in this map, the ImplOp's
+  // assumptions are known to be satisfiable for the given TraitApplicationAttr,
+  // at the arguments it maps to.
   // We only memoize satisfiable results because new proofs appear in the IR
   // as resolution unfolds
-  DenseSet<std::pair<ImplOp,TraitApplicationAttr>> assumptionsKnownSatisfiable;
+  DenseMap<std::pair<ImplOp, TraitApplicationAttr>, SpecializationMap>
+      assumptionsKnownSatisfiable;
 
   // The applications a generator has already supplied an impl for, in the
   // module it was supplied into. Generation supplies an impl the module lacks,
@@ -249,6 +253,9 @@ private:
 struct ResolvedImpl {
   ImplOp impl;
   ClaimType selectedClaim;
+  /// The arguments the impl's parameters take at `selectedClaim`, as the
+  /// selection that chose it read them.
+  SpecializationMap arguments;
 };
 
 /// One step of the resolution of a projection with a ground head: the impl
@@ -276,15 +283,12 @@ private:
   friend class ImplResolver;
 
   /// The step resolving `projection` through the impl `select` settles on for
-  /// the projection's application, the impl's header read through
-  /// `readHeader`, the context selection chose it under. Stops where selection
-  /// does, and is refused where the impl's header does not carry to the claim
-  /// selection chose it for, or where the impl binds no such associated type
-  /// at the projection's associated-type arguments.
+  /// the projection's application, at the arguments selection read for it.
+  /// Stops where selection does, and is refused where the impl binds no such
+  /// associated type at the projection's associated-type arguments.
   static Answer<ProjectionResolution>
   get(ProjectionType projection,
       llvm::function_ref<Answer<ResolvedImpl>(ClaimType)> select,
-      Normalizer readHeader,
       llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
   ProjectionResolution(ProjectionType projection, ImplOp impl,
@@ -303,12 +307,14 @@ struct ProvenPremise;
 
 /// One step of an endpoint's resolution, as its witness cites it: the equality
 /// `projection = binding`, the impl selection chose for the projection's
-/// application, and the evidence for each of that impl's where entries at the
-/// arguments its parameters take there, in order -- a proven application at an
-/// application entry, and the resolution of the equality at an equality entry.
+/// application, the arguments its parameters take there, and the evidence for
+/// each of that impl's where entries at those arguments, in order -- a proven
+/// application at an application entry, and the resolution of the equality at
+/// an equality entry.
 struct ResolutionStep {
   TypeEqualityAttr equality;
   FlatSymbolRefAttr impl;
+  ArrayAttr arguments;
   SmallVector<std::variant<std::shared_ptr<ProvenPremise>,
                            std::shared_ptr<EqualityResolution>>>
       premises;
@@ -665,14 +671,15 @@ class ImplResolver {
       return ClaimType::get(scope.getContext(), app, sym);
     }
 
-    /// Answers `impl` where all of its where-clause assumptions are
-    /// satisfiable when specialized for `concreteSelf`, asked at `site` by the
-    /// selection of `concreteSelf`, whose frame stands on the chain while it
-    /// runs; refused where one is not, and overflows where judging one does.
-    Answer<ImplOp> assumptionsSatisfiableFor(ImplOp impl,
-                                             ClaimType concreteSelf,
-                                             const SelectionSite &site,
-                                             OpBuilder &builder);
+    /// Answers the arguments `impl`'s parameters take at `concreteSelf` where
+    /// all of its where-clause assumptions are satisfiable when specialized
+    /// for it, asked at `site` by the selection of `concreteSelf`, whose frame
+    /// stands on the chain while it runs; refused where one is not, and
+    /// overflows where judging one does.
+    Answer<SpecializationMap> assumptionsSatisfiableFor(ImplOp impl,
+                                                        ClaimType concreteSelf,
+                                                        const SelectionSite &site,
+                                                        OpBuilder &builder);
 
     ModuleOp module;
     ProofResolutionMemo memo;

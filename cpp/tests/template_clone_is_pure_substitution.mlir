@@ -32,7 +32,7 @@ trait.impl private @T_impl(%self: !trait.claim<@T[!trait.poly<0>]>, %out: !trait
 trait.proof private @T_p {
   %p0 = trait.witness proj_resolve !trait.proj<@Assoc[i64], "Out"> resolves i32 by @Assoc_i64
     : !trait.claim<!trait.proj<@Assoc[i64], "Out"> = i32>
-  %d = trait.derive @T[i64] from @T_impl given(%p0) : (!trait.claim<!trait.proj<@Assoc[i64], "Out"> = i32>)
+  %d = trait.derive @T[i64] from @T_impl[i64] given(%p0) : (!trait.claim<!trait.proj<@Assoc[i64], "Out"> = i32>)
   trait.return %d : !trait.claim<@T[i64]>
 }
 

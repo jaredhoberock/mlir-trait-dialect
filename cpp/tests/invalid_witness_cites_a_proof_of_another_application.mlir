@@ -17,7 +17,7 @@ trait.impl private @B_blanket(%self: !trait.claim<@B[!trait.poly<0>]>) {
   trait.return %req0 : !trait.claim<@A[!trait.poly<0>]>
 }
 trait.proof private @p {
-  %d = trait.derive @B[i32] from @B_blanket given()
+  %d = trait.derive @B[i32] from @B_blanket[i32] given()
   trait.return %d : !trait.claim<@B[i32]>
 }
 

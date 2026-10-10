@@ -36,7 +36,7 @@ func.func @main() {
 // CHECK-LABEL: func.func @main
 // CHECK-NOT: trait.allege
 // CHECK: %[[GROUP:.*]] = trait.witness @Group_i8 for @Group[i8]
-// CHECK: %[[PAYLOAD:.*]] = trait.witness proj_resolve !trait.proj<@Carry[i64, i8], "Payload"> resolves i64 by @Carry_any given(%[[GROUP]])
+// CHECK: %[[PAYLOAD:.*]] = trait.witness proj_resolve !trait.proj<@Carry[i64, i8], "Payload"> resolves i64 by @Carry_any[i64, i8] given(%[[GROUP]])
 // CHECK: call @need(%[[PAYLOAD]])
 
 // LOWERED-LABEL: func.func @main

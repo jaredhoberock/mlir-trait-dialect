@@ -41,7 +41,7 @@ func.func @main() {
 // CHECK: trait.allege !trait.proj<@Carry[!trait.poly<3>, i8], "Payload"> = !trait.poly<3>
 // CHECK-LABEL: func.func private @send_
 // CHECK-NOT: trait.allege
-// CHECK: trait.witness proj_resolve !trait.proj<@Carry[i64, i8], "Payload"> resolves i64 by @Carry_any given
+// CHECK: trait.witness proj_resolve !trait.proj<@Carry[i64, i8], "Payload"> resolves i64 by @Carry_any[i64, i8] given
 
 // LOWERED-NOT: trait.
 // LOWERED-LABEL: func.func @main

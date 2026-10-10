@@ -348,18 +348,23 @@ pub fn project<'c>(loc: Location<'c>,
         .add_results(&[result_claim]))
 }
 
-/// Create a `trait.derive` of `trait_app` from the impl `impl_name`, with
+/// Create a `trait.derive` of `trait_app` from the impl `impl_name` at
+/// `impl_args`, the argument of each of the impl's parameters by position, with
 /// `premises` holding one claim per entry of the impl's where clause, in its
-/// order; the impl's arguments are read off the application and the premises.
+/// order.
 pub fn derive<'c>(loc: Location<'c>,
                   trait_app: TraitApplicationAttribute<'c>,
                   impl_name: &str,
+                  impl_args: &[Type<'c>],
                   premises: &[Value<'c,'_>],
 ) -> Operation<'c> {
     let claim = unproven_claim(loc, trait_app.into());
     build_op(OperationBuilder::new("trait.derive", loc)
         .add_operands(premises)
-        .add_attributes(&[(identifier(loc, "impl"), symbol_ref_attr(loc, impl_name))])
+        .add_attributes(&[
+            (identifier(loc, "impl"), symbol_ref_attr(loc, impl_name)),
+            (identifier(loc, "impl_args"), type_array_attr(loc, impl_args)),
+        ])
         .add_results(&[claim]))
 }
 
@@ -495,11 +500,15 @@ pub fn type_equality_attr<'c>(ctx: &'c Context, lhs: Type<'c>, rhs: Type<'c>) ->
 
 /// Create a projection-resolution `trait.witness` of `result_type`, an
 /// equality claim whose left side is the projection the impl `impl_name`
-/// resolves, with `premises` holding one claim per entry of that impl's where
+/// resolves at `impl_args`, the argument of each of its parameters by
+/// position, with `premises` holding one claim per entry of that impl's where
 /// clause, in its order.
-pub fn witness_proj_resolve<'c>(loc: Location<'c>, impl_name: &str, premises: &[Value<'c, '_>], result_type: Type<'c>) -> Operation<'c> {
+pub fn witness_proj_resolve<'c>(loc: Location<'c>, impl_name: &str, impl_args: &[Type<'c>], premises: &[Value<'c, '_>], result_type: Type<'c>) -> Operation<'c> {
     build_op(OperationBuilder::new("trait.witness", loc)
-        .add_attributes(&[(identifier(loc, "impl"), symbol_ref_attr(loc, impl_name))])
+        .add_attributes(&[
+            (identifier(loc, "impl"), symbol_ref_attr(loc, impl_name)),
+            (identifier(loc, "impl_args"), type_array_attr(loc, impl_args)),
+        ])
         .add_operands(premises)
         .add_results(&[result_type]))
 }

@@ -44,7 +44,7 @@ trait.impl private @A_pair(%self: !trait.claim<@A[tuple<!P, !Q>]>, %p: !trait.cl
 trait.proof private @pair {
   %p = trait.witness @B_i32 for @B[i32]
   %q = trait.witness @B_i64 for @B[i64]
-  %d = trait.derive @A[tuple<i32, i64>] from @A_pair given(%p, %q) : (!trait.claim<@B[i32] by @B_i32>, !trait.claim<@B[i64] by @B_i64>)
+  %d = trait.derive @A[tuple<i32, i64>] from @A_pair[i32, i64] given(%p, %q) : (!trait.claim<@B[i32] by @B_i32>, !trait.claim<@B[i64] by @B_i64>)
   trait.return %d : !trait.claim<@A[tuple<i32, i64>]>
 }
 func.func @main() -> i64 {

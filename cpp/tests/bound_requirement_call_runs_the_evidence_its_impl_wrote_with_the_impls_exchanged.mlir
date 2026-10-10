@@ -30,7 +30,7 @@ trait.trait private @Wrapped(%self: !trait.claim<@Wrapped[!T]>) -> !trait.claim<
 trait.impl private @W(%self: !trait.claim<@Wrapped[i32]>) {
   %mark = trait.witness @Specific for @Mark[i32]
   trait.method @requirement_1() -> !trait.claim<@Mark[!trait.poly<0>]> {
-    %m = trait.derive @Mark[!trait.poly<0>] from @Blanket given()
+    %m = trait.derive @Mark[!trait.poly<0>] from @Blanket[!trait.poly<0>] given()
     trait.return %m : !trait.claim<@Mark[!trait.poly<0>]>
   }
   trait.return %mark : !trait.claim<@Mark[i32] by @Specific>

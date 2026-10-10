@@ -34,7 +34,7 @@ func.func private @f(%t: !trait.claim<@Tensor[!T]>) -> i64 {
   // expected-error @below {{unproven monomorphic claim '!trait.claim<!trait.proj<@Tensor[i8], "Shape"> = i64>' after instantiate-monomorphs}}
   %s = trait.allege !trait.proj<@Tensor[!T], "Shape"> = i64
   // expected-error @below {{unproven monomorphic claim '!trait.claim<!trait.proj<@S[i8], "Out"> = i64>' after instantiate-monomorphs}}
-  %e = trait.witness proj_resolve !trait.proj<@S[!T], "Out"> resolves i64 by @S_blanket given(%t, %s)
+  %e = trait.witness proj_resolve !trait.proj<@S[!T], "Out"> resolves i64 by @S_blanket[!trait.poly<0>] given(%t, %s)
     : (!trait.claim<@Tensor[!T]>, !trait.claim<!trait.proj<@Tensor[!T], "Shape"> = i64>) : !trait.claim<!trait.proj<@S[!T], "Out"> = i64>
   %r = trait.coerce %v : !trait.proj<@S[!T], "Out"> to i64 via (%e)
     : (!trait.claim<!trait.proj<@S[!T], "Out"> = i64>)
@@ -73,7 +73,7 @@ func.func private @gen(%v: !trait.proj<@S[i64], "Out">, %x: !T) -> !T {
   // expected-error @below {{unproven monomorphic claim '!trait.claim<!trait.proj<@Marker[i64], "M"> = i64>' after instantiate-monomorphs}}
   %m = trait.allege !trait.proj<@Marker[i64], "M"> = !T
   // expected-error @below {{unproven monomorphic claim '!trait.claim<!trait.proj<@S[i64], "Out"> = i64>' after instantiate-monomorphs}}
-  %e = trait.witness proj_resolve !trait.proj<@S[i64], "Out"> resolves !T by @S_i64 given(%m)
+  %e = trait.witness proj_resolve !trait.proj<@S[i64], "Out"> resolves !T by @S_i64[!trait.poly<2>] given(%m)
     : (!trait.claim<!trait.proj<@Marker[i64], "M"> = !T>)
     : !trait.claim<!trait.proj<@S[i64], "Out"> = !T>
   %r = trait.coerce %v : !trait.proj<@S[i64], "Out"> to !T via (%e)

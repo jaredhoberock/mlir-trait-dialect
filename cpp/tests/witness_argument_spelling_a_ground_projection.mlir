@@ -14,7 +14,7 @@
 
 // CHECK-LABEL: func.func @read
 // CHECK: %[[U:.*]] = trait.witness refl : !trait.claim<!trait.proj<@Marker[i64], "M"> = !trait.proj<@Marker[i64], "M">>
-// CHECK: by @S_i64 given(%[[U]])
+// CHECK: by @S_i64[!trait.proj<@Marker[i64], "M">] given(%[[U]])
 // LOWER-LABEL: func.func @read(%arg0: i1) -> i1
 // LOWER-NEXT: return %arg0 : i1
 !S = !trait.poly<0>
@@ -34,7 +34,7 @@ trait.impl private @S_i64(%self: !trait.claim<@S[i64]>, %m: !trait.claim<!trait.
 // The argument for !U is the projection the where-equality spells, still spelled.
 func.func @read(%v: !trait.proj<@S[i64], "Out">) -> i1 {
   %u = trait.witness refl : !trait.claim<!trait.proj<@Marker[i64], "M"> = !trait.proj<@Marker[i64], "M">>
-  %e = trait.witness proj_resolve !trait.proj<@S[i64], "Out"> resolves !trait.proj<@Marker[i64], "M"> by @S_i64
+  %e = trait.witness proj_resolve !trait.proj<@S[i64], "Out"> resolves !trait.proj<@Marker[i64], "M"> by @S_i64[!trait.proj<@Marker[i64], "M">]
     given(%u) : (!trait.claim<!trait.proj<@Marker[i64], "M"> = !trait.proj<@Marker[i64], "M">>)
     : !trait.claim<!trait.proj<@S[i64], "Out"> = !trait.proj<@Marker[i64], "M">>
   %r = trait.coerce %v : !trait.proj<@S[i64], "Out"> to !trait.proj<@Marker[i64], "M"> via (%e)
@@ -48,10 +48,10 @@ func.func @read(%v: !trait.proj<@S[i64], "Out">) -> i1 {
 
 // KEEP-LABEL: func.func @keep
 // KEEP: %[[U:.*]] = trait.witness refl : !trait.claim<!trait.proj<@Marker[i64], "M"> = !trait.proj<@Marker[i64], "M">>
-// KEEP: by @S_i64 given(%[[U]])
+// KEEP: by @S_i64[!trait.proj<@Marker[i64], "M">] given(%[[U]])
 func.func @keep() -> !trait.claim<!trait.proj<@S[i64], "Out"> = !trait.proj<@Marker[i64], "M">> {
   %u = trait.witness refl : !trait.claim<!trait.proj<@Marker[i64], "M"> = !trait.proj<@Marker[i64], "M">>
-  %e = trait.witness proj_resolve !trait.proj<@S[i64], "Out"> resolves !trait.proj<@Marker[i64], "M"> by @S_i64
+  %e = trait.witness proj_resolve !trait.proj<@S[i64], "Out"> resolves !trait.proj<@Marker[i64], "M"> by @S_i64[!trait.proj<@Marker[i64], "M">]
     given(%u) : (!trait.claim<!trait.proj<@Marker[i64], "M"> = !trait.proj<@Marker[i64], "M">>)
     : !trait.claim<!trait.proj<@S[i64], "Out"> = !trait.proj<@Marker[i64], "M">>
   return %e : !trait.claim<!trait.proj<@S[i64], "Out"> = !trait.proj<@Marker[i64], "M">>

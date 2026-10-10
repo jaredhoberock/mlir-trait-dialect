@@ -3,8 +3,8 @@
 
 // RUN: mlir-opt %s -split-input-file -verify-diagnostics
 
-// A derive's impl arguments are read off its derived application and its
-// premises; the derived application is the impl's header at those arguments.
+// A derive states its impl's arguments, one per parameter; the derived
+// application is the impl's header at them.
 
 !T = !trait.poly<0>
 !U = !trait.poly<1>
@@ -12,7 +12,7 @@ trait.trait private @Tr(%self: !trait.claim<@Tr[!T]>) {}
 trait.impl private @Tr_tuple(%self: !trait.claim<@Tr[tuple<!trait.poly<0>>]>, %tr: !trait.claim<@Tr[!trait.poly<0>]>) {}
 func.func private @g(%t: !trait.claim<@Tr[!T]>) {
   // expected-error @below {{impl '@Tr_tuple' at the arguments the citation gives it proves '!trait.claim<@Tr[tuple<!trait.poly<0>>]>', not '!trait.claim<@Tr[i64]>'}}
-  %d = trait.derive @Tr[i64] from @Tr_tuple given(%t) : (!trait.claim<@Tr[!T]>)
+  %d = trait.derive @Tr[i64] from @Tr_tuple[!trait.poly<0>] given(%t) : (!trait.claim<@Tr[!T]>)
   return
 }
 
@@ -27,7 +27,20 @@ trait.impl private @Tr_tuple(%self: !trait.claim<@Tr[tuple<!trait.poly<0>>]>, %t
   trait.assoc_type @Out = i64
 }
 func.func private @g(%t: !trait.claim<@Tr[!T]>) {
-  // expected-error @below {{impl '@Tr_tuple' has 2 where entries, and the citation supplies 1 claims}}
+  // expected-error @below {{impl '@Tr_tuple' states 2 premises, and the derive supplies 1}}
+  %d = trait.derive @Tr[tuple<!T>] from @Tr_tuple[!trait.poly<0>] given(%t) : (!trait.claim<@Tr[!T]>)
+  return
+}
+
+// -----
+
+// One argument per parameter of the impl.
+
+!T = !trait.poly<0>
+trait.trait private @Tr(%self: !trait.claim<@Tr[!T]>) {}
+trait.impl private @Tr_tuple(%self: !trait.claim<@Tr[tuple<!trait.poly<0>>]>, %tr: !trait.claim<@Tr[!trait.poly<0>]>) {}
+func.func private @g(%t: !trait.claim<@Tr[!T]>) {
+  // expected-error @below {{impl '@Tr_tuple' takes 1 type arguments, and the derive states 0}}
   %d = trait.derive @Tr[tuple<!T>] from @Tr_tuple given(%t) : (!trait.claim<@Tr[!T]>)
   return
 }
@@ -44,6 +57,6 @@ trait.impl private @Tr_tuple(%self: !trait.claim<@Tr[tuple<!trait.poly<0>>]>, %t
 }
 func.func private @g(%t: !trait.claim<@Tr[!T]>) {
   // expected-error @below {{premise 1 of impl '@Tr_tuple' is '!trait.claim<!trait.proj<@Tr[!trait.poly<0>], "Out"> = i64>', and the derive supplies '!trait.claim<@Tr[!trait.poly<0>]>'}}
-  %d = trait.derive @Tr[tuple<!T>] from @Tr_tuple given(%t, %t) : (!trait.claim<@Tr[!T]>, !trait.claim<@Tr[!T]>)
+  %d = trait.derive @Tr[tuple<!T>] from @Tr_tuple[!trait.poly<0>] given(%t, %t) : (!trait.claim<@Tr[!T]>, !trait.claim<@Tr[!T]>)
   return
 }

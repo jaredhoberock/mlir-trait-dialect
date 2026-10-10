@@ -486,15 +486,9 @@ def ImplOp : TraitDialectOp<"impl", [
     /// its position, and the header and where clause spell each.
     SmallVector<GenericTypeInterface, 4> getTypeParams();
 
-    /// The arguments a citation of this impl gives its parameters: read off
-    /// the application `cited` names against the header, and off each claim
-    /// `premises` supplies, one per where entry in order, against that entry.
-    /// Fails, naming it, where a parameter is read nowhere or the premises are
-    /// not one per where entry. Nothing is judged: the caller compares the
-    /// declaration rebuilt at the arguments with what the citation spells.
-    FailureOr<SpecializationMap> readCitationArguments(
-        ClaimType cited, TypeRange premises,
-        llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+    /// The argument list a citation of this impl states for `arguments`: the
+    /// argument of each parameter, by position.
+    ArrayAttr stateArguments(const SpecializationMap &arguments);
 
     /// Extracts a method from this impl as a free function with a leading self parameter.
     ///
@@ -524,12 +518,6 @@ def ImplOp : TraitDialectOp<"impl", [
     FailureOr<SpecializationMap> buildSubstitutionForSelfClaim(ClaimType actualSelfClaim,
                                                             Normalizer normalize,
                                                             llvm::function_ref<InFlightDiagnostic()> errFn);
-
-    /// As above, with no established context.
-    FailureOr<SpecializationMap> buildSubstitutionForSelfClaim(ClaimType actualSelfClaim,
-                                                            llvm::function_ref<InFlightDiagnostic()> errFn = nullptr) {
-      return buildSubstitutionForSelfClaim(actualSelfClaim, Normalizer(), errFn);
-    }
 
     /// The arguments this impl takes for `actualSelfClaim`, without judging
     /// them: read off the demanded application by position, then filled out
@@ -941,16 +929,18 @@ def DeriveOp : TraitDialectOp<"derive", [
     for Struct<U>`: given an in-scope claim for `Trait[!T]`, there is no way to
     produce `Trait[Struct<!T>]` without `trait.derive`.
 
-    It names the impl, and `given` holds one claim per entry of the impl's where
-    clause in its order -- an application claim for an application entry and an
-    equality claim for an equality entry. The arguments the impl's parameters
-    take are read off the derived application against the impl's header and off
-    each operand against its entry, never stated; the derived application is the
-    header at those arguments and each operand's claim is its entry at them.
+    It names the impl and states the arguments its parameters take, the
+    argument of `!trait.poly<i>` at position `i` (rustc's `ImplSource` carries
+    an impl's arguments beside it, GHC's `evDFunApp` applies a dictionary
+    function to its type arguments); `given` holds one claim per entry of the
+    impl's where clause in its order -- an application claim for an application
+    entry and an equality claim for an equality entry. The derived application
+    is the impl's header at the arguments and each operand's claim is its entry
+    at them, compared by identity.
 
     ```mlir
     // Given: impl<U> Trait for Struct<U> where Trait[U], Trait[U]::Out = i64
-    %d = trait.derive @Trait[Struct<!T>] from @the_impl given(%t, %e)
+    %d = trait.derive @Trait[Struct<!T>] from @the_impl[!T] given(%t, %e)
       : (!trait.claim<@Trait[!T]>, !trait.claim<!trait.proj<@Trait[!T], "Out"> = i64>)
     ```
 
@@ -961,6 +951,8 @@ def DeriveOp : TraitDialectOp<"derive", [
 
   let arguments = (ins
     FlatSymbolRefAttr:$impl,
+    // The argument of each of the impl's parameters, by position.
+    TypeArrayAttr:$impl_args,
     // One operand per where-clause entry; the verifier checks each against its
     // entry so a mismatched claim is diagnosed at its operand.
     Variadic<Claim>:$assumptions
@@ -973,6 +965,11 @@ def DeriveOp : TraitDialectOp<"derive", [
       return cast<ClaimType>(getResult().getType());
     }
 
+    /// The arguments this derive states for its impl's parameters.
+    SpecializationMap getImplArguments() {
+      return SpecializationMap::fromPositions(getImplArgs().getAsValueRange<TypeAttr>());
+    }
+
     /// The application this derive derives, which its result claim states.
     TraitApplicationAttr getTraitApplication() {
       return getDerivedClaim().getTraitApplication();
@@ -981,11 +978,12 @@ def DeriveOp : TraitDialectOp<"derive", [
     ImplOp getImplOp();
   }];
 
-  // `@Trait[...] from @impl given(%claims) : (types)`; the derived claim is
-  // read off the application and the operand types are printed only when
-  // there are operands.
+  // `@Trait[...] from @impl[args] given(%claims) : (types)`; the derived claim
+  // is read off the application, the argument list is printed only when the
+  // impl takes arguments, and the operand types only when there are operands.
   let assemblyFormat = [{
     custom<ClaimPredicate>(type($result)) `from` $impl
+    `` custom<ImplArguments>($impl_args)
     `given` `(` $assumptions `)`
     (`:` `(` type($assumptions)^ `)`)? attr-dict-with-keyword
   }];
@@ -1099,11 +1097,10 @@ def WitnessOp : TraitDialectOp<"witness", [
     Equality arm. Introduces a value of type `!trait.claim<!A = !B>` that is
     evidence the two spellings name one type. There are three leaves:
 
-      * proj-resolve: cites an impl by symbol with one claim per entry of its
-        where clause, in order, as a derive cites one. The equality holds
-        because the cited impl, at the arguments the projection's application
-        and the premises give its parameters, binds the associated type the
-        projection names to the resolved type.
+      * proj-resolve: cites an impl by symbol at stated arguments, with one
+        claim per entry of its where clause, in order, as a derive cites one.
+        The equality holds because the cited impl, at those arguments, binds
+        the associated type the projection names to the resolved type.
 
         %item_eq = trait.witness proj_resolve !trait.proj<@A[i64], "Item"> resolves i64 by @A_impl
           : !trait.claim<!trait.proj<@A[i64], "Item"> = i64>
@@ -1135,14 +1132,14 @@ def WitnessOp : TraitDialectOp<"witness", [
     unsound -- so admitting a representational leaf requires role machinery first.
 
     The application arm is its result claim alone, and a proj-resolve leaf is
-    its result equality and the impl it cites: the op stores neither the claim
-    nor the impl's arguments a second time.
+    its result equality, the impl it cites and the arguments it cites it at.
   }];
 
   // The application arm is its result claim alone, which names the proof or
   // impl it cites; the equality arm carries its leaf.
   let arguments = (ins
     OptionalAttr<FlatSymbolRefAttr>:$impl,               // proj-resolve leaf
+    OptionalAttr<TypeArrayAttr>:$impl_args,              // proj-resolve leaf
     UnitAttr:$refl,                                      // refl leaf
     Variadic<Claim>:$premises
   );
@@ -1153,22 +1150,24 @@ def WitnessOp : TraitDialectOp<"witness", [
                    "::mlir::trait::TraitApplicationAttr":$trait_application), [{
       MLIRContext* ctx = $_builder.getContext();
       ClaimType claimTy = ClaimType::get(ctx, trait_application, proof);
-      build($_builder, $_state, claimTy, /*impl=*/nullptr, /*refl=*/nullptr,
-            /*premises=*/{});
+      build($_builder, $_state, claimTy, /*impl=*/nullptr, /*impl_args=*/nullptr,
+            /*refl=*/nullptr, /*premises=*/{});
     }]>,
     // Equality proj-resolve arm.
     OpBuilder<(ins "::mlir::trait::TypeEqualityAttr":$equality,
                    "::mlir::FlatSymbolRefAttr":$impl,
+                   "::mlir::ArrayAttr":$impl_args,
                    "::mlir::ValueRange":$premises), [{
       MLIRContext* ctx = $_builder.getContext();
       ClaimType claimTy = ClaimType::getEquality(ctx, equality);
-      build($_builder, $_state, claimTy, impl, /*refl=*/nullptr, premises);
+      build($_builder, $_state, claimTy, impl, impl_args, /*refl=*/nullptr,
+            premises);
     }]>,
     // Equality refl arm.
     OpBuilder<(ins "::mlir::trait::TypeEqualityAttr":$equality), [{
       MLIRContext* ctx = $_builder.getContext();
       ClaimType claimTy = ClaimType::getEquality(ctx, equality);
-      build($_builder, $_state, claimTy, /*impl=*/nullptr,
+      build($_builder, $_state, claimTy, /*impl=*/nullptr, /*impl_args=*/nullptr,
             $_builder.getUnitAttr(), /*premises=*/{});
     }]>,
     // Equality composition arm. Distinct in arity from the proj-resolve builder
@@ -1178,8 +1177,8 @@ def WitnessOp : TraitDialectOp<"witness", [
                    "::mlir::ValueRange":$premises), [{
       MLIRContext* ctx = $_builder.getContext();
       ClaimType claimTy = ClaimType::getEquality(ctx, equality);
-      build($_builder, $_state, claimTy, /*impl=*/nullptr, /*refl=*/nullptr,
-            premises);
+      build($_builder, $_state, claimTy, /*impl=*/nullptr, /*impl_args=*/nullptr,
+            /*refl=*/nullptr, premises);
     }]>
   ];
 
@@ -1187,9 +1186,16 @@ def WitnessOp : TraitDialectOp<"witness", [
 
   let extraClassDeclaration = [{
     /// Verifies this projection-resolution witness: the cited impl, at the
-    /// arguments the projection's application and the premises give it, binds
-    /// the projection as stated, each compared as written.
+    /// arguments the witness states, proves the projection's application over
+    /// the premises and binds the projection as stated, each compared by
+    /// identity.
     LogicalResult verifyResolution(ModuleOp module);
+
+    /// The arguments a projection-resolution witness states for its impl's
+    /// parameters.
+    SpecializationMap getImplArguments() {
+      return SpecializationMap::fromPositions(getImplArgsAttr().getAsValueRange<TypeAttr>());
+    }
 
     ClaimType getResultClaim() {
       return cast<ClaimType>(getResult().getType());
@@ -1622,9 +1628,8 @@ def ProofOp : TraitDialectOp<"proof", [
     /// application that proof proves. An equality premise rests on none.
     SmallVector<ClaimType> getSubproofs();
 
-    /// The arguments this proof's impl takes at the derive.
-    FailureOr<SpecializationMap> getImplArguments(
-        llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+    /// The arguments this proof's impl takes, as its derive states them.
+    SpecializationMap getImplArguments() { return getDerive().getImplArguments(); }
 
     /// Resolve a proof symbol to the impl it is backed by: a trait.proof yields
     /// its impl, a directly-named trait.impl yields itself. Whether the symbol

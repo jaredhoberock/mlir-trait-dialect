@@ -22,11 +22,11 @@ trait.impl private @Nine(%self: !trait.claim<@Mark[!T]>) {
   }
 }
 trait.proof private @PN {
-  %d = trait.derive @Mark[i32] from @Nine given()
+  %d = trait.derive @Mark[i32] from @Nine[i32] given()
   trait.return %d : !trait.claim<@Mark[i32]>
 }
 trait.proof private @Alias {
-  %d = trait.derive @Mark[i32] from @Nine given()
+  %d = trait.derive @Mark[i32] from @Nine[i32] given()
   trait.return %d : !trait.claim<@Mark[i32]>
 }
 trait.trait private @Wrapped(%self: !trait.claim<@Wrapped[!T]>) {
@@ -34,7 +34,7 @@ trait.trait private @Wrapped(%self: !trait.claim<@Wrapped[!T]>) {
 }
 trait.impl private @W(%self: !trait.claim<@Wrapped[i32]>) {
   trait.method @requirement_0() -> !trait.claim<@Mark[!trait.poly<0>]> {
-    %r = trait.derive @Mark[!trait.poly<0>] from @Nine given()
+    %r = trait.derive @Mark[!trait.poly<0>] from @Nine[!trait.poly<0>] given()
     trait.return %r : !trait.claim<@Mark[!trait.poly<0>]>
   }
 }

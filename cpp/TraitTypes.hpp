@@ -181,6 +181,11 @@ public:
     return applySubstitution(*this, nullptr, ty, ClaimPredicates::Substituted);
   }
 
+  /// The specialization binding the declaration parameter labelled `i` to
+  /// `arguments[i]`: a citation's argument list, stated by position.
+  template <typename RangeT>
+  static SpecializationMap fromPositions(RangeT &&arguments);
+
   static SpecializationMap fromTypeMap(const llvm::DenseMap<Type, Type> &subst) {
     SpecializationMap result;
     for (auto [key, value] : subst) {
@@ -725,6 +730,16 @@ inline GenericTypeInterface getParameterOccurrence(Type ty) {
   if (auto label = dyn_cast<PolyType>(generic.getParameterAtom()))
     return cast<GenericTypeInterface>(Type(label));
   return {};
+}
+
+template <typename RangeT>
+SpecializationMap SpecializationMap::fromPositions(RangeT &&arguments) {
+  SpecializationMap result;
+  for (auto [position, argument] : llvm::enumerate(arguments)) {
+    Type label = PolyType::get(argument.getContext(), position);
+    result.bind(cast<GenericTypeInterface>(label), argument);
+  }
+  return result;
 }
 
 /// The parameter count of a declaration whose header and where clause spell

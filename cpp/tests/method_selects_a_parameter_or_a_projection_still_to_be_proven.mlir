@@ -30,7 +30,7 @@ trait.trait private @Host(%self: !trait.claim<@Host[!T]>) { trait.method @run(!t
 trait.impl private @Host_i32(%self: !trait.claim<@Host[i32]>) {
   trait.method @run(%p: !trait.claim<@Mark[i32]>) -> i64 {
     %c = arith.constant false
-    %w = trait.derive @Wrapped[i32] from @Wrapped_any given(%p) : (!trait.claim<@Mark[i32]>)
+    %w = trait.derive @Wrapped[i32] from @Wrapped_any[i32] given(%p) : (!trait.claim<@Mark[i32]>)
     %m = trait.project %w[0] : !trait.claim<@Wrapped[i32]> -> !trait.claim<@Mark[i32]>
     %s = arith.select %c, %p, %m : !trait.claim<@Mark[i32]>
     %v = trait.method.call %s @Mark[i32]::@value() : () -> i64

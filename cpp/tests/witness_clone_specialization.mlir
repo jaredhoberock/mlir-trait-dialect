@@ -21,12 +21,12 @@ trait.impl private @S_blanket(%self: !trait.claim<@S[!T]>, %tensor: !trait.claim
 }
 
 // CHECK-LABEL: func.func private @f(
-// CHECK: trait.witness proj_resolve !trait.proj<@S[!trait.poly<0>], "Out"> resolves i64 by @S_blanket given(%arg0, %arg1)
+// CHECK: trait.witness proj_resolve !trait.proj<@S[!trait.poly<0>], "Out"> resolves i64 by @S_blanket[!trait.poly<0>] given(%arg0, %arg1)
 // CHECK-LABEL: func.func private @f_
-// CHECK: trait.witness proj_resolve !trait.proj<@S[i8], "Out"> resolves i64 by @S_blanket given(%arg0, %arg1) : (!trait.claim<@Tensor[i8] by @Tensor_i8>, !trait.claim<!trait.proj<@Tensor[i8], "Shape"> = i64>) : !trait.claim<!trait.proj<@S[i8], "Out"> = i64>
+// CHECK: trait.witness proj_resolve !trait.proj<@S[i8], "Out"> resolves i64 by @S_blanket[i8] given(%arg0, %arg1) : (!trait.claim<@Tensor[i8] by @Tensor_i8>, !trait.claim<!trait.proj<@Tensor[i8], "Shape"> = i64>) : !trait.claim<!trait.proj<@S[i8], "Out"> = i64>
 func.func private @f(%t: !trait.claim<@Tensor[!T]>, %sh: !trait.claim<!trait.proj<@Tensor[!T], "Shape"> = i64>)
     -> !trait.claim<!trait.proj<@S[!T], "Out"> = i64> {
-  %e = trait.witness proj_resolve !trait.proj<@S[!T], "Out"> resolves i64 by @S_blanket given(%t, %sh)
+  %e = trait.witness proj_resolve !trait.proj<@S[!T], "Out"> resolves i64 by @S_blanket[!trait.poly<0>] given(%t, %sh)
     : (!trait.claim<@Tensor[!T]>, !trait.claim<!trait.proj<@Tensor[!T], "Shape"> = i64>)
     : !trait.claim<!trait.proj<@S[!T], "Out"> = i64>
   return %e : !trait.claim<!trait.proj<@S[!T], "Out"> = i64>

@@ -40,12 +40,12 @@ trait.impl private @C_i64(%self: !trait.claim<@C[i64]>) {
   }
 }
 trait.impl private @A_gen(%self: !trait.claim<@A[!T]>, %b: !trait.claim<@B[!T]>) {
-  %c = trait.derive @C[!T] from @C_via_B given(%b) : (!trait.claim<@B[!T]>)
+  %c = trait.derive @C[!T] from @C_via_B[!trait.poly<0>] given(%b) : (!trait.claim<@B[!T]>)
   trait.return %c : !trait.claim<@C[!T]>
 }
 trait.proof private @PA {
   %b = trait.witness @B_x for @B[i64]
-  %d = trait.derive @A[i64] from @A_gen given(%b) : (!trait.claim<@B[i64] by @B_x>)
+  %d = trait.derive @A[i64] from @A_gen[i64] given(%b) : (!trait.claim<@B[i64] by @B_x>)
   trait.return %d : !trait.claim<@A[i64]>
 }
 func.func @main() -> i64 {

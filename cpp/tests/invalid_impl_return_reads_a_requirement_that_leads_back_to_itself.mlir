@@ -104,17 +104,17 @@ trait.trait private @B(%self: !trait.claim<@B[!T]>) {}
 trait.trait private @A(%self: !trait.claim<@A[!T]>) -> !trait.claim<@B[!T]> {}
 trait.trait private @C(%self: !trait.claim<@C[!T]>) -> !trait.claim<@B[!T]> {}
 trait.impl private @A_gen(%self: !trait.claim<@A[!T]>) {
-  %c = trait.derive @C[!T] from @C_gen given()
+  %c = trait.derive @C[!T] from @C_gen[!trait.poly<0>] given()
   %b = trait.project %c[0] : !trait.claim<@C[!T]> -> !trait.claim<@B[!T]>
   trait.return %b : !trait.claim<@B[!T]>
 }
 trait.impl private @C_gen(%self: !trait.claim<@C[!trait.poly<0>]>) {
-  %a = trait.derive @A[!trait.poly<0>] from @A_gen given()
+  %a = trait.derive @A[!trait.poly<0>] from @A_gen[!trait.poly<0>] given()
   %b = trait.project %a[0] : !trait.claim<@A[!trait.poly<0>]> -> !trait.claim<@B[!trait.poly<0>]>
   trait.return %b : !trait.claim<@B[!trait.poly<0>]>
 }
 func.func @main() -> i64 {
-  %a = trait.derive @A[i32] from @A_gen given()
+  %a = trait.derive @A[i32] from @A_gen[i32] given()
   %b = trait.project %a[0] : !trait.claim<@A[i32]> -> !trait.claim<@B[i32]>
   %c = arith.constant 1 : i64
   return %c : i64
