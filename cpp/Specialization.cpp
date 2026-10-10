@@ -4,7 +4,6 @@
 #include "SymbolLookup.hpp"
 #include "TraitOps.hpp"
 #include "TraitTypes.hpp"
-#include <llvm/ADT/SetVector.h>
 #include <mlir/IR/IRMapping.h>
 #include <mlir/IR/PatternMatch.h>
 #include <mlir/IR/Verifier.h>
@@ -406,34 +405,6 @@ func::FuncOp getOrCutInstance(RewriterBase &rewriter, ModuleOp module,
       break;
   }
 
-  // A claim the instance returns is the value its returns hand back: where
-  // every return supplies one proven claim at a position the signature spells
-  // as that claim unproven, the result carries that proof, as the values
-  // feeding it do.
-  SmallVector<Type> results(instance.getFunctionType().getResults());
-  bool refined = false;
-  for (unsigned position = 0; position < results.size(); ++position) {
-    auto formal = dyn_cast<ClaimType>(results[position]);
-    if (!formal || !formal.isApplication() || formal.isProven())
-      continue;
-    llvm::SmallSetVector<Type, 1> supplied;
-    instance.walk([&](func::ReturnOp ret) {
-      supplied.insert(ret.getOperand(position).getType());
-    });
-    auto proven = supplied.size() == 1
-                      ? dyn_cast<ClaimType>(supplied.front())
-                      : ClaimType();
-    if (!proven || !proven.isProven() || proven.asUnproven() != formal)
-      continue;
-    results[position] = proven;
-    refined = true;
-  }
-  if (refined)
-    rewriter.modifyOpInPlace(instance, [&] {
-      instance.setFunctionType(FunctionType::get(
-          instance.getContext(), instance.getFunctionType().getInputs(),
-          results));
-    });
   return instance;
 }
 

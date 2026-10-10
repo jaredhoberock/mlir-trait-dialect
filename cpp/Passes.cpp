@@ -4,6 +4,7 @@
 #include "ImplResolution.hpp"
 #include "Passes.hpp"
 #include <llvm/ADT/ScopeExit.h>
+#include <llvm/ADT/SetVector.h>
 #include "TraitOps.hpp"
 #include "Trait.hpp"
 #include "TraitTypes.hpp"
@@ -1189,24 +1190,63 @@ struct MonomorphizeResultTypesPattern
   }
 };
 
-/// Returns true if `replacer.replaceElementsIn(op, ...)` with the given
-/// options would modify anything on `op` (not recursing into children).
-static bool wouldReplace(AttrTypeReplacer &replacer, Operation *op,
-                         bool replaceAttrs, bool replaceLocs, bool replaceTypes) {
-  if (replaceTypes) {
-    for (Type t : op->getResultTypes())
-      if (replacer.replace(t) != t) return true;
-    for (Region &r : op->getRegions())
-      for (Block &b : r)
-        for (Value arg : b.getArguments())
-          if (replacer.replace(arg.getType()) != arg.getType()) return true;
+/// Whether the result claims of `op` are views a pattern writes from the
+/// producer they repeat, never selection: a function's, of the values its
+/// returns hand back (`ProveFunctionResultsPattern`), and a call's, of its
+/// callee's signature (`ProveCallResultsPattern`). A function without a body
+/// has no returns, and its results are positions no producer writes.
+static bool resultClaimsAreViews(Operation *op) {
+  if (auto function = dyn_cast<func::FuncOp>(op))
+    return !function.isExternal();
+  return isa<func::CallOp, FuncCallOp, MethodCallOp>(op);
+}
+
+/// Respells `op` under `rewriter`: its attributes and its regions' block
+/// arguments by `replacer`, its results by `results` -- a function's result
+/// types stand in its signature, an attribute. Fails where nothing changes.
+static LogicalResult respellOp(Operation *op, AttrTypeReplacer &replacer,
+                               AttrTypeReplacer &results,
+                               PatternRewriter &rewriter) {
+  auto function = dyn_cast<func::FuncOp>(op);
+  StringAttr signature =
+      function ? function.getFunctionTypeAttrName() : StringAttr();
+  SmallVector<NamedAttribute> attributes;
+  bool attributesChanged = false;
+  for (NamedAttribute attr : op->getAttrs()) {
+    Attribute value = attr.getValue();
+    if (attr.getName() == signature) {
+      FunctionType type = function.getFunctionType();
+      auto inputs = llvm::map_to_vector(
+          type.getInputs(), [&](Type input) { return replacer.replace(input); });
+      auto outputs = llvm::map_to_vector(
+          type.getResults(), [&](Type output) { return results.replace(output); });
+      value = TypeAttr::get(FunctionType::get(op->getContext(), inputs, outputs));
+    } else {
+      value = replacer.replace(value);
+    }
+    attributesChanged |= value != attr.getValue();
+    attributes.emplace_back(attr.getName(), value);
   }
-  if (replaceAttrs)
-    for (NamedAttribute attr : op->getAttrs())
-      if (replacer.replace(attr.getValue()) != attr.getValue()) return true;
-  if (replaceLocs)
-    if (replacer.replace(op->getLoc()) != op->getLoc()) return true;
-  return false;
+  SmallVector<std::pair<Value, Type>> retyped;
+  auto retype = [&](Value value, AttrTypeReplacer &by) {
+    if (Type type = by.replace(value.getType()); type != value.getType())
+      retyped.emplace_back(value, type);
+  };
+  for (Value result : op->getResults())
+    retype(result, results);
+  for (Region &region : op->getRegions())
+    for (Block &block : region)
+      for (BlockArgument argument : block.getArguments())
+        retype(argument, replacer);
+  if (!attributesChanged && retyped.empty())
+    return failure();
+  rewriter.modifyOpInPlace(op, [&] {
+    if (attributesChanged)
+      op->setAttrs(DictionaryAttr::get(op->getContext(), attributes));
+    for (auto [value, type] : retyped)
+      value.setType(type);
+  });
+  return success();
 }
 
 /// Asks impl selection for the obligations an op spells and respells the op
@@ -1220,15 +1260,18 @@ static bool wouldReplace(AttrTypeReplacer &replacer, Operation *op,
 /// reached -- a clone a substitution minted included -- as Rust's
 /// monomorphization collector asks `Instance::resolve` per use. Selection
 /// memoizes every answer, so every op spelling one claim names one proof. An
-/// equality's endpoints state a proposition and are left as spelled. A claim
-/// whose evidence its producer reads by position is that reading's to prove,
-/// never selection's, so such a result keeps its spelling, as does the result
-/// of an op that infers its result types from its operands, whose evidence is
-/// theirs (`MonomorphizeResultTypesPattern`); and a call computing evidence
-/// keeps its result's projections as well, since the variables of the
-/// requirement it computes are read off that spelling when it is replaced by
-/// its method's body. What selection refuses stays spelled for the stage's exit
-/// walk to name.
+/// equality's endpoints state a proposition and are left as spelled. Selection
+/// decides only a position no producer writes: a claim whose evidence its
+/// producer reads by position is that reading's to prove, so such a result
+/// keeps its spelling, as do the results of an op that infers its result types
+/// from its operands, whose evidence is theirs
+/// (`MonomorphizeResultTypesPattern`), and the result claims of a function and
+/// of a call, which repeat what a function returns and what a callee's
+/// signature says (`resultClaimsAreViews`); and a call computing evidence keeps
+/// its result's projections as well, since the variables of the requirement it
+/// computes are read off that spelling when it is replaced by its method's
+/// body. What selection refuses stays spelled for the stage's exit walk to
+/// name.
 struct SettleSpelledObligationsPattern : public RewritePattern {
   ImplResolver &resolver;
 
@@ -1251,10 +1294,9 @@ struct SettleSpelledObligationsPattern : public RewritePattern {
       return failure();
 
     SelectionSite site = SelectionSite::of(op);
-    AttrTypeReplacer replacer = makeEndpointSealedReplacer();
     // A ground projection is resolved to its normal form in one rewrite; one
     // that has none is named once, and left as spelled.
-    replacer.addReplacement([&](ProjectionType proj) -> std::optional<Type> {
+    auto resolveProjection = [&](ProjectionType proj) -> std::optional<Type> {
       if (isPolymorphicType(proj))
         return std::nullopt;
       Answer<Type> resolved =
@@ -1262,40 +1304,127 @@ struct SettleSpelledObligationsPattern : public RewritePattern {
       if (!resolved.isAnswer() || *resolved == Type(proj))
         return std::nullopt;
       return *resolved;
-    });
+    };
     // A claim's predicate is never respelled: the proof is minted at the
     // application the claim spells, so `X by @p` holds because `p` proves `X`
     // as spelled, and nothing citing it reads through a respelling. A claim
     // standing in another's arguments is a type argument of that application,
     // part of what it states, and is left as spelled with it.
+    auto keepClaim = [](ClaimType claim) {
+      return std::make_pair(Type(claim), WalkResult::skip());
+    };
+    AttrTypeReplacer replacer = makeEndpointSealedReplacer();
+    replacer.addReplacement(resolveProjection);
     replacer.addReplacement(
         [&](ClaimType claim) -> std::optional<std::pair<Type, WalkResult>> {
           if (!provesClaims || !claim.isApplication() || claim.isProven() ||
               !claim.isMonomorphic())
-            return std::make_pair(Type(claim), WalkResult::skip());
+            return keepClaim(claim);
           Answer<ClaimType> proven =
               resolver.resolveAndEnsureProofFor(claim, site, rewriter);
           return std::make_pair(proven.isAnswer() ? Type(*proven) : Type(claim),
                                 WalkResult::skip());
         });
-    if (!wouldReplace(replacer, op,
-                      /*replaceAttrs=*/true,
-                      /*replaceLocs=*/false,
-                      /*replaceTypes=*/true))
-      return failure();
+    AttrTypeReplacer views = makeEndpointSealedReplacer();
+    views.addReplacement(resolveProjection);
+    views.addReplacement(keepClaim);
 
-    rewriter.modifyOpInPlace(op, [&] {
-      replacer.replaceElementsIn(op,
-                                 /*replaceAttrs=*/true,
-                                 /*replaceLocs=*/false,
-                                 /*replaceTypes=*/true);
-    });
+    if (failed(respellOp(op, replacer,
+                         resultClaimsAreViews(op) ? views : replacer, rewriter)))
+      return failure();
     // A call judges its callee's signature, so a respelled callee's calls are
     // asked again.
-    if (auto function = dyn_cast<func::FuncOp>(op))
-      if (auto uses = SymbolTable::getSymbolUses(function, site.scope))
+    if (isa<func::FuncOp>(op))
+      if (auto uses = SymbolTable::getSymbolUses(op, site.scope))
         for (const SymbolTable::SymbolUse &use : *uses)
           rewriter.modifyOpInPlace(use.getUser(), [] {});
+    return success();
+  }
+};
+
+/// Whether `view`, the type a producer gives a result position, settles
+/// `spelled`, the type the position is spelled with: the two state one type
+/// modulo the proofs their claims carry, and `view` names a proof at every
+/// application it spells.
+static bool settles(Type view, Type spelled) {
+  return view != spelled && !carriesUndischargedObligation(view) &&
+         stripClaimProofs(view) == stripClaimProofs(spelled);
+}
+
+/// Gives a function's result type the proofs its returns hand back: where
+/// every return supplies one type at a position that settles the signature's
+/// (`settles`), the result carries it, as the values feeding it do. The
+/// signature repeats the body's choice; nothing selects for it. Runs whenever
+/// the returns settle, and asks a respelled function's calls again, as they
+/// judge its signature.
+struct ProveFunctionResultsPattern : public OpRewritePattern<func::FuncOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(func::FuncOp function,
+                                PatternRewriter &rewriter) const override {
+    SmallVector<Type> results(function.getResultTypes());
+    if (function.isExternal() ||
+        !llvm::any_of(results, carriesUndischargedObligation))
+      return rewriter.notifyMatchFailure(function, "no result claim to settle");
+    SmallVector<func::ReturnOp> returns;
+    for (Block &block : function.getBody())
+      if (auto ret = dyn_cast<func::ReturnOp>(block.getTerminator()))
+        returns.push_back(ret);
+    bool refined = false;
+    for (unsigned position = 0; position < results.size(); ++position) {
+      llvm::SmallSetVector<Type, 1> supplied;
+      for (func::ReturnOp ret : returns)
+        supplied.insert(ret.getOperand(position).getType());
+      if (supplied.size() != 1 || !settles(supplied.front(), results[position]))
+        continue;
+      results[position] = supplied.front();
+      refined = true;
+    }
+    if (!refined)
+      return rewriter.notifyMatchFailure(function, "no result claim settles");
+    rewriter.modifyOpInPlace(function, [&] {
+      function.setFunctionType(FunctionType::get(
+          function.getContext(), function.getArgumentTypes(), results));
+    });
+    if (auto uses = SymbolTable::getSymbolUses(function, getAnchorModule(function)))
+      for (const SymbolTable::SymbolUse &use : *uses)
+        rewriter.modifyOpInPlace(use.getUser(), [] {});
+    return success();
+  }
+};
+
+/// Gives a call's result types the proofs its callee's signature names, as
+/// `MonomorphizeResultTypesPattern` gives an inferable op the types its
+/// operands determine: the call's result repeats what the callee returns
+/// (`settles`), and nothing selects for it.
+template <typename CallOpT>
+struct ProveCallResultsPattern : public OpRewritePattern<CallOpT> {
+  using OpRewritePattern<CallOpT>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(CallOpT call,
+                                PatternRewriter &rewriter) const override {
+    if (!llvm::any_of(call->getResultTypes(), carriesUndischargedObligation))
+      return rewriter.notifyMatchFailure(call, "no result claim to settle");
+    FlatSymbolRefAttr name;
+    if constexpr (std::is_same_v<CallOpT, FuncCallOp>)
+      name = call.getCalleeNameAttr();
+    else
+      name = call.getCalleeAttr();
+    auto callee = lookupSymbolFrom<FunctionOpInterface>(getAnchorModule(call),
+                                                        name);
+    if (!callee || callee.getNumResults() != call->getNumResults())
+      return rewriter.notifyMatchFailure(call, "no callee signature to read");
+    SmallVector<std::pair<Value, Type>> retyped;
+    for (auto [result, declared] :
+         llvm::zip(call->getResults(), callee.getResultTypes()))
+      if (settles(declared, result.getType()))
+        retyped.emplace_back(result, declared);
+    if (retyped.empty())
+      return rewriter.notifyMatchFailure(call, "no result claim settles");
+    rewriter.modifyOpInPlace(call, [&] {
+      for (auto [result, type] : retyped)
+        result.setType(type);
+    });
     return success();
   }
 };
@@ -1376,7 +1505,9 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
     patterns.add<ProveClaimResultPattern>(ctx, resolver, namedObligations,
                                           refusedAClaim);
     patterns.add<SettleSpelledObligationsPattern>(ctx, resolver);
-    patterns.add<MonomorphizeResultTypesPattern>(ctx);
+    patterns.add<MonomorphizeResultTypesPattern, ProveFunctionResultsPattern,
+                 ProveCallResultsPattern<func::CallOp>,
+                 ProveCallResultsPattern<FuncCallOp>>(ctx);
     patterns.add<SettleCoercePattern>(ctx, resolver);
     patterns.add<CallOpLowering<FuncCallOp>, CallOpLowering<MethodCallOp>>(
         ctx, resolver);
