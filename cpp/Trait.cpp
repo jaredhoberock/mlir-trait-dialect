@@ -31,7 +31,7 @@ void addErasePolymorphs(MlirOpPassManager pm, void *) {
 /// unless it is still pending instantiation, so instantiate is present exactly on
 /// the operations a pattern would fire on and has an opinion on every other one.
 /// It rewrites no type, so it hands back no converter.
-void *instantiateLegality(MlirOperation, void *targetPtr, void *) {
+void *instantiateLegality(MlirOperation, void *targetPtr, void *, void *) {
   auto &target = *static_cast<ConversionTarget *>(targetPtr);
   target.markUnknownOpDynamicallyLegal(
       [](Operation *op) -> std::optional<bool> { return !isPendingOp(op); });
@@ -44,7 +44,7 @@ void *instantiateLegality(MlirOperation, void *targetPtr, void *) {
 /// or a poly, claim, or projection type does, and runs to cut the template; the
 /// readiness walk reads what erase collects off the same interface the type system
 /// already speaks.
-void *eraseLegality(MlirOperation, void *targetPtr, void *) {
+void *eraseLegality(MlirOperation, void *targetPtr, void *, void *) {
   auto &target = *static_cast<ConversionTarget *>(targetPtr);
   populateErasePolymorphsLegality(target, /*templatesIllegal=*/true);
   auto *converter = new TypeConverter();
