@@ -127,9 +127,12 @@ def ClaimType : TypeDef<TraitDialect, "Claim", [
     never re-derive a spelled proof: a claim that names one is checked
     against the declaration it names, locally (`verifyCitation`), and
     claim types are otherwise compared by identity, proof included.
-    The two places that read a claim for its predicate alone compare
-    modulo the proof named: a derive's premises against its impl's
-    where entries, and a coerce's entailment.  Solving may consult the
+    The places that read a claim for its predicate alone compare
+    modulo the proof named: the premises a derive or a proj-resolve
+    witness supplies against its impl's where entries, a call's
+    arguments against the callee's instantiated formals, a coerce's
+    claim endpoints under its cited equalities, and the agreement of an
+    impl's own declarations with its trait's.  Solving may consult the
     module and its caches; checking stays local.  Any future proposal to move provenance out of the spelled
     type requires an explicit owner ruling to reopen.
   }];
