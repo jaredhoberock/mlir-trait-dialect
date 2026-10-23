@@ -817,11 +817,22 @@ def Claim : Type<
   "::mlir::trait::ClaimType"
 >;
 
-/// A claim of a trait application, the only claim impl selection can prove.
-def ApplicationClaim : Type<
+/// A claim naming no proof: the claim an op states where its own operands and
+/// attributes are its evidence, or where it asserts the claim outright.
+def UnprovenClaim : Type<
   And<[CPred<"::mlir::isa<::mlir::trait::ClaimType>($_self)">,
-       CPred<"::mlir::cast<::mlir::trait::ClaimType>($_self).isApplication()">]>,
-  "a '!trait.claim' of a trait application",
+       CPred<"!::mlir::cast<::mlir::trait::ClaimType>($_self).isProven()">]>,
+  "a '!trait.claim' naming no proof",
+  "::mlir::trait::ClaimType"
+>;
+
+/// An unproven claim of a trait application, the only claim impl selection can
+/// prove.
+def UnprovenApplicationClaim : Type<
+  And<[CPred<"::mlir::isa<::mlir::trait::ClaimType>($_self)">,
+       CPred<"::mlir::cast<::mlir::trait::ClaimType>($_self).isApplication()">,
+       CPred<"!::mlir::cast<::mlir::trait::ClaimType>($_self).isProven()">]>,
+  "a '!trait.claim' of a trait application naming no proof",
   "::mlir::trait::ClaimType"
 >;
 
@@ -891,10 +902,11 @@ def AllegeOp : TraitDialectOp<"allege", [
     An allegation is a trusted assertion and carries no justification: impl
     selection proves its claim by whichever impl it selects, and a claim
     nothing proves -- an application no impl serves, or an equality whose
-    sides resolve to two types -- is refused here.
+    sides resolve to two types -- is refused here. So the alleged claim names
+    no proof: the proof is the one selection builds or reuses in its place.
   }];
 
-  let results = (outs Claim:$result);
+  let results = (outs UnprovenClaim:$result);
 
   let builders = [
     OpBuilder<(ins "::mlir::trait::TraitApplicationAttr":$app), [{
@@ -944,8 +956,9 @@ def DeriveOp : TraitDialectOp<"derive", [
       : (!trait.claim<@Trait[!T]>, !trait.claim<!trait.proj<@Trait[!T], "Out"> = i64>)
     ```
 
-    Once monomorphic, a derive becomes the witness of the proof whose body it
-    is, at the application selection resolves its claim to, coerced to the
+    The derived claim names no proof: the derive is its evidence, and once
+    monomorphic, a derive becomes the witness of the proof whose body it is,
+    at the application selection resolves its claim to, coerced to the
     derive's own spelling.
   }];
 
@@ -958,7 +971,7 @@ def DeriveOp : TraitDialectOp<"derive", [
     Variadic<Claim>:$assumptions
   );
 
-  let results = (outs ApplicationClaim:$result);
+  let results = (outs UnprovenApplicationClaim:$result);
 
   let extraClassDeclaration = [{
     ClaimType getDerivedClaim() {
@@ -1008,14 +1021,13 @@ def ProjectOp : TraitDialectOp<"project", [
 
     The result claim is derived, never spelled: requirement `index`
     instantiated at the source claim's arguments. A where entry of a proven
-    source is the claim its proof's derive is given at that position. A
-    trait requirement of a proven source is the evidence the impl returns at
-    that position, which the stage puts in the projection's place
-    (`inlineEvidence`), where the ops computing it are proven as anywhere else;
-    a proof the result spells is held to that evidence by the coercion bridging
-    the two. The printed result type is an annotation on that derivation:
-    verification compares it with the requirement the index selects, modulo the
-    proof where no where entry fixes one, and refuses a disagreement.
+    source is the claim its proof's derive is given at that position. A trait
+    requirement names no proof: of a proven source, its evidence is what the
+    impl returns at that position, which the stage puts in the projection's
+    place (`inlineEvidence`), where the ops computing it are proven as anywhere
+    else. The printed result type is that derivation: verification compares it
+    with the requirement the index selects, by identity, and refuses a
+    disagreement.
 
     A requirement quantified over variables of its own is no result of the trait
     but a method of it, and is called rather than projected.

@@ -33,11 +33,11 @@ trait.trait private @Wrapped(%self: !trait.claim<@Wrapped[!T]>) {
 }
 trait.impl private @W(%self: !trait.claim<@Wrapped[i32]>) {
   trait.assoc_type @Item<[!trait.poly<0>]> = i32
-  trait.method @requirement_0() -> !trait.claim<@Mark[!trait.proj<@Wrapped[i32], "Item", [!trait.poly<0>]>] by @Nine> {
+  trait.method @requirement_0() -> !trait.claim<@Mark[!trait.proj<@Wrapped[i32], "Item", [!trait.poly<0>]>]> {
     %n = trait.witness @Nine for @Mark[i32]
     %e = trait.witness proj_resolve !trait.proj<@Wrapped[i32], "Item", [!trait.poly<0>]> resolves i32 by @W : !trait.claim<!trait.proj<@Wrapped[i32], "Item", [!trait.poly<0>]> = i32>
-    %m = trait.coerce %n : !trait.claim<@Mark[i32] by @Nine> to !trait.claim<@Mark[!trait.proj<@Wrapped[i32], "Item", [!trait.poly<0>]>] by @Nine> via (%e) : (!trait.claim<!trait.proj<@Wrapped[i32], "Item", [!trait.poly<0>]> = i32>)
-    trait.return %m : !trait.claim<@Mark[!trait.proj<@Wrapped[i32], "Item", [!trait.poly<0>]>] by @Nine>
+    %m = trait.coerce %n : !trait.claim<@Mark[i32] by @Nine> to !trait.claim<@Mark[!trait.proj<@Wrapped[i32], "Item", [!trait.poly<0>]>]> via (%e) : (!trait.claim<!trait.proj<@Wrapped[i32], "Item", [!trait.poly<0>]> = i32>)
+    trait.return %m : !trait.claim<@Mark[!trait.proj<@Wrapped[i32], "Item", [!trait.poly<0>]>]>
   }
 }
 trait.proof private @PW {

@@ -1636,9 +1636,9 @@ LogicalResult ProjectOp::inlineEvidence(RewriterBase &rewriter) {
     clone->setLoc(CallSiteLoc::get(clone->getLoc(), getLoc()));
 
   // The evidence is spelled as the impl wrote it, which the result may spell
-  // otherwise: the two meet as their projections resolve, and a proof the
-  // result spells must be the one the evidence carries, which the coercion
-  // bridging them holds it to.
+  // otherwise: the two meet as their projections resolve. The coercion
+  // bridging them keeps the evidence beneath the result, which names no proof
+  // of its own.
   Value replacement = inlined;
   if (inlined.getType() != getResult().getType())
     replacement = CoerceOp::create(rewriter, getLoc(), getResult().getType(),
@@ -2468,8 +2468,6 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (!module)
     return emitError() << "not inside a module";
 
-  auto errFn = [&] { return emitOpError(); };
-
   // Equality proj-resolve arm: the cited impl, at the arguments the
   // projection's application and the premises give it, binds the projection
   // as stated.
@@ -2481,14 +2479,10 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (getResultClaim().isEquality())
     return success();
 
-  // Application arm: a witness carries the application the declaration it
-  // names proves -- a proof's proven claim or an unconditional impl's header
-  // (`verifyCitation`). Reading the impl's header alone would accept a witness
-  // for an application the proof does not prove, because a blanket impl's
-  // header carries to every application of its trait.
-  if (failed(verifyCitation(getProvenClaim(), module, errFn)))
-    return failure();
-
+  // Application arm: the declaration the witness names proves the application
+  // its result claims, which the claim type holds of every proven claim
+  // (`ClaimType::verifySymbolUses`).
+  //
   // A witness in a proof's body names a root: a proof whose body holds its
   // derive, or an unconditional impl. A cast is then one hop from the derive
   // it records and a premise names the proof its evidence rests on, so a chain
@@ -3153,15 +3147,13 @@ LogicalResult ProjectOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (failed(requirement))
     return failure();
 
-  // The result type is an annotation on the selection: the index decides which
-  // claim this op produces, so the spelled one must be that claim. A where
-  // entry carries the proof the source's proof gives it there; any other
-  // requirement is compared modulo the proof, which the evidence the stage
-  // inlines here decides (`inlineEvidence`).
-  bool selected = requirement->isProven()
-                      ? *requirement == getResultClaim()
-                      : *requirement == getResultClaim().asUnproven();
-  if (!selected)
+  // The result type is the selection: the index decides which claim this op
+  // produces, so the written one must be that claim. A trait requirement is
+  // the trait's at the source's arguments, which names no proof; its evidence
+  // is the impl's return the stage inlines here (`inlineEvidence`), never a
+  // proof the result names. A where entry is the claim the source's proof
+  // gives its derive there, proven or not.
+  if (*requirement != getResultClaim())
     return emitOpError() << "type mismatch: expected " << *requirement
                          << " but found " << getResultClaim();
 

@@ -263,10 +263,12 @@ LogicalResult ClaimType::verifySymbolUses(Operation *op,
   if (failed(getTraitApplication().verifySymbolUses(op, symbolTable)))
     return failure();
 
-  // if there's a proof, verify that it points to a valid symbol
-  if (auto proof = getProof())
-    if (failed(ProofOp::getProofOpOrUnconditionalImplOp(module, proof, err)))
-      return failure();
+  // A proven claim names the proof of exactly the application it spells
+  // (`verifyCitation`), wherever a value of it stands: an op's result, a block
+  // argument, a signature. Each consumer then reads the citation as evidence
+  // for the claim it holds, with nothing to re-check at its use.
+  if (isProven() && failed(verifyCitation(*this, module, err)))
+    return failure();
 
   return success();
 }

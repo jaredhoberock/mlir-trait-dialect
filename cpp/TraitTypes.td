@@ -80,7 +80,11 @@ def ClaimType : TypeDef<TraitDialect, "Claim", [
           !trait.claim<@PartialEq[i32,i32] by @PartialEq_impl_i32_i32>
 
       is a proven claim naming the impl (`@PartialEq_impl_i32_i32`) that
-      establishes it.
+      establishes it. The proof a claim names proves exactly the application
+      the claim spells -- a `trait.proof`'s proven application or an
+      unconditional impl's header (`verifyCitation`) -- so another spelling of
+      one application names a proof of that spelling, and a coercion carrying
+      a claim to another spelling names none.
 
     * `TypeEqualityAttr` — two type spellings name one type:
 

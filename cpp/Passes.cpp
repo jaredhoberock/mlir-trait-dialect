@@ -268,28 +268,6 @@ bool isForeign(Operation *op) {
   return false;
 }
 
-/// Verify that every proven claim spelled in a top-level function signature
-/// names evidence for its application (`verifyCitation`). A `by @proof` in a
-/// declared type is otherwise checked nowhere, so a signature can name a proof
-/// of another application and go undiagnosed. What that proof cites underneath
-/// was decided at the proof op holding it. Only module-level `func.func`
-/// signatures are walked; signatures nested inside trait/impl method bodies are
-/// not yet covered.
-LogicalResult verifyDeclaredClaimProofs(ModuleOp module) {
-  LogicalResult status = success();
-  for (auto f : module.getOps<func::FuncOp>()) {
-    auto errFn = [&] {
-      return f.emitOpError() << "declared claim in signature has an invalid proof: ";
-    };
-    f.getFunctionType().walk([&](ClaimType claim) {
-      if (claim.isApplication() && claim.isProven() &&
-          failed(verifyCitation(claim, module, errFn)))
-        status = failure();
-    });
-  }
-  return status;
-}
-
 /// Refuses a proof whose derivation stands too deep. A derivation is followed
 /// from each proof through the proof each application premise names, at the
 /// instance the proof cites it, and its depth is counted and refused as impl
@@ -528,11 +506,8 @@ struct ProveClaimResultPattern : public RewritePattern {
     if (!isa<AllegeOp, DeriveOp, ProjectOp>(op))
       return failure();
 
-    // In-place retyping by proof propagation can prove a claim out from under
-    // its producing op, which leaves that op holding exactly the witness it was
-    // going to build: its result type already names both the proof and the
-    // application. Build it, rather than leaving behind a producer nothing
-    // legalizes wherever a consumer still wants its result.
+    // An allegation's and a derive's claim names no proof; a projection's is
+    // the requirement it selects (`ProjectOp::verifySymbolUses`).
     auto claim = cast<ClaimType>(op->getResult(0).getType());
 
     // A projection of a proven source is replaced by the evidence the source's
@@ -556,9 +531,9 @@ struct ProveClaimResultPattern : public RewritePattern {
       return proveAllegedEquality(allegation, claim.getEqualityAttr(), rewriter);
     }
 
-    // A claim spelled unproven is proven by selection once it is monomorphic;
-    // a polymorphic one waits for the instance that grounds it.
-    if (!claim.isProven() && !claim.isMonomorphic())
+    // An application claim is proven by selection once it is monomorphic; a
+    // polymorphic one waits for the instance that grounds it.
+    if (claim.isPolymorphic())
       return rewriter.notifyMatchFailure(op, "polymorphic claim deferred");
 
     // A derive states its own decision: its claim is proven by the proof whose
@@ -566,17 +541,11 @@ struct ProveClaimResultPattern : public RewritePattern {
     if (auto derive = dyn_cast<DeriveOp>(op))
       return transcribe(derive, rewriter);
 
-    // The proof the op is spelled with; else the evidence selection builds or
-    // reuses for its claim, demanded where the op stands: the proof it names
-    // is a symbol its own module resolves, and the impls that may serve it are
+    // An allegation: the evidence selection builds or reuses for its claim,
+    // demanded where the allegation stands: the impls that may serve it are
     // the ones standing there. The evidence is the proof of the application
     // selection resolves the claim to, coerced to the claim's spelling
     // (`resolveEvidenceFor`). A refusal is final, so it is named once.
-    if (claim.isProven()) {
-      rewriter.replaceOpWithNewOp<WitnessOp>(op, claim.getProof(),
-                                             claim.getTraitApplication());
-      return success();
-    }
     auto errFn = [&] { return op->emitOpError(); };
     Answer<ProvenPremise> evidence = resolver.resolveEvidenceFor(
         claim, SelectionSite::of(op), rewriter, firstAsk(op, errFn));
@@ -1732,10 +1701,6 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
 
   // verify traits are acyclic
   if (failed(verifyAcyclicTraits(module)))
-    return failure();
-
-  // verify that proofs named in declared signatures actually prove their claims
-  if (failed(verifyDeclaredClaimProofs(module)))
     return failure();
 
   // refuse a proof whose derivation keeps reaching larger applications

@@ -17,8 +17,8 @@ trait.impl private @B_i32(%self: !trait.claim<@B[i32]>) {
 }
 trait.impl private @A_i32(%self: !trait.claim<@A[i32]>) {
   // expected-error @+1 {{operand #0 does not dominate this use}}
-  %c = trait.project %b[0] : !trait.claim<@B[i32] by @B_i32> -> !trait.claim<@C[i32] by @C_i32>
+  %c = trait.project %b[0] : !trait.claim<@B[i32] by @B_i32> -> !trait.claim<@C[i32]>
   // expected-note @+1 {{operand defined here}}
   %b = trait.witness @B_i32 for @B[i32]
-  trait.return %c : !trait.claim<@C[i32] by @C_i32>
+  trait.return %c : !trait.claim<@C[i32]>
 }

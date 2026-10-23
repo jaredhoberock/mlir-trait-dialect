@@ -41,17 +41,17 @@ module {
       : !trait.claim<!trait.proj<@A[i32], "Out"> = i64>
     %d1 = trait.coerce %d
       : !trait.claim<@D[i64, i64] by @D_p>
-      to !trait.claim<@D[!trait.proj<@A[i32], "Out">, i64] by @D_p>
+      to !trait.claim<@D[!trait.proj<@A[i32], "Out">, i64]>
       via (%eq_i32) : (!trait.claim<!trait.proj<@A[i32], "Out"> = i64>)
     // Second application: coerce the second i64 to @A[f32]::Out citing @A[f32]::Out = i64.
     %eq_f32 = trait.witness proj_resolve !trait.proj<@A[f32], "Out"> resolves i64 by @A_f32
       : !trait.claim<!trait.proj<@A[f32], "Out"> = i64>
     %d2 = trait.coerce %d1
-      : !trait.claim<@D[!trait.proj<@A[i32], "Out">, i64] by @D_p>
-      to !trait.claim<@D[!trait.proj<@A[i32], "Out">, !trait.proj<@A[f32], "Out">] by @D_p>
+      : !trait.claim<@D[!trait.proj<@A[i32], "Out">, i64]>
+      to !trait.claim<@D[!trait.proj<@A[i32], "Out">, !trait.proj<@A[f32], "Out">]>
       via (%eq_f32) : (!trait.claim<!trait.proj<@A[f32], "Out"> = i64>)
     %r = trait.func.call @f(%x, %y, %d2)
-      : (i32, f32, !trait.claim<@D[!trait.proj<@A[i32], "Out">, !trait.proj<@A[f32], "Out">] by @D_p>)
+      : (i32, f32, !trait.claim<@D[!trait.proj<@A[i32], "Out">, !trait.proj<@A[f32], "Out">]>)
       -> i32
     return %r : i32
   }

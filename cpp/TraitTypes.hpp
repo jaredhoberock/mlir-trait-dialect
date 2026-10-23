@@ -940,9 +940,11 @@ FailureOr<ClaimType> getClaimRequirementAt(
 /// declaration the cited symbol holds -- a proof's proven application, which
 /// `ProofOp::verify` holds ground, or an unconditional impl's header -- is that
 /// application, by interned identity. Every writer witnesses a proof at the
-/// application it proves and respells it by a coercion, so a citation is one
-/// comparison. Nothing is read inside a cited proof: a proof op's body decides
-/// its own premises and citations.
+/// application it proves and respells it by a coercion whose result names no
+/// proof, so a citation is one comparison, and every proven claim type a
+/// verified module holds passes it (`ClaimType::verifySymbolUses`). Nothing is
+/// read inside a cited proof: a proof op's body decides its own premises and
+/// citations.
 LogicalResult verifyCitation(ClaimType proven, ModuleOp module,
                              llvm::function_ref<InFlightDiagnostic()> err);
 

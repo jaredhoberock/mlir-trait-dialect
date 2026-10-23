@@ -23,8 +23,8 @@ trait.impl private @Rec_i64(%self: !trait.claim<@Rec[i64]>) {
   trait.method @id(%x: i64) -> i64 { trait.return %x : i64 }
   %w = trait.witness @Rec_i64 for @Rec[i64]
   %eq = trait.witness proj_resolve !trait.proj<@Rec[i64], "Sub"> resolves i64 by @Rec_i64 : !trait.claim<!trait.proj<@Rec[i64], "Sub"> = i64>
-  %req0 = trait.coerce %w : !trait.claim<@Rec[i64] by @Rec_i64> to !trait.claim<@Rec[!trait.proj<@Rec[i64], "Sub">] by @Rec_i64> via (%eq) : (!trait.claim<!trait.proj<@Rec[i64], "Sub"> = i64>)
-  trait.return %req0 : !trait.claim<@Rec[!trait.proj<@Rec[i64], "Sub">] by @Rec_i64>
+  %req0 = trait.coerce %w : !trait.claim<@Rec[i64] by @Rec_i64> to !trait.claim<@Rec[!trait.proj<@Rec[i64], "Sub">]> via (%eq) : (!trait.claim<!trait.proj<@Rec[i64], "Sub"> = i64>)
+  trait.return %req0 : !trait.claim<@Rec[!trait.proj<@Rec[i64], "Sub">]>
 }
 
 trait.impl private @Rec_unit(%self: !trait.claim<@Rec[tuple<>]>) {
@@ -32,8 +32,8 @@ trait.impl private @Rec_unit(%self: !trait.claim<@Rec[tuple<>]>) {
   trait.method @id(%x: tuple<>) -> tuple<> { trait.return %x : tuple<> }
   %w = trait.witness @Rec_unit for @Rec[tuple<>]
   %eq = trait.witness proj_resolve !trait.proj<@Rec[tuple<>], "Sub"> resolves tuple<> by @Rec_unit : !trait.claim<!trait.proj<@Rec[tuple<>], "Sub"> = tuple<>>
-  %req0 = trait.coerce %w : !trait.claim<@Rec[tuple<>] by @Rec_unit> to !trait.claim<@Rec[!trait.proj<@Rec[tuple<>], "Sub">] by @Rec_unit> via (%eq) : (!trait.claim<!trait.proj<@Rec[tuple<>], "Sub"> = tuple<>>)
-  trait.return %req0 : !trait.claim<@Rec[!trait.proj<@Rec[tuple<>], "Sub">] by @Rec_unit>
+  %req0 = trait.coerce %w : !trait.claim<@Rec[tuple<>] by @Rec_unit> to !trait.claim<@Rec[!trait.proj<@Rec[tuple<>], "Sub">]> via (%eq) : (!trait.claim<!trait.proj<@Rec[tuple<>], "Sub"> = tuple<>>)
+  trait.return %req0 : !trait.claim<@Rec[!trait.proj<@Rec[tuple<>], "Sub">]>
 }
 
 func.func @test_coinductive(%x: i64) -> i64 {

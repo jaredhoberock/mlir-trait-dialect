@@ -21,8 +21,8 @@ trait.proof private @p {
   trait.return %d : !trait.claim<@B[i32]>
 }
 
-func.func @main() -> !trait.claim<@B[i64] by @p> {
+func.func @main() {
   // expected-error @below {{proof @p proves '!trait.claim<@B[i32]>', which does not discharge the obligation '!trait.claim<@B[i64]>'}}
   %w = trait.witness @p for @B[i64]
-  return %w : !trait.claim<@B[i64] by @p>
+  return
 }
