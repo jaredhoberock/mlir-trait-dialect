@@ -6,6 +6,6 @@ defaultTargets = ["EvidenceCalculus"]
 [[lean_lib]]
 name = "EvidenceCalculus"
 # One module per file, all at the project root. The import graph is
-#   Defs <- Logic <- Calculus <- {Soundness, Completeness, Coherence, Minimality, Erasure, Findings}
+#   Defs <- Logic <- Calculus <- {Soundness, Completeness, Coherence, Minimality, Erasure, Findings, ReqAdmissible}
 # and the theorem files never import each other.
-roots = ["Defs", "Logic", "Calculus", "Soundness", "Completeness", "Coherence", "Minimality", "Erasure", "Findings"]
+roots = ["Defs", "Logic", "Calculus", "Soundness", "Completeness", "Coherence", "Minimality", "Erasure", "Findings", "ReqAdmissible"]

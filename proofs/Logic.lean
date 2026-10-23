@@ -17,7 +17,7 @@ Decisions taken by the scaffold:
 * The hypothesis rule carries the position `k` of the hypothesis so that `elab` (Calculus.lean) can
   write `^k`; the skeleton's `P ∈ Γ` is a proposition and cannot be read for the index.
 * Shared lemmas that more than one theorem file needs are stated here: weakening, the closure lemma
-  (6.1) and its predicate form, (REQ-ADMISSIBLE), and `erasure_core`, which is theorem 7's statement.
+  (6.1) and its predicate form, and `erasure_core`, which is theorem 7's statement.
   Theorem 5 (Coherence.lean) uses theorem 7 in its COERCE case and the theorem files do not import each
   other, so the statement lives here; Erasure.lean's `erasure` is its instance.
 
@@ -230,9 +230,8 @@ theorem predEntails_valid (L : ConLaw) (S : Sig) (Ok : ImplId -> Subst -> Prop) 
     exact hP.elim fun d => (entails_valid L S Ok Γ E hE hac).elim fun dac =>
       (entails_valid L S Ok Γ E hE hbd).elim fun dbd => ⟨.trans (.symm dac) (.trans d dbd)⟩
 
-/-- (REQ-ADMISSIBLE), SPEC.md 4.3: under H3 the full logic proves nothing the primitive fragment does not. -/
-theorem req_admissible (L : ConLaw) (S : Sig) (hS : S.DeclWF) (hD : S.ReqDuty L) :
-    Valid L S Γ P -> ValidP L S Γ P := by sorry
+-- (REQ-ADMISSIBLE) as SPEC.md 4.3 states it is false: `Sig.ReqDuty` lets two impls' duties read each other's
+-- application with no base. ReqAdmissible.lean states it (`ReqAdmissible`) and refutes it (`req_admissible_fails`).
 
 /-- Under no hypotheses nothing is an `Env(G)` member: (REQ) and (REQ-A) have no primitive instance at
 `G = []`. -/
