@@ -25,7 +25,7 @@ trait.proof private @Safe_proof_alt {
 
 func.func @swap() -> !trait.claim<@Safe[i32, i64] by @Safe_proof_alt> {
   %s = trait.witness @Safe_proof for @Safe[i32, i64]
-  // expected-error @below {{may not swap the proof backing claim #trait<application@Safe[i32, i64]>}}
+  // expected-error @below {{names @Safe_proof_alt for #trait<application@Safe[i32, i64]>, a proof its input does not carry: a coerce neither mints a proof nor exchanges one}}
   %c = trait.coerce %s
     : !trait.claim<@Safe[i32, i64] by @Safe_proof>
     to !trait.claim<@Safe[i32, i64] by @Safe_proof_alt>

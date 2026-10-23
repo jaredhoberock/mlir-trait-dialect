@@ -2627,16 +2627,21 @@ LogicalResult CoerceOp::verify() {
                            << ": a coerce respells a claim at its root or a "
                               "type that holds no claim";
 
-  // 2. No proof swap: a proof present on the result must be the input's.
-  // Otherwise comparison is modulo the proof, permanently.
+  // 2. The result names no proof its input does not carry. A proven claim
+  // names the proof of exactly its own application
+  // (`ClaimType::verifySymbolUses`), so a proven result naming its input's
+  // proof is the input's type unchanged; what this refuses is a proof minted
+  // on an unproven input, or another proof exchanged for the input's (two
+  // impls of one application, each with its proof). A result dropping its
+  // input's proof is admitted, and the endpoints are compared without proofs.
   auto fromClaim = dyn_cast<ClaimType>(getInput().getType());
   auto toClaim = dyn_cast<ClaimType>(getResult().getType());
   if (toClaim && toClaim.isProven() &&
       (!fromClaim || fromClaim.getProof() != toClaim.getProof()))
-    return emitOpError() << "may not swap the proof backing claim "
+    return emitOpError() << "names " << toClaim.getProof() << " for "
                          << toClaim.getTraitApplication()
-                         << ": a coerce compares modulo a proof but may not "
-                            "exchange it for another";
+                         << ", a proof its input does not carry: a coerce "
+                            "neither mints a proof nor exchanges one";
   Type input = fromClaim ? Type(fromClaim.asUnproven()) : getInput().getType();
   Type result = toClaim ? Type(toClaim.asUnproven()) : getResult().getType();
 

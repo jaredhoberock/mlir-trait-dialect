@@ -29,7 +29,7 @@ trait.trait private @Wrapped(%self: !trait.claim<@Wrapped[!T]>) {
 }
 trait.impl private @W(%self: !trait.claim<@Wrapped[i32]>) {
   trait.method @requirement_0(%p: !trait.claim<@Mark[i32]>) -> !trait.claim<@Mark[i32]> {
-    // expected-error @below {{may not swap the proof backing claim #trait<application@Mark[i32]>: a coerce compares modulo a proof but may not exchange it for another}}
+    // expected-error @below {{names @Seven for #trait<application@Mark[i32]>, a proof its input does not carry: a coerce neither mints a proof nor exchanges one}}
     trait.return %p : !trait.claim<@Mark[i32]>
   }
 }

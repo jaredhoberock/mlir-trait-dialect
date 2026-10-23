@@ -2093,9 +2093,10 @@ struct EraseCoerceOp : public OpConversionPattern<CoerceOp> {
     // and may not cross the barrier unjudged: every claim-to-claim coerce that
     // reaches the barrier live is judged here (one dropped as dead earlier,
     // during instantiate-monomorphs, forwarded no value and so needs no
-    // judgment). Comparison strips application-claim proofs, exactly as the
-    // verifier does: a coerce compares modulo the proof permanently, so
-    // exchanging a proof label alone is not a surviving difference. (The
+    // judgment). Comparison strips application-claim proofs, as the verifier's
+    // entailment does: the verifier admits a result dropping its input's proof
+    // and refuses any other difference in proofs (`CoerceOp::verify`), so a
+    // dropped proof alone is not a surviving difference. (The
     // value-carrying arm below needs no strip; the values it forwards carry no
     // proof.) A claim's predicate is never respelled, so a coerce respelling
     // evidence (`evidenceOf`) keeps its two spellings to the barrier; it is
