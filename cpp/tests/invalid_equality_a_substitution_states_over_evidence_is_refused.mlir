@@ -7,17 +7,17 @@
 // @f states the equality of its parameter with itself and hands it to @h. A
 // call supplying evidence as the parameter cuts instances whose equality
 // relates claims: the clone substitutes the variable into the equality, which
-// it can always build, and the verifier refuses what it built where it stands,
-// at the instance of @h that takes it, as it refuses an equality over evidence
-// written by hand (invalid_claim_inside_an_equality_endpoint.mlir).
+// it can always build, and the verifier after the step refuses what it built
+// at the op producing it, the refl in @f's instance, as it refuses an equality
+// over evidence written by hand (invalid_claim_inside_an_equality_endpoint.mlir).
 
 trait.trait private @T(%s: !trait.claim<@T[!trait.poly<0>]>) {}
 trait.impl private @I(%s: !trait.claim<@T[i32]>) {}
-// expected-error @below {{a type-equality endpoint must not contain a claim: '!trait.claim<@T[i32]>' in '!trait.claim<!trait.claim<@T[i32]> = !trait.claim<@T[i32]>>'}}
 func.func private @h(%e: !trait.claim<!trait.poly<0> = !trait.poly<0>>, %x: !trait.poly<0>) -> !trait.poly<0> {
   return %x : !trait.poly<0>
 }
 func.func private @f(%x: !trait.poly<0>) -> !trait.poly<0> {
+  // expected-error @below {{'trait.witness' op a type-equality endpoint must not contain a claim: '!trait.claim<@T[i32]>' in '!trait.claim<!trait.claim<@T[i32]> = !trait.claim<@T[i32]>>'}}
   %e = trait.witness refl : !trait.claim<!trait.poly<0> = !trait.poly<0>>
   %y = trait.func.call @h(%e, %x) : (!trait.claim<!trait.poly<0> = !trait.poly<0>>, !trait.poly<0>) -> !trait.poly<0>
   return %y : !trait.poly<0>

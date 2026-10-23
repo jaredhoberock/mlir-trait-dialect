@@ -15,8 +15,8 @@
 namespace mlir::trait {
 
 // Structural well-formedness of an equality proposition: two endpoint types.
-// That neither holds a claim is a judgment on the equality where it stands
-// (`ClaimType::verifySymbolUses`), as a trait application's claim argument is
+// That neither holds a claim is a judgment on the equality where it is read
+// (`verifyEndpointsRelateTypes`), as a trait application's claim argument is
 // (`TraitApplicationAttr::verifySymbolUses`), not an invariant of the
 // attribute: a clone's substitution and selection's normal forms rebuild an
 // equality, and neither can fail. Constructing the attribute does not assert

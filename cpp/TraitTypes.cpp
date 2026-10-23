@@ -219,6 +219,23 @@ ModuleOp getAnchorModule(Operation *anchor) {
   return anchor->getParentOfType<ModuleOp>();
 }
 
+LogicalResult
+verifyEndpointsRelateTypes(ClaimType claim,
+                           llvm::function_ref<InFlightDiagnostic()> err) {
+  // A hypothesis equating two claims would let a coerce turn evidence of one
+  // application into evidence of another with no equality between their
+  // arguments, and one equating a claim with a value would turn evidence into
+  // a value.
+  TypeEqualityAttr eq = claim.getEqualityAttr();
+  if (!eq)
+    return success();
+  for (Type endpoint : {eq.getLhs(), eq.getRhs()})
+    if (containsClaim(endpoint))
+      return err() << "a type-equality endpoint must not contain a claim: "
+                   << endpoint << " in " << Type(claim);
+  return success();
+}
+
 // A claim's predicate is one of exactly two arms; the equality arm never
 // carries a proof.
 LogicalResult ClaimType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
@@ -250,23 +267,13 @@ LogicalResult ClaimType::verifySymbolUses(Operation *op,
                            << ": anchor operation is not nested in a module";
   auto err = [&] { return op->emitError(); };
 
-  // Equality arm: an equality relates types, and a claim is a value's
-  // evidence, so an endpoint holding one, proven or not, at its root or inside
-  // another type, is refused, as an application refuses a claim argument.
-  // Otherwise a hypothesis equating two claims would let a coerce turn evidence
-  // of one application into evidence of another with no equality between their
-  // arguments, and one equating a claim with a value would turn evidence into a
-  // value. The equality has no trait symbol and no proof of its own, and the
-  // endpoints are ordinary sub-elements the framework's own walk descends
-  // into, so it reaches every symbol-using type nested in one; reading the
-  // application here would assert.
-  if (TypeEqualityAttr eq = getEqualityAttr()) {
-    for (Type endpoint : {eq.getLhs(), eq.getRhs()})
-      if (containsClaim(endpoint))
-        return err() << "a type-equality endpoint must not contain a claim: "
-                     << endpoint << " in " << Type(*this);
-    return success();
-  }
+  // Equality arm: an equality relates types, as an application refuses a
+  // claim argument. The equality has no trait symbol and no proof of its own,
+  // and the endpoints are ordinary sub-elements the framework's own walk
+  // descends into, so it reaches every symbol-using type nested in one;
+  // reading the application here would assert.
+  if (getEqualityAttr())
+    return verifyEndpointsRelateTypes(*this, err);
 
   // Application arm: verify the trait application.
   if (failed(getTraitApplication().verifySymbolUses(op, symbolTable)))

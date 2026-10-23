@@ -605,12 +605,13 @@ class ImplResolver {
     bool hasOverflowed() const { return overflowed; }
 
     /// Names, through `err`, why selection refused the application of
-    /// `obligation` -- a claim, or a projection's head -- in `scope`, over the
-    /// candidates it recorded: none whose assumptions hold, or two or more.
-    /// Names nothing where selection has entered no refusal, or where this
-    /// resolver has named that refusal already: a refusal is selection's
-    /// answer about an application, named once, where it is first reported.
-    /// The refusal is what an obligation left standing does not say by itself;
+    /// `obligation` -- a claim, or a projection's head -- in `scope`: over the
+    /// candidates it recorded, none whose assumptions hold or two or more, or,
+    /// where it refused the application before judging any, by the arguments
+    /// that name no type a predicate states. Names nothing where this resolver
+    /// has named that application already: a refusal is selection's answer
+    /// about an application, named once, where it is first reported. The
+    /// refusal is what an obligation left standing does not say by itself;
     /// this asks selection nothing new.
     void nameRefusal(Type obligation, ModuleOp scope,
                      llvm::function_ref<InFlightDiagnostic()> err);
@@ -757,6 +758,11 @@ class ImplResolver {
     bool overflowed = false;
     DenseSet<Location> overflowSites;
     DenseSet<ScopedApplication> namedRefusals;
+
+    // How many readings of a projection's associated-type arguments stand
+    // nested in one another (`resolveProjection`), which the depth limit
+    // bounds.
+    unsigned nestedArgumentReadings = 0;
 
     InstantiationChain instantiations;
     ImplGeneratorSet generators;

@@ -81,12 +81,17 @@ def TypeEqualityAttr : AttrDef<TraitDialect, "TypeEquality", []> {
     argument: a claim is a value's evidence, never a type. An equality relating
     two claims would let a coerce turn evidence of one application into
     evidence of another with no equality between their arguments, and one
-    relating a claim to a value would turn evidence into a value. The claim's
-    symbol-use verifier refuses both where the equality stands
-    (`ClaimType::verifySymbolUses`), and selection refuses an equality whose
-    sides resolve to either (`ImplResolver::readEqualitySides`); the
-    constructor does not, because a clone's substitution and selection's normal
-    forms rebuild an equality and neither can fail.
+    relating a claim to a value would turn evidence into a value. The rule is
+    `verifyEndpointsRelateTypes`: every evidence op (allege, derive, project,
+    witness, coerce) asks it of the evidence it reads and produces, at every
+    verification (`EqualitiesRelateTypes`), so no coerce cites such an
+    equality; the claim's symbol-use verifier asks it wherever an equality
+    naming a symbol stands (`ClaimType::verifySymbolUses`; the symbol-use walk
+    reaches no type naming none); and erasure's entry and selection refuse an
+    equality whose sides, as written or as resolved, are either
+    (`ImplResolver::readEqualitySides`). The constructor does not, because a
+    clone's substitution and selection's normal forms rebuild an equality and
+    neither can fail.
 
     The endpoints are ordered; orientation is recorded for provenance
     only. Replay is direction-blind, so no symmetry construct exists.

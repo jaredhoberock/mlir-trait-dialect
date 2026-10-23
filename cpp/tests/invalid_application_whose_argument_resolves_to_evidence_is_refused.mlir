@@ -10,8 +10,9 @@
 // application before it selects an impl for it and refuses it there, before
 // any proof over it or equality respelling it is written, naming the type
 // carrying the claim that the predicate it reads resolves to: an allegation, a
-// projection whose head is such an application, a method call's receiver, and
-// a proof cited by hand, which erasure's entry reads as selection does.
+// projection whose head is such an application, a method call's receiver, a
+// proof cited by hand, which erasure's entry reads as selection does, and a
+// parameter's claim, which instantiation names where it stands unproven.
 
 trait.trait private @Mark(%self: !trait.claim<@Mark[!trait.poly<0>]>) {}
 trait.trait private @Wrap(%self: !trait.claim<@Wrap[!trait.poly<0>]>) { trait.assoc_type @Item }
@@ -82,4 +83,18 @@ func.func @run() -> i64 {
   %w = trait.witness @p for @B[!trait.proj<@Wrap[i32], "Item">]
   %v = func.call @use(%w) : (!trait.claim<@B[!trait.proj<@Wrap[i32], "Item">] by @p>) -> i64
   return %v : i64
+}
+
+// -----
+
+trait.trait private @Mark(%self: !trait.claim<@Mark[!trait.poly<0>]>) {}
+trait.trait private @Wrap(%self: !trait.claim<@Wrap[!trait.poly<0>]>) { trait.assoc_type @Item }
+trait.impl private @Wrap_i32(%self: !trait.claim<@Wrap[i32]>) { trait.assoc_type @Item = tuple<!trait.claim<@Mark[i32]>> }
+trait.trait private @B(%self: !trait.claim<@B[!trait.poly<0>]>) {}
+trait.impl private @B_any(%self: !trait.claim<@B[!trait.poly<0>]>) {}
+// expected-error @below {{a predicate states types, and '!trait.claim<@B[!trait.proj<@Wrap[i32], "Item">]>' resolves to 'tuple<!trait.claim<@Mark[i32]>>', which carries a claim}}
+// expected-error @below {{unproven monomorphic claim '!trait.claim<@B[!trait.proj<@Wrap[i32], "Item">]>' after instantiate-monomorphs}}
+func.func @g(%c: !trait.claim<@B[!trait.proj<@Wrap[i32], "Item">]>) -> i64 {
+  %k = arith.constant 7 : i64
+  return %k : i64
 }

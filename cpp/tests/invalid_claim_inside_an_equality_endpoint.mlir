@@ -5,8 +5,9 @@
 
 // An equality relates two types, and a claim is a value's evidence, never a
 // type: an endpoint holding one, proven or not, at its root or inside another
-// type, is refused where the equality is built, as an application refuses a
-// claim argument. Otherwise a hypothesis equating two claims would let a coerce
+// type, is refused wherever an equality naming a symbol stands, as these do,
+// as an application refuses a claim argument; one naming none is refused by
+// the ops reading it (invalid_equality_over_evidence_naming_no_symbol.mlir). Otherwise a hypothesis equating two claims would let a coerce
 // turn evidence of one application into evidence of another with no equality
 // between their arguments, and one equating a claim with a value would turn
 // evidence into a value.

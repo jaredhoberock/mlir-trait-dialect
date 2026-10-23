@@ -935,6 +935,13 @@ FailureOr<ClaimType> getClaimRequirementAt(
     uint64_t index,
     llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
 
+/// Refuses `claim` where it states an equality one of whose endpoints holds a
+/// claim, proven or not, at its root or inside another type, naming the
+/// endpoint through `err`: an equality relates types, and a claim is a value's
+/// evidence (`TypeEqualityAttr`).
+LogicalResult verifyEndpointsRelateTypes(
+    ClaimType claim, llvm::function_ref<InFlightDiagnostic()> err);
+
 /// Whether the evidence `proven` names is evidence for its application: the
 /// declaration the cited symbol holds -- a proof's proven application, which
 /// `ProofOp::verify` holds ground, or an unconditional impl's header -- is that

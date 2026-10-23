@@ -663,11 +663,8 @@ ReturnOp ImplOp::getReturn() {
 static FailureOr<bool>
 agreeInOwnContext(ImplOp impl, Type expected, Type actual,
                   llvm::function_ref<InFlightDiagnostic()> errFn) {
-  // The impl's own bindings are spelled over its own parameters, so they are
-  // read at the arguments its parameters take in its own body: themselves.
-  SpecializationMap own;
   auto read = [&](Type ty) -> FailureOr<Type> {
-    FailureOr<Type> out = impl.readOwnBindings(ty, own);
+    FailureOr<Type> out = impl.readOwnBindings(ty);
     if (failed(out) && errFn)
       errFn() << "projection normalization did not converge; check for "
                  "cyclic associated type bindings";
@@ -1938,15 +1935,17 @@ FailureOr<Type> ImplOp::specializeAssociatedTypeBinding(
   return instantiate(*binding, arguments);
 }
 
-FailureOr<Type> ImplOp::readOwnBindings(Type ty,
-                                        const SpecializationMap &arguments) {
-  TraitApplicationAttr own = getSelfApplicationAt(arguments);
+FailureOr<Type> ImplOp::readOwnBindings(Type ty) {
+  // The bindings are spelled over the impl's own parameters, so they are read
+  // at the arguments those parameters take in its own body: themselves.
+  TraitApplicationAttr own = getSelfApplication();
   AttrTypeReplacer replacer;
   replacer.addReplacement([&](ProjectionType proj) -> std::optional<Type> {
     if (proj.getTraitApplication() != own)
       return std::nullopt;
     auto bound = specializeAssociatedTypeBinding(
-        proj.getAssocName().getValue(), proj.getAssocTypeArgs(), arguments);
+        proj.getAssocName().getValue(), proj.getAssocTypeArgs(),
+        SpecializationMap());
     if (failed(bound))
       return std::nullopt;
     return *bound;
@@ -2273,6 +2272,25 @@ void WitnessOp::print(OpAsmPrinter &p) {
 
   p.printOptionalAttrDictWithKeyword((*this)->getAttrs(),
                                      /*elidedAttrs=*/{"impl", "impl_args", "refl"});
+}
+
+LogicalResult mlir::trait::verifyEqualitiesRelateTypes(Operation *op) {
+  // Evidence is a value whose type is a claim, so an evidence op reads and
+  // produces evidence at the root of its operand and result types; a claim
+  // nested in another value's type is judged where an evidence op reads it
+  // out, so every equality a coerce cites is judged at the coerce.
+  auto err = [&] { return op->emitOpError(); };
+  auto relatesTypes = [&](Type type) {
+    auto claim = dyn_cast<ClaimType>(type);
+    return !claim || succeeded(verifyEndpointsRelateTypes(claim, err));
+  };
+  for (Type type : op->getOperandTypes())
+    if (!relatesTypes(type))
+      return failure();
+  for (Type type : op->getResultTypes())
+    if (!relatesTypes(type))
+      return failure();
+  return success();
 }
 
 LogicalResult mlir::trait::verifyReadsUnderDominance(Operation *op) {
@@ -2814,29 +2832,24 @@ static FailureOr<SpecializationMap> readCallSpecialization(
   return arguments;
 }
 
-/// Refuses `call`, a call of this dialect outside a template, standing inside a
-/// symbol table other than a module. The call names its callee in its module
-/// (`getAnchorModule`) and lowers to a `func.call` standing where it stands,
-/// which names a function of its own symbol table alone, so inside any other
-/// symbol table no lowering reaches the callee. A call inside a template
-/// (`isForeign`) is never lowered where it stands: a trait or impl
-/// declaration's methods are cut into its module before a call they hold
-/// lowers, a template no instance reaches is collected with its calls, and the
-/// clone an instance makes of a call is judged by this rule where it stands.
-static LogicalResult verifyCallStandsInItsModule(Operation *call) {
+LogicalResult mlir::trait::verifyCallStandsInItsModule(
+    Operation *call, llvm::function_ref<InFlightDiagnostic()> err) {
   for (Operation *ancestor = call->getParentOp();
        ancestor && !isa<ModuleOp>(ancestor); ancestor = ancestor->getParentOp())
-    if (ancestor->hasTrait<OpTrait::SymbolTable>() && !isForeign(call))
-      return call->emitOpError()
-             << "stands inside '" << ancestor->getName()
-             << "', a symbol table below the module its callee is named in: "
-                "the func.call it lowers to names a function of its own "
-                "symbol table alone";
+    if (ancestor->hasTrait<OpTrait::SymbolTable>() && !isForeign(call)) {
+      if (err)
+        err() << "stands inside '" << ancestor->getName()
+              << "', a symbol table below the module its callee is named in: "
+                 "the func.call it lowers to names a function of its own "
+                 "symbol table alone";
+      return failure();
+    }
   return success();
 }
 
 LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  if (failed(verifyCallStandsInItsModule(getOperation())))
+  if (failed(verifyCallStandsInItsModule(getOperation(),
+                                          [&] { return emitOpError(); })))
     return failure();
 
   // Verification writes nothing, so every name read under it resolves through
@@ -3032,7 +3045,8 @@ void MethodCallOp::print(OpAsmPrinter& p) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult FuncCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  if (failed(verifyCallStandsInItsModule(getOperation())))
+  if (failed(verifyCallStandsInItsModule(getOperation(),
+                                          [&] { return emitOpError(); })))
     return failure();
 
   // Verification writes nothing, so every name read under it resolves through

@@ -71,12 +71,18 @@ ImplResolver::assumptionsSatisfiableFor(ImplOp impl,
     return Answer<SpecializationMap>::overflow();
   SpecializationMap known = args.toSpecialization();
 
-  for (ClaimType premise : impl.getWhereClaims()) {
+  // Each where entry is read at those arguments as the proof citing the
+  // candidate reads it (`proofAtResolution`), so selection admits no candidate
+  // whose proof cannot be written. An entry that reads `concreteSelf` -- an
+  // application entry requiring it, or an equality entry projecting through it
+  // at any depth -- meets that selection again on the chain and is refused
+  // there: its evidence would cite the proof it is a premise of, and rustc
+  // refuses such a where clause too (E0275).
+  for (ClaimType premise : impl.getWhereClaimsAt(known)) {
     // An application premise is discharged by proving it: a unique impl whose
     // own premises hold in turn.
     if (premise.isApplication()) {
-      auto assume = cast<ClaimType>(instantiate(Type(premise), known));
-      Answer<ResolvedImpl> subImpl = resolveImplFor(assume, site, builder);
+      Answer<ResolvedImpl> subImpl = resolveImplFor(premise, site, builder);
       if (!subImpl.isAnswer())
         return subImpl.stop<SpecializationMap>();
       Answer<SpecializationMap> held = assumptionsSatisfiableFor(
@@ -88,25 +94,13 @@ ImplResolver::assumptionsSatisfiableFor(ImplOp impl,
 
     // An equality premise is discharged here rather than at the impl: it
     // restricts when the impl applies, and only the demanded application says
-    // whether it holds. Each side is read through the candidate's own
-    // associated-type bindings first -- a premise may project through the very
-    // application being selected, which selection cannot ask itself about --
-    // and the premise so read is judged as every equality is
-    // (`readEqualitySides`): through what selection has settled elsewhere,
-    // refused where a side names no type a predicate states, and overflowing
-    // where a side does not settle. A reading carrying a type variable is left
-    // to the instances that fill it.
-    TypeEqualityAttr equality = premise.getEqualityAttr();
-    auto ownReading = [&](Type ty) {
-      Type instantiated = instantiate(ty, known);
-      FailureOr<Type> reduced = impl.readOwnBindings(instantiated, known);
-      return succeeded(reduced) ? *reduced : instantiated;
-    };
-    Answer<std::pair<Type, Type>> sides = readEqualitySides(
-        TypeEqualityAttr::get(equality.getContext(),
-                              ownReading(equality.getLhs()),
-                              ownReading(equality.getRhs())),
-        site, builder);
+    // whether it holds. It is judged as every equality is
+    // (`readEqualitySides`): each projection, and each argument a projection
+    // states, read through selection, refused where a side names no type a
+    // predicate states, and overflowing where a side does not settle. A
+    // reading carrying a type variable is left to the instances that fill it.
+    Answer<std::pair<Type, Type>> sides =
+        readEqualitySides(premise.getEqualityAttr(), site, builder);
     if (!sides.isAnswer())
       return sides.stop<SpecializationMap>();
     if (premiseDefersToInstances(sides->first, sides->second))
@@ -176,9 +170,11 @@ static LogicalResult diagnoseImplResolutionFailure(
 /// template's, resolved when an instance substitutes it. One carrying a claim
 /// names a value's evidence, which a predicate never states: an application,
 /// a projection and an equality each refuse a claim as written (their
-/// symbol-use verifiers), and this is the same law on what a binding resolves
-/// them to. Each such type is named through `err` when it is given: a
-/// projection by its refusal, a type carrying a claim beside `predicate`.
+/// symbol-use verifiers, and `verifyEndpointsRelateTypes` for an equality),
+/// and this is the same law on what a binding resolves them to. Each such type
+/// is named through `err` when it is given: a type carrying a claim beside
+/// `predicate`, and a projection carrying none by its refusal -- one carrying
+/// a claim stands for that claim, named with the type holding it.
 static bool isNoPredicateType(ImplResolver &resolver, Type predicate,
                               ArrayRef<Type> normalized, ModuleOp scope,
                               llvm::function_ref<InFlightDiagnostic()> err) {
@@ -188,7 +184,7 @@ static bool isNoPredicateType(ImplResolver &resolver, Type predicate,
     if (isPolymorphicType(Type(proj)))
       return;
     standing = true;
-    if (err)
+    if (err && !containsClaim(proj))
       resolver.nameRefusal(proj, scope, err);
   });
   llvm::SmallSetVector<Type, 2> carryingClaims;
@@ -757,15 +753,31 @@ Answer<ProjectionResolution> ImplResolver::resolveProjection(
     const SelectionSite &site,
     OpBuilder &builder,
     llvm::function_ref<InFlightDiagnostic()> err) {
+  // An overflow is a hard error, so once one is met no projection is read
+  // further, as no application is selected further (`resolveImplFor`).
+  if (overflowed)
+    return Answer<ProjectionResolution>::overflow();
+
   // A projection's own associated-type arguments are types it states, as its
   // head application's are: one naming no type makes the projection name
-  // none, whether or not the binding reads it.
-  for (Type argument : proj.getAssocTypeArgs()) {
-    Answer<Type> read = resolveProjectionsIn(argument, site, builder);
-    if (!read.isAnswer())
-      return read.stop<ProjectionResolution>();
-    if (isNoPredicateType(*this, Type(proj), *read, site.scope, err))
-      return Answer<ProjectionResolution>::refusal();
+  // none, whether or not the binding reads it. Each is read by a reading
+  // nested in this one, and the nesting is bounded as rustc's normalizer
+  // bounds its depth: a binding growing its own arguments overflows rather
+  // than nesting without end.
+  if (!proj.getAssocTypeArgs().empty()) {
+    if (nestedArgumentReadings >= kInstantiationDepthLimit) {
+      overflow(Overflow::projectionSteps(Type(proj)), site);
+      return Answer<ProjectionResolution>::overflow();
+    }
+    ++nestedArgumentReadings;
+    auto unnest = llvm::scope_exit([&] { --nestedArgumentReadings; });
+    for (Type argument : proj.getAssocTypeArgs()) {
+      Answer<Type> read = resolveProjectionsIn(argument, site, builder);
+      if (!read.isAnswer())
+        return read.stop<ProjectionResolution>();
+      if (isNoPredicateType(*this, Type(proj), *read, site.scope, err))
+        return Answer<ProjectionResolution>::refusal();
+    }
   }
   auto select = [&](ClaimType claim) {
     return resolveImplFor(claim, site, builder, err);
@@ -1111,7 +1123,18 @@ void ImplResolver::nameRefusal(
   auto selected = cast<ClaimType>(readSettledProjectionsIn(claim, scope));
   TraitApplicationAttr app = selected.getTraitApplication();
   auto refusal = memo.refused.find({scope, app});
-  if (refusal == memo.refused.end() || !namedRefusals.insert({scope, app}).second)
+  // An application whose arguments name no type a predicate states is refused
+  // before any candidate is judged (`readApplication`), and so enters no
+  // refusal: it is named by those arguments, as that reading names them.
+  if (refusal == memo.refused.end()) {
+    if (isNoPredicateType(*this, Type(claim), app.getTypeArgs(), scope,
+                          /*err=*/nullptr) &&
+        namedRefusals.insert({scope, app}).second)
+      (void)isNoPredicateType(*this, Type(claim), app.getTypeArgs(), scope,
+                              err);
+    return;
+  }
+  if (!namedRefusals.insert({scope, app}).second)
     return;
   auto trait = app.getTrait(scope, /*errFn=*/nullptr);
   if (succeeded(trait))

@@ -135,6 +135,14 @@ def ReadsUnderDominance : NativeOpTrait<"ReadsUnderDominance"> {
   let cppNamespace = "::mlir::trait";
 }
 
+// The evidence an evidence op reads and produces states no equality relating
+// evidence (`verifyEndpointsRelateTypes`), whatever symbols it names: the
+// evidence ops are the ones making equality evidence or reading it as
+// evidence, so no verification passes a coerce citing such an equality.
+def EqualitiesRelateTypes : NativeOpTrait<"EqualitiesRelateTypes"> {
+  let cppNamespace = "::mlir::trait";
+}
+
 // Op's regions have only these types of child operations.
 class HasChildren<list<string> ops>
     : ParamNativeOpTrait<"HasOnlyChildOps", !interleave(ops, ", ")>, StructuralOpTrait;
@@ -618,15 +626,13 @@ def ImplOp : TraitDialectOp<"impl", [
         const SpecializationMap &headerArguments,
         llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
-    /// `ty` with every projection over this impl's header at `arguments`
-    /// resolved through this impl's associated-type bindings at those
-    /// arguments, to a fixed point: the facts the impl states of its own
-    /// application, which hold anywhere it is read at those arguments. A
-    /// projection over any other application, and an equality's endpoints,
-    /// stand as spelled. Fails where the bindings do not settle within the
-    /// projection-step bound.
-    FailureOr<Type> readOwnBindings(Type ty,
-                                    const SpecializationMap &arguments);
+    /// `ty`, spelled over this impl's own parameters, with every projection
+    /// over its header resolved through its associated-type bindings, to a
+    /// fixed point: the facts the impl states of its own application, which
+    /// hold in its own body. A projection over any other application, and an
+    /// equality's endpoints, stand as spelled. Fails where the bindings do not
+    /// settle within the projection-step bound.
+    FailureOr<Type> readOwnBindings(Type ty);
 
   }];
 
@@ -878,7 +884,8 @@ def Projection : Type<
 
 
 def AllegeOp : TraitDialectOp<"allege", [
-  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+  EqualitiesRelateTypes
 ]> {
   let summary = "Unverified claim that a trait application or a type equality holds";
   let description = [{
@@ -941,7 +948,8 @@ def AllegeOp : TraitDialectOp<"allege", [
 def DeriveOp : TraitDialectOp<"derive", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
   Pure,
-  ReadsUnderDominance
+  ReadsUnderDominance,
+  EqualitiesRelateTypes
 ]>{
   let summary = "Derive a claim from an impl and one claim per where entry";
   let description = [{
@@ -1016,7 +1024,8 @@ def DeriveOp : TraitDialectOp<"derive", [
 def ProjectOp : TraitDialectOp<"project", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
-  ReadsUnderDominance
+  ReadsUnderDominance,
+  EqualitiesRelateTypes
 ]> {
   let summary = "Select one of a claim's requirements by position";
   let description = [{
@@ -1105,7 +1114,8 @@ def ProjectOp : TraitDialectOp<"project", [
 def WitnessOp : TraitDialectOp<"witness", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
   Pure,
-  ReadsUnderDominance
+  ReadsUnderDominance,
+  EqualitiesRelateTypes
 ]>{
   let summary = "Introduces verified evidence for a claim";
   let description = [{
@@ -1234,7 +1244,8 @@ def WitnessOp : TraitDialectOp<"witness", [
 
 def CoerceOp : TraitDialectOp<"coerce", [
   Pure,
-  ReadsUnderDominance
+  ReadsUnderDominance,
+  EqualitiesRelateTypes
 ]> {
   let summary = "Change a value's written type by citing type equalities";
   let description = [{

@@ -1016,6 +1016,13 @@ struct CallOpLowering : public OpRewritePattern<CallOpT> {
     if (!isRewritableGenericCall(op))
       return rewriter.notifyMatchFailure(op, "not a rewritable generic call");
 
+    // An instance's clone of a call is cut outside every template, before any
+    // verification judges where it stands, and the call it lowers to would
+    // name a function of the symbol table it stands in: one standing below
+    // its module stays, for the exit walk to name by its scope.
+    if (failed(verifyCallStandsInItsModule(op, /*err=*/nullptr)))
+      return rewriter.notifyMatchFailure(op, "stands below its module");
+
     // The predicate confirmed the callee's signature exists; read it again to
     // specialize against, as the substitution below reads it.
     FailureOr<FunctionType> formalTy;
@@ -1491,13 +1498,25 @@ struct MonomorphizeResultTypesPattern
   }
 };
 
+/// The returns of `function`'s body, which hand its results back: none for an
+/// external function, or for a body that never returns.
+static SmallVector<func::ReturnOp> returnsOf(func::FuncOp function) {
+  SmallVector<func::ReturnOp> returns;
+  for (Block &block : function.getBody())
+    if (auto ret = dyn_cast<func::ReturnOp>(block.getTerminator()))
+      returns.push_back(ret);
+  return returns;
+}
+
 /// Respells `op` under `rewriter`, each position by its writer's replacer.
 /// Selection, `selecting`, writes a declaration's positions, which no
 /// producer writes: a function's parameters, as its signature states them and
-/// its entry block receives them, and an external function's results. Every
-/// other position -- an op's result, a block's argument, a body's result, an
-/// op's own attribute -- is written by a producer or by the op stating it, and
-/// takes `views`, which proves no claim. Fails where nothing changes.
+/// its entry block receives them, and the results of a function no return
+/// hands back, an external function's or a body's that never returns. Every
+/// other position -- an op's result, a block's argument, the results a
+/// function's returns hand back, an op's own attribute -- is written by a
+/// producer or by the op stating it, and takes `views`, which proves no claim.
+/// Fails where nothing changes.
 static LogicalResult respellOp(Operation *op, AttrTypeReplacer &selecting,
                                AttrTypeReplacer &views,
                                PatternRewriter &rewriter) {
@@ -1510,7 +1529,8 @@ static LogicalResult respellOp(Operation *op, AttrTypeReplacer &selecting,
     Attribute value = attr.getValue();
     if (attr.getName() == signature) {
       FunctionType type = function.getFunctionType();
-      AttrTypeReplacer &results = function.isExternal() ? selecting : views;
+      AttrTypeReplacer &results =
+          returnsOf(function).empty() ? selecting : views;
       auto inputs = llvm::map_to_vector(
           type.getInputs(), [&](Type input) { return selecting.replace(input); });
       auto outputs = llvm::map_to_vector(
@@ -1645,13 +1665,10 @@ struct ProveFunctionResultsPattern : public OpRewritePattern<func::FuncOp> {
   LogicalResult matchAndRewrite(func::FuncOp function,
                                 PatternRewriter &rewriter) const override {
     SmallVector<Type> results(function.getResultTypes());
-    if (function.isExternal() ||
+    SmallVector<func::ReturnOp> returns = returnsOf(function);
+    if (returns.empty() ||
         !llvm::any_of(results, carriesUndischargedObligation))
       return rewriter.notifyMatchFailure(function, "no result claim to settle");
-    SmallVector<func::ReturnOp> returns;
-    for (Block &block : function.getBody())
-      if (auto ret = dyn_cast<func::ReturnOp>(block.getTerminator()))
-        returns.push_back(ret);
     bool refined = false;
     for (unsigned position = 0; position < results.size(); ++position) {
       llvm::SmallSetVector<Type, 1> supplied;
@@ -1977,13 +1994,14 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
   // A generic call the driver could still rewrite but did not is a call whose
   // callee specialization fail-closed -- an external polymorphic declaration has
   // no body to clone, or the substitution read a projection selection refused,
-  // which is named by that refusal. Standing outside every template, it is
-  // named here rather than left for a later step to meet a call it cannot
-  // lower.
+  // which is named by that refusal -- or one an instance cut below its module,
+  // named by its scope. Standing outside every template, it is named here
+  // rather than left for a later step to meet a call it cannot lower.
   bool sawSurvivingCall = false;
   module.walk([&](Operation *op) {
     if (isForeign(op) || !isRewritableGenericCall(op))
       return;
+    (void)verifyCallStandsInItsModule(op, [&] { return op->emitOpError(); });
     auto nameRefusalsIn = [&](TypeRange types) {
       for (Type type : types)
         type.walk([&](ProjectionType proj) {
@@ -2072,8 +2090,8 @@ struct EraseCoerceOp : public OpConversionPattern<CoerceOp> {
     // A coerce of a value, live or dead, forwards its input: one value of the
     // result's type. Its verifier puts the two endpoints in one class of the
     // congruence its cited equalities seed (`CoerceOp::verify`), and no cited
-    // equality relates a claim, as written (`ClaimType::verifySymbolUses`) or
-    // as its sides resolve (the entry judgment), so a claim at the input's
+    // equality relates a claim, as written (`EqualitiesRelateTypes`) or as its
+    // sides resolve (the entry judgment), so a claim at the input's
     // root is in no class with the claim-free result. The entry
     // judgment refused a ground projection standing at either endpoint -- the
     // result is a standing site of this op, the input one of its producer --
@@ -2586,9 +2604,9 @@ bool isRewritableGenericCall(Operation *op) {
   // The single readiness law the two call-lowering patterns gate on, so the
   // patterns and the instantiate step's discharge read one spelling. A
   // trait.func.call is rewritable when its operands are monomorphic, its operand
-  // claims proven, and its callee has a signature to specialize against; outside
-  // a template it stands in the module that holds its callee, where the
-  // func.call it lowers to can name it (`FuncCallOp::verifySymbolUses`). A
+  // claims proven, and its callee has a signature to specialize against; it
+  // lowers only standing in the module that holds its callee, where the
+  // func.call it lowers to can name it (`verifyCallStandsInItsModule`). A
   // trait.method.call is rewritable when its operands are
   // monomorphic, its receiver claim proven, its argument claims proven, and its
   // method has a signature; it lowers in place to a trait.func.call and needs no

@@ -34,6 +34,38 @@ public:
 /// and none is computed from `op`'s own result.
 LogicalResult verifyReadsUnderDominance(Operation *op);
 
+/// Refuses `op` where one of its operands or results is evidence of an
+/// equality relating evidence (`verifyEndpointsRelateTypes`).
+LogicalResult verifyEqualitiesRelateTypes(Operation *op);
+
+/// The evidence an evidence op reads and produces states no equality relating
+/// evidence: an op verifier, which every verification runs, unlike the
+/// symbol-use walk, which skips a type naming no symbol.
+template <typename ConcreteType>
+class EqualitiesRelateTypes
+    : public ::mlir::OpTrait::TraitBase<ConcreteType, EqualitiesRelateTypes> {
+public:
+  static LogicalResult verifyTrait(Operation *op) {
+    return verifyEqualitiesRelateTypes(op);
+  }
+};
+
+/// Refuses `call`, a call of this dialect outside a template, standing inside a
+/// symbol table other than a module, naming why through `err` when it is
+/// given. The call names its callee in its module (`getAnchorModule`) and
+/// lowers to a `func.call` standing where it stands, which names a function of
+/// its own symbol table alone, so inside any other symbol table no lowering
+/// reaches the callee. A call inside a template (`isForeign`) is never lowered
+/// where it stands: a trait or impl declaration's methods are cut into its
+/// module before a call they hold lowers, and a template no instance reaches is
+/// collected with its calls. The clone an instance makes of a call stands
+/// outside every template from the step that cuts it, before any verification
+/// runs, so no call is lowered where this rule refuses it, and one it leaves
+/// unlowered is named by it where instantiation ends.
+LogicalResult
+verifyCallStandsInItsModule(Operation *call,
+                            llvm::function_ref<InFlightDiagnostic()> err);
+
 /// An op reading evidence: every value it reads is defined where SSA dominance
 /// holds (`verifyReadsUnderDominance`), so a derivation through its operands is
 /// a finite term and a walk reading evidence through them ends. A graph region

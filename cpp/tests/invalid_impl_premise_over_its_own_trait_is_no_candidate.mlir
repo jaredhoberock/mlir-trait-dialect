@@ -9,10 +9,11 @@
 // the trait being implemented). The first projects the impl's own trait
 // application, @A[!S]::Output, which names a type only through @A_gen's own
 // binding of Output to !T: its evidence at i64 would be the citation of @A_gen
-// it is a premise of, so no proof can supply it and the citation is refused,
-// as rustc refuses a where clause that requires the impl's own application.
-// The declaration's signature states the same claim, which stands unproven
-// there too.
+// it is a premise of. Selection reads the premise as that citation would, meets
+// @A[i64] again on its chain and refuses the candidate, as rustc refuses a
+// where clause that requires the impl's own application (E0275). The
+// declaration's signature states the same claim, which stands unproven there
+// too.
 
 !S = !trait.poly<0>
 !T = !trait.poly<1>
@@ -27,6 +28,7 @@ trait.impl private @B_i64(%self: !trait.claim<@B[i64]>) {
 trait.trait private @A(%self: !trait.claim<@A[!S]>) {
   trait.assoc_type @Output
 }
+// expected-note @below {{unsatisfiable candidate}}
 trait.impl private @A_gen(%self: !trait.claim<@A[!S]>, %b: !trait.claim<@B[!S]>, %output: !trait.claim<!trait.proj<@A[!S], "Output"> = !T>, %x: !trait.claim<!trait.proj<@B[!S], "X"> = !T>) {
   trait.assoc_type @Output = !T
 }
@@ -35,7 +37,7 @@ trait.impl private @A_gen(%self: !trait.claim<@A[!S]>, %b: !trait.claim<@B[!S]>,
 func.func private @need(!trait.claim<@A[i64]>)
 
 func.func @main() {
-  // expected-error @below {{impl '@A_gen' applies where '!trait.claim<!trait.proj<@A[i64], "Output"> = i1>', which selection does not settle at '!trait.claim<@A[i64]>'}}
+  // expected-error @below {{'trait.allege' op no impl with satisfiable assumptions for '!trait.claim<@A[i64]>'}}
   // expected-error @below {{unproven monomorphic claim '!trait.claim<@A[i64]>' after instantiate-monomorphs}}
   %c = trait.allege @A[i64]
   func.call @need(%c) : (!trait.claim<@A[i64]>) -> ()
