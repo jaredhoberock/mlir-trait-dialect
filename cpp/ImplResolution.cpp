@@ -1001,7 +1001,12 @@ Value buildEqualityEvidence(OpBuilder &builder, Location loc,
   SmallVector<Value> witnesses = buildStepWitnesses(builder, loc, steps);
   if (witnesses.size() == 1 && steps.front().equality == eq)
     return witnesses.front();
-  return WitnessOp::create(builder, loc, eq, ValueRange(witnesses)).getResult();
+  MLIRContext *ctx = builder.getContext();
+  Value lhs = WitnessOp::create(
+      builder, loc, TypeEqualityAttr::get(ctx, eq.getLhs(), eq.getLhs()));
+  return CoerceOp::create(builder, loc, ClaimType::getEquality(ctx, eq), lhs,
+                          witnesses)
+      .getResult();
 }
 
 void ImplResolver::nameRefusal(

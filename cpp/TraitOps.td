@@ -57,13 +57,14 @@ include "TraitTypes.td"
 // impl that assumes it, or the result of an evidence op.  trait.witness cites
 // a proof, or an impl with no parameters and no where entries; for an
 // equality it cites a projection's resolution by an impl
-// (`proj_resolve P resolves T by @impl`), a composition of such steps
-// (`compose(...)`), or reflexivity (`refl`).  trait.derive applies an impl
-// to evidence for its where entries.  trait.project reads a claim's
-// requirement by position.  trait.coerce respells a value's type, and
-// accepts the respelling where the ground congruence closure of the
-// equalities it cites joins the two spellings.  trait.allege asserts a claim
-// for impl selection to prove.  A proven claim's type names its proof
+// (`proj_resolve P resolves T by @impl`) or reflexivity (`refl`), and an
+// equality several such steps entail together is a trait.coerce of a refl
+// witness citing them.  trait.derive applies an impl to evidence for its
+// where entries.  trait.project reads a claim's requirement by position.
+// trait.coerce respells a value's type, and accepts the respelling where the
+// ground congruence closure of the equalities it cites joins the two
+// spellings.  trait.allege asserts a claim for impl selection to prove.  A
+// proven claim's type names its proof
 // (`!trait.claim<@T[i32] by @p>`), and a method call prints its receiver's
 // proof apart from the receiver's type, after its signature (`by @p`).
 //
@@ -892,8 +893,10 @@ def AllegeOp : TraitDialectOp<"allege", [
     an error.
     An equality is proved by resolving each projection its sides spell
     through the impl selection selects for the projection's application: the
-    projection-resolution witness citing that impl at its arguments, or the
-    composition of one such witness per projection resolved.
+    projection-resolution witness citing that impl at its arguments, or, where
+    several projections resolve, a `trait.coerce` of a refl witness of the
+    left side to the equality, citing one such witness per projection
+    resolved.
 
     Examples:
       // monomorphic: proven where it stands
@@ -1120,7 +1123,7 @@ def WitnessOp : TraitDialectOp<"witness", [
       %ord_w = trait.witness @Ord_impl_i32_p for @Ord[i32]
 
     Equality arm. Introduces a value of type `!trait.claim<!A = !B>` that is
-    evidence the two spellings name one type. There are three leaves:
+    evidence the two spellings name one type. There are two leaves:
 
       * proj-resolve: cites an impl by symbol at stated arguments, with one
         claim per entry of its where clause, in order, as a derive cites one.
@@ -1137,20 +1140,17 @@ def WitnessOp : TraitDialectOp<"witness", [
 
         %refl = trait.witness refl : !trait.claim<i64 = i64>
 
-      * compose: cites nothing by symbol; consumes variadic equality-claim
-        `premises` and introduces the equality their ground congruence closure
-        entails. It builds a multi-hop equality without alleging it: the result
-        is derived, not asserted.
+    An equality several leaves entail together is a `trait.coerce` of a refl
+    witness of its left side to it, citing the leaves; the coerce's ground
+    congruence closure carries the leaves to the result, so only the leaves
+    are stored.
 
-        %item_eq = trait.witness compose(%a_eq, %b_eq) : (...) : !trait.claim<...>
-
-        Only the leaf premises are stored; the transitivity and congruence
-        carrying them to the result are re-derived at verify by replaying the
-        same ground congruence closure `trait.coerce` uses to decide equational
-        entailment.
+        %lhs = trait.witness refl : !trait.claim<!A = !A>
+        %eq = trait.coerce %lhs : !trait.claim<!A = !A> to !trait.claim<!A = !B>
+          via (%a_eq, %b_eq) : (...)
 
     Admissible leaves are only definitional equalities -- one type, two
-    spellings. The three leaves above are exhaustive; none is representational (a
+    spellings. The two leaves above are exhaustive; none is representational (a
     layout cast, a zero-cost view), so such a leaf is unconstructable. The
     dialect's nominal types are generative and congruence is exercised through
     projection heads -- the combination that made GHC's unscoped newtype coercions
@@ -1161,12 +1161,14 @@ def WitnessOp : TraitDialectOp<"witness", [
   }];
 
   // The application arm is its result claim alone, which names the proof or
-  // impl it cites; the equality arm carries its leaf.
+  // impl it cites; the equality arm carries its leaf. The premises are a
+  // proj-resolve leaf's `given` claims, one per where entry of the impl it
+  // cites; no other arm takes any (`WitnessOp::verify`).
   let arguments = (ins
     OptionalAttr<FlatSymbolRefAttr>:$impl,               // proj-resolve leaf
     OptionalAttr<ImplArgumentsAttr>:$impl_args,          // proj-resolve leaf
     UnitAttr:$refl,                                      // refl leaf
-    Variadic<Claim>:$premises
+    Variadic<Claim>:$premises                            // proj-resolve leaf
   );
 
   let builders = [
@@ -1194,16 +1196,6 @@ def WitnessOp : TraitDialectOp<"witness", [
       ClaimType claimTy = ClaimType::getEquality(ctx, equality);
       build($_builder, $_state, claimTy, /*impl=*/nullptr, /*impl_args=*/nullptr,
             $_builder.getUnitAttr(), /*premises=*/{});
-    }]>,
-    // Equality composition arm. Distinct in arity from the proj-resolve builder
-    // (that one takes an impl too); it carries only the premises whose ground
-    // congruence closure entails the result equality.
-    OpBuilder<(ins "::mlir::trait::TypeEqualityAttr":$equality,
-                   "::mlir::ValueRange":$premises), [{
-      MLIRContext* ctx = $_builder.getContext();
-      ClaimType claimTy = ClaimType::getEquality(ctx, equality);
-      build($_builder, $_state, claimTy, /*impl=*/nullptr, /*impl_args=*/nullptr,
-            /*refl=*/nullptr, premises);
     }]>
   ];
 

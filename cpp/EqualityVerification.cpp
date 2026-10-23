@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 
-// The ground-congruence entailment a witness composition and a coerce both
-// appeal to, and the term decomposition it keys on.
+// The ground-congruence entailment the verifiers decide equalities by, and
+// the term decomposition it keys on.
 
 #include "Trait.hpp"
 #include "TraitOps.hpp"
@@ -254,15 +254,14 @@ private:
 
 } // namespace
 
-// The one ground-entailment decision the witness composition arm and
-// trait.coerce's proven arm share: whether `lhs` and `rhs` fall in one class of
-// the ground congruence closure seeded by the premise equalities. The
+// The one ground-entailment decision: whether `lhs` and `rhs` fall in one
+// class of the ground congruence closure seeded by the premise equalities. The
 // comparison is modulo application-claim proofs, permanently: a premise's
 // endpoints carry none (`TypeEqualityAttr::verify`), and the caller strips the
-// two compared types. For the composition arm the transitivity and
-// congruence that carry the premises to the result are derived here at verify
-// and never stored, so the witness holds only its leaf premises and only
-// definitional leaves are ever stored.
+// two compared types. The transitivity and congruence that carry the premises
+// to the result are derived here at verify and never stored, so a coerce holds
+// only the leaf equalities it cites and only definitional leaves are ever
+// stored.
 bool mlir::trait::entailedByGroundCongruence(Type lhs, Type rhs,
                                              ArrayRef<TypeEqualityAttr> premises) {
   GroundCongruence closure;

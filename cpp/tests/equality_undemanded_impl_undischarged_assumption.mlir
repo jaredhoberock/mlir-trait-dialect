@@ -10,12 +10,12 @@
 // puts the endpoint projections to impl selection; selecting @Has_mid to carry
 // @Has[i32]::Out to i64 demands its assumption @X[i32], which is unsatisfiable,
 // so selection refuses it and @Has[i32]::Out stays spelled. The endpoints do not
-// meet at a ground type, and the composed equality is reported as a leftover --
+// meet at a ground type, and the coerced equality is reported as a leftover --
 // the settlement resolves only through impls whose where-bounds hold, never
 // through @Has_mid on the strength of its binding alone. Supplying an @X[i32]
 // impl is what discharges the assumption and lets the equality settle.
 
-// VERIFY: trait.witness compose
+// VERIFY: trait.coerce
 
 !U = !trait.poly<1>
 
@@ -36,9 +36,12 @@ func.func @main() -> () {
     : !trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = !trait.proj<@Has[i32], "Out">>
   %p2 = trait.witness proj_resolve !trait.proj<@Has[tuple<i32, i32>], "Out"> resolves !trait.proj<@Has[i32], "Out"> by @Has_w2[i32]
     : !trait.claim<!trait.proj<@Has[tuple<i32, i32>], "Out"> = !trait.proj<@Has[i32], "Out">>
-  %c = trait.witness compose(%p1, %p2)
-    : (!trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = !trait.proj<@Has[i32], "Out">>, !trait.claim<!trait.proj<@Has[tuple<i32, i32>], "Out"> = !trait.proj<@Has[i32], "Out">>)
-    : !trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = !trait.proj<@Has[tuple<i32, i32>], "Out">>
+  %r = trait.witness refl
+    : !trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = !trait.proj<@Has[tuple<i32>], "Out">>
+  %c = trait.coerce %r
+    : !trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = !trait.proj<@Has[tuple<i32>], "Out">>
+    to !trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = !trait.proj<@Has[tuple<i32, i32>], "Out">>
+    via (%p1, %p2) : (!trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = !trait.proj<@Has[i32], "Out">>, !trait.claim<!trait.proj<@Has[tuple<i32, i32>], "Out"> = !trait.proj<@Has[i32], "Out">>)
   trait.func.call @gen(%c) : (!trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = !trait.proj<@Has[tuple<i32, i32>], "Out">>) -> ()
   return
 }

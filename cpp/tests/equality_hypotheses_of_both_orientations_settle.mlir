@@ -33,9 +33,12 @@ func.func private @inner(!trait.poly<0>, !trait.claim<@Trait[!trait.poly<0>]>, !
 func.func @outer(%x: !trait.poly<0>, %t: !trait.claim<@Trait[!trait.poly<0>]>, %o: !trait.claim<@Other[!trait.poly<0>]>,
     %eq: !trait.claim<!trait.proj<@Trait[!trait.poly<0>], "Item"> = !trait.proj<@Other[!trait.poly<0>], "Item">>)
     -> !trait.proj<@Other[!trait.poly<0>], "Item"> {
-  %rev = trait.witness compose(%eq)
-    : (!trait.claim<!trait.proj<@Trait[!trait.poly<0>], "Item"> = !trait.proj<@Other[!trait.poly<0>], "Item">>)
-    : !trait.claim<!trait.proj<@Other[!trait.poly<0>], "Item"> = !trait.proj<@Trait[!trait.poly<0>], "Item">>
+  %other = trait.witness refl
+    : !trait.claim<!trait.proj<@Other[!trait.poly<0>], "Item"> = !trait.proj<@Other[!trait.poly<0>], "Item">>
+  %rev = trait.coerce %other
+    : !trait.claim<!trait.proj<@Other[!trait.poly<0>], "Item"> = !trait.proj<@Other[!trait.poly<0>], "Item">>
+    to !trait.claim<!trait.proj<@Other[!trait.poly<0>], "Item"> = !trait.proj<@Trait[!trait.poly<0>], "Item">>
+    via (%eq) : (!trait.claim<!trait.proj<@Trait[!trait.poly<0>], "Item"> = !trait.proj<@Other[!trait.poly<0>], "Item">>)
   %r = trait.func.call @inner(%x, %t, %o, %rev)
     : (!trait.poly<0>, !trait.claim<@Trait[!trait.poly<0>]>, !trait.claim<@Other[!trait.poly<0>]>,
        !trait.claim<!trait.proj<@Other[!trait.poly<0>], "Item"> = !trait.proj<@Trait[!trait.poly<0>], "Item">>)

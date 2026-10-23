@@ -11,26 +11,29 @@
 // nested in the tuple. Settlement resolves ground projections anywhere in an
 // endpoint, descending composites, so it grounds the endpoint at tuple<i64>.
 
-// The composition witness of that equality has this shape: the nested
-// proj-resolve leaf grounding @Inner[i64]::Item, and a compose whose ground
-// congruence closure lifts that equality through the tuple to the endpoint
-// equality.
-// SHAPE: trait.witness compose(%{{[0-9]+}}) : (!trait.claim<!trait.proj<@Inner[i64], "Item"> = i64>) : !trait.claim<tuple<!trait.proj<@Inner[i64], "Item">> = tuple<i64>>
+// The evidence of that equality has this shape: the nested proj-resolve leaf
+// grounding @Inner[i64]::Item, and a coerce of a refl witness citing it, whose
+// ground congruence closure lifts that equality through the tuple to the
+// endpoint equality.
+// SHAPE: trait.coerce %{{[0-9]+}} : !trait.claim<tuple<!trait.proj<@Inner[i64], "Item">> = tuple<!trait.proj<@Inner[i64], "Item">>> to !trait.claim<tuple<!trait.proj<@Inner[i64], "Item">> = tuple<i64>> via (%{{[0-9]+}}) : (!trait.claim<!trait.proj<@Inner[i64], "Item"> = i64>)
 
 !S = !trait.poly<0>
 
 trait.trait private @Inner(%self: !trait.claim<@Inner[!S]>) { trait.assoc_type @Item }
 trait.impl private @Inner_i64(%self: !trait.claim<@Inner[i64]>) { trait.assoc_type @Item = i64 }
 
-// The composition witness, written out by hand so its shape and the verifier's
-// acceptance of a projection nested in a composite endpoint are both pinned. The coerce keeps the witness live so parse-time verification
-// judges it.
+// The equality's evidence, written out by hand so its shape and the verifier's
+// acceptance of a projection nested in a composite endpoint are both pinned. The
+// value coerce keeps the evidence live so parse-time verification judges it.
 func.func @evidence(%p: tuple<!trait.proj<@Inner[i64], "Item">>) -> tuple<i64> {
   %w = trait.witness proj_resolve !trait.proj<@Inner[i64], "Item"> resolves i64 by @Inner_i64
     : !trait.claim<!trait.proj<@Inner[i64], "Item"> = i64>
-  %c = trait.witness compose(%w)
-    : (!trait.claim<!trait.proj<@Inner[i64], "Item"> = i64>)
-    : !trait.claim<tuple<!trait.proj<@Inner[i64], "Item">> = tuple<i64>>
+  %r = trait.witness refl
+    : !trait.claim<tuple<!trait.proj<@Inner[i64], "Item">> = tuple<!trait.proj<@Inner[i64], "Item">>>
+  %c = trait.coerce %r
+    : !trait.claim<tuple<!trait.proj<@Inner[i64], "Item">> = tuple<!trait.proj<@Inner[i64], "Item">>>
+    to !trait.claim<tuple<!trait.proj<@Inner[i64], "Item">> = tuple<i64>>
+    via (%w) : (!trait.claim<!trait.proj<@Inner[i64], "Item"> = i64>)
   %v = trait.coerce %p : tuple<!trait.proj<@Inner[i64], "Item">> to tuple<i64> via (%c)
     : (!trait.claim<tuple<!trait.proj<@Inner[i64], "Item">> = tuple<i64>>)
   return %v : tuple<i64>

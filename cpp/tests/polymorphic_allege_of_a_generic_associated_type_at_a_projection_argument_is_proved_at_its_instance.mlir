@@ -7,7 +7,8 @@
 // An allegation over a generic associated type whose argument is a projection
 // over a type variable is kept by the template, and the instance cut at i64
 // proves it one step at a time: @Gat_any's binding at the argument as spelled,
-// then the argument's own resolution through @Arg_i64, composed.
+// then the argument's own resolution through @Arg_i64, both cited by a coerce of
+// the refl witness of the alleged equality's left side.
 
 !S = !trait.poly<0>
 !A = !trait.poly<1>
@@ -47,7 +48,8 @@ func.func @main() {
 // CHECK-NOT: trait.allege
 // CHECK: %[[GAT:.*]] = trait.witness proj_resolve !trait.proj<@Gat[i64], "Item", [!trait.proj<@Arg[i64], "Out">]> resolves !trait.proj<@Arg[i64], "Out"> by @Gat_any
 // CHECK: %[[ARG:.*]] = trait.witness proj_resolve !trait.proj<@Arg[i64], "Out"> resolves i32 by @Arg_i64
-// CHECK: %[[BOTH:.*]] = trait.witness compose(%[[GAT]], %[[ARG]])
+// CHECK: %[[LHS:.*]] = trait.witness refl : !trait.claim<!trait.proj<@Gat[i64], "Item", [!trait.proj<@Arg[i64], "Out">]> = !trait.proj<@Gat[i64], "Item", [!trait.proj<@Arg[i64], "Out">]>>
+// CHECK: %[[BOTH:.*]] = trait.coerce %[[LHS]] : {{.*}} to !trait.claim<!trait.proj<@Gat[i64], "Item", [!trait.proj<@Arg[i64], "Out">]> = i32> via (%[[GAT]], %[[ARG]])
 // CHECK: call @sink_{{.*}}(%[[BOTH]])
 
 // LOWERED-NOT: trait.

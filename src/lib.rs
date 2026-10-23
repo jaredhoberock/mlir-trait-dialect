@@ -537,16 +537,6 @@ pub fn witness_refl<'c>(loc: Location<'c>, result_type: Type<'c>) -> Operation<'
         .add_results(&[result_type]))
 }
 
-/// Create a composition `trait.witness`. `premises` are equality-claim values
-/// whose ground congruence closure entails `result_type` (an equality claim).
-/// The witness stores only the leaf premises; the multi-hop equality it names is
-/// re-derived at verify by replaying that closure.
-pub fn witness_compose<'c>(loc: Location<'c>, premises: &[Value<'c, '_>], result_type: Type<'c>) -> Operation<'c> {
-    build_op(OperationBuilder::new("trait.witness", loc)
-        .add_operands(premises)
-        .add_results(&[result_type]))
-}
-
 /// Create a `trait.coerce` op: change `input`'s written type to `result_type`,
 /// justified by the cited `equalities` (equality-claim values).
 pub fn coerce<'c>(loc: Location<'c>, input: Value<'c, '_>, equalities: &[Value<'c, '_>], result_type: Type<'c>) -> Operation<'c> {

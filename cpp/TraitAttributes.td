@@ -82,7 +82,7 @@ def TypeEqualityAttr : AttrDef<TraitDialect, "TypeEquality", []> {
     equality must apply wherever its fact holds: if provenance could appear in
     an endpoint, either it would participate in matching — the same fact spelled
     `by @A` and `by @B` would look like two facts, correct coercions would be
-    refused, and the composition judgment's endpoint matching would fail to
+    refused, and the coerce judgment's endpoint matching would fail to
     connect valid chains — or it would be ignored everywhere, a dead field
     inviting misreading. The constructor forbids the state instead: one fact,
     one spelling. The single place value provenance meets fact-level evidence

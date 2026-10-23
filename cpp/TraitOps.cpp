@@ -2230,15 +2230,6 @@ ParseResult WitnessOp::parse(OpAsmParser &p, OperationState& result) {
     return parseResultType();
   }
 
-  // Equality composition arm: `compose(%premises...) : (types...) :
-  // <result-type>`. The premise types are spelled -- SSA operands resolve
-  // against written types -- and the result equality is spelled too, since it is
-  // derived from the premises and not inferable from them.
-  if (succeeded(p.parseOptionalKeyword("compose"))) {
-    if (parsePremises()) return failure();
-    return parseResultType();
-  }
-
   // Application arm: `@Symbol for @Trait[Types...]`, which is the proven
   // claim the result type is.
   FlatSymbolRefAttr proof;
@@ -2275,15 +2266,6 @@ void WitnessOp::print(OpAsmPrinter &p) {
     return;
   }
 
-  // Composition arm: an equality result with neither an impl nor a refl
-  // marker. Print the premises with their types and the spelled result equality.
-  if (getResultClaim().isEquality()) {
-    p << " compose";
-    printTypedOperandList(p, getPremises());
-    p << " : " << getResult().getType();
-    return;
-  }
-
   // Application arm.
   p << " " << getProof() << " for ";
   getResultClaim().getTraitApplication().print(p);
@@ -2316,8 +2298,8 @@ LogicalResult mlir::trait::verifyReadsUnderDominance(Operation *op) {
 // The op's attributes must match the result claim's arm exactly. For the
 // application arm the result claim names the proof it cites. For the equality
 // arm, the result's left side is the projection a cited impl resolves
-// (proj-resolve), its endpoints are identical (refl), or the premises' ground
-// congruence closure entails it (compose).
+// (proj-resolve) or its endpoints are identical (refl); an equality several
+// leaves entail together is a trait.coerce of a refl witness, not a witness.
 LogicalResult WitnessOp::verify() {
   ClaimType result = dyn_cast<ClaimType>(getResult().getType());
   if (!result)
@@ -2346,42 +2328,19 @@ LogicalResult WitnessOp::verify() {
       return success();
     }
 
+    // An equality witness is a leaf: one with neither marker would state an
+    // equality nothing it carries establishes.
+    if (!resolves)
+      return emitOpError() << "an equality witness cites an impl resolving a "
+                              "projection or carries a refl marker; an "
+                              "equality other equalities entail is a "
+                              "trait.coerce of a refl witness citing them";
+
     // proj-resolve: the impl the witness cites resolves the projection its
     // result's left side spells, which its symbol uses verify.
-    if (resolves) {
-      if (!isa<ProjectionType>(eq.getLhs()))
-        return emitOpError() << "a proj-resolve witness resolves a projection, "
-                             << "found " << eq.getLhs();
-      return success();
-    }
-
-    // Composition: neither a witness nor refl. The result equality is
-    // derived from the leaf equality premises by replaying the ground congruence
-    // closure -- the transitivity and congruence that carry the premises to the
-    // result are never stored, only the leaves are, so only definitional leaves
-    // are ever stored. An equality claim carries no proof by that rule, so there
-    // is no proof-swap for this arm to police.
-    //
-    // The composition arm's evidence is other claim values, read where SSA
-    // dominance holds (`ReadsUnderDominance`), so no premise is the op's own
-    // result and the induction bottoms out at proj-resolve- or refl-anchored
-    // leaves: a false composition would need a false premise, which needs a
-    // false leaf, and the proj-resolve and refl leaves refuse those.
-    if (getPremises().empty())
-      return emitOpError() << "a composition witness requires at least one "
-                              "equality premise";
-    SmallVector<TypeEqualityAttr> premiseEqualities;
-    for (Value premise : getPremises()) {
-      auto claim = dyn_cast<ClaimType>(premise.getType());
-      if (!claim || !claim.isEquality())
-        return emitOpError() << "a composition witness premise must be an "
-                                "equality claim, but a premise has type "
-                             << premise.getType();
-      premiseEqualities.push_back(claim.getEqualityAttr());
-    }
-    if (!entailedByGroundCongruence(eq.getLhs(), eq.getRhs(), premiseEqualities))
-      return emitOpError() << "the premises do not entail " << eq.getLhs()
-                           << " = " << eq.getRhs();
+    if (!isa<ProjectionType>(eq.getLhs()))
+      return emitOpError() << "a proj-resolve witness resolves a projection, "
+                           << "found " << eq.getLhs();
     return success();
   }
 
@@ -2486,8 +2445,7 @@ LogicalResult WitnessOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (isProjectionResolution())
     return verifyResolution(module);
 
-  // Refl and composition arms cite nothing by symbol: their evidence is the
-  // spelling, or the premises, which are SSA values.
+  // The refl arm cites nothing by symbol: its evidence is the spelling.
   if (getResultClaim().isEquality())
     return success();
 

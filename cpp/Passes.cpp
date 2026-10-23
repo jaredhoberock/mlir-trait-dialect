@@ -1062,8 +1062,14 @@ struct CallOpLowering : public OpRewritePattern<CallOpT> {
 };
 
 /// Whether every use of `coerce` reads its evidence through it: each is an op
-/// of this dialect (`evidenceOf`).
+/// of this dialect (`evidenceOf`). A coerce to an equality claim is never read
+/// through: `evidenceOf` reads application evidence alone, and the equality the
+/// coerce states is its own, entailed by the equalities it cites rather than
+/// carried from its input.
 static bool readThrough(CoerceOp coerce) {
+  auto result = dyn_cast<ClaimType>(coerce.getResult().getType());
+  if (result && result.isEquality())
+    return false;
   Dialect *trait = coerce->getDialect();
   return llvm::all_of(coerce.getResult().getUsers(), [&](Operation *user) {
     return user->getDialect() == trait;
@@ -1807,12 +1813,14 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
   // spelling, standing on an op erasure removes. A coerce every use of which
   // reads its evidence through it (`readThrough`) carries its input's evidence,
   // so its claim is judged where its input is produced, and an obligation is
-  // named once, under the spelling it was produced at. The whole type is
-  // walked, so a claim nested inside an aggregate is caught too, not only a
-  // claim that is the root type. Trait infrastructure regions are templates
-  // and keep their unproven claims. The candidate claims are gathered under the
-  // walk and judged after it closes, because judging may insert into the
-  // module.
+  // named once, under the spelling it was produced at. A coerce to an equality
+  // claim is never read through, so every standing monomorphic equality is
+  // judged here whatever reads it, and erasure removes it on this judgment
+  // (`EraseCoerceOp`). The whole type is walked, so a claim nested inside an
+  // aggregate is caught too, not only a claim that is the root type. Trait
+  // infrastructure regions are templates and keep their unproven claims. The
+  // candidate claims are gathered under the walk and judged after it closes,
+  // because judging may insert into the module.
   bool hasLeftovers = false;
   struct StandingClaim {
     Operation *op;
@@ -2082,26 +2090,40 @@ struct EraseCoerceOp : public OpConversionPattern<CoerceOp> {
 
   LogicalResult matchAndRewrite(CoerceOp op, OneToNOpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
-    // Erasure is a checked judgment on the op, not a trusting forward. Every
-    // cited equality is a claim value that maps to zero here, and so is a
-    // claim-typed input (a claim-to-claim coerce shrinking 1:0). A coerce whose
-    // input itself erased, or whose result is unused, leaves nothing to forward
-    // -- but dropping it is still conditioned on its own recorded endpoints: a
-    // discharged respell carries endpoints that coincide here (projection
-    // resolution rewrote both to the same ground type), while an undischarged one
-    // (its two projections ground to different types) still relates two spellings
-    // and may not cross the barrier unjudged: every claim-to-claim coerce that
-    // reaches the barrier live is judged here (one dropped as dead earlier,
-    // during instantiate-monomorphs, forwarded no value and so needs no
-    // judgment). Comparison strips application-claim proofs, as the verifier's
-    // entailment does: the verifier admits a result dropping its input's proof
-    // and refuses any other difference in proofs (`CoerceOp::verify`), so a
-    // dropped proof alone is not a surviving difference. (The
-    // value-carrying arm below needs no strip; the values it forwards carry no
-    // proof.) A claim's predicate is never respelled, so a coerce respelling
-    // evidence (`evidenceOf`) keeps its two spellings to the barrier; it is
-    // discharged by the equalities it cites (`CoerceOp::verify`), each of which
-    // instantiate-monomorphs settled or refused at its exit.
+    // Every cited equality is a claim value that maps to zero here, and so is a
+    // claim-typed input (a claim-to-claim coerce shrinking 1:0).
+    //
+    // A coerce to an equality claim is erased as a witness is: its result was
+    // judged at the exit of instantiate-monomorphs, which settles every
+    // monomorphic equality claim standing outside a template when its endpoints
+    // ground-resolve to one type (`equalityClaimGroundResolvesToOneSpelling`)
+    // and refuses the rest. An equality's endpoints are never respelled, so
+    // their written forms still differ here wherever the coerce related two
+    // forms of one type; comparing them would refuse the claims that walk
+    // settled.
+    auto resultClaim = dyn_cast<ClaimType>(op.getResult().getType());
+    if (resultClaim && resultClaim.isEquality()) {
+      rewriter.eraseOp(op);
+      return success();
+    }
+    // A coerce to an application claim is a checked judgment on the op, not a
+    // trusting forward. One whose input itself erased, or whose result is
+    // unused, leaves nothing to forward -- but dropping it is still conditioned
+    // on its own recorded endpoints: a discharged respell carries endpoints that
+    // coincide here (projection resolution rewrote both to the same ground
+    // type), while an undischarged one (its two projections ground to different
+    // types) still relates two spellings and may not cross the barrier
+    // unjudged: every such coerce that reaches the barrier live is judged here
+    // (one dropped as dead earlier, during instantiate-monomorphs, forwarded no
+    // value and so needs no judgment). Comparison strips application-claim
+    // proofs, as the verifier's entailment does: the verifier admits a result
+    // dropping its input's proof and refuses any other difference in proofs
+    // (`CoerceOp::verify`), so a dropped proof alone is not a surviving
+    // difference. (The value-carrying arm below needs no strip; the values it
+    // forwards carry no proof.) A claim's predicate is never respelled, so a
+    // coerce respelling evidence (`evidenceOf`) keeps its two spellings to the
+    // barrier; it is discharged by the equalities it cites (`CoerceOp::verify`),
+    // each of which instantiate-monomorphs settled or refused at its exit.
     ValueRange input = adaptor.getInput();
     if (input.empty() || op.getResult().use_empty()) {
       if (stripClaimProofs(op.getInput().getType()) !=

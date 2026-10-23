@@ -98,10 +98,9 @@ struct TermShape {
 TermShape decomposeTerm(Type t);
 
 /// Whether `lhs` and `rhs` are equal under the ground congruence closure of the
-/// premise equalities -- the one entailment decision the witness composition arm
-/// and trait.coerce's proven arm share. The two types are compared as given, so
-/// a caller comparing modulo proofs strips them first. Defined beside the
-/// closure; declared here for the composition arm's verifier.
+/// premise equalities -- the one equational entailment decision the verifiers
+/// make. The two types are compared as given, so a caller comparing modulo
+/// proofs strips them first. Defined beside the closure.
 bool entailedByGroundCongruence(Type lhs, Type rhs,
                                 ArrayRef<TypeEqualityAttr> premises);
 

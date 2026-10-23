@@ -350,12 +350,13 @@ Value buildPremiseEvidence(OpBuilder &builder, Location loc,
 
 /// Builds at `builder`'s insertion point the evidence for `eq` from `steps`,
 /// the steps resolving its sides to one ground spelling: refl for identical
-/// sides; the sole step's witness where it proves `eq` as spelled; else the
-/// composition of every step's witness, whose ground congruence closure carries
-/// the sides together across every step. Each step's witness cites its impl
-/// with one claim per where entry, a witness of the proof at an application
-/// entry and the evidence built for the equality at an equality entry. The
-/// result is closed: it reads no value from around it.
+/// sides; the sole step's witness where it proves `eq` as spelled; else a
+/// coerce of the refl witness of `eq`'s left side to `eq`, citing every step's
+/// witness, whose ground congruence closure carries the sides together across
+/// every step. Each step's witness cites its impl with one claim per where
+/// entry, a witness of the proof at an application entry and the evidence built
+/// for the equality at an equality entry. The result is closed: it reads no
+/// value from around it.
 Value buildEqualityEvidence(OpBuilder &builder, Location loc,
                             TypeEqualityAttr eq,
                             ArrayRef<ResolutionStep> steps);

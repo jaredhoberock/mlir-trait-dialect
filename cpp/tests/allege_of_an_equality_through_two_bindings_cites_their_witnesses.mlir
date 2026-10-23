@@ -6,8 +6,8 @@
 
 // An allegation of an equality whose projection resolves through a binding that
 // itself spells a projection is proved one binding at a time: a
-// projection-resolution witness per projection resolved, composed into the
-// alleged equality.
+// projection-resolution witness per projection resolved, cited together by a
+// coerce of the refl witness of the alleged equality's left side.
 
 !S = !trait.poly<0>
 !T = !trait.poly<1>
@@ -35,7 +35,8 @@ func.func @main() {
 // CHECK-NOT: trait.allege
 // CHECK: %[[CARRY:.*]] = trait.witness proj_resolve !trait.proj<@Carry[i64, i8], "Payload"> resolves !trait.proj<@Other[i64], "Out"> by @Carry_any
 // CHECK: %[[OTHER:.*]] = trait.witness proj_resolve !trait.proj<@Other[i64], "Out"> resolves i32 by @Other_i64
-// CHECK: %[[BOTH:.*]] = trait.witness compose(%[[CARRY]], %[[OTHER]])
+// CHECK: %[[LHS:.*]] = trait.witness refl : !trait.claim<!trait.proj<@Carry[i64, i8], "Payload"> = !trait.proj<@Carry[i64, i8], "Payload">>
+// CHECK: %[[BOTH:.*]] = trait.coerce %[[LHS]] : {{.*}} to !trait.claim<!trait.proj<@Carry[i64, i8], "Payload"> = i32> via (%[[CARRY]], %[[OTHER]])
 // CHECK: call @need(%[[BOTH]])
 
 // LOWERED-LABEL: func.func @main
