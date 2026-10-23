@@ -125,10 +125,10 @@ func.func @main() -> i64 {
 // The cycle through where arguments: @A_i32's return projects its where
 // argument @C[i32], which proof @PA gives it as @PC's claim, and @C_i32's
 // return projects its where argument @A[i32], which @PC gives it as @PA's.
-// The reading follows what each proof gave the impl it derives from, so the
-// evidence has no base.
+// Each proof's derivation cites itself through the other, so the proofs are
+// refused before any evidence is read.
 
-// CHECK: note: its source '!trait.claim<@A[i32] by @PA>' names @PA, whose evidence for requirement 0 has no base: it is read through the returns of @A_i32, @C_i32, @A_i32 back to a requirement it stands for
+// CHECK: error: 'trait.proof' op is cited by its own derivation: @PA -> @PC -> @PA
 
 !T = !trait.poly<0>
 trait.trait private @B(%self: !trait.claim<@B[!T]>) { trait.method @v() -> i64 }

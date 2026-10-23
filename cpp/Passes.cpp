@@ -268,84 +268,94 @@ bool isForeign(Operation *op) {
   return false;
 }
 
-/// Refuses a proof whose derivation stands too deep. A derivation is followed
-/// from each proof through the proof each application premise names, at the
-/// instance the proof cites it, and its depth is counted and refused as impl
-/// selection counts and refuses an obligation chain (Rust's trait solver's
-/// overflow): a proof citing itself, or a ring of proofs citing one another,
-/// at ever larger arguments reaches a new application at every step. A proof
-/// cited again at an application on the chain is a coinductive citation and
-/// counts zero.
+/// The proofs `proof`'s derivation cites: the proof each application witness
+/// names among the claims its derive is given and the ops computing them in
+/// the body holding the derive -- a coercion, an equality's witness, the
+/// derive of a where entry. A cast's derivation is its source's
+/// (`ProofOp::getDerive`).
+static SmallVector<ProofOp> getCitedProofs(ProofOp proof, ModuleOp module) {
+  SmallVector<ProofOp> cited;
+  DeriveOp derive = proof.getDerive();
+  if (!derive)
+    return cited;
+  // A proof's body is closed (`ProofOp::verify`), so every value read here is
+  // an op's result.
+  SmallVector<Value> pending(derive.getAssumptions());
+  DenseSet<Operation *> seen;
+  while (!pending.empty()) {
+    Operation *producer = pending.pop_back_val().getDefiningOp();
+    if (!seen.insert(producer).second)
+      continue;
+    auto witness = dyn_cast<WitnessOp>(producer);
+    if (witness && witness.getResultClaim().isApplication()) {
+      auto named = lookupSymbolFrom<ProofOp>(module, witness.getProof());
+      if (named && !llvm::is_contained(cited, named))
+        cited.push_back(named);
+      continue;
+    }
+    llvm::append_range(pending, producer->getOperands());
+  }
+  return cited;
+}
+
+/// Refuses a proof whose derivation cites it or stands too deep. A derivation
+/// is followed from each proof through the proofs it cites
+/// (`getCitedProofs`). A proof cited again on the chain below it rests on
+/// itself, which the trait logic has no rule for: impl selection refuses the
+/// same application as a cycle, as rustc's trait solver does for every trait
+/// but an auto trait, so the proof is refused, naming the cycle. A chain is
+/// otherwise counted and refused as impl selection counts and refuses an
+/// obligation chain (Rust's trait solver's overflow), so a cycle standing past
+/// the depth limit is refused by that count.
 ///
-/// The height below a (proof, application) pair is kept and read where the
-/// pair is reached again, and followed anew where the chain reaching it makes
-/// it too deep, so a refusal names a real chain. A height that counts pairs
-/// above it on the chain as zero holds while those pairs stand there, so it is
-/// kept with them and read only while each still stands at its depth (rustc's
-/// provisional cache); one that counts none holds on every chain. A height
-/// read is then never below the one a fresh walk computes, and the verdict
-/// depends on no order of proofs or premises.
+/// The height below a proof is kept and read where the proof is cited again,
+/// and followed anew where the chain reaching it makes it too deep, so a
+/// refusal names a real chain, and whether a module is refused depends on no
+/// order of proofs or premises.
 static LogicalResult verifyProofDerivationsEnd(ModuleOp module) {
-  using Followed = std::pair<Operation *, TraitApplicationAttr>;
-  // A height, with the pairs above it on the chain, and their depths there,
-  // that the derivation below cites coinductively.
-  struct Height {
-    unsigned value;
-    SmallVector<std::pair<Followed, unsigned>, 1> cites;
-  };
   SmallVector<ObligationFrame> chain;
-  DenseMap<Followed, unsigned> depthOnChain;
-  DenseMap<Followed, Height> heights;
-  auto standsWhereCited = [&](const Height &height) {
-    return llvm::all_of(height.cites, [&](const auto &cited) {
-      auto onChain = depthOnChain.find(cited.first);
-      return onChain != depthOnChain.end() && onChain->second == cited.second;
-    });
-  };
-  std::function<FailureOr<Height>(ProofOp, ClaimType)> follow =
-      [&](ProofOp proof, ClaimType at) -> FailureOr<Height> {
-    TraitApplicationAttr app = at.getTraitApplication();
-    Followed key{proof, app};
-    if (auto onChain = depthOnChain.find(key); onChain != depthOnChain.end())
-      return Height{0, {{key, onChain->second}}};
-    // The deepest frame below the pair stands `height - 1` below it.
-    if (auto known = heights.find(key);
-        known != heights.end() && standsWhereCited(known->second) &&
-        chain.size() + known->second.value - 1 < kInstantiationDepthLimit)
+  DenseMap<Operation *, unsigned> depthOnChain;
+  DenseMap<Operation *, unsigned> heights;
+  std::function<FailureOr<unsigned>(ProofOp)> follow =
+      [&](ProofOp proof) -> FailureOr<unsigned> {
+    if (auto onChain = depthOnChain.find(proof);
+        onChain != depthOnChain.end()) {
+      InFlightDiagnostic cycle = proof.emitOpError();
+      cycle << "is cited by its own derivation: ";
+      for (const ObligationFrame &frame :
+           ArrayRef(chain).drop_front(onChain->second))
+        cycle << frame.proof << " -> ";
+      cycle << chain[onChain->second].proof;
+      return failure();
+    }
+    // The deepest frame below the proof stands `height - 1` below it.
+    if (auto known = heights.find(proof);
+        known != heights.end() &&
+        chain.size() + known->second - 1 < kInstantiationDepthLimit)
       return known->second;
+    TraitApplicationAttr app = proof.getTraitApplication();
     if (failed(checkObligationChainDepth(chain))) {
       emitObligationOverflow(proof.getLoc(), app, chain);
       return failure();
     }
-    SmallVector<ClaimType> premises = proof.getSubproofs();
-    unsigned depth = chain.size();
+    depthOnChain[proof] = chain.size();
     chain.push_back(
         {app, FlatSymbolRefAttr::get(proof.getContext(), proof.getSymName())});
-    depthOnChain[key] = depth;
     auto popped = llvm::scope_exit([&] {
       chain.pop_back();
-      depthOnChain.erase(key);
+      depthOnChain.erase(proof);
     });
-    Height below{0, {}};
-    for (ClaimType premise : premises) {
-      if (!premise.isApplication() || !premise.isProven())
-        continue;
-      if (auto cited = lookupSymbolFrom<ProofOp>(module, premise.getProof())) {
-        FailureOr<Height> height = follow(cited, premise);
-        if (failed(height))
-          return failure();
-        below.value = std::max(below.value, height->value);
-        for (const auto &above : height->cites)
-          if (above.second < depth && !llvm::is_contained(below.cites, above))
-            below.cites.push_back(above);
-      }
+    unsigned below = 0;
+    for (ProofOp cited : getCitedProofs(proof, module)) {
+      FailureOr<unsigned> height = follow(cited);
+      if (failed(height))
+        return failure();
+      below = std::max(below, *height);
     }
-    ++below.value;
-    heights[key] = below;
-    return below;
+    return heights[proof] = below + 1;
   };
   for (ProofOp proof : module.getOps<ProofOp>())
-    if (failed(follow(proof, proof.getProvenClaim())))
+    if (failed(follow(proof)))
       return failure();
   return success();
 }
@@ -1703,7 +1713,7 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
   if (failed(verifyAcyclicTraits(module)))
     return failure();
 
-  // refuse a proof whose derivation keeps reaching larger applications
+  // refuse a proof whose derivation cites it or stands too deep
   if (failed(verifyProofDerivationsEnd(module)))
     return failure();
 
