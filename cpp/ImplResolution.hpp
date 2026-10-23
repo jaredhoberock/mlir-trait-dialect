@@ -562,9 +562,10 @@ class ImplResolver {
     /// that it settles exactly when the two are one type. Refused where a
     /// ground projection still stands on either side -- one selection refused,
     /// which names no type, whatever the other side spells -- naming each
-    /// refusal through `err` when it is given; overflows where selection does
-    /// or a side does not settle within the depth limit. Identical sides are
-    /// read as any others.
+    /// refusal through `err` when it is given, and where a side resolves to a
+    /// type carrying a claim, which no equality relates; overflows where
+    /// selection does or a side does not settle within the depth limit.
+    /// Identical sides are read as any others.
     Answer<std::pair<Type, Type>>
     readEqualitySides(TypeEqualityAttr eq, const SelectionSite &site,
                       OpBuilder &builder,

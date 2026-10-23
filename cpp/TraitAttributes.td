@@ -76,17 +76,12 @@ def TypeEqualityAttr : AttrDef<TraitDialect, "TypeEquality", []> {
     only. A *value* of the enclosing claim type, in verifier-valid IR, is the
     evidence that the equality holds.
 
-    Endpoints are statements of fact, so they admit no proven claims. A proven
-    claim type glues a fact to one value's provenance (`by @impl`), and the
-    provenance legitimately varies value by value while the fact does not. An
-    equality must apply wherever its fact holds: if provenance could appear in
-    an endpoint, either it would participate in matching — the same fact spelled
-    `by @A` and `by @B` would look like two facts, correct coercions would be
-    refused, and the coerce judgment's endpoint matching would fail to
-    connect valid chains — or it would be ignored everywhere, a dead field
-    inviting misreading. The constructor forbids the state instead: one fact,
-    one spelling. The single place value provenance meets fact-level evidence
-    is the coerce verdict, which strips proofs at that one boundary.
+    Endpoints relate types, so they admit no claim, proven or not, as a trait
+    application admits no claim argument: a claim is a value's evidence, never
+    a type. An equality relating two claims would let a coerce turn evidence of
+    one application into evidence of another with no equality between their
+    arguments, and one relating a claim to a value would turn evidence into a
+    value; the constructor forbids both states.
 
     The endpoints are ordered; orientation is recorded for provenance
     only. Replay is direction-blind, so no symmetry construct exists.

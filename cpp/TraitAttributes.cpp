@@ -14,25 +14,11 @@
 
 namespace mlir::trait {
 
-// Whether any claim nested in the type is proven -- a proven claim spelled
-// into a position that forbids one. The equality arm freezes endpoints that
-// contain no proven claim.
-static bool containsProvenClaim(Type type) {
-  bool found = false;
-  type.walk([&](Type sub) {
-    if (auto claim = dyn_cast<ClaimType>(sub))
-      if (claim.isProven())
-        found = true;
-  });
-  return found;
-}
-
-// Structural well-formedness of an equality proposition. An endpoint must not
-// contain a proven claim: a proven claim spelled into an endpoint would carry a
-// proof into the arm that forbids one, re-creating the asymmetric proof
-// comparison the equality arm exists to avoid. Constructing the attribute does
-// not assert the equality; only a value of the enclosing claim type is
-// evidence.
+// Structural well-formedness of an equality proposition. An endpoint relates a
+// type, so it contains no claim, proven or not, as a trait application takes no
+// claim argument (`TraitApplicationAttr::verifySymbolUses`): a claim is a
+// value's evidence. Constructing the attribute does not assert the equality;
+// only a value of the enclosing claim type is evidence.
 LogicalResult TypeEqualityAttr::verify(
     llvm::function_ref<InFlightDiagnostic()> emitError,
     Type lhs, Type rhs) {
@@ -41,8 +27,8 @@ LogicalResult TypeEqualityAttr::verify(
     return failure();
   }
 
-  if (containsProvenClaim(lhs) || containsProvenClaim(rhs)) {
-    if (emitError) emitError() << "a type-equality endpoint must not contain a proven claim";
+  if (containsClaim(lhs) || containsClaim(rhs)) {
+    if (emitError) emitError() << "a type-equality endpoint must not contain a claim";
     return failure();
   }
 

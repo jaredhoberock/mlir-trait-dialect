@@ -34,7 +34,7 @@ namespace mlir::trait {
 
 /// Parse one where-clause predicate: an application `@Trait[types...]` yielding a
 /// TraitApplicationAttr, or an equality `!A = !B` yielding a checked
-/// TypeEqualityAttr whose endpoints carry no proven claim, disambiguated by the
+/// TypeEqualityAttr whose endpoints carry no claim, disambiguated by the
 /// leading `@`. This is the single grammar for a where-clause predicate; a
 /// `by @proof` tail (allowed only on an application claim) is the caller's to
 /// add. Fails on a malformed predicate, having emitted the diagnostic where the

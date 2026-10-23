@@ -941,6 +941,16 @@ ImplResolver::readEqualitySides(TypeEqualityAttr eq, const SelectionSite &site,
   }
   if (namesNoType(*this, {**lhs, **rhs}, site.scope, err))
     return Sides::refusal();
+  // An equality relates types, never evidence (`TypeEqualityAttr::verify`),
+  // so a side a binding resolves to a type carrying a claim is no side of one.
+  for (Type side : {**lhs, **rhs})
+    if (containsClaim(side)) {
+      if (err)
+        err() << "an equality relates types, and one side of "
+              << Type(ClaimType::getEquality(eq.getContext(), eq))
+              << " resolves to " << side << ", which carries a claim";
+      return Sides::refusal();
+    }
   return std::make_pair(**lhs, **rhs);
 }
 

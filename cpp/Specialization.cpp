@@ -272,8 +272,7 @@ InstanceKey::get(SymbolRefAttr templateRef, ArrayRef<Type> typeArguments,
   SmallVector<Type> evidence;
   for (auto [formal, supplied] : llvm::zip(formalInputs, actualInputs)) {
     // Whether a position takes evidence is read off its formal as the instance
-    // spells it: a formal spelled as a projection that resolves to a claim
-    // takes evidence exactly as one spelled as that claim does.
+    // spells it.
     Type parameter = stamp.replace(formal);
     if (!containsType<ClaimType>(parameter)) {
       evidence.push_back(Type());

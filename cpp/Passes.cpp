@@ -2055,15 +2055,15 @@ struct EraseCoerceOp : public OpConversionPattern<CoerceOp> {
     }
     // A coerce of a value, live or dead, forwards its input: one value of the
     // result's type. Its verifier puts the two endpoints in one class of the
-    // congruence its cited equalities seed, and admits a claim at the input's
-    // root (`CoerceOp::verify`). The entry judgment refused a ground projection
-    // standing at either endpoint -- the result is a standing site of this op,
-    // the input one of its producer -- and every cited equality that does not
-    // settle at one type naming no projection. A congruence seeded only by
-    // settled equalities joins only types that resolve to one type, and a type
-    // naming no projection resolves to itself, so the two endpoints are one
-    // type; a claim at the input would need a cited equality relating it to
-    // the claim-free result, and none such settles.
+    // congruence its cited equalities seed (`CoerceOp::verify`), and no cited
+    // equality relates a claim (`TypeEqualityAttr::verify`), so a claim at the
+    // input's root is in no class with the claim-free result. The entry
+    // judgment refused a ground projection standing at either endpoint -- the
+    // result is a standing site of this op, the input one of its producer --
+    // and every cited equality that does not settle at one type naming no
+    // projection. A congruence seeded only by settled equalities joins only
+    // types that resolve to one type, and a type naming no projection resolves
+    // to itself, so the two endpoints are one type.
     ValueRange input = adaptor.getInput();
     assert(input.size() == 1 && input.front().getType() == op.getResult().getType() &&
            "erasure's entry judgment leaves a value coerce's endpoints one type");
@@ -2346,8 +2346,8 @@ static LogicalResult judgeStandingTheory(ModuleOp module) {
       continue;
     judged = false;
     // A refused reading left a projection selection refused standing on a
-    // side; the report reads each side again, which selection answers from
-    // what it settled, to show where it stands.
+    // side, or read a side to a type carrying a claim; the report reads each
+    // side again, which selection answers from what it settled, to show it.
     Type lhs = eq.getLhs(), rhs = eq.getRhs();
     if (sides.isAnswer()) {
       std::tie(lhs, rhs) = *sides;
@@ -2366,7 +2366,10 @@ static LogicalResult judgeStandingTheory(ModuleOp module) {
                                 << " does not settle before erasure: ";
     // Two sides meeting at one form that still names a projection name no
     // type: the refusal named above says why selection left it standing.
-    if (lhs == rhs)
+    if (containsClaim(lhs) || containsClaim(rhs))
+      report << "its sides resolve to " << lhs << " and " << rhs
+             << ", and an equality relates no claim";
+    else if (lhs == rhs)
       report << "both its sides resolve to " << lhs
              << ", which still names a projection";
     else
