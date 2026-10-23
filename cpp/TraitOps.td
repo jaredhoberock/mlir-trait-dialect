@@ -1000,6 +1000,7 @@ def DeriveOp : TraitDialectOp<"derive", [
     `given` `(` $assumptions `)`
     (`:` `(` type($assumptions)^ `)`)? attr-dict-with-keyword
   }];
+  let hasVerifier = 1;
 }
 
 def ProjectOp : TraitDialectOp<"project", [
@@ -1088,6 +1089,7 @@ def ProjectOp : TraitDialectOp<"project", [
   let assemblyFormat = [{
     $source `[` $index `]` attr-dict `:` type($source) `->` type($result)
   }];
+  let hasVerifier = 1;
 }
 
 def WitnessOp : TraitDialectOp<"witness", [

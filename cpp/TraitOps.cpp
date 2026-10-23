@@ -2292,6 +2292,15 @@ void WitnessOp::print(OpAsmPrinter &p) {
                                      /*elidedAttrs=*/{"impl", "impl_args", "refl"});
 }
 
+/// Whether `op` stands where SSA dominance holds: each claim it reads is
+/// defined before it, so none is computed from its own result. A graph region
+/// (a module body) lets an op read its own result, directly or through others,
+/// and a derivation read from such a claim rests on itself.
+static bool standsUnderDominance(Operation *op) {
+  Region *parent = op->getParentRegion();
+  return !parent || mlir::mayHaveSSADominance(*parent);
+}
+
 // The op's attributes must match the result claim's arm exactly. For the
 // application arm the result claim names the proof it cites. For the equality
 // arm, the result's left side is the projection a cited impl resolves
@@ -2350,8 +2359,7 @@ LogicalResult WitnessOp::verify() {
     // makes the induction bottom out at proj-resolve- or refl-anchored leaves: a
     // false composition would need a false premise, which needs a false leaf, and
     // the proj-resolve and refl leaves refuse those.
-    if (Region *parent = getOperation()->getParentRegion();
-        parent && !mlir::mayHaveSSADominance(*parent))
+    if (!standsUnderDominance(*this))
       return emitOpError() << "a composition witness must be in a region that "
                               "enforces SSA dominance, so its premises cannot be "
                               "justified by its own result";
@@ -2511,6 +2519,16 @@ ImplOp DeriveOp::getImplOp() {
   return lookupSymbolFrom<ImplOp>(module, getImplAttr());
 }
 
+LogicalResult DeriveOp::verify() {
+  // A derive is evidence through the claims it is given, so none of them may
+  // be computed from its own result.
+  if (!standsUnderDominance(*this))
+    return emitOpError() << "must be in a region that enforces SSA dominance, "
+                            "so no claim it is given is computed from its own "
+                            "result";
+  return success();
+}
+
 /// Verifies a derive: it states one argument per parameter of the impl, the
 /// derived application is the impl's header at them, and each operand's claim
 /// is the impl's where-clause entry at them, in order, each compared by
@@ -2607,8 +2625,7 @@ LogicalResult CoerceOp::verify() {
   // whose result a reader of evidence passes through to the value beneath, so
   // every such walk ends. In a graph region (a module body) two coerces may
   // each be the other's input, and that walk would never end.
-  if (Region *parent = getOperation()->getParentRegion();
-      parent && !mlir::mayHaveSSADominance(*parent))
+  if (!standsUnderDominance(*this))
     return emitOpError() << "must be in a region that enforces SSA dominance, "
                             "so the chain of coercions defining its input ends";
 
@@ -3131,6 +3148,15 @@ FailureOr<func::FuncOp> FuncCallOp::getOrSpecializeCallee(
 //===----------------------------------------------------------------------===//
 // ProjectOp
 //===----------------------------------------------------------------------===//
+
+LogicalResult ProjectOp::verify() {
+  // A projection's evidence is its source's, so the source may not be
+  // computed from its own result.
+  if (!standsUnderDominance(*this))
+    return emitOpError() << "must be in a region that enforces SSA dominance, "
+                            "so its source is not computed from its own result";
+  return success();
+}
 
 LogicalResult ProjectOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // Verification writes nothing, so every name read under it resolves through
