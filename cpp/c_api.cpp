@@ -74,7 +74,9 @@ MlirType traitClaimTypeWithApplication(MlirType wrappedClaimType,
   ClaimType claimType = dyn_cast<ClaimType>(unwrap(wrappedClaimType));
   TraitApplicationAttr traitApp = dyn_cast<TraitApplicationAttr>(unwrap(wrappedTraitApp));
   if (!claimType || !traitApp) return {};
-  return wrap(ClaimType::get(claimType.getContext(), traitApp, claimType.getProof()));
+  // A claim names the proof of exactly the application it spells
+  // (`verifyCitation`), so the claim of another application names none.
+  return wrap(ClaimType::get(claimType.getContext(), traitApp));
 }
 
 MlirAttribute traitClaimTypeGetTraitApplication(MlirType wrappedClaimType) {

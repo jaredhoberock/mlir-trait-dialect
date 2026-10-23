@@ -1031,3 +1031,18 @@ trait.proof private @p {{\n\
     assert!(Module::parse(&context, &source("%tr", "!trait.claim<@Tr[i32] by @Tr_i32>")).is_none());
 }
 
+
+#[test]
+fn a_claim_respelled_to_another_application_names_no_proof() {
+    // A claim names the proof of exactly the application it spells, so the
+    // claim of another application a respelling builds names none.
+    let context = trait_context();
+    let proven = trait_::ClaimType::try_from(
+        melior::ir::Type::parse(&context, "!trait.claim<@T[i32] by @T_i32>").unwrap(),
+    )
+    .unwrap();
+    let i64_ty = IntegerType::new(&context, 64).into();
+    let respelled =
+        proven.with_application(trait_::trait_application_attr(&context, "T", &[i64_ty]));
+    assert_eq!(respelled.to_string(), "!trait.claim<@T[i64]>");
+}

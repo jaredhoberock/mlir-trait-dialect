@@ -43,8 +43,10 @@ MlirType traitPolyTypeGet(MlirContext ctx, unsigned int label);
 MlirType traitClaimTypeGet(MlirContext ctx,
                            MlirAttribute predicate);
 
-/// Return a claim type with the same proof as `claimType` but
-/// with a different trait application.
+/// Return the unproven claim of `traitApp`, the claim `claimType` states
+/// respelled to another application. A claim names the proof of exactly the
+/// application it spells, so the respelled claim names none, whatever proof
+/// `claimType` names.
 MlirType traitClaimTypeWithApplication(MlirType claimType,
                                        MlirAttribute traitApp);
 

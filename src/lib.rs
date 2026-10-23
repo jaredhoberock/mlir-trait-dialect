@@ -413,8 +413,10 @@ impl<'c> ClaimType<'c> {
         Self { type_ }
     }
 
-    /// Return a claim type with the same proof but a different
-    /// trait application.
+    /// Return the unproven claim of `trait_app`, this claim respelled to
+    /// another application. A claim names the proof of exactly the
+    /// application it spells, so the respelled claim names none, whatever
+    /// proof this one names.
     pub fn with_application(&self, trait_app: TraitApplicationAttribute<'c>) -> Self {
         let type_ = unsafe {
             Type::from_raw(traitClaimTypeWithApplication(
