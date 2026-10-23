@@ -28,6 +28,26 @@ public:
   }
 };
 
+/// Refuses `op` unless every region from its own up to its nearest isolated
+/// ancestor enforces SSA dominance, where it reads any value: a value it reads
+/// is defined in one of those regions, so each is then defined before `op`
+/// and none is computed from `op`'s own result.
+LogicalResult verifyReadsUnderDominance(Operation *op);
+
+/// An op reading evidence: every value it reads is defined where SSA dominance
+/// holds (`verifyReadsUnderDominance`), so a derivation through its operands is
+/// a finite term and a walk reading evidence through them ends. A graph region
+/// -- a module body -- would let the op read its own result, directly or
+/// through other ops, even from inside a region nested in it.
+template <typename ConcreteType>
+class ReadsUnderDominance
+    : public ::mlir::OpTrait::TraitBase<ConcreteType, ReadsUnderDominance> {
+public:
+  static LogicalResult verifyTrait(Operation *op) {
+    return verifyReadsUnderDominance(op);
+  }
+};
+
 /// Rewrite a type with every proven application claim stripped to its unproven
 /// form: the claim the type is, or each claim it holds as a value's type, never
 /// a claim's interior, which holds no claim. Coerce comparison is modulo the
@@ -45,8 +65,8 @@ bool settles(Type view, Type spelled);
 /// a coercion's result, the evidence the coerced value carries; null where it
 /// carries none yet. A coercion respells evidence and makes none, so a reader
 /// of evidence reads it through every coercion, and no proof is written at a
-/// spelling only such readers meet. The walk ends: a coerce stands where SSA
-/// dominance holds (`CoerceOp::verify`).
+/// spelling only such readers meet. The walk ends: a coerce reads its input
+/// where SSA dominance holds (`ReadsUnderDominance`).
 ClaimType evidenceOf(Value value);
 
 /// The type a reader of evidence takes `value` at: the evidence it carries,

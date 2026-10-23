@@ -14,6 +14,6 @@
 // The verifier refuses the first op of the cycle it reaches; that one refusal
 // is enough to reject the module and stops verification, so a single diagnostic
 // is expected.
-// expected-error @+1 {{a composition witness must be in a region that enforces SSA dominance}}
+// expected-error @+1 {{'trait.witness' op must be in a region that enforces SSA dominance}}
 %a = trait.witness compose(%b) : (!trait.claim<i32 = i64>) : !trait.claim<i32 = i64>
 %b = trait.witness compose(%a) : (!trait.claim<i32 = i64>) : !trait.claim<i32 = i64>

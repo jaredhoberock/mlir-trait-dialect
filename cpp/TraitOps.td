@@ -127,6 +127,12 @@ def HasGetModule : NativeOpTrait<"HasGetModule"> {
   let cppNamespace = "::mlir::trait";
 }
 
+// The op reads every value it is given where SSA dominance holds, so none is
+// computed from its own result.
+def ReadsUnderDominance : NativeOpTrait<"ReadsUnderDominance"> {
+  let cppNamespace = "::mlir::trait";
+}
+
 // Op's regions have only these types of child operations.
 class HasChildren<list<string> ops>
     : ParamNativeOpTrait<"HasOnlyChildOps", !interleave(ops, ", ")>, StructuralOpTrait;
@@ -930,7 +936,8 @@ def AllegeOp : TraitDialectOp<"allege", [
 
 def DeriveOp : TraitDialectOp<"derive", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
-  Pure
+  Pure,
+  ReadsUnderDominance
 ]>{
   let summary = "Derive a claim from an impl and one claim per where entry";
   let description = [{
@@ -1000,12 +1007,12 @@ def DeriveOp : TraitDialectOp<"derive", [
     `given` `(` $assumptions `)`
     (`:` `(` type($assumptions)^ `)`)? attr-dict-with-keyword
   }];
-  let hasVerifier = 1;
 }
 
 def ProjectOp : TraitDialectOp<"project", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
-  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+  ReadsUnderDominance
 ]> {
   let summary = "Select one of a claim's requirements by position";
   let description = [{
@@ -1089,12 +1096,12 @@ def ProjectOp : TraitDialectOp<"project", [
   let assemblyFormat = [{
     $source `[` $index `]` attr-dict `:` type($source) `->` type($result)
   }];
-  let hasVerifier = 1;
 }
 
 def WitnessOp : TraitDialectOp<"witness", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
-  Pure
+  Pure,
+  ReadsUnderDominance
 ]>{
   let summary = "Introduces verified evidence for a claim";
   let description = [{
@@ -1233,7 +1240,8 @@ def WitnessOp : TraitDialectOp<"witness", [
 }
 
 def CoerceOp : TraitDialectOp<"coerce", [
-  Pure
+  Pure,
+  ReadsUnderDominance
 ]> {
   let summary = "Change a value's written type by citing type equalities";
   let description = [{
@@ -1295,7 +1303,8 @@ def CoerceOp : TraitDialectOp<"coerce", [
 
 def MethodCallOp : TraitDialectOp<"method.call", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
-  HasGetModule
+  HasGetModule,
+  ReadsUnderDominance
 ]>{
   let summary = "Call a trait method";
   let description = [{
@@ -1475,7 +1484,8 @@ def MethodCallOp : TraitDialectOp<"method.call", [
 
 def FuncCallOp : TraitDialectOp<"func.call", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
-  HasGetModule
+  HasGetModule,
+  ReadsUnderDominance
 ]> {
   let summary = "Call a possibly polymorphic function defined with func.func and !trait.poly";
   let description = [{

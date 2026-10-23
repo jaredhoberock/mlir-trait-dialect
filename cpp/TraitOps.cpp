@@ -2292,13 +2292,25 @@ void WitnessOp::print(OpAsmPrinter &p) {
                                      /*elidedAttrs=*/{"impl", "impl_args", "refl"});
 }
 
-/// Whether `op` stands where SSA dominance holds: each claim it reads is
-/// defined before it, so none is computed from its own result. A graph region
-/// (a module body) lets an op read its own result, directly or through others,
-/// and a derivation read from such a claim rests on itself.
-static bool standsUnderDominance(Operation *op) {
-  Region *parent = op->getParentRegion();
-  return !parent || mlir::mayHaveSSADominance(*parent);
+LogicalResult mlir::trait::verifyReadsUnderDominance(Operation *op) {
+  // An op reading no value -- a witness citing a declaration, a refl witness
+  // -- has nothing to compute from its own result.
+  if (op->getNumOperands() == 0)
+    return success();
+  // A value `op` reads is defined in a region enclosing it, the outermost one
+  // being its nearest isolated ancestor's own.
+  for (Region *region = op->getParentRegion(); region;) {
+    if (!mlir::mayHaveSSADominance(*region))
+      return op->emitOpError()
+             << "must be in a region that enforces SSA dominance, and so must "
+                "every region around it up to its nearest isolated ancestor, "
+                "so that no value it reads is computed from its own result";
+    Operation *owner = region->getParentOp();
+    if (!owner || owner->hasTrait<OpTrait::IsIsolatedFromAbove>())
+      break;
+    region = owner->getParentRegion();
+  }
+  return success();
 }
 
 // The op's attributes must match the result claim's arm exactly. For the
@@ -2350,19 +2362,11 @@ LogicalResult WitnessOp::verify() {
     // are ever stored. An equality claim carries no proof by that rule, so there
     // is no proof-swap for this arm to police.
     //
-    // The composition arm is the only equality leaf whose evidence is another
-    // claim value rather than a witness or an identical-endpoint marker, so
-    // it is the only one whose validity can rest on its operands. In a region
-    // without SSA dominance (a graph region such as a module body) a premise may
-    // be the op's own result, letting two composes justify each other in a cycle
-    // that grounds a false equality on nothing. Requiring an SSA-dominance region
-    // makes the induction bottom out at proj-resolve- or refl-anchored leaves: a
-    // false composition would need a false premise, which needs a false leaf, and
-    // the proj-resolve and refl leaves refuse those.
-    if (!standsUnderDominance(*this))
-      return emitOpError() << "a composition witness must be in a region that "
-                              "enforces SSA dominance, so its premises cannot be "
-                              "justified by its own result";
+    // The composition arm's evidence is other claim values, read where SSA
+    // dominance holds (`ReadsUnderDominance`), so no premise is the op's own
+    // result and the induction bottoms out at proj-resolve- or refl-anchored
+    // leaves: a false composition would need a false premise, which needs a
+    // false leaf, and the proj-resolve and refl leaves refuse those.
     if (getPremises().empty())
       return emitOpError() << "a composition witness requires at least one "
                               "equality premise";
@@ -2519,16 +2523,6 @@ ImplOp DeriveOp::getImplOp() {
   return lookupSymbolFrom<ImplOp>(module, getImplAttr());
 }
 
-LogicalResult DeriveOp::verify() {
-  // A derive is evidence through the claims it is given, so none of them may
-  // be computed from its own result.
-  if (!standsUnderDominance(*this))
-    return emitOpError() << "must be in a region that enforces SSA dominance, "
-                            "so no claim it is given is computed from its own "
-                            "result";
-  return success();
-}
-
 /// Verifies a derive: it states one argument per parameter of the impl, the
 /// derived application is the impl's header at them, and each operand's claim
 /// is the impl's where-clause entry at them, in order, each compared by
@@ -2619,15 +2613,9 @@ LogicalResult ReturnOp::verify() {
 LogicalResult CoerceOp::verify() {
   // A verdict that is a pure function of op, operands, and attributes.
 
-  // 0. A coerce stands in a region that enforces SSA dominance, as a
-  // composition witness does, so its input is defined before it and the chain
-  // of coercions defining a value is acyclic. A coercion is the only trait op
-  // whose result a reader of evidence passes through to the value beneath, so
-  // every such walk ends. In a graph region (a module body) two coerces may
-  // each be the other's input, and that walk would never end.
-  if (!standsUnderDominance(*this))
-    return emitOpError() << "must be in a region that enforces SSA dominance, "
-                            "so the chain of coercions defining its input ends";
+  // A coerce reads its input where SSA dominance holds
+  // (`ReadsUnderDominance`), so the chain of coercions defining a value is
+  // acyclic and a reader of evidence passing through them reaches its end.
 
   // 1. A coerce respells one claim at its root or a type that holds no claim:
   // a claim nested in another type stands there as a value's own type, which a
@@ -3148,15 +3136,6 @@ FailureOr<func::FuncOp> FuncCallOp::getOrSpecializeCallee(
 //===----------------------------------------------------------------------===//
 // ProjectOp
 //===----------------------------------------------------------------------===//
-
-LogicalResult ProjectOp::verify() {
-  // A projection's evidence is its source's, so the source may not be
-  // computed from its own result.
-  if (!standsUnderDominance(*this))
-    return emitOpError() << "must be in a region that enforces SSA dominance, "
-                            "so its source is not computed from its own result";
-  return success();
-}
 
 LogicalResult ProjectOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // Verification writes nothing, so every name read under it resolves through
