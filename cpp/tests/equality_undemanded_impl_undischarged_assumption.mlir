@@ -37,7 +37,7 @@ func.func private @gen(%c: !trait.claim<!trait.proj<@Has[tuple<!trait.poly<0>>],
 }
 
 // MONO: error: no impl with satisfiable assumptions for '!trait.proj<@Has[i32], "Out">'
-// MONO: error: equality '!trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = !trait.proj<@Has[tuple<i32, i32>], "Out">>' does not settle before erasure: both its sides resolve to '!trait.proj<@Has[i32], "Out">', which still names a projection
+// MONO: error: equality '!trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = !trait.proj<@Has[tuple<i32, i32>], "Out">>' does not settle before erasure: a side resolves to no type a predicate states
 // ERASE: error: 'trait.func.call' op is a generic call instantiate-monomorphs has not lowered before erasure
 // ERASE-NOT: does not settle
 func.func @main() -> () {

@@ -33,8 +33,8 @@ func.func private @g(%e: !trait.claim<i64 = i32>) -> i64 {
 
 // CHECK: error: equality '!trait.claim<i64 = i32>' does not settle before erasure: its sides resolve to 'i64' and 'i32'
 // CHECK: error: incoherent impls (multiple satisfiable) for '!trait.proj<@A[i32], "Item">'
-// CHECK: error: equality '!trait.claim<!trait.proj<@A[i32], "Item"> = i64>' does not settle before erasure: its sides resolve to '!trait.proj<@A[i32], "Item">' and 'i64'
-// CHECK: error: equality '!trait.claim<!trait.proj<@A[i32], "Item"> = i32>' does not settle before erasure: its sides resolve to '!trait.proj<@A[i32], "Item">' and 'i32'
+// CHECK: error: equality '!trait.claim<!trait.proj<@A[i32], "Item"> = i64>' does not settle before erasure: a side resolves to no type a predicate states
+// CHECK: error: equality '!trait.claim<!trait.proj<@A[i32], "Item"> = i32>' does not settle before erasure: a side resolves to no type a predicate states
 // CHECK: error: equality '!trait.claim<i64 = i32>' does not settle before erasure: its sides resolve to 'i64' and 'i32'
 func.func @use() -> i64 {
   %m = trait.witness @M_i32 for @M[i32]

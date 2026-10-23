@@ -5,10 +5,10 @@
 
 // A call of this dialect names its callee in its module and lowers to a
 // func.call where it stands, which names a function of its own symbol table
-// alone. Inside a symbol table other than its module or a trait or impl
-// declaration -- whose methods are cut into the module before a call they hold
-// lowers -- no lowering reaches the callee, so the call is refused where it
-// stands.
+// alone. Inside a symbol table other than its module, no lowering reaches the
+// callee, so a call outside a template is refused where it stands; one inside a
+// template is never lowered where it stands
+// (generic_call_inside_an_unused_template_in_another_symbol_table_is_collected.mlir).
 
 func.func @f(%x: i64) -> i64 { return %x : i64 }
 gpu.module @g {

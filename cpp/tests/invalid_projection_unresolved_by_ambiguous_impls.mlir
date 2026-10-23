@@ -28,9 +28,10 @@ func.func private @wrap(%x: !T) -> !trait.proj<@Gen[!T], "A"> {
   return %r : !trait.proj<@Gen[!T], "A">
 }
 
+// expected-error @below {{incoherent impls (multiple satisfiable) for '!trait.proj<@Gen[i64], "A">'}}
+// expected-error @below {{unresolved projection '!trait.proj<@Gen[i64], "A">' after instantiate-monomorphs}}
 func.func @main() -> !trait.proj<@Gen[i64], "A"> {
   %x = arith.constant 1 : i64
-  // expected-error @below {{incoherent impls (multiple satisfiable) for '!trait.proj<@Gen[i64], "A">'}}
   // expected-error @below {{unresolved projection '!trait.proj<@Gen[i64], "A">' after instantiate-monomorphs}}
   %r = trait.func.call @wrap(%x) : (i64) -> !trait.proj<@Gen[i64], "A">
   return %r : !trait.proj<@Gen[i64], "A">

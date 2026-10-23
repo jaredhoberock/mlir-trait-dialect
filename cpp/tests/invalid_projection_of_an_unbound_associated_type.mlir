@@ -31,6 +31,7 @@ func.func private @wrap(%x: !T) -> !trait.proj<@Gen[!T], "B"> {
   return %r : !trait.proj<@Gen[!T], "B">
 }
 
+// expected-error @below {{unresolved projection '!trait.proj<@Gen[i64], "B">' after instantiate-monomorphs}}
 func.func @main() -> !trait.proj<@Gen[i64], "B"> {
   %x = arith.constant 1 : i64
   // expected-error @below {{unresolved projection '!trait.proj<@Gen[i64], "B">' after instantiate-monomorphs}}

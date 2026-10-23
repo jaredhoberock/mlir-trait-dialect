@@ -257,7 +257,7 @@ private:
 // The one ground-entailment decision: whether `lhs` and `rhs` fall in one
 // class of the ground congruence closure seeded by the premise equalities. The
 // comparison is modulo application-claim proofs, permanently: a premise's
-// endpoints carry no claim (`TypeEqualityAttr::verify`), and the caller strips
+// endpoints carry no claim (`ClaimType::verifySymbolUses`), and the caller strips
 // the two compared types. The transitivity and congruence that carry the
 // premises to the result are derived here at verify and never stored, so a
 // coerce holds only the leaf equalities it cites and only definitional leaves

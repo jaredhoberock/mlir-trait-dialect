@@ -250,14 +250,23 @@ LogicalResult ClaimType::verifySymbolUses(Operation *op,
                            << ": anchor operation is not nested in a module";
   auto err = [&] { return op->emitError(); };
 
-  // Equality arm: no trait symbol and no proof of its own, and the endpoints
-  // are ordinary sub-elements the framework's own walk descends into, so it
-  // reaches every symbol-using type nested in one and this entry point has
-  // nothing left to check. The guard stands because the framework still calls
-  // this on the outer equality claim, where reading the application would
-  // assert.
-  if (getEqualityAttr())
+  // Equality arm: an equality relates types, and a claim is a value's
+  // evidence, so an endpoint holding one, proven or not, at its root or inside
+  // another type, is refused, as an application refuses a claim argument.
+  // Otherwise a hypothesis equating two claims would let a coerce turn evidence
+  // of one application into evidence of another with no equality between their
+  // arguments, and one equating a claim with a value would turn evidence into a
+  // value. The equality has no trait symbol and no proof of its own, and the
+  // endpoints are ordinary sub-elements the framework's own walk descends
+  // into, so it reaches every symbol-using type nested in one; reading the
+  // application here would assert.
+  if (TypeEqualityAttr eq = getEqualityAttr()) {
+    for (Type endpoint : {eq.getLhs(), eq.getRhs()})
+      if (containsClaim(endpoint))
+        return err() << "a type-equality endpoint must not contain a claim: "
+                     << endpoint << " in " << Type(*this);
     return success();
+  }
 
   // Application arm: verify the trait application.
   if (failed(getTraitApplication().verifySymbolUses(op, symbolTable)))

@@ -14,21 +14,18 @@
 
 namespace mlir::trait {
 
-// Structural well-formedness of an equality proposition. An endpoint relates a
-// type, so it contains no claim, proven or not, as a trait application takes no
-// claim argument (`TraitApplicationAttr::verifySymbolUses`): a claim is a
-// value's evidence. Constructing the attribute does not assert the equality;
-// only a value of the enclosing claim type is evidence.
+// Structural well-formedness of an equality proposition: two endpoint types.
+// That neither holds a claim is a judgment on the equality where it stands
+// (`ClaimType::verifySymbolUses`), as a trait application's claim argument is
+// (`TraitApplicationAttr::verifySymbolUses`), not an invariant of the
+// attribute: a clone's substitution and selection's normal forms rebuild an
+// equality, and neither can fail. Constructing the attribute does not assert
+// the equality; only a value of the enclosing claim type is evidence.
 LogicalResult TypeEqualityAttr::verify(
     llvm::function_ref<InFlightDiagnostic()> emitError,
     Type lhs, Type rhs) {
   if (!lhs || !rhs) {
     if (emitError) emitError() << "type equality requires two endpoint types";
-    return failure();
-  }
-
-  if (containsClaim(lhs) || containsClaim(rhs)) {
-    if (emitError) emitError() << "a type-equality endpoint must not contain a claim";
     return failure();
   }
 

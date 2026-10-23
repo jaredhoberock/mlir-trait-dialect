@@ -32,8 +32,9 @@ trait.impl private @Res_i64(%self: !trait.claim<@Res[i64]>) {
   trait.assoc_type @X = i32
 }
 
+// expected-error @below {{incoherent impls (multiple satisfiable) for '!trait.proj<@Gen[i64], "A">'}}
+// expected-error @below {{unresolved projection '!trait.proj<@Gen[i64], "A">' after instantiate-monomorphs}}
 func.func @main() -> (!trait.proj<@Gen[i64], "A">, !trait.proj<@Res[i64], "X">) {
-  // expected-error @below {{incoherent impls (multiple satisfiable) for '!trait.proj<@Gen[i64], "A">'}}
   // expected-error @below {{unresolved projection '!trait.proj<@Gen[i64], "A">' after instantiate-monomorphs}}
   %r = ub.poison : !trait.proj<@Gen[i64], "A">
   %s = ub.poison : !trait.proj<@Res[i64], "X">

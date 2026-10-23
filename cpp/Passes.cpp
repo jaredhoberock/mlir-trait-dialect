@@ -1093,9 +1093,11 @@ static void walkHeldTypes(Attribute attribute,
 /// an argument of a block of one of its regions, and of a type one of its
 /// attributes carries as a `TypeAttr` -- a bodiless declaration's signature, a
 /// type argument another dialect's op names -- where no value stands and the
-/// position is null. A function with a body adds no site through its signature:
-/// its inputs are its entry block's arguments (FunctionOpInterface's verifier)
-/// and its results are what its returns hand back (func.return's verifier).
+/// position is null. A function with a body adds its declared result types
+/// through its signature, as sites where no value stands, and not its inputs,
+/// which are its entry block's arguments (FunctionOpInterface's verifier): a
+/// return hands back a value of each result type, but a function that never
+/// returns hands back none, and its results stand in its signature alone.
 /// A coerce every use of which reads its evidence through it (`readThrough`)
 /// carries its input's proof, so the application claim it produces is no site
 /// of its own: it is judged where its input is produced. This is the one
@@ -1121,12 +1123,15 @@ static void walkStandingSites(Operation *op,
     for (Block &block : region)
       for (BlockArgument argument : block.getArguments())
         visitType(argument, argument.getType());
-  // A function with a body adds no site through its signature.
+  // A function with a body adds its result types through its signature.
   auto visitHeld = [&](TypeAttr held) {
     auto function = dyn_cast<FunctionOpInterface>(op);
     if (function && !function.isExternal() &&
-        held.getValue() == function.getFunctionType())
+        held.getValue() == function.getFunctionType()) {
+      for (Type result : function.getResultTypes())
+        visitType(Value(), result);
       return;
+    }
     visitType(Value(), held.getValue());
   };
   // The attributes are read where they are stored, an op's properties holding
@@ -1971,12 +1976,23 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
 
   // A generic call the driver could still rewrite but did not is a call whose
   // callee specialization fail-closed -- an external polymorphic declaration has
-  // no body to clone. Standing outside every template, it is named here rather
-  // than left for a later step to meet a call it cannot lower.
+  // no body to clone, or the substitution read a projection selection refused,
+  // which is named by that refusal. Standing outside every template, it is
+  // named here rather than left for a later step to meet a call it cannot
+  // lower.
   bool sawSurvivingCall = false;
   module.walk([&](Operation *op) {
     if (isForeign(op) || !isRewritableGenericCall(op))
       return;
+    auto nameRefusalsIn = [&](TypeRange types) {
+      for (Type type : types)
+        type.walk([&](ProjectionType proj) {
+          if (!isPolymorphicType(Type(proj)))
+            nameRefusal(op, proj);
+        });
+    };
+    nameRefusalsIn(op->getOperandTypes());
+    nameRefusalsIn(op->getResultTypes());
     op->emitOpError()
         << "rewritable generic call survived instantiate-monomorphs";
     sawSurvivingCall = true;
@@ -2056,8 +2072,9 @@ struct EraseCoerceOp : public OpConversionPattern<CoerceOp> {
     // A coerce of a value, live or dead, forwards its input: one value of the
     // result's type. Its verifier puts the two endpoints in one class of the
     // congruence its cited equalities seed (`CoerceOp::verify`), and no cited
-    // equality relates a claim (`TypeEqualityAttr::verify`), so a claim at the
-    // input's root is in no class with the claim-free result. The entry
+    // equality relates a claim, as written (`ClaimType::verifySymbolUses`) or
+    // as its sides resolve (the entry judgment), so a claim at the input's
+    // root is in no class with the claim-free result. The entry
     // judgment refused a ground projection standing at either endpoint -- the
     // result is a standing site of this op, the input one of its producer --
     // and every cited equality that does not settle at one type naming no
@@ -2222,16 +2239,17 @@ static LogicalResult checkNothingOutsideATemplateCarriesTheory(ModuleOp module) 
 /// type variable is neither proven nor holds there: no instance substitutes
 /// the variable. An equality claim carries no proof -- its evidence is the
 /// value itself -- so it holds when selection reads its sides to one type
-/// naming no projection (`ImplResolver::readEqualitySides`), the reading
-/// instantiation writes an equality's evidence from. Selection resolves a
-/// projection only through an impl whose assumptions are satisfiable, so an
-/// equality never holds through an impl whose where-bounds do not. A proven
-/// application claim states a proposition about the types its arguments name:
-/// each ground projection standing there is put to selection and must resolve
-/// to a type naming no projection, as selection requires of every application
-/// it proves (`ImplResolver::resolveImplFor`), so a proof cited by hand over
-/// an argument no impl gives a meaning is refused here rather than erased
-/// unread.
+/// naming no projection and carrying no claim
+/// (`ImplResolver::readEqualitySides`), the reading instantiation writes an
+/// equality's evidence from. Selection resolves a projection only through an
+/// impl whose assumptions are satisfiable, so an equality never holds through
+/// an impl whose where-bounds do not. A proven application claim states a
+/// proposition about the types its arguments name, and is read as selection
+/// reads every application before it proves one
+/// (`ImplResolver::readApplication`): an argument still naming a projection
+/// selection refused, or resolving to a type carrying a claim, is refused, so
+/// a proof cited by hand over an argument no impl gives a meaning is refused
+/// here rather than erased unread.
 ///
 /// Hypotheses and conclusions are judged alike. A claim a block argument takes
 /// is a hypothesis the block assumes and its callers or predecessors supply;
@@ -2239,7 +2257,8 @@ static LogicalResult checkNothingOutsideATemplateCarriesTheory(ModuleOp module) 
 /// it is assumed rather than erased unread with the body that assumes it, as
 /// instantiate-monomorphs' exit walk refuses an unproven monomorphic
 /// application claim a block argument takes. A claim a bodiless declaration's
-/// signature names is judged at the declaration. Fails where anything is
+/// signature names, or a function's declared result type, is judged at the
+/// function, whether or not a return hands one back. Fails where anything is
 /// refused or a resolution overflows; an overflow is named where it was met,
 /// and alone.
 static LogicalResult judgeStandingTheory(ModuleOp module) {
@@ -2270,16 +2289,17 @@ static LogicalResult judgeStandingTheory(ModuleOp module) {
   // What is put to selection is gathered under the walk and judged after it
   // closes, because selection may insert into the module the impl a
   // resolution chain runs through. Each is kept with the op whose standing
-  // site carries it and where it stands; a projection is put to selection
-  // once per op, its outermost spelling only, since resolving it resolves
-  // what its arguments spell.
+  // site carries it and where it stands; an application is read once per op,
+  // and only where it spells a ground projection, since one spelling none
+  // reads to itself and its arguments carry no claim as written
+  // (`TraitApplicationAttr::verifySymbolUses`).
   struct Standing {
     Operation *op;
     Location at;
     ClaimType claim;
   };
   SmallVector<Standing> equalities;
-  llvm::MapVector<std::pair<Operation *, Type>, Location> spelled;
+  llvm::MapVector<std::pair<Operation *, ClaimType>, Location> applications;
   bool judged = true;
   walkStandingSites(module, [&](Operation *op, Value position, Type site) {
     auto claim = dyn_cast<ClaimType>(site);
@@ -2296,14 +2316,17 @@ static LogicalResult judgeStandingTheory(ModuleOp module) {
                     << "carries a type variable outside a template";
       return;
     }
-    Type(claim).walk<WalkOrder::PreOrder>([&](ProjectionType proj) {
-      if (isPolymorphicType(Type(proj)))
-        return WalkResult::advance();
-      spelled.insert({{op, Type(proj)}, at});
-      return WalkResult::skip();
-    });
+    bool spellsGroundProjection =
+        Type(claim)
+            .walk([&](ProjectionType proj) {
+              return isPolymorphicType(Type(proj)) ? WalkResult::advance()
+                                                   : WalkResult::interrupt();
+            })
+            .wasInterrupted();
+    if (spellsGroundProjection)
+      applications.insert({{op, claim}, at});
   });
-  if (equalities.empty() && spelled.empty())
+  if (equalities.empty() && applications.empty())
     return success(judged);
 
   // Selection reads every symbol name from the resolver's symbol tables, which
@@ -2314,18 +2337,9 @@ static LogicalResult judgeStandingTheory(ModuleOp module) {
   SymbolTableKeeper listener(resolver.getSymbolTables());
   OpBuilder builder(module.getContext(), &listener);
 
-  // A refusal is selection's answer about an application, named once, at the
-  // first refused site spelling a projection of it. A projection still
-  // standing in a reading is one selection refused.
-  DenseSet<Type> named;
-  auto nameRefusals = [&](Type reading, Operation *op, Location at) {
-    reading.walk([&](ProjectionType proj) {
-      if (!isPolymorphicType(Type(proj)) && named.insert(proj.asClaim()).second)
-        resolver.nameRefusal(proj, getAnchorModule(op),
-                             [&] { return emitError(at); });
-    });
-  };
-
+  // Each verdict is the resolver's reading, which names through the report's
+  // location why it refuses: a projection selection refused, by that refusal,
+  // or a type carrying a claim. The report states what the reading settled.
   for (auto [op, at, claim] : equalities) {
     if (!claim.isMonomorphic()) {
       judged = false;
@@ -2334,61 +2348,37 @@ static LogicalResult judgeStandingTheory(ModuleOp module) {
                        "variable outside a template";
       continue;
     }
-    TypeEqualityAttr eq = claim.getEqualityAttr();
-    SelectionSite site = SelectionSite::of(op);
-    Answer<std::pair<Type, Type>> sides =
-        resolver.readEqualitySides(eq, site, builder);
-    if (sides.isOverflow()) {
-      judged = false;
-      continue;
-    }
+    Location here = at;
+    Answer<std::pair<Type, Type>> sides = resolver.readEqualitySides(
+        claim.getEqualityAttr(), SelectionSite::of(op), builder,
+        [&] { return emitError(here); });
     if (sides.isAnswer() && sides->first == sides->second)
       continue;
     judged = false;
-    // A refused reading left a projection selection refused standing on a
-    // side, or read a side to a type carrying a claim; the report reads each
-    // side again, which selection answers from what it settled, to show it.
-    Type lhs = eq.getLhs(), rhs = eq.getRhs();
-    if (sides.isAnswer()) {
-      std::tie(lhs, rhs) = *sides;
-    } else {
-      Answer<Type> lhsRead = resolver.resolveProjectionsIn(lhs, site, builder);
-      Answer<Type> rhsRead = resolver.resolveProjectionsIn(rhs, site, builder);
-      if (!lhsRead.isAnswer() || !rhsRead.isAnswer())
-        continue;
-      lhs = *lhsRead;
-      rhs = *rhsRead;
-    }
-    nameRefusals(lhs, op, at);
-    nameRefusals(rhs, op, at);
+    if (sides.isOverflow())
+      continue;
     InFlightDiagnostic report = emitError(at)
                                 << "equality " << claim
                                 << " does not settle before erasure: ";
-    // Two sides meeting at one form that still names a projection name no
-    // type: the refusal named above says why selection left it standing.
-    if (containsClaim(lhs) || containsClaim(rhs))
-      report << "its sides resolve to " << lhs << " and " << rhs
-             << ", and an equality relates no claim";
-    else if (lhs == rhs)
-      report << "both its sides resolve to " << lhs
-             << ", which still names a projection";
+    if (sides.isAnswer())
+      report << "its sides resolve to " << sides->first << " and "
+             << sides->second;
     else
-      report << "its sides resolve to " << lhs << " and " << rhs;
+      report << "a side resolves to no type a predicate states";
   }
 
-  for (auto [key, at] : spelled) {
-    auto [op, proj] = key;
-    Answer<Type> resolved =
-        resolver.resolveProjectionsIn(proj, SelectionSite::of(op), builder);
-    if (!resolved.isAnswer()) {
-      judged = false;
-      continue;
-    }
-    if (!containsType<ProjectionType>(*resolved))
+  for (auto [key, at] : applications) {
+    auto [op, claim] = key;
+    Location here = at;
+    Answer<ClaimType> read = resolver.readApplication(
+        claim, SelectionSite::of(op), builder, [&] { return emitError(here); });
+    if (read.isAnswer())
       continue;
     judged = false;
-    nameRefusals(*resolved, op, at);
-    emitError(at) << "unresolved projection " << proj << " before erasure";
+    if (read.isOverflow())
+      continue;
+    emitError(at) << "claim " << claim << " is not proven before erasure: an "
+                  << "argument it states resolves to no type a predicate states";
   }
   return success(judged && !resolver.hasOverflowed());
 }

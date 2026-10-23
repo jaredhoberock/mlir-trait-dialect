@@ -76,12 +76,17 @@ def TypeEqualityAttr : AttrDef<TraitDialect, "TypeEquality", []> {
     only. A *value* of the enclosing claim type, in verifier-valid IR, is the
     evidence that the equality holds.
 
-    Endpoints relate types, so they admit no claim, proven or not, as a trait
-    application admits no claim argument: a claim is a value's evidence, never
-    a type. An equality relating two claims would let a coerce turn evidence of
-    one application into evidence of another with no equality between their
-    arguments, and one relating a claim to a value would turn evidence into a
-    value; the constructor forbids both states.
+    Endpoints relate types, so an equality standing in a program admits no
+    claim in either, proven or not, as a trait application admits no claim
+    argument: a claim is a value's evidence, never a type. An equality relating
+    two claims would let a coerce turn evidence of one application into
+    evidence of another with no equality between their arguments, and one
+    relating a claim to a value would turn evidence into a value. The claim's
+    symbol-use verifier refuses both where the equality stands
+    (`ClaimType::verifySymbolUses`), and selection refuses an equality whose
+    sides resolve to either (`ImplResolver::readEqualitySides`); the
+    constructor does not, because a clone's substitution and selection's normal
+    forms rebuild an equality and neither can fail.
 
     The endpoints are ordered; orientation is recorded for provenance
     only. Replay is direction-blind, so no symmetry construct exists.
@@ -91,12 +96,12 @@ def TypeEqualityAttr : AttrDef<TraitDialect, "TypeEquality", []> {
     and by any walk that classifies content. What no rewrite may do is move
     one. Global type rewrites — proof stamping foremost — rewrite claim types
     wherever they can see them; an endpoint that received a stamped proof would
-    be exactly the state the constructor forbids, so two individually-correct
+    be exactly the state the verifier refuses, so two individually-correct
     passes would kill a legal program. The attribute's sub-element replacement
     therefore answers it unchanged: endpoints are a leaf to every rewrite,
     upstream's replacers included, and reachable to a read. The one mover is
     the clone rule — one substitution applied to both endpoints atomically,
-    rebuilt through this constructor, re-checked (`respellClaimPredicate`).
+    rebuilt through this constructor (`respellClaimPredicate`).
   }];
 
   let parameters = (ins "::mlir::Type":$lhs, "::mlir::Type":$rhs);

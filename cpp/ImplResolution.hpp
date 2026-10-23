@@ -539,7 +539,9 @@ class ImplResolver {
     /// Resolves one step of a concrete ProjectionType: the impl the internal
     /// impl resolution pipeline selects for its application, the arguments
     /// that impl takes there, and its associated-type binding specialized at
-    /// them.
+    /// them. Refused where one of its own associated-type arguments is no type
+    /// a predicate states, as its head's arguments may be none
+    /// (`resolveImplFor`).
     Answer<ProjectionResolution> resolveProjection(
         ProjectionType proj, const SelectionSite &site, OpBuilder &builder,
         llvm::function_ref<InFlightDiagnostic()> err = nullptr);
@@ -557,14 +559,26 @@ class ImplResolver {
         decltype(&makeGroundProjectionReplacer) replacerFor =
             makeGroundProjectionReplacer);
 
+    /// The application `claim` states, its projections read through selection
+    /// at `site` to a fixed point: the one reading by which selection judges an
+    /// application before it selects an impl for it, and by which an
+    /// application a proof was cited for by hand is judged. Refused where an
+    /// argument is no type a predicate states -- one still naming a projection
+    /// selection refused, or one carrying a claim -- naming each through `err`
+    /// when it is given; overflows where selection does.
+    Answer<ClaimType>
+    readApplication(ClaimType claim, const SelectionSite &site,
+                    OpBuilder &builder,
+                    llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+
     /// The types the sides of `eq` name, each read through selection at `site`
     /// to a fixed point: the one reading by which an equality is judged, so
     /// that it settles exactly when the two are one type. Refused where a
     /// ground projection still stands on either side -- one selection refused,
-    /// which names no type, whatever the other side spells -- naming each
-    /// refusal through `err` when it is given, and where a side resolves to a
-    /// type carrying a claim, which no equality relates; overflows where
-    /// selection does or a side does not settle within the depth limit.
+    /// which names no type, whatever the other side spells -- and where a side
+    /// resolves to a type carrying a claim, which no equality relates, naming
+    /// each through `err` when it is given; overflows where selection does or
+    /// a side does not settle within the depth limit.
     /// Identical sides are read as any others.
     Answer<std::pair<Type, Type>>
     readEqualitySides(TypeEqualityAttr eq, const SelectionSite &site,
@@ -593,11 +607,13 @@ class ImplResolver {
     /// Names, through `err`, why selection refused the application of
     /// `obligation` -- a claim, or a projection's head -- in `scope`, over the
     /// candidates it recorded: none whose assumptions hold, or two or more.
-    /// Names nothing where selection has entered no refusal. The refusal is
-    /// what an obligation left standing does not say by itself; this asks
-    /// selection nothing new.
+    /// Names nothing where selection has entered no refusal, or where this
+    /// resolver has named that refusal already: a refusal is selection's
+    /// answer about an application, named once, where it is first reported.
+    /// The refusal is what an obligation left standing does not say by itself;
+    /// this asks selection nothing new.
     void nameRefusal(Type obligation, ModuleOp scope,
-                     llvm::function_ref<InFlightDiagnostic()> err) const;
+                     llvm::function_ref<InFlightDiagnostic()> err);
 
     /// The template instantiations cut over this resolver's span, which is one
     /// stage run.
@@ -668,7 +684,10 @@ class ImplResolver {
         llvm::function_ref<InFlightDiagnostic()> err);
 
     /// Finds the unique impl for the wanted claim and returns the normalized
-    /// claim that was actually used for selection.
+    /// claim that was actually used for selection. Refused where an argument of
+    /// the normalized claim is no type a predicate states -- one naming a
+    /// projection selection refused, or one carrying a claim -- and where no
+    /// one impl's assumptions hold, naming why through `err` when it is given.
     Answer<ResolvedImpl> resolveImplFor(
         ClaimType wanted,
         const SelectionSite &site,
@@ -737,6 +756,7 @@ class ImplResolver {
 
     bool overflowed = false;
     DenseSet<Location> overflowSites;
+    DenseSet<ScopedApplication> namedRefusals;
 
     InstantiationChain instantiations;
     ImplGeneratorSet generators;

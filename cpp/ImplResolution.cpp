@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "ImplResolution.hpp"
 #include <llvm/ADT/ScopeExit.h>
+#include <llvm/ADT/SetVector.h>
 #include <llvm/Support/ErrorHandling.h>
 
 namespace mlir::trait {
@@ -90,29 +91,27 @@ ImplResolver::assumptionsSatisfiableFor(ImplOp impl,
     // whether it holds. Each side is read through the candidate's own
     // associated-type bindings first -- a premise may project through the very
     // application being selected, which selection cannot ask itself about --
-    // and then through what selection has settled elsewhere. A reading carrying
-    // a type variable is left to the instances that fill it.
-    // A side whose projections still change after the depth limit's worth of
-    // steps is the premise's overflow.
+    // and the premise so read is judged as every equality is
+    // (`readEqualitySides`): through what selection has settled elsewhere,
+    // refused where a side names no type a predicate states, and overflowing
+    // where a side does not settle. A reading carrying a type variable is left
+    // to the instances that fill it.
     TypeEqualityAttr equality = premise.getEqualityAttr();
-    auto reduce = [&](Type ty) {
+    auto ownReading = [&](Type ty) {
       Type instantiated = instantiate(ty, known);
       FailureOr<Type> reduced = impl.readOwnBindings(instantiated, known);
-      return settleThroughSelection(
-          succeeded(reduced) ? *reduced : instantiated, site, builder);
+      return succeeded(reduced) ? *reduced : instantiated;
     };
-    Answer<std::optional<Type>> lhs = reduce(equality.getLhs());
-    Answer<std::optional<Type>> rhs = reduce(equality.getRhs());
-    if (lhs.isOverflow() || rhs.isOverflow())
-      return Answer<SpecializationMap>::overflow();
-    if (!*lhs || !*rhs) {
-      overflow(Overflow::projectionSteps(instantiate(Type(premise), known)),
-               site);
-      return Answer<SpecializationMap>::overflow();
-    }
-    if (premiseDefersToInstances(**lhs, **rhs))
+    Answer<std::pair<Type, Type>> sides = readEqualitySides(
+        TypeEqualityAttr::get(equality.getContext(),
+                              ownReading(equality.getLhs()),
+                              ownReading(equality.getRhs())),
+        site, builder);
+    if (!sides.isAnswer())
+      return sides.stop<SpecializationMap>();
+    if (premiseDefersToInstances(sides->first, sides->second))
       continue;
-    if (**lhs != **rhs)
+    if (sides->first != sides->second)
       return Answer<SpecializationMap>::refusal();
   }
 
@@ -169,16 +168,20 @@ static LogicalResult diagnoseImplResolutionFailure(
   return diag;
 }
 
-/// Whether one of `normalized`, types whose projections selection has
-/// resolved wherever it can, still names a ground projection: one whose
-/// application selection refused, so that it names no type. Each distinct one
-/// is named by that refusal through `err` when it is given. A type stating a
-/// projection that names no type is itself no type, as rustc refuses a
-/// predicate whose normalization fails (E0277). A projection carrying a type
-/// variable is a template's, resolved when an instance substitutes it.
-static bool namesNoType(const ImplResolver &resolver,
-                        ArrayRef<Type> normalized, ModuleOp scope,
-                        llvm::function_ref<InFlightDiagnostic()> err) {
+/// Whether one of `normalized`, the types `predicate` states with their
+/// projections resolved by selection wherever it can, is no type a predicate
+/// may state. One still naming a ground projection whose application
+/// selection refused names no type, as rustc refuses a predicate whose
+/// normalization fails (E0277); a projection carrying a type variable is a
+/// template's, resolved when an instance substitutes it. One carrying a claim
+/// names a value's evidence, which a predicate never states: an application,
+/// a projection and an equality each refuse a claim as written (their
+/// symbol-use verifiers), and this is the same law on what a binding resolves
+/// them to. Each such type is named through `err` when it is given: a
+/// projection by its refusal, a type carrying a claim beside `predicate`.
+static bool isNoPredicateType(ImplResolver &resolver, Type predicate,
+                              ArrayRef<Type> normalized, ModuleOp scope,
+                              llvm::function_ref<InFlightDiagnostic()> err) {
   bool standing = false;
   AttrTypeWalker walker;
   walker.addWalk([&](ProjectionType proj) {
@@ -188,9 +191,37 @@ static bool namesNoType(const ImplResolver &resolver,
     if (err)
       resolver.nameRefusal(proj, scope, err);
   });
-  for (Type type : normalized)
+  llvm::SmallSetVector<Type, 2> carryingClaims;
+  for (Type type : normalized) {
     walker.walk(type);
-  return standing;
+    if (containsClaim(type))
+      carryingClaims.insert(type);
+  }
+  if (err)
+    for (Type type : carryingClaims)
+      err() << "a predicate states types, and " << predicate << " resolves to "
+            << type << ", which carries a claim";
+  return standing || !carryingClaims.empty();
+}
+
+Answer<ClaimType>
+ImplResolver::readApplication(ClaimType claim, const SelectionSite &site,
+                              OpBuilder &builder,
+                              llvm::function_ref<InFlightDiagnostic()> err) {
+  Answer<Type> normalized = resolveProjectionsIn(claim, site, builder);
+  if (!normalized.isAnswer())
+    return normalized.stop<ClaimType>();
+  auto read = cast<ClaimType>(*normalized);
+  // A proposition about a projection that names no type is about no type, so
+  // it is refused, named by the projection's refusal, rather than matched
+  // against an impl over the projection as an opaque type; one whose argument
+  // resolves to a type carrying a claim is about evidence, and is refused the
+  // same way, before any proof over it or equality respelling it is written.
+  if (isNoPredicateType(*this, Type(claim),
+                        read.getTraitApplication().getTypeArgs(), site.scope,
+                        err))
+    return Answer<ClaimType>::refusal();
+  return read;
 }
 
 Answer<ResolvedImpl> ImplResolver::resolveImplFor(
@@ -215,10 +246,10 @@ Answer<ResolvedImpl> ImplResolver::resolveImplFor(
   if (overflowed)
     return Selected::overflow();
 
-  Answer<Type> normalized = resolveProjectionsIn(wanted, site, builder);
+  Answer<ClaimType> normalized = readApplication(wanted, site, builder, err);
   if (!normalized.isAnswer())
     return normalized.stop<ResolvedImpl>();
-  ClaimType selected = cast<ClaimType>(*normalized);
+  ClaimType selected = *normalized;
 
   TraitApplicationAttr app = selected.getTraitApplication();
 
@@ -235,13 +266,6 @@ Answer<ResolvedImpl> ImplResolver::resolveImplFor(
     memo.heightBelow = std::max(memo.heightBelow, it->second.height);
     return ResolvedImpl{it->second.impl, selected, it->second.arguments};
   }
-
-  // A proposition about a projection that names no type is about no type, so
-  // it is refused, named by the projection's refusal, rather than matched
-  // against an impl over the projection as an opaque type. Such an application
-  // is never chosen, so the memo read above answers none.
-  if (namesNoType(*this, Type(selected), scope, err))
-    return Selected::refusal();
 
   if (auto it = memo.refused.find({scope, app}); it != memo.refused.end()) {
     if (err) {
@@ -740,7 +764,7 @@ Answer<ProjectionResolution> ImplResolver::resolveProjection(
     Answer<Type> read = resolveProjectionsIn(argument, site, builder);
     if (!read.isAnswer())
       return read.stop<ProjectionResolution>();
-    if (namesNoType(*this, *read, site.scope, err))
+    if (isNoPredicateType(*this, Type(proj), *read, site.scope, err))
       return Answer<ProjectionResolution>::refusal();
   }
   auto select = [&](ClaimType claim) {
@@ -939,18 +963,9 @@ ImplResolver::readEqualitySides(TypeEqualityAttr eq, const SelectionSite &site,
              site);
     return Sides::overflow();
   }
-  if (namesNoType(*this, {**lhs, **rhs}, site.scope, err))
+  if (isNoPredicateType(*this, ClaimType::getEquality(eq.getContext(), eq),
+                        {**lhs, **rhs}, site.scope, err))
     return Sides::refusal();
-  // An equality relates types, never evidence (`TypeEqualityAttr::verify`),
-  // so a side a binding resolves to a type carrying a claim is no side of one.
-  for (Type side : {**lhs, **rhs})
-    if (containsClaim(side)) {
-      if (err)
-        err() << "an equality relates types, and one side of "
-              << Type(ClaimType::getEquality(eq.getContext(), eq))
-              << " resolves to " << side << ", which carries a claim";
-      return Sides::refusal();
-    }
   return std::make_pair(**lhs, **rhs);
 }
 
@@ -1089,14 +1104,14 @@ Value buildEqualityEvidence(OpBuilder &builder, Location loc,
 
 void ImplResolver::nameRefusal(
     Type obligation, ModuleOp scope,
-    llvm::function_ref<InFlightDiagnostic()> err) const {
+    llvm::function_ref<InFlightDiagnostic()> err) {
   auto projection = dyn_cast<ProjectionType>(obligation);
   ClaimType claim =
       projection ? projection.asClaim() : cast<ClaimType>(obligation);
   auto selected = cast<ClaimType>(readSettledProjectionsIn(claim, scope));
   TraitApplicationAttr app = selected.getTraitApplication();
   auto refusal = memo.refused.find({scope, app});
-  if (refusal == memo.refused.end())
+  if (refusal == memo.refused.end() || !namedRefusals.insert({scope, app}).second)
     return;
   auto trait = app.getTrait(scope, /*errFn=*/nullptr);
   if (succeeded(trait))

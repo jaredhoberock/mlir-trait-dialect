@@ -14,7 +14,7 @@
 
 trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) { trait.assoc_type @Item }
 // expected-error @below {{no impl with satisfiable assumptions for '!trait.proj<@A[i64], "Item">'}}
-// expected-error @below {{equality '!trait.claim<!trait.proj<@A[i64], "Item"> = i64>' does not settle before erasure: its sides resolve to '!trait.proj<@A[i64], "Item">' and 'i64'}}
+// expected-error @below {{equality '!trait.claim<!trait.proj<@A[i64], "Item"> = i64>' does not settle before erasure: a side resolves to no type a predicate states}}
 func.func @use(%h: !trait.claim<!trait.proj<@A[i64], "Item"> = i64>) -> i64 {
   %k = arith.constant 7 : i64
   return %k : i64
@@ -24,5 +24,5 @@ func.func @use(%h: !trait.claim<!trait.proj<@A[i64], "Item"> = i64>) -> i64 {
 
 trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) { trait.assoc_type @Item }
 // expected-error @below {{no impl with satisfiable assumptions for '!trait.proj<@A[i64], "Item">'}}
-// expected-error @below {{equality '!trait.claim<!trait.proj<@A[i64], "Item"> = i64>' does not settle before erasure: its sides resolve to '!trait.proj<@A[i64], "Item">' and 'i64'}}
+// expected-error @below {{equality '!trait.claim<!trait.proj<@A[i64], "Item"> = i64>' does not settle before erasure: a side resolves to no type a predicate states}}
 func.func private @decl(!trait.claim<!trait.proj<@A[i64], "Item"> = i64>) -> i64

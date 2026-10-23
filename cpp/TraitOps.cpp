@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
+#include "Passes.hpp"
 #include "Specialization.hpp"
 #include "Trait.hpp"
 #include "TraitOps.hpp"
@@ -2813,17 +2814,19 @@ static FailureOr<SpecializationMap> readCallSpecialization(
   return arguments;
 }
 
-/// Refuses `call`, a call of this dialect, standing inside a symbol table other
-/// than a module or a trait or impl declaration. The call names its callee in
-/// its module (`getAnchorModule`) and lowers to a `func.call` standing where it
-/// stands, which names a function of its own symbol table alone, so inside any
-/// other symbol table no lowering reaches the callee. A declaration's methods
-/// are cut into its module before a call they hold lowers.
+/// Refuses `call`, a call of this dialect outside a template, standing inside a
+/// symbol table other than a module. The call names its callee in its module
+/// (`getAnchorModule`) and lowers to a `func.call` standing where it stands,
+/// which names a function of its own symbol table alone, so inside any other
+/// symbol table no lowering reaches the callee. A call inside a template
+/// (`isForeign`) is never lowered where it stands: a trait or impl
+/// declaration's methods are cut into its module before a call they hold
+/// lowers, a template no instance reaches is collected with its calls, and the
+/// clone an instance makes of a call is judged by this rule where it stands.
 static LogicalResult verifyCallStandsInItsModule(Operation *call) {
   for (Operation *ancestor = call->getParentOp();
        ancestor && !isa<ModuleOp>(ancestor); ancestor = ancestor->getParentOp())
-    if (ancestor->hasTrait<OpTrait::SymbolTable>() &&
-        !isa<TraitOp, ImplOp>(ancestor))
+    if (ancestor->hasTrait<OpTrait::SymbolTable>() && !isForeign(call))
       return call->emitOpError()
              << "stands inside '" << ancestor->getName()
              << "', a symbol table below the module its callee is named in: "
