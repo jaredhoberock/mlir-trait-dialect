@@ -5,10 +5,12 @@
 // RUN: mlir-opt -pass-pipeline='builtin.module(monomorphize-trait)' %s | FileCheck %s --check-prefix=LOWERED
 
 // An allegation over a generic associated type whose argument is itself a
-// projection is proved one step at a time: the generic associated type's
-// binding at the argument as spelled, which is the argument, then the
-// argument's own resolution. A coerce of the refl witness of the alleged
-// equality's left side cites both steps to reach the alleged equality.
+// projection is proved one step at a time, the argument first: the argument's
+// own resolution, then the generic associated type's binding at the
+// argument's normal form, which is that normal form. A coerce of the refl
+// witness of the alleged equality's left side cites both steps to reach the
+// alleged equality, its congruence carrying the projection as spelled to the
+// one the second step states.
 
 !S = !trait.poly<0>
 !A = !trait.poly<1>
@@ -37,10 +39,10 @@ func.func @main() {
 
 // CHECK-LABEL: func.func @main
 // CHECK-NOT: trait.allege
-// CHECK: %[[GAT:.*]] = trait.witness proj_resolve !trait.proj<@Gat[i64], "Item", [!trait.proj<@Arg[i64], "Out">]> resolves !trait.proj<@Arg[i64], "Out"> by @Gat_i64
 // CHECK: %[[ARG:.*]] = trait.witness proj_resolve !trait.proj<@Arg[i64], "Out"> resolves i32 by @Arg_i64
+// CHECK: %[[GAT:.*]] = trait.witness proj_resolve !trait.proj<@Gat[i64], "Item", [i32]> resolves i32 by @Gat_i64
 // CHECK: %[[LHS:.*]] = trait.witness refl : !trait.claim<!trait.proj<@Gat[i64], "Item", [!trait.proj<@Arg[i64], "Out">]> = !trait.proj<@Gat[i64], "Item", [!trait.proj<@Arg[i64], "Out">]>>
-// CHECK: %[[BOTH:.*]] = trait.coerce %[[LHS]] : {{.*}} to !trait.claim<!trait.proj<@Gat[i64], "Item", [!trait.proj<@Arg[i64], "Out">]> = i32> via (%[[GAT]], %[[ARG]])
+// CHECK: %[[BOTH:.*]] = trait.coerce %[[LHS]] : {{.*}} to !trait.claim<!trait.proj<@Gat[i64], "Item", [!trait.proj<@Arg[i64], "Out">]> = i32> via (%[[ARG]], %[[GAT]])
 // CHECK: call @need(%[[BOTH]])
 
 // LOWERED-LABEL: func.func @main

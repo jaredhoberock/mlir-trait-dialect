@@ -76,10 +76,27 @@ inline std::optional<std::pair<Type, WalkResult>> respellClaimPredicate(
       WalkResult::skip());
 }
 
+/// A replacer with one projection rule: a projection `reads` admits is offered
+/// to `hop`, which declines by answering nullopt; the rest stand.
+///
+/// An answer is not walked by the replacer: what a binding spells, its own
+/// projections or ones grown beneath a constructor, is read either by `hop`,
+/// which may descend beneath the answer's root (`replaceBeneathRoot`) under a
+/// bound it keeps, or by the next round of the fixed point every normalizer
+/// runs (`tryNormalizeProjectionsToFixedPoint`). So no recursion through a
+/// binding escapes both bounds. An answer that is the projection itself leaves
+/// it standing unwalked.
+AttrTypeReplacer makeProjectionReplacer(
+    bool (*reads)(ProjectionType),
+    std::function<std::optional<Type>(ProjectionType)> hop);
+
 /// A replacer with the one rule every ground-projection rewrite registers: a
 /// polymorphic projection is left standing -- it stands for as many types as
 /// its variables have instances, so no resolver owes it an answer -- and a
 /// ground one is resolved through `hop`, which declines by answering nullopt.
+/// An answer is not walked by the replacer: the projections it spells are
+/// read by `hop` beneath its root (`replaceBeneathRoot`) or by the next round
+/// (`tryNormalizeProjectionsToFixedPoint`).
 AttrTypeReplacer makeGroundProjectionReplacer(
     std::function<std::optional<Type>(ProjectionType)> hop);
 
@@ -88,9 +105,19 @@ AttrTypeReplacer makeGroundProjectionReplacer(
 /// function of the projection's own associated-type arguments, so a projection
 /// whose head is ground is resolved through `hop` whatever those arguments still
 /// spell. A head still carrying a variable stands for as many impls as that
-/// variable has instances and is left standing.
+/// variable has instances and is left standing. An answer is not walked by the
+/// replacer: the projections it spells are read by `hop` beneath its root
+/// (`replaceBeneathRoot`) or by the next round
+/// (`tryNormalizeProjectionsToFixedPoint`).
 AttrTypeReplacer makeGroundHeadProjectionReplacer(
     std::function<std::optional<Type>(ProjectionType)> hop);
+
+/// `answer`, what a projection rule of `walk` substituted, with every type and
+/// attribute directly beneath its root replaced by `walk`: the descent a
+/// replacer makes into a replacement, made instead by the rule's owner, which
+/// can then bound how deep such descents nest. The root itself is left
+/// standing for the next round of the walk's fixed point.
+Type replaceBeneathRoot(Type answer, AttrTypeReplacer &walk);
 
 inline bool isPolymorphicType(Type root);
 /// How a substitution reaches a claim's predicate: through every binding it

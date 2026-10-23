@@ -631,7 +631,8 @@ def ImplOp : TraitDialectOp<"impl", [
     /// fixed point: the facts the impl states of its own application, which
     /// hold in its own body. A projection over any other application, and an
     /// equality's endpoints, stand as spelled. Fails where the bindings do not
-    /// settle within the projection-step bound.
+    /// settle within the projection-step bound, or nest beneath their roots
+    /// past the depth limit.
     FailureOr<Type> readOwnBindings(Type ty);
 
   }];

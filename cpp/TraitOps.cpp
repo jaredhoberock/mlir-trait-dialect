@@ -1937,22 +1937,40 @@ FailureOr<Type> ImplOp::specializeAssociatedTypeBinding(
 
 FailureOr<Type> ImplOp::readOwnBindings(Type ty) {
   // The bindings are spelled over the impl's own parameters, so they are read
-  // at the arguments those parameters take in its own body: themselves.
+  // at the arguments those parameters take in its own body: themselves. What a
+  // binding spells beneath its root is read by a reading nested in the
+  // projection's, and once the depth limit's worth of such nesting is met the
+  // reading changes nothing more and fails: a binding growing beneath a
+  // constructor has no normal form.
   TraitApplicationAttr own = getSelfApplication();
-  AttrTypeReplacer replacer;
-  replacer.addReplacement([&](ProjectionType proj) -> std::optional<Type> {
-    if (proj.getTraitApplication() != own)
-      return std::nullopt;
-    auto bound = specializeAssociatedTypeBinding(
-        proj.getAssocName().getValue(), proj.getAssocTypeArgs(),
-        SpecializationMap());
-    if (failed(bound))
-      return std::nullopt;
-    return *bound;
-  });
+  unsigned nested = 0;
+  bool tooDeep = false;
+  AttrTypeReplacer replacer = makeProjectionReplacer(
+      [](ProjectionType) { return true; },
+      [&](ProjectionType proj) -> std::optional<Type> {
+        if (tooDeep)
+          return Type(proj);
+        if (proj.getTraitApplication() != own)
+          return std::nullopt;
+        auto bound = specializeAssociatedTypeBinding(
+            proj.getAssocName().getValue(), proj.getAssocTypeArgs(),
+            SpecializationMap());
+        if (failed(bound))
+          return std::nullopt;
+        if (nested >= kInstantiationDepthLimit) {
+          tooDeep = true;
+          return Type(proj);
+        }
+        ++nested;
+        Type read = replaceBeneathRoot(*bound, replacer);
+        --nested;
+        return read;
+      });
   Type out;
   if (failed(tryNormalizeProjectionsToFixedPoint(
-          ty, [&](Type t) { return replacer.replace(t); }, out)))
+          ty, [&](Type t) { return tooDeep ? t : replacer.replace(t); },
+          out)) ||
+      tooDeep)
     return failure();
   return out;
 }

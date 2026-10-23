@@ -603,8 +603,9 @@ Answer<ClaimType> ImplResolver::writeProof(
   // Every respelling is resolved before the proof is begun: resolving one can
   // write the proofs its steps cite, and those stand before this one.
   auto header = cast<ClaimType>(instantiate(Type(impl.getSelfClaim()), arguments));
-  Answer<SmallVector<ResolutionStep>> headerSteps = resolveRespelling(
-      header.getTraitApplication(), app, site, builder, /*depth=*/0);
+  Answer<SmallVector<ResolutionStep>> headerSteps =
+      resolveRespelling(header.getTraitApplication().getTypeArgs(),
+                        app.getTypeArgs(), site, builder, /*depth=*/0);
   if (!headerSteps.isAnswer())
     return headerSteps.stop<ClaimType>();
   SmallVector<ProvenPremise> applicationPremises;
@@ -654,7 +655,8 @@ Answer<ClaimType> ImplResolver::respellProof(ClaimType proven,
   // Every respelling step is resolved before the cast is begun: resolving one
   // can write the proofs its steps cite, and those stand before this one.
   Answer<SmallVector<ResolutionStep>> steps =
-      resolveRespelling(from, to, site, builder, /*depth=*/0);
+      resolveRespelling(from.getTypeArgs(), to.getTypeArgs(), site, builder,
+                        /*depth=*/0);
   if (!steps.isAnswer())
     return steps.stop<ClaimType>();
   OpBuilder::InsertionGuard guard(builder);
@@ -671,13 +673,12 @@ Answer<ClaimType> ImplResolver::respellProof(ClaimType proven,
 }
 
 Answer<SmallVector<ResolutionStep>>
-ImplResolver::resolveRespelling(TraitApplicationAttr spelled,
-                                TraitApplicationAttr resolved,
+ImplResolver::resolveRespelling(ArrayRef<Type> spelled,
+                                ArrayRef<Type> resolved,
                                 const SelectionSite &site, OpBuilder &builder,
                                 unsigned depth) {
   SmallVector<ResolutionStep> steps;
-  for (auto [from, to] :
-       llvm::zip_equal(spelled.getTypeArgs(), resolved.getTypeArgs())) {
+  for (auto [from, to] : llvm::zip_equal(spelled, resolved)) {
     if (from == to)
       continue;
     auto sides =
@@ -701,8 +702,10 @@ ImplResolver::resolvePremise(ClaimType entry, FlatSymbolRefAttr proof,
   auto proofOp = dyn_cast<ProofOp>(*cited);
   TraitApplicationAttr own = proofOp ? proofOp.getTraitApplication()
                                      : cast<ImplOp>(*cited).getSelfApplication();
-  Answer<SmallVector<ResolutionStep>> respelling = resolveRespelling(
-      own, entry.getTraitApplication(), site, builder, depth);
+  Answer<SmallVector<ResolutionStep>> respelling =
+      resolveRespelling(own.getTypeArgs(),
+                        entry.getTraitApplication().getTypeArgs(), site,
+                        builder, depth);
   if (!respelling.isAnswer())
     return respelling.stop<ProvenPremise>();
   MLIRContext *ctx = entry.getContext();
@@ -758,50 +761,76 @@ Answer<ProjectionResolution> ImplResolver::resolveProjection(
   if (overflowed)
     return Answer<ProjectionResolution>::overflow();
 
-  // A projection's own associated-type arguments are types it states, as its
-  // head application's are: one naming no type makes the projection name
-  // none, whether or not the binding reads it. Each is read by a reading
-  // nested in this one, and the nesting is bounded as rustc's normalizer
-  // bounds its depth: a binding growing its own arguments overflows rather
-  // than nesting without end.
-  if (!proj.getAssocTypeArgs().empty()) {
-    if (nestedArgumentReadings >= kInstantiationDepthLimit) {
-      overflow(Overflow::projectionSteps(Type(proj)), site);
-      return Answer<ProjectionResolution>::overflow();
-    }
-    ++nestedArgumentReadings;
-    auto unnest = llvm::scope_exit([&] { --nestedArgumentReadings; });
-    for (Type argument : proj.getAssocTypeArgs()) {
-      Answer<Type> read = resolveProjectionsIn(argument, site, builder);
-      if (!read.isAnswer())
-        return read.stop<ProjectionResolution>();
-      if (isNoPredicateType(*this, Type(proj), *read, site.scope, err))
-        return Answer<ProjectionResolution>::refusal();
-    }
-  }
+  // A projection's own associated-type arguments are read to their normal
+  // forms before it is projected, as rustc normalizes a projection's
+  // arguments before it projects, and the binding is specialized at what was
+  // read, as selection specializes it at the head arguments it read: the
+  // binding then holds no argument a reading still owes, so each is read once.
+  // The arguments are types the projection states, as its head application's
+  // are: one naming no type makes the projection name none, whether or not
+  // the binding reads it.
+  Answer<ProjectionType> atRead = proj;
+  if (!proj.getAssocTypeArgs().empty())
+    atRead = readNested<ProjectionType>(
+        proj, site, [&]() -> Answer<ProjectionType> {
+          SmallVector<Type> arguments;
+          for (Type argument : proj.getAssocTypeArgs()) {
+            Answer<Type> read = resolveProjectionsIn(argument, site, builder);
+            if (!read.isAnswer())
+              return read.stop<ProjectionType>();
+            if (isNoPredicateType(*this, Type(proj), *read, site.scope, err))
+              return Answer<ProjectionType>::refusal();
+            arguments.push_back(*read);
+          }
+          return ProjectionType::get(proj.getContext(),
+                                     proj.getTraitApplication(),
+                                     proj.getAssocName(), arguments);
+        });
+  if (!atRead.isAnswer())
+    return atRead.stop<ProjectionResolution>();
   auto select = [&](ClaimType claim) {
     return resolveImplFor(claim, site, builder, err);
   };
-  return ProjectionResolution::get(proj, select, err);
+  return ProjectionResolution::get(*atRead, select, err);
+}
+
+Answer<Type> ImplResolver::readBeneathRoot(Type binding, ProjectionType proj,
+                                           AttrTypeReplacer &walk,
+                                           const SelectionSite &site) {
+  return readNested<Type>(proj, site, [&]() -> Answer<Type> {
+    return replaceBeneathRoot(binding, walk);
+  });
 }
 
 Answer<std::optional<Type>>
 ImplResolver::settleThroughSelection(
     Type ty, const SelectionSite &site, OpBuilder &builder,
     decltype(&makeGroundProjectionReplacer) replacerFor) {
+  // An overflow stops selection for the stage, so once a step overflows the
+  // walk changes nothing more: an overflowed projection stands unwalked, and
+  // the fixed point ends at the round that met it rather than re-expanding
+  // what the replacer had already answered.
   bool stepOverflowed = false;
   AttrTypeReplacer replacer = replacerFor(
       [&](ProjectionType proj) -> std::optional<Type> {
     Answer<ProjectionResolution> resolved =
         resolveProjection(proj, site, builder);
     stepOverflowed |= resolved.isOverflow();
+    if (resolved.isOverflow())
+      return Type(proj);
     if (!resolved.isAnswer())
       return std::nullopt;
-    return resolved->getBinding();
+    Answer<Type> read =
+        readBeneathRoot(resolved->getBinding(), proj, replacer, site);
+    stepOverflowed |= read.isOverflow();
+    if (!read.isAnswer())
+      return Type(proj);
+    return *read;
   });
   Type out;
   bool settles = succeeded(tryNormalizeProjectionsToFixedPoint(
-      ty, [&](Type t) { return replacer.replace(t); }, out));
+      ty, [&](Type t) { return stepOverflowed ? t : replacer.replace(t); },
+      out));
   if (stepOverflowed)
     return Answer<std::optional<Type>>::overflow();
   if (!settles)
@@ -824,19 +853,30 @@ Answer<Type> ImplResolver::resolveProjectionsIn(
 }
 
 void Overflow::emit(Location anchor) const {
-  if (ImplOp generated = impl) {
+  switch (kind) {
+  case Kind::InexactImpl: {
+    ImplOp generated = impl;
     generated->emitError() << "an impl generated for " << app
                            << " must state that application; it states "
                            << generated.getSelfClaim().getTraitApplication();
     return;
   }
-  if (app) {
+  case Kind::Obligations:
     emitObligationOverflow(anchor, app, chain, height);
     return;
+  case Kind::ProjectionSteps:
+    emitError(anchor) << "overflow evaluating the requirement " << spelled
+                      << ": " << kInstantiationDepthLimit
+                      << " projection steps stand on the chain";
+    return;
+  case Kind::NestedReadings:
+    emitError(anchor) << "overflow evaluating the requirement " << spelled
+                      << ": " << kInstantiationDepthLimit
+                      << " readings of projections' arguments and bindings "
+                         "stand nested";
+    return;
   }
-  emitError(anchor) << "overflow evaluating the requirement " << spelled
-                    << ": " << kInstantiationDepthLimit
-                    << " projection steps stand on the chain";
+  llvm_unreachable("an overflow of no kind");
 }
 
 void ImplResolver::overflow(const Overflow &what, const SelectionSite &site) {
@@ -981,6 +1021,15 @@ ImplResolver::readEqualitySides(TypeEqualityAttr eq, const SelectionSite &site,
   return std::make_pair(**lhs, **rhs);
 }
 
+/// The types `proj` is applied at, in the positions a coerce's congruence
+/// reads them (`decomposeTerm`): its head application's arguments, then its
+/// own associated-type arguments.
+static SmallVector<Type> typeArgumentsOf(ProjectionType proj) {
+  SmallVector<Type> types(proj.getTraitApplication().getTypeArgs());
+  llvm::append_range(types, proj.getAssocTypeArgs());
+  return types;
+}
+
 Answer<std::pair<Type, Type>>
 ImplResolver::resolveEquality(TypeEqualityAttr eq, const SelectionSite &site,
                               OpBuilder &builder,
@@ -994,12 +1043,14 @@ ImplResolver::resolveEquality(TypeEqualityAttr eq, const SelectionSite &site,
   if (!read.isAnswer() || read->first != read->second)
     return read;
   MLIRContext *ctx = eq.getContext();
-  // A step whose resolution fails is left standing; the failure is carried out
-  // past the fixed point so that it, and not the standing projection, is what
-  // refuses. One replacer serves both sides and every round of the fixed
-  // point, and it answers a projection it has already met from its cache, so a
-  // projection spelled twice is one step. An equality entry of a resolving
-  // impl recurses, bounded as every obligation chain is.
+  // A step whose resolution fails is left standing, and the walk changes
+  // nothing after it: its answer is discarded, so a projection met later
+  // stands unwalked and the fixed point ends at the round that met the
+  // failure, which is carried out past it so that it, and not the standing
+  // projection, is what refuses. One replacer serves both sides and every
+  // round of the fixed point, and it answers a projection it has already met
+  // from its cache, so a projection spelled twice is one step. An equality
+  // entry of a resolving impl recurses, bounded as every obligation chain is.
   bool stepFailed = depth >= kInstantiationDepthLimit;
   bool stepOverflowed = false;
   auto stop = [&](bool overflowedHere) {
@@ -1010,29 +1061,33 @@ ImplResolver::resolveEquality(TypeEqualityAttr eq, const SelectionSite &site,
   AttrTypeReplacer replacer = makeGroundProjectionReplacer(
       [&](ProjectionType proj) -> std::optional<Type> {
         if (stepFailed)
-          return std::nullopt;
+          return Type(proj);
         Answer<ProjectionResolution> resolved =
             resolveProjection(proj, site, builder, err);
         if (!resolved.isAnswer())
           return stop(resolved.isOverflow());
-        // The step is stated at the application the impl's header spells at
-        // its arguments, which its witness's citation rebuilds; the steps
-        // resolving the projections either spelling holds carry the
-        // projection as spelled to it.
+        // The step is stated as the resolution read the projection: at the
+        // application the impl's header spells at its arguments, which its
+        // witness's citation rebuilds, and at the normal forms of its own
+        // associated-type arguments, at which the binding was specialized.
+        // The steps resolving each type the projection as spelled holds apart
+        // from those carry it to the stated one, which a coerce's congruence
+        // then relates to it.
         TraitApplicationAttr header =
             cast<ClaimType>(instantiate(Type(resolved->getImpl().getSelfClaim()),
                                         resolved->getArguments()))
                 .getTraitApplication();
-        ProjectionType stated = proj;
-        if (header != proj.getTraitApplication()) {
+        ProjectionType stated = ProjectionType::get(
+            ctx, header, proj.getAssocName(),
+            resolved->getProjection().getAssocTypeArgs());
+        if (stated != proj) {
           Answer<SmallVector<ResolutionStep>> respelling = resolveRespelling(
-              proj.getTraitApplication(), header, site, builder, depth + 1);
+              typeArgumentsOf(proj), typeArgumentsOf(stated), site, builder,
+              depth + 1);
           if (!respelling.isAnswer())
             return stop(respelling.isOverflow());
           for (ResolutionStep &carried : *respelling)
             steps.push_back(std::move(carried));
-          stated = ProjectionType::get(ctx, header, proj.getAssocName(),
-                                       proj.getAssocTypeArgs());
         }
         ResolutionStep step;
         step.equality = TypeEqualityAttr::get(ctx, Type(stated),
@@ -1069,7 +1124,11 @@ ImplResolver::resolveEquality(TypeEqualityAttr eq, const SelectionSite &site,
           step.premises.push_back(std::move(nested));
         }
         steps.push_back(std::move(step));
-        return resolved->getBinding();
+        Answer<Type> read =
+            readBeneathRoot(resolved->getBinding(), proj, replacer, site);
+        if (!read.isAnswer())
+          return stop(read.isOverflow());
+        return *read;
       });
   // A side whose projections still change after the depth limit's worth of
   // steps is an overflow, named once, as every resolution selection runs
@@ -1078,7 +1137,11 @@ ImplResolver::resolveEquality(TypeEqualityAttr eq, const SelectionSite &site,
   auto resolve = [&](Type side) {
     Type out;
     settles &= succeeded(tryNormalizeProjectionsToFixedPoint(
-        side, [&](Type current) { return replacer.replace(current); }, out));
+        side,
+        [&](Type current) {
+          return stepFailed ? current : replacer.replace(current);
+        },
+        out));
     return out;
   };
   Type lhs = resolve(eq.getLhs());

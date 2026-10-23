@@ -21,17 +21,20 @@
 
 namespace mlir::trait {
 
-/// A replacer with one projection rule, over the spellings `reads` admits.
-static AttrTypeReplacer makeProjectionReplacer(
+AttrTypeReplacer makeProjectionReplacer(
     bool (*reads)(ProjectionType),
     std::function<std::optional<Type>(ProjectionType)> hop) {
   AttrTypeReplacer replacer;
   replacer.addReplacement(
-      [reads, hop = std::move(hop)](Type t) -> std::optional<Type> {
+      [reads, hop = std::move(hop)](
+          Type t) -> std::optional<std::pair<Type, WalkResult>> {
         auto projection = dyn_cast<ProjectionType>(t);
         if (!projection || !reads(projection))
           return std::nullopt;
-        return hop(projection);
+        std::optional<Type> binding = hop(projection);
+        if (!binding)
+          return std::nullopt;
+        return std::make_pair(*binding, WalkResult::skip());
       });
   return replacer;
 }
@@ -50,6 +53,26 @@ AttrTypeReplacer makeGroundHeadProjectionReplacer(
         return !isPolymorphicType(Type(proj.asClaim()));
       },
       std::move(hop));
+}
+
+Type replaceBeneathRoot(Type answer, AttrTypeReplacer &walk) {
+  SmallVector<Attribute> attributes;
+  SmallVector<Type> types;
+  bool changed = false;
+  answer.walkImmediateSubElements(
+      [&](Attribute element) {
+        Attribute replaced = walk.replace(element);
+        changed |= replaced != element;
+        attributes.push_back(replaced);
+      },
+      [&](Type element) {
+        Type replaced = walk.replace(element);
+        changed |= replaced != element;
+        types.push_back(replaced);
+      });
+  if (!changed)
+    return answer;
+  return answer.replaceImmediateSubElements(attributes, types);
 }
 
 void TraitDialect::registerTypes() {
