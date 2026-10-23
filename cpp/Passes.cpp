@@ -269,18 +269,14 @@ bool isForeign(Operation *op) {
 }
 
 /// The proofs `proof`'s derivation cites: the proof each application witness
-/// names among the claims its derive is given and the ops computing them in
-/// the body holding the derive -- a coercion, an equality's witness, the
-/// derive of a where entry. A cast's derivation is its source's
-/// (`ProofOp::getDerive`).
+/// names among the ops computing the claim the proof returns -- its derive and
+/// the claims the derive is given, a coercion and the equalities it cites, an
+/// equality's witness, the derive of a where entry, and a cast's source.
 static SmallVector<ProofOp> getCitedProofs(ProofOp proof, ModuleOp module) {
   SmallVector<ProofOp> cited;
-  DeriveOp derive = proof.getDerive();
-  if (!derive)
-    return cited;
   // A proof's body is closed (`ProofOp::verify`), so every value read here is
   // an op's result.
-  SmallVector<Value> pending(derive.getAssumptions());
+  SmallVector<Value> pending{proof.getProven()};
   DenseSet<Operation *> seen;
   while (!pending.empty()) {
     Operation *producer = pending.pop_back_val().getDefiningOp();

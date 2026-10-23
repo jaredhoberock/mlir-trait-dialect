@@ -88,6 +88,79 @@ trait.proof private @p {
 
 // -----
 
+// Through the coercion respelling the proof's returned claim: @p returns its
+// derive of @Foo[@Bar[i32]::Out] coerced to @Foo[i64] by the equality
+// @Bar_cond binds, given the witness of @p itself.
+
+!T = !trait.poly<0>
+trait.trait private @Foo(%self: !trait.claim<@Foo[!T]>) { trait.method @m() -> i64 }
+trait.trait private @Bar(%self: !trait.claim<@Bar[!T]>) { trait.assoc_type @Out }
+trait.impl private @Foo_head(%self: !trait.claim<@Foo[!trait.proj<@Bar[i32], "Out">]>) {
+  trait.method @m() -> i64 { %v = arith.constant 7 : i64  trait.return %v : i64 }
+}
+trait.impl private @Bar_cond(%self: !trait.claim<@Bar[i32]>, %f: !trait.claim<@Foo[i64]>) {
+  trait.assoc_type @Out = i64
+}
+// expected-error @below {{'trait.proof' op is cited by its own derivation: @p -> @p}}
+trait.proof private @p {
+  %d = trait.derive @Foo[!trait.proj<@Bar[i32], "Out">] from @Foo_head given()
+  %w = trait.witness @p for @Foo[i64]
+  %e = trait.witness proj_resolve !trait.proj<@Bar[i32], "Out"> resolves i64 by @Bar_cond given(%w)
+    : (!trait.claim<@Foo[i64] by @p>) : !trait.claim<!trait.proj<@Bar[i32], "Out"> = i64>
+  %c = trait.coerce %d : !trait.claim<@Foo[!trait.proj<@Bar[i32], "Out">]>
+    to !trait.claim<@Foo[i64]> via (%e) : (!trait.claim<!trait.proj<@Bar[i32], "Out"> = i64>)
+  trait.return %c : !trait.claim<@Foo[i64]>
+}
+func.func @consume(%h: !trait.claim<@Foo[i64] by @p>) -> i64 {
+  %v = arith.constant 7 : i64
+  return %v : i64
+}
+func.func @main() -> i64 {
+  %w = trait.witness @p for @Foo[i64]
+  %r = trait.func.call @consume(%w) : (!trait.claim<@Foo[i64] by @p>) -> i64
+  return %r : i64
+}
+
+// -----
+
+// The same coercion citing an equality @Bar_cond binds given another proof,
+// @q, which cites none: the call runs @Foo_head's method.
+
+// CHECK-LABEL: func.func @main() -> i64
+// CHECK:         call @Foo_head_{{h[0-9a-f]+}}_m()
+
+!T = !trait.poly<0>
+trait.trait private @Foo(%self: !trait.claim<@Foo[!T]>) { trait.method @m() -> i64 }
+trait.trait private @Bar(%self: !trait.claim<@Bar[!T]>) { trait.assoc_type @Out }
+trait.trait private @Baz(%self: !trait.claim<@Baz[!T]>) {}
+trait.impl private @Foo_head(%self: !trait.claim<@Foo[!trait.proj<@Bar[i32], "Out">]>) {
+  trait.method @m() -> i64 { %v = arith.constant 7 : i64  trait.return %v : i64 }
+}
+trait.impl private @Baz_i64(%self: !trait.claim<@Baz[i64]>) {}
+trait.impl private @Bar_cond(%self: !trait.claim<@Bar[i32]>, %z: !trait.claim<@Baz[i64]>) {
+  trait.assoc_type @Out = i64
+}
+trait.proof private @q {
+  %d = trait.derive @Baz[i64] from @Baz_i64 given()
+  trait.return %d : !trait.claim<@Baz[i64]>
+}
+trait.proof private @p {
+  %d = trait.derive @Foo[!trait.proj<@Bar[i32], "Out">] from @Foo_head given()
+  %z = trait.witness @q for @Baz[i64]
+  %e = trait.witness proj_resolve !trait.proj<@Bar[i32], "Out"> resolves i64 by @Bar_cond given(%z)
+    : (!trait.claim<@Baz[i64] by @q>) : !trait.claim<!trait.proj<@Bar[i32], "Out"> = i64>
+  %c = trait.coerce %d : !trait.claim<@Foo[!trait.proj<@Bar[i32], "Out">]>
+    to !trait.claim<@Foo[i64]> via (%e) : (!trait.claim<!trait.proj<@Bar[i32], "Out"> = i64>)
+  trait.return %c : !trait.claim<@Foo[i64]>
+}
+func.func @main() -> i64 {
+  %w = trait.witness @p for @Foo[i64]
+  %r = trait.method.call %w @Foo[i64]::@m() : () -> i64 by @p
+  return %r : i64
+}
+
+// -----
+
 // A proof citing another proof, which cites none, rests on that one: @p's
 // where entry is @q's, and the call runs @Foo_all's method.
 
