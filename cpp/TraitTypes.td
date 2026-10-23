@@ -124,16 +124,13 @@ def ClaimType : TypeDef<TraitDialect, "Claim", [
     Removing spelled proofs from claim types in favor of side state
     was evaluated in depth and rejected by owner ruling: it makes the
     text depend on state outside itself.  Verifiers, by contrast,
-    never re-derive a spelled proof: a claim that names one is checked
-    against the declaration it names, locally (`verifyCitation`), and
+    never re-derive a spelled proof: a proof named is checked against
+    its declaration once, locally (`verifyCitation`); a verifier that
+    compares two evidence types compares their predicates with the
+    proofs stripped (`stripClaimProofs`) and never re-derives one; and
     claim types are otherwise compared by identity, proof included.
-    The places that read a claim for its predicate alone compare
-    modulo the proof named: the premises a derive or a proj-resolve
-    witness supplies against its impl's where entries, a call's
-    arguments against the callee's instantiated formals, a coerce's
-    claim endpoints under its cited equalities, and the agreement of an
-    impl's own declarations with its trait's.  Solving may consult the
-    module and its caches; checking stays local.  Any future proposal to move provenance out of the spelled
+    Solving may consult the module and its caches; checking stays
+    local.  Any future proposal to move provenance out of the spelled
     type requires an explicit owner ruling to reopen.
   }];
 

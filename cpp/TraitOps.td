@@ -136,9 +136,18 @@ def ReadsUnderDominance : NativeOpTrait<"ReadsUnderDominance"> {
 }
 
 // The evidence an evidence op reads and produces states no equality relating
-// evidence (`verifyEndpointsRelateTypes`), whatever symbols it names: the
-// evidence ops are the ones making equality evidence or reading it as
-// evidence, so no verification passes a coerce citing such an equality.
+// evidence (`verifyEndpointsRelateTypes`), whatever symbols it names. Of the
+// five ops bearing it, `trait.coerce` bears the soundness: it alone reasons
+// from an equality, so no verification passes a coerce citing one relating
+// evidence. The other four -- allege, derive, project and witness -- make
+// equality evidence or compare it by position with a declaration, and asking
+// them refuses such an equality earlier, nearer the op that wrote it.
+//
+// XXX TODO: delete this trait once `trait.assoc_type` declares its kind, a type
+// or evidence. Every rewrite building an equality is then kind-preserving, so
+// the endpoint rule returns to `TypeEqualityAttr::verify`, and this trait, the
+// equality arm of `ClaimType::verifySymbolUses` and the evidence half of
+// `isNoPredicateType` go with it.
 def EqualitiesRelateTypes : NativeOpTrait<"EqualitiesRelateTypes"> {
   let cppNamespace = "::mlir::trait";
 }

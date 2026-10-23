@@ -2416,8 +2416,9 @@ static LogicalResult verifyPremisesSuppliedByPosition(
 
 /// Whether the citation a derive or a projection-resolution witness makes of
 /// `impl` states one argument per parameter, `stated`, and, at those
-/// `arguments`, the header `cited` and the where entries `premises` supply,
-/// positionally, each compared by identity.
+/// `arguments`, the header `cited`, compared by identity, and the where entries
+/// `premises` supply, positionally, each compared with the proof its claim
+/// names stripped (`verifyPremisesSuppliedByPosition`).
 static LogicalResult verifyCitationOf(
     ImplOp impl, ClaimType cited, ImplArgumentsAttr stated,
     const SpecializationMap &arguments, ValueRange premises,
@@ -2519,9 +2520,9 @@ ImplOp DeriveOp::getImplOp() {
 }
 
 /// Verifies a derive: it states one argument per parameter of the impl, the
-/// derived application is the impl's header at them, and each operand's claim
-/// is the impl's where-clause entry at them, in order, each compared by
-/// identity.
+/// derived application is the impl's header at them, and each operand's claim,
+/// with the proof it names stripped, is the impl's where-clause entry at them,
+/// in order.
 LogicalResult DeriveOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // Verification writes nothing, so every name read under it resolves through
   // the symbol tables the walk this is one step of has already built.
