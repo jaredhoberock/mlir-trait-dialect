@@ -64,12 +64,14 @@ void *eraseLegality(MlirOperation, void *targetPtr, void *, void *) {
 /// claims and allegations, leaving the polymorphic templates standing; its target
 /// has an opinion on every operation and marks a pending one illegal, so the
 /// readiness walk runs it exactly while a pending operation stands. erase-polymorphs
-/// then judges every standing monomorphic equality, which nothing makes pending, at
-/// its own entry, erases the claims and projections, respells the remaining types,
-/// and collects the templates nothing names; its target holds it behind instantiate
-/// (it has no opinion on a pending operation) and its converter refuses every
-/// polymorphic type, so it runs once the type system has settled, and it requests
-/// the cleanup interlude after it.
+/// then judges at its own entry every claim and projection standing outside a
+/// template -- every equality among them, which nothing makes pending -- erases the
+/// claims and projections, respells the remaining types, and collects the templates
+/// nothing names; its target has no opinion on any operation still pending
+/// instantiation, whatever its kind, so the readiness walk holds it behind
+/// instantiate while one stands and the two never share a batch, and its converter
+/// refuses every polymorphic type, so it runs once the type system has settled, and
+/// it requests the cleanup interlude after it.
 struct LoweringContribution : lowering::LoweringContributionInterface {
   using lowering::LoweringContributionInterface::LoweringContributionInterface;
   void contributeSteps(lowering::LoweringStepSink &sink) const override {

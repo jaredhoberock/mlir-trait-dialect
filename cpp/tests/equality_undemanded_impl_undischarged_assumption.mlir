@@ -34,7 +34,7 @@ func.func private @gen(%c: !trait.claim<!trait.proj<@Has[tuple<!trait.poly<0>>],
 
 // CHECK: error: no impl with satisfiable assumptions for '!trait.proj<@Has[i32], "Out">'
 // CHECK: error: unresolved projection '!trait.proj<@Has[i32], "Out">' after instantiate-monomorphs
-// ERASE: error: equality '!trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = !trait.proj<@Has[tuple<i32, i32>], "Out">>' does not settle before erasure: its sides resolve to '!trait.proj<@Has[i32], "Out">' and '!trait.proj<@Has[i32], "Out">'
+// ERASE: error: equality '!trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = !trait.proj<@Has[tuple<i32, i32>], "Out">>' does not settle before erasure: both its sides resolve to '!trait.proj<@Has[i32], "Out">', which is not a ground type
 func.func @main() -> () {
   %p1 = trait.witness proj_resolve !trait.proj<@Has[tuple<i32>], "Out"> resolves !trait.proj<@Has[i32], "Out"> by @Has_w1[i32]
     : !trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = !trait.proj<@Has[i32], "Out">>

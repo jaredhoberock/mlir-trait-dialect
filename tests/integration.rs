@@ -755,6 +755,58 @@ func.func @host(%x: i32) -> i32 {\n\
     );
 }
 
+#[test]
+fn erase_waits_behind_instantiate_on_every_pending_operation() {
+    // erase's legality has no opinion on an operation still pending
+    // instantiation, whatever its kind, so the readiness walk holds the step
+    // behind instantiate rather than readying both as one batch, in which the
+    // roster's order alone would put instantiate first. A standing allegation of
+    // an equality is pending, and so is a function taking an unproven claim; at
+    // the entry boundary of each module instantiate is ready alone and erase
+    // waits on that operation.
+    let registry = DialectRegistry::new();
+    register_all_dialects(&registry);
+    let context = Context::new();
+    context.append_dialect_registry(&registry);
+    trait_::register(&context);
+    context.load_all_available_dialects();
+
+    let allegation = "\
+trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) { trait.assoc_type @Item }\n\
+trait.impl private @A_impl(%self: !trait.claim<@A[!trait.poly<0>]>) { trait.assoc_type @Item = !trait.poly<0> }\n\
+func.func private @g(%e: !trait.claim<!trait.proj<@A[i64], \"Item\"> = i64>) -> i64 {\n\
+  %c = arith.constant 7 : i64\n\
+  return %c : i64\n\
+}\n\
+func.func @use() -> i64 {\n\
+  %a = trait.allege !trait.proj<@A[i64], \"Item\"> = i64\n\
+  %v = func.call @g(%a) : (!trait.claim<!trait.proj<@A[i64], \"Item\"> = i64>) -> i64\n\
+  return %v : i64\n\
+}\n";
+    let hypothesis = "\
+trait.trait private @B(%self: !trait.claim<@B[!trait.poly<0>]>) {}\n\
+trait.impl private @B_i64(%self: !trait.claim<@B[i64]>) {}\n\
+func.func @use(%b: !trait.claim<@B[i64]>) -> i64 {\n\
+  %c = arith.constant 7 : i64\n\
+  return %c : i64\n\
+}\n";
+    for (source, pending) in [(allegation, "trait.allege"), (hypothesis, "func.func")] {
+        let module = Module::parse(&context, source).expect("the fixture module parses");
+        assert!(module.as_operation().verify(), "the fixture module verifies");
+        let readiness = entry_readiness(&context, &module);
+        assert_eq!(
+            ready_steps(&readiness),
+            vec!["instantiate-monomorphs".to_string()],
+            "instantiate is ready alone while {pending} is pending: {readiness}"
+        );
+        assert!(
+            readiness.contains(&format!("erase-polymorphs:waits({pending})")),
+            "erase has no opinion on the pending {pending}, which holds it behind \
+             instantiate: {readiness}"
+        );
+    }
+}
+
 
 /// A context with every upstream dialect and the trait dialect loaded.
 fn trait_context() -> Context {

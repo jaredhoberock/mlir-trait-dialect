@@ -6,11 +6,11 @@
 
 // Erasure judges every monomorphic equality a coerce states, whatever reads it
 // and whether or not instantiation ran before it. %c derives i64 = i32 from the
-// hypothesis i32 = i64, which no caller supplies, and only the coerce %d cites
-// it; %d's own equality holds through %w alone and settles. The erase pass
-// removes a coerce to an equality without comparing its endpoints, so its entry
-// judgment is where %c's equality is refused: its endpoints are two ground
-// types.
+// hypothesis i32 = i64, and only the coerce %d cites it; %d's own equality
+// holds through %w alone and settles. The erase pass removes a coerce to an
+// equality without comparing its endpoints, so its entry judgment is where %c's
+// equality is refused: its endpoints are two ground types. The hypothesis is
+// refused there too, where @use assumes it.
 
 !S = !trait.poly<0>
 trait.trait private @A(%self: !trait.claim<@A[!S]>) { trait.assoc_type @Item }
@@ -21,6 +21,7 @@ func.func private @g(%e: !trait.claim<!trait.proj<@A[i64], "Item"> = i64>) -> i6
   return %c : i64
 }
 
+// CHECK: error: equality '!trait.claim<i32 = i64>' does not settle before erasure: its sides resolve to 'i32' and 'i64'
 func.func @use(%h: !trait.claim<i32 = i64>) -> i64 {
   %w = trait.witness proj_resolve !trait.proj<@A[i64], "Item"> resolves i64 by @A_impl[i64] : !trait.claim<!trait.proj<@A[i64], "Item"> = i64>
   %r0 = trait.witness refl : !trait.claim<i64 = i64>

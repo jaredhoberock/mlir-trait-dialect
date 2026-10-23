@@ -79,10 +79,12 @@ struct InstantiateMonomorphsPass : PassWrapper<InstantiateMonomorphsPass, Operat
 std::unique_ptr<Pass> createInstantiateMonomorphsPass();
 
 /// Erases all residual polymorphism from the module, the second half of
-/// monomorphization. Its entry judges every monomorphic equality standing
-/// outside a template and refuses one that does not hold, so no equality is
-/// erased unjudged whatever ran before it; an application claim is
-/// instantiate-monomorphs' to prove or refuse. Three phases follow. Evidence
+/// monomorphization. Its entry judges every claim and projection standing
+/// outside a template, the result of an op and the argument of a block alike:
+/// an equality must hold, and one carrying a type variable never does there; an
+/// application claim must be proven and a projection resolved, which is
+/// instantiate-monomorphs' work. It refuses what fails, so nothing is erased
+/// unjudged whatever ran before it. Three phases follow. Evidence
 /// lowering erases the claims, projections, witnesses and coerces and rewrites
 /// the signatures they stood on; the type sweep respells the remaining types of
 /// every op outside a template; the exit check holds everything standing
