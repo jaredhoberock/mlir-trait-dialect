@@ -557,16 +557,28 @@ class ImplResolver {
         decltype(&makeGroundProjectionReplacer) replacerFor =
             makeGroundProjectionReplacer);
 
-    /// The ground spellings the sides of `eq` resolve to through selection at
-    /// `site`, appending one step per distinct ground projection resolved on
-    /// the way to `steps`; identical sides are read as spelled. The walk
+    /// The types the sides of `eq` name, each read through selection at `site`
+    /// to a fixed point: the one reading by which an equality is judged, so
+    /// that it settles exactly when the two are one type. Refused where a
+    /// ground projection still stands on either side -- one selection refused,
+    /// which names no type, whatever the other side spells -- naming each
+    /// refusal through `err` when it is given; overflows where selection does
+    /// or a side does not settle within the depth limit. Identical sides are
+    /// read as any others.
+    Answer<std::pair<Type, Type>>
+    readEqualitySides(TypeEqualityAttr eq, const SelectionSite &site,
+                      OpBuilder &builder,
+                      llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+
+    /// The sides of `eq` as `readEqualitySides` reads them and, where they
+    /// meet, one step per distinct ground projection resolved on the way,
+    /// appended to `steps`: the evidence of the equality. The walk
     /// descends composites, so a projection nested inside one yields its step
     /// just as a top-level projection does, and runs to a fixed point because
     /// a binding may itself spell a projection. An equality entry of a
     /// resolving impl is resolved the same way, and must reach one spelling.
-    /// Refused where a step is refused or a ground projection still stands;
-    /// overflows where selection does or a side does not settle within the
-    /// depth limit.
+    /// Refused where the reading is or a step is refused; overflows where
+    /// either does.
     Answer<std::pair<Type, Type>>
     resolveEquality(TypeEqualityAttr eq, const SelectionSite &site,
                     OpBuilder &builder, SmallVectorImpl<ResolutionStep> &steps,

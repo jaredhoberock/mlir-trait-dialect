@@ -61,7 +61,7 @@ trait.impl private @I(%self: !trait.claim<@T[i32]>, %out: !trait.claim<!trait.pr
 }
 
 func.func @main() -> i64 {
-  // expected-error @below {{no impl with satisfiable assumptions for '!trait.claim<@Has[i32]>'}}
+  // expected-error @below {{no impl with satisfiable assumptions for '!trait.proj<@Has[i32], "Out">'}}
   // expected-error @below {{unproven monomorphic claim '!trait.claim<!trait.proj<@Has[i32], "Out"> = i64>' after instantiate-monomorphs}}
   %eq = trait.allege !trait.proj<@Has[i32], "Out"> = i64
   // expected-error @below {{unproven monomorphic claim '!trait.claim<@T[i32]>' after instantiate-monomorphs}}

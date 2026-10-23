@@ -2813,7 +2813,29 @@ static FailureOr<SpecializationMap> readCallSpecialization(
   return arguments;
 }
 
+/// Refuses `call`, a call of this dialect, standing inside a symbol table other
+/// than a module or a trait or impl declaration. The call names its callee in
+/// its module (`getAnchorModule`) and lowers to a `func.call` standing where it
+/// stands, which names a function of its own symbol table alone, so inside any
+/// other symbol table no lowering reaches the callee. A declaration's methods
+/// are cut into its module before a call they hold lowers.
+static LogicalResult verifyCallStandsInItsModule(Operation *call) {
+  for (Operation *ancestor = call->getParentOp();
+       ancestor && !isa<ModuleOp>(ancestor); ancestor = ancestor->getParentOp())
+    if (ancestor->hasTrait<OpTrait::SymbolTable>() &&
+        !isa<TraitOp, ImplOp>(ancestor))
+      return call->emitOpError()
+             << "stands inside '" << ancestor->getName()
+             << "', a symbol table below the module its callee is named in: "
+                "the func.call it lowers to names a function of its own "
+                "symbol table alone";
+  return success();
+}
+
 LogicalResult MethodCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  if (failed(verifyCallStandsInItsModule(getOperation())))
+    return failure();
+
   // Verification writes nothing, so every name read under it resolves through
   // the symbol tables the walk this is one step of has already built.
   SymbolLookupScope symbolAnswers(getOperation(), symbolTable);
@@ -3007,6 +3029,9 @@ void MethodCallOp::print(OpAsmPrinter& p) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult FuncCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  if (failed(verifyCallStandsInItsModule(getOperation())))
+    return failure();
+
   // Verification writes nothing, so every name read under it resolves through
   // the symbol tables the walk this is one step of has already built.
   SymbolLookupScope symbolAnswers(getOperation(), symbolTable);

@@ -41,9 +41,9 @@ void *instantiateLegality(MlirOperation, void *targetPtr, void *, void *) {
 /// The legality erase-polymorphs hands the driver: its readiness target
 /// (`populateErasePolymorphsReadiness`), and a converter that maps every
 /// polymorphic type to none. Erase is therefore present while a template stands,
-/// or an op of this dialect, or a poly, claim, or projection type does, and runs
-/// to cut the template; the readiness walk reads what erase collects off the same
-/// interface the type system already speaks.
+/// which it runs to cut, or an op it rewrites -- an evidence op, or one
+/// mentioning a claim or a projection; the readiness walk reads what erase
+/// collects off the same interface the type system already speaks.
 void *eraseLegality(MlirOperation, void *targetPtr, void *, void *) {
   auto &target = *static_cast<ConversionTarget *>(targetPtr);
   populateErasePolymorphsReadiness(target);

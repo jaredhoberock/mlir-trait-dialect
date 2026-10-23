@@ -557,7 +557,13 @@ struct ProveClaimResultPattern : public RewritePattern {
         claim, SelectionSite::of(op), rewriter, firstAsk(op, errFn));
     if (!evidence.isAnswer()) {
       (void)refuse(op);
+      // Selection named why where it was first asked: the claim's refusal, or
+      // that of a projection its arguments spell that names no type
+      // (`ImplResolver::resolveImplFor`).
       namedObligations.insert(Type(claim));
+      Type(claim).walk([&](ProjectionType proj) {
+        namedObligations.insert(Type(proj.asClaim()));
+      });
       return rewriter.notifyMatchFailure(op, "couldn't find proof of this claim");
     }
     rewriter.replaceOp(op, buildPremiseEvidence(rewriter, op->getLoc(), *evidence));
@@ -1006,8 +1012,7 @@ struct CallOpLowering : public OpRewritePattern<CallOpT> {
 
   LogicalResult matchAndRewrite(CallOpT op, PatternRewriter &rewriter) const override {
     // The one readiness law, checked before any demand is raised: monomorphic
-    // operands, proven claims, and a callee with a signature -- for a free
-    // function, one at module scope.
+    // operands, proven claims, and a callee with a signature.
     if (!isRewritableGenericCall(op))
       return rewriter.notifyMatchFailure(op, "not a rewritable generic call");
 
@@ -1070,21 +1075,40 @@ static bool readThrough(CoerceOp coerce) {
   });
 }
 
+/// Visits each `TypeAttr` `attribute` is or holds among its attributes. A type
+/// an attribute holds as a parameter of its own rather than as a `TypeAttr` --
+/// an application's arguments, a constant's type -- is part of what that
+/// attribute states, as an application claim's arguments are part of what the
+/// claim states, so the walk enters no type.
+static void walkHeldTypes(Attribute attribute,
+                          llvm::function_ref<void(TypeAttr)> visit) {
+  if (auto held = dyn_cast<TypeAttr>(attribute))
+    return visit(held);
+  attribute.walkImmediateSubElements(
+      [&](Attribute sub) { walkHeldTypes(sub, visit); }, [](Type) {});
+}
+
 /// Visits the standing sites of `op`, each with the value standing there: every
-/// obligation site (`walkObligationSites`) of the type of a result of `op` and
-/// of an argument of a block of one of its regions. A coerce every use of which
-/// reads its evidence through it (`readThrough`) carries its input's proof, so
-/// the application claim it produces is no site of its own: it is judged where
-/// its input is produced. This is the one enumeration of the places a claim or
-/// a projection stands in a program; what instantiation still owes and what
-/// erasure judges before it erases are each a verdict on these sites. Whether
-/// `op` stands outside a template is the caller's to establish.
+/// obligation site (`walkObligationSites`) of the type of a result of `op`, of
+/// an argument of a block of one of its regions, and of a type one of its
+/// attributes carries as a `TypeAttr` -- a bodiless declaration's signature, a
+/// type argument another dialect's op names -- where no value stands and the
+/// position is null. A function with a body adds no site through its signature:
+/// its inputs are its entry block's arguments (FunctionOpInterface's verifier)
+/// and its results are what its returns hand back (func.return's verifier).
+/// A coerce every use of which reads its evidence through it (`readThrough`)
+/// carries its input's proof, so the application claim it produces is no site
+/// of its own: it is judged where its input is produced. This is the one
+/// enumeration of the places a claim or a projection stands in a program; what
+/// instantiation still owes and what erasure judges before it erases are each a
+/// verdict on these sites. Whether `op` stands outside a template is the
+/// caller's to establish.
 static void walkStandingSites(Operation *op,
                               llvm::function_ref<void(Value, Type)> visit) {
   auto coerce = dyn_cast<CoerceOp>(op);
   bool readsThrough = coerce && readThrough(coerce);
-  auto visitValue = [&](Value position) {
-    walkObligationSites(position.getType(), [&](Type site) {
+  auto visitType = [&](Value position, Type type) {
+    walkObligationSites(type, [&](Type site) {
       auto claim = dyn_cast<ClaimType>(site);
       if (readsThrough && claim && claim.isApplication())
         return;
@@ -1092,11 +1116,35 @@ static void walkStandingSites(Operation *op,
     });
   };
   for (Value result : op->getResults())
-    visitValue(result);
+    visitType(result, result.getType());
   for (Region &region : op->getRegions())
     for (Block &block : region)
       for (BlockArgument argument : block.getArguments())
-        visitValue(argument);
+        visitType(argument, argument.getType());
+  // A function with a body adds no site through its signature.
+  auto visitHeld = [&](TypeAttr held) {
+    auto function = dyn_cast<FunctionOpInterface>(op);
+    if (function && !function.isExternal() &&
+        held.getValue() == function.getFunctionType())
+      return;
+    visitType(Value(), held.getValue());
+  };
+  // The attributes are read where they are stored, an op's properties holding
+  // its inherent ones, rather than gathered into one dictionary per read.
+  for (NamedAttribute attribute : op->getRawDictionaryAttrs())
+    walkHeldTypes(attribute.getValue(), visitHeld);
+  if (op->getPropertiesStorageSize())
+    if (std::optional<RegisteredOperationName> name = op->getRegisteredInfo())
+      for (StringAttr inherent : name->getAttributeNames())
+        if (std::optional<Attribute> value = op->getInherentAttr(inherent);
+            value && *value)
+          walkHeldTypes(*value, visitHeld);
+}
+
+/// Where a diagnostic about a standing site of `op` stands: at the value
+/// standing there, or at `op` for a type one of its attributes carries.
+static Location siteLocation(Operation *op, Value position) {
+  return position ? position.getLoc() : op->getLoc();
 }
 
 /// Visits the standing sites (`walkStandingSites`) of every op of `module`
@@ -1791,18 +1839,9 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
       resolver.hasOverflowed())
     return failure();
 
-  // The walks below ask impl selection about what still stands, and selection
-  // may generate the impl a resolution chain runs through. A generated impl is
-  // a complete template the module verifier checks and nothing below
-  // revisits, inserted at the module body where it belongs; the builder's
-  // listener is the one selection requires, and enters it in the module's
-  // symbol table.
-  SymbolTableKeeper settleListener(resolver.getSymbolTables());
-  OpBuilder settleBuilder(ctx, &settleListener);
-
   // An obligation still standing because selection refused it is named with
-  // the candidates selection recorded, once, at the first op the walks below
-  // reach spelling it: the leftover report says that it stands, not why. A
+  // the candidates selection recorded, once, at the first op the walk below
+  // reaches spelling it: the leftover report says that it stands, not why. A
   // claim the claim-proving pattern was refused was named where it first
   // asked, and a claim a positional reading produces is no question of
   // selection's.
@@ -1823,11 +1862,12 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
 
   // Assert that nothing this stage owes is left standing (`owesInstantiation`
   // at every standing site, `walkStandingSites`): no op produces an unproven
-  // monomorphic application claim that escaped proving or takes one as a block
-  // argument, no monomorphic allegation stands, and no ground projection stands
-  // unresolved. Keying this check on the types values carry rather than on the
-  // set of claim-producing ops makes it total over producers: an op whose claims
-  // the patterns above fail to discharge is an error here, never a silent gap.
+  // monomorphic application claim that escaped proving, takes one as a block
+  // argument or names one in a type an attribute carries, no monomorphic
+  // allegation stands, and no ground projection stands unresolved. Keying this
+  // check on the types standing sites carry rather than on the set of
+  // claim-producing ops makes it total over producers: an op whose claims the
+  // patterns above fail to discharge is an error here, never a silent gap.
   // An equality is no obligation of this stage: it carries no proof to await,
   // and erasure, which removes it, judges every standing equality first
   // (`judgeStandingTheory`). Every claim is reported before any projection.
@@ -1929,53 +1969,6 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
   if (hasLeftovers || !standingProjections.empty())
     return failure();
 
-  // A ground projection can also stand where no standing site reads: in an
-  // attribute, or in the arguments of a proven application claim, the spelling
-  // its proof is minted at. One there that selection resolves has a meaning;
-  // one selection refuses names a type no impl gives a meaning, which erasure
-  // would take away unread, so it is put to selection here and refused at the
-  // op carrying it. A projection an equality's endpoints name at a result or a
-  // block argument is judged with that equality, at erasure's entry
-  // (`judgeStandingTheory`), so the walk of those types does not enter one.
-  SmallVector<std::pair<Operation *, ProjectionType>> spelledProjections;
-  module.walk<WalkOrder::PreOrder>([&](Operation *op) {
-    if (isTemplate(op))
-      return WalkResult::skip();
-    llvm::SetVector<ProjectionType> spelled;
-    auto collect = [&](Type sub) -> WalkResult {
-      if (auto claim = dyn_cast<ClaimType>(sub); claim && claim.isEquality())
-        return WalkResult::skip();
-      if (auto proj = dyn_cast<ProjectionType>(sub); proj && !isPolymorphicType(sub))
-        spelled.insert(proj);
-      return WalkResult::advance();
-    };
-    for (Type t : op->getResultTypes())
-      t.walk<WalkOrder::PreOrder>(collect);
-    for (Region &r : op->getRegions())
-      for (Block &b : r)
-        for (Value arg : b.getArguments())
-          arg.getType().walk<WalkOrder::PreOrder>(collect);
-    op->getAttrDictionary().walk([&](ProjectionType proj) {
-      if (!isPolymorphicType(Type(proj)))
-        spelled.insert(proj);
-    });
-    for (ProjectionType proj : spelled)
-      spelledProjections.emplace_back(op, proj);
-    return WalkResult::advance();
-  });
-  bool sawUnresolvedProjection = false;
-  for (auto [op, proj] : spelledProjections) {
-    if (resolver.resolveProjection(proj, SelectionSite::of(op), settleBuilder)
-            .isAnswer())
-      continue;
-    nameRefusal(op, proj);
-    op->emitError() << "unresolved projection " << proj
-                    << " after instantiate-monomorphs";
-    sawUnresolvedProjection = true;
-  }
-  if (sawUnresolvedProjection)
-    return failure();
-
   // A generic call the driver could still rewrite but did not is a call whose
   // callee specialization fail-closed -- an external polymorphic declaration has
   // no body to clone. Standing outside every template, it is named here rather
@@ -2061,13 +2054,16 @@ struct EraseCoerceOp : public OpConversionPattern<CoerceOp> {
       return success();
     }
     // A coerce of a value, live or dead, forwards its input: one value of the
-    // result's type. Its verifier admits no claim in either endpoint and puts
-    // the two in one class of the congruence its cited equalities seed; the
-    // entry judgment refused every ground projection standing at either
-    // endpoint and every cited equality whose sides do not resolve to one type.
-    // A congruence seeded only by equalities whose sides resolve to one type
-    // joins only types that resolve to one type, and a type free of projections
-    // resolves to itself, so the two endpoints are one type.
+    // result's type. Its verifier puts the two endpoints in one class of the
+    // congruence its cited equalities seed, and admits a claim at the input's
+    // root (`CoerceOp::verify`). The entry judgment refused a ground projection
+    // standing at either endpoint -- the result is a standing site of this op,
+    // the input one of its producer -- and every cited equality that does not
+    // settle at one type naming no projection. A congruence seeded only by
+    // settled equalities joins only types that resolve to one type, and a type
+    // naming no projection resolves to itself, so the two endpoints are one
+    // type; a claim at the input would need a cited equality relating it to
+    // the claim-free result, and none such settles.
     ValueRange input = adaptor.getInput();
     assert(input.size() == 1 && input.front().getType() == op.getResult().getType() &&
            "erasure's entry judgment leaves a value coerce's endpoints one type");
@@ -2210,73 +2206,104 @@ static LogicalResult checkNothingOutsideATemplateCarriesTheory(ModuleOp module) 
   return success(clean);
 }
 
-/// The erase step's entry judgment: every claim and projection at a standing
-/// site outside a template (`walkStandingSites`) is one erasure may remove. An
-/// application claim must be proven and a projection resolved, which
-/// instantiate-monomorphs does and erasure does not, so one still undischarged
-/// is refused where it stands. An equality claim must hold, and is judged
-/// here, beside why selection refused each projection left standing in an
-/// endpoint. A claim carrying a type variable is neither proven nor holds here:
-/// outside a template no instance substitutes the variable.
+/// The erase step's entry judgment: everything erasure removes outside a
+/// template holds before any of it is erased, whatever ran before.
 ///
-/// An equality claim carries no proof -- its evidence is the value itself --
-/// so unlike an application claim it is never "proven"; it holds when the
-/// projections in its endpoints resolve, each to a fixed point since one hop's
-/// binding may spell the next, and the two endpoints meet at one type that
-/// names no projection.
-/// Selection resolves a projection only through an impl whose assumptions are
-/// satisfiable and refuses it otherwise, so a projection whose only candidate
-/// impl is conditional with an undischarged assumption stays spelled and the
-/// endpoints do not meet: an equality never holds through an impl whose
-/// where-bounds do not.
+/// First, work instantiate-monomorphs still owes is refused where it is owed
+/// (`isPendingOp`): a generic call that pass would lower, and every standing
+/// site (`walkStandingSites`) at which it owes work (`owesInstantiation`) -- an
+/// unproven monomorphic application claim, a ground projection, a monomorphic
+/// allegation. Erasure does none of that work, and its conversion erases a
+/// call's evidence operands under the call. The lowering driver runs erasure
+/// only once nothing is pending (`isPendingExpansion`), so this refuses a
+/// module handed to erasure on its own, before anything else reads it.
 ///
-/// Erasure maps every claim to nothing and reads none it removes, so the pass
-/// that erases judges first, whatever ran before it: the lowering driver runs
-/// instantiate-monomorphs only while an operation is pending (`isPendingOp`),
-/// and no equality is.
+/// Then every claim standing outside a template is judged. A claim carrying a
+/// type variable is neither proven nor holds there: no instance substitutes
+/// the variable. An equality claim carries no proof -- its evidence is the
+/// value itself -- so it holds when selection reads its sides to one type
+/// naming no projection (`ImplResolver::readEqualitySides`), the reading
+/// instantiation writes an equality's evidence from. Selection resolves a
+/// projection only through an impl whose assumptions are satisfiable, so an
+/// equality never holds through an impl whose where-bounds do not. A proven
+/// application claim states a proposition about the types its arguments name:
+/// each ground projection standing there is put to selection and must resolve
+/// to a type naming no projection, as selection requires of every application
+/// it proves (`ImplResolver::resolveImplFor`), so a proof cited by hand over
+/// an argument no impl gives a meaning is refused here rather than erased
+/// unread.
 ///
 /// Hypotheses and conclusions are judged alike. A claim a block argument takes
 /// is a hypothesis the block assumes and its callers or predecessors supply;
 /// one that does not hold is one no evidence can supply, so it is refused where
 /// it is assumed rather than erased unread with the body that assumes it, as
 /// instantiate-monomorphs' exit walk refuses an unproven monomorphic
-/// application claim a block argument takes. A hypothesis is named at its
-/// block argument and put to selection at the op whose region takes it. Fails
-/// where anything is refused or an endpoint's resolution overflows; an overflow
-/// is named where it was met, and alone.
+/// application claim a block argument takes. A claim a bodiless declaration's
+/// signature names is judged at the declaration. Fails where anything is
+/// refused or a resolution overflows; an overflow is named where it was met,
+/// and alone.
 static LogicalResult judgeStandingTheory(ModuleOp module) {
-  // The equalities are gathered under the walk and judged after it closes,
-  // because selection may insert into the module the impl a resolution chain
-  // runs through. Each is kept with the op that produces it or whose region
-  // takes it, and the value it stands on.
-  struct StandingEquality {
+  bool owed = false;
+  module.walk<WalkOrder::PreOrder>([&](Operation *op) {
+    if (isTemplate(op))
+      return WalkResult::skip();
+    if (isRewritableGenericCall(op)) {
+      owed = true;
+      op->emitOpError()
+          << "is a generic call instantiate-monomorphs has not lowered "
+             "before erasure";
+    }
+    walkStandingSites(op, [&](Value position, Type site) {
+      if (!owesInstantiation(op, site))
+        return;
+      owed = true;
+      emitError(siteLocation(op, position))
+          << (isa<ClaimType>(site) ? "unproven monomorphic claim "
+                                   : "unresolved projection ")
+          << site << " before erasure";
+    });
+    return WalkResult::advance();
+  });
+  if (owed)
+    return failure();
+
+  // What is put to selection is gathered under the walk and judged after it
+  // closes, because selection may insert into the module the impl a
+  // resolution chain runs through. Each is kept with the op whose standing
+  // site carries it and where it stands; a projection is put to selection
+  // once per op, its outermost spelling only, since resolving it resolves
+  // what its arguments spell.
+  struct Standing {
     Operation *op;
-    Value position;
+    Location at;
     ClaimType claim;
   };
-  SmallVector<StandingEquality> equalities;
+  SmallVector<Standing> equalities;
+  llvm::MapVector<std::pair<Operation *, Type>, Location> spelled;
   bool judged = true;
   walkStandingSites(module, [&](Operation *op, Value position, Type site) {
     auto claim = dyn_cast<ClaimType>(site);
-    if (claim && claim.isEquality()) {
-      equalities.push_back({op, position, claim});
+    if (!claim)
+      return;
+    Location at = siteLocation(op, position);
+    if (claim.isEquality()) {
+      equalities.push_back({op, at, claim});
       return;
     }
-    if (claim && !claim.isMonomorphic()) {
+    if (!claim.isMonomorphic()) {
       judged = false;
-      emitError(position.getLoc())
-          << "claim " << claim << " is not proven before erasure: it "
-          << "carries a type variable outside a template";
+      emitError(at) << "claim " << claim << " is not proven before erasure: it "
+                    << "carries a type variable outside a template";
       return;
     }
-    if (!isUndischargedObligation(site))
-      return;
-    judged = false;
-    emitError(position.getLoc())
-        << (claim ? "unproven monomorphic claim " : "unresolved projection ")
-        << site << " before erasure";
+    Type(claim).walk<WalkOrder::PreOrder>([&](ProjectionType proj) {
+      if (isPolymorphicType(Type(proj)))
+        return WalkResult::advance();
+      spelled.insert({{op, Type(proj)}, at});
+      return WalkResult::skip();
+    });
   });
-  if (equalities.empty())
+  if (equalities.empty() && spelled.empty())
     return success(judged);
 
   // Selection reads every symbol name from the resolver's symbol tables, which
@@ -2288,10 +2315,18 @@ static LogicalResult judgeStandingTheory(ModuleOp module) {
   OpBuilder builder(module.getContext(), &listener);
 
   // A refusal is selection's answer about an application, named once, at the
-  // first refused equality spelling a projection of it.
+  // first refused site spelling a projection of it. A projection still
+  // standing in a reading is one selection refused.
   DenseSet<Type> named;
-  for (auto [op, position, claim] : equalities) {
-    Location at = position.getLoc();
+  auto nameRefusals = [&](Type reading, Operation *op, Location at) {
+    reading.walk([&](ProjectionType proj) {
+      if (!isPolymorphicType(Type(proj)) && named.insert(proj.asClaim()).second)
+        resolver.nameRefusal(proj, getAnchorModule(op),
+                             [&] { return emitError(at); });
+    });
+  };
+
+  for (auto [op, at, claim] : equalities) {
     if (!claim.isMonomorphic()) {
       judged = false;
       emitError(at) << "equality " << claim
@@ -2301,37 +2336,56 @@ static LogicalResult judgeStandingTheory(ModuleOp module) {
     }
     TypeEqualityAttr eq = claim.getEqualityAttr();
     SelectionSite site = SelectionSite::of(op);
-    Answer<Type> lhs = resolver.resolveProjectionsIn(eq.getLhs(), site, builder);
-    Answer<Type> rhs =
-        lhs.isAnswer() ? resolver.resolveProjectionsIn(eq.getRhs(), site, builder)
-                       : lhs;
-    if (!rhs.isAnswer()) {
+    Answer<std::pair<Type, Type>> sides =
+        resolver.readEqualitySides(eq, site, builder);
+    if (sides.isOverflow()) {
       judged = false;
       continue;
     }
-    // The equality settles when both sides resolve to one type that names no
-    // projection: the two then denote that one type. Neither side carries a
-    // type variable, since the claim is monomorphic and resolution substitutes
-    // none; a claim standing inside the type is a type like any other here.
-    if (*lhs == *rhs && !containsType<ProjectionType>(*lhs))
+    if (sides.isAnswer() && sides->first == sides->second)
       continue;
     judged = false;
-    for (Type side : {*lhs, *rhs})
-      side.walk([&, op = op](ProjectionType proj) {
-        if (named.insert(proj.asClaim()).second)
-          resolver.nameRefusal(proj, getAnchorModule(op),
-                               [&] { return emitError(at); });
-      });
+    // A refused reading left a projection selection refused standing on a
+    // side; the report reads each side again, which selection answers from
+    // what it settled, to show where it stands.
+    Type lhs = eq.getLhs(), rhs = eq.getRhs();
+    if (sides.isAnswer()) {
+      std::tie(lhs, rhs) = *sides;
+    } else {
+      Answer<Type> lhsRead = resolver.resolveProjectionsIn(lhs, site, builder);
+      Answer<Type> rhsRead = resolver.resolveProjectionsIn(rhs, site, builder);
+      if (!lhsRead.isAnswer() || !rhsRead.isAnswer())
+        continue;
+      lhs = *lhsRead;
+      rhs = *rhsRead;
+    }
+    nameRefusals(lhs, op, at);
+    nameRefusals(rhs, op, at);
     InFlightDiagnostic report = emitError(at)
                                 << "equality " << claim
                                 << " does not settle before erasure: ";
     // Two sides meeting at one form that still names a projection name no
     // type: the refusal named above says why selection left it standing.
-    if (*lhs == *rhs)
-      report << "both its sides resolve to " << *lhs
+    if (lhs == rhs)
+      report << "both its sides resolve to " << lhs
              << ", which still names a projection";
     else
-      report << "its sides resolve to " << *lhs << " and " << *rhs;
+      report << "its sides resolve to " << lhs << " and " << rhs;
+  }
+
+  for (auto [key, at] : spelled) {
+    auto [op, proj] = key;
+    Answer<Type> resolved =
+        resolver.resolveProjectionsIn(proj, SelectionSite::of(op), builder);
+    if (!resolved.isAnswer()) {
+      judged = false;
+      continue;
+    }
+    if (!containsType<ProjectionType>(*resolved))
+      continue;
+    judged = false;
+    nameRefusals(*resolved, op, at);
+    emitError(at) << "unresolved projection " << proj << " before erasure";
   }
   return success(judged && !resolver.hasOverflowed());
 }
@@ -2471,9 +2525,18 @@ TypeConverter makeErasePolymorphsConverter() {
   return opConverter;
 }
 
+/// Whether erasure rewrites `op`, an op standing outside a template: an
+/// evidence op, which leaves with erasure, or an op mentioning a claim or a
+/// projection in an operand, a result, a block argument or an attribute, which
+/// erasure takes out of it. The pass's own conversion target and the readiness
+/// target the lowering driver walks for it both read this, so the driver never
+/// selects erasure for an op the pass leaves as it stands.
+static bool erasureRewrites(Operation *op) {
+  return isa<AllegeOp, DeriveOp, ProjectOp, WitnessOp, CoerceOp>(op) ||
+         opMentionsType<ClaimType>(op) || opMentionsType<ProjectionType>(op);
+}
+
 void populateErasePolymorphsLegality(ConversionTarget &target) {
-  // The evidence ops leave with erasure.
-  target.addIllegalOp<AllegeOp, DeriveOp, ProjectOp, WitnessOp, CoerceOp>();
   // A template leaves with monomorphization, so the pass converts neither it
   // nor its interior: the three declarations are legal and recursively legal,
   // and a function is a template exactly while its signature stays
@@ -2495,18 +2558,13 @@ void populateErasePolymorphsLegality(ConversionTarget &target) {
   target.markOpRecursivelyLegal<func::FuncOp>([](Operation *op) {
     return isPolymorphicType(Type(cast<func::FuncOp>(op).getFunctionType()));
   });
-  target.markUnknownOpDynamicallyLegal([](Operation *op) -> std::optional<bool> {
-    // An operation still pending instantiation is not erase's: the conversion
-    // leaves it, and the entry judgment has refused one whose types carry an
-    // obligation. A template -- including a generic symbol declaration another
-    // dialect owns, whose body may still name a claim or projection -- is
-    // carried to no target by erasure and cut by the collector. Every other op
-    // is legal once it carries no claim or projection.
-    if (isPendingOp(op))
-      return std::nullopt;
-    if (isTemplate(op))
-      return true;
-    return !opMentionsType<ClaimType>(op) && !opMentionsType<ProjectionType>(op);
+  // A template -- including a generic symbol declaration another dialect owns,
+  // whose body may still name a claim or projection -- is carried to no target
+  // by erasure and cut by the collector. Every other op is legal once erasure
+  // has nothing in it to rewrite. No op still pending instantiation reaches
+  // the conversion: the entry judgment refuses each first.
+  target.markUnknownOpDynamicallyLegal([](Operation *op) {
+    return isTemplate(op) || !erasureRewrites(op);
   });
 }
 
@@ -2515,17 +2573,19 @@ void populateErasePolymorphsReadiness(ConversionTarget &target) {
   // pending instantiation is not erase's yet, whatever its kind: the target has
   // no opinion on it, so the readiness walk holds erase behind instantiate
   // while instantiate owes anything and the two steps never share a batch.
-  // Otherwise erase has work exactly where an op of this dialect stands --
-  // codegen may write a coerce that cites nothing and mentions no claim or
-  // projection -- or a template, so the step is present while one stands and
-  // runs to cut it, or an op mentioning a claim or a projection in an operand,
-  // a result, a block argument or an attribute.
+  // Otherwise erase has work where a template stands, which it runs to cut,
+  // and exactly where the pass's own target finds an op it rewrites
+  // (`erasureRewrites`).
   target.markUnknownOpDynamicallyLegal([](Operation *op) -> std::optional<bool> {
+    // An op owing instantiation work at a standing site mentions a claim or a
+    // projection there, so one erasure leaves as it stands is pending only as
+    // a generic call (`isPendingOp`).
+    bool rewrites = isTemplate(op) || erasureRewrites(op);
+    if (!rewrites && !isa<FuncCallOp, MethodCallOp>(op))
+      return true;
     if (isPendingOp(op))
       return std::nullopt;
-    if (isa_and_present<TraitDialect>(op->getDialect()) || isTemplate(op))
-      return false;
-    return !opMentionsType<ClaimType>(op) && !opMentionsType<ProjectionType>(op);
+    return !rewrites;
   });
 }
 
@@ -2533,9 +2593,10 @@ bool isRewritableGenericCall(Operation *op) {
   // The single readiness law the two call-lowering patterns gate on, so the
   // patterns and the instantiate step's discharge read one spelling. A
   // trait.func.call is rewritable when its operands are monomorphic, its operand
-  // claims proven, it stands at module scope (func.call requires the callee in
-  // the same symbol table), and its callee has a signature to specialize
-  // against. A trait.method.call is rewritable when its operands are
+  // claims proven, and its callee has a signature to specialize against; outside
+  // a template it stands in the module that holds its callee, where the
+  // func.call it lowers to can name it (`FuncCallOp::verifySymbolUses`). A
+  // trait.method.call is rewritable when its operands are
   // monomorphic, its receiver claim proven, its argument claims proven, and its
   // method has a signature; it lowers in place to a trait.func.call and needs no
   // scope of its own. None of these reads raises a demand. The
@@ -2566,13 +2627,9 @@ bool isRewritableGenericCall(Operation *op) {
     }
     return true;
   };
-  auto atModuleScope = [](Operation *op) {
-    Operation *nearestTable = SymbolTable::getNearestSymbolTable(op);
-    return nearestTable && isa<ModuleOp>(nearestTable);
-  };
   if (auto call = dyn_cast<FuncCallOp>(op))
     return operandsMonomorphic(call.getOperands()) &&
-           operandClaimsProven(call.getOperands()) && atModuleScope(op) &&
+           operandClaimsProven(call.getOperands()) &&
            succeeded(call.getCalleeFunctionType());
   if (auto call = dyn_cast<MethodCallOp>(op))
     return operandsMonomorphic(call.getOperands()) &&

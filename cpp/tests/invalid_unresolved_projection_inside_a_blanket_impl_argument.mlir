@@ -3,9 +3,10 @@
 
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' -verify-diagnostics
 
-// A blanket Box impl can prove a claim whose argument contains an unresolved
-// projection. That proof does not resolve @T[i64]::A, so the projection must
-// still be diagnosed on the allegation that carries it.
+// A blanket Box impl matches any argument, but a claim whose argument is a
+// projection no impl resolves is about no type: selection refuses it, named by
+// why @T[i64]::A names no type, rather than prove it over the projection as an
+// opaque type, and the allegation that carries it stands unproven.
 
 !T = !trait.poly<0>
 
@@ -24,7 +25,7 @@ func.func private @callee(%c: !trait.claim<@Box[!trait.proj<@T[i64], "A">]>,
 
 func.func @main() -> i64 {
   // expected-error @below {{no impl with satisfiable assumptions for '!trait.proj<@T[i64], "A">'}}
-  // expected-error @below {{unresolved projection '!trait.proj<@T[i64], "A">' after instantiate-monomorphs}}
+  // expected-error @below {{unproven monomorphic claim '!trait.claim<@Box[!trait.proj<@T[i64], "A">]>' after instantiate-monomorphs}}
   %c = trait.allege @Box[!trait.proj<@T[i64], "A">]
   %x = arith.constant 0 : i64
   %r = trait.func.call @callee(%c, %x)

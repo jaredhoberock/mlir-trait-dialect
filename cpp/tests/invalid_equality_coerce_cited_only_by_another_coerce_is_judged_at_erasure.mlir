@@ -30,6 +30,6 @@ func.func @use(%h: !trait.claim<i32 = i64>) -> i64 {
   %c = trait.coerce %r0 : !trait.claim<i64 = i64> to !trait.claim<i64 = i32> via (%h) : (!trait.claim<i32 = i64>)
   %r1 = trait.witness refl : !trait.claim<!trait.proj<@A[i64], "Item"> = !trait.proj<@A[i64], "Item">>
   %d = trait.coerce %r1 : !trait.claim<!trait.proj<@A[i64], "Item"> = !trait.proj<@A[i64], "Item">> to !trait.claim<!trait.proj<@A[i64], "Item"> = i64> via (%w, %c) : (!trait.claim<!trait.proj<@A[i64], "Item"> = i64>, !trait.claim<i64 = i32>)
-  %r = trait.func.call @g(%d) : (!trait.claim<!trait.proj<@A[i64], "Item"> = i64>) -> i64
+  %r = func.call @g(%d) : (!trait.claim<!trait.proj<@A[i64], "Item"> = i64>) -> i64
   return %r : i64
 }

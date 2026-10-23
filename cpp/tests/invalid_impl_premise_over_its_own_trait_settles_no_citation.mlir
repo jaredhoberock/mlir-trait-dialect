@@ -11,6 +11,8 @@
 // binding of Output to !T: its evidence at i64 would be the citation of @A_gen
 // it is a premise of, so no proof can supply it and the citation is refused,
 // as rustc refuses a where clause that requires the impl's own application.
+// The declaration's signature states the same claim, which stands unproven
+// there too.
 
 !S = !trait.poly<0>
 !T = !trait.poly<1>
@@ -29,6 +31,7 @@ trait.impl private @A_gen(%self: !trait.claim<@A[!S]>, %b: !trait.claim<@B[!S]>,
   trait.assoc_type @Output = !T
 }
 
+// expected-error @below {{unproven monomorphic claim '!trait.claim<@A[i64]>' after instantiate-monomorphs}}
 func.func private @need(!trait.claim<@A[i64]>)
 
 func.func @main() {

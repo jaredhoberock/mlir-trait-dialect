@@ -42,15 +42,16 @@ func.func @main() -> i32 attributes {provenance = @poly} {
 
 // -----
 
-// A generic call left standing names its callee, so the callee cannot be
-// collected and the call is what the check refuses.
+// A generic call left standing is work instantiation still owes, so the
+// entry refuses it before the conversion erases anything under it, and the
+// exit check never meets the callee it names.
 func.func private @poly(%x: !trait.poly<0>) -> !trait.poly<0> {
   return %x : !trait.poly<0>
 }
 
 func.func @main() -> i32 {
   %c = arith.constant 0 : i32
-  // expected-error @+1 {{'trait.func.call' op names the template @poly from outside a template}}
+  // expected-error @+1 {{'trait.func.call' op is a generic call instantiate-monomorphs has not lowered before erasure}}
   %r = trait.func.call @poly(%c) : (i32) -> i32
   return %r : i32
 }

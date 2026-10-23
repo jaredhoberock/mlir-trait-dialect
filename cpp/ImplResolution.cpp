@@ -169,6 +169,30 @@ static LogicalResult diagnoseImplResolutionFailure(
   return diag;
 }
 
+/// Whether one of `normalized`, types whose projections selection has
+/// resolved wherever it can, still names a ground projection: one whose
+/// application selection refused, so that it names no type. Each distinct one
+/// is named by that refusal through `err` when it is given. A type stating a
+/// projection that names no type is itself no type, as rustc refuses a
+/// predicate whose normalization fails (E0277). A projection carrying a type
+/// variable is a template's, resolved when an instance substitutes it.
+static bool namesNoType(const ImplResolver &resolver,
+                        ArrayRef<Type> normalized, ModuleOp scope,
+                        llvm::function_ref<InFlightDiagnostic()> err) {
+  bool standing = false;
+  AttrTypeWalker walker;
+  walker.addWalk([&](ProjectionType proj) {
+    if (isPolymorphicType(Type(proj)))
+      return;
+    standing = true;
+    if (err)
+      resolver.nameRefusal(proj, scope, err);
+  });
+  for (Type type : normalized)
+    walker.walk(type);
+  return standing;
+}
+
 Answer<ResolvedImpl> ImplResolver::resolveImplFor(
     ClaimType wanted,
     const SelectionSite &site,
@@ -211,6 +235,14 @@ Answer<ResolvedImpl> ImplResolver::resolveImplFor(
     memo.heightBelow = std::max(memo.heightBelow, it->second.height);
     return ResolvedImpl{it->second.impl, selected, it->second.arguments};
   }
+
+  // A proposition about a projection that names no type is about no type, so
+  // it is refused, named by the projection's refusal, rather than matched
+  // against an impl over the projection as an opaque type. Such an application
+  // is never chosen, so the memo read above answers none.
+  if (namesNoType(*this, Type(selected), scope, err))
+    return Selected::refusal();
+
   if (auto it = memo.refused.find({scope, app}); it != memo.refused.end()) {
     if (err) {
       if (auto trait = app.getTrait(scope, err); succeeded(trait))
@@ -701,6 +733,16 @@ Answer<ProjectionResolution> ImplResolver::resolveProjection(
     const SelectionSite &site,
     OpBuilder &builder,
     llvm::function_ref<InFlightDiagnostic()> err) {
+  // A projection's own associated-type arguments are types it states, as its
+  // head application's are: one naming no type makes the projection name
+  // none, whether or not the binding reads it.
+  for (Type argument : proj.getAssocTypeArgs()) {
+    Answer<Type> read = resolveProjectionsIn(argument, site, builder);
+    if (!read.isAnswer())
+      return read.stop<ProjectionResolution>();
+    if (namesNoType(*this, *read, site.scope, err))
+      return Answer<ProjectionResolution>::refusal();
+  }
   auto select = [&](ClaimType claim) {
     return resolveImplFor(claim, site, builder, err);
   };
@@ -877,14 +919,43 @@ Answer<ClaimType> ImplResolver::proofAtResolution(
 //===----------------------------------------------------------------------===//
 
 Answer<std::pair<Type, Type>>
+ImplResolver::readEqualitySides(TypeEqualityAttr eq, const SelectionSite &site,
+                                OpBuilder &builder,
+                                llvm::function_ref<InFlightDiagnostic()> err) {
+  using Sides = Answer<std::pair<Type, Type>>;
+  Answer<std::optional<Type>> lhs =
+      settleThroughSelection(eq.getLhs(), site, builder);
+  if (!lhs.isAnswer())
+    return lhs.stop<std::pair<Type, Type>>();
+  Answer<std::optional<Type>> rhs =
+      settleThroughSelection(eq.getRhs(), site, builder);
+  if (!rhs.isAnswer())
+    return rhs.stop<std::pair<Type, Type>>();
+  // A side whose projections still change after the depth limit's worth of
+  // steps is the equality's overflow, named once.
+  if (!*lhs || !*rhs) {
+    overflow(Overflow::projectionSteps(
+                 ClaimType::getEquality(eq.getContext(), eq)),
+             site);
+    return Sides::overflow();
+  }
+  if (namesNoType(*this, {**lhs, **rhs}, site.scope, err))
+    return Sides::refusal();
+  return std::make_pair(**lhs, **rhs);
+}
+
+Answer<std::pair<Type, Type>>
 ImplResolver::resolveEquality(TypeEqualityAttr eq, const SelectionSite &site,
                               OpBuilder &builder,
                               SmallVectorImpl<ResolutionStep> &steps,
                               llvm::function_ref<InFlightDiagnostic()> err,
                               unsigned depth) {
   using Sides = Answer<std::pair<Type, Type>>;
-  if (eq.getLhs() == eq.getRhs())
-    return std::make_pair(eq.getLhs(), eq.getRhs());
+  // The verdict is the reading's; the steps are written only for sides that
+  // meet, the equality's evidence.
+  Sides read = readEqualitySides(eq, site, builder, err);
+  if (!read.isAnswer() || read->first != read->second)
+    return read;
   MLIRContext *ctx = eq.getContext();
   // A step whose resolution fails is left standing; the failure is carried out
   // past the fixed point so that it, and not the standing projection, is what
@@ -981,12 +1052,9 @@ ImplResolver::resolveEquality(TypeEqualityAttr eq, const SelectionSite &site,
     overflow(Overflow::projectionSteps(ClaimType::getEquality(ctx, eq)), site);
     return Sides::overflow();
   }
-  bool standing = false;
-  for (Type side : {lhs, rhs})
-    side.walk([&](ProjectionType proj) {
-      standing |= !isPolymorphicType(Type(proj));
-    });
-  if (stepFailed || standing)
+  // The walk resolves what the reading resolved, so with no step refused it
+  // reaches the reading's sides.
+  if (stepFailed)
     return Sides::refusal();
   return std::make_pair(lhs, rhs);
 }

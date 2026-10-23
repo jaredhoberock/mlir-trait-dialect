@@ -16,8 +16,10 @@
 // equality settles only through impls whose where-bounds hold, never through
 // @Has_mid on the strength of its binding alone. After instantiation the
 // instance of @gen the call cuts takes the coerced equality as its hypothesis,
-// and is refused there first. Supplying an @X[i32] impl is what discharges the
-// assumption and lets the equality settle.
+// and is refused there first. Handed to erasure alone, the module still owes
+// instantiation that call, and erasure's entry refuses it before judging
+// anything. Supplying an @X[i32] impl is what discharges the assumption and
+// lets the equality settle.
 
 // VERIFY: trait.coerce
 
@@ -36,9 +38,8 @@ func.func private @gen(%c: !trait.claim<!trait.proj<@Has[tuple<!trait.poly<0>>],
 
 // MONO: error: no impl with satisfiable assumptions for '!trait.proj<@Has[i32], "Out">'
 // MONO: error: equality '!trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = !trait.proj<@Has[tuple<i32, i32>], "Out">>' does not settle before erasure: both its sides resolve to '!trait.proj<@Has[i32], "Out">', which still names a projection
-// ERASE: error: no impl with satisfiable assumptions for '!trait.proj<@Has[i32], "Out">'
-// ERASE: error: equality '!trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = !trait.proj<@Has[i32], "Out">>' does not settle before erasure: both its sides resolve to '!trait.proj<@Has[i32], "Out">', which still names a projection
-// ERASE: error: equality '!trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = !trait.proj<@Has[tuple<i32, i32>], "Out">>' does not settle before erasure: both its sides resolve to '!trait.proj<@Has[i32], "Out">', which still names a projection
+// ERASE: error: 'trait.func.call' op is a generic call instantiate-monomorphs has not lowered before erasure
+// ERASE-NOT: does not settle
 func.func @main() -> () {
   %p1 = trait.witness proj_resolve !trait.proj<@Has[tuple<i32>], "Out"> resolves !trait.proj<@Has[i32], "Out"> by @Has_w1[i32]
     : !trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = !trait.proj<@Has[i32], "Out">>
