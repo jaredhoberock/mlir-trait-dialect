@@ -7,10 +7,10 @@
 // of the refl witness of @A[i64]::Item citing both, is passed to a function that
 // is no template. The call lowers to a plain call whose claim still reads
 // @A[i64]::Item = @B[i64]::Item, since nothing rewrites an equality's
-// endpoints, and the leftover check settles it: both endpoints resolve to i64.
-// Erasure removes the coerce on that judgment rather than comparing its written
-// endpoints, which still differ, and the claim leaves the call and the callee's
-// signature with it.
+// endpoints, and erasure's entry judgment settles it: both endpoints resolve to
+// i64. Erasure removes the coerce on that judgment rather than comparing its
+// written endpoints, which still differ, and the claim leaves the call and the
+// callee's signature with it.
 
 !S = !trait.poly<0>
 trait.trait private @A(%self: !trait.claim<@A[!S]>) { trait.assoc_type @Item }

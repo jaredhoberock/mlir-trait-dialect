@@ -1062,14 +1062,8 @@ struct CallOpLowering : public OpRewritePattern<CallOpT> {
 };
 
 /// Whether every use of `coerce` reads its evidence through it: each is an op
-/// of this dialect (`evidenceOf`). A coerce to an equality claim is never read
-/// through: `evidenceOf` reads application evidence alone, and the equality the
-/// coerce states is its own, entailed by the equalities it cites rather than
-/// carried from its input.
+/// of this dialect (`evidenceOf`).
 static bool readThrough(CoerceOp coerce) {
-  auto result = dyn_cast<ClaimType>(coerce.getResult().getType());
-  if (result && result.isEquality())
-    return false;
   Dialect *trait = coerce->getDialect();
   return llvm::all_of(coerce.getResult().getUsers(), [&](Operation *user) {
     return user->getDialect() == trait;
@@ -1668,39 +1662,6 @@ struct ProveCallResultsPattern : public OpRewritePattern<CallOpT> {
   }
 };
 
-/// Whether a monomorphic equality claim is settled at the leftover check: its
-/// two endpoints ground-resolve to one spelling through impls whose obligations
-/// hold. Fails where an endpoint's resolution overflows, the overflow named
-/// at `carrier`.
-///
-/// An equality claim carries no proof -- its evidence is the value
-/// itself -- so unlike an application claim it is never "proven"; it is
-/// discharged instead when the projections in its endpoints resolve and the two
-/// endpoints meet at one ground type. Selection resolves a projection only
-/// through an impl whose assumptions are satisfiable and refuses it otherwise,
-/// so a projection whose only candidate impl is conditional with an
-/// undischarged assumption stays spelled and the endpoints do not meet -- the
-/// settlement never resolves through an impl whose where-bounds do not hold.
-/// Resolution runs to a fixed point because one hop's binding may spell the
-/// next.
-static FailureOr<bool>
-equalityClaimGroundResolvesToOneSpelling(ClaimType claim,
-                                         ImplResolver &resolver,
-                                         Operation *carrier,
-                                         OpBuilder &builder) {
-  auto eq = claim.getEqualityAttr();
-  if (!eq)
-    return false;
-  SelectionSite site = SelectionSite::of(carrier);
-  Answer<Type> lhs = resolver.resolveProjectionsIn(eq.getLhs(), site, builder);
-  if (!lhs.isAnswer())
-    return failure();
-  Answer<Type> rhs = resolver.resolveProjectionsIn(eq.getRhs(), site, builder);
-  if (!rhs.isAnswer())
-    return failure();
-  return *lhs == *rhs && isGroundType(*lhs);
-}
-
 } // end namespace
 
 LogicalResult instantiateMonomorphs(ModuleOp module) {
@@ -1803,24 +1764,21 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
                          [&] { return emitError(op->getLoc()); });
   };
 
-  // Assert that no op produced an unproven monomorphic claim that escaped
-  // proving, nor takes an unproven application claim as a block argument; an
-  // equality a block takes is a hypothesis its predecessors supply. Keying this
-  // check on the types values carry rather than on the set of claim-producing
-  // ops makes it total over producers: an op whose claims the patterns above
-  // fail to discharge is an error here, never a silent gap. The one claim that
-  // passes unproven is an equality whose endpoints ground-resolve to one
-  // spelling, standing on an op erasure removes. A coerce every use of which
-  // reads its evidence through it (`readThrough`) carries its input's evidence,
-  // so its claim is judged where its input is produced, and an obligation is
-  // named once, under the spelling it was produced at. A coerce to an equality
-  // claim is never read through, so every standing monomorphic equality is
-  // judged here whatever reads it, and erasure removes it on this judgment
-  // (`EraseCoerceOp`). The whole type is walked, so a claim nested inside an
-  // aggregate is caught too, not only a claim that is the root type. Trait
-  // infrastructure regions are templates and keep their unproven claims. The
-  // candidate claims are gathered under the walk and judged after it closes,
-  // because judging may insert into the module.
+  // Assert that no op produced an unproven monomorphic application claim that
+  // escaped proving, nor takes one as a block argument, and that no monomorphic
+  // allegation stands: the claim-proving pattern alone proves an allegation, of
+  // an application or of an equality, so one still standing here is a leftover.
+  // Keying this check on the types values carry rather than on the set of
+  // claim-producing ops makes it total over producers: an op whose claims the
+  // patterns above fail to discharge is an error here, never a silent gap. An
+  // equality is no obligation of this stage: it carries no proof to await, and
+  // erasure, which removes it, judges every standing monomorphic equality first
+  // (`judgeStandingEqualities`). A coerce every use of which reads its evidence
+  // through it (`readThrough`) carries its input's evidence, so its claim is
+  // judged where its input is produced, and an obligation is named once, under
+  // the spelling it was produced at. The whole type is walked, so a claim nested
+  // inside an aggregate is caught too, not only a claim that is the root type.
+  // Trait infrastructure regions are templates and keep their unproven claims.
   bool hasLeftovers = false;
   struct StandingClaim {
     Operation *op;
@@ -1833,47 +1791,25 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
       return WalkResult::skip();
     if (auto coerce = dyn_cast<CoerceOp>(op); coerce && readThrough(coerce))
       return WalkResult::advance();
-    auto gather = [&](Value position, bool equalities) {
+    auto gather = [&](Value position) {
       walkObligationSites(position.getType(), [&](Type sub) {
         auto claim = dyn_cast<ClaimType>(sub);
         if (!claim)
           return;
-        bool standingEquality = equalities && claim.isEquality() &&
-                                claim.isMonomorphic();
-        if (standingEquality || isUndischargedObligation(claim))
+        if (isUndischargedObligation(claim) ||
+            (isa<AllegeOp>(op) && claim.isMonomorphic()))
           monomorphicClaims.push_back({op, claim, position});
       });
     };
     for (Value result : op->getResults())
-      gather(result, /*equalities=*/true);
+      gather(result);
     for (Region &r : op->getRegions())
       for (Block &b : r)
         for (Value arg : b.getArguments())
-          gather(arg, /*equalities=*/false);
+          gather(arg);
     return WalkResult::advance();
   });
   for (auto [op, claim, position] : monomorphicClaims) {
-    // An equality claim has no proof to await; it is settled when its endpoints
-    // ground-resolve to one spelling through impls whose obligations hold, read
-    // in the module the op carrying it stands in. A monomorphic equality that
-    // resolves is not a leftover; one whose projection has no
-    // obligation-holding impl stays unequal and is reported like an unprovable
-    // application claim. An allegation is proved by the claim-proving pattern
-    // alone, so one still standing here is a leftover however its endpoints
-    // resolve. A `trait.witness` or `trait.project` of an equality that
-    // resolves is removed by erasure.
-    if (claim.isEquality() && !isa<AllegeOp>(op)) {
-      FailureOr<bool> settled = equalityClaimGroundResolvesToOneSpelling(
-          claim, resolver, op, settleBuilder);
-      if (succeeded(settled) && *settled)
-        continue;
-      // An endpoint whose resolution overflows is named where it was met, and
-      // alone.
-      if (failed(settled)) {
-        hasLeftovers = true;
-        continue;
-      }
-    }
     hasLeftovers = true;
     // Evidence read past the depth limit is refused as any obligation chain
     // that deep is, and named there alone.
@@ -1952,8 +1888,8 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
   // yet instantiated, so its ground projections (over a concrete base nested in
   // an otherwise generic body) resolve when it is cloned for a concrete instance
   // and its whole subtree is skipped. The scan reads the obligation sites of a
-  // type, so a projection standing in an equality's endpoints is the equality
-  // settling's to discharge and is not reported here.
+  // type, so a projection standing in an equality's endpoints is not reported
+  // here; the walk after this one puts it to selection.
   SmallVector<std::pair<Operation *, ProjectionType>> standingProjections;
   module.walk<WalkOrder::PreOrder>([&](Operation *op) {
     if (isTemplate(op))
@@ -2039,8 +1975,10 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
 
   // ModuleOp's own verifier hook runs here over the module shell -- it does not
   // recurse into the body, and this shallow tail judges no coerce. The bonded
-  // erase pass refuses a coerce at its barrier where its endpoints stand apart:
-  // they cannot be discharged and cannot cross.
+  // erase pass erases a coerce to an equality on the judgment it makes at its
+  // entry, and refuses at its barrier a coerce of a value, or a respell of an
+  // application claim no evidence proves, whose endpoints stand apart: it is not
+  // discharged and cannot cross (`EraseCoerceOp`).
   if (failed(module.verify()))
     return failure();
 
@@ -2093,37 +2031,31 @@ struct EraseCoerceOp : public OpConversionPattern<CoerceOp> {
     // Every cited equality is a claim value that maps to zero here, and so is a
     // claim-typed input (a claim-to-claim coerce shrinking 1:0).
     //
-    // A coerce to an equality claim is erased as a witness is: its result was
-    // judged at the exit of instantiate-monomorphs, which settles every
-    // monomorphic equality claim standing outside a template when its endpoints
-    // ground-resolve to one type (`equalityClaimGroundResolvesToOneSpelling`)
-    // and refuses the rest. An equality's endpoints are never respelled, so
-    // their written forms still differ here wherever the coerce related two
-    // forms of one type; comparing them would refuse the claims that walk
-    // settled.
+    // A coerce to an equality claim is erased as a witness is: this pass judged
+    // its result at its entry (`judgeStandingEqualities`). An equality's
+    // endpoints are never respelled, so their written forms still differ here
+    // wherever the coerce related two forms of one type; comparing them would
+    // refuse the equalities that judgment settled.
     auto resultClaim = dyn_cast<ClaimType>(op.getResult().getType());
     if (resultClaim && resultClaim.isEquality()) {
       rewriter.eraseOp(op);
       return success();
     }
-    // A coerce to an application claim is a checked judgment on the op, not a
-    // trusting forward. One whose input itself erased, or whose result is
-    // unused, leaves nothing to forward -- but dropping it is still conditioned
-    // on its own recorded endpoints: a discharged respell carries endpoints that
-    // coincide here (projection resolution rewrote both to the same ground
-    // type), while an undischarged one (its two projections ground to different
-    // types) still relates two spellings and may not cross the barrier
-    // unjudged: every such coerce that reaches the barrier live is judged here
-    // (one dropped as dead earlier, during instantiate-monomorphs, forwarded no
-    // value and so needs no judgment). Comparison strips application-claim
-    // proofs, as the verifier's entailment does: the verifier admits a result
-    // dropping its input's proof and refuses any other difference in proofs
-    // (`CoerceOp::verify`), so a dropped proof alone is not a surviving
-    // difference. (The value-carrying arm below needs no strip; the values it
-    // forwards carry no proof.) A claim's predicate is never respelled, so a
-    // coerce respelling evidence (`evidenceOf`) keeps its two spellings to the
-    // barrier; it is discharged by the equalities it cites (`CoerceOp::verify`),
-    // each of which instantiate-monomorphs settled or refused at its exit.
+    // A coerce to an application claim, and a coerce of a value whose result is
+    // unused, leave nothing to forward, but dropping one is conditioned on its
+    // recorded endpoints. A claim's predicate is never respelled, so a respell of
+    // evidence (`evidenceOf`) keeps its two spellings to the barrier and is
+    // discharged by the equalities it cites (`CoerceOp::verify`). A respell
+    // whose input carries no evidence relates an unproven claim, which
+    // instantiate-monomorphs refuses wherever it is produced and which keeps the
+    // module pending until that pass has run (`isPendingOp`); where this pass
+    // runs without it, such a respell whose endpoints stand apart is refused
+    // here (invalid_coerce_undischarged_at_barrier.mlir). A dead coerce of a
+    // value is judged as a live one is: its endpoints must coincide. Comparison
+    // strips application-claim proofs, as the verifier's entailment does: the
+    // verifier admits a result dropping its input's proof and refuses any other
+    // difference in proofs (`CoerceOp::verify`), so a dropped proof alone is not
+    // a surviving difference.
     ValueRange input = adaptor.getInput();
     if (input.empty() || op.getResult().use_empty()) {
       if (stripClaimProofs(op.getInput().getType()) !=
@@ -2285,11 +2217,93 @@ static LogicalResult checkNothingOutsideATemplateCarriesTheory(ModuleOp module) 
   return success(clean);
 }
 
+/// The erase step's entry judgment: every monomorphic equality claim an op
+/// standing outside a template produces, at an obligation site of a result
+/// type, holds or is refused at that op, beside why selection refused each
+/// projection left standing in an endpoint.
+///
+/// An equality claim carries no proof -- its evidence is the value itself --
+/// so unlike an application claim it is never "proven"; it holds when the
+/// projections in its endpoints resolve, each to a fixed point since one hop's
+/// binding may spell the next, and the two endpoints meet at one ground type.
+/// Selection resolves a projection only through an impl whose assumptions are
+/// satisfiable and refuses it otherwise, so a projection whose only candidate
+/// impl is conditional with an undischarged assumption stays spelled and the
+/// endpoints do not meet: an equality never holds through an impl whose
+/// where-bounds do not.
+///
+/// Erasure maps every claim to nothing and reads no equality it removes, so
+/// the pass that erases judges first, whatever ran before it: the lowering
+/// driver runs instantiate-monomorphs only while an operation is pending
+/// (`isPendingOp`), and no equality is. An equality a block takes is a
+/// hypothesis its predecessors supply, judged where they produce it. Fails
+/// where an equality is refused or an endpoint's resolution overflows; an
+/// overflow is named where it was met, and alone.
+static LogicalResult judgeStandingEqualities(ModuleOp module) {
+  // The claims are gathered under the walk and judged after it closes,
+  // because selection may insert into the module the impl a resolution chain
+  // runs through.
+  SmallVector<std::pair<Operation *, ClaimType>> equalities;
+  module.walk<WalkOrder::PreOrder>([&](Operation *op) {
+    if (isTemplate(op))
+      return WalkResult::skip();
+    for (Type type : op->getResultTypes())
+      walkObligationSites(type, [&](Type sub) {
+        auto claim = dyn_cast<ClaimType>(sub);
+        if (claim && claim.isEquality() && claim.isMonomorphic())
+          equalities.emplace_back(op, claim);
+      });
+    return WalkResult::advance();
+  });
+  if (equalities.empty())
+    return success();
+
+  // Selection reads every symbol name from the resolver's symbol tables, which
+  // the builder's listener keeps true as selection inserts a generated impl or
+  // proof: a template the collector this pass runs takes when nothing names it.
+  ImplResolver resolver(module);
+  SymbolLookupScope symbolAnswers(resolver.getSymbolTables());
+  SymbolTableKeeper listener(resolver.getSymbolTables());
+  OpBuilder builder(module.getContext(), &listener);
+
+  // A refusal is selection's answer about an application, named once, at the
+  // first refused equality spelling a projection of it.
+  DenseSet<Type> named;
+  bool settled = true;
+  for (auto [op, claim] : equalities) {
+    TypeEqualityAttr eq = claim.getEqualityAttr();
+    SelectionSite site = SelectionSite::of(op);
+    Answer<Type> lhs = resolver.resolveProjectionsIn(eq.getLhs(), site, builder);
+    Answer<Type> rhs =
+        lhs.isAnswer() ? resolver.resolveProjectionsIn(eq.getRhs(), site, builder)
+                       : lhs;
+    if (!rhs.isAnswer()) {
+      settled = false;
+      continue;
+    }
+    if (*lhs == *rhs && isGroundType(*lhs))
+      continue;
+    settled = false;
+    for (Type side : {*lhs, *rhs})
+      side.walk([&, op = op](ProjectionType proj) {
+        if (named.insert(proj.asClaim()).second)
+          resolver.nameRefusal(proj, getAnchorModule(op),
+                               [&] { return emitError(op->getLoc()); });
+      });
+    op->emitError() << "equality " << claim
+                    << " does not settle before erasure: its sides resolve to "
+                    << *lhs << " and " << *rhs;
+  }
+  return success(settled && !resolver.hasOverflowed());
+}
+
 /// Erases all residual polymorphism from the module.
 ///
-/// Three phases run in sequence, and none of them deletes an operation for
-/// being a template: the collector the pass runs after them takes what nothing
-/// names.
+/// It first judges every monomorphic equality standing outside a template
+/// (`judgeStandingEqualities`), the one judgment erasure rests on that no
+/// earlier pass is sure to have made. Three phases then run in sequence, and
+/// none of them deletes an operation for being a template: the collector the
+/// pass runs after them takes what nothing names.
 ///
 /// Phase 1 (applyPartialConversion): Structural op rewrites that erase
 ///   SSA values.  Claim types map to zero results (1:0 erasure), so ops
@@ -2316,6 +2330,9 @@ static LogicalResult checkNothingOutsideATemplateCarriesTheory(ModuleOp module) 
 /// Each dialect contributes to phases 1 and 2 via populateErasePolymorphsPatterns.
 static LogicalResult erasePolymorphs(ModuleOp module) {
   MLIRContext* ctx = module.getContext();
+
+  if (failed(judgeStandingEqualities(module)))
+    return failure();
 
   // A block no edge reaches never runs, and the structural conversions below
   // convert a later block with the branches that reach it, so one no branch
@@ -2554,26 +2571,29 @@ static bool opCarriesStandingObligation(Operation *op) {
 
 bool isPendingOp(Operation *op) {
   // One op's share of isPendingExpansion, spelled once: an op outside a template is
-  // pending instantiation when it is a generic call a pattern can rewrite or it
-  // carries a standing obligation -- an unproven monomorphic application claim or an
-  // unresolved ground projection the two leftover checks refuse. The op and type shape
-  // is tested before the template-ancestor walk: an op that could never be pending pays
-  // for no walk, and one that could pays for it once. The instantiate step's qualified
-  // discharge reads this to count an operation exactly where a lowering pattern would
-  // fire on it, and the erase step's gate reads it to hold while any such op stands, so
-  // the two steps share one definition of pending work.
-  if (isRewritableGenericCall(op))
+  // pending instantiation when it is a generic call a pattern can rewrite, an
+  // allegation, or it carries a standing obligation -- an unproven monomorphic
+  // application claim or an unresolved ground projection the two leftover checks
+  // refuse. An allegation is pending by its op whatever it alleges: the claim-proving
+  // pattern alone proves one, an equality included, which no type it carries
+  // records as owed. The op and type shape is tested before the template-ancestor
+  // walk: an op that could never be pending pays for no walk, and one that could
+  // pays for it once. The instantiate step's qualified discharge reads this to count
+  // an operation exactly where a lowering pattern would fire on it, and the erase
+  // step's gate reads it to hold while any such op stands, so the two steps share
+  // one definition of pending work.
+  if (isRewritableGenericCall(op) || isa<AllegeOp>(op))
     return !isForeign(op);
   return opCarriesStandingObligation(op);
 }
 
 bool isPendingExpansion(ModuleOp module) {
   // Instantiation is pending while some op outside a template is pending: a
-  // generic call the patterns can rewrite, or an op carrying a standing obligation
-  // -- an unproven monomorphic application claim or an unresolved ground
-  // projection it has not yet discharged (the demands the two leftover checks
-  // refuse). A foreign op is a template or code inside one, which instantiation
-  // carries to no target.
+  // generic call the patterns can rewrite, an allegation, or an op carrying a
+  // standing obligation -- an unproven monomorphic application claim or an
+  // unresolved ground projection it has not yet discharged (the demands the two
+  // leftover checks refuse). A foreign op is a template or code inside one, which
+  // instantiation carries to no target.
   bool pending = false;
   module.walk([&](Operation *op) {
     if (isPendingOp(op)) {

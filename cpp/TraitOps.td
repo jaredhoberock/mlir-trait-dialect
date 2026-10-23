@@ -58,9 +58,10 @@ include "TraitTypes.td"
 // a proof, or an impl with no parameters and no where entries; for an
 // equality it cites a projection's resolution by an impl
 // (`proj_resolve P resolves T by @impl`) or reflexivity (`refl`), and an
-// equality several such steps entail together is a trait.coerce of a refl
-// witness citing them.  trait.derive applies an impl to evidence for its
-// where entries.  trait.project reads a claim's requirement by position.
+// equality no one such leaf states as written is a trait.coerce of a refl
+// witness citing the leaves that entail it.  trait.derive applies an impl to
+// evidence for its where entries.  trait.project reads a claim's requirement by
+// position.
 // trait.coerce respells a value's type, and accepts the respelling where the
 // ground congruence closure of the equalities it cites joins the two
 // spellings.  trait.allege asserts a claim for impl selection to prove.  A
@@ -892,11 +893,11 @@ def AllegeOp : TraitDialectOp<"allege", [
     each instance that grounds it. A monomorphic allegation nothing proves is
     an error.
     An equality is proved by resolving each projection its sides spell
-    through the impl selection selects for the projection's application: the
-    projection-resolution witness citing that impl at its arguments, or, where
-    several projections resolve, a `trait.coerce` of a refl witness of the
-    left side to the equality, citing one such witness per projection
-    resolved.
+    through the impl selection selects for the projection's application, one
+    projection-resolution witness per projection resolved, citing that impl at
+    its arguments. Where one such witness states the equality as written, it
+    is the proof; otherwise the proof is a `trait.coerce` of a refl witness of
+    the left side to the equality, citing every one of them.
 
     Examples:
       // monomorphic: proven where it stands
@@ -1140,10 +1141,10 @@ def WitnessOp : TraitDialectOp<"witness", [
 
         %refl = trait.witness refl : !trait.claim<i64 = i64>
 
-    An equality several leaves entail together is a `trait.coerce` of a refl
-    witness of its left side to it, citing the leaves; the coerce's ground
-    congruence closure carries the leaves to the result, so only the leaves
-    are stored.
+    An equality no one leaf states as written is a `trait.coerce` of a refl
+    witness of its left side to it, citing the leaves that entail it; the
+    coerce's ground congruence closure carries the leaves to the result, so
+    only the leaves are stored.
 
         %lhs = trait.witness refl : !trait.claim<!A = !A>
         %eq = trait.coerce %lhs : !trait.claim<!A = !A> to !trait.claim<!A = !B>

@@ -26,19 +26,19 @@ bool isRewritableGenericCall(Operation *op);
 bool isForeign(Operation *op);
 
 /// Whether `op` outside a template is still pending instantiation: a rewritable
-/// generic call, or an op carrying a standing obligation. This is one op's share
-/// of `isPendingExpansion`, spelled once so the instantiate step's qualified
-/// discharge and the erase step's gate read one definition of pending work -- the
-/// discharge counts a call exactly where a lowering pattern would fire on it, the
-/// gate holds erase ineligible while any such op stands.
+/// generic call, an allegation, or an op carrying a standing obligation. This is
+/// one op's share of `isPendingExpansion`, spelled once so the instantiate step's
+/// qualified discharge and the erase step's gate read one definition of pending
+/// work -- the discharge counts a call exactly where a lowering pattern would fire
+/// on it, the gate holds erase ineligible while any such op stands.
 bool isPendingOp(Operation *op);
 
 /// Whether `module` still carries instantiation work outside a template (a
 /// trait, impl, or proof body, or a polymorphic function): a rewritable generic
-/// call, or an unproven monomorphic application claim or an unresolved ground
-/// projection instantiation has not yet discharged. This is the erase step's
-/// readiness -- it may run only when this is false, the condition under which
-/// nothing standing can still mention a template.
+/// call, an allegation, or an unproven monomorphic application claim or an
+/// unresolved ground projection instantiation has not yet discharged. This is the
+/// erase step's readiness -- it may run only when this is false, the condition
+/// under which nothing standing can still mention a template.
 bool isPendingExpansion(ModuleOp module);
 
 /// Builds the type converter erase-polymorphs applies in its phase-1 partial
@@ -79,17 +79,20 @@ struct InstantiateMonomorphsPass : PassWrapper<InstantiateMonomorphsPass, Operat
 std::unique_ptr<Pass> createInstantiateMonomorphsPass();
 
 /// Erases all residual polymorphism from the module, the second half of
-/// monomorphization, in three phases. It runs after instantiate-monomorphs has
-/// proved every monomorphic claim. Evidence lowering erases the claims,
-/// projections, witnesses and coerces and rewrites the signatures they stood
-/// on; the type sweep respells the remaining types of every op outside a
-/// template; the exit check holds everything standing outside a template
-/// theory-free and free of any mention of a template. It deletes nothing for
-/// being a template: a `symbol-dce` the pass then runs over the same module
-/// collects what nothing names. That collector is inside the pass because the
-/// module between the two halves does not verify — a standing template's
-/// interior can name a generic definition another dialect's erasure took — so
-/// the boundary this pass closes is the one with the templates already gone.
+/// monomorphization. Its entry judges every monomorphic equality standing
+/// outside a template and refuses one that does not hold, so no equality is
+/// erased unjudged whatever ran before it; an application claim is
+/// instantiate-monomorphs' to prove or refuse. Three phases follow. Evidence
+/// lowering erases the claims, projections, witnesses and coerces and rewrites
+/// the signatures they stood on; the type sweep respells the remaining types of
+/// every op outside a template; the exit check holds everything standing
+/// outside a template theory-free and free of any mention of a template. It
+/// deletes nothing for being a template: a `symbol-dce` the pass then runs over
+/// the same module collects what nothing names. That collector is inside the
+/// pass because the module between the two halves does not verify — a standing
+/// template's interior can name a generic definition another dialect's erasure
+/// took — so the boundary this pass closes is the one with the templates
+/// already gone.
 struct ErasePolymorphsPass : PassWrapper<ErasePolymorphsPass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ErasePolymorphsPass);
 

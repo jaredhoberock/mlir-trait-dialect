@@ -3,17 +3,19 @@
 
 // RUN: mlir-opt %s | FileCheck %s --check-prefix=VERIFY
 // RUN: not mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' 2>&1 | FileCheck %s
+// RUN: not mlir-opt %s -pass-pipeline='builtin.module(erase-polymorphs-trait)' 2>&1 | FileCheck %s --check-prefix=ERASE
 
 // The refusal half of the undemanded settlement. The structure matches
 // equality_settles_through_undemanded_impl.mlir, but the middle impl @Has_mid
 // is conditional on @X[i32], for which the module carries no impl. Settlement
 // puts the endpoint projections to impl selection; selecting @Has_mid to carry
 // @Has[i32]::Out to i64 demands its assumption @X[i32], which is unsatisfiable,
-// so selection refuses it and @Has[i32]::Out stays spelled. The endpoints do not
-// meet at a ground type, and the coerced equality is reported as a leftover --
-// the settlement resolves only through impls whose where-bounds hold, never
-// through @Has_mid on the strength of its binding alone. Supplying an @X[i32]
-// impl is what discharges the assumption and lets the equality settle.
+// so selection refuses it and @Has[i32]::Out stays spelled. Instantiation
+// refuses that projection where the witnesses spell it; erasure, run alone,
+// refuses the coerced equality, whose endpoints do not meet at a ground type --
+// an equality settles only through impls whose where-bounds hold, never through
+// @Has_mid on the strength of its binding alone. Supplying an @X[i32] impl is
+// what discharges the assumption and lets the equality settle.
 
 // VERIFY: trait.coerce
 
@@ -30,7 +32,9 @@ func.func private @gen(%c: !trait.claim<!trait.proj<@Has[tuple<!trait.poly<0>>],
   return
 }
 
-// CHECK: unproven monomorphic claim '!trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = !trait.proj<@Has[tuple<i32, i32>], "Out">>' after instantiate-monomorphs
+// CHECK: error: no impl with satisfiable assumptions for '!trait.proj<@Has[i32], "Out">'
+// CHECK: error: unresolved projection '!trait.proj<@Has[i32], "Out">' after instantiate-monomorphs
+// ERASE: error: equality '!trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = !trait.proj<@Has[tuple<i32, i32>], "Out">>' does not settle before erasure: its sides resolve to '!trait.proj<@Has[i32], "Out">' and '!trait.proj<@Has[i32], "Out">'
 func.func @main() -> () {
   %p1 = trait.witness proj_resolve !trait.proj<@Has[tuple<i32>], "Out"> resolves !trait.proj<@Has[i32], "Out"> by @Has_w1[i32]
     : !trait.claim<!trait.proj<@Has[tuple<i32>], "Out"> = !trait.proj<@Has[i32], "Out">>

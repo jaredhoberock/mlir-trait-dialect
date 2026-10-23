@@ -2298,8 +2298,8 @@ LogicalResult mlir::trait::verifyReadsUnderDominance(Operation *op) {
 // The op's attributes must match the result claim's arm exactly. For the
 // application arm the result claim names the proof it cites. For the equality
 // arm, the result's left side is the projection a cited impl resolves
-// (proj-resolve) or its endpoints are identical (refl); an equality several
-// leaves entail together is a trait.coerce of a refl witness, not a witness.
+// (proj-resolve) or its endpoints are identical (refl); an equality no one leaf
+// states as written is a trait.coerce of a refl witness, not a witness.
 LogicalResult WitnessOp::verify() {
   ClaimType result = dyn_cast<ClaimType>(getResult().getType());
   if (!result)

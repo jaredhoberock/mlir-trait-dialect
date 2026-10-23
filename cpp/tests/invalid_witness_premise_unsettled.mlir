@@ -31,7 +31,6 @@ func.func @wrong(%v: !trait.proj<@S[i64], "Out">) -> i64 {
   // expected-error @below {{alleges '!trait.proj<@Marker[i64], "M">' = 'i64', and impl selection resolves its sides to 'i1' and 'i64'}}
   // expected-error @below {{unproven monomorphic claim '!trait.claim<!trait.proj<@Marker[i64], "M"> = i64>' after instantiate-monomorphs}}
   %m = trait.allege !trait.proj<@Marker[i64], "M"> = i64
-  // expected-error @below {{unproven monomorphic claim '!trait.claim<!trait.proj<@S[i64], "Out"> = i64>' after instantiate-monomorphs}}
   %e = trait.witness proj_resolve !trait.proj<@S[i64], "Out"> resolves i64 by @S_gen[i64, i64] given(%m)
     : (!trait.claim<!trait.proj<@Marker[i64], "M"> = i64>)
     : !trait.claim<!trait.proj<@S[i64], "Out"> = i64>
