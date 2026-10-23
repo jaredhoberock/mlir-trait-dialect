@@ -38,15 +38,15 @@ void *instantiateLegality(MlirOperation, void *targetPtr, void *, void *) {
   return nullptr;
 }
 
-/// The legality erase-polymorphs hands the driver: the phase-1 target its pass
-/// applies with a template marked illegal, and a converter that maps every
+/// The legality erase-polymorphs hands the driver: its readiness target
+/// (`populateErasePolymorphsReadiness`), and a converter that maps every
 /// polymorphic type to none. Erase is therefore present while a template stands,
-/// or a poly, claim, or projection type does, and runs to cut the template; the
-/// readiness walk reads what erase collects off the same interface the type system
-/// already speaks.
+/// or an op of this dialect, or a poly, claim, or projection type does, and runs
+/// to cut the template; the readiness walk reads what erase collects off the same
+/// interface the type system already speaks.
 void *eraseLegality(MlirOperation, void *targetPtr, void *, void *) {
   auto &target = *static_cast<ConversionTarget *>(targetPtr);
-  populateErasePolymorphsLegality(target, /*templatesIllegal=*/true);
+  populateErasePolymorphsReadiness(target);
   auto *converter = new TypeConverter();
   converter->addConversion([](Type type) { return type; });
   converter->addConversion(

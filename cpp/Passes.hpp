@@ -26,8 +26,10 @@ bool isRewritableGenericCall(Operation *op);
 bool isForeign(Operation *op);
 
 /// Whether `op` outside a template is still pending instantiation: a rewritable
-/// generic call, an allegation, or an op carrying a standing obligation. This is
-/// one op's share of `isPendingExpansion`, spelled once so the instantiate step's
+/// generic call, or an op at a standing site of which instantiation still owes
+/// work -- an unproven monomorphic application claim, an unresolved ground
+/// projection, or a monomorphic allegation. This is one op's share of
+/// `isPendingExpansion`, spelled once so the instantiate step's
 /// qualified discharge and the erase step's gate read one definition of pending
 /// work -- the discharge counts a call exactly where a lowering pattern would fire
 /// on it, the gate holds erase ineligible while any such op stands.
@@ -35,9 +37,9 @@ bool isPendingOp(Operation *op);
 
 /// Whether `module` still carries instantiation work outside a template (a
 /// trait, impl, or proof body, or a polymorphic function): a rewritable generic
-/// call, an allegation, or an unproven monomorphic application claim or an
-/// unresolved ground projection instantiation has not yet discharged. This is the
-/// erase step's readiness -- it may run only when this is false, the condition
+/// call, a monomorphic allegation, or an unproven monomorphic application claim
+/// or an unresolved ground projection instantiation has not yet discharged. This
+/// is the erase step's readiness -- it may run only when this is false, the condition
 /// under which nothing standing can still mention a template.
 bool isPendingExpansion(ModuleOp module);
 
@@ -52,17 +54,18 @@ TypeConverter makeErasePolymorphsConverter();
 /// coerce) are illegal; the trait, impl, and proof declarations are legal and
 /// recursively legal; a func.func is legal (and recursively legal) while its
 /// signature stays polymorphic, and legal once it mentions no claim or
-/// projection; every other op is legal once it is a template or mentions no
-/// claim or projection. Built by one function so a second caller can build the
-/// identical target.
-///
-/// `templatesIllegal` flips the treatment of a template for the readiness target
-/// the driver walks: a template becomes illegal, so the step is present while one
-/// stands and runs to cut it, where the pass's own target keeps it legal and
-/// recursively legal so the pass carries it to no target and the collector removes
-/// it. The two targets differ only in that.
-void populateErasePolymorphsLegality(ConversionTarget &target,
-                                     bool templatesIllegal = false);
+/// projection; an op still pending instantiation has no opinion; every other op
+/// is legal once it is a template or mentions no claim or projection. Built by
+/// one function so a second caller can build the identical target.
+void populateErasePolymorphsLegality(ConversionTarget &target);
+
+/// Configures the readiness target the lowering driver walks for
+/// erase-polymorphs: one rule over every op, no per-op mark. An op still pending
+/// instantiation has no opinion, so the step waits behind instantiate while
+/// instantiate owes anything; otherwise an op is illegal exactly when it belongs
+/// to this dialect, is a template, or mentions a claim or a projection, so the
+/// step is present while any stands and runs to erase or cut it.
+void populateErasePolymorphsReadiness(ConversionTarget &target);
 
 /// The first half of monomorphization: instantiates the monomorphs every trait
 /// call needs and proves the monomorphic claims, leaving the polymorphic
@@ -83,8 +86,10 @@ std::unique_ptr<Pass> createInstantiateMonomorphsPass();
 /// outside a template, the result of an op and the argument of a block alike:
 /// an equality must hold, and one carrying a type variable never does there; an
 /// application claim must be proven and a projection resolved, which is
-/// instantiate-monomorphs' work. It refuses what fails, so nothing is erased
-/// unjudged whatever ran before it. Three phases follow. Evidence
+/// instantiate-monomorphs' work. It refuses what fails, so no value typed with a
+/// claim is erased unjudged whatever ran before it; a bodiless declaration's
+/// signature names no value, and its claims leave with the signature unread.
+/// Three phases follow. Evidence
 /// lowering erases the claims, projections, witnesses and coerces and rewrites
 /// the signatures they stood on; the type sweep respells the remaining types of
 /// every op outside a template; the exit check holds everything standing

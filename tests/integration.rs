@@ -761,9 +761,10 @@ fn erase_waits_behind_instantiate_on_every_pending_operation() {
     // instantiation, whatever its kind, so the readiness walk holds the step
     // behind instantiate rather than readying both as one batch, in which the
     // roster's order alone would put instantiate first. A standing allegation of
-    // an equality is pending, and so is a function taking an unproven claim; at
-    // the entry boundary of each module instantiate is ready alone and erase
-    // waits on that operation.
+    // an equality is pending, so is a function taking an unproven claim, and so
+    // is a value coerced to a ground projection though every use of the coerce
+    // reads through it; at the entry boundary of each module instantiate is
+    // ready alone and erase waits on that operation.
     let registry = DialectRegistry::new();
     register_all_dialects(&registry);
     let context = Context::new();
@@ -790,7 +791,20 @@ func.func @use(%b: !trait.claim<@B[i64]>) -> i64 {\n\
   %c = arith.constant 7 : i64\n\
   return %c : i64\n\
 }\n";
-    for (source, pending) in [(allegation, "trait.allege"), (hypothesis, "func.func")] {
+    let projection = "\
+trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) { trait.assoc_type @Item }\n\
+trait.impl private @A_impl(%self: !trait.claim<@A[!trait.poly<0>]>) { trait.assoc_type @Item = !trait.poly<0> }\n\
+func.func @use(%x: i64) -> i64 {\n\
+  %w = trait.witness proj_resolve !trait.proj<@A[i64], \"Item\"> resolves i64 by @A_impl[i64] : !trait.claim<!trait.proj<@A[i64], \"Item\"> = i64>\n\
+  %p = trait.coerce %x : i64 to !trait.proj<@A[i64], \"Item\"> via (%w) : (!trait.claim<!trait.proj<@A[i64], \"Item\"> = i64>)\n\
+  %y = trait.coerce %p : !trait.proj<@A[i64], \"Item\"> to i64 via (%w) : (!trait.claim<!trait.proj<@A[i64], \"Item\"> = i64>)\n\
+  return %y : i64\n\
+}\n";
+    for (source, pending) in [
+        (allegation, "trait.allege"),
+        (hypothesis, "func.func"),
+        (projection, "trait.coerce"),
+    ] {
         let module = Module::parse(&context, source).expect("the fixture module parses");
         assert!(module.as_operation().verify(), "the fixture module verifies");
         let readiness = entry_readiness(&context, &module);

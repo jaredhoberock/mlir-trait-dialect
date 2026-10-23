@@ -1070,6 +1070,63 @@ static bool readThrough(CoerceOp coerce) {
   });
 }
 
+/// Visits the standing sites of `op`, each with the value standing there: every
+/// obligation site (`walkObligationSites`) of the type of a result of `op` and
+/// of an argument of a block of one of its regions. A coerce every use of which
+/// reads its evidence through it (`readThrough`) carries its input's proof, so
+/// the application claim it produces is no site of its own: it is judged where
+/// its input is produced. This is the one enumeration of the places a claim or
+/// a projection stands in a program; what instantiation still owes and what
+/// erasure judges before it erases are each a verdict on these sites. Whether
+/// `op` stands outside a template is the caller's to establish.
+static void walkStandingSites(Operation *op,
+                              llvm::function_ref<void(Value, Type)> visit) {
+  auto coerce = dyn_cast<CoerceOp>(op);
+  bool readsThrough = coerce && readThrough(coerce);
+  auto visitValue = [&](Value position) {
+    walkObligationSites(position.getType(), [&](Type site) {
+      auto claim = dyn_cast<ClaimType>(site);
+      if (readsThrough && claim && claim.isApplication())
+        return;
+      visit(position, site);
+    });
+  };
+  for (Value result : op->getResults())
+    visitValue(result);
+  for (Region &region : op->getRegions())
+    for (Block &block : region)
+      for (BlockArgument argument : block.getArguments())
+        visitValue(argument);
+}
+
+/// Visits the standing sites (`walkStandingSites`) of every op of `module`
+/// outside a template, with the op each stands at, in one pre-order walk that
+/// skips a template whole.
+static void walkStandingSites(ModuleOp module,
+                              llvm::function_ref<void(Operation *, Value, Type)> visit) {
+  module.walk<WalkOrder::PreOrder>([&](Operation *op) {
+    if (isTemplate(op))
+      return WalkResult::skip();
+    walkStandingSites(op, [&](Value position, Type site) {
+      visit(op, position, site);
+    });
+    return WalkResult::advance();
+  });
+}
+
+/// Whether instantiation owes the work standing at `site`, a standing site of
+/// `op`: an undischarged obligation (`isUndischargedObligation`), or the claim
+/// of a monomorphic allegation, which the claim-proving pattern alone proves --
+/// an equality's included, which no type records as owed. A polymorphic
+/// allegation is none of instantiation's work: outside a template no instance
+/// substitutes its variable, and erasure refuses it.
+static bool owesInstantiation(Operation *op, Type site) {
+  if (isUndischargedObligation(site))
+    return true;
+  auto claim = dyn_cast<ClaimType>(site);
+  return claim && isa<AllegeOp>(op) && claim.isMonomorphic();
+}
+
 /// Settles a coerce once its input is evidence: a coerce whose result is
 /// spelled as its input is replaced by the input, the fold the stage's drivers
 /// do not run (applyPatternsOverReachableOps), and a coerce of evidence to
@@ -1764,21 +1821,16 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
                          [&] { return emitError(op->getLoc()); });
   };
 
-  // Assert that no op produced an unproven monomorphic application claim that
-  // escaped proving, nor takes one as a block argument, and that no monomorphic
-  // allegation stands: the claim-proving pattern alone proves an allegation, of
-  // an application or of an equality, so one still standing here is a leftover.
-  // Keying this check on the types values carry rather than on the set of
-  // claim-producing ops makes it total over producers: an op whose claims the
-  // patterns above fail to discharge is an error here, never a silent gap. An
-  // equality is no obligation of this stage: it carries no proof to await, and
-  // erasure, which removes it, judges every standing equality first
-  // (`judgeStandingTheory`). A coerce every use of which reads its evidence
-  // through it (`readThrough`) carries its input's evidence, so its claim is
-  // judged where its input is produced, and an obligation is named once, under
-  // the spelling it was produced at. The whole type is walked, so a claim nested
-  // inside an aggregate is caught too, not only a claim that is the root type.
-  // Trait infrastructure regions are templates and keep their unproven claims.
+  // Assert that nothing this stage owes is left standing (`owesInstantiation`
+  // at every standing site, `walkStandingSites`): no op produces an unproven
+  // monomorphic application claim that escaped proving or takes one as a block
+  // argument, no monomorphic allegation stands, and no ground projection stands
+  // unresolved. Keying this check on the types values carry rather than on the
+  // set of claim-producing ops makes it total over producers: an op whose claims
+  // the patterns above fail to discharge is an error here, never a silent gap.
+  // An equality is no obligation of this stage: it carries no proof to await,
+  // and erasure, which removes it, judges every standing equality first
+  // (`judgeStandingTheory`). Every claim is reported before any projection.
   bool hasLeftovers = false;
   struct StandingClaim {
     Operation *op;
@@ -1786,28 +1838,14 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
     Value position;
   };
   SmallVector<StandingClaim> monomorphicClaims;
-  module.walk<WalkOrder::PreOrder>([&](Operation *op) {
-    if (isTemplate(op))
-      return WalkResult::skip();
-    if (auto coerce = dyn_cast<CoerceOp>(op); coerce && readThrough(coerce))
-      return WalkResult::advance();
-    auto gather = [&](Value position) {
-      walkObligationSites(position.getType(), [&](Type sub) {
-        auto claim = dyn_cast<ClaimType>(sub);
-        if (!claim)
-          return;
-        if (isUndischargedObligation(claim) ||
-            (isa<AllegeOp>(op) && claim.isMonomorphic()))
-          monomorphicClaims.push_back({op, claim, position});
-      });
-    };
-    for (Value result : op->getResults())
-      gather(result);
-    for (Region &r : op->getRegions())
-      for (Block &b : r)
-        for (Value arg : b.getArguments())
-          gather(arg);
-    return WalkResult::advance();
+  SmallVector<std::pair<Operation *, ProjectionType>> standingProjections;
+  walkStandingSites(module, [&](Operation *op, Value position, Type site) {
+    if (!owesInstantiation(op, site))
+      return;
+    if (auto claim = dyn_cast<ClaimType>(site))
+      monomorphicClaims.push_back({op, claim, position});
+    else
+      standingProjections.emplace_back(op, cast<ProjectionType>(site));
   });
   for (auto [op, claim, position] : monomorphicClaims) {
     hasLeftovers = true;
@@ -1877,38 +1915,12 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
     }
   }
 
-  // Reject each concrete-base projection that survived resolution. Walking the
-  // result and block-argument types of every non-infrastructure op (operand
-  // types are SSA-determined by their producers, so they are covered where those
-  // producers are visited), this reports any projection whose base is not
-  // symbolic, attributing it to the carrying op ahead of the legalization
-  // failure that leftover projection then triggers, instead of leaving that
-  // failure the only clue. Projections over still-symbolic bases live only in
-  // templates and are left alone; a still-polymorphic template function is not
-  // yet instantiated, so its ground projections (over a concrete base nested in
-  // an otherwise generic body) resolve when it is cloned for a concrete instance
-  // and its whole subtree is skipped. The scan reads the obligation sites of a
-  // type, so a projection standing in an equality's endpoints is not reported
-  // here; the walk after this one puts it to selection.
-  SmallVector<std::pair<Operation *, ProjectionType>> standingProjections;
-  module.walk<WalkOrder::PreOrder>([&](Operation *op) {
-    if (isTemplate(op))
-      return WalkResult::skip();
-    auto gather = [&](Type root) {
-      walkObligationSites(root, [&](Type sub) {
-        auto proj = dyn_cast<ProjectionType>(sub);
-        if (proj && isUndischargedObligation(proj))
-          standingProjections.emplace_back(op, proj);
-      });
-    };
-    for (Type t : op->getResultTypes())
-      gather(t);
-    for (Region &r : op->getRegions())
-      for (Block &b : r)
-        for (Value arg : b.getArguments())
-          gather(arg.getType());
-    return WalkResult::advance();
-  });
+  // A ground projection that survived resolution is reported at the op
+  // carrying it, ahead of the legalization failure it would otherwise trigger
+  // with no clue why. Operand types are their producers', so they are covered
+  // where those producers stand. A projection over a still-symbolic base stands
+  // only in a template, whose ground projections resolve when it is cloned for
+  // a concrete instance.
   for (auto [op, proj] : standingProjections) {
     nameRefusal(op, proj);
     op->emitError() << "unresolved projection " << proj
@@ -1917,30 +1929,36 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
   if (hasLeftovers || !standingProjections.empty())
     return failure();
 
-  // A ground projection can also stand where the walk above does not read: in
-  // an attribute, or in an equality's endpoints, which state a proposition and
-  // are left as spelled. One there that selection resolves has a meaning; one
-  // selection refuses names a type no impl gives a meaning, which erasure would
-  // otherwise take away unread, so it is put to selection here and refused at
-  // the op carrying it.
+  // A ground projection can also stand where no standing site reads: in an
+  // attribute, or in the arguments of a proven application claim, the spelling
+  // its proof is minted at. One there that selection resolves has a meaning;
+  // one selection refuses names a type no impl gives a meaning, which erasure
+  // would take away unread, so it is put to selection here and refused at the
+  // op carrying it. A projection an equality's endpoints name at a result or a
+  // block argument is judged with that equality, at erasure's entry
+  // (`judgeStandingTheory`), so the walk of those types does not enter one.
   SmallVector<std::pair<Operation *, ProjectionType>> spelledProjections;
   module.walk<WalkOrder::PreOrder>([&](Operation *op) {
     if (isTemplate(op))
       return WalkResult::skip();
     llvm::SetVector<ProjectionType> spelled;
-    auto collect = [&](auto root) {
-      root.walk([&](ProjectionType proj) {
-        if (!isPolymorphicType(Type(proj)))
-          spelled.insert(proj);
-      });
+    auto collect = [&](Type sub) -> WalkResult {
+      if (auto claim = dyn_cast<ClaimType>(sub); claim && claim.isEquality())
+        return WalkResult::skip();
+      if (auto proj = dyn_cast<ProjectionType>(sub); proj && !isPolymorphicType(sub))
+        spelled.insert(proj);
+      return WalkResult::advance();
     };
     for (Type t : op->getResultTypes())
-      collect(t);
+      t.walk<WalkOrder::PreOrder>(collect);
     for (Region &r : op->getRegions())
       for (Block &b : r)
         for (Value arg : b.getArguments())
-          collect(arg.getType());
-    collect(Attribute(op->getAttrDictionary()));
+          arg.getType().walk<WalkOrder::PreOrder>(collect);
+    op->getAttrDictionary().walk([&](ProjectionType proj) {
+      if (!isPolymorphicType(Type(proj)))
+        spelled.insert(proj);
+    });
     for (ProjectionType proj : spelled)
       spelledProjections.emplace_back(op, proj);
     return WalkResult::advance();
@@ -1975,9 +1993,9 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
 
   // ModuleOp's own verifier hook runs here over the module shell -- it does not
   // recurse into the body, and this shallow tail judges no coerce. The bonded
-  // erase pass erases a coerce to a claim on the judgment it makes at its entry,
-  // and refuses at its barrier a coerce of a value whose endpoints stand apart:
-  // it is not discharged and cannot cross (`EraseCoerceOp`).
+  // erase pass judges at its entry what it removes, and then erases every
+  // coerce: one to a claim leaves with the claim, and one of a value forwards
+  // its input (`EraseCoerceOp`).
   if (failed(module.verify()))
     return failure();
 
@@ -2030,31 +2048,31 @@ struct EraseCoerceOp : public OpConversionPattern<CoerceOp> {
     // Every cited equality is a claim value that maps to zero here, and so is a
     // claim-typed input (a claim-to-claim coerce shrinking 1:0).
     //
-    // A coerce to a claim is erased as a witness is: this pass judged every
-    // claim standing outside a template at its entry (`judgeStandingTheory`),
-    // its result and its input among them. A claim's predicate and an
-    // equality's endpoints are never respelled, so their written forms still
-    // differ here wherever the coerce related two forms of one type; comparing
-    // them would refuse what that judgment settled.
+    // A coerce to a claim is erased as a witness is: this pass judged at its
+    // entry every claim standing outside a template (`judgeStandingTheory`),
+    // the coerce's input among them, and its result too unless it is an
+    // application claim every use of which reads the input's proof through the
+    // coerce (`walkStandingSites`). A claim's predicate and an equality's
+    // endpoints are never respelled, so their written forms still differ here
+    // wherever the coerce related two forms of one type; comparing them would
+    // refuse what that judgment settled.
     if (isa<ClaimType>(op.getResult().getType())) {
       rewriter.eraseOp(op);
       return success();
     }
-    // A coerce of a value, live or dead: its input survived as one value, and
-    // forwarding it is a no-op exactly when its post-conversion type equals the
-    // result type -- the discharged (reflexive) form, which projection
-    // resolution has produced by here. An undischarged coerce still relates two
-    // different types; it is refused, so the op stays illegal and the
-    // conversion fails loudly. The witness is deliberately not re-verified:
-    // the replay endpoints are authoritative at the barrier.
+    // A coerce of a value, live or dead, forwards its input: one value of the
+    // result's type. Its verifier admits no claim in either endpoint and puts
+    // the two in one class of the congruence its cited equalities seed; the
+    // entry judgment refused every ground projection standing at either
+    // endpoint and every cited equality whose sides do not resolve to one type.
+    // A congruence seeded only by equalities whose sides resolve to one type
+    // joins only types that resolve to one type, and a type free of projections
+    // resolves to itself, so the two endpoints are one type.
     ValueRange input = adaptor.getInput();
-    if (input.front().getType() == op.getResult().getType()) {
-      rewriter.replaceOp(op, input);
-      return success();
-    }
-    return rewriter.notifyMatchFailure(
-        op, "a coerce whose endpoints still differ after conversion is not "
-            "discharged and cannot cross the erase barrier");
+    assert(input.size() == 1 && input.front().getType() == op.getResult().getType() &&
+           "erasure's entry judgment leaves a value coerce's endpoints one type");
+    rewriter.replaceOp(op, input);
+    return success();
   }
 };
 
@@ -2192,20 +2210,20 @@ static LogicalResult checkNothingOutsideATemplateCarriesTheory(ModuleOp module) 
   return success(clean);
 }
 
-/// The erase step's entry judgment: every claim and projection standing
-/// outside a template, at an obligation site of the type of an op's result or
-/// of a block's argument, is one erasure may remove. An application claim must
-/// be proven and a projection resolved, which instantiate-monomorphs does and
-/// erasure does not, so one still undischarged is refused where it stands. An
-/// equality claim must hold, and is judged here, beside why selection refused
-/// each projection left standing in an endpoint. A claim carrying a type
-/// variable is neither proven nor holds here: outside a template no instance
-/// substitutes the variable.
+/// The erase step's entry judgment: every claim and projection at a standing
+/// site outside a template (`walkStandingSites`) is one erasure may remove. An
+/// application claim must be proven and a projection resolved, which
+/// instantiate-monomorphs does and erasure does not, so one still undischarged
+/// is refused where it stands. An equality claim must hold, and is judged
+/// here, beside why selection refused each projection left standing in an
+/// endpoint. A claim carrying a type variable is neither proven nor holds here:
+/// outside a template no instance substitutes the variable.
 ///
 /// An equality claim carries no proof -- its evidence is the value itself --
 /// so unlike an application claim it is never "proven"; it holds when the
 /// projections in its endpoints resolve, each to a fixed point since one hop's
-/// binding may spell the next, and the two endpoints meet at one ground type.
+/// binding may spell the next, and the two endpoints meet at one type that
+/// names no projection.
 /// Selection resolves a projection only through an impl whose assumptions are
 /// satisfiable and refuses it otherwise, so a projection whose only candidate
 /// impl is conditional with an undischarged assumption stays spelled and the
@@ -2223,11 +2241,9 @@ static LogicalResult checkNothingOutsideATemplateCarriesTheory(ModuleOp module) 
 /// it is assumed rather than erased unread with the body that assumes it, as
 /// instantiate-monomorphs' exit walk refuses an unproven monomorphic
 /// application claim a block argument takes. A hypothesis is named at its
-/// block argument and put to selection at the op whose region takes it. A
-/// coerce every use of which reads its evidence through it (`readThrough`)
-/// carries its input's evidence, so its application claim is judged where its
-/// input is produced. Fails where anything is refused or an endpoint's
-/// resolution overflows; an overflow is named where it was met, and alone.
+/// block argument and put to selection at the op whose region takes it. Fails
+/// where anything is refused or an endpoint's resolution overflows; an overflow
+/// is named where it was met, and alone.
 static LogicalResult judgeStandingTheory(ModuleOp module) {
   // The equalities are gathered under the walk and judged after it closes,
   // because selection may insert into the module the impl a resolution chain
@@ -2240,42 +2256,25 @@ static LogicalResult judgeStandingTheory(ModuleOp module) {
   };
   SmallVector<StandingEquality> equalities;
   bool judged = true;
-  module.walk<WalkOrder::PreOrder>([&](Operation *op) {
-    if (isTemplate(op))
-      return WalkResult::skip();
-    auto coerce = dyn_cast<CoerceOp>(op);
-    bool readsThrough = coerce && readThrough(coerce);
-    auto gather = [&](Value position) {
-      walkObligationSites(position.getType(), [&](Type sub) {
-        auto claim = dyn_cast<ClaimType>(sub);
-        if (claim && claim.isEquality()) {
-          equalities.push_back({op, position, claim});
-          return;
-        }
-        if (claim && readsThrough)
-          return;
-        if (claim && !claim.isMonomorphic()) {
-          judged = false;
-          emitError(position.getLoc())
-              << "claim " << claim << " is not proven before erasure: it "
-              << "carries a type variable outside a template";
-          return;
-        }
-        if (!isUndischargedObligation(sub))
-          return;
-        judged = false;
-        emitError(position.getLoc())
-            << (claim ? "unproven monomorphic claim " : "unresolved projection ")
-            << sub << " before erasure";
-      });
-    };
-    for (Value result : op->getResults())
-      gather(result);
-    for (Region &r : op->getRegions())
-      for (Block &b : r)
-        for (Value arg : b.getArguments())
-          gather(arg);
-    return WalkResult::advance();
+  walkStandingSites(module, [&](Operation *op, Value position, Type site) {
+    auto claim = dyn_cast<ClaimType>(site);
+    if (claim && claim.isEquality()) {
+      equalities.push_back({op, position, claim});
+      return;
+    }
+    if (claim && !claim.isMonomorphic()) {
+      judged = false;
+      emitError(position.getLoc())
+          << "claim " << claim << " is not proven before erasure: it "
+          << "carries a type variable outside a template";
+      return;
+    }
+    if (!isUndischargedObligation(site))
+      return;
+    judged = false;
+    emitError(position.getLoc())
+        << (claim ? "unproven monomorphic claim " : "unresolved projection ")
+        << site << " before erasure";
   });
   if (equalities.empty())
     return success(judged);
@@ -2310,7 +2309,11 @@ static LogicalResult judgeStandingTheory(ModuleOp module) {
       judged = false;
       continue;
     }
-    if (*lhs == *rhs && isGroundType(*lhs))
+    // The equality settles when both sides resolve to one type that names no
+    // projection: the two then denote that one type. Neither side carries a
+    // type variable, since the claim is monomorphic and resolution substitutes
+    // none; a claim standing inside the type is a type like any other here.
+    if (*lhs == *rhs && !containsType<ProjectionType>(*lhs))
       continue;
     judged = false;
     for (Type side : {*lhs, *rhs})
@@ -2322,12 +2325,11 @@ static LogicalResult judgeStandingTheory(ModuleOp module) {
     InFlightDiagnostic report = emitError(at)
                                 << "equality " << claim
                                 << " does not settle before erasure: ";
-    // Two sides meeting at one form that is not ground still name no type:
-    // where it is a projection selection left standing, the refusal named
-    // above says why.
+    // Two sides meeting at one form that still names a projection name no
+    // type: the refusal named above says why selection left it standing.
     if (*lhs == *rhs)
       report << "both its sides resolve to " << *lhs
-             << ", which is not a ground type";
+             << ", which still names a projection";
     else
       report << "its sides resolve to " << *lhs << " and " << *rhs;
   }
@@ -2469,80 +2471,62 @@ TypeConverter makeErasePolymorphsConverter() {
   return opConverter;
 }
 
-void populateErasePolymorphsLegality(ConversionTarget &target,
-                                     bool templatesIllegal) {
-  // The evidence ops leave with erasure, so the pass's own target marks them
-  // illegal. An operation still pending instantiation is not erase's yet,
-  // whatever its kind (`isPendingOp`): the readiness target has no opinion on
-  // one, so the readiness walk holds erase behind instantiate while
-  // instantiate owes anything, and the two steps never share a batch.
-  if (templatesIllegal)
-    target.addDynamicallyLegalOp<AllegeOp, DeriveOp, ProjectOp, WitnessOp,
-                                 CoerceOp>(
-        [](Operation *op) -> std::optional<bool> {
-          if (isPendingOp(op))
-            return std::nullopt;
-          return false;
-        });
-  else
-    target.addIllegalOp<AllegeOp, DeriveOp, ProjectOp, WitnessOp, CoerceOp>();
-  // A template leaves with monomorphization, so the pass's own target converts
-  // neither it nor its interior: the three declarations are legal and recursively
-  // legal, and a function is a template exactly while its signature stays
-  // polymorphic. A recursively legal op's interior is never enqueued, so an unused
-  // template neither converts nor has to legalize; a monomorphic function answers
-  // the same law every other op does. The readiness target instead marks a
-  // template illegal, so the step is present while one stands rather than absent
-  // while a template holds another step's type standing.
-  if (templatesIllegal) {
-    target.addIllegalOp<TraitOp, ImplOp, ProofOp>();
-  } else {
-    target.addLegalOp<TraitOp, ImplOp, ProofOp>();
-    target.markOpRecursivelyLegal<TraitOp, ImplOp, ProofOp>();
-  }
-  target.addDynamicallyLegalOp<func::FuncOp>(
-      [templatesIllegal](func::FuncOp func) -> std::optional<bool> {
-        bool isTemplateFunc = isPolymorphicType(Type(func.getFunctionType()));
-        // A function's own spelling is its attributes, its signature among them,
-        // which its entry block receives; a later block's arguments are converted
-        // with the branches that reach it (upstream's structural conversions).
-        bool clean = llvm::none_of(func->getAttrs(), [](NamedAttribute attr) {
-          return containsType<ClaimType>(attr.getValue()) ||
-                 containsType<ProjectionType>(attr.getValue());
-        });
-        // a template function is illegal in the readiness target, legal (and
-        // recursively legal, below) in the pass's own
-        if (templatesIllegal) {
-          if (isPendingOp(func))
-            return std::nullopt;
-          return !isTemplateFunc && clean;
-        }
-        return isTemplateFunc || clean;
-      });
-  if (!templatesIllegal)
-    target.markOpRecursivelyLegal<func::FuncOp>([](Operation *op) {
-      return isPolymorphicType(Type(cast<func::FuncOp>(op).getFunctionType()));
+void populateErasePolymorphsLegality(ConversionTarget &target) {
+  // The evidence ops leave with erasure.
+  target.addIllegalOp<AllegeOp, DeriveOp, ProjectOp, WitnessOp, CoerceOp>();
+  // A template leaves with monomorphization, so the pass converts neither it
+  // nor its interior: the three declarations are legal and recursively legal,
+  // and a function is a template exactly while its signature stays
+  // polymorphic. A recursively legal op's interior is never enqueued, so an
+  // unused template neither converts nor has to legalize; a monomorphic
+  // function answers the same law every other op does.
+  target.addLegalOp<TraitOp, ImplOp, ProofOp>();
+  target.markOpRecursivelyLegal<TraitOp, ImplOp, ProofOp>();
+  target.addDynamicallyLegalOp<func::FuncOp>([](func::FuncOp func) {
+    // A function's own spelling is its attributes, its signature among them,
+    // which its entry block receives; a later block's arguments are converted
+    // with the branches that reach it (upstream's structural conversions).
+    bool clean = llvm::none_of(func->getAttrs(), [](NamedAttribute attr) {
+      return containsType<ClaimType>(attr.getValue()) ||
+             containsType<ProjectionType>(attr.getValue());
     });
-  target.markUnknownOpDynamicallyLegal(
-      [templatesIllegal](Operation *op) -> std::optional<bool> {
-        // An operation still pending instantiation is not erase's yet: neither
-        // target has an opinion on it, so the readiness walk holds erase behind
-        // instantiate and the partial conversion leaves it for a later pass.
-        // Under the driver erase runs only once none stands, and run alone it
-        // refuses at its entry one whose types carry an obligation.
-        if (isPendingOp(op))
-          return std::nullopt;
-        // A template -- including a generic symbol declaration another dialect
-        // owns, whose body may still name a claim or projection -- is carried to
-        // no target by erasure and cut by the collector. The pass's target leaves
-        // it legal whatever theory its spelling still names; the readiness target
-        // marks it illegal so the step is present while it stands. Every other op
-        // is legal once it carries no claim or projection.
-        if (isTemplate(op))
-          return templatesIllegal ? std::optional<bool>(false)
-                                  : std::optional<bool>(true);
-        return !opMentionsType<ClaimType>(op) && !opMentionsType<ProjectionType>(op);
-      });
+    return isPolymorphicType(Type(func.getFunctionType())) || clean;
+  });
+  target.markOpRecursivelyLegal<func::FuncOp>([](Operation *op) {
+    return isPolymorphicType(Type(cast<func::FuncOp>(op).getFunctionType()));
+  });
+  target.markUnknownOpDynamicallyLegal([](Operation *op) -> std::optional<bool> {
+    // An operation still pending instantiation is not erase's: the conversion
+    // leaves it, and the entry judgment has refused one whose types carry an
+    // obligation. A template -- including a generic symbol declaration another
+    // dialect owns, whose body may still name a claim or projection -- is
+    // carried to no target by erasure and cut by the collector. Every other op
+    // is legal once it carries no claim or projection.
+    if (isPendingOp(op))
+      return std::nullopt;
+    if (isTemplate(op))
+      return true;
+    return !opMentionsType<ClaimType>(op) && !opMentionsType<ProjectionType>(op);
+  });
+}
+
+void populateErasePolymorphsReadiness(ConversionTarget &target) {
+  // One rule and no per-op mark, so no op escapes it. An operation still
+  // pending instantiation is not erase's yet, whatever its kind: the target has
+  // no opinion on it, so the readiness walk holds erase behind instantiate
+  // while instantiate owes anything and the two steps never share a batch.
+  // Otherwise erase has work exactly where an op of this dialect stands --
+  // codegen may write a coerce that cites nothing and mentions no claim or
+  // projection -- or a template, so the step is present while one stands and
+  // runs to cut it, or an op mentioning a claim or a projection in an operand,
+  // a result, a block argument or an attribute.
+  target.markUnknownOpDynamicallyLegal([](Operation *op) -> std::optional<bool> {
+    if (isPendingOp(op))
+      return std::nullopt;
+    if (isa_and_present<TraitDialect>(op->getDialect()) || isTemplate(op))
+      return false;
+    return !opMentionsType<ClaimType>(op) && !opMentionsType<ProjectionType>(op);
+  });
 }
 
 bool isRewritableGenericCall(Operation *op) {
@@ -2598,56 +2582,31 @@ bool isRewritableGenericCall(Operation *op) {
   return false;
 }
 
-// One op's share of the two leftover checks' scan: an op one of whose result or
-// block-argument types carries a standing obligation -- an unproven monomorphic
-// application claim or an unresolved ground projection the leftover checks refuse --
-// and that stands outside a template. Reused so the pending-op predicate reads the
-// same demand they do. A coerce whose uses read its evidence through it carries its
-// input's (`readThrough`), and its input's producer is judged instead. The type shape
-// is tested before the template-ancestor walk, so an op carrying no such type never
-// pays for the walk. File-local: only isPendingOp reads it.
-static bool opCarriesStandingObligation(Operation *op) {
-  if (auto coerce = dyn_cast<CoerceOp>(op); coerce && readThrough(coerce))
-    return false;
-  auto carriesObligation = [&] {
-    for (Type t : op->getResultTypes())
-      if (carriesUndischargedObligation(t))
-        return true;
-    for (Region &region : op->getRegions())
-      for (Block &block : region)
-        for (BlockArgument arg : block.getArguments())
-          if (carriesUndischargedObligation(arg.getType()))
-            return true;
-    return false;
-  };
-  return carriesObligation() && !isForeign(op);
-}
-
 bool isPendingOp(Operation *op) {
   // One op's share of isPendingExpansion, spelled once: an op outside a template is
-  // pending instantiation when it is a generic call a pattern can rewrite, an
-  // allegation, or it carries a standing obligation -- an unproven monomorphic
-  // application claim or an unresolved ground projection the two leftover checks
-  // refuse. An allegation is pending by its op whatever it alleges: the claim-proving
-  // pattern alone proves one, an equality included, which no type it carries
-  // records as owed. The op and type shape is tested before the template-ancestor
-  // walk: an op that could never be pending pays for no walk, and one that could
-  // pays for it once. The instantiate step's qualified discharge reads this to count
-  // an operation exactly where a lowering pattern would fire on it, and the erase
-  // step's gate reads it to hold while any such op stands, so the two steps share
-  // one definition of pending work.
-  if (isRewritableGenericCall(op) || isa<AllegeOp>(op))
+  // pending instantiation when it is a generic call a pattern can rewrite, or when
+  // instantiation owes the work standing at one of its standing sites -- the
+  // verdict instantiate-monomorphs' exit walk refuses what is left of
+  // (`owesInstantiation`). The op and type shape is tested before the
+  // template-ancestor walk: an op that could never be pending pays for no walk,
+  // and one that could pays for it once. The instantiate step's qualified
+  // discharge reads this to count an operation exactly where a lowering pattern
+  // would fire on it, and the erase step's gate reads it to hold while any such op
+  // stands, so the two steps share one definition of pending work.
+  if (isRewritableGenericCall(op))
     return !isForeign(op);
-  return opCarriesStandingObligation(op);
+  bool owed = false;
+  walkStandingSites(op, [&](Value, Type site) {
+    owed = owed || owesInstantiation(op, site);
+  });
+  return owed && !isForeign(op);
 }
 
 bool isPendingExpansion(ModuleOp module) {
   // Instantiation is pending while some op outside a template is pending: a
-  // generic call the patterns can rewrite, an allegation, or an op carrying a
-  // standing obligation -- an unproven monomorphic application claim or an
-  // unresolved ground projection it has not yet discharged (the demands the two
-  // leftover checks refuse). A foreign op is a template or code inside one, which
-  // instantiation carries to no target.
+  // generic call the patterns can rewrite, or an op at one of whose standing
+  // sites instantiation still owes work (`owesInstantiation`). A foreign op is a
+  // template or code inside one, which instantiation carries to no target.
   bool pending = false;
   module.walk([&](Operation *op) {
     if (isPendingOp(op)) {

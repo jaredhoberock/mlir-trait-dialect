@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 
-// isPendingExpansion counts a standing allegation outside a template as pending
-// instantiation whatever it alleges, so the lowering driver serves an equality
-// allegation that is the module's only trait work: no type the allegation
-// carries records it as owed, since an equality is no obligation site, and only
-// the claim-proving pattern of instantiate-monomorphs proves it.
+// isPendingExpansion counts a standing monomorphic allegation outside a
+// template as pending instantiation whatever it alleges, so the lowering driver
+// serves an equality allegation that is the module's only trait work: no type
+// the allegation carries records it as owed, since an equality is no
+// obligation, and only the claim-proving pattern of instantiate-monomorphs
+// proves it.
 
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(report-expansion-readiness-trait)' 2>&1 | FileCheck %s
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' | FileCheck %s --check-prefix=LOWERED
