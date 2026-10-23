@@ -75,6 +75,29 @@ Type replaceBeneathRoot(Type answer, AttrTypeReplacer &walk) {
   return answer.replaceImmediateSubElements(attributes, types);
 }
 
+bool isPolymorphicType(Type root) {
+  // A projection or a claim is polymorphic exactly where one of its parts is,
+  // and the walk visits those parts itself, so it is not asked: asking it
+  // would walk its parts again, once for every projection or claim enclosing
+  // them.
+  return root
+      .walk([](Type sub) {
+        if (isa<ProjectionType, ClaimType>(sub))
+          return WalkResult::advance();
+        auto p = dyn_cast<PolymorphicTypeInterface>(sub);
+        return p && p.isPolymorphic() ? WalkResult::interrupt()
+                                      : WalkResult::advance();
+      })
+      .wasInterrupted();
+}
+
+SmallVector<GenericTypeInterface, 4> getGenericTypesIn(Type ty) {
+  SmallVector<GenericTypeInterface, 4> result;
+  ty.walk<WalkOrder::PreOrder>(
+      [&](GenericTypeInterface generic) { result.push_back(generic); });
+  return result;
+}
+
 void TraitDialect::registerTypes() {
   addTypes<
 #define GET_TYPEDEF_LIST

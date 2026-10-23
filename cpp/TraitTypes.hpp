@@ -119,7 +119,11 @@ AttrTypeReplacer makeGroundHeadProjectionReplacer(
 /// standing for the next round of the walk's fixed point.
 Type replaceBeneathRoot(Type answer, AttrTypeReplacer &walk);
 
-inline bool isPolymorphicType(Type root);
+/// Whether some part of `root`, `root` included, is polymorphic: a part
+/// whose `PolymorphicTypeInterface` says so. One walk visits each distinct
+/// part once.
+bool isPolymorphicType(Type root);
+
 /// How a substitution reaches a claim's predicate: through every binding it
 /// holds, or through its variable bindings alone (`respellClaimPredicate`), as
 /// a clone stamps one.
@@ -330,31 +334,6 @@ template<class NeedleType> bool containsType(Type ty) {
              return isa<NeedleType>(sub) ? WalkResult::interrupt()
                                          : WalkResult::advance();
            }).wasInterrupted();
-}
-
-inline bool isPolymorphicType(Type root) {
-  // fast path: if the root itself is a PolymorphicTypeInterface,
-  // call its predicate
-  if (auto p = dyn_cast<PolymorphicTypeInterface>(root)) {
-    return p.isPolymorphic();
-  }
-
-  // otherwise, just walk the type
-  bool found = false;
-  root.walk([&](Type sub) -> WalkResult {
-    // skip the root to avoid infinite recursion
-    if (sub == root) return WalkResult::advance(); 
-
-    if (auto p = dyn_cast<PolymorphicTypeInterface>(sub)) {
-      if (p.isPolymorphic()) {
-        found = true;
-        return WalkResult::interrupt();
-      }
-    }
-
-    return WalkResult::advance();
-  });
-  return found;
 }
 
 inline bool isMonomorphicType(Type ty) {
@@ -661,49 +640,11 @@ template<class NeedleType> bool opMentionsType(Operation *op) {
   return false;
 }
 
-/// Collects distinct generic types appearing anywhere in `ty`.
-///
-/// Claim and projection types store their trait application as an attribute, so
-/// this helper descends through those application arguments explicitly instead
-/// of relying only on MLIR's structural type walk.
-inline SmallVector<GenericTypeInterface,4> getGenericTypesIn(Type ty) {
-  SmallVector<GenericTypeInterface, 4> result;
-  DenseSet<Type> seen;
-
-  auto collect = [&](Type ty, auto &collectRef) -> void {
-    if (auto generic = dyn_cast<GenericTypeInterface>(ty)) {
-      if (seen.insert(generic).second)
-        result.push_back(generic);
-    }
-
-    if (auto claim = dyn_cast<ClaimType>(ty)) {
-      if (auto eq = claim.getEqualityAttr()) {
-        // This walk ignores attributes, so the endpoints an equality holds in
-        // its own attribute are descended explicitly to collect any generic
-        // standing inside.
-        collectRef(eq.getLhs(), collectRef);
-        collectRef(eq.getRhs(), collectRef);
-      } else {
-        for (Type arg : claim.getTraitApplication().getTypeArgs())
-          collectRef(arg, collectRef);
-      }
-    } else if (auto projection = dyn_cast<ProjectionType>(ty)) {
-      for (Type arg : projection.getTraitApplication().getTypeArgs())
-        collectRef(arg, collectRef);
-      for (Type arg : projection.getAssocTypeArgs())
-        collectRef(arg, collectRef);
-    }
-
-    ty.walkImmediateSubElements(
-        /*walkAttrsFn=*/[](Attribute) {},
-        /*walkTypesFn=*/[&](Type subTy) {
-          collectRef(subTy, collectRef);
-        });
-  };
-
-  collect(ty, collect);
-  return result;
-}
+/// Collects distinct generic types appearing anywhere in `ty`, in the order a
+/// pre-order walk first meets them. The walk visits each distinct part once,
+/// through the attributes a claim or a projection stores its trait application
+/// and endpoints in as through any other part.
+SmallVector<GenericTypeInterface, 4> getGenericTypesIn(Type ty);
 
 /// The declaration parameter `ty` is an occurrence of, or null when it is none.
 ///
