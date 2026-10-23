@@ -2795,6 +2795,15 @@ LogicalResult MethodCallOp::verify() {
   if (expectedTraitAttr != foundTraitAttr)
     return emitOpError() << "expected claim for " << expectedTraitAttr << ", found " << foundTraitAttr;
 
+  // A call computing evidence is replaced by the evidence its receiver's impl
+  // returns (`inlineEvidence`), so its claim names no proof, as a projection
+  // of a trait requirement names none: a proof it named would be read in place
+  // of that evidence.
+  if (computesEvidence() && cast<ClaimType>(getResult(0).getType()).isProven())
+    return emitOpError() << "computes the evidence its receiver's impl returns, "
+                            "so its claim names no proof, found "
+                         << getResult(0).getType();
+
   return success();
 }
 
