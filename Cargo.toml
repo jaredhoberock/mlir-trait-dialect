@@ -5,8 +5,8 @@ edition = "2024"
 links = "trait_dialect"
 
 [dependencies]
-melior = "0.27"
-mlir-sys = "220.0.1"
+melior = "0.28.2"
+mlir-sys = "230.0.2"
 lowering_driver = { path = "../mlir-lowering-driver", package = "mlir-lowering-driver" }
 
 [lib]
