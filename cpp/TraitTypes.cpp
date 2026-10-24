@@ -371,13 +371,10 @@ FailureOr<Attribute> parseApplicationOrEqualityPredicate(AsmParser &p) {
 
   // The application arm opens with a trait symbol (`@Trait[...]`); anything else
   // is the equality arm (`!A = !B`), disambiguated by the leading `@`.
-  FlatSymbolRefAttr traitName;
-  OptionalParseResult symRes = p.parseOptionalAttribute(traitName);
-  if (symRes.has_value()) {
-    if (failed(*symRes))
-      return failure();
+  StringAttr traitName;
+  if (succeeded(p.parseOptionalSymbolName(traitName))) {
     FailureOr<TraitApplicationAttr> app =
-        parseTraitApplicationBody(p, traitName);
+        parseTraitApplicationBody(p, FlatSymbolRefAttr::get(traitName));
     if (failed(app))
       return failure();
     return Attribute(*app);
