@@ -8,10 +8,10 @@ config.test_format = lit.formats.ShTest(True)
 config.suffixes = ['.mlir']
 config.test_source_root = os.path.dirname(__file__)
 
-mlir_prefix = os.environ.get('MLIR_SYS_220_PREFIX', '/home/jhoberock/dev/git/llvm-project-22/install-release-asserts')
+mlir_prefix = os.environ.get('MLIR_SYS_230_PREFIX', '/home/jhoberock/dev/git/llvm-project-23/install-release-asserts-23.1.4')
 llvm_bin = os.path.join(mlir_prefix, 'bin')
 llvm_lib = os.path.join(mlir_prefix, 'lib')
-fallback_llvm_bin = '/home/jhoberock/dev/git/llvm-project-22/build/bin'
+fallback_llvm_bin = '/home/jhoberock/dev/git/llvm-project-23/build-release-asserts/bin'
 
 def tool(name):
     installed = os.path.join(llvm_bin, name)

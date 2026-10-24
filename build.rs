@@ -4,7 +4,7 @@ use std::process::Command;
 
 fn main() {
     let mlir_prefix =
-        env::var("MLIR_SYS_220_PREFIX").expect("MLIR_SYS_220_PREFIX must be set");
+        env::var("MLIR_SYS_230_PREFIX").expect("MLIR_SYS_230_PREFIX must be set");
     let crate_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let cpp_dir = crate_dir.join("cpp");
     let build_dir = PathBuf::from(env::var("OUT_DIR").unwrap()).join("cpp");
@@ -31,7 +31,7 @@ fn main() {
     println!("cargo:include_dir={}", build_dir.display());
     println!("cargo:lib_dir={}", build_dir.display());
 
-    println!("cargo:rerun-if-env-changed=MLIR_SYS_220_PREFIX");
+    println!("cargo:rerun-if-env-changed=MLIR_SYS_230_PREFIX");
     println!("cargo:rerun-if-changed=cpp");
     // This dialect compiles against the driver's contribution headers rather
     // than linking them, so a change to either must recompile its C++.
