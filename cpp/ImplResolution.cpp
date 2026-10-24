@@ -162,29 +162,42 @@ static LogicalResult diagnoseImplResolutionFailure(
   return diag;
 }
 
+/// Whether `type`, read through selection wherever it can be, is no type a
+/// predicate may state. One still naming a ground projection whose
+/// application selection refused names no type, as rustc refuses a predicate
+/// whose normalization fails (E0277); a projection carrying a type variable
+/// is a template's, resolved when an instance substitutes it. One carrying a
+/// claim names a value's evidence, which a predicate never states: an
+/// application, a projection and an equality each refuse a claim as written
+/// (their symbol-use verifiers, and `verifyEndpointsRelateTypes` for an
+/// equality), and this is the same law on what a binding resolves them to.
+static bool namesNoType(Type type) {
+  return type
+      .walk([](Type part) {
+        auto proj = dyn_cast<ProjectionType>(part);
+        return isa<ClaimType>(part) || (proj && !isPolymorphicType(Type(proj)))
+                   ? WalkResult::interrupt()
+                   : WalkResult::advance();
+      })
+      .wasInterrupted();
+}
+
 /// Whether one of `normalized`, the types `predicate` states with their
 /// projections resolved by selection wherever it can, is no type a predicate
-/// may state. One still naming a ground projection whose application
-/// selection refused names no type, as rustc refuses a predicate whose
-/// normalization fails (E0277); a projection carrying a type variable is a
-/// template's, resolved when an instance substitutes it. One carrying a claim
-/// names a value's evidence, which a predicate never states: an application,
-/// a projection and an equality each refuse a claim as written (their
-/// symbol-use verifiers, and `verifyEndpointsRelateTypes` for an equality),
-/// and this is the same law on what a binding resolves them to. Each such type
-/// is named through `err` when it is given: a type carrying a claim beside
-/// `predicate`, and a projection carrying none by its refusal -- one carrying
-/// a claim stands for that claim, named with the type holding it.
+/// may state (`namesNoType`). Each such type is named through `err` when it is
+/// given: a type carrying a claim beside `predicate`, and a projection
+/// carrying none by its refusal -- one carrying a claim stands for that claim,
+/// named with the type holding it.
 static bool isNoPredicateType(ImplResolver &resolver, Type predicate,
                               ArrayRef<Type> normalized, ModuleOp scope,
                               llvm::function_ref<InFlightDiagnostic()> err) {
-  bool standing = false;
+  if (!llvm::any_of(normalized, namesNoType))
+    return false;
+  if (!err)
+    return true;
   AttrTypeWalker walker;
   walker.addWalk([&](ProjectionType proj) {
-    if (isPolymorphicType(Type(proj)))
-      return;
-    standing = true;
-    if (err && !containsClaim(proj))
+    if (!isPolymorphicType(Type(proj)) && !containsClaim(proj))
       resolver.nameRefusal(proj, scope, err);
   });
   llvm::SmallSetVector<Type, 2> carryingClaims;
@@ -193,11 +206,10 @@ static bool isNoPredicateType(ImplResolver &resolver, Type predicate,
     if (containsClaim(type))
       carryingClaims.insert(type);
   }
-  if (err)
-    for (Type type : carryingClaims)
-      err() << "a predicate states types, and " << predicate << " resolves to "
-            << type << ", which carries a claim";
-  return standing || !carryingClaims.empty();
+  for (Type type : carryingClaims)
+    err() << "a predicate states types, and " << predicate << " resolves to "
+          << type << ", which carries a claim";
+  return true;
 }
 
 Answer<ClaimType>
@@ -723,6 +735,11 @@ Answer<ProjectionResolution> ProjectionResolution::get(
     ProjectionType projection,
     llvm::function_ref<Answer<ResolvedImpl>(ClaimType)> select,
     llvm::function_ref<InFlightDiagnostic()> err) {
+  // A projection's own associated-type arguments are types it states, as its
+  // head application's are (`resolveImplFor`): one naming no type makes the
+  // projection name none, whether or not the binding reads it.
+  if (llvm::any_of(projection.getAssocTypeArgs(), namesNoType))
+    return Answer<ProjectionResolution>::refusal();
   Answer<ResolvedImpl> resolved = select(projection.asClaim());
   if (!resolved.isAnswer())
     return resolved.stop<ProjectionResolution>();
@@ -753,30 +770,34 @@ Answer<ProjectionResolution> ImplResolver::resolveProjection(
     const SelectionSite &site,
     OpBuilder &builder,
     llvm::function_ref<InFlightDiagnostic()> err) {
+  // The associated-type arguments are read before the projection is
+  // projected, as a reading of a spelling reads them before it offers the
+  // projection (`ProjectionNormalizer`), and the step is taken at what they
+  // read to.
+  SmallVector<Type> arguments;
+  for (Type argument : proj.getAssocTypeArgs()) {
+    Answer<Type> read = resolveProjectionsIn(argument, site, builder);
+    if (!read.isAnswer())
+      return read.stop<ProjectionResolution>();
+    arguments.push_back(*read);
+  }
+  return resolveStep(ProjectionType::get(proj.getContext(),
+                                         proj.getTraitApplication(),
+                                         proj.getAssocName(), arguments),
+                     site, builder, err);
+}
+
+Answer<ProjectionResolution> ImplResolver::resolveStep(
+    ProjectionType proj, const SelectionSite &site, OpBuilder &builder,
+    llvm::function_ref<InFlightDiagnostic()> err) {
   // An overflow is a hard error, so once one is met no projection is read
   // further, as no application is selected further (`resolveImplFor`).
   if (overflowed)
     return Answer<ProjectionResolution>::overflow();
-
   auto select = [&](ClaimType claim) {
     return resolveImplFor(claim, site, builder, err);
   };
   return ProjectionResolution::get(proj, select, err);
-}
-
-Answer<ProjectionResolution> ImplResolver::resolveOfferedProjection(
-    ProjectionType proj, const SelectionSite &site, OpBuilder &builder,
-    llvm::function_ref<InFlightDiagnostic()> err) {
-  // A projection's own associated-type arguments are types it states, as its
-  // head application's are: one naming no type makes the projection name
-  // none, whether or not the binding reads it. A reading offers a projection
-  // only once its arguments are read (`ProjectionNormalizer`), as rustc
-  // normalizes a projection's arguments before it projects, so they are
-  // judged, and the binding is specialized, at what was read.
-  if (isNoPredicateType(*this, Type(proj), proj.getAssocTypeArgs(), site.scope,
-                        err))
-    return Answer<ProjectionResolution>::refusal();
-  return resolveProjection(proj, site, builder, err);
 }
 
 Answer<Normalized>
@@ -787,7 +808,7 @@ ImplResolver::settleThroughSelection(Type ty, const SelectionSite &site,
   ProjectionNormalizer normalizer(
       reads, [&](ProjectionType proj) -> std::optional<Type> {
         Answer<ProjectionResolution> resolved =
-            resolveOfferedProjection(proj, site, builder);
+            resolveStep(proj, site, builder);
         stepOverflowed |= resolved.isOverflow();
         if (!resolved.isAnswer())
           return std::nullopt;
@@ -1010,7 +1031,7 @@ ImplResolver::resolveEquality(TypeEqualityAttr eq, const SelectionSite &site,
         if (stepFailed)
           return std::nullopt;
         Answer<ProjectionResolution> resolved =
-            resolveOfferedProjection(proj, site, builder, err);
+            resolveStep(proj, site, builder, err);
         if (!resolved.isAnswer())
           return stop(resolved.isOverflow());
         // The step is stated at the application the impl's header spells at
@@ -1171,11 +1192,11 @@ Type ImplResolver::readSettledProjectionsIn(Type ty, ModuleOp scope) const {
           return std::nullopt;
         return resolved->getBinding();
       });
-  // A reading that meets a bound is handed back as its partial normal form.
-  // It asks selection nothing, so what is named from it is a refusal
-  // selection entered: the one keyed by what the reading reached, or else
-  // those of the projections still standing in it.
-  return normalizer.normalize(ty).type;
+  // A reading that meets a bound reads nothing: it asks selection nothing, so
+  // what is named from the type is a refusal selection entered, keyed by the
+  // spelling the reading began from or by the projections standing in it.
+  Normalized out = normalizer.normalize(ty);
+  return out.unsettled ? ty : out.type;
 }
 
 } // end mlir::trait

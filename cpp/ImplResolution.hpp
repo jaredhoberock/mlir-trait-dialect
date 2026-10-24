@@ -301,8 +301,12 @@ private:
 
   /// The step resolving `projection` through the impl `select` settles on for
   /// the projection's application, at the arguments selection read for it.
-  /// Stops where selection does, and is refused where the impl binds no such
-  /// associated type at the projection's associated-type arguments.
+  /// Stops where selection does, and is refused where one of the projection's
+  /// associated-type arguments names no type -- it holds a ground projection
+  /// selection left standing, or a claim -- or where the impl binds no such
+  /// associated type at them. Every step is made here, so no step stands at an
+  /// argument naming no type, whichever reading asked for it; the reading
+  /// names why.
   static Answer<ProjectionResolution>
   get(ProjectionType projection,
       llvm::function_ref<Answer<ResolvedImpl>(ClaimType)> select,
@@ -551,7 +555,10 @@ class ImplResolver {
     /// Resolves one step of a concrete ProjectionType: the impl the internal
     /// impl resolution pipeline selects for its application, the arguments
     /// that impl takes there, and its associated-type binding specialized at
-    /// them and at `proj`'s own associated-type arguments as given.
+    /// them and at `proj`'s own associated-type arguments read through
+    /// selection, as a reading of a spelling reads them before it offers
+    /// `proj`. Refused where one of those arguments names no type
+    /// (`ProjectionResolution`).
     Answer<ProjectionResolution> resolveProjection(
         ProjectionType proj, const SelectionSite &site, OpBuilder &builder,
         llvm::function_ref<InFlightDiagnostic()> err = nullptr);
@@ -723,12 +730,11 @@ class ImplResolver {
         Type ty, const SelectionSite &site, OpBuilder &builder,
         bool (*reads)(ProjectionType) = readsGroundProjection);
 
-    /// One step of `proj`'s resolution, as `resolveProjection` resolves it,
-    /// where a reading offers `proj`: once its arguments are read
-    /// (`ProjectionNormalizer`). Refused where one of those arguments is no
-    /// type a predicate states, as its head's arguments may be none
-    /// (`resolveImplFor`).
-    Answer<ProjectionResolution> resolveOfferedProjection(
+    /// One step of `proj`'s resolution at its associated-type arguments as
+    /// given: the step a reading of a spelling takes where it offers `proj`,
+    /// once it has read those arguments (`ProjectionNormalizer`). Refused where
+    /// one of them names no type (`ProjectionResolution`).
+    Answer<ProjectionResolution> resolveStep(
         ProjectionType proj, const SelectionSite &site, OpBuilder &builder,
         llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
@@ -739,9 +745,9 @@ class ImplResolver {
 
     /// `ty` with every monomorphic projection selection has already settled in
     /// `scope` resolved through what it settled; the rest left spelled as
-    /// written. It asks selection nothing, so the stage's exit walk reads
-    /// through it the key a refusal of a leftover obligation was entered
-    /// under.
+    /// read, and `ty` as written where the reading meets a bound. It asks
+    /// selection nothing, so the stage's exit walk reads through it the key a
+    /// refusal of a leftover obligation was entered under.
     Type readSettledProjectionsIn(Type ty, ModuleOp scope) const;
 
     /// One step of `proj`'s resolution through the impl selection has already
