@@ -338,7 +338,7 @@ template <typename ConcreteOp>
 LogicalResult refineUnlessUnmintable(MLIRContext *ctx,
                                      std::optional<Location> location,
                                      ValueRange operands, DictionaryAttr attrs,
-                                     OpaqueProperties properties,
+                                     PropertyRef properties,
                                      RegionRange regions,
                                      SmallVectorImpl<Type> &returnTypes) {
   SmallVector<Type, 4> inferred;

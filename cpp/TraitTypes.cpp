@@ -61,7 +61,7 @@ void TraitDialect::registerTypes() {
 }
 
 std::string hashToSuffix(StringRef input) {
-  uint64_t hash = llvm::xxHash64(input);
+  uint64_t hash = llvm::xxh3_64bits(input);
   std::string result;
   llvm::raw_string_ostream out(result);
   out << llvm::format("_h%016" PRIx64, hash);

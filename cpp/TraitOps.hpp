@@ -168,7 +168,7 @@ namespace mlir::trait {
 /// memory reads it.
 struct ObligationResource
     : public SideEffects::Resource::Base<ObligationResource> {
-  StringRef getName() final { return "<Obligation>"; }
+  StringRef getName() const final { return "<Obligation>"; }
 };
 
 /// What the evidence a projection of a proven claim reads stands on
