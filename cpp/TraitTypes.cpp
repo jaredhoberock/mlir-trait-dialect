@@ -121,6 +121,10 @@ ProjectionNormalizer::ProjectionNormalizer(
     : reads(std::move(reads)), hop(std::move(hop)) {
   replacer.addReplacement(
       [this](ProjectionType projection) { return read(projection); });
+  walker.addWalk([this](ProjectionType projection) {
+    return reading.contains(projection) ? WalkResult::interrupt()
+                                        : WalkResult::advance();
+  });
 }
 
 std::pair<Type, WalkResult>
@@ -187,14 +191,8 @@ ProjectionNormalizer::read(ProjectionType projection) {
 }
 
 void ProjectionNormalizer::judge(Type normal) {
-  if (met)
-    return;
-  normal.walk([&](ProjectionType part) {
-    if (!reading.contains(part))
-      return WalkResult::advance();
+  if (!met && walker.walk(normal).wasInterrupted())
     met = NormalizationBound::Depth;
-    return WalkResult::interrupt();
-  });
 }
 
 Normalized ProjectionNormalizer::normalize(Type ty) {

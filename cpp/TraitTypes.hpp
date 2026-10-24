@@ -998,12 +998,24 @@ private:
   /// projection holding it in an argument stands -- so it stands in the
   /// normal form of the answer being read when it was reached: a chain that
   /// returns to where it is reading has no end.
+  ///
+  /// Each type is judged once per normalizer: `walker` keeps what it has
+  /// walked across answers and readings. A type judged clean stays clean,
+  /// because every projection standing in a normal form has been through the
+  /// replacer. Its reading had either finished when that normal form was
+  /// judged -- and an element read is answered from what it read to and never
+  /// read again, so it is never again being read -- or was still in
+  /// progress, and the judgment met the bound, after which nothing is read or
+  /// judged.
   void judge(Type normal);
 
   std::function<bool(ProjectionType)> reads;
   std::function<std::optional<Type>(ProjectionType)> hop;
   /// Keeps what each element read to, so each is read once.
   AttrTypeReplacer replacer;
+  /// Finds a projection still being read; keeps what it has walked, so each
+  /// type is judged once.
+  AttrTypeWalker walker;
   /// The projections whose reading is in progress.
   DenseSet<Type> reading;
   /// How many answers are being read beneath the element in hand.
