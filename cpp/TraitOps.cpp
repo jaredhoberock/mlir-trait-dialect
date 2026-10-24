@@ -1941,7 +1941,7 @@ FailureOr<Type> ImplOp::readOwnBindings(Type ty) {
   // a projection of the impl's own application is read here, so only one of
   // those in its arguments is read before it.
   TraitApplicationAttr own = getSelfApplication();
-  AttrTypeReplacer replacer = makeProjectionReplacer(
+  ProjectionNormalizer normalizer(
       [own](ProjectionType proj) { return proj.getTraitApplication() == own; },
       [&](ProjectionType proj) -> std::optional<Type> {
         auto bound = specializeAssociatedTypeBinding(
@@ -1951,8 +1951,7 @@ FailureOr<Type> ImplOp::readOwnBindings(Type ty) {
           return std::nullopt;
         return *bound;
       });
-  Normalized out = normalizeProjectionsToFixedPoint(
-      ty, [&](Type t) { return replacer.replace(t); });
+  Normalized out = normalizer.normalize(ty);
   if (out.unsettled)
     return failure();
   return out.type;

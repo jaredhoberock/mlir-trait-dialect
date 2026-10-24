@@ -822,7 +822,7 @@ static Type readThroughSelection(Type ty, ImplResolver &resolver,
                                  const SelectionSite &site,
                                  PatternRewriter &rewriter) {
   Answer<Type> resolved = resolver.resolveProjectionsIn(
-      ty, site, rewriter, makeGroundHeadProjectionReplacer);
+      ty, site, rewriter, readsGroundHeadProjection);
   return resolved.isAnswer() ? *resolved : ty;
 }
 

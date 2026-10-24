@@ -206,8 +206,8 @@ private:
 /// What stops impl selection for the rest of a stage run, as it is named.
 ///
 /// Two kinds go past a bound: an obligation chain past the depth limit
-/// (`kInstantiationDepthLimit`), and a spelling whose projections still
-/// change when their fixed point meets one of its bounds
+/// (`kInstantiationDepthLimit`), and a spelling whose projections' reading
+/// meets one of its bounds before it reaches a normal form
 /// (`NormalizationBound`). rustc bounds selection and normalization alike by
 /// its one recursion limit, and names either as an overflow. The third is an
 /// impl a generator wrote for another application than the one it was asked
@@ -223,11 +223,11 @@ public:
     return Overflow(Kind::Obligations, app, Type(), chain, height, ImplOp());
   }
 
-  /// The projections `spelled` spells, still changing when their fixed point
-  /// met `bound`.
+  /// The projections `spelled` spells, whose reading met `bound` before it
+  /// reached a normal form.
   static Overflow unsettled(Type spelled, NormalizationBound bound) {
-    return Overflow(bound == NormalizationBound::Rounds ? Kind::ProjectionSteps
-                                                        : Kind::ProjectionWidth,
+    return Overflow(bound == NormalizationBound::Depth ? Kind::ProjectionSteps
+                                                       : Kind::ProjectionWidth,
                     TraitApplicationAttr(), spelled, {}, 0, ImplOp());
   }
 
@@ -556,22 +556,20 @@ class ImplResolver {
         ProjectionType proj, const SelectionSite &site, OpBuilder &builder,
         llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
-    /// Walks `ty` and replaces every projection `replacerFor` admits that
-    /// selection resolves with its resolved type, to a fixed point; a
-    /// projection selection refuses is left spelled as written. By default a
-    /// projection is admitted once it is ground; under
-    /// `makeGroundHeadProjectionReplacer`, once its head application is.
-    /// Overflows where the resolution meets a bound of its fixed point while
-    /// it still changes (a binding that grows or branches under it has no
-    /// normal form), or where a step does.
+    /// `ty` with every projection `reads` admits read through selection to
+    /// its normal form (`ProjectionNormalizer`); a projection selection
+    /// refuses is left spelled as read. By default a projection is admitted
+    /// once it is ground; under `readsGroundHeadProjection`, once its head
+    /// application is. Overflows where the reading meets one of its bounds
+    /// (a binding that grows or branches under it has no normal form), or
+    /// where a step does.
     Answer<Type> resolveProjectionsIn(
         Type ty, const SelectionSite &site, OpBuilder &builder,
-        decltype(&makeGroundProjectionReplacer) replacerFor =
-            makeGroundProjectionReplacer);
+        bool (*reads)(ProjectionType) = readsGroundProjection);
 
     /// The application `claim` states, its projections read through selection
-    /// at `site` to a fixed point: the one reading by which selection judges an
-    /// application before it selects an impl for it, and by which an
+    /// at `site` to their normal form: the one reading by which selection
+    /// judges an application before it selects an impl for it, and by which an
     /// application a proof was cited for by hand is judged. Refused where an
     /// argument is no type a predicate states -- one still naming a projection
     /// selection refused, or one carrying a claim -- naming each through `err`
@@ -582,13 +580,13 @@ class ImplResolver {
                     llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     /// The types the sides of `eq` name, each read through selection at `site`
-    /// to a fixed point: the one reading by which an equality is judged, so
+    /// to its normal form: the one reading by which an equality is judged, so
     /// that it settles exactly when the two are one type. Refused where a
     /// ground projection still stands on either side -- one selection refused,
     /// which names no type, whatever the other side spells -- and where a side
     /// resolves to a type carrying a claim, which no equality relates, naming
     /// each through `err` when it is given; overflows where selection does or
-    /// a side does not settle within the depth limit.
+    /// a side's reading meets one of its bounds.
     /// Identical sides are read as any others.
     Answer<std::pair<Type, Type>>
     readEqualitySides(TypeEqualityAttr eq, const SelectionSite &site,
@@ -599,9 +597,10 @@ class ImplResolver {
     /// meet, one step per distinct ground projection resolved on the way,
     /// appended to `steps`: the evidence of the equality. The walk
     /// descends composites, so a projection nested inside one yields its step
-    /// just as a top-level projection does, and runs to a fixed point because
-    /// a binding may itself spell a projection. An equality entry of a
-    /// resolving impl is resolved the same way, and must reach one spelling.
+    /// just as a top-level projection does, and reads each step's answer in
+    /// turn because a binding may itself spell a projection. An equality entry
+    /// of a resolving impl is resolved the same way, and must reach one
+    /// spelling.
     /// Refused where the reading is or a step is refused; overflows where
     /// either does.
     Answer<std::pair<Type, Type>>
@@ -715,20 +714,18 @@ class ImplResolver {
                       TraitApplicationAttr resolved, const SelectionSite &site,
                       OpBuilder &builder, unsigned depth);
 
-    /// `ty` with every projection `replacerFor` admits that selection
-    /// resolves resolved, to a fixed point, or the bound that fixed point met
-    /// while the resolution still changed, which this names nothing about: a
-    /// candidate's header is read through this, and a header with no normal
-    /// form makes its impl no candidate rather than the stage's overflow.
-    /// Overflows where a step does.
+    /// `ty` with every projection `reads` admits read through selection to
+    /// its normal form, or the bound that reading met, which this names
+    /// nothing about: a candidate's header is read through this, and a header
+    /// with no normal form makes its impl no candidate rather than the stage's
+    /// overflow. Overflows where a step does.
     Answer<Normalized> settleThroughSelection(
         Type ty, const SelectionSite &site, OpBuilder &builder,
-        decltype(&makeGroundProjectionReplacer) replacerFor =
-            makeGroundProjectionReplacer);
+        bool (*reads)(ProjectionType) = readsGroundProjection);
 
     /// One step of `proj`'s resolution, as `resolveProjection` resolves it,
-    /// where a walk offers `proj`: once its arguments are read
-    /// (`makeProjectionReplacer`). Refused where one of those arguments is no
+    /// where a reading offers `proj`: once its arguments are read
+    /// (`ProjectionNormalizer`). Refused where one of those arguments is no
     /// type a predicate states, as its head's arguments may be none
     /// (`resolveImplFor`).
     Answer<ProjectionResolution> resolveOfferedProjection(

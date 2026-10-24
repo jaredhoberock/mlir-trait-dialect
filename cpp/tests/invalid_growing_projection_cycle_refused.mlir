@@ -4,13 +4,13 @@
 // RUN: not mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' 2>&1 | FileCheck %s
 
 // A binding cycle that grows rather than oscillates: @Grow[i32]'s Output
-// resolves to a tuple that itself contains @Grow[i32]'s Output, so each
-// resolution pass nests the spelling one level deeper and it never settles. The
-// stage resolves the projection where the call is lowered; the fixed-point
-// driver's rewrite budget bounds the growth and the nonconvergence is reported
-// as the stage's overflow, so the type never runs the process out of stack.
+// resolves to a tuple that itself contains @Grow[i32]'s Output, so reading the
+// answer reaches the projection still being read and the chain never ends. The
+// stage resolves the projection where the call is lowered and reports the
+// endless chain as its overflow, so the type never runs the process out of
+// stack.
 
-// CHECK: error: overflow evaluating the requirement '!trait.proj<@Grow[i32], "Output">': 128 projection steps stand on the chain
+// CHECK: error: overflow evaluating the requirement '!trait.proj<@Grow[i32], "Output">': a chain of steps resolving its projections does not end within 128 steps
 
 !T = !trait.poly<0>
 

@@ -12,7 +12,7 @@
 // lowered reports the nonconverging resolution as its overflow at the use --
 // it neither aborts the process nor runs the cyclic proof.
 
-// CHECK: error: overflow evaluating the requirement '!trait.proj<@Loop[i32], "Output">': 128 projection steps stand on the chain
+// CHECK: error: overflow evaluating the requirement '!trait.proj<@Loop[i32], "Output">': a chain of steps resolving its projections does not end within 128 steps
 
 !T = !trait.poly<0>
 

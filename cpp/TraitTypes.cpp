@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <string>
 #include <llvm/ADT/ScopeExit.h>
+#include <llvm/ADT/SmallVectorExtras.h>
 #include <llvm/ADT/TypeSwitch.h>
 #include <llvm/Support/ErrorHandling.h>
 #include <llvm/Support/Format.h>
@@ -21,55 +22,12 @@
 
 namespace mlir::trait {
 
-AttrTypeReplacer makeProjectionReplacer(
-    std::function<bool(ProjectionType)> reads,
-    std::function<std::optional<Type>(ProjectionType)> hop) {
-  AttrTypeReplacer replacer;
-  replacer.addReplacement(
-      [reads = std::move(reads), hop = std::move(hop)](
-          Type t) -> std::optional<std::pair<Type, WalkResult>> {
-        auto projection = dyn_cast<ProjectionType>(t);
-        if (!projection || !reads(projection))
-          return std::nullopt;
-        // Declined while an argument still holds a projection this walk
-        // reads: the walk descends into the arguments in this round, and the
-        // projection is offered at what they were read to in the next.
-        auto unread = [&](Type argument) {
-          return argument
-              .walk<WalkOrder::PreOrder>([&](ProjectionType inner) {
-                return reads(inner) ? WalkResult::interrupt()
-                                    : WalkResult::advance();
-              })
-              .wasInterrupted();
-        };
-        if (llvm::any_of(projection.getTraitApplication().getTypeArgs(),
-                         unread) ||
-            llvm::any_of(projection.getAssocTypeArgs(), unread))
-          return std::nullopt;
-        // What `hop` answers, and a projection it declines, is not walked:
-        // the arguments of a projection offered to it hold nothing this walk
-        // reads.
-        std::optional<Type> binding = hop(projection);
-        return std::make_pair(binding ? *binding : Type(projection),
-                              WalkResult::skip());
-      });
-  return replacer;
+bool readsGroundProjection(ProjectionType proj) {
+  return !isPolymorphicType(Type(proj));
 }
 
-AttrTypeReplacer makeGroundProjectionReplacer(
-    std::function<std::optional<Type>(ProjectionType)> hop) {
-  return makeProjectionReplacer(
-      [](ProjectionType proj) { return !isPolymorphicType(Type(proj)); },
-      std::move(hop));
-}
-
-AttrTypeReplacer makeGroundHeadProjectionReplacer(
-    std::function<std::optional<Type>(ProjectionType)> hop) {
-  return makeProjectionReplacer(
-      [](ProjectionType proj) {
-        return !isPolymorphicType(Type(proj.asClaim()));
-      },
-      std::move(hop));
+bool readsGroundHeadProjection(ProjectionType proj) {
+  return !isPolymorphicType(Type(proj.asClaim()));
 }
 
 bool isPolymorphicType(Type root) {
@@ -157,34 +115,94 @@ void emitObligationOverflow(Location anchor, TraitApplicationAttr app,
       });
 }
 
-/// Whether `ty` holds more distinct types than the width limit. The walk
-/// visits each distinct type once, so it stops within the limit's worth.
-static bool exceedsWidthLimit(Type ty) {
-  unsigned distinct = 0;
-  return ty
-      .walk([&](Type) {
-        return ++distinct > kNormalFormWidthLimit ? WalkResult::interrupt()
-                                                  : WalkResult::advance();
-      })
-      .wasInterrupted();
+ProjectionNormalizer::ProjectionNormalizer(
+    std::function<bool(ProjectionType)> reads,
+    std::function<std::optional<Type>(ProjectionType)> hop)
+    : reads(std::move(reads)), hop(std::move(hop)) {
+  replacer.addReplacement(
+      [this](ProjectionType projection) { return read(projection); });
 }
 
-Normalized normalizeProjectionsToFixedPoint(
-    Type ty, llvm::function_ref<Type(Type)> step) {
-  // Every round reads one layer more, so the depth limit's worth of rounds
-  // that change the spelling reach a normal form that deep, and the round
-  // after them finds nothing left to change. The width is judged on what each
-  // changing round reached, before the next round reads it.
-  for (unsigned rounds = 0;; ++rounds) {
-    Type next = step(ty);
-    if (next == ty)
-      return {ty, std::nullopt};
-    if (rounds == kInstantiationDepthLimit)
-      return {next, NormalizationBound::Rounds};
-    ty = next;
-    if (exceedsWidthLimit(ty))
-      return {ty, NormalizationBound::Width};
+std::pair<Type, WalkResult>
+ProjectionNormalizer::read(ProjectionType projection) {
+  // This reads a projection and what it reads to, so the walk descends into
+  // neither.
+  auto stand = [](Type type) {
+    return std::make_pair(type, WalkResult::skip());
+  };
+  if (met)
+    return stand(projection);
+  reading.insert(projection);
+  llvm::scope_exit done([&] { reading.erase(projection); });
+
+  // The arguments are read first, at the depth the projection stands at: a
+  // projection written in another's argument is no step of it. The projection
+  // at what they read to is an element of its own, read as any other is: it
+  // may be one `reads` admits only now.
+  MLIRContext *ctx = projection.getContext();
+  TraitApplicationAttr app = projection.getTraitApplication();
+  auto readEach = [&](ArrayRef<Type> arguments) {
+    return llvm::map_to_vector(
+        arguments, [&](Type argument) { return replacer.replace(argument); });
+  };
+  SmallVector<Type> headArguments = readEach(app.getTypeArgs());
+  SmallVector<Type> ownArguments = readEach(projection.getAssocTypeArgs());
+  if (!llvm::equal(headArguments, app.getTypeArgs()) ||
+      !llvm::equal(ownArguments, projection.getAssocTypeArgs()))
+    return stand(replacer.replace(Type(ProjectionType::get(
+        ctx, TraitApplicationAttr::get(ctx, app.getTraitName(), headArguments),
+        projection.getAssocName(), ownArguments))));
+
+  // An argument still holding a projection this reading reads holds one `hop`
+  // declined, which names no type, so the projection is not offered.
+  auto holdsDeclined = [&](Type argument) {
+    return argument
+        .walk([&](ProjectionType inner) {
+          return reads(inner) ? WalkResult::interrupt() : WalkResult::advance();
+        })
+        .wasInterrupted();
+  };
+  if (!reads(projection) || llvm::any_of(headArguments, holdsDeclined) ||
+      llvm::any_of(ownArguments, holdsDeclined))
+    return stand(projection);
+  if (depth == kInstantiationDepthLimit) {
+    met = NormalizationBound::Depth;
+    return stand(projection);
   }
+  std::optional<Type> binding = hop(projection);
+  if (!binding)
+    return stand(projection);
+  ++depth;
+  Type normal = replacer.replace(*binding);
+  --depth;
+  judge(normal);
+  return stand(normal);
+}
+
+void ProjectionNormalizer::judge(Type normal) {
+  if (met)
+    return;
+  // The walk visits each distinct type once, so it stops within the width
+  // limit's worth.
+  unsigned distinct = 0;
+  normal.walk([&](Type part) {
+    if (isa<ProjectionType>(part) && reading.contains(part)) {
+      met = NormalizationBound::Depth;
+      return WalkResult::interrupt();
+    }
+    if (++distinct > kNormalFormWidthLimit) {
+      met = NormalizationBound::Width;
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+}
+
+Normalized ProjectionNormalizer::normalize(Type ty) {
+  Type normal = replacer.replace(ty);
+  if (normal != ty)
+    judge(normal);
+  return {normal, met};
 }
 
 //===----------------------------------------------------------------------===//

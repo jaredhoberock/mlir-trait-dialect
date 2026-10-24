@@ -769,8 +769,8 @@ Answer<ProjectionResolution> ImplResolver::resolveOfferedProjection(
     llvm::function_ref<InFlightDiagnostic()> err) {
   // A projection's own associated-type arguments are types it states, as its
   // head application's are: one naming no type makes the projection name
-  // none, whether or not the binding reads it. A walk offers a projection
-  // only once its arguments are read (`makeProjectionReplacer`), as rustc
+  // none, whether or not the binding reads it. A reading offers a projection
+  // only once its arguments are read (`ProjectionNormalizer`), as rustc
   // normalizes a projection's arguments before it projects, so they are
   // judged, and the binding is specialized, at what was read.
   if (isNoPredicateType(*this, Type(proj), proj.getAssocTypeArgs(), site.scope,
@@ -780,21 +780,20 @@ Answer<ProjectionResolution> ImplResolver::resolveOfferedProjection(
 }
 
 Answer<Normalized>
-ImplResolver::settleThroughSelection(
-    Type ty, const SelectionSite &site, OpBuilder &builder,
-    decltype(&makeGroundProjectionReplacer) replacerFor) {
+ImplResolver::settleThroughSelection(Type ty, const SelectionSite &site,
+                                     OpBuilder &builder,
+                                     bool (*reads)(ProjectionType)) {
   bool stepOverflowed = false;
-  AttrTypeReplacer replacer = replacerFor(
-      [&](ProjectionType proj) -> std::optional<Type> {
-    Answer<ProjectionResolution> resolved =
-        resolveOfferedProjection(proj, site, builder);
-    stepOverflowed |= resolved.isOverflow();
-    if (!resolved.isAnswer())
-      return std::nullopt;
-    return resolved->getBinding();
-  });
-  Normalized out = normalizeProjectionsToFixedPoint(
-      ty, [&](Type t) { return replacer.replace(t); });
+  ProjectionNormalizer normalizer(
+      reads, [&](ProjectionType proj) -> std::optional<Type> {
+        Answer<ProjectionResolution> resolved =
+            resolveOfferedProjection(proj, site, builder);
+        stepOverflowed |= resolved.isOverflow();
+        if (!resolved.isAnswer())
+          return std::nullopt;
+        return resolved->getBinding();
+      });
+  Normalized out = normalizer.normalize(ty);
   if (stepOverflowed)
     return Answer<Normalized>::overflow();
   return out;
@@ -802,9 +801,8 @@ ImplResolver::settleThroughSelection(
 
 Answer<Type> ImplResolver::resolveProjectionsIn(
     Type ty, const SelectionSite &site, OpBuilder &builder,
-    decltype(&makeGroundProjectionReplacer) replacerFor) {
-  Answer<Normalized> settled =
-      settleThroughSelection(ty, site, builder, replacerFor);
+    bool (*reads)(ProjectionType)) {
+  Answer<Normalized> settled = settleThroughSelection(ty, site, builder, reads);
   if (!settled.isAnswer())
     return settled.stop<Type>();
   if (settled->unsettled) {
@@ -828,8 +826,9 @@ void Overflow::emit(Location anchor) const {
     return;
   case Kind::ProjectionSteps:
     emitError(anchor) << "overflow evaluating the requirement " << spelled
-                      << ": " << kInstantiationDepthLimit
-                      << " projection steps stand on the chain";
+                      << ": a chain of steps resolving its projections does "
+                         "not end within "
+                      << kInstantiationDepthLimit << " steps";
     return;
   case Kind::ProjectionWidth:
     emitError(anchor) << "overflow evaluating the requirement " << spelled
@@ -966,8 +965,8 @@ ImplResolver::readEqualitySides(TypeEqualityAttr eq, const SelectionSite &site,
   Answer<Normalized> rhs = settleThroughSelection(eq.getRhs(), site, builder);
   if (!rhs.isAnswer())
     return rhs.stop<std::pair<Type, Type>>();
-  // A side whose projections still change when their fixed point meets a
-  // bound is the equality's overflow, named once.
+  // A side whose reading meets a bound is the equality's overflow, named
+  // once.
   if (std::optional<NormalizationBound> unsettled =
           lhs->unsettled ? lhs->unsettled : rhs->unsettled) {
     overflow(Overflow::unsettled(ClaimType::getEquality(eq.getContext(), eq),
@@ -995,11 +994,10 @@ ImplResolver::resolveEquality(TypeEqualityAttr eq, const SelectionSite &site,
     return read;
   MLIRContext *ctx = eq.getContext();
   // A step whose resolution fails is left standing; the failure is carried out
-  // past the fixed point so that it, and not the standing projection, is what
-  // refuses. One replacer serves both sides and every round of the fixed
-  // point, and it answers a projection it has already met from its cache, so a
-  // projection spelled twice is one step. An equality entry of a resolving
-  // impl recurses, bounded as every obligation chain is.
+  // past the reading so that it, and not the standing projection, is what
+  // refuses. One normalizer reads both sides, and it reads a projection it has
+  // already met once, so a projection spelled twice is one step. An equality
+  // entry of a resolving impl recurses, bounded as every obligation chain is.
   bool stepFailed = depth >= kInstantiationDepthLimit;
   bool stepOverflowed = false;
   auto stop = [&](bool overflowedHere) {
@@ -1007,8 +1005,8 @@ ImplResolver::resolveEquality(TypeEqualityAttr eq, const SelectionSite &site,
     stepOverflowed |= overflowedHere;
     return std::nullopt;
   };
-  AttrTypeReplacer replacer = makeGroundProjectionReplacer(
-      [&](ProjectionType proj) -> std::optional<Type> {
+  ProjectionNormalizer normalizer(
+      readsGroundProjection, [&](ProjectionType proj) -> std::optional<Type> {
         if (stepFailed)
           return std::nullopt;
         Answer<ProjectionResolution> resolved =
@@ -1018,7 +1016,7 @@ ImplResolver::resolveEquality(TypeEqualityAttr eq, const SelectionSite &site,
         // The step is stated at the application the impl's header spells at
         // its arguments, which its witness's citation rebuilds, and at the
         // projection's own associated-type arguments, which the walk read
-        // before it offered the projection (`makeProjectionReplacer`); the
+        // before it offered the projection (`ProjectionNormalizer`); the
         // steps resolving the projections either head spells carry the
         // projection as spelled to it.
         TraitApplicationAttr header =
@@ -1073,31 +1071,24 @@ ImplResolver::resolveEquality(TypeEqualityAttr eq, const SelectionSite &site,
         steps.push_back(std::move(step));
         return resolved->getBinding();
       });
-  // A side whose projections still change when their fixed point meets a
-  // bound is an overflow, named once, as every resolution selection runs
-  // names its own.
-  std::optional<NormalizationBound> unsettled;
-  auto resolve = [&](Type side) {
-    Normalized out = normalizeProjectionsToFixedPoint(
-        side, [&](Type current) { return replacer.replace(current); });
-    if (!unsettled)
-      unsettled = out.unsettled;
-    return out.type;
-  };
-  Type lhs = resolve(eq.getLhs());
-  Type rhs = resolve(eq.getRhs());
+  // A side whose reading meets a bound is an overflow, named once, as every
+  // resolution selection runs names its own. A bound met on the first side is
+  // met on the second, which the normalizer then does not read.
+  Normalized lhs = normalizer.normalize(eq.getLhs());
+  Normalized rhs = normalizer.normalize(eq.getRhs());
   if (stepOverflowed)
     return Sides::overflow();
-  if (unsettled) {
-    overflow(Overflow::unsettled(ClaimType::getEquality(ctx, eq), *unsettled),
-             site);
+  if (rhs.unsettled) {
+    overflow(
+        Overflow::unsettled(ClaimType::getEquality(ctx, eq), *rhs.unsettled),
+        site);
     return Sides::overflow();
   }
   // The walk resolves what the reading resolved, so with no step refused it
   // reaches the reading's sides.
   if (stepFailed)
     return Sides::refusal();
-  return std::make_pair(lhs, rhs);
+  return std::make_pair(lhs.type, rhs.type);
 }
 
 Value buildEqualityEvidence(OpBuilder &builder, Location loc,
@@ -1172,20 +1163,19 @@ Type ImplResolver::readSettledProjectionsIn(Type ty, ModuleOp scope) const {
   // therefore read here once those arguments are read, as selection reads
   // them; one whose argument holds a projection nothing settled stands, as
   // selection left it standing.
-  AttrTypeReplacer replacer = makeGroundHeadProjectionReplacer(
+  ProjectionNormalizer normalizer(
+      readsGroundHeadProjection,
       [this, scope](ProjectionType proj) -> std::optional<Type> {
-    auto resolved = readSettledProjection(proj, scope);
-    if (failed(resolved))
-      return std::nullopt;
-    return resolved->getBinding();
-  });
-  // A reading that meets a bound of its fixed point is handed back as its
-  // partial normal form. It asks selection nothing, so what is named from it
-  // is a refusal selection entered: the one keyed by what the reading
-  // reached, or else those of the projections still standing in it.
-  return normalizeProjectionsToFixedPoint(
-             ty, [&](Type t) { return replacer.replace(t); })
-      .type;
+        auto resolved = readSettledProjection(proj, scope);
+        if (failed(resolved))
+          return std::nullopt;
+        return resolved->getBinding();
+      });
+  // A reading that meets a bound is handed back as its partial normal form.
+  // It asks selection nothing, so what is named from it is a refusal
+  // selection entered: the one keyed by what the reading reached, or else
+  // those of the projections still standing in it.
+  return normalizer.normalize(ty).type;
 }
 
 } // end mlir::trait
