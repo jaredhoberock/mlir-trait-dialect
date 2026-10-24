@@ -126,9 +126,13 @@ def ClaimType : TypeDef<TraitDialect, "Claim", [
     text depend on state outside itself.  Verifiers, by contrast,
     never re-derive a spelled proof: a proof named is checked against
     its declaration once, locally (`verifyCitation`); a verifier that
-    compares two evidence types compares their predicates with the
-    proofs stripped (`stripClaimProofs`) and never re-derives one; and
-    claim types are otherwise compared by identity, proof included.
+    compares evidence supplied for an obligation with what a
+    declaration demands compares their predicates with the proofs
+    stripped (`stripClaimProofs`); and claim types are otherwise
+    compared by identity, proof included, as the evidence an op produces
+    or returns is with the type it declares -- `trait.project`'s result
+    with the requirement its index selects among them (owner decision,
+    2026-10-23).
     Solving may consult the module and its caches; checking stays
     local.  Any future proposal to move provenance out of the spelled
     type requires an explicit owner ruling to reopen.
