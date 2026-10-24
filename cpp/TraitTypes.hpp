@@ -462,20 +462,25 @@ constexpr unsigned kSubstitutionFixedPointMaxPasses = 256;
 /// that step resolved, and one written in another's argument stands as deep as
 /// the projection it is written in (`ProjectionNormalizer`). It bounds the
 /// steps one reading takes along one chain, not a chain's length: an element
-/// already read is answered from what it read to, at no further depth.
+/// already read is answered from what it read to, at no further depth. The
+/// steps one reading takes in all are bounded by the step budget
+/// (`kProjectionStepBudget`).
 constexpr unsigned kInstantiationDepthLimit = 128;
 
-/// How many distinct types a normal form a reading of a spelling's projections
-/// reaches may hold (`ProjectionNormalizer`). The depth limit bounds how deep a
-/// chain of steps reaches; this bounds how wide what they spell grows, which a
-/// binding branching to a finite depth beneath a constructor, its leaves
-/// distinct, multiplies at every step. Types are uniqued, so a normal form
-/// whose tree is exponential in its depth -- a binding spelling its argument
-/// twice, nested -- holds few distinct types and stays far below it, where a
-/// bound on the tree's size would refuse it. It is a measure of the normal
-/// form, not of the work: a finite branching whose leaves coincide takes its
-/// steps beneath both bounds.
-constexpr unsigned kNormalFormWidthLimit = 2048;
+/// How many steps one reading of a spelling's projections may take
+/// (`ProjectionNormalizer`): a step is a binding a projection resolves to,
+/// read in its place. The depth limit bounds the steps a reading takes along
+/// one chain; this bounds the steps it takes in all, which a binding that
+/// branches to a finite depth doubles at every level while no chain nears the
+/// depth limit. It counts steps, not the types a normal form holds, because
+/// the steps are the reading's work and what they spell need not grow with
+/// them: a branching whose leaves coincide takes 2^(d+1) steps to a normal
+/// form of d+1 distinct types, and a binding spelling its argument twice,
+/// nested d deep, spells a tree of 2^d leaves in d steps. rustc bounds
+/// normalization by its recursion limit alone, and takes a finite
+/// branching's exponential time; this budget is the dialect's own, valued by
+/// the time a reading takes to meet it, about a second.
+constexpr unsigned kProjectionStepBudget = 1u << 18;
 
 /// How many frames from each end of a chain a refusal names. A chain at the
 /// depth limit is a hundred-odd frames of the same shape; its ends say where it
@@ -924,12 +929,12 @@ enum class NormalizationBound {
   /// whose reading reaches a projection still being read, by its own binding
   /// or through another's, has no end at all.
   Depth,
-  /// A normal form holding more distinct types than the width limit
-  /// (`kNormalFormWidthLimit`): a binding that branches to a finite depth,
-  /// its leaves distinct, multiplies its projections at every step. (One
-  /// that branches without end meets the depth limit first, along its first
-  /// branch.)
-  Width,
+  /// A reading that would take more steps than the step budget
+  /// (`kProjectionStepBudget`): a binding that branches to a finite depth
+  /// doubles the steps at every level, whether its leaves are distinct or
+  /// coincide. (One that branches without end meets the depth limit first,
+  /// along its first branch.)
+  Steps,
 };
 
 /// What reading a spelling's projections reached: the normal form, or the
@@ -959,11 +964,11 @@ struct Normalized {
 /// takes no step at it. The reading meets a bound where a projection would be
 /// offered at the depth limit, where it reaches an element it is still reading
 /// (whose normal form would then hold itself, so the chain never ends), or
-/// where a normal form it reaches holds more distinct types than the width
-/// limit; it then reads nothing more and hands back the partial normal form it
-/// reached. Each element is read once and what it read to is kept, so a
-/// projection spelled twice is offered once, and a spelling whose tree is
-/// exponential in its depth costs its distinct types.
+/// where it would take a step past the step budget; it then reads nothing more
+/// and hands back the partial normal form it reached. Each element is read
+/// once and what it read to is kept, so a projection spelled twice is offered
+/// once, and a spelling whose tree is exponential in its depth costs its
+/// distinct types.
 ///
 /// Every normalizer reads through this, so the spelling one hands back is the
 /// spelling all of them do, which is what lets a demand and an impl's self
@@ -986,10 +991,9 @@ private:
   /// Reads `projection` at `depth` (above), and what it reads to.
   std::pair<Type, WalkResult> read(ProjectionType projection);
 
-  /// Meets a bound where `normal`, the normal form of an answer or of the
-  /// spelling, holds a projection still being read, or more distinct types
-  /// than the width limit. The replacer answers an element reached again
-  /// while it is being read with that element as written; it holds a
+  /// Meets a bound where `normal`, the normal form of an answer, holds a
+  /// projection still being read. The replacer answers an element reached
+  /// again while it is being read with that element as written; it holds a
   /// projection being read, and nothing reading it takes it apart -- a
   /// projection holding it in an argument stands -- so it stands in the
   /// normal form of the answer being read when it was reached: a chain that
@@ -1004,6 +1008,8 @@ private:
   DenseSet<Type> reading;
   /// How many answers are being read beneath the element in hand.
   unsigned depth = 0;
+  /// How many steps the reading in hand has taken.
+  unsigned steps = 0;
   std::optional<NormalizationBound> met;
 };
 

@@ -226,8 +226,8 @@ public:
   /// The projections `spelled` spells, whose reading met `bound` before it
   /// reached a normal form.
   static Overflow unsettled(Type spelled, NormalizationBound bound) {
-    return Overflow(bound == NormalizationBound::Depth ? Kind::ProjectionSteps
-                                                       : Kind::ProjectionWidth,
+    return Overflow(bound == NormalizationBound::Depth ? Kind::ProjectionDepth
+                                                       : Kind::ProjectionSteps,
                     TraitApplicationAttr(), spelled, {}, 0, ImplOp());
   }
 
@@ -243,8 +243,8 @@ public:
 private:
   enum class Kind {
     Obligations,
+    ProjectionDepth,
     ProjectionSteps,
-    ProjectionWidth,
     InexactImpl
   };
 
@@ -568,8 +568,8 @@ class ImplResolver {
     /// refuses is left spelled as read. By default a projection is admitted
     /// once it is ground; under `readsGroundHeadProjection`, once its head
     /// application is. Overflows where the reading meets one of its bounds
-    /// (a binding that grows or branches under it has no normal form), or
-    /// where a step does.
+    /// (a binding that grows under it has no normal form, and one that
+    /// branches none within the step budget), or where a step does.
     Answer<Type> resolveProjectionsIn(
         Type ty, const SelectionSite &site, OpBuilder &builder,
         bool (*reads)(ProjectionType) = readsGroundProjection);

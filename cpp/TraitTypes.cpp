@@ -172,6 +172,13 @@ ProjectionNormalizer::read(ProjectionType projection) {
   std::optional<Type> binding = hop(projection);
   if (!binding)
     return stand(projection);
+  // A step is an answer read; a declined hop is none. The step past the
+  // budget is not read.
+  if (steps == kProjectionStepBudget) {
+    met = NormalizationBound::Steps;
+    return stand(projection);
+  }
+  ++steps;
   ++depth;
   Type normal = replacer.replace(*binding);
   --depth;
@@ -182,26 +189,21 @@ ProjectionNormalizer::read(ProjectionType projection) {
 void ProjectionNormalizer::judge(Type normal) {
   if (met)
     return;
-  // The walk visits each distinct type once, so it stops within the width
-  // limit's worth.
-  unsigned distinct = 0;
-  normal.walk([&](Type part) {
-    if (isa<ProjectionType>(part) && reading.contains(part)) {
-      met = NormalizationBound::Depth;
-      return WalkResult::interrupt();
-    }
-    if (++distinct > kNormalFormWidthLimit) {
-      met = NormalizationBound::Width;
-      return WalkResult::interrupt();
-    }
-    return WalkResult::advance();
+  normal.walk([&](ProjectionType part) {
+    if (!reading.contains(part))
+      return WalkResult::advance();
+    met = NormalizationBound::Depth;
+    return WalkResult::interrupt();
   });
 }
 
 Normalized ProjectionNormalizer::normalize(Type ty) {
+  // The budget is a reading's, not the normalizer's: a spelling read after
+  // another through one normalizer is answered from what that one read to
+  // wherever they share an element, so it takes no more steps than it would
+  // read alone, and one within the budget alone is within it here.
+  steps = 0;
   Type normal = replacer.replace(ty);
-  if (normal != ty)
-    judge(normal);
   return {normal, met};
 }
 

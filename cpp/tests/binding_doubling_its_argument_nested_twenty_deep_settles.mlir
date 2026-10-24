@@ -6,8 +6,9 @@
 // @I and @I2 each bind their associated type to a pair of its argument, and
 // !P20 and !Q20 nest a projection of each twenty deep in its own argument. Both
 // read to one normal form, a tree of 2^20 leaves spelled by twenty-one
-// distinct types: the width a reading is bounded by counts distinct types, so
-// the hypothesis that the two are one type settles, and erasure removes it.
+// distinct types, in twenty steps each: a reading is bounded by the steps it
+// takes, not by the size of what they spell, so the hypothesis that the two
+// are one type settles, and erasure removes it.
 
 // CHECK: func.func @f() {
 

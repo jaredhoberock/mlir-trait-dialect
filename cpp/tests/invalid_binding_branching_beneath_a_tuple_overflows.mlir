@@ -54,12 +54,13 @@ func.func @f(%e: !trait.claim<!trait.proj<@A[i32], "Item", [i64]> = i64>) { retu
 // A binding that branches to a finite depth: @C[tuple<T>]'s Out is a pair of
 // @C[T]'s Out at two larger arguments, and @C[i1]'s is its argument, so the
 // demand thirty deep has a normal form of 2^30 leaves, nearly all of them
-// distinct types. No chain reaches the depth limit; the normal forms the
-// reading reaches pass the width limit, and it overflows there.
+// distinct types, and reading it takes a step at each of the 2^31 - 1
+// projections the branching spells. No chain reaches the depth limit; the
+// reading would take more steps than the step budget, and it overflows there.
 
 !T = !trait.poly<0>
 trait.trait private @C(%s: !trait.claim<@C[!T]>) { trait.assoc_type @Out<[!trait.poly<1>]> }
 trait.impl private @Z(%s: !trait.claim<@C[i1]>) { trait.assoc_type @Out<[!trait.poly<0>]> = !trait.poly<0> }
 trait.impl private @S(%s: !trait.claim<@C[tuple<!T>]>) { trait.assoc_type @Out<[!trait.poly<1>]> = tuple<!trait.proj<@C[!T], "Out", [tuple<!trait.poly<1>>]>, !trait.proj<@C[!T], "Out", [tuple<!trait.poly<1>, !trait.poly<1>>]>> }
-// expected-error @below {{overflow evaluating the requirement '!trait.claim<!trait.proj<@C[tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<i1>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>], "Out", [i64]> = i64>': resolving its projections spells more than 2048 distinct types}}
+// expected-error @below {{overflow evaluating the requirement '!trait.claim<!trait.proj<@C[tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<i1>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>], "Out", [i64]> = i64>': resolving its projections takes more than 262144 steps}}
 func.func @f(%e: !trait.claim<!trait.proj<@C[tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<tuple<i1>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>], "Out", [i64]> = i64>) { return }

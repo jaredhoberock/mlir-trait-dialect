@@ -845,16 +845,16 @@ void Overflow::emit(Location anchor) const {
   case Kind::Obligations:
     emitObligationOverflow(anchor, app, chain, height);
     return;
-  case Kind::ProjectionSteps:
+  case Kind::ProjectionDepth:
     emitError(anchor) << "overflow evaluating the requirement " << spelled
                       << ": a chain of steps resolving its projections does "
                          "not end within "
                       << kInstantiationDepthLimit << " steps";
     return;
-  case Kind::ProjectionWidth:
+  case Kind::ProjectionSteps:
     emitError(anchor) << "overflow evaluating the requirement " << spelled
-                      << ": resolving its projections spells more than "
-                      << kNormalFormWidthLimit << " distinct types";
+                      << ": resolving its projections takes more than "
+                      << kProjectionStepBudget << " steps";
     return;
   }
   llvm_unreachable("an overflow of no kind");
