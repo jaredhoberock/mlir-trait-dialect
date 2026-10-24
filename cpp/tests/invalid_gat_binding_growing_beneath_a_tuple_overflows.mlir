@@ -6,9 +6,9 @@
 
 // @I binds Item<U> to a one-tuple of Item<tuple<U>>: the binding grows its own
 // argument beneath a constructor rather than at its root. What a binding spells
-// beneath its root is read by a reading nested in the projection's, and the
-// nesting is bounded by the depth limit: the hypothesis overflows there, named
-// once, rather than recursing until the stack is gone.
+// is read by the next round, a layer a round, and the rounds are bounded by the
+// depth limit: the hypothesis overflows there, named once, rather than
+// recursing until the stack is gone.
 
 !T = !trait.poly<0>
 trait.trait private @A(%s: !trait.claim<@A[!T]>) {
@@ -17,5 +17,5 @@ trait.trait private @A(%s: !trait.claim<@A[!T]>) {
 trait.impl private @I(%s: !trait.claim<@A[i32]>) {
   trait.assoc_type @Item<[!trait.poly<0>]> = tuple<!trait.proj<@A[i32], "Item", [tuple<!trait.poly<0>>]>>
 }
-// expected-error @below {{128 readings of projections' arguments and bindings stand nested}}
+// expected-error @below {{overflow evaluating the requirement '!trait.claim<!trait.proj<@A[i32], "Item", [i64]> = i64>': 128 projection steps stand on the chain}}
 func.func @f(%e: !trait.claim<!trait.proj<@A[i32], "Item", [i64]> = i64>) { return }

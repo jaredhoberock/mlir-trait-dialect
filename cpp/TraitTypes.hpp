@@ -77,47 +77,41 @@ inline std::optional<std::pair<Type, WalkResult>> respellClaimPredicate(
 }
 
 /// A replacer with one projection rule: a projection `reads` admits is offered
-/// to `hop`, which declines by answering nullopt; the rest stand.
+/// to `hop` once its arguments -- its head application's and its own
+/// associated-type arguments -- hold no projection `reads` admits, and stands
+/// where `hop` declines by answering nullopt; the rest stand.
 ///
-/// An answer is not walked by the replacer: what a binding spells, its own
-/// projections or ones grown beneath a constructor, is read either by `hop`,
-/// which may descend beneath the answer's root (`replaceBeneathRoot`) under a
-/// bound it keeps, or by the next round of the fixed point every normalizer
-/// runs (`tryNormalizeProjectionsToFixedPoint`). So no recursion through a
-/// binding escapes both bounds. An answer that is the projection itself leaves
-/// it standing unwalked.
+/// A projection whose arguments still hold one is not offered: the walk reads
+/// those arguments in this round and offers the projection in the next, at
+/// what they were read to. So the rounds of the fixed point every normalizer
+/// runs (`normalizeProjectionsToFixedPoint`) read all of a projection's
+/// arguments before it is projected, as rustc and GHC normalize a
+/// projection's arguments first, and a projection whose argument holds one
+/// `hop` declines is never offered. Neither an answer nor a declined
+/// projection is walked: what a binding spells is read by the next round, so
+/// every reading through a binding is a round of that fixed point and stands
+/// under its bounds, and a projection offered holds nothing more to read.
 AttrTypeReplacer makeProjectionReplacer(
-    bool (*reads)(ProjectionType),
+    std::function<bool(ProjectionType)> reads,
     std::function<std::optional<Type>(ProjectionType)> hop);
 
 /// A replacer with the one rule every ground-projection rewrite registers: a
 /// polymorphic projection is left standing -- it stands for as many types as
 /// its variables have instances, so no resolver owes it an answer -- and a
-/// ground one is resolved through `hop`, which declines by answering nullopt.
-/// An answer is not walked by the replacer: the projections it spells are
-/// read by `hop` beneath its root (`replaceBeneathRoot`) or by the next round
-/// (`tryNormalizeProjectionsToFixedPoint`).
+/// ground one is resolved through `hop`, which declines by answering nullopt,
+/// once its arguments are read (`makeProjectionReplacer`).
 AttrTypeReplacer makeGroundProjectionReplacer(
     std::function<std::optional<Type>(ProjectionType)> hop);
 
 /// A replacer with the head-keyed projection rule: which impl serves a
 /// projection is settled by its head application, and what that impl binds is a
 /// function of the projection's own associated-type arguments, so a projection
-/// whose head is ground is resolved through `hop` whatever those arguments still
-/// spell. A head still carrying a variable stands for as many impls as that
-/// variable has instances and is left standing. An answer is not walked by the
-/// replacer: the projections it spells are read by `hop` beneath its root
-/// (`replaceBeneathRoot`) or by the next round
-/// (`tryNormalizeProjectionsToFixedPoint`).
+/// whose head is ground is resolved through `hop` once its arguments hold no
+/// projection whose head is ground, whatever variables they still carry
+/// (`makeProjectionReplacer`). A head still carrying a variable stands for as
+/// many impls as that variable has instances and is left standing.
 AttrTypeReplacer makeGroundHeadProjectionReplacer(
     std::function<std::optional<Type>(ProjectionType)> hop);
-
-/// `answer`, what a projection rule of `walk` substituted, with every type and
-/// attribute directly beneath its root replaced by `walk`: the descent a
-/// replacer makes into a replacement, made instead by the rule's owner, which
-/// can then bound how deep such descents nest. The root itself is left
-/// standing for the next round of the walk's fixed point.
-Type replaceBeneathRoot(Type answer, AttrTypeReplacer &walk);
 
 /// Whether some part of `root`, `root` included, is polymorphic: a part
 /// whose `PolymorphicTypeInterface` says so. One walk visits each distinct
@@ -489,6 +483,15 @@ constexpr unsigned kSubstitutionFixedPointMaxPasses = 256;
 /// makes the same kind of progress, so the steps resolving a spelling's
 /// projections stand under the same bound, as rustc's normalization does.
 constexpr unsigned kInstantiationDepthLimit = 128;
+
+/// How many distinct types a spelling may hold while its projections are
+/// rewritten to their normal form (`normalizeProjectionsToFixedPoint`). The
+/// rounds bound how deep a rewrite reaches; this bounds how wide, which a
+/// binding branching beneath a constructor multiplies every round. Types are
+/// uniqued, so a normal form whose tree is exponential in its depth -- a
+/// binding spelling its argument twice, nested -- holds few distinct types
+/// and stays far below it, where a bound on the tree's size would refuse it.
+constexpr unsigned kNormalFormWidthLimit = 2048;
 
 /// How many frames from each end of a chain a refusal names. A chain at the
 /// depth limit is a hundred-odd frames of the same shape; its ends say where it
@@ -928,11 +931,34 @@ LogicalResult verifyCitation(ClaimType proven, ModuleOp module,
 /// its lookup scope this way.
 ModuleOp getAnchorModule(Operation *anchor);
 
-/// Rewrites `ty` with `step` until its spelling stops changing and reports
-/// success, or reports failure at a rewrite still changing after the depth
-/// limit's worth of steps (`kInstantiationDepthLimit`). `out` receives the fixed point on success and the
-/// still-changing partial normal form on failure, so the caller, which owns the
-/// diagnostic, names the type that would not settle.
+/// The bound a rewrite of a spelling to its fixed point meets while the
+/// spelling still changes (`normalizeProjectionsToFixedPoint`).
+enum class NormalizationBound {
+  /// The depth limit's worth of rounds that change the spelling
+  /// (`kInstantiationDepthLimit`): a binding that grows, at its root or
+  /// beneath a constructor, adds a layer every round.
+  Rounds,
+  /// More distinct types than the width limit (`kNormalFormWidthLimit`): a
+  /// binding that branches multiplies its projections every round, and meets
+  /// this long before the rounds.
+  Width,
+};
+
+/// What rewriting a spelling to its fixed point reached: the fixed point, or
+/// the partial normal form standing where a bound was met while the spelling
+/// still changed, with that bound.
+struct Normalized {
+  Type type;
+  /// The bound met; none where `type` is the fixed point.
+  std::optional<NormalizationBound> unsettled;
+};
+
+/// Rewrites `ty` with `step` until its spelling stops changing, or until a
+/// bound is met while it still changes: the depth limit's worth of rounds
+/// that change it, or a spelling holding more distinct types than the width
+/// limit. A bound met is no answer about the type; the caller, which owns the
+/// diagnostic, decides what it means and names the type that would not
+/// settle.
 ///
 /// Resolving a projection substitutes the selected impl's associated-type
 /// binding, and that binding may itself be spelled as a projection -- an impl
@@ -943,8 +969,8 @@ ModuleOp getAnchorModule(Operation *anchor);
 /// the spelling one hands back is the spelling all of them do -- which is what
 /// lets a demand and an impl's self application be compared for equality at
 /// all.
-LogicalResult tryNormalizeProjectionsToFixedPoint(
-    Type ty, llvm::function_ref<Type(Type)> step, Type &out);
+Normalized normalizeProjectionsToFixedPoint(Type ty,
+                                            llvm::function_ref<Type(Type)> step);
 
 /// The symbol suffix `_h` followed by sixteen hex digits of `input`'s hash.
 std::string hashToSuffix(StringRef input);

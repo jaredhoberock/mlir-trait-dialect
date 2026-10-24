@@ -1937,42 +1937,25 @@ FailureOr<Type> ImplOp::specializeAssociatedTypeBinding(
 
 FailureOr<Type> ImplOp::readOwnBindings(Type ty) {
   // The bindings are spelled over the impl's own parameters, so they are read
-  // at the arguments those parameters take in its own body: themselves. What a
-  // binding spells beneath its root is read by a reading nested in the
-  // projection's, and once the depth limit's worth of such nesting is met the
-  // reading changes nothing more and fails: a binding growing beneath a
-  // constructor has no normal form.
+  // at the arguments those parameters take in its own body: themselves. Only
+  // a projection of the impl's own application is read here, so only one of
+  // those in its arguments is read before it.
   TraitApplicationAttr own = getSelfApplication();
-  unsigned nested = 0;
-  bool tooDeep = false;
   AttrTypeReplacer replacer = makeProjectionReplacer(
-      [](ProjectionType) { return true; },
+      [own](ProjectionType proj) { return proj.getTraitApplication() == own; },
       [&](ProjectionType proj) -> std::optional<Type> {
-        if (tooDeep)
-          return Type(proj);
-        if (proj.getTraitApplication() != own)
-          return std::nullopt;
         auto bound = specializeAssociatedTypeBinding(
             proj.getAssocName().getValue(), proj.getAssocTypeArgs(),
             SpecializationMap());
         if (failed(bound))
           return std::nullopt;
-        if (nested >= kInstantiationDepthLimit) {
-          tooDeep = true;
-          return Type(proj);
-        }
-        ++nested;
-        Type read = replaceBeneathRoot(*bound, replacer);
-        --nested;
-        return read;
+        return *bound;
       });
-  Type out;
-  if (failed(tryNormalizeProjectionsToFixedPoint(
-          ty, [&](Type t) { return tooDeep ? t : replacer.replace(t); },
-          out)) ||
-      tooDeep)
+  Normalized out = normalizeProjectionsToFixedPoint(
+      ty, [&](Type t) { return replacer.replace(t); });
+  if (out.unsettled)
     return failure();
-  return out;
+  return out.type;
 }
 
 FailureOr<SpecializationMap> ImplOp::buildImplSpecialization(

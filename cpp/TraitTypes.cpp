@@ -22,19 +22,36 @@
 namespace mlir::trait {
 
 AttrTypeReplacer makeProjectionReplacer(
-    bool (*reads)(ProjectionType),
+    std::function<bool(ProjectionType)> reads,
     std::function<std::optional<Type>(ProjectionType)> hop) {
   AttrTypeReplacer replacer;
   replacer.addReplacement(
-      [reads, hop = std::move(hop)](
+      [reads = std::move(reads), hop = std::move(hop)](
           Type t) -> std::optional<std::pair<Type, WalkResult>> {
         auto projection = dyn_cast<ProjectionType>(t);
         if (!projection || !reads(projection))
           return std::nullopt;
-        std::optional<Type> binding = hop(projection);
-        if (!binding)
+        // Declined while an argument still holds a projection this walk
+        // reads: the walk descends into the arguments in this round, and the
+        // projection is offered at what they were read to in the next.
+        auto unread = [&](Type argument) {
+          return argument
+              .walk<WalkOrder::PreOrder>([&](ProjectionType inner) {
+                return reads(inner) ? WalkResult::interrupt()
+                                    : WalkResult::advance();
+              })
+              .wasInterrupted();
+        };
+        if (llvm::any_of(projection.getTraitApplication().getTypeArgs(),
+                         unread) ||
+            llvm::any_of(projection.getAssocTypeArgs(), unread))
           return std::nullopt;
-        return std::make_pair(*binding, WalkResult::skip());
+        // What `hop` answers, and a projection it declines, is not walked:
+        // the arguments of a projection offered to it hold nothing this walk
+        // reads.
+        std::optional<Type> binding = hop(projection);
+        return std::make_pair(binding ? *binding : Type(projection),
+                              WalkResult::skip());
       });
   return replacer;
 }
@@ -53,26 +70,6 @@ AttrTypeReplacer makeGroundHeadProjectionReplacer(
         return !isPolymorphicType(Type(proj.asClaim()));
       },
       std::move(hop));
-}
-
-Type replaceBeneathRoot(Type answer, AttrTypeReplacer &walk) {
-  SmallVector<Attribute> attributes;
-  SmallVector<Type> types;
-  bool changed = false;
-  answer.walkImmediateSubElements(
-      [&](Attribute element) {
-        Attribute replaced = walk.replace(element);
-        changed |= replaced != element;
-        attributes.push_back(replaced);
-      },
-      [&](Type element) {
-        Type replaced = walk.replace(element);
-        changed |= replaced != element;
-        types.push_back(replaced);
-      });
-  if (!changed)
-    return answer;
-  return answer.replaceImmediateSubElements(attributes, types);
 }
 
 bool isPolymorphicType(Type root) {
@@ -160,18 +157,34 @@ void emitObligationOverflow(Location anchor, TraitApplicationAttr app,
       });
 }
 
-LogicalResult tryNormalizeProjectionsToFixedPoint(
-    Type ty, llvm::function_ref<Type(Type)> step, Type &out) {
-  Type previous;
-  for (unsigned i = 0; i != kInstantiationDepthLimit && ty != previous; ++i) {
-    previous = ty;
-    ty = step(ty);
+/// Whether `ty` holds more distinct types than the width limit. The walk
+/// visits each distinct type once, so it stops within the limit's worth.
+static bool exceedsWidthLimit(Type ty) {
+  unsigned distinct = 0;
+  return ty
+      .walk([&](Type) {
+        return ++distinct > kNormalFormWidthLimit ? WalkResult::interrupt()
+                                                  : WalkResult::advance();
+      })
+      .wasInterrupted();
+}
+
+Normalized normalizeProjectionsToFixedPoint(
+    Type ty, llvm::function_ref<Type(Type)> step) {
+  // Every round reads one layer more, so the depth limit's worth of rounds
+  // that change the spelling reach a normal form that deep, and the round
+  // after them finds nothing left to change. The width is judged on what each
+  // changing round reached, before the next round reads it.
+  for (unsigned rounds = 0;; ++rounds) {
+    Type next = step(ty);
+    if (next == ty)
+      return {ty, std::nullopt};
+    if (rounds == kInstantiationDepthLimit)
+      return {next, NormalizationBound::Rounds};
+    ty = next;
+    if (exceedsWidthLimit(ty))
+      return {ty, NormalizationBound::Width};
   }
-  // `out` carries what the loop reached either way: the fixed point on success,
-  // the still-changing partial normal form on failure. A caller reporting the
-  // nonconvergence reads the partial to name the type that would not settle.
-  out = ty;
-  return success(ty == previous);
 }
 
 //===----------------------------------------------------------------------===//

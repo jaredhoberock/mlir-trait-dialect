@@ -205,14 +205,14 @@ private:
 
 /// What stops impl selection for the rest of a stage run, as it is named.
 ///
-/// Three kinds go past the depth limit (`kInstantiationDepthLimit`): an
-/// obligation chain, the rounds resolving a spelling's projections, and the
-/// readings nested in one another within a round, of projections' arguments
-/// and of what their bindings spell. rustc bounds selection and normalization
-/// alike by its one recursion limit, and names each as an overflow. The fourth
-/// is an impl a generator wrote for another application than the one it was
-/// asked for: the memo's refusals are final only because no impl generated
-/// later serves one, so no answer selection keeps can stand after it.
+/// Two kinds go past a bound: an obligation chain past the depth limit
+/// (`kInstantiationDepthLimit`), and a spelling whose projections still
+/// change when their fixed point meets one of its bounds
+/// (`NormalizationBound`). rustc bounds selection and normalization alike by
+/// its one recursion limit, and names either as an overflow. The third is an
+/// impl a generator wrote for another application than the one it was asked
+/// for: the memo's refusals are final only because no impl generated later
+/// serves one, so no answer selection keeps can stand after it.
 class Overflow {
 public:
   /// The obligation chain `chain` reaching `app`, with `height` frames
@@ -223,18 +223,12 @@ public:
     return Overflow(Kind::Obligations, app, Type(), chain, height, ImplOp());
   }
 
-  /// The projections `spelled` spells, still changing after the limit's
-  /// worth of resolution steps.
-  static Overflow projectionSteps(Type spelled) {
-    return Overflow(Kind::ProjectionSteps, TraitApplicationAttr(), spelled, {},
-                    0, ImplOp());
-  }
-
-  /// The projection `spelled`, met with the limit's worth of readings of
-  /// projections' arguments and bindings already nested in one another.
-  static Overflow nestedReadings(Type spelled) {
-    return Overflow(Kind::NestedReadings, TraitApplicationAttr(), spelled, {},
-                    0, ImplOp());
+  /// The projections `spelled` spells, still changing when their fixed point
+  /// met `bound`.
+  static Overflow unsettled(Type spelled, NormalizationBound bound) {
+    return Overflow(bound == NormalizationBound::Rounds ? Kind::ProjectionSteps
+                                                        : Kind::ProjectionWidth,
+                    TraitApplicationAttr(), spelled, {}, 0, ImplOp());
   }
 
   /// `impl`, generated for `asked`, stating another application.
@@ -250,7 +244,7 @@ private:
   enum class Kind {
     Obligations,
     ProjectionSteps,
-    NestedReadings,
+    ProjectionWidth,
     InexactImpl
   };
 
@@ -557,11 +551,7 @@ class ImplResolver {
     /// Resolves one step of a concrete ProjectionType: the impl the internal
     /// impl resolution pipeline selects for its application, the arguments
     /// that impl takes there, and its associated-type binding specialized at
-    /// them and at the normal forms of `proj`'s own associated-type
-    /// arguments, which the step's projection states. Refused where one of
-    /// those arguments is no type a predicate states, as its head's arguments
-    /// may be none (`resolveImplFor`); overflows where reading one does, or
-    /// where the depth limit's worth of such readings stand nested.
+    /// them and at `proj`'s own associated-type arguments as given.
     Answer<ProjectionResolution> resolveProjection(
         ProjectionType proj, const SelectionSite &site, OpBuilder &builder,
         llvm::function_ref<InFlightDiagnostic()> err = nullptr);
@@ -571,9 +561,9 @@ class ImplResolver {
     /// projection selection refuses is left spelled as written. By default a
     /// projection is admitted once it is ground; under
     /// `makeGroundHeadProjectionReplacer`, once its head application is.
-    /// Overflows where the resolution still changes after the depth limit's
-    /// worth of projection steps (a binding that grows under it has no normal
-    /// form), or where a step does.
+    /// Overflows where the resolution meets a bound of its fixed point while
+    /// it still changes (a binding that grows or branches under it has no
+    /// normal form), or where a step does.
     Answer<Type> resolveProjectionsIn(
         Type ty, const SelectionSite &site, OpBuilder &builder,
         decltype(&makeGroundProjectionReplacer) replacerFor =
@@ -715,59 +705,35 @@ class ImplResolver {
         OpBuilder &builder,
         llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
-    /// The steps carrying each type of `spelled` to the one at its position
-    /// in `resolved` through selection at `site`: those resolving the
-    /// equality of each pair the two spell apart, whose sides selection must
-    /// carry to one spelling, bounded below `depth` as `resolveEquality` is.
-    /// Refused where it does not; overflows where selection does.
+    /// The steps carrying `spelled`'s type arguments to `resolved`'s through
+    /// selection at `site`: those resolving the equality of each argument the
+    /// two spell apart, whose sides selection must carry to one spelling,
+    /// bounded below `depth` as `resolveEquality` is. Refused where it does
+    /// not; overflows where selection does.
     Answer<SmallVector<ResolutionStep>>
-    resolveRespelling(ArrayRef<Type> spelled, ArrayRef<Type> resolved,
-                      const SelectionSite &site, OpBuilder &builder,
-                      unsigned depth);
-
-
-    /// `read`, run as a reading nested in the readings standing, those of
-    /// projections' associated-type arguments and of what their bindings
-    /// spell beneath their roots; an overflow named for `proj` at `site` where
-    /// the depth limit's worth already stand nested. rustc bounds a
-    /// projection's normalization at every depth by its one recursion limit,
-    /// so a binding growing its own arguments, or growing beneath a
-    /// constructor, overflows rather than nesting without end.
-    template <typename T>
-    Answer<T> readNested(ProjectionType proj, const SelectionSite &site,
-                         llvm::function_ref<Answer<T>()> read) {
-      if (nestedReadings >= kInstantiationDepthLimit) {
-        overflow(Overflow::nestedReadings(Type(proj)), site);
-        return Answer<T>::overflow();
-      }
-      ++nestedReadings;
-      Answer<T> answer = read();
-      --nestedReadings;
-      return answer;
-    }
-
-    /// `binding`, what a step of `walk` answered for `proj`, with every type
-    /// and attribute directly beneath its root replaced by `walk`, as a
-    /// reading nested in `proj`'s: the descent a replacer makes into a
-    /// replacement, made here so that the depth limit bounds it, as rustc
-    /// normalizes a projection's result one depth further in. A projection
-    /// standing at the root is the fixed point's next round. Overflows where
-    /// the limit's worth of readings already stand nested; a step `walk` takes
-    /// beneath the root stops as that walk's steps do.
-    Answer<Type> readBeneathRoot(Type binding, ProjectionType proj,
-                                 AttrTypeReplacer &walk,
-                                 const SelectionSite &site);
+    resolveRespelling(TraitApplicationAttr spelled,
+                      TraitApplicationAttr resolved, const SelectionSite &site,
+                      OpBuilder &builder, unsigned depth);
 
     /// `ty` with every projection `replacerFor` admits that selection
-    /// resolves resolved, to a fixed point; none where the resolution still
-    /// changes after the depth limit's worth of projection steps, which this
-    /// names nothing about: a candidate's header is read through this, and a
-    /// header with no normal form makes its impl no candidate rather than the
-    /// stage's overflow. Overflows where a step does.
-    Answer<std::optional<Type>> settleThroughSelection(
+    /// resolves resolved, to a fixed point, or the bound that fixed point met
+    /// while the resolution still changed, which this names nothing about: a
+    /// candidate's header is read through this, and a header with no normal
+    /// form makes its impl no candidate rather than the stage's overflow.
+    /// Overflows where a step does.
+    Answer<Normalized> settleThroughSelection(
         Type ty, const SelectionSite &site, OpBuilder &builder,
         decltype(&makeGroundProjectionReplacer) replacerFor =
             makeGroundProjectionReplacer);
+
+    /// One step of `proj`'s resolution, as `resolveProjection` resolves it,
+    /// where a walk offers `proj`: once its arguments are read
+    /// (`makeProjectionReplacer`). Refused where one of those arguments is no
+    /// type a predicate states, as its head's arguments may be none
+    /// (`resolveImplFor`).
+    Answer<ProjectionResolution> resolveOfferedProjection(
+        ProjectionType proj, const SelectionSite &site, OpBuilder &builder,
+        llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     /// Stops selection at the overflow `what`, met at `site`: the stage's
     /// hard error. Selection answers nothing more, nothing reached under it is
@@ -810,9 +776,6 @@ class ImplResolver {
     bool overflowed = false;
     DenseSet<Location> overflowSites;
     DenseSet<ScopedApplication> namedRefusals;
-
-    // How many readings stand nested in one another (`readNested`).
-    unsigned nestedReadings = 0;
 
     InstantiationChain instantiations;
     ImplGeneratorSet generators;
