@@ -460,16 +460,21 @@ constexpr unsigned kSubstitutionFixedPointMaxPasses = 256;
 /// stands under the same bound, counted as rustc's normalizer counts it: a
 /// projection a step's answer spells stands one deeper than the projection
 /// that step resolved, and one written in another's argument stands as deep as
-/// the projection it is written in (`ProjectionNormalizer`).
+/// the projection it is written in (`ProjectionNormalizer`). It bounds the
+/// steps one reading takes along one chain, not a chain's length: an element
+/// already read is answered from what it read to, at no further depth.
 constexpr unsigned kInstantiationDepthLimit = 128;
 
 /// How many distinct types a normal form a reading of a spelling's projections
 /// reaches may hold (`ProjectionNormalizer`). The depth limit bounds how deep a
 /// chain of steps reaches; this bounds how wide what they spell grows, which a
-/// binding branching beneath a constructor multiplies at every step. Types are
-/// uniqued, so a normal form whose tree is exponential in its depth -- a
-/// binding spelling its argument twice, nested -- holds few distinct types
-/// and stays far below it, where a bound on the tree's size would refuse it.
+/// binding branching to a finite depth beneath a constructor, its leaves
+/// distinct, multiplies at every step. Types are uniqued, so a normal form
+/// whose tree is exponential in its depth -- a binding spelling its argument
+/// twice, nested -- holds few distinct types and stays far below it, where a
+/// bound on the tree's size would refuse it. It is a measure of the normal
+/// form, not of the work: a finite branching whose leaves coincide takes its
+/// steps beneath both bounds.
 constexpr unsigned kNormalFormWidthLimit = 2048;
 
 /// How many frames from each end of a chain a refusal names. A chain at the
@@ -920,8 +925,10 @@ enum class NormalizationBound {
   /// or through another's, has no end at all.
   Depth,
   /// A normal form holding more distinct types than the width limit
-  /// (`kNormalFormWidthLimit`): a binding that branches multiplies its
-  /// projections at every step.
+  /// (`kNormalFormWidthLimit`): a binding that branches to a finite depth,
+  /// its leaves distinct, multiplies its projections at every step. (One
+  /// that branches without end meets the depth limit first, along its first
+  /// branch.)
   Width,
 };
 
@@ -947,8 +954,9 @@ struct Normalized {
 ///
 /// A projection stands, as read, where `reads` does not admit it, where `hop`
 /// declines it, and where an argument still holds a projection `reads` admits
-/// -- one `hop` declined -- so a projection whose argument names no type is
-/// never offered. The reading meets a bound where a projection would be
+/// -- one `hop` declined. An argument that is a claim, or holds one, is
+/// judged where the step is constructed (`ProjectionResolution::get`), which
+/// takes no step at it. The reading meets a bound where a projection would be
 /// offered at the depth limit, where it reaches an element it is still reading
 /// (whose normal form would then hold itself, so the chain never ends), or
 /// where a normal form it reaches holds more distinct types than the width

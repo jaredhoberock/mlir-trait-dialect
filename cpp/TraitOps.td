@@ -636,12 +636,11 @@ def ImplOp : TraitDialectOp<"impl", [
         llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     /// `ty`, spelled over this impl's own parameters, with every projection
-    /// over its header resolved through its associated-type bindings, to a
-    /// fixed point: the facts the impl states of its own application, which
+    /// over its header resolved through its associated-type bindings to its
+    /// normal form: the facts the impl states of its own application, which
     /// hold in its own body. A projection over any other application, and an
-    /// equality's endpoints, stand as spelled. Fails where the bindings do not
-    /// settle within the bounds of that fixed point
-    /// (`normalizeProjectionsToFixedPoint`).
+    /// equality's endpoints, stand as spelled. Fails where the reading meets
+    /// a bound (`ProjectionNormalizer`).
     FailureOr<Type> readOwnBindings(Type ty);
 
   }];
