@@ -1,0 +1,5 @@
+# The estate's repositories are fetched over ssh. Cargo's built-in fetcher
+# authenticates ssh only through an ssh agent; the git command line also reads
+# the user's key files and ssh configuration.
+[net]
+git-fetch-with-cli = true
