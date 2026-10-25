@@ -1,0 +1,4 @@
+# The Rust toolchain every build of this repository uses: a stable release,
+# which the estate builds with (no unstable feature is used).
+[toolchain]
+channel = "1.91.1"
