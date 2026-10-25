@@ -10,7 +10,9 @@ LLVM_BIN_PATH := $(MLIR_SYS_230_PREFIX)/bin
 LLVM_CONFIG := $(LLVM_BIN_PATH)/llvm-config
 TBLGEN := $(LLVM_BIN_PATH)/mlir-tblgen
 
-LOWERING_DRIVER_SOURCE_DIR := ../../mlir-lowering-driver/cpp
+ifndef LOWERING_DRIVER_SOURCE_DIR
+$(error LOWERING_DRIVER_SOURCE_DIR must be set; cargo sets it from the dependency crate)
+endif
 
 CXX := clang++
 # The install's llvm-config reports no optimization level; set -O2 as the
