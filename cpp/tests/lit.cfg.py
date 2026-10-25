@@ -4,32 +4,31 @@ import os
 import sys
 import lit.formats
 
+config.name = "Trait Dialect Tests"
 config.test_format = lit.formats.ShTest(True)
 config.suffixes = ['.mlir']
 config.test_source_root = os.path.dirname(__file__)
 
-mlir_prefix = os.environ.get('MLIR_SYS_230_PREFIX', '/home/jhoberock/dev/git/llvm-project-23/install-release-asserts-23.1.4')
-llvm_bin = os.path.join(mlir_prefix, 'bin')
-llvm_lib = os.path.join(mlir_prefix, 'lib')
-fallback_llvm_bin = '/home/jhoberock/dev/git/llvm-project-23/build-release-asserts/bin'
-
+# Every tool and plugin path comes from the site configuration build.rs writes
+# into the build's output directory (lit.site.cfg.py), which loads this file.
 def tool(name):
-    installed = os.path.join(llvm_bin, name)
-    if os.path.exists(installed):
-        return installed
-    return os.path.join(fallback_llvm_bin, name)
+    return os.path.join(config.llvm_tools_dir, name)
 
-def plugin(env_var, fallback):
-    return os.environ.get(env_var, fallback)
+def utility(name):
+    return os.path.join(config.llvm_utils_dir, name)
 
-# Tools the RUN lines name bare (`not`) resolve the same way `tool()` does: the
-# install's bin first, then the build tree's.
-config.environment['PATH'] = os.pathsep.join([llvm_bin, fallback_llvm_bin, os.environ.get('PATH', '')])
-
-config.name = "Trait Dialect Tests"
-trait_plugin = plugin('TRAIT_DIALECT_PLUGIN', os.path.join(os.path.dirname(__file__), '..', 'build', 'libtrait_dialect.so'))
-config.substitutions.append(('mlir-opt', f'{tool('mlir-opt')} --load-dialect-plugin={trait_plugin}'))
-config.substitutions.append(('FileCheck', tool('FileCheck')))
+# The directories `tool` and `utility` look in are also on the path a row's shell
+# searches, so a row inverting an exit status writes `not` and gets LLVM's. It is
+# a path entry rather than a substitution: a substitution rewrites every
+# occurrence of its own name in the whole line, and `not` is a word a RUN line may
+# hold for other reasons.
+config.environment['PATH'] = os.pathsep.join(
+    [config.llvm_tools_dir, config.llvm_utils_dir, config.environment['PATH']])
+# The dialect plugins in the order the site configuration records them: each
+# after the plugins whose symbols it references, which must be loaded first.
+dialect_plugins = ' '.join(f'--load-dialect-plugin={plugin}' for plugin in config.dialect_plugins)
+config.substitutions.append(('mlir-opt', f'{tool("mlir-opt")} {dialect_plugins}'))
+config.substitutions.append(('FileCheck', utility('FileCheck')))
 # A row whose module repeats one declaration shape many times is written out by
 # Inputs/expand_repeats.py before mlir-opt reads it.
 config.substitutions.append(('%python', sys.executable))
