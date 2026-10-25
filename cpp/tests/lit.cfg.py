@@ -6,9 +6,7 @@ from lit.llvm import llvm_config
 from lit.llvm.subst import ToolSubst
 
 config.name = "Trait Dialect Tests"
-# XXX TODO lit 24 removes the external shell; the estate's rows move to lit's
-# internal shell before the toolchain moves to LLVM 24.
-config.test_format = lit.formats.ShTest(True, force_execute_external=True)
+config.test_format = lit.formats.ShTest()
 config.suffixes = ['.mlir']
 config.test_source_root = os.path.dirname(__file__)
 
