@@ -28,6 +28,25 @@ module @inner {
 
 // -----
 
+// A trait, an impl and a proof answer the same law as every other template:
+// each may be written public, and erase refuses each one still public when it
+// runs.
+// expected-error @below {{'trait.trait' op is a public template}}
+trait.trait @Show(%self: !trait.claim<@Show[!trait.poly<0>]>) {
+}
+
+// expected-error @below {{'trait.impl' op is a public template}}
+trait.impl @Show_i32(%self: !trait.claim<@Show[i32]>) {
+}
+
+// expected-error @below {{'trait.proof' op is a public template}}
+trait.proof @Show_i32_p {
+  %d = trait.derive @Show[i32] from @Show_i32 given()
+  trait.return %d : !trait.claim<@Show[i32]>
+}
+
+// -----
+
 // A provenance attribute naming a template is a walker-visible reference that
 // would keep the template alive through collection.
 func.func private @poly(%x: !trait.poly<0>) -> !trait.poly<0> {

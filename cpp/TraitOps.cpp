@@ -26,9 +26,9 @@
 #include <variant>
 
 namespace mlir::trait {
-/// Parse and print the optional `private`/`nested` keyword a template op leads
-/// with, so `trait.proof private @p ...` reads and prints as `func.func` does.
-/// A public template elides the keyword.
+/// Parse and print the optional visibility keyword a template op leads with,
+/// so `trait.proof private @p ...` reads and prints as `func.func` does: the
+/// keyword is printed exactly when the attribute is present.
 static ::mlir::ParseResult parseVisibilityKeyword(::mlir::OpAsmParser &parser,
                                                   ::mlir::StringAttr &visibility) {
   ::mlir::NamedAttrList attrs;
@@ -42,8 +42,8 @@ static ::mlir::ParseResult parseVisibilityKeyword(::mlir::OpAsmParser &parser,
 
 static void printVisibilityKeyword(::mlir::OpAsmPrinter &printer,
                                    ::mlir::Operation *, ::mlir::StringAttr visibility) {
-  if (visibility && visibility.getValue() != "public")
-    printer << visibility.getValue();
+  if (visibility)
+    printer << visibility.getValue() << ' ';
 }
 
 /// The unproven claim an op names by spelling the predicate it states: an
@@ -124,21 +124,6 @@ using namespace mlir::trait;
 
 namespace {
 
-/// A trait, impl or proof is a template: monomorphization cuts its instances
-/// and the collector after erase takes what nothing names. Collection may only
-/// take a symbol nothing outside its table may name, so a template is private
-/// from birth at its birth site and a public one is refused where it is
-/// written, not discovered at erase. The upstream twin is the rule that a
-/// declaration cannot be public.
-LogicalResult verifyTemplateIsNotPublic(Operation *op) {
-  if (SymbolTable::getSymbolVisibility(op) != SymbolTable::Visibility::Public)
-    return success();
-  return op->emitOpError()
-         << "must not be public: it is a template monomorphization "
-            "instantiates and collection then takes, so it is private from "
-            "birth";
-}
-
 /// Parses a declaration's function-like header after its visibility,
 /// `@name(%a: T, ...) [-> results]`, into `result`'s symbol name, `arguments`
 /// and `results`. A declaration's arguments and results carry no attributes.
@@ -180,8 +165,6 @@ void printDeclarationHeader(OpAsmPrinter &p, Operation *op, TypeRange results,
   printVisibilityKeyword(p, op,
                          op->getAttrOfType<StringAttr>(
                              SymbolTable::getVisibilityAttrName()));
-  if (op->getAttrOfType<StringAttr>(SymbolTable::getVisibilityAttrName()))
-    p << ' ';
   p.printSymbolName(
       op->getAttrOfType<StringAttr>(SymbolTable::getSymbolAttrName()).getValue());
   Region &body = op->getRegion(0);
@@ -396,9 +379,6 @@ void TraitOp::getAsmBlockArgumentNames(Region &region,
 }
 
 LogicalResult TraitOp::verify() {
-  if (failed(verifyTemplateIsNotPublic(getOperation())))
-    return failure();
-
   // The one block argument is the trait's own application, whose arguments are
   // the trait's parameters, at least one: parameter `i` is an occurrence of
   // label `i`, its position.
@@ -867,8 +847,6 @@ static LogicalResult verifyAssociatedTypeBindingScopes(ImplOp impl) {
 }
 
 LogicalResult ImplOp::verify() {
-  if (failed(verifyTemplateIsNotPublic(getOperation())))
-    return failure();
   // The first block argument is the impl's own application and every other a
   // where entry: an application it assumes or an equality it assumes.
   Block &body = getBody().front();
@@ -1992,9 +1970,6 @@ static Operation *respelledFrom(Value proven) {
 }
 
 LogicalResult ProofOp::verify() {
-  if (failed(verifyTemplateIsNotPublic(getOperation())))
-    return failure();
-
   // A proof is closed and returns the one claim it proves: the claim a derive
   // in its body derives, which is the decision the proof records, spelled as
   // the derive spells it or respelled by one coercion.

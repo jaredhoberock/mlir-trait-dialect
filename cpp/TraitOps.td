@@ -217,7 +217,8 @@ def TraitOp : TraitDialectOp<"trait", [
     The body holds methods, associated-type declarations, and evidence ops over
     `%self` that default methods may share. It is a function body, so a value is
     defined before the ops that read it, and it ends without a terminator. A
-    trait is a template that dies with monomorphization, so it is private.
+    trait is a template that dies with monomorphization; a producer may write
+    it public, and erase refuses a template still public when it runs.
   }];
 
   let arguments = (ins
@@ -348,9 +349,9 @@ def TraitOp : TraitDialectOp<"trait", [
         llvm::function_ref<FailureOr<ClaimType>(ClaimType, ClaimType)> respell);
   }];
 
-  // The body's one block takes the self claim; a trait is a template that dies
-  // with monomorphization, so it is private from birth: erase collects it by
-  // liveness, never by kind.
+  // The body's one block takes the self claim. The builder mints the trait
+  // private, the one visibility erase accepts: erase collects it by liveness,
+  // never by kind.
   let skipDefaultBuilders = 1;
   let builders = [
     OpBuilder<(ins "::llvm::StringRef":$name,
@@ -420,7 +421,8 @@ def ImplOp : TraitDialectOp<"impl", [
 
     A method of the impl reads the arguments and the evidence values the body
     defines before it as ordinary SSA uses. An impl is a template that dies
-    with monomorphization, so it is private.
+    with monomorphization; a producer may write it public, and erase refuses
+    a template still public when it runs.
   }];
 
   let arguments = (ins
@@ -647,8 +649,8 @@ def ImplOp : TraitDialectOp<"impl", [
 
   // The body's one block takes the self claim and then one claim per where
   // entry, and ends with an empty `trait.return` the caller fills or replaces.
-  // An impl is a template that dies with monomorphization, so it is private
-  // from birth: erase collects it by liveness, never by kind.
+  // The builder mints the impl private, the one visibility erase accepts:
+  // erase collects it by liveness, never by kind.
   let skipDefaultBuilders = 1;
   let builders = [
     OpBuilder<(ins "::mlir::StringRef":$sym_name,
@@ -1646,7 +1648,8 @@ def ProofOp : TraitDialectOp<"proof", [
     }
     ```
 
-    A proof is a template that dies with monomorphization, so it is private.
+    A proof is a template that dies with monomorphization; a producer may
+    write it public, and erase refuses a template still public when it runs.
   }];
 
   let arguments = (ins
@@ -1722,9 +1725,9 @@ def ProofOp : TraitDialectOp<"proof", [
       llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
   }];
 
-  // A proof is a template that dies with monomorphization, so it is private
-  // from birth: erase collects it by liveness, never by kind. Its body is one
-  // empty block the caller fills and ends with `trait.return`.
+  // The builder mints the proof private, the one visibility erase accepts:
+  // erase collects it by liveness, never by kind. Its body is one empty block
+  // the caller fills and ends with `trait.return`.
   let skipDefaultBuilders = 1;
   let builders = [
     OpBuilder<(ins "::llvm::StringRef":$sym_name), [{
@@ -1734,7 +1737,7 @@ def ProofOp : TraitDialectOp<"proof", [
     }]>
   ];
 
-  let assemblyFormat = "custom<VisibilityKeyword>($sym_visibility) $sym_name attr-dict-with-keyword $body";
+  let assemblyFormat = "custom<VisibilityKeyword>($sym_visibility) `` $sym_name attr-dict-with-keyword $body";
   let hasVerifier = 1;
 }
 

@@ -2172,18 +2172,18 @@ static LogicalResult checkNothingOutsideATemplateCarriesTheory(ModuleOp module) 
 
   module.walk<WalkOrder::PreOrder>([&](Operation *op) -> WalkResult {
     if (isTemplate(op)) {
-      // A template is private from birth, so a public one is a template
-      // collection may not take. The trait, impl, and proof declarations answer
-      // the same law in their own verifiers; every other template is a plain
-      // symbol declaration -- a polymorphic function, or a generic definition of
-      // a dialect this one does not name -- and is judged here, where the walk
-      // meets it, reaching one standing inside a nested symbol table too.
-      if (!isa<TraitOp, ImplOp, ProofOp>(op) &&
-          SymbolTable::getSymbolVisibility(op) == SymbolTable::Visibility::Public) {
+      // Collection takes only a symbol nothing outside its own symbol table
+      // may name, so every template -- a trait, an impl, a proof, a
+      // polymorphic function, or a generic definition of a dialect this one
+      // does not name -- is private by the time erase runs. A template may be
+      // written public, as a module's exported trait is; this check is the one
+      // place a public template is refused, wherever the walk meets it,
+      // inside a nested symbol table too.
+      if (SymbolTable::getSymbolVisibility(op) == SymbolTable::Visibility::Public) {
         op->emitOpError()
-            << "is a public template: a template is private from birth, so "
-               "that nothing outside its own symbol table may name it once "
-               "its instances are cut";
+            << "is a public template: a template is private by the time "
+               "erase runs, so that nothing outside its own symbol table may "
+               "name it once its instances are cut";
         clean = false;
       }
       return WalkResult::skip();

@@ -232,8 +232,8 @@ fn declaration_body<'c>(loc: Location<'c>, arguments: &[Type<'c>]) -> Region<'c>
 
 /// Build a `trait.trait` whose one block argument is `self_claim`, the claim of
 /// the trait's own application, and whose result signature is `requirements`,
-/// one claim per requirement in order. A trait is a template that dies with
-/// monomorphization, so it is private from birth.
+/// one claim per requirement in order. The trait is minted private, the one
+/// visibility erase accepts.
 pub fn trait_<'c>(loc: Location<'c>,
                   name: &str,
                   self_claim: Type<'c>,
@@ -251,8 +251,8 @@ pub fn trait_<'c>(loc: Location<'c>,
 /// Build a named `trait.impl` whose block arguments are `self_claim`, the
 /// claim of the application it implements, and then `where_claims`, one claim
 /// per where entry in order. The caller fills the body and ends it with
-/// `trait.return` of the evidence for the trait's requirements. An impl is a
-/// template that dies with monomorphization, so it is private from birth.
+/// `trait.return` of the evidence for the trait's requirements. The impl is
+/// minted private, the one visibility erase accepts.
 pub fn impl_named<'c>(loc: Location<'c>,
                       sym_name: &str,
                       self_claim: Type<'c>,
