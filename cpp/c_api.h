@@ -116,18 +116,6 @@ intptr_t traitProjectionTypeGetNumAssocTypeArgs(MlirType projection);
 /// The associated type's own argument `index` a !trait.proj states.
 MlirType traitProjectionTypeGetAssocTypeArg(MlirType projection, intptr_t index);
 
-/// Renames each symbol `names[i]` that an op at the top level of
-/// `symbolTableOp` defines to `newNames[i]`, and rewrites every reference whose
-/// root names a renamed symbol to name it by its new name, in the attributes,
-/// result types and block-argument types of every op inside `symbolTableOp`,
-/// nested symbol tables included: a reference is read as the top level's, as
-/// this dialect resolves its symbol uses. A reference's nested parts
-/// (`@Trait::@method`) are not renamed. An equality claim's endpoints and a
-/// citation's arguments, which no replacer moves as sub-elements, move as the
-/// clone rule moves them: each rebuilt at once through its constructor.
-void traitRenameSymbols(MlirOperation symbolTableOp, const MlirStringRef *names,
-                        const MlirStringRef *newNames, intptr_t count);
-
 /// Collect all unique types implementing GenericTypeInterface found in `type`.
 ///
 /// This walks `type` recursively and returns every distinct generic type
