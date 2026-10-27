@@ -58,6 +58,20 @@ unsafe extern "C" {
     fn traitProjectionTypeGetAssocName(projection: MlirType) -> MlirStringRef;
     fn traitProjectionTypeGetNumAssocTypeArgs(projection: MlirType) -> isize;
     fn traitProjectionTypeGetAssocTypeArg(projection: MlirType, index: isize) -> MlirType;
+    fn traitRenameSymbols(op: mlir_sys::MlirOperation, names: *const MlirStringRef, new_names: *const MlirStringRef, count: isize);
+}
+
+/// Rename each top-level symbol of `op` named first in `renames` to the name
+/// second, rewriting every reference whose root names a renamed symbol in the
+/// attributes, result types and block-argument types of every op inside `op`;
+/// an equality claim's endpoints move through the clone rule.
+///
+/// # Safety
+/// `op` must be a live operation holding a symbol table.
+pub unsafe fn rename_symbols(op: mlir_sys::MlirOperation, renames: &[(String, String)]) {
+    let names: Vec<MlirStringRef> = renames.iter().map(|(name, _)| StringRef::new(name).to_raw()).collect();
+    let new_names: Vec<MlirStringRef> = renames.iter().map(|(_, name)| StringRef::new(name).to_raw()).collect();
+    unsafe { traitRenameSymbols(op, names.as_ptr(), new_names.as_ptr(), renames.len() as isize) }
 }
 
 /// The text of a string the context owns.
