@@ -43,6 +43,29 @@ unsafe extern "C" {
                                 lhs: MlirType, rhs: MlirType) -> MlirAttribute;
     fn traitImplArgumentsAttrGet(ctx: MlirContext,
                                  types: *const MlirType, num_types: isize) -> MlirAttribute;
+
+    fn traitTypeIsAPoly(ty: MlirType) -> bool;
+    fn traitPolyTypeGetLabel(ty: MlirType) -> u32;
+    fn traitClaimTypeGetPredicate(claim_ty: MlirType) -> MlirAttribute;
+    fn traitTraitApplicationAttrGetTraitName(trait_app: MlirAttribute) -> MlirStringRef;
+    fn traitTraitApplicationAttrGetNumTypeArgs(trait_app: MlirAttribute) -> isize;
+    fn traitTraitApplicationAttrGetTypeArg(trait_app: MlirAttribute, index: isize) -> MlirType;
+    fn traitAttributeIsATypeEquality(attr: MlirAttribute) -> bool;
+    fn traitTypeEqualityAttrGetLhs(equality: MlirAttribute) -> MlirType;
+    fn traitTypeEqualityAttrGetRhs(equality: MlirAttribute) -> MlirType;
+    fn traitTypeIsAProjection(ty: MlirType) -> bool;
+    fn traitProjectionTypeGetTraitApplication(projection: MlirType) -> MlirAttribute;
+    fn traitProjectionTypeGetAssocName(projection: MlirType) -> MlirStringRef;
+    fn traitProjectionTypeGetNumAssocTypeArgs(projection: MlirType) -> isize;
+    fn traitProjectionTypeGetAssocTypeArg(projection: MlirType, index: isize) -> MlirType;
+}
+
+/// The text of a string the context owns.
+fn context_string(text: MlirStringRef) -> String {
+    unsafe { StringRef::from_raw(text) }
+        .as_str()
+        .expect("MLIR identifiers are UTF-8")
+        .to_string()
 }
 
 pub fn register(ctx: &Context) {
@@ -206,6 +229,20 @@ impl<'c> std::fmt::Display for TraitApplicationAttribute<'c> {
 impl<'c> std::hash::Hash for TraitApplicationAttribute<'c> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.attribute.to_raw().ptr.hash(state);
+    }
+}
+
+impl<'c> TraitApplicationAttribute<'c> {
+    /// The symbol name of the trait the application applies.
+    pub fn trait_name(&self) -> String {
+        context_string(unsafe { traitTraitApplicationAttrGetTraitName(self.attribute.to_raw()) })
+    }
+
+    /// The application's type arguments, `Self` first.
+    pub fn type_args(&self) -> Vec<Type<'c>> {
+        let raw = self.attribute.to_raw();
+        let count = unsafe { traitTraitApplicationAttrGetNumTypeArgs(raw) };
+        (0..count).map(|index| unsafe { Type::from_raw(traitTraitApplicationAttrGetTypeArg(raw, index)) }).collect()
     }
 }
 
@@ -383,6 +420,12 @@ pub fn derive<'c>(loc: Location<'c>,
         .add_results(&[claim]))
 }
 
+/// The label of `ty` when it is a `!trait.poly`: the position of the
+/// parameter it stands for in the declaration binding it.
+pub fn poly_label(ty: Type) -> Option<u32> {
+    unsafe { traitTypeIsAPoly(ty.to_raw()).then(|| traitPolyTypeGetLabel(ty.to_raw())) }
+}
+
 /// The `!trait.poly<label>` type. A label names a position in the declaration
 /// that binds it, so it is non-negative and local to that declaration.
 pub fn poly_type<'c>(
@@ -434,6 +477,29 @@ impl<'c> ClaimType<'c> {
         TraitApplicationAttribute::try_from(attr)
             .expect("C API returned non-TraitApplicationAttr for claim application")
     }
+
+    /// The predicate the claim states.
+    pub fn predicate(&self) -> ClaimPredicate<'c> {
+        let predicate = unsafe { traitClaimTypeGetPredicate(self.type_.to_raw()) };
+        if unsafe { traitAttributeIsATypeEquality(predicate) } {
+            let (lhs, rhs) = unsafe {
+                (traitTypeEqualityAttrGetLhs(predicate), traitTypeEqualityAttrGetRhs(predicate))
+            };
+            return unsafe { ClaimPredicate::Equal(Type::from_raw(lhs), Type::from_raw(rhs)) };
+        }
+        let attribute = unsafe { Attribute::from_raw(predicate) };
+        ClaimPredicate::Trait(
+            TraitApplicationAttribute::try_from(attribute).expect("a claim states an application or an equality"),
+        )
+    }
+}
+
+/// What a `!trait.claim` states: a trait application, or an equality between
+/// two types, left first.
+#[derive(Clone, Copy)]
+pub enum ClaimPredicate<'c> {
+    Trait(TraitApplicationAttribute<'c>),
+    Equal(Type<'c>, Type<'c>),
 }
 
 impl<'c> TryFrom<Type<'c>> for ClaimType<'c> {
@@ -480,6 +546,44 @@ pub fn generic_types_in<'c>(ty: Type<'c>) -> Vec<Type<'c>> {
         let mut results = vec![MlirType { ptr: std::ptr::null_mut() }; count as usize];
         traitGetGenericTypesIn(ty.to_raw(), results.as_mut_ptr(), count);
         results.into_iter().map(|t| Type::from_raw(t)).collect()
+    }
+}
+
+/// A `!trait.proj<@Trait[types], "AssocName", [assoc_type_args]>` type.
+#[derive(Clone, Copy)]
+pub struct ProjectionType<'c> {
+    type_: Type<'c>,
+}
+
+impl<'c> ProjectionType<'c> {
+    /// The application the projection projects out of.
+    pub fn trait_application(&self) -> TraitApplicationAttribute<'c> {
+        let attribute = unsafe { Attribute::from_raw(traitProjectionTypeGetTraitApplication(self.type_.to_raw())) };
+        TraitApplicationAttribute::try_from(attribute).expect("a projection projects out of an application")
+    }
+
+    /// The name of the associated type the projection names.
+    pub fn assoc_name(&self) -> String {
+        context_string(unsafe { traitProjectionTypeGetAssocName(self.type_.to_raw()) })
+    }
+
+    /// The associated type's own arguments.
+    pub fn assoc_type_args(&self) -> Vec<Type<'c>> {
+        let raw = self.type_.to_raw();
+        let count = unsafe { traitProjectionTypeGetNumAssocTypeArgs(raw) };
+        (0..count).map(|index| unsafe { Type::from_raw(traitProjectionTypeGetAssocTypeArg(raw, index)) }).collect()
+    }
+}
+
+impl<'c> TryFrom<Type<'c>> for ProjectionType<'c> {
+    type Error = &'static str;
+
+    fn try_from(type_: Type<'c>) -> Result<Self, Self::Error> {
+        if unsafe { traitTypeIsAProjection(type_.to_raw()) } {
+            Ok(Self { type_ })
+        } else {
+            Err("expected trait::ProjectionType")
+        }
     }
 }
 

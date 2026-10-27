@@ -72,6 +72,50 @@ MlirAttribute traitTypeEqualityAttrGet(MlirContext ctx,
 MlirAttribute traitImplArgumentsAttrGet(MlirContext ctx, const MlirType *types,
                                         intptr_t numTypes);
 
+/// Whether `type` is a !trait.poly.
+bool traitTypeIsAPoly(MlirType type);
+
+/// The label of a !trait.poly: the position of the parameter it stands for
+/// in the declaration binding it.
+unsigned int traitPolyTypeGetLabel(MlirType polyType);
+
+/// The predicate a !trait.claim states: a #trait.application or a
+/// #trait.equality.
+MlirAttribute traitClaimTypeGetPredicate(MlirType claimType);
+
+/// The symbol name of the trait a #trait.application applies.
+MlirStringRef traitTraitApplicationAttrGetTraitName(MlirAttribute traitApp);
+
+/// The number of type arguments of a #trait.application, `Self` first.
+intptr_t traitTraitApplicationAttrGetNumTypeArgs(MlirAttribute traitApp);
+
+/// Type argument `index` of a #trait.application.
+MlirType traitTraitApplicationAttrGetTypeArg(MlirAttribute traitApp, intptr_t index);
+
+/// Whether the given attribute is a #trait.equality.
+bool traitAttributeIsATypeEquality(MlirAttribute attr);
+
+/// The left side of a #trait.equality.
+MlirType traitTypeEqualityAttrGetLhs(MlirAttribute equality);
+
+/// The right side of a #trait.equality.
+MlirType traitTypeEqualityAttrGetRhs(MlirAttribute equality);
+
+/// Whether `type` is a !trait.proj.
+bool traitTypeIsAProjection(MlirType type);
+
+/// The #trait.application a !trait.proj projects out of.
+MlirAttribute traitProjectionTypeGetTraitApplication(MlirType projection);
+
+/// The name of the associated type a !trait.proj names.
+MlirStringRef traitProjectionTypeGetAssocName(MlirType projection);
+
+/// The number of the associated type's own arguments a !trait.proj states.
+intptr_t traitProjectionTypeGetNumAssocTypeArgs(MlirType projection);
+
+/// The associated type's own argument `index` a !trait.proj states.
+MlirType traitProjectionTypeGetAssocTypeArg(MlirType projection, intptr_t index);
+
 /// Collect all unique types implementing GenericTypeInterface found in `type`.
 ///
 /// This walks `type` recursively and returns every distinct generic type

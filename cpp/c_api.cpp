@@ -8,6 +8,7 @@
 #include "TraitTypes.hpp"
 #include <mlir/CAPI/IR.h>
 #include <mlir/CAPI/Pass.h>
+#include <mlir/CAPI/Support.h>
 #include <mlir/CAPI/Wrap.h>
 #include <mlir/IR/Builders.h>
 
@@ -116,6 +117,62 @@ MlirAttribute traitImplArgumentsAttrGet(MlirContext ctx, const MlirType *types,
   for (intptr_t i = 0; i < numTypes; ++i)
     unwrapped.push_back(unwrap(types[i]));
   return wrap(ImplArgumentsAttr::get(unwrap(ctx), unwrapped));
+}
+
+bool traitTypeIsAPoly(MlirType type) {
+  return isa<PolyType>(unwrap(type));
+}
+
+unsigned int traitPolyTypeGetLabel(MlirType polyType) {
+  return cast<PolyType>(unwrap(polyType)).getLabel();
+}
+
+MlirAttribute traitClaimTypeGetPredicate(MlirType claimType) {
+  return wrap(cast<ClaimType>(unwrap(claimType)).getPredicate());
+}
+
+MlirStringRef traitTraitApplicationAttrGetTraitName(MlirAttribute traitApp) {
+  return wrap(cast<TraitApplicationAttr>(unwrap(traitApp)).getTraitName().getValue());
+}
+
+intptr_t traitTraitApplicationAttrGetNumTypeArgs(MlirAttribute traitApp) {
+  return cast<TraitApplicationAttr>(unwrap(traitApp)).getTypeArgs().size();
+}
+
+MlirType traitTraitApplicationAttrGetTypeArg(MlirAttribute traitApp, intptr_t index) {
+  return wrap(cast<TraitApplicationAttr>(unwrap(traitApp)).getTypeArgs()[index]);
+}
+
+bool traitAttributeIsATypeEquality(MlirAttribute attr) {
+  return isa<TypeEqualityAttr>(unwrap(attr));
+}
+
+MlirType traitTypeEqualityAttrGetLhs(MlirAttribute equality) {
+  return wrap(cast<TypeEqualityAttr>(unwrap(equality)).getLhs());
+}
+
+MlirType traitTypeEqualityAttrGetRhs(MlirAttribute equality) {
+  return wrap(cast<TypeEqualityAttr>(unwrap(equality)).getRhs());
+}
+
+bool traitTypeIsAProjection(MlirType type) {
+  return isa<ProjectionType>(unwrap(type));
+}
+
+MlirAttribute traitProjectionTypeGetTraitApplication(MlirType projection) {
+  return wrap(cast<ProjectionType>(unwrap(projection)).getTraitApplication());
+}
+
+MlirStringRef traitProjectionTypeGetAssocName(MlirType projection) {
+  return wrap(cast<ProjectionType>(unwrap(projection)).getAssocName().getValue());
+}
+
+intptr_t traitProjectionTypeGetNumAssocTypeArgs(MlirType projection) {
+  return cast<ProjectionType>(unwrap(projection)).getAssocTypeArgs().size();
+}
+
+MlirType traitProjectionTypeGetAssocTypeArg(MlirType projection, intptr_t index) {
+  return wrap(cast<ProjectionType>(unwrap(projection)).getAssocTypeArgs()[index]);
 }
 
 intptr_t traitGetGenericTypesIn(MlirType type, MlirType *results, intptr_t maxResults) {
