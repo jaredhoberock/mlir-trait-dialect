@@ -808,7 +808,9 @@ static Attribute instantiationTemplateKey(FuncCallOp op) {
   return op.getCalleeNameAttr();
 }
 static Attribute instantiationTemplateKey(MethodCallOp op) {
-  return op.getMethodRefAttr();
+  return SymbolRefAttr::get(
+      op.getContext(), op.getTraitApplication().getTraitName().getValue(),
+      {FlatSymbolRefAttr::get(op.getMethodNameAttr())});
 }
 
 /// Impl selection's reading of a type's projections at `site`: each whose head

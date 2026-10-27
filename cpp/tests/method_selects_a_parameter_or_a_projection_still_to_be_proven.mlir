@@ -33,13 +33,13 @@ trait.impl private @Host_i32(%self: !trait.claim<@Host[i32]>) {
     %w = trait.derive @Wrapped[i32] from @Wrapped_any[i32] given(%p) : (!trait.claim<@Mark[i32]>)
     %m = trait.project %w[0] : !trait.claim<@Wrapped[i32]> -> !trait.claim<@Mark[i32]>
     %s = arith.select %c, %p, %m : !trait.claim<@Mark[i32]>
-    %v = trait.method.call %s @Mark[i32]::@value() : () -> i64
+    %v = trait.method.call %s @value() : !trait.claim<@Mark[i32]>, () -> i64
     trait.return %v : i64
   }
 }
 func.func @main() -> i64 {
   %h = trait.witness @Host_i32 for @Host[i32]
   %p = trait.witness @Nine for @Mark[i32]
-  %v = trait.method.call %h @Host[i32]::@run(%p) : (!trait.claim<@Mark[i32] by @Nine>) -> i64 by @Host_i32
+  %v = trait.method.call %h @run(%p) : !trait.claim<@Host[i32] by @Host_i32>, (!trait.claim<@Mark[i32] by @Nine>) -> i64
   return %v : i64
 }

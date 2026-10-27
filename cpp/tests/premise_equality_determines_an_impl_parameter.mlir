@@ -40,7 +40,7 @@ trait.impl private @Fold_gen(%self: !trait.claim<@Fold[!trait.poly<0>]>, %output
 // CHECK-SAME: (i32) -> i64
 func.func @main(%x: i32) {
   %c = trait.allege @Fold[i32]
-  %r = trait.method.call %c @Fold[i32]::@run(%x)
-    : (i32) -> !trait.proj<@Fold[i32], "Sum">
+  %r = trait.method.call %c @run(%x)
+    : !trait.claim<@Fold[i32]>, (i32) -> !trait.proj<@Fold[i32], "Sum">
   return
 }

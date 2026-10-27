@@ -40,7 +40,7 @@ func.func @caller() -> !trait.proj<@ConstMapper[i32], "Result", [i1]> {
   %a = trait.allege @ConstMapper[i32]
   %self = arith.constant 7 : i32
   %x = arith.constant 1 : i1
-  %r = trait.method.call %a @ConstMapper[i32]::@map(%self, %x)
-    : (i32, i1) -> !trait.proj<@ConstMapper[i32], "Result", [i1]>
+  %r = trait.method.call %a @map(%self, %x)
+    : !trait.claim<@ConstMapper[i32]>, (i32, i1) -> !trait.proj<@ConstMapper[i32], "Result", [i1]>
   return %r : !trait.proj<@ConstMapper[i32], "Result", [i1]>
 }

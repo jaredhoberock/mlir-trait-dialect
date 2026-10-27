@@ -13,7 +13,7 @@ trait.trait private @Unwrap(%self: !trait.claim<@Unwrap[!T]>) {
 }
 
 func.func private @caller(%claim: !trait.claim<@Unwrap[!T]>, %value: !T) -> !T {
-  %result = trait.method.call %claim @Unwrap[!T]::@unwrap(%value) : (!T) -> !T
+  %result = trait.method.call %claim @unwrap(%value) : !trait.claim<@Unwrap[!T]>, (!T) -> !T
   return %result : !T
 }
 

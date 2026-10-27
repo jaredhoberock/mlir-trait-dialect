@@ -31,7 +31,7 @@ trait.proof private @Alias {
 trait.trait private @Wrapped(%self: !trait.claim<@Wrapped[!T]>) -> !trait.claim<@Mark[!T]> { trait.method @value() -> i64 }
 trait.impl private @W(%self: !trait.claim<@Wrapped[!T]>, %mark: !trait.claim<@Mark[!T]>) {
   trait.method @value() -> i64 {
-    %v = trait.method.call %mark @Mark[!T]::@value() : () -> i64
+    %v = trait.method.call %mark @value() : !trait.claim<@Mark[!T]>, () -> i64
     trait.return %v : i64
   }
   trait.return %mark : !trait.claim<@Mark[!T]>
@@ -43,7 +43,7 @@ trait.proof private @PW {
 }
 func.func private @f(%p: !trait.claim<@Mark[!T]>) -> i64 {
   %w = trait.derive @Wrapped[!T] from @W[!trait.poly<0>] given(%p) : (!trait.claim<@Mark[!T]>)
-  %v = trait.method.call %w @Wrapped[!T]::@value() : () -> i64
+  %v = trait.method.call %w @value() : !trait.claim<@Wrapped[!T]>, () -> i64
   return %v : i64
 }
 func.func @main() -> i64 {

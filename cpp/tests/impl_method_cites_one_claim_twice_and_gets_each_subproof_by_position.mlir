@@ -31,12 +31,12 @@ trait.impl private @Mark_two(%self: !trait.claim<@Mark[i32]>) {
 trait.impl private @Tr_impl(%self: !trait.claim<@Tr[i32]>, %mark: !trait.claim<@Mark[i32]>, %mark_1: !trait.claim<@Mark[i32]>) {
   trait.method @value() -> i64 {
     %first = scf.execute_region -> i64 {
-      %v0 = trait.method.call %mark @Mark[i32]::@value() : () -> i64
+      %v0 = trait.method.call %mark @value() : !trait.claim<@Mark[i32]>, () -> i64
       scf.yield %v0 : i64
     }
     cf.br ^second
   ^second:
-    %v1 = trait.method.call %mark_1 @Mark[i32]::@value() : () -> i64
+    %v1 = trait.method.call %mark_1 @value() : !trait.claim<@Mark[i32]>, () -> i64
     %ten = arith.constant 10 : i64
     %scaled = arith.muli %first, %ten : i64
     %r = arith.addi %scaled, %v1 : i64
@@ -51,6 +51,6 @@ trait.proof private @P {
 }
 func.func @main() -> i64 {
   %p = trait.witness @P for @Tr[i32]
-  %r = trait.method.call %p @Tr[i32]::@value() : () -> i64 by @P
+  %r = trait.method.call %p @value() : !trait.claim<@Tr[i32] by @P>, () -> i64
   return %r : i64
 }

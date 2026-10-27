@@ -43,14 +43,14 @@ trait.trait private @Tr(%self: !trait.claim<@Tr[!A]>) {
 }
 trait.impl private @Tr_i64(%self: !trait.claim<@Tr[i64]>) {
   trait.method @run(%m: !trait.claim<@Mark[i64]>) -> i64 {
-    %v = trait.method.call %m @Mark[i64]::@value() : () -> i64
+    %v = trait.method.call %m @value() : !trait.claim<@Mark[i64]>, () -> i64
     trait.return %v : i64
   }
 }
 trait.trait private @Get(%self: !trait.claim<@Get[!A]>) { trait.method @get() -> i64 }
 trait.impl private @Tr_gen(%self: !trait.claim<@Get[!trait.poly<0>]>, %mark: !trait.claim<@Mark[!trait.poly<0>]>) {
   trait.method @get() -> i64 {
-    %v = trait.method.call %mark @Mark[!trait.poly<0>]::@value() : () -> i64
+    %v = trait.method.call %mark @value() : !trait.claim<@Mark[!trait.poly<0>]>, () -> i64
     trait.return %v : i64
   }
 }
@@ -68,13 +68,13 @@ func.func @main() -> i64 {
   %m = trait.witness @Mark_i64 for @Mark[i64]
   %m_spelled = trait.coerce %m : !trait.claim<@Mark[i64] by @Mark_i64> to !trait.claim<@Mark[!trait.proj<@Fold[i32], "Item">]> via (%item, %elem) : (!trait.claim<!trait.proj<@Fold[i32], "Item"> = !trait.proj<@Tensor[i32], "Element">>, !trait.claim<!trait.proj<@Tensor[i32], "Element"> = i64>)
   %m_declared = trait.coerce %m_spelled : !trait.claim<@Mark[!trait.proj<@Fold[i32], "Item">]> to !trait.claim<@Mark[i64]> via (%item, %elem) : (!trait.claim<!trait.proj<@Fold[i32], "Item"> = !trait.proj<@Tensor[i32], "Element">>, !trait.claim<!trait.proj<@Tensor[i32], "Element"> = i64>)
-  %a = trait.method.call %tr @Tr[i64]::@run(%m_declared) : (!trait.claim<@Mark[i64]>) -> i64 by @Tr_i64
-  %b = trait.method.call %tr @Tr[i64]::@run(%m) : (!trait.claim<@Mark[i64] by @Mark_i64>) -> i64 by @Tr_i64
+  %a = trait.method.call %tr @run(%m_declared) : !trait.claim<@Tr[i64] by @Tr_i64>, (!trait.claim<@Mark[i64]>) -> i64
+  %b = trait.method.call %tr @run(%m) : !trait.claim<@Tr[i64] by @Tr_i64>, (!trait.claim<@Mark[i64] by @Mark_i64>) -> i64
 
   %p = trait.witness @P for @Get[i64]
   %p_spelled = trait.coerce %p : !trait.claim<@Get[i64] by @P> to !trait.claim<@Get[!trait.proj<@Fold[i32], "Item">]> via (%item, %elem) : (!trait.claim<!trait.proj<@Fold[i32], "Item"> = !trait.proj<@Tensor[i32], "Element">>, !trait.claim<!trait.proj<@Tensor[i32], "Element"> = i64>)
-  %c = trait.method.call %p_spelled @Get[!trait.proj<@Fold[i32], "Item">]::@get() : () -> i64
-  %d = trait.method.call %p @Get[i64]::@get() : () -> i64 by @P
+  %c = trait.method.call %p_spelled @get() : !trait.claim<@Get[!trait.proj<@Fold[i32], "Item">]>, () -> i64
+  %d = trait.method.call %p @get() : !trait.claim<@Get[i64] by @P>, () -> i64
 
   %ab = arith.addi %a, %b : i64
   %cd = arith.addi %c, %d : i64

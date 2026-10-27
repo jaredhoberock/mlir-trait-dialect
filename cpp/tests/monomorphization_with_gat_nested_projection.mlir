@@ -55,12 +55,12 @@ trait.impl private @Outer_impl(%self_claim: !trait.claim<@Outer[i1]>) {
 func.func @caller() -> !trait.proj<@Outer[i1], "Wrap", [!trait.proj<@Inner[i32], "Item">]> {
   %a = trait.allege @Inner[i32]
   %x = arith.constant 7 : i32
-  %item = trait.method.call %a @Inner[i32]::@get(%x)
-    : (i32) -> !trait.proj<@Inner[i32], "Item">
+  %item = trait.method.call %a @get(%x)
+    : !trait.claim<@Inner[i32]>, (i32) -> !trait.proj<@Inner[i32], "Item">
 
   %b = trait.allege @Outer[i1]
   %self = arith.constant 1 : i1
-  %r = trait.method.call %b @Outer[i1]::@wrap(%self, %item)
-    : (i1, !trait.proj<@Inner[i32], "Item">) -> !trait.proj<@Outer[i1], "Wrap", [!trait.proj<@Inner[i32], "Item">]>
+  %r = trait.method.call %b @wrap(%self, %item)
+    : !trait.claim<@Outer[i1]>, (i1, !trait.proj<@Inner[i32], "Item">) -> !trait.proj<@Outer[i1], "Wrap", [!trait.proj<@Inner[i32], "Item">]>
   return %r : !trait.proj<@Outer[i1], "Wrap", [!trait.proj<@Inner[i32], "Item">]>
 }

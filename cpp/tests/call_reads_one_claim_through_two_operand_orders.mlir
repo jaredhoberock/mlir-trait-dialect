@@ -43,7 +43,7 @@ trait.proof private @pu {
 // CHECK: call @[[F]]() : () -> i64
 // CHECK-NOT: trait.
 func.func private @f(%u: !trait.claim<@U[!trait.poly<0>]>, %v: !trait.claim<@V[!trait.poly<0>]>) -> i64 {
-  %r = trait.method.call %v @V[!trait.poly<0>]::@v() : () -> i64
+  %r = trait.method.call %v @v() : !trait.claim<@V[!trait.poly<0>]>, () -> i64
   return %r : i64
 }
 func.func @main() -> i64 {
@@ -88,7 +88,7 @@ trait.proof private @pu {
 // CHECK: call @[[F2]]() : () -> i64
 // CHECK-NOT: trait.
 func.func private @f(%v: !trait.claim<@V[!trait.poly<0>]>, %u: !trait.claim<@U[!trait.poly<0>]>) -> i64 {
-  %r = trait.method.call %v @V[!trait.poly<0>]::@v() : () -> i64
+  %r = trait.method.call %v @v() : !trait.claim<@V[!trait.poly<0>]>, () -> i64
   return %r : i64
 }
 func.func @main() -> i64 {

@@ -48,6 +48,6 @@ func.func @main() -> i64 {
   %o = trait.witness @O9 for @Outer[i32]
   %w = trait.project %o[0] : !trait.claim<@Outer[i32] by @O9> -> !trait.claim<@Wrapped[i32]>
   %m = trait.project %w[0] : !trait.claim<@Wrapped[i32]> -> !trait.claim<@Mark[i32]>
-  %v = trait.method.call %m @Mark[i32]::@value() : () -> i64
+  %v = trait.method.call %m @value() : !trait.claim<@Mark[i32]>, () -> i64
   return %v : i64
 }

@@ -39,8 +39,8 @@ trait.impl private @Callable_i64(%self_claim: !trait.claim<@Callable[i64]>) {
 func.func private @apply(%f: !trait.poly<0>,
                  %claim: !trait.claim<@Callable[!trait.poly<0>]>)
     -> !trait.proj<@Callable[!trait.poly<0>], "Output"> {
-  %r = trait.method.call %claim @Callable[!trait.poly<0>]::@call(%f)
-    : (!trait.poly<0>) -> !trait.proj<@Callable[!trait.poly<0>], "Output">
+  %r = trait.method.call %claim @call(%f)
+    : !trait.claim<@Callable[!trait.poly<0>]>, (!trait.poly<0>) -> !trait.proj<@Callable[!trait.poly<0>], "Output">
   return %r : !trait.proj<@Callable[!trait.poly<0>], "Output">
 }
 

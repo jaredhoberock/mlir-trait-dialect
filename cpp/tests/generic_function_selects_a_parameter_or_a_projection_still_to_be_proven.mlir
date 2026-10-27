@@ -31,7 +31,7 @@ func.func private @g(%p: !trait.claim<@Mark[!T]>) -> i64 {
   %w = trait.derive @Wrapped[!T] from @Wrapped_any[!trait.poly<0>] given(%p) : (!trait.claim<@Mark[!T]>)
   %m = trait.project %w[0] : !trait.claim<@Wrapped[!T]> -> !trait.claim<@Mark[!T]>
   %s = arith.select %c, %p, %m : !trait.claim<@Mark[!T]>
-  %v = trait.method.call %s @Mark[!T]::@value() : () -> i64
+  %v = trait.method.call %s @value() : !trait.claim<@Mark[!T]>, () -> i64
   return %v : i64
 }
 func.func @main() -> i64 {

@@ -40,9 +40,9 @@ trait.impl private @Tr_i64(%self: !trait.claim<@Tr[i64]>) {
 }
 func.func @main() -> i64 {
   %t = trait.witness @Tr_i64 for @Tr[i64]
-  %a = trait.method.call %t @Tr[i64]::@v() : () -> i64 by @Tr_i64
+  %a = trait.method.call %t @v() : !trait.claim<@Tr[i64] by @Tr_i64>, () -> i64
   %o = trait.project %t[0] : !trait.claim<@Tr[i64] by @Tr_i64> -> !trait.claim<@Tr[!trait.proj<@Tr[i64], "Out">]>
-  %b = trait.method.call %o @Tr[!trait.proj<@Tr[i64], "Out">]::@v() : () -> i64
+  %b = trait.method.call %o @v() : !trait.claim<@Tr[!trait.proj<@Tr[i64], "Out">]>, () -> i64
   %s = arith.addi %a, %b : i64
   return %s : i64
 }

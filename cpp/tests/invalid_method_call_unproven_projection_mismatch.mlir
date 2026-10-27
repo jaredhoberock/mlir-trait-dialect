@@ -28,7 +28,7 @@ func.func @unproven_claim_does_not_normalize(
     %claim: !trait.claim<@Unwrap[!X]>,
     %value: !X) -> !X {
   // expected-error @below {{type mismatch: expected '(!trait.proj<@Broad[i64], "Output">) -> !trait.proj<@Unwrap[!trait.proj<@Broad[i64], "Output">], "Output">' but found '(!trait.proj<@Broad[i64], "Output">) -> !trait.proj<@Broad[i64], "Output">'}}
-  %result = trait.method.call %claim @Unwrap[!X]::@unwrap(%value)
-    : (!X) -> !X
+  %result = trait.method.call %claim @unwrap(%value)
+    : !trait.claim<@Unwrap[!X]>, (!X) -> !X
   return %result : !X
 }

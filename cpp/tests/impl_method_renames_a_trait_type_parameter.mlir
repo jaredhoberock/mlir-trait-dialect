@@ -22,6 +22,6 @@ trait.impl private @I(%self: !trait.claim<@T[i32]>) {
 // CHECK: call @[[F]]
 func.func @main(%x: i32, %m: i64, %n: i8) -> i64 {
   %c = trait.allege @T[i32]
-  %r = trait.method.call %c @T[i32]::@f(%x, %m, %n) : (i32, i64, i8) -> i64
+  %r = trait.method.call %c @f(%x, %m, %n) : !trait.claim<@T[i32]>, (i32, i64, i8) -> i64
   return %r : i64
 }

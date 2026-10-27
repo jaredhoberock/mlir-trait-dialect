@@ -48,7 +48,7 @@ fn a_rename_reaches_an_equality_claims_endpoints_a_citations_arguments_and_every
         return %x : i64
       }
       func.func private @h(%c: !trait.claim<@T[i64]>, %x: i64) -> i64 {
-        %y = trait.method.call %c @T[i64]::@m(%x) : (i64) -> i64
+        %y = trait.method.call %c @m(%x) : !trait.claim<@T[i64]>, (i64) -> i64
         return %y : i64
       }
       trait.impl private @I(%self: !trait.claim<@T[i64]>) {

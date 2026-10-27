@@ -25,8 +25,8 @@ trait.trait private @Chooser(%self: !trait.claim<@Chooser[!trait.poly<0>]>) {
 trait.impl private @Chooser_i32(%self: !trait.claim<@Chooser[i32]>) {
   trait.method @choose(%a: i32, %b: !trait.poly<0>, %same: !trait.claim<@SameAs[i32, !trait.poly<0>]>) -> i32 {
     // inner method call uses the where-clause claim
-    %converted = trait.method.call %same @SameAs[i32, !trait.poly<0>]::@convert(%b)
-      : (!trait.poly<0>) -> i32
+    %converted = trait.method.call %same @convert(%b)
+      : !trait.claim<@SameAs[i32, !trait.poly<0>]>, (!trait.poly<0>) -> i32
     trait.return %converted : i32
   }
 }
@@ -34,8 +34,8 @@ trait.impl private @Chooser_i32(%self: !trait.claim<@Chooser[i32]>) {
 func.func @test(%x: i32, %y: i32) -> i32 {
   %chooser = trait.allege @Chooser[i32]
   %same = trait.allege @SameAs[i32, i32]
-  %res = trait.method.call %chooser @Chooser[i32]::@choose(%x, %y, %same)
-    : (i32, i32, !trait.claim<@SameAs[i32, i32]>) -> i32
+  %res = trait.method.call %chooser @choose(%x, %y, %same)
+    : !trait.claim<@Chooser[i32]>, (i32, i32, !trait.claim<@SameAs[i32, i32]>) -> i32
   return %res : i32
 }
 

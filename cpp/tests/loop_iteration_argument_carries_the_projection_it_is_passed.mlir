@@ -49,7 +49,7 @@ trait.impl private @Host_i32(%self: !trait.claim<@Host[i32]>, %mark: !trait.clai
     %r = scf.for %i = %lb to %ub step %st iter_args(%a = %m) -> (!trait.claim<@Mark[i32]>) {
       scf.yield %a : !trait.claim<@Mark[i32]>
     }
-    %v = trait.method.call %r @Mark[i32]::@value() : () -> i64
+    %v = trait.method.call %r @value() : !trait.claim<@Mark[i32]>, () -> i64
     trait.return %v : i64
   }
 }
@@ -62,6 +62,6 @@ func.func @main() -> i64 {
   %h = trait.witness @H for @Host[i32]
   %w = trait.witness @W for @Wrapped[i32]
   %c = arith.constant false
-  %v = trait.method.call %h @Host[i32]::@run(%w, %c) : (!trait.claim<@Wrapped[i32] by @W>, i1) -> i64 by @H
+  %v = trait.method.call %h @run(%w, %c) : !trait.claim<@Host[i32] by @H>, (!trait.claim<@Wrapped[i32] by @W>, i1) -> i64
   return %v : i64
 }

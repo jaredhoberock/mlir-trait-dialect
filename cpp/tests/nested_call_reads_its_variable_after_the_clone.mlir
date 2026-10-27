@@ -30,18 +30,16 @@ trait.impl private @Store_impl_i32(%self_claim: !trait.claim<@Store[i32]>) {
   trait.method @keep(%self: i32, %v: !trait.poly<0>) -> !trait.poly<0> {
     %inner = arith.constant 0 : i64
     %p = trait.witness @Store_impl_i64 for @Store[i64]
-    %r = trait.method.call %p @Store[i64]::@keep(%inner, %v)
-      : (i64, !trait.poly<0>) -> !trait.poly<0>
-      by @Store_impl_i64
+    %r = trait.method.call %p @keep(%inner, %v)
+      : !trait.claim<@Store[i64] by @Store_impl_i64>, (i64, !trait.poly<0>) -> !trait.poly<0>
     trait.return %r : !trait.poly<0>
   }
 }
 
 func.func @main(%x: i32, %v: f32) -> f32 {
   %p = trait.witness @Store_impl_i32 for @Store[i32]
-  %r = trait.method.call %p @Store[i32]::@keep(%x, %v)
-    : (i32, f32) -> f32
-    by @Store_impl_i32
+  %r = trait.method.call %p @keep(%x, %v)
+    : !trait.claim<@Store[i32] by @Store_impl_i32>, (i32, f32) -> f32
   return %r : f32
 }
 

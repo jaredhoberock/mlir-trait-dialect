@@ -68,9 +68,9 @@ trait.proof private @p {
 
 func.func @main(%x: tuple<i32>, %y: i32) -> i64 {
   %w = trait.witness @p for @B[tuple<i32>]
-  %r = trait.method.call %w @B[tuple<i32>]::@b(%x) : (tuple<i32>) -> i64 by @p
+  %r = trait.method.call %w @b(%x) : !trait.claim<@B[tuple<i32>] by @p>, (tuple<i32>) -> i64
   %a = trait.project %w[2] : !trait.claim<@B[tuple<i32>] by @p> -> !trait.claim<@A[i32] by @A_i32>
-  %s = trait.method.call %a @A[i32]::@a(%y) : (i32) -> i64 by @A_i32
+  %s = trait.method.call %a @a(%y) : !trait.claim<@A[i32] by @A_i32>, (i32) -> i64
   %t = arith.addi %r, %s : i64
   return %t : i64
 }

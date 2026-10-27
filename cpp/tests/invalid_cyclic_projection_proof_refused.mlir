@@ -45,6 +45,6 @@ trait.proof private @p {
 
 func.func @main() -> i64 {
   %w = trait.witness @p for @Wants[!trait.proj<@Loop[i32], "Output">]
-  %v = trait.method.call %w @Wants[!trait.proj<@Loop[i32], "Output">]::@m() : () -> i64 by @p
+  %v = trait.method.call %w @m() : !trait.claim<@Wants[!trait.proj<@Loop[i32], "Output">] by @p>, () -> i64
   return %v : i64
 }

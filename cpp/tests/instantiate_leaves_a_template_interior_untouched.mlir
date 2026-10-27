@@ -23,10 +23,10 @@ trait.proof private @Tr_i64_p {
 
 // CHECK: func.func private @tpl
 // CHECK: trait.allege @Tr[i64]
-// CHECK: trait.method.call {{.*}} @Tr[i64]::@m
+// CHECK: trait.method.call {{.*}} @m(
 func.func private @tpl(%x: !trait.poly<1>, %v: i64) -> i64 {
   %c = trait.allege @Tr[i64]
-  %r = trait.method.call %c @Tr[i64]::@m(%v) : (i64) -> i64
+  %r = trait.method.call %c @m(%v) : !trait.claim<@Tr[i64]>, (i64) -> i64
   return %r : i64
 }
 
@@ -36,6 +36,6 @@ func.func private @tpl(%x: !trait.poly<1>, %v: i64) -> i64 {
 // CHECK: call @Tr_i64_{{h[0-9a-f]+}}_m
 func.func @host(%v: i64) -> i64 {
   %c = trait.allege @Tr[i64]
-  %r = trait.method.call %c @Tr[i64]::@m(%v) : (i64) -> i64
+  %r = trait.method.call %c @m(%v) : !trait.claim<@Tr[i64]>, (i64) -> i64
   return %r : i64
 }

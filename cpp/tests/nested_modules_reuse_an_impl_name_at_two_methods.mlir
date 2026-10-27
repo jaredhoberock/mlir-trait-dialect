@@ -38,13 +38,13 @@ module @inner {
   }
   func.func @main() -> i64 {
     %c = trait.allege @T[i32]
-    %r = trait.method.call %c @T[i32]::@m() : () -> i64
+    %r = trait.method.call %c @m() : !trait.claim<@T[i32]>, () -> i64
     return %r : i64
   }
 }
 func.func @main() -> i64 {
   %c = trait.allege @T[i32]
-  %r = trait.method.call %c @T[i32]::@m() : () -> i64
+  %r = trait.method.call %c @m() : !trait.claim<@T[i32]>, () -> i64
   return %r : i64
 }
 
@@ -69,7 +69,7 @@ trait.impl private @T_i32(%self: !trait.claim<@T[i32]>) {
 }
 func.func @main() -> i64 {
   %c = trait.allege @T[i32]
-  %r = trait.method.call %c @T[i32]::@m() : () -> i64
+  %r = trait.method.call %c @m() : !trait.claim<@T[i32]>, () -> i64
   return %r : i64
 }
 module @inner {
@@ -82,7 +82,7 @@ module @inner {
   }
   func.func @main() -> i64 {
     %c = trait.allege @T[i32]
-    %r = trait.method.call %c @T[i32]::@m() : () -> i64
+    %r = trait.method.call %c @m() : !trait.claim<@T[i32]>, () -> i64
     return %r : i64
   }
 }

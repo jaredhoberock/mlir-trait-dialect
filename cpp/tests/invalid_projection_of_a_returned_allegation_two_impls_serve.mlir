@@ -27,7 +27,7 @@ trait.impl private @Host_i64(%self: !trait.claim<@Host[i64]>) {
 func.func @main() -> i64 {
   %h = trait.witness @Host_i64 for @Host[i64]
   %e = trait.project %h[0] : !trait.claim<@Host[i64] by @Host_i64> -> !trait.claim<@Extra[i64]>
-  %v = trait.method.call %e @Extra[i64]::@v() : () -> i64
+  %v = trait.method.call %e @v() : !trait.claim<@Extra[i64]>, () -> i64
   return %v : i64
 }
 
@@ -50,7 +50,7 @@ trait.impl private @Extra9(%self: !trait.claim<@Extra[i64]>) {
 trait.trait private @Mark(%self: !trait.claim<@Mark[!T]>) { trait.method @value() -> i64 }
 trait.impl private @Nine(%self: !trait.claim<@Mark[i64]>, %e: !trait.claim<@Extra[i64]>) {
   trait.method @value() -> i64 {
-    %v = trait.method.call %e @Extra[i64]::@v() : () -> i64
+    %v = trait.method.call %e @v() : !trait.claim<@Extra[i64]>, () -> i64
     trait.return %v : i64
   }
 }
@@ -68,6 +68,6 @@ trait.impl private @Host_i64(%self: !trait.claim<@Host[i64]>) {
 func.func @main() -> i64 {
   %h = trait.witness @Host_i64 for @Host[i64]
   %m = trait.project %h[0] : !trait.claim<@Host[i64] by @Host_i64> -> !trait.claim<@Mark[i64]>
-  %v = trait.method.call %m @Mark[i64]::@value() : () -> i64
+  %v = trait.method.call %m @value() : !trait.claim<@Mark[i64]>, () -> i64
   return %v : i64
 }

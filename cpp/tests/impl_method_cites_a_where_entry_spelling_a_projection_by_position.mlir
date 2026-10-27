@@ -44,15 +44,15 @@ trait.trait private @U(%self: !trait.claim<@U[!S, !F]>) {
 
 trait.impl private @U_gen(%self: !trait.claim<@U[!S, !F]>, %tr: !trait.claim<@Tr[!S]>, %fn: !trait.claim<@Fn[!F, !trait.proj<@Tr[!S], "Root">]>) {
   trait.method @u(%s: !S, %f: !F) -> i64 {
-    %r = trait.method.call %tr @Tr[!S]::@go(%s, %f, %fn)
-      : (!S, !F, !trait.claim<@Fn[!F, !trait.proj<@Tr[!S], "Root">]>) -> i64
+    %r = trait.method.call %tr @go(%s, %f, %fn)
+      : !trait.claim<@Tr[!S]>, (!S, !F, !trait.claim<@Fn[!F, !trait.proj<@Tr[!S], "Root">]>) -> i64
     trait.return %r : i64
   }
 }
 
 func.func @main(%s: i32, %f: i8) -> i64 {
   %p = trait.allege @U[i32, i8]
-  %r = trait.method.call %p @U[i32, i8]::@u(%s, %f) : (i32, i8) -> i64
+  %r = trait.method.call %p @u(%s, %f) : !trait.claim<@U[i32, i8]>, (i32, i8) -> i64
   return %r : i64
 }
 

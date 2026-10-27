@@ -49,16 +49,16 @@ trait.trait private @Wrapper(%self: !trait.claim<@Wrapper[!S]>) {
 trait.impl private @Wrapper_impl(%self_claim: !trait.claim<@Wrapper[!trait.poly<0>]>, %container_1: !trait.claim<@Container[!trait.poly<0>]>) {
   trait.method @get(%self: !trait.poly<0>) -> i32 {
     // use the @Container[T] assumption to call @first, then @Printable to print
-    %elem = trait.method.call %container_1 @Container[!trait.poly<0>]::@first(%self)
-      : (!trait.poly<0>) -> !trait.proj<@Container[!trait.poly<0>], "Elem">
+    %elem = trait.method.call %container_1 @first(%self)
+      : !trait.claim<@Container[!trait.poly<0>]>, (!trait.poly<0>) -> !trait.proj<@Container[!trait.poly<0>], "Elem">
 
     // @Container's sole requirement is the @Printable obligation
     %printable = trait.project %container_1[0]
       : !trait.claim<@Container[!trait.poly<0>]>
       -> !trait.claim<@Printable[!trait.proj<@Container[!trait.poly<0>], "Elem">]>
 
-    %result = trait.method.call %printable @Printable[!trait.proj<@Container[!trait.poly<0>], "Elem">]::@print(%elem)
-      : (!trait.proj<@Container[!trait.poly<0>], "Elem">) -> i32
+    %result = trait.method.call %printable @print(%elem)
+      : !trait.claim<@Printable[!trait.proj<@Container[!trait.poly<0>], "Elem">]>, (!trait.proj<@Container[!trait.poly<0>], "Elem">) -> i32
 
     trait.return %result : i32
   }
@@ -74,7 +74,7 @@ trait.impl private @Wrapper_impl(%self_claim: !trait.claim<@Wrapper[!trait.poly<
 func.func @caller() -> i32 {
   %w = trait.allege @Wrapper[i32]
   %x = arith.constant 42 : i32
-  %res = trait.method.call %w @Wrapper[i32]::@get(%x)
-    : (i32) -> i32
+  %res = trait.method.call %w @get(%x)
+    : !trait.claim<@Wrapper[i32]>, (i32) -> i32
   return %res : i32
 }

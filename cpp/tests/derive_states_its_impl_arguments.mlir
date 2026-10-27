@@ -39,7 +39,7 @@ trait.impl private @Tr_tuple(%self: !trait.claim<@Tr[tuple<!trait.poly<0>>]>, %t
 
 func.func private @g(%t: !trait.claim<@Tr[!T]>, %e: !trait.claim<!trait.proj<@Tr[!T], "Out"> = i64>, %x: tuple<!T>) -> i64 {
   %d = trait.derive @Tr[tuple<!T>] from @Tr_tuple[!trait.poly<0>] given(%t, %e) : (!trait.claim<@Tr[!T]>, !trait.claim<!trait.proj<@Tr[!T], "Out"> = i64>)
-  %r = trait.method.call %d @Tr[tuple<!T>]::@get(%x) : (tuple<!T>) -> i64
+  %r = trait.method.call %d @get(%x) : !trait.claim<@Tr[tuple<!T>]>, (tuple<!T>) -> i64
   return %r : i64
 }
 

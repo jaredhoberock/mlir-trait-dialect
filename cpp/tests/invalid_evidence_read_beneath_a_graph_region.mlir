@@ -55,7 +55,7 @@ trait.impl private @Foo_all(%self: !trait.claim<@Foo[!T]>, %foo: !trait.claim<@F
   %d = trait.derive @Foo[i32] from @Foo_all[i32] given(%x) : (!trait.claim<@Foo[i32]>)
   scf.yield %d : !trait.claim<@Foo[i32]>
 }
-%r = trait.method.call %x @Foo[i32]::@m() : () -> i64
+%r = trait.method.call %x @m() : !trait.claim<@Foo[i32]>, () -> i64
 
 // -----
 
@@ -81,5 +81,5 @@ trait.trait private @B(%self: !trait.claim<@B[!T]>) {
   trait.method @requirement_0() -> !trait.claim<@A[!T]>
 }
 // expected-error @below {{'trait.method.call' op must be in a region that enforces SSA dominance}}
-%b = trait.method.call %a @A[i32]::@requirement_0() : () -> !trait.claim<@B[i32]>
-%a = trait.method.call %b @B[i32]::@requirement_0() : () -> !trait.claim<@A[i32]>
+%b = trait.method.call %a @requirement_0() : !trait.claim<@A[i32]>, () -> !trait.claim<@B[i32]>
+%a = trait.method.call %b @requirement_0() : !trait.claim<@B[i32]>, () -> !trait.claim<@A[i32]>

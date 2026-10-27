@@ -58,8 +58,8 @@ trait.impl private @Outer_tuple(%self_claim: !trait.claim<@Outer[tuple<!trait.po
   trait.assoc_type @Assoc = !trait.proj<@Inner[!trait.poly<0>], "Assoc">
   trait.method @method(%self: tuple<!trait.poly<0>>) -> !trait.proj<@Inner[!trait.poly<0>], "Assoc"> {
     %elem = "test.extract"(%self) : (tuple<!trait.poly<0>>) -> !trait.poly<0>
-    %res = trait.method.call %inner @Inner[!trait.poly<0>]::@method(%elem)
-      : (!trait.poly<0>) -> !trait.proj<@Inner[!trait.poly<0>], "Assoc">
+    %res = trait.method.call %inner @method(%elem)
+      : !trait.claim<@Inner[!trait.poly<0>]>, (!trait.poly<0>) -> !trait.proj<@Inner[!trait.poly<0>], "Assoc">
     trait.return %res : !trait.proj<@Inner[!trait.poly<0>], "Assoc">
   }
 }
@@ -71,7 +71,7 @@ trait.impl private @Outer_tuple(%self_claim: !trait.claim<@Outer[tuple<!trait.po
 // CHECK: return %{{.*}} : f32
 func.func @test_forwarding(%arg: tuple<i32>) -> !trait.proj<@Outer[tuple<i32>], "Assoc"> {
   %a = trait.allege @Outer[tuple<i32>]
-  %res = trait.method.call %a @Outer[tuple<i32>]::@method(%arg)
-    : (tuple<i32>) -> !trait.proj<@Outer[tuple<i32>], "Assoc">
+  %res = trait.method.call %a @method(%arg)
+    : !trait.claim<@Outer[tuple<i32>]>, (tuple<i32>) -> !trait.proj<@Outer[tuple<i32>], "Assoc">
   return %res : !trait.proj<@Outer[tuple<i32>], "Assoc">
 }

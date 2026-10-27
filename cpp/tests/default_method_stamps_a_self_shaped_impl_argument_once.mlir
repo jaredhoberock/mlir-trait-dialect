@@ -24,8 +24,8 @@ func.func @main() -> i32 {
   %c = arith.constant 0 : i32
   %v = builtin.unrealized_conversion_cast %c : i32 to tuple<i32>
   %w = trait.allege @Tr[tuple<i32>]
-  %r = trait.method.call %w @Tr[tuple<i32>]::@method(%v)
-    : (tuple<i32>) -> tuple<i32>
+  %r = trait.method.call %w @method(%v)
+    : !trait.claim<@Tr[tuple<i32>]>, (tuple<i32>) -> tuple<i32>
   %o = builtin.unrealized_conversion_cast %r : tuple<i32> to i32
   return %o : i32
 }

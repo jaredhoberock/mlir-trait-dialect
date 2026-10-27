@@ -23,6 +23,6 @@ trait.impl private @T_i32(%self: !trait.claim<@T[i32]>) {
 // CHECK: pending-expansion=true
 func.func @host(%x: i32) -> i32 {
   %ev = trait.allege @T[i32]
-  %r = trait.method.call %ev @T[i32]::@m(%x) : (i32) -> i32
+  %r = trait.method.call %ev @m(%x) : !trait.claim<@T[i32]>, (i32) -> i32
   return %r : i32
 }

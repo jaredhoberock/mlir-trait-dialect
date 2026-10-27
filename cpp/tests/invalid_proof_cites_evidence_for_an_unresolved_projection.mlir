@@ -33,7 +33,7 @@ trait.impl private @A_i64(%self: !trait.claim<@A[i64]>) {
 trait.impl private @B_i32(%self: !trait.claim<@B[i32]>) {
   trait.method @b(%x: i32) -> i64 {
     %a = trait.project %self[0] : !trait.claim<@B[i32]> -> !trait.claim<@A[!trait.proj<@Foo[i32], "Out">]>
-    %r = trait.method.call %a @A[!trait.proj<@Foo[i32], "Out">]::@a() : () -> i64
+    %r = trait.method.call %a @a() : !trait.claim<@A[!trait.proj<@Foo[i32], "Out">]>, () -> i64
     trait.return %r : i64
   }
   %a = trait.witness @A_i64 for @A[i64]
@@ -41,6 +41,6 @@ trait.impl private @B_i32(%self: !trait.claim<@B[i32]>) {
 }
 func.func @main(%x: i32) -> i64 {
   %w = trait.witness @B_i32 for @B[i32]
-  %r = trait.method.call %w @B[i32]::@b(%x) : (i32) -> i64 by @B_i32
+  %r = trait.method.call %w @b(%x) : !trait.claim<@B[i32] by @B_i32>, (i32) -> i64
   return %r : i64
 }

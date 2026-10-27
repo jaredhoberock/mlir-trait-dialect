@@ -22,7 +22,7 @@ trait.impl private @T_i32(%self: !trait.claim<@T[i32]>) {
 // CHECK: call @T_i32_{{h[0-9a-f]+}}_m
 func.func @main() -> i64 {
   %c = trait.allege @T[i32]
-  %r = trait.method.call %c @T[i32]::@m() : () -> i64
+  %r = trait.method.call %c @m() : !trait.claim<@T[i32]>, () -> i64
   return %r : i64
 }
 
@@ -41,7 +41,7 @@ module @inner {
   // CHECK: call @T_inner_{{h[0-9a-f]+}}_m
   func.func @main() -> i64 {
     %c = trait.allege @T[i32]
-    %r = trait.method.call %c @T[i32]::@m() : () -> i64
+    %r = trait.method.call %c @m() : !trait.claim<@T[i32]>, () -> i64
     return %r : i64
   }
 }
@@ -68,7 +68,7 @@ trait.impl private @B_impl(%self: !trait.claim<@B[i32]>) {
   %top = trait.witness @A_top for @A[i32]
   trait.method @b() -> i64 {
     %a = trait.project %self[0] : !trait.claim<@B[i32]> -> !trait.claim<@A[i32]>
-    %r = trait.method.call %a @A[i32]::@a() : () -> i64
+    %r = trait.method.call %a @a() : !trait.claim<@A[i32]>, () -> i64
     trait.return %r : i64
   }
   trait.return %top : !trait.claim<@A[i32] by @A_top>
@@ -82,7 +82,7 @@ trait.proof private @p {
 // CHECK: call @A_top_{{h[0-9a-f]+}}_a
 func.func @main() -> i64 {
   %w = trait.witness @p for @B[i32]
-  %r = trait.method.call %w @B[i32]::@b() : () -> i64 by @p
+  %r = trait.method.call %w @b() : !trait.claim<@B[i32] by @p>, () -> i64
   return %r : i64
 }
 
@@ -100,7 +100,7 @@ module @inner {
     %inner = trait.witness @A_inner for @A[i32]
     trait.method @b() -> i64 {
       %a = trait.project %self[0] : !trait.claim<@B[i32]> -> !trait.claim<@A[i32]>
-      %r = trait.method.call %a @A[i32]::@a() : () -> i64
+      %r = trait.method.call %a @a() : !trait.claim<@A[i32]>, () -> i64
       trait.return %r : i64
     }
     trait.return %inner : !trait.claim<@A[i32] by @A_inner>
@@ -110,7 +110,7 @@ module @inner {
   // CHECK: call @A_inner_{{h[0-9a-f]+}}_a
   func.func @main() -> i64 {
     %c = trait.allege @B[i32]
-    %r = trait.method.call %c @B[i32]::@b() : () -> i64
+    %r = trait.method.call %c @b() : !trait.claim<@B[i32]>, () -> i64
     return %r : i64
   }
 }

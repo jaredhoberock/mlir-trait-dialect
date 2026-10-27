@@ -20,13 +20,13 @@ trait.impl private @B_impl_i1(%self: !trait.claim<@B[i1]>) {
 
     // test that we are able to trait.method.call
     // from inside a method to another trait
-    %res = trait.method.call %a @A[i1]::@a(%arg0) : (i1) -> i1
+    %res = trait.method.call %a @a(%arg0) : !trait.claim<@A[i1]>, (i1) -> i1
     trait.return %res : i1
   }
 }
 func.func @test(%arg0 : i1) -> i1 {
   %b = trait.allege @B[i1]
-  %res = trait.method.call %b @B[i1]::@b(%arg0) : (i1) -> i1
+  %res = trait.method.call %b @b(%arg0) : !trait.claim<@B[i1]>, (i1) -> i1
   return %res : i1
 }
 

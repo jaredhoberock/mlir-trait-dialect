@@ -36,6 +36,6 @@ func.func @main() -> i64 {
   %em = trait.derive @E[i64] from @E_mid given(%p2) : (!trait.claim<@P[i64]>)
   %p1 = trait.derive @P[i64] from @P_gen[i64] given(%em) : (!trait.claim<@E[i64]>)
   %b = trait.project %p1[0] : !trait.claim<@P[i64]> -> !trait.claim<@B[i64]>
-  %v = trait.method.call %b @B[i64]::@v() : () -> i64
+  %v = trait.method.call %b @v() : !trait.claim<@B[i64]>, () -> i64
   return %v : i64
 }

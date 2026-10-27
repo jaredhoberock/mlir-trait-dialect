@@ -42,7 +42,7 @@ trait.impl private @T_i64(%self: !trait.claim<@T[i64]>) {
 
 func.func @main(%x: i64) -> !trait.proj<@Sib[i64], "Elem"> {
   %w = trait.witness @T_i64 for @T[i64]
-  %r = trait.method.call %w @T[i64]::@get(%x) : (i64) -> !trait.proj<@Sib[i64], "Elem"> by @T_i64
+  %r = trait.method.call %w @get(%x) : !trait.claim<@T[i64] by @T_i64>, (i64) -> !trait.proj<@Sib[i64], "Elem">
   return %r : !trait.proj<@Sib[i64], "Elem">
 }
 

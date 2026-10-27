@@ -20,6 +20,6 @@ trait.impl private @I129(%s: !trait.claim<@A[i129,i32]>) { %b = trait.witness @B
 func.func @main() -> i64 {
   %a = trait.witness @I1 for @A[i1,i32]
   %b = trait.project %a[0] : !trait.claim<@A[i1,i32] by @I1> -> !trait.claim<@B[i32]>
-  %v = trait.method.call %b @B[i32]::@v() : () -> i64
+  %v = trait.method.call %b @v() : !trait.claim<@B[i32]>, () -> i64
   return %v : i64
 }

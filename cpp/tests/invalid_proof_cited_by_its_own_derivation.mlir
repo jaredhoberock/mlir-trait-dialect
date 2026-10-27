@@ -24,7 +24,7 @@ trait.proof private @p {
 }
 func.func @main() -> i64 {
   %w = trait.witness @p for @Foo[i32]
-  %r = trait.method.call %w @Foo[i32]::@m() : () -> i64 by @p
+  %r = trait.method.call %w @m() : !trait.claim<@Foo[i32] by @p>, () -> i64
   return %r : i64
 }
 
@@ -155,7 +155,7 @@ trait.proof private @p {
 }
 func.func @main() -> i64 {
   %w = trait.witness @p for @Foo[i64]
-  %r = trait.method.call %w @Foo[i64]::@m() : () -> i64 by @p
+  %r = trait.method.call %w @m() : !trait.claim<@Foo[i64] by @p>, () -> i64
   return %r : i64
 }
 
@@ -185,6 +185,6 @@ trait.proof private @p {
 }
 func.func @main() -> i64 {
   %w = trait.witness @p for @Foo[i32]
-  %r = trait.method.call %w @Foo[i32]::@m() : () -> i64 by @p
+  %r = trait.method.call %w @m() : !trait.claim<@Foo[i32] by @p>, () -> i64
   return %r : i64
 }

@@ -53,7 +53,7 @@ func.func @test() -> i32 {
   //      then @Marker[tuple<>] is satisfied by @Marker_unit
   // CHECK: trait.witness @Marker_via_assoc_{{.*}}_p for @Marker[i32]
   %m = trait.allege @Marker[i32]
-  %res = trait.method.call %m @Marker[i32]::@mark(%x) : (i32) -> i32
+  %res = trait.method.call %m @mark(%x) : !trait.claim<@Marker[i32]>, (i32) -> i32
   return %res : i32
 }
 

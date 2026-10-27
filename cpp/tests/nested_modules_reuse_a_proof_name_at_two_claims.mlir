@@ -26,7 +26,7 @@ trait.proof private @p {
 // CHECK: func.func @main(%{{.*}}: i32) -> i32
 func.func @main(%x: i32) -> i32 {
   %w = trait.witness @p for @B[i32]
-  %r = trait.method.call %w @B[i32]::@m(%x) : (i32) -> i32 by @p
+  %r = trait.method.call %w @m(%x) : !trait.claim<@B[i32] by @p>, (i32) -> i32
   return %r : i32
 }
 
@@ -51,7 +51,7 @@ module @inner {
   // CHECK: func.func @main(%{{.*}}: i64) -> i64
   func.func @main(%x: i64) -> i64 {
     %w = trait.witness @p for @B[i64]
-    %r = trait.method.call %w @B[i64]::@m(%x) : (i64) -> i64 by @p
+    %r = trait.method.call %w @m(%x) : !trait.claim<@B[i64] by @p>, (i64) -> i64
     return %r : i64
   }
 }

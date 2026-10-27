@@ -47,7 +47,7 @@ trait.proof private @PW {
 func.func private @f(%p: !trait.claim<@Trait[!T]>) -> i64 {
   %w = trait.allege @Other[!T]
   %d = trait.project %w[0] : !trait.claim<@Other[!T]> -> !trait.claim<@Trait[!T]>
-  %v = trait.method.call %d @Trait[!T]::@method() : () -> i64
+  %v = trait.method.call %d @method() : !trait.claim<@Trait[!T]>, () -> i64
   return %v : i64
 }
 func.func @main() -> i64 {

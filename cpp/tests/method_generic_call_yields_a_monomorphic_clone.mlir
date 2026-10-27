@@ -25,9 +25,8 @@ trait.impl private @Store_impl_i64(%self_claim: !trait.claim<@Store[i64]>) {
 
 func.func @main(%x: i64, %v: i32) -> i32 {
   %p = trait.witness @Store_impl_i64 for @Store[i64]
-  %r = trait.method.call %p @Store[i64]::@keep(%x, %v)
-    : (i64, i32) -> i32
-    by @Store_impl_i64
+  %r = trait.method.call %p @keep(%x, %v)
+    : !trait.claim<@Store[i64] by @Store_impl_i64>, (i64, i32) -> i32
   return %r : i32
 }
 

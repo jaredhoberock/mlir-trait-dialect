@@ -22,8 +22,8 @@ trait.impl private @Get_impl(%self: !trait.claim<@Get[i32]>) {
 // where the caller supplies it.
 !A = !trait.poly<1>
 func.func private @return_method_result(%claim: !trait.claim<@Get[!trait.poly<0>]>) -> !trait.poly<0> {
-  %res = trait.method.call %claim @Get[!trait.poly<0>]::@get()
-    : () -> !trait.poly<0>
+  %res = trait.method.call %claim @get()
+    : !trait.claim<@Get[!trait.poly<0>]>, () -> !trait.poly<0>
   return %res : !trait.poly<0>
 }
 

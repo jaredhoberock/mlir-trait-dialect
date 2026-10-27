@@ -30,7 +30,7 @@ trait.impl private @B_i32(%self: !trait.claim<@B[i32]>) {
 
 trait.impl private @A_gen(%self: !trait.claim<@A[!T]>, %b_1: !trait.claim<@B[!T]>, %out: !trait.claim<!trait.proj<@B[!T], "Out"> = i64>) {
   trait.method @a(%x: !T) -> i64 {
-    %o = trait.method.call %b_1 @B[!T]::@b(%x) : (!T) -> !trait.proj<@B[!T], "Out">
+    %o = trait.method.call %b_1 @b(%x) : !trait.claim<@B[!T]>, (!T) -> !trait.proj<@B[!T], "Out">
     %r = trait.coerce %o : !trait.proj<@B[!T], "Out"> to i64 via (%out) : (!trait.claim<!trait.proj<@B[!T], "Out"> = i64>)
     trait.return %r : i64
   }
@@ -38,7 +38,7 @@ trait.impl private @A_gen(%self: !trait.claim<@A[!T]>, %b_1: !trait.claim<@B[!T]
 
 func.func @main(%x: i32) -> i64 {
   %a = trait.allege @A[i32]
-  %r = trait.method.call %a @A[i32]::@a(%x) : (i32) -> i64
+  %r = trait.method.call %a @a(%x) : !trait.claim<@A[i32]>, (i32) -> i64
   return %r : i64
 }
 

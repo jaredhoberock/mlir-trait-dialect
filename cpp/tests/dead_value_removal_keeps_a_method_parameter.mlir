@@ -19,6 +19,6 @@ trait.impl private @A_i32(%self: !trait.claim<@A[i32]>) {
 }
 func.func @main(%x: i32) -> i32 {
   %c = trait.witness @A_i32 for @A[i32]
-  %r = trait.method.call %c @A[i32]::@m(%x, %x) : (i32, i32) -> i32 by @A_i32
+  %r = trait.method.call %c @m(%x, %x) : !trait.claim<@A[i32] by @A_i32>, (i32, i32) -> i32
   return %r : i32
 }

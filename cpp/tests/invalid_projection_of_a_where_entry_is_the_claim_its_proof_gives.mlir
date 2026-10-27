@@ -27,7 +27,7 @@ func.func @main() -> i64 {
   %w = trait.witness @p for @B[i32]
   // expected-error @below {{type mismatch: expected '!trait.claim<@A[i32]>' but found '!trait.claim<@A[i32] by @A_alt>'}}
   %x = trait.project %w[0] : !trait.claim<@B[i32] by @p> -> !trait.claim<@A[i32] by @A_alt>
-  %r = trait.method.call %x @A[i32]::@m() : () -> i64 by @A_alt
+  %r = trait.method.call %x @m() : !trait.claim<@A[i32] by @A_alt>, () -> i64
   return %r : i64
 }
 

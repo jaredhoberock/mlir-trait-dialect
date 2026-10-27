@@ -49,7 +49,7 @@ trait.impl private @Iterable_impl(%self_claim: !trait.claim<@Iterable[i32]>) {
 func.func @caller() -> !trait.proj<@Iterable[i32], "Item"> {
   %a = trait.allege @Iterable[i32]
   %x = arith.constant 7 : i32
-  %item = trait.method.call %a @Iterable[i32]::@first(%x)
-    : (i32) -> !trait.proj<@Iterable[i32], "Item">
+  %item = trait.method.call %a @first(%x)
+    : !trait.claim<@Iterable[i32]>, (i32) -> !trait.proj<@Iterable[i32], "Item">
   return %item : !trait.proj<@Iterable[i32], "Item">
 }

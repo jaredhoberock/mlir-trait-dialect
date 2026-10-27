@@ -49,7 +49,7 @@ trait.proof private @P {
 }
 
 func.func private @g(%c: !trait.claim<@T[!S]>, %x: !S) -> !trait.proj<@T[!S], "Out"> {
-  %r = trait.method.call %c @T[!S]::@m(%x) : (!S) -> !trait.proj<@T[!S], "Out">
+  %r = trait.method.call %c @m(%x) : !trait.claim<@T[!S]>, (!S) -> !trait.proj<@T[!S], "Out">
   return %r : !trait.proj<@T[!S], "Out">
 }
 

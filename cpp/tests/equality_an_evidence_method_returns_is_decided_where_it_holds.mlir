@@ -21,7 +21,7 @@ trait.impl private @I(%self: !trait.claim<@A[i8]>) {
 }
 func.func @main() -> i64 {
  %a = trait.witness @I for @A[i8]
- %e = trait.method.call %a @A[i8]::@eq() : () -> !trait.claim<i64 = i64> by @I
+ %e = trait.method.call %a @eq() : !trait.claim<@A[i8] by @I>, () -> !trait.claim<i64 = i64>
  %n = arith.constant 9 : i64
  %r = trait.coerce %n : i64 to i64 via (%e) : (!trait.claim<i64 = i64>)
  return %r : i64

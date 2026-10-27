@@ -50,7 +50,7 @@ trait.proof private @pv {
 // CHECK-NOT: trait.
 func.func @main() -> i64 {
   %w = trait.witness @pv for @V[i8]
-  %r = trait.method.call %w @V[i8]::@v() : () -> i64 by @pv
+  %r = trait.method.call %w @v() : !trait.claim<@V[i8] by @pv>, () -> i64
   return %r : i64
 }
 
@@ -95,6 +95,6 @@ trait.proof private @pv {
 // CHECK: call @[[V2]]_v() : () -> i64
 // CHECK-NOT: trait.
 func.func @f(%c: !trait.claim<@V[i8] by @pv>) -> i64 {
-  %r = trait.method.call %c @V[i8]::@v() : () -> i64 by @pv
+  %r = trait.method.call %c @v() : !trait.claim<@V[i8] by @pv>, () -> i64
   return %r : i64
 }

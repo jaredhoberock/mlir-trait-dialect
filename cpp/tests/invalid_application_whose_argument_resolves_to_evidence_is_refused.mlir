@@ -56,7 +56,7 @@ func.func @run() -> i64 {
   // expected-error @below {{'trait.allege' op a predicate states types, and '!trait.claim<@Show[!trait.proj<@Wrap[i32], "Item">]>' resolves to 'tuple<!trait.claim<@Mark[i32]>>', which carries a claim}}
   // expected-error @below {{unproven monomorphic claim '!trait.claim<@Show[!trait.proj<@Wrap[i32], "Item">]>' after instantiate-monomorphs}}
   %c = trait.allege @Show[!trait.proj<@Wrap[i32], "Item">]
-  %v = trait.method.call %c @Show[!trait.proj<@Wrap[i32], "Item">]::@v() : () -> i64
+  %v = trait.method.call %c @v() : !trait.claim<@Show[!trait.proj<@Wrap[i32], "Item">]>, () -> i64
   return %v : i64
 }
 

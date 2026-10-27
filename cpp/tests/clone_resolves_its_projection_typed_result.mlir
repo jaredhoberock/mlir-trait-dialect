@@ -27,8 +27,8 @@ trait.proof private @Producer_i64_p {
 
 func.func private @tpl(%claim: !trait.claim<@Producer[!trait.poly<0>]>, %v: !trait.poly<0>)
     -> !trait.proj<@Producer[!trait.poly<0>], "Item"> {
-  %m = trait.method.call %claim @Producer[!trait.poly<0>]::@make(%v)
-    : (!trait.poly<0>) -> !trait.proj<@Producer[!trait.poly<0>], "Item">
+  %m = trait.method.call %claim @make(%v)
+    : !trait.claim<@Producer[!trait.poly<0>]>, (!trait.poly<0>) -> !trait.proj<@Producer[!trait.poly<0>], "Item">
   return %m : !trait.proj<@Producer[!trait.poly<0>], "Item">
 }
 

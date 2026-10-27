@@ -38,9 +38,9 @@ func.func @repro() {
     !trait.proj<@Has[i32], "Shape">,
     !trait.proj<@Has[f32], "Shape">
   ]
-  trait.method.call %claim @Eq[
+  trait.method.call %claim @use() : !trait.claim<@Eq[
     !trait.proj<@Has[i32], "Shape">,
     !trait.proj<@Has[f32], "Shape">
-  ]::@use() : () -> ()
+  ]>, () -> ()
   return
 }

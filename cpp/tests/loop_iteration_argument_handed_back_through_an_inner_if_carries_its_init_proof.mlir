@@ -29,7 +29,7 @@ trait.impl private @Two(%self: !trait.claim<@Bound[i64]>) {
 trait.trait private @Need(%self: !trait.claim<@Need[!S]>) { trait.method @get() -> i64 }
 trait.impl private @Need_from(%self: !trait.claim<@Need[!S]>, %b: !trait.claim<@Bound[!S]>) {
   trait.method @get() -> i64 {
-    %v = trait.method.call %b @Bound[!S]::@value() : () -> i64
+    %v = trait.method.call %b @value() : !trait.claim<@Bound[!S]>, () -> i64
     trait.return %v : i64
   }
 }
@@ -47,7 +47,7 @@ func.func private @pick(%flag: i1) -> i64 {
     }
     scf.yield %x : !trait.claim<@Need[i64]>
   }
-  %v = trait.method.call %r @Need[i64]::@get() : () -> i64
+  %v = trait.method.call %r @get() : !trait.claim<@Need[i64]>, () -> i64
   return %v : i64
 }
 func.func @main() -> i64 {

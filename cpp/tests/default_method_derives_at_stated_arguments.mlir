@@ -26,7 +26,7 @@ trait.trait private @Wrap(%self: !trait.claim<@Wrap[!S]>) -> !trait.claim<@Tr[!S
   trait.method @wrapped(%x: tuple<!S>) -> i64 {
     %t = trait.project %self[0] : !trait.claim<@Wrap[!S]> -> !trait.claim<@Tr[!S]>
     %d = trait.derive @Tr[tuple<!S>] from @Tr_tuple[!trait.poly<0>] given(%t) : (!trait.claim<@Tr[!S]>)
-    %r = trait.method.call %d @Tr[tuple<!S>]::@get(%x) : (tuple<!S>) -> i64
+    %r = trait.method.call %d @get(%x) : !trait.claim<@Tr[tuple<!S>]>, (tuple<!S>) -> i64
     trait.return %r : i64
   }
 }
@@ -45,7 +45,7 @@ trait.impl private @Wrap_i32(%self: !trait.claim<@Wrap[i32]>) {
 
 func.func @main(%x: tuple<i32>) -> i64 {
   %w = trait.allege @Wrap[i32]
-  %r = trait.method.call %w @Wrap[i32]::@wrapped(%x) : (tuple<i32>) -> i64
+  %r = trait.method.call %w @wrapped(%x) : !trait.claim<@Wrap[i32]>, (tuple<i32>) -> i64
   return %r : i64
 }
 

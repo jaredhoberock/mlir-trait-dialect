@@ -21,8 +21,8 @@ trait.trait private @A(%self: !trait.claim<@A[!T]>) -> !trait.claim<@B[!T]> {
   trait.method @a(!T) -> i64
   trait.method @twice(%x: !T) -> i64 {
     %b = trait.project %self[0] : !trait.claim<@A[!T]> -> !trait.claim<@B[!T]>
-    %u = trait.method.call %self @A[!T]::@a(%x) : (!T) -> i64
-    %v = trait.method.call %b @B[!T]::@b(%x) : (!T) -> i64
+    %u = trait.method.call %self @a(%x) : !trait.claim<@A[!T]>, (!T) -> i64
+    %v = trait.method.call %b @b(%x) : !trait.claim<@B[!T]>, (!T) -> i64
     %r = arith.addi %u, %v : i64
     trait.return %r : i64
   }
@@ -30,7 +30,7 @@ trait.trait private @A(%self: !trait.claim<@A[!T]>) -> !trait.claim<@B[!T]> {
 
 trait.impl private @A_gen(%self: !trait.claim<@A[!T]>, %b: !trait.claim<@B[!T]>, %out: !trait.claim<!trait.proj<@B[!T], "Out"> = i64>, %b_1: !trait.claim<@B[!T]>) {
   trait.method @a(%x: !T) -> i64 {
-    %r = trait.method.call %b_1 @B[!T]::@b(%x) : (!T) -> i64
+    %r = trait.method.call %b_1 @b(%x) : !trait.claim<@B[!T]>, (!T) -> i64
     trait.return %r : i64
   }
   trait.return %b : !trait.claim<@B[!T]>
@@ -39,5 +39,5 @@ trait.impl private @A_gen(%self: !trait.claim<@A[!T]>, %b: !trait.claim<@B[!T]>,
 // CHECK: trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) -> !trait.claim<@B[!trait.poly<0>]>
 // CHECK: trait.project %self[0] : <@A[!trait.poly<0>]> -> <@B[!trait.poly<0>]>
 // CHECK: trait.impl private @A_gen(%self: !trait.claim<@A[!trait.poly<0>]>, %b: !trait.claim<@B[!trait.poly<0>]>, %out: !trait.claim<!trait.proj<@B[!trait.poly<0>], "Out"> = i64>, %b_0: !trait.claim<@B[!trait.poly<0>]>)
-// CHECK: trait.method.call %b_0 @B[!trait.poly<0>]::@b
+// CHECK: trait.method.call %b_0 @b
 // CHECK: trait.return %b : !trait.claim<@B[!trait.poly<0>]>

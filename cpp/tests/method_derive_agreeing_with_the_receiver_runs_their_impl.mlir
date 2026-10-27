@@ -29,7 +29,7 @@ trait.impl private @Nine(%self: !trait.claim<@Mark[i32]>) {
 trait.trait private @Wrapped(%self: !trait.claim<@Wrapped[!T]>) { trait.method @value() -> i64 }
 trait.impl private @Wrapped_i32(%self: !trait.claim<@Wrapped[i32]>, %mark: !trait.claim<@Mark[i32]>) {
   trait.method @value() -> i64 {
-    %v = trait.method.call %mark @Mark[i32]::@value() : () -> i64
+    %v = trait.method.call %mark @value() : !trait.claim<@Mark[i32]>, () -> i64
     trait.return %v : i64
   }
 }
@@ -52,7 +52,7 @@ trait.impl private @Host_i32(%self: !trait.claim<@Host[i32]>, %wrapped: !trait.c
   trait.method @run(%c: !trait.claim<@Outer[i32]>) -> i64 {
     %m = trait.project %c[0] : !trait.claim<@Outer[i32]> -> !trait.claim<@Mark[i32]>
     %w = trait.derive @Wrapped[i32] from @Wrapped_i32 given(%m) : (!trait.claim<@Mark[i32]>)
-    %v = trait.method.call %w @Wrapped[i32]::@value() : () -> i64
+    %v = trait.method.call %w @value() : !trait.claim<@Wrapped[i32]>, () -> i64
     trait.return %v : i64
   }
 }
@@ -64,6 +64,6 @@ trait.proof private @H {
 func.func @main() -> i64 {
   %h = trait.witness @H for @Host[i32]
   %c = trait.witness @OP for @Outer[i32]
-  %v = trait.method.call %h @Host[i32]::@run(%c) : (!trait.claim<@Outer[i32] by @OP>) -> i64 by @H
+  %v = trait.method.call %h @run(%c) : !trait.claim<@Host[i32] by @H>, (!trait.claim<@Outer[i32] by @OP>) -> i64
   return %v : i64
 }

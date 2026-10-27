@@ -24,9 +24,9 @@ trait.trait private @A(%self: !trait.claim<@A[!S]>) -> (!trait.claim<@B[!S]>, !t
   trait.method @twice(%x: !S) -> i64 {
     %b = trait.project %self[0] : !trait.claim<@A[!S]> -> !trait.claim<@B[!S]>
     %e = trait.project %self[1] : !trait.claim<@A[!S]> -> !trait.claim<!trait.proj<@A[!S], "Out"> = i64>
-    %o = trait.method.call %self @A[!S]::@make(%x) : (!S) -> !trait.proj<@A[!S], "Out">
+    %o = trait.method.call %self @make(%x) : !trait.claim<@A[!S]>, (!S) -> !trait.proj<@A[!S], "Out">
     %oi = trait.coerce %o : !trait.proj<@A[!S], "Out"> to i64 via (%e) : (!trait.claim<!trait.proj<@A[!S], "Out"> = i64>)
-    %v = trait.method.call %b @B[!S]::@b(%x) : (!S) -> i64
+    %v = trait.method.call %b @b(%x) : !trait.claim<@B[!S]>, (!S) -> i64
     %r = arith.addi %oi, %v : i64
     trait.return %r : i64
   }
@@ -52,7 +52,7 @@ trait.impl private @A_i32(%self: !trait.claim<@A[i32]>) {
 
 func.func @main(%x: i32) -> i64 {
   %a = trait.allege @A[i32]
-  %r = trait.method.call %a @A[i32]::@twice(%x) : (i32) -> i64
+  %r = trait.method.call %a @twice(%x) : !trait.claim<@A[i32]>, (i32) -> i64
   return %r : i64
 }
 

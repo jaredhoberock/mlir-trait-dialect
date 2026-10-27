@@ -26,7 +26,7 @@ trait.impl private @A_i64(%self: !trait.claim<@A[i64]>) {
 trait.impl private @B_blanket(%self: !trait.claim<@B[!trait.poly<0>]>) {
   trait.method @b() -> i64 {
     %a = trait.project %self[0] : !trait.claim<@B[!trait.poly<0>]> -> !trait.claim<@A[!trait.proj<@Foo[!trait.poly<0>], "Out">]>
-    %r = trait.method.call %a @A[!trait.proj<@Foo[!trait.poly<0>], "Out">]::@a() : () -> i64
+    %r = trait.method.call %a @a() : !trait.claim<@A[!trait.proj<@Foo[!trait.poly<0>], "Out">]>, () -> i64
     trait.return %r : i64
   }
   %a64 = trait.witness @A_i64 for @A[i64]
@@ -38,6 +38,6 @@ trait.proof private @forged {
 }
 func.func @main() -> i64 {
   %w = trait.witness @forged for @B[i32]
-  %r = trait.method.call %w @B[i32]::@b() : () -> i64 by @forged
+  %r = trait.method.call %w @b() : !trait.claim<@B[i32] by @forged>, () -> i64
   return %r : i64
 }

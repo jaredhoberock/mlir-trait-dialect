@@ -12,7 +12,7 @@
 
 // ROUNDTRIP:      trait.impl private @Into_impl(%self: !trait.claim<@Into[!trait.poly<0>, !trait.poly<1>]>, %from: !trait.claim<@From[!trait.poly<1>, !trait.poly<0>]>) {
 // ROUNDTRIP:        scf.execute_region
-// ROUNDTRIP-NEXT:     trait.method.call %from @From[!trait.poly<1>, !trait.poly<0>]::@from(
+// ROUNDTRIP-NEXT:     trait.method.call %from @from(
 
 // INSTANCE:      func.func private @Into_impl_{{.*}}_into(%{{.*}}: !trait.claim<@Into[i32, i64] by @{{.*}}>, %[[X:.*]]: i32) -> i64 {
 // INSTANCE-NEXT:   %[[FROM:.*]] = trait.witness @From_i64_i32 for @From[i64, i32]
@@ -31,7 +31,7 @@ trait.trait private @Into(%self: !trait.claim<@Into[!T, !U]>) {
 trait.impl private @Into_impl(%self: !trait.claim<@Into[!T, !U]>, %from: !trait.claim<@From[!U, !T]>) {
   trait.method @into(%x: !T) -> !U {
     %r = scf.execute_region -> !U {
-      %v = trait.method.call %from @From[!U, !T]::@from(%x) : (!T) -> !U
+      %v = trait.method.call %from @from(%x) : !trait.claim<@From[!U, !T]>, (!T) -> !U
       scf.yield %v : !U
     }
     trait.return %r : !U
@@ -48,6 +48,6 @@ trait.impl private @From_i64_i32(%self: !trait.claim<@From[i64, i32]>) {
 func.func @main() -> i64 {
   %x = arith.constant 7 : i32
   %c = trait.allege @Into[i32, i64]
-  %r = trait.method.call %c @Into[i32, i64]::@into(%x) : (i32) -> i64
+  %r = trait.method.call %c @into(%x) : !trait.claim<@Into[i32, i64]>, (i32) -> i64
   return %r : i64
 }

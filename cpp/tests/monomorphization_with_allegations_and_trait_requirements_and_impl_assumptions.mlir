@@ -40,8 +40,8 @@ trait.impl private @C_impl(%self: !trait.claim<@C[!trait.poly<0>]>, %b: !trait.c
 func.func @foo(%x: i8) -> i1 {
   %c = trait.allege @C[i8]
   // CHECK: call @C_{{h[0-9a-f]+}}_method
-  %res = trait.method.call %c @C[i8]::@method(%x)
-    : (i8) -> i1
+  %res = trait.method.call %c @method(%x)
+    : !trait.claim<@C[i8]>, (i8) -> i1
   return %res : i1
 }
 

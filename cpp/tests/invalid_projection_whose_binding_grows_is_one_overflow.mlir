@@ -17,7 +17,7 @@ trait.impl private @I2(%s: !trait.claim<@A[i64]>) { trait.method @value() -> i64
 func.func @main() -> i64 {
   // expected-error @+1 {{overflow evaluating the requirement '!trait.claim<@A[!trait.proj<@H[i32], "E">]>': a chain of steps resolving its projections does not end within 128 steps}}
   %a = trait.allege @A[!trait.proj<@H[i32], "E">]
-  %v = trait.method.call %a @A[!trait.proj<@H[i32], "E">]::@value() : () -> i64
+  %v = trait.method.call %a @value() : !trait.claim<@A[!trait.proj<@H[i32], "E">]>, () -> i64
   return %v : i64
 }
 
@@ -31,7 +31,7 @@ trait.impl private @I2(%s: !trait.claim<@A[!T]>, %e: !trait.claim<!trait.proj<@H
 func.func @main() -> i64 {
   // expected-error @+1 {{overflow evaluating the requirement '!trait.claim<!trait.proj<@H[i32], "E"> = i64>': a chain of steps resolving its projections does not end within 128 steps}}
   %a = trait.allege @A[i32]
-  %v = trait.method.call %a @A[i32]::@value() : () -> i64
+  %v = trait.method.call %a @value() : !trait.claim<@A[i32]>, () -> i64
   return %v : i64
 }
 
@@ -63,6 +63,6 @@ trait.impl private @H130(%s: !trait.claim<@H[i130]>) { trait.assoc_type @E = i32
 func.func @main() -> i64 {
   // expected-error @+1 {{overflow evaluating the requirement '!trait.claim<@A[!trait.proj<@H[i1], "E">]>': a chain of steps resolving its projections does not end within 128 steps}}
   %a = trait.allege @A[!trait.proj<@H[i1], "E">]
-  %v = trait.method.call %a @A[!trait.proj<@H[i1], "E">]::@value() : () -> i64
+  %v = trait.method.call %a @value() : !trait.claim<@A[!trait.proj<@H[i1], "E">]>, () -> i64
   return %v : i64
 }

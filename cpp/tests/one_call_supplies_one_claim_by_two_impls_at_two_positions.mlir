@@ -26,8 +26,8 @@ trait.impl private @Two(%self: !trait.claim<@Tr[i32]>) {
   }
 }
 func.func private @g(%a: !trait.claim<@Tr[!T]>, %b: !trait.claim<@Tr[!T]>) -> i64 {
-  %x = trait.method.call %a @Tr[!T]::@value() : () -> i64
-  %y = trait.method.call %b @Tr[!T]::@value() : () -> i64
+  %x = trait.method.call %a @value() : !trait.claim<@Tr[!T]>, () -> i64
+  %y = trait.method.call %b @value() : !trait.claim<@Tr[!T]>, () -> i64
   %s = arith.addi %x, %y : i64
   return %s : i64
 }

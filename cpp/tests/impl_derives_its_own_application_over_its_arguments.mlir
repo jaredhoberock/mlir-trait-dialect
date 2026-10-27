@@ -28,17 +28,17 @@ trait.impl private @B_i32(%self: !trait.claim<@B[i32]>) {
 trait.impl private @A_gen(%self: !trait.claim<@A[!T]>, %b: !trait.claim<@B[!T]>) {
   %own = trait.derive @A[!T] from @A_gen[!trait.poly<0>] given(%b) : (!trait.claim<@B[!T]>)
   trait.method @a(%x: !T) -> i64 {
-    %v = trait.method.call %b @B[!T]::@b(%x) : (!T) -> i64
+    %v = trait.method.call %b @b(%x) : !trait.claim<@B[!T]>, (!T) -> i64
     trait.return %v : i64
   }
   trait.method @twice(%x: !T) -> i64 {
-    %u = trait.method.call %own @A[!T]::@a(%x) : (!T) -> i64
+    %u = trait.method.call %own @a(%x) : !trait.claim<@A[!T]>, (!T) -> i64
     %r = arith.addi %u, %u : i64
     trait.return %r : i64
   }
   trait.method @thrice(%x: !T) -> i64 {
     %me = trait.derive @A[!T] from @A_gen[!trait.poly<0>] given(%b) : (!trait.claim<@B[!T]>)
-    %u = trait.method.call %me @A[!T]::@a(%x) : (!T) -> i64
+    %u = trait.method.call %me @a(%x) : !trait.claim<@A[!T]>, (!T) -> i64
     %v = arith.addi %u, %u : i64
     %r = arith.addi %v, %u : i64
     trait.return %r : i64
@@ -47,8 +47,8 @@ trait.impl private @A_gen(%self: !trait.claim<@A[!T]>, %b: !trait.claim<@B[!T]>)
 func.func @main() -> i64 {
   %x = arith.constant 0 : i32
   %a = trait.allege @A[i32]
-  %r = trait.method.call %a @A[i32]::@twice(%x) : (i32) -> i64
-  %s = trait.method.call %a @A[i32]::@thrice(%x) : (i32) -> i64
+  %r = trait.method.call %a @twice(%x) : !trait.claim<@A[i32]>, (i32) -> i64
+  %s = trait.method.call %a @thrice(%x) : !trait.claim<@A[i32]>, (i32) -> i64
   %t = arith.addi %r, %s : i64
   return %t : i64
 }

@@ -20,7 +20,7 @@ trait.impl private @Greet_i32(%self: !trait.claim<@Greet[i32]>) {
 
 func.func @main(%x: i32) -> i32 {
   %w = trait.allege @Greet[i32]
-  %r = trait.method.call %w @Greet[i32]::@greet(%x) : (i32) -> i32
+  %r = trait.method.call %w @greet(%x) : !trait.claim<@Greet[i32]>, (i32) -> i32
   return %r : i32
 }
 

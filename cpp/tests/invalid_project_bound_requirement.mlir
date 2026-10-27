@@ -17,6 +17,6 @@ trait.trait private @Has(%self: !trait.claim<@Has[!S]>) {
 }
 func.func private @f(%h: !trait.claim<@Has[!trait.poly<2>]>, %p: !trait.claim<@Marker[i64]>) {
   // expected-error @below {{type mismatch: expected '(!trait.claim<@Marker[i64]>) -> !trait.claim<@Marker[!trait.proj<@Has[!trait.poly<2>], "A", [i64]>]>' but found '(!trait.claim<@Marker[i64]>) -> !trait.claim<@Marker[!trait.proj<@Has[!trait.poly<2>], "A", [i1]>]>'}}
-  %m = trait.method.call %h @Has[!trait.poly<2>]::@requirement_0(%p) : (!trait.claim<@Marker[i64]>) -> !trait.claim<@Marker[!trait.proj<@Has[!trait.poly<2>], "A", [i1]>]>
+  %m = trait.method.call %h @requirement_0(%p) : !trait.claim<@Has[!trait.poly<2>]>, (!trait.claim<@Marker[i64]>) -> !trait.claim<@Marker[!trait.proj<@Has[!trait.poly<2>], "A", [i1]>]>
   return
 }

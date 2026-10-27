@@ -16,6 +16,6 @@ trait.trait private @Trait(%self: !trait.claim<@Trait[!trait.poly<0>]>) {
 func.func @f(%x: i64) -> i1 {
   %e = trait.witness refl : !trait.claim<i64 = i64>
   // expected-error @below {{receiver ('!trait.claim<i64 = i64>') must be a trait-application claim; an equality claim names no trait to call}}
-  %r = "trait.method.call"(%e, %x) <{method_ref = @Trait::@m}> : (!trait.claim<i64 = i64>, i64) -> i1
+  %r = "trait.method.call"(%e, %x) <{method_name = "m"}> : (!trait.claim<i64 = i64>, i64) -> i1
   return %r : i1
 }

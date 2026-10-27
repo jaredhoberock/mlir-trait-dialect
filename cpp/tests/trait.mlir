@@ -25,8 +25,8 @@ trait.trait private @PartialEq(%self_claim: !trait.claim<@PartialEq[!trait.poly<
   trait.method @eq(!trait.poly<0>, !trait.poly<1>) -> i1
   
   trait.method @neq(%self: !trait.poly<0>, %other: !trait.poly<1>) -> i1 {
-    %eq = trait.method.call %self_claim @PartialEq[!trait.poly<0>,!trait.poly<1>]::@eq(%self, %other)
-      : (!trait.poly<0>, !trait.poly<1>) -> i1
+    %eq = trait.method.call %self_claim @eq(%self, %other)
+      : !trait.claim<@PartialEq[!trait.poly<0>,!trait.poly<1>]>, (!trait.poly<0>, !trait.poly<1>) -> i1
 
     %true = arith.constant true
     %res = arith.xori %eq, %true : i1
@@ -47,8 +47,8 @@ trait.trait private @PartialOrd(%self_claim: !trait.claim<@PartialOrd[!trait.pol
   trait.method @partial_cmp(!trait.poly<0>, !trait.poly<1>) -> !ordering
 
   trait.method @lt(%self: !trait.poly<0>, %other: !trait.poly<1>) -> i1 {
-    %cmp = trait.method.call %self_claim @PartialOrd[!trait.poly<0>,!trait.poly<1>]::@partial_cmp(%self, %other)
-      : (!trait.poly<0>, !trait.poly<1>) -> !ordering
+    %cmp = trait.method.call %self_claim @partial_cmp(%self, %other)
+      : !trait.claim<@PartialOrd[!trait.poly<0>,!trait.poly<1>]>, (!trait.poly<0>, !trait.poly<1>) -> !ordering
 
     %res = arith.constant false
     trait.return %res : i1

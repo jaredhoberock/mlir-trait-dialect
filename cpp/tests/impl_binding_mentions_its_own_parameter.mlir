@@ -28,7 +28,7 @@ trait.impl private @I(%self: !trait.claim<@Tr[tuple<!trait.poly<0>>]>) {
 // CHECK: call @[[CLONE]]
 func.func @main(%s: tuple<i32>) -> i32 {
   %c = trait.allege @Tr[tuple<i32>]
-  %r = trait.method.call %c @Tr[tuple<i32>]::@f(%s) : (tuple<i32>) -> !trait.proj<@Tr[tuple<i32>], "X">
+  %r = trait.method.call %c @f(%s) : !trait.claim<@Tr[tuple<i32>]>, (tuple<i32>) -> !trait.proj<@Tr[tuple<i32>], "X">
   %e = trait.allege !trait.proj<@Tr[tuple<i32>], "X"> = i32
   %o = trait.coerce %r : !trait.proj<@Tr[tuple<i32>], "X"> to i32
     via (%e) : (!trait.claim<!trait.proj<@Tr[tuple<i32>], "X"> = i32>)

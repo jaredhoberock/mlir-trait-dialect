@@ -33,7 +33,7 @@ trait.trait private @PartialEq(%self: !trait.claim<@PartialEq[!S, !O]>) {
   // an optional method with a default implementation
   trait.method @ne(%x: !S, %y: !O) -> i1 {
     // call a method through the trait's own claim
-    %equal = trait.method.call %self @PartialEq[!S, !O]::@eq(%x, %y) : (!S, !O) -> i1
+    %equal = trait.method.call %self @eq(%x, %y) : !trait.claim<@PartialEq[!S, !O]>, (!S, !O) -> i1
     %true = arith.constant 1 : i1
     %res = arith.xori %equal, %true : i1
     trait.return %res : i1
@@ -53,7 +53,7 @@ trait.impl private @PartialEq_i32(%self: !trait.claim<@PartialEq[i32, i32]>) {
 //    a concrete type.
 !T = !trait.poly<2>
 func.func private @foo(%c: !trait.claim<@PartialEq[!T, !T]>, %a: !T, %b: !T) -> i1 {
-  %res = trait.method.call %c @PartialEq[!T, !T]::@ne(%a, %b) : (!T, !T) -> i1
+  %res = trait.method.call %c @ne(%a, %b) : !trait.claim<@PartialEq[!T, !T]>, (!T, !T) -> i1
   return %res : i1
 }
 

@@ -30,7 +30,7 @@ gpu.module @g {
     %w = trait.witness @T_i32 for @T[i32]
     %c = trait.coerce %w : !trait.claim<@T[i32] by @T_i32> to !trait.claim<@T[i32]>
     // expected-error @below {{'trait.method.call' op stands inside 'gpu.module', a symbol table below the module its callee is named in}}
-    %v = trait.method.call %c @T[i32]::@m() : () -> i64
+    %v = trait.method.call %c @m() : !trait.claim<@T[i32]>, () -> i64
     return %v : i64
   }
 }

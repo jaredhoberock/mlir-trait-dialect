@@ -26,6 +26,6 @@ trait.impl private @Box_i64(%self: !trait.claim<@Box[i64]>) {
 func.func @main() -> i64 {
   // expected-error @below {{proof @Box_i64 proves '!trait.claim<@Box[i64]>', which does not discharge the obligation '!trait.claim<@Box[!trait.proj<@Gen[i64], "A">]>'}}
   %w = trait.witness @Box_i64 for @Box[!trait.proj<@Gen[i64], "A">]
-  %r = trait.method.call %w @Box[!trait.proj<@Gen[i64], "A">]::@v() : () -> i64 by @Box_i64
+  %r = trait.method.call %w @v() : !trait.claim<@Box[!trait.proj<@Gen[i64], "A">] by @Box_i64>, () -> i64
   return %r : i64
 }

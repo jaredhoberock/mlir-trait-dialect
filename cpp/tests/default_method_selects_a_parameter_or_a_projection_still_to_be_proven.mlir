@@ -32,7 +32,7 @@ trait.trait private @Host(%self: !trait.claim<@Host[!T]>) {
     %w = trait.derive @Wrapped[!T] from @Wrapped_any[!trait.poly<0>] given(%p) : (!trait.claim<@Mark[!T]>)
     %m = trait.project %w[0] : !trait.claim<@Wrapped[!T]> -> !trait.claim<@Mark[!T]>
     %s = arith.select %c, %p, %m : !trait.claim<@Mark[!T]>
-    %v = trait.method.call %s @Mark[!T]::@value() : () -> i64
+    %v = trait.method.call %s @value() : !trait.claim<@Mark[!T]>, () -> i64
     trait.return %v : i64
   }
 }
@@ -40,6 +40,6 @@ trait.impl private @Host_i32(%self: !trait.claim<@Host[i32]>) {}
 func.func @main() -> i64 {
   %h = trait.witness @Host_i32 for @Host[i32]
   %p = trait.witness @Nine for @Mark[i32]
-  %v = trait.method.call %h @Host[i32]::@run(%p) : (!trait.claim<@Mark[i32] by @Nine>) -> i64 by @Host_i32
+  %v = trait.method.call %h @run(%p) : !trait.claim<@Host[i32] by @Host_i32>, (!trait.claim<@Mark[i32] by @Nine>) -> i64
   return %v : i64
 }

@@ -10,8 +10,8 @@ trait.trait private @PartialEq(%self_claim: !trait.claim<@PartialEq[!PartialEqS,
   trait.method @eq(!PartialEqS, !PartialEqO) -> i1
   
   trait.method @ne(%self: !PartialEqS, %other: !PartialEqO) -> i1 {
-    %equal = trait.method.call %self_claim @PartialEq[!PartialEqS,!PartialEqO]::@eq(%self, %other)
-      : (!PartialEqS,!PartialEqO) -> i1
+    %equal = trait.method.call %self_claim @eq(%self, %other)
+      : !trait.claim<@PartialEq[!PartialEqS,!PartialEqO]>, (!PartialEqS,!PartialEqO) -> i1
 
     %true = arith.constant 1 : i1
     %not_equal = arith.xori %equal, %true : i1
@@ -33,8 +33,8 @@ trait.impl private @PartialEq_impl_i32_i32(%self_claim: !trait.claim<@PartialEq[
 // CHECK-NOT: builtin.unrealized_conversion_cast
 // CHECK: call @PartialEq_impl_i32_i32_{{h[0-9a-f]+}}_eq
 func.func private @foo(%c: !trait.claim<@PartialEq[!T,!T]>, %x: !T, %y: !T) -> i1 {
-  %res = trait.method.call %c @PartialEq[!T,!T]::@eq(%x, %y)
-    : (!T,!T) -> i1
+  %res = trait.method.call %c @eq(%x, %y)
+    : !trait.claim<@PartialEq[!T,!T]>, (!T,!T) -> i1
   return %res : i1
 }
 
@@ -75,8 +75,8 @@ trait.trait private @PartialOrd(%self_claim: !trait.claim<@PartialOrd[!trait.pol
   trait.method @partial_cmp(!trait.poly<0>, !trait.poly<1>) -> !opt_ord
 
   trait.method @lt(%self: !trait.poly<0>, %other: !trait.poly<1>) -> i1 {
-    %cmp = trait.method.call %self_claim @PartialOrd[!trait.poly<0>,!trait.poly<1>]::@partial_cmp(%self, %other)
-      : (!trait.poly<0>,!trait.poly<1>) -> !opt_ord
+    %cmp = trait.method.call %self_claim @partial_cmp(%self, %other)
+      : !trait.claim<@PartialOrd[!trait.poly<0>,!trait.poly<1>]>, (!trait.poly<0>,!trait.poly<1>) -> !opt_ord
 
     %ord_lt = arith.constant 0 : !opt_ord
     %res = arith.cmpi eq, %cmp, %ord_lt : !opt_ord
@@ -88,19 +88,19 @@ trait.trait private @PartialOrd(%self_claim: !trait.claim<@PartialOrd[!trait.pol
       : !trait.claim<@PartialOrd[!trait.poly<0>,!trait.poly<1>]>
       -> !trait.claim<@PartialEq[!trait.poly<0>,!trait.poly<1>]>
 
-    %lt = trait.method.call %self_claim @PartialOrd[!trait.poly<0>,!trait.poly<1>]::@lt(%self, %other)
-      : (!trait.poly<0>,!trait.poly<1>) -> i1
+    %lt = trait.method.call %self_claim @lt(%self, %other)
+      : !trait.claim<@PartialOrd[!trait.poly<0>,!trait.poly<1>]>, (!trait.poly<0>,!trait.poly<1>) -> i1
 
-    %eq = trait.method.call %partial_eq @PartialEq[!trait.poly<0>,!trait.poly<1>]::@eq(%self, %other)
-      : (!trait.poly<0>,!trait.poly<1>) -> i1
+    %eq = trait.method.call %partial_eq @eq(%self, %other)
+      : !trait.claim<@PartialEq[!trait.poly<0>,!trait.poly<1>]>, (!trait.poly<0>,!trait.poly<1>) -> i1
 
     %res = arith.ori %lt, %eq : i1
     trait.return %res : i1
   }
 
   trait.method @gt(%self: !trait.poly<0>, %other: !trait.poly<1>) -> i1 {
-    %cmp = trait.method.call %self_claim @PartialOrd[!trait.poly<0>,!trait.poly<1>]::@partial_cmp(%self, %other)
-      : (!trait.poly<0>,!trait.poly<1>) -> !opt_ord
+    %cmp = trait.method.call %self_claim @partial_cmp(%self, %other)
+      : !trait.claim<@PartialOrd[!trait.poly<0>,!trait.poly<1>]>, (!trait.poly<0>,!trait.poly<1>) -> !opt_ord
 
     %ord_gt = arith.constant 2 : !opt_ord
     %res = arith.cmpi eq, %cmp, %ord_gt : !opt_ord
@@ -112,11 +112,11 @@ trait.trait private @PartialOrd(%self_claim: !trait.claim<@PartialOrd[!trait.pol
       : !trait.claim<@PartialOrd[!trait.poly<0>,!trait.poly<1>]>
       -> !trait.claim<@PartialEq[!trait.poly<0>,!trait.poly<1>]>
 
-    %gt = trait.method.call %self_claim @PartialOrd[!trait.poly<0>,!trait.poly<1>]::@gt(%self, %other)
-      : (!trait.poly<0>,!trait.poly<1>) -> i1
+    %gt = trait.method.call %self_claim @gt(%self, %other)
+      : !trait.claim<@PartialOrd[!trait.poly<0>,!trait.poly<1>]>, (!trait.poly<0>,!trait.poly<1>) -> i1
 
-    %eq = trait.method.call %partial_eq @PartialEq[!trait.poly<0>,!trait.poly<1>]::@eq(%self, %other)
-      : (!trait.poly<0>,!trait.poly<1>) -> i1
+    %eq = trait.method.call %partial_eq @eq(%self, %other)
+      : !trait.claim<@PartialEq[!trait.poly<0>,!trait.poly<1>]>, (!trait.poly<0>,!trait.poly<1>) -> i1
 
     %res = arith.ori %gt, %eq : i1
     trait.return %res : i1
@@ -156,8 +156,8 @@ trait.trait private @Ord(%self_claim: !trait.claim<@Ord[!trait.poly<0>]>) -> (!t
       : !trait.claim<@Ord[!trait.poly<0>]>
       -> !trait.claim<@PartialOrd[!trait.poly<0>,!trait.poly<0>]>
 
-    %cond = trait.method.call %partial_ord @PartialOrd[!trait.poly<0>,!trait.poly<0>]::@gt(%self, %other)
-      : (!trait.poly<0>,!trait.poly<0>) -> i1
+    %cond = trait.method.call %partial_ord @gt(%self, %other)
+      : !trait.claim<@PartialOrd[!trait.poly<0>,!trait.poly<0>]>, (!trait.poly<0>,!trait.poly<0>) -> i1
 
     %res = scf.if %cond -> !trait.poly<0> {
       scf.yield %self : !trait.poly<0>
@@ -173,8 +173,8 @@ trait.trait private @Ord(%self_claim: !trait.claim<@Ord[!trait.poly<0>]>) -> (!t
       : !trait.claim<@Ord[!trait.poly<0>]>
       -> !trait.claim<@PartialOrd[!trait.poly<0>,!trait.poly<0>]>
 
-    %cond = trait.method.call %partial_ord @PartialOrd[!trait.poly<0>,!trait.poly<0>]::@le(%self, %other)
-      : (!trait.poly<0>,!trait.poly<0>) -> i1
+    %cond = trait.method.call %partial_ord @le(%self, %other)
+      : !trait.claim<@PartialOrd[!trait.poly<0>,!trait.poly<0>]>, (!trait.poly<0>,!trait.poly<0>) -> i1
 
     %res = scf.if %cond -> !trait.poly<0> {
       scf.yield %self: !trait.poly<0>
@@ -211,8 +211,8 @@ trait.impl private @Ord_impl_i32(%self: !trait.claim<@Ord[i32]>) {
 // CHECK: call @Ord_{{h[0-9a-f]+}}_max
 func.func @max(%a: i32, %b: i32) -> i32 {
   %ord = trait.allege @Ord[i32]
-  %res = trait.method.call %ord @Ord[i32]::@max(%a, %b)
-    : (i32,i32) -> i32
+  %res = trait.method.call %ord @max(%a, %b)
+    : !trait.claim<@Ord[i32]>, (i32,i32) -> i32
   return %res : i32
 }
 
@@ -222,7 +222,7 @@ func.func @max(%a: i32, %b: i32) -> i32 {
 // CHECK: call @Ord_{{h[0-9a-f]+}}_min
 func.func @min(%a: i32, %b: i32) -> i32 {
   %ord = trait.allege @Ord[i32]
-  %res = trait.method.call %ord @Ord[i32]::@min(%a, %b)
-    : (i32,i32) -> i32
+  %res = trait.method.call %ord @min(%a, %b)
+    : !trait.claim<@Ord[i32]>, (i32,i32) -> i32
   return %res : i32
 }

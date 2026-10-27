@@ -31,7 +31,7 @@ trait.impl private @Two(%self: !trait.claim<@Bound[i64]>) {
 trait.trait private @Need(%self: !trait.claim<@Need[!S]>) { trait.method @get() -> i64 }
 trait.impl private @Need_from(%self: !trait.claim<@Need[!S]>, %b: !trait.claim<@Bound[!S]>) {
   trait.method @get() -> i64 {
-    %v = trait.method.call %b @Bound[!S]::@value() : () -> i64
+    %v = trait.method.call %b @value() : !trait.claim<@Bound[!S]>, () -> i64
     trait.return %v : i64
   }
 }
@@ -44,7 +44,7 @@ func.func private @pick(%flag: i1) -> i64 {
   %b2 = trait.witness @Two for @Bound[i64]
   %d2 = trait.derive @Need[i64] from @Need_from[i64] given(%b2) : (!trait.claim<@Bound[i64] by @Two>)
   %r = arith.select %flag, %d1, %d2 : !trait.claim<@Need[i64]>
-  %v = trait.method.call %r @Need[i64]::@get() : () -> i64
+  %v = trait.method.call %r @get() : !trait.claim<@Need[i64]>, () -> i64
   return %v : i64
 }
 func.func private @pick_projected(%flag: i1) -> i64 {
@@ -57,7 +57,7 @@ func.func private @pick_projected(%flag: i1) -> i64 {
   %c2 = trait.coerce %b2 : !trait.claim<@Bound[i64] by @Two> to !trait.claim<@Bound[!P]> via (%eq2) : (!trait.claim<!P = i64>)
   %d2 = trait.derive @Need[!P] from @Need_from[!P] given(%c2) : (!trait.claim<@Bound[!P]>)
   %r = arith.select %flag, %d1, %d2 : !trait.claim<@Need[!P]>
-  %v = trait.method.call %r @Need[!P]::@get() : () -> i64
+  %v = trait.method.call %r @get() : !trait.claim<@Need[!P]>, () -> i64
   return %v : i64
 }
 func.func @plain() -> i64 {

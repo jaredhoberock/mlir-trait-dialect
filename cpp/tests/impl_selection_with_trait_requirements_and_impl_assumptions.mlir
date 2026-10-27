@@ -38,8 +38,8 @@ trait.impl private @C_impl(%self: !trait.claim<@C[!trait.poly<0>]>, %b: !trait.c
 func.func @foo(%x: i8) -> i1 {
   // CHECK: trait.witness @C_impl_{{.*}}_p for @C[i8]
   %c = trait.allege @C[i8]
-  %res = trait.method.call %c @C[i8]::@method(%x)
-    : (i8) -> i1
+  %res = trait.method.call %c @method(%x)
+    : !trait.claim<@C[i8]>, (i8) -> i1
   return %res : i1
 }
 

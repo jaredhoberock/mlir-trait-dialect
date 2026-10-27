@@ -14,7 +14,7 @@
 trait.trait private @Tr(%self: !trait.claim<@Tr[!T]>) {
   trait.method @required(!T) -> i64
   trait.method @default(%x: !T) -> i64 {
-    %r = trait.method.call %self @Tr[!T]::@required(%x) : (!T) -> i64
+    %r = trait.method.call %self @required(%x) : !trait.claim<@Tr[!T]>, (!T) -> i64
     trait.return %r : i64
   }
 }

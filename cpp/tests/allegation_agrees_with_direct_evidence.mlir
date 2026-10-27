@@ -27,7 +27,7 @@ trait.impl private @T_i32(%self: !trait.claim<@T[i32]>) {
 }
 
 func.func private @g(%c: !trait.claim<@T[!S]>, %x: !S) -> !trait.proj<@T[!S], "Out"> {
-  %r = trait.method.call %c @T[!S]::@m(%x) : (!S) -> !trait.proj<@T[!S], "Out">
+  %r = trait.method.call %c @m(%x) : !trait.claim<@T[!S]>, (!S) -> !trait.proj<@T[!S], "Out">
   return %r : !trait.proj<@T[!S], "Out">
 }
 
@@ -79,7 +79,7 @@ trait.impl private @T_i32(%self: !trait.claim<@T[i32]>) {
 }
 
 func.func private @g(%c: !trait.claim<@T[!S]>, %x: !S) -> !trait.proj<@T[!S], "Out"> {
-  %r = trait.method.call %c @T[!S]::@m(%x) : (!S) -> !trait.proj<@T[!S], "Out">
+  %r = trait.method.call %c @m(%x) : !trait.claim<@T[!S]>, (!S) -> !trait.proj<@T[!S], "Out">
   return %r : !trait.proj<@T[!S], "Out">
 }
 
@@ -133,7 +133,7 @@ trait.impl private @Chosen(%self: !trait.claim<@T[i32]>) {
 }
 
 func.func private @g(%c: !trait.claim<@T[!S]>, %x: !S) -> !trait.proj<@T[!S], "Out"> {
-  %r = trait.method.call %c @T[!S]::@m(%x) : (!S) -> !trait.proj<@T[!S], "Out">
+  %r = trait.method.call %c @m(%x) : !trait.claim<@T[!S]>, (!S) -> !trait.proj<@T[!S], "Out">
   return %r : !trait.proj<@T[!S], "Out">
 }
 

@@ -34,8 +34,8 @@ trait.impl private @FoldFn_gen(%self: !trait.claim<@FoldFn[!S]>, %out: !trait.cl
 
 func.func @main(%pv: !trait.proj<@Out[i32], "Output">) -> i32 {
   %c = trait.allege @FoldFn[i32]
-  %r = trait.method.call %c @FoldFn[i32]::@run(%pv)
-    : (!trait.proj<@Out[i32], "Output">) -> i32
+  %r = trait.method.call %c @run(%pv)
+    : !trait.claim<@FoldFn[i32]>, (!trait.proj<@Out[i32], "Output">) -> i32
   return %r : i32
 }
 

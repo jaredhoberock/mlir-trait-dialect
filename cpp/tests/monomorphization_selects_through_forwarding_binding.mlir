@@ -41,6 +41,6 @@ trait.impl private @Get_blanket(%self: !trait.claim<@Get[!trait.poly<0>, !trait.
 // CHECK: call @Get_blanket
 func.func @forwarded() {
   %c = trait.allege @Get[f32, !trait.proj<@Ten[f32], "Element">]
-  trait.method.call %c @Get[f32, !trait.proj<@Ten[f32], "Element">]::@use() : () -> ()
+  trait.method.call %c @use() : !trait.claim<@Get[f32, !trait.proj<@Ten[f32], "Element">]>, () -> ()
   return
 }

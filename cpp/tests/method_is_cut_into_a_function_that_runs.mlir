@@ -34,7 +34,7 @@
 trait.trait private @Tr(%self: !trait.claim<@Tr[!T]>) {
   trait.method @pick(!T) -> i64
   trait.method @twice(%x: !T) -> i64 {
-    %p = trait.method.call %self @Tr[!T]::@pick(%x) : (!T) -> i64
+    %p = trait.method.call %self @pick(%x) : !trait.claim<@Tr[!T]>, (!T) -> i64
     %r = arith.addi %p, %p : i64
     trait.return %r : i64
   }
@@ -63,9 +63,9 @@ func.func @main() -> i64 {
   %minus5 = arith.constant -5 : i64
   %five = arith.constant 5 : i64
   %four = arith.constant 4 : i64
-  %a = trait.method.call %w @Tr[i64]::@pick(%minus5) : (i64) -> i64
-  %b = trait.method.call %w @Tr[i64]::@pick(%five) : (i64) -> i64
-  %c = trait.method.call %w @Tr[i64]::@twice(%four) : (i64) -> i64
+  %a = trait.method.call %w @pick(%minus5) : !trait.claim<@Tr[i64]>, (i64) -> i64
+  %b = trait.method.call %w @pick(%five) : !trait.claim<@Tr[i64]>, (i64) -> i64
+  %c = trait.method.call %w @twice(%four) : !trait.claim<@Tr[i64]>, (i64) -> i64
   %hundred = arith.constant 100 : i64
   %ten = arith.constant 10 : i64
   %a100 = arith.muli %a, %hundred : i64

@@ -33,7 +33,7 @@ trait.proof private @p {
 }
 func.func @main() -> i64 {
   %w = trait.witness @p for @Vector[i8]
-  %r = trait.method.call %w @Vector[i8]::@v() : () -> i64 by @p
+  %r = trait.method.call %w @v() : !trait.claim<@Vector[i8] by @p>, () -> i64
   return %r : i64
 }
 

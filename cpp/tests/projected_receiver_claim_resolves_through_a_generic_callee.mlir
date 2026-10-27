@@ -24,8 +24,8 @@ func.func private @callee(%t: !trait.poly<0>,
   %eq = trait.allege !trait.proj<@Outer[i64], "Item"> = i64
   %px = trait.coerce %x : i64 to !trait.proj<@Outer[i64], "Item">
     via (%eq) : (!trait.claim<!trait.proj<@Outer[i64], "Item"> = i64>)
-  %result = trait.method.call %claim @Trait[!trait.poly<0>, !trait.proj<@Outer[i64], "Item">]::@method(%t, %px)
-    : (!trait.poly<0>, !trait.proj<@Outer[i64], "Item">) -> i64
+  %result = trait.method.call %claim @method(%t, %px)
+    : !trait.claim<@Trait[!trait.poly<0>, !trait.proj<@Outer[i64], "Item">]>, (!trait.poly<0>, !trait.proj<@Outer[i64], "Item">) -> i64
   return %result : i64
 }
 

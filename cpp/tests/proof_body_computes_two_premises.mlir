@@ -35,8 +35,8 @@ trait.impl private @B_i64(%self: !trait.claim<@B[i64]>) {
 }
 trait.impl private @A_pair(%self: !trait.claim<@A[tuple<!P, !Q>]>, %p: !trait.claim<@B[!P]>, %q: !trait.claim<@B[!Q]>) {
   trait.method @a() -> i64 {
-    %x = trait.method.call %p @B[!P]::@b() : () -> i64
-    %y = trait.method.call %q @B[!Q]::@b() : () -> i64
+    %x = trait.method.call %p @b() : !trait.claim<@B[!P]>, () -> i64
+    %y = trait.method.call %q @b() : !trait.claim<@B[!Q]>, () -> i64
     %r = arith.addi %x, %y : i64
     trait.return %r : i64
   }
@@ -49,6 +49,6 @@ trait.proof private @pair {
 }
 func.func @main() -> i64 {
   %w = trait.witness @pair for @A[tuple<i32, i64>]
-  %r = trait.method.call %w @A[tuple<i32, i64>]::@a() : () -> i64 by @pair
+  %r = trait.method.call %w @a() : !trait.claim<@A[tuple<i32, i64>] by @pair>, () -> i64
   return %r : i64
 }

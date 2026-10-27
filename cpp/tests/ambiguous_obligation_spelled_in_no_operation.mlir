@@ -54,6 +54,6 @@ trait.proof private @forged {
 func.func @main() -> i64 {
   %w = trait.witness @forged for @B[i32]
   %a = trait.project %w[0] : !trait.claim<@B[i32] by @forged> -> !trait.claim<@A[!trait.proj<@Foo[i32], "Out">]>
-  %r = trait.method.call %a @A[!trait.proj<@Foo[i32], "Out">]::@a() : () -> i64
+  %r = trait.method.call %a @a() : !trait.claim<@A[!trait.proj<@Foo[i32], "Out">]>, () -> i64
   return %r : i64
 }

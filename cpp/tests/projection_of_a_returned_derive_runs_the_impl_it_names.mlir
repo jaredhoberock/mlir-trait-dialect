@@ -29,7 +29,7 @@ trait.impl private @B_y(%self: !trait.claim<@B[i64]>) {
 }
 trait.impl private @C_via_B(%self: !trait.claim<@C[!T]>, %b: !trait.claim<@B[!T]>) {
   trait.method @c() -> i64 {
-    %v = trait.method.call %b @B[!T]::@b() : () -> i64
+    %v = trait.method.call %b @b() : !trait.claim<@B[!T]>, () -> i64
     trait.return %v : i64
   }
 }
@@ -51,6 +51,6 @@ trait.proof private @PA {
 func.func @main() -> i64 {
   %a = trait.witness @PA for @A[i64]
   %c = trait.project %a[0] : !trait.claim<@A[i64] by @PA> -> !trait.claim<@C[i64]>
-  %v = trait.method.call %c @C[i64]::@c() : () -> i64
+  %v = trait.method.call %c @c() : !trait.claim<@C[i64]>, () -> i64
   return %v : i64
 }

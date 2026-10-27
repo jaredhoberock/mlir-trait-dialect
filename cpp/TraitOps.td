@@ -406,7 +406,7 @@ def ImplOp : TraitDialectOp<"impl", [
     trait.impl private @Into_impl(%self: !trait.claim<@Into[!T, !U]>,
                                   %from: !trait.claim<@From[!U, !T]>) {
       trait.method @into(%x: !T) -> !U {
-        %0 = trait.method.call %from @From[!U, !T]::@from(%x) : (!T) -> !U
+        %0 = trait.method.call %from @from(%x) : !trait.claim<@From[!U, !T]>, (!T) -> !U
         trait.return %0 : !U
       }
     }
@@ -733,8 +733,8 @@ def MethodOp : TraitDialectOp<"method", [
     trait.trait private @PartialEq(%self: !trait.claim<@PartialEq[!S, !O]>) {
       trait.method @eq(!S, !O) -> i1
       trait.method @ne(%a: !S, %b: !O) -> i1 {
-        %eq = trait.method.call %self @PartialEq[!S, !O]::@eq(%a, %b)
-          : (!S, !O) -> i1
+        %eq = trait.method.call %self @eq(%a, %b)
+          : !trait.claim<@PartialEq[!S, !O]>, (!S, !O) -> i1
         %true = arith.constant 1 : i1
         %res = arith.xori %eq, %true : i1
         trait.return %res : i1
@@ -1326,12 +1326,14 @@ def MethodCallOp : TraitDialectOp<"method.call", [
     Calls a method from a trait. This can appear in either polymorphic or monomorphic code.
     Resolution to an implementation is performed during monomorphization.
 
-    The call spells its method, its receiver claim, its arguments and its
+    The call names its method, its receiver claim, its arguments and its
     results, and says nothing about the method's type variables: the instance it
-    wants is read off those types against the method's declaration. The trait's
-    arguments ride in the receiver claim's application, the method's own
-    variables stand in the argument and result positions, and a variable no
-    position determines is refused.
+    wants is read off those types against the method's declaration. The trait is
+    the one the receiver claim's application names, and the method is named
+    inside that trait, so the method's name is not a symbol reference of the
+    enclosing symbol table. The trait's arguments ride in the receiver claim's
+    application, the method's own variables stand in the argument and result
+    positions, and a variable no position determines is refused.
 
     Example:
       %x = ... : i32
@@ -1341,20 +1343,20 @@ def MethodCallOp : TraitDialectOp<"method.call", [
       %partial_eq = trait.allege : @PartialEq[i32,i32]
 
       // call @eq using that unproven claim
-      %res0 = trait.method.call %partial_eq @PartialEq[i32,i32]::@eq(%x, %y)
-        : (i32, i32) -> i1
+      %res0 = trait.method.call %partial_eq @eq(%x, %y)
+        : !trait.claim<@PartialEq[i32,i32]>, (i32, i32) -> i1
 
       // get a proven claim value for @PartialEq[i32,i32]
       %partial_eq_p = trait.witness @PartialEq_impl_i32_i32 for @PartialEq[i32,i32]
 
       // call @eq using that proven claim
-      %res1 = trait.method.call %partial_eq_p @PartialEq[i32,i32]::@eq(%x, %y)
-        : (i32, i32) -> i1
-        by @PartialEq_impl_i32_i32
+      %res1 = trait.method.call %partial_eq_p @eq(%x, %y)
+        : !trait.claim<@PartialEq[i32,i32] by @PartialEq_impl_i32_i32>, (i32, i32) -> i1
   }];
 
   let arguments = (ins
-    SymbolRefAttr:$method_ref,
+    // The method's name inside the trait the receiver claim names.
+    StrAttr:$method_name,
     // The receiver must be an application claim -- a method call names its trait
     // through it -- and the verifier checks the arm so an equality receiver is
     // diagnosed at its operand.
@@ -1362,46 +1364,7 @@ def MethodCallOp : TraitDialectOp<"method.call", [
     Variadic<AnyType>:$arguments
   );
 
-  // custom builders
-  let builders = [
-    // builder that takes trait and method as FlatSymbolRefAttrs
-    OpBuilder<(ins
-      "TypeRange":$results,
-      "FlatSymbolRefAttr":$traitRef,
-      "FlatSymbolRefAttr":$methodRef,
-      "Value":$claim,
-      "ValueRange":$arguments), [{
-        MLIRContext *ctx = $_builder.getContext();
-
-        // create the nested SymbolRefAttr
-        SymbolRefAttr qualifiedRef = SymbolRefAttr::get(
-          ctx,
-          traitRef.getValue(),
-          methodRef
-        );
-
-        // build the operation with the created nested reference
-        return build($_builder, $_state, results, qualifiedRef, claim, arguments);
-    }]>,
-
-    // builder that takes trait and method names separately
-    OpBuilder<(ins
-      "TypeRange":$results,
-      "StringRef":$traitName,
-      "StringRef":$methodName,
-      "Value":$claim,
-      "ValueRange":$arguments), [{
-        // convert strings to FlatSymbolRefAttrs and call the other builder
-        MLIRContext *ctx = $_builder.getContext();
-        FlatSymbolRefAttr traitRef = FlatSymbolRefAttr::get(ctx, traitName);
-        FlatSymbolRefAttr methodRef = FlatSymbolRefAttr::get(ctx, methodName);
-
-        // call the other builder
-        return build($_builder, $_state, results, traitRef, methodRef, claim, arguments);
-    }]>,
-  ];
-
-  let results = (outs Variadic<AnyType>);
+let results = (outs Variadic<AnyType>);
 
   let extraClassDeclaration = [{
     FailureOr<TraitOp> getTrait(llvm::function_ref<InFlightDiagnostic()> err = nullptr);
@@ -1447,28 +1410,6 @@ def MethodCallOp : TraitDialectOp<"method.call", [
 
     TraitApplicationAttr getTraitApplication() {
       return getClaimType().getTraitApplication();
-    }
-
-    FlatSymbolRefAttr getTraitAttr() {
-      return FlatSymbolRefAttr::get(
-        getContext(),
-        getMethodRef().getRootReference().getValue()
-      );
-    }
-
-    FlatSymbolRefAttr getMethodAttr() {
-      auto methodRef = getMethodRef();
-      if (methodRef.getNestedReferences().empty()) {
-        emitOpError() << "expected nested symbol reference with @trait::@method format";
-        return nullptr;
-      }
-      return cast<FlatSymbolRefAttr>(getMethodRef().getNestedReferences().front());
-    }
-
-    StringRef getMethodName() {
-      assert(!getMethodRef().getNestedReferences().empty() &&
-             "Expected nested method reference");
-      return cast<FlatSymbolRefAttr>(getMethodRef().getNestedReferences().front()).getValue();
     }
 
     ImplOp getProvenImpl();

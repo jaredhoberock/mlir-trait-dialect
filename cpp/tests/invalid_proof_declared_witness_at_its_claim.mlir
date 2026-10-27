@@ -43,7 +43,7 @@ trait.proof private @Foo_i64_p {
 }
 func.func @main(%x: i64) -> i1 {
   %w = trait.witness @Foo_i64_p for @Foo[i64]
-  %r = trait.method.call %w @Foo[i64]::@f(%x) : (i64) -> !trait.proj<@S[i64], "Out"> by @Foo_i64_p
+  %r = trait.method.call %w @f(%x) : !trait.claim<@Foo[i64] by @Foo_i64_p>, (i64) -> !trait.proj<@S[i64], "Out">
   %m = trait.witness proj_resolve !trait.proj<@Marker[i64], "M"> resolves i1 by @Marker_i64 : !trait.claim<!trait.proj<@Marker[i64], "M"> = i1>
   %e = trait.witness proj_resolve !trait.proj<@S[i64], "Out"> resolves i1 by @S_i64[i1] given(%m) : (!trait.claim<!trait.proj<@Marker[i64], "M"> = i1>)
     : !trait.claim<!trait.proj<@S[i64], "Out"> = i1>

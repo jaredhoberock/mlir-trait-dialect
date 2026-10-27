@@ -42,8 +42,8 @@ trait.impl private @Host_i32(%self: !trait.claim<@Host[i32]>) {
   trait.method @run(%w: !trait.claim<@Wrapped[i32]>) -> i64 {
     %r = trait.project %self[0] : !trait.claim<@Host[i32]> -> !trait.claim<@Mark[i32]>
     %m = trait.project %w[0] : !trait.claim<@Wrapped[i32]> -> !trait.claim<@Mark[i32]>
-    %a = trait.method.call %r @Mark[i32]::@value() : () -> i64
-    %b = trait.method.call %m @Mark[i32]::@value() : () -> i64
+    %a = trait.method.call %r @value() : !trait.claim<@Mark[i32]>, () -> i64
+    %b = trait.method.call %m @value() : !trait.claim<@Mark[i32]>, () -> i64
     %ten = arith.constant 10 : i64
     %tens = arith.muli %a, %ten : i64
     %sum = arith.addi %tens, %b : i64
@@ -59,6 +59,6 @@ trait.proof private @H {
 func.func @main() -> i64 {
   %h = trait.witness @H for @Host[i32]
   %w = trait.witness @W for @Wrapped[i32]
-  %v = trait.method.call %h @Host[i32]::@run(%w) : (!trait.claim<@Wrapped[i32] by @W>) -> i64 by @H
+  %v = trait.method.call %h @run(%w) : !trait.claim<@Host[i32] by @H>, (!trait.claim<@Wrapped[i32] by @W>) -> i64
   return %v : i64
 }

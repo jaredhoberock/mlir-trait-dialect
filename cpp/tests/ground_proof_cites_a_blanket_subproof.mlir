@@ -18,7 +18,7 @@ trait.impl private @A2_blanket(%self: !trait.claim<@A2[!trait.poly<0>, !trait.po
 trait.impl private @B2_i32(%self: !trait.claim<@B2[i32, i32]>) {
   trait.method @b() -> i64 {
     %a = trait.project %self[0] : !trait.claim<@B2[i32, i32]> -> !trait.claim<@A2[i32, i32]>
-    %r = trait.method.call %a @A2[i32, i32]::@a() : () -> i64
+    %r = trait.method.call %a @a() : !trait.claim<@A2[i32, i32]>, () -> i64
     trait.return %r : i64
   }
   %req0 = trait.allege @A2[i32, i32]
@@ -42,6 +42,6 @@ trait.proof private @pb {
 // CHECK-NOT: trait.
 func.func @main() -> i64 {
   %w = trait.witness @pb for @B2[i32, i32]
-  %r = trait.method.call %w @B2[i32, i32]::@b() : () -> i64 by @pb
+  %r = trait.method.call %w @b() : !trait.claim<@B2[i32, i32] by @pb>, () -> i64
   return %r : i64
 }

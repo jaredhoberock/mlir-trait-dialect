@@ -15,8 +15,8 @@
 // ROUNDTRIP-NEXT:   trait.assoc_type @A<[!trait.poly<1>]>
 // ROUNDTRIP-NEXT:   trait.method @requirement_0(!trait.claim<@Marker[!trait.poly<1>]>) -> !trait.claim<@Marker[!trait.proj<@Has[!trait.poly<0>], "A", [!trait.poly<1>]>]>
 // ROUNDTRIP-NEXT: }
-// ROUNDTRIP:      trait.method.call %{{.*}} @Has[i32]::@requirement_0(%{{.*}})
-// ROUNDTRIP-NEXT:   : (!trait.claim<@Marker[i64] by @Marker_i64>) -> !trait.claim<@Marker[!trait.proj<@Has[i32], "A", [i64]>]>
+// ROUNDTRIP:      trait.method.call %{{.*}} @requirement_0(%{{.*}})
+// ROUNDTRIP-NEXT:   : !trait.claim<@Has[i32] by @Has_i32>, (!trait.claim<@Marker[i64] by @Marker_i64>) -> !trait.claim<@Marker[!trait.proj<@Has[i32], "A", [i64]>]>
 
 // CHECK: {{^}}42{{$}}
 
@@ -47,7 +47,7 @@ func.func @main() -> i64 {
   %x = arith.constant 41 : i64
   %has = trait.witness @Has_i32 for @Has[i32]
   %m = trait.witness @Marker_i64 for @Marker[i64]
-  %ev = trait.method.call %has @Has[i32]::@requirement_0(%m) : (!trait.claim<@Marker[i64] by @Marker_i64>) -> !trait.claim<@Marker[!trait.proj<@Has[i32], "A", [i64]>]> by @Has_i32
-  %r = trait.method.call %ev @Marker[!trait.proj<@Has[i32], "A", [i64]>]::@mark(%x) : (i64) -> i64
+  %ev = trait.method.call %has @requirement_0(%m) : !trait.claim<@Has[i32] by @Has_i32>, (!trait.claim<@Marker[i64] by @Marker_i64>) -> !trait.claim<@Marker[!trait.proj<@Has[i32], "A", [i64]>]>
+  %r = trait.method.call %ev @mark(%x) : !trait.claim<@Marker[!trait.proj<@Has[i32], "A", [i64]>]>, (i64) -> i64
   return %r : i64
 }

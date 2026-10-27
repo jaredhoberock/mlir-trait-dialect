@@ -44,6 +44,6 @@ trait.proof private @PW {
 func.func @main() -> i64 {
   %p = trait.witness @P2 for @Trait[i32]
   %d = trait.derive @Other[i32] from @W[i32] given(%p) : (!trait.claim<@Trait[i32] by @P2>)
-  %v = trait.method.call %d @Other[i32]::@method() : () -> i64
+  %v = trait.method.call %d @method() : !trait.claim<@Other[i32]>, () -> i64
   return %v : i64
 }

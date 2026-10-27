@@ -19,6 +19,6 @@ trait.impl private @I(%s: !trait.claim<@A[!trait.proj<@H[i32], "E">]>) { trait.m
 trait.impl private @I2(%s: !trait.claim<@A[i64]>) { trait.method @value() -> i64 { %c = arith.constant 9 : i64 trait.return %c : i64 } }
 func.func @main() -> i64 {
   %a = trait.allege @A[i64]
-  %v = trait.method.call %a @A[i64]::@value() : () -> i64
+  %v = trait.method.call %a @value() : !trait.claim<@A[i64]>, () -> i64
   return %v : i64
 }

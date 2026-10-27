@@ -30,7 +30,7 @@ trait.impl private @C_i32(%self: !trait.claim<@C[i32]>) {
 func.func @main() -> i64 {
   %a = trait.witness @A_i32 for @A[i32]
   %b = trait.project %a[0] : !trait.claim<@A[i32] by @A_i32> -> !trait.claim<@B[i32]>
-  %v = trait.method.call %b @B[i32]::@v() : () -> i64
+  %v = trait.method.call %b @v() : !trait.claim<@B[i32]>, () -> i64
   return %v : i64
 }
 
@@ -79,7 +79,7 @@ trait.impl private @C_i32(%self: !trait.claim<@C[i32]>) {
 }
 func.func private @callee(%c: !trait.claim<@A[!T]>) -> i64 {
   %b = trait.project %c[0] : !trait.claim<@A[!T]> -> !trait.claim<@B[!T]>
-  %v = trait.method.call %b @B[!T]::@v() : () -> i64
+  %v = trait.method.call %b @v() : !trait.claim<@B[!T]>, () -> i64
   return %v : i64
 }
 func.func @main() -> i64 {
@@ -155,7 +155,7 @@ trait.proof private @PC {
 func.func @main() -> i64 {
   %a = trait.witness @PA for @A[i32]
   %b = trait.project %a[0] : !trait.claim<@A[i32] by @PA> -> !trait.claim<@B[i32]>
-  %v = trait.method.call %b @B[i32]::@v() : () -> i64
+  %v = trait.method.call %b @v() : !trait.claim<@B[i32]>, () -> i64
   return %v : i64
 }
 
@@ -186,7 +186,7 @@ trait.impl private @X(%s: !trait.claim<@A[i32]>) {
 func.func @main() -> i64 {
   %a = trait.witness @X for @A[i32]
   %b = trait.project %a[0] : !trait.claim<@A[i32] by @X> -> !trait.claim<@B[i32]>
-  %v = trait.method.call %b @B[i32]::@v() : () -> i64
+  %v = trait.method.call %b @v() : !trait.claim<@B[i32]>, () -> i64
   return %v : i64
 }
 
@@ -208,6 +208,6 @@ trait.impl private @I130(%s: !trait.claim<@A[i130,i32]>) { %b = trait.witness @B
 func.func @main() -> i64 {
   %a = trait.witness @I1 for @A[i1,i32]
   %b = trait.project %a[0] : !trait.claim<@A[i1,i32] by @I1> -> !trait.claim<@B[i32]>
-  %v = trait.method.call %b @B[i32]::@v() : () -> i64
+  %v = trait.method.call %b @v() : !trait.claim<@B[i32]>, () -> i64
   return %v : i64
 }

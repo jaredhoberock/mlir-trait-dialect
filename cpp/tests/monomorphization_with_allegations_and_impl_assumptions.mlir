@@ -35,8 +35,8 @@ trait.impl private @B_impl_i8(%self: !trait.claim<@B[i8]>) {
 // CHECK-NOT: trait.impl private @A_impl_poly
 trait.impl private @A_impl_poly(%self: !trait.claim<@A[!trait.poly<0>]>, %b_1: !trait.claim<@B[!trait.poly<0>]>) {
   trait.method @method_a(%arg0: !trait.poly<0>) -> i32 {
-    %res = trait.method.call %b_1 @B[!trait.poly<0>]::@method_b(%arg0)
-      : (!trait.poly<0>) -> i32
+    %res = trait.method.call %b_1 @method_b(%arg0)
+      : !trait.claim<@B[!trait.poly<0>]>, (!trait.poly<0>) -> i32
     trait.return %res : i32
   }
 }
@@ -49,13 +49,13 @@ func.func @test() -> i32 {
 
   %a_i32 = trait.allege @A[i32]
   // CHECK: call @A_impl_poly_{{.*}}_method_a
-  %res0 = trait.method.call %a_i32 @A[i32]::@method_a(%c42_i32)
-    : (i32) -> i32
+  %res0 = trait.method.call %a_i32 @method_a(%c42_i32)
+    : !trait.claim<@A[i32]>, (i32) -> i32
 
   %a_i8 = trait.allege @A[i8]
   // CHECK: call @A_impl_poly_{{.*}}_method_a
-  %res1 = trait.method.call %a_i8 @A[i8]::@method_a(%c7_i8)
-    : (i8) -> i32
+  %res1 = trait.method.call %a_i8 @method_a(%c7_i8)
+    : !trait.claim<@A[i8]>, (i8) -> i32
 
   %res = arith.addi %res0, %res1 : i32
   return %res : i32

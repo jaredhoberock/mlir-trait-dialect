@@ -27,7 +27,7 @@ trait.impl private @Two(%self: !trait.claim<@Bound[i64]>) {
 trait.trait private @Need(%self: !trait.claim<@Need[!S]>) { trait.method @get() -> i64 }
 trait.impl private @Need_from(%self: !trait.claim<@Need[!S]>, %b: !trait.claim<@Bound[!S]>) {
   trait.method @get() -> i64 {
-    %v = trait.method.call %b @Bound[!S]::@value() : () -> i64
+    %v = trait.method.call %b @value() : !trait.claim<@Bound[!S]>, () -> i64
     trait.return %v : i64
   }
 }
@@ -46,7 +46,7 @@ func.func private @pick(%flag: i1) -> i64 {
   // expected-error @+2 {{unproven monomorphic claim '!trait.claim<@Need[!trait.proj<@Trait[i64], "Output">]>' after instantiate-monomorphs}}
   // expected-note-re @+1 {{control flow joins it from '!trait.claim<@Need[!trait.proj<@Trait[i64], "Output">] by @{{.*}}' and '!trait.claim<@Need[!trait.proj<@Trait[i64], "Output">] by @{{.*}}'}}
   %r = arith.select %flag, %d1, %d2 : !trait.claim<@Need[!P]>
-  %v = trait.method.call %r @Need[!P]::@get() : () -> i64
+  %v = trait.method.call %r @get() : !trait.claim<@Need[!P]>, () -> i64
   return %v : i64
 }
 func.func @main() -> i64 {

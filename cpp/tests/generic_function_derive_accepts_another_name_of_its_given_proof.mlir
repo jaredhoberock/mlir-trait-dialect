@@ -21,7 +21,7 @@ trait.impl private @Nine(%self: !trait.claim<@Mark[i32]>) {
 }
 trait.impl private @MT(%self: !trait.claim<@Mark[tuple<!T>]>, %mark: !trait.claim<@Mark[!T]>) {
   trait.method @value() -> i64 {
-    %v = trait.method.call %mark @Mark[!T]::@value() : () -> i64
+    %v = trait.method.call %mark @value() : !trait.claim<@Mark[!T]>, () -> i64
     %one = arith.constant 1 : i64
     %r = arith.addi %v, %one : i64
     trait.return %r : i64
@@ -30,7 +30,7 @@ trait.impl private @MT(%self: !trait.claim<@Mark[tuple<!T>]>, %mark: !trait.clai
 trait.trait private @Wrapped(%self: !trait.claim<@Wrapped[!T]>) { trait.method @value() -> i64 }
 trait.impl private @W(%self: !trait.claim<@Wrapped[!T]>, %mark: !trait.claim<@Mark[!T]>) {
   trait.method @value() -> i64 {
-    %v = trait.method.call %mark @Mark[!T]::@value() : () -> i64
+    %v = trait.method.call %mark @value() : !trait.claim<@Mark[!T]>, () -> i64
     trait.return %v : i64
   }
 }
@@ -46,7 +46,7 @@ trait.proof private @PF2 {
 }
 func.func private @f(%p: !trait.claim<@Mark[!T]>) -> i64 {
   %w = trait.derive @Wrapped[!T] from @W[!trait.poly<0>] given(%p) : (!trait.claim<@Mark[!T]>)
-  %v = trait.method.call %w @Wrapped[!T]::@value() : () -> i64
+  %v = trait.method.call %w @value() : !trait.claim<@Wrapped[!T]>, () -> i64
   return %v : i64
 }
 func.func @main() -> i64 {

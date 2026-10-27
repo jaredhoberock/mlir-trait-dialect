@@ -11,7 +11,7 @@ use mlir_sys::{
     mlirArrayAttrGet, mlirFlatSymbolRefAttrGet, mlirIdentifierGet, mlirIntegerAttrGet,
     mlirIntegerTypeGet,
     mlirLocationGetContext,
-    mlirStringAttrGet, mlirSymbolRefAttrGet, mlirTypeAttrGet,
+    mlirStringAttrGet, mlirTypeAttrGet,
     mlirUnitAttrGet,
 };
 
@@ -344,24 +344,19 @@ pub fn return_<'c>(loc: Location<'c>, operands: &[Value<'c, '_>]) -> Operation<'
     build_op(OperationBuilder::new("trait.return", loc).add_operands(operands))
 }
 
-/// Build a `trait.method.call` of `@trait_name::@method_name` through `claim`,
-/// the receiver claim, with `arguments`; `result_types` are the call's results.
+/// Build a `trait.method.call` of `method_name`, a method of the trait the
+/// receiver claim `claim` names, with `arguments`; `result_types` are the
+/// call's results.
 pub fn method_call<'c>(loc: Location<'c>,
-                       trait_name: &str,
                        method_name: &str,
                        claim: Value<'c,'_>,
                        arguments: &[Value<'c,'_>],
                        result_types: &[Type<'c>],
 ) -> Operation<'c> {
-    let method_ref = unsafe {
-        let ctx = mlirLocationGetContext(loc.to_raw());
-        let method = mlirFlatSymbolRefAttrGet(ctx, StringRef::new(method_name).to_raw());
-        Attribute::from_raw(mlirSymbolRefAttrGet(ctx, StringRef::new(trait_name).to_raw(), 1, &method))
-    };
     build_op(OperationBuilder::new("trait.method.call", loc)
         .add_operands(&[claim])
         .add_operands(arguments)
-        .add_attributes(&[(identifier(loc, "method_ref"), method_ref)])
+        .add_attributes(&[(identifier(loc, "method_name"), string_attr(loc, method_name))])
         .add_results(result_types))
 }
 

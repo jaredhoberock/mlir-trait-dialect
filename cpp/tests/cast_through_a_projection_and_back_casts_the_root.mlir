@@ -35,6 +35,6 @@ trait.proof private @q {
 }
 func.func @main() -> i64 {
   %w = trait.witness @q for @T[i32]
-  %v = trait.method.call %w @T[i32]::@m() : () -> i64 by @q
+  %v = trait.method.call %w @m() : !trait.claim<@T[i32] by @q>, () -> i64
   return %v : i64
 }

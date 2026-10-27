@@ -36,6 +36,6 @@ func.func @main() -> i64 {
   %e = trait.allege !P17 = !N17
   func.call @need(%e) : (!trait.claim<!P17 = !N17>) -> ()
   %b = trait.allege @B[!P17]
-  %v = trait.method.call %b @B[!P17]::@value() : () -> i64
+  %v = trait.method.call %b @value() : !trait.claim<@B[!P17]>, () -> i64
   return %v : i64
 }

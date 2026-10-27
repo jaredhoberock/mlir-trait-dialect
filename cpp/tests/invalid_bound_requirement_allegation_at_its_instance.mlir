@@ -32,12 +32,12 @@ trait.impl private @Holds_i32(%self: !trait.claim<@Holds[i32]>) {
 }
 
 func.func private @use_rule(%m: !trait.claim<@Rule[!trait.poly<0>]>, %x: !trait.poly<0>) -> i64 {
-  %r = trait.method.call %m @Rule[!trait.poly<0>]::@size(%x) : (!trait.poly<0>) -> i64
+  %r = trait.method.call %m @size(%x) : !trait.claim<@Rule[!trait.poly<0>]>, (!trait.poly<0>) -> i64
   return %r : i64
 }
 
 func.func private @f(%h: !trait.claim<@Holds[!trait.poly<0>]>, %x: !trait.proj<@Holds[!trait.poly<0>], "C", [i1]>) -> i64 {
-  %m = trait.method.call %h @Holds[!trait.poly<0>]::@requirement_0() : () -> !trait.claim<@Rule[!trait.proj<@Holds[!trait.poly<0>], "C", [i1]>]>
+  %m = trait.method.call %h @requirement_0() : !trait.claim<@Holds[!trait.poly<0>]>, () -> !trait.claim<@Rule[!trait.proj<@Holds[!trait.poly<0>], "C", [i1]>]>
   %r = trait.func.call @use_rule(%m, %x) : (!trait.claim<@Rule[!trait.proj<@Holds[!trait.poly<0>], "C", [i1]>]>, !trait.proj<@Holds[!trait.poly<0>], "C", [i1]>) -> i64
   return %r : i64
 }
@@ -83,7 +83,7 @@ trait.trait private @Outer(%self: !trait.claim<@Outer[!S]>) {
 trait.impl private @Outer_i32(%self: !trait.claim<@Outer[i32]>, %base: !trait.claim<@Base[i32]>) {
   trait.assoc_type @A<[!trait.poly<0>]> = !trait.proj<@Base[i32], "A", [!trait.poly<0>]>
   trait.method @requirement_0() -> !trait.claim<@Mark[!trait.proj<@Outer[i32], "A", [!trait.poly<0>]>]> {
-    %r = trait.method.call %base @Base[i32]::@requirement_0() : () -> !trait.claim<@Mark[!trait.proj<@Base[i32], "A", [!trait.poly<0>]>]>
+    %r = trait.method.call %base @requirement_0() : !trait.claim<@Base[i32]>, () -> !trait.claim<@Mark[!trait.proj<@Base[i32], "A", [!trait.poly<0>]>]>
     %e = trait.witness proj_resolve !trait.proj<@Outer[i32], "A", [!trait.poly<0>]> resolves !trait.proj<@Base[i32], "A", [!trait.poly<0>]> by @Outer_i32 given(%base)
       : (!trait.claim<@Base[i32]>)
       : !trait.claim<!trait.proj<@Outer[i32], "A", [!trait.poly<0>]> = !trait.proj<@Base[i32], "A", [!trait.poly<0>]>>
@@ -94,12 +94,12 @@ trait.impl private @Outer_i32(%self: !trait.claim<@Outer[i32]>, %base: !trait.cl
 }
 
 func.func private @use(%m: !trait.claim<@Mark[!trait.poly<0>]>, %x: !trait.poly<0>) -> i64 {
-  %r = trait.method.call %m @Mark[!trait.poly<0>]::@value(%x) : (!trait.poly<0>) -> i64
+  %r = trait.method.call %m @value(%x) : !trait.claim<@Mark[!trait.poly<0>]>, (!trait.poly<0>) -> i64
   return %r : i64
 }
 
 func.func private @f(%h: !trait.claim<@Outer[!trait.poly<0>]>, %x: !trait.proj<@Outer[!trait.poly<0>], "A", [i1]>) -> i64 {
-  %m = trait.method.call %h @Outer[!trait.poly<0>]::@requirement_0() : () -> !trait.claim<@Mark[!trait.proj<@Outer[!trait.poly<0>], "A", [i1]>]>
+  %m = trait.method.call %h @requirement_0() : !trait.claim<@Outer[!trait.poly<0>]>, () -> !trait.claim<@Mark[!trait.proj<@Outer[!trait.poly<0>], "A", [i1]>]>
   %r = trait.func.call @use(%m, %x) : (!trait.claim<@Mark[!trait.proj<@Outer[!trait.poly<0>], "A", [i1]>]>, !trait.proj<@Outer[!trait.poly<0>], "A", [i1]>) -> i64
   return %r : i64
 }
@@ -142,12 +142,12 @@ trait.impl private @Has_i32(%self: !trait.claim<@Has[i32]>) {
 }
 
 func.func private @use_sup(%m: !trait.claim<@Sup0[!trait.poly<0>]>, %x: !trait.poly<0>) -> i64 {
-  %r = trait.method.call %m @Sup0[!trait.poly<0>]::@sup(%x) : (!trait.poly<0>) -> i64
+  %r = trait.method.call %m @sup(%x) : !trait.claim<@Sup0[!trait.poly<0>]>, (!trait.poly<0>) -> i64
   return %r : i64
 }
 
 func.func private @f(%h: !trait.claim<@Has[!trait.poly<0>]>, %x: !trait.proj<@Has[!trait.poly<0>], "A", [i1]>) -> i64 {
-  %m = trait.method.call %h @Has[!trait.poly<0>]::@requirement_0() : () -> !trait.claim<@Sup0[!trait.proj<@Has[!trait.poly<0>], "A", [i1]>]>
+  %m = trait.method.call %h @requirement_0() : !trait.claim<@Has[!trait.poly<0>]>, () -> !trait.claim<@Sup0[!trait.proj<@Has[!trait.poly<0>], "A", [i1]>]>
   %r = trait.func.call @use_sup(%m, %x) : (!trait.claim<@Sup0[!trait.proj<@Has[!trait.poly<0>], "A", [i1]>]>, !trait.proj<@Has[!trait.poly<0>], "A", [i1]>) -> i64
   return %r : i64
 }

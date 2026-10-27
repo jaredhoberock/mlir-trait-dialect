@@ -33,7 +33,7 @@ trait.proof private @pv2 {
 }
 
 func.func private @g(%c: !trait.claim<@T[!trait.poly<0>]>) -> i64 {
-  %r = trait.method.call %c @T[!trait.poly<0>]::@t() : () -> i64
+  %r = trait.method.call %c @t() : !trait.claim<@T[!trait.poly<0>]>, () -> i64
   return %r : i64
 }
 

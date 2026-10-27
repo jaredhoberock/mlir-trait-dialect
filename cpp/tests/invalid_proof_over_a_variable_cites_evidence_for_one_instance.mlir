@@ -29,7 +29,7 @@ trait.impl private @A_i64(%self: !trait.claim<@A[i64]>) {
 trait.impl private @B_blanket(%self: !trait.claim<@B[!trait.poly<0>]>) {
   trait.method @b(%x: !trait.poly<0>) -> i64 {
     %a = trait.project %self[0] : !trait.claim<@B[!trait.poly<0>]> -> !trait.claim<@A[!trait.poly<0>]>
-    %r = trait.method.call %a @A[!trait.poly<0>]::@a() : () -> i64
+    %r = trait.method.call %a @a() : !trait.claim<@A[!trait.poly<0>]>, () -> i64
     trait.return %r : i64
   }
   %a = trait.witness @A_i64 for @A[i64]
@@ -54,7 +54,7 @@ trait.impl private @A_blanket(%self: !trait.claim<@A[!trait.poly<0>]>) {
 trait.impl private @B_blanket(%self: !trait.claim<@B[!trait.poly<0>]>) {
   trait.method @b(%x: !trait.poly<0>) -> i64 {
     %a = trait.project %self[0] : !trait.claim<@B[!trait.poly<0>]> -> !trait.claim<@A[!trait.poly<0>]>
-    %r = trait.method.call %a @A[!trait.poly<0>]::@a() : () -> i64
+    %r = trait.method.call %a @a() : !trait.claim<@A[!trait.poly<0>]>, () -> i64
     trait.return %r : i64
   }
   %a = trait.derive @A[!trait.poly<0>] from @A_blanket[!trait.poly<0>] given()

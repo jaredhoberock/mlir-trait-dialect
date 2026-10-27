@@ -26,8 +26,8 @@ trait.impl private @Get_impl(%self_claim: !trait.claim<@Get[i32]>) {
 func.func @caller() -> !trait.proj<@Get[i32], "Output"> {
   %a = trait.allege @Get[i32]
   %x = arith.constant 7 : i32
-  %r = trait.method.call %a @Get[i32]::@get(%x)
-    : (i32) -> !trait.proj<@Get[i32], "Output">
+  %r = trait.method.call %a @get(%x)
+    : !trait.claim<@Get[i32]>, (i32) -> !trait.proj<@Get[i32], "Output">
   return %r : !trait.proj<@Get[i32], "Output">
 }
 

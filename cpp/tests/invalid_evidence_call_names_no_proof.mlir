@@ -30,8 +30,8 @@ func.func @main() -> i64 {
   %w = trait.witness @W for @Wrapped[i32]
   %p = trait.witness @Nine for @Mark[i32]
   // expected-error @below {{'trait.method.call' op computes the evidence its receiver's impl returns, so its claim names no proof, found '!trait.claim<@Mark[i32] by @Seven>'}}
-  %m = trait.method.call %w @Wrapped[i32]::@requirement_0(%p) : (!trait.claim<@Mark[i32] by @Nine>) -> !trait.claim<@Mark[i32] by @Seven> by @W
-  %v = trait.method.call %m @Mark[i32]::@value() : () -> i64 by @Seven
+  %m = trait.method.call %w @requirement_0(%p) : !trait.claim<@Wrapped[i32] by @W>, (!trait.claim<@Mark[i32] by @Nine>) -> !trait.claim<@Mark[i32] by @Seven>
+  %v = trait.method.call %m @value() : !trait.claim<@Mark[i32] by @Seven>, () -> i64
   return %v : i64
 }
 
@@ -72,8 +72,8 @@ trait.proof private @Seven_as {
 func.func @main() -> i64 {
   %w = trait.witness @W for @Wrapped[i32]
   // expected-error @below {{'trait.method.call' op computes the evidence its receiver's impl returns, so its claim names no proof}}
-  %m = trait.method.call %w @Wrapped[i32]::@requirement_0() : () -> !trait.claim<@Mark[!trait.proj<@Wrapped[i32], "Item", [i1]>] by @Seven_as> by @W
-  %v = trait.method.call %m @Mark[!trait.proj<@Wrapped[i32], "Item", [i1]>]::@value() : () -> i64 by @Seven_as
+  %m = trait.method.call %w @requirement_0() : !trait.claim<@Wrapped[i32] by @W>, () -> !trait.claim<@Mark[!trait.proj<@Wrapped[i32], "Item", [i1]>] by @Seven_as>
+  %v = trait.method.call %m @value() : !trait.claim<@Mark[!trait.proj<@Wrapped[i32], "Item", [i1]>] by @Seven_as>, () -> i64
   return %v : i64
 }
 
@@ -104,8 +104,8 @@ func.func @main() -> i64 {
   %w = trait.witness @W for @Wrapped[i32]
   %u = arith.constant 0 : i1
   // expected-error @below {{'trait.method.call' op computes the evidence its receiver's impl returns, so its claim names no proof, found '!trait.claim<@Mark[i32] by @Seven>'}}
-  %m = trait.method.call %w @Wrapped[i32]::@requirement_0(%u) : (i1) -> !trait.claim<@Mark[i32] by @Seven> by @W
+  %m = trait.method.call %w @requirement_0(%u) : !trait.claim<@Wrapped[i32] by @W>, (i1) -> !trait.claim<@Mark[i32] by @Seven>
   %c = trait.coerce %m : !trait.claim<@Mark[i32] by @Seven> to !trait.claim<@Mark[i32]>
-  %v = trait.method.call %c @Mark[i32]::@value() : () -> i64
+  %v = trait.method.call %c @value() : !trait.claim<@Mark[i32]>, () -> i64
   return %v : i64
 }

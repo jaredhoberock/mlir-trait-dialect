@@ -28,7 +28,7 @@ trait.impl private @A_i64(%self: !trait.claim<@A[i64]>) {
 trait.impl private @B_i32(%self: !trait.claim<@B[i32]>) {
   trait.method @b(%x: i32) -> i64 {
     %a = trait.project %self[0] : !trait.claim<@B[i32]> -> !trait.claim<@A[i32]>
-    %r = trait.method.call %a @A[i32]::@a() : () -> i64
+    %r = trait.method.call %a @a() : !trait.claim<@A[i32]>, () -> i64
     trait.return %r : i64
   }
   %req0 = trait.allege @A[i32]
@@ -43,6 +43,6 @@ trait.impl private @B_i32(%self: !trait.claim<@B[i32]>) {
 // CHECK: call @[[B]]
 func.func @main(%x: i32) -> i64 {
   %c = trait.allege @B[i32]
-  %r = trait.method.call %c @B[i32]::@b(%x) : (i32) -> i64
+  %r = trait.method.call %c @b(%x) : !trait.claim<@B[i32]>, (i32) -> i64
   return %r : i64
 }

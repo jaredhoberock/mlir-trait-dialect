@@ -37,7 +37,7 @@ trait.impl private @Tr_any(%self_claim: !trait.claim<@Tr[!trait.poly<0>]>) {
 // Takes a claim, calls method through it
 !F = !trait.poly<2>
 func.func private @inner(%x: !trait.poly<0>, %c: !trait.claim<@Tr[!trait.poly<0>]>) -> i32 {
-  %r = trait.method.call %c @Tr[!trait.poly<0>]::@method(%x) : (!trait.poly<0>) -> i32
+  %r = trait.method.call %c @method(%x) : !trait.claim<@Tr[!trait.poly<0>]>, (!trait.poly<0>) -> i32
   return %r : i32
 }
 

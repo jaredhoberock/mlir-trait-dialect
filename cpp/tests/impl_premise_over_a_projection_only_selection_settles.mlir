@@ -38,6 +38,6 @@ trait.impl private @I(%self: !trait.claim<@T[i32]>, %out: !trait.claim<!trait.pr
 
 func.func @main() -> i64 {
   %w = trait.allege @T[i32]
-  %r = trait.method.call %w @T[i32]::@m() : () -> i64
+  %r = trait.method.call %w @m() : !trait.claim<@T[i32]>, () -> i64
   return %r : i64
 }

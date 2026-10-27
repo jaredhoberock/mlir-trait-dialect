@@ -57,7 +57,7 @@ func.func @caller() -> !trait.proj<@Transform[i64], "Output", [i1]> {
   %a = trait.allege @Transform[i64]
   %self = arith.constant 7 : i64
   %x = arith.constant 1 : i1
-  %r = trait.method.call %a @Transform[i64]::@apply(%self, %x)
-    : (i64, i1) -> !trait.proj<@Transform[i64], "Output", [i1]>
+  %r = trait.method.call %a @apply(%self, %x)
+    : !trait.claim<@Transform[i64]>, (i64, i1) -> !trait.proj<@Transform[i64], "Output", [i1]>
   return %r : !trait.proj<@Transform[i64], "Output", [i1]>
 }

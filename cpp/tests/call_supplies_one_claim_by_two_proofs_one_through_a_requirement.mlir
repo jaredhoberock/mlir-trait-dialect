@@ -62,8 +62,8 @@ func.func private @f(
   %r = trait.project %t2[0]
     : !trait.claim<@T2[!trait.poly<0>]>
     -> !trait.claim<@T1[!trait.proj<@T0[!trait.poly<0>], "A">]>
-  %u = trait.method.call %r @T1[!trait.proj<@T0[!trait.poly<0>], "A">]::@value() : () -> i64
-  %v = trait.method.call %t1 @T1[!trait.proj<@T0[!trait.poly<0>], "A">]::@value() : () -> i64
+  %u = trait.method.call %r @value() : !trait.claim<@T1[!trait.proj<@T0[!trait.poly<0>], "A">]>, () -> i64
+  %v = trait.method.call %t1 @value() : !trait.claim<@T1[!trait.proj<@T0[!trait.poly<0>], "A">]>, () -> i64
   %s = arith.addi %u, %v : i64
   return %s : i64
 }

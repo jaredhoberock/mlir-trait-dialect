@@ -21,18 +21,18 @@ trait.trait private @P1(%self: !trait.claim<@P1[!trait.poly<0>]>) { trait.method
 trait.trait private @P2(%self: !trait.claim<@P2[!trait.poly<0>]>) { trait.method @m() -> i64 }
 trait.impl private @P1_all(%self: !trait.claim<@P1[!trait.poly<0>]>, %p2: !trait.claim<@P2[!trait.poly<0>]>) {
   trait.method @m() -> i64 {
-    %v = trait.method.call %p2 @P2[!trait.poly<0>]::@m() : () -> i64
+    %v = trait.method.call %p2 @m() : !trait.claim<@P2[!trait.poly<0>]>, () -> i64
     trait.return %v : i64
   }
 }
 trait.impl private @P2_all(%self: !trait.claim<@P2[!trait.poly<0>]>, %p1: !trait.claim<@P1[tuple<!trait.poly<0>>]>) {
   trait.method @m() -> i64 {
-    %v = trait.method.call %p1 @P1[tuple<!trait.poly<0>>]::@m() : () -> i64
+    %v = trait.method.call %p1 @m() : !trait.claim<@P1[tuple<!trait.poly<0>>]>, () -> i64
     trait.return %v : i64
   }
 }
 func.func @main() -> i64 {
   %w = trait.allege @P1[i32]
-  %v = trait.method.call %w @P1[i32]::@m() : () -> i64
+  %v = trait.method.call %w @m() : !trait.claim<@P1[i32]>, () -> i64
   return %v : i64
 }

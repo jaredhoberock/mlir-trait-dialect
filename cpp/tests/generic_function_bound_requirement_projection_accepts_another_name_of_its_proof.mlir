@@ -43,8 +43,8 @@ trait.proof private @PW {
   trait.return %d : !trait.claim<@Wrapped[i32]>
 }
 func.func private @f(%w: !trait.claim<@Wrapped[!T]>, %p: !trait.claim<@Mark[!T]>) -> i64 {
-  %m = trait.method.call %w @Wrapped[!T]::@requirement_0() : () -> !trait.claim<@Mark[i32]>
-  %v = trait.method.call %m @Mark[i32]::@value() : () -> i64
+  %m = trait.method.call %w @requirement_0() : !trait.claim<@Wrapped[!T]>, () -> !trait.claim<@Mark[i32]>
+  %v = trait.method.call %m @value() : !trait.claim<@Mark[i32]>, () -> i64
   return %v : i64
 }
 func.func @main() -> i64 {

@@ -27,7 +27,7 @@ func.func @main() -> i64 {
   %h = trait.witness @Has_i32 for @Has[i32]
   // expected-error @below {{type mismatch: expected '!trait.claim<@T[i32]>' but found '!trait.claim<@T[i32] by @T_i64>'}}
   %c = trait.project %h[0] : !trait.claim<@Has[i32] by @Has_i32> -> !trait.claim<@T[i32] by @T_i64>
-  %r = trait.method.call %c @T[i32]::@m() : () -> i64 by @T_i64
+  %r = trait.method.call %c @m() : !trait.claim<@T[i32] by @T_i64>, () -> i64
   return %r : i64
 }
 
@@ -56,7 +56,7 @@ func.func @main() -> i64 {
   %a = trait.witness @I for @A[i32]
   // expected-error @below {{type mismatch: expected '!trait.claim<@Mark[i32]>' but found '!trait.claim<@Mark[i32] by @Seven>'}}
   %m = trait.project %a[0] : !trait.claim<@A[i32] by @I> -> !trait.claim<@Mark[i32] by @Seven>
-  %v = trait.method.call %m @Mark[i32]::@value() : () -> i64 by @Seven
+  %v = trait.method.call %m @value() : !trait.claim<@Mark[i32] by @Seven>, () -> i64
   return %v : i64
 }
 
@@ -85,7 +85,7 @@ func.func @main() -> i64 {
   %a = trait.witness @I for @A[i32]
   // expected-error @below {{type mismatch: expected '!trait.claim<@Mark[i32]>' but found '!trait.claim<@Mark[i32] by @Nine>'}}
   %m = trait.project %a[0] : !trait.claim<@A[i32] by @I> -> !trait.claim<@Mark[i32] by @Nine>
-  %v = trait.method.call %m @Mark[i32]::@value() : () -> i64 by @Nine
+  %v = trait.method.call %m @value() : !trait.claim<@Mark[i32] by @Nine>, () -> i64
   return %v : i64
 }
 
@@ -119,6 +119,6 @@ trait.impl private @I(%self: !trait.claim<@A[i32]>) {
 func.func @main() -> i64 {
   %a = trait.witness @I for @A[i32]
   %m = trait.project %a[0] : !trait.claim<@A[i32] by @I> -> !trait.claim<@Mark[i32]>
-  %v = trait.method.call %m @Mark[i32]::@value() : () -> i64
+  %v = trait.method.call %m @value() : !trait.claim<@Mark[i32]>, () -> i64
   return %v : i64
 }

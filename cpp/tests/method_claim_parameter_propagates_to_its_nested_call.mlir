@@ -26,8 +26,8 @@ trait.trait private @Choose(%self: !trait.claim<@Choose[!T]>) {
 
 trait.impl private @Choose_i32(%self: !trait.claim<@Choose[i32]>) {
   trait.method @choose(%a: i32, %same: !trait.claim<@Convert[i32, i32]>) -> i32 {
-    %converted = trait.method.call %same @Convert[i32, i32]::@convert(%a)
-      : (i32) -> i32
+    %converted = trait.method.call %same @convert(%a)
+      : !trait.claim<@Convert[i32, i32]>, (i32) -> i32
     trait.return %converted : i32
   }
 }
@@ -35,8 +35,8 @@ trait.impl private @Choose_i32(%self: !trait.claim<@Choose[i32]>) {
 func.func @test(%x: i32) -> i32 {
   %chooser = trait.allege @Choose[i32]
   %same = trait.allege @Convert[i32, i32]
-  %res = trait.method.call %chooser @Choose[i32]::@choose(%x, %same)
-    : (i32, !trait.claim<@Convert[i32, i32]>) -> i32
+  %res = trait.method.call %chooser @choose(%x, %same)
+    : !trait.claim<@Choose[i32]>, (i32, !trait.claim<@Convert[i32, i32]>) -> i32
   return %res : i32
 }
 

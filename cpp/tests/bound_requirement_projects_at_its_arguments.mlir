@@ -11,8 +11,10 @@
 // defines no method of its own. Both instances lower to the method the impl
 // binding's type implements.
 
-// VERIFIED: trait.method.call %self @Has[!trait.poly<0>]::@requirement_0(%arg1)
-// VERIFIED: trait.method.call %{{.*}} @Has[!trait.poly<0>]::@requirement_0(%{{.*}})
+// VERIFIED: trait.method.call %self @requirement_0(%arg1)
+// VERIFIED-NEXT: !trait.claim<@Has[!trait.poly<0>]>
+// VERIFIED: trait.method.call %{{.*}} @requirement_0(%{{.*}})
+// VERIFIED-NEXT: !trait.claim<@Has[!trait.poly<0>]>
 
 !S = !trait.poly<0>
 !X = !trait.poly<1>
@@ -28,8 +30,8 @@ trait.trait private @Has(%self: !trait.claim<@Has[!S]>) {
   trait.assoc_type @A<[!X]>
   trait.method @requirement_0(!trait.claim<@Marker[!trait.poly<1>]>) -> !trait.claim<@Marker[!trait.proj<@Has[!trait.poly<0>], "A", [!trait.poly<1>]>]>
   trait.method @use(%x: !trait.proj<@Has[!S], "A", [i1]>, %p: !trait.claim<@Marker[i1]>) -> i64 {
-    %m = trait.method.call %self @Has[!S]::@requirement_0(%p) : (!trait.claim<@Marker[i1]>) -> !trait.claim<@Marker[!trait.proj<@Has[!S], "A", [i1]>]>
-    %r = trait.method.call %m @Marker[!trait.proj<@Has[!S], "A", [i1]>]::@mark(%x) : (!trait.proj<@Has[!S], "A", [i1]>) -> i64
+    %m = trait.method.call %self @requirement_0(%p) : !trait.claim<@Has[!S]>, (!trait.claim<@Marker[i1]>) -> !trait.claim<@Marker[!trait.proj<@Has[!S], "A", [i1]>]>
+    %r = trait.method.call %m @mark(%x) : !trait.claim<@Marker[!trait.proj<@Has[!S], "A", [i1]>]>, (!trait.proj<@Has[!S], "A", [i1]>) -> i64
     trait.return %r : i64
   }
 }
@@ -52,12 +54,12 @@ trait.impl private @Has_i32(%self: !trait.claim<@Has[i32]>) {
 }
 
 func.func private @use_marker(%m: !trait.claim<@Marker[!trait.poly<0>]>, %x: !trait.poly<0>) -> i64 {
-  %r = trait.method.call %m @Marker[!trait.poly<0>]::@mark(%x) : (!trait.poly<0>) -> i64
+  %r = trait.method.call %m @mark(%x) : !trait.claim<@Marker[!trait.poly<0>]>, (!trait.poly<0>) -> i64
   return %r : i64
 }
 
 func.func private @f(%h: !trait.claim<@Has[!trait.poly<0>]>, %p: !trait.claim<@Marker[i1]>, %x: !trait.proj<@Has[!trait.poly<0>], "A", [i1]>) -> i64 {
-  %m = trait.method.call %h @Has[!trait.poly<0>]::@requirement_0(%p) : (!trait.claim<@Marker[i1]>) -> !trait.claim<@Marker[!trait.proj<@Has[!trait.poly<0>], "A", [i1]>]>
+  %m = trait.method.call %h @requirement_0(%p) : !trait.claim<@Has[!trait.poly<0>]>, (!trait.claim<@Marker[i1]>) -> !trait.claim<@Marker[!trait.proj<@Has[!trait.poly<0>], "A", [i1]>]>
   %r = trait.func.call @use_marker(%m, %x) : (!trait.claim<@Marker[!trait.proj<@Has[!trait.poly<0>], "A", [i1]>]>, !trait.proj<@Has[!trait.poly<0>], "A", [i1]>) -> i64
   return %r : i64
 }
@@ -66,7 +68,7 @@ func.func @main(%x: !trait.proj<@Has[i32], "A", [i1]>) -> i64 {
   %h = trait.allege @Has[i32]
   %p = trait.allege @Marker[i1]
   %r = trait.func.call @f(%h, %p, %x) : (!trait.claim<@Has[i32]>, !trait.claim<@Marker[i1]>, !trait.proj<@Has[i32], "A", [i1]>) -> i64
-  %u = trait.method.call %h @Has[i32]::@use(%x, %p) : (!trait.proj<@Has[i32], "A", [i1]>, !trait.claim<@Marker[i1]>) -> i64
+  %u = trait.method.call %h @use(%x, %p) : !trait.claim<@Has[i32]>, (!trait.proj<@Has[i32], "A", [i1]>, !trait.claim<@Marker[i1]>) -> i64
   %s = arith.addi %r, %u : i64
   return %s : i64
 }

@@ -59,8 +59,7 @@ func.func @main(%x: i32) -> !trait.proj<@Item[i32], "Of"> {
   %item = trait.allege @Item[i32]
   %takes = trait.derive @Takes[i32, !trait.proj<@Item[i32], "Of">]
     from @Takes_blanket[i32] given(%item) : (!trait.claim<@Item[i32]>)
-  %r = trait.method.call %takes
-    @Takes[i32, !trait.proj<@Item[i32], "Of">]::@go(%x)
-    : (i32) -> !trait.proj<@Item[i32], "Of">
+  %r = trait.method.call %takes @go(%x)
+    : !trait.claim<@Takes[i32, !trait.proj<@Item[i32], "Of">]>, (i32) -> !trait.proj<@Item[i32], "Of">
   return %r : !trait.proj<@Item[i32], "Of">
 }

@@ -30,7 +30,7 @@ trait.impl private @Nine(%self: !trait.claim<@Mark[i32]>) {
 func.func private @g(%a: !trait.claim<@Mark[!T]>, %b: !trait.claim<@Mark[!T]>) -> i64 {
   %c = arith.constant true
   %s = arith.select %c, %a, %b : !trait.claim<@Mark[!T]>
-  %v = trait.method.call %s @Mark[!T]::@value() : () -> i64
+  %v = trait.method.call %s @value() : !trait.claim<@Mark[!T]>, () -> i64
   return %v : i64
 }
 func.func @main() -> i64 {

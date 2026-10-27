@@ -58,7 +58,7 @@ func.func private @unused_helper(%x: i32) -> i32 {
 }
 
 func.func private @live_template(%c: !trait.claim<@Show[!S]>, %x: !S) -> i32 {
-  %r = trait.method.call %c @Show[!S]::@show(%x) : (!S) -> i32
+  %r = trait.method.call %c @show(%x) : !trait.claim<@Show[!S]>, (!S) -> i32
   %h = func.call @used_helper(%r) : (i32) -> i32
   return %h : i32
 }

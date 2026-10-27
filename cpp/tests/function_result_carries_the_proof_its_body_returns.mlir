@@ -35,7 +35,7 @@ trait.impl private @Two(%self: !trait.claim<@Bound[i64]>) {
 trait.trait private @Need(%self: !trait.claim<@Need[!S]>) { trait.method @get() -> i64 }
 trait.impl private @Need_from(%self: !trait.claim<@Need[!S]>, %b: !trait.claim<@Bound[!S]>) {
   trait.method @get() -> i64 {
-    %v = trait.method.call %b @Bound[!S]::@value() : () -> i64
+    %v = trait.method.call %b @value() : !trait.claim<@Bound[!S]>, () -> i64
     trait.return %v : i64
   }
 }
@@ -56,8 +56,8 @@ func.func private @make_two() -> !trait.claim<@Need[!trait.proj<@Trait[i64], "Ou
 func.func @main() -> i64 {
   %one = func.call @make_one() : () -> !trait.claim<@Need[!trait.proj<@Trait[i64], "Output">]>
   %two = func.call @make_two() : () -> !trait.claim<@Need[!trait.proj<@Trait[i64], "Output">]>
-  %a = trait.method.call %one @Need[!trait.proj<@Trait[i64], "Output">]::@get() : () -> i64
-  %b = trait.method.call %two @Need[!trait.proj<@Trait[i64], "Output">]::@get() : () -> i64
+  %a = trait.method.call %one @get() : !trait.claim<@Need[!trait.proj<@Trait[i64], "Output">]>, () -> i64
+  %b = trait.method.call %two @get() : !trait.claim<@Need[!trait.proj<@Trait[i64], "Output">]>, () -> i64
   %ten = arith.constant 10 : i64
   %tens = arith.muli %a, %ten : i64
   %sum = arith.addi %tens, %b : i64

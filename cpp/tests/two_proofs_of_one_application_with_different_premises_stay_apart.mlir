@@ -27,7 +27,7 @@ trait.impl private @B_ten(%self: !trait.claim<@B[i64]>) {
 }
 trait.impl private @A_gen(%self: !trait.claim<@A[!P]>, %b: !trait.claim<@B[!P]>) {
   trait.method @a() -> i64 {
-    %r = trait.method.call %b @B[!P]::@b() : () -> i64
+    %r = trait.method.call %b @b() : !trait.claim<@B[!P]>, () -> i64
     trait.return %r : i64
   }
 }
@@ -44,8 +44,8 @@ trait.proof private @by_ten {
 func.func @main() -> i64 {
   %one = trait.witness @by_one for @A[i64]
   %ten = trait.witness @by_ten for @A[i64]
-  %x = trait.method.call %one @A[i64]::@a() : () -> i64 by @by_one
-  %y = trait.method.call %ten @A[i64]::@a() : () -> i64 by @by_ten
+  %x = trait.method.call %one @a() : !trait.claim<@A[i64] by @by_one>, () -> i64
+  %y = trait.method.call %ten @a() : !trait.claim<@A[i64] by @by_ten>, () -> i64
   %s = arith.addi %x, %y : i64
   return %s : i64
 }

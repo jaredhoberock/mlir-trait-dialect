@@ -21,7 +21,7 @@ trait.impl private @J(%s: !trait.claim<@B[!trait.proj<@A[i32], "Item", [i64]>]>)
 trait.impl private @K(%s: !trait.claim<@B[i64]>) { trait.method @value() -> i64 { %c = arith.constant 7 : i64 trait.return %c : i64 } }
 func.func @main() -> i64 {
   %b = trait.allege @B[i64]
-  %v = trait.method.call %b @B[i64]::@value() : () -> i64
+  %v = trait.method.call %b @value() : !trait.claim<@B[i64]>, () -> i64
   return %v : i64
 }
 
@@ -39,6 +39,6 @@ trait.impl private @J(%s: !trait.claim<@B[!trait.proj<@A[i32], "Item", [i64]>]>)
 trait.impl private @K(%s: !trait.claim<@B[i64]>) { trait.method @value() -> i64 { %c = arith.constant 7 : i64 trait.return %c : i64 } }
 func.func @main() -> i64 {
   %b = trait.allege @B[i64]
-  %v = trait.method.call %b @B[i64]::@value() : () -> i64
+  %v = trait.method.call %b @value() : !trait.claim<@B[i64]>, () -> i64
   return %v : i64
 }

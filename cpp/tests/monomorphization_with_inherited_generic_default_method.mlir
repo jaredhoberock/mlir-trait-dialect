@@ -16,16 +16,14 @@ func.func @main() -> i32 {
   %self_claim0 = trait.witness @Trait_impl_i64 for @Trait[i64]
   %zero0 = arith.constant 0 : i64
   %one = arith.constant 1 : i64
-  %x = trait.method.call %self_claim0 @Trait[i64]::@method(%zero0, %one)
-    : (i64, i64) -> i64
-    by @Trait_impl_i64
+  %x = trait.method.call %self_claim0 @method(%zero0, %one)
+    : !trait.claim<@Trait[i64] by @Trait_impl_i64>, (i64, i64) -> i64
 
   %self_claim1 = trait.witness @Trait_impl_i64 for @Trait[i64]
   %zero1 = arith.constant 0 : i64
   %true = arith.constant true
-  %y = trait.method.call %self_claim1 @Trait[i64]::@method(%zero1, %true)
-    : (i64, i1) -> i1
-    by @Trait_impl_i64
+  %y = trait.method.call %self_claim1 @method(%zero1, %true)
+    : !trait.claim<@Trait[i64] by @Trait_impl_i64>, (i64, i1) -> i1
 
   %result = arith.constant 0 : i32
   return %result : i32

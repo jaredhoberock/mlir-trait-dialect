@@ -27,7 +27,7 @@ trait.impl private @Foo_all(%self: !trait.claim<@Foo[!T]>, %foo: !trait.claim<@F
 }
 // expected-error @below {{'trait.derive' op must be in a region that enforces SSA dominance}}
 %d = trait.derive @Foo[i32] from @Foo_all[i32] given(%d) : (!trait.claim<@Foo[i32]>)
-%r = trait.method.call %d @Foo[i32]::@m() : () -> i64
+%r = trait.method.call %d @m() : !trait.claim<@Foo[i32]>, () -> i64
 
 // -----
 

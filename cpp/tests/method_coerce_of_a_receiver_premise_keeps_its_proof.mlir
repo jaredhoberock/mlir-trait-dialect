@@ -33,7 +33,7 @@ trait.impl private @Host_i32(%self: !trait.claim<@Host[i32]>, %mark: !trait.clai
   trait.method @run() -> i64 {
     %e = trait.witness proj_resolve !trait.proj<@Assoc[i32], "A"> resolves i32 by @Assoc_i32 : !trait.claim<!trait.proj<@Assoc[i32], "A"> = i32>
     %m = trait.coerce %mark : !trait.claim<@Mark[i32]> to !trait.claim<@Mark[!trait.proj<@Assoc[i32], "A">]> via (%e) : (!trait.claim<!trait.proj<@Assoc[i32], "A"> = i32>)
-    %v = trait.method.call %m @Mark[!trait.proj<@Assoc[i32], "A">]::@value() : () -> i64
+    %v = trait.method.call %m @value() : !trait.claim<@Mark[!trait.proj<@Assoc[i32], "A">]>, () -> i64
     trait.return %v : i64
   }
 }
@@ -44,6 +44,6 @@ trait.proof private @H {
 }
 func.func @main() -> i64 {
   %h = trait.witness @H for @Host[i32]
-  %v = trait.method.call %h @Host[i32]::@run() : () -> i64 by @H
+  %v = trait.method.call %h @run() : !trait.claim<@Host[i32] by @H>, () -> i64
   return %v : i64
 }

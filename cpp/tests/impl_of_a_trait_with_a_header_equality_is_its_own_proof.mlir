@@ -32,7 +32,7 @@ trait.impl private @T_i64(%self: !trait.claim<@T[i64]>) {
 // CHECK-NOT: trait.
 func.func @main(%x: i64) -> i64 {
   %c = trait.allege @T[i64]
-  %r = trait.method.call %c @T[i64]::@get(%x) : (i64) -> !trait.proj<@T[i64], "Out">
+  %r = trait.method.call %c @get(%x) : !trait.claim<@T[i64]>, (i64) -> !trait.proj<@T[i64], "Out">
   %e = trait.allege !trait.proj<@T[i64], "Out"> = i64
   %o = trait.coerce %r : !trait.proj<@T[i64], "Out"> to i64
     via (%e) : (!trait.claim<!trait.proj<@T[i64], "Out"> = i64>)

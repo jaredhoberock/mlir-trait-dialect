@@ -29,7 +29,7 @@ trait.impl private @FoldFn_bad(%self: !trait.claim<@FoldFn[i32]>) {
 }
 func.func private @use(%f: !trait.claim<@FoldFn[!S]>) -> !S {
   %e = trait.project %f[0] : !trait.claim<@FoldFn[!S]> -> !trait.claim<!trait.proj<@FoldFn[!S], "Output"> = !S>
-  %v = trait.method.call %f @FoldFn[!S]::@make() : () -> !trait.proj<@FoldFn[!S], "Output">
+  %v = trait.method.call %f @make() : !trait.claim<@FoldFn[!S]>, () -> !trait.proj<@FoldFn[!S], "Output">
   %r = trait.coerce %v : !trait.proj<@FoldFn[!S], "Output"> to !S via (%e) : (!trait.claim<!trait.proj<@FoldFn[!S], "Output"> = !S>)
   return %r : !S
 }

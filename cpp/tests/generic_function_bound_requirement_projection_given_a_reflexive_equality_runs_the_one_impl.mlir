@@ -40,8 +40,8 @@ trait.proof private @PW {
 }
 func.func private @f(%w: !trait.claim<@Wrapped[!T]>, %p: !trait.claim<@Mark[!T]>) -> i64 {
   %e = trait.witness refl : !trait.claim<!T = !T>
-  %m = trait.method.call %w @Wrapped[!T]::@requirement_1(%e) : (!trait.claim<!T = !T>) -> !trait.claim<@Mark[!T]>
-  %v = trait.method.call %m @Mark[!T]::@value() : () -> i64
+  %m = trait.method.call %w @requirement_1(%e) : !trait.claim<@Wrapped[!T]>, (!trait.claim<!T = !T>) -> !trait.claim<@Mark[!T]>
+  %v = trait.method.call %m @value() : !trait.claim<@Mark[!T]>, () -> i64
   return %v : i64
 }
 func.func @main() -> i64 {

@@ -17,6 +17,6 @@ trait.impl private @I0(%s: !trait.claim<@H[!trait.proj<@H[tuple<i32>], "E">]>) {
 trait.impl private @I1(%s: !trait.claim<@H[tuple<i32>]>) { trait.assoc_type @E = i32  trait.method @value() -> i64 { %c = arith.constant 8 : i64 trait.return %c : i64 } }
 func.func @main() -> i64 {
   %a = trait.allege @H[i32]
-  %v = trait.method.call %a @H[i32]::@value() : () -> i64
+  %v = trait.method.call %a @value() : !trait.claim<@H[i32]>, () -> i64
   return %v : i64
 }

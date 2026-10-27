@@ -61,7 +61,6 @@ fn test_jit() {
             let block = Block::new(&[(self_ty, loc), (other_ty, loc)]);
             let equal = block.append_operation(trait_::method_call(
                 loc,
-                "PartialEq",
                 "eq",
                 self_claim,                            // claim
                 &[
@@ -150,9 +149,8 @@ fn test_jit() {
 
     // !T = trait.poly<0>
     // func.func @foo(%c: !trait.claim<@PartialEq[!T,!T]>, %x: !T, %y: !T) -> i1 {
-    //   %res = trait.method.call %c @PartialEq[!T,!T]::@eq(%x, %y)
-    //     :  (!S,!O) -> i1
-    //     as (!T, !T) -> i1
+    //   %res = trait.method.call %c @eq(%x, %y)
+    //     : !trait.claim<@PartialEq[!T,!T]>, (!T, !T) -> i1
     //   return %res : i1
     // }
     let poly_ty = trait_::poly_type(&context, 0);
@@ -185,7 +183,6 @@ fn test_jit() {
         let block = Block::new(&[(claim_ty, loc), (poly_ty, loc), (poly_ty, loc)]);
         let result = block.append_operation(trait_::method_call(
             loc,
-            "PartialEq",
             "eq",
             block.argument(0).unwrap().into(),     // %c
             &[
@@ -264,12 +261,10 @@ fn test_jit() {
 
     // !C = !trait.claim<@PartialEq[!T,!T]>
     // func.func @baz(%c: !C, %x: !T, %y: !T) -> i1 {
-    //   %eq = trait.method.call %c @PartialEq[!T,!T]::@eq(%x, %y)
-    //     :  (!S,!O) -> i1
-    //     as (!T,!T) -> i1
-    //   %neq = trait.method.call %c @PartialEq[!T,!T]::@neq(%x, %y)
-    //     :  (!S,!O) -> i1
-    //     as (!T,!T) -> i1
+    //   %eq = trait.method.call %c @eq(%x, %y)
+    //     : !trait.claim<@PartialEq[!T,!T]>, (!T, !T) -> i1
+    //   %neq = trait.method.call %c @neq(%x, %y)
+    //     : !trait.claim<@PartialEq[!T,!T]>, (!T, !T) -> i1
     //   %result = arith.ori %eq, %neq : i1
     //   return %result : i1
     // }
@@ -302,7 +297,6 @@ fn test_jit() {
         let block = Block::new(&[(claim_ty, loc), (poly_ty, loc), (poly_ty, loc)]);
         let eq = block.append_operation(trait_::method_call(
             loc,
-            "PartialEq",
             "eq",
             block.argument(0).unwrap().into(),     // c
             &[
@@ -313,7 +307,6 @@ fn test_jit() {
         ));
         let neq = block.append_operation(trait_::method_call(
             loc,
-            "PartialEq",
             "neq",
             block.argument(0).unwrap().into(),     // c
             &[
@@ -670,12 +663,12 @@ trait.impl private @Store_impl_i64(%self: !trait.claim<@Store[i64]>) {\n\
   }\n\
 }\n\
 func.func private @tpl(%p: !trait.claim<@Store[i64]>, %x: i64, %v: !trait.poly<7>) -> !trait.poly<7> {\n\
-  %r = trait.method.call %p @Store[i64]::@keep(%x, %v) : (i64, !trait.poly<7>) -> !trait.poly<7>\n\
+  %r = trait.method.call %p @keep(%x, %v) : !trait.claim<@Store[i64]>, (i64, !trait.poly<7>) -> !trait.poly<7>\n\
   return %r : !trait.poly<7>\n\
 }\n\
 func.func @host(%x: i64, %v: i32) -> i32 {\n\
   %p = trait.witness @Store_impl_i64 for @Store[i64]\n\
-  %r = trait.method.call %p @Store[i64]::@keep(%x, %v) : (i64, i32) -> i32 by @Store_impl_i64\n\
+  %r = trait.method.call %p @keep(%x, %v) : !trait.claim<@Store[i64] by @Store_impl_i64>, (i64, i32) -> i32\n\
   return %r : i32\n\
 }\n";
     let mut module = Module::parse(&context, source).expect("the fixture module parses");
@@ -732,7 +725,7 @@ trait.impl private @T_i32(%self: !trait.claim<@T[i32]>) {\n\
 }\n\
 func.func @host(%x: i32) -> i32 {\n\
   %ev = trait.allege @T[i32]\n\
-  %r = trait.method.call %ev @T[i32]::@m(%x) : (i32) -> i32\n\
+  %r = trait.method.call %ev @m(%x) : !trait.claim<@T[i32]>, (i32) -> i32\n\
   return %r : i32\n\
 }\n";
     let mut module = Module::parse(&context, source).expect("the fixture module parses");
@@ -862,7 +855,6 @@ fn module_with_a_gen<'c>(context: &'c Context, returned: usize) -> Module<'c> {
     let method_block = Block::new(&[(t, loc)]);
     let call = method_block.append_operation(trait_::method_call(
         loc,
-        "C",
         "c",
         impl_block.argument(2).unwrap().into(),
         &[method_block.argument(0).unwrap().into()],
@@ -894,7 +886,7 @@ fn the_declaration_builders_take_their_claims_as_block_arguments() {
         rendered.contains(
             "trait.impl private @A_gen(%self: !trait.claim<@A[!trait.poly<0>]>, \
              %b: !trait.claim<@B[!trait.poly<0>]>, %c: !trait.claim<@C[!trait.poly<0>]>)"
-        ) && rendered.contains("trait.method.call %c @C[!trait.poly<0>]::@c(")
+        ) && rendered.contains("trait.method.call %c @c(")
             && rendered.contains("trait.return %b : !trait.claim<@B[!trait.poly<0>]>"),
         "the arguments print as the claims they hold: {rendered}"
     );
@@ -994,7 +986,6 @@ fn an_evidence_method_states_and_selects_a_quantified_requirement() {
     let block = Block::new(&[(has_t, loc), (marker_i1, loc)]);
     block.append_operation(trait_::method_call(
         loc,
-        "Has",
         "requirement_0",
         block.argument(0).unwrap().into(),
         &[block.argument(1).unwrap().into()],
@@ -1018,7 +1009,8 @@ fn an_evidence_method_states_and_selects_a_quantified_requirement() {
     assert!(
         rendered.contains("trait.project %sub[0]")
             && rendered.contains("trait.allege @Marker[i64]")
-            && rendered.contains("@Has[!trait.poly<3>]::@requirement_0(%arg1)"),
+            && rendered.contains("@requirement_0(%arg1)")
+            && rendered.contains(": !trait.claim<@Has[!trait.poly<3>]>, ("),
         "the evidence and its selection print what they state: {rendered}"
     );
 }

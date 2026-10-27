@@ -12,9 +12,9 @@ trait.trait private @Tr(%self: !trait.claim<@Tr[!trait.poly<0>]>) {
   trait.method @m(!trait.poly<0>, !trait.poly<1>) -> !trait.poly<1>
 }
 
-// CHECK: trait.method.call {{.*}}::@m
+// CHECK: trait.method.call {{.*}} @m(
 func.func @caller(%x: i64, %y: i32) -> i32 {
   %c = trait.allege @Tr[i64]
-  %r = trait.method.call %c @Tr[i64]::@m(%x, %y) : (i64, i32) -> i32
+  %r = trait.method.call %c @m(%x, %y) : !trait.claim<@Tr[i64]>, (i64, i32) -> i32
   return %r : i32
 }

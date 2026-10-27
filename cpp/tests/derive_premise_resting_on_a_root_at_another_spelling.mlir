@@ -36,7 +36,7 @@ trait.proof private @pb {
 trait.trait private @Need(%self: !trait.claim<@Need[!S]>) { trait.method @w() -> i64 }
 trait.impl private @Need_from(%self: !trait.claim<@Need[!S]>, %b: !trait.claim<@Bound[!S]>) {
   trait.method @w() -> i64 {
-    %r = trait.method.call %b @Bound[!S]::@v() : () -> i64
+    %r = trait.method.call %b @v() : !trait.claim<@Bound[!S]>, () -> i64
     trait.return %r : i64
   }
 }
@@ -45,6 +45,6 @@ func.func @main() -> i64 {
   %eq = trait.witness proj_resolve !trait.proj<@Trait[i64], "Output"> resolves i64 by @Trait_impl : !trait.claim<!trait.proj<@Trait[i64], "Output"> = i64>
   %c = trait.coerce %b : !trait.claim<@Bound[!trait.proj<@Trait[i64], "Output">] by @pb> to !trait.claim<@Bound[i64]> via (%eq) : (!trait.claim<!trait.proj<@Trait[i64], "Output"> = i64>)
   %d = trait.derive @Need[i64] from @Need_from[i64] given(%c) : (!trait.claim<@Bound[i64]>)
-  %r = trait.method.call %d @Need[i64]::@w() : () -> i64
+  %r = trait.method.call %d @w() : !trait.claim<@Need[i64]>, () -> i64
   return %r : i64
 }

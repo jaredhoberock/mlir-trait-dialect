@@ -38,6 +38,6 @@ func.func @main() -> i64 {
   %b = trait.witness @B_bad for @B[i8]
   %a = trait.project %b[1] : !trait.claim<@B[i8] by @B_bad> -> !trait.claim<@A[i32]>
   %x = arith.constant 0 : i32
-  %v = trait.method.call %a @A[i32]::@a(%x) : (i32) -> i64
+  %v = trait.method.call %a @a(%x) : !trait.claim<@A[i32]>, (i32) -> i64
   return %v : i64
 }

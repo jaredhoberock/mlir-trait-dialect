@@ -24,6 +24,6 @@ func.func @f() -> i64 {
   %c1 = trait.coerce %w : !trait.claim<@T[i32] by @T_i32> to !trait.claim<@T[i32]>
   %c2 = trait.coerce %c1 : !trait.claim<@T[i32]> to !trait.claim<@T[i32]>
   // expected-error @below {{'trait.method.call' op is a generic call instantiate-monomorphs has not lowered before erasure}}
-  %v = trait.method.call %c2 @T[i32]::@m() : () -> i64
+  %v = trait.method.call %c2 @m() : !trait.claim<@T[i32]>, () -> i64
   return %v : i64
 }

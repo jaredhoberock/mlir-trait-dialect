@@ -43,9 +43,9 @@ trait.impl private @B_via_a(%self: !trait.claim<@B[!T]>, %a: !trait.claim<@A[!T]
 // @B[i32].
 func.func @main() -> i64 {
   %b = trait.allege @B[i32]
-  %vb = trait.method.call %b @B[i32]::@value() : () -> i64
+  %vb = trait.method.call %b @value() : !trait.claim<@B[i32]>, () -> i64
   %a = trait.allege @A[i32]
-  %va = trait.method.call %a @A[i32]::@value() : () -> i64
+  %va = trait.method.call %a @value() : !trait.claim<@A[i32]>, () -> i64
   %v = arith.addi %va, %vb : i64
   return %v : i64
 }

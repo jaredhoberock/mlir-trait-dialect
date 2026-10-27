@@ -25,7 +25,7 @@ func.func @test_mono(%x: i32) -> i32 {
   // CHECK: trait.witness
   // CHECK-NOT: trait.allege
   %c = trait.allege @Safe[i32]
-  %r = trait.method.call %c @Safe[i32]::@check(%x) : (i32) -> i32
+  %r = trait.method.call %c @check(%x) : !trait.claim<@Safe[i32]>, (i32) -> i32
   return %r : i32
 }
 
@@ -36,6 +36,6 @@ func.func @test_mono(%x: i32) -> i32 {
 func.func @test_poly(%x: !T2) -> i32 {
   // CHECK: trait.allege @Safe[!trait.poly<2>]
   %c = trait.allege @Safe[!T2]
-  %r = trait.method.call %c @Safe[!T2]::@check(%x) : (!T2) -> i32
+  %r = trait.method.call %c @check(%x) : !trait.claim<@Safe[!T2]>, (!T2) -> i32
   return %r : i32
 }

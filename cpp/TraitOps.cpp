@@ -2742,12 +2742,6 @@ LogicalResult MethodCallOp::verify() {
                             "trait-application claim; an equality claim names no "
                             "trait to call";
 
-  // verify that the named trait matches the claim's trait
-  auto expectedTraitAttr = getTraitAttr();
-  auto foundTraitAttr = claim.getTraitApplication().getTraitName();
-  if (expectedTraitAttr != foundTraitAttr)
-    return emitOpError() << "expected claim for " << expectedTraitAttr << ", found " << foundTraitAttr;
-
   // A call computing evidence is replaced by the evidence its receiver's impl
   // returns (`inlineEvidence`), so its claim names no proof, as a projection
   // of a trait requirement names none: a proof it named would be read in place
@@ -2905,113 +2899,64 @@ FailureOr<func::FuncOp> MethodCallOp::getOrSpecializeCallee(
 }
 
 ParseResult MethodCallOp::parse(OpAsmParser& p, OperationState &st) {
-  MLIRContext* ctx = p.getContext();
-
   // grammar:
   //
-  // trait.method.call %claim @Trait[Types...]::@method(%arguments...)
-  //   : (Types...) -> Type
-  //   (by @Proof)?
+  // trait.method.call %claim @method(%arguments...)
+  //   : ClaimType, (Types...) -> Type
   //   attr-dict?
 
-  // parse %claim
   OpAsmParser::UnresolvedOperand claim;
   if (p.parseOperand(claim)) return failure();
 
-  // parse '@Trait[Types...]' as TraitApplicationAttr
-  TraitApplicationAttr traitApp = dyn_cast_or_null<TraitApplicationAttr>(TraitApplicationAttr::parse(p, {}));
-  if (!traitApp) return p.emitError(p.getCurrentLocation(), "expected a TraitApplicationAttr");
+  // The method is named inside the receiver claim's trait, so its name is
+  // parsed as a name and not as a reference into the enclosing symbol table.
+  StringAttr methodName;
+  if (p.parseSymbolName(methodName)) return failure();
+  st.addAttribute(getMethodNameAttrName(st.name), methodName);
 
-  // parse '::'
-  if (p.parseColon() || p.parseColon()) return failure();
-
-  // parse '@method' as FlatSymbolRefAttr
-  FlatSymbolRefAttr methodName;
-  if (p.parseAttribute(methodName)) return failure();
-
-  // add methodRef attribute
-  auto traitName = traitApp.getTraitName().getValue();
-  auto methodRef = SymbolRefAttr::get(ctx, traitName, methodName);
-  st.addAttribute("method_ref", methodRef);
-
-  // parse '(' %arguments... ')'
   SmallVector<OpAsmParser::UnresolvedOperand> arguments;
   if (p.parseOperandList(arguments, OpAsmParser::Delimiter::Paren)) return failure();
 
-  // parse ':' methodFunctionType
+  auto loc = p.getCurrentLocation();
+  ClaimType claimTy;
   FunctionType argumentTypesAndResultType;
-  if (p.parseColonType(argumentTypesAndResultType)) return failure();
+  if (p.parseColonType(claimTy) || p.parseComma() ||
+      p.parseType(argumentTypesAndResultType))
+    return failure();
 
-  // add the result types
   st.addTypes(argumentTypesAndResultType.getResults());
 
-  // parse optional 'by' @ProofSym
-  FlatSymbolRefAttr proofSym;
-  if (succeeded(p.parseOptionalKeyword("by"))) {
-    if (p.parseAttribute(proofSym)) return failure();
-  }
-
-  // build the type of %claim
-  auto loc = p.getCurrentLocation();
-  ClaimType claimTy = ClaimType::get(ctx, traitApp, proofSym);
-
-  // resolve %claim
   if (p.resolveOperand(claim, claimTy, st.operands))
     return failure();
 
-  // resolve arguments
   auto argumentTypes = argumentTypesAndResultType.getInputs();
   if (argumentTypes.size() != arguments.size())
     return p.emitError(loc, "argument count mismatch");
-
   if (p.resolveOperands(arguments, argumentTypes, loc, st.operands))
     return failure();
 
-  // parse attributes
   if (p.parseOptionalAttrDictWithKeyword(st.attributes)) return failure();
-  
+
   return success();
 }
 
 void MethodCallOp::print(OpAsmPrinter& p) {
   // grammar:
   //
-  // trait.method.call %claim @Trait[Types...]::@method(%arguments...)
-  //   : (Types...) -> Type
-  //   (by @Proof)?
+  // trait.method.call %claim @method(%arguments...)
+  //   : ClaimType, (Types...) -> Type
   //   attr-dict?
-
-  // print %claim
   p << " " << getClaim() << " ";
+  p.printSymbolName(getMethodName());
+  p << "(" << getArguments() << ")";
 
-  // print '@Trait[Types...]'
-  getTraitApplication().print(p);
-
-  // '::@method(%arguments...)'
-  p << "::" << getMethodAttr() << "(" << getArguments() << ")";
-
-  // on a newline:
-  // ': ' (argumentTypes) -> (resultTypes)`
   p.printNewline();
   p.getStream().indent(2);
-  FunctionType actualFunctionType = FunctionType::get(
-    getContext(),
-    ValueRange(getArguments()).getTypes(),
-    getResultTypes()
-  );
-  p << ": " << actualFunctionType;
-
-  // on a newline:
-  // (by @Proof)?
-  if (getClaimType().isProven()) {
-    p.printNewline();
-    p.getStream().indent(2);
-    p << "by " << getClaimType().getProof();
-  }
+  p << ": " << getClaim().getType() << ", " << getActualFunctionType();
 
   p.printOptionalAttrDictWithKeyword(
     (*this)->getAttrs(),
-    /*elidedAttrs=*/{"method_ref"}
+    /*elidedAttrs=*/{getMethodNameAttrName()}
   );
 }
 

@@ -39,7 +39,7 @@ func.func @respell_then_consume(%x: i64) -> i1 {
     via (%eq) : (!trait.claim<!trait.proj<@Assoc[i64], "Output"> = i64>)
   %vx = trait.coerce %x : i64 to !trait.proj<@Assoc[i64], "Output">
     via (%eq) : (!trait.claim<!trait.proj<@Assoc[i64], "Output"> = i64>)
-  %r = trait.method.call %c @Bound[!trait.proj<@Assoc[i64], "Output">]::@use(%vx)
-    : (!trait.proj<@Assoc[i64], "Output">) -> i1
+  %r = trait.method.call %c @use(%vx)
+    : !trait.claim<@Bound[!trait.proj<@Assoc[i64], "Output">]>, (!trait.proj<@Assoc[i64], "Output">) -> i1
   return %r : i1
 }

@@ -45,6 +45,6 @@ trait.proof private @T_p {
 // CHECK: call @T_impl
 func.func @main(%x: i64) -> i32 {
   %w = trait.allege @T[i64]
-  %r = trait.method.call %w @T[i64]::@m(%x) : (i64) -> i32
+  %r = trait.method.call %w @m(%x) : !trait.claim<@T[i64]>, (i64) -> i32
   return %r : i32
 }

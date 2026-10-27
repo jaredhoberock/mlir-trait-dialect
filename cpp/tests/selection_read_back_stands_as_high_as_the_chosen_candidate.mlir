@@ -24,9 +24,9 @@ trait.impl private @Z0_i(%s: !trait.claim<@Z0[i32]>, %n: !trait.claim<@Z1[i32]>)
 trait.impl private @Z29_i(%s: !trait.claim<@Z29[i32]>, %n: !trait.claim<@X[i32]>) {}
 func.func @main() -> i64 {
   %z = trait.allege @Z0[i32]
-  %vz = trait.method.call %z @Z0[i32]::@m() : () -> i64
+  %vz = trait.method.call %z @m() : !trait.claim<@Z0[i32]>, () -> i64
   %x = trait.allege @X[i32]
-  %vx = trait.method.call %x @X[i32]::@m() : () -> i64
+  %vx = trait.method.call %x @m() : !trait.claim<@X[i32]>, () -> i64
   %r = arith.addi %vx, %vz : i64
   return %r : i64
 }

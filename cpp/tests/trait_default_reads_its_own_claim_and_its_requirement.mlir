@@ -18,8 +18,8 @@ trait.trait private @A(%self: !trait.claim<@A[!T]>) -> !trait.claim<@B[!T]> {
   trait.method @a(!T) -> i64
   trait.method @both(%x: !T) -> i64 {
     %b = trait.project %self[0] : !trait.claim<@A[!T]> -> !trait.claim<@B[!T]>
-    %u = trait.method.call %self @A[!T]::@a(%x) : (!T) -> i64
-    %v = trait.method.call %b @B[!T]::@b(%x) : (!T) -> i64
+    %u = trait.method.call %self @a(%x) : !trait.claim<@A[!T]>, (!T) -> i64
+    %v = trait.method.call %b @b(%x) : !trait.claim<@B[!T]>, (!T) -> i64
     %r = arith.addi %u, %v : i64
     trait.return %r : i64
   }
@@ -41,6 +41,6 @@ trait.impl private @A_i32(%self: !trait.claim<@A[i32]>) {
 func.func @main() -> i64 {
   %x = arith.constant 0 : i32
   %a = trait.allege @A[i32]
-  %r = trait.method.call %a @A[i32]::@both(%x) : (i32) -> i64
+  %r = trait.method.call %a @both(%x) : !trait.claim<@A[i32]>, (i32) -> i64
   return %r : i64
 }

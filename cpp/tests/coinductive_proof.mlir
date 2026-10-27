@@ -39,14 +39,14 @@ trait.impl private @Rec_unit(%self: !trait.claim<@Rec[tuple<>]>) {
 func.func @test_coinductive(%x: i64) -> i64 {
   // CHECK: trait.witness @Rec_i64 for @Rec[i64]
   %c = trait.allege @Rec[i64]
-  %res = trait.method.call %c @Rec[i64]::@id(%x) : (i64) -> i64
+  %res = trait.method.call %c @id(%x) : !trait.claim<@Rec[i64]>, (i64) -> i64
   return %res : i64
 }
 
 func.func @test_coinductive_unit(%x: tuple<>) -> tuple<> {
   // CHECK: trait.witness @Rec_unit for @Rec[tuple<>]
   %c = trait.allege @Rec[tuple<>]
-  %res = trait.method.call %c @Rec[tuple<>]::@id(%x) : (tuple<>) -> tuple<>
+  %res = trait.method.call %c @id(%x) : !trait.claim<@Rec[tuple<>]>, (tuple<>) -> tuple<>
   return %res : tuple<>
 }
 

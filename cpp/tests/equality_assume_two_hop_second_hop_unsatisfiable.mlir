@@ -47,6 +47,6 @@ trait.impl private @Run_gen(%self: !trait.claim<@Run[!S]>, %wrap: !trait.claim<@
 func.func @main() -> i64 {
   %c = trait.allege @Run[i64]
   %x = arith.constant 3 : i64
-  %r = trait.method.call %c @Run[i64]::@go(%x) : (i64) -> i64
+  %r = trait.method.call %c @go(%x) : !trait.claim<@Run[i64]>, (i64) -> i64
   return %r : i64
 }

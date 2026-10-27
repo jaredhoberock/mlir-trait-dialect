@@ -18,7 +18,7 @@ trait.trait private @Wrapped(%self: !trait.claim<@Wrapped[!T]>) -> !trait.claim<
 trait.trait private @Host(%self: !trait.claim<@Host[!T]>) {
   trait.method @run(%w: !trait.claim<@Wrapped[!T]>) -> i64 {
     %m = trait.project %w[0] : !trait.claim<@Wrapped[!T]> -> !trait.claim<@Mark[!T]>
-    %v = trait.method.call %m @Mark[!T]::@value() : () -> i64
+    %v = trait.method.call %m @value() : !trait.claim<@Mark[!T]>, () -> i64
     trait.return %v : i64
   }
 }
@@ -51,6 +51,6 @@ trait.proof private @H {
 func.func @main() -> i64 {
   %h = trait.witness @H for @Host[i32]
   %w = trait.witness @W for @Wrapped[i32]
-  %v = trait.method.call %h @Host[i32]::@run(%w) : (!trait.claim<@Wrapped[i32] by @W>) -> i64 by @H
+  %v = trait.method.call %h @run(%w) : !trait.claim<@Host[i32] by @H>, (!trait.claim<@Wrapped[i32] by @W>) -> i64
   return %v : i64
 }

@@ -38,7 +38,7 @@ trait.impl private @A_polymorphic_impl(%self: !trait.claim<@A[!trait.poly<0>]>, 
 func.func @main() {
   // CHECK: trait.witness @A_polymorphic_impl_{{.*}}_p
   %0 = trait.allege @A[tuple<tuple<>, tuple<i1>>]
-  trait.method.call %0 @A[tuple<tuple<>, tuple<i1>>]::@a() : () -> ()
+  trait.method.call %0 @a() : !trait.claim<@A[tuple<tuple<>, tuple<i1>>]>, () -> ()
   return
 }
 

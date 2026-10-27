@@ -21,6 +21,6 @@ trait.impl private @I(%self: !trait.claim<@T[i32]>, %eq: !trait.claim<i32 = i64>
 func.func @main() -> i64 {
   // expected-error @below {{impl '@I' binds type parameters or has a where clause, so it must be cited through a trait.proof}}
   %w = trait.witness @I for @T[i32]
-  %r = trait.method.call %w @T[i32]::@m() : () -> i64 by @I
+  %r = trait.method.call %w @m() : !trait.claim<@T[i32] by @I>, () -> i64
   return %r : i64
 }

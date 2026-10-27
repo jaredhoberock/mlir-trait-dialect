@@ -31,7 +31,7 @@ func.func @main() -> i64 {
   %eq = trait.allege !trait.proj<@Has[i32], "Out"> = i64
   // expected-error @below {{unproven monomorphic claim '!trait.claim<@T[i32]>' after instantiate-monomorphs}}
   %w = trait.derive @T[i32] from @I given(%eq) : (!trait.claim<!trait.proj<@Has[i32], "Out"> = i64>)
-  %r = trait.method.call %w @T[i32]::@m() : () -> i64
+  %r = trait.method.call %w @m() : !trait.claim<@T[i32]>, () -> i64
   return %r : i64
 }
 
@@ -66,6 +66,6 @@ func.func @main() -> i64 {
   %eq = trait.allege !trait.proj<@Has[i32], "Out"> = i64
   // expected-error @below {{unproven monomorphic claim '!trait.claim<@T[i32]>' after instantiate-monomorphs}}
   %w = trait.derive @T[i32] from @I given(%eq) : (!trait.claim<!trait.proj<@Has[i32], "Out"> = i64>)
-  %r = trait.method.call %w @T[i32]::@m() : () -> i64
+  %r = trait.method.call %w @m() : !trait.claim<@T[i32]>, () -> i64
   return %r : i64
 }
