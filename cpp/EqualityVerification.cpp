@@ -26,33 +26,40 @@ static Type positionPlaceholder(MLIRContext *ctx, unsigned position) {
 
 TermShape mlir::trait::decomposeTerm(Type t) {
   TermShape s;
-  MLIRContext *ctx = t.getContext();
   if (auto claim = dyn_cast<ClaimType>(t)) {
     if (auto eq = claim.getEqualityAttr()) {
-      s.key = StringAttr::get(ctx, "trait.claim.eq");
+      s.key.kind = TermKey::Kind::Equality;
       s.children.push_back(eq.getLhs());
       s.children.push_back(eq.getRhs());
       return s;
     }
     // Application claims are compared modulo the proof, so the key ignores it.
     auto app = claim.getTraitApplication();
-    s.key = ArrayAttr::get(
-        ctx, {StringAttr::get(ctx, "trait.claim.app"), app.getTraitName()});
-    for (Type a : app.getTypeArgs())
-      s.children.push_back(a);
+    s.key.kind = TermKey::Kind::Application;
+    s.key.trait = app.getTraitName();
+    s.children.append(app.getTypeArgs().begin(), app.getTypeArgs().end());
     return s;
   }
   if (auto proj = dyn_cast<ProjectionType>(t)) {
     auto app = proj.getTraitApplication();
-    s.key = ArrayAttr::get(
-        ctx, {StringAttr::get(ctx, "trait.proj"), app.getTraitName(),
-              proj.getAssocName(),
-              IntegerAttr::get(IntegerType::get(ctx, 64),
-                               (int64_t)proj.getAssocTypeArgs().size())});
-    for (Type a : app.getTypeArgs())
-      s.children.push_back(a);
-    for (Type a : proj.getAssocTypeArgs())
-      s.children.push_back(a);
+    s.key.kind = TermKey::Kind::Projection;
+    s.key.trait = app.getTraitName();
+    s.key.associatedType = proj.getAssocName();
+    s.key.split = proj.getAssocTypeArgs().size();
+    s.children.append(app.getTypeArgs().begin(), app.getTypeArgs().end());
+    s.children.append(proj.getAssocTypeArgs().begin(),
+                      proj.getAssocTypeArgs().end());
+    return s;
+  }
+  // A function type's shell is the function type of its arity split at the
+  // placeholders: its constructor takes any inputs and results and normalizes
+  // none, so the split is the whole of its non-child storage.
+  if (auto function = dyn_cast<FunctionType>(t)) {
+    s.key.kind = TermKey::Kind::Function;
+    s.key.split = function.getNumInputs();
+    s.children.append(function.getInputs().begin(), function.getInputs().end());
+    s.children.append(function.getResults().begin(),
+                      function.getResults().end());
     return s;
   }
 
@@ -61,36 +68,32 @@ TermShape mlir::trait::decomposeTerm(Type t) {
   // `!coord.poly<!trait.poly<0>>`) carries its label as an immediate
   // sub-element whose reconstruction declines a position placeholder, so it
   // must be keyed here rather than decomposed structurally below.
-  if (getParameterOccurrence(t)) {
-    s.key = TypeAttr::get(t);
+  s.key.type = t;
+  if (getParameterOccurrence(t))
     return s;
-  }
 
   SmallVector<Attribute> subAttrs;
   SmallVector<Type> subTypes;
   t.walkImmediateSubElements([&](Attribute a) { subAttrs.push_back(a); },
                              [&](Type ty) { subTypes.push_back(ty); });
-  if (subTypes.empty()) {
-    s.key = TypeAttr::get(t);
+  if (subTypes.empty())
     return s;
-  }
+  MLIRContext *ctx = t.getContext();
   SmallVector<Type> placeholders;
   for (unsigned i = 0, n = subTypes.size(); i < n; ++i)
     placeholders.push_back(positionPlaceholder(ctx, i));
   // A partial constructor declines the placeholder arguments -- its inference
   // fails on them, as a weak product with no result does -- and returns a null
-  // shell. Such a type is keyed atomically: its own TypeAttr, no children
-  // enumerated, exactly as a leaf is. Congruence and the position-paired
-  // proof-swap walk both read children from here, so neither descends past this
-  // constructor's shell. Completeness across it is deliberately forgone, not
-  // lost by accident: a coerce that needs the crossing refuses with the ordinary
+  // shell. Such a type is keyed atomically: itself, no children enumerated,
+  // exactly as a leaf is. Congruence and the position-paired proof-swap walk
+  // both read children from here, so neither descends past this constructor's
+  // shell. Completeness across it is deliberately forgone, not lost by
+  // accident: a coerce that needs the crossing refuses with the ordinary
   // not-equal diagnostic rather than crashing on the null shell.
   Type shell = t.replaceImmediateSubElements(subAttrs, placeholders);
-  if (!shell) {
-    s.key = TypeAttr::get(t);
+  if (!shell)
     return s;
-  }
-  s.key = TypeAttr::get(shell);
+  s.key.type = shell;
   s.children = std::move(subTypes);
   return s;
 }
@@ -202,9 +205,9 @@ private:
     for (unsigned i = 0; i != n; ++i) {
       if (children[i].empty())
         continue;
-      // Only type constructors normalize; claim and projection keys are not
-      // TypeAttr and carry no construction-time law to reapply.
-      if (!isa<TypeAttr>(ctorKey[i]))
+      // Only type constructors normalize; claims and projections carry no
+      // construction-time law to reapply.
+      if (!ctorKey[i].isTypeConstructor())
         continue;
       SmallVector<Attribute> subAttrs;
       SmallVector<Type> subTypes;
@@ -248,7 +251,7 @@ private:
   }
 
   TypeEquivalence classes;
-  SmallVector<Attribute> ctorKey;
+  SmallVector<TermKey> ctorKey;
   SmallVector<SmallVector<unsigned>> children;
 };
 

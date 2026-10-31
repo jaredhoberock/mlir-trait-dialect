@@ -766,12 +766,13 @@ LogicalResult TypeArguments::assign(
 
 namespace {
 
-/// One pass of the reading. `throughProjections` says whether a formal
-/// projection may be read: a parameter standing only inside one is determined
-/// by the position the projection itself stands in, so the first pass leaves
-/// projections alone and the second reads what the first did not fill.
+/// The reading of `formal` against `actual`. A parameter standing only inside a
+/// projection is determined by the position the projection itself stands in, so
+/// a formal projection the walk meets is set aside in `projections`, in the
+/// order the walk meets it, and read after every position outside one; with no
+/// list to set it aside in, a projection is read where it stands.
 void extractInto(Type formal, Type actual, TypeArguments &args,
-                 bool throughProjections) {
+                 SmallVectorImpl<std::pair<Type, Type>> *projections) {
   // A parameter of this declaration takes whatever stands opposite it. This
   // comes first so that a parameter matched against itself is still recorded.
   // A second, differing reading of one parameter keeps the first: the reading
@@ -791,8 +792,10 @@ void extractInto(Type formal, Type actual, TypeArguments &args,
   // same projection, and only after every position outside a projection has had
   // its say -- what a projection's arguments confirm, a position outside one
   // determines.
-  if (isa<ProjectionType>(formal) && !throughProjections)
+  if (isa<ProjectionType>(formal) && projections) {
+    projections->emplace_back(formal, actual);
     return;
+  }
 
   // Every other node is read by its shape: the same constructor, the same
   // attributes and the same child count, then the children by position. A
@@ -811,14 +814,16 @@ void extractInto(Type formal, Type actual, TypeArguments &args,
     return;
   for (auto [formalChild, actualChild] :
        llvm::zip(formalShape.children, actualShape.children))
-    extractInto(formalChild, actualChild, args, throughProjections);
+    extractInto(formalChild, actualChild, args, projections);
 }
 
 } // namespace
 
 void extractTypeArguments(Type formal, Type actual, TypeArguments &args) {
-  extractInto(formal, actual, args, /*throughProjections=*/false);
-  extractInto(formal, actual, args, /*throughProjections=*/true);
+  SmallVector<std::pair<Type, Type>> projections;
+  extractInto(formal, actual, args, &projections);
+  for (auto [projection, opposite] : projections)
+    extractInto(projection, opposite, args, /*projections=*/nullptr);
 }
 
 LogicalResult verifyEqualAfterInstantiation(

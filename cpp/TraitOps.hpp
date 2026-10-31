@@ -74,28 +74,72 @@ ClaimType evidenceOf(Value value);
 /// else its own type.
 Type evidenceTypeOf(Value value);
 
-/// A type's term decomposition for ground reasoning: an exact constructor
-/// identity together with the positional type children the constructor is
-/// applied to. Two types denote the same constructor exactly when their keys are
-/// equal; the key carries every part of a type that is not a child -- a function
-/// type's arity split, a vector's or memref's shape, a memref's layout and memory
-/// space, a trait or associated-type name -- so distinct constructors never share
-/// a key and congruence over the children is sound.
+/// The identity of the constructor a type is built by: every part of the type
+/// that is not a child -- a function type's arity split, a vector's or memref's
+/// shape, a memref's layout and memory space, a trait or associated-type name.
+/// Two types denote the same constructor exactly when their keys are equal, so
+/// distinct constructors never share a key and congruence over the children is
+/// sound.
+///
+/// A claim, a projection and a function type are keyed by the interned
+/// attributes and the counts they already hold, so naming their constructor
+/// mints nothing. Every other type is keyed by `type`.
+struct TermKey {
+  enum class Kind : uint8_t {
+    /// Any type not listed below, keyed by `type`.
+    Type,
+    /// A function type, keyed by its input count in `split`.
+    Function,
+    /// An application claim, keyed by its trait; the proof is no part of it.
+    Application,
+    /// An equality claim.
+    Equality,
+    /// A projection, keyed by its trait, its associated type and its
+    /// associated-type argument count in `split`.
+    Projection,
+  };
+
+  Kind kind = Kind::Type;
+  /// For `Type`: the type rebuilt with numbered placeholders for its type
+  /// children -- its shell, which holds the full non-child storage by
+  /// construction -- or the type itself where it has no type child, is a
+  /// parameter occurrence, or its constructor declines the placeholders.
+  Type type;
+  /// The trait an application claim or a projection names.
+  Attribute trait;
+  /// The associated type a projection names.
+  Attribute associatedType;
+  unsigned split = 0;
+
+  /// Whether the key names a type constructor, which may normalize its
+  /// arguments when it builds a type: anything but a claim or a projection.
+  bool isTypeConstructor() const {
+    return kind == Kind::Type || kind == Kind::Function;
+  }
+
+  bool operator==(const TermKey &other) const {
+    return kind == other.kind && type == other.type && trait == other.trait &&
+           associatedType == other.associatedType && split == other.split;
+  }
+  bool operator!=(const TermKey &other) const { return !(*this == other); }
+};
+
+/// A type's term decomposition for ground reasoning: its constructor's identity
+/// together with the positional type children the constructor is applied to.
 struct TermShape {
-  Attribute key;
+  TermKey key;
   SmallVector<Type, 4> children;
 };
 
 /// Decompose a type into its constructor key and positional type children.
 /// Claims, projections, and equality endpoints carry their type arguments inside
 /// hand-written attribute storage the generic sub-element walk cannot see, so
-/// each is enumerated explicitly. Every other type derives its key by rebuilding
-/// itself with its immediate sub-element types replaced by numbered placeholders:
-/// the resulting shell holds the full non-child storage by construction and
-/// compares by exact type equality, so two containers share a key exactly when
-/// they differ only in their children. A constructor that declines the
-/// placeholder arguments yields no shell; that type is keyed atomically instead
-/// (see the guard in the definition).
+/// each is enumerated explicitly, as a function type's inputs and results are.
+/// Every other type derives its key by rebuilding itself with its immediate
+/// sub-element types replaced by numbered placeholders: two containers share a
+/// shell exactly when they differ only in their children. A constructor that
+/// declines the placeholder arguments yields no shell; that type is keyed
+/// atomically instead (see the guard in the definition).
 TermShape decomposeTerm(Type t);
 
 /// Whether `lhs` and `rhs` are equal under the ground congruence closure of the
