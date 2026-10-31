@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 #include "Specialization.hpp"
-#include "SymbolLookup.hpp"
 #include "TraitOps.hpp"
 #include "TraitTypes.hpp"
 #include <mlir/IR/IRMapping.h>
@@ -130,50 +129,29 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(
   return replacer;
 }
 
-/// Whether the block a builder inserts into stands inside a trait, impl, or
-/// proof, or a still-polymorphic function -- a template, whose clone carries no
-/// projection binding and no evidence binding, because its spelling is resolved
-/// when the template is itself cloned for a concrete instance.
+/// Whether the block a builder inserts into stands inside an impl or a proof,
+/// or a function that is a template (`isTemplateSignature`) -- whose clone
+/// carries no projection binding and no evidence binding, because its spelling
+/// is resolved when the template is itself cloned for a concrete instance.
 static bool insertionStandsInsideTemplate(OpBuilder &builder) {
   Block *block = builder.getInsertionBlock();
   if (!block)
     return false;
   for (Operation *op = block->getParentOp(); op; op = op->getParentOp()) {
-    if (isa<TraitOp, ImplOp, ProofOp>(op))
+    if (isa<ImplOp, ProofOp>(op))
       return true;
     if (auto func = dyn_cast<func::FuncOp>(op))
-      if (isPolymorphicType(Type(func.getFunctionType())))
+      if (isTemplateSignature(func.getFunctionType(), !func.isExternal()))
         return true;
   }
   return false;
 }
 
-/// When `function` is a `func.func` cut from a method, ends with `func.return`
-/// every block of its body the method's `trait.return` ends, over the same
-/// operands. A return nested in a deeper region ends no block of the body and is
-/// left alone.
-static void endWithFunctionReturns(RewriterBase &rewriter,
-                                   FunctionOpInterface function) {
-  if (!isa<func::FuncOp>(function))
-    return;
-  for (Block &block : function.getFunctionBody()) {
-    if (block.empty())
-      continue;
-    auto methodReturn = dyn_cast<ReturnOp>(&block.back());
-    if (!methodReturn)
-      continue;
-    OpBuilder::InsertionGuard guard(rewriter);
-    rewriter.setInsertionPoint(methodReturn);
-    rewriter.replaceOpWithNewOp<func::ReturnOp>(methodReturn,
-                                                methodReturn.getOperands());
-  }
-}
-
-FunctionOpInterface specializePolymorph(RewriterBase &rewriter,
-                                        FunctionOpInterface polymorph,
-                                        StringRef instanceName,
-                                        const SpecializationMap &variables,
-                                        const ProjectionBindings &projections) {
+func::FuncOp specializePolymorph(RewriterBase &rewriter,
+                                 func::FuncOp polymorph,
+                                 StringRef instanceName,
+                                 const SpecializationMap &variables,
+                                 const ProjectionBindings &projections) {
   if (polymorph.isExternal()) {
     polymorph.emitError("cannot specialize external function");
     return nullptr;
@@ -183,7 +161,7 @@ FunctionOpInterface specializePolymorph(RewriterBase &rewriter,
   OpBuilder &builder = rewriter;
 
   // A clone whose signature still spells a type variable under the generic-keyed
-  // bindings alone, or that is inserted inside a trait, impl, or proof, is a
+  // bindings alone, or that is inserted inside an impl or a proof, is a
   // template: it is stamped under those bindings with no projection or evidence
   // binding, so a substitution-invariant verifier accepts it as it accepts the
   // source, and its spelling resolves when it is cloned for a concrete
@@ -206,36 +184,23 @@ FunctionOpInterface specializePolymorph(RewriterBase &rewriter,
           ? substitutedType
           : llvm::cast<FunctionType>(replacer.replace(oldFunctionType));
 
-  // create the instance with the new type and instance name, of the kind the
-  // block it stands in holds
-  bool instanceIsMethod =
-      isa<TraitOp, ImplOp>(builder.getInsertionBlock()->getParentOp());
-  FunctionOpInterface instance =
-      instanceIsMethod
-          ? FunctionOpInterface(
-                MethodOp::create(builder, loc, instanceName, newFunctionType))
-          : FunctionOpInterface(func::FuncOp::create(builder, loc, instanceName,
-                                                     newFunctionType));
+  // create the instance with the new type and instance name
+  auto instance =
+      func::FuncOp::create(builder, loc, instanceName, newFunctionType);
 
-  // clone the polymorph's attributes with type replacement
+  // clone the polymorph's attributes with type replacement, but for its name
+  // and function type
   for (NamedAttribute attr : polymorph->getAttrs()) {
     StringRef n = attr.getName();
-
-    // don't copy the polymorph's name or function type, and give a method no
-    // visibility
-    if (n == SymbolTable::getSymbolAttrName() || n == "function_type" ||
-        (instanceIsMethod && n == SymbolTable::getVisibilityAttrName())) {
+    if (n == SymbolTable::getSymbolAttrName() || n == "function_type")
       continue;
-    }
-
     instance->setAttr(attr.getName(), replacer.replace(attr.getValue()));
   }
 
   IRMapping mapping;
-  Region &body = instance.getFunctionBody();
-  cloneRegionStampedBefore(builder, polymorph.getFunctionBody(), body,
-                           body.end(), mapping, replacer);
-  endWithFunctionReturns(rewriter, instance);
+  Region &body = instance.getBody();
+  cloneRegionStampedBefore(builder, polymorph.getBody(), body, body.end(),
+                           mapping, replacer);
 
   return instance;
 }
@@ -258,7 +223,7 @@ void specializePolymorphicRegion(OpBuilder &builder, Region &polymorph,
 }
 
 FailureOr<InstanceKey>
-InstanceKey::get(SymbolRefAttr templateRef, ArrayRef<Type> typeArguments,
+InstanceKey::get(FlatSymbolRefAttr templateRef, ArrayRef<Type> typeArguments,
                  TypeRange formalInputs, TypeRange actualInputs,
                  AttrTypeReplacer &stamp,
                  llvm::function_ref<FailureOr<ClaimType>(ClaimType, ClaimType)> respell) {
@@ -315,22 +280,16 @@ std::string InstanceKey::getSymbolName() const {
                                      return static_cast<bool>(supplied);
                                    }));
 
-  // A method's template is reached through its impl, and the hash qualifies the
-  // root it is reached through, so a method's name reads its impl, the identity
-  // of the instance, then the method.
-  std::string name = templateRef.getRootReference().str() +
-                     generateMangledNameSuffixFor(identity);
-  for (FlatSymbolRefAttr nested : templateRef.getNestedReferences())
-    name += "_" + nested.getValue().str();
-  return name;
+  return templateRef.getValue().str() + generateMangledNameSuffixFor(identity);
 }
 
-func::FuncOp getOrCutInstance(RewriterBase &rewriter, ModuleOp module,
-                              const InstanceKey &key,
+func::FuncOp getOrCutInstance(RewriterBase &rewriter,
+                              SymbolTableCollection &symbolTable,
+                              Operation *from, const InstanceKey &key,
                               llvm::function_ref<func::FuncOp(StringRef)> cut) {
   std::string name = key.getSymbolName();
-  if (auto existing = lookupSymbolFrom<func::FuncOp>(
-          module, FlatSymbolRefAttr::get(module.getContext(), name)))
+  if (auto existing = symbolTable.lookupNearestSymbolFrom<func::FuncOp>(
+          from, FlatSymbolRefAttr::get(from->getContext(), name)))
     return existing;
 
   func::FuncOp instance = cut(name);
@@ -364,11 +323,11 @@ func::FuncOp getOrCutInstance(RewriterBase &rewriter, ModuleOp module,
     SmallVector<ProjectOp> projections;
     instance.walk([&](ProjectOp project) {
       if (project.getSourceEvidence() &&
-          project.readEvidence().end == EvidenceReading::End::Base)
+          project.readEvidence(symbolTable).end == EvidenceReading::End::Base)
         projections.push_back(project);
     });
     for (ProjectOp project : projections)
-      changed |= succeeded(project.inlineEvidence(rewriter));
+      changed |= succeeded(project.inlineEvidence(rewriter, symbolTable));
     if (!changed)
       break;
   }

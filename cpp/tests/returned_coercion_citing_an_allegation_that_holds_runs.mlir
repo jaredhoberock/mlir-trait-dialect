@@ -10,9 +10,8 @@
 // CHECK: {{^}}9{{$}}
 
 !T = !trait.poly<0>
-trait.trait private @A(%self: !trait.claim<@A[!T]>) -> !trait.claim<!trait.proj<@A[!T], "Out"> = i64> { trait.assoc_type @Out }
-trait.impl private @I(%self: !trait.claim<@A[i8]>) {
- trait.assoc_type @Out = i64
+trait.trait private @A(!trait.claim<@A[!T]>) -> !trait.claim<!trait.proj<@A[!T], "Out"> = i64> assoc {Out = 0}
+trait.impl private @I(%self: !trait.claim<@A[i8]>) bindings {Out = i64} {
  %e = trait.allege !trait.proj<@A[i8], "Out"> = i64
  %r = trait.witness refl : !trait.claim<i64 = i64>
  %c = trait.coerce %r : !trait.claim<i64 = i64> to !trait.claim<!trait.proj<@A[i8], "Out"> = i64> via (%e) : (!trait.claim<!trait.proj<@A[i8], "Out"> = i64>)

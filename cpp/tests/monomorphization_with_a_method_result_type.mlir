@@ -4,16 +4,15 @@
 // RUN: mlir-opt -pass-pipeline='builtin.module(monomorphize-trait)' %s | FileCheck %s
 
 !T = !trait.poly<0>
-trait.trait private @Get(%self: !trait.claim<@Get[!T]>) {
-  // method returns the trait's type parameter
-  trait.method @get() -> !T
-}
+trait.trait private @Get(!trait.claim<@Get[!T]>) members [@Get.get]
+// method returns the trait's type parameter
+func.func private @Get.get(!trait.claim<@Get[!T]>) -> !T
 
-trait.impl private @Get_impl(%self: !trait.claim<@Get[i32]>) {
-  trait.method @get() -> i32 {
-    %c = arith.constant 0 : i32
-    trait.return %c : i32
-  }
+trait.impl private @Get_impl(%self: !trait.claim<@Get[i32]>) members [@Get.get -> @Get_impl.get] {
+}
+func.func private @Get_impl.get(%self: !trait.claim<@Get[i32]>) -> i32 {
+  %c = arith.constant 0 : i32
+  return %c : i32
 }
 
 // The method's declared result is the trait's parameter, so a call writes its
@@ -22,8 +21,7 @@ trait.impl private @Get_impl(%self: !trait.claim<@Get[i32]>) {
 // where the caller supplies it.
 !A = !trait.poly<1>
 func.func private @return_method_result(%claim: !trait.claim<@Get[!trait.poly<0>]>) -> !trait.poly<0> {
-  %res = trait.method.call %claim @get()
-    : !trait.claim<@Get[!trait.poly<0>]>, () -> !trait.poly<0>
+  %res = trait.func.call @Get.get(%claim) : (!trait.claim<@Get[!trait.poly<0>]>) -> !trait.poly<0>
   return %res : !trait.poly<0>
 }
 
@@ -39,7 +37,6 @@ func.func @bar() -> i32 {
 // CHECK-NOT:   trait.trait
 // CHECK-NOT:   trait.impl
 // CHECK-NOT:   trait.func.call
-// CHECK-NOT:   trait.method.call
 // CHECK-NOT:   trait.allege
 // CHECK-NOT:   trait.assume
 // CHECK-NOT:   trait.witness

@@ -9,11 +9,8 @@
 // impl binds Assoc<!poly<99>> = !poly<99>. A citation of the true resolved type
 // is accepted; a citation of a false one is refused.
 
-trait.trait private @Trait(%self: !trait.claim<@Trait[!trait.poly<0>]>) {
-  trait.assoc_type @Assoc<[!trait.poly<1>]>
-}
-trait.impl private @Trait_impl(%self: !trait.claim<@Trait[i64]>) {
-  trait.assoc_type @Assoc<[!trait.poly<0>]> = !trait.poly<0>
+trait.trait private @Trait(!trait.claim<@Trait[!trait.poly<0>]>) assoc {Assoc = 1}
+trait.impl private @Trait_impl(%self: !trait.claim<@Trait[i64]>) bindings {Assoc = !trait.poly<0>} {
 }
 
 func.func @true_citation() -> !trait.claim<!trait.proj<@Trait[i64], "Assoc", [i1]> = i1> {
@@ -24,11 +21,8 @@ func.func @true_citation() -> !trait.claim<!trait.proj<@Trait[i64], "Assoc", [i1
 
 // -----
 
-trait.trait private @Trait(%self: !trait.claim<@Trait[!trait.poly<0>]>) {
-  trait.assoc_type @Assoc<[!trait.poly<1>]>
-}
-trait.impl private @Trait_impl(%self: !trait.claim<@Trait[i64]>) {
-  trait.assoc_type @Assoc<[!trait.poly<0>]> = !trait.poly<0>
+trait.trait private @Trait(!trait.claim<@Trait[!trait.poly<0>]>) assoc {Assoc = 1}
+trait.impl private @Trait_impl(%self: !trait.claim<@Trait[i64]>) bindings {Assoc = !trait.poly<0>} {
 }
 
 func.func @false_citation() -> !trait.claim<!trait.proj<@Trait[i64], "Assoc", [i1]> = i64> {

@@ -11,14 +11,11 @@
 
 !S = !trait.poly<0>
 
-trait.trait private @Trait(%self: !trait.claim<@Trait[!S]>) {
-  trait.assoc_type @Output
-}
+trait.trait private @Trait(!trait.claim<@Trait[!S]>) assoc {Output = 0}
 
-trait.trait private @Bound(%self: !trait.claim<@Bound[!S]>) {}
+trait.trait private @Bound(!trait.claim<@Bound[!S]>)
 
-trait.impl private @Trait_impl(%self: !trait.claim<@Trait[i64]>) {
-  trait.assoc_type @Output = i64
+trait.impl private @Trait_impl(%self: !trait.claim<@Trait[i64]>) bindings {Output = i64} {
 }
 
 // Concrete <-> projection: the equality @Trait[i64]::Output = i64 reconciles the

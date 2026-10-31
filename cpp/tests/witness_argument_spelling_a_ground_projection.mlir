@@ -19,17 +19,11 @@
 // LOWER-NEXT: return %arg0 : i1
 !S = !trait.poly<0>
 !U = !trait.poly<1>
-trait.trait private @Marker(%self: !trait.claim<@Marker[!S]>) {
-  trait.assoc_type @M
+trait.trait private @Marker(!trait.claim<@Marker[!S]>) assoc {M = 0}
+trait.impl private @Marker_i64(%self: !trait.claim<@Marker[i64]>) bindings {M = i1} {
 }
-trait.impl private @Marker_i64(%self: !trait.claim<@Marker[i64]>) {
-  trait.assoc_type @M = i1
-}
-trait.trait private @S(%self: !trait.claim<@S[!S]>) {
-  trait.assoc_type @Out
-}
-trait.impl private @S_i64(%self: !trait.claim<@S[i64]>, %m: !trait.claim<!trait.proj<@Marker[i64], "M"> = !trait.poly<0>>) {
-  trait.assoc_type @Out = !trait.poly<0>
+trait.trait private @S(!trait.claim<@S[!S]>) assoc {Out = 0}
+trait.impl private @S_i64(%self: !trait.claim<@S[i64]>, %m: !trait.claim<!trait.proj<@Marker[i64], "M"> = !trait.poly<0>>) bindings {Out = !trait.poly<0>} {
 }
 // The argument for !U is the projection the where-equality spells, still spelled.
 func.func @read(%v: !trait.proj<@S[i64], "Out">) -> i1 {

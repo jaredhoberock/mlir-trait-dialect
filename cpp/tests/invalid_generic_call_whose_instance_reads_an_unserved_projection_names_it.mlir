@@ -10,9 +10,10 @@
 // named there, with selection's refusal of the projection beside it.
 
 !T = !trait.poly<0>
-trait.trait private @A(%self: !trait.claim<@A[!T]>) { trait.assoc_type @Item }
-trait.trait private @B(%self: !trait.claim<@B[!T]>) {}
-trait.impl private @B_proj(%self: !trait.claim<@B[!trait.proj<@A[i64], "Item">]>) {}
+trait.trait private @A(!trait.claim<@A[!T]>) assoc {Item = 0}
+trait.trait private @B(!trait.claim<@B[!T]>)
+trait.impl private @B_proj(%self: !trait.claim<@B[!trait.proj<@A[i64], "Item">]>) {
+}
 func.func private @use(%w: !trait.claim<@B[!trait.proj<@A[!T], "Item">]>, %x: !T) -> !T {
   return %x : !T
 }

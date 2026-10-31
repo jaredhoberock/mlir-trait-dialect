@@ -15,14 +15,12 @@
 //
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(instantiate-monomorphs-trait)' | FileCheck %s
 
-trait.trait private @Producer(%self: !trait.claim<@Producer[!trait.poly<0>]>) {
-  trait.assoc_type @Item
+trait.trait private @Producer(!trait.claim<@Producer[!trait.poly<0>]>) assoc {Item = 0}
+trait.impl private @Producer_i64(%self: !trait.claim<@Producer[i64]>) bindings {Item = i32} {
 }
-trait.impl private @Producer_i64(%self: !trait.claim<@Producer[i64]>) {
-  trait.assoc_type @Item = i32
+trait.trait private @Has(!trait.claim<@Has[!trait.poly<0>]>)
+trait.impl private @Has_i32(%self: !trait.claim<@Has[i32]>) {
 }
-trait.trait private @Has(%self: !trait.claim<@Has[!trait.poly<0>]>) {}
-trait.impl private @Has_i32(%self: !trait.claim<@Has[i32]>) {}
 trait.proof private @Has_i32_p {
   %d = trait.derive @Has[i32] from @Has_i32 given()
   trait.return %d : !trait.claim<@Has[i32]>

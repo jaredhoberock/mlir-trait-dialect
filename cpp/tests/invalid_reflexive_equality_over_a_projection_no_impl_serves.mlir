@@ -11,7 +11,7 @@
 // spellings as settled. Erasure alone meets the allegation still owed to
 // instantiation and refuses it there.
 
-trait.trait private @Has(%self: !trait.claim<@Has[!trait.poly<0>]>) { trait.assoc_type @Out }
+trait.trait private @Has(!trait.claim<@Has[!trait.poly<0>]>) assoc {Out = 0}
 
 func.func @main() -> i64 {
   // ERASE: error: unproven monomorphic claim '!trait.claim<!trait.proj<@Has[i32], "Out"> = !trait.proj<@Has[i32], "Out">>' before erasure

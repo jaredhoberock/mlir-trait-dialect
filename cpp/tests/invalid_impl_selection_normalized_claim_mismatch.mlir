@@ -8,28 +8,23 @@
 
 !L = !trait.poly<0>
 !R = !trait.poly<1>
-trait.trait private @Eq(%self: !trait.claim<@Eq[!L, !R]>) {
-  trait.method @use()
-}
+trait.trait private @Eq(!trait.claim<@Eq[!L, !R]>) members [@Eq.use]
+func.func private @Eq.use(!trait.claim<@Eq[!L, !R]>)
 
 !T = !trait.poly<2>
-trait.impl private @Eq_same(%self: !trait.claim<@Eq[!trait.poly<0>, !trait.poly<0>]>) {
-  trait.method @use() {
-    trait.return
-  }
+trait.impl private @Eq_same(%self: !trait.claim<@Eq[!trait.poly<0>, !trait.poly<0>]>) members [@Eq.use -> @Eq_same.use] {
+}
+func.func private @Eq_same.use(%self: !trait.claim<@Eq[!trait.poly<0>, !trait.poly<0>]>) {
+  return
 }
 
 !A = !trait.poly<3>
-trait.trait private @Has(%self: !trait.claim<@Has[!trait.poly<0>]>) {
-  trait.assoc_type @Shape
+trait.trait private @Has(!trait.claim<@Has[!trait.poly<0>]>) assoc {Shape = 0}
+
+trait.impl private @Has_i32(%self: !trait.claim<@Has[i32]>) bindings {Shape = i32} {
 }
 
-trait.impl private @Has_i32(%self: !trait.claim<@Has[i32]>) {
-  trait.assoc_type @Shape = i32
-}
-
-trait.impl private @Has_f32(%self: !trait.claim<@Has[f32]>) {
-  trait.assoc_type @Shape = i64
+trait.impl private @Has_f32(%self: !trait.claim<@Has[f32]>) bindings {Shape = i64} {
 }
 
 func.func @repro() {
@@ -38,9 +33,9 @@ func.func @repro() {
     !trait.proj<@Has[i32], "Shape">,
     !trait.proj<@Has[f32], "Shape">
   ]
-  trait.method.call %claim @use() : !trait.claim<@Eq[
+  trait.func.call @Eq.use(%claim) : (!trait.claim<@Eq[
     !trait.proj<@Has[i32], "Shape">,
     !trait.proj<@Has[f32], "Shape">
-  ]>, () -> ()
+  ]>) -> ()
   return
 }

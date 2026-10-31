@@ -13,12 +13,12 @@
 !G = !trait.poly<2>
 !X = !trait.poly<3>
 
-trait.trait private @Group(%self: !trait.claim<@Group[!S]>) {}
-trait.impl private @Group_i8(%self: !trait.claim<@Group[i8]>) {}
+trait.trait private @Group(!trait.claim<@Group[!S]>)
+trait.impl private @Group_i8(%self: !trait.claim<@Group[i8]>) {
+}
 
-trait.trait private @Carry(%self: !trait.claim<@Carry[!trait.poly<0>, !trait.poly<1>]>) { trait.assoc_type @Payload }
-trait.impl private @Carry_any(%self: !trait.claim<@Carry[!trait.poly<0>, !trait.poly<1>]>, %group: !trait.claim<@Group[!trait.poly<1>]>) {
-  trait.assoc_type @Payload = !trait.poly<0>
+trait.trait private @Carry(!trait.claim<@Carry[!trait.poly<0>, !trait.poly<1>]>) assoc {Payload = 0}
+trait.impl private @Carry_any(%self: !trait.claim<@Carry[!trait.poly<0>, !trait.poly<1>]>, %group: !trait.claim<@Group[!trait.poly<1>]>) bindings {Payload = !trait.poly<0>} {
 }
 
 func.func private @sink(%e: !trait.claim<!trait.proj<@Carry[!trait.poly<0>, i8], "Payload"> = !trait.poly<0>>) {

@@ -15,36 +15,39 @@
 // CHECK: {{^}}9{{$}}
 
 !S = !trait.poly<0>
-trait.trait private @Bound(%self: !trait.claim<@Bound[!S]>) { trait.method @value() -> i64 }
-trait.impl private @One(%self: !trait.claim<@Bound[i64]>) {
-  trait.method @value() -> i64 {
-    %v = arith.constant 7 : i64
-    trait.return %v : i64
-  }
+trait.trait private @Bound(!trait.claim<@Bound[!S]>) members [@Bound.value]
+func.func private @Bound.value(!trait.claim<@Bound[!S]>) -> i64
+trait.impl private @One(%self: !trait.claim<@Bound[i64]>) members [@Bound.value -> @One.value] {
 }
-trait.impl private @Two(%self: !trait.claim<@Bound[i64]>) {
-  trait.method @value() -> i64 {
-    %v = arith.constant 9 : i64
-    trait.return %v : i64
-  }
+func.func private @One.value(%self: !trait.claim<@Bound[i64]>) -> i64 {
+  %v = arith.constant 7 : i64
+  return %v : i64
 }
-trait.trait private @Need(%self: !trait.claim<@Need[!S]>) { trait.method @get() -> i64 }
-trait.impl private @Need_from(%self: !trait.claim<@Need[!S]>, %b: !trait.claim<@Bound[!S]>) {
-  trait.method @get() -> i64 {
-    %v = trait.method.call %b @value() : !trait.claim<@Bound[!S]>, () -> i64
-    trait.return %v : i64
-  }
+trait.impl private @Two(%self: !trait.claim<@Bound[i64]>) members [@Bound.value -> @Two.value] {
+}
+func.func private @Two.value(%self: !trait.claim<@Bound[i64]>) -> i64 {
+  %v = arith.constant 9 : i64
+  return %v : i64
+}
+trait.trait private @Need(!trait.claim<@Need[!S]>) members [@Need.get]
+func.func private @Need.get(!trait.claim<@Need[!S]>) -> i64
+trait.impl private @Need_from(%self: !trait.claim<@Need[!S]>, %b: !trait.claim<@Bound[!S]>) members [@Need.get -> @Need_from.get] {
+}
+func.func private @Need_from.get(%self: !trait.claim<@Need[!S]>, %b: !trait.claim<@Bound[!S]>) -> i64 {
+  %v = trait.func.call @Bound.value(%b) : (!trait.claim<@Bound[!S]>) -> i64
+  return %v : i64
 }
 !P = !trait.proj<@Trait[i64], "Output">
-trait.trait private @Trait(%self: !trait.claim<@Trait[!S]>) { trait.assoc_type @Output }
-trait.impl private @Trait_impl(%self: !trait.claim<@Trait[i64]>) { trait.assoc_type @Output = i64 }
+trait.trait private @Trait(!trait.claim<@Trait[!S]>) assoc {Output = 0}
+trait.impl private @Trait_impl(%self: !trait.claim<@Trait[i64]>) bindings {Output = i64} {
+}
 func.func private @pick(%flag: i1) -> i64 {
   %b1 = trait.witness @Two for @Bound[i64]
   %d1 = trait.derive @Need[i64] from @Need_from[i64] given(%b1) : (!trait.claim<@Bound[i64] by @Two>)
   %b2 = trait.witness @Two for @Bound[i64]
   %d2 = trait.derive @Need[i64] from @Need_from[i64] given(%b2) : (!trait.claim<@Bound[i64] by @Two>)
   %r = arith.select %flag, %d1, %d2 : !trait.claim<@Need[i64]>
-  %v = trait.method.call %r @get() : !trait.claim<@Need[i64]>, () -> i64
+  %v = trait.func.call @Need.get(%r) : (!trait.claim<@Need[i64]>) -> i64
   return %v : i64
 }
 func.func private @pick_projected(%flag: i1) -> i64 {
@@ -57,7 +60,7 @@ func.func private @pick_projected(%flag: i1) -> i64 {
   %c2 = trait.coerce %b2 : !trait.claim<@Bound[i64] by @Two> to !trait.claim<@Bound[!P]> via (%eq2) : (!trait.claim<!P = i64>)
   %d2 = trait.derive @Need[!P] from @Need_from[!P] given(%c2) : (!trait.claim<@Bound[!P]>)
   %r = arith.select %flag, %d1, %d2 : !trait.claim<@Need[!P]>
-  %v = trait.method.call %r @get() : !trait.claim<@Need[!P]>, () -> i64
+  %v = trait.func.call @Need.get(%r) : (!trait.claim<@Need[!P]>) -> i64
   return %v : i64
 }
 func.func @plain() -> i64 {

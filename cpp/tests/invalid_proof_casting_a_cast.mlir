@@ -10,7 +10,7 @@
 // itself, two proofs casting each other, and a cast of a cast all lead nowhere
 // or the long way round to a root.
 
-trait.trait private @M(%s: !trait.claim<@M[!trait.poly<0>]>) {}
+trait.trait private @M(!trait.claim<@M[!trait.poly<0>]>)
 trait.proof private @pa {
   // expected-error @below {{names the cast @pa: a witness in a proof's body names a root}}
   %w = trait.witness @pa for @M[i32]
@@ -19,7 +19,7 @@ trait.proof private @pa {
 
 // -----
 
-trait.trait private @M(%s: !trait.claim<@M[!trait.poly<0>]>) {}
+trait.trait private @M(!trait.claim<@M[!trait.poly<0>]>)
 trait.proof private @pa {
   %w = trait.witness @pb for @M[i32]
   trait.return %w : !trait.claim<@M[i32] by @pb>
@@ -34,8 +34,9 @@ trait.proof private @pb {
 
 // -----
 
-trait.trait private @M(%s: !trait.claim<@M[!trait.poly<0>]>) {}
-trait.impl private @M_i32(%s: !trait.claim<@M[i32]>) {}
+trait.trait private @M(!trait.claim<@M[!trait.poly<0>]>)
+trait.impl private @M_i32(%s: !trait.claim<@M[i32]>) {
+}
 trait.proof private @pa {
   %w = trait.witness @M_i32 for @M[i32]
   trait.return %w : !trait.claim<@M[i32] by @M_i32>

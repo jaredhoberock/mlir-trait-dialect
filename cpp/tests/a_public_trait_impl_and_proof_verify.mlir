@@ -8,8 +8,7 @@
 // structure alone; a template must be private only by the time erase runs.
 
 // CHECK: trait.trait @Show(
-trait.trait @Show(%self: !trait.claim<@Show[!trait.poly<0>]>) {
-}
+trait.trait @Show(!trait.claim<@Show[!trait.poly<0>]>)
 
 // CHECK: trait.impl @Show_i32(
 trait.impl @Show_i32(%self: !trait.claim<@Show[i32]>) {

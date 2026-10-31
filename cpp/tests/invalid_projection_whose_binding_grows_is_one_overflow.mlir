@@ -10,36 +10,49 @@
 // -- names it once, and the stage stops there.
 
 !T = !trait.poly<0>
-trait.trait private @H(%s: !trait.claim<@H[!T]>) { trait.assoc_type @E }
-trait.impl private @Hg(%s: !trait.claim<@H[!T]>) { trait.assoc_type @E = !trait.proj<@H[tuple<!T>], "E"> }
-trait.trait private @A(%s: !trait.claim<@A[!T]>) { trait.method @value() -> i64 }
-trait.impl private @I2(%s: !trait.claim<@A[i64]>) { trait.method @value() -> i64 { %c = arith.constant 9 : i64 trait.return %c : i64 } }
+trait.trait private @H(!trait.claim<@H[!T]>) assoc {E = 0}
+trait.impl private @Hg(%s: !trait.claim<@H[!T]>) bindings {E = !trait.proj<@H[tuple<!T>], "E">} {
+}
+trait.trait private @A(!trait.claim<@A[!T]>) members [@A.value]
+func.func private @A.value(!trait.claim<@A[!T]>) -> i64
+trait.impl private @I2(%s: !trait.claim<@A[i64]>) members [@A.value -> @I2.value] {
+}
+func.func private @I2.value(%s: !trait.claim<@A[i64]>) -> i64 {
+  %c = arith.constant 9 : i64 return %c : i64
+}
 func.func @main() -> i64 {
   // expected-error @+1 {{overflow evaluating the requirement '!trait.claim<@A[!trait.proj<@H[i32], "E">]>': a chain of steps resolving its projections does not end within 128 steps}}
   %a = trait.allege @A[!trait.proj<@H[i32], "E">]
-  %v = trait.method.call %a @value() : !trait.claim<@A[!trait.proj<@H[i32], "E">]>, () -> i64
+  %v = trait.func.call @A.value(%a) : (!trait.claim<@A[!trait.proj<@H[i32], "E">]>) -> i64
   return %v : i64
 }
 
 // -----
 
 !T = !trait.poly<0>
-trait.trait private @H(%s: !trait.claim<@H[!T]>) { trait.assoc_type @E }
-trait.impl private @Hg(%s: !trait.claim<@H[!T]>) { trait.assoc_type @E = !trait.proj<@H[tuple<!T>], "E"> }
-trait.trait private @A(%s: !trait.claim<@A[!T]>) { trait.method @value() -> i64 }
-trait.impl private @I2(%s: !trait.claim<@A[!T]>, %e: !trait.claim<!trait.proj<@H[!T], "E"> = i64>) { trait.method @value() -> i64 { %c = arith.constant 9 : i64 trait.return %c : i64 } }
+trait.trait private @H(!trait.claim<@H[!T]>) assoc {E = 0}
+trait.impl private @Hg(%s: !trait.claim<@H[!T]>) bindings {E = !trait.proj<@H[tuple<!T>], "E">} {
+}
+trait.trait private @A(!trait.claim<@A[!T]>) members [@A.value]
+func.func private @A.value(!trait.claim<@A[!T]>) -> i64
+trait.impl private @I2(%s: !trait.claim<@A[!T]>, %e: !trait.claim<!trait.proj<@H[!T], "E"> = i64>) members [@A.value -> @I2.value] {
+}
+func.func private @I2.value(%s: !trait.claim<@A[!T]>, %e: !trait.claim<!trait.proj<@H[!T], "E"> = i64>) -> i64 {
+  %c = arith.constant 9 : i64 return %c : i64
+}
 func.func @main() -> i64 {
   // expected-error @+1 {{overflow evaluating the requirement '!trait.claim<!trait.proj<@H[i32], "E"> = i64>': a chain of steps resolving its projections does not end within 128 steps}}
   %a = trait.allege @A[i32]
-  %v = trait.method.call %a @value() : !trait.claim<@A[i32]>, () -> i64
+  %v = trait.func.call @A.value(%a) : (!trait.claim<@A[i32]>) -> i64
   return %v : i64
 }
 
 // -----
 
 !T = !trait.poly<0>
-trait.trait private @H(%s: !trait.claim<@H[!T]>) { trait.assoc_type @E }
-trait.impl private @Hg(%s: !trait.claim<@H[!T]>) { trait.assoc_type @E = !trait.proj<@H[tuple<!T>], "E"> }
+trait.trait private @H(!trait.claim<@H[!T]>) assoc {E = 0}
+trait.impl private @Hg(%s: !trait.claim<@H[!T]>) bindings {E = !trait.proj<@H[tuple<!T>], "E">} {
+}
 func.func private @need(!trait.claim<!trait.proj<@H[i32], "E"> = i64>)
 func.func @main() {
   // expected-error @+1 {{overflow evaluating the requirement '!trait.claim<!trait.proj<@H[i32], "E"> = i64>': a chain of steps resolving its projections does not end within 128 steps}}
@@ -55,14 +68,20 @@ func.func @main() {
 // steps are past the limit's worth, the same overflow as a growing binding.
 
 !T = !trait.poly<0>
-trait.trait private @H(%s: !trait.claim<@H[!T]>) { trait.assoc_type @E }
-trait.trait private @A(%s: !trait.claim<@A[!T]>) { trait.method @value() -> i64 }
-trait.impl private @A_i32(%s: !trait.claim<@A[i32]>) { trait.method @value() -> i64 { %c = arith.constant 7 : i64 trait.return %c : i64 } }
-// REPEAT 1 129: trait.impl private @H{k}(%s: !trait.claim<@H[i{k}]>) { trait.assoc_type @E = !trait.proj<@H[i{k+1}], "E"> }
-trait.impl private @H130(%s: !trait.claim<@H[i130]>) { trait.assoc_type @E = i32 }
+trait.trait private @H(!trait.claim<@H[!T]>) assoc {E = 0}
+trait.trait private @A(!trait.claim<@A[!T]>) members [@A.value]
+func.func private @A.value(!trait.claim<@A[!T]>) -> i64
+trait.impl private @A_i32(%s: !trait.claim<@A[i32]>) members [@A.value -> @A_i32.value] {
+}
+func.func private @A_i32.value(%s: !trait.claim<@A[i32]>) -> i64 {
+  %c = arith.constant 7 : i64 return %c : i64
+}
+// REPEAT 1 129: trait.impl private @H{k}(%s: !trait.claim<@H[i{k}]>) bindings {E = !trait.proj<@H[i{k+1}], "E">} {}
+trait.impl private @H130(%s: !trait.claim<@H[i130]>) bindings {E = i32} {
+}
 func.func @main() -> i64 {
   // expected-error @+1 {{overflow evaluating the requirement '!trait.claim<@A[!trait.proj<@H[i1], "E">]>': a chain of steps resolving its projections does not end within 128 steps}}
   %a = trait.allege @A[!trait.proj<@H[i1], "E">]
-  %v = trait.method.call %a @value() : !trait.claim<@A[!trait.proj<@H[i1], "E">]>, () -> i64
+  %v = trait.func.call @A.value(%a) : (!trait.claim<@A[!trait.proj<@H[i1], "E">]>) -> i64
   return %v : i64
 }

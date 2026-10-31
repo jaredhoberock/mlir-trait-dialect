@@ -13,35 +13,35 @@
 
 !T = !trait.poly<0>
 !B = !trait.poly<1>
-trait.trait private @Mark(%self: !trait.claim<@Mark[!T]>) { trait.method @value() -> i64 }
-trait.impl private @Blanket(%self: !trait.claim<@Mark[!T]>) {
-  trait.method @value() -> i64 {
-    %v = arith.constant 9 : i64
-    trait.return %v : i64
-  }
+trait.trait private @Mark(!trait.claim<@Mark[!T]>) members [@Mark.value]
+func.func private @Mark.value(!trait.claim<@Mark[!T]>) -> i64
+trait.impl private @Blanket(%self: !trait.claim<@Mark[!T]>) members [@Mark.value -> @Blanket.value] {
 }
-trait.trait private @Wrapped(%self: !trait.claim<@Wrapped[!T]>) -> !trait.claim<@Mark[!T]> {
-  trait.method @requirement_1() -> !trait.claim<@Mark[!B]>
+func.func private @Blanket.value(%self: !trait.claim<@Mark[!T]>) -> i64 {
+  %v = arith.constant 9 : i64
+  return %v : i64
 }
+trait.trait private @Wrapped(!trait.claim<@Wrapped[!T]>) -> !trait.claim<@Mark[!T]> members [@Wrapped.requirement_1]
+func.func private @Wrapped.requirement_1(!trait.claim<@Wrapped[!T]>) -> !trait.claim<@Mark[!B]>
 trait.proof private @PB {
   %d = trait.derive @Mark[i32] from @Blanket[i32] given()
   trait.return %d : !trait.claim<@Mark[i32]>
 }
-trait.impl private @W(%self: !trait.claim<@Wrapped[i32]>) {
-  trait.method @requirement_1() -> !trait.claim<@Mark[!trait.poly<0>]> {
-    %r = trait.derive @Mark[!trait.poly<0>] from @Blanket[!trait.poly<0>] given()
-    trait.return %r : !trait.claim<@Mark[!trait.poly<0>]>
-  }
+trait.impl private @W(%self: !trait.claim<@Wrapped[i32]>) members [@Wrapped.requirement_1 -> @W.requirement_1] {
   %mark = trait.witness @PB for @Mark[i32]
   trait.return %mark : !trait.claim<@Mark[i32] by @PB>
+}
+func.func private @W.requirement_1(%self: !trait.claim<@Wrapped[i32]>) -> !trait.claim<@Mark[!trait.poly<0>]> {
+  %r = trait.derive @Mark[!trait.poly<0>] from @Blanket[!trait.poly<0>] given()
+  return %r : !trait.claim<@Mark[!trait.poly<0>]>
 }
 trait.proof private @PW {
   %d = trait.derive @Wrapped[i32] from @W given()
   trait.return %d : !trait.claim<@Wrapped[i32]>
 }
 func.func private @f(%w: !trait.claim<@Wrapped[!T]>) -> i64 {
-  %m = trait.method.call %w @requirement_1() : !trait.claim<@Wrapped[!T]>, () -> !trait.claim<@Mark[!T]>
-  %v = trait.method.call %m @value() : !trait.claim<@Mark[!T]>, () -> i64
+  %m = trait.func.call @Wrapped.requirement_1(%w) : (!trait.claim<@Wrapped[!T]>) -> !trait.claim<@Mark[!T]>
+  %v = trait.func.call @Mark.value(%m) : (!trait.claim<@Mark[!T]>) -> i64
   return %v : i64
 }
 func.func @main() -> i64 {

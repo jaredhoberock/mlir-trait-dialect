@@ -9,9 +9,10 @@
 // about the module it was read from, so neither module's answers for the
 // other's.
 
-trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) {}
-trait.trait private @B(%self: !trait.claim<@B[!trait.poly<0>]>) -> !trait.claim<@A[!trait.poly<0>]> {}
-trait.impl private @A_top(%self: !trait.claim<@A[i32]>) {}
+trait.trait private @A(!trait.claim<@A[!trait.poly<0>]>)
+trait.trait private @B(!trait.claim<@B[!trait.poly<0>]>) -> !trait.claim<@A[!trait.poly<0>]>
+trait.impl private @A_top(%self: !trait.claim<@A[i32]>) {
+}
 trait.impl private @B_impl(%self: !trait.claim<@B[i32]>) {
   %a = trait.witness @A_top for @A[i32]
   trait.return %a : !trait.claim<@A[i32] by @A_top>
@@ -37,9 +38,10 @@ func.func @main() -> !trait.claim<@A[i32] by @A_top> {
 
 // CHECK: module @inner
 module @inner {
-  trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) {}
-  trait.trait private @B(%self: !trait.claim<@B[!trait.poly<0>]>) -> !trait.claim<@A[!trait.poly<0>]> {}
-  trait.impl private @A_inner(%self: !trait.claim<@A[i32]>) {}
+  trait.trait private @A(!trait.claim<@A[!trait.poly<0>]>)
+  trait.trait private @B(!trait.claim<@B[!trait.poly<0>]>) -> !trait.claim<@A[!trait.poly<0>]>
+  trait.impl private @A_inner(%self: !trait.claim<@A[i32]>) {
+  }
   trait.impl private @B_impl(%self: !trait.claim<@B[i32]>) {
     %a = trait.witness @A_inner for @A[i32]
     trait.return %a : !trait.claim<@A[i32] by @A_inner>

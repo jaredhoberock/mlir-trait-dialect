@@ -5,39 +5,35 @@
 
 // ---- Test 1: test everything
 
-// CHECK-LABEL: trait private @PartialEq(%self: !trait.claim<@PartialEq[!trait.poly<0>, !trait.poly<1>]>)
+// CHECK-LABEL: trait private @PartialEq(!trait.claim<@PartialEq[!trait.poly<0>, !trait.poly<1>]>)
 !PartialEqS = !trait.poly<0>
 !PartialEqO = !trait.poly<1>
-trait.trait private @PartialEq(%self_claim: !trait.claim<@PartialEq[!PartialEqS, !PartialEqO]>) {
-  // CHECK-LABEL: trait.method @eq
-  trait.method @eq(!PartialEqS, !PartialEqO) -> i1
-  
-  // CHECK-LABEL: trait.method @ne
-  trait.method @ne(%self: !PartialEqS, %other: !PartialEqO) -> i1 {
-    %equal = trait.method.call %self_claim @eq(%self, %other)
-      : !trait.claim<@PartialEq[!PartialEqS,!PartialEqO]>, (!PartialEqS,!PartialEqO) -> i1
-    %true = arith.constant 1 : i1
-    %not_equal = arith.xori %equal, %true : i1
-    trait.return %not_equal : i1
-  }
+trait.trait private @PartialEq(!trait.claim<@PartialEq[!PartialEqS, !PartialEqO]>) members [@PartialEq.eq, default @PartialEq.ne]
+// CHECK-LABEL: func.func private @PartialEq.eq(
+func.func private @PartialEq.eq(!trait.claim<@PartialEq[!PartialEqS, !PartialEqO]>, !PartialEqS, !PartialEqO) -> i1
+// CHECK-LABEL: func.func private @PartialEq.ne(
+func.func private @PartialEq.ne(%self_claim: !trait.claim<@PartialEq[!PartialEqS, !PartialEqO]>, %self: !PartialEqS, %other: !PartialEqO) -> i1 {
+  %equal = trait.func.call @PartialEq.eq(%self_claim, %self, %other) : (!trait.claim<@PartialEq[!PartialEqS,!PartialEqO]>, !PartialEqS,!PartialEqO) -> i1
+  %true = arith.constant 1 : i1
+  %not_equal = arith.xori %equal, %true : i1
+  return %not_equal : i1
 }
 
 // CHECK-LABEL: trait.impl private @PartialEq_impl_i32_i32(%self: !trait.claim<@PartialEq[i32, i32]>
-trait.impl private @PartialEq_impl_i32_i32(%self_claim: !trait.claim<@PartialEq[i32, i32]>) {
-  // CHECK-LABEL: trait.method @eq
-  trait.method @eq(%self: i32, %other: i32) -> i1 {
-    %equal = arith.cmpi eq, %self, %other : i32
-    trait.return %equal : i1
-  }
+trait.impl private @PartialEq_impl_i32_i32(%self_claim: !trait.claim<@PartialEq[i32, i32]>) members [@PartialEq.eq -> @PartialEq_impl_i32_i32.eq, @PartialEq.ne -> @PartialEq.ne] {
+}
+// CHECK-LABEL: func.func private @PartialEq_impl_i32_i32.eq(
+func.func private @PartialEq_impl_i32_i32.eq(%self_claim: !trait.claim<@PartialEq[i32, i32]>, %self: i32, %other: i32) -> i1 {
+  %equal = arith.cmpi eq, %self, %other : i32
+  return %equal : i1
 }
 
 // CHECK-LABEL: func.func @foo
 !T = !trait.poly<0>
 !W = !trait.claim<@PartialEq[!T,!T]>
 func.func @foo(%w: !W, %x: !T, %y: !T) -> i1 {
-  // CHECK: %[[RES:.*]] = trait.method.call %{{.*}} @eq
-  %res = trait.method.call %w @eq(%x, %y)
-    : !trait.claim<@PartialEq[!T,!T]>, (!T,!T) -> i1
+  // CHECK: %[[RES:.*]] = trait.func.call @PartialEq.eq(
+  %res = trait.func.call @PartialEq.eq(%w, %x, %y) : (!trait.claim<@PartialEq[!T,!T]>, !T,!T) -> i1
   return %res : i1
 }
 
@@ -52,10 +48,9 @@ func.func @bar(%x: i32, %y: i32) -> i1 {
   return %res : i1
 }
 
-// CHECK-LABEL: trait private @Eq(%self: !trait.claim<@Eq[!trait.poly<0>]>) -> !trait.claim<@PartialEq[!trait.poly<0>, !trait.poly<0>]>
+// CHECK-LABEL: trait private @Eq(!trait.claim<@Eq[!trait.poly<0>]>) -> !trait.claim<@PartialEq[!trait.poly<0>, !trait.poly<0>]>
 !EqS = !trait.poly<2>
-trait.trait private @Eq(%self: !trait.claim<@Eq[!trait.poly<0>]>) -> !trait.claim<@PartialEq[!trait.poly<0>,!trait.poly<0>]> {
-}
+trait.trait private @Eq(!trait.claim<@Eq[!trait.poly<0>]>) -> !trait.claim<@PartialEq[!trait.poly<0>,!trait.poly<0>]>
 
 // CHECK-LABEL: impl private @Eq_impl_i32(%self: !trait.claim<@Eq[i32]>)
 trait.impl private @Eq_impl_i32(%self: !trait.claim<@Eq[i32]>) {
@@ -70,82 +65,71 @@ trait.impl private @Eq_impl_i32(%self: !trait.claim<@Eq[i32]>) {
 // 3: None
 !opt_ord = i2
 
-// CHECK-LABEL: trait private @PartialOrd(%self: !trait.claim<@PartialOrd[!trait.poly<0>, !trait.poly<1>]>) -> !trait.claim<@PartialEq
+// CHECK-LABEL: trait private @PartialOrd(!trait.claim<@PartialOrd[!trait.poly<0>, !trait.poly<1>]>) -> !trait.claim<@PartialEq
 !PartialOrdS = !trait.poly<3>
 !PartialOrdO = !trait.poly<4>
-trait.trait private @PartialOrd(%self_claim: !trait.claim<@PartialOrd[!trait.poly<0>, !trait.poly<1>]>) -> !trait.claim<@PartialEq[!trait.poly<0>,!trait.poly<1>]> {
-  // CHECK-LABEL: trait.method @partial_cmp
-  trait.method @partial_cmp(!trait.poly<0>, !trait.poly<1>) -> !opt_ord
+trait.trait private @PartialOrd(!trait.claim<@PartialOrd[!trait.poly<0>, !trait.poly<1>]>) -> !trait.claim<@PartialEq[!trait.poly<0>,!trait.poly<1>]> members [@PartialOrd.partial_cmp, default @PartialOrd.lt, default @PartialOrd.le, default @PartialOrd.gt, default @PartialOrd.ge]
+// CHECK-LABEL: func.func private @PartialOrd.partial_cmp(
+func.func private @PartialOrd.partial_cmp(!trait.claim<@PartialOrd[!trait.poly<0>, !trait.poly<1>]>, !trait.poly<0>, !trait.poly<1>) -> !opt_ord
+// CHECK-LABEL: func.func private @PartialOrd.lt(
+func.func private @PartialOrd.lt(%self_claim: !trait.claim<@PartialOrd[!trait.poly<0>, !trait.poly<1>]>, %self: !trait.poly<0>, %other: !trait.poly<1>) -> i1 {
+  %cmp = trait.func.call @PartialOrd.partial_cmp(%self_claim, %self, %other) : (!trait.claim<@PartialOrd[!trait.poly<0>,!trait.poly<1>]>, !trait.poly<0>,!trait.poly<1>) -> !opt_ord
 
-  // CHECK-LABEL: trait.method @lt
-  trait.method @lt(%self: !trait.poly<0>, %other: !trait.poly<1>) -> i1 {
-    %cmp = trait.method.call %self_claim @partial_cmp(%self, %other)
-      : !trait.claim<@PartialOrd[!trait.poly<0>,!trait.poly<1>]>, (!trait.poly<0>,!trait.poly<1>) -> !opt_ord
+  %ord_lt = arith.constant 0 : !opt_ord
+  %res = arith.cmpi eq, %cmp, %ord_lt : !opt_ord
+  return %res : i1
+}
+// CHECK-LABEL: func.func private @PartialOrd.le(
+func.func private @PartialOrd.le(%self_claim: !trait.claim<@PartialOrd[!trait.poly<0>, !trait.poly<1>]>, %self: !trait.poly<0>, %other: !trait.poly<1>) -> i1 {
+  %partial_eq_p = trait.project %self_claim[0]
+    : !trait.claim<@PartialOrd[!trait.poly<0>,!trait.poly<1>]>
+    -> !trait.claim<@PartialEq[!trait.poly<0>,!trait.poly<1>]>
 
-    %ord_lt = arith.constant 0 : !opt_ord
-    %res = arith.cmpi eq, %cmp, %ord_lt : !opt_ord
-    trait.return %res : i1
-  }
+  %lt = trait.func.call @PartialOrd.lt(%self_claim, %self, %other) : (!trait.claim<@PartialOrd[!trait.poly<0>,!trait.poly<1>]>, !trait.poly<0>, !trait.poly<1>) -> i1
 
-  // CHECK-LABEL: trait.method @le
-  trait.method @le(%self: !trait.poly<0>, %other: !trait.poly<1>) -> i1 {
-    %partial_eq_p = trait.project %self_claim[0]
-      : !trait.claim<@PartialOrd[!trait.poly<0>,!trait.poly<1>]>
-      -> !trait.claim<@PartialEq[!trait.poly<0>,!trait.poly<1>]>
+  %eq = trait.func.call @PartialEq.eq(%partial_eq_p, %self, %other) : (!trait.claim<@PartialEq[!trait.poly<0>,!trait.poly<1>]>, !trait.poly<0>, !trait.poly<1>) -> i1
 
-    %lt = trait.method.call %self_claim @lt(%self, %other)
-      : !trait.claim<@PartialOrd[!trait.poly<0>,!trait.poly<1>]>, (!trait.poly<0>, !trait.poly<1>) -> i1
+  %res = arith.ori %lt, %eq : i1
+  return %res : i1
+}
+// CHECK-LABEL: func.func private @PartialOrd.gt(
+func.func private @PartialOrd.gt(%self_claim: !trait.claim<@PartialOrd[!trait.poly<0>, !trait.poly<1>]>, %self: !trait.poly<0>, %other: !trait.poly<1>) -> i1 {
+  %cmp = trait.func.call @PartialOrd.partial_cmp(%self_claim, %self, %other) : (!trait.claim<@PartialOrd[!trait.poly<0>,!trait.poly<1>]>, !trait.poly<0>,!trait.poly<1>) -> !opt_ord
 
-    %eq = trait.method.call %partial_eq_p @eq(%self, %other)
-      : !trait.claim<@PartialEq[!trait.poly<0>,!trait.poly<1>]>, (!trait.poly<0>, !trait.poly<1>) -> i1
+  %ord_gt = arith.constant 2 : !opt_ord
+  %res = arith.cmpi eq, %cmp, %ord_gt : !opt_ord
+  return %res : i1
+}
+// CHECK-LABEL: func.func private @PartialOrd.ge(
+func.func private @PartialOrd.ge(%self_claim: !trait.claim<@PartialOrd[!trait.poly<0>, !trait.poly<1>]>, %self: !trait.poly<0>, %other: !trait.poly<1>) -> i1 {
+  %partial_eq = trait.project %self_claim[0]
+    : !trait.claim<@PartialOrd[!trait.poly<0>,!trait.poly<1>]>
+    -> !trait.claim<@PartialEq[!trait.poly<0>,!trait.poly<1>]>
 
-    %res = arith.ori %lt, %eq : i1
-    trait.return %res : i1
-  }
+  %gt = trait.func.call @PartialOrd.gt(%self_claim, %self, %other) : (!trait.claim<@PartialOrd[!trait.poly<0>,!trait.poly<1>]>, !trait.poly<0>, !trait.poly<1>) -> i1
 
-  // CHECK-LABEL: trait.method @gt
-  trait.method @gt(%self: !trait.poly<0>, %other: !trait.poly<1>) -> i1 {
-    %cmp = trait.method.call %self_claim @partial_cmp(%self, %other)
-      : !trait.claim<@PartialOrd[!trait.poly<0>,!trait.poly<1>]>, (!trait.poly<0>,!trait.poly<1>) -> !opt_ord
+  %eq = trait.func.call @PartialEq.eq(%partial_eq, %self, %other) : (!trait.claim<@PartialEq[!trait.poly<0>,!trait.poly<1>]>, !trait.poly<0>, !trait.poly<1>) -> i1
 
-    %ord_gt = arith.constant 2 : !opt_ord
-    %res = arith.cmpi eq, %cmp, %ord_gt : !opt_ord
-    trait.return %res : i1
-  }
-
-  // CHECK-LABEL: trait.method @ge
-  trait.method @ge(%self: !trait.poly<0>, %other: !trait.poly<1>) -> i1 {
-    %partial_eq = trait.project %self_claim[0]
-      : !trait.claim<@PartialOrd[!trait.poly<0>,!trait.poly<1>]>
-      -> !trait.claim<@PartialEq[!trait.poly<0>,!trait.poly<1>]>
-
-    %gt = trait.method.call %self_claim @gt(%self, %other)
-      : !trait.claim<@PartialOrd[!trait.poly<0>,!trait.poly<1>]>, (!trait.poly<0>, !trait.poly<1>) -> i1
-
-    %eq = trait.method.call %partial_eq @eq(%self, %other)
-      : !trait.claim<@PartialEq[!trait.poly<0>,!trait.poly<1>]>, (!trait.poly<0>, !trait.poly<1>) -> i1
-
-    %res = arith.ori %gt, %eq : i1
-    trait.return %res : i1
-  }
+  %res = arith.ori %gt, %eq : i1
+  return %res : i1
 }
 
 // CHECK-LABEL: trait.impl private @PartialOrd_impl_i32_i32(%self: !trait.claim<@PartialOrd[i32, i32]>
-trait.impl private @PartialOrd_impl_i32_i32(%self: !trait.claim<@PartialOrd[i32, i32]>) {
-  // CHECK-LABEL: trait.method @partial_cmp
-  trait.method @partial_cmp(%a: i32, %b: i32) -> !opt_ord {
-    %c_lt = arith.constant 0 : !opt_ord
-    %c_eq = arith.constant 1 : !opt_ord
-    %c_gt = arith.constant 2 : !opt_ord
-
-    %lt = arith.cmpi slt, %a, %b : i32
-    %eq = arith.cmpi eq,  %a, %b : i32
-    %gt_or_lt = arith.select %lt, %c_lt, %c_gt : !opt_ord
-    %res = arith.select %eq, %c_eq, %gt_or_lt : !opt_ord
-    trait.return %res : !opt_ord
-  }
+trait.impl private @PartialOrd_impl_i32_i32(%self: !trait.claim<@PartialOrd[i32, i32]>) members [@PartialOrd.partial_cmp -> @PartialOrd_impl_i32_i32.partial_cmp, @PartialOrd.lt -> @PartialOrd.lt, @PartialOrd.le -> @PartialOrd.le, @PartialOrd.gt -> @PartialOrd.gt, @PartialOrd.ge -> @PartialOrd.ge] {
   %partial_eq = trait.witness @PartialEq_impl_i32_i32 for @PartialEq[i32,i32]
   trait.return %partial_eq : !trait.claim<@PartialEq[i32,i32] by @PartialEq_impl_i32_i32>
+}
+// CHECK-LABEL: func.func private @PartialOrd_impl_i32_i32.partial_cmp(
+func.func private @PartialOrd_impl_i32_i32.partial_cmp(%self: !trait.claim<@PartialOrd[i32, i32]>, %a: i32, %b: i32) -> !opt_ord {
+  %c_lt = arith.constant 0 : !opt_ord
+  %c_eq = arith.constant 1 : !opt_ord
+  %c_gt = arith.constant 2 : !opt_ord
+
+  %lt = arith.cmpi slt, %a, %b : i32
+  %eq = arith.cmpi eq,  %a, %b : i32
+  %gt_or_lt = arith.select %lt, %c_lt, %c_gt : !opt_ord
+  %res = arith.select %eq, %c_eq, %gt_or_lt : !opt_ord
+  return %res : !opt_ord
 }
 
 // model Ordering
@@ -154,67 +138,62 @@ trait.impl private @PartialOrd_impl_i32_i32(%self: !trait.claim<@PartialOrd[i32,
 // 2: Greater
 !ord = i2
 
-// CHECK-LABEL: trait private @Ord(%self: !trait.claim<@Ord[!trait.poly<0>]>) -> (!trait.claim<@Eq[!trait.poly<0>]>, !trait.claim<@PartialOrd[!trait.poly<0>, !trait.poly<0>]>)
+// CHECK-LABEL: trait private @Ord(!trait.claim<@Ord[!trait.poly<0>]>) -> (!trait.claim<@Eq[!trait.poly<0>]>, !trait.claim<@PartialOrd[!trait.poly<0>, !trait.poly<0>]>)
 !OrdS = !trait.poly<5>
-trait.trait private @Ord(%self_claim: !trait.claim<@Ord[!trait.poly<0>]>) -> (!trait.claim<@Eq[!trait.poly<0>]>, !trait.claim<@PartialOrd[!trait.poly<0>,!trait.poly<0>]>) {
-  // CHECK-LABEL: trait.method @cmp
-  trait.method @cmp(!trait.poly<0>, !trait.poly<0>) -> !ord
+trait.trait private @Ord(!trait.claim<@Ord[!trait.poly<0>]>) -> (!trait.claim<@Eq[!trait.poly<0>]>, !trait.claim<@PartialOrd[!trait.poly<0>,!trait.poly<0>]>) members [@Ord.cmp, default @Ord.max, default @Ord.min]
+// CHECK-LABEL: func.func private @Ord.cmp(
+func.func private @Ord.cmp(!trait.claim<@Ord[!trait.poly<0>]>, !trait.poly<0>, !trait.poly<0>) -> !ord
+// CHECK-LABEL: func.func private @Ord.max(
+func.func private @Ord.max(%self_claim: !trait.claim<@Ord[!trait.poly<0>]>, %self: !trait.poly<0>, %other: !trait.poly<0>) -> !trait.poly<0> {
+  %partial_ord_p = trait.project %self_claim[1]
+    : !trait.claim<@Ord[!trait.poly<0>]>
+    -> !trait.claim<@PartialOrd[!trait.poly<0>,!trait.poly<0>]>
 
-  // CHECK-LABEL: trait.method @max
-  trait.method @max(%self: !trait.poly<0>, %other: !trait.poly<0>) -> !trait.poly<0> {
-    %partial_ord_p = trait.project %self_claim[1]
-      : !trait.claim<@Ord[!trait.poly<0>]>
-      -> !trait.claim<@PartialOrd[!trait.poly<0>,!trait.poly<0>]>
+  %cond = trait.func.call @PartialOrd.gt(%partial_ord_p, %self, %other) : (!trait.claim<@PartialOrd[!trait.poly<0>,!trait.poly<0>]>, !trait.poly<0>,!trait.poly<0>) -> i1
 
-    %cond = trait.method.call %partial_ord_p @gt(%self, %other)
-      : !trait.claim<@PartialOrd[!trait.poly<0>,!trait.poly<0>]>, (!trait.poly<0>,!trait.poly<0>) -> i1
-
-    %res = scf.if %cond -> !trait.poly<0> {
-      scf.yield %self : !trait.poly<0>
-    } else {
-      scf.yield %other : !trait.poly<0>
-    }
-
-    trait.return %res : !trait.poly<0>
+  %res = scf.if %cond -> !trait.poly<0> {
+    scf.yield %self : !trait.poly<0>
+  } else {
+    scf.yield %other : !trait.poly<0>
   }
 
-  // CHECK-LABEL: trait.method @min
-  trait.method @min(%self: !trait.poly<0>, %other: !trait.poly<0>) -> !trait.poly<0> {
-    %partial_ord = trait.project %self_claim[1]
-      : !trait.claim<@Ord[!trait.poly<0>]>
-      -> !trait.claim<@PartialOrd[!trait.poly<0>,!trait.poly<0>]>
+  return %res : !trait.poly<0>
+}
+// CHECK-LABEL: func.func private @Ord.min(
+func.func private @Ord.min(%self_claim: !trait.claim<@Ord[!trait.poly<0>]>, %self: !trait.poly<0>, %other: !trait.poly<0>) -> !trait.poly<0> {
+  %partial_ord = trait.project %self_claim[1]
+    : !trait.claim<@Ord[!trait.poly<0>]>
+    -> !trait.claim<@PartialOrd[!trait.poly<0>,!trait.poly<0>]>
 
-    %cond = trait.method.call %partial_ord @le(%self, %other)
-      : !trait.claim<@PartialOrd[!trait.poly<0>,!trait.poly<0>]>, (!trait.poly<0>,!trait.poly<0>) -> i1
+  %cond = trait.func.call @PartialOrd.le(%partial_ord, %self, %other) : (!trait.claim<@PartialOrd[!trait.poly<0>,!trait.poly<0>]>, !trait.poly<0>,!trait.poly<0>) -> i1
 
-    %res = scf.if %cond -> !trait.poly<0> {
-      scf.yield %self: !trait.poly<0>
-    } else {
-      scf.yield %other: !trait.poly<0>
-    }
-
-    trait.return %res : !trait.poly<0>
+  %res = scf.if %cond -> !trait.poly<0> {
+    scf.yield %self: !trait.poly<0>
+  } else {
+    scf.yield %other: !trait.poly<0>
   }
+
+  return %res : !trait.poly<0>
 }
 
 // CHECK-LABEL: trait.impl private @Ord_impl_i32(%self: !trait.claim<@Ord[i32]>
-trait.impl private @Ord_impl_i32(%self: !trait.claim<@Ord[i32]>) {
-  // CHECK-LABEL: trait.method @cmp
-  trait.method @cmp(%a: i32, %b: i32) -> !ord {
-    %lt = arith.cmpi slt, %a, %b : i32
-    %eq = arith.cmpi eq,  %a, %b : i32
-
-    %c_lt = arith.constant 0 : !ord
-    %c_eq = arith.constant 1 : !ord
-    %c_gt = arith.constant 2 : !ord
-
-    %gt_or_lt = arith.select %lt, %c_lt, %c_gt : !ord
-    %res = arith.select %eq, %c_eq, %gt_or_lt : !ord
-    trait.return %res : !ord
-  }
+trait.impl private @Ord_impl_i32(%self: !trait.claim<@Ord[i32]>) members [@Ord.cmp -> @Ord_impl_i32.cmp, @Ord.max -> @Ord.max, @Ord.min -> @Ord.min] {
   %eq_p = trait.witness @Eq_impl_i32_p for @Eq[i32]
   %partial_ord_p = trait.witness @PartialOrd_impl_i32_i32_p for @PartialOrd[i32,i32]
   trait.return %eq_p, %partial_ord_p : !trait.claim<@Eq[i32] by @Eq_impl_i32_p>, !trait.claim<@PartialOrd[i32,i32] by @PartialOrd_impl_i32_i32_p>
+}
+// CHECK-LABEL: func.func private @Ord_impl_i32.cmp(
+func.func private @Ord_impl_i32.cmp(%self: !trait.claim<@Ord[i32]>, %a: i32, %b: i32) -> !ord {
+  %lt = arith.cmpi slt, %a, %b : i32
+  %eq = arith.cmpi eq,  %a, %b : i32
+
+  %c_lt = arith.constant 0 : !ord
+  %c_eq = arith.constant 1 : !ord
+  %c_gt = arith.constant 2 : !ord
+
+  %gt_or_lt = arith.select %lt, %c_lt, %c_gt : !ord
+  %res = arith.select %eq, %c_eq, %gt_or_lt : !ord
+  return %res : !ord
 }
 
 // CHECK-LABEL: trait.proof private @PartialOrd_impl_i32_i32_p
@@ -239,8 +218,7 @@ trait.proof private @Ord_impl_i32_p {
 func.func @max(%a: i32, %b: i32) -> i32 {
   %ord_p = trait.witness @Ord_impl_i32_p for @Ord[i32]
 
-  %res = trait.method.call %ord_p @max(%a, %b)
-    : !trait.claim<@Ord[i32] by @Ord_impl_i32_p>, (i32, i32) -> i32
+  %res = trait.func.call @Ord.max(%ord_p, %a, %b) : (!trait.claim<@Ord[i32] by @Ord_impl_i32_p>, i32, i32) -> i32
 
   return %res : i32
 }
@@ -249,8 +227,7 @@ func.func @max(%a: i32, %b: i32) -> i32 {
 func.func @min(%a: i32, %b: i32) -> i32 {
   %ord_p = trait.witness @Ord_impl_i32_p for @Ord[i32]
 
-  %res = trait.method.call %ord_p @min(%a, %b)
-    : !trait.claim<@Ord[i32] by @Ord_impl_i32_p>, (i32, i32) -> i32
+  %res = trait.func.call @Ord.min(%ord_p, %a, %b) : (!trait.claim<@Ord[i32] by @Ord_impl_i32_p>, i32, i32) -> i32
 
   return %res : i32
 }

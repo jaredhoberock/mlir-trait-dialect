@@ -21,28 +21,24 @@
 !S = !trait.poly<0>
 !T = !trait.poly<1>
 
-trait.trait private @Printable(%self: !trait.claim<@Printable[!S]>) {
-  trait.method @print(!S) -> i32
+trait.trait private @Printable(!trait.claim<@Printable[!S]>) members [@Printable.print]
+func.func private @Printable.print(!trait.claim<@Printable[!S]>, !S) -> i32
+
+trait.trait private @Transform(!trait.claim<@Transform[!S]>) -> !trait.claim<@Printable[!trait.proj<@Transform[!S], "Output", [i32]>]> assoc {Output = 1} members [@Transform.apply]
+func.func private @Transform.apply(!trait.claim<@Transform[!S]>, !S, !T) -> !trait.proj<@Transform[!S], "Output", [!T]>
+
+trait.impl private @Printable_impl(%self_claim: !trait.claim<@Printable[i32]>) members [@Printable.print -> @Printable_impl.print] {
+}
+func.func private @Printable_impl.print(%self_claim: !trait.claim<@Printable[i32]>, %self: i32) -> i32 {
+  return %self : i32
 }
 
-trait.trait private @Transform(%self: !trait.claim<@Transform[!S]>) -> !trait.claim<@Printable[!trait.proj<@Transform[!S], "Output", [i32]>]> {
-  trait.assoc_type @Output<[!T]>
-  trait.method @apply(!S, !T) -> !trait.proj<@Transform[!S], "Output", [!T]>
-}
-
-trait.impl private @Printable_impl(%self_claim: !trait.claim<@Printable[i32]>) {
-  trait.method @print(%self: i32) -> i32 {
-    trait.return %self : i32
-  }
-}
-
-trait.impl private @Transform_impl(%self_claim: !trait.claim<@Transform[i64]>) {
-  trait.assoc_type @Output<[!trait.poly<0>]> = !trait.poly<0>
-  trait.method @apply(%self: i64, %x: !trait.poly<0>) -> !trait.poly<0> {
-    trait.return %x : !trait.poly<0>
-  }
+trait.impl private @Transform_impl(%self_claim: !trait.claim<@Transform[i64]>) bindings {Output = !trait.poly<0>} members [@Transform.apply -> @Transform_impl.apply] {
   %req0 = trait.allege @Printable[!trait.proj<@Transform[i64], "Output", [i32]>]
   trait.return %req0 : !trait.claim<@Printable[!trait.proj<@Transform[i64], "Output", [i32]>]>
+}
+func.func private @Transform_impl.apply(%self_claim: !trait.claim<@Transform[i64]>, %self: i64, %x: !trait.poly<0>) -> !trait.poly<0> {
+  return %x : !trait.poly<0>
 }
 
 // Proving @Transform[i64] must resolve the where clause:
@@ -57,7 +53,6 @@ func.func @caller() -> !trait.proj<@Transform[i64], "Output", [i1]> {
   %a = trait.allege @Transform[i64]
   %self = arith.constant 7 : i64
   %x = arith.constant 1 : i1
-  %r = trait.method.call %a @apply(%self, %x)
-    : !trait.claim<@Transform[i64]>, (i64, i1) -> !trait.proj<@Transform[i64], "Output", [i1]>
+  %r = trait.func.call @Transform.apply(%a, %self, %x) : (!trait.claim<@Transform[i64]>, i64, i1) -> !trait.proj<@Transform[i64], "Output", [i1]>
   return %r : !trait.proj<@Transform[i64], "Output", [i1]>
 }

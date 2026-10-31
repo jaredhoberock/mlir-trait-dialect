@@ -11,44 +11,42 @@
 // CHECK: {{^}}15{{$}}
 
 !T = !trait.poly<0>
-trait.trait private @B(%self: !trait.claim<@B[!T]>) {
-  trait.method @b(!T) -> i64
+trait.trait private @B(!trait.claim<@B[!T]>) members [@B.b]
+func.func private @B.b(!trait.claim<@B[!T]>, !T) -> i64
+trait.trait private @A(!trait.claim<@A[!T]>) members [@A.a, @A.twice, @A.thrice]
+func.func private @A.a(!trait.claim<@A[!T]>, !T) -> i64
+func.func private @A.twice(!trait.claim<@A[!T]>, !T) -> i64
+func.func private @A.thrice(!trait.claim<@A[!T]>, !T) -> i64
+trait.impl private @B_i32(%self: !trait.claim<@B[i32]>) members [@B.b -> @B_i32.b] {
 }
-trait.trait private @A(%self: !trait.claim<@A[!T]>) {
-  trait.method @a(!T) -> i64
-  trait.method @twice(!T) -> i64
-  trait.method @thrice(!T) -> i64
+func.func private @B_i32.b(%self: !trait.claim<@B[i32]>, %x: i32) -> i64 {
+  %c = arith.constant 3 : i64
+  return %c : i64
 }
-trait.impl private @B_i32(%self: !trait.claim<@B[i32]>) {
-  trait.method @b(%x: i32) -> i64 {
-    %c = arith.constant 3 : i64
-    trait.return %c : i64
-  }
+trait.impl private @A_gen(%self: !trait.claim<@A[!T]>, %b: !trait.claim<@B[!T]>) members [@A.a -> @A_gen.a, @A.twice -> @A_gen.twice, @A.thrice -> @A_gen.thrice] {
 }
-trait.impl private @A_gen(%self: !trait.claim<@A[!T]>, %b: !trait.claim<@B[!T]>) {
+func.func private @A_gen.a(%self: !trait.claim<@A[!T]>, %b: !trait.claim<@B[!T]>, %x: !T) -> i64 {
+  %v = trait.func.call @B.b(%b, %x) : (!trait.claim<@B[!T]>, !T) -> i64
+  return %v : i64
+}
+func.func private @A_gen.twice(%self: !trait.claim<@A[!T]>, %b: !trait.claim<@B[!T]>, %x: !T) -> i64 {
   %own = trait.derive @A[!T] from @A_gen[!trait.poly<0>] given(%b) : (!trait.claim<@B[!T]>)
-  trait.method @a(%x: !T) -> i64 {
-    %v = trait.method.call %b @b(%x) : !trait.claim<@B[!T]>, (!T) -> i64
-    trait.return %v : i64
-  }
-  trait.method @twice(%x: !T) -> i64 {
-    %u = trait.method.call %own @a(%x) : !trait.claim<@A[!T]>, (!T) -> i64
-    %r = arith.addi %u, %u : i64
-    trait.return %r : i64
-  }
-  trait.method @thrice(%x: !T) -> i64 {
-    %me = trait.derive @A[!T] from @A_gen[!trait.poly<0>] given(%b) : (!trait.claim<@B[!T]>)
-    %u = trait.method.call %me @a(%x) : !trait.claim<@A[!T]>, (!T) -> i64
-    %v = arith.addi %u, %u : i64
-    %r = arith.addi %v, %u : i64
-    trait.return %r : i64
-  }
+  %u = trait.func.call @A.a(%own, %x) : (!trait.claim<@A[!T]>, !T) -> i64
+  %r = arith.addi %u, %u : i64
+  return %r : i64
+}
+func.func private @A_gen.thrice(%self: !trait.claim<@A[!T]>, %b: !trait.claim<@B[!T]>, %x: !T) -> i64 {
+  %me = trait.derive @A[!T] from @A_gen[!trait.poly<0>] given(%b) : (!trait.claim<@B[!T]>)
+  %u = trait.func.call @A.a(%me, %x) : (!trait.claim<@A[!T]>, !T) -> i64
+  %v = arith.addi %u, %u : i64
+  %r = arith.addi %v, %u : i64
+  return %r : i64
 }
 func.func @main() -> i64 {
   %x = arith.constant 0 : i32
   %a = trait.allege @A[i32]
-  %r = trait.method.call %a @twice(%x) : !trait.claim<@A[i32]>, (i32) -> i64
-  %s = trait.method.call %a @thrice(%x) : !trait.claim<@A[i32]>, (i32) -> i64
+  %r = trait.func.call @A.twice(%a, %x) : (!trait.claim<@A[i32]>, i32) -> i64
+  %s = trait.func.call @A.thrice(%a, %x) : (!trait.claim<@A[i32]>, i32) -> i64
   %t = arith.addi %r, %s : i64
   return %t : i64
 }

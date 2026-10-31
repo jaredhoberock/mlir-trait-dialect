@@ -13,11 +13,8 @@
 !S = !trait.poly<0>
 !T = !trait.poly<1>
 
-trait.trait private @A(%self: !trait.claim<@A[!S]>) {
-  trait.assoc_type @Output
-}
+trait.trait private @A(!trait.claim<@A[!S]>) assoc {Output = 0}
 
 // expected-error @below {{type parameter '!trait.poly<1>' is not constrained by the impl's trait application or its where clause, so impl selection cannot determine it}}
-trait.impl private @A_gen(%self: !trait.claim<@A[!S]>, %a: !trait.claim<@A[!S]>, %output: !trait.claim<!trait.proj<@A[!S], "Output"> = !T>) {
-  trait.assoc_type @Output = !T
+trait.impl private @A_gen(%self: !trait.claim<@A[!S]>, %a: !trait.claim<@A[!S]>, %output: !trait.claim<!trait.proj<@A[!S], "Output"> = !T>) bindings {Output = !T} {
 }

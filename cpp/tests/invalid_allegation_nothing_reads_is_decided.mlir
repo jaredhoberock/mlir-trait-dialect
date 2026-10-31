@@ -9,7 +9,7 @@
 
 // CHECK: error: 'trait.allege' op no impl with satisfiable assumptions for '!trait.claim<@T[i32]>'
 
-trait.trait private @T(%self: !trait.claim<@T[!trait.poly<0>]>) {}
+trait.trait private @T(!trait.claim<@T[!trait.poly<0>]>)
 
 func.func @main() {
   %c = trait.allege @T[i32]

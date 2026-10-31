@@ -5,32 +5,33 @@
 
 !A = !trait.poly<0>
 // CHECK: trait.trait private @
-trait.trait private @A(%self: !trait.claim<@A[!A]>) {}
+trait.trait private @A(!trait.claim<@A[!A]>)
 
 !Ai = !trait.poly<1>
 // CHECK: trait.impl private @A_impl
-trait.impl private @A_impl(%self: !trait.claim<@A[!trait.poly<0>]>) {}
+trait.impl private @A_impl(%self: !trait.claim<@A[!trait.poly<0>]>) {
+}
 
 !B = !trait.poly<2>
 // CHECK: trait.trait private @B
-trait.trait private @B(%self: !trait.claim<@B[!trait.poly<0>]>) {}
+trait.trait private @B(!trait.claim<@B[!trait.poly<0>]>)
 
 !Bi = !trait.poly<3>
 // CHECK: trait.impl private @B_impl
-trait.impl private @B_impl(%self: !trait.claim<@B[!trait.poly<0>]>) {}
+trait.impl private @B_impl(%self: !trait.claim<@B[!trait.poly<0>]>) {
+}
 
 !C = !trait.poly<4>
 // CHECK: trait.trait private @C
-trait.trait private @C(%self_claim: !trait.claim<@C[!trait.poly<0>]>) -> !trait.claim<@A[!trait.poly<0>]> {
-  trait.method @method(%self: !trait.poly<0>) -> i1 {
-    %res = arith.constant 0 : i1
-    trait.return %res : i1
-  }
+trait.trait private @C(!trait.claim<@C[!trait.poly<0>]>) -> !trait.claim<@A[!trait.poly<0>]> members [default @C.method]
+func.func private @C.method(%self_claim: !trait.claim<@C[!trait.poly<0>]>, %self: !trait.poly<0>) -> i1 {
+  %res = arith.constant 0 : i1
+  return %res : i1
 }
 
 !Ci = !trait.poly<5>
 // CHECK: trait.impl private @C_impl
-trait.impl private @C_impl(%self: !trait.claim<@C[!trait.poly<0>]>, %b: !trait.claim<@B[!trait.poly<0>]>) {
+trait.impl private @C_impl(%self: !trait.claim<@C[!trait.poly<0>]>, %b: !trait.claim<@B[!trait.poly<0>]>) members [@C.method -> @C.method] {
   %req0 = trait.allege @A[!trait.poly<0>]
   trait.return %req0 : !trait.claim<@A[!trait.poly<0>]>
 }
@@ -38,8 +39,7 @@ trait.impl private @C_impl(%self: !trait.claim<@C[!trait.poly<0>]>, %b: !trait.c
 func.func @foo(%x: i8) -> i1 {
   // CHECK: trait.witness @C_impl_{{.*}}_p for @C[i8]
   %c = trait.allege @C[i8]
-  %res = trait.method.call %c @method(%x)
-    : !trait.claim<@C[i8]>, (i8) -> i1
+  %res = trait.func.call @C.method(%c, %x) : (!trait.claim<@C[i8]>, i8) -> i1
   return %res : i1
 }
 

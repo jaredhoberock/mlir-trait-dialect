@@ -13,15 +13,10 @@
 !S = !trait.poly<0>
 !A = !trait.poly<1>
 
-trait.trait private @Arg(%self: !trait.claim<@Arg[!S]>) {
-  trait.assoc_type @Out
-}
+trait.trait private @Arg(!trait.claim<@Arg[!S]>) assoc {Out = 0}
 
-trait.trait private @Gat(%self: !trait.claim<@Gat[!S]>) {
-  trait.assoc_type @Item<[!A]>
-}
-trait.impl private @Gat_i64(%self: !trait.claim<@Gat[i64]>) {
-  trait.assoc_type @Item<[!trait.poly<0>]> = f32
+trait.trait private @Gat(!trait.claim<@Gat[!S]>) assoc {Item = 1}
+trait.impl private @Gat_i64(%self: !trait.claim<@Gat[i64]>) bindings {Item = f32} {
 }
 
 func.func private @need(!trait.claim<!trait.proj<@Gat[i64], "Item", [!trait.proj<@Arg[i64], "Out">]> = f32>)

@@ -15,9 +15,10 @@
 // CHECK: error: unresolved projection '!trait.proj<@A[i32], "Item", [!trait.proj<@B[i64], "Out">]>' after instantiate-monomorphs
 // CHECK: error: no impl with satisfiable assumptions for '!trait.proj<@B[i64], "Out">'
 !T = !trait.poly<0>
-trait.trait private @A(%s: !trait.claim<@A[!T]>) { trait.assoc_type @Item<[!trait.poly<1>]> }
-trait.impl private @I(%s: !trait.claim<@A[i32]>) { trait.assoc_type @Item<[!T]> = i64 }
-trait.trait private @B(%s: !trait.claim<@B[!T]>) { trait.assoc_type @Out }
+trait.trait private @A(!trait.claim<@A[!T]>) assoc {Item = 1}
+trait.impl private @I(%s: !trait.claim<@A[i32]>) bindings {Item = i64} {
+}
+trait.trait private @B(!trait.claim<@B[!T]>) assoc {Out = 0}
 !P = !trait.proj<@A[i32], "Item", [!trait.proj<@B[!T], "Out">]>
 !Q = !trait.proj<@A[i32], "Item", [!trait.proj<@B[i64], "Out">]>
 func.func private @f(%x: !T) -> !P { %v = ub.poison : !P return %v : !P }
@@ -28,11 +29,13 @@ func.func @run() { %c = arith.constant 7 : i64 %r = trait.func.call @f(%c) : (i6
 // CHECK: error: unproven monomorphic claim '!trait.claim<@Mark[i64]>' after instantiate-monomorphs
 // CHECK: error: unresolved projection '!trait.proj<@A[i32], "Item", [!trait.claim<@Mark[i64]>]>' after instantiate-monomorphs
 !T = !trait.poly<0>
-trait.trait private @A(%s: !trait.claim<@A[!T]>) { trait.assoc_type @Item<[!trait.poly<1>]> }
-trait.impl private @I(%s: !trait.claim<@A[i32]>) { trait.assoc_type @Item<[!T]> = i64 }
-trait.trait private @B(%s: !trait.claim<@B[!T]>) { trait.assoc_type @Out }
-trait.trait private @Mark(%s: !trait.claim<@Mark[!T]>) {}
-trait.impl private @J(%s: !trait.claim<@B[i64]>) { trait.assoc_type @Out = !trait.claim<@Mark[i64]> }
+trait.trait private @A(!trait.claim<@A[!T]>) assoc {Item = 1}
+trait.impl private @I(%s: !trait.claim<@A[i32]>) bindings {Item = i64} {
+}
+trait.trait private @B(!trait.claim<@B[!T]>) assoc {Out = 0}
+trait.trait private @Mark(!trait.claim<@Mark[!T]>)
+trait.impl private @J(%s: !trait.claim<@B[i64]>) bindings {Out = !trait.claim<@Mark[i64]>} {
+}
 !P = !trait.proj<@A[i32], "Item", [!trait.proj<@B[!T], "Out">]>
 !Q = !trait.proj<@A[i32], "Item", [!trait.proj<@B[i64], "Out">]>
 func.func private @f(%x: !T) -> !P { %v = ub.poison : !P return %v : !P }
@@ -42,10 +45,12 @@ func.func @run() { %c = arith.constant 7 : i64 %r = trait.func.call @f(%c) : (i6
 
 // CHECK-NOT: error
 !T = !trait.poly<0>
-trait.trait private @A(%s: !trait.claim<@A[!T]>) { trait.assoc_type @Item<[!trait.poly<1>]> }
-trait.impl private @I(%s: !trait.claim<@A[i32]>) { trait.assoc_type @Item<[!T]> = i64 }
-trait.trait private @B(%s: !trait.claim<@B[!T]>) { trait.assoc_type @Out }
-trait.impl private @J(%s: !trait.claim<@B[i64]>) { trait.assoc_type @Out = i32 }
+trait.trait private @A(!trait.claim<@A[!T]>) assoc {Item = 1}
+trait.impl private @I(%s: !trait.claim<@A[i32]>) bindings {Item = i64} {
+}
+trait.trait private @B(!trait.claim<@B[!T]>) assoc {Out = 0}
+trait.impl private @J(%s: !trait.claim<@B[i64]>) bindings {Out = i32} {
+}
 !P = !trait.proj<@A[i32], "Item", [!trait.proj<@B[!T], "Out">]>
 !Q = !trait.proj<@A[i32], "Item", [!trait.proj<@B[i64], "Out">]>
 func.func private @f(%x: !T) -> !P { %v = ub.poison : !P return %v : !P }

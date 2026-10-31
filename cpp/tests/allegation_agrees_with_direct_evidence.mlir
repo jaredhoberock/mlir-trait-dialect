@@ -13,21 +13,18 @@
 
 !S = !trait.poly<0>
 
-trait.trait private @T(%self: !trait.claim<@T[!S]>) {
-  trait.assoc_type @Out
-  trait.method @m(!S) -> !trait.proj<@T[!S], "Out">
-}
+trait.trait private @T(!trait.claim<@T[!S]>) assoc {Out = 0} members [@T.m]
+func.func private @T.m(!trait.claim<@T[!S]>, !S) -> !trait.proj<@T[!S], "Out">
 
-trait.impl private @T_i32(%self: !trait.claim<@T[i32]>) {
-  trait.assoc_type @Out = i64
-  trait.method @m(%x: i32) -> i64 {
-    %c = arith.constant 7 : i64
-    trait.return %c : i64
-  }
+trait.impl private @T_i32(%self: !trait.claim<@T[i32]>) bindings {Out = i64} members [@T.m -> @T_i32.m] {
+}
+func.func private @T_i32.m(%self: !trait.claim<@T[i32]>, %x: i32) -> i64 {
+  %c = arith.constant 7 : i64
+  return %c : i64
 }
 
 func.func private @g(%c: !trait.claim<@T[!S]>, %x: !S) -> !trait.proj<@T[!S], "Out"> {
-  %r = trait.method.call %c @m(%x) : !trait.claim<@T[!S]>, (!S) -> !trait.proj<@T[!S], "Out">
+  %r = trait.func.call @T.m(%c, %x) : (!trait.claim<@T[!S]>, !S) -> !trait.proj<@T[!S], "Out">
   return %r : !trait.proj<@T[!S], "Out">
 }
 
@@ -57,29 +54,25 @@ func.func @by_allegation(%x: i32) -> !trait.proj<@T[i32], "Out"> {
 
 !S = !trait.poly<0>
 
-trait.trait private @T(%self: !trait.claim<@T[!S]>) {
-  trait.assoc_type @Out
-  trait.method @m(!S) -> !trait.proj<@T[!S], "Out">
+trait.trait private @T(!trait.claim<@T[!S]>) assoc {Out = 0} members [@T.m]
+func.func private @T.m(!trait.claim<@T[!S]>, !S) -> !trait.proj<@T[!S], "Out">
+
+trait.impl private @T_f64(%self: !trait.claim<@T[f64]>) bindings {Out = i1} members [@T.m -> @T_f64.m] {
+}
+func.func private @T_f64.m(%self: !trait.claim<@T[f64]>, %x: f64) -> i1 {
+  %c = arith.constant true
+  return %c : i1
 }
 
-trait.impl private @T_f64(%self: !trait.claim<@T[f64]>) {
-  trait.assoc_type @Out = i1
-  trait.method @m(%x: f64) -> i1 {
-    %c = arith.constant true
-    trait.return %c : i1
-  }
+trait.impl private @T_i32(%self: !trait.claim<@T[i32]>) bindings {Out = i64} members [@T.m -> @T_i32.m] {
 }
-
-trait.impl private @T_i32(%self: !trait.claim<@T[i32]>) {
-  trait.assoc_type @Out = i64
-  trait.method @m(%x: i32) -> i64 {
-    %c = arith.constant 7 : i64
-    trait.return %c : i64
-  }
+func.func private @T_i32.m(%self: !trait.claim<@T[i32]>, %x: i32) -> i64 {
+  %c = arith.constant 7 : i64
+  return %c : i64
 }
 
 func.func private @g(%c: !trait.claim<@T[!S]>, %x: !S) -> !trait.proj<@T[!S], "Out"> {
-  %r = trait.method.call %c @m(%x) : !trait.claim<@T[!S]>, (!S) -> !trait.proj<@T[!S], "Out">
+  %r = trait.func.call @T.m(%c, %x) : (!trait.claim<@T[!S]>, !S) -> !trait.proj<@T[!S], "Out">
   return %r : !trait.proj<@T[!S], "Out">
 }
 
@@ -119,21 +112,18 @@ func.func @selects_by_type(%x: f64) -> !trait.proj<@T[f64], "Out"> {
 
 !S = !trait.poly<0>
 
-trait.trait private @T(%self: !trait.claim<@T[!S]>) {
-  trait.assoc_type @Out
-  trait.method @m(!S) -> !trait.proj<@T[!S], "Out">
-}
+trait.trait private @T(!trait.claim<@T[!S]>) assoc {Out = 0} members [@T.m]
+func.func private @T.m(!trait.claim<@T[!S]>, !S) -> !trait.proj<@T[!S], "Out">
 
-trait.impl private @Chosen(%self: !trait.claim<@T[i32]>) {
-  trait.assoc_type @Out = i64
-  trait.method @m(%x: i32) -> i64 {
-    %c = arith.constant 7 : i64
-    trait.return %c : i64
-  }
+trait.impl private @Chosen(%self: !trait.claim<@T[i32]>) bindings {Out = i64} members [@T.m -> @Chosen.m] {
+}
+func.func private @Chosen.m(%self: !trait.claim<@T[i32]>, %x: i32) -> i64 {
+  %c = arith.constant 7 : i64
+  return %c : i64
 }
 
 func.func private @g(%c: !trait.claim<@T[!S]>, %x: !S) -> !trait.proj<@T[!S], "Out"> {
-  %r = trait.method.call %c @m(%x) : !trait.claim<@T[!S]>, (!S) -> !trait.proj<@T[!S], "Out">
+  %r = trait.func.call @T.m(%c, %x) : (!trait.claim<@T[!S]>, !S) -> !trait.proj<@T[!S], "Out">
   return %r : !trait.proj<@T[!S], "Out">
 }
 

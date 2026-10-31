@@ -9,13 +9,10 @@
 !S = !trait.poly<0>
 !T = !trait.poly<1>
 
-trait.trait private @Trait(%self: !trait.claim<@Trait[!S, !T]>) {
-  trait.method @method(!S, !T) -> i64
-}
+trait.trait private @Trait(!trait.claim<@Trait[!S, !T]>) members [@Trait.method]
+func.func private @Trait.method(!trait.claim<@Trait[!S, !T]>, !S, !T) -> i64
 
-trait.trait private @Outer(%self: !trait.claim<@Outer[!S]>) {
-  trait.assoc_type @Item
-}
+trait.trait private @Outer(!trait.claim<@Outer[!S]>) assoc {Item = 0}
 
 func.func private @callee(%t: !trait.poly<0>,
     %outer: !trait.claim<@Outer[i64]>,
@@ -24,19 +21,17 @@ func.func private @callee(%t: !trait.poly<0>,
   %eq = trait.allege !trait.proj<@Outer[i64], "Item"> = i64
   %px = trait.coerce %x : i64 to !trait.proj<@Outer[i64], "Item">
     via (%eq) : (!trait.claim<!trait.proj<@Outer[i64], "Item"> = i64>)
-  %result = trait.method.call %claim @method(%t, %px)
-    : !trait.claim<@Trait[!trait.poly<0>, !trait.proj<@Outer[i64], "Item">]>, (!trait.poly<0>, !trait.proj<@Outer[i64], "Item">) -> i64
+  %result = trait.func.call @Trait.method(%claim, %t, %px) : (!trait.claim<@Trait[!trait.poly<0>, !trait.proj<@Outer[i64], "Item">]>, !trait.poly<0>, !trait.proj<@Outer[i64], "Item">) -> i64
   return %result : i64
 }
 
-trait.impl private @Outer_i64(%self: !trait.claim<@Outer[i64]>) {
-  trait.assoc_type @Item = i64
+trait.impl private @Outer_i64(%self: !trait.claim<@Outer[i64]>) bindings {Item = i64} {
 }
 
-trait.impl private @Trait_i64(%self_claim: !trait.claim<@Trait[i64, i64]>) {
-  trait.method @method(%self: i64, %x: i64) -> i64 {
-    trait.return %x : i64
-  }
+trait.impl private @Trait_i64(%self_claim: !trait.claim<@Trait[i64, i64]>) members [@Trait.method -> @Trait_i64.method] {
+}
+func.func private @Trait_i64.method(%self_claim: !trait.claim<@Trait[i64, i64]>, %self: i64, %x: i64) -> i64 {
+  return %x : i64
 }
 
 func.func @main() -> i64 {
@@ -56,8 +51,8 @@ func.func @main() -> i64 {
 }
 
 // CHECK-LABEL: func.func private @callee_
-// CHECK: call @Trait_i64_{{h[0-9a-f]+}}_method
-// CHECK-LABEL: func.func private @Trait_i64_{{h[0-9a-f]+}}_method
+// CHECK: call @Trait_i64.method_{{h[0-9a-f]+}}
+// CHECK-LABEL: func.func private @Trait_i64.method_{{h[0-9a-f]+}}
 // CHECK: return %arg1 : i64
 // CHECK-LABEL: func.func @main() -> i64
 // CHECK: call @callee_

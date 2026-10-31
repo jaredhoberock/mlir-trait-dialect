@@ -4,7 +4,6 @@
 #define TRAIT_OPS_TD
 
 include "mlir/Interfaces/ControlFlowInterfaces.td"
-include "mlir/Interfaces/FunctionInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/IR/OpAsmInterface.td"
 include "mlir/IR/OpBase.td"
@@ -36,8 +35,8 @@ include "TraitTypes.td"
 //    is the work of the stage described under "How claims are proven".
 //
 // 3. Claims flow into polymorphic code through !trait.claim parameters --
-//    a function's, and a trait's or impl's block arguments, which its
-//    methods read -- so polymorphic code relies on a trait only where its
+//    a function's, a trait member's leading ones among them, and an impl's
+//    block arguments -- so polymorphic code relies on a trait only where its
 //    caller proves it.  A claim code fabricates is an allegation
 //    (trait.allege), a trusted assertion that impl selection proves where
 //    its types are concrete: instantiate-monomorphs proves a monomorphic one
@@ -53,8 +52,8 @@ include "TraitTypes.td"
 // How claims are proven
 //===----------------------------------------------------------------------===//
 //
-// A claim's evidence is a value: a block argument of the function, trait or
-// impl that assumes it, or the result of an evidence op.  trait.witness cites
+// A claim's evidence is a value: a block argument of the function or impl
+// that assumes it, or the result of an evidence op.  trait.witness cites
 // a proof, or an impl with no parameters and no where entries; for an
 // equality it cites a projection's resolution by an impl
 // (`proj_resolve P resolves T by @impl`) or reflexivity (`refl`), and an
@@ -65,9 +64,7 @@ include "TraitTypes.td"
 // trait.coerce respells a value's type, and accepts the respelling where the
 // ground congruence closure of the equalities it cites joins the two
 // spellings.  trait.allege asserts a claim for impl selection to prove.  A
-// proven claim's type names its proof
-// (`!trait.claim<@T[i32] by @p>`), and a method call prints its receiver's
-// proof apart from the receiver's type, after its signature (`by @p`).
+// proven claim's type names its proof (`!trait.claim<@T[i32] by @p>`).
 //
 // The stage proving claims is the monomorphize-trait pipeline:
 // instantiate-monomorphs-trait, then erase-polymorphs-trait.  Instantiation
@@ -79,9 +76,12 @@ include "TraitTypes.td"
 // memoized in the module the op stands in -- a refusal included, entered once
 // nothing still part-way through could answer it otherwise -- asks the
 // dialects' impl generators for an impl where none binds an application, and
-// writes a proof as a trait.proof at the end of that module.  The driver cuts
-// one instance per template, type arguments and evidence at each call whose
-// operands are proven, lowering the call to a func.call of the instance.
+// writes a proof as a trait.proof at the end of that module.  A call of a
+// trait's member whose receiver is proven calls the function the receiver's
+// impl pairs with the member, given the premises the receiver's proof derives
+// it from.  The driver cuts one instance per template, type arguments and
+// evidence at each call whose operands are proven, lowering the call to a
+// func.call of the instance.
 // What selection refuses stays spelled where it stands, and the stage's exit
 // walk names it there.  An instance's evidence parameters
 // take its caller's proofs, so a body reads the evidence it was given by
@@ -95,8 +95,8 @@ include "TraitTypes.td"
 // The evidence an impl returns for its trait's requirements is read by
 // position: a projection of a proven claim is replaced by the ops the impl's
 // return computes there, cloned at the projection with the impl's where
-// arguments taken from the claim's proof, and a call of a method computing
-// evidence is replaced by the method's body, so the stage's patterns are the
+// arguments taken from the claim's proof, and a call of a member computing
+// evidence is replaced by the member's body, so the stage's patterns are the
 // only reading of either -- a derive there is transcribed, an allegation
 // decided where it stands, a coercion settled.  An instance is cut with the
 // projections off its proven parameters inlined, and those the inlined
@@ -115,19 +115,13 @@ include "TraitTypes.td"
 // may cite its own impl through a derive or a witness, which builds evidence,
 // but an impl may not return a projection of its own application, which
 // would read the very return it stands in (GHC's rule for instance
-// superclasses); and an op in an impl's body outside its methods holds only
-// the impl's where arguments as hypotheses, never its own application.  A
-// proof is identified by its impl, its application and the proof each premise
+// superclasses); and an op in an impl's body takes only the impl's where
+// arguments as hypotheses, never its own application.  A proof is identified by its impl, its application and the proof each premise
 // names: one standing with that body answers wherever the stage would write
 // it.
 //
 //===----------------------------------------------------------------------===//
 
-
-// Adds a `getModule()` convenience method to the op.
-def HasGetModule : NativeOpTrait<"HasGetModule"> {
-  let cppNamespace = "::mlir::trait";
-}
 
 // The op reads every value it is given where SSA dominance holds, so none is
 // computed from its own result.
@@ -143,10 +137,10 @@ def ReadsUnderDominance : NativeOpTrait<"ReadsUnderDominance"> {
 // equality evidence or compare it by position with a declaration, and asking
 // them refuses such an equality earlier, nearer the op that wrote it.
 //
-// XXX TODO: delete this trait once `trait.assoc_type` declares its kind, a type
-// or evidence. Every rewrite building an equality is then kind-preserving, so
-// the endpoint rule returns to `TypeEqualityAttr::verify`, and this trait, the
-// equality arm of `ClaimType::verifySymbolUses` and the evidence half of
+// XXX TODO: delete this trait once an associated type declares its kind, a
+// type or evidence. Every rewrite building an equality is then kind-preserving,
+// so the endpoint rule returns to `TypeEqualityAttr::verify`, and this trait,
+// the equality arm of `ClaimType::verifySymbolUses` and the evidence half of
 // `isNoPredicateType` go with it.
 def EqualitiesRelateTypes : NativeOpTrait<"EqualitiesRelateTypes"> {
   let cppNamespace = "::mlir::trait";
@@ -157,83 +151,79 @@ class HasChildren<list<string> ops>
     : ParamNativeOpTrait<"HasOnlyChildOps", !interleave(ops, ", ")>, StructuralOpTrait;
 
 
-// The operations a trait's or an impl's body may hold beside its methods and
-// associated types: the evidence ops, which compute evidence over the
-// declaration's block arguments for its methods to share and, in an impl, for
-// its return.
+// The operations an impl's body may contain beside its return: the evidence ops,
+// which compute the evidence the impl returns from its block arguments.
 defvar DeclarationEvidenceOps = ["trait::AllegeOp", "trait::CoerceOp",
                                  "trait::DeriveOp", "trait::ProjectOp",
                                  "trait::WitnessOp"];
 
 def TraitOp : TraitDialectOp<"trait", [
-  DeclareOpInterfaceMethods<OpAsmOpInterface, ["getAsmBlockArgumentNames"]>,
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
-  HasChildren<!listconcat(["trait::MethodOp", "trait::AssocTypeOp"],
-                          DeclarationEvidenceOps)>,
-  HasGetModule,
-  IsolatedFromAbove,
-  NoTerminator,
-  SingleBlock,
-  Symbol,
-  SymbolTable
+  Symbol
 ]> {
   let summary = "Declares a trait interface";
   let description = [{
     Declares a trait interface, similar to a Rust or Scala trait, or a Haskell
-    typeclass, printed as a function signature. Its one block argument is the
-    trait's own application, the hypothesis every default method runs under;
-    the application's type arguments, distinct type variables, are the trait's
-    parameters in order. Its result signature states the trait's requirements:
-    one claim per fact every proof of the trait carries, in the one order
-    `trait.project` indexes them by and every impl returns their evidence in.
+    typeclass, printed as a function signature with no body. Its one input is
+    the trait's own application, whose type arguments, distinct type
+    variables, are the trait's parameters in order. Its result signature states
+    the trait's requirements: one claim per fact every proof of the trait
+    carries, in the one order `trait.project` indexes them by and every impl
+    returns their evidence in.
 
     ```mlir
     !S = !trait.poly<0>
     !O = !trait.poly<1>
 
-    trait.trait private @PartialOrd(%self: !trait.claim<@PartialOrd[!S, !O]>)
-        -> !trait.claim<@PartialEq[!S, !O]> {
-      // a required method
-      trait.method @partial_cmp(!S, !O) -> !opt_ord
+    trait.trait private @PartialOrd(!trait.claim<@PartialOrd[!S, !O]>)
+        -> !trait.claim<@PartialEq[!S, !O]>
+        members [@PartialOrd.partial_cmp, default @PartialOrd.lt]
 
-      // a default method, which reads the trait's argument
-      trait.method @lt(%a: !S, %b: !O) -> i1 {
-        %eq = trait.project %self[0] : !trait.claim<@PartialOrd[!S, !O]>
-                                    -> !trait.claim<@PartialEq[!S, !O]>
-        ...
-        trait.return %res : i1
-      }
+    // a required member
+    func.func private @PartialOrd.partial_cmp(!trait.claim<@PartialOrd[!S, !O]>, !S, !O) -> !opt_ord
+
+    // a member with a default, which reads the trait's application
+    func.func private @PartialOrd.lt(%self: !trait.claim<@PartialOrd[!S, !O]>, %a: !S, %b: !O) -> i1 {
+      %eq = trait.project %self[0] : !trait.claim<@PartialOrd[!S, !O]>
+                                  -> !trait.claim<@PartialEq[!S, !O]>
+      ...
+      return %res : i1
     }
     ```
+
+    `members` lists the trait's members in declaration order, which is
+    program content: member k is a module-level function whose leading
+    parameter is the trait's own application, followed by the member's inputs.
+    A member marked `default` has a body, the definition an impl may leave the
+    member to (`defaults`); every other member is external, required of every
+    impl. `assoc` names each associated type with the number of type parameters
+    of its own, which are labelled after the trait's by position.
 
     A requirement is a trait application or a type equality the trait's
     associated types satisfy (`!trait.proj<@FoldFn[!S], "Output"> = !S`). A
     requirement quantified over variables of its own -- a generic associated
     type's bound -- is a function from its premises to its conclusion, and is
-    declared as one: a required method of the trait whose type variables are the
+    declared as one: a required member whose type variables are the
     requirement's, whose claim parameters are its premises and whose result is
     its conclusion. Every impl defines it, and a use calls it.
 
-    The body holds methods, associated-type declarations, and evidence ops over
-    `%self` that default methods may share. It is a function body, so a value is
-    defined before the ops that read it, and it ends without a terminator. A
-    trait is a template that dies with monomorphization; a producer may write
+    A trait is a template that dies with monomorphization; a producer may write
     it public, and erase refuses a template still public when it runs.
   }];
 
   let arguments = (ins
     SymbolNameAttr:$sym_name,
+    TypeAttr:$self,
     TypeArrayAttr:$requirements,
+    FlatSymbolRefArrayAttr:$members,
+    DenseBoolArrayAttr:$defaults,
+    DictionaryAttr:$assoc,
     OptionalAttr<StrAttr>:$sym_visibility
   );
 
-  let regions = (region SizedRegion<1>:$body);
-
   let extraClassDeclaration = [{
-    /// The trait's own application, the claim its one block argument holds.
-    ClaimType getSelfClaim() {
-      return ::llvm::cast<ClaimType>(getBody().front().getArgument(0).getType());
-    }
+    /// The trait's own application, the claim each of its members leads with.
+    ClaimType getSelfClaim() { return ::llvm::cast<ClaimType>(getSelf()); }
 
     TraitApplicationAttr getSelfApplication() {
       return getSelfClaim().getTraitApplication();
@@ -244,51 +234,32 @@ def TraitOp : TraitDialectOp<"trait", [
       return getSelfApplication().getTypeArgs();
     }
 
-    FailureOr<FunctionOpInterface> getMethod(StringRef methodName, llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
-      auto func = dyn_cast_or_null<FunctionOpInterface>(mlir::SymbolTable::lookupSymbolIn(*this, methodName));
-      if (!func) {
-        if (err) err() << "cannot find method '@" << methodName
-                       << "' in trait '" << getSymNameAttr() << "'";
-        return failure();
-      }
-      return func;
-    }
+    /// The position of `member` among this trait's members, read by interned
+    /// identity; none where the trait declares no such member.
+    std::optional<unsigned> getMemberPosition(FlatSymbolRefAttr member);
 
-    bool hasMethod(StringRef methodName) {
-      return succeeded(getMethod(methodName));
-    }
+    /// The number of type parameters of its own the associated type `name`
+    /// takes; none where the trait declares no associated type of that name.
+    std::optional<unsigned> getAssociatedTypeArity(StringRef name);
 
-    llvm::SmallSet<llvm::StringRef,8> getRequiredMethodNames() {
-      llvm::SmallSet<llvm::StringRef,8> result;
-      for (Operation& op : getBody().front()) {
-        if (auto func = dyn_cast<FunctionOpInterface>(op)) {
-          if (func.isExternal()) {
-            result.insert(func.getName());
-          }
-        }
-      }
-      return result;
-    }
+    /// The member of this trait the one builder named `name`
+    /// (`addMember`), null where the trait declares none so named. An impl
+    /// generator implementing a trait by the names its tag promises reads its
+    /// members here.
+    FlatSymbolRefAttr getMemberNamed(StringRef name);
 
-    std::vector<FunctionOpInterface> getOptionalMethods() {
-      std::vector<FunctionOpInterface> result;
-      for (Operation& op : getBody().front()) {
-        if (auto func = dyn_cast<FunctionOpInterface>(op)) {
-          if (!func.isExternal()) {
-            result.push_back(func);
-          }
-        }
-      }
-      return result;
-    }
+    /// Declares member `name` of this trait, whose inputs after the trait's own
+    /// application and whose results are `signature`'s: a private module-level
+    /// function `@<trait>.<name>` leading with the trait's self claim, entered
+    /// at the end of `members`, with an entry block the caller fills where
+    /// `withDefault`, and external otherwise. The function is created where
+    /// `builder` inserts.
+    func::FuncOp addMember(OpBuilder &builder, Location loc, StringRef name,
+                           FunctionType signature, bool withDefault);
 
-    FailureOr<FunctionOpInterface> getOptionalMethod(StringRef methodName) {
-      for (auto method : getOptionalMethods()) {
-        if (method.getName() == methodName)
-          return method;
-      }
-      return failure();
-    }
+    /// Declares associated type `name` of this trait, taking `arity` type
+    /// parameters of its own, labelled after the trait's by position.
+    void declareAssociatedType(StringRef name, unsigned arity);
 
     /// Builds the specialization that maps this trait's generic parameters to
     /// the corresponding types in `actualSelfClaim`.
@@ -312,24 +283,7 @@ def TraitOp : TraitDialectOp<"trait", [
         ClaimType actualSelfClaim, unsigned index,
         llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
 
-    /// Return all AssocTypeOps declared in this trait
-    SmallVector<AssocTypeOp> getAssociatedTypes() {
-      SmallVector<AssocTypeOp> result;
-      for (Operation& op : getBody().front())
-        if (auto assoc = dyn_cast<AssocTypeOp>(op))
-          result.push_back(assoc);
-      return result;
-    }
-
-    /// Look up a specific associated type by name
-    FailureOr<AssocTypeOp> getAssociatedType(StringRef name) {
-      for (auto assoc : getAssociatedTypes())
-        if (assoc.getSymName() == name)
-          return assoc;
-      return failure();
-    }
-
-    /// Return all the ImplOps for this TraitOp
+    /// The impls of this trait standing in the symbol table it stands in.
     SmallVector<ImplOp> getImpls();
 
     /// The impls whose headers match `wanted`, read through the established
@@ -337,33 +291,25 @@ def TraitOp : TraitDialectOp<"trait", [
     /// spelling its resolution only where the caller's context can reduce it.
     SmallVector<ImplOp> getCandidateImplsFor(ClaimType wanted,
                                              Normalizer normalize = Normalizer());
-
-    /// Cuts the default method `methodName` of this trait into a module-level
-    /// function for the receiver `provenSelfClaim`, as an impl method is cut
-    /// (`ImplOp::getOrSpecializeFreeFunctionFromMethod`): the trait's argument
-    /// becomes the instance's leading self proof.
-    FailureOr<func::FuncOp> getOrSpecializeFreeFunctionFromDefault(
-        PatternRewriter &rewriter, ClaimType provenSelfClaim,
-        StringRef methodName, TypeRange actualArguments,
-        const CallSubstitution &callSubst,
-        llvm::function_ref<FailureOr<ClaimType>(ClaimType, ClaimType)> respell);
   }];
 
-  // The body's one block takes the self claim. The builder mints the trait
-  // private, the one visibility erase accepts: erase collects it by liveness,
-  // never by kind.
+  // The builder mints the trait private, the one visibility erase accepts:
+  // erase collects it by liveness, never by kind. It declares no member and no
+  // associated type; `addMember` adds the members.
   let skipDefaultBuilders = 1;
   let builders = [
     OpBuilder<(ins "::llvm::StringRef":$name,
                    "::mlir::ArrayRef<Type>":$typeParams,
                    "::mlir::ArrayRef<Type>":$requirements), [{
       ::mlir::MLIRContext *ctx = $_builder.getContext();
-      $_state.addAttribute("sym_name", $_builder.getStringAttr(name));
-      $_state.addAttribute("requirements", $_builder.getTypeArrayAttr(requirements));
-      $_state.addAttribute("sym_visibility", $_builder.getStringAttr("private"));
       ClaimType self = ClaimType::get(ctx, TraitApplicationAttr::get(ctx, name, typeParams));
-      ::mlir::Region *region = $_state.addRegion();
-      region->emplaceBlock().addArgument(self, $_state.location);
+      $_state.addAttribute("sym_name", $_builder.getStringAttr(name));
+      $_state.addAttribute("self", ::mlir::TypeAttr::get(self));
+      $_state.addAttribute("requirements", $_builder.getTypeArrayAttr(requirements));
+      $_state.addAttribute("members", $_builder.getArrayAttr({}));
+      $_state.addAttribute("defaults", $_builder.getDenseBoolArrayAttr({}));
+      $_state.addAttribute("assoc", $_builder.getDictionaryAttr({}));
+      $_state.addAttribute("sym_visibility", $_builder.getStringAttr("private"));
     }]>
   ];
 
@@ -374,14 +320,10 @@ def TraitOp : TraitDialectOp<"trait", [
 def ImplOp : TraitDialectOp<"impl", [
   DeclareOpInterfaceMethods<OpAsmOpInterface, ["getAsmBlockArgumentNames"]>,
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
-  HasChildren<!listconcat(["trait::MethodOp", "trait::AssocTypeOp",
-                           "trait::ReturnOp"],
-                          DeclarationEvidenceOps)>,
-  HasGetModule,
+  HasChildren<!listconcat(["trait::ReturnOp"], DeclarationEvidenceOps)>,
   IsolatedFromAbove,
   SingleBlockImplicitTerminator<"trait::ReturnOp">,
-  Symbol,
-  SymbolTable
+  Symbol
 ]> {
   let summary = "Implements a trait for a list of types";
   let description = [{
@@ -394,21 +336,34 @@ def ImplOp : TraitDialectOp<"impl", [
     claim per where entry in that order, so a where entry exists once, as its
     block argument, and its position is the argument's.
 
-    The body holds the associated-type bindings, the methods, and the evidence
-    ops that compute, from the arguments, the evidence for each of the trait's
-    requirements, which `trait.return` returns in the trait's order. The
-    returned evidence is the trait's requirements at the self claim's
-    arguments, read through the impl's own bindings and its where equalities,
-    and none of it may rest on the impl's own application, argument 0. An impl
-    of a trait requiring nothing returns nothing, and its return is not printed.
+    The body contains the evidence ops that compute, from the arguments, the
+    evidence for each of the trait's requirements, which `trait.return`
+    returns in the trait's order. The returned evidence is the trait's
+    requirements at the self claim's arguments, read through the impl's own
+    bindings and its where equalities, and none of it may rest on the impl's
+    own application, argument 0. An impl of a trait requiring nothing returns
+    nothing, and its return is not printed.
+
+    `members` pairs each member of the trait with the function implementing
+    it, `@Trait.member -> @function`: a module-level function whose leading
+    parameters are the impl's block arguments in order, followed by the
+    member's inputs at the impl's arguments. A member the impl leaves to its
+    trait's default is paired with itself. `bindings` binds each associated
+    type of the trait to a type spelled over the impl's parameters and, for a
+    generic associated type, over its own parameters, labelled after the
+    impl's by position.
 
     ```mlir
     trait.impl private @Into_impl(%self: !trait.claim<@Into[!T, !U]>,
-                                  %from: !trait.claim<@From[!U, !T]>) {
-      trait.method @into(%x: !T) -> !U {
-        %0 = trait.method.call %from @from(%x) : !trait.claim<@From[!U, !T]>, (!T) -> !U
-        trait.return %0 : !U
-      }
+                                  %from: !trait.claim<@From[!U, !T]>)
+        members [@Into.into -> @Into_impl.into] {
+    }
+
+    func.func private @Into_impl.into(%self: !trait.claim<@Into[!T, !U]>,
+                                      %from: !trait.claim<@From[!U, !T]>,
+                                      %x: !T) -> !U {
+      %0 = trait.func.call @From.from(%from, %x) : (!trait.claim<@From[!U, !T]>, !T) -> !U
+      return %0 : !U
     }
 
     trait.impl private @Dense_array(%self: !trait.claim<@Dense[!array.array<!S, !E>]>,
@@ -419,14 +374,14 @@ def ImplOp : TraitDialectOp<"impl", [
     }
     ```
 
-    A method of the impl reads the arguments and the evidence values the body
-    defines before it as ordinary SSA uses. An impl is a template that dies
-    with monomorphization; a producer may write it public, and erase refuses
-    a template still public when it runs.
+    An impl is a template that dies with monomorphization; a producer may write
+    it public, and erase refuses a template still public when it runs.
   }];
 
   let arguments = (ins
     SymbolNameAttr:$sym_name,
+    ArrayAttr:$members,
+    DictionaryAttr:$bindings,
     OptionalAttr<StrAttr>:$sym_visibility
   );
   let regions = (region SizedRegion<1>:$body);
@@ -489,25 +444,40 @@ def ImplOp : TraitDialectOp<"impl", [
       return getSelfApplication().getTraitName();
     }
 
-    TraitOp getTrait();
+    /// The trait this impl implements, read in the symbol table it stands in
+    /// through `symbolTable`.
+    TraitOp getTrait(SymbolTableCollection &symbolTable);
 
     ArrayRef<Type> getTypeArgs() {
       return getSelfApplication().getTypeArgs();
     }
 
-    FailureOr<FunctionOpInterface> getMethod(StringRef methodName, llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
-      auto func = dyn_cast_or_null<FunctionOpInterface>(mlir::SymbolTable::lookupSymbolIn(*this, methodName));
-      if (!func) {
-        if (err) err() << "cannot find method '@" << methodName
-                       << "' in impl '" << getSymNameAttr() << "'";
-        return failure();
-      }
-      return func;
-    }
+    /// The function implementing `member` of this impl's trait, read off the
+    /// pair whose left side is `member` by interned identity: `member` itself
+    /// where the impl leaves it to the trait's default, null where no pair
+    /// names it.
+    FlatSymbolRefAttr getImplementationOf(FlatSymbolRefAttr member);
 
-    bool hasMethod(StringRef name) {
-      return succeeded(getMethod(name));
-    }
+    /// Adds the function implementing `member`, a member of this impl's
+    /// trait whose inputs and results at this impl's arguments are
+    /// `signature`'s: a private module-level function `@<impl>.<name>`, named
+    /// after the member's name within its trait, whose leading parameters are
+    /// this impl's block argument types in order and whose remaining inputs
+    /// are `signature`'s, with an entry block the caller fills; the pair
+    /// `member -> function` is entered in `members`. The function is created
+    /// where `builder` inserts.
+    func::FuncOp addMember(OpBuilder &builder, Location loc,
+                           FlatSymbolRefAttr member, FunctionType signature);
+
+    /// Pairs every member of `trait`, this impl's trait, in the trait's order:
+    /// with the function `addMember` entered for it, or with itself, leaving it
+    /// to the trait's default.
+    void completeMembers(TraitOp trait);
+
+    /// Binds associated type `name` of this impl's trait to `type`, spelled
+    /// over the impl's parameters and the associated type's own, labelled
+    /// after them.
+    void bindAssociatedType(StringRef name, Type type);
 
     /// The impl's type parameters, labels 0 to n - 1: a parameter's label is
     /// its position, and the header and where clause spell each.
@@ -516,21 +486,6 @@ def ImplOp : TraitDialectOp<"impl", [
     /// The argument list a citation of this impl states for `arguments`: the
     /// argument of each parameter, by position.
     ImplArgumentsAttr stateArguments(const SpecializationMap &arguments);
-
-    /// Extracts a method from this impl as a free function with a leading self parameter.
-    ///
-    /// Reads the impl's arguments off the proven self claim, adds the
-    /// call-site substitution, and monomorphizes the cloned method. The
-    /// instance is named by the evidence it is made with: the proven self
-    /// claim at the leading position, then `actualArguments`, what the call
-    /// supplies for the method's own parameters, position by position. A
-    /// method this impl does not define is the trait's default, cut from the
-    /// trait. `respell` carries a proven claim the call supplies to the
-    /// spelling the instance's parameter has (`InstanceKey::get`).
-    FailureOr<func::FuncOp> getOrSpecializeFreeFunctionFromMethod(PatternRewriter& rewriter, ClaimType provenSelfClaim, StringRef methodName,
-                                                                   TypeRange actualArguments,
-                                                                   const CallSubstitution &callSubst,
-                                                                   llvm::function_ref<FailureOr<ClaimType>(ClaimType, ClaimType)> respell);
 
     /// The arguments carrying this impl's header to `actualSelfClaim`: read
     /// them off the demanded application by position, rebuild the header at
@@ -558,13 +513,6 @@ def ImplOp : TraitDialectOp<"impl", [
     TypeArguments readTypeArgumentsFor(ClaimType actualSelfClaim,
                                        Normalizer normalize);
 
-    /// The arguments this impl's parameters take at the proven self claim
-    /// `provenSelfClaim`: the ones its proof's derive states this impl's
-    /// header at, read by position off the proof, whatever spelling the claim
-    /// citing it has. An impl named as its own proof binds no parameter.
-    FailureOr<SpecializationMap> buildImplSpecialization(ClaimType provenSelfClaim,
-                                                         llvm::function_ref<InFlightDiagnostic()> err = nullptr);
-
     // Helper to generate unique symbol name for an ImplOp
     static std::string generateSymName(TraitApplicationAttr selfApp, ArrayRef<ClaimType> where);
 
@@ -582,55 +530,36 @@ def ImplOp : TraitDialectOp<"impl", [
 
     LogicalResult verifyIsUnconditional(llvm::function_ref<InFlightDiagnostic()> errFn);
 
-    /// Look up an associated type op by name
-    FailureOr<AssocTypeOp> getAssociatedType(StringRef name) {
-      for (Operation& op : getBody().front())
-        if (auto assoc = dyn_cast<AssocTypeOp>(op))
-          if (assoc.getSymName() == name)
-            return assoc;
-      return failure();
-    }
-
-    /// Look up an associated type binding by name, with neither this impl's
-    /// header arguments nor a projection's associated-type arguments applied:
-    /// the result spells the impl's own parameters. Use
-    /// `specializeAssociatedTypeBinding` to read it at both argument lists.
+    /// The type this impl binds associated type `name` to, with neither this
+    /// impl's header arguments nor a projection's associated-type arguments
+    /// applied: the result spells the impl's own parameters and the associated
+    /// type's own, labelled after them. Use `specializeAssociatedTypeBinding`
+    /// to read it at both argument lists.
     FailureOr<Type> getAssociatedTypeBinding(
         StringRef name,
         llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
-      for (Operation& op : getBody().front()) {
-        if (auto assoc = dyn_cast<AssocTypeOp>(op)) {
-          if (assoc.getSymName() == name) {
-            if (auto boundType = assoc.getBoundType())
-              return *boundType;
-            if (err) err() << "associated type '" << name
-                           << "' has no binding in impl '" << getSymName() << "'";
-            return failure();
-          }
-        }
+      auto bound = ::llvm::dyn_cast_or_null<TypeAttr>(getBindings().get(name));
+      if (!bound) {
+        if (err) err() << "no binding of associated type '" << name
+                       << "' in impl '" << getSymName() << "'";
+        return failure();
       }
-      if (err) err() << "no associated type '" << name
-                     << "' in impl '" << getSymName() << "'";
-      return failure();
+      return bound.getValue();
     }
 
     /// The type this impl binds for associated type `name`, read at the two
     /// argument lists a use of it supplies: `headerArguments`, the arguments
     /// this impl's header parameters take at the application selecting it chose
     /// it for, and `assocTypeArgs`, the arguments a projection supplies for the
-    /// binding's own parameters. For a binding with no parameters of its own
-    /// `assocTypeArgs` is empty.
+    /// binding's own parameters, which are labelled after the header's by
+    /// position. For a binding with no parameters of its own `assocTypeArgs`
+    /// is empty.
     ///
     /// Both lists stand in one substitution, applied in a single pass. An
     /// argument is a term of whoever spelled the use, so a label it shares with
     /// a parameter of either list names that caller's variable and not this
     /// declaration's: one pass never revisits a term it stamped, so no argument
     /// is read as a parameter the other list answers for.
-    ///
-    /// Returns failure if:
-    ///   - No associated type named `name` exists in this impl
-    ///   - The associated type has no bound type
-    ///   - GAT arity mismatch (`assocTypeArgs` size != type parameter count)
     FailureOr<Type> specializeAssociatedTypeBinding(
         StringRef name,
         ArrayRef<Type> assocTypeArgs,
@@ -649,14 +578,18 @@ def ImplOp : TraitDialectOp<"impl", [
 
   // The body's one block takes the self claim and then one claim per where
   // entry, and ends with an empty `trait.return` the caller fills or replaces.
-  // The builder mints the impl private, the one visibility erase accepts:
-  // erase collects it by liveness, never by kind.
+  // The impl pairs no member and binds no associated type until `addMember`,
+  // `completeMembers` and its bindings are entered. The builder mints the impl
+  // private, the one visibility erase accepts: erase collects it by liveness,
+  // never by kind.
   let skipDefaultBuilders = 1;
   let builders = [
     OpBuilder<(ins "::mlir::StringRef":$sym_name,
                    "::mlir::trait::TraitApplicationAttr":$self_application,
                    "::mlir::ArrayRef<::mlir::Type>":$where), [{
       $_state.addAttribute("sym_name", $_builder.getStringAttr(sym_name));
+      $_state.addAttribute("members", $_builder.getArrayAttr({}));
+      $_state.addAttribute("bindings", $_builder.getDictionaryAttr({}));
       $_state.addAttribute("sym_visibility", $_builder.getStringAttr("private"));
       ::mlir::Region *region = $_state.addRegion();
       ::mlir::Block &body = region->emplaceBlock();
@@ -680,147 +613,24 @@ def ImplOp : TraitDialectOp<"impl", [
   let hasVerifier = 1;
 }
 
-def AssocTypeOp : TraitDialectOp<"assoc_type", [
-  ParentOneOf<["trait::TraitOp", "trait::ImplOp"]>,
-  Symbol
-]> {
-  let summary = "Declares or binds an associated type";
-  let description = [{
-    Inside a `trait.trait`, declares an associated type by name:
-    ```mlir
-    trait.trait private @Iterator(%self: !trait.claim<@Iterator[!S]>) {
-      trait.assoc_type @Item
-      trait.method @next(!S) -> !trait.proj<@Iterator[!S], "Item">
-    }
-    ```
-
-    Inside a `trait.impl`, binds the associated type to a concrete type:
-    ```mlir
-    trait.impl private @Iterator_i32(%self: !trait.claim<@Iterator[i32]>) {
-      trait.assoc_type @Item = i64
-      trait.method @next(%x: i32) -> i64 { ... }
-    }
-    ```
-  }];
-
-  let arguments = (ins
-    SymbolNameAttr:$sym_name,
-    OptionalAttr<TypeAttr>:$bound_type,
-    OptionalAttr<TypeArrayAttr>:$type_params
-  );
-
-  let assemblyFormat = [{
-    $sym_name (`<` $type_params^ `>`)? (`=` $bound_type^)? attr-dict
-  }];
-}
-
-
-def MethodOp : TraitDialectOp<"method", [
-  AutomaticAllocationScope,
-  FunctionOpInterface,
-  ParentOneOf<["trait::TraitOp", "trait::ImplOp"]>
-]> {
-  let summary = "A method a trait declares or an impl defines";
-  let description = [{
-    A function-like member of a `trait.trait` or `trait.impl`, printed as a
-    `func.func` is and ended by `trait.return`. Its function type is the method's
-    interface: its value parameters, then its own claim parameters. In a trait, a
-    method without a body is required of every impl and a method with one is a
-    default; in an impl, every method has a body and defines the trait's method
-    of its name.
-
-    ```mlir
-    trait.trait private @PartialEq(%self: !trait.claim<@PartialEq[!S, !O]>) {
-      trait.method @eq(!S, !O) -> i1
-      trait.method @ne(%a: !S, %b: !O) -> i1 {
-        %eq = trait.method.call %self @eq(%a, %b)
-          : !trait.claim<@PartialEq[!S, !O]>, (!S, !O) -> i1
-        %true = arith.constant 1 : i1
-        %res = arith.xori %eq, %true : i1
-        trait.return %res : i1
-      }
-    }
-    ```
-
-    A method's parent is a trait or an impl (`ParentOneOf`), and a method lives
-    and dies with it: it carries no visibility (the verifier refuses one), so it
-    is never discardable on its own, and a method without a body is a requirement
-    rather than a declaration of something defined elsewhere (`isDeclaration` is
-    the interface's default, false).
-
-    A method is not isolated from above: it reads its declaration's block
-    arguments and the evidence values the declaration's body defines before it
-    as ordinary SSA uses, and nothing else from outside itself, since its
-    declaration is isolated from above and its child list admits evidence ops
-    alone beside methods and associated types. A method that returns claims
-    only computes evidence -- a quantified requirement of its trait -- and is
-    called for that evidence rather than cut. The constants the folder
-    materializes while simplifying a method's body are placed in that body, as
-    in an isolated function's: the dialect's `DialectFoldInterface` claims a
-    method's body as the region to materialize into.
-
-    A method is instantiated by cutting it into a module-level `func.func`, its
-    `trait.return`s becoming `func.return`s and every value it reads from its
-    declaration replaced by the evidence the receiver's proof supplies there.
-  }];
-
-  let arguments = (ins
-    SymbolNameAttr:$sym_name,
-    TypeAttrOf<FunctionType>:$function_type,
-    OptionalAttr<DictArrayAttr>:$arg_attrs,
-    OptionalAttr<DictArrayAttr>:$res_attrs
-  );
-  let regions = (region AnyRegion:$body);
-
-  let builders = [
-    // A method of `name` and `type` with no body; a bodied method's caller adds
-    // the entry block.
-    OpBuilder<(ins "::llvm::StringRef":$name, "::mlir::FunctionType":$type), [{
-      $_state.addAttribute(::mlir::SymbolTable::getSymbolAttrName(),
-                           $_builder.getStringAttr(name));
-      $_state.addAttribute(getFunctionTypeAttrName($_state.name),
-                           ::mlir::TypeAttr::get(type));
-      $_state.addRegion();
-    }]>
-  ];
-
-  let extraClassDeclaration = [{
-    //===------------------------------------------------------------------===//
-    // FunctionOpInterface Methods
-    //===------------------------------------------------------------------===//
-
-    /// The body a call runs, null for a required method, which has none.
-    ::mlir::Region *getCallableRegion() { return isExternal() ? nullptr : &getBody(); }
-
-    ::llvm::ArrayRef<::mlir::Type> getArgumentTypes() { return getFunctionType().getInputs(); }
-
-    ::llvm::ArrayRef<::mlir::Type> getResultTypes() { return getFunctionType().getResults(); }
-  }];
-
-  let hasCustomAssemblyFormat = 1;
-  let hasVerifier = 1;
-}
-
 
 def ReturnOp : TraitDialectOp<"return", [
-  ParentOneOf<["trait::MethodOp", "trait::ImplOp", "trait::ProofOp"]>,
+  ParentOneOf<["trait::ImplOp", "trait::ProofOp"]>,
   Pure,
   ReturnLike,
   Terminator
 ]> {
-  let summary = "Returns from a method, an impl, or a proof";
+  let summary = "Returns from an impl or a proof";
   let description = [{
-    The one terminator of the dialect's three function-like bodies. It ends a
-    block of a `trait.method`'s body, returning the method's results, whose
-    number and types are the method's result types, by identity; it ends a
+    The one terminator of the dialect's two evidence bodies. It ends a
     `trait.impl`'s body, returning the evidence for each of the impl's trait's
     requirements, in the trait's order; and it ends a `trait.proof`'s body,
     returning the one claim the proof proves.
 
     ```mlir
-    trait.method @into(%x: !T) -> !U {
+    trait.proof private @Into_f32_f64_p {
       ...
-      trait.return %r : !U
+      trait.return %p : !trait.claim<@Into[f32, f64]>
     }
     ```
   }];
@@ -834,7 +644,6 @@ def ReturnOp : TraitDialectOp<"return", [
   let assemblyFormat = "attr-dict ($operands^ `:` type($operands))?";
   let hasVerifier = 1;
 }
-
 
 def Claim : Type<
   CPred<"::mlir::isa<::mlir::trait::ClaimType>($_self)">,
@@ -1018,7 +827,9 @@ def DeriveOp : TraitDialectOp<"derive", [
       return getDerivedClaim().getTraitApplication();
     }
 
-    ImplOp getImplOp();
+    /// The impl this derive cites, read through `symbolTable`; null where
+    /// the symbol names no impl.
+    ImplOp getImplOp(SymbolTableCollection &symbolTable);
   }];
 
   // `@Trait[...] from @impl[args] given(%claims) : (types)`; the derived claim
@@ -1101,7 +912,8 @@ def ProjectOp : TraitDialectOp<"project", [
     /// bridged to the result's spelling by a coercion where the two differ.
     /// Fails, leaving the projection standing, where the source names no
     /// proof.
-    LogicalResult inlineEvidence(RewriterBase &rewriter);
+    LogicalResult inlineEvidence(RewriterBase &rewriter,
+                                 SymbolTableCollection &symbolTable);
 
     /// What this projection's evidence stands on. The evidence is the
     /// source's impl's return at this index, and where that is a projection in
@@ -1114,7 +926,7 @@ def ProjectOp : TraitDialectOp<"project", [
     /// still projecting past the instantiation depth limit overflows:
     /// inlining either would never finish (GHC's rule for instance
     /// superclasses, read across impls).
-    EvidenceReading readEvidence();
+    EvidenceReading readEvidence(SymbolTableCollection &symbolTable);
   }];
 
   let assemblyFormat = [{
@@ -1228,7 +1040,7 @@ def WitnessOp : TraitDialectOp<"witness", [
     /// arguments the witness states, proves the projection's application over
     /// the premises and binds the projection as stated, each compared by
     /// identity.
-    LogicalResult verifyResolution(ModuleOp module);
+    LogicalResult verifyResolution(SymbolTableCollection &symbolTable);
 
     /// The arguments a projection-resolution witness states for its impl's
     /// parameters.
@@ -1310,137 +1122,13 @@ def CoerceOp : TraitDialectOp<"coerce", [
   let hasFolder = 1;
 }
 
-
 //===----------------------------------------------------------------------===//
-// Call ops
+// Call op
 //===----------------------------------------------------------------------===//
-
-
-def MethodCallOp : TraitDialectOp<"method.call", [
-  DeclareOpInterfaceMethods<SymbolUserOpInterface>,
-  HasGetModule,
-  ReadsUnderDominance
-]>{
-  let summary = "Call a trait method";
-  let description = [{
-    Calls a method from a trait. This can appear in either polymorphic or monomorphic code.
-    Resolution to an implementation is performed during monomorphization.
-
-    The call names its method, its receiver claim, its arguments and its
-    results, and says nothing about the method's type variables: the instance it
-    wants is read off those types against the method's declaration. The trait is
-    the one the receiver claim's application names, and the method is named
-    inside that trait, so the method's name is not a symbol reference of the
-    enclosing symbol table. The trait's arguments ride in the receiver claim's
-    application, the method's own variables stand in the argument and result
-    positions, and a variable no position determines is refused.
-
-    Example:
-      %x = ... : i32
-      %y = ... : i32
-
-      // get an unproven claim value for @PartialEq[i32,i32]
-      %partial_eq = trait.allege : @PartialEq[i32,i32]
-
-      // call @eq using that unproven claim
-      %res0 = trait.method.call %partial_eq @eq(%x, %y)
-        : !trait.claim<@PartialEq[i32,i32]>, (i32, i32) -> i1
-
-      // get a proven claim value for @PartialEq[i32,i32]
-      %partial_eq_p = trait.witness @PartialEq_impl_i32_i32 for @PartialEq[i32,i32]
-
-      // call @eq using that proven claim
-      %res1 = trait.method.call %partial_eq_p @eq(%x, %y)
-        : !trait.claim<@PartialEq[i32,i32] by @PartialEq_impl_i32_i32>, (i32, i32) -> i1
-  }];
-
-  let arguments = (ins
-    // The method's name inside the trait the receiver claim names.
-    StrAttr:$method_name,
-    // The receiver must be an application claim -- a method call names its trait
-    // through it -- and the verifier checks the arm so an equality receiver is
-    // diagnosed at its operand.
-    Claim:$claim,
-    Variadic<AnyType>:$arguments
-  );
-
-let results = (outs Variadic<AnyType>);
-
-  let extraClassDeclaration = [{
-    FailureOr<TraitOp> getTrait(llvm::function_ref<InFlightDiagnostic()> err = nullptr);
-
-    FailureOr<FunctionOpInterface> getMethod(llvm::function_ref<InFlightDiagnostic()> err = nullptr);
-
-    FailureOr<FunctionType> getMethodFunctionType(llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
-      auto maybeMethod = getMethod(err);
-      if (failed(maybeMethod)) return failure();
-      return cast<FunctionType>(maybeMethod->getFunctionType());
-    }
-
-    /// Get a FunctionType corresponding to the actual argument and result types of this MethodCallOp
-    /// Note that the claim type is not part of the function type
-    FunctionType getActualFunctionType() {
-      return FunctionType::get(getContext(), getArguments().getTypes(), getResultTypes());
-    }
-
-    /// The type arguments this call supplies for its callee's parameters, once
-    /// the callee's signature instantiated at them is the signature spelled
-    /// here. The projection bindings that close it are asked of impl selection
-    /// when the call is lowered.
-    ///
-    /// `selection` resolves a type's projections through the stage's impl
-    /// selection, which is all the stage reads both signatures through. A
-    /// verifier passes none and compares the two signatures as written.
-    FailureOr<SpecializationMap> buildParameterSpecialization(llvm::function_ref<Type(Type)> selection, llvm::function_ref<InFlightDiagnostic()> err = nullptr);
-
-    /// Specializes the callee as a free function using a pre-built
-    /// substitution; `respell` carries a proven claim this call supplies to the
-    /// spelling the instance's parameter has (`InstanceKey::get`).
-    FailureOr<func::FuncOp> getOrSpecializeCallee(PatternRewriter &rewriter,
-                                                  const CallSubstitution &subst,
-                                                  llvm::function_ref<FailureOr<ClaimType>(ClaimType, ClaimType)> respell);
-
-    ClaimType getClaimType() {
-      return cast<ClaimType>(getClaim().getType());
-    }
-
-    /// The evidence the receiver carries (`evidenceOf`); null while it carries
-    /// none.
-    ClaimType getReceiverEvidence() { return evidenceOf(getClaim()); }
-
-    TraitApplicationAttr getTraitApplication() {
-      return getClaimType().getTraitApplication();
-    }
-
-    ImplOp getProvenImpl();
-
-    /// Whether this call computes evidence: its one result is a claim, so its
-    /// method is a quantified requirement of the trait, and the call is
-    /// replaced by the method's body where it is monomorphic
-    /// (`inlineEvidence`) rather than cut into an instance.
-    bool computesEvidence() {
-      return getNumResults() == 1 && ::llvm::isa<ClaimType>(getResult(0).getType());
-    }
-
-    /// Replaces this call, one that computes evidence, by the body of the
-    /// method the receiver's proven impl defines, stamped under `subst`: the
-    /// body's reads from its impl take the evidence the receiver's proof
-    /// supplies there, its parameters this call's arguments, and this call's
-    /// result the operand the body returns. The claim it leaves is read by
-    /// position, never selected again. The receiver impl's arguments are the
-    /// ones its proof states (`ImplOp::buildImplSpecialization`).
-    LogicalResult inlineEvidence(PatternRewriter &rewriter,
-                                 const CallSubstitution &subst);
-  }];
-
-  let hasVerifier = 1;
-  let hasCustomAssemblyFormat = 1;
-}
 
 
 def FuncCallOp : TraitDialectOp<"func.call", [
   DeclareOpInterfaceMethods<SymbolUserOpInterface>,
-  HasGetModule,
   ReadsUnderDominance
 ]> {
   let summary = "Call a possibly polymorphic function defined with func.func and !trait.poly";
@@ -1454,9 +1142,16 @@ def FuncCallOp : TraitDialectOp<"func.call", [
     types against the callee's declaration, and a variable no position
     determines is refused.
 
+    A call of a trait's member names the member's function, and its first
+    operand is the receiver's claim, the member's leading parameter. Once the
+    receiver's proof is known, the stage calls the function the proof's impl
+    pairs with the member instead, passing the receiver and the premises the
+    proof's derive is given ahead of the call's other operands; a member the
+    impl leaves to its trait's default is called as written.
+
     Example:
       // a polymorphic function @foo
-      !T = !trait.poly<2>
+      !T = !trait.poly<0>
       func.func @foo(
         %c: !trait.claim<@PartialEq[!T,!T]>,
         %x: !T,
@@ -1472,6 +1167,10 @@ def FuncCallOp : TraitDialectOp<"func.call", [
       %a = trait.allege @PartialEq[i32,i32]
       %r = trait.func.call @foo(%a, %x, %y)
         : (!trait.claim<@PartialEq[i32,i32]>, i32, i32) -> i1
+
+      // a call of the member @PartialEq.eq through the receiver %a
+      %e = trait.func.call @PartialEq.eq(%a, %x, %y)
+        : (!trait.claim<@PartialEq[i32,i32]>, i32, i32) -> i1
   }];
 
   let arguments = (ins
@@ -1483,12 +1182,12 @@ def FuncCallOp : TraitDialectOp<"func.call", [
 
 
   let extraClassDeclaration = [{
-    FailureOr<func::FuncOp> getCallee(llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
+    /// The callee, read in the symbol table this call stands in through
+    /// `symbolTable`.
+    FailureOr<func::FuncOp> getCallee(SymbolTableCollection &symbolTable,
+                                      llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
       auto name = getCalleeNameAttr();
-      auto module = getModule(err);
-      if (failed(module)) return failure();
-
-      auto callee = lookupSymbolFrom<func::FuncOp>(*module, name);
+      auto callee = symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, name);
       if (!callee) {
         if (err) err() << "'" << name.getValue()
                        << "' does not refer to a valid func.func";
@@ -1497,8 +1196,9 @@ def FuncCallOp : TraitDialectOp<"func.call", [
       return callee;
     }
 
-    FailureOr<FunctionType> getCalleeFunctionType(llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
-      auto callee = getCallee(err);
+    FailureOr<FunctionType> getCalleeFunctionType(SymbolTableCollection &symbolTable,
+                                                  llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
+      auto callee = getCallee(symbolTable, err);
       if (failed(callee)) return failure();
       return callee->getFunctionType();
     }
@@ -1508,11 +1208,21 @@ def FuncCallOp : TraitDialectOp<"func.call", [
       return FunctionType::get(getContext(), getOperands().getTypes(), getResultTypes());
     }
 
-    /// Looks up or specializes the monomorphized callee, a template binding at
-    /// least one type parameter, using a pre-built substitution; `respell`
-    /// carries a proven claim this call supplies to the spelling the instance's
-    /// parameter has (`InstanceKey::get`).
+    /// Whether this call computes evidence: its one result is a claim. A
+    /// member call computing evidence calls a quantified requirement of a
+    /// trait, and is replaced by the body of the function implementing it
+    /// where it is monomorphic (`inlineMemberAt`) rather than cut into an
+    /// instance.
+    bool computesEvidence() {
+      return getNumResults() == 1 && ::llvm::isa<ClaimType>(getResult(0).getType());
+    }
+
+    /// Looks up or specializes the monomorphized callee, a template, using a
+    /// pre-built substitution; `respell` carries a proven claim this call
+    /// supplies to the type the instance's parameter is written with
+    /// (`InstanceKey::get`).
     FailureOr<func::FuncOp> getOrSpecializeCallee(PatternRewriter &rewriter,
+                                                  SymbolTableCollection &symbolTable,
                                                   const CallSubstitution &subst,
                                                   llvm::function_ref<FailureOr<ClaimType>(ClaimType, ClaimType)> respell);
 
@@ -1524,14 +1234,16 @@ def FuncCallOp : TraitDialectOp<"func.call", [
     /// `selection` resolves a type's projections through the stage's impl
     /// selection, which is all the stage reads both signatures through. A
     /// verifier passes none and compares the two signatures as written.
-    FailureOr<SpecializationMap> buildParameterSpecialization(llvm::function_ref<Type(Type)> selection, llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+    FailureOr<SpecializationMap> buildParameterSpecialization(SymbolTableCollection &symbolTable,
+                                                              llvm::function_ref<Type(Type)> selection,
+                                                              llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
     // The type parameters the callee's signature binds: the labels below the
     // bound it spells, a label being a position in the declaration.
-    SmallVector<GenericTypeInterface, 4> getCalleeTypeParams() {
+    SmallVector<GenericTypeInterface, 4> getCalleeTypeParams(SymbolTableCollection &symbolTable) {
       SmallVector<GenericTypeInterface, 4> parameters;
       for (unsigned label = 0,
-                    bound = getLabelBound(Type(*getCalleeFunctionType()));
+                    bound = getLabelBound(Type(*getCalleeFunctionType(symbolTable)));
            label < bound; ++label)
         parameters.push_back(cast<GenericTypeInterface>(
             Type(PolyType::get(getContext(), label))));
@@ -1542,6 +1254,7 @@ def FuncCallOp : TraitDialectOp<"func.call", [
 
   let assemblyFormat = "$callee_name `(` $operands `)` attr-dict `:` functional-type($operands, results)";
 }
+
 
 
 //===----------------------------------------------------------------------===//
@@ -1606,16 +1319,16 @@ def ProofOp : TraitDialectOp<"proof", [
     /// The derive the body returns, read through its respelling, or the derive
     /// of the proof this one casts: the decision this proof records. Null for
     /// a cast of an unconditional impl, which derives from nothing.
-    DeriveOp getDerive();
+    DeriveOp getDerive(SymbolTableCollection &symbolTable);
 
     /// The proof or unconditional impl this proof casts to its own spelling, a
     /// root whose body holds its derive where it is a proof; null for a proof
     /// whose body holds its derive.
-    Operation *getCastSource();
+    Operation *getCastSource(SymbolTableCollection &symbolTable);
 
     /// The impl the derive this proof records cites, or the unconditional impl
     /// it casts.
-    ImplOp getImpl();
+    ImplOp getImpl(SymbolTableCollection &symbolTable);
 
     TraitApplicationAttr getTraitApplication() {
       return cast<ClaimType>(getProven().getType()).getTraitApplication();
@@ -1627,41 +1340,46 @@ def ProofOp : TraitDialectOp<"proof", [
       return ClaimType::get(ctx, getTraitApplication(), symRef);
     }
 
-    TraitOp getTrait();
+    TraitOp getTrait(SymbolTableCollection &symbolTable);
 
     /// The claims the derive is given, one per where entry of the impl.
-    SmallVector<ClaimType> getPremises();
+    SmallVector<ClaimType> getPremises(SymbolTableCollection &symbolTable);
 
     /// The proof each application premise of the derive rests on, in order:
     /// the witness beneath the premise's respelling to its where entry, at the
     /// application that proof proves. An equality premise rests on none.
-    SmallVector<ClaimType> getSubproofs();
+    SmallVector<ClaimType> getSubproofs(SymbolTableCollection &symbolTable);
 
     /// The arguments this proof's impl takes, as its derive states them; none
     /// for a cast of an unconditional impl.
-    SpecializationMap getImplArguments() {
-      DeriveOp derive = getDerive();
+    SpecializationMap getImplArguments(SymbolTableCollection &symbolTable) {
+      DeriveOp derive = getDerive(symbolTable);
       return derive ? derive.getImplArguments() : SpecializationMap();
     }
 
-    /// Resolve a proof symbol to the impl it is backed by: a trait.proof yields
+    /// Resolve a proof symbol, read in the symbol table `from` stands in
+    /// through `symbolTable`, to the impl it is backed by: a trait.proof yields
     /// its impl, a directly-named trait.impl yields itself. Whether the symbol
     /// is one this citation may name is the citing op's own check.
     static FailureOr<ImplOp> getImplFromProof(
-      ModuleOp module,
+      SymbolTableCollection &symbolTable,
+      Operation *from,
       FlatSymbolRefAttr name,
       llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
 
-    // look up a proof by name. It must be either a ProofOp or an unconditional impl
+    /// The proof or unconditional impl `name` names, read in the symbol table
+    /// `from` stands in through `symbolTable`.
     static FailureOr<Operation*> getProofOpOrUnconditionalImplOp(
-      ModuleOp module,
+      SymbolTableCollection &symbolTable,
+      Operation *from,
       FlatSymbolRefAttr name,
       llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
 
     /// The root the proof or unconditional impl `name` names rests on: that
     /// declaration, or the one it casts where it is a cast.
     static FailureOr<Operation*> getRootOf(
-      ModuleOp module,
+      SymbolTableCollection &symbolTable,
+      Operation *from,
       FlatSymbolRefAttr name,
       llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
   }];

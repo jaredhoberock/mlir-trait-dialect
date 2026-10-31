@@ -11,14 +11,15 @@
 // written. Nothing implements @Foo, so @Foo[i8]::Out is settled by nothing and
 // is not i64.
 
-trait.trait private @Foo(%self: !trait.claim<@Foo[!trait.poly<0>]>) { trait.assoc_type @Out }
-trait.trait private @Tensor(%self: !trait.claim<@Tensor[!trait.poly<0>]>) -> !trait.claim<!trait.proj<@Foo[!trait.poly<0>], "Out"> = i64> {}
-trait.trait private @Vector(%self: !trait.claim<@Vector[!trait.poly<0>]>) { trait.method @v() -> i64 }
-trait.impl private @Vector_blanket(%self: !trait.claim<@Vector[!trait.poly<0>]>, %tensor: !trait.claim<@Tensor[!trait.poly<0>]>, %out: !trait.claim<!trait.proj<@Foo[!trait.poly<0>], "Out"> = i64>) {
-  trait.method @v() -> i64 {
-    %c = arith.constant 7 : i64
-    trait.return %c : i64
-  }
+trait.trait private @Foo(!trait.claim<@Foo[!trait.poly<0>]>) assoc {Out = 0}
+trait.trait private @Tensor(!trait.claim<@Tensor[!trait.poly<0>]>) -> !trait.claim<!trait.proj<@Foo[!trait.poly<0>], "Out"> = i64>
+trait.trait private @Vector(!trait.claim<@Vector[!trait.poly<0>]>) members [@Vector.v]
+func.func private @Vector.v(!trait.claim<@Vector[!trait.poly<0>]>) -> i64
+trait.impl private @Vector_blanket(%self: !trait.claim<@Vector[!trait.poly<0>]>, %tensor: !trait.claim<@Tensor[!trait.poly<0>]>, %out: !trait.claim<!trait.proj<@Foo[!trait.poly<0>], "Out"> = i64>) members [@Vector.v -> @Vector_blanket.v] {
+}
+func.func private @Vector_blanket.v(%self: !trait.claim<@Vector[!trait.poly<0>]>, %tensor: !trait.claim<@Tensor[!trait.poly<0>]>, %out: !trait.claim<!trait.proj<@Foo[!trait.poly<0>], "Out"> = i64>) -> i64 {
+  %c = arith.constant 7 : i64
+  return %c : i64
 }
 trait.impl private @Tensor_i8(%self: !trait.claim<@Tensor[i8]>) {
   %e = trait.allege !trait.proj<@Foo[i8], "Out"> = i64
@@ -33,7 +34,7 @@ trait.proof private @p {
 }
 func.func @main() -> i64 {
   %w = trait.witness @p for @Vector[i8]
-  %r = trait.method.call %w @v() : !trait.claim<@Vector[i8] by @p>, () -> i64
+  %r = trait.func.call @Vector.v(%w) : (!trait.claim<@Vector[i8] by @p>) -> i64
   return %r : i64
 }
 
@@ -45,24 +46,28 @@ func.func @main() -> i64 {
 // would run @Vector_a's method. The evidence the proof states for that premise
 // is refused where it is written.
 
-trait.trait private @Foo(%self: !trait.claim<@Foo[!trait.poly<0>]>) { trait.assoc_type @Out }
-trait.impl private @Foo_any(%self: !trait.claim<@Foo[!trait.poly<0>]>) { trait.assoc_type @Out = i32 }
-trait.impl private @Foo_i8(%self: !trait.claim<@Foo[i8]>) { trait.assoc_type @Out = i32 }
-trait.trait private @Tensor(%self: !trait.claim<@Tensor[!trait.poly<0>]>) {}
-trait.trait private @Vector(%self: !trait.claim<@Vector[!trait.poly<0>]>) { trait.method @v() -> i64 }
-trait.impl private @Vector_a(%self: !trait.claim<@Vector[!trait.poly<0>]>, %tensor: !trait.claim<@Tensor[!trait.poly<0>]>, %out: !trait.claim<!trait.proj<@Foo[!trait.poly<0>], "Out"> = i64>) {
-  trait.method @v() -> i64 {
-    %c = arith.constant 1 : i64
-    trait.return %c : i64
-  }
+trait.trait private @Foo(!trait.claim<@Foo[!trait.poly<0>]>) assoc {Out = 0}
+trait.impl private @Foo_any(%self: !trait.claim<@Foo[!trait.poly<0>]>) bindings {Out = i32} {
 }
-trait.impl private @Vector_b(%self: !trait.claim<@Vector[!trait.poly<0>]>, %tensor: !trait.claim<@Tensor[!trait.poly<0>]>, %out: !trait.claim<!trait.proj<@Foo[!trait.poly<0>], "Out"> = i32>) {
-  trait.method @v() -> i64 {
-    %c = arith.constant 2 : i64
-    trait.return %c : i64
-  }
+trait.impl private @Foo_i8(%self: !trait.claim<@Foo[i8]>) bindings {Out = i32} {
 }
-trait.impl private @Tensor_i8(%self: !trait.claim<@Tensor[i8]>) {}
+trait.trait private @Tensor(!trait.claim<@Tensor[!trait.poly<0>]>)
+trait.trait private @Vector(!trait.claim<@Vector[!trait.poly<0>]>) members [@Vector.v]
+func.func private @Vector.v(!trait.claim<@Vector[!trait.poly<0>]>) -> i64
+trait.impl private @Vector_a(%self: !trait.claim<@Vector[!trait.poly<0>]>, %tensor: !trait.claim<@Tensor[!trait.poly<0>]>, %out: !trait.claim<!trait.proj<@Foo[!trait.poly<0>], "Out"> = i64>) members [@Vector.v -> @Vector_a.v] {
+}
+func.func private @Vector_a.v(%self: !trait.claim<@Vector[!trait.poly<0>]>, %tensor: !trait.claim<@Tensor[!trait.poly<0>]>, %out: !trait.claim<!trait.proj<@Foo[!trait.poly<0>], "Out"> = i64>) -> i64 {
+  %c = arith.constant 1 : i64
+  return %c : i64
+}
+trait.impl private @Vector_b(%self: !trait.claim<@Vector[!trait.poly<0>]>, %tensor: !trait.claim<@Tensor[!trait.poly<0>]>, %out: !trait.claim<!trait.proj<@Foo[!trait.poly<0>], "Out"> = i32>) members [@Vector.v -> @Vector_b.v] {
+}
+func.func private @Vector_b.v(%self: !trait.claim<@Vector[!trait.poly<0>]>, %tensor: !trait.claim<@Tensor[!trait.poly<0>]>, %out: !trait.claim<!trait.proj<@Foo[!trait.poly<0>], "Out"> = i32>) -> i64 {
+  %c = arith.constant 2 : i64
+  return %c : i64
+}
+trait.impl private @Tensor_i8(%self: !trait.claim<@Tensor[i8]>) {
+}
 trait.proof private @p {
   %t = trait.witness @Tensor_i8 for @Tensor[i8]
   // expected-error @below {{impl '@Foo_i8' binds the projection to 'i32', not the certified resolution 'i64'}}

@@ -11,24 +11,22 @@
 // the two as one.
 
 module {
-  trait.trait private @T0(%self: !trait.claim<@T0[!trait.poly<0>]>) {
-    trait.assoc_type @A
+  trait.trait private @T0(!trait.claim<@T0[!trait.poly<0>]>) assoc {A = 0}
+
+  trait.trait private @T1(!trait.claim<@T1[!trait.poly<0>]>)
+
+  trait.trait private @T2(!trait.claim<@T2[!trait.poly<0>]>) -> !trait.claim<@T1[!trait.proj<@T0[!trait.poly<0>], "A">]>
+
+  trait.impl private @T1_i64(%self: !trait.claim<@T1[i64]>) {
   }
 
-  trait.trait private @T1(%self: !trait.claim<@T1[!trait.poly<0>]>) {}
-
-  trait.trait private @T2(%self: !trait.claim<@T2[!trait.poly<0>]>) -> !trait.claim<@T1[!trait.proj<@T0[!trait.poly<0>], "A">]> {}
-
-  trait.impl private @T1_i64(%self: !trait.claim<@T1[i64]>) {}
-
-  trait.impl private @T0_i64(%self: !trait.claim<@T0[i64]>) {
-    trait.assoc_type @A = i64
+  trait.impl private @T0_i64(%self: !trait.claim<@T0[i64]>) bindings {A = i64} {
   }
 
   trait.impl private @T2_i64(%self: !trait.claim<@T2[i64]>) {
   %req0 = trait.allege @T1[!trait.proj<@T0[i64], "A">]
   trait.return %req0 : !trait.claim<@T1[!trait.proj<@T0[i64], "A">]>
-}
+  }
 
   trait.proof private @T2_i64_p {
     %d = trait.derive @T2[i64] from @T2_i64 given()

@@ -10,9 +10,7 @@
 
 // The impl a projection-resolution witness cites must resolve to an impl.
 module {
-  trait.trait private @Eq(%self: !trait.claim<@Eq[!trait.poly<0>]>) {
-    trait.assoc_type @Out
-  }
+  trait.trait private @Eq(!trait.claim<@Eq[!trait.poly<0>]>) assoc {Out = 0}
   func.func @f() {
     // expected-error @+1 {{cannot find trait.impl '@NoSuchImpl' cited by the witness}}
     %w = trait.witness proj_resolve !trait.proj<@Eq[i32], "Out"> resolves i64 by @NoSuchImpl : !trait.claim<!trait.proj<@Eq[i32], "Out"> = i64>

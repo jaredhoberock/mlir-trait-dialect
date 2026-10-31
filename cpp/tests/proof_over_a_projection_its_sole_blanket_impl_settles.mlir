@@ -11,31 +11,34 @@
 // discharges.
 
 // CHECK-NOT: trait.
-// CHECK: func.func private @[[A:A_i64_h[0-9a-f]+_a]]() -> i64
-// CHECK: func.func private @[[B:B_blanket_[a-z0-9]+]]_b() -> i64
+// CHECK: func.func private @[[A:A_i64.a_h[0-9a-f]+]]() -> i64
+// CHECK: func.func private @[[B:B_blanket.b_h[0-9a-f]+]]() -> i64
 // CHECK: call @[[A]]() : () -> i64
 // CHECK: func.func @main() -> i64
-// CHECK: call @[[B]]_b() : () -> i64
+// CHECK: call @[[B]]() : () -> i64
 // CHECK-NOT: trait.
 
-trait.trait private @Foo(%self: !trait.claim<@Foo[!trait.poly<0>]>) { trait.assoc_type @Out }
-trait.impl private @Foo_any(%self: !trait.claim<@Foo[!trait.poly<0>]>) { trait.assoc_type @Out = i64 }
-trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) { trait.method @a() -> i64 }
-trait.trait private @B(%self: !trait.claim<@B[!trait.poly<0>]>) -> !trait.claim<@A[!trait.proj<@Foo[!trait.poly<0>], "Out">]> { trait.method @b() -> i64 }
-trait.impl private @A_i64(%self: !trait.claim<@A[i64]>) {
-  trait.method @a() -> i64 {
-    %c = arith.constant 64 : i64
-    trait.return %c : i64
-  }
+trait.trait private @Foo(!trait.claim<@Foo[!trait.poly<0>]>) assoc {Out = 0}
+trait.impl private @Foo_any(%self: !trait.claim<@Foo[!trait.poly<0>]>) bindings {Out = i64} {
 }
-trait.impl private @B_blanket(%self: !trait.claim<@B[!trait.poly<0>]>) {
-  trait.method @b() -> i64 {
-    %a = trait.project %self[0] : !trait.claim<@B[!trait.poly<0>]> -> !trait.claim<@A[!trait.proj<@Foo[!trait.poly<0>], "Out">]>
-    %r = trait.method.call %a @a() : !trait.claim<@A[!trait.proj<@Foo[!trait.poly<0>], "Out">]>, () -> i64
-    trait.return %r : i64
-  }
+trait.trait private @A(!trait.claim<@A[!trait.poly<0>]>) members [@A.a]
+func.func private @A.a(!trait.claim<@A[!trait.poly<0>]>) -> i64
+trait.trait private @B(!trait.claim<@B[!trait.poly<0>]>) -> !trait.claim<@A[!trait.proj<@Foo[!trait.poly<0>], "Out">]> members [@B.b]
+func.func private @B.b(!trait.claim<@B[!trait.poly<0>]>) -> i64
+trait.impl private @A_i64(%self: !trait.claim<@A[i64]>) members [@A.a -> @A_i64.a] {
+}
+func.func private @A_i64.a(%self: !trait.claim<@A[i64]>) -> i64 {
+  %c = arith.constant 64 : i64
+  return %c : i64
+}
+trait.impl private @B_blanket(%self: !trait.claim<@B[!trait.poly<0>]>) members [@B.b -> @B_blanket.b] {
   %req0 = trait.allege @A[!trait.proj<@Foo[!trait.poly<0>], "Out">]
   trait.return %req0 : !trait.claim<@A[!trait.proj<@Foo[!trait.poly<0>], "Out">]>
+}
+func.func private @B_blanket.b(%self: !trait.claim<@B[!trait.poly<0>]>) -> i64 {
+  %a = trait.project %self[0] : !trait.claim<@B[!trait.poly<0>]> -> !trait.claim<@A[!trait.proj<@Foo[!trait.poly<0>], "Out">]>
+  %r = trait.func.call @A.a(%a) : (!trait.claim<@A[!trait.proj<@Foo[!trait.poly<0>], "Out">]>) -> i64
+  return %r : i64
 }
 trait.proof private @P {
   %d = trait.derive @B[i32] from @B_blanket[i32] given()
@@ -43,6 +46,6 @@ trait.proof private @P {
 }
 func.func @main() -> i64 {
   %w = trait.witness @P for @B[i32]
-  %r = trait.method.call %w @b() : !trait.claim<@B[i32] by @P>, () -> i64
+  %r = trait.func.call @B.b(%w) : (!trait.claim<@B[i32] by @P>) -> i64
   return %r : i64
 }

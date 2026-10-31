@@ -11,13 +11,9 @@
 // -- and each names a trait nothing else in the module mentions. Stock
 // symbol-dce runs alone: nothing of the dialect is special-cased.
 
-trait.trait private @InSignature(%self: !trait.claim<@InSignature[!trait.poly<0>]>) {
-  trait.assoc_type @Out
-}
+trait.trait private @InSignature(!trait.claim<@InSignature[!trait.poly<0>]>) assoc {Out = 0}
 
-trait.trait private @InAttribute(%self: !trait.claim<@InAttribute[!trait.poly<0>]>) {
-  trait.assoc_type @Out
-}
+trait.trait private @InAttribute(!trait.claim<@InAttribute[!trait.poly<0>]>) assoc {Out = 0}
 
 // CHECK-DAG: trait.trait private @InSignature
 // CHECK-DAG: trait.trait private @InAttribute

@@ -10,13 +10,14 @@
 // evidence has no base, so the projection is never inlined, and the stage
 // names it where it stands.
 
-// CHECK: :[[@LINE+19]]:8: error: unproven monomorphic claim '!trait.claim<@B[i32]>' after instantiate-monomorphs
+// CHECK: :[[@LINE+20]]:8: error: unproven monomorphic claim '!trait.claim<@B[i32]>' after instantiate-monomorphs
 // CHECK: note: its source '!trait.claim<@A[i32] by @A_i32>' names @A_i32, whose evidence for requirement 0 has no base: it is read through the returns of @A_i32, @C_i32, @A_i32 back to a requirement it stands for
 
 !T = !trait.poly<0>
-trait.trait private @B(%self: !trait.claim<@B[!T]>) { trait.method @v() -> i64 }
-trait.trait private @A(%self: !trait.claim<@A[!T]>) -> !trait.claim<@B[!T]> {}
-trait.trait private @C(%self: !trait.claim<@C[!T]>) -> !trait.claim<@B[!T]> {}
+trait.trait private @B(!trait.claim<@B[!T]>) members [@B.v]
+func.func private @B.v(!trait.claim<@B[!T]>) -> i64
+trait.trait private @A(!trait.claim<@A[!T]>) -> !trait.claim<@B[!T]>
+trait.trait private @C(!trait.claim<@C[!T]>) -> !trait.claim<@B[!T]>
 trait.impl private @A_i32(%self: !trait.claim<@A[i32]>) {
   %c = trait.witness @C_i32 for @C[i32]
   %b = trait.project %c[0] : !trait.claim<@C[i32] by @C_i32> -> !trait.claim<@B[i32]>
@@ -30,7 +31,7 @@ trait.impl private @C_i32(%self: !trait.claim<@C[i32]>) {
 func.func @main() -> i64 {
   %a = trait.witness @A_i32 for @A[i32]
   %b = trait.project %a[0] : !trait.claim<@A[i32] by @A_i32> -> !trait.claim<@B[i32]>
-  %v = trait.method.call %b @v() : !trait.claim<@B[i32]>, () -> i64
+  %v = trait.func.call @B.v(%b) : (!trait.claim<@B[i32]>) -> i64
   return %v : i64
 }
 
@@ -44,8 +45,8 @@ func.func @main() -> i64 {
 // CHECK: error: 'trait.impl' op returns evidence for requirement 0 that projects the impl's own application
 
 !T = !trait.poly<0>
-trait.trait private @B(%self: !trait.claim<@B[!T]>) {}
-trait.trait private @A(%self: !trait.claim<@A[!T]>) -> (!trait.claim<@B[!T]>, !trait.claim<@B[!T]>) {}
+trait.trait private @B(!trait.claim<@B[!T]>)
+trait.trait private @A(!trait.claim<@A[!T]>) -> (!trait.claim<@B[!T]>, !trait.claim<@B[!T]>)
 trait.impl private @A_i32(%self: !trait.claim<@A[i32]>) {
   %a = trait.witness @A_i32 for @A[i32]
   %x = trait.project %a[1] : !trait.claim<@A[i32] by @A_i32> -> !trait.claim<@B[i32]>
@@ -60,13 +61,14 @@ trait.impl private @A_i32(%self: !trait.claim<@A[i32]>) {
 // The cut inlines no evidence with no base, so the projection stands in the
 // instance and the stage names it there.
 
-// CHECK: :[[@LINE+18]]:8: error: unproven monomorphic claim '!trait.claim<@B[i32]>' after instantiate-monomorphs
+// CHECK: :[[@LINE+19]]:8: error: unproven monomorphic claim '!trait.claim<@B[i32]>' after instantiate-monomorphs
 // CHECK: note: its source '!trait.claim<@A[i32] by @A_i32>' names @A_i32, whose evidence for requirement 0 has no base: it is read through the returns of @A_i32, @C_i32, @A_i32 back to a requirement it stands for
 
 !T = !trait.poly<0>
-trait.trait private @B(%self: !trait.claim<@B[!T]>) { trait.method @v() -> i64 }
-trait.trait private @A(%self: !trait.claim<@A[!T]>) -> !trait.claim<@B[!T]> {}
-trait.trait private @C(%self: !trait.claim<@C[!T]>) -> !trait.claim<@B[!T]> {}
+trait.trait private @B(!trait.claim<@B[!T]>) members [@B.v]
+func.func private @B.v(!trait.claim<@B[!T]>) -> i64
+trait.trait private @A(!trait.claim<@A[!T]>) -> !trait.claim<@B[!T]>
+trait.trait private @C(!trait.claim<@C[!T]>) -> !trait.claim<@B[!T]>
 trait.impl private @A_i32(%self: !trait.claim<@A[i32]>) {
   %c = trait.witness @C_i32 for @C[i32]
   %b = trait.project %c[0] : !trait.claim<@C[i32] by @C_i32> -> !trait.claim<@B[i32]>
@@ -79,7 +81,7 @@ trait.impl private @C_i32(%self: !trait.claim<@C[i32]>) {
 }
 func.func private @callee(%c: !trait.claim<@A[!T]>) -> i64 {
   %b = trait.project %c[0] : !trait.claim<@A[!T]> -> !trait.claim<@B[!T]>
-  %v = trait.method.call %b @v() : !trait.claim<@B[!T]>, () -> i64
+  %v = trait.func.call @B.v(%b) : (!trait.claim<@B[!T]>) -> i64
   return %v : i64
 }
 func.func @main() -> i64 {
@@ -100,9 +102,9 @@ func.func @main() -> i64 {
 
 !T = !trait.poly<0>
 !U = !trait.poly<1>
-trait.trait private @B(%self: !trait.claim<@B[!T]>) {}
-trait.trait private @A(%self: !trait.claim<@A[!T]>) -> !trait.claim<@B[!T]> {}
-trait.trait private @C(%self: !trait.claim<@C[!T]>) -> !trait.claim<@B[!T]> {}
+trait.trait private @B(!trait.claim<@B[!T]>)
+trait.trait private @A(!trait.claim<@A[!T]>) -> !trait.claim<@B[!T]>
+trait.trait private @C(!trait.claim<@C[!T]>) -> !trait.claim<@B[!T]>
 trait.impl private @A_gen(%self: !trait.claim<@A[!T]>) {
   %c = trait.derive @C[!T] from @C_gen[!trait.poly<0>] given()
   %b = trait.project %c[0] : !trait.claim<@C[!T]> -> !trait.claim<@B[!T]>
@@ -131,9 +133,10 @@ func.func @main() -> i64 {
 // CHECK: error: 'trait.proof' op is cited by its own derivation: @PA -> @PC -> @PA
 
 !T = !trait.poly<0>
-trait.trait private @B(%self: !trait.claim<@B[!T]>) { trait.method @v() -> i64 }
-trait.trait private @A(%self: !trait.claim<@A[!T]>) -> !trait.claim<@B[!T]> {}
-trait.trait private @C(%self: !trait.claim<@C[!T]>) -> !trait.claim<@B[!T]> {}
+trait.trait private @B(!trait.claim<@B[!T]>) members [@B.v]
+func.func private @B.v(!trait.claim<@B[!T]>) -> i64
+trait.trait private @A(!trait.claim<@A[!T]>) -> !trait.claim<@B[!T]>
+trait.trait private @C(!trait.claim<@C[!T]>) -> !trait.claim<@B[!T]>
 trait.impl private @A_i32(%self: !trait.claim<@A[i32]>, %c: !trait.claim<@C[i32]>) {
   %b = trait.project %c[0] : !trait.claim<@C[i32]> -> !trait.claim<@B[i32]>
   trait.return %b : !trait.claim<@B[i32]>
@@ -155,7 +158,7 @@ trait.proof private @PC {
 func.func @main() -> i64 {
   %a = trait.witness @PA for @A[i32]
   %b = trait.project %a[0] : !trait.claim<@A[i32] by @PA> -> !trait.claim<@B[i32]>
-  %v = trait.method.call %b @v() : !trait.claim<@B[i32]>, () -> i64
+  %v = trait.func.call @B.v(%b) : (!trait.claim<@B[i32]>) -> i64
   return %v : i64
 }
 
@@ -170,9 +173,10 @@ func.func @main() -> i64 {
 // CHECK: note: its source '!trait.claim<@A[i32] by @X>' names @X, whose evidence for requirement 0 has no base: it is read through the returns of @X, @Y, @X back to a requirement it stands for
 
 !T = !trait.poly<0>
-trait.trait private @B(%s: !trait.claim<@B[!T]>) { trait.method @v() -> i64 }
-trait.trait private @A(%s: !trait.claim<@A[!T]>) -> !trait.claim<@B[!T]> {}
-trait.trait private @C(%s: !trait.claim<@C[!T]>) -> !trait.claim<@A[!T]> {}
+trait.trait private @B(!trait.claim<@B[!T]>) members [@B.v]
+func.func private @B.v(!trait.claim<@B[!T]>) -> i64
+trait.trait private @A(!trait.claim<@A[!T]>) -> !trait.claim<@B[!T]>
+trait.trait private @C(!trait.claim<@C[!T]>) -> !trait.claim<@A[!T]>
 trait.impl private @Y(%s: !trait.claim<@C[i32]>) {
   %x = trait.derive @A[i32] from @X given()
   trait.return %x : !trait.claim<@A[i32]>
@@ -186,7 +190,7 @@ trait.impl private @X(%s: !trait.claim<@A[i32]>) {
 func.func @main() -> i64 {
   %a = trait.witness @X for @A[i32]
   %b = trait.project %a[0] : !trait.claim<@A[i32] by @X> -> !trait.claim<@B[i32]>
-  %v = trait.method.call %b @v() : !trait.claim<@B[i32]>, () -> i64
+  %v = trait.func.call @B.v(%b) : (!trait.claim<@B[i32]>) -> i64
   return %v : i64
 }
 
@@ -200,14 +204,19 @@ func.func @main() -> i64 {
 
 !T = !trait.poly<0>
 !U = !trait.poly<1>
-trait.trait private @B(%s: !trait.claim<@B[!T]>) { trait.method @v() -> i64 }
-trait.impl private @Base(%s: !trait.claim<@B[i32]>) { trait.method @v() -> i64 { %v = arith.constant 7 : i64 trait.return %v : i64 } }
-trait.trait private @A(%s: !trait.claim<@A[!T,!U]>) -> !trait.claim<@B[!U]> {}
+trait.trait private @B(!trait.claim<@B[!T]>) members [@B.v]
+func.func private @B.v(!trait.claim<@B[!T]>) -> i64
+trait.impl private @Base(%s: !trait.claim<@B[i32]>) members [@B.v -> @Base.v] {
+}
+func.func private @Base.v(%s: !trait.claim<@B[i32]>) -> i64 {
+  %v = arith.constant 7 : i64 return %v : i64
+}
+trait.trait private @A(!trait.claim<@A[!T,!U]>) -> !trait.claim<@B[!U]>
 // REPEAT 1 129: trait.impl private @I{k}(%s: !trait.claim<@A[i{k},i32]>) { %a = trait.witness @I{k+1} for @A[i{k+1},i32] %b = trait.project %a[0] : !trait.claim<@A[i{k+1},i32] by @I{k+1}> -> !trait.claim<@B[i32]> trait.return %b : !trait.claim<@B[i32]> }
 trait.impl private @I130(%s: !trait.claim<@A[i130,i32]>) { %b = trait.witness @Base for @B[i32] trait.return %b : !trait.claim<@B[i32] by @Base> }
 func.func @main() -> i64 {
   %a = trait.witness @I1 for @A[i1,i32]
   %b = trait.project %a[0] : !trait.claim<@A[i1,i32] by @I1> -> !trait.claim<@B[i32]>
-  %v = trait.method.call %b @v() : !trait.claim<@B[i32]>, () -> i64
+  %v = trait.func.call @B.v(%b) : (!trait.claim<@B[i32]>) -> i64
   return %v : i64
 }

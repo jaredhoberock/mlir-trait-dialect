@@ -10,8 +10,8 @@
 // it is declared.
 
 !T = !trait.poly<0>
-trait.trait private @B(%self: !trait.claim<@B[!T]>) {}
-trait.trait private @A(%self: !trait.claim<@A[!T]>) -> !trait.claim<@B[!T]> {}
+trait.trait private @B(!trait.claim<@B[!T]>)
+trait.trait private @A(!trait.claim<@A[!T]>) -> !trait.claim<@B[!T]>
 // expected-error @below {{returns evidence for requirement 0 that projects the impl's own application}}
 trait.impl private @A_i32(%self: !trait.claim<@A[i32]>) {
   %a = trait.witness @A_i32 for @A[i32]

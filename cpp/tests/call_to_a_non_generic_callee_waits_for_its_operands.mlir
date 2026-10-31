@@ -15,8 +15,9 @@
 // CHECK: 14
 
 !T = !trait.poly<0>
-trait.trait private @H(%s: !trait.claim<@H[!T]>) { trait.assoc_type @E }
-trait.impl private @H_i32(%s: !trait.claim<@H[i32]>) { trait.assoc_type @E = i64 }
+trait.trait private @H(!trait.claim<@H[!T]>) assoc {E = 0}
+trait.impl private @H_i32(%s: !trait.claim<@H[i32]>) bindings {E = i64} {
+}
 func.func private @k_before(%x: !trait.proj<@H[i32], "E">) -> i64 {
   %y = builtin.unrealized_conversion_cast %x : !trait.proj<@H[i32], "E"> to i64
   return %y : i64

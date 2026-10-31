@@ -3,18 +3,19 @@
 
 // Instantiation rewrites monomorphic obligations and their calls only where it
 // owns the code. A polymorphic function is a template it leaves for the caller
-// that clones it, so a proven-shaped obligation and the method call reading it,
-// standing inside one, are carried through untouched -- still spelled as an
-// allege and a method call -- while the same pair outside a template is proved
+// that clones it, so a proven-shaped obligation and the member call reading
+// it, standing inside one, are carried through untouched -- still spelled as an
+// allege and a member call -- while the same pair outside a template is proved
 // and lowered.
 
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(instantiate-monomorphs-trait)' | FileCheck %s
 
-trait.trait private @Tr(%self: !trait.claim<@Tr[!trait.poly<0>]>) {
-  trait.method @m(!trait.poly<0>) -> i64
+trait.trait private @Tr(!trait.claim<@Tr[!trait.poly<0>]>) members [@Tr.m]
+func.func private @Tr.m(!trait.claim<@Tr[!trait.poly<0>]>, !trait.poly<0>) -> i64
+trait.impl private @Tr_i64(%self_claim: !trait.claim<@Tr[i64]>) members [@Tr.m -> @Tr_i64.m] {
 }
-trait.impl private @Tr_i64(%self_claim: !trait.claim<@Tr[i64]>) {
-  trait.method @m(%self: i64) -> i64 { trait.return %self : i64 }
+func.func private @Tr_i64.m(%self_claim: !trait.claim<@Tr[i64]>, %self: i64) -> i64 {
+  return %self : i64
 }
 trait.proof private @Tr_i64_p {
   %d = trait.derive @Tr[i64] from @Tr_i64 given()
@@ -23,19 +24,19 @@ trait.proof private @Tr_i64_p {
 
 // CHECK: func.func private @tpl
 // CHECK: trait.allege @Tr[i64]
-// CHECK: trait.method.call {{.*}} @m(
+// CHECK: trait.func.call @Tr.m(
 func.func private @tpl(%x: !trait.poly<1>, %v: i64) -> i64 {
   %c = trait.allege @Tr[i64]
-  %r = trait.method.call %c @m(%v) : !trait.claim<@Tr[i64]>, (i64) -> i64
+  %r = trait.func.call @Tr.m(%c, %v) : (!trait.claim<@Tr[i64]>, i64) -> i64
   return %r : i64
 }
 
 // CHECK-LABEL: func.func @host
 // CHECK-NOT: trait.allege
-// CHECK-NOT: trait.method.call
-// CHECK: call @Tr_i64_{{h[0-9a-f]+}}_m
+// CHECK-NOT: trait.func.call
+// CHECK: call @Tr_i64.m_{{h[0-9a-f]+}}
 func.func @host(%v: i64) -> i64 {
   %c = trait.allege @Tr[i64]
-  %r = trait.method.call %c @m(%v) : !trait.claim<@Tr[i64]>, (i64) -> i64
+  %r = trait.func.call @Tr.m(%c, %v) : (!trait.claim<@Tr[i64]>, i64) -> i64
   return %r : i64
 }

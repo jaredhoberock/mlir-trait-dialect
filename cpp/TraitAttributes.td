@@ -41,9 +41,13 @@ def TraitApplicationAttr : AttrDef<TraitDialect, "TraitApplication",
       return TraitApplicationAttr::get(ctx, traitRef, types);
     }
 
-    FailureOr<TraitOp> getTrait(ModuleOp module, llvm::function_ref<InFlightDiagnostic()> errFn = nullptr) const;
+    /// The trait this application names, read in the symbol table `from`
+    /// stands in (or is) through `symbolTable`.
+    FailureOr<TraitOp> getTrait(SymbolTableCollection &symbolTable, Operation *from,
+                                llvm::function_ref<InFlightDiagnostic()> errFn = nullptr) const;
 
-    TraitOp getTraitOrAbort(ModuleOp module, const char* message) const;
+    TraitOp getTraitOrAbort(SymbolTableCollection &symbolTable, Operation *from,
+                            const char* message) const;
 
     bool mentionsType(Type ty) const {
       bool found = false;

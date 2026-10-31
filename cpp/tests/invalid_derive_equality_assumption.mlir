@@ -8,9 +8,11 @@
 // application entry is refused at its position.
 
 !T0 = !trait.poly<0>
-trait.trait private @Trait(%self: !trait.claim<@Trait[!T0]>) {}
-trait.impl private @Trait_impl_i32(%self: !trait.claim<@Trait[i32]>) {}
-trait.impl private @Trait_impl_tuple(%self: !trait.claim<@Trait[tuple<!T0>]>, %trait: !trait.claim<@Trait[!T0]>) {}
+trait.trait private @Trait(!trait.claim<@Trait[!T0]>)
+trait.impl private @Trait_impl_i32(%self: !trait.claim<@Trait[i32]>) {
+}
+trait.impl private @Trait_impl_tuple(%self: !trait.claim<@Trait[tuple<!T0>]>, %trait: !trait.claim<@Trait[!T0]>) {
+}
 
 func.func @f(%e: !trait.claim<i32 = i32>) -> !trait.claim<@Trait[tuple<i32>]> {
   // expected-error @below {{premise 0 of impl '@Trait_impl_tuple' is '!trait.claim<@Trait[i32]>', and the derive supplies '!trait.claim<i32 = i32>'}}

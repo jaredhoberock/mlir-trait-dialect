@@ -15,29 +15,27 @@
 // CHECK-NOT: trait.impl
 // CHECK-NOT: trait.derive
 // CHECK-NOT: trait.func.call
-// CHECK-NOT: trait.method.call
 
 !T0 = !trait.poly<0>
 
-trait.trait private @Tr(%self: !trait.claim<@Tr[!T0]>) {
-  trait.method @method(!T0) -> i32
-}
+trait.trait private @Tr(!trait.claim<@Tr[!T0]>) members [@Tr.method]
+func.func private @Tr.method(!trait.claim<@Tr[!T0]>, !T0) -> i32
 
 // A blanket impl: @outer derives its claim at its own type variable, so the
 // impl's header must be spelled over one too -- an impl for a single concrete
 // type justifies nothing about a variable.
 !B = !trait.poly<9>
-trait.impl private @Tr_any(%self_claim: !trait.claim<@Tr[!trait.poly<0>]>) {
-  trait.method @method(%self: !trait.poly<0>) -> i32 {
-    %c = arith.constant 0 : i32
-    trait.return %c : i32
-  }
+trait.impl private @Tr_any(%self_claim: !trait.claim<@Tr[!trait.poly<0>]>) members [@Tr.method -> @Tr_any.method] {
+}
+func.func private @Tr_any.method(%self_claim: !trait.claim<@Tr[!trait.poly<0>]>, %self: !trait.poly<0>) -> i32 {
+  %c = arith.constant 0 : i32
+  return %c : i32
 }
 
 // Takes a claim, calls method through it
 !F = !trait.poly<2>
 func.func private @inner(%x: !trait.poly<0>, %c: !trait.claim<@Tr[!trait.poly<0>]>) -> i32 {
-  %r = trait.method.call %c @method(%x) : !trait.claim<@Tr[!trait.poly<0>]>, (!trait.poly<0>) -> i32
+  %r = trait.func.call @Tr.method(%c, %x) : (!trait.claim<@Tr[!trait.poly<0>]>, !trait.poly<0>) -> i32
   return %r : i32
 }
 

@@ -13,45 +13,42 @@
 !S = !trait.poly<0>
 !V = !trait.poly<9>
 
-trait.trait private @Store(%self: !trait.claim<@Store[!S]>) {
-  trait.method @keep(!trait.poly<0>, !trait.poly<1>) -> !trait.poly<1>
-}
+trait.trait private @Store(!trait.claim<@Store[!S]>) members [@Store.keep]
+func.func private @Store.keep(!trait.claim<@Store[!S]>, !trait.poly<0>, !trait.poly<1>) -> !trait.poly<1>
 
-trait.impl private @Store_impl_i64(%self_claim: !trait.claim<@Store[i64]>) {
-  trait.method @keep(%self: i64, %v: !trait.poly<0>) -> !trait.poly<0> {
-    trait.return %v : !trait.poly<0>
-  }
+trait.impl private @Store_impl_i64(%self_claim: !trait.claim<@Store[i64]>) members [@Store.keep -> @Store_impl_i64.keep] {
+}
+func.func private @Store_impl_i64.keep(%self_claim: !trait.claim<@Store[i64]>, %self: i64, %v: !trait.poly<0>) -> !trait.poly<0> {
+  return %v : !trait.poly<0>
 }
 
 // Forwards to the i64 impl's method under the same method generic: the nested
 // call spells this method's own variable in the argument position the trait
 // method's !V stands in.
-trait.impl private @Store_impl_i32(%self_claim: !trait.claim<@Store[i32]>) {
-  trait.method @keep(%self: i32, %v: !trait.poly<0>) -> !trait.poly<0> {
-    %inner = arith.constant 0 : i64
-    %p = trait.witness @Store_impl_i64 for @Store[i64]
-    %r = trait.method.call %p @keep(%inner, %v)
-      : !trait.claim<@Store[i64] by @Store_impl_i64>, (i64, !trait.poly<0>) -> !trait.poly<0>
-    trait.return %r : !trait.poly<0>
-  }
+trait.impl private @Store_impl_i32(%self_claim: !trait.claim<@Store[i32]>) members [@Store.keep -> @Store_impl_i32.keep] {
+}
+func.func private @Store_impl_i32.keep(%self_claim: !trait.claim<@Store[i32]>, %self: i32, %v: !trait.poly<0>) -> !trait.poly<0> {
+  %inner = arith.constant 0 : i64
+  %p = trait.witness @Store_impl_i64 for @Store[i64]
+  %r = trait.func.call @Store.keep(%p, %inner, %v) : (!trait.claim<@Store[i64] by @Store_impl_i64>, i64, !trait.poly<0>) -> !trait.poly<0>
+  return %r : !trait.poly<0>
 }
 
 func.func @main(%x: i32, %v: f32) -> f32 {
   %p = trait.witness @Store_impl_i32 for @Store[i32]
-  %r = trait.method.call %p @keep(%x, %v)
-    : !trait.claim<@Store[i32] by @Store_impl_i32>, (i32, f32) -> f32
+  %r = trait.func.call @Store.keep(%p, %x, %v) : (!trait.claim<@Store[i32] by @Store_impl_i32>, i32, f32) -> f32
   return %r : f32
 }
 
 // The i64 method's instance for f32 stands beside its impl, then the forwarding
 // method's instance calls it in place of the nested generic call, and main calls
 // the forwarding instance.
-// CHECK-LABEL: func.func private @Store_impl_i64_{{h[0-9a-f]+}}_keep
+// CHECK-LABEL: func.func private @Store_impl_i64.keep_{{h[0-9a-f]+}}
 // CHECK-SAME: %{{.*}}: i64, %{{.*}}: f32) -> f32
-// CHECK-LABEL: func.func private @Store_impl_i32_{{h[0-9a-f]+}}_keep
+// CHECK-LABEL: func.func private @Store_impl_i32.keep_{{h[0-9a-f]+}}
 // CHECK-SAME: %{{.*}}: i32, %{{.*}}: f32) -> f32
-// CHECK-NOT: trait.method.call
-// CHECK: call @Store_impl_i64_{{h[0-9a-f]+}}_keep
-// CHECK-NOT: trait.method.call
+// CHECK-NOT: trait.func.call
+// CHECK: call @Store_impl_i64.keep_{{h[0-9a-f]+}}
+// CHECK-NOT: trait.func.call
 // CHECK-LABEL: func.func @main
-// CHECK: call @Store_impl_i32_{{h[0-9a-f]+}}_keep
+// CHECK: call @Store_impl_i32.keep_{{h[0-9a-f]+}}

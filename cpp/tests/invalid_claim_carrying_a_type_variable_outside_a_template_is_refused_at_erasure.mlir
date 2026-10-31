@@ -10,8 +10,9 @@
 // rather than erase it unread. Instantiation proves and refuses monomorphic
 // claims only, so the refusal is the same whether it ran first or not.
 
-trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) { trait.assoc_type @Item }
-trait.impl private @A_impl(%self: !trait.claim<@A[!trait.poly<0>]>) { trait.assoc_type @Item = !trait.poly<0> }
+trait.trait private @A(!trait.claim<@A[!trait.poly<0>]>) assoc {Item = 0}
+trait.impl private @A_impl(%self: !trait.claim<@A[!trait.poly<0>]>) bindings {Item = !trait.poly<0>} {
+}
 
 func.func private @g(%e: !trait.claim<!trait.proj<@A[i64], "Item"> = i64>) -> i64 {
   %c = arith.constant 7 : i64
@@ -33,8 +34,9 @@ func.func @use() -> i64 {
 
 // -----
 
-trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) { trait.assoc_type @Item }
-trait.impl private @A_impl(%self: !trait.claim<@A[!trait.poly<0>]>) { trait.assoc_type @Item = !trait.poly<0> }
+trait.trait private @A(!trait.claim<@A[!trait.poly<0>]>) assoc {Item = 0}
+trait.impl private @A_impl(%self: !trait.claim<@A[!trait.poly<0>]>) bindings {Item = !trait.poly<0>} {
+}
 
 func.func private @g(%e: !trait.claim<!trait.proj<@A[i64], "Item"> = i64>) -> i64 {
   %c = arith.constant 7 : i64
@@ -61,8 +63,9 @@ func.func @use(%h: !trait.claim<i32 = i64>) -> i64 {
 
 // -----
 
-trait.trait private @B(%self: !trait.claim<@B[!trait.poly<0>]>) {}
-trait.impl private @B_i64(%self: !trait.claim<@B[i64]>) {}
+trait.trait private @B(!trait.claim<@B[!trait.poly<0>]>)
+trait.impl private @B_i64(%self: !trait.claim<@B[i64]>) {
+}
 
 // An allegation of an application over a type variable: instantiation proves
 // monomorphic allegations only, so it stands to erasure, which refuses it.

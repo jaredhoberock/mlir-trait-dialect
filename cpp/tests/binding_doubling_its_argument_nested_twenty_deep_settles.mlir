@@ -13,10 +13,12 @@
 // CHECK: func.func @f() {
 
 !T = !trait.poly<0>
-trait.trait private @A(%s: !trait.claim<@A[!T]>) { trait.assoc_type @Item<[!trait.poly<1>]> }
-trait.impl private @I(%s: !trait.claim<@A[i32]>) { trait.assoc_type @Item<[!trait.poly<0>]> = tuple<!trait.poly<0>, !trait.poly<0>> }
-trait.trait private @A2(%s: !trait.claim<@A2[!T]>) { trait.assoc_type @Item2<[!trait.poly<1>]> }
-trait.impl private @I2(%s: !trait.claim<@A2[i32]>) { trait.assoc_type @Item2<[!trait.poly<0>]> = tuple<!trait.poly<0>, !trait.poly<0>> }
+trait.trait private @A(!trait.claim<@A[!T]>) assoc {Item = 1}
+trait.impl private @I(%s: !trait.claim<@A[i32]>) bindings {Item = tuple<!trait.poly<0>, !trait.poly<0>>} {
+}
+trait.trait private @A2(!trait.claim<@A2[!T]>) assoc {Item2 = 1}
+trait.impl private @I2(%s: !trait.claim<@A2[i32]>) bindings {Item2 = tuple<!trait.poly<0>, !trait.poly<0>>} {
+}
 !P0 = i64
 !Q0 = i64
 // REPEAT 0 19: !P{k+1} = !trait.proj<@A[i32], "Item", [!P{k}]>

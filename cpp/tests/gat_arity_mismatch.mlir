@@ -3,41 +3,23 @@
 
 // RUN: mlir-opt %s -verify-diagnostics -split-input-file
 
-// Tests that impl GAT arity mismatches are diagnosed.
+// A generic associated type's own parameters are a count its trait declares,
+// and an impl's binding takes that count by position, so only a projection
+// states how many arguments it supplies: one supplying another number than the
+// associated type takes is diagnosed where it stands.
 
 !S = !trait.poly<0>
-!T = !trait.poly<1>
 
-trait.trait private @HasGAT(%self: !trait.claim<@HasGAT[!S]>) {
-  trait.assoc_type @Item<[!T]>
-  trait.method @get(!S, !T) -> !trait.proj<@HasGAT[!S], "Item", [!T]>
-}
+trait.trait private @HasGAT(!trait.claim<@HasGAT[!S]>) assoc {Item = 1}
 
-// expected-error @+1 {{'trait.impl' op associated type 'Item' has 0 type parameter(s) but trait declares 1}}
-trait.impl private @HasGAT_impl(%self_claim: !trait.claim<@HasGAT[i32]>) {
-  trait.assoc_type @Item = i64
-  trait.method @get(%self: i32, %value: i64) -> i64 {
-    %c = arith.constant 42 : i64
-    trait.return %c : i64
-  }
-}
+// expected-error @+1 {{projection '!trait.proj<@HasGAT[i32], "Item">' supplies 0 argument(s) to associated type 'Item', which takes 1}}
+func.func private @takes(%x: !trait.proj<@HasGAT[i32], "Item">)
 
 // -----
 
 !S = !trait.poly<0>
-!T = !trait.poly<1>
-!U = !trait.poly<2>
 
-trait.trait private @OneParam(%self: !trait.claim<@OneParam[!S]>) {
-  trait.assoc_type @Item<[!T]>
-  trait.method @get(!S, !T) -> !trait.proj<@OneParam[!S], "Item", [!T]>
-}
+trait.trait private @OneParam(!trait.claim<@OneParam[!S]>) assoc {Item = 1}
 
-// expected-error @+1 {{'trait.impl' op associated type 'Item' has 2 type parameter(s) but trait declares 1}}
-trait.impl private @OneParam_impl(%self_claim: !trait.claim<@OneParam[i32]>) {
-  trait.assoc_type @Item<[!trait.poly<0>, !trait.poly<1>]> = !trait.poly<0>
-  trait.method @get(%self: i32, %value: i64) -> i64 {
-    %c = arith.extsi %self : i32 to i64
-    trait.return %c : i64
-  }
-}
+// expected-error @+1 {{projection '!trait.proj<@OneParam[i32], "Item", [i64, i8]>' supplies 2 argument(s) to associated type 'Item', which takes 1}}
+func.func private @takes(%x: !trait.proj<@OneParam[i32], "Item", [i64, i8]>)

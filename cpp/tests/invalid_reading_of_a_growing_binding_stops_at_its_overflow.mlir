@@ -11,13 +11,8 @@
 // goes on re-expanding what its walk had already answered.
 
 !T = !trait.poly<0>
-trait.trait private @A(%s: !trait.claim<@A[!T]>) {
-  trait.assoc_type @Item<[!trait.poly<1>]>
-  trait.assoc_type @Step<[!trait.poly<1>]>
-}
-trait.impl private @I(%s: !trait.claim<@A[i32]>) {
-  trait.assoc_type @Item<[!trait.poly<0>]> = tuple<!trait.proj<@A[i32], "Item", [!trait.proj<@A[i32], "Step", [!trait.poly<0>]>]>, !trait.proj<@A[i32], "Step", [!trait.proj<@A[i32], "Item", [!trait.poly<0>]>]>>
-  trait.assoc_type @Step<[!trait.poly<0>]> = !trait.proj<@A[i32], "Item", [!trait.poly<0>]>
+trait.trait private @A(!trait.claim<@A[!T]>) assoc {Item = 1, Step = 1}
+trait.impl private @I(%s: !trait.claim<@A[i32]>) bindings {Item = tuple<!trait.proj<@A[i32], "Item", [!trait.proj<@A[i32], "Step", [!trait.poly<0>]>]>, !trait.proj<@A[i32], "Step", [!trait.proj<@A[i32], "Item", [!trait.poly<0>]>]>>, Step = !trait.proj<@A[i32], "Item", [!trait.poly<0>]>} {
 }
 // expected-error @below {{overflow evaluating the requirement '!trait.claim<!trait.proj<@A[i32], "Item", [i64]> = i64>': a chain of steps resolving its projections does not end within 128 steps}}
 func.func @f(%e: !trait.claim<!trait.proj<@A[i32], "Item", [i64]> = i64>) { return }
@@ -25,11 +20,8 @@ func.func @f(%e: !trait.claim<!trait.proj<@A[i32], "Item", [i64]> = i64>) { retu
 // -----
 
 !T = !trait.poly<0>
-trait.trait private @A(%s: !trait.claim<@A[!T]>) {
-  trait.assoc_type @Item<[!trait.poly<1>, !trait.poly<2>]>
-}
-trait.impl private @I(%s: !trait.claim<@A[i32]>) {
-  trait.assoc_type @Item<[!trait.poly<0>, !trait.poly<1>]> = !trait.proj<@A[i32], "Item", [!trait.proj<@A[i32], "Item", [!trait.poly<0>, !trait.poly<1>]>, !trait.proj<@A[i32], "Item", [!trait.poly<1>, !trait.poly<0>]>]>
+trait.trait private @A(!trait.claim<@A[!T]>) assoc {Item = 2}
+trait.impl private @I(%s: !trait.claim<@A[i32]>) bindings {Item = !trait.proj<@A[i32], "Item", [!trait.proj<@A[i32], "Item", [!trait.poly<0>, !trait.poly<1>]>, !trait.proj<@A[i32], "Item", [!trait.poly<1>, !trait.poly<0>]>]>} {
 }
 // expected-error @below {{overflow evaluating the requirement '!trait.claim<!trait.proj<@A[i32], "Item", [i64, i32]> = i64>': a chain of steps resolving its projections does not end within 128 steps}}
 func.func @f(%e: !trait.claim<!trait.proj<@A[i32], "Item", [i64, i32]> = i64>) { return }
@@ -37,11 +29,8 @@ func.func @f(%e: !trait.claim<!trait.proj<@A[i32], "Item", [i64, i32]> = i64>) {
 // -----
 
 !T = !trait.poly<0>
-trait.trait private @A(%s: !trait.claim<@A[!T]>) {
-  trait.assoc_type @Item<[!trait.poly<1>]>
-}
-trait.impl private @I(%s: !trait.claim<@A[i32]>) {
-  trait.assoc_type @Item<[!trait.poly<0>]> = !trait.proj<@A[i32], "Item", [tuple<!trait.proj<@A[i32], "Item", [!trait.poly<0>]>, !trait.proj<@A[i32], "Item", [tuple<!trait.poly<0>>]>>]>
+trait.trait private @A(!trait.claim<@A[!T]>) assoc {Item = 1}
+trait.impl private @I(%s: !trait.claim<@A[i32]>) bindings {Item = !trait.proj<@A[i32], "Item", [tuple<!trait.proj<@A[i32], "Item", [!trait.poly<0>]>, !trait.proj<@A[i32], "Item", [tuple<!trait.poly<0>>]>>]>} {
 }
 // expected-error @below {{overflow evaluating the requirement '!trait.claim<!trait.proj<@A[i32], "Item", [i64]> = i64>': a chain of steps resolving its projections does not end within 128 steps}}
 func.func @f(%e: !trait.claim<!trait.proj<@A[i32], "Item", [i64]> = i64>) { return }

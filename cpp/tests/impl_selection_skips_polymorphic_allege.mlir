@@ -9,14 +9,13 @@
 !T = !trait.poly<0>
 
 // CHECK: trait.trait private @Safe
-trait.trait private @Safe(%self: !trait.claim<@Safe[!T]>) {
-  trait.method @check(!T) -> i32
-}
+trait.trait private @Safe(!trait.claim<@Safe[!T]>) members [@Safe.check]
+func.func private @Safe.check(!trait.claim<@Safe[!T]>, !T) -> i32
 
-trait.impl private @Safe_impl(%self: !trait.claim<@Safe[i32]>) {
-  trait.method @check(%x: i32) -> i32 {
-    trait.return %x : i32
-  }
+trait.impl private @Safe_impl(%self: !trait.claim<@Safe[i32]>) members [@Safe.check -> @Safe_impl.check] {
+}
+func.func private @Safe_impl.check(%self: !trait.claim<@Safe[i32]>, %x: i32) -> i32 {
+  return %x : i32
 }
 
 // Monomorphic allege is resolved to a witness
@@ -25,7 +24,7 @@ func.func @test_mono(%x: i32) -> i32 {
   // CHECK: trait.witness
   // CHECK-NOT: trait.allege
   %c = trait.allege @Safe[i32]
-  %r = trait.method.call %c @check(%x) : !trait.claim<@Safe[i32]>, (i32) -> i32
+  %r = trait.func.call @Safe.check(%c, %x) : (!trait.claim<@Safe[i32]>, i32) -> i32
   return %r : i32
 }
 
@@ -36,6 +35,6 @@ func.func @test_mono(%x: i32) -> i32 {
 func.func @test_poly(%x: !T2) -> i32 {
   // CHECK: trait.allege @Safe[!trait.poly<2>]
   %c = trait.allege @Safe[!T2]
-  %r = trait.method.call %c @check(%x) : !trait.claim<@Safe[!T2]>, (!T2) -> i32
+  %r = trait.func.call @Safe.check(%c, %x) : (!trait.claim<@Safe[!T2]>, !T2) -> i32
   return %r : i32
 }

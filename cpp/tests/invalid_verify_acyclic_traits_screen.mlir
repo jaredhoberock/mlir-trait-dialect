@@ -22,4 +22,4 @@
 // aborting trait accessor.
 !T = !trait.poly<0>
 // expected-error @+1 {{trait `where` clause references undefined trait 'Undefined'}}
-trait.trait private @A(%self: !trait.claim<@A[!T]>) -> !trait.claim<@Undefined[!T]> {}
+trait.trait private @A(!trait.claim<@A[!T]>) -> !trait.claim<@Undefined[!T]>

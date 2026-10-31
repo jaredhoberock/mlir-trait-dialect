@@ -12,32 +12,34 @@
 // CHECK: {{^}}1{{$}}
 
 !T = !trait.poly<0>
-trait.trait private @B(%self: !trait.claim<@B[!T]>) { trait.method @b() -> i64 }
-trait.trait private @C(%self: !trait.claim<@C[!T]>) { trait.method @c() -> i64 }
-trait.trait private @A(%self: !trait.claim<@A[!T]>) -> !trait.claim<@C[!T]> {}
-trait.impl private @B_x(%self: !trait.claim<@B[i64]>) {
-  trait.method @b() -> i64 {
-    %c = arith.constant 1 : i64
-    trait.return %c : i64
-  }
+trait.trait private @B(!trait.claim<@B[!T]>) members [@B.b]
+func.func private @B.b(!trait.claim<@B[!T]>) -> i64
+trait.trait private @C(!trait.claim<@C[!T]>) members [@C.c]
+func.func private @C.c(!trait.claim<@C[!T]>) -> i64
+trait.trait private @A(!trait.claim<@A[!T]>) -> !trait.claim<@C[!T]>
+trait.impl private @B_x(%self: !trait.claim<@B[i64]>) members [@B.b -> @B_x.b] {
 }
-trait.impl private @B_y(%self: !trait.claim<@B[i64]>) {
-  trait.method @b() -> i64 {
-    %c = arith.constant 2 : i64
-    trait.return %c : i64
-  }
+func.func private @B_x.b(%self: !trait.claim<@B[i64]>) -> i64 {
+  %c = arith.constant 1 : i64
+  return %c : i64
 }
-trait.impl private @C_via_B(%self: !trait.claim<@C[!T]>, %b: !trait.claim<@B[!T]>) {
-  trait.method @c() -> i64 {
-    %v = trait.method.call %b @b() : !trait.claim<@B[!T]>, () -> i64
-    trait.return %v : i64
-  }
+trait.impl private @B_y(%self: !trait.claim<@B[i64]>) members [@B.b -> @B_y.b] {
 }
-trait.impl private @C_i64(%self: !trait.claim<@C[i64]>) {
-  trait.method @c() -> i64 {
-    %c = arith.constant 100 : i64
-    trait.return %c : i64
-  }
+func.func private @B_y.b(%self: !trait.claim<@B[i64]>) -> i64 {
+  %c = arith.constant 2 : i64
+  return %c : i64
+}
+trait.impl private @C_via_B(%self: !trait.claim<@C[!T]>, %b: !trait.claim<@B[!T]>) members [@C.c -> @C_via_B.c] {
+}
+func.func private @C_via_B.c(%self: !trait.claim<@C[!T]>, %b: !trait.claim<@B[!T]>) -> i64 {
+  %v = trait.func.call @B.b(%b) : (!trait.claim<@B[!T]>) -> i64
+  return %v : i64
+}
+trait.impl private @C_i64(%self: !trait.claim<@C[i64]>) members [@C.c -> @C_i64.c] {
+}
+func.func private @C_i64.c(%self: !trait.claim<@C[i64]>) -> i64 {
+  %c = arith.constant 100 : i64
+  return %c : i64
 }
 trait.impl private @A_gen(%self: !trait.claim<@A[!T]>, %b: !trait.claim<@B[!T]>) {
   %c = trait.derive @C[!T] from @C_via_B[!trait.poly<0>] given(%b) : (!trait.claim<@B[!T]>)
@@ -51,6 +53,6 @@ trait.proof private @PA {
 func.func @main() -> i64 {
   %a = trait.witness @PA for @A[i64]
   %c = trait.project %a[0] : !trait.claim<@A[i64] by @PA> -> !trait.claim<@C[i64]>
-  %v = trait.method.call %c @c() : !trait.claim<@C[i64]>, () -> i64
+  %v = trait.func.call @C.c(%c) : (!trait.claim<@C[i64]>) -> i64
   return %v : i64
 }

@@ -8,18 +8,16 @@
 // witness citing @Tensor_i8, and the proof stands. The equality its derive
 // carries is what the coerce spends.
 
-trait.trait private @Tensor(%self: !trait.claim<@Tensor[!trait.poly<0>]>) {
-  trait.assoc_type @Shape
-  trait.method @shape(!trait.poly<0>) -> !trait.proj<@Tensor[!trait.poly<0>], "Shape">
+trait.trait private @Tensor(!trait.claim<@Tensor[!trait.poly<0>]>) assoc {Shape = 0} members [@Tensor.shape]
+func.func private @Tensor.shape(!trait.claim<@Tensor[!trait.poly<0>]>, !trait.poly<0>) -> !trait.proj<@Tensor[!trait.poly<0>], "Shape">
+trait.trait private @Vector(!trait.claim<@Vector[!trait.poly<0>]>)
+trait.impl private @Vector_blanket(%self: !trait.claim<@Vector[!trait.poly<0>]>, %tensor: !trait.claim<@Tensor[!trait.poly<0>]>, %shape: !trait.claim<!trait.proj<@Tensor[!trait.poly<0>], "Shape"> = i64>) {
 }
-trait.trait private @Vector(%self: !trait.claim<@Vector[!trait.poly<0>]>) {}
-trait.impl private @Vector_blanket(%self: !trait.claim<@Vector[!trait.poly<0>]>, %tensor: !trait.claim<@Tensor[!trait.poly<0>]>, %shape: !trait.claim<!trait.proj<@Tensor[!trait.poly<0>], "Shape"> = i64>) {}
-trait.impl private @Tensor_i8(%self: !trait.claim<@Tensor[i8]>) {
-  trait.assoc_type @Shape = i64
-  trait.method @shape(%x: i8) -> i64 {
-    %c = arith.constant 1 : i64
-    trait.return %c : i64
-  }
+trait.impl private @Tensor_i8(%self: !trait.claim<@Tensor[i8]>) bindings {Shape = i64} members [@Tensor.shape -> @Tensor_i8.shape] {
+}
+func.func private @Tensor_i8.shape(%self: !trait.claim<@Tensor[i8]>, %x: i8) -> i64 {
+  %c = arith.constant 1 : i64
+  return %c : i64
 }
 
 trait.proof private @p {
@@ -31,12 +29,12 @@ trait.proof private @p {
 }
 
 // CHECK: func.func @main
-// CHECK: call @[[SHAPE:Tensor_i8_h[0-9a-f]+_shape]]
+// CHECK: call @[[SHAPE:Tensor_i8.shape_h[0-9a-f]+]]
 // CHECK-NOT: trait.
 func.func @main(%x: i8) -> i64 {
   %w = trait.witness @p for @Vector[i8]
   %t = trait.witness @Tensor_i8 for @Tensor[i8]
-  %s = trait.method.call %t @shape(%x) : !trait.claim<@Tensor[i8] by @Tensor_i8>, (i8) -> !trait.proj<@Tensor[i8], "Shape">
+  %s = trait.func.call @Tensor.shape(%t, %x) : (!trait.claim<@Tensor[i8] by @Tensor_i8>, i8) -> !trait.proj<@Tensor[i8], "Shape">
   %eq = trait.project %w[1] : !trait.claim<@Vector[i8] by @p> -> !trait.claim<!trait.proj<@Tensor[i8], "Shape"> = i64>
   %n = trait.coerce %s : !trait.proj<@Tensor[i8], "Shape"> to i64 via (%eq) : (!trait.claim<!trait.proj<@Tensor[i8], "Shape"> = i64>)
   return %n : i64

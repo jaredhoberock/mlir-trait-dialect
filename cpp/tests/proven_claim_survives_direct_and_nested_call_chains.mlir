@@ -7,11 +7,13 @@
 // that also needs @Q[i32]. Proof propagation must preserve both concrete call
 // chains: @user1 to @g, and @user2 to @h to @g2.
 
-trait.trait private @P(%self: !trait.claim<@P[!trait.poly<0>]>) {}
-trait.impl private @P_impl(%self: !trait.claim<@P[!trait.poly<0>]>) {}
+trait.trait private @P(!trait.claim<@P[!trait.poly<0>]>)
+trait.impl private @P_impl(%self: !trait.claim<@P[!trait.poly<0>]>) {
+}
 
-trait.trait private @Q(%self: !trait.claim<@Q[!trait.poly<0>]>) {}
-trait.impl private @Q_impl(%self: !trait.claim<@Q[!trait.poly<0>]>) {}
+trait.trait private @Q(!trait.claim<@Q[!trait.poly<0>]>)
+trait.impl private @Q_impl(%self: !trait.claim<@Q[!trait.poly<0>]>) {
+}
 
 !T = !trait.poly<4>
 func.func private @g(%c: !trait.claim<@P[!trait.poly<0>]>, %x: !trait.poly<0>) -> !trait.poly<0> {

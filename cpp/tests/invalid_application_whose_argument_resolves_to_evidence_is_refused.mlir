@@ -10,15 +10,19 @@
 // application before it selects an impl for it and refuses it there, before
 // any proof over it or equality respelling it is written, naming the type
 // carrying the claim that the predicate it reads resolves to: an allegation, a
-// projection whose head is such an application, a method call's receiver, a
+// projection whose head is such an application, a member call's receiver, a
 // proof cited by hand, which erasure's entry reads as selection does, and a
-// parameter's claim, which instantiation names where it stands unproven.
+// bodiless declaration's parameter claim, which instantiation names where it
+// stands unproven, selecting nothing for it. A function with a body taking an
+// unproven claim is a template instantiation never reads in place.
 
-trait.trait private @Mark(%self: !trait.claim<@Mark[!trait.poly<0>]>) {}
-trait.trait private @Wrap(%self: !trait.claim<@Wrap[!trait.poly<0>]>) { trait.assoc_type @Item }
-trait.impl private @Wrap_i32(%self: !trait.claim<@Wrap[i32]>) { trait.assoc_type @Item = tuple<!trait.claim<@Mark[i32]>> }
-trait.trait private @B(%self: !trait.claim<@B[!trait.poly<0>]>) {}
-trait.impl private @B_any(%self: !trait.claim<@B[!trait.poly<0>]>) {}
+trait.trait private @Mark(!trait.claim<@Mark[!trait.poly<0>]>)
+trait.trait private @Wrap(!trait.claim<@Wrap[!trait.poly<0>]>) assoc {Item = 0}
+trait.impl private @Wrap_i32(%self: !trait.claim<@Wrap[i32]>) bindings {Item = tuple<!trait.claim<@Mark[i32]>>} {
+}
+trait.trait private @B(!trait.claim<@B[!trait.poly<0>]>)
+trait.impl private @B_any(%self: !trait.claim<@B[!trait.poly<0>]>) {
+}
 // expected-error @below {{unproven monomorphic claim '!trait.claim<@B[!trait.proj<@Wrap[i32], "Item">]>' after instantiate-monomorphs}}
 func.func private @need(!trait.claim<@B[!trait.proj<@Wrap[i32], "Item">]>)
 func.func @run() {
@@ -31,11 +35,13 @@ func.func @run() {
 
 // -----
 
-trait.trait private @Mark(%self: !trait.claim<@Mark[!trait.poly<0>]>) {}
-trait.trait private @Wrap(%self: !trait.claim<@Wrap[!trait.poly<0>]>) { trait.assoc_type @Item }
-trait.impl private @Wrap_i32(%self: !trait.claim<@Wrap[i32]>) { trait.assoc_type @Item = tuple<!trait.claim<@Mark[i32]>> }
-trait.trait private @Gat(%self: !trait.claim<@Gat[!trait.poly<0>]>) { trait.assoc_type @Item }
-trait.impl private @Gat_any(%self: !trait.claim<@Gat[!trait.poly<0>]>) { trait.assoc_type @Item = i64 }
+trait.trait private @Mark(!trait.claim<@Mark[!trait.poly<0>]>)
+trait.trait private @Wrap(!trait.claim<@Wrap[!trait.poly<0>]>) assoc {Item = 0}
+trait.impl private @Wrap_i32(%self: !trait.claim<@Wrap[i32]>) bindings {Item = tuple<!trait.claim<@Mark[i32]>>} {
+}
+trait.trait private @Gat(!trait.claim<@Gat[!trait.poly<0>]>) assoc {Item = 0}
+trait.impl private @Gat_any(%self: !trait.claim<@Gat[!trait.poly<0>]>) bindings {Item = i64} {
+}
 func.func @run() {
   // expected-error @below {{'trait.allege' op a predicate states types, and '!trait.claim<!trait.proj<@Gat[!trait.proj<@Wrap[i32], "Item">], "Item"> = i64>' resolves to '!trait.proj<@Gat[tuple<!trait.claim<@Mark[i32]>>], "Item">', which carries a claim}}
   // expected-error @below {{unproven monomorphic claim '!trait.claim<!trait.proj<@Gat[!trait.proj<@Wrap[i32], "Item">], "Item"> = i64>' after instantiate-monomorphs}}
@@ -45,28 +51,34 @@ func.func @run() {
 
 // -----
 
-trait.trait private @Mark(%self: !trait.claim<@Mark[!trait.poly<0>]>) {}
-trait.trait private @Wrap(%self: !trait.claim<@Wrap[!trait.poly<0>]>) { trait.assoc_type @Item }
-trait.impl private @Wrap_i32(%self: !trait.claim<@Wrap[i32]>) { trait.assoc_type @Item = tuple<!trait.claim<@Mark[i32]>> }
-trait.trait private @Show(%self: !trait.claim<@Show[!trait.poly<0>]>) { trait.method @v() -> i64 }
-trait.impl private @Show_any(%self: !trait.claim<@Show[!trait.poly<0>]>) {
-  trait.method @v() -> i64 { %k = arith.constant 5 : i64  trait.return %k : i64 }
+trait.trait private @Mark(!trait.claim<@Mark[!trait.poly<0>]>)
+trait.trait private @Wrap(!trait.claim<@Wrap[!trait.poly<0>]>) assoc {Item = 0}
+trait.impl private @Wrap_i32(%self: !trait.claim<@Wrap[i32]>) bindings {Item = tuple<!trait.claim<@Mark[i32]>>} {
+}
+trait.trait private @Show(!trait.claim<@Show[!trait.poly<0>]>) members [@Show.v]
+func.func private @Show.v(!trait.claim<@Show[!trait.poly<0>]>) -> i64
+trait.impl private @Show_any(%self: !trait.claim<@Show[!trait.poly<0>]>) members [@Show.v -> @Show_any.v] {
+}
+func.func private @Show_any.v(%self: !trait.claim<@Show[!trait.poly<0>]>) -> i64 {
+  %k = arith.constant 5 : i64  return %k : i64
 }
 func.func @run() -> i64 {
   // expected-error @below {{'trait.allege' op a predicate states types, and '!trait.claim<@Show[!trait.proj<@Wrap[i32], "Item">]>' resolves to 'tuple<!trait.claim<@Mark[i32]>>', which carries a claim}}
   // expected-error @below {{unproven monomorphic claim '!trait.claim<@Show[!trait.proj<@Wrap[i32], "Item">]>' after instantiate-monomorphs}}
   %c = trait.allege @Show[!trait.proj<@Wrap[i32], "Item">]
-  %v = trait.method.call %c @v() : !trait.claim<@Show[!trait.proj<@Wrap[i32], "Item">]>, () -> i64
+  %v = trait.func.call @Show.v(%c) : (!trait.claim<@Show[!trait.proj<@Wrap[i32], "Item">]>) -> i64
   return %v : i64
 }
 
 // -----
 
-trait.trait private @Mark(%self: !trait.claim<@Mark[!trait.poly<0>]>) {}
-trait.trait private @Wrap(%self: !trait.claim<@Wrap[!trait.poly<0>]>) { trait.assoc_type @Item }
-trait.impl private @Wrap_i32(%self: !trait.claim<@Wrap[i32]>) { trait.assoc_type @Item = tuple<!trait.claim<@Mark[i32]>> }
-trait.trait private @B(%self: !trait.claim<@B[!trait.poly<0>]>) {}
-trait.impl private @B_any(%self: !trait.claim<@B[!trait.poly<0>]>) {}
+trait.trait private @Mark(!trait.claim<@Mark[!trait.poly<0>]>)
+trait.trait private @Wrap(!trait.claim<@Wrap[!trait.poly<0>]>) assoc {Item = 0}
+trait.impl private @Wrap_i32(%self: !trait.claim<@Wrap[i32]>) bindings {Item = tuple<!trait.claim<@Mark[i32]>>} {
+}
+trait.trait private @B(!trait.claim<@B[!trait.poly<0>]>)
+trait.impl private @B_any(%self: !trait.claim<@B[!trait.poly<0>]>) {
+}
 trait.proof private @p {
   %d = trait.derive @B[!trait.proj<@Wrap[i32], "Item">] from @B_any[!trait.proj<@Wrap[i32], "Item">] given()
   trait.return %d : !trait.claim<@B[!trait.proj<@Wrap[i32], "Item">]>
@@ -87,14 +99,12 @@ func.func @run() -> i64 {
 
 // -----
 
-trait.trait private @Mark(%self: !trait.claim<@Mark[!trait.poly<0>]>) {}
-trait.trait private @Wrap(%self: !trait.claim<@Wrap[!trait.poly<0>]>) { trait.assoc_type @Item }
-trait.impl private @Wrap_i32(%self: !trait.claim<@Wrap[i32]>) { trait.assoc_type @Item = tuple<!trait.claim<@Mark[i32]>> }
-trait.trait private @B(%self: !trait.claim<@B[!trait.poly<0>]>) {}
-trait.impl private @B_any(%self: !trait.claim<@B[!trait.poly<0>]>) {}
-// expected-error @below {{a predicate states types, and '!trait.claim<@B[!trait.proj<@Wrap[i32], "Item">]>' resolves to 'tuple<!trait.claim<@Mark[i32]>>', which carries a claim}}
-// expected-error @below {{unproven monomorphic claim '!trait.claim<@B[!trait.proj<@Wrap[i32], "Item">]>' after instantiate-monomorphs}}
-func.func @g(%c: !trait.claim<@B[!trait.proj<@Wrap[i32], "Item">]>) -> i64 {
-  %k = arith.constant 7 : i64
-  return %k : i64
+trait.trait private @Mark(!trait.claim<@Mark[!trait.poly<0>]>)
+trait.trait private @Wrap(!trait.claim<@Wrap[!trait.poly<0>]>) assoc {Item = 0}
+trait.impl private @Wrap_i32(%self: !trait.claim<@Wrap[i32]>) bindings {Item = tuple<!trait.claim<@Mark[i32]>>} {
 }
+trait.trait private @B(!trait.claim<@B[!trait.poly<0>]>)
+trait.impl private @B_any(%self: !trait.claim<@B[!trait.poly<0>]>) {
+}
+// expected-error @below {{unproven monomorphic claim '!trait.claim<@B[!trait.proj<@Wrap[i32], "Item">]>' after instantiate-monomorphs}}
+func.func private @g(!trait.claim<@B[!trait.proj<@Wrap[i32], "Item">]>) -> i64

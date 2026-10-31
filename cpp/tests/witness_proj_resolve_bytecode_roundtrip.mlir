@@ -9,12 +9,9 @@
 
 !S = !trait.poly<0>
 
-trait.trait private @Trait(%self: !trait.claim<@Trait[!S]>) {
-  trait.assoc_type @Output
-}
+trait.trait private @Trait(!trait.claim<@Trait[!S]>) assoc {Output = 0}
 
-trait.impl private @Trait_impl(%self: !trait.claim<@Trait[i64]>) {
-  trait.assoc_type @Output = i64
+trait.impl private @Trait_impl(%self: !trait.claim<@Trait[i64]>) bindings {Output = i64} {
 }
 
 // CHECK: trait.witness proj_resolve !trait.proj<@Trait[i64], "Output"> resolves i64 by @Trait_impl : !trait.claim<!trait.proj<@Trait[i64], "Output"> = i64>

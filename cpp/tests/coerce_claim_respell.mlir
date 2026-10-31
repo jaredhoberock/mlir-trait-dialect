@@ -13,15 +13,11 @@
 
 !S = !trait.poly<0>
 
-trait.trait private @Conv(%self: !trait.claim<@Conv[!S]>) {
-  trait.assoc_type @At
-}
+trait.trait private @Conv(!trait.claim<@Conv[!S]>) assoc {At = 0}
 
-trait.trait private @Safe(%self: !trait.claim<@Safe[!trait.poly<0>, !trait.poly<1>]>) {
-}
+trait.trait private @Safe(!trait.claim<@Safe[!trait.poly<0>, !trait.poly<1>]>)
 
-trait.impl private @Conv_i1(%self: !trait.claim<@Conv[i1]>) {
-  trait.assoc_type @At = i64
+trait.impl private @Conv_i1(%self: !trait.claim<@Conv[i1]>) bindings {At = i64} {
 }
 
 trait.impl private @Safe_impl(%self: !trait.claim<@Safe[i32, i64]>) {

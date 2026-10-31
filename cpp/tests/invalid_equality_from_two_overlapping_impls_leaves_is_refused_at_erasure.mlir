@@ -18,13 +18,17 @@
 
 // VERIFY: trait.coerce
 
-trait.trait private @M(%self: !trait.claim<@M[!trait.poly<0>]>) {}
-trait.trait private @N(%self: !trait.claim<@N[!trait.poly<0>]>) {}
-trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) { trait.assoc_type @Item }
-trait.impl private @M_i32(%self: !trait.claim<@M[i32]>) {}
-trait.impl private @N_i32(%self: !trait.claim<@N[i32]>) {}
-trait.impl private @A_m(%self: !trait.claim<@A[!trait.poly<0>]>, %m: !trait.claim<@M[!trait.poly<0>]>) { trait.assoc_type @Item = i64 }
-trait.impl private @A_n(%self: !trait.claim<@A[!trait.poly<0>]>, %n: !trait.claim<@N[!trait.poly<0>]>) { trait.assoc_type @Item = i32 }
+trait.trait private @M(!trait.claim<@M[!trait.poly<0>]>)
+trait.trait private @N(!trait.claim<@N[!trait.poly<0>]>)
+trait.trait private @A(!trait.claim<@A[!trait.poly<0>]>) assoc {Item = 0}
+trait.impl private @M_i32(%self: !trait.claim<@M[i32]>) {
+}
+trait.impl private @N_i32(%self: !trait.claim<@N[i32]>) {
+}
+trait.impl private @A_m(%self: !trait.claim<@A[!trait.poly<0>]>, %m: !trait.claim<@M[!trait.poly<0>]>) bindings {Item = i64} {
+}
+trait.impl private @A_n(%self: !trait.claim<@A[!trait.poly<0>]>, %n: !trait.claim<@N[!trait.poly<0>]>) bindings {Item = i32} {
+}
 
 func.func private @g(%e: !trait.claim<i64 = i32>) -> i64 {
   %c = arith.constant 7 : i64

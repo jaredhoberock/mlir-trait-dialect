@@ -10,8 +10,9 @@
 // lets the hypothesis leave with the parameter, whether instantiation ran first
 // or not.
 
-trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) { trait.assoc_type @Item }
-trait.impl private @A_impl(%self: !trait.claim<@A[!trait.poly<0>]>) { trait.assoc_type @Item = !trait.poly<0> }
+trait.trait private @A(!trait.claim<@A[!trait.poly<0>]>) assoc {Item = 0}
+trait.impl private @A_impl(%self: !trait.claim<@A[!trait.poly<0>]>) bindings {Item = !trait.poly<0>} {
+}
 
 // CHECK-LABEL: func.func @use() -> i64
 // CHECK-NEXT: %[[C:.*]] = arith.constant 7 : i64

@@ -13,25 +13,27 @@
 // CHECK: {{^}}9{{$}}
 
 !S = !trait.poly<0>
-trait.trait private @Bound(%self: !trait.claim<@Bound[!S]>) { trait.method @value() -> i64 }
-trait.impl private @One(%self: !trait.claim<@Bound[i64]>) {
-  trait.method @value() -> i64 {
-    %v = arith.constant 7 : i64
-    trait.return %v : i64
-  }
+trait.trait private @Bound(!trait.claim<@Bound[!S]>) members [@Bound.value]
+func.func private @Bound.value(!trait.claim<@Bound[!S]>) -> i64
+trait.impl private @One(%self: !trait.claim<@Bound[i64]>) members [@Bound.value -> @One.value] {
 }
-trait.impl private @Two(%self: !trait.claim<@Bound[i64]>) {
-  trait.method @value() -> i64 {
-    %v = arith.constant 9 : i64
-    trait.return %v : i64
-  }
+func.func private @One.value(%self: !trait.claim<@Bound[i64]>) -> i64 {
+  %v = arith.constant 7 : i64
+  return %v : i64
 }
-trait.trait private @Need(%self: !trait.claim<@Need[!S]>) { trait.method @get() -> i64 }
-trait.impl private @Need_from(%self: !trait.claim<@Need[!S]>, %b: !trait.claim<@Bound[!S]>) {
-  trait.method @get() -> i64 {
-    %v = trait.method.call %b @value() : !trait.claim<@Bound[!S]>, () -> i64
-    trait.return %v : i64
-  }
+trait.impl private @Two(%self: !trait.claim<@Bound[i64]>) members [@Bound.value -> @Two.value] {
+}
+func.func private @Two.value(%self: !trait.claim<@Bound[i64]>) -> i64 {
+  %v = arith.constant 9 : i64
+  return %v : i64
+}
+trait.trait private @Need(!trait.claim<@Need[!S]>) members [@Need.get]
+func.func private @Need.get(!trait.claim<@Need[!S]>) -> i64
+trait.impl private @Need_from(%self: !trait.claim<@Need[!S]>, %b: !trait.claim<@Bound[!S]>) members [@Need.get -> @Need_from.get] {
+}
+func.func private @Need_from.get(%self: !trait.claim<@Need[!S]>, %b: !trait.claim<@Bound[!S]>) -> i64 {
+  %v = trait.func.call @Bound.value(%b) : (!trait.claim<@Bound[!S]>) -> i64
+  return %v : i64
 }
 func.func private @pick(%flag: i1) -> i64 {
   %c0 = arith.constant 0 : index
@@ -47,7 +49,7 @@ func.func private @pick(%flag: i1) -> i64 {
     }
     scf.yield %x : !trait.claim<@Need[i64]>
   }
-  %v = trait.method.call %r @get() : !trait.claim<@Need[i64]>, () -> i64
+  %v = trait.func.call @Need.get(%r) : (!trait.claim<@Need[i64]>) -> i64
   return %v : i64
 }
 func.func @main() -> i64 {

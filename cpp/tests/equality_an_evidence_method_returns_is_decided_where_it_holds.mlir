@@ -10,18 +10,17 @@
 // CHECK: {{^}}9{{$}}
 
 !T = !trait.poly<0>
-trait.trait private @A(%self: !trait.claim<@A[!T]>) {
- trait.method @eq() -> !trait.claim<i64 = i64>
+trait.trait private @A(!trait.claim<@A[!T]>) members [@A.eq]
+func.func private @A.eq(!trait.claim<@A[!T]>) -> !trait.claim<i64 = i64>
+trait.impl private @I(%self: !trait.claim<@A[i8]>) members [@A.eq -> @I.eq] {
 }
-trait.impl private @I(%self: !trait.claim<@A[i8]>) {
- trait.method @eq() -> !trait.claim<i64 = i64> {
-  %e = trait.allege i64 = i64
-  trait.return %e : !trait.claim<i64 = i64>
- }
+func.func private @I.eq(%self: !trait.claim<@A[i8]>) -> !trait.claim<i64 = i64> {
+ %e = trait.allege i64 = i64
+ return %e : !trait.claim<i64 = i64>
 }
 func.func @main() -> i64 {
  %a = trait.witness @I for @A[i8]
- %e = trait.method.call %a @eq() : !trait.claim<@A[i8] by @I>, () -> !trait.claim<i64 = i64>
+ %e = trait.func.call @A.eq(%a) : (!trait.claim<@A[i8] by @I>) -> !trait.claim<i64 = i64>
  %n = arith.constant 9 : i64
  %r = trait.coerce %n : i64 to i64 via (%e) : (!trait.claim<i64 = i64>)
  return %r : i64

@@ -10,13 +10,10 @@
 // impl is not proving the claim, so the mismatch must be refused where the
 // proof is declared rather than trusted through to a leaf binding.
 
-trait.trait private @HasPart(%self: !trait.claim<@HasPart[!trait.poly<0>]>) {
-  trait.assoc_type @Part
+trait.trait private @HasPart(!trait.claim<@HasPart[!trait.poly<0>]>) assoc {Part = 0}
+trait.impl private @HasPart_i64(%self: !trait.claim<@HasPart[i64]>) bindings {Part = f32} {
 }
-trait.impl private @HasPart_i64(%self: !trait.claim<@HasPart[i64]>) {
-  trait.assoc_type @Part = f32
-}
-trait.trait private @Other(%self: !trait.claim<@Other[!trait.poly<0>]>) {}
+trait.trait private @Other(!trait.claim<@Other[!trait.poly<0>]>)
 
 // expected-error @below {{proof @HasPart_i64 proves '!trait.claim<@HasPart[i64]>', which does not discharge the obligation '!trait.claim<@Other[!trait.proj<@HasPart[i64], "Part">]>'}}
 func.func private @takes_forged(

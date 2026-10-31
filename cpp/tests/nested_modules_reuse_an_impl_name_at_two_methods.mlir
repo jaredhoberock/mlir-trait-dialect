@@ -11,78 +11,82 @@
 
 // The checks follow the order the specializations are printed in, which is the
 // order the modules holding them stand in.
-// CHECK: func.func private @T_i32_{{h[0-9a-f]+}}_m
+// CHECK: func.func private @T_i32.m_{{h[0-9a-f]+}}
 // CHECK: arith.constant 1
 // CHECK: module @inner
-// CHECK: func.func private @T_i32_{{h[0-9a-f]+}}_m
+// CHECK: func.func private @T_i32.m_{{h[0-9a-f]+}}
 // CHECK: arith.constant 2
 // CHECK: func.func @main
-// CHECK: call @T_i32_{{h[0-9a-f]+}}_m
+// CHECK: call @T_i32.m_{{h[0-9a-f]+}}
 // CHECK: func.func @main
-// CHECK: call @T_i32_{{h[0-9a-f]+}}_m
+// CHECK: call @T_i32.m_{{h[0-9a-f]+}}
 
-trait.trait private @T(%self: !trait.claim<@T[!trait.poly<0>]>) { trait.method @m() -> i64 }
-trait.impl private @T_i32(%self: !trait.claim<@T[i32]>) {
-  trait.method @m() -> i64 {
-    %c = arith.constant 1 : i64
-    trait.return %c : i64
-  }
+trait.trait private @T(!trait.claim<@T[!trait.poly<0>]>) members [@T.m]
+func.func private @T.m(!trait.claim<@T[!trait.poly<0>]>) -> i64
+trait.impl private @T_i32(%self: !trait.claim<@T[i32]>) members [@T.m -> @T_i32.m] {
+}
+func.func private @T_i32.m(%self: !trait.claim<@T[i32]>) -> i64 {
+  %c = arith.constant 1 : i64
+  return %c : i64
 }
 module @inner {
-  trait.trait private @T(%self: !trait.claim<@T[!trait.poly<0>]>) { trait.method @m() -> i64 }
-  trait.impl private @T_i32(%self: !trait.claim<@T[i32]>) {
-    trait.method @m() -> i64 {
-      %c = arith.constant 2 : i64
-      trait.return %c : i64
-    }
+  trait.trait private @T(!trait.claim<@T[!trait.poly<0>]>) members [@T.m]
+  func.func private @T.m(!trait.claim<@T[!trait.poly<0>]>) -> i64
+  trait.impl private @T_i32(%self: !trait.claim<@T[i32]>) members [@T.m -> @T_i32.m] {
+  }
+  func.func private @T_i32.m(%self: !trait.claim<@T[i32]>) -> i64 {
+    %c = arith.constant 2 : i64
+    return %c : i64
   }
   func.func @main() -> i64 {
     %c = trait.allege @T[i32]
-    %r = trait.method.call %c @m() : !trait.claim<@T[i32]>, () -> i64
+    %r = trait.func.call @T.m(%c) : (!trait.claim<@T[i32]>) -> i64
     return %r : i64
   }
 }
 func.func @main() -> i64 {
   %c = trait.allege @T[i32]
-  %r = trait.method.call %c @m() : !trait.claim<@T[i32]>, () -> i64
+  %r = trait.func.call @T.m(%c) : (!trait.claim<@T[i32]>) -> i64
   return %r : i64
 }
 
 // -----
 
-// CHECK: func.func private @T_i32_{{h[0-9a-f]+}}_m
+// CHECK: func.func private @T_i32.m_{{h[0-9a-f]+}}
 // CHECK: arith.constant 1
 // CHECK: func.func @main
-// CHECK: call @T_i32_{{h[0-9a-f]+}}_m
+// CHECK: call @T_i32.m_{{h[0-9a-f]+}}
 // CHECK: module @inner
-// CHECK: func.func private @T_i32_{{h[0-9a-f]+}}_m
+// CHECK: func.func private @T_i32.m_{{h[0-9a-f]+}}
 // CHECK: arith.constant 2
 // CHECK: func.func @main
-// CHECK: call @T_i32_{{h[0-9a-f]+}}_m
+// CHECK: call @T_i32.m_{{h[0-9a-f]+}}
 
-trait.trait private @T(%self: !trait.claim<@T[!trait.poly<0>]>) { trait.method @m() -> i64 }
-trait.impl private @T_i32(%self: !trait.claim<@T[i32]>) {
-  trait.method @m() -> i64 {
-    %c = arith.constant 1 : i64
-    trait.return %c : i64
-  }
+trait.trait private @T(!trait.claim<@T[!trait.poly<0>]>) members [@T.m]
+func.func private @T.m(!trait.claim<@T[!trait.poly<0>]>) -> i64
+trait.impl private @T_i32(%self: !trait.claim<@T[i32]>) members [@T.m -> @T_i32.m] {
+}
+func.func private @T_i32.m(%self: !trait.claim<@T[i32]>) -> i64 {
+  %c = arith.constant 1 : i64
+  return %c : i64
 }
 func.func @main() -> i64 {
   %c = trait.allege @T[i32]
-  %r = trait.method.call %c @m() : !trait.claim<@T[i32]>, () -> i64
+  %r = trait.func.call @T.m(%c) : (!trait.claim<@T[i32]>) -> i64
   return %r : i64
 }
 module @inner {
-  trait.trait private @T(%self: !trait.claim<@T[!trait.poly<0>]>) { trait.method @m() -> i64 }
-  trait.impl private @T_i32(%self: !trait.claim<@T[i32]>) {
-    trait.method @m() -> i64 {
-      %c = arith.constant 2 : i64
-      trait.return %c : i64
-    }
+  trait.trait private @T(!trait.claim<@T[!trait.poly<0>]>) members [@T.m]
+  func.func private @T.m(!trait.claim<@T[!trait.poly<0>]>) -> i64
+  trait.impl private @T_i32(%self: !trait.claim<@T[i32]>) members [@T.m -> @T_i32.m] {
+  }
+  func.func private @T_i32.m(%self: !trait.claim<@T[i32]>) -> i64 {
+    %c = arith.constant 2 : i64
+    return %c : i64
   }
   func.func @main() -> i64 {
     %c = trait.allege @T[i32]
-    %r = trait.method.call %c @m() : !trait.claim<@T[i32]>, () -> i64
+    %r = trait.func.call @T.m(%c) : (!trait.claim<@T[i32]>) -> i64
     return %r : i64
   }
 }

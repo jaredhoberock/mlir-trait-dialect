@@ -3,25 +3,15 @@
 
 // RUN: mlir-opt %s -verify-diagnostics -split-input-file
 
-trait.trait private @Trait0(%self: !trait.claim<@Trait0[!trait.poly<0>, !trait.poly<1>]>) {
-  trait.assoc_type @Output
-}
+trait.trait private @Trait0(!trait.claim<@Trait0[!trait.poly<0>, !trait.poly<1>]>) assoc {Output = 0}
 
-trait.trait private @Trait1(%self: !trait.claim<@Trait1[!trait.poly<0>]>) {
-  // expected-error @+1 {{function 'method' result type contains type parameter '!trait.poly<4>' that is not determined by any input type}}
-  trait.method @method(
-    !trait.poly<0>,
-    !trait.poly<3>
-  ) -> tuple<!trait.proj<@Trait0[!trait.poly<4>, !trait.poly<0>], "Output">>
-}
+trait.trait private @Trait1(!trait.claim<@Trait1[!trait.poly<0>]>) members [@Trait1.method]
+// expected-error @+1 {{function 'Trait1.method' result type contains type parameter '!trait.poly<4>' that is not determined by any input type}}
+func.func private @Trait1.method(!trait.claim<@Trait1[!trait.poly<0>]>, !trait.poly<0>, !trait.poly<3>) -> tuple<!trait.proj<@Trait0[!trait.poly<4>, !trait.poly<0>], "Output">>
 
 // -----
 
-trait.trait private @Trait0(%self: !trait.claim<@Trait0[!trait.poly<0>, !trait.poly<1>]>) {}
+trait.trait private @Trait0(!trait.claim<@Trait0[!trait.poly<0>, !trait.poly<1>]>)
 
-trait.trait private @Trait1(%self: !trait.claim<@Trait1[!trait.poly<0>]>) {
-  trait.method @method(
-    !trait.poly<0>,
-    !trait.claim<@Trait0[!trait.poly<3>, !trait.poly<0>]>
-  ) -> !trait.poly<3>
-}
+trait.trait private @Trait1(!trait.claim<@Trait1[!trait.poly<0>]>) members [@Trait1.method]
+func.func private @Trait1.method(!trait.claim<@Trait1[!trait.poly<0>]>, !trait.poly<0>, !trait.claim<@Trait0[!trait.poly<3>, !trait.poly<0>]>) -> !trait.poly<3>

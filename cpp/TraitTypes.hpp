@@ -94,6 +94,16 @@ bool readsGroundHeadProjection(ProjectionType proj);
 /// part once.
 bool isPolymorphicType(Type root);
 
+/// Whether a function of type `type`, with a body where `hasBody`, is a
+/// template the stage clones per instance rather than code it rewrites in
+/// place: its signature is polymorphic, or it has a body and takes an unproven
+/// application claim. A ground claim does not determine its proof -- two
+/// impls may prove one application, and a caller supplies the proof it chose --
+/// so a body taking one runs whatever impls its caller's proof selects and is
+/// cloned per proof, as a generic function is cloned per type argument. A
+/// function with no body defines nothing to clone.
+bool isTemplateSignature(FunctionType type, bool hasBody);
+
 /// How a substitution reaches a claim's predicate: through every binding it
 /// holds, or through its variable bindings alone (`respellClaimPredicate`), as
 /// a clone stamps one.
@@ -873,7 +883,8 @@ bool carriesUndischargedObligation(Type root);
 /// requires nothing.
 FailureOr<uint64_t> getClaimRequirementCount(
     ClaimType claim,
-    ModuleOp module,
+    SymbolTableCollection &symbolTable,
+    Operation *from,
     llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
 
 /// The requirement `claim` carries at `index`, in the one order a projection
@@ -891,7 +902,8 @@ FailureOr<uint64_t> getClaimRequirementCount(
 /// requirement.
 FailureOr<ClaimType> getClaimRequirementAt(
     ClaimType claim,
-    ModuleOp module,
+    SymbolTableCollection &symbolTable,
+    Operation *from,
     uint64_t index,
     llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
 
@@ -911,14 +923,9 @@ LogicalResult verifyEndpointsRelateTypes(
 /// verified module holds passes it (`ClaimType::verifySymbolUses`). Nothing is
 /// read inside a cited proof: a proof op's body decides its own premises and
 /// citations.
-LogicalResult verifyCitation(ClaimType proven, ModuleOp module,
+LogicalResult verifyCitation(ClaimType proven, SymbolTableCollection &symbolTable,
+                             Operation *from,
                              llvm::function_ref<InFlightDiagnostic()> err);
-
-/// The module that anchors symbol lookups for `anchor`: the operation itself
-/// when it is the module, otherwise its enclosing module (null if it has none).
-/// A symbol-use verifier reached through an attribute or type interface recovers
-/// its lookup scope this way.
-ModuleOp getAnchorModule(Operation *anchor);
 
 /// The bound a reading of a spelling's projections meets before it reaches a
 /// normal form (`ProjectionNormalizer`).

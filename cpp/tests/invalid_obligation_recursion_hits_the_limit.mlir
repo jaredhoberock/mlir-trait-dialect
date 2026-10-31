@@ -19,8 +19,7 @@
 // CHECK: note: required by {{.*}}@Foo[tuple<i32>]
 // CHECK: note: {{.*}} more frame(s) elided
 
-trait.trait private @Foo(%self: !trait.claim<@Foo[!trait.poly<0>]>) {
-}
+trait.trait private @Foo(!trait.claim<@Foo[!trait.poly<0>]>)
 
 trait.impl private @Foo_blanket(%self: !trait.claim<@Foo[!trait.poly<0>]>, %foo: !trait.claim<@Foo[tuple<!trait.poly<0>>]>) {
 }

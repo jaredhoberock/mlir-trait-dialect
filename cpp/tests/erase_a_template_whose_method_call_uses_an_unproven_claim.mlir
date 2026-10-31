@@ -8,12 +8,11 @@
 
 !T = !trait.poly<0>
 
-trait.trait private @Unwrap(%self: !trait.claim<@Unwrap[!T]>) {
-  trait.method @unwrap(!T) -> !T
-}
+trait.trait private @Unwrap(!trait.claim<@Unwrap[!T]>) members [@Unwrap.unwrap]
+func.func private @Unwrap.unwrap(!trait.claim<@Unwrap[!T]>, !T) -> !T
 
 func.func private @caller(%claim: !trait.claim<@Unwrap[!T]>, %value: !T) -> !T {
-  %result = trait.method.call %claim @unwrap(%value) : !trait.claim<@Unwrap[!T]>, (!T) -> !T
+  %result = trait.func.call @Unwrap.unwrap(%claim, %value) : (!trait.claim<@Unwrap[!T]>, !T) -> !T
   return %result : !T
 }
 

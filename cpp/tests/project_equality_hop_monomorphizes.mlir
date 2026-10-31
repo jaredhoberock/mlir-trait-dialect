@@ -11,12 +11,9 @@
 
 !S = !trait.poly<0>
 
-trait.trait private @Has(%self: !trait.claim<@Has[!S]>) -> !trait.claim<!trait.proj<@Has[!S], "Out"> = i64> {
-  trait.assoc_type @Out
-}
+trait.trait private @Has(!trait.claim<@Has[!S]>) -> !trait.claim<!trait.proj<@Has[!S], "Out"> = i64> assoc {Out = 0}
 
-trait.impl private @Has_i32(%self: !trait.claim<@Has[i32]>) {
-  trait.assoc_type @Out = i64
+trait.impl private @Has_i32(%self: !trait.claim<@Has[i32]>) bindings {Out = i64} {
   %req0 = trait.allege !trait.proj<@Has[i32], "Out"> = i64
   trait.return %req0 : !trait.claim<!trait.proj<@Has[i32], "Out"> = i64>
 }

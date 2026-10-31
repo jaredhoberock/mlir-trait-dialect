@@ -12,21 +12,21 @@
 // CHECK: {{^}}9{{$}}
 
 !T = !trait.poly<0>
-trait.trait private @Mark(%self: !trait.claim<@Mark[!T]>) { trait.method @value() -> i64 }
-trait.impl private @Nine(%self: !trait.claim<@Mark[i32]>) {
-  trait.method @value() -> i64 {
-    %v = arith.constant 9 : i64
-    trait.return %v : i64
-  }
+trait.trait private @Mark(!trait.claim<@Mark[!T]>) members [@Mark.value]
+func.func private @Mark.value(!trait.claim<@Mark[!T]>) -> i64
+trait.impl private @Nine(%self: !trait.claim<@Mark[i32]>) members [@Mark.value -> @Nine.value] {
 }
-trait.trait private @Wrapped(%self: !trait.claim<@Wrapped[!T]>) -> !trait.claim<@Mark[!T]> {
-  trait.method @value() -> i64 {
-    %p = trait.project %self[0] : !trait.claim<@Wrapped[!T]> -> !trait.claim<@Mark[!T]>
-    %v = trait.method.call %p @value() : !trait.claim<@Mark[!T]>, () -> i64
-    trait.return %v : i64
-  }
+func.func private @Nine.value(%self: !trait.claim<@Mark[i32]>) -> i64 {
+  %v = arith.constant 9 : i64
+  return %v : i64
 }
-trait.impl private @W(%self: !trait.claim<@Wrapped[i32]>) {
+trait.trait private @Wrapped(!trait.claim<@Wrapped[!T]>) -> !trait.claim<@Mark[!T]> members [default @Wrapped.value]
+func.func private @Wrapped.value(%self: !trait.claim<@Wrapped[!T]>) -> i64 {
+  %p = trait.project %self[0] : !trait.claim<@Wrapped[!T]> -> !trait.claim<@Mark[!T]>
+  %v = trait.func.call @Mark.value(%p) : (!trait.claim<@Mark[!T]>) -> i64
+  return %v : i64
+}
+trait.impl private @W(%self: !trait.claim<@Wrapped[i32]>) members [@Wrapped.value -> @Wrapped.value] {
   %req0 = trait.allege @Mark[i32]
   trait.return %req0 : !trait.claim<@Mark[i32]>
 }
@@ -38,7 +38,7 @@ trait.proof private @O9 {
   %d = trait.derive @Outer[i32] from @O given()
   trait.return %d : !trait.claim<@Outer[i32]>
 }
-trait.trait private @Outer(%self: !trait.claim<@Outer[!T]>) -> !trait.claim<@Wrapped[!T]> {}
+trait.trait private @Outer(!trait.claim<@Outer[!T]>) -> !trait.claim<@Wrapped[!T]>
 trait.impl private @O(%self: !trait.claim<@Outer[i32]>) {
   %req0 = trait.allege @Wrapped[i32]
   trait.return %req0 : !trait.claim<@Wrapped[i32]>
@@ -46,12 +46,12 @@ trait.impl private @O(%self: !trait.claim<@Outer[i32]>) {
 func.func private @f(%x: !T) -> i64 {
   %a = trait.allege @Outer[!T]
   %w = trait.project %a[0] : !trait.claim<@Outer[!T]> -> !trait.claim<@Wrapped[!T]>
-  %v = trait.method.call %w @value() : !trait.claim<@Wrapped[!T]>, () -> i64
+  %v = trait.func.call @Wrapped.value(%w) : (!trait.claim<@Wrapped[!T]>) -> i64
   return %v : i64
 }
 func.func @main() -> i64 {
   %first = trait.allege @Wrapped[i32]
-  %v0 = trait.method.call %first @value() : !trait.claim<@Wrapped[i32]>, () -> i64
+  %v0 = trait.func.call @Wrapped.value(%first) : (!trait.claim<@Wrapped[i32]>) -> i64
   %x = arith.constant 0 : i32
   %v = trait.func.call @f(%x) : (i32) -> i64
   return %v : i64

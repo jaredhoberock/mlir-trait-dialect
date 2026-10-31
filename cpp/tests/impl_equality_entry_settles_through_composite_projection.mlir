@@ -19,8 +19,9 @@
 
 !S = !trait.poly<0>
 
-trait.trait private @Inner(%self: !trait.claim<@Inner[!S]>) { trait.assoc_type @Item }
-trait.impl private @Inner_i64(%self: !trait.claim<@Inner[i64]>) { trait.assoc_type @Item = i64 }
+trait.trait private @Inner(!trait.claim<@Inner[!S]>) assoc {Item = 0}
+trait.impl private @Inner_i64(%self: !trait.claim<@Inner[i64]>) bindings {Item = i64} {
+}
 
 // The equality's evidence, written out by hand so its shape and the verifier's
 // acceptance of a projection nested in a composite endpoint are both pinned. The
@@ -39,9 +40,8 @@ func.func @evidence(%p: tuple<!trait.proj<@Inner[i64], "Item">>) -> tuple<i64> {
   return %v : tuple<i64>
 }
 
-trait.trait private @Run(%self: !trait.claim<@Run[!S]>) {
-  trait.method @go(!S) -> i64
-}
+trait.trait private @Run(!trait.claim<@Run[!S]>) members [@Run.go]
+func.func private @Run.go(!trait.claim<@Run[!S]>, !S) -> i64
 
 // The callee's monomorphic instance keeps the equality-claim parameter on its
 // ABI even though the body ignores it: the parameter carries the evidence across
@@ -54,19 +54,19 @@ func.func private @need(%v: i64, %e: !trait.claim<tuple<!trait.proj<@Inner[!S], 
 
 // The closure-like impl: its where-clause carries the inherited equality; the
 // method cites it by position and forwards it as the call operand.
-trait.impl private @Run_gen(%self: !trait.claim<@Run[!S]>, %inner: !trait.claim<@Inner[!S]>, %eq: !trait.claim<tuple<!trait.proj<@Inner[!S], "Item">> = tuple<i64>>) {
-  trait.method @go(%x: !S) -> i64 {
-    %v = arith.constant 7 : i64
-    %r = trait.func.call @need(%v, %eq)
-      : (i64, !trait.claim<tuple<!trait.proj<@Inner[!S], "Item">> = tuple<i64>>) -> i64
-    trait.return %r : i64
-  }
+trait.impl private @Run_gen(%self: !trait.claim<@Run[!S]>, %inner: !trait.claim<@Inner[!S]>, %eq: !trait.claim<tuple<!trait.proj<@Inner[!S], "Item">> = tuple<i64>>) members [@Run.go -> @Run_gen.go] {
+}
+func.func private @Run_gen.go(%self: !trait.claim<@Run[!S]>, %inner: !trait.claim<@Inner[!S]>, %eq: !trait.claim<tuple<!trait.proj<@Inner[!S], "Item">> = tuple<i64>>, %x: !S) -> i64 {
+  %v = arith.constant 7 : i64
+  %r = trait.func.call @need(%v, %eq)
+    : (i64, !trait.claim<tuple<!trait.proj<@Inner[!S], "Item">> = tuple<i64>>) -> i64
+  return %r : i64
 }
 
 func.func @main() -> i64 {
   %c = trait.allege @Run[i64]
   %x = arith.constant 3 : i64
-  %r = trait.method.call %c @go(%x) : !trait.claim<@Run[i64]>, (i64) -> i64
+  %r = trait.func.call @Run.go(%c, %x) : (!trait.claim<@Run[i64]>, i64) -> i64
   return %r : i64
 }
 

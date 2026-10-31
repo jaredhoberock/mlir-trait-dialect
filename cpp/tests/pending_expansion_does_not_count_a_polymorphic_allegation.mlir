@@ -10,8 +10,9 @@
 // name (invalid_claim_carrying_a_type_variable_outside_a_template_is_refused_at_erasure.mlir),
 // rather than running instantiate on work it leaves standing.
 
-trait.trait private @B(%self: !trait.claim<@B[!trait.poly<0>]>) {}
-trait.impl private @B_i64(%self: !trait.claim<@B[i64]>) {}
+trait.trait private @B(!trait.claim<@B[!trait.poly<0>]>)
+trait.impl private @B_i64(%self: !trait.claim<@B[i64]>) {
+}
 
 // CHECK: pending-expansion=false
 func.func @alleged() -> i64 {

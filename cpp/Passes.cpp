@@ -153,16 +153,17 @@ static bool isGenericSymbolDeclaration(Operation *op) {
 }
 
 /// True when `op` is itself a generic template: a trait, impl, or proof
-/// declaration, a still-polymorphic function, or any other symbol declaration
-/// whose spelling still carries a generic type. Instantiation carries a template
-/// to no target; it dies when its concrete instances are cloned. The shell op is
-/// a template too, so this answers true for the declaration itself, not only for
+/// declaration, a function the template rule names one
+/// (`isTemplateSignature`), or any other symbol declaration whose spelling
+/// still carries a generic type. Instantiation carries a template to no
+/// target; it dies when its concrete instances are cloned. The shell op is a
+/// template too, so this answers true for the declaration itself, not only for
 /// code nested inside one.
 static bool isTemplate(Operation *op) {
   if (isa<TraitOp, ImplOp, ProofOp>(op))
     return true;
   if (auto func = dyn_cast<func::FuncOp>(op))
-    return isPolymorphicType(Type(func.getFunctionType()));
+    return isTemplateSignature(func.getFunctionType(), !func.isExternal());
   return isGenericSymbolDeclaration(op);
 }
 
@@ -272,7 +273,8 @@ bool isForeign(Operation *op) {
 /// names among the ops computing the claim the proof returns -- its derive and
 /// the claims the derive is given, a coercion and the equalities it cites, an
 /// equality's witness, the derive of a where entry, and a cast's source.
-static SmallVector<ProofOp> getCitedProofs(ProofOp proof, ModuleOp module) {
+static SmallVector<ProofOp> getCitedProofs(ProofOp proof,
+                                           SymbolTableCollection &symbolTable) {
   SmallVector<ProofOp> cited;
   // A proof's body is closed (`ProofOp::verify`), so every value read here is
   // an op's result.
@@ -284,7 +286,8 @@ static SmallVector<ProofOp> getCitedProofs(ProofOp proof, ModuleOp module) {
       continue;
     auto witness = dyn_cast<WitnessOp>(producer);
     if (witness && witness.getResultClaim().isApplication()) {
-      auto named = lookupSymbolFrom<ProofOp>(module, witness.getProof());
+      auto named = symbolTable.lookupNearestSymbolFrom<ProofOp>(
+          proof, witness.getProof());
       if (named && !llvm::is_contained(cited, named))
         cited.push_back(named);
       continue;
@@ -309,6 +312,7 @@ static SmallVector<ProofOp> getCitedProofs(ProofOp proof, ModuleOp module) {
 /// refusal names a real chain, and whether a module is refused depends on no
 /// order of proofs or premises.
 static LogicalResult verifyProofDerivationsEnd(ModuleOp module) {
+  SymbolTableCollection symbolTable;
   SmallVector<ObligationFrame> chain;
   DenseMap<Operation *, unsigned> depthOnChain;
   DenseMap<Operation *, unsigned> heights;
@@ -342,7 +346,7 @@ static LogicalResult verifyProofDerivationsEnd(ModuleOp module) {
       depthOnChain.erase(proof);
     });
     unsigned below = 0;
-    for (ProofOp cited : getCitedProofs(proof, module)) {
+    for (ProofOp cited : getCitedProofs(proof, symbolTable)) {
       FailureOr<unsigned> height = follow(cited);
       if (failed(height))
         return failure();
@@ -366,6 +370,7 @@ static LogicalResult verifyProofDerivationsEnd(ModuleOp module) {
 // accessor. The trait-to-trait edges it walks form the requirement dependency
 // graph; a back-edge is a cycle.
 static LogicalResult verifyAcyclicTraitsStructure(ModuleOp module) {
+  SymbolTableCollection symbolTable;
   enum class Status : uint8_t { NotSeen = 0, InPath, Done };
   DenseMap<TraitOp, Status> status;
   SmallVector<TraitOp, 16> stack;
@@ -406,7 +411,7 @@ static LogicalResult verifyAcyclicTraitsStructure(ModuleOp module) {
       // module does not define is refused here -- a hostile blob reaches this
       // screen before the full verifier, so this must not reach the aborting
       // accessor.
-      FailureOr<TraitOp> v = app.getTrait(module, /*errFn=*/nullptr);
+      FailureOr<TraitOp> v = app.getTrait(symbolTable, u, /*errFn=*/nullptr);
       if (failed(v))
         return u.emitError("trait `where` clause references undefined trait '")
                << app.getTraitName().getValue() << "'";
@@ -446,7 +451,18 @@ LogicalResult verifyAcyclicTraits(ModuleOp module) {
   if (failed(verifyAcyclicTraitsStructure(module)))
     return failure();
 
-  return module.verify();
+  if (failed(module.verify()))
+    return failure();
+
+  // Each function an impl pairs with a member is that member's declaration
+  // carried to the impl. No pass rewrites a template, so the comparison is made
+  // once, here, on the module as written.
+  SymbolTableCollection symbolTable;
+  for (ImplOp impl : module.getOps<ImplOp>())
+    if (failed(verifyImplMemberSignatures(impl, impl.getTrait(symbolTable),
+                                          symbolTable)))
+      return failure();
+  return success();
 }
 
 void VerifyAcyclicTraitsPass::runOnOperation() {
@@ -524,9 +540,10 @@ struct ProveClaimResultPattern : public RewritePattern {
         return rewriter.notifyMatchFailure(op, "waits for its source");
       // Evidence with no base, or read past the depth limit, is never
       // inlined; the exit walk names it.
-      if (project.readEvidence().end != EvidenceReading::End::Base)
+      if (project.readEvidence(resolver.getSymbolTables()).end !=
+          EvidenceReading::End::Base)
         return rewriter.notifyMatchFailure(op, "its evidence has no base");
-      return project.inlineEvidence(rewriter);
+      return project.inlineEvidence(rewriter, resolver.getSymbolTables());
     }
 
     // An alleged equality is proved here once monomorphic.
@@ -591,9 +608,9 @@ struct ProveClaimResultPattern : public RewritePattern {
     }
 
     auto errFn = [&] { return derive.emitOpError(); };
-    ModuleOp scope = getAnchorModule(derive);
+    SymbolTableCollection &symbolTable = resolver.getSymbolTables();
     ClaimType claim = derive.getDerivedClaim();
-    ImplOp impl = derive.getImplOp();
+    ImplOp impl = derive.getImplOp(symbolTable);
     if (!impl)
       return rewriter.notifyMatchFailure(derive, "cites no impl");
 
@@ -605,6 +622,7 @@ struct ProveClaimResultPattern : public RewritePattern {
     // projection selection does not resolve leaves the derive standing for the
     // stage's exit walk to name.
     SelectionSite site = SelectionSite::of(derive);
+    Operation *scope = site.scope;
     auto resolve = [&](ClaimType spelled) -> std::optional<ClaimType> {
       Answer<Type> resolved =
           resolver.resolveProjectionsIn(Type(spelled), site, rewriter);
@@ -619,7 +637,8 @@ struct ProveClaimResultPattern : public RewritePattern {
         continue;
       if (!resolve(premise.asUnproven()))
         return rewriter.notifyMatchFailure(derive, "spells no normal form");
-      auto root = ProofOp::getRootOf(scope, evidenceOf(operand).getProof());
+      auto root = ProofOp::getRootOf(symbolTable, derive,
+                                     evidenceOf(operand).getProof());
       if (failed(root))
         return rewriter.notifyMatchFailure(derive, "names no proof");
       subproofs.push_back(
@@ -791,27 +810,12 @@ FailureOr<CallSubstitution> CallSubstitution::forCall(
 
 namespace {
 
-/// The common product of lowering either kind of trait call site: the callee
-/// specialized for this call and the result types after applying the same
-/// closed substitution.
+/// The common product of lowering a trait call: the callee specialized for
+/// this call and the result types after applying the same closed substitution.
 struct SpecializedCallTarget {
   func::FuncOp callee;
   SmallVector<Type> resultTypes;
 };
-
-/// The template a call instantiates, named by the symbol its callee is reached
-/// through: a free function's own symbol, a method's trait-qualified name. Two
-/// instances of one template answer alike here whatever type arguments their
-/// instance names were mangled from, which is what makes a chain of them
-/// countable.
-static Attribute instantiationTemplateKey(FuncCallOp op) {
-  return op.getCalleeNameAttr();
-}
-static Attribute instantiationTemplateKey(MethodCallOp op) {
-  return SymbolRefAttr::get(
-      op.getContext(), op.getTraitApplication().getTraitName().getValue(),
-      {FlatSymbolRefAttr::get(op.getMethodNameAttr())});
-}
 
 /// Impl selection's reading of a type's projections at `site`: each whose head
 /// application is ground resolved to its normal form, and a type whose
@@ -828,18 +832,20 @@ static Type readThroughSelection(Type ty, ImplResolver &resolver,
   return resolved.isAnswer() ? *resolved : ty;
 }
 
-/// The closed call-site substitution of `op` against its callee's signature
-/// `formalTy`, read through impl selection in the module the call stands in, on
-/// top of the evidence the call itself carries.
-template <typename CallOpT>
+/// The closed call-site substitution of `op`, a call stating the signature
+/// `actual`, against `formal`, the signature of its callee `callee`, read
+/// through impl selection in the symbol table the call stands in, on top of
+/// the evidence the call itself carries.
 static FailureOr<CallSubstitution>
-buildCallSubstitution(CallOpT op, PatternRewriter &rewriter,
-                      ImplResolver &resolver, FunctionType formalTy) {
+buildCallSubstitution(Operation *op, PatternRewriter &rewriter,
+                      ImplResolver &resolver, FunctionType formal,
+                      FunctionType actual, StringRef callee) {
   SelectionSite site = SelectionSite::of(op);
   auto selection = [&](Type ty) {
     return readThroughSelection(ty, resolver, site, rewriter);
   };
-  auto specialization = op.buildParameterSpecialization(selection);
+  auto specialization =
+      readCallTypeArguments(op, formal, actual, callee, selection);
   if (failed(specialization)) {
     (void)rewriter.notifyMatchFailure(op, "couldn't build substitution");
     return failure();
@@ -856,25 +862,30 @@ buildCallSubstitution(CallOpT op, PatternRewriter &rewriter,
     return resolved->getBinding();
   };
   return CallSubstitution::forCall(std::move(*specialization),
-                                   op.getOperandTypes(), op.getResultTypes(),
-                                   formalTy, resolve);
+                                   actual.getInputs(), actual.getResults(),
+                                   formal, resolve);
 }
 
-/// Builds and closes the call-site substitution, uses it to specialize the
-/// callee against `formalTy`, and computes the concrete result types for the
-/// replacement call.
+/// Gets or cuts the instance a call names under its substitution: given how
+/// a proven claim the call supplies is carried to the type the instance's
+/// parameter is written with (`InstanceKey::get`).
+using GetOrCutInstance = llvm::function_ref<FailureOr<func::FuncOp>(
+    llvm::function_ref<FailureOr<ClaimType>(ClaimType, ClaimType)>)>;
+
+/// The instance `op` calls, cut under `subst` by `getOrCut`, and the result
+/// types the call reads it at, the results stamped as the instance is.
 ///
 /// Refuses before cutting an instance whose chain already carries the depth
-/// limit's worth of instances of the same template: a template that
-/// instantiates itself at a larger type makes progress at every step, so the
-/// chain is what says it never ends.
-template <typename CallOpT>
+/// limit's worth of instances of the template `templateKey` names: a template
+/// that instantiates itself at a larger type makes progress at every step, so
+/// the chain is what says it never ends. A template is named by its function's
+/// symbol, which two of its instances share whatever type arguments their
+/// names were mangled from.
 static FailureOr<SpecializedCallTarget>
-specializeCallTarget(CallOpT op, PatternRewriter &rewriter,
-                     ImplResolver &resolver, FunctionType formalTy) {
-  Operation *caller =
-      op.getOperation()->template getParentOfType<func::FuncOp>();
-  Attribute templateKey = instantiationTemplateKey(op);
+specializeCallTarget(FuncCallOp op, FlatSymbolRefAttr templateKey,
+                     const CallSubstitution &subst, PatternRewriter &rewriter,
+                     ImplResolver &resolver, GetOrCutInstance getOrCut) {
+  Operation *caller = op->getParentOfType<func::FuncOp>();
   InstantiationChain &chain = resolver.getInstantiationChain();
   if (chain.depthAt(caller, templateKey) >= kInstantiationDepthLimit) {
     chain.noteLimitReached();
@@ -892,16 +903,12 @@ specializeCallTarget(CallOpT op, PatternRewriter &rewriter,
     return failure();
   }
 
-  auto subst = buildCallSubstitution(op, rewriter, resolver, formalTy);
-  if (failed(subst))
-    return failure();
-
   // The results are stamped as the instance is (`CloneKind::Instance`), so a
   // claim among them keeps its predicate as the instance's signature does.
   SpecializedCallTarget target;
   AttrTypeReplacer stamp = makeTypeReplacerFromSubstitution(
-      subst->getSpecialization(), CloneKind::Instance,
-      subst->getProjectionBindings());
+      subst.getSpecialization(), CloneKind::Instance,
+      subst.getProjectionBindings());
   for (Type r : op.getResultTypes()) {
     Type newR = stamp.replace(r);
     if (isPolymorphicType(newR)) {
@@ -917,7 +924,7 @@ specializeCallTarget(CallOpT op, PatternRewriter &rewriter,
         .respellProof(proven, spelling.getTraitApplication(), site, rewriter)
         .orFailure();
   };
-  auto callee = op.getOrSpecializeCallee(rewriter, *subst, respell);
+  auto callee = getOrCut(respell);
   if (failed(callee)) {
     (void)rewriter.notifyMatchFailure(op, "couldn't get or specialize callee");
     return failure();
@@ -951,18 +958,20 @@ static SmallVector<Value> passAsDeclared(PatternRewriter &rewriter,
   return passed;
 }
 
-/// Lowers a call of `op`'s callee, which binds no type parameter and so is no
-/// template: the call reaches it as written, so what the call supplies must be
-/// what it declares, and no specialization is built. A callee cut as an
-/// instance can still spell an obligation the cut minted, and an operand's
-/// producer or a result can still spell one too; the call waits for each
-/// spelling to be settled where it stands, so the two are compared only once
-/// each is. An operand is read at the evidence it carries (`evidenceTypeOf`),
-/// and a claim parameter is supplied where its proof rests on the root that
-/// evidence rests on: the parameter's proof is that evidence respelled.
+/// Lowers a call of `op`'s callee, which is no template
+/// (`isTemplateSignature`): the call reaches it as written, so what the call
+/// supplies must be what it declares, and no specialization is built. A callee
+/// cut as an instance can still spell an obligation the cut minted, and an
+/// operand's producer or a result can still spell one too; the call waits for
+/// each written obligation to be settled where it stands, so the two are
+/// compared only once each is. An operand is read at the evidence it carries
+/// (`evidenceTypeOf`), and a claim parameter is supplied where its proof rests
+/// on the root that evidence rests on: the parameter's proof is that evidence
+/// respelled.
 static LogicalResult lowerCallOfNonTemplate(FuncCallOp op,
-                                            PatternRewriter &rewriter) {
-  func::FuncOp callee = *op.getCallee();
+                                            PatternRewriter &rewriter,
+                                            SymbolTableCollection &symbolTable) {
+  func::FuncOp callee = *op.getCallee(symbolTable);
   TypeRange parameters = callee.getFunctionType().getInputs();
   auto supplied = llvm::map_to_vector(op.getOperands(), evidenceTypeOf);
   if (llvm::any_of(parameters, carriesUndischargedObligation) ||
@@ -973,12 +982,11 @@ static LogicalResult lowerCallOfNonTemplate(FuncCallOp op,
     return op.emitOpError() << "passes " << supplied.size()
                             << " operand(s) to '@" << op.getCalleeName()
                             << "', which takes " << parameters.size();
-  ModuleOp module = getAnchorModule(op);
   auto rootOf = [&](Type type) -> Operation * {
     auto claim = dyn_cast<ClaimType>(type);
     if (!claim || !claim.isApplication() || !claim.isProven())
       return nullptr;
-    auto root = ProofOp::getRootOf(module, claim.getProof());
+    auto root = ProofOp::getRootOf(symbolTable, op, claim.getProof());
     return succeeded(root) ? *root : nullptr;
   };
   for (auto [index, types] : llvm::enumerate(llvm::zip(parameters, supplied))) {
@@ -997,80 +1005,178 @@ static LogicalResult lowerCallOfNonTemplate(FuncCallOp op,
   return success();
 }
 
+/// Lowers `op`, a call of a trait's member that `member` reads as reaching
+/// the function an impl implements it by, to a call of that function's
+/// instance. The function leads with the impl's block arguments, and the
+/// receiver's root determines its where entries, so the instance is keyed and
+/// called by the receiver -- passed at its root, the impl's header at the
+/// arguments the root states, which the function's leading parameter is read
+/// against -- and the call's other operands alone; its where parameters take
+/// the premises the root's derive is given inside its own body
+/// (`cutMemberInstance`). A call computing evidence is replaced by the
+/// function's body instead (`inlineMemberAt`).
+static LogicalResult lowerMemberCall(FuncCallOp op, MemberCall member,
+                                     PatternRewriter &rewriter,
+                                     ImplResolver &resolver) {
+  func::FuncOp function = member.function;
+  FunctionType formal = function.getFunctionType();
+  // The signature the call states once it reaches the function: the
+  // receiver's root, the root's premises, then the call's other operands.
+  SmallVector<Type> inputs{member.root};
+  if (member.derive)
+    llvm::append_range(inputs, member.derive.getAssumptions().getTypes());
+  llvm::append_range(inputs, op.getOperands().drop_front().getTypes());
+  auto actual =
+      FunctionType::get(op.getContext(), inputs, op.getResultTypes());
+  auto subst = buildCallSubstitution(op, rewriter, resolver, formal, actual,
+                                     function.getSymName());
+  if (failed(subst))
+    return failure();
+
+  Value receiver = op.getOperand(0);
+  if (receiver.getType() != Type(member.root)) {
+    OpBuilder::InsertionGuard guard(rewriter);
+    rewriter.setInsertionPoint(op);
+    receiver = WitnessOp::create(rewriter, op.getLoc(), member.root.getProof(),
+                                 member.root.getTraitApplication())
+                   .getResult();
+  }
+  if (op.computesEvidence())
+    return inlineMemberAt(rewriter, op, member, receiver, *subst);
+
+  // The instance is keyed by the receiver's root and the other operands'
+  // evidence, at the function's parameters past its where entries.
+  ArrayRef<Type> formalInputs = formal.getInputs();
+  SmallVector<Type> keyedFormals{formalInputs.front()};
+  llvm::append_range(keyedFormals,
+                     formalInputs.drop_front(1 + member.whereCount));
+  SmallVector<Type> keyedActuals{member.root};
+  for (Value operand : op.getOperands().drop_front())
+    keyedActuals.push_back(evidenceTypeOf(operand));
+  auto symbol = FlatSymbolRefAttr::get(function.getSymNameAttr());
+  auto getOrCut = [&](auto respell) -> FailureOr<func::FuncOp> {
+    SmallVector<Type> typeArguments;
+    for (unsigned label = 0, bound = getLabelBound(Type(formal));
+         label < bound; ++label)
+      typeArguments.push_back(subst->getSpecialization().apply(
+          PolyType::get(op.getContext(), label)));
+    AttrTypeReplacer stamp = makeTypeReplacerFromSubstitution(
+        subst->getSpecialization(), CloneKind::Instance,
+        subst->getProjectionBindings());
+    auto key = InstanceKey::get(symbol, typeArguments, keyedFormals,
+                                keyedActuals, stamp, respell);
+    if (failed(key))
+      return failure();
+    func::FuncOp instance = getOrCutInstance(
+        rewriter, resolver.getSymbolTables(), function, *key,
+        [&](StringRef instanceName) {
+          PatternRewriter::InsertionGuard guard(rewriter);
+          rewriter.setInsertionPointAfter(function);
+          return cutMemberInstance(rewriter, member, instanceName,
+                                   subst->getSpecialization(),
+                                   subst->getProjectionBindings());
+        });
+    if (!instance)
+      return failure();
+    return instance;
+  };
+  auto target =
+      specializeCallTarget(op, symbol, *subst, rewriter, resolver, getOrCut);
+  if (failed(target))
+    return failure();
+
+  SmallVector<Value> args{receiver};
+  llvm::append_range(args, op.getOperands().drop_front());
+  args = passAsDeclared(rewriter, op.getLoc(), args,
+                        target->callee.getFunctionType().getInputs());
+  rewriter.replaceOpWithNewOp<func::CallOp>(
+      op, target->callee.getSymName(), target->resultTypes, args);
+  return success();
+}
+
 /// Lowers a trait call whose instance is ready to a call of that instance.
 ///
-/// A `trait.func.call` becomes a `func.call` of the specialized callee, its
-/// operands passing through untouched: the readiness law established that every
-/// operand claim is proven, so specialization never bakes an unprovable claim
-/// parameter into the callee. A `trait.method.call` becomes a `trait.func.call`
-/// of the method's free-function instance, its receiver claim passed as the
-/// leading argument.
-template <typename CallOpT>
-struct CallOpLowering : public OpRewritePattern<CallOpT> {
+/// A call of a trait's member whose impl implements it by a function of its
+/// own reaches that function (`lowerMemberCall`); one the impl leaves to its
+/// trait's default calls the member's own body. A member call computing
+/// evidence is replaced by the body it reaches. Any other call of a template
+/// becomes a `func.call` of the instance its evidence names, its operands
+/// passing through untouched: the readiness law established that every operand
+/// claim is proven, so specialization never bakes an unprovable claim
+/// parameter into the callee; and a call of a function that is no template is
+/// lowered as written.
+struct CallOpLowering : public OpRewritePattern<FuncCallOp> {
   ImplResolver &resolver;
 
   CallOpLowering(MLIRContext *ctx, ImplResolver &resolver)
-    : OpRewritePattern<CallOpT>(ctx), resolver(resolver) {}
+    : OpRewritePattern<FuncCallOp>(ctx), resolver(resolver) {}
 
-  LogicalResult matchAndRewrite(CallOpT op, PatternRewriter &rewriter) const override {
+  LogicalResult matchAndRewrite(FuncCallOp op, PatternRewriter &rewriter) const override {
+    SymbolTableCollection &symbolTable = resolver.getSymbolTables();
     // The one readiness law, checked before any demand is raised: monomorphic
     // operands, proven claims, and a callee with a signature.
-    if (!isRewritableGenericCall(op))
+    if (!isRewritableGenericCall(op, symbolTable))
       return rewriter.notifyMatchFailure(op, "not a rewritable generic call");
 
-    // An instance's clone of a call is cut outside every template, before any
-    // verification judges where it stands, and the call it lowers to would
-    // name a function of the symbol table it stands in: one standing below
-    // its module stays, for the exit walk to name by its scope.
-    if (failed(verifyCallStandsInItsModule(op, /*err=*/nullptr)))
-      return rewriter.notifyMatchFailure(op, "stands below its module");
+    FailureOr<MemberCall> member = readMemberCall(op, symbolTable);
+    if (failed(member))
+      return rewriter.notifyMatchFailure(op, "the receiver names no impl yet");
+    func::FuncOp callee = *op.getCallee(symbolTable);
+    if (member->function && member->function != callee)
+      return lowerMemberCall(op, *member, rewriter, resolver);
 
-    // The predicate confirmed the callee's signature exists; read it again to
-    // specialize against, as the substitution below reads it.
-    FailureOr<FunctionType> formalTy;
-    if constexpr (std::is_same_v<CallOpT, FuncCallOp>)
-      formalTy = op.getCalleeFunctionType();
-    else
-      formalTy = op.getMethodFunctionType();
-    if (failed(formalTy))
-      return rewriter.notifyMatchFailure(op, "couldn't get the callee's function type");
-
-    // A call computing evidence is replaced by the body the receiver's impl
-    // wrote for it: the evidence is read by position, never selected again.
-    if constexpr (std::is_same_v<CallOpT, MethodCallOp>) {
-      if (op.computesEvidence()) {
-        auto subst = buildCallSubstitution(op, rewriter, resolver, *formalTy);
-        if (failed(subst))
-          return failure();
-        return op.inlineEvidence(rewriter, *subst);
+    // A member left to its trait's default is called at the evidence its
+    // receiver carries, which a coercion may spell otherwise: the default's
+    // parameters, the trait's, are read off the receiver's application.
+    if (member->function) {
+      ClaimType receiver = evidenceOf(op.getOperand(0));
+      if (op.getOperand(0).getType() != Type(receiver)) {
+        OpBuilder::InsertionGuard guard(rewriter);
+        rewriter.setInsertionPoint(op);
+        Value witness = WitnessOp::create(rewriter, op.getLoc(),
+                                          receiver.getProof(),
+                                          receiver.getTraitApplication());
+        rewriter.modifyOpInPlace(op, [&] { op->setOperand(0, witness); });
+        return success();
       }
     }
 
-    if constexpr (std::is_same_v<CallOpT, FuncCallOp>) {
-      if (op.getCalleeTypeParams().empty())
-        return lowerCallOfNonTemplate(op, rewriter);
+    // The predicate confirmed the callee's signature exists; read it again to
+    // specialize against, as the substitution below reads it.
+    FunctionType formalTy = callee.getFunctionType();
+    auto subst =
+        [&]() { return buildCallSubstitution(op, rewriter, resolver, formalTy,
+                                             op.getActualFunctionType(),
+                                             op.getCalleeName()); };
+
+    // A default computing evidence is replaced by the body the trait wrote for
+    // it: the evidence is read by position, never selected again.
+    if (member->function && op.computesEvidence()) {
+      auto closed = subst();
+      if (failed(closed))
+        return failure();
+      return inlineMemberAt(rewriter, op, *member, op.getOperand(0), *closed);
     }
 
-    auto target = specializeCallTarget(op, rewriter, resolver, *formalTy);
+    if (!isTemplateSignature(formalTy, !callee.isExternal()))
+      return lowerCallOfNonTemplate(op, rewriter, symbolTable);
+
+    auto closed = subst();
+    if (failed(closed))
+      return failure();
+    auto getOrCut = [&](auto respell) {
+      return op.getOrSpecializeCallee(rewriter, symbolTable, *closed, respell);
+    };
+    auto target = specializeCallTarget(op, op.getCalleeNameAttr(), *closed,
+                                       rewriter, resolver, getOrCut);
     if (failed(target))
       return failure();
 
-    SmallVector<Value> args;
-    if constexpr (std::is_same_v<CallOpT, MethodCallOp>) {
-      args.push_back(op.getClaim());
-      llvm::append_range(args, op.getArguments());
-    } else {
-      llvm::append_range(args, op.getOperands());
-    }
-    args = passAsDeclared(rewriter, op.getLoc(), args,
-                          target->callee.getFunctionType().getInputs());
-    if constexpr (std::is_same_v<CallOpT, FuncCallOp>) {
-      rewriter.replaceOpWithNewOp<func::CallOp>(
-          op, target->callee.getSymName(), target->resultTypes, args);
-    } else {
-      rewriter.replaceOpWithNewOp<FuncCallOp>(
-          op, target->resultTypes, target->callee.getSymName(), args);
-    }
+    SmallVector<Value> args =
+        passAsDeclared(rewriter, op.getLoc(), op.getOperands(),
+                       target->callee.getFunctionType().getInputs());
+    rewriter.replaceOpWithNewOp<func::CallOp>(
+        op, target->callee.getSymName(), target->resultTypes, args);
     return success();
   }
 };
@@ -1510,51 +1616,29 @@ static SmallVector<func::ReturnOp> returnsOf(func::FuncOp function) {
   return returns;
 }
 
-/// Respells `op` under `rewriter`, each position by its writer's replacer.
-/// Selection, `selecting`, writes a declaration's positions, which no
-/// producer writes: a function's parameters, as its signature states them and
-/// its entry block receives them, and the results of a function no return
-/// hands back, an external function's or a body's that never returns. Every
-/// other position -- an op's result, a block's argument, the results a
-/// function's returns hand back, an op's own attribute -- is written by a
-/// producer or by the op stating it, and takes `views`, which proves no claim.
-/// Fails where nothing changes.
-static LogicalResult respellOp(Operation *op, AttrTypeReplacer &selecting,
-                               AttrTypeReplacer &views,
+/// Respells `op` under `rewriter` by `resolving`: its attributes, a
+/// function's signature among them, its results' types and its blocks'
+/// arguments' types. Fails where nothing changes.
+static LogicalResult respellOp(Operation *op, AttrTypeReplacer &resolving,
                                PatternRewriter &rewriter) {
-  auto function = dyn_cast<func::FuncOp>(op);
-  StringAttr signature =
-      function ? function.getFunctionTypeAttrName() : StringAttr();
   SmallVector<NamedAttribute> attributes;
   bool attributesChanged = false;
   for (NamedAttribute attr : op->getAttrs()) {
-    Attribute value = attr.getValue();
-    if (attr.getName() == signature) {
-      FunctionType type = function.getFunctionType();
-      AttrTypeReplacer &results =
-          returnsOf(function).empty() ? selecting : views;
-      auto inputs = llvm::map_to_vector(
-          type.getInputs(), [&](Type input) { return selecting.replace(input); });
-      auto outputs = llvm::map_to_vector(
-          type.getResults(), [&](Type output) { return results.replace(output); });
-      value = TypeAttr::get(FunctionType::get(op->getContext(), inputs, outputs));
-    } else {
-      value = views.replace(value);
-    }
+    Attribute value = resolving.replace(attr.getValue());
     attributesChanged |= value != attr.getValue();
     attributes.emplace_back(attr.getName(), value);
   }
   SmallVector<std::pair<Value, Type>> retyped;
-  auto retype = [&](Value value, AttrTypeReplacer &by) {
-    if (Type type = by.replace(value.getType()); type != value.getType())
+  auto retype = [&](Value value) {
+    if (Type type = resolving.replace(value.getType()); type != value.getType())
       retyped.emplace_back(value, type);
   };
   for (Value result : op->getResults())
-    retype(result, views);
+    retype(result);
   for (Region &region : op->getRegions())
     for (Block &block : region)
       for (BlockArgument argument : block.getArguments())
-        retype(argument, function && block.isEntryBlock() ? selecting : views);
+        retype(argument);
   if (!attributesChanged && retyped.empty())
     return failure();
   rewriter.modifyOpInPlace(op, [&] {
@@ -1566,12 +1650,9 @@ static LogicalResult respellOp(Operation *op, AttrTypeReplacer &selecting,
   return success();
 }
 
-/// Asks impl selection for the claims a declaration spells and respells the
-/// op with the answers, and resolves the ground projections every op spells:
-/// each unproven monomorphic application claim at a declaration position
-/// becomes the claim proven at its own spelling, and each ground projection
-/// standing outside a claim the type it resolves to. A claim's predicate is
-/// never respelled (`respellClaimPredicate`).
+/// Resolves the ground projections every op spells: each ground projection
+/// standing outside a claim becomes the type it resolves to. A claim's
+/// predicate is never respelled (`respellClaimPredicate`).
 ///
 /// Every claim-typed position has one writer, fixed by its kind. An op's
 /// result is its op's: inferred from its operands
@@ -1580,31 +1661,24 @@ static LogicalResult respellOp(Operation *op, AttrTypeReplacer &selecting,
 /// prove and coerce. A join is written from what control flow carries into it
 /// (`ProveJoinsPattern`), or by its op's dialect where the op transforms what
 /// it carries, and a body's result from what its returns hand back
-/// (`ProveFunctionResultsPattern`). Selection writes the positions no producer
-/// writes (`respellOp`), asked by the function that declares them whenever it
-/// is reached -- an instance a substitution minted included -- as Rust's
-/// monomorphization collector asks `Instance::resolve` per use. An op whose
-/// result law is undeclared leaves its claim unproven, and the stage's exit
-/// walk names it. Selection memoizes every answer, so every position spelling
-/// one claim names one proof. An equality's endpoints state a proposition and
-/// are left as spelled. What selection refuses stays spelled for the stage's
-/// exit walk to name.
-struct SettleSpelledObligationsPattern : public RewritePattern {
+/// (`ProveFunctionResultsPattern`). A function's parameters are written by the
+/// cut that makes it: an instance takes the evidence its key names
+/// (`getOrCutInstance`), and a function with a body taking an unproven
+/// application claim is a template no rewrite reaches (`isTemplateSignature`),
+/// so no claim is selected for a declaration. An op whose result law is
+/// undeclared leaves its claim unproven, and the stage's exit walk names it.
+/// An equality's endpoints state a proposition and are left as spelled. What
+/// selection refuses stays spelled for the stage's exit walk to name.
+struct SettleSpelledProjectionsPattern : public RewritePattern {
   ImplResolver &resolver;
 
-  SettleSpelledObligationsPattern(MLIRContext *ctx, ImplResolver &resolver)
+  SettleSpelledProjectionsPattern(MLIRContext *ctx, ImplResolver &resolver)
     : RewritePattern(MatchAnyOpTypeTag(), /*benefit=*/1, ctx),
       resolver(resolver) {}
 
   LogicalResult matchAndRewrite(Operation *op,
                                 PatternRewriter &rewriter) const override {
-    // An allegation's claim is proven by the evidence that replaces it
-    // (`ProveClaimResultPattern`).
-    if (isa<AllegeOp>(op))
-      return failure();
-    bool declaresClaims =
-        isa<func::FuncOp>(op) && opMentionsType<ClaimType>(op);
-    if (!declaresClaims && !opMentionsType<ProjectionType>(op))
+    if (!opMentionsType<ProjectionType>(op))
       return failure();
 
     SelectionSite site = SelectionSite::of(op);
@@ -1624,26 +1698,13 @@ struct SettleSpelledObligationsPattern : public RewritePattern {
     // as spelled, and nothing citing it reads through a respelling. A claim
     // standing in another's arguments is a type argument of that application,
     // part of what it states, and is left as spelled with it.
-    auto keepClaim = [](ClaimType claim) {
+    AttrTypeReplacer resolving;
+    resolving.addReplacement(resolveProjection);
+    resolving.addReplacement([](ClaimType claim) {
       return std::make_pair(Type(claim), WalkResult::skip());
-    };
-    AttrTypeReplacer selecting;
-    selecting.addReplacement(resolveProjection);
-    selecting.addReplacement(
-        [&](ClaimType claim) -> std::optional<std::pair<Type, WalkResult>> {
-          if (!claim.isApplication() || claim.isProven() ||
-              !claim.isMonomorphic())
-            return keepClaim(claim);
-          Answer<ClaimType> proven =
-              resolver.resolveAndEnsureProofFor(claim, site, rewriter);
-          return std::make_pair(proven.isAnswer() ? Type(*proven) : Type(claim),
-                                WalkResult::skip());
-        });
-    AttrTypeReplacer views;
-    views.addReplacement(resolveProjection);
-    views.addReplacement(keepClaim);
+    });
 
-    if (failed(respellOp(op, selecting, views, rewriter)))
+    if (failed(respellOp(op, resolving, rewriter)))
       return failure();
     // A call judges its callee's signature, so a respelled callee's calls are
     // asked again.
@@ -1687,7 +1748,8 @@ struct ProveFunctionResultsPattern : public OpRewritePattern<func::FuncOp> {
       function.setFunctionType(FunctionType::get(
           function.getContext(), function.getArgumentTypes(), results));
     });
-    if (auto uses = SymbolTable::getSymbolUses(function, getAnchorModule(function)))
+    if (auto uses = SymbolTable::getSymbolUses(function,
+                                               function->getParentOp()))
       for (const SymbolTable::SymbolUse &use : *uses)
         rewriter.modifyOpInPlace(use.getUser(), [] {});
     return success();
@@ -1761,7 +1823,10 @@ struct ProveJoinsPattern : public RewritePattern {
 /// (`settles`), and nothing selects for it.
 template <typename CallOpT>
 struct ProveCallResultsPattern : public OpRewritePattern<CallOpT> {
-  using OpRewritePattern<CallOpT>::OpRewritePattern;
+  SymbolTableCollection &symbolTable;
+
+  ProveCallResultsPattern(MLIRContext *ctx, SymbolTableCollection &symbolTable)
+    : OpRewritePattern<CallOpT>(ctx), symbolTable(symbolTable) {}
 
   LogicalResult matchAndRewrite(CallOpT call,
                                 PatternRewriter &rewriter) const override {
@@ -1772,8 +1837,8 @@ struct ProveCallResultsPattern : public OpRewritePattern<CallOpT> {
       name = call.getCalleeNameAttr();
     else
       name = call.getCalleeAttr();
-    auto callee = lookupSymbolFrom<FunctionOpInterface>(getAnchorModule(call),
-                                                        name);
+    auto callee =
+        symbolTable.lookupNearestSymbolFrom<FunctionOpInterface>(call, name);
     if (!callee || callee.getNumResults() != call->getNumResults())
       return rewriter.notifyMatchFailure(call, "no callee signature to read");
     SmallVector<std::pair<Value, Type>> retyped;
@@ -1799,9 +1864,9 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
   // keeps true (`SymbolTableKeeper`): the impls selection generates, the proofs
   // it records, the instances calls cut, and what a rewrite erases.
   ImplResolver resolver(module);
-  SymbolLookupScope symbolAnswers(resolver.getSymbolTables());
 
-  // verify traits are acyclic
+  // verify traits are acyclic, the module, and each impl's members against
+  // their trait's
   if (failed(verifyAcyclicTraits(module)))
     return failure();
 
@@ -1812,8 +1877,8 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
   MLIRContext* ctx = module.getContext();
 
   // One driver: prove claim producers (allege, derive, project), settle what
-  // each op spells, lower trait.func.call and trait.method.call to instances,
-  // and monomorphize any generic op whose results become monomorphic. Each
+  // each op spells, lower trait.func.call to instances, and monomorphize any
+  // generic op whose results become monomorphic. Each
   // pattern asks impl selection for what it needs where it needs it, and the
   // driver re-walks every function a rewrite landed in, so a fact selection
   // mints reaches every op that reads it.
@@ -1828,13 +1893,14 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
     RewritePatternSet patterns(ctx);
     patterns.add<ProveClaimResultPattern>(ctx, resolver, namedObligations,
                                           refusedAClaim);
-    patterns.add<SettleSpelledObligationsPattern>(ctx, resolver);
+    patterns.add<SettleSpelledProjectionsPattern>(ctx, resolver);
     patterns.add<MonomorphizeResultTypesPattern, ProveFunctionResultsPattern,
-                 ProveCallResultsPattern<func::CallOp>,
-                 ProveCallResultsPattern<FuncCallOp>, ProveJoinsPattern>(ctx);
+                 ProveJoinsPattern>(ctx);
+    patterns.add<ProveCallResultsPattern<func::CallOp>,
+                 ProveCallResultsPattern<FuncCallOp>>(
+        ctx, resolver.getSymbolTables());
     patterns.add<SettleCoercePattern>(ctx, resolver);
-    patterns.add<CallOpLowering<FuncCallOp>, CallOpLowering<MethodCallOp>>(
-        ctx, resolver);
+    patterns.add<CallOpLowering>(ctx, resolver);
 
     // collect instantiate-monomorphs patterns from other dialects
     for (Dialect *d : ctx->getLoadedDialects()) {
@@ -1880,7 +1946,7 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
     if (auto claim = dyn_cast<ClaimType>(obligation))
       if (!claim.isApplication() || producesPositionalEvidence(op))
         return;
-    resolver.nameRefusal(obligation, getAnchorModule(op),
+    resolver.nameRefusal(obligation, SymbolTable::getNearestSymbolTable(op),
                          [&] { return emitError(op->getLoc()); });
   };
 
@@ -1917,7 +1983,8 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
     // that deep is, and named there alone.
     if (auto project = dyn_cast<ProjectOp>(op);
         project && project.getSourceEvidence()) {
-      EvidenceReading reading = project.readEvidence();
+      EvidenceReading reading =
+          project.readEvidence(resolver.getSymbolTables());
       if (reading.end == EvidenceReading::End::Overflow) {
         emitObligationOverflow(op->getLoc(), reading.chain.back().application,
                                reading.chain);
@@ -1962,7 +2029,8 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
     // either, the evidence the source names is what the report points at.
     if (auto project = dyn_cast<ProjectOp>(op)) {
       if (ClaimType source = project.getSourceEvidence()) {
-        EvidenceReading reading = project.readEvidence();
+        EvidenceReading reading =
+            project.readEvidence(resolver.getSymbolTables());
         Diagnostic &note = report.attachNote();
         note << "its source " << source << " names " << source.getProof()
              << ", whose evidence for requirement " << project.getIndex();
@@ -1996,14 +2064,13 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
   // A generic call the driver could still rewrite but did not is a call whose
   // callee specialization fail-closed -- an external polymorphic declaration has
   // no body to clone, or the substitution read a projection selection refused,
-  // which is named by that refusal -- or one an instance cut below its module,
-  // named by its scope. Standing outside every template, it is named here
-  // rather than left for a later step to meet a call it cannot lower.
+  // which is named by that refusal. Standing outside every template, it is
+  // named here rather than left for a later step to meet a call it cannot
+  // lower.
   bool sawSurvivingCall = false;
   module.walk([&](Operation *op) {
-    if (isForeign(op) || !isRewritableGenericCall(op))
+    if (isForeign(op) || !isRewritableGenericCall(op, resolver.getSymbolTables()))
       return;
-    (void)verifyCallStandsInItsModule(op, [&] { return op->emitOpError(); });
     auto nameRefusalsIn = [&](TypeRange types) {
       for (Type type : types)
         type.walk([&](ProjectionType proj) {
@@ -2283,10 +2350,11 @@ static LogicalResult checkNothingOutsideATemplateCarriesTheory(ModuleOp module) 
 /// and alone.
 static LogicalResult judgeStandingTheory(ModuleOp module) {
   bool owed = false;
+  SymbolTableCollection symbolTable;
   module.walk<WalkOrder::PreOrder>([&](Operation *op) {
     if (isTemplate(op))
       return WalkResult::skip();
-    if (isRewritableGenericCall(op)) {
+    if (isRewritableGenericCall(op, symbolTable)) {
       owed = true;
       op->emitOpError()
           << "is a generic call instantiate-monomorphs has not lowered "
@@ -2353,7 +2421,6 @@ static LogicalResult judgeStandingTheory(ModuleOp module) {
   // the builder's listener keeps true as selection inserts a generated impl or
   // proof: a template the collector this pass runs takes when nothing names it.
   ImplResolver resolver(module);
-  SymbolLookupScope symbolAnswers(resolver.getSymbolTables());
   SymbolTableKeeper listener(resolver.getSymbolTables());
   OpBuilder builder(module.getContext(), &listener);
 
@@ -2552,10 +2619,10 @@ static bool erasureRewrites(Operation *op) {
 void populateErasePolymorphsLegality(ConversionTarget &target) {
   // A template leaves with monomorphization, so the pass converts neither it
   // nor its interior: the three declarations are legal and recursively legal,
-  // and a function is a template exactly while its signature stays
-  // polymorphic. A recursively legal op's interior is never enqueued, so an
-  // unused template neither converts nor has to legalize; a monomorphic
-  // function answers the same law every other op does.
+  // and a function is a template exactly while the template rule names it one
+  // (`isTemplateSignature`). A recursively legal op's interior is never
+  // enqueued, so an unused template neither converts nor has to legalize; any
+  // other function answers the same law every other op does.
   target.addLegalOp<TraitOp, ImplOp, ProofOp>();
   target.markOpRecursivelyLegal<TraitOp, ImplOp, ProofOp>();
   target.addDynamicallyLegalOp<func::FuncOp>([](func::FuncOp func) {
@@ -2566,10 +2633,12 @@ void populateErasePolymorphsLegality(ConversionTarget &target) {
       return containsType<ClaimType>(attr.getValue()) ||
              containsType<ProjectionType>(attr.getValue());
     });
-    return isPolymorphicType(Type(func.getFunctionType())) || clean;
+    return isTemplateSignature(func.getFunctionType(), !func.isExternal()) ||
+           clean;
   });
   target.markOpRecursivelyLegal<func::FuncOp>([](Operation *op) {
-    return isPolymorphicType(Type(cast<func::FuncOp>(op).getFunctionType()));
+    auto func = cast<func::FuncOp>(op);
+    return isTemplateSignature(func.getFunctionType(), !func.isExternal());
   });
   // A template -- including a generic symbol declaration another dialect owns,
   // whose body may still name a claim or projection -- is carried to no target
@@ -2594,25 +2663,26 @@ void populateErasePolymorphsReadiness(ConversionTarget &target) {
     // projection there, so one erasure leaves as it stands is pending only as
     // a generic call (`isPendingOp`).
     bool rewrites = isTemplate(op) || erasureRewrites(op);
-    if (!rewrites && !isa<FuncCallOp, MethodCallOp>(op))
+    if (!rewrites && !isa<FuncCallOp>(op))
       return true;
-    if (isPendingOp(op))
+    // The driver asks op by op over a module its steps rewrite between asks,
+    // so a table kept across asks would go stale; the collection built here
+    // reads the module once, and only where this op is a call it reads.
+    SymbolTableCollection symbolTable;
+    if (isPendingOp(op, symbolTable))
       return std::nullopt;
     return !rewrites;
   });
 }
 
-bool isRewritableGenericCall(Operation *op) {
-  // The single readiness law the two call-lowering patterns gate on, so the
-  // patterns and the instantiate step's discharge read one spelling. A
+bool isRewritableGenericCall(Operation *op, SymbolTableCollection &symbolTable) {
+  // The single readiness law the call-lowering pattern gates on, so the
+  // pattern and the instantiate step's discharge read one spelling. A
   // trait.func.call is rewritable when its operands are monomorphic, its operand
-  // claims proven, and its callee has a signature to specialize against; it
-  // lowers only standing in the module that holds its callee, where the
-  // func.call it lowers to can name it (`verifyCallStandsInItsModule`). A
-  // trait.method.call is rewritable when its operands are
-  // monomorphic, its receiver claim proven, its argument claims proven, and its
-  // method has a signature; it lowers in place to a trait.func.call and needs no
-  // scope of its own. None of these reads raises a demand. The
+  // claims proven -- a member call's receiver among them -- and its callee has
+  // a signature to specialize against, read in the symbol table the call
+  // stands in, where the func.call it lowers to names it. None of these reads
+  // raises a demand. The
   // substitution the patterns then run may still find a callee whose result
   // stays polymorphic -- a call whose instantiation the arguments do not
   // determine -- and refuse it fail-closed; that is the rewrite discovering
@@ -2643,16 +2713,11 @@ bool isRewritableGenericCall(Operation *op) {
   if (auto call = dyn_cast<FuncCallOp>(op))
     return operandsMonomorphic(call.getOperands()) &&
            operandClaimsProven(call.getOperands()) &&
-           succeeded(call.getCalleeFunctionType());
-  if (auto call = dyn_cast<MethodCallOp>(op))
-    return operandsMonomorphic(call.getOperands()) &&
-           call.getReceiverEvidence() &&
-           operandClaimsProven(call.getOperands()) &&
-           succeeded(call.getMethodFunctionType());
+           succeeded(call.getCalleeFunctionType(symbolTable));
   return false;
 }
 
-bool isPendingOp(Operation *op) {
+bool isPendingOp(Operation *op, SymbolTableCollection &symbolTable) {
   // One op's share of isPendingExpansion, spelled once: an op outside a template is
   // pending instantiation when it is a generic call a pattern can rewrite, or when
   // instantiation owes the work standing at one of its standing sites -- the
@@ -2663,7 +2728,7 @@ bool isPendingOp(Operation *op) {
   // discharge reads this to count an operation exactly where a lowering pattern
   // would fire on it, and the erase step's gate reads it to hold while any such op
   // stands, so the two steps share one definition of pending work.
-  if (isRewritableGenericCall(op))
+  if (isRewritableGenericCall(op, symbolTable))
     return !isForeign(op);
   bool owed = false;
   walkStandingSites(op, [&](Value, Type site) {
@@ -2678,8 +2743,9 @@ bool isPendingExpansion(ModuleOp module) {
   // sites instantiation still owes work (`owesInstantiation`). A foreign op is a
   // template or code inside one, which instantiation carries to no target.
   bool pending = false;
+  SymbolTableCollection symbolTable;
   module.walk([&](Operation *op) {
-    if (isPendingOp(op)) {
+    if (isPendingOp(op, symbolTable)) {
       pending = true;
       return WalkResult::interrupt();
     }

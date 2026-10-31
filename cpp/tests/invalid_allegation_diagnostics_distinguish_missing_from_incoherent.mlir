@@ -9,13 +9,15 @@
 
 !T = !trait.poly<0>
 
-trait.trait private @Absent(%self: !trait.claim<@Absent[!T]>) {}
+trait.trait private @Absent(!trait.claim<@Absent[!T]>)
 
-trait.trait private @Doubled(%self: !trait.claim<@Doubled[!T]>) {}
+trait.trait private @Doubled(!trait.claim<@Doubled[!T]>)
 
-trait.impl private @Doubled_wide(%self: !trait.claim<@Doubled[i64]>) {}
+trait.impl private @Doubled_wide(%self: !trait.claim<@Doubled[i64]>) {
+}
 
-trait.impl private @Doubled_narrow(%self: !trait.claim<@Doubled[i64]>) {}
+trait.impl private @Doubled_narrow(%self: !trait.claim<@Doubled[i64]>) {
+}
 
 !P = !trait.poly<1>
 

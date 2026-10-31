@@ -40,29 +40,25 @@ fn a_rename_reaches_an_equality_claims_endpoints_a_citations_arguments_and_every
     let context = context();
     let text = r#"
     module {
-      trait.trait private @T(%self: !trait.claim<@T[!trait.poly<0>]>) {
-        trait.assoc_type @A
-        trait.method @m(!trait.poly<0>) -> i64
-      }
+      trait.trait private @T(!trait.claim<@T[!trait.poly<0>]>) assoc {A = 0} members [@T.m]
+      func.func private @T.m(!trait.claim<@T[!trait.poly<0>]>, !trait.poly<0>) -> i64
       func.func private @m(%x: i64) -> i64 {
         return %x : i64
       }
       func.func private @h(%c: !trait.claim<@T[i64]>, %x: i64) -> i64 {
-        %y = trait.method.call %c @m(%x) : !trait.claim<@T[i64]>, (i64) -> i64
+        %y = trait.func.call @T.m(%c, %x) : (!trait.claim<@T[i64]>, i64) -> i64
         return %y : i64
       }
-      trait.impl private @I(%self: !trait.claim<@T[i64]>) {
-        trait.assoc_type @A = i64
-        trait.method @m(%x: i64) -> i64 {
-          trait.return %x : i64
-        }
+      trait.impl private @I(%self: !trait.claim<@T[i64]>) bindings {A = i64} members [@T.m -> @I.m] {
       }
-      trait.impl private @J(%self: !trait.claim<@T[tuple<!trait.poly<0>>]>) {
-        trait.assoc_type @A = i1
-        trait.method @m(%x: tuple<!trait.poly<0>>) -> i64 {
-          %one = arith.constant 1 : i64
-          trait.return %one : i64
-        }
+      func.func private @I.m(%self: !trait.claim<@T[i64]>, %x: i64) -> i64 {
+        return %x : i64
+      }
+      trait.impl private @J(%self: !trait.claim<@T[tuple<!trait.poly<0>>]>) bindings {A = i1} members [@T.m -> @J.m] {
+      }
+      func.func private @J.m(%self: !trait.claim<@T[tuple<!trait.poly<0>>]>, %x: tuple<!trait.poly<0>>) -> i64 {
+        %one = arith.constant 1 : i64
+        return %one : i64
       }
       func.func private @g() -> !trait.claim<@T[tuple<!trait.proj<@T[i64], "A">>]> {
         %c = trait.derive @T[tuple<!trait.proj<@T[i64], "A">>] from @J[!trait.proj<@T[i64], "A">] given()
@@ -76,8 +72,9 @@ fn a_rename_reaches_an_equality_claims_endpoints_a_citations_arguments_and_every
     }
     "#;
     let module = Module::parse(&context, text).expect("the module parses");
-    // `m` names a top-level function and a method of `T`: the reference
-    // `@T::@m` renames its root alone
+    // `m` names a top-level function, and `T.m` the member of `T` named after
+    // it: the member's own symbol is neither renamed name, so it keeps its name
+    // while every claim its signature spells names the renamed trait
     let renames = [("T".to_string(), "m.T".to_string()), ("m".to_string(), "m.m".to_string())];
     unsafe { trait_::rename_symbols(module.as_operation().to_raw(), &renames) };
     // the citation's arguments name the renamed trait; it verifies only once
@@ -86,14 +83,20 @@ fn a_rename_reaches_an_equality_claims_endpoints_a_citations_arguments_and_every
 
     let declared = module.body().first_operation().expect("the trait");
     assert_eq!(StringAttribute::try_from(declared.attribute("sym_name").unwrap()).unwrap().value(), "m.T");
-    let f = declared
-        .next_in_block()
-        .and_then(|m| m.next_in_block())
-        .and_then(|h| h.next_in_block())
-        .and_then(|i| i.next_in_block())
-        .and_then(|j| j.next_in_block())
-        .and_then(|g| g.next_in_block())
-        .expect("the function");
+    let named = |name: &str| {
+        let mut op = module.body().first_operation();
+        while let Some(current) = op {
+            if StringAttribute::try_from(current.attribute("sym_name").unwrap()).unwrap().value() == name {
+                return current;
+            }
+            op = current.next_in_block();
+        }
+        panic!("no symbol @{name}");
+    };
+    let member = named("T.m");
+    let member_ty = FunctionType::try_from(TypeAttribute::try_from(member.attribute("function_type").unwrap()).unwrap().value()).unwrap();
+    assert_eq!(trait_names(member_ty.input(0).unwrap()), ["m.T"]);
+    let f = named("f");
     let fn_ty = FunctionType::try_from(TypeAttribute::try_from(f.attribute("function_type").unwrap()).unwrap().value()).unwrap();
     let names: Vec<String> = (0..fn_ty.input_count()).flat_map(|k| trait_names(fn_ty.input(k).unwrap())).collect();
     assert_eq!(names, ["m.T", "m.T", "m.T", "m.T"]);

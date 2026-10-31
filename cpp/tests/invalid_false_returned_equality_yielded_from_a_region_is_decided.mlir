@@ -9,14 +9,11 @@
 // projections, obligations outstanding, stand although nothing reads them:
 // they are replaced by the allegation, which is decided there and refused. The
 // true control is false_equality_yielded_from_a_region_is_decided_where_it_holds.
-// CHECK: :[[@LINE+8]]:{{[0-9]+}}: error: 'trait.allege' op alleges '!trait.proj<@A[i8], "Out">' = 'i64', and impl selection resolves its sides to 'i32' and 'i64'
+// CHECK: :[[@LINE+5]]:{{[0-9]+}}: error: 'trait.allege' op alleges '!trait.proj<@A[i8], "Out">' = 'i64', and impl selection resolves its sides to 'i32' and 'i64'
 
 !T = !trait.poly<0>
-trait.trait private @A(%self: !trait.claim<@A[!T]>) -> !trait.claim<!trait.proj<@A[!T], "Out"> = i64> {
-  trait.assoc_type @Out
-}
-trait.impl private @I(%self: !trait.claim<@A[i8]>) {
-  trait.assoc_type @Out = i32
+trait.trait private @A(!trait.claim<@A[!T]>) -> !trait.claim<!trait.proj<@A[!T], "Out"> = i64> assoc {Out = 0}
+trait.impl private @I(%self: !trait.claim<@A[i8]>) bindings {Out = i32} {
   %e = trait.allege !trait.proj<@A[i8], "Out"> = i64
   trait.return %e : !trait.claim<!trait.proj<@A[i8], "Out"> = i64>
 }
@@ -38,14 +35,11 @@ func.func @main() -> i64 {
 // -----
 
 // The same with one projection yielded from an scf.execute_region.
-// CHECK: :[[@LINE+8]]:{{[0-9]+}}: error: 'trait.allege' op alleges '!trait.proj<@A[i8], "Out">' = 'i64', and impl selection resolves its sides to 'i32' and 'i64'
+// CHECK: :[[@LINE+5]]:{{[0-9]+}}: error: 'trait.allege' op alleges '!trait.proj<@A[i8], "Out">' = 'i64', and impl selection resolves its sides to 'i32' and 'i64'
 
 !T = !trait.poly<0>
-trait.trait private @A(%self: !trait.claim<@A[!T]>) -> !trait.claim<!trait.proj<@A[!T], "Out"> = i64> {
-  trait.assoc_type @Out
-}
-trait.impl private @I(%self: !trait.claim<@A[i8]>) {
-  trait.assoc_type @Out = i32
+trait.trait private @A(!trait.claim<@A[!T]>) -> !trait.claim<!trait.proj<@A[!T], "Out"> = i64> assoc {Out = 0}
+trait.impl private @I(%self: !trait.claim<@A[i8]>) bindings {Out = i32} {
   %e = trait.allege !trait.proj<@A[i8], "Out"> = i64
   trait.return %e : !trait.claim<!trait.proj<@A[i8], "Out"> = i64>
 }
@@ -67,7 +61,7 @@ func.func @main() -> i64 {
 // CHECK: :[[@LINE+5]]:{{[0-9]+}}: error: 'trait.allege' op alleges 'i32' = 'i64', and impl selection resolves its sides to 'i32' and 'i64'
 
 !T = !trait.poly<0>
-trait.trait private @A(%s: !trait.claim<@A[!T]>) -> !trait.claim<!T = i64> {}
+trait.trait private @A(!trait.claim<@A[!T]>) -> !trait.claim<!T = i64>
 trait.impl private @I(%s: !trait.claim<@A[i32]>) {
   %e = trait.allege i32 = i64
   trait.return %e : !trait.claim<i32 = i64>

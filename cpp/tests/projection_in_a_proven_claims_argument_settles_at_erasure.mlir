@@ -9,10 +9,12 @@
 // states is a type, erasure's entry settles it, and the evidence leaves with
 // erasure on either route, the call keeping the value its callee computes.
 
-trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) { trait.assoc_type @Item }
-trait.impl private @A_i64(%self: !trait.claim<@A[i64]>) { trait.assoc_type @Item = i64 }
-trait.trait private @B(%self: !trait.claim<@B[!trait.poly<0>]>) {}
-trait.impl private @B_proj(%self: !trait.claim<@B[!trait.proj<@A[i64], "Item">]>) {}
+trait.trait private @A(!trait.claim<@A[!trait.poly<0>]>) assoc {Item = 0}
+trait.impl private @A_i64(%self: !trait.claim<@A[i64]>) bindings {Item = i64} {
+}
+trait.trait private @B(!trait.claim<@B[!trait.poly<0>]>)
+trait.impl private @B_proj(%self: !trait.claim<@B[!trait.proj<@A[i64], "Item">]>) {
+}
 
 // CHECK-LABEL: func.func @use() -> i64
 // CHECK: arith.constant 7 : i64

@@ -7,10 +7,11 @@
 // read only after its definition.
 
 !T = !trait.poly<0>
-trait.trait private @C(%self: !trait.claim<@C[!T]>) {}
-trait.trait private @B(%self: !trait.claim<@B[!T]>) -> !trait.claim<@C[!T]> {}
-trait.trait private @A(%self: !trait.claim<@A[!T]>) -> !trait.claim<@C[!T]> {}
-trait.impl private @C_i32(%self: !trait.claim<@C[i32]>) {}
+trait.trait private @C(!trait.claim<@C[!T]>)
+trait.trait private @B(!trait.claim<@B[!T]>) -> !trait.claim<@C[!T]>
+trait.trait private @A(!trait.claim<@A[!T]>) -> !trait.claim<@C[!T]>
+trait.impl private @C_i32(%self: !trait.claim<@C[i32]>) {
+}
 trait.impl private @B_i32(%self: !trait.claim<@B[i32]>) {
   %c = trait.witness @C_i32 for @C[i32]
   trait.return %c : !trait.claim<@C[i32] by @C_i32>

@@ -10,23 +10,28 @@
 // one of two it cannot choose between.
 
 !T = !trait.poly<0>
-trait.trait private @Dead(%self: !trait.claim<@Dead[!T]>) { trait.assoc_type @Out }
-trait.impl private @Dead_f32(%self: !trait.claim<@Dead[f32]>) { trait.assoc_type @Out = f32 }
-trait.trait private @A(%self: !trait.claim<@A[!T]>) { trait.assoc_type @Item }
-trait.impl private @A_only_when_dead(%self: !trait.claim<@A[!T]>,
-                                     %eq: !trait.claim<!trait.proj<@Dead[!T], "Out"> = !trait.proj<@Dead[!T], "Out">>) {
-  trait.assoc_type @Item = f32
+trait.trait private @Dead(!trait.claim<@Dead[!T]>) assoc {Out = 0}
+trait.impl private @Dead_f32(%self: !trait.claim<@Dead[f32]>) bindings {Out = f32} {
 }
-trait.impl private @A_i32(%self: !trait.claim<@A[i32]>) { trait.assoc_type @Item = i64 }
+trait.trait private @A(!trait.claim<@A[!T]>) assoc {Item = 0}
+trait.impl private @A_only_when_dead(%self: !trait.claim<@A[!T]>,
+                                     %eq: !trait.claim<!trait.proj<@Dead[!T], "Out"> = !trait.proj<@Dead[!T], "Out">>) bindings {Item = f32} {
+}
+trait.impl private @A_i32(%self: !trait.claim<@A[i32]>) bindings {Item = i64} {
+}
 
-func.func private @need(!trait.claim<@A[i32]>)
+// A function with a body taking the claim is a template, cloned at the proof
+// its call supplies.
+func.func private @need(%a0: !trait.claim<@A[i32]>) {
+  return
+}
 
 // CHECK-LABEL: func.func @f()
 // CHECK: trait.witness @A_i32 for @A[i32]
 // MONO-LABEL: func.func @f()
-// MONO: call @need()
+// MONO: call @need_h{{[0-9a-f]+}}()
 func.func @f() {
   %e = trait.allege @A[i32]
-  func.call @need(%e) : (!trait.claim<@A[i32]>) -> ()
+  trait.func.call @need(%e) : (!trait.claim<@A[i32]>) -> ()
   return
 }

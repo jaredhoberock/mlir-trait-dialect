@@ -10,21 +10,23 @@
 // it discharges at the application the citation names, so both spell it at i8.
 // Split 2 swaps the operand order.
 
-trait.trait private @V(%self: !trait.claim<@V[!trait.poly<0>]>) { trait.method @v() -> i64 }
-trait.trait private @U(%self: !trait.claim<@U[!trait.poly<0>]>) -> !trait.claim<@V[!trait.poly<0>]> { trait.method @u() -> i64 }
-trait.impl private @V_blanket(%self: !trait.claim<@V[!trait.poly<0>]>) {
-  trait.method @v() -> i64 {
-    %c = arith.constant 7 : i64
-    trait.return %c : i64
-  }
+trait.trait private @V(!trait.claim<@V[!trait.poly<0>]>) members [@V.v]
+func.func private @V.v(!trait.claim<@V[!trait.poly<0>]>) -> i64
+trait.trait private @U(!trait.claim<@U[!trait.poly<0>]>) -> !trait.claim<@V[!trait.poly<0>]> members [@U.u]
+func.func private @U.u(!trait.claim<@U[!trait.poly<0>]>) -> i64
+trait.impl private @V_blanket(%self: !trait.claim<@V[!trait.poly<0>]>) members [@V.v -> @V_blanket.v] {
 }
-trait.impl private @U_blanket(%self: !trait.claim<@U[!trait.poly<0>]>) {
-  trait.method @u() -> i64 {
-    %c = arith.constant 1 : i64
-    trait.return %c : i64
-  }
+func.func private @V_blanket.v(%self: !trait.claim<@V[!trait.poly<0>]>) -> i64 {
+  %c = arith.constant 7 : i64
+  return %c : i64
+}
+trait.impl private @U_blanket(%self: !trait.claim<@U[!trait.poly<0>]>) members [@U.u -> @U_blanket.u] {
   %req0 = trait.allege @V[!trait.poly<0>]
   trait.return %req0 : !trait.claim<@V[!trait.poly<0>]>
+}
+func.func private @U_blanket.u(%self: !trait.claim<@U[!trait.poly<0>]>) -> i64 {
+  %c = arith.constant 1 : i64
+  return %c : i64
 }
 trait.proof private @pv {
   %d = trait.derive @V[i8] from @V_blanket[i8] given()
@@ -36,14 +38,14 @@ trait.proof private @pu {
 }
 
 // CHECK-NOT: trait.
-// CHECK: func.func private @[[V:V_blanket_[a-z0-9]+]]_v() -> i64
+// CHECK: func.func private @[[V:V_blanket.v_[a-z0-9]+]]() -> i64
 // CHECK: func.func private @[[F:f_[a-z0-9]+]]() -> i64
-// CHECK: call @[[V]]_v() : () -> i64
+// CHECK: call @[[V]]() : () -> i64
 // CHECK: func.func @main() -> i64
 // CHECK: call @[[F]]() : () -> i64
 // CHECK-NOT: trait.
 func.func private @f(%u: !trait.claim<@U[!trait.poly<0>]>, %v: !trait.claim<@V[!trait.poly<0>]>) -> i64 {
-  %r = trait.method.call %v @v() : !trait.claim<@V[!trait.poly<0>]>, () -> i64
+  %r = trait.func.call @V.v(%v) : (!trait.claim<@V[!trait.poly<0>]>) -> i64
   return %r : i64
 }
 func.func @main() -> i64 {
@@ -55,21 +57,23 @@ func.func @main() -> i64 {
 
 // -----
 
-trait.trait private @V(%self: !trait.claim<@V[!trait.poly<0>]>) { trait.method @v() -> i64 }
-trait.trait private @U(%self: !trait.claim<@U[!trait.poly<0>]>) -> !trait.claim<@V[!trait.poly<0>]> { trait.method @u() -> i64 }
-trait.impl private @V_blanket(%self: !trait.claim<@V[!trait.poly<0>]>) {
-  trait.method @v() -> i64 {
-    %c = arith.constant 7 : i64
-    trait.return %c : i64
-  }
+trait.trait private @V(!trait.claim<@V[!trait.poly<0>]>) members [@V.v]
+func.func private @V.v(!trait.claim<@V[!trait.poly<0>]>) -> i64
+trait.trait private @U(!trait.claim<@U[!trait.poly<0>]>) -> !trait.claim<@V[!trait.poly<0>]> members [@U.u]
+func.func private @U.u(!trait.claim<@U[!trait.poly<0>]>) -> i64
+trait.impl private @V_blanket(%self: !trait.claim<@V[!trait.poly<0>]>) members [@V.v -> @V_blanket.v] {
 }
-trait.impl private @U_blanket(%self: !trait.claim<@U[!trait.poly<0>]>) {
-  trait.method @u() -> i64 {
-    %c = arith.constant 1 : i64
-    trait.return %c : i64
-  }
+func.func private @V_blanket.v(%self: !trait.claim<@V[!trait.poly<0>]>) -> i64 {
+  %c = arith.constant 7 : i64
+  return %c : i64
+}
+trait.impl private @U_blanket(%self: !trait.claim<@U[!trait.poly<0>]>) members [@U.u -> @U_blanket.u] {
   %req0 = trait.allege @V[!trait.poly<0>]
   trait.return %req0 : !trait.claim<@V[!trait.poly<0>]>
+}
+func.func private @U_blanket.u(%self: !trait.claim<@U[!trait.poly<0>]>) -> i64 {
+  %c = arith.constant 1 : i64
+  return %c : i64
 }
 trait.proof private @pv {
   %d = trait.derive @V[i8] from @V_blanket[i8] given()
@@ -81,14 +85,14 @@ trait.proof private @pu {
 }
 
 // CHECK-NOT: trait.
-// CHECK: func.func private @[[V2:V_blanket_[a-z0-9]+]]_v() -> i64
+// CHECK: func.func private @[[V2:V_blanket.v_[a-z0-9]+]]() -> i64
 // CHECK: func.func private @[[F2:f_[a-z0-9]+]]() -> i64
-// CHECK: call @[[V2]]_v() : () -> i64
+// CHECK: call @[[V2]]() : () -> i64
 // CHECK: func.func @main() -> i64
 // CHECK: call @[[F2]]() : () -> i64
 // CHECK-NOT: trait.
 func.func private @f(%v: !trait.claim<@V[!trait.poly<0>]>, %u: !trait.claim<@U[!trait.poly<0>]>) -> i64 {
-  %r = trait.method.call %v @v() : !trait.claim<@V[!trait.poly<0>]>, () -> i64
+  %r = trait.func.call @V.v(%v) : (!trait.claim<@V[!trait.poly<0>]>) -> i64
   return %r : i64
 }
 func.func @main() -> i64 {

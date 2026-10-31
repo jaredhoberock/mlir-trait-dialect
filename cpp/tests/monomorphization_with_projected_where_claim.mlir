@@ -16,41 +16,35 @@
 // monomorphization_with_assoc_type_bound.mlir.
 
 // CHECK-NOT: trait.project
-// CHECK-NOT: trait.method.call
+// CHECK-NOT: trait.func.call
 
-trait.trait private @MyEq(%self: !trait.claim<@MyEq[!trait.poly<0>, !trait.poly<1>]>) {
-  trait.method @eq(!trait.poly<0>, !trait.poly<1>) -> i1
+trait.trait private @MyEq(!trait.claim<@MyEq[!trait.poly<0>, !trait.poly<1>]>) members [@MyEq.eq]
+func.func private @MyEq.eq(!trait.claim<@MyEq[!trait.poly<0>, !trait.poly<1>]>, !trait.poly<0>, !trait.poly<1>) -> i1
+trait.trait private @Has(!trait.claim<@Has[!trait.poly<0>]>) -> !trait.claim<@MyEq[!trait.proj<@Has[!trait.poly<0>], "A">, !trait.proj<@Has[!trait.poly<0>], "A">]> assoc {A = 0} members [@Has.get]
+func.func private @Has.get(!trait.claim<@Has[!trait.poly<0>]>, !trait.poly<0>) -> !trait.proj<@Has[!trait.poly<0>], "A">
+trait.impl private @MyEq_impl(%self: !trait.claim<@MyEq[i64, i64]>) members [@MyEq.eq -> @MyEq_impl.eq] {
 }
-trait.trait private @Has(%self: !trait.claim<@Has[!trait.poly<0>]>) -> !trait.claim<@MyEq[!trait.proj<@Has[!trait.poly<0>], "A">, !trait.proj<@Has[!trait.poly<0>], "A">]> {
-  trait.assoc_type @A
-  trait.method @get(!trait.poly<0>) -> !trait.proj<@Has[!trait.poly<0>], "A">
+func.func private @MyEq_impl.eq(%self: !trait.claim<@MyEq[i64, i64]>, %arg0: i64, %arg1: i64) -> i1 {
+  %true = arith.constant true
+  return %true : i1
 }
-trait.impl private @MyEq_impl(%self: !trait.claim<@MyEq[i64, i64]>) {
-  trait.method @eq(%arg0: i64, %arg1: i64) -> i1 {
-    %true = arith.constant true
-    trait.return %true : i1
-  }
-}
-trait.impl private @Has_impl(%self: !trait.claim<@Has[f64]>) {
-  trait.assoc_type @A = i64
-  trait.method @get(%arg0: f64) -> i64 {
-    %c0_i64 = arith.constant 0 : i64
-    trait.return %c0_i64 : i64
-  }
+trait.impl private @Has_impl(%self: !trait.claim<@Has[f64]>) bindings {A = i64} members [@Has.get -> @Has_impl.get] {
   %req0 = trait.allege @MyEq[!trait.proj<@Has[f64], "A">, !trait.proj<@Has[f64], "A">]
   trait.return %req0 : !trait.claim<@MyEq[!trait.proj<@Has[f64], "A">, !trait.proj<@Has[f64], "A">]>
 }
+func.func private @Has_impl.get(%self: !trait.claim<@Has[f64]>, %arg0: f64) -> i64 {
+  %c0_i64 = arith.constant 0 : i64
+  return %c0_i64 : i64
+}
 
 // CHECK-LABEL: func.func nested @f_
-// CHECK: %[[ID:.*]] = call @Has_impl_{{h[0-9a-f]+}}_get
-// CHECK: %[[RES:.*]] = call @MyEq_impl_{{h[0-9a-f]+}}_eq(%[[ID]], %[[ID]])
+// CHECK: %[[ID:.*]] = call @Has_impl.get_{{h[0-9a-f]+}}
+// CHECK: %[[RES:.*]] = call @MyEq_impl.eq_{{h[0-9a-f]+}}(%[[ID]], %[[ID]])
 // CHECK: return %[[RES]]
 func.func nested @f(%arg0: !trait.poly<0>, %arg1: !trait.claim<@Has[!trait.poly<0>]>) -> i1 {
-  %0 = trait.method.call %arg1 @get(%arg0)
-    : !trait.claim<@Has[!trait.poly<0>]>, (!trait.poly<0>) -> !trait.proj<@Has[!trait.poly<0>], "A">
+  %0 = trait.func.call @Has.get(%arg1, %arg0) : (!trait.claim<@Has[!trait.poly<0>]>, !trait.poly<0>) -> !trait.proj<@Has[!trait.poly<0>], "A">
   %1 = trait.project %arg1[0] : !trait.claim<@Has[!trait.poly<0>]> -> !trait.claim<@MyEq[!trait.proj<@Has[!trait.poly<0>], "A">, !trait.proj<@Has[!trait.poly<0>], "A">]>
-  %2 = trait.method.call %1 @eq(%0, %0)
-    : !trait.claim<@MyEq[!trait.proj<@Has[!trait.poly<0>], "A">, !trait.proj<@Has[!trait.poly<0>], "A">]>, (!trait.proj<@Has[!trait.poly<0>], "A">, !trait.proj<@Has[!trait.poly<0>], "A">) -> i1
+  %2 = trait.func.call @MyEq.eq(%1, %0, %0) : (!trait.claim<@MyEq[!trait.proj<@Has[!trait.poly<0>], "A">, !trait.proj<@Has[!trait.poly<0>], "A">]>, !trait.proj<@Has[!trait.poly<0>], "A">, !trait.proj<@Has[!trait.poly<0>], "A">) -> i1
   return %2 : i1
 }
 

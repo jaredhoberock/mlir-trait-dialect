@@ -14,17 +14,22 @@
 // CHECK: error: overflow evaluating the requirement {{.*}}@Y1[i32]{{.*}}: 128 obligations stand on the chain that reaches it
 
 !T = !trait.poly<0>
-trait.trait private @R(%self: !trait.claim<@R[!T]>) {}
-trait.trait private @X(%self: !trait.claim<@X[!T]>) {}
-trait.trait private @Y1(%self: !trait.claim<@Y1[!T]>) {}
-trait.trait private @Y2(%self: !trait.claim<@Y2[!T]>) {}
-// REPEAT 1 126: trait.trait private @C{k}(%self: !trait.claim<@C{k}[!trait.poly<0>]>) {}
-trait.impl private @R_i32(%self: !trait.claim<@R[i32]>, %x: !trait.claim<@X[i32]>, %c: !trait.claim<@C1[i32]>) {}
-trait.impl private @X_i32(%self: !trait.claim<@X[i32]>, %y: !trait.claim<@Y1[i32]>) {}
-trait.impl private @Y1_i32(%self: !trait.claim<@Y1[i32]>, %y: !trait.claim<@Y2[i32]>) {}
-trait.impl private @Y2_i32(%self: !trait.claim<@Y2[i32]>) {}
+trait.trait private @R(!trait.claim<@R[!T]>)
+trait.trait private @X(!trait.claim<@X[!T]>)
+trait.trait private @Y1(!trait.claim<@Y1[!T]>)
+trait.trait private @Y2(!trait.claim<@Y2[!T]>)
+// REPEAT 1 126: trait.trait private @C{k}(!trait.claim<@C{k}[!trait.poly<0>]>)
+trait.impl private @R_i32(%self: !trait.claim<@R[i32]>, %x: !trait.claim<@X[i32]>, %c: !trait.claim<@C1[i32]>) {
+}
+trait.impl private @X_i32(%self: !trait.claim<@X[i32]>, %y: !trait.claim<@Y1[i32]>) {
+}
+trait.impl private @Y1_i32(%self: !trait.claim<@Y1[i32]>, %y: !trait.claim<@Y2[i32]>) {
+}
+trait.impl private @Y2_i32(%self: !trait.claim<@Y2[i32]>) {
+}
 // REPEAT 1 125: trait.impl private @C{k}_i32(%self: !trait.claim<@C{k}[i32]>, %n: !trait.claim<@C{k+1}[i32]>) {}
-trait.impl private @C126_i32(%self: !trait.claim<@C126[i32]>, %x: !trait.claim<@X[i32]>) {}
+trait.impl private @C126_i32(%self: !trait.claim<@C126[i32]>, %x: !trait.claim<@X[i32]>) {
+}
 trait.proof private @r {
   %x = trait.witness @x for @X[i32]
   %c = trait.witness @c1 for @C1[i32]
@@ -55,17 +60,22 @@ trait.proof private @c126 {
 // CHECK: error: overflow evaluating the requirement {{.*}}@Y1[i32]{{.*}}: 128 obligations stand on the chain that reaches it
 
 !T = !trait.poly<0>
-trait.trait private @R(%self: !trait.claim<@R[!T]>) {}
-trait.trait private @X(%self: !trait.claim<@X[!T]>) {}
-trait.trait private @Y1(%self: !trait.claim<@Y1[!T]>) {}
-trait.trait private @Y2(%self: !trait.claim<@Y2[!T]>) {}
-// REPEAT 1 126: trait.trait private @C{k}(%self: !trait.claim<@C{k}[!trait.poly<0>]>) {}
-trait.impl private @R_i32(%self: !trait.claim<@R[i32]>, %c: !trait.claim<@C1[i32]>, %x: !trait.claim<@X[i32]>) {}
-trait.impl private @X_i32(%self: !trait.claim<@X[i32]>, %y: !trait.claim<@Y1[i32]>) {}
-trait.impl private @Y1_i32(%self: !trait.claim<@Y1[i32]>, %y: !trait.claim<@Y2[i32]>) {}
-trait.impl private @Y2_i32(%self: !trait.claim<@Y2[i32]>) {}
+trait.trait private @R(!trait.claim<@R[!T]>)
+trait.trait private @X(!trait.claim<@X[!T]>)
+trait.trait private @Y1(!trait.claim<@Y1[!T]>)
+trait.trait private @Y2(!trait.claim<@Y2[!T]>)
+// REPEAT 1 126: trait.trait private @C{k}(!trait.claim<@C{k}[!trait.poly<0>]>)
+trait.impl private @R_i32(%self: !trait.claim<@R[i32]>, %c: !trait.claim<@C1[i32]>, %x: !trait.claim<@X[i32]>) {
+}
+trait.impl private @X_i32(%self: !trait.claim<@X[i32]>, %y: !trait.claim<@Y1[i32]>) {
+}
+trait.impl private @Y1_i32(%self: !trait.claim<@Y1[i32]>, %y: !trait.claim<@Y2[i32]>) {
+}
+trait.impl private @Y2_i32(%self: !trait.claim<@Y2[i32]>) {
+}
 // REPEAT 1 125: trait.impl private @C{k}_i32(%self: !trait.claim<@C{k}[i32]>, %n: !trait.claim<@C{k+1}[i32]>) {}
-trait.impl private @C126_i32(%self: !trait.claim<@C126[i32]>, %x: !trait.claim<@X[i32]>) {}
+trait.impl private @C126_i32(%self: !trait.claim<@C126[i32]>, %x: !trait.claim<@X[i32]>) {
+}
 trait.proof private @r {
   %x = trait.witness @x for @X[i32]
   %c = trait.witness @c1 for @C1[i32]

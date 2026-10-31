@@ -18,11 +18,8 @@
 !U = !trait.poly<2>
 !W = !trait.poly<1>
 
-trait.trait private @Has(%self: !trait.claim<@Has[!trait.poly<0>]>) {
-  trait.assoc_type @A<[!trait.poly<1>]>
-}
-trait.impl private @Has_tuple(%self: !trait.claim<@Has[tuple<!trait.poly<0>>]>) {
-  trait.assoc_type @A<[!trait.poly<1>]> = tuple<!trait.poly<0>, !trait.poly<1>>
+trait.trait private @Has(!trait.claim<@Has[!trait.poly<0>]>) assoc {A = 1}
+trait.impl private @Has_tuple(%self: !trait.claim<@Has[tuple<!trait.poly<0>>]>) bindings {A = tuple<!trait.poly<0>, !trait.poly<1>>} {
 }
 
 func.func private @g(%x: !trait.poly<0>,

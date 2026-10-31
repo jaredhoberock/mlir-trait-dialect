@@ -20,27 +20,22 @@
 !Y = !trait.poly<4>
 !B = !trait.poly<5>
 
-trait.trait private @Call(%self: !trait.claim<@Call[!S, !A]>) {
-  trait.assoc_type @Output
+trait.trait private @Call(!trait.claim<@Call[!S, !A]>) assoc {Output = 0}
+trait.trait private @Other(!trait.claim<@Other[!S]>) assoc {Out = 0}
+trait.trait private @Pair(!trait.claim<@Pair[!S, !A]>) assoc {Res = 0}
+
+trait.impl private @other_i8(%self: !trait.claim<@Other[i8]>) bindings {Out = i32} {
 }
-trait.trait private @Other(%self: !trait.claim<@Other[!S]>) {
-  trait.assoc_type @Out
+trait.impl private @direct(%self: !trait.claim<@Call[i32, i64]>) bindings {Output = f32} {
 }
-trait.trait private @Pair(%self: !trait.claim<@Pair[!S, !A]>) {
-  trait.assoc_type @Res
+trait.impl private @chain(%self: !trait.claim<@Pair[!trait.poly<0>, !trait.poly<1>]>, %output: !trait.claim<!trait.proj<@Call[!trait.poly<2>, !trait.poly<1>], "Output"> = !trait.poly<3>>, %out: !trait.claim<!trait.proj<@Other[!trait.poly<0>], "Out"> = !trait.poly<2>>) bindings {Res = !trait.poly<3>} {
 }
 
-trait.impl private @other_i8(%self: !trait.claim<@Other[i8]>) {
-  trait.assoc_type @Out = i32
+// A function with a body taking the claim is a template, cloned at the proof
+// its call supplies.
+func.func private @need(%c: !trait.claim<@Pair[i8, i64]>) {
+  return
 }
-trait.impl private @direct(%self: !trait.claim<@Call[i32, i64]>) {
-  trait.assoc_type @Output = f32
-}
-trait.impl private @chain(%self: !trait.claim<@Pair[!trait.poly<0>, !trait.poly<1>]>, %output: !trait.claim<!trait.proj<@Call[!trait.poly<2>, !trait.poly<1>], "Output"> = !trait.poly<3>>, %out: !trait.claim<!trait.proj<@Other[!trait.poly<0>], "Out"> = !trait.poly<2>>) {
-  trait.assoc_type @Res = !trait.poly<3>
-}
-
-func.func private @need(!trait.claim<@Pair[i8, i64]>)
 
 // CHECK-LABEL: func.func @main
 // CHECK: trait.witness @[[PROOF:.*]] for @Pair[i8, i64]
@@ -50,6 +45,6 @@ func.func private @need(!trait.claim<@Pair[i8, i64]>)
 // CHECK: trait.derive @Pair[i8, i64] from @chain[i8, i64, i32, f32] given(%[[OUTPUT]], %[[OUT]])
 func.func @main() {
   %c = trait.allege @Pair[i8, i64]
-  func.call @need(%c) : (!trait.claim<@Pair[i8, i64]>) -> ()
+  trait.func.call @need(%c) : (!trait.claim<@Pair[i8, i64]>) -> ()
   return
 }

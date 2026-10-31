@@ -7,6 +7,28 @@
 
 namespace mlir::trait {
 
+namespace {
+/// The symbol table `op` is an entry of, null where `op` is no symbol standing
+/// directly in one.
+Operation *symbolTableOf(Operation *op) {
+  if (!op->hasAttrOfType<StringAttr>(SymbolTable::getSymbolAttrName()))
+    return nullptr;
+  Operation *parent = op->getParentOp();
+  return parent && parent->hasTrait<OpTrait::SymbolTable>() ? parent : nullptr;
+}
+} // namespace
+
+void SymbolTableKeeper::notifyOperationInserted(Operation *op,
+                                                OpBuilder::InsertPoint) {
+  if (Operation *table = symbolTableOf(op))
+    tables.getSymbolTable(table).insert(op);
+}
+
+void SymbolTableKeeper::notifyOperationErased(Operation *op) {
+  if (Operation *table = symbolTableOf(op))
+    tables.getSymbolTable(table).remove(op);
+}
+
 unsigned InstantiationChain::depthAt(Operation *instance,
                                     Attribute templateKey) const {
   unsigned depth = 0;
@@ -189,7 +211,7 @@ static bool namesNoType(Type type) {
 /// carrying none by its refusal -- one carrying a claim stands for that claim,
 /// named with the type holding it.
 static bool isNoPredicateType(ImplResolver &resolver, Type predicate,
-                              ArrayRef<Type> normalized, ModuleOp scope,
+                              ArrayRef<Type> normalized, Operation *scope,
                               llvm::function_ref<InFlightDiagnostic()> err) {
   if (!llvm::any_of(normalized, namesNoType))
     return false;
@@ -237,7 +259,7 @@ Answer<ResolvedImpl> ImplResolver::resolveImplFor(
     const SelectionSite &site,
     OpBuilder &builder,
     llvm::function_ref<InFlightDiagnostic()> err) {
-  ModuleOp scope = site.scope;
+  Operation *scope = site.scope;
   ClaimType originalWanted = wanted;
   using Selected = Answer<ResolvedImpl>;
 
@@ -277,7 +299,7 @@ Answer<ResolvedImpl> ImplResolver::resolveImplFor(
 
   if (auto it = memo.refused.find({scope, app}); it != memo.refused.end()) {
     if (err) {
-      if (auto trait = app.getTrait(scope, err); succeeded(trait))
+      if (auto trait = app.getTrait(symbolTables, scope, err); succeeded(trait))
         (void)diagnoseImplResolutionFailure(*trait, originalWanted,
                                             it->second.satisfiable,
                                             it->second.unsatisfiable, err);
@@ -293,7 +315,7 @@ Answer<ResolvedImpl> ImplResolver::resolveImplFor(
   // standing a trait whose impls all miss has: an op in a nested module may
   // name a trait only that module declares, and the demand it raises reaches
   // this scope keyed by that spelling.
-  auto declaredTrait = app.getTrait(scope, err);
+  auto declaredTrait = app.getTrait(symbolTables, scope, err);
   if (failed(declaredTrait)) {
     memo.refused.try_emplace({scope, app});
     return Selected::refusal();
@@ -419,7 +441,7 @@ Answer<ResolvedImpl> ImplResolver::resolveImplFor(
            "impl generation requires a builder whose insertions someone "
            "observes");
     OpBuilder::InsertionGuard guard(builder);
-    builder.setInsertionPointToEnd(scope.getBody());
+    builder.setInsertionPointToEnd(&scope->getRegion(0).front());
     if (auto impl = generators.generateImpl(trait, selected, builder);
         succeeded(impl)) {
       memo.generatedFor.insert({scope, app});
@@ -513,12 +535,12 @@ Value buildPremiseEvidence(OpBuilder &builder, Location loc,
 /// renames it when the builder's listener enters it there
 /// (`SymbolTableKeeper`): mangled names are not one-to-one, so the table, not
 /// the mangling, makes a proof's name unique.
-static ProofOp createProof(OpBuilder &builder, ModuleOp scope, StringRef name) {
+static ProofOp createProof(OpBuilder &builder, Operation *scope, StringRef name) {
   // A created proof is IR nothing revisits unless someone hears about it, for
   // the same reason a generated impl is.
   assert(builder.getListener() &&
          "proof creation requires a builder whose insertions someone observes");
-  builder.setInsertionPointToEnd(scope.getBody());
+  builder.setInsertionPointToEnd(&scope->getRegion(0).front());
   ProofOp proof = ProofOp::create(builder, builder.getUnknownLoc(), name);
   builder.setInsertionPointToEnd(&proof.getBody().front());
   return proof;
@@ -531,14 +553,14 @@ static ProofOp createProof(OpBuilder &builder, ModuleOp scope, StringRef name) {
 /// the evidence the next of `equalitySteps` build at an equality entry -- and
 /// returns it respelled as `app` by `headerSteps`.
 static ProofOp
-writeProofBody(OpBuilder &builder, ModuleOp scope, StringRef name, ImplOp impl,
+writeProofBody(OpBuilder &builder, Operation *scope, StringRef name, ImplOp impl,
                const SpecializationMap &arguments, ClaimType header,
                TraitApplicationAttr app,
                ArrayRef<ClaimType> entries,
                ArrayRef<ProvenPremise> applicationPremises,
                ArrayRef<SmallVector<ResolutionStep>> equalitySteps,
                ArrayRef<ResolutionStep> headerSteps) {
-  MLIRContext *ctx = scope.getContext();
+  MLIRContext *ctx = scope->getContext();
   OpBuilder::InsertionGuard guard(builder);
   ProofOp proof = createProof(builder, scope, name);
   Location loc = proof.getLoc();
@@ -562,36 +584,36 @@ writeProofBody(OpBuilder &builder, ModuleOp scope, StringRef name, ImplOp impl,
 }
 
 FlatSymbolRefAttr ImplResolver::lookupProof(const ProofIdentity &identity) {
-  auto scope = cast<ModuleOp>(std::get<0>(identity));
+  Operation *scope = std::get<0>(identity);
   if (indexedScopes.insert(scope).second)
-    for (ProofOp proof : scope.getOps<ProofOp>())
+    for (ProofOp proof : scope->getRegion(0).getOps<ProofOp>())
       indexProof(scope, proof);
   return proofs.lookup(identity);
 }
 
-void ImplResolver::indexProof(ModuleOp scope, ProofOp proof) {
+void ImplResolver::indexProof(Operation *scope, ProofOp proof) {
   // A proof is identified by what it cites. The impl is held by identity
   // rather than by name: a name is resolved in one symbol table, and two
   // modules can each hold an impl of that name meaning two different impls.
   TraitApplicationAttr app = proof.getTraitApplication();
   FlatSymbolRefAttr name =
       FlatSymbolRefAttr::get(proof.getContext(), proof.getSymNameAttr());
-  if (Operation *source = proof.getCastSource()) {
+  if (Operation *source = proof.getCastSource(symbolTables)) {
     proofs.try_emplace({scope, source, app, ArrayAttr()}, name);
     return;
   }
   SmallVector<Attribute> subproofs = llvm::map_to_vector(
-      proof.getSubproofs(),
+      proof.getSubproofs(symbolTables),
       [](ClaimType subproof) -> Attribute { return subproof.getProof(); });
-  proofs.try_emplace({scope, proof.getImpl(), app,
+  proofs.try_emplace({scope, proof.getImpl(symbolTables), app,
                       ArrayAttr::get(proof.getContext(), subproofs)},
                      name);
 }
 
-ClaimType ImplResolver::findProof(ModuleOp scope, ImplOp impl,
+ClaimType ImplResolver::findProof(Operation *scope, ImplOp impl,
                                   TraitApplicationAttr app,
                                   ArrayRef<FlatSymbolRefAttr> subproofs) {
-  MLIRContext *ctx = scope.getContext();
+  MLIRContext *ctx = scope->getContext();
   // An impl with no parameters and no where entries is its own proof where its
   // header spells the application; one whose header spells it otherwise is
   // proven by a cast of it.
@@ -606,12 +628,12 @@ ClaimType ImplResolver::findProof(ModuleOp scope, ImplOp impl,
 }
 
 Answer<ClaimType> ImplResolver::writeProof(
-    ModuleOp scope, ImplOp impl, TraitApplicationAttr app,
+    Operation *scope, ImplOp impl, TraitApplicationAttr app,
     const SpecializationMap &arguments, ArrayRef<ClaimType> entries,
     ArrayRef<FlatSymbolRefAttr> subproofs,
     ArrayRef<SmallVector<ResolutionStep>> equalitySteps,
     const SelectionSite &site, OpBuilder &builder) {
-  MLIRContext *ctx = scope.getContext();
+  MLIRContext *ctx = scope->getContext();
   // Every respelling is resolved before the proof is begun: resolving one can
   // write the proofs its steps cite, and those stand before this one.
   auto header = cast<ClaimType>(instantiate(Type(impl.getSelfClaim()), arguments));
@@ -646,10 +668,10 @@ Answer<ClaimType> ImplResolver::respellProof(ClaimType proven,
   if (proven.getTraitApplication() == to)
     return proven;
   using Respelled = Answer<ClaimType>;
-  ModuleOp scope = site.scope;
-  MLIRContext *ctx = scope.getContext();
+  Operation *scope = site.scope;
+  MLIRContext *ctx = scope->getContext();
   // The source of the cast: the root `proven` rests on.
-  auto root = ProofOp::getRootOf(scope, proven.getProof());
+  auto root = ProofOp::getRootOf(symbolTables, scope, proven.getProof());
   if (failed(root))
     return Respelled::refusal();
   Operation *source = *root;
@@ -707,7 +729,8 @@ Answer<ProvenPremise>
 ImplResolver::resolvePremise(ClaimType entry, FlatSymbolRefAttr proof,
                              const SelectionSite &site, OpBuilder &builder,
                              unsigned depth) {
-  auto cited = ProofOp::getProofOpOrUnconditionalImplOp(site.scope, proof);
+  auto cited = ProofOp::getProofOpOrUnconditionalImplOp(symbolTables,
+                                                        site.scope, proof);
   if (failed(cited))
     return Answer<ProvenPremise>::refusal();
   auto proofOp = dyn_cast<ProofOp>(*cited);
@@ -917,11 +940,11 @@ Answer<ClaimType> ImplResolver::proofAtResolution(
     const SelectionSite &site, OpBuilder &builder, ClaimType wanted,
     llvm::function_ref<InFlightDiagnostic()> err) {
   using Proven = Answer<ClaimType>;
-  ModuleOp scope = site.scope;
+  Operation *scope = site.scope;
   // Selection's record of the application holds its proof once one stands.
   auto chosen = memo.chosen.find({scope, app});
   if (chosen != memo.chosen.end() && chosen->second.proof)
-    return ClaimType::get(scope.getContext(), app, chosen->second.proof);
+    return ClaimType::get(scope->getContext(), app, chosen->second.proof);
 
   // The evidence for each where entry at the arguments selection chose, in
   // order: the proof of an application entry at the application selection
@@ -1131,7 +1154,7 @@ Value buildEqualityEvidence(OpBuilder &builder, Location loc,
 }
 
 void ImplResolver::nameRefusal(
-    Type obligation, ModuleOp scope,
+    Type obligation, Operation *scope,
     llvm::function_ref<InFlightDiagnostic()> err) {
   auto projection = dyn_cast<ProjectionType>(obligation);
   ClaimType claim =
@@ -1152,7 +1175,7 @@ void ImplResolver::nameRefusal(
   }
   if (!namedRefusals.insert({scope, app}).second)
     return;
-  auto trait = app.getTrait(scope, /*errFn=*/nullptr);
+  auto trait = app.getTrait(symbolTables, scope, /*errFn=*/nullptr);
   if (succeeded(trait))
     (void)diagnoseImplResolutionFailure(*trait, obligation,
                                         refusal->second.satisfiable,
@@ -1164,7 +1187,7 @@ void ImplResolver::nameRefusal(
 //===----------------------------------------------------------------------===//
 
 FailureOr<ProjectionResolution>
-ImplResolver::readSettledProjection(ProjectionType proj, ModuleOp scope) const {
+ImplResolver::readSettledProjection(ProjectionType proj, Operation *scope) const {
   auto select = [&](ClaimType wanted) -> Answer<ResolvedImpl> {
     // Selection keys what it settles by the claim whose projections it
     // resolved, so the spelling is put through the same resolution first.
@@ -1177,7 +1200,7 @@ ImplResolver::readSettledProjection(ProjectionType proj, ModuleOp scope) const {
   return ProjectionResolution::get(proj, select, /*err=*/nullptr).orFailure();
 }
 
-Type ImplResolver::readSettledProjectionsIn(Type ty, ModuleOp scope) const {
+Type ImplResolver::readSettledProjectionsIn(Type ty, Operation *scope) const {
   // A settled fact answers a projection by its head: selection settled which
   // impl serves that application, and what that impl binds is a function of the
   // projection's own associated-type arguments. A head selection has settled is

@@ -13,10 +13,12 @@
 // CHECK: {{^}}12{{$}}
 
 !T = !trait.poly<0>
-trait.trait private @A(%self: !trait.claim<@A[!T]>) {}
-trait.trait private @B(%self: !trait.claim<@B[!T]>) {}
-trait.impl private @I_hbf3d28c240ae87e4(%self: !trait.claim<@B[i32]>, %eq: !trait.claim<i32 = i32>) {}
-trait.impl private @I(%self: !trait.claim<@A[!T]>, %b: !trait.claim<@B[!T]>) {}
+trait.trait private @A(!trait.claim<@A[!T]>)
+trait.trait private @B(!trait.claim<@B[!T]>)
+trait.impl private @I_hbf3d28c240ae87e4(%self: !trait.claim<@B[i32]>, %eq: !trait.claim<i32 = i32>) {
+}
+trait.impl private @I(%self: !trait.claim<@A[!T]>, %b: !trait.claim<@B[!T]>) {
+}
 func.func private @f(%a: !trait.claim<@A[!T]>) -> i64 {
   %v = arith.constant 9 : i64
   return %v : i64

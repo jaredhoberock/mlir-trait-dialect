@@ -9,16 +9,13 @@
 //
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(instantiate-monomorphs-trait)' | FileCheck %s
 
-trait.trait private @Producer(%self: !trait.claim<@Producer[!trait.poly<0>]>) {
-  trait.assoc_type @Item
-  trait.method @make(!trait.poly<0>) -> !trait.proj<@Producer[!trait.poly<0>], "Item">
+trait.trait private @Producer(!trait.claim<@Producer[!trait.poly<0>]>) assoc {Item = 0} members [@Producer.make]
+func.func private @Producer.make(!trait.claim<@Producer[!trait.poly<0>]>, !trait.poly<0>) -> !trait.proj<@Producer[!trait.poly<0>], "Item">
+trait.impl private @Producer_i64(%self: !trait.claim<@Producer[i64]>) bindings {Item = i32} members [@Producer.make -> @Producer_i64.make] {
 }
-trait.impl private @Producer_i64(%self: !trait.claim<@Producer[i64]>) {
-  trait.assoc_type @Item = i32
-  trait.method @make(%x: i64) -> i32 {
-    %c = arith.constant 0 : i32
-    trait.return %c : i32
-  }
+func.func private @Producer_i64.make(%self: !trait.claim<@Producer[i64]>, %x: i64) -> i32 {
+  %c = arith.constant 0 : i32
+  return %c : i32
 }
 trait.proof private @Producer_i64_p {
   %d = trait.derive @Producer[i64] from @Producer_i64 given()
@@ -27,8 +24,7 @@ trait.proof private @Producer_i64_p {
 
 func.func private @tpl(%claim: !trait.claim<@Producer[!trait.poly<0>]>, %v: !trait.poly<0>)
     -> !trait.proj<@Producer[!trait.poly<0>], "Item"> {
-  %m = trait.method.call %claim @make(%v)
-    : !trait.claim<@Producer[!trait.poly<0>]>, (!trait.poly<0>) -> !trait.proj<@Producer[!trait.poly<0>], "Item">
+  %m = trait.func.call @Producer.make(%claim, %v) : (!trait.claim<@Producer[!trait.poly<0>]>, !trait.poly<0>) -> !trait.proj<@Producer[!trait.poly<0>], "Item">
   return %m : !trait.proj<@Producer[!trait.poly<0>], "Item">
 }
 
@@ -41,7 +37,7 @@ func.func @main(%v: i64) -> !trait.proj<@Producer[i64], "Item"> {
 
 // CHECK: func.func {{.*}}@tpl_
 // CHECK-SAME: -> i32
-// CHECK: call @Producer_i64_{{h[0-9a-f]+}}_make
+// CHECK: call @Producer_i64.make_{{h[0-9a-f]+}}
 // CHECK: return %{{.*}} : i32
 // CHECK-LABEL: func.func @main
 // CHECK: call @tpl_

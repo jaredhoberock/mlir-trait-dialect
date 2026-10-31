@@ -8,8 +8,9 @@
 
 !T = !trait.poly<0>
 !U = !trait.poly<1>
-trait.trait private @Tr(%self: !trait.claim<@Tr[!T]>) {}
-trait.impl private @Tr_tuple(%self: !trait.claim<@Tr[tuple<!trait.poly<0>>]>, %tr: !trait.claim<@Tr[!trait.poly<0>]>) {}
+trait.trait private @Tr(!trait.claim<@Tr[!T]>)
+trait.impl private @Tr_tuple(%self: !trait.claim<@Tr[tuple<!trait.poly<0>>]>, %tr: !trait.claim<@Tr[!trait.poly<0>]>) {
+}
 func.func private @g(%t: !trait.claim<@Tr[!T]>) {
   // expected-error @below {{impl '@Tr_tuple' at the arguments the citation gives it proves '!trait.claim<@Tr[tuple<!trait.poly<0>>]>', not '!trait.claim<@Tr[i64]>'}}
   %d = trait.derive @Tr[i64] from @Tr_tuple[!trait.poly<0>] given(%t) : (!trait.claim<@Tr[!T]>)
@@ -22,9 +23,8 @@ func.func private @g(%t: !trait.claim<@Tr[!T]>) {
 
 !T = !trait.poly<0>
 !U = !trait.poly<1>
-trait.trait private @Tr(%self: !trait.claim<@Tr[!T]>) { trait.assoc_type @Out }
-trait.impl private @Tr_tuple(%self: !trait.claim<@Tr[tuple<!trait.poly<0>>]>, %tr: !trait.claim<@Tr[!trait.poly<0>]>, %out: !trait.claim<!trait.proj<@Tr[!trait.poly<0>], "Out"> = i64>) {
-  trait.assoc_type @Out = i64
+trait.trait private @Tr(!trait.claim<@Tr[!T]>) assoc {Out = 0}
+trait.impl private @Tr_tuple(%self: !trait.claim<@Tr[tuple<!trait.poly<0>>]>, %tr: !trait.claim<@Tr[!trait.poly<0>]>, %out: !trait.claim<!trait.proj<@Tr[!trait.poly<0>], "Out"> = i64>) bindings {Out = i64} {
 }
 func.func private @g(%t: !trait.claim<@Tr[!T]>) {
   // expected-error @below {{impl '@Tr_tuple' states 2 premises, and the derive supplies 1}}
@@ -37,8 +37,9 @@ func.func private @g(%t: !trait.claim<@Tr[!T]>) {
 // One argument per parameter of the impl.
 
 !T = !trait.poly<0>
-trait.trait private @Tr(%self: !trait.claim<@Tr[!T]>) {}
-trait.impl private @Tr_tuple(%self: !trait.claim<@Tr[tuple<!trait.poly<0>>]>, %tr: !trait.claim<@Tr[!trait.poly<0>]>) {}
+trait.trait private @Tr(!trait.claim<@Tr[!T]>)
+trait.impl private @Tr_tuple(%self: !trait.claim<@Tr[tuple<!trait.poly<0>>]>, %tr: !trait.claim<@Tr[!trait.poly<0>]>) {
+}
 func.func private @g(%t: !trait.claim<@Tr[!T]>) {
   // expected-error @below {{impl '@Tr_tuple' takes 1 type arguments, and the derive states 0}}
   %d = trait.derive @Tr[tuple<!T>] from @Tr_tuple given(%t) : (!trait.claim<@Tr[!T]>)
@@ -51,9 +52,8 @@ func.func private @g(%t: !trait.claim<@Tr[!T]>) {
 
 !T = !trait.poly<0>
 !U = !trait.poly<1>
-trait.trait private @Tr(%self: !trait.claim<@Tr[!T]>) { trait.assoc_type @Out }
-trait.impl private @Tr_tuple(%self: !trait.claim<@Tr[tuple<!trait.poly<0>>]>, %tr: !trait.claim<@Tr[!trait.poly<0>]>, %out: !trait.claim<!trait.proj<@Tr[!trait.poly<0>], "Out"> = i64>) {
-  trait.assoc_type @Out = i64
+trait.trait private @Tr(!trait.claim<@Tr[!T]>) assoc {Out = 0}
+trait.impl private @Tr_tuple(%self: !trait.claim<@Tr[tuple<!trait.poly<0>>]>, %tr: !trait.claim<@Tr[!trait.poly<0>]>, %out: !trait.claim<!trait.proj<@Tr[!trait.poly<0>], "Out"> = i64>) bindings {Out = i64} {
 }
 func.func private @g(%t: !trait.claim<@Tr[!T]>) {
   // expected-error @below {{premise 1 of impl '@Tr_tuple' is '!trait.claim<!trait.proj<@Tr[!trait.poly<0>], "Out"> = i64>', and the derive supplies '!trait.claim<@Tr[!trait.poly<0>]>'}}

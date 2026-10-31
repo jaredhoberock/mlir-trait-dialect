@@ -14,16 +14,13 @@
 // is refused.
 // The true control is
 // equality_read_through_a_projection_of_a_projection_holds.
-// CHECK: :[[@LINE+10]]:{{[0-9]+}}: error: 'trait.allege' op alleges '!trait.proj<@A[i8], "Out">' = 'i64', and impl selection resolves its sides to 'i32' and 'i64'
+// CHECK: :[[@LINE+7]]:{{[0-9]+}}: error: 'trait.allege' op alleges '!trait.proj<@A[i8], "Out">' = 'i64', and impl selection resolves its sides to 'i32' and 'i64'
 
 !T = !trait.poly<0>
 !E = !trait.claim<!trait.proj<@A[i8], "Out"> = i64>
-trait.trait private @A(%self: !trait.claim<@A[!T]>) -> !trait.claim<!trait.proj<@A[!T], "Out"> = i64> {
-  trait.assoc_type @Out
-}
-trait.trait private @B(%self: !trait.claim<@B[!T]>) -> !trait.claim<@A[!T]> {}
-trait.impl private @I(%self: !trait.claim<@A[i8]>) {
-  trait.assoc_type @Out = i32
+trait.trait private @A(!trait.claim<@A[!T]>) -> !trait.claim<!trait.proj<@A[!T], "Out"> = i64> assoc {Out = 0}
+trait.trait private @B(!trait.claim<@B[!T]>) -> !trait.claim<@A[!T]>
+trait.impl private @I(%self: !trait.claim<@A[i8]>) bindings {Out = i32} {
   %e = trait.allege !trait.proj<@A[i8], "Out"> = i64
   trait.return %e : !E
 }
@@ -47,12 +44,12 @@ func.func @main() -> i64 {
 // CHECK: :[[@LINE+5]]:{{[0-9]+}}: error: 'trait.allege' op alleges 'i32' = 'i64', and impl selection resolves its sides to 'i32' and 'i64'
 
 !T = !trait.poly<0>
-trait.trait private @B(%s: !trait.claim<@B[!T]>) -> !trait.claim<!T = i64> {}
+trait.trait private @B(!trait.claim<@B[!T]>) -> !trait.claim<!T = i64>
 trait.impl private @IB(%s: !trait.claim<@B[i32]>) {
  %e = trait.allege i32 = i64
  trait.return %e : !trait.claim<i32 = i64>
 }
-trait.trait private @A(%s: !trait.claim<@A[!T]>) -> !trait.claim<@B[!T]> {}
+trait.trait private @A(!trait.claim<@A[!T]>) -> !trait.claim<@B[!T]>
 trait.impl private @IA(%s: !trait.claim<@A[i32]>) {
  %b = trait.witness @IB for @B[i32]
  trait.return %b : !trait.claim<@B[i32] by @IB>
@@ -73,7 +70,7 @@ func.func @main() -> i64 {
 // CHECK: :[[@LINE+5]]:{{[0-9]+}}: error: 'trait.allege' op alleges 'i32' = 'i64', and impl selection resolves its sides to 'i32' and 'i64'
 
 !T = !trait.poly<0>
-trait.trait private @A(%s: !trait.claim<@A[!T]>) -> !trait.claim<!T = i64> {}
+trait.trait private @A(!trait.claim<@A[!T]>) -> !trait.claim<!T = i64>
 trait.impl private @I(%s: !trait.claim<@A[i32]>) {
   %e = trait.allege i32 = i64
   trait.return %e : !trait.claim<i32 = i64>

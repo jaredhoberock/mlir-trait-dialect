@@ -15,19 +15,17 @@
 !U = !trait.poly<2>
 !U1 = !trait.poly<5>
 
-trait.trait private @M0(%self: !trait.claim<@M0[!trait.poly<0>]>) {}
-trait.impl private @M0_i64(%self: !trait.claim<@M0[i64]>) {}
-trait.trait private @M1(%self: !trait.claim<@M1[!trait.poly<0>]>) {}
-trait.impl private @M1_i1(%self: !trait.claim<@M1[i1]>) {}
+trait.trait private @M0(!trait.claim<@M0[!trait.poly<0>]>)
+trait.impl private @M0_i64(%self: !trait.claim<@M0[i64]>) {
+}
+trait.trait private @M1(!trait.claim<@M1[!trait.poly<0>]>)
+trait.impl private @M1_i1(%self: !trait.claim<@M1[i1]>) {
+}
 
-trait.trait private @Has(%self: !trait.claim<@Has[!trait.poly<0>]>) {
-  trait.assoc_type @A<[!trait.poly<1>]>
+trait.trait private @Has(!trait.claim<@Has[!trait.poly<0>]>) assoc {A = 1}
+trait.impl private @Has_tuple_m0(%self: !trait.claim<@Has[tuple<!trait.poly<0>>]>, %m0: !trait.claim<@M0[!trait.poly<0>]>) bindings {A = !trait.poly<1>} {
 }
-trait.impl private @Has_tuple_m0(%self: !trait.claim<@Has[tuple<!trait.poly<0>>]>, %m0: !trait.claim<@M0[!trait.poly<0>]>) {
-  trait.assoc_type @A<[!trait.poly<1>]> = !trait.poly<1>
-}
-trait.impl private @Has_tuple_m1(%self: !trait.claim<@Has[tuple<!trait.poly<0>>]>, %m1: !trait.claim<@M1[!trait.poly<0>]>) {
-  trait.assoc_type @A<[!trait.poly<1>]> = !trait.poly<1>
+trait.impl private @Has_tuple_m1(%self: !trait.claim<@Has[tuple<!trait.poly<0>>]>, %m1: !trait.claim<@M1[!trait.poly<0>]>) bindings {A = !trait.poly<1>} {
 }
 
 func.func private @g(%x: !trait.poly<0>,

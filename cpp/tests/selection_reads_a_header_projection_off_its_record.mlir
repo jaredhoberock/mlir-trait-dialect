@@ -12,26 +12,20 @@
 // it and the instance that proof is named after, reads it that way.
 
 !T = !trait.poly<0>
-trait.trait private @Item(%self: !trait.claim<@Item[!T]>) {
-  trait.assoc_type @Of
-}
+trait.trait private @Item(!trait.claim<@Item[!T]>) assoc {Of = 0}
 
 !S = !trait.poly<1>
-trait.trait private @Small(%self: !trait.claim<@Small[!trait.poly<0>]>) {
-}
+trait.trait private @Small(!trait.claim<@Small[!trait.poly<0>]>)
 
 !B = !trait.poly<2>
-trait.trait private @Big(%self: !trait.claim<@Big[!trait.poly<0>]>) {
-}
+trait.trait private @Big(!trait.claim<@Big[!trait.poly<0>]>)
 
 !A = !trait.poly<3>
-trait.impl private @Item_small(%self: !trait.claim<@Item[!trait.poly<0>]>, %small: !trait.claim<@Small[!trait.poly<0>]>) {
-  trait.assoc_type @Of = i64
+trait.impl private @Item_small(%self: !trait.claim<@Item[!trait.poly<0>]>, %small: !trait.claim<@Small[!trait.poly<0>]>) bindings {Of = i64} {
 }
 
 !C = !trait.poly<4>
-trait.impl private @Item_big(%self: !trait.claim<@Item[!trait.poly<0>]>, %big: !trait.claim<@Big[!trait.poly<0>]>) {
-  trait.assoc_type @Of = f32
+trait.impl private @Item_big(%self: !trait.claim<@Item[!trait.poly<0>]>, %big: !trait.claim<@Big[!trait.poly<0>]>) bindings {Of = f32} {
 }
 
 trait.impl private @Small_i32(%self: !trait.claim<@Small[i32]>) {
@@ -39,27 +33,25 @@ trait.impl private @Small_i32(%self: !trait.claim<@Small[i32]>) {
 
 !U = !trait.poly<5>
 !V = !trait.poly<6>
-trait.trait private @Takes(%self: !trait.claim<@Takes[!trait.poly<0>, !trait.poly<1>]>) {
-  trait.method @go(!trait.poly<0>) -> !trait.poly<1>
-}
+trait.trait private @Takes(!trait.claim<@Takes[!trait.poly<0>, !trait.poly<1>]>) members [@Takes.go]
+func.func private @Takes.go(!trait.claim<@Takes[!trait.poly<0>, !trait.poly<1>]>, !trait.poly<0>) -> !trait.poly<1>
 
 !W = !trait.poly<7>
-trait.impl private @Takes_blanket(%self: !trait.claim<@Takes[!trait.poly<0>, !trait.proj<@Item[!trait.poly<0>], "Of">]>, %item: !trait.claim<@Item[!trait.poly<0>]>) {
-  trait.method @go(%x: !trait.poly<0>) -> !trait.proj<@Item[!trait.poly<0>], "Of"> {
-    %r = ub.poison : !trait.proj<@Item[!trait.poly<0>], "Of">
-    trait.return %r : !trait.proj<@Item[!trait.poly<0>], "Of">
-  }
+trait.impl private @Takes_blanket(%self: !trait.claim<@Takes[!trait.poly<0>, !trait.proj<@Item[!trait.poly<0>], "Of">]>, %item: !trait.claim<@Item[!trait.poly<0>]>) members [@Takes.go -> @Takes_blanket.go] {
+}
+func.func private @Takes_blanket.go(%self: !trait.claim<@Takes[!trait.poly<0>, !trait.proj<@Item[!trait.poly<0>], "Of">]>, %item: !trait.claim<@Item[!trait.poly<0>]>, %x: !trait.poly<0>) -> !trait.proj<@Item[!trait.poly<0>], "Of"> {
+  %r = ub.poison : !trait.proj<@Item[!trait.poly<0>], "Of">
+  return %r : !trait.proj<@Item[!trait.poly<0>], "Of">
 }
 
-// CHECK-LABEL: func.func private @Takes_blanket_{{[0-9a-z_]+}}_go
+// CHECK-LABEL: func.func private @Takes_blanket.go_{{h[0-9a-f]+}}
 // CHECK-SAME: (%{{.*}}: i32) -> i64
 // CHECK-LABEL: func.func @main
-// CHECK: call @Takes_blanket_
+// CHECK: call @Takes_blanket.go_
 func.func @main(%x: i32) -> !trait.proj<@Item[i32], "Of"> {
   %item = trait.allege @Item[i32]
   %takes = trait.derive @Takes[i32, !trait.proj<@Item[i32], "Of">]
     from @Takes_blanket[i32] given(%item) : (!trait.claim<@Item[i32]>)
-  %r = trait.method.call %takes @go(%x)
-    : !trait.claim<@Takes[i32, !trait.proj<@Item[i32], "Of">]>, (i32) -> !trait.proj<@Item[i32], "Of">
+  %r = trait.func.call @Takes.go(%takes, %x) : (!trait.claim<@Takes[i32, !trait.proj<@Item[i32], "Of">]>, i32) -> !trait.proj<@Item[i32], "Of">
   return %r : !trait.proj<@Item[i32], "Of">
 }

@@ -9,10 +9,12 @@
 // verifier refuses. Two impls of one application, each with its own proof, make
 // the swap spellable.
 
-trait.trait private @Safe(%self: !trait.claim<@Safe[!trait.poly<0>, !trait.poly<1>]>) {}
+trait.trait private @Safe(!trait.claim<@Safe[!trait.poly<0>, !trait.poly<1>]>)
 
-trait.impl private @Safe_impl(%self: !trait.claim<@Safe[i32, i64]>) {}
-trait.impl private @Safe_impl_alt(%self: !trait.claim<@Safe[i32, i64]>) {}
+trait.impl private @Safe_impl(%self: !trait.claim<@Safe[i32, i64]>) {
+}
+trait.impl private @Safe_impl_alt(%self: !trait.claim<@Safe[i32, i64]>) {
+}
 
 trait.proof private @Safe_proof {
   %d = trait.derive @Safe[i32, i64] from @Safe_impl given()
@@ -38,10 +40,12 @@ func.func @swap() -> !trait.claim<@Safe[i32, i64] by @Safe_proof_alt> {
 // a claim at its root or a type that holds no claim, so a coerce of a tuple
 // holding claims is refused before any proof is compared.
 
-trait.trait private @Safe(%self: !trait.claim<@Safe[!trait.poly<0>, !trait.poly<1>]>) {}
+trait.trait private @Safe(!trait.claim<@Safe[!trait.poly<0>, !trait.poly<1>]>)
 
-trait.impl private @Safe_impl(%self: !trait.claim<@Safe[i32, i64]>) {}
-trait.impl private @Safe_impl_alt(%self: !trait.claim<@Safe[i32, i64]>) {}
+trait.impl private @Safe_impl(%self: !trait.claim<@Safe[i32, i64]>) {
+}
+trait.impl private @Safe_impl_alt(%self: !trait.claim<@Safe[i32, i64]>) {
+}
 
 trait.proof private @Safe_proof {
   %d = trait.derive @Safe[i32, i64] from @Safe_impl given()

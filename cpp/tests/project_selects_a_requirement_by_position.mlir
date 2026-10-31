@@ -12,12 +12,10 @@
 
 !S = !trait.poly<0>
 
-trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) {}
-trait.trait private @B(%self: !trait.claim<@B[!trait.poly<0>]>) {}
+trait.trait private @A(!trait.claim<@A[!trait.poly<0>]>)
+trait.trait private @B(!trait.claim<@B[!trait.poly<0>]>)
 
-trait.trait private @Has(%self: !trait.claim<@Has[!S]>) -> (!trait.claim<@A[!S]>, !trait.claim<!trait.proj<@Has[!S], "Out"> = i64>, !trait.claim<@B[!S]>) {
-  trait.assoc_type @Out
-}
+trait.trait private @Has(!trait.claim<@Has[!S]>) -> (!trait.claim<@A[!S]>, !trait.claim<!trait.proj<@Has[!S], "Out"> = i64>, !trait.claim<@B[!S]>) assoc {Out = 0}
 
 // CHECK-LABEL: func.func @f
 // CHECK: trait.project %arg0[0] : <@Has[i32]> -> <@A[i32]>

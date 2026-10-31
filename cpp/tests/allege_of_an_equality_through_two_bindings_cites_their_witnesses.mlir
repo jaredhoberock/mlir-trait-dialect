@@ -13,14 +13,12 @@
 !T = !trait.poly<1>
 !G = !trait.poly<2>
 
-trait.trait private @Other(%self: !trait.claim<@Other[!S]>) { trait.assoc_type @Out }
-trait.impl private @Other_i64(%self: !trait.claim<@Other[i64]>) {
-  trait.assoc_type @Out = i32
+trait.trait private @Other(!trait.claim<@Other[!S]>) assoc {Out = 0}
+trait.impl private @Other_i64(%self: !trait.claim<@Other[i64]>) bindings {Out = i32} {
 }
 
-trait.trait private @Carry(%self: !trait.claim<@Carry[!trait.poly<0>, !trait.poly<1>]>) { trait.assoc_type @Payload }
-trait.impl private @Carry_any(%self: !trait.claim<@Carry[!trait.poly<0>, !trait.poly<1>]>) {
-  trait.assoc_type @Payload = !trait.proj<@Other[!trait.poly<0>], "Out">
+trait.trait private @Carry(!trait.claim<@Carry[!trait.poly<0>, !trait.poly<1>]>) assoc {Payload = 0}
+trait.impl private @Carry_any(%self: !trait.claim<@Carry[!trait.poly<0>, !trait.poly<1>]>) bindings {Payload = !trait.proj<@Other[!trait.poly<0>], "Out">} {
 }
 
 func.func private @need(!trait.claim<!trait.proj<@Carry[i64, i8], "Payload"> = i32>)

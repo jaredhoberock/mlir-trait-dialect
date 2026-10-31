@@ -16,14 +16,12 @@
 !B = !trait.poly<3>
 !X = !trait.poly<4>
 
-trait.trait private @Arg(%self: !trait.claim<@Arg[!S]>) { trait.assoc_type @Out }
-trait.impl private @Arg_i64(%self: !trait.claim<@Arg[i64]>) {
-  trait.assoc_type @Out = i32
+trait.trait private @Arg(!trait.claim<@Arg[!S]>) assoc {Out = 0}
+trait.impl private @Arg_i64(%self: !trait.claim<@Arg[i64]>) bindings {Out = i32} {
 }
 
-trait.trait private @Gat(%self: !trait.claim<@Gat[!S]>) { trait.assoc_type @Item<[!A]> }
-trait.impl private @Gat_any(%self: !trait.claim<@Gat[!trait.poly<0>]>) {
-  trait.assoc_type @Item<[!trait.poly<1>]> = !trait.poly<1>
+trait.trait private @Gat(!trait.claim<@Gat[!S]>) assoc {Item = 1}
+trait.impl private @Gat_any(%self: !trait.claim<@Gat[!trait.poly<0>]>) bindings {Item = !trait.poly<1>} {
 }
 
 func.func private @sink(%e: !trait.claim<!trait.proj<@Gat[!trait.poly<0>], "Item", [!trait.proj<@Arg[!trait.poly<0>], "Out">]> = i32>) {

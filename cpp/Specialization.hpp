@@ -37,16 +37,10 @@ void cloneRegionStampedBefore(OpBuilder &builder, Region &source, Region &dest,
 
 /// Clones `polymorph` at `rewriter`'s insertion point as `instanceName`, its
 /// signature, attributes and body stamped under `substitution`, and answers the
-/// clone, or null when `polymorph` has no body to clone.
-///
-/// The clone is the function the block it is inserted into holds: a
-/// `trait.method` inside a trait or impl and a `func.func` anywhere else. A
-/// method cut into a `func.func` has every `trait.return` ending a block of its
-/// body become a `func.return` over the same operands; nothing else in the body
-/// changes kind. A method carries no visibility, so a clone into a trait or impl
-/// takes none, and a `func.func` takes the polymorph's.
-FunctionOpInterface specializePolymorph(
-    RewriterBase &rewriter, FunctionOpInterface polymorph,
+/// clone, or null when `polymorph` has no body to clone. The clone takes the
+/// polymorph's visibility.
+func::FuncOp specializePolymorph(
+    RewriterBase &rewriter, func::FuncOp polymorph,
     StringRef instanceName, const SpecializationMap &variables,
     const ProjectionBindings &projections = ProjectionBindings());
 
@@ -95,14 +89,14 @@ public:
   /// claim holds an unproven application, or when a claim the use supplies
   /// under another spelling is not carried to the parameter's.
   static FailureOr<InstanceKey>
-  get(SymbolRefAttr templateRef, ArrayRef<Type> typeArguments,
+  get(FlatSymbolRefAttr templateRef, ArrayRef<Type> typeArguments,
       TypeRange formalInputs, TypeRange actualInputs, AttrTypeReplacer &stamp,
       llvm::function_ref<FailureOr<ClaimType>(ClaimType, ClaimType)> respell);
 
-  /// The symbol the instance is cut under: the template's root name, a hash of
-  /// the type arguments followed by the evidence, then for a method the
-  /// method's name. Equal keys spell one name in every process; unequal keys of
-  /// one template spell different names but for a collision of the 64-bit hash.
+  /// The symbol the instance is cut under: the template's name and a hash of
+  /// the type arguments followed by the evidence. Equal keys spell one name in
+  /// every process; unequal keys of one template spell different names but for
+  /// a collision of the 64-bit hash.
   std::string getSymbolName() const;
 
   /// What each formal position received, null at a position that takes no
@@ -110,27 +104,29 @@ public:
   ArrayRef<Type> getEvidence() const { return evidence; }
 
 private:
-  InstanceKey(SymbolRefAttr templateRef, ArrayRef<Type> typeArguments,
+  InstanceKey(FlatSymbolRefAttr templateRef, ArrayRef<Type> typeArguments,
               SmallVector<Type> evidence)
       : templateRef(templateRef),
         typeArguments(typeArguments.begin(), typeArguments.end()),
         evidence(std::move(evidence)) {}
 
-  SymbolRefAttr templateRef;
+  FlatSymbolRefAttr templateRef;
   SmallVector<Type> typeArguments;
   SmallVector<Type> evidence;
 };
 
-/// The instance `key` names among `module`'s symbols: the one already cut for
-/// it, or the one `cut` makes under the key's symbol name.
+/// The instance `key` names among the symbols of the table `from` stands in,
+/// read through `symbolTable`: the one already cut for it, or the one `cut`
+/// makes under the key's symbol name.
 ///
 /// A fresh instance takes, at each position that takes evidence, exactly the
 /// evidence the key holds there, and a projection its body reads off an
 /// operand takes the evidence the source's proof determines at its index.
 /// `cut` answers null when the template has no body to clone, and so does
 /// this.
-func::FuncOp getOrCutInstance(RewriterBase &rewriter, ModuleOp module,
-                              const InstanceKey &key,
+func::FuncOp getOrCutInstance(RewriterBase &rewriter,
+                              SymbolTableCollection &symbolTable,
+                              Operation *from, const InstanceKey &key,
                               llvm::function_ref<func::FuncOp(StringRef)> cut);
 
 }

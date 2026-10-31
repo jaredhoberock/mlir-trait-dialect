@@ -12,16 +12,17 @@
 // does not settle at erasure's entry, and one alleged over it is unproven.
 
 !T = !trait.poly<0>
-trait.trait private @Dead(%self: !trait.claim<@Dead[!T]>) { trait.assoc_type @Out }
-trait.trait private @Has(%self: !trait.claim<@Has[!T]>) { trait.assoc_type @Out }
-trait.impl private @Has_any(%self: !trait.claim<@Has[!T]>) { trait.assoc_type @Out = !trait.proj<@Dead[!T], "Out"> }
-trait.trait private @Other(%self: !trait.claim<@Other[!T]>) { trait.assoc_type @Out }
-trait.impl private @Other_any(%self: !trait.claim<@Other[!T]>) { trait.assoc_type @Out = !trait.proj<@Dead[!T], "Out"> }
-trait.trait private @Run(%self: !trait.claim<@Run[!T]>) { trait.assoc_type @Item }
+trait.trait private @Dead(!trait.claim<@Dead[!T]>) assoc {Out = 0}
+trait.trait private @Has(!trait.claim<@Has[!T]>) assoc {Out = 0}
+trait.impl private @Has_any(%self: !trait.claim<@Has[!T]>) bindings {Out = !trait.proj<@Dead[!T], "Out">} {
+}
+trait.trait private @Other(!trait.claim<@Other[!T]>) assoc {Out = 0}
+trait.impl private @Other_any(%self: !trait.claim<@Other[!T]>) bindings {Out = !trait.proj<@Dead[!T], "Out">} {
+}
+trait.trait private @Run(!trait.claim<@Run[!T]>) assoc {Item = 0}
 // expected-note @below {{unsatisfiable candidate}}
 trait.impl private @Run_cond(%self: !trait.claim<@Run[!T]>,
-                             %eq: !trait.claim<!trait.proj<@Has[!T], "Out"> = !trait.proj<@Other[!T], "Out">>) {
-  trait.assoc_type @Item = i64
+                             %eq: !trait.claim<!trait.proj<@Has[!T], "Out"> = !trait.proj<@Other[!T], "Out">>) bindings {Item = i64} {
 }
 
 // ERASE: error: no impl with satisfiable assumptions for '!trait.proj<@Run[i32], "Item">'
@@ -35,16 +36,17 @@ func.func @assumed(%x: i64, %h: !trait.claim<!trait.proj<@Run[i32], "Item"> = i6
 // -----
 
 !T = !trait.poly<0>
-trait.trait private @Dead(%self: !trait.claim<@Dead[!T]>) { trait.assoc_type @Out }
-trait.trait private @Has(%self: !trait.claim<@Has[!T]>) { trait.assoc_type @Out }
-trait.impl private @Has_any(%self: !trait.claim<@Has[!T]>) { trait.assoc_type @Out = !trait.proj<@Dead[!T], "Out"> }
-trait.trait private @Other(%self: !trait.claim<@Other[!T]>) { trait.assoc_type @Out }
-trait.impl private @Other_any(%self: !trait.claim<@Other[!T]>) { trait.assoc_type @Out = !trait.proj<@Dead[!T], "Out"> }
-trait.trait private @Run(%self: !trait.claim<@Run[!T]>) { trait.assoc_type @Item }
+trait.trait private @Dead(!trait.claim<@Dead[!T]>) assoc {Out = 0}
+trait.trait private @Has(!trait.claim<@Has[!T]>) assoc {Out = 0}
+trait.impl private @Has_any(%self: !trait.claim<@Has[!T]>) bindings {Out = !trait.proj<@Dead[!T], "Out">} {
+}
+trait.trait private @Other(!trait.claim<@Other[!T]>) assoc {Out = 0}
+trait.impl private @Other_any(%self: !trait.claim<@Other[!T]>) bindings {Out = !trait.proj<@Dead[!T], "Out">} {
+}
+trait.trait private @Run(!trait.claim<@Run[!T]>) assoc {Item = 0}
 // expected-note @below {{unsatisfiable candidate}}
 trait.impl private @Run_cond(%self: !trait.claim<@Run[!T]>,
-                             %eq: !trait.claim<!trait.proj<@Has[!T], "Out"> = !trait.proj<@Other[!T], "Out">>) {
-  trait.assoc_type @Item = i64
+                             %eq: !trait.claim<!trait.proj<@Has[!T], "Out"> = !trait.proj<@Other[!T], "Out">>) bindings {Item = i64} {
 }
 
 func.func private @need(!trait.claim<!trait.proj<@Run[i32], "Item"> = i64>)

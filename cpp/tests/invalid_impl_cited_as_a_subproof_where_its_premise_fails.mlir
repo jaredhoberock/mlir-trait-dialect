@@ -11,30 +11,28 @@
 
 // CHECK: error: unproven monomorphic claim '!trait.claim<@T[i32]>' after instantiate-monomorphs
 
-trait.trait private @T(%self: !trait.claim<@T[!trait.poly<0>]>) {
-  trait.method @m() -> i64
+trait.trait private @T(!trait.claim<@T[!trait.poly<0>]>) members [@T.m]
+func.func private @T.m(!trait.claim<@T[!trait.poly<0>]>) -> i64
+trait.impl private @I(%self: !trait.claim<@T[i32]>, %eq: !trait.claim<i32 = i64>) members [@T.m -> @I.m] {
 }
-trait.impl private @I(%self: !trait.claim<@T[i32]>, %eq: !trait.claim<i32 = i64>) {
-  trait.method @m() -> i64 {
-    %c = arith.constant 1 : i64
-    trait.return %c : i64
-  }
+func.func private @I.m(%self: !trait.claim<@T[i32]>, %eq: !trait.claim<i32 = i64>) -> i64 {
+  %c = arith.constant 1 : i64
+  return %c : i64
 }
-trait.trait private @Uses(%self: !trait.claim<@Uses[!trait.poly<0>]>) -> !trait.claim<@T[!trait.poly<0>]> {
-  trait.method @u() -> i64
-}
-trait.impl private @Uses_i32(%self: !trait.claim<@Uses[i32]>) {
+trait.trait private @Uses(!trait.claim<@Uses[!trait.poly<0>]>) -> !trait.claim<@T[!trait.poly<0>]> members [@Uses.u]
+func.func private @Uses.u(!trait.claim<@Uses[!trait.poly<0>]>) -> i64
+trait.impl private @Uses_i32(%self: !trait.claim<@Uses[i32]>) members [@Uses.u -> @Uses_i32.u] {
   %eq = trait.allege i32 = i64
   %t = trait.derive @T[i32] from @I given(%eq) : (!trait.claim<i32 = i64>)
-  trait.method @u() -> i64 {
-    %c = arith.constant 3 : i64
-    trait.return %c : i64
-  }
   trait.return %t : !trait.claim<@T[i32]>
+}
+func.func private @Uses_i32.u(%self: !trait.claim<@Uses[i32]>) -> i64 {
+  %c = arith.constant 3 : i64
+  return %c : i64
 }
 func.func @main() -> i64 {
   %w = trait.witness @Uses_i32 for @Uses[i32]
   %t = trait.project %w[0] : !trait.claim<@Uses[i32] by @Uses_i32> -> !trait.claim<@T[i32]>
-  %r = trait.method.call %t @m() : !trait.claim<@T[i32]>, () -> i64
+  %r = trait.func.call @T.m(%t) : (!trait.claim<@T[i32]>) -> i64
   return %r : i64
 }

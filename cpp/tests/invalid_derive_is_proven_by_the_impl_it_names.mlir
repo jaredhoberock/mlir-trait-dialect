@@ -16,29 +16,28 @@
 !T = !trait.poly<0>
 !U = !trait.poly<1>
 
-trait.trait private @Mark(%self: !trait.claim<@Mark[!T]>) {}
-trait.trait private @Tr(%self: !trait.claim<@Tr[!T]>) {
-  trait.method @get(!T) -> i64
+trait.trait private @Mark(!trait.claim<@Mark[!T]>)
+trait.trait private @Tr(!trait.claim<@Tr[!T]>) members [@Tr.get]
+func.func private @Tr.get(!trait.claim<@Tr[!T]>, !T) -> i64
+
+trait.impl private @Tr_any(%self: !trait.claim<@Tr[tuple<!trait.poly<0>>]>, %mark: !trait.claim<@Mark[!trait.poly<0>]>) members [@Tr.get -> @Tr_any.get] {
+}
+func.func private @Tr_any.get(%self: !trait.claim<@Tr[tuple<!trait.poly<0>>]>, %mark: !trait.claim<@Mark[!trait.poly<0>]>, %x: tuple<!trait.poly<0>>) -> i64 {
+  %c = arith.constant 1 : i64
+  return %c : i64
 }
 
-trait.impl private @Tr_any(%self: !trait.claim<@Tr[tuple<!trait.poly<0>>]>, %mark: !trait.claim<@Mark[!trait.poly<0>]>) {
-  trait.method @get(%x: tuple<!trait.poly<0>>) -> i64 {
-    %c = arith.constant 1 : i64
-    trait.return %c : i64
-  }
+trait.impl private @Tr_i32(%self: !trait.claim<@Tr[tuple<i32>]>) members [@Tr.get -> @Tr_i32.get] {
 }
-
-trait.impl private @Tr_i32(%self: !trait.claim<@Tr[tuple<i32>]>) {
-  trait.method @get(%x: tuple<i32>) -> i64 {
-    %c = arith.constant 2 : i64
-    trait.return %c : i64
-  }
+func.func private @Tr_i32.get(%self: !trait.claim<@Tr[tuple<i32>]>, %x: tuple<i32>) -> i64 {
+  %c = arith.constant 2 : i64
+  return %c : i64
 }
 
 func.func private @g(%x: tuple<!T>) -> i64 {
   %m = trait.allege @Mark[!T]
   %d = trait.derive @Tr[tuple<!T>] from @Tr_any[!trait.poly<0>] given(%m) : (!trait.claim<@Mark[!T]>)
-  %r = trait.method.call %d @get(%x) : !trait.claim<@Tr[tuple<!T>]>, (tuple<!T>) -> i64
+  %r = trait.func.call @Tr.get(%d, %x) : (!trait.claim<@Tr[tuple<!T>]>, tuple<!T>) -> i64
   return %r : i64
 }
 

@@ -3,27 +3,29 @@
 
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(instantiate-monomorphs-trait)' | FileCheck %s
 
-// The sibling of the refusal row: once @Gen binds @Gen[i64]::A to i64, the
-// claim spelled through the projection and the claim spelled at its resolution
-// are one claim. The witness of @Box_i64 is respelled through the projection
-// by a coercion citing the binding, and impl selection serves an allege
-// spelled through the projection from the same impl.
+// The sibling of the refusal test program: once @Gen binds @Gen[i64]::A to
+// i64, the claim spelled through the projection and the claim spelled at its
+// resolution are one claim. The witness of @Box_i64 is respelled through the
+// projection by a coercion citing the binding, and impl selection serves an
+// allege spelled through the projection from the same impl. @holds takes the
+// three claims as a template does, so its call passes each at the proof its
+// instance's parameter names.
 
-trait.trait private @Gen(%self: !trait.claim<@Gen[!trait.poly<0>]>) {
-  trait.assoc_type @A
+trait.trait private @Gen(!trait.claim<@Gen[!trait.poly<0>]>) assoc {A = 0}
+
+trait.impl private @Gen_i64(%self: !trait.claim<@Gen[i64]>) bindings {A = i64} {
 }
 
-trait.impl private @Gen_i64(%self: !trait.claim<@Gen[i64]>) {
-  trait.assoc_type @A = i64
+trait.trait private @Box(!trait.claim<@Box[!trait.poly<0>]>)
+
+trait.impl private @Box_i64(%self: !trait.claim<@Box[i64]>) {
 }
 
-trait.trait private @Box(%self: !trait.claim<@Box[!trait.poly<0>]>) {}
-
-trait.impl private @Box_i64(%self: !trait.claim<@Box[i64]>) {}
-
-func.func private @holds(!trait.claim<@Box[i64]>,
-                         !trait.claim<@Box[!trait.proj<@Gen[i64], "A">]>,
-                         !trait.claim<@Box[!trait.proj<@Gen[i64], "A">]>)
+func.func private @holds(%d: !trait.claim<@Box[i64]>,
+                         %t: !trait.claim<@Box[!trait.proj<@Gen[i64], "A">]>,
+                         %s: !trait.claim<@Box[!trait.proj<@Gen[i64], "A">]>) {
+  return
+}
 
 // The coercion settles to the witness of @Box_i64 respelled through the
 // projection, and the allege selection serves at that spelling names the same
@@ -32,7 +34,7 @@ func.func private @holds(!trait.claim<@Box[i64]>,
 // CHECK: %[[D:.*]] = trait.witness @Box_i64 for @Box[i64]
 // CHECK: %[[T:.*]] = trait.witness @[[P:Box_i64_.*]] for @Box[!trait.proj<@Gen[i64], "A">]
 // CHECK: %[[S:.*]] = trait.witness @[[P]] for @Box[!trait.proj<@Gen[i64], "A">]
-// CHECK: call @holds(%[[D]], %[[T]], %[[S]])
+// CHECK: call @holds_{{h[0-9a-f]+}}(%[[D]], %[[T]], %[[S]])
 // CHECK-NOT: trait.allege
 func.func @main() {
   %direct = trait.witness @Box_i64 for @Box[i64]

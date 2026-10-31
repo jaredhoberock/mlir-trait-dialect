@@ -30,6 +30,18 @@ bool readsGroundHeadProjection(ProjectionType proj) {
   return !isPolymorphicType(Type(proj.asClaim()));
 }
 
+bool isTemplateSignature(FunctionType type, bool hasBody) {
+  // A parameter taking an unproven application claim is read off the input
+  // itself: the claims a function assumes are its own parameters, never parts
+  // of another type. It is the cheaper reading, so it is asked first.
+  if (hasBody && llvm::any_of(type.getInputs(), [](Type input) {
+        auto claim = dyn_cast<ClaimType>(input);
+        return claim && claim.isApplication() && !claim.isProven();
+      }))
+    return true;
+  return isPolymorphicType(Type(type));
+}
+
 bool isPolymorphicType(Type root) {
   // A projection or a claim is polymorphic exactly where one of its parts is,
   // and the walk visits those parts itself, so it is not asked: asking it
@@ -286,16 +298,6 @@ void PolyType::print(AsmPrinter &printer) const {
 // ClaimType
 //===----------------------------------------------------------------------===//
 
-// Recover the module that anchors symbol lookups: the operation verification
-// reached, or that operation itself when it is the anchoring symbol table.
-ModuleOp getAnchorModule(Operation *anchor) {
-  if (!anchor)
-    return {};
-  if (auto module = dyn_cast<ModuleOp>(anchor))
-    return module;
-  return anchor->getParentOfType<ModuleOp>();
-}
-
 LogicalResult
 verifyEndpointsRelateTypes(ClaimType claim,
                            llvm::function_ref<InFlightDiagnostic()> err) {
@@ -330,18 +332,10 @@ LogicalResult ClaimType::verify(llvm::function_ref<InFlightDiagnostic()> emitErr
 
 // Entry point for the upstream SymbolUserTypeInterface: symbol-table
 // verification invokes this for every claim reachable from an operation, and an
-// owning op may call it directly. The module is recovered from the anchoring
-// operation and diagnostics are anchored there.
+// owning op may call it directly. A name resolves in the symbol table the
+// operation stands in, and diagnostics are anchored there.
 LogicalResult ClaimType::verifySymbolUses(Operation *op,
                                           SymbolTableCollection &symbolTable) const {
-  // Verification writes nothing, so every name read under it resolves through
-  // the symbol tables the walk this is one step of has already built.
-  SymbolLookupScope symbolAnswers(op, symbolTable);
-
-  ModuleOp module = getAnchorModule(op);
-  if (!module)
-    return op->emitError() << "cannot verify " << *this
-                           << ": anchor operation is not nested in a module";
   auto err = [&] { return op->emitError(); };
 
   // Equality arm: an equality relates types, as an application refuses a
@@ -360,7 +354,7 @@ LogicalResult ClaimType::verifySymbolUses(Operation *op,
   // (`verifyCitation`), wherever a value of it stands: an op's result, a block
   // argument, a signature. Each consumer then reads the citation as evidence
   // for the claim it holds, with nothing to re-check at its use.
-  if (isProven() && failed(verifyCitation(*this, module, err)))
+  if (isProven() && failed(verifyCitation(*this, symbolTable, op, err)))
     return failure();
 
   return success();
@@ -451,10 +445,11 @@ bool ClaimType::isPolymorphic() const {
   });
 }
 
-LogicalResult verifyCitation(ClaimType proven, ModuleOp module,
+LogicalResult verifyCitation(ClaimType proven, SymbolTableCollection &symbolTable,
+                             Operation *from,
                              llvm::function_ref<InFlightDiagnostic()> err) {
-  auto symOp =
-      ProofOp::getProofOpOrUnconditionalImplOp(module, proven.getProof(), err);
+  auto symOp = ProofOp::getProofOpOrUnconditionalImplOp(symbolTable, from,
+                                                        proven.getProof(), err);
   if (failed(symOp))
     return failure();
   TraitApplicationAttr declared =
@@ -496,34 +491,36 @@ bool carriesUndischargedObligation(Type root) {
 
 FailureOr<uint64_t> getClaimRequirementCount(
     ClaimType claim,
-    ModuleOp module,
+    SymbolTableCollection &symbolTable,
+    Operation *from,
     llvm::function_ref<InFlightDiagnostic()> errFn) {
   // An equality claim states that two spellings name one type; it applies no
   // trait, so it requires nothing.
   if (claim.isEquality())
     return 0;
 
-  auto trait = claim.getTraitApplication().getTrait(module, errFn);
+  auto trait = claim.getTraitApplication().getTrait(symbolTable, from, errFn);
   if (failed(trait))
     return failure();
   uint64_t count = trait->getRequirements().size();
   if (!claim.isProven())
     return count;
-  auto cited =
-      ProofOp::getProofOpOrUnconditionalImplOp(module, claim.getProof(), errFn);
+  auto cited = ProofOp::getProofOpOrUnconditionalImplOp(symbolTable, from,
+                                                        claim.getProof(), errFn);
   if (failed(cited))
     return failure();
   if (auto proof = dyn_cast<ProofOp>(*cited))
-    count += proof.getPremises().size();
+    count += proof.getPremises(symbolTable).size();
   return count;
 }
 
 FailureOr<ClaimType> getClaimRequirementAt(
     ClaimType claim,
-    ModuleOp module,
+    SymbolTableCollection &symbolTable,
+    Operation *from,
     uint64_t index,
     llvm::function_ref<InFlightDiagnostic()> errFn) {
-  auto count = getClaimRequirementCount(claim, module, errFn);
+  auto count = getClaimRequirementCount(claim, symbolTable, from, errFn);
   if (failed(count))
     return failure();
   if (index >= *count) {
@@ -534,7 +531,7 @@ FailureOr<ClaimType> getClaimRequirementAt(
   }
 
   TraitOp trait = claim.getTraitApplication().getTraitOrAbort(
-      module, "getClaimRequirementAt: the counted trait vanished");
+      symbolTable, from, "getClaimRequirementAt: the counted trait vanished");
   uint64_t traitCount = trait.getRequirements().size();
 
   // A requirement of the trait -- every requirement an unproven claim
@@ -549,11 +546,11 @@ FailureOr<ClaimType> getClaimRequirementAt(
   // A where entry of the impl: the claim the proof's derive is given at that
   // position, read by index. Only a proof has where entries to read: an impl
   // named directly is unconditional.
-  auto cited =
-      ProofOp::getProofOpOrUnconditionalImplOp(module, claim.getProof(), errFn);
+  auto cited = ProofOp::getProofOpOrUnconditionalImplOp(symbolTable, from,
+                                                        claim.getProof(), errFn);
   if (failed(cited))
     return failure();
-  return cast<ProofOp>(*cited).getPremises()[index - traitCount];
+  return cast<ProofOp>(*cited).getPremises(symbolTable)[index - traitCount];
 }
 
 //===----------------------------------------------------------------------===//
@@ -623,17 +620,32 @@ void ProjectionType::print(AsmPrinter &p) const {
 // same trait application as its claim, so verification delegates to that claim.
 LogicalResult ProjectionType::verifySymbolUses(Operation *op,
                                                SymbolTableCollection &symbolTable) const {
-  // Verification writes nothing, so every name read under it resolves through
-  // the symbol tables the walk this is one step of has already built.
-  SymbolLookupScope symbolAnswers(op, symbolTable);
-
   for (Type arg : getAssocTypeArgs())
     if (containsClaim(arg))
       return op->emitError()
              << "projection " << *this
              << " takes a claim as a type argument; a claim is a value's "
                 "evidence, never a type argument";
-  return asClaim().verifySymbolUses(op, symbolTable);
+  if (failed(asClaim().verifySymbolUses(op, symbolTable)))
+    return failure();
+  // The projection names an associated type its trait declares and supplies
+  // one argument per parameter of the associated type's own, which a binding
+  // reads by position after its impl's parameters.
+  TraitOp trait = getTraitApplication().getTraitOrAbort(
+      symbolTable, op, "ProjectionType::verifySymbolUses: the verified trait vanished");
+  std::optional<unsigned> arity =
+      trait.getAssociatedTypeArity(getAssocName().getValue());
+  if (!arity)
+    return op->emitError() << "projection " << *this
+                           << " names no associated type of trait '"
+                           << trait.getSymNameAttr() << "'";
+  if (*arity != getAssocTypeArgs().size())
+    return op->emitError() << "projection " << *this << " supplies "
+                           << getAssocTypeArgs().size()
+                           << " argument(s) to associated type '"
+                           << getAssocName().getValue() << "', which takes "
+                           << *arity;
+  return success();
 }
 
 //===----------------------------------------------------------------------===//

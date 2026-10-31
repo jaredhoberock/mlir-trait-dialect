@@ -12,22 +12,23 @@
 // CHECK: {{^}}16{{$}}
 
 !T = !trait.poly<0>
-trait.trait private @Tr(%self: !trait.claim<@Tr[!T]>) { trait.method @value() -> i64 }
-trait.impl private @One(%self: !trait.claim<@Tr[i32]>) {
-  trait.method @value() -> i64 {
-    %v = arith.constant 7 : i64
-    trait.return %v : i64
-  }
+trait.trait private @Tr(!trait.claim<@Tr[!T]>) members [@Tr.value]
+func.func private @Tr.value(!trait.claim<@Tr[!T]>) -> i64
+trait.impl private @One(%self: !trait.claim<@Tr[i32]>) members [@Tr.value -> @One.value] {
 }
-trait.impl private @Two(%self: !trait.claim<@Tr[i32]>) {
-  trait.method @value() -> i64 {
-    %v = arith.constant 9 : i64
-    trait.return %v : i64
-  }
+func.func private @One.value(%self: !trait.claim<@Tr[i32]>) -> i64 {
+  %v = arith.constant 7 : i64
+  return %v : i64
+}
+trait.impl private @Two(%self: !trait.claim<@Tr[i32]>) members [@Tr.value -> @Two.value] {
+}
+func.func private @Two.value(%self: !trait.claim<@Tr[i32]>) -> i64 {
+  %v = arith.constant 9 : i64
+  return %v : i64
 }
 func.func private @g(%a: !trait.claim<@Tr[!T]>, %b: !trait.claim<@Tr[!T]>) -> i64 {
-  %x = trait.method.call %a @value() : !trait.claim<@Tr[!T]>, () -> i64
-  %y = trait.method.call %b @value() : !trait.claim<@Tr[!T]>, () -> i64
+  %x = trait.func.call @Tr.value(%a) : (!trait.claim<@Tr[!T]>) -> i64
+  %y = trait.func.call @Tr.value(%b) : (!trait.claim<@Tr[!T]>) -> i64
   %s = arith.addi %x, %y : i64
   return %s : i64
 }

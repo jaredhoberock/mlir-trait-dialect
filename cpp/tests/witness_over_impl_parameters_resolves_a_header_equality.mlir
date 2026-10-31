@@ -15,20 +15,14 @@
 
 !S = !trait.poly<0>
 
-trait.trait private @Bar(%self: !trait.claim<@Bar[!S]>) {
-  trait.assoc_type @Assoc
+trait.trait private @Bar(!trait.claim<@Bar[!S]>) assoc {Assoc = 0}
+
+trait.impl private @Bar_box(%self: !trait.claim<@Bar[tuple<!S>]>) bindings {Assoc = !S} {
 }
 
-trait.impl private @Bar_box(%self: !trait.claim<@Bar[tuple<!S>]>) {
-  trait.assoc_type @Assoc = !S
-}
+trait.trait private @Foo(!trait.claim<@Foo[!S]>) -> (!trait.claim<@Bar[!S]>, !trait.claim<!trait.proj<@Bar[!S], "Assoc"> = !trait.proj<@Foo[!S], "U">>) assoc {U = 0}
 
-trait.trait private @Foo(%self: !trait.claim<@Foo[!S]>) -> (!trait.claim<@Bar[!S]>, !trait.claim<!trait.proj<@Bar[!S], "Assoc"> = !trait.proj<@Foo[!S], "U">>) {
-  trait.assoc_type @U
-}
-
-trait.impl private @Foo_box(%self: !trait.claim<@Foo[tuple<!S>]>) {
-  trait.assoc_type @U = !S
+trait.impl private @Foo_box(%self: !trait.claim<@Foo[tuple<!S>]>) bindings {U = !S} {
   %req0 = trait.allege @Bar[tuple<!S>]
   %req1 = trait.allege !trait.proj<@Bar[tuple<!S>], "Assoc"> = !trait.proj<@Foo[tuple<!S>], "U">
   trait.return %req0, %req1 : !trait.claim<@Bar[tuple<!S>]>, !trait.claim<!trait.proj<@Bar[tuple<!S>], "Assoc"> = !trait.proj<@Foo[tuple<!S>], "U">>

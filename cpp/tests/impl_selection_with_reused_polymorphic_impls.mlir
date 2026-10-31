@@ -4,41 +4,44 @@
 // RUN: mlir-opt -pass-pipeline='builtin.module(instantiate-monomorphs-trait)' %s | FileCheck %s
 
 !A = !trait.poly<0>
-trait.trait private @A(%self: !trait.claim<@A[!A]>) {
-  trait.method @a() {
-    trait.return
-  }
+trait.trait private @A(!trait.claim<@A[!A]>) members [default @A.a]
+func.func private @A.a(%self: !trait.claim<@A[!A]>) {
+  return
 }
 
-trait.impl private @A_impl(%self: !trait.claim<@A[i1]>) {}
+trait.impl private @A_impl(%self: !trait.claim<@A[i1]>) members [@A.a -> @A.a] {
+}
 
 !B = !trait.poly<1>
-trait.trait private @B(%self: !trait.claim<@B[!trait.poly<0>]>) {}
+trait.trait private @B(!trait.claim<@B[!trait.poly<0>]>)
 
 // 0-tuple impl for @B
-trait.impl private @B_tuple_impl_arity_0(%self: !trait.claim<@B[tuple<>]>) {}
+trait.impl private @B_tuple_impl_arity_0(%self: !trait.claim<@B[tuple<>]>) {
+}
 
 // 1-tuple impl for @B
 !C = !trait.poly<2>
-trait.impl private @B_tuple_impl_arity_1(%self: !trait.claim<@B[tuple<!trait.poly<0>>]>, %a: !trait.claim<@A[!trait.poly<0>]>) {}
+trait.impl private @B_tuple_impl_arity_1(%self: !trait.claim<@B[tuple<!trait.poly<0>>]>, %a: !trait.claim<@A[!trait.poly<0>]>) {
+}
 
 // 2-tuple impl for @B
 !D = !trait.poly<3>
 !E = !trait.poly<4>
-trait.impl private @B_tuple_impl_arity_2(%self: !trait.claim<@B[tuple<!trait.poly<0>, !trait.poly<1>>]>, %a: !trait.claim<@A[!trait.poly<0>]>, %a_1: !trait.claim<@A[!trait.poly<1>]>) {}
+trait.impl private @B_tuple_impl_arity_2(%self: !trait.claim<@B[tuple<!trait.poly<0>, !trait.poly<1>>]>, %a: !trait.claim<@A[!trait.poly<0>]>, %a_1: !trait.claim<@A[!trait.poly<1>]>) {
+}
 
 // polymorphic impl for @A
 !F = !trait.poly<5>
-trait.impl private @A_polymorphic_impl(%self: !trait.claim<@A[!trait.poly<0>]>, %b: !trait.claim<@B[!trait.poly<0>]>) {
-  trait.method @a() {
-    trait.return
-  }
+trait.impl private @A_polymorphic_impl(%self: !trait.claim<@A[!trait.poly<0>]>, %b: !trait.claim<@B[!trait.poly<0>]>) members [@A.a -> @A_polymorphic_impl.a] {
+}
+func.func private @A_polymorphic_impl.a(%self: !trait.claim<@A[!trait.poly<0>]>, %b: !trait.claim<@B[!trait.poly<0>]>) {
+  return
 }
 
 func.func @main() {
   // CHECK: trait.witness @A_polymorphic_impl_{{.*}}_p
   %0 = trait.allege @A[tuple<tuple<>, tuple<i1>>]
-  trait.method.call %0 @a() : !trait.claim<@A[tuple<tuple<>, tuple<i1>>]>, () -> ()
+  trait.func.call @A.a(%0) : (!trait.claim<@A[tuple<tuple<>, tuple<i1>>]>) -> ()
   return
 }
 

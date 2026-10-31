@@ -12,25 +12,27 @@
 // CHECK: {{^}}16{{$}}
 
 !T = !trait.poly<0>
-trait.trait private @Mark(%self: !trait.claim<@Mark[!T]>) { trait.method @value() -> i64 }
-trait.trait private @Tr(%self: !trait.claim<@Tr[!T]>) { trait.method @value() -> i64 }
-trait.impl private @Mark_one(%self: !trait.claim<@Mark[i32]>) {
-  trait.method @value() -> i64 {
-    %v = arith.constant 7 : i64
-    trait.return %v : i64
-  }
+trait.trait private @Mark(!trait.claim<@Mark[!T]>) members [@Mark.value]
+func.func private @Mark.value(!trait.claim<@Mark[!T]>) -> i64
+trait.trait private @Tr(!trait.claim<@Tr[!T]>) members [@Tr.value]
+func.func private @Tr.value(!trait.claim<@Tr[!T]>) -> i64
+trait.impl private @Mark_one(%self: !trait.claim<@Mark[i32]>) members [@Mark.value -> @Mark_one.value] {
 }
-trait.impl private @Mark_two(%self: !trait.claim<@Mark[i32]>) {
-  trait.method @value() -> i64 {
-    %v = arith.constant 9 : i64
-    trait.return %v : i64
-  }
+func.func private @Mark_one.value(%self: !trait.claim<@Mark[i32]>) -> i64 {
+  %v = arith.constant 7 : i64
+  return %v : i64
 }
-trait.impl private @Tr_impl(%self: !trait.claim<@Tr[i32]>, %mark: !trait.claim<@Mark[i32]>) {
-  trait.method @value() -> i64 {
-    %v = trait.method.call %mark @value() : !trait.claim<@Mark[i32]>, () -> i64
-    trait.return %v : i64
-  }
+trait.impl private @Mark_two(%self: !trait.claim<@Mark[i32]>) members [@Mark.value -> @Mark_two.value] {
+}
+func.func private @Mark_two.value(%self: !trait.claim<@Mark[i32]>) -> i64 {
+  %v = arith.constant 9 : i64
+  return %v : i64
+}
+trait.impl private @Tr_impl(%self: !trait.claim<@Tr[i32]>, %mark: !trait.claim<@Mark[i32]>) members [@Tr.value -> @Tr_impl.value] {
+}
+func.func private @Tr_impl.value(%self: !trait.claim<@Tr[i32]>, %mark: !trait.claim<@Mark[i32]>) -> i64 {
+  %v = trait.func.call @Mark.value(%mark) : (!trait.claim<@Mark[i32]>) -> i64
+  return %v : i64
 }
 trait.proof private @P_one {
   %p0 = trait.witness @Mark_one for @Mark[i32]
@@ -45,8 +47,8 @@ trait.proof private @P_two {
 func.func @main() -> i64 {
   %one = trait.witness @P_one for @Tr[i32]
   %two = trait.witness @P_two for @Tr[i32]
-  %a = trait.method.call %one @value() : !trait.claim<@Tr[i32] by @P_one>, () -> i64
-  %b = trait.method.call %two @value() : !trait.claim<@Tr[i32] by @P_two>, () -> i64
+  %a = trait.func.call @Tr.value(%one) : (!trait.claim<@Tr[i32] by @P_one>) -> i64
+  %b = trait.func.call @Tr.value(%two) : (!trait.claim<@Tr[i32] by @P_two>) -> i64
   %s = arith.addi %a, %b : i64
   return %s : i64
 }

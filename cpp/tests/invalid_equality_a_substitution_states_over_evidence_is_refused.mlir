@@ -11,8 +11,9 @@
 // at the op producing it, the refl in @f's instance, as it refuses an equality
 // over evidence written by hand (invalid_claim_inside_an_equality_endpoint.mlir).
 
-trait.trait private @T(%s: !trait.claim<@T[!trait.poly<0>]>) {}
-trait.impl private @I(%s: !trait.claim<@T[i32]>) {}
+trait.trait private @T(!trait.claim<@T[!trait.poly<0>]>)
+trait.impl private @I(%s: !trait.claim<@T[i32]>) {
+}
 func.func private @h(%e: !trait.claim<!trait.poly<0> = !trait.poly<0>>, %x: !trait.poly<0>) -> !trait.poly<0> {
   return %x : !trait.poly<0>
 }

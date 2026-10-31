@@ -13,11 +13,11 @@
 
 !T = !trait.poly<0>
 
-trait.trait private @Tensor(%self: !trait.claim<@Tensor[!T]>) { trait.assoc_type @Shape }
-trait.impl private @Tensor_i8(%self: !trait.claim<@Tensor[i8]>) { trait.assoc_type @Shape = i64 }
-trait.trait private @S(%self: !trait.claim<@S[!T]>) { trait.assoc_type @Out }
-trait.impl private @S_blanket(%self: !trait.claim<@S[!T]>, %tensor: !trait.claim<@Tensor[!T]>, %shape: !trait.claim<!trait.proj<@Tensor[!T], "Shape"> = i64>) {
-  trait.assoc_type @Out = i64
+trait.trait private @Tensor(!trait.claim<@Tensor[!T]>) assoc {Shape = 0}
+trait.impl private @Tensor_i8(%self: !trait.claim<@Tensor[i8]>) bindings {Shape = i64} {
+}
+trait.trait private @S(!trait.claim<@S[!T]>) assoc {Out = 0}
+trait.impl private @S_blanket(%self: !trait.claim<@S[!T]>, %tensor: !trait.claim<@Tensor[!T]>, %shape: !trait.claim<!trait.proj<@Tensor[!T], "Shape"> = i64>) bindings {Out = i64} {
 }
 
 // CHECK-LABEL: func.func private @f(

@@ -17,22 +17,24 @@
 // CHECK: note: required by {{.*}}@P1[tuple<i32>]
 // CHECK: note: {{.*}} more frame(s) elided
 
-trait.trait private @P1(%self: !trait.claim<@P1[!trait.poly<0>]>) { trait.method @m() -> i64 }
-trait.trait private @P2(%self: !trait.claim<@P2[!trait.poly<0>]>) { trait.method @m() -> i64 }
-trait.impl private @P1_all(%self: !trait.claim<@P1[!trait.poly<0>]>, %p2: !trait.claim<@P2[!trait.poly<0>]>) {
-  trait.method @m() -> i64 {
-    %v = trait.method.call %p2 @m() : !trait.claim<@P2[!trait.poly<0>]>, () -> i64
-    trait.return %v : i64
-  }
+trait.trait private @P1(!trait.claim<@P1[!trait.poly<0>]>) members [@P1.m]
+func.func private @P1.m(!trait.claim<@P1[!trait.poly<0>]>) -> i64
+trait.trait private @P2(!trait.claim<@P2[!trait.poly<0>]>) members [@P2.m]
+func.func private @P2.m(!trait.claim<@P2[!trait.poly<0>]>) -> i64
+trait.impl private @P1_all(%self: !trait.claim<@P1[!trait.poly<0>]>, %p2: !trait.claim<@P2[!trait.poly<0>]>) members [@P1.m -> @P1_all.m] {
 }
-trait.impl private @P2_all(%self: !trait.claim<@P2[!trait.poly<0>]>, %p1: !trait.claim<@P1[tuple<!trait.poly<0>>]>) {
-  trait.method @m() -> i64 {
-    %v = trait.method.call %p1 @m() : !trait.claim<@P1[tuple<!trait.poly<0>>]>, () -> i64
-    trait.return %v : i64
-  }
+func.func private @P1_all.m(%self: !trait.claim<@P1[!trait.poly<0>]>, %p2: !trait.claim<@P2[!trait.poly<0>]>) -> i64 {
+  %v = trait.func.call @P2.m(%p2) : (!trait.claim<@P2[!trait.poly<0>]>) -> i64
+  return %v : i64
+}
+trait.impl private @P2_all(%self: !trait.claim<@P2[!trait.poly<0>]>, %p1: !trait.claim<@P1[tuple<!trait.poly<0>>]>) members [@P2.m -> @P2_all.m] {
+}
+func.func private @P2_all.m(%self: !trait.claim<@P2[!trait.poly<0>]>, %p1: !trait.claim<@P1[tuple<!trait.poly<0>>]>) -> i64 {
+  %v = trait.func.call @P1.m(%p1) : (!trait.claim<@P1[tuple<!trait.poly<0>>]>) -> i64
+  return %v : i64
 }
 func.func @main() -> i64 {
   %w = trait.allege @P1[i32]
-  %v = trait.method.call %w @m() : !trait.claim<@P1[i32]>, () -> i64
+  %v = trait.func.call @P1.m(%w) : (!trait.claim<@P1[i32]>) -> i64
   return %v : i64
 }

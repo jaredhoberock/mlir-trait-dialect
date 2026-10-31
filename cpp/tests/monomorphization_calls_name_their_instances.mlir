@@ -11,13 +11,16 @@
 
 !T = !trait.poly<0>
 
-trait.trait private @Zero(%self: !trait.claim<@Zero[!T]>) {}
-trait.trait private @One(%self: !trait.claim<@One[!T]>) {}
-trait.trait private @Two(%self: !trait.claim<@Two[!T]>) -> (!trait.claim<@Zero[!T]>, !trait.claim<@One[!T]>) {}
+trait.trait private @Zero(!trait.claim<@Zero[!T]>)
+trait.trait private @One(!trait.claim<@One[!T]>)
+trait.trait private @Two(!trait.claim<@Two[!T]>) -> (!trait.claim<@Zero[!T]>, !trait.claim<@One[!T]>)
 
-trait.impl private @Zero_i32(%self: !trait.claim<@Zero[i32]>) {}
-trait.impl private @Zero_i64(%self: !trait.claim<@Zero[i64]>) {}
-trait.impl private @One_i32(%self: !trait.claim<@One[i32]>) {}
+trait.impl private @Zero_i32(%self: !trait.claim<@Zero[i32]>) {
+}
+trait.impl private @Zero_i64(%self: !trait.claim<@Zero[i64]>) {
+}
+trait.impl private @One_i32(%self: !trait.claim<@One[i32]>) {
+}
 trait.impl private @Two_i32(%self: !trait.claim<@Two[i32]>) {
   %req0 = trait.allege @Zero[i32]
   %req1 = trait.allege @One[i32]

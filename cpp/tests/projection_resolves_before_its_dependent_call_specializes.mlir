@@ -8,17 +8,15 @@
 
 !T = !trait.poly<0>
 
-trait.trait private @Outer(%self: !trait.claim<@Outer[!T]>) {
-  trait.assoc_type @Item
+trait.trait private @Outer(!trait.claim<@Outer[!T]>) assoc {Item = 0}
+
+trait.impl private @Outer_i64(%self: !trait.claim<@Outer[i64]>) bindings {Item = i64} {
 }
 
-trait.impl private @Outer_i64(%self: !trait.claim<@Outer[i64]>) {
-  trait.assoc_type @Item = i64
+trait.trait private @Sink(!trait.claim<@Sink[!T]>)
+
+trait.impl private @Sink_any(%self: !trait.claim<@Sink[!T]>) {
 }
-
-trait.trait private @Sink(%self: !trait.claim<@Sink[!T]>) {}
-
-trait.impl private @Sink_any(%self: !trait.claim<@Sink[!T]>) {}
 
 func.func private @callee(%c: !trait.claim<@Sink[!trait.proj<@Outer[i64], "Item">]>,
                   %x: !T) -> !T {

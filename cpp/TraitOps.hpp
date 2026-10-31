@@ -8,25 +8,10 @@
 #include <mlir/IR/Dialect.h>
 #include <mlir/IR/OpDefinition.h>
 #include <mlir/IR/PatternMatch.h>
-#include "SymbolLookup.hpp"
+#include <mlir/IR/SymbolTable.h>
 #include "TraitTypes.hpp"
 
 namespace mlir::trait {
-
-/// Mixin that adds a `getModule()` convenience method to any op.
-template <typename ConcreteType>
-class HasGetModule : public ::mlir::OpTrait::TraitBase<ConcreteType, HasGetModule> {
-public:
-  FailureOr<ModuleOp> getModule(
-      llvm::function_ref<InFlightDiagnostic()> err = nullptr) {
-    auto module = this->getOperation()->template getParentOfType<ModuleOp>();
-    if (!module) {
-      if (err) err() << "not in a module";
-      return failure();
-    }
-    return module;
-  }
-};
 
 /// Refuses `op` unless every region from its own up to its nearest isolated
 /// ancestor enforces SSA dominance, where it reads any value: a value it reads
@@ -49,22 +34,6 @@ public:
     return verifyEqualitiesRelateTypes(op);
   }
 };
-
-/// Refuses `call`, a call of this dialect outside a template, standing inside a
-/// symbol table other than a module, naming why through `err` when it is
-/// given. The call names its callee in its module (`getAnchorModule`) and
-/// lowers to a `func.call` standing where it stands, which names a function of
-/// its own symbol table alone, so inside any other symbol table no lowering
-/// reaches the callee. A call inside a template (`isForeign`) is never lowered
-/// where it stands: a trait or impl declaration's methods are cut into its
-/// module before a call they hold lowers, and a template no instance reaches is
-/// collected with its calls. The clone an instance makes of a call stands
-/// outside every template from the step that cuts it, before any verification
-/// runs, so no call is lowered where this rule refuses it, and one it leaves
-/// unlowered is named by it where instantiation ends.
-LogicalResult
-verifyCallStandsInItsModule(Operation *call,
-                            llvm::function_ref<InFlightDiagnostic()> err);
 
 /// An op reading evidence: every value it reads is defined where SSA dominance
 /// holds (`verifyReadsUnderDominance`), so a derivation through its operands is
@@ -202,10 +171,70 @@ namespace mlir::trait {
 /// operands or off the declarations they name: a projection, a derive, a
 /// coercion, or a call computing evidence. The stage proves such a result by
 /// that reading -- the impl's returned evidence inlined at the projection, the
-/// proof whose body the derive is, the input's proof respelled, the method's
+/// proof whose body the derive is, the input's proof respelled, the callee's
 /// body inlined at the call -- and never by selecting on the result's
 /// spelling.
 bool producesPositionalEvidence(Operation *op);
+
+/// The type arguments `call` supplies for `formal`, the signature of its
+/// callee `callee`, once that signature instantiated at them is `actual`, the
+/// signature the call states: read off `actual` against `formal`, through
+/// `selection` where it is given, and refused through `err` where the two
+/// disagree or a parameter no position determines.
+FailureOr<SpecializationMap>
+readCallTypeArguments(Operation *call, FunctionType formal, FunctionType actual,
+                      StringRef callee, llvm::function_ref<Type(Type)> selection,
+                      llvm::function_ref<InFlightDiagnostic()> err = nullptr);
+
+/// What a call of a trait's member reaches once its receiver -- the call's
+/// first operand -- carries evidence: the function implementing the member,
+/// read off the pair the impl the receiver's proof names, through the root it
+/// rests on, makes for it.
+struct MemberCall {
+  /// The function the impl pairs with the member: the impl's own, or the
+  /// member itself where the impl leaves it to its trait's default. Null where
+  /// the call names no trait's member.
+  func::FuncOp function;
+  ImplOp impl;
+  /// The claim the root proves, naming the root: the impl's header at the
+  /// arguments the root's derive states.
+  ClaimType root;
+  /// The root's derive, given the evidence for the impl's where entries; null
+  /// for an unconditional impl named as its own proof, or a default.
+  DeriveOp derive;
+  /// How many where parameters `function` takes after the receiver: the
+  /// impl's where entries for the impl's own function, none for a default.
+  unsigned whereCount = 0;
+};
+
+/// Reads `call` as a call of a trait's member: one whose callee leads with an
+/// unproven application of a trait listing the callee among its members.
+/// Answers a `MemberCall` with no function where it is no such call; failure
+/// where it is one whose receiver carries no evidence yet or whose proof names
+/// no impl pairing the member.
+FailureOr<MemberCall> readMemberCall(FuncCallOp call,
+                                     SymbolTableCollection &symbolTable);
+
+/// Clones `member.function` at `rewriter`'s insertion point as `instanceName`,
+/// stamped under `variables` and `projections`, with its where parameters
+/// dropped: each one its body reads takes a clone of the premise the root's
+/// derive is given at its position, so the instance is keyed and called by its
+/// receiver and its other operands alone. Answers null where the function has
+/// no body.
+func::FuncOp cutMemberInstance(RewriterBase &rewriter, MemberCall member,
+                               StringRef instanceName,
+                               const SpecializationMap &variables,
+                               const ProjectionBindings &projections);
+
+/// Replaces `call`, a member call computing evidence, by the body of
+/// `member.function` stamped under `subst`: its receiver parameter takes
+/// `receiver`, its where parameters clones of the premises the root's derive
+/// is given, its inputs the call's other operands, and the call's result the
+/// operand the body returns. The claim it leaves is read by position, never
+/// selected again.
+LogicalResult inlineMemberAt(PatternRewriter &rewriter, FuncCallOp call,
+                             MemberCall member, Value receiver,
+                             const CallSubstitution &subst);
 
 /// Ends `impl`'s body, an impl of `trait`, with a return of an allegation of
 /// each of the trait's requirements at the impl's self application: the
@@ -213,5 +242,17 @@ bool producesPositionalEvidence(Operation *op);
 /// selection proves where a use reads it. The allegations stand before the
 /// return, whose operands they become.
 void allegeRequirements(ImplOp impl, TraitOp trait, OpBuilder &builder);
+
+/// Verifies that every function `impl` pairs with a member of `trait`, its
+/// trait, is that member's declaration carried to the impl: the function's
+/// type with the impl's block arguments dropped from its front is the member's
+/// with the trait's self claim dropped, instantiated at the impl's arguments,
+/// read through the impl's own bindings and where equalities (rustc's
+/// `compare_impl_method`). A member left to the trait's default is the trait's
+/// own and is not compared. No pass rewrites a template, so the comparison is
+/// made once, on the module as written, where the stage begins
+/// (`verifyAcyclicTraits`); the impl's own verifier checks the pairs' shape.
+LogicalResult verifyImplMemberSignatures(ImplOp impl, TraitOp trait,
+                                         SymbolTableCollection &symbolTable);
 
 } // end mlir::trait

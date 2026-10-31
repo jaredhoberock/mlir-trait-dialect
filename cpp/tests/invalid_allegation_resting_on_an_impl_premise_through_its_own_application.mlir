@@ -11,9 +11,10 @@
 // serves or one an impl serves.
 
 !T = !trait.poly<0>
-trait.trait private @A(%s: !trait.claim<@A[!T]>) { trait.assoc_type @Item }
+trait.trait private @A(!trait.claim<@A[!T]>) assoc {Item = 0}
 // expected-note @below {{unsatisfiable candidate}}
-trait.impl private @I(%s: !trait.claim<@A[i32]>, %e: !trait.claim<!trait.proj<@A[i32], "Item"> = i64>) { trait.assoc_type @Item = i64 }
+trait.impl private @I(%s: !trait.claim<@A[i32]>, %e: !trait.claim<!trait.proj<@A[i32], "Item"> = i64>) bindings {Item = i64} {
+}
 func.func private @need(!trait.claim<!trait.proj<@A[i32], "Item"> = i64>)
 func.func @f() {
   // expected-error @below {{'trait.allege' op no impl with satisfiable assumptions for '!trait.proj<@A[i32], "Item">'}}
@@ -26,14 +27,11 @@ func.func @f() {
 // -----
 
 !T = !trait.poly<0>
-trait.trait private @B(%s: !trait.claim<@B[!T]>) { trait.assoc_type @Item }
-trait.trait private @A(%s: !trait.claim<@A[!T]>) {
-  trait.assoc_type @Item<[!trait.poly<1>]>
-}
+trait.trait private @B(!trait.claim<@B[!T]>) assoc {Item = 0}
+trait.trait private @A(!trait.claim<@A[!T]>) assoc {Item = 1}
 // expected-note @below {{unsatisfiable candidate}}
 trait.impl private @I(%s: !trait.claim<@A[!T]>,
-    %e: !trait.claim<!trait.proj<@A[!T], "Item", [!trait.proj<@B[!T], "Item">]> = i64>) {
-  trait.assoc_type @Item<[!trait.poly<1>]> = i64
+    %e: !trait.claim<!trait.proj<@A[!T], "Item", [!trait.proj<@B[!T], "Item">]> = i64>) bindings {Item = i64} {
 }
 func.func private @need(!trait.claim<!trait.proj<@A[i32], "Item", [i32]> = i64>)
 func.func @f() {
@@ -47,15 +45,13 @@ func.func @f() {
 // -----
 
 !T = !trait.poly<0>
-trait.trait private @B(%s: !trait.claim<@B[!T]>) { trait.assoc_type @Item }
-trait.impl private @B_i32(%s: !trait.claim<@B[i32]>) { trait.assoc_type @Item = i32 }
-trait.trait private @A(%s: !trait.claim<@A[!T]>) {
-  trait.assoc_type @Item<[!trait.poly<1>]>
+trait.trait private @B(!trait.claim<@B[!T]>) assoc {Item = 0}
+trait.impl private @B_i32(%s: !trait.claim<@B[i32]>) bindings {Item = i32} {
 }
+trait.trait private @A(!trait.claim<@A[!T]>) assoc {Item = 1}
 // expected-note @below {{unsatisfiable candidate}}
 trait.impl private @I(%s: !trait.claim<@A[!T]>,
-    %e: !trait.claim<!trait.proj<@A[!T], "Item", [!trait.proj<@B[!T], "Item">]> = i64>) {
-  trait.assoc_type @Item<[!trait.poly<1>]> = i64
+    %e: !trait.claim<!trait.proj<@A[!T], "Item", [!trait.proj<@B[!T], "Item">]> = i64>) bindings {Item = i64} {
 }
 func.func private @need(!trait.claim<!trait.proj<@A[i32], "Item", [i32]> = i64>)
 func.func @f() {

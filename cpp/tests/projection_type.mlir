@@ -3,15 +3,12 @@
 
 // RUN: mlir-opt %s | FileCheck %s
 
-// CHECK-LABEL: trait private @Get
-// CHECK: trait.assoc_type @Output
-// CHECK: trait.method @get(!trait.poly<0>) -> !trait.proj<@Get[!trait.poly<0>], "Output">
+// CHECK-LABEL: trait.trait private @Get(!trait.claim<@Get[!trait.poly<0>]>) assoc {Output = 0} members [@Get.get]
+// CHECK: func.func private @Get.get(!trait.claim<@Get[!trait.poly<0>]>, !trait.poly<0>) -> !trait.proj<@Get[!trait.poly<0>], "Output">
 
 !T = !trait.poly<0>
-trait.trait private @Get(%self: !trait.claim<@Get[!T]>) {
-  trait.assoc_type @Output
-  trait.method @get(!T) -> !trait.proj<@Get[!T], "Output">
-}
+trait.trait private @Get(!trait.claim<@Get[!T]>) assoc {Output = 0} members [@Get.get]
+func.func private @Get.get(!trait.claim<@Get[!T]>, !T) -> !trait.proj<@Get[!T], "Output">
 
 // CHECK: func.func @use_proj
 // CHECK-SAME: !trait.proj<@Get[i32], "Output">

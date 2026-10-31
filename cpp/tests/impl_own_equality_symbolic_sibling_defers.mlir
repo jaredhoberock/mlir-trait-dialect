@@ -14,17 +14,14 @@
 
 !S = !trait.poly<0>
 
-trait.trait private @X(%self: !trait.claim<@X[!S]>) {}
+trait.trait private @X(!trait.claim<@X[!S]>)
 
-trait.trait private @Sib(%self: !trait.claim<@Sib[!S]>) {
-  trait.assoc_type @Elem
+trait.trait private @Sib(!trait.claim<@Sib[!S]>) assoc {Elem = 0}
+
+trait.impl private @Sib_i8(%self: !trait.claim<@Sib[i8]>, %x: !trait.claim<@X[i8]>) bindings {Elem = i64} {
 }
 
-trait.impl private @Sib_i8(%self: !trait.claim<@Sib[i8]>, %x: !trait.claim<@X[i8]>) {
-  trait.assoc_type @Elem = i64
-}
-
-trait.trait private @Host(%self: !trait.claim<@Host[!S]>) {}
+trait.trait private @Host(!trait.claim<@Host[!S]>)
 
 // CHECK: trait.impl private @Host_i8
 trait.impl private @Host_i8(%self: !trait.claim<@Host[i8]>, %elem: !trait.claim<!trait.proj<@Sib[i8], "Elem"> = f32>) {

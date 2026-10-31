@@ -10,8 +10,9 @@
 // the program lowers. invalid_equality_a_substitution_states_over_evidence_is_refused.mlir
 // is the twin whose instance passes the equality on.
 
-trait.trait private @T(%s: !trait.claim<@T[!trait.poly<0>]>) {}
-trait.impl private @I(%s: !trait.claim<@T[i32]>) {}
+trait.trait private @T(!trait.claim<@T[!trait.poly<0>]>)
+trait.impl private @I(%s: !trait.claim<@T[i32]>) {
+}
 func.func private @f(%x: !trait.poly<0>) -> !trait.poly<0> {
   %e = trait.witness refl : !trait.claim<!trait.poly<0> = !trait.poly<0>>
   return %x : !trait.poly<0>

@@ -10,39 +10,35 @@
 !T = !trait.poly<0>
 !U = !trait.poly<1>
 
-trait.trait private @Convert(%self: !trait.claim<@Convert[!T, !U]>) {
-  trait.method @convert(!U) -> !T
+trait.trait private @Convert(!trait.claim<@Convert[!T, !U]>) members [@Convert.convert]
+func.func private @Convert.convert(!trait.claim<@Convert[!T, !U]>, !U) -> !T
+
+trait.impl private @Convert_i32(%self: !trait.claim<@Convert[i32, i32]>) members [@Convert.convert -> @Convert_i32.convert] {
+}
+func.func private @Convert_i32.convert(%self: !trait.claim<@Convert[i32, i32]>, %x: i32) -> i32 {
+  return %x : i32
 }
 
-trait.impl private @Convert_i32(%self: !trait.claim<@Convert[i32, i32]>) {
-  trait.method @convert(%x: i32) -> i32 {
-    trait.return %x : i32
-  }
-}
+trait.trait private @Choose(!trait.claim<@Choose[!T]>) members [@Choose.choose]
+func.func private @Choose.choose(!trait.claim<@Choose[!T]>, !T, !trait.claim<@Convert[!T, !T]>) -> !T
 
-trait.trait private @Choose(%self: !trait.claim<@Choose[!T]>) {
-  trait.method @choose(!T, !trait.claim<@Convert[!T, !T]>) -> !T
+trait.impl private @Choose_i32(%self: !trait.claim<@Choose[i32]>) members [@Choose.choose -> @Choose_i32.choose] {
 }
-
-trait.impl private @Choose_i32(%self: !trait.claim<@Choose[i32]>) {
-  trait.method @choose(%a: i32, %same: !trait.claim<@Convert[i32, i32]>) -> i32 {
-    %converted = trait.method.call %same @convert(%a)
-      : !trait.claim<@Convert[i32, i32]>, (i32) -> i32
-    trait.return %converted : i32
-  }
+func.func private @Choose_i32.choose(%self: !trait.claim<@Choose[i32]>, %a: i32, %same: !trait.claim<@Convert[i32, i32]>) -> i32 {
+  %converted = trait.func.call @Convert.convert(%same, %a) : (!trait.claim<@Convert[i32, i32]>, i32) -> i32
+  return %converted : i32
 }
 
 func.func @test(%x: i32) -> i32 {
   %chooser = trait.allege @Choose[i32]
   %same = trait.allege @Convert[i32, i32]
-  %res = trait.method.call %chooser @choose(%x, %same)
-    : !trait.claim<@Choose[i32]>, (i32, !trait.claim<@Convert[i32, i32]>) -> i32
+  %res = trait.func.call @Choose.choose(%chooser, %x, %same) : (!trait.claim<@Choose[i32]>, i32, !trait.claim<@Convert[i32, i32]>) -> i32
   return %res : i32
 }
 
-// CHECK-LABEL: func.func private @Convert_i32_{{h[0-9a-f]+}}_convert
+// CHECK-LABEL: func.func private @Convert_i32.convert_{{h[0-9a-f]+}}
 // CHECK: return %arg0 : i32
-// CHECK-LABEL: func.func private @Choose_i32_{{h[0-9a-f]+}}_choose
-// CHECK: call @Convert_i32_{{h[0-9a-f]+}}_convert
+// CHECK-LABEL: func.func private @Choose_i32.choose_{{h[0-9a-f]+}}
+// CHECK: call @Convert_i32.convert_{{h[0-9a-f]+}}
 // CHECK-LABEL: func.func @test
-// CHECK: call @Choose_i32_{{h[0-9a-f]+}}_choose
+// CHECK: call @Choose_i32.choose_{{h[0-9a-f]+}}

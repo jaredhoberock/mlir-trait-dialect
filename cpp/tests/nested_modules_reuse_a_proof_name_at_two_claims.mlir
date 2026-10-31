@@ -7,51 +7,55 @@
 // claims. Each module's @p proves its own application, and the method each call
 // reaches is its own module's.
 
-trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) {}
-trait.trait private @B(%self: !trait.claim<@B[!trait.poly<0>]>) -> !trait.claim<@A[!trait.poly<0>]> {
-  trait.method @m(!trait.poly<0>) -> !trait.poly<0>
+trait.trait private @A(!trait.claim<@A[!trait.poly<0>]>)
+trait.trait private @B(!trait.claim<@B[!trait.poly<0>]>) -> !trait.claim<@A[!trait.poly<0>]> members [@B.m]
+func.func private @B.m(!trait.claim<@B[!trait.poly<0>]>, !trait.poly<0>) -> !trait.poly<0>
+trait.impl private @A_top(%self: !trait.claim<@A[i32]>) {
 }
-trait.impl private @A_top(%self: !trait.claim<@A[i32]>) {}
-trait.impl private @B_impl(%self: !trait.claim<@B[i32]>) {
-  trait.method @m(%x: i32) -> i32 { trait.return %x : i32 }
+trait.impl private @B_impl(%self: !trait.claim<@B[i32]>) members [@B.m -> @B_impl.m] {
   %req0 = trait.allege @A[i32]
   trait.return %req0 : !trait.claim<@A[i32]>
+}
+func.func private @B_impl.m(%self: !trait.claim<@B[i32]>, %x: i32) -> i32 {
+  return %x : i32
 }
 trait.proof private @p {
   %d = trait.derive @B[i32] from @B_impl given()
   trait.return %d : !trait.claim<@B[i32]>
 }
 
-// CHECK: func.func private @B_impl_{{h[0-9a-f]+}}_m(%{{.*}}: i32) -> i32
+// CHECK: func.func private @B_impl.m_{{h[0-9a-f]+}}(%{{.*}}: i32) -> i32
 // CHECK: func.func @main(%{{.*}}: i32) -> i32
 func.func @main(%x: i32) -> i32 {
   %w = trait.witness @p for @B[i32]
-  %r = trait.method.call %w @m(%x) : !trait.claim<@B[i32] by @p>, (i32) -> i32
+  %r = trait.func.call @B.m(%w, %x) : (!trait.claim<@B[i32] by @p>, i32) -> i32
   return %r : i32
 }
 
 // CHECK: module @inner
 module @inner {
-  trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) {}
-  trait.trait private @B(%self: !trait.claim<@B[!trait.poly<0>]>) -> !trait.claim<@A[!trait.poly<0>]> {
-    trait.method @m(!trait.poly<0>) -> !trait.poly<0>
+  trait.trait private @A(!trait.claim<@A[!trait.poly<0>]>)
+  trait.trait private @B(!trait.claim<@B[!trait.poly<0>]>) -> !trait.claim<@A[!trait.poly<0>]> members [@B.m]
+  func.func private @B.m(!trait.claim<@B[!trait.poly<0>]>, !trait.poly<0>) -> !trait.poly<0>
+  trait.impl private @A_inner(%self: !trait.claim<@A[i64]>) {
   }
-  trait.impl private @A_inner(%self: !trait.claim<@A[i64]>) {}
-  trait.impl private @B_impl(%self: !trait.claim<@B[i64]>) {
-    trait.method @m(%x: i64) -> i64 { trait.return %x : i64 }
+  trait.impl private @B_impl(%self: !trait.claim<@B[i64]>) members [@B.m -> @B_impl.m] {
   %req0 = trait.allege @A[i64]
   trait.return %req0 : !trait.claim<@A[i64]>
-}
+  }
+  func.func private @B_impl.m(%self: !trait.claim<@B[i64]>, %x: i64) -> i64 {
+    return %x : i64
+  }
   trait.proof private @p {
     %d = trait.derive @B[i64] from @B_impl given()
     trait.return %d : !trait.claim<@B[i64]>
   }
 
-  // CHECK: func.func private @B_impl_{{h[0-9a-f]+}}_m(%{{.*}}: i64) -> i64
+  // CHECK: func.func private @B_impl.m_{{h[0-9a-f]+}}(%{{.*}}: i64) -> i64
   // CHECK: func.func @main(%{{.*}}: i64) -> i64
   func.func @main(%x: i64) -> i64 {
     %w = trait.witness @p for @B[i64]
-    %r = trait.method.call %w @m(%x) : !trait.claim<@B[i64] by @p>, (i64) -> i64
+    %r = trait.func.call @B.m(%w, %x) : (!trait.claim<@B[i64] by @p>, i64) -> i64
     return %r : i64
   }
 }

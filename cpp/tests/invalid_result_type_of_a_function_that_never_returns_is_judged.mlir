@@ -11,9 +11,10 @@
 // result_type_of_a_function_that_never_returns_resolves.mlir is the twin an
 // impl of @A for i64 makes true.
 
-trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) { trait.assoc_type @Item }
-trait.trait private @B(%self: !trait.claim<@B[!trait.poly<0>]>) {}
-trait.impl private @I(%self: !trait.claim<@B[!trait.proj<@A[i64], "Item">]>) {}
+trait.trait private @A(!trait.claim<@A[!trait.poly<0>]>) assoc {Item = 0}
+trait.trait private @B(!trait.claim<@B[!trait.poly<0>]>)
+trait.impl private @I(%self: !trait.claim<@B[!trait.proj<@A[i64], "Item">]>) {
+}
 
 // expected-error @below {{no impl with satisfiable assumptions for '!trait.proj<@A[i64], "Item">'}}
 // expected-error @below {{claim '!trait.claim<@B[!trait.proj<@A[i64], "Item">] by @I>' is not proven before erasure: an argument it states resolves to no type a predicate states}}

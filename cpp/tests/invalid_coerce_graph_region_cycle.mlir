@@ -8,9 +8,10 @@
 // may each be the other's input, and a walk from either to the evidence beneath
 // would never end; the coerce is refused where it stands.
 
-trait.trait private @T(%s: !trait.claim<@T[!trait.poly<0>]>) {}
-trait.trait private @A(%s: !trait.claim<@A[!trait.poly<0>]>) { trait.assoc_type @Item }
-trait.impl private @AI(%s: !trait.claim<@A[i32]>) { trait.assoc_type @Item = i32 }
+trait.trait private @T(!trait.claim<@T[!trait.poly<0>]>)
+trait.trait private @A(!trait.claim<@A[!trait.poly<0>]>) assoc {Item = 0}
+trait.impl private @AI(%s: !trait.claim<@A[i32]>) bindings {Item = i32} {
+}
 %e = trait.witness proj_resolve !trait.proj<@A[i32], "Item"> resolves i32 by @AI : !trait.claim<!trait.proj<@A[i32], "Item"> = i32>
 // expected-error @below {{'trait.coerce' op must be in a region that enforces SSA dominance}}
 %x = trait.coerce %y : !trait.claim<@T[i32]> to !trait.claim<@T[!trait.proj<@A[i32], "Item">]> via (%e) : (!trait.claim<!trait.proj<@A[i32], "Item"> = i32>)

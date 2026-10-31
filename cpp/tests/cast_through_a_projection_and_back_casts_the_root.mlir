@@ -11,15 +11,17 @@
 
 // CHECK: {{^}}37{{$}}
 
-trait.trait private @T(%s: !trait.claim<@T[!trait.poly<0>]>) { trait.method @m() -> i64 }
-trait.impl private @I(%s: !trait.claim<@T[i32]>) {
-  trait.method @m() -> i64 {
-    %v = arith.constant 37 : i64
-    trait.return %v : i64
-  }
+trait.trait private @T(!trait.claim<@T[!trait.poly<0>]>) members [@T.m]
+func.func private @T.m(!trait.claim<@T[!trait.poly<0>]>) -> i64
+trait.impl private @I(%s: !trait.claim<@T[i32]>) members [@T.m -> @I.m] {
 }
-trait.trait private @A(%s: !trait.claim<@A[!trait.poly<0>]>) { trait.assoc_type @Out }
-trait.impl private @A_i32(%s: !trait.claim<@A[i32]>) { trait.assoc_type @Out = i32 }
+func.func private @I.m(%s: !trait.claim<@T[i32]>) -> i64 {
+  %v = arith.constant 37 : i64
+  return %v : i64
+}
+trait.trait private @A(!trait.claim<@A[!trait.poly<0>]>) assoc {Out = 0}
+trait.impl private @A_i32(%s: !trait.claim<@A[i32]>) bindings {Out = i32} {
+}
 trait.proof private @p {
   %w = trait.witness @I for @T[i32]
   %e = trait.witness proj_resolve !trait.proj<@A[i32], "Out"> resolves i32 by @A_i32 : !trait.claim<!trait.proj<@A[i32], "Out"> = i32>
@@ -35,6 +37,6 @@ trait.proof private @q {
 }
 func.func @main() -> i64 {
   %w = trait.witness @q for @T[i32]
-  %v = trait.method.call %w @m() : !trait.claim<@T[i32] by @q>, () -> i64
+  %v = trait.func.call @T.m(%w) : (!trait.claim<@T[i32] by @q>) -> i64
   return %v : i64
 }

@@ -14,22 +14,19 @@
 // CHECK: note: called from
 
 !S = !trait.poly<0>
-trait.trait private @FoldFn(%self: !trait.claim<@FoldFn[!S]>) -> !trait.claim<!trait.proj<@FoldFn[!S], "Output"> = !S> {
-  trait.assoc_type @Output
-  trait.method @make() -> !trait.proj<@FoldFn[!S], "Output">
-}
-trait.impl private @FoldFn_bad(%self: !trait.claim<@FoldFn[i32]>) {
-  trait.assoc_type @Output = i64
+trait.trait private @FoldFn(!trait.claim<@FoldFn[!S]>) -> !trait.claim<!trait.proj<@FoldFn[!S], "Output"> = !S> assoc {Output = 0} members [@FoldFn.make]
+func.func private @FoldFn.make(!trait.claim<@FoldFn[!S]>) -> !trait.proj<@FoldFn[!S], "Output">
+trait.impl private @FoldFn_bad(%self: !trait.claim<@FoldFn[i32]>) bindings {Output = i64} members [@FoldFn.make -> @FoldFn_bad.make] {
   %req0 = trait.allege !trait.proj<@FoldFn[i32], "Output"> = i32
-  trait.method @make() -> i64 {
-    %c = arith.constant 5 : i64
-    trait.return %c : i64
-  }
   trait.return %req0 : !trait.claim<!trait.proj<@FoldFn[i32], "Output"> = i32>
+}
+func.func private @FoldFn_bad.make(%self: !trait.claim<@FoldFn[i32]>) -> i64 {
+  %c = arith.constant 5 : i64
+  return %c : i64
 }
 func.func private @use(%f: !trait.claim<@FoldFn[!S]>) -> !S {
   %e = trait.project %f[0] : !trait.claim<@FoldFn[!S]> -> !trait.claim<!trait.proj<@FoldFn[!S], "Output"> = !S>
-  %v = trait.method.call %f @make() : !trait.claim<@FoldFn[!S]>, () -> !trait.proj<@FoldFn[!S], "Output">
+  %v = trait.func.call @FoldFn.make(%f) : (!trait.claim<@FoldFn[!S]>) -> !trait.proj<@FoldFn[!S], "Output">
   %r = trait.coerce %v : !trait.proj<@FoldFn[!S], "Output"> to !S via (%e) : (!trait.claim<!trait.proj<@FoldFn[!S], "Output"> = !S>)
   return %r : !S
 }

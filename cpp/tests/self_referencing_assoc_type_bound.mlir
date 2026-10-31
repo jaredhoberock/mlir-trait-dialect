@@ -11,7 +11,5 @@
 
 !S = !trait.poly<0>
 
-trait.trait private @Trait(%self: !trait.claim<@Trait[!S]>) -> !trait.claim<@Trait[!trait.proj<@Trait[!S], "Assoc">]> {
-  trait.assoc_type @Assoc
-  trait.method @get(!S) -> !trait.proj<@Trait[!S], "Assoc">
-}
+trait.trait private @Trait(!trait.claim<@Trait[!S]>) -> !trait.claim<@Trait[!trait.proj<@Trait[!S], "Assoc">]> assoc {Assoc = 0} members [@Trait.get]
+func.func private @Trait.get(!trait.claim<@Trait[!S]>, !S) -> !trait.proj<@Trait[!S], "Assoc">

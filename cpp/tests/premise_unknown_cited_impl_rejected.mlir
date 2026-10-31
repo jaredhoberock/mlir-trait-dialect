@@ -9,26 +9,22 @@
 
 !S = !trait.poly<0>
 
-trait.trait private @Sib(%self: !trait.claim<@Sib[!S]>) {
-  trait.assoc_type @Elem
+trait.trait private @Sib(!trait.claim<@Sib[!S]>) assoc {Elem = 0}
+
+trait.impl private @Sib_i64(%self: !trait.claim<@Sib[i64]>) bindings {Elem = i32} {
 }
 
-trait.impl private @Sib_i64(%self: !trait.claim<@Sib[i64]>) {
-  trait.assoc_type @Elem = i32
-}
+trait.trait private @Host(!trait.claim<@Host[!S]>) members [@Host.make]
+func.func private @Host.make(!trait.claim<@Host[!S]>, !S) -> !trait.proj<@Sib[!S], "Elem">
 
-trait.trait private @Host(%self: !trait.claim<@Host[!S]>) {
-  trait.method @make(!S) -> !trait.proj<@Sib[!S], "Elem">
+trait.impl private @Host_i64(%self: !trait.claim<@Host[i64]>) members [@Host.make -> @Host_i64.make] {
 }
-
-trait.impl private @Host_i64(%self: !trait.claim<@Host[i64]>) {
-  trait.method @make(%x: i64) -> !trait.proj<@Sib[i64], "Elem"> {
-    %r = ub.poison : i32
-    // expected-error @below {{cannot find trait.impl '@Nope' cited by the witness}}
-    %e = trait.witness proj_resolve !trait.proj<@Sib[i64], "Elem"> resolves i32 by @Nope
-      : !trait.claim<!trait.proj<@Sib[i64], "Elem"> = i32>
-    %c = trait.coerce %r : i32 to !trait.proj<@Sib[i64], "Elem"> via (%e)
-      : (!trait.claim<!trait.proj<@Sib[i64], "Elem"> = i32>)
-    trait.return %c : !trait.proj<@Sib[i64], "Elem">
-  }
+func.func private @Host_i64.make(%self: !trait.claim<@Host[i64]>, %x: i64) -> !trait.proj<@Sib[i64], "Elem"> {
+  %r = ub.poison : i32
+  // expected-error @below {{cannot find trait.impl '@Nope' cited by the witness}}
+  %e = trait.witness proj_resolve !trait.proj<@Sib[i64], "Elem"> resolves i32 by @Nope
+    : !trait.claim<!trait.proj<@Sib[i64], "Elem"> = i32>
+  %c = trait.coerce %r : i32 to !trait.proj<@Sib[i64], "Elem"> via (%e)
+    : (!trait.claim<!trait.proj<@Sib[i64], "Elem"> = i32>)
+  return %c : !trait.proj<@Sib[i64], "Elem">
 }

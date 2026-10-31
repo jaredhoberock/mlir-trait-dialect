@@ -12,15 +12,14 @@
 !T0 = !trait.poly<0>
 !T1 = !trait.poly<1>
 
-trait.trait private @Trait(%self: !trait.claim<@Trait[!T0, !T1]>) {
-  trait.method @method(!T0, !T1) -> i64
-}
+trait.trait private @Trait(!trait.claim<@Trait[!T0, !T1]>) members [@Trait.method]
+func.func private @Trait.method(!trait.claim<@Trait[!T0, !T1]>, !T0, !T1) -> i64
 
 !T2 = !trait.poly<2>
-trait.impl private @Trait_impl(%self_claim: !trait.claim<@Trait[i64, !trait.poly<0>]>) {
-  trait.method @method(%self: i64, %arg: !trait.poly<0>) -> i64 {
-    trait.return %self : i64
-  }
+trait.impl private @Trait_impl(%self_claim: !trait.claim<@Trait[i64, !trait.poly<0>]>) members [@Trait.method -> @Trait_impl.method] {
+}
+func.func private @Trait_impl.method(%self_claim: !trait.claim<@Trait[i64, !trait.poly<0>]>, %self: i64, %arg: !trait.poly<0>) -> i64 {
+  return %self : i64
 }
 
 !T3 = !trait.poly<3>

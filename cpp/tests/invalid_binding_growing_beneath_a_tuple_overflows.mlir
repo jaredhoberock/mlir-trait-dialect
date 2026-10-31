@@ -11,9 +11,8 @@
 // written.
 
 !T = !trait.poly<0>
-trait.trait private @A(%s: !trait.claim<@A[!T]>) { trait.assoc_type @Item }
-trait.impl private @I(%s: !trait.claim<@A[!T]>) {
-  trait.assoc_type @Item = tuple<!trait.proj<@A[tuple<!T>], "Item">>
+trait.trait private @A(!trait.claim<@A[!T]>) assoc {Item = 0}
+trait.impl private @I(%s: !trait.claim<@A[!T]>) bindings {Item = tuple<!trait.proj<@A[tuple<!T>], "Item">>} {
 }
 // expected-error @below {{overflow evaluating the requirement '!trait.claim<!trait.proj<@A[i64], "Item"> = i64>': a chain of steps resolving its projections does not end within 128 steps}}
 func.func @f(%e: !trait.claim<!trait.proj<@A[i64], "Item"> = i64>) { return }
@@ -21,9 +20,8 @@ func.func @f(%e: !trait.claim<!trait.proj<@A[i64], "Item"> = i64>) { return }
 // -----
 
 !T = !trait.poly<0>
-trait.trait private @A(%s: !trait.claim<@A[!T]>) { trait.assoc_type @Item }
-trait.impl private @I(%s: !trait.claim<@A[!T]>) {
-  trait.assoc_type @Item = tuple<!trait.proj<@A[tuple<!T>], "Item">>
+trait.trait private @A(!trait.claim<@A[!T]>) assoc {Item = 0}
+trait.impl private @I(%s: !trait.claim<@A[!T]>) bindings {Item = tuple<!trait.proj<@A[tuple<!T>], "Item">>} {
 }
 func.func private @need(!trait.claim<!trait.proj<@A[i64], "Item"> = i64>)
 func.func @run() {
@@ -36,9 +34,8 @@ func.func @run() {
 // -----
 
 !T = !trait.poly<0>
-trait.trait private @A(%s: !trait.claim<@A[!T]>) { trait.assoc_type @Item }
-trait.impl private @I(%s: !trait.claim<@A[!T]>) {
-  trait.assoc_type @Item = tuple<!trait.proj<@A[tuple<!T>], "Item">>
+trait.trait private @A(!trait.claim<@A[!T]>) assoc {Item = 0}
+trait.impl private @I(%s: !trait.claim<@A[!T]>) bindings {Item = tuple<!trait.proj<@A[tuple<!T>], "Item">>} {
 }
 // expected-error @below {{overflow evaluating the requirement '!trait.proj<@A[i64], "Item">': a chain of steps resolving its projections does not end within 128 steps}}
 func.func private @use(!trait.proj<@A[i64], "Item">)

@@ -14,12 +14,9 @@
 
 !S = !trait.poly<0>
 
-trait.trait private @FoldFn(%self: !trait.claim<@FoldFn[!S]>) {
-  trait.assoc_type @Output
-}
+trait.trait private @FoldFn(!trait.claim<@FoldFn[!S]>) assoc {Output = 0}
 
-trait.impl private @FoldFn_bad(%self: !trait.claim<@FoldFn[i32]>, %output: !trait.claim<!trait.proj<@FoldFn[i32], "Output"> = i32>) {
-  trait.assoc_type @Output = i64
+trait.impl private @FoldFn_bad(%self: !trait.claim<@FoldFn[i32]>, %output: !trait.claim<!trait.proj<@FoldFn[i32], "Output"> = i32>) bindings {Output = i64} {
 }
 
 func.func private @needs(!trait.claim<@FoldFn[i32]>)

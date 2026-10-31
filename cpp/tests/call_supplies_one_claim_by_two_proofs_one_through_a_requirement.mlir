@@ -13,29 +13,27 @@
 
 // CHECK: {{^}}16{{$}}
 
-trait.trait private @T0(%self: !trait.claim<@T0[!trait.poly<0>]>) {
-  trait.assoc_type @A
+trait.trait private @T0(!trait.claim<@T0[!trait.poly<0>]>) assoc {A = 0}
+
+trait.trait private @T1(!trait.claim<@T1[!trait.poly<0>]>) members [@T1.value]
+func.func private @T1.value(!trait.claim<@T1[!trait.poly<0>]>) -> i64
+
+trait.trait private @T2(!trait.claim<@T2[!trait.poly<0>]>) -> !trait.claim<@T1[!trait.proj<@T0[!trait.poly<0>], "A">]>
+
+trait.impl private @T1_i64_a(%self: !trait.claim<@T1[i64]>) members [@T1.value -> @T1_i64_a.value] {
+}
+func.func private @T1_i64_a.value(%self: !trait.claim<@T1[i64]>) -> i64 {
+  %v = arith.constant 7 : i64
+  return %v : i64
+}
+trait.impl private @T1_i64_b(%self: !trait.claim<@T1[i64]>) members [@T1.value -> @T1_i64_b.value] {
+}
+func.func private @T1_i64_b.value(%self: !trait.claim<@T1[i64]>) -> i64 {
+  %v = arith.constant 9 : i64
+  return %v : i64
 }
 
-trait.trait private @T1(%self: !trait.claim<@T1[!trait.poly<0>]>) { trait.method @value() -> i64 }
-
-trait.trait private @T2(%self: !trait.claim<@T2[!trait.poly<0>]>) -> !trait.claim<@T1[!trait.proj<@T0[!trait.poly<0>], "A">]> {}
-
-trait.impl private @T1_i64_a(%self: !trait.claim<@T1[i64]>) {
-  trait.method @value() -> i64 {
-    %v = arith.constant 7 : i64
-    trait.return %v : i64
-  }
-}
-trait.impl private @T1_i64_b(%self: !trait.claim<@T1[i64]>) {
-  trait.method @value() -> i64 {
-    %v = arith.constant 9 : i64
-    trait.return %v : i64
-  }
-}
-
-trait.impl private @T0_i64(%self: !trait.claim<@T0[i64]>) {
-  trait.assoc_type @A = i64
+trait.impl private @T0_i64(%self: !trait.claim<@T0[i64]>) bindings {A = i64} {
 }
 
 trait.impl private @T2_i64(%self: !trait.claim<@T2[i64]>) {
@@ -62,8 +60,8 @@ func.func private @f(
   %r = trait.project %t2[0]
     : !trait.claim<@T2[!trait.poly<0>]>
     -> !trait.claim<@T1[!trait.proj<@T0[!trait.poly<0>], "A">]>
-  %u = trait.method.call %r @value() : !trait.claim<@T1[!trait.proj<@T0[!trait.poly<0>], "A">]>, () -> i64
-  %v = trait.method.call %t1 @value() : !trait.claim<@T1[!trait.proj<@T0[!trait.poly<0>], "A">]>, () -> i64
+  %u = trait.func.call @T1.value(%r) : (!trait.claim<@T1[!trait.proj<@T0[!trait.poly<0>], "A">]>) -> i64
+  %v = trait.func.call @T1.value(%t1) : (!trait.claim<@T1[!trait.proj<@T0[!trait.poly<0>], "A">]>) -> i64
   %s = arith.addi %u, %v : i64
   return %s : i64
 }

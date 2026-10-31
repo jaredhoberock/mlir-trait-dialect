@@ -7,8 +7,9 @@
 // declared: the named proof must prove the claim it annotates. Here the
 // signature claims @T[i64] but names @T_i32_p, which proves @T[i32].
 
-trait.trait private @T(%self: !trait.claim<@T[!trait.poly<0>]>) {}
-trait.impl private @T_i32(%self: !trait.claim<@T[i32]>) {}
+trait.trait private @T(!trait.claim<@T[!trait.poly<0>]>)
+trait.impl private @T_i32(%self: !trait.claim<@T[i32]>) {
+}
 trait.proof private @T_i32_p {
   %d = trait.derive @T[i32] from @T_i32 given()
   trait.return %d : !trait.claim<@T[i32]>

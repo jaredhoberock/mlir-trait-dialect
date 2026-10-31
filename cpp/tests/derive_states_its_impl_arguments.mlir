@@ -16,30 +16,26 @@
 !T = !trait.poly<0>
 !U = !trait.poly<1>
 
-trait.trait private @Tr(%self: !trait.claim<@Tr[!T]>) {
-  trait.assoc_type @Out
-  trait.method @get(!T) -> i64
+trait.trait private @Tr(!trait.claim<@Tr[!T]>) assoc {Out = 0} members [@Tr.get]
+func.func private @Tr.get(!trait.claim<@Tr[!T]>, !T) -> i64
+
+trait.impl private @Tr_i32(%self: !trait.claim<@Tr[i32]>) bindings {Out = i64} members [@Tr.get -> @Tr_i32.get] {
+}
+func.func private @Tr_i32.get(%self: !trait.claim<@Tr[i32]>, %x: i32) -> i64 {
+  %c = arith.constant 7 : i64
+  return %c : i64
 }
 
-trait.impl private @Tr_i32(%self: !trait.claim<@Tr[i32]>) {
-  trait.assoc_type @Out = i64
-  trait.method @get(%x: i32) -> i64 {
-    %c = arith.constant 7 : i64
-    trait.return %c : i64
-  }
+trait.impl private @Tr_tuple(%self: !trait.claim<@Tr[tuple<!trait.poly<0>>]>, %tr: !trait.claim<@Tr[!trait.poly<0>]>, %out: !trait.claim<!trait.proj<@Tr[!trait.poly<0>], "Out"> = i64>) bindings {Out = i64} members [@Tr.get -> @Tr_tuple.get] {
 }
-
-trait.impl private @Tr_tuple(%self: !trait.claim<@Tr[tuple<!trait.poly<0>>]>, %tr: !trait.claim<@Tr[!trait.poly<0>]>, %out: !trait.claim<!trait.proj<@Tr[!trait.poly<0>], "Out"> = i64>) {
-  trait.assoc_type @Out = i64
-  trait.method @get(%x: tuple<!trait.poly<0>>) -> i64 {
-    %c = arith.constant 35 : i64
-    trait.return %c : i64
-  }
+func.func private @Tr_tuple.get(%self: !trait.claim<@Tr[tuple<!trait.poly<0>>]>, %tr: !trait.claim<@Tr[!trait.poly<0>]>, %out: !trait.claim<!trait.proj<@Tr[!trait.poly<0>], "Out"> = i64>, %x: tuple<!trait.poly<0>>) -> i64 {
+  %c = arith.constant 35 : i64
+  return %c : i64
 }
 
 func.func private @g(%t: !trait.claim<@Tr[!T]>, %e: !trait.claim<!trait.proj<@Tr[!T], "Out"> = i64>, %x: tuple<!T>) -> i64 {
   %d = trait.derive @Tr[tuple<!T>] from @Tr_tuple[!trait.poly<0>] given(%t, %e) : (!trait.claim<@Tr[!T]>, !trait.claim<!trait.proj<@Tr[!T], "Out"> = i64>)
-  %r = trait.method.call %d @get(%x) : !trait.claim<@Tr[tuple<!T>]>, (tuple<!T>) -> i64
+  %r = trait.func.call @Tr.get(%d, %x) : (!trait.claim<@Tr[tuple<!T>]>, tuple<!T>) -> i64
   return %r : i64
 }
 
@@ -51,7 +47,7 @@ func.func @main(%x: tuple<i32>) -> i64 {
   return %r : i64
 }
 
-// CHECK: func.func private @[[GET:Tr_tuple_[_a-z0-9]*get[_a-z0-9]*]](%{{.*}}: tuple<i32>) -> i64
+// CHECK: func.func private @[[GET:Tr_tuple.get_h[0-9a-f]+]](%{{.*}}: tuple<i32>) -> i64
 // CHECK: func.func private @[[G:g_[_a-z0-9]*]](%{{.*}}: tuple<i32>) -> i64
 // CHECK-NEXT: call @[[GET]](
 // CHECK: func.func @main

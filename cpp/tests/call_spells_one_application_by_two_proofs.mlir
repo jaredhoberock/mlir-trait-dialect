@@ -9,12 +9,13 @@
 // verifies: they are two names for one fact, and which name a clone takes is
 // settled where the clone is cut.
 
-trait.trait private @T(%self: !trait.claim<@T[!trait.poly<0>]>) { trait.method @t() -> i64 }
-trait.impl private @T_i64(%self: !trait.claim<@T[i64]>) {
-  trait.method @t() -> i64 {
-    %c = arith.constant 5 : i64
-    trait.return %c : i64
-  }
+trait.trait private @T(!trait.claim<@T[!trait.poly<0>]>) members [@T.t]
+func.func private @T.t(!trait.claim<@T[!trait.poly<0>]>) -> i64
+trait.impl private @T_i64(%self: !trait.claim<@T[i64]>) members [@T.t -> @T_i64.t] {
+}
+func.func private @T_i64.t(%self: !trait.claim<@T[i64]>) -> i64 {
+  %c = arith.constant 5 : i64
+  return %c : i64
 }
 trait.proof private @pv1 {
   %d = trait.derive @T[i64] from @T_i64 given()

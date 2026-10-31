@@ -13,26 +13,22 @@
 
 !S = !trait.poly<0>
 
-trait.trait private @Sib(%self: !trait.claim<@Sib[!S]>) {
-  trait.assoc_type @Elem
+trait.trait private @Sib(!trait.claim<@Sib[!S]>) assoc {Elem = 0}
+
+trait.impl private @Sib_i64(%self: !trait.claim<@Sib[i64]>) bindings {Elem = i32} {
 }
 
-trait.impl private @Sib_i64(%self: !trait.claim<@Sib[i64]>) {
-  trait.assoc_type @Elem = i32
-}
+trait.trait private @Host(!trait.claim<@Host[!S]>) members [@Host.make]
+func.func private @Host.make(!trait.claim<@Host[!S]>, !S) -> !trait.proj<@Sib[!S], "Elem">
 
-trait.trait private @Host(%self: !trait.claim<@Host[!S]>) {
-  trait.method @make(!S) -> !trait.proj<@Sib[!S], "Elem">
+trait.impl private @Host_T(%self: !trait.claim<@Host[!S]>) members [@Host.make -> @Host_T.make] {
 }
-
-trait.impl private @Host_T(%self: !trait.claim<@Host[!S]>) {
-  trait.method @make(%x: !S) -> !trait.proj<@Sib[!S], "Elem"> {
-    %r = ub.poison : i32
-    // expected-error @below {{impl '@Sib_i64' at the arguments the citation gives it proves '!trait.claim<@Sib[i64]>', not '!trait.claim<@Sib[!trait.poly<0>]>'}}
-    %e = trait.witness proj_resolve !trait.proj<@Sib[!S], "Elem"> resolves i32 by @Sib_i64
-      : !trait.claim<!trait.proj<@Sib[!S], "Elem"> = i32>
-    %c = trait.coerce %r : i32 to !trait.proj<@Sib[!S], "Elem"> via (%e)
-      : (!trait.claim<!trait.proj<@Sib[!S], "Elem"> = i32>)
-    trait.return %c : !trait.proj<@Sib[!S], "Elem">
-  }
+func.func private @Host_T.make(%self: !trait.claim<@Host[!S]>, %x: !S) -> !trait.proj<@Sib[!S], "Elem"> {
+  %r = ub.poison : i32
+  // expected-error @below {{impl '@Sib_i64' at the arguments the citation gives it proves '!trait.claim<@Sib[i64]>', not '!trait.claim<@Sib[!trait.poly<0>]>'}}
+  %e = trait.witness proj_resolve !trait.proj<@Sib[!S], "Elem"> resolves i32 by @Sib_i64
+    : !trait.claim<!trait.proj<@Sib[!S], "Elem"> = i32>
+  %c = trait.coerce %r : i32 to !trait.proj<@Sib[!S], "Elem"> via (%e)
+    : (!trait.claim<!trait.proj<@Sib[!S], "Elem"> = i32>)
+  return %c : !trait.proj<@Sib[!S], "Elem">
 }

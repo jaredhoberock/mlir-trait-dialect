@@ -26,6 +26,24 @@ static auto unwrapArray(T *elements, intptr_t count) {
   return storage;
 }
 
+/// Points `builder` where the next member function of `owner` stands: after
+/// `owner` and the member functions already standing directly after it, which
+/// keeps them in the order they were added. A detached `owner` leaves the
+/// builder with no insertion point, so the function is created detached.
+static void insertAfterMembers(OpBuilder &builder, Operation *owner,
+                               llvm::function_ref<bool(StringAttr)> isMember) {
+  if (!owner->getBlock())
+    return;
+  Operation *last = owner;
+  while (Operation *next = last->getNextNode()) {
+    auto function = dyn_cast<func::FuncOp>(next);
+    if (!function || !isMember(function.getSymNameAttr()))
+      break;
+    last = next;
+  }
+  builder.setInsertionPointAfter(last);
+}
+
 extern "C" {
 
 void traitRegisterDialect(MlirContext context) {
@@ -191,7 +209,7 @@ void traitRenameSymbols(MlirOperation symbolTableOp, const MlirStringRef *names,
   // nominal type) is reached only by replacing elements of types too
   AttrTypeReplacer replacer;
   // A reference's root alone names a top-level symbol; its nested parts name
-  // symbols inside it, so the walk does not descend into them.
+  // symbols inside the one it names, so the walk does not descend into them.
   replacer.addReplacement(
       [&](SymbolRefAttr reference) -> std::optional<std::pair<Attribute, WalkResult>> {
         auto found = renamed.find(reference.getRootReference());
@@ -231,6 +249,49 @@ void traitRenameSymbols(MlirOperation symbolTableOp, const MlirStringRef *names,
         if (found != renamed.end())
           SymbolTable::setSymbolName(&op, found->second);
       }
+}
+
+MlirOperation traitTraitOpAddMember(MlirOperation traitOp, MlirStringRef name,
+                                    MlirType signature, bool withDefault) {
+  auto trait = cast<TraitOp>(unwrap(traitOp));
+  OpBuilder builder(trait.getContext());
+  insertAfterMembers(builder, trait, [&](StringAttr symbol) {
+    return trait.getMemberPosition(FlatSymbolRefAttr::get(symbol)).has_value();
+  });
+  return wrap(trait
+                  .addMember(builder, trait.getLoc(), unwrap(name),
+                             cast<FunctionType>(unwrap(signature)), withDefault)
+                  .getOperation());
+}
+
+void traitTraitOpDeclareAssociatedType(MlirOperation traitOp,
+                                       MlirStringRef name, intptr_t arity) {
+  cast<TraitOp>(unwrap(traitOp)).declareAssociatedType(unwrap(name), arity);
+}
+
+MlirOperation traitImplOpAddMember(MlirOperation implOp, MlirAttribute member,
+                                   MlirType signature) {
+  auto impl = cast<ImplOp>(unwrap(implOp));
+  OpBuilder builder(impl.getContext());
+  insertAfterMembers(builder, impl, [&](StringAttr symbol) {
+    return llvm::any_of(impl.getMembers(), [&](Attribute entry) {
+      return cast<ArrayAttr>(entry)[1] == FlatSymbolRefAttr::get(symbol);
+    });
+  });
+  return wrap(impl
+                  .addMember(builder, impl.getLoc(),
+                             cast<FlatSymbolRefAttr>(unwrap(member)),
+                             cast<FunctionType>(unwrap(signature)))
+                  .getOperation());
+}
+
+void traitImplOpCompleteMembers(MlirOperation implOp, MlirOperation traitOp) {
+  cast<ImplOp>(unwrap(implOp)).completeMembers(cast<TraitOp>(unwrap(traitOp)));
+}
+
+void traitImplOpBindAssociatedType(MlirOperation implOp, MlirStringRef name,
+                                   MlirType type) {
+  cast<ImplOp>(unwrap(implOp)).bindAssociatedType(unwrap(name), unwrap(type));
 }
 
 intptr_t traitGetGenericTypesIn(MlirType type, MlirType *results, intptr_t maxResults) {

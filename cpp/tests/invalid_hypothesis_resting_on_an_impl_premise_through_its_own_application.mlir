@@ -16,9 +16,10 @@
 // it.
 
 !T = !trait.poly<0>
-trait.trait private @A(%s: !trait.claim<@A[!T]>) { trait.assoc_type @Item }
+trait.trait private @A(!trait.claim<@A[!T]>) assoc {Item = 0}
 // expected-note @below {{unsatisfiable candidate}}
-trait.impl private @I(%s: !trait.claim<@A[i32]>, %e: !trait.claim<!trait.proj<@A[i32], "Item"> = i64>) { trait.assoc_type @Item = i64 }
+trait.impl private @I(%s: !trait.claim<@A[i32]>, %e: !trait.claim<!trait.proj<@A[i32], "Item"> = i64>) bindings {Item = i64} {
+}
 // expected-error @below {{no impl with satisfiable assumptions for '!trait.proj<@A[i32], "Item">'}}
 // expected-error @below {{equality '!trait.claim<!trait.proj<@A[i32], "Item"> = i64>' does not settle before erasure: a side resolves to no type a predicate states}}
 func.func @f(%h: !trait.claim<!trait.proj<@A[i32], "Item"> = i64>) -> i64 {
@@ -29,14 +30,11 @@ func.func @f(%h: !trait.claim<!trait.proj<@A[i32], "Item"> = i64>) -> i64 {
 // -----
 
 !T = !trait.poly<0>
-trait.trait private @B(%s: !trait.claim<@B[!T]>) { trait.assoc_type @Item }
-trait.trait private @A(%s: !trait.claim<@A[!T]>) {
-  trait.assoc_type @Item<[!trait.poly<1>]>
-}
+trait.trait private @B(!trait.claim<@B[!T]>) assoc {Item = 0}
+trait.trait private @A(!trait.claim<@A[!T]>) assoc {Item = 1}
 // expected-note @below {{unsatisfiable candidate}}
 trait.impl private @I(%s: !trait.claim<@A[!T]>,
-    %e: !trait.claim<!trait.proj<@A[!T], "Item", [!trait.proj<@B[!T], "Item">]> = i64>) {
-  trait.assoc_type @Item<[!trait.poly<1>]> = i64
+    %e: !trait.claim<!trait.proj<@A[!T], "Item", [!trait.proj<@B[!T], "Item">]> = i64>) bindings {Item = i64} {
 }
 // expected-error @below {{no impl with satisfiable assumptions for '!trait.proj<@A[i32], "Item", [i32]>'}}
 // expected-error @below {{equality '!trait.claim<!trait.proj<@A[i32], "Item", [i32]> = i64>' does not settle before erasure: a side resolves to no type a predicate states}}
@@ -45,16 +43,14 @@ func.func @f(%e: !trait.claim<!trait.proj<@A[i32], "Item", [i32]> = i64>) { retu
 // -----
 
 !T = !trait.poly<0>
-trait.trait private @C(%s: !trait.claim<@C[!T]>) {}
-trait.trait private @B(%s: !trait.claim<@B[!T]>) { trait.assoc_type @Item }
-trait.impl private @B_i32(%s: !trait.claim<@B[i32]>) { trait.assoc_type @Item = tuple<!trait.claim<@C[i32]>> }
-trait.trait private @A(%s: !trait.claim<@A[!T]>) {
-  trait.assoc_type @Item<[!trait.poly<1>]>
+trait.trait private @C(!trait.claim<@C[!T]>)
+trait.trait private @B(!trait.claim<@B[!T]>) assoc {Item = 0}
+trait.impl private @B_i32(%s: !trait.claim<@B[i32]>) bindings {Item = tuple<!trait.claim<@C[i32]>>} {
 }
+trait.trait private @A(!trait.claim<@A[!T]>) assoc {Item = 1}
 // expected-note @below {{unsatisfiable candidate}}
 trait.impl private @I(%s: !trait.claim<@A[!T]>,
-    %e: !trait.claim<!trait.proj<@A[!T], "Item", [!trait.proj<@B[!T], "Item">]> = i64>) {
-  trait.assoc_type @Item<[!trait.poly<1>]> = i64
+    %e: !trait.claim<!trait.proj<@A[!T], "Item", [!trait.proj<@B[!T], "Item">]> = i64>) bindings {Item = i64} {
 }
 // expected-error @below {{no impl with satisfiable assumptions for '!trait.proj<@A[i32], "Item", [i32]>'}}
 // expected-error @below {{equality '!trait.claim<!trait.proj<@A[i32], "Item", [i32]> = i64>' does not settle before erasure: a side resolves to no type a predicate states}}

@@ -8,12 +8,9 @@
 // module is what that distinction is for: it would move a stored witness's own
 // equality out from under the claim it must match.
 
-trait.trait private @Has(%self: !trait.claim<@Has[!trait.poly<0>]>) {
-  trait.assoc_type @Out
-}
+trait.trait private @Has(!trait.claim<@Has[!trait.poly<0>]>) assoc {Out = 0}
 
-trait.impl private @Has_i32(%self: !trait.claim<@Has[i32]>) {
-  trait.assoc_type @Out = i64
+trait.impl private @Has_i32(%self: !trait.claim<@Has[i32]>) bindings {Out = i64} {
 }
 
 // The witness's stored equality keeps the ground projection it was minted with,

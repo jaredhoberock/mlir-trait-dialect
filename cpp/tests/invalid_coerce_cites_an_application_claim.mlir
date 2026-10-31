@@ -6,7 +6,7 @@
 // A coerce cites equality claims. An application claim is not equality evidence
 // and carries no endpoints for the closure to seed, so citing one is refused.
 
-trait.trait private @T(%self: !trait.claim<@T[!trait.poly<0>]>) {}
+trait.trait private @T(!trait.claim<@T[!trait.poly<0>]>)
 
 func.func @application_citation(%p: !trait.claim<@T[i32]>) -> !trait.claim<i32 = i32> {
   %r = trait.witness refl : !trait.claim<i32 = i32>

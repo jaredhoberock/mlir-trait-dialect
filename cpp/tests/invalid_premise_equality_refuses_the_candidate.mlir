@@ -12,18 +12,16 @@
 
 !T = !trait.poly<0>
 
-trait.trait private @Ten(%self: !trait.claim<@Ten[!T]>) {
-  trait.assoc_type @Shape
+trait.trait private @Ten(!trait.claim<@Ten[!T]>) assoc {Shape = 0}
+
+trait.impl private @Ten_i32(%self: !trait.claim<@Ten[i32]>) bindings {Shape = tuple<i64, i64>} {
 }
 
-trait.impl private @Ten_i32(%self: !trait.claim<@Ten[i32]>) {
-  trait.assoc_type @Shape = tuple<i64, i64>
-}
-
-trait.trait private @X(%self: !trait.claim<@X[!T]>) {}
+trait.trait private @X(!trait.claim<@X[!T]>)
 
 !U = !trait.poly<1>
-trait.impl private @X_gen(%self: !trait.claim<@X[!trait.poly<0>]>, %shape: !trait.claim<!trait.proj<@Ten[!trait.poly<0>], "Shape"> = i64>) {}
+trait.impl private @X_gen(%self: !trait.claim<@X[!trait.poly<0>]>, %shape: !trait.claim<!trait.proj<@Ten[!trait.poly<0>], "Shape"> = i64>) {
+}
 
 func.func private @needs(!trait.claim<@X[i32]>)
 

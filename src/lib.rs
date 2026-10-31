@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 use melior::{
     Context, pass::Pass, StringRef,
-    ir::{AttributeLike, Block, Identifier, Location, Operation, Region, RegionLike, Type, TypeLike, Value},
+    ir::{AttributeLike, Block, Identifier, Location, Operation, OperationRef, Region, RegionLike, Type, TypeLike, Value},
     ir::attribute::Attribute,
-    ir::operation::OperationBuilder,
+    ir::operation::{OperationBuilder, OperationLike},
 };
 use mlir_sys::{
-    MlirAttribute, MlirContext, MlirPass, MlirStringRef, MlirType,
-    mlirArrayAttrGet, mlirFlatSymbolRefAttrGet, mlirIdentifierGet, mlirIntegerAttrGet,
-    mlirIntegerTypeGet,
+    MlirAttribute, MlirContext, MlirOperation, MlirPass, MlirStringRef, MlirType,
+    mlirArrayAttrGet, mlirDenseBoolArrayGet, mlirDictionaryAttrGet, mlirFlatSymbolRefAttrGet,
+    mlirIdentifierGet, mlirIntegerAttrGet, mlirIntegerTypeGet,
     mlirLocationGetContext,
     mlirStringAttrGet, mlirTypeAttrGet,
     mlirUnitAttrGet,
@@ -59,6 +59,14 @@ unsafe extern "C" {
     fn traitProjectionTypeGetNumAssocTypeArgs(projection: MlirType) -> isize;
     fn traitProjectionTypeGetAssocTypeArg(projection: MlirType, index: isize) -> MlirType;
     fn traitRenameSymbols(op: mlir_sys::MlirOperation, names: *const MlirStringRef, new_names: *const MlirStringRef, count: isize);
+
+    fn traitTraitOpAddMember(trait_op: MlirOperation, name: MlirStringRef,
+                             signature: MlirType, with_default: bool) -> MlirOperation;
+    fn traitTraitOpDeclareAssociatedType(trait_op: MlirOperation, name: MlirStringRef, arity: isize);
+    fn traitImplOpAddMember(impl_op: MlirOperation, member: MlirAttribute,
+                            signature: MlirType) -> MlirOperation;
+    fn traitImplOpCompleteMembers(impl_op: MlirOperation, trait_op: MlirOperation);
+    fn traitImplOpBindAssociatedType(impl_op: MlirOperation, name: MlirStringRef, ty: MlirType);
 }
 
 /// Rename each top-level symbol of `op` named first in `renames` to the name
@@ -281,28 +289,67 @@ fn declaration_body<'c>(loc: Location<'c>, arguments: &[Type<'c>]) -> Region<'c>
     region
 }
 
-/// Build a `trait.trait` whose one block argument is `self_claim`, the claim of
-/// the trait's own application, and whose result signature is `requirements`,
-/// one claim per requirement in order. The trait is minted private, the one
-/// visibility erase accepts.
+/// Build a `trait.trait` declaring the trait `name`, whose own application is
+/// `self_claim` and whose result signature is `requirements`, one claim per
+/// requirement in order. It declares no member and no associated type until
+/// `trait_member` and `declare_associated_type` add them. The trait is minted
+/// private, the one visibility erase accepts.
 pub fn trait_<'c>(loc: Location<'c>,
                   name: &str,
                   self_claim: Type<'c>,
                   requirements: &[Type<'c>],
 ) -> Operation<'c> {
+    let (no_defaults, no_associated_types) = unsafe {
+        let ctx = mlirLocationGetContext(loc.to_raw());
+        (Attribute::from_raw(mlirDenseBoolArrayGet(ctx, 0, std::ptr::null())),
+         Attribute::from_raw(mlirDictionaryAttrGet(ctx, 0, std::ptr::null())))
+    };
     build_op(OperationBuilder::new("trait.trait", loc)
         .add_attributes(&[
             (identifier(loc, "sym_name"), string_attr(loc, name)),
+            (identifier(loc, "self"), type_attr(self_claim)),
             (identifier(loc, "requirements"), type_array_attr(loc, requirements)),
+            (identifier(loc, "members"), array_attr(loc, &[])),
+            (identifier(loc, "defaults"), no_defaults),
+            (identifier(loc, "assoc"), no_associated_types),
             (identifier(loc, "sym_visibility"), string_attr(loc, "private")),
-        ])
-        .add_regions([declaration_body(loc, &[self_claim])]))
+        ]))
+}
+
+/// Declare member `name` of the trait `trait_op`, which stands in a block,
+/// whose inputs after the trait's own application and whose results are
+/// `signature`'s, a function type: a private `func.func @<trait>.<name>`
+/// leading with the trait's self claim, standing after the trait and the
+/// member functions already standing after it, and entered at the end of the
+/// trait's members. With `with_default` the function's entry block is the
+/// member's default body, for the caller to fill and end with `func.return`;
+/// otherwise the function is external, required of every impl.
+pub fn trait_member<'c, 'a>(trait_op: OperationRef<'c, 'a>,
+                            name: &str,
+                            signature: Type<'c>,
+                            with_default: bool,
+) -> OperationRef<'c, 'a> {
+    assert!(trait_op.block().is_some(), "a trait gains members where it stands in a block");
+    unsafe {
+        OperationRef::from_raw(traitTraitOpAddMember(
+            trait_op.to_raw(), StringRef::new(name).to_raw(), signature.to_raw(), with_default))
+    }
+}
+
+/// Declare associated type `name` of the trait `trait_op`, taking `arity` type
+/// parameters of its own, labelled after the trait's by position.
+pub fn declare_associated_type(trait_op: OperationRef, name: &str, arity: usize) {
+    unsafe {
+        traitTraitOpDeclareAssociatedType(trait_op.to_raw(), StringRef::new(name).to_raw(), arity as isize)
+    }
 }
 
 /// Build a named `trait.impl` whose block arguments are `self_claim`, the
 /// claim of the application it implements, and then `where_claims`, one claim
 /// per where entry in order. The caller fills the body and ends it with
-/// `trait.return` of the evidence for the trait's requirements. The impl is
+/// `trait.return` of the evidence for the trait's requirements. It pairs no
+/// member and binds no associated type until `impl_member`,
+/// `complete_impl_members` and `bind_associated_type` add them. The impl is
 /// minted private, the one visibility erase accepts.
 pub fn impl_named<'c>(loc: Location<'c>,
                       sym_name: &str,
@@ -311,57 +358,65 @@ pub fn impl_named<'c>(loc: Location<'c>,
 ) -> Operation<'c> {
     let mut arguments = vec![self_claim];
     arguments.extend_from_slice(where_claims);
+    let no_bindings = unsafe {
+        Attribute::from_raw(mlirDictionaryAttrGet(
+            mlirLocationGetContext(loc.to_raw()), 0, std::ptr::null()))
+    };
     build_op(OperationBuilder::new("trait.impl", loc)
         .add_attributes(&[
             (identifier(loc, "sym_name"), string_attr(loc, sym_name)),
+            (identifier(loc, "members"), array_attr(loc, &[])),
+            (identifier(loc, "bindings"), no_bindings),
             (identifier(loc, "sym_visibility"), string_attr(loc, "private")),
         ])
         .add_regions([declaration_body(loc, &arguments)]))
 }
 
-/// Build a `trait.method` named `name` whose type is `function_type`, holding
-/// `body`: an empty region for a method a trait requires, or one whose entry
-/// block takes the function type's inputs and whose blocks end in
-/// `trait.return`. A method carries no visibility: it lives and dies with the
-/// trait or impl it stands in.
-pub fn method<'c>(loc: Location<'c>,
-                  name: &str,
-                  function_type: Type<'c>,
-                  body: Region<'c>,
-) -> Operation<'c> {
-    build_op(OperationBuilder::new("trait.method", loc)
-        .add_attributes(&[
-            (identifier(loc, "sym_name"), string_attr(loc, name)),
-            (identifier(loc, "function_type"), type_attr(function_type)),
-        ])
-        .add_regions([body]))
+/// Add to the impl `impl_op`, which stands in a block, the function
+/// implementing `member`, a member of the impl's trait named by its symbol,
+/// whose inputs and results at the impl's arguments are `signature`'s, a
+/// function type: a private `func.func @<impl>.<name>`, named after the
+/// member's name within its trait, whose leading parameters are the impl's
+/// block argument types and whose remaining inputs are `signature`'s, standing
+/// after the impl and the member functions already standing after it. Its
+/// entry block is for the caller to fill and end with `func.return`; the pair
+/// `member -> function` is entered in the impl's members.
+pub fn impl_member<'c, 'a>(impl_op: OperationRef<'c, 'a>,
+                           member: &str,
+                           signature: Type<'c>,
+) -> OperationRef<'c, 'a> {
+    assert!(impl_op.block().is_some(), "an impl gains members where it stands in a block");
+    let member = symbol_ref_attr(impl_op.location(), member);
+    unsafe {
+        OperationRef::from_raw(traitImplOpAddMember(
+            impl_op.to_raw(), member.to_raw(), signature.to_raw()))
+    }
 }
 
-/// Build a `trait.return` of `operands`: the results of the method whose body
-/// the block it ends stands in, the evidence an impl returns for its trait's
-/// requirements, or the one claim a proof proves.
+/// Pair every member of `trait_op`, the trait of the impl `impl_op`, in the
+/// trait's order: with the function `impl_member` added for it, or with itself,
+/// leaving it to the trait's default.
+pub fn complete_impl_members(impl_op: OperationRef, trait_op: OperationRef) {
+    unsafe { traitImplOpCompleteMembers(impl_op.to_raw(), trait_op.to_raw()) }
+}
+
+/// Bind associated type `name` of the impl `impl_op` to `ty`, spelled over the
+/// impl's parameters and the associated type's own, labelled after them.
+pub fn bind_associated_type<'c>(impl_op: OperationRef<'c, '_>, name: &str, ty: Type<'c>) {
+    unsafe {
+        traitImplOpBindAssociatedType(impl_op.to_raw(), StringRef::new(name).to_raw(), ty.to_raw())
+    }
+}
+
+/// Build a `trait.return` of `operands`: the evidence an impl returns for its
+/// trait's requirements, or the one claim a proof proves.
 pub fn return_<'c>(loc: Location<'c>, operands: &[Value<'c, '_>]) -> Operation<'c> {
     build_op(OperationBuilder::new("trait.return", loc).add_operands(operands))
 }
 
-/// Build a `trait.method.call` of `method_name`, a method of the trait the
-/// receiver claim `claim` names, with `arguments`; `result_types` are the
-/// call's results.
-pub fn method_call<'c>(loc: Location<'c>,
-                       method_name: &str,
-                       claim: Value<'c,'_>,
-                       arguments: &[Value<'c,'_>],
-                       result_types: &[Type<'c>],
-) -> Operation<'c> {
-    build_op(OperationBuilder::new("trait.method.call", loc)
-        .add_operands(&[claim])
-        .add_operands(arguments)
-        .add_attributes(&[(identifier(loc, "method_name"), string_attr(loc, method_name))])
-        .add_results(result_types))
-}
-
 /// Build a `trait.func.call` of `@callee` with `arguments`; `result_types` are
-/// the call's results.
+/// the call's results. A call of a trait's member names the member's function
+/// and passes the receiver's claim first.
 pub fn func_call<'c>(loc: Location<'c>,
                      callee: &str,
                      arguments: &[Value<'c,'_>],
@@ -657,19 +712,5 @@ pub fn coerce<'c>(loc: Location<'c>, input: Value<'c, '_>, equalities: &[Value<'
         .add_operands(&[input])
         .add_operands(equalities)
         .add_results(&[result_type]))
-}
-
-/// Create a `trait.assoc_type` op. Pass `None` for a bare declaration (inside a
-/// trait body) or `Some(type)` for a binding (inside an impl body).
-/// Pass `type_params` for GAT type parameters (empty slice for non-GAT).
-pub fn assoc_type<'c>(loc: Location<'c>, name: &str, bound_type: Option<Type<'c>>, type_params: &[Type<'c>]) -> Operation<'c> {
-    let mut attributes = vec![(identifier(loc, "sym_name"), string_attr(loc, name))];
-    if let Some(bound_type) = bound_type {
-        attributes.push((identifier(loc, "bound_type"), type_attr(bound_type)));
-    }
-    if !type_params.is_empty() {
-        attributes.push((identifier(loc, "type_params"), type_array_attr(loc, type_params)));
-    }
-    build_op(OperationBuilder::new("trait.assoc_type", loc).add_attributes(&attributes))
 }
 

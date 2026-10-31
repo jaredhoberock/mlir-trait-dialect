@@ -12,9 +12,12 @@
 // with its own witness.
 
 !T = !trait.poly<0>
-trait.trait private @Foo(%self: !trait.claim<@Foo[!T]>) { trait.method @m() -> i64 }
-trait.impl private @Foo_all(%self: !trait.claim<@Foo[!T]>, %foo: !trait.claim<@Foo[!T]>) {
-  trait.method @m() -> i64 { %c = arith.constant 7 : i64  trait.return %c : i64 }
+trait.trait private @Foo(!trait.claim<@Foo[!T]>) members [@Foo.m]
+func.func private @Foo.m(!trait.claim<@Foo[!T]>) -> i64
+trait.impl private @Foo_all(%self: !trait.claim<@Foo[!T]>, %foo: !trait.claim<@Foo[!T]>) members [@Foo.m -> @Foo_all.m] {
+}
+func.func private @Foo_all.m(%self: !trait.claim<@Foo[!T]>, %foo: !trait.claim<@Foo[!T]>) -> i64 {
+  %c = arith.constant 7 : i64  return %c : i64
 }
 // expected-error @below {{'trait.proof' op is cited by its own derivation: @p -> @p}}
 trait.proof private @p {
@@ -24,7 +27,7 @@ trait.proof private @p {
 }
 func.func @main() -> i64 {
   %w = trait.witness @p for @Foo[i32]
-  %r = trait.method.call %w @m() : !trait.claim<@Foo[i32] by @p>, () -> i64
+  %r = trait.func.call @Foo.m(%w) : (!trait.claim<@Foo[i32] by @p>) -> i64
   return %r : i64
 }
 
@@ -33,10 +36,12 @@ func.func @main() -> i64 {
 // Two proofs each supplying the other's where entry.
 
 !T = !trait.poly<0>
-trait.trait private @Foo(%self: !trait.claim<@Foo[!T]>) {}
-trait.trait private @Baz(%self: !trait.claim<@Baz[!T]>) {}
-trait.impl private @Foo_all(%self: !trait.claim<@Foo[!T]>, %b: !trait.claim<@Baz[!T]>) {}
-trait.impl private @Baz_all(%self: !trait.claim<@Baz[!T]>, %f: !trait.claim<@Foo[!T]>) {}
+trait.trait private @Foo(!trait.claim<@Foo[!T]>)
+trait.trait private @Baz(!trait.claim<@Baz[!T]>)
+trait.impl private @Foo_all(%self: !trait.claim<@Foo[!T]>, %b: !trait.claim<@Baz[!T]>) {
+}
+trait.impl private @Baz_all(%self: !trait.claim<@Baz[!T]>, %f: !trait.claim<@Foo[!T]>) {
+}
 // expected-error @below {{'trait.proof' op is cited by its own derivation: @p -> @q -> @p}}
 trait.proof private @p {
   %b = trait.witness @q for @Baz[i32]
@@ -56,10 +61,12 @@ trait.proof private @q {
 // itself.
 
 !T = !trait.poly<0>
-trait.trait private @Foo(%self: !trait.claim<@Foo[!T]>) {}
-trait.trait private @Bar(%self: !trait.claim<@Bar[!T]>) { trait.assoc_type @Out }
-trait.impl private @Bar_all(%self: !trait.claim<@Bar[!T]>, %f: !trait.claim<@Foo[!T]>) { trait.assoc_type @Out = i64 }
-trait.impl private @Foo_all(%self: !trait.claim<@Foo[!T]>, %e: !trait.claim<!trait.proj<@Bar[!T], "Out"> = i64>) {}
+trait.trait private @Foo(!trait.claim<@Foo[!T]>)
+trait.trait private @Bar(!trait.claim<@Bar[!T]>) assoc {Out = 0}
+trait.impl private @Bar_all(%self: !trait.claim<@Bar[!T]>, %f: !trait.claim<@Foo[!T]>) bindings {Out = i64} {
+}
+trait.impl private @Foo_all(%self: !trait.claim<@Foo[!T]>, %e: !trait.claim<!trait.proj<@Bar[!T], "Out"> = i64>) {
+}
 // expected-error @below {{'trait.proof' op is cited by its own derivation: @p -> @p}}
 trait.proof private @p {
   %w = trait.witness @p for @Foo[i32]
@@ -74,10 +81,12 @@ trait.proof private @p {
 // Through the derive of a where entry, computed in the proof's body.
 
 !T = !trait.poly<0>
-trait.trait private @Foo(%self: !trait.claim<@Foo[!T]>) {}
-trait.trait private @Baz(%self: !trait.claim<@Baz[!T]>) {}
-trait.impl private @Baz_all(%self: !trait.claim<@Baz[!T]>, %f: !trait.claim<@Foo[!T]>) {}
-trait.impl private @Foo_all(%self: !trait.claim<@Foo[!T]>, %b: !trait.claim<@Baz[!T]>) {}
+trait.trait private @Foo(!trait.claim<@Foo[!T]>)
+trait.trait private @Baz(!trait.claim<@Baz[!T]>)
+trait.impl private @Baz_all(%self: !trait.claim<@Baz[!T]>, %f: !trait.claim<@Foo[!T]>) {
+}
+trait.impl private @Foo_all(%self: !trait.claim<@Foo[!T]>, %b: !trait.claim<@Baz[!T]>) {
+}
 // expected-error @below {{'trait.proof' op is cited by its own derivation: @p -> @p}}
 trait.proof private @p {
   %w = trait.witness @p for @Foo[i32]
@@ -93,13 +102,15 @@ trait.proof private @p {
 // @Bar_cond binds, given the witness of @p itself.
 
 !T = !trait.poly<0>
-trait.trait private @Foo(%self: !trait.claim<@Foo[!T]>) { trait.method @m() -> i64 }
-trait.trait private @Bar(%self: !trait.claim<@Bar[!T]>) { trait.assoc_type @Out }
-trait.impl private @Foo_head(%self: !trait.claim<@Foo[!trait.proj<@Bar[i32], "Out">]>) {
-  trait.method @m() -> i64 { %v = arith.constant 7 : i64  trait.return %v : i64 }
+trait.trait private @Foo(!trait.claim<@Foo[!T]>) members [@Foo.m]
+func.func private @Foo.m(!trait.claim<@Foo[!T]>) -> i64
+trait.trait private @Bar(!trait.claim<@Bar[!T]>) assoc {Out = 0}
+trait.impl private @Foo_head(%self: !trait.claim<@Foo[!trait.proj<@Bar[i32], "Out">]>) members [@Foo.m -> @Foo_head.m] {
 }
-trait.impl private @Bar_cond(%self: !trait.claim<@Bar[i32]>, %f: !trait.claim<@Foo[i64]>) {
-  trait.assoc_type @Out = i64
+func.func private @Foo_head.m(%self: !trait.claim<@Foo[!trait.proj<@Bar[i32], "Out">]>) -> i64 {
+  %v = arith.constant 7 : i64  return %v : i64
+}
+trait.impl private @Bar_cond(%self: !trait.claim<@Bar[i32]>, %f: !trait.claim<@Foo[i64]>) bindings {Out = i64} {
 }
 // expected-error @below {{'trait.proof' op is cited by its own derivation: @p -> @p}}
 trait.proof private @p {
@@ -127,18 +138,21 @@ func.func @main() -> i64 {
 // @q, which cites none: the call runs @Foo_head's method.
 
 // CHECK-LABEL: func.func @main() -> i64
-// CHECK:         call @Foo_head_{{h[0-9a-f]+}}_m()
+// CHECK:         call @Foo_head.m_{{h[0-9a-f]+}}()
 
 !T = !trait.poly<0>
-trait.trait private @Foo(%self: !trait.claim<@Foo[!T]>) { trait.method @m() -> i64 }
-trait.trait private @Bar(%self: !trait.claim<@Bar[!T]>) { trait.assoc_type @Out }
-trait.trait private @Baz(%self: !trait.claim<@Baz[!T]>) {}
-trait.impl private @Foo_head(%self: !trait.claim<@Foo[!trait.proj<@Bar[i32], "Out">]>) {
-  trait.method @m() -> i64 { %v = arith.constant 7 : i64  trait.return %v : i64 }
+trait.trait private @Foo(!trait.claim<@Foo[!T]>) members [@Foo.m]
+func.func private @Foo.m(!trait.claim<@Foo[!T]>) -> i64
+trait.trait private @Bar(!trait.claim<@Bar[!T]>) assoc {Out = 0}
+trait.trait private @Baz(!trait.claim<@Baz[!T]>)
+trait.impl private @Foo_head(%self: !trait.claim<@Foo[!trait.proj<@Bar[i32], "Out">]>) members [@Foo.m -> @Foo_head.m] {
 }
-trait.impl private @Baz_i64(%self: !trait.claim<@Baz[i64]>) {}
-trait.impl private @Bar_cond(%self: !trait.claim<@Bar[i32]>, %z: !trait.claim<@Baz[i64]>) {
-  trait.assoc_type @Out = i64
+func.func private @Foo_head.m(%self: !trait.claim<@Foo[!trait.proj<@Bar[i32], "Out">]>) -> i64 {
+  %v = arith.constant 7 : i64  return %v : i64
+}
+trait.impl private @Baz_i64(%self: !trait.claim<@Baz[i64]>) {
+}
+trait.impl private @Bar_cond(%self: !trait.claim<@Bar[i32]>, %z: !trait.claim<@Baz[i64]>) bindings {Out = i64} {
 }
 trait.proof private @q {
   %d = trait.derive @Baz[i64] from @Baz_i64 given()
@@ -155,7 +169,7 @@ trait.proof private @p {
 }
 func.func @main() -> i64 {
   %w = trait.witness @p for @Foo[i64]
-  %r = trait.method.call %w @m() : !trait.claim<@Foo[i64] by @p>, () -> i64
+  %r = trait.func.call @Foo.m(%w) : (!trait.claim<@Foo[i64] by @p>) -> i64
   return %r : i64
 }
 
@@ -165,14 +179,18 @@ func.func @main() -> i64 {
 // where entry is @q's, and the call runs @Foo_all's method.
 
 // CHECK-LABEL: func.func @main() -> i64
-// CHECK:         call @Foo_all_{{h[0-9a-f]+}}_m()
+// CHECK:         call @Foo_all.m_{{h[0-9a-f]+}}()
 
 !T = !trait.poly<0>
-trait.trait private @Foo(%self: !trait.claim<@Foo[!T]>) { trait.method @m() -> i64 }
-trait.trait private @Baz(%self: !trait.claim<@Baz[!T]>) {}
-trait.impl private @Baz_i32(%self: !trait.claim<@Baz[i32]>) {}
-trait.impl private @Foo_all(%self: !trait.claim<@Foo[!T]>, %b: !trait.claim<@Baz[!T]>) {
-  trait.method @m() -> i64 { %c = arith.constant 7 : i64  trait.return %c : i64 }
+trait.trait private @Foo(!trait.claim<@Foo[!T]>) members [@Foo.m]
+func.func private @Foo.m(!trait.claim<@Foo[!T]>) -> i64
+trait.trait private @Baz(!trait.claim<@Baz[!T]>)
+trait.impl private @Baz_i32(%self: !trait.claim<@Baz[i32]>) {
+}
+trait.impl private @Foo_all(%self: !trait.claim<@Foo[!T]>, %b: !trait.claim<@Baz[!T]>) members [@Foo.m -> @Foo_all.m] {
+}
+func.func private @Foo_all.m(%self: !trait.claim<@Foo[!T]>, %b: !trait.claim<@Baz[!T]>) -> i64 {
+  %c = arith.constant 7 : i64  return %c : i64
 }
 trait.proof private @q {
   %d = trait.derive @Baz[i32] from @Baz_i32 given()
@@ -185,6 +203,6 @@ trait.proof private @p {
 }
 func.func @main() -> i64 {
   %w = trait.witness @p for @Foo[i32]
-  %r = trait.method.call %w @m() : !trait.claim<@Foo[i32] by @p>, () -> i64
+  %r = trait.func.call @Foo.m(%w) : (!trait.claim<@Foo[i32] by @p>) -> i64
   return %r : i64
 }

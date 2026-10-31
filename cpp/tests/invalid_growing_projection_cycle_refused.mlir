@@ -14,22 +14,20 @@
 
 !T = !trait.poly<0>
 
-trait.trait private @Grow(%self: !trait.claim<@Grow[!T]>) {
-  trait.assoc_type @Output
-}
+trait.trait private @Grow(!trait.claim<@Grow[!T]>) assoc {Output = 0}
 
-trait.impl private @Grow_i32(%self: !trait.claim<@Grow[i32]>) {
-  trait.assoc_type @Output = tuple<!trait.proj<@Grow[i32], "Output">, i32>
+trait.impl private @Grow_i32(%self: !trait.claim<@Grow[i32]>) bindings {Output = tuple<!trait.proj<@Grow[i32], "Output">, i32>} {
 }
 
 !W = !trait.poly<1>
-trait.trait private @Wants(%self: !trait.claim<@Wants[!trait.poly<0>]>) { trait.method @m() -> i64 }
+trait.trait private @Wants(!trait.claim<@Wants[!trait.poly<0>]>) members [@Wants.m]
+func.func private @Wants.m(!trait.claim<@Wants[!trait.poly<0>]>) -> i64
 
-trait.impl private @Wants_impl(%self: !trait.claim<@Wants[!trait.proj<@Grow[i32], "Output">]>) {
-  trait.method @m() -> i64 {
-    %c = arith.constant 1 : i64
-    trait.return %c : i64
-  }
+trait.impl private @Wants_impl(%self: !trait.claim<@Wants[!trait.proj<@Grow[i32], "Output">]>) members [@Wants.m -> @Wants_impl.m] {
+}
+func.func private @Wants_impl.m(%self: !trait.claim<@Wants[!trait.proj<@Grow[i32], "Output">]>) -> i64 {
+  %c = arith.constant 1 : i64
+  return %c : i64
 }
 
 trait.proof private @p {
@@ -39,6 +37,6 @@ trait.proof private @p {
 
 func.func @main() -> i64 {
   %w = trait.witness @p for @Wants[!trait.proj<@Grow[i32], "Output">]
-  %v = trait.method.call %w @m() : !trait.claim<@Wants[!trait.proj<@Grow[i32], "Output">] by @p>, () -> i64
+  %v = trait.func.call @Wants.m(%w) : (!trait.claim<@Wants[!trait.proj<@Grow[i32], "Output">] by @p>) -> i64
   return %v : i64
 }

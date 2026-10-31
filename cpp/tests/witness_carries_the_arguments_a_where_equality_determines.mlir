@@ -15,39 +15,32 @@
 !S = !trait.poly<0>
 !U = !trait.poly<1>
 
-trait.trait private @Marker(%self: !trait.claim<@Marker[!S]>) {
-  trait.assoc_type @M
-}
-trait.impl private @Marker_i64(%self: !trait.claim<@Marker[i64]>) {
-  trait.assoc_type @M = i1
+trait.trait private @Marker(!trait.claim<@Marker[!S]>) assoc {M = 0}
+trait.impl private @Marker_i64(%self: !trait.claim<@Marker[i64]>) bindings {M = i1} {
 }
 
-trait.trait private @S(%self: !trait.claim<@S[!S]>) {
-  trait.assoc_type @Out
-}
-trait.impl private @S_i64(%self: !trait.claim<@S[i64]>, %m: !trait.claim<!trait.proj<@Marker[i64], "M"> = !trait.poly<0>>) {
-  trait.assoc_type @Out = !trait.poly<0>
+trait.trait private @S(!trait.claim<@S[!S]>) assoc {Out = 0}
+trait.impl private @S_i64(%self: !trait.claim<@S[i64]>, %m: !trait.claim<!trait.proj<@Marker[i64], "M"> = !trait.poly<0>>) bindings {Out = !trait.poly<0>} {
 }
 
-trait.trait private @Foo(%self: !trait.claim<@Foo[!S]>) {
-  trait.method @f(!S) -> !trait.proj<@S[i64], "Out">
-}
+trait.trait private @Foo(!trait.claim<@Foo[!S]>) members [@Foo.f]
+func.func private @Foo.f(!trait.claim<@Foo[!S]>, !S) -> !trait.proj<@S[i64], "Out">
 
 // CHECK: trait.impl private @Foo_i64(%self: !trait.claim<@Foo[i64]>)
 // CHECK: %[[M:.*]] = trait.witness proj_resolve !trait.proj<@Marker[i64], "M"> resolves i1 by @Marker_i64
 // CHECK: trait.witness proj_resolve !trait.proj<@S[i64], "Out"> resolves i1 by @S_i64[i1] given(%[[M]])
-trait.impl private @Foo_i64(%self: !trait.claim<@Foo[i64]>) {
-  trait.method @f(%x: i64) -> !trait.proj<@S[i64], "Out"> {
-    %t = arith.constant true
-    %m = trait.witness proj_resolve !trait.proj<@Marker[i64], "M"> resolves i1 by @Marker_i64
-      : !trait.claim<!trait.proj<@Marker[i64], "M"> = i1>
-    %e = trait.witness proj_resolve !trait.proj<@S[i64], "Out"> resolves i1 by @S_i64[i1]
-      given(%m) : (!trait.claim<!trait.proj<@Marker[i64], "M"> = i1>)
-      : !trait.claim<!trait.proj<@S[i64], "Out"> = i1>
-    %r = trait.coerce %t : i1 to !trait.proj<@S[i64], "Out"> via (%e)
-      : (!trait.claim<!trait.proj<@S[i64], "Out"> = i1>)
-    trait.return %r : !trait.proj<@S[i64], "Out">
-  }
+trait.impl private @Foo_i64(%self: !trait.claim<@Foo[i64]>) members [@Foo.f -> @Foo_i64.f] {
+}
+func.func private @Foo_i64.f(%self: !trait.claim<@Foo[i64]>, %x: i64) -> !trait.proj<@S[i64], "Out"> {
+  %t = arith.constant true
+  %m = trait.witness proj_resolve !trait.proj<@Marker[i64], "M"> resolves i1 by @Marker_i64
+    : !trait.claim<!trait.proj<@Marker[i64], "M"> = i1>
+  %e = trait.witness proj_resolve !trait.proj<@S[i64], "Out"> resolves i1 by @S_i64[i1]
+    given(%m) : (!trait.claim<!trait.proj<@Marker[i64], "M"> = i1>)
+    : !trait.claim<!trait.proj<@S[i64], "Out"> = i1>
+  %r = trait.coerce %t : i1 to !trait.proj<@S[i64], "Out"> via (%e)
+    : (!trait.claim<!trait.proj<@S[i64], "Out"> = i1>)
+  return %r : !trait.proj<@S[i64], "Out">
 }
 
 // CHECK-LABEL: func.func @read

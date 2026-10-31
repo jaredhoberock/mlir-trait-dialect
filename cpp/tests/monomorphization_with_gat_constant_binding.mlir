@@ -18,17 +18,14 @@
 !S = !trait.poly<0>
 !T = !trait.poly<1>
 
-trait.trait private @ConstMapper(%self: !trait.claim<@ConstMapper[!S]>) {
-  trait.assoc_type @Result<[!T]>
-  trait.method @map(!S, !T) -> !trait.proj<@ConstMapper[!S], "Result", [!T]>
-}
+trait.trait private @ConstMapper(!trait.claim<@ConstMapper[!S]>) assoc {Result = 1} members [@ConstMapper.map]
+func.func private @ConstMapper.map(!trait.claim<@ConstMapper[!S]>, !S, !T) -> !trait.proj<@ConstMapper[!S], "Result", [!T]>
 
-trait.impl private @ConstMapper_impl(%self_claim: !trait.claim<@ConstMapper[i32]>) {
-  trait.assoc_type @Result<[!trait.poly<0>]> = i64
-  trait.method @map(%self: i32, %x: !trait.poly<0>) -> i64 {
-    %c = arith.extsi %self : i32 to i64
-    trait.return %c : i64
-  }
+trait.impl private @ConstMapper_impl(%self_claim: !trait.claim<@ConstMapper[i32]>) bindings {Result = i64} members [@ConstMapper.map -> @ConstMapper_impl.map] {
+}
+func.func private @ConstMapper_impl.map(%self_claim: !trait.claim<@ConstMapper[i32]>, %self: i32, %x: !trait.poly<0>) -> i64 {
+  %c = arith.extsi %self : i32 to i64
+  return %c : i64
 }
 
 // CHECK-LABEL: func.func @caller
@@ -40,7 +37,6 @@ func.func @caller() -> !trait.proj<@ConstMapper[i32], "Result", [i1]> {
   %a = trait.allege @ConstMapper[i32]
   %self = arith.constant 7 : i32
   %x = arith.constant 1 : i1
-  %r = trait.method.call %a @map(%self, %x)
-    : !trait.claim<@ConstMapper[i32]>, (i32, i1) -> !trait.proj<@ConstMapper[i32], "Result", [i1]>
+  %r = trait.func.call @ConstMapper.map(%a, %self, %x) : (!trait.claim<@ConstMapper[i32]>, i32, i1) -> !trait.proj<@ConstMapper[i32], "Result", [i1]>
   return %r : !trait.proj<@ConstMapper[i32], "Result", [i1]>
 }

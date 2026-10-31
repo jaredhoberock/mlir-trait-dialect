@@ -12,11 +12,8 @@
 
 !S = !trait.poly<0>
 !T = !trait.poly<1>
-trait.trait private @Same(%self: !trait.claim<@Same[!S]>) -> !trait.claim<!trait.proj<@Same[!S], "A"> = i64> {
-  trait.assoc_type @A
-}
-trait.impl private @Same_i32(%self: !trait.claim<@Same[i32]>) {
-  trait.assoc_type @A = i64
+trait.trait private @Same(!trait.claim<@Same[!S]>) -> !trait.claim<!trait.proj<@Same[!S], "A"> = i64> assoc {A = 0}
+trait.impl private @Same_i32(%self: !trait.claim<@Same[i32]>) bindings {A = i64} {
   %a = trait.witness proj_resolve !trait.proj<@Same[i32], "A"> resolves i64 by @Same_i32 : !trait.claim<!trait.proj<@Same[i32], "A"> = i64>
   trait.return %a : !trait.claim<!trait.proj<@Same[i32], "A"> = i64>
 }

@@ -13,20 +13,18 @@
 !S = !trait.poly<0>
 !V = !trait.poly<9>
 
-trait.trait private @Store(%self: !trait.claim<@Store[!S]>) {
-  trait.method @keep(!trait.poly<0>, !trait.poly<1>) -> !trait.poly<1>
-}
+trait.trait private @Store(!trait.claim<@Store[!S]>) members [@Store.keep]
+func.func private @Store.keep(!trait.claim<@Store[!S]>, !trait.poly<0>, !trait.poly<1>) -> !trait.poly<1>
 
-trait.impl private @Store_impl_i64(%self_claim: !trait.claim<@Store[i64]>) {
-  trait.method @keep(%self: i64, %v: !trait.poly<0>) -> !trait.poly<0> {
-    trait.return %v : !trait.poly<0>
-  }
+trait.impl private @Store_impl_i64(%self_claim: !trait.claim<@Store[i64]>) members [@Store.keep -> @Store_impl_i64.keep] {
+}
+func.func private @Store_impl_i64.keep(%self_claim: !trait.claim<@Store[i64]>, %self: i64, %v: !trait.poly<0>) -> !trait.poly<0> {
+  return %v : !trait.poly<0>
 }
 
 func.func @main(%x: i64, %v: i32) -> i32 {
   %p = trait.witness @Store_impl_i64 for @Store[i64]
-  %r = trait.method.call %p @keep(%x, %v)
-    : !trait.claim<@Store[i64] by @Store_impl_i64>, (i64, i32) -> i32
+  %r = trait.func.call @Store.keep(%p, %x, %v) : (!trait.claim<@Store[i64] by @Store_impl_i64>, i64, i32) -> i32
   return %r : i32
 }
 
@@ -34,8 +32,8 @@ func.func @main(%x: i64, %v: i32) -> i32 {
 // ahead of the instance cut from it, so the exclusion leads: a CHECK-NOT scans
 // only from the preceding match onward, and one placed after the positive check
 // would never reach the line such a clone stands on.
-// CHECK-NOT: func.func private @Store_impl_i64_{{h[0-9a-f]+}}_keep{{.*}}!trait.poly
-// CHECK: func.func private @Store_impl_i64_{{h[0-9a-f]+}}_keep{{.*}}%arg2: i32) -> i32
+// CHECK-NOT: func.func private @Store_impl_i64.keep_{{h[0-9a-f]+}}{{.*}}!trait.poly
+// CHECK: func.func private @Store_impl_i64.keep_{{h[0-9a-f]+}}{{.*}}%arg2: i32) -> i32
 // CHECK: func.func @main
-// CHECK: call @Store_impl_i64_{{h[0-9a-f]+}}_keep
-// CHECK-NOT: trait.method.call
+// CHECK: call @Store_impl_i64.keep_{{h[0-9a-f]+}}
+// CHECK-NOT: trait.func.call

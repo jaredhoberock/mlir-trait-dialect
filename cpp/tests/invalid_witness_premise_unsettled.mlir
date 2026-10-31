@@ -13,17 +13,11 @@
 !U = !trait.poly<1>
 !T = !trait.poly<2>
 
-trait.trait private @Marker(%self: !trait.claim<@Marker[!S]>) {
-  trait.assoc_type @M
+trait.trait private @Marker(!trait.claim<@Marker[!S]>) assoc {M = 0}
+trait.impl private @Marker_i64(%self: !trait.claim<@Marker[i64]>) bindings {M = i1} {
 }
-trait.impl private @Marker_i64(%self: !trait.claim<@Marker[i64]>) {
-  trait.assoc_type @M = i1
-}
-trait.trait private @S(%self: !trait.claim<@S[!S]>) {
-  trait.assoc_type @Out
-}
-trait.impl private @S_gen(%self: !trait.claim<@S[!trait.poly<0>]>, %m: !trait.claim<!trait.proj<@Marker[!trait.poly<0>], "M"> = !trait.poly<1>>) {
-  trait.assoc_type @Out = !U
+trait.trait private @S(!trait.claim<@S[!S]>) assoc {Out = 0}
+trait.impl private @S_gen(%self: !trait.claim<@S[!trait.poly<0>]>, %m: !trait.claim<!trait.proj<@Marker[!trait.poly<0>], "M"> = !trait.poly<1>>) bindings {Out = !U} {
 }
 
 // WRONG: @Marker[i64]::M is i1, so @S[i64]::Out is i1; the citation says i64.

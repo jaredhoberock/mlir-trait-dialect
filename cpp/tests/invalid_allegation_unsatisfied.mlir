@@ -12,8 +12,7 @@
 // CHECK: 'trait.allege' op no impl with satisfiable assumptions for '!trait.claim<@T[i32]>'
 // CHECK: unproven monomorphic claim '!trait.claim<@T[i32]>' after instantiate-monomorphs
 
-trait.trait private @T(%self: !trait.claim<@T[!trait.poly<0>]>) {
-}
+trait.trait private @T(!trait.claim<@T[!trait.poly<0>]>)
 
 func.func private @needs(%c: !trait.claim<@T[i32]>) {
   return

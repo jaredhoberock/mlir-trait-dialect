@@ -8,24 +8,23 @@
 
 !T = !trait.poly<0>
 
-trait.trait private @Greet(%self: !trait.claim<@Greet[!T]>) {
-  trait.method @greet(!T) -> i32
-}
+trait.trait private @Greet(!trait.claim<@Greet[!T]>) members [@Greet.greet]
+func.func private @Greet.greet(!trait.claim<@Greet[!T]>, !T) -> i32
 
-trait.impl private @Greet_i32(%self: !trait.claim<@Greet[i32]>) {
-  trait.method @greet(%x: i32) -> i32 {
-    trait.return %x : i32
-  }
+trait.impl private @Greet_i32(%self: !trait.claim<@Greet[i32]>) members [@Greet.greet -> @Greet_i32.greet] {
+}
+func.func private @Greet_i32.greet(%self: !trait.claim<@Greet[i32]>, %x: i32) -> i32 {
+  return %x : i32
 }
 
 func.func @main(%x: i32) -> i32 {
   %w = trait.allege @Greet[i32]
-  %r = trait.method.call %w @greet(%x) : !trait.claim<@Greet[i32]>, (i32) -> i32
+  %r = trait.func.call @Greet.greet(%w, %x) : (!trait.claim<@Greet[i32]>, i32) -> i32
   return %r : i32
 }
 
-// CHECK-LABEL: func.func private @Greet_i32_{{h[0-9a-f]+}}_greet
+// CHECK-LABEL: func.func private @Greet_i32.greet_{{h[0-9a-f]+}}
 // CHECK: return %arg0 : i32
 // CHECK-LABEL: func.func @main
-// CHECK: call @Greet_i32_{{h[0-9a-f]+}}_greet
+// CHECK: call @Greet_i32.greet_{{h[0-9a-f]+}}
 // CHECK: return {{.*}} : i32

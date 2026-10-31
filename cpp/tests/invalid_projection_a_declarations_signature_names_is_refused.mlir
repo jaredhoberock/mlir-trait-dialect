@@ -11,7 +11,7 @@
 // Handed to erasure alone, the work is still owed, and erasure's entry refuses
 // it there before anything else runs.
 
-trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) { trait.assoc_type @Item }
+trait.trait private @A(!trait.claim<@A[!trait.poly<0>]>) assoc {Item = 0}
 
 // ERASE: error: unresolved projection '!trait.proj<@A[i64], "Item">' before erasure
 // expected-error @below {{no impl with satisfiable assumptions for '!trait.proj<@A[i64], "Item">'}}

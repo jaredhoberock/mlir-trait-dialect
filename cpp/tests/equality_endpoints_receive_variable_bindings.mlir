@@ -13,8 +13,9 @@
 
 !S = !trait.poly<1>
 
-trait.trait private @Assoc(%self: !trait.claim<@Assoc[!trait.poly<0>]>) { trait.assoc_type @Out }
-trait.impl private @Assoc_i64(%self: !trait.claim<@Assoc[i64]>) { trait.assoc_type @Out = i32 }
+trait.trait private @Assoc(!trait.claim<@Assoc[!trait.poly<0>]>) assoc {Out = 0}
+trait.impl private @Assoc_i64(%self: !trait.claim<@Assoc[i64]>) bindings {Out = i32} {
+}
 
 // The clone binds S := i64. The equality endpoint is variable-substituted but
 // not resolved: it stays proj<@Assoc[i64], "Out">, not i32.

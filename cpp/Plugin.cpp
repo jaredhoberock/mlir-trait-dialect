@@ -35,15 +35,13 @@ struct ReportExpansionReadinessPass
 
   void runOnOperation() override {
     ModuleOp module = getOperation();
+    SymbolTableCollection symbolTable;
     module.walk([&](Operation *op) {
       if (auto call = dyn_cast<FuncCallOp>(op))
         op->emitRemark() << "func.call @" << call.getCalleeNameAttr().getValue()
                          << " rewritable="
-                         << (isRewritableGenericCall(op) ? "true" : "false")
-                         << " foreign=" << (isForeign(op) ? "true" : "false");
-      else if (isa<MethodCallOp>(op))
-        op->emitRemark() << "method.call rewritable="
-                         << (isRewritableGenericCall(op) ? "true" : "false")
+                         << (isRewritableGenericCall(op, symbolTable) ? "true"
+                                                                       : "false")
                          << " foreign=" << (isForeign(op) ? "true" : "false");
     });
     module->emitRemark() << "pending-expansion="

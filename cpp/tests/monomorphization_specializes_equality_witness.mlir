@@ -15,12 +15,9 @@
 !S = !trait.poly<0>
 !U = !trait.poly<1>
 
-trait.trait private @Trait(%self: !trait.claim<@Trait[!S]>) {
-  trait.assoc_type @Output
-}
+trait.trait private @Trait(!trait.claim<@Trait[!S]>) assoc {Output = 0}
 
-trait.impl private @Trait_impl(%self: !trait.claim<@Trait[!trait.poly<0>]>) {
-  trait.assoc_type @Output = !trait.poly<0>
+trait.impl private @Trait_impl(%self: !trait.claim<@Trait[!trait.poly<0>]>) bindings {Output = !trait.poly<0>} {
 }
 
 trait.proof private @Trait_i64_p {

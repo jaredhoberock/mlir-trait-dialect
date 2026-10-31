@@ -16,14 +16,12 @@
 
 !T = !trait.poly<0>
 
-trait.trait private @Tensor(%self: !trait.claim<@Tensor[!trait.poly<0>]>) { trait.assoc_type @Shape }
-trait.impl private @Tensor_i8(%self: !trait.claim<@Tensor[i8]>) {
-  trait.assoc_type @Shape = tuple<i64, i64>
+trait.trait private @Tensor(!trait.claim<@Tensor[!trait.poly<0>]>) assoc {Shape = 0}
+trait.impl private @Tensor_i8(%self: !trait.claim<@Tensor[i8]>) bindings {Shape = tuple<i64, i64>} {
 }
-trait.trait private @S(%self: !trait.claim<@S[!trait.poly<0>]>) { trait.assoc_type @Out }
+trait.trait private @S(!trait.claim<@S[!trait.poly<0>]>) assoc {Out = 0}
 // expected-note @+1 {{unsatisfiable candidate}}
-trait.impl private @S_blanket(%self: !trait.claim<@S[!trait.poly<0>]>, %tensor: !trait.claim<@Tensor[!trait.poly<0>]>, %shape: !trait.claim<!trait.proj<@Tensor[!trait.poly<0>], "Shape"> = i64>) {
-  trait.assoc_type @Out = i64
+trait.impl private @S_blanket(%self: !trait.claim<@S[!trait.poly<0>]>, %tensor: !trait.claim<@Tensor[!trait.poly<0>]>, %shape: !trait.claim<!trait.proj<@Tensor[!trait.poly<0>], "Shape"> = i64>) bindings {Out = i64} {
 }
 
 func.func private @f(%t: !trait.claim<@Tensor[!T]>) -> i64 {
@@ -55,17 +53,11 @@ func.func @main() {
 !U = !trait.poly<1>
 !T = !trait.poly<2>
 
-trait.trait private @Marker(%self: !trait.claim<@Marker[!S]>) {
-  trait.assoc_type @M
+trait.trait private @Marker(!trait.claim<@Marker[!S]>) assoc {M = 0}
+trait.impl private @Marker_i64(%self: !trait.claim<@Marker[i64]>) bindings {M = i1} {
 }
-trait.impl private @Marker_i64(%self: !trait.claim<@Marker[i64]>) {
-  trait.assoc_type @M = i1
-}
-trait.trait private @S(%self: !trait.claim<@S[!S]>) {
-  trait.assoc_type @Out
-}
-trait.impl private @S_i64(%self: !trait.claim<@S[i64]>, %m: !trait.claim<!trait.proj<@Marker[i64], "M"> = !trait.poly<0>>) {
-  trait.assoc_type @Out = !trait.poly<0>
+trait.trait private @S(!trait.claim<@S[!S]>) assoc {Out = 0}
+trait.impl private @S_i64(%self: !trait.claim<@S[i64]>, %m: !trait.claim<!trait.proj<@Marker[i64], "M"> = !trait.poly<0>>) bindings {Out = !trait.poly<0>} {
 }
 func.func private @gen(%v: !trait.proj<@S[i64], "Out">, %x: !trait.poly<0>) -> !trait.poly<0> {
   // expected-error @below {{alleges '!trait.proj<@Marker[i64], "M">' = 'i64', and impl selection resolves its sides to 'i1' and 'i64'}}

@@ -15,10 +15,11 @@
 func.func private @dup() { return }
 func.func private @dup() { return }
 
-trait.trait private @T(%self: !trait.claim<@T[!trait.poly<0>]>) { trait.method @m() -> i64 }
-trait.impl private @T_i32(%self: !trait.claim<@T[i32]>) {
-  trait.method @m() -> i64 {
-    %c = arith.constant 1 : i64
-    trait.return %c : i64
-  }
+trait.trait private @T(!trait.claim<@T[!trait.poly<0>]>) members [@T.m]
+func.func private @T.m(!trait.claim<@T[!trait.poly<0>]>) -> i64
+trait.impl private @T_i32(%self: !trait.claim<@T[i32]>) members [@T.m -> @T_i32.m] {
+}
+func.func private @T_i32.m(%self: !trait.claim<@T[i32]>) -> i64 {
+  %c = arith.constant 1 : i64
+  return %c : i64
 }

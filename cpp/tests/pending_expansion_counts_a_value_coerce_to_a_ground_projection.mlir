@@ -13,8 +13,9 @@
 // and the function lowers to its argument rather than being refused at
 // erasure's entry for a projection instantiation would have resolved.
 
-trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) { trait.assoc_type @Item }
-trait.impl private @A_impl(%self: !trait.claim<@A[!trait.poly<0>]>) { trait.assoc_type @Item = !trait.poly<0> }
+trait.trait private @A(!trait.claim<@A[!trait.poly<0>]>) assoc {Item = 0}
+trait.impl private @A_impl(%self: !trait.claim<@A[!trait.poly<0>]>) bindings {Item = !trait.poly<0>} {
+}
 
 // CHECK: pending-expansion=true
 // LOWERED-LABEL: func.func @use(%arg0: i64) -> i64

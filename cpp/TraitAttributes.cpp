@@ -81,10 +81,12 @@ static T cantFail(FailureOr<T> f, const char* message) {
 }
 
 FailureOr<TraitOp> TraitApplicationAttr::getTrait(
-    ModuleOp module,
+    SymbolTableCollection &symbolTable,
+    Operation *from,
     llvm::function_ref<InFlightDiagnostic()> emitError
 ) const {
-  TraitOp traitOp = lookupSymbolFrom<TraitOp>(module, getTraitName());
+  TraitOp traitOp =
+      symbolTable.lookupNearestSymbolFrom<TraitOp>(from, getTraitName());
   if (!traitOp) {
     if (emitError) emitError() << "cannot find trait '" << getTraitName() << "'";
     return failure();
@@ -93,10 +95,11 @@ FailureOr<TraitOp> TraitApplicationAttr::getTrait(
 }
 
 TraitOp TraitApplicationAttr::getTraitOrAbort(
-    ModuleOp module,
+    SymbolTableCollection &symbolTable,
+    Operation *from,
     const char* msg
 ) const {
-  return cantFail(getTrait(module), msg);
+  return cantFail(getTrait(symbolTable, from), msg);
 }
 
 // A trait application references a trait symbol applied to a fixed number of
@@ -108,18 +111,9 @@ TraitOp TraitApplicationAttr::getTraitOrAbort(
 // verify a trait application encountered in a discardable position.
 LogicalResult TraitApplicationAttr::verifySymbolUses(
     Operation *op, SymbolTableCollection &symbolTable) const {
-  // Verification writes nothing, so every name read under it resolves through
-  // the symbol tables the walk this is one step of has already built.
-  SymbolLookupScope symbolAnswers(op, symbolTable);
-
-  ModuleOp module = getAnchorModule(op);
-  if (!module)
-    return op->emitError()
-           << "cannot verify trait application '" << getTraitName()
-           << "': anchor operation is not nested in a module";
   auto err = [&] { return op->emitError(); };
 
-  auto trait = getTrait(module, err);
+  auto trait = getTrait(symbolTable, op, err);
   if (failed(trait))
     return failure();
 

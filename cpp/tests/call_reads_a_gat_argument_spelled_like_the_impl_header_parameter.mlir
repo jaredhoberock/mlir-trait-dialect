@@ -13,14 +13,12 @@
 !V = !trait.poly<0>
 !U = !trait.poly<2>
 
-trait.trait private @M0(%self: !trait.claim<@M0[!trait.poly<0>]>) {}
-trait.impl private @M0_i64(%self: !trait.claim<@M0[i64]>) {}
-
-trait.trait private @Has(%self: !trait.claim<@Has[!trait.poly<0>]>) {
-  trait.assoc_type @A<[!trait.poly<1>]>
+trait.trait private @M0(!trait.claim<@M0[!trait.poly<0>]>)
+trait.impl private @M0_i64(%self: !trait.claim<@M0[i64]>) {
 }
-trait.impl private @Has_tuple(%self: !trait.claim<@Has[tuple<!trait.poly<0>>]>, %m0: !trait.claim<@M0[!trait.poly<0>]>) {
-  trait.assoc_type @A<[!trait.poly<1>]> = !trait.poly<1>
+
+trait.trait private @Has(!trait.claim<@Has[!trait.poly<0>]>) assoc {A = 1}
+trait.impl private @Has_tuple(%self: !trait.claim<@Has[tuple<!trait.poly<0>>]>, %m0: !trait.claim<@M0[!trait.poly<0>]>) bindings {A = !trait.poly<1>} {
 }
 
 func.func private @g(%x: !T,

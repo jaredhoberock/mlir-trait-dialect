@@ -29,5 +29,6 @@ func.func @dead_reflexive_respell() {
   return
 }
 
-trait.trait private @Bound(%self: !trait.claim<@Bound[!trait.poly<0>]>) {}
-trait.impl private @Bound_i64(%self: !trait.claim<@Bound[i64]>) {}
+trait.trait private @Bound(!trait.claim<@Bound[!trait.poly<0>]>)
+trait.impl private @Bound_i64(%self: !trait.claim<@Bound[i64]>) {
+}

@@ -6,8 +6,7 @@
 // Two unconditional impls satisfy @T[i32]. An allegation names no preferred
 // impl, so it must report incoherence and stand unproven at the stage's exit.
 
-trait.trait private @T(%self: !trait.claim<@T[!trait.poly<0>]>) {
-}
+trait.trait private @T(!trait.claim<@T[!trait.poly<0>]>)
 
 trait.impl private @T_first(%self: !trait.claim<@T[i32]>) {
 }

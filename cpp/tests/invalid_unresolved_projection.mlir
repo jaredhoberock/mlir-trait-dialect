@@ -11,9 +11,7 @@
 // the leftover projection triggers downstream, rather than surfacing only as
 // that opaque failure.
 
-trait.trait private @T(%self: !trait.claim<@T[!trait.poly<0>]>) {
-  trait.assoc_type @A
-}
+trait.trait private @T(!trait.claim<@T[!trait.poly<0>]>) assoc {A = 0}
 
 // expected-error @below {{no impl with satisfiable assumptions for '!trait.proj<@T[i64], "A">'}}
 // expected-error @below {{unresolved projection '!trait.proj<@T[i64], "A">' after instantiate-monomorphs}}

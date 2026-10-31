@@ -11,29 +11,32 @@
 // whichever way the flag goes, and neither value's proof is chosen.
 
 !S = !trait.poly<0>
-trait.trait private @Bound(%self: !trait.claim<@Bound[!S]>) { trait.method @value() -> i64 }
-trait.impl private @One(%self: !trait.claim<@Bound[i64]>) {
-  trait.method @value() -> i64 {
-    %v = arith.constant 7 : i64
-    trait.return %v : i64
-  }
+trait.trait private @Bound(!trait.claim<@Bound[!S]>) members [@Bound.value]
+func.func private @Bound.value(!trait.claim<@Bound[!S]>) -> i64
+trait.impl private @One(%self: !trait.claim<@Bound[i64]>) members [@Bound.value -> @One.value] {
 }
-trait.impl private @Two(%self: !trait.claim<@Bound[i64]>) {
-  trait.method @value() -> i64 {
-    %v = arith.constant 9 : i64
-    trait.return %v : i64
-  }
+func.func private @One.value(%self: !trait.claim<@Bound[i64]>) -> i64 {
+  %v = arith.constant 7 : i64
+  return %v : i64
 }
-trait.trait private @Need(%self: !trait.claim<@Need[!S]>) { trait.method @get() -> i64 }
-trait.impl private @Need_from(%self: !trait.claim<@Need[!S]>, %b: !trait.claim<@Bound[!S]>) {
-  trait.method @get() -> i64 {
-    %v = trait.method.call %b @value() : !trait.claim<@Bound[!S]>, () -> i64
-    trait.return %v : i64
-  }
+trait.impl private @Two(%self: !trait.claim<@Bound[i64]>) members [@Bound.value -> @Two.value] {
+}
+func.func private @Two.value(%self: !trait.claim<@Bound[i64]>) -> i64 {
+  %v = arith.constant 9 : i64
+  return %v : i64
+}
+trait.trait private @Need(!trait.claim<@Need[!S]>) members [@Need.get]
+func.func private @Need.get(!trait.claim<@Need[!S]>) -> i64
+trait.impl private @Need_from(%self: !trait.claim<@Need[!S]>, %b: !trait.claim<@Bound[!S]>) members [@Need.get -> @Need_from.get] {
+}
+func.func private @Need_from.get(%self: !trait.claim<@Need[!S]>, %b: !trait.claim<@Bound[!S]>) -> i64 {
+  %v = trait.func.call @Bound.value(%b) : (!trait.claim<@Bound[!S]>) -> i64
+  return %v : i64
 }
 !P = !trait.proj<@Trait[i64], "Output">
-trait.trait private @Trait(%self: !trait.claim<@Trait[!S]>) { trait.assoc_type @Output }
-trait.impl private @Trait_impl(%self: !trait.claim<@Trait[i64]>) { trait.assoc_type @Output = i64 }
+trait.trait private @Trait(!trait.claim<@Trait[!S]>) assoc {Output = 0}
+trait.impl private @Trait_impl(%self: !trait.claim<@Trait[i64]>) bindings {Output = i64} {
+}
 func.func private @pick(%flag: i1) -> i64 {
   %b1 = trait.witness @One for @Bound[i64]
   %eq1 = trait.witness proj_resolve !P resolves i64 by @Trait_impl : !trait.claim<!P = i64>
@@ -46,7 +49,7 @@ func.func private @pick(%flag: i1) -> i64 {
   // expected-error @+2 {{unproven monomorphic claim '!trait.claim<@Need[!trait.proj<@Trait[i64], "Output">]>' after instantiate-monomorphs}}
   // expected-note-re @+1 {{control flow joins it from '!trait.claim<@Need[!trait.proj<@Trait[i64], "Output">] by @{{.*}}' and '!trait.claim<@Need[!trait.proj<@Trait[i64], "Output">] by @{{.*}}'}}
   %r = arith.select %flag, %d1, %d2 : !trait.claim<@Need[!P]>
-  %v = trait.method.call %r @get() : !trait.claim<@Need[!P]>, () -> i64
+  %v = trait.func.call @Need.get(%r) : (!trait.claim<@Need[!P]>) -> i64
   return %v : i64
 }
 func.func @main() -> i64 {

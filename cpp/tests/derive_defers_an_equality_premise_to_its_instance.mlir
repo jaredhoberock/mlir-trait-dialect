@@ -9,13 +9,11 @@
 // stands. The instance decides it: cloned at i8, where @Tensor_i8 binds
 // Shape to i64, the allegation is proved and the clone stands.
 
-trait.trait private @Tensor(%self: !trait.claim<@Tensor[!trait.poly<0>]>) {
-  trait.assoc_type @Shape
+trait.trait private @Tensor(!trait.claim<@Tensor[!trait.poly<0>]>) assoc {Shape = 0}
+trait.trait private @Vector(!trait.claim<@Vector[!trait.poly<0>]>)
+trait.impl private @Vector_blanket(%self: !trait.claim<@Vector[!trait.poly<0>]>, %tensor: !trait.claim<@Tensor[!trait.poly<0>]>, %shape: !trait.claim<!trait.proj<@Tensor[!trait.poly<0>], "Shape"> = i64>) {
 }
-trait.trait private @Vector(%self: !trait.claim<@Vector[!trait.poly<0>]>) {}
-trait.impl private @Vector_blanket(%self: !trait.claim<@Vector[!trait.poly<0>]>, %tensor: !trait.claim<@Tensor[!trait.poly<0>]>, %shape: !trait.claim<!trait.proj<@Tensor[!trait.poly<0>], "Shape"> = i64>) {}
-trait.impl private @Tensor_i8(%self: !trait.claim<@Tensor[i8]>) {
-  trait.assoc_type @Shape = i64
+trait.impl private @Tensor_i8(%self: !trait.claim<@Tensor[i8]>) bindings {Shape = i64} {
 }
 
 func.func private @needs(%v: !trait.claim<@Vector[!trait.poly<0>]>) {

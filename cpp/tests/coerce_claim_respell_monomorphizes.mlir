@@ -10,26 +10,22 @@
 // coerces and their cited equalities reduce to nothing and the surviving call is
 // the concrete method. The respell sweep does not trip.
 
-trait.trait private @Bound(%self: !trait.claim<@Bound[!trait.poly<0>]>) {
-  trait.method @use(!trait.poly<0>) -> i1
+trait.trait private @Bound(!trait.claim<@Bound[!trait.poly<0>]>) members [@Bound.use]
+func.func private @Bound.use(!trait.claim<@Bound[!trait.poly<0>]>, !trait.poly<0>) -> i1
+trait.impl private @Bound_impl(%self_claim: !trait.claim<@Bound[i64]>) members [@Bound.use -> @Bound_impl.use] {
 }
-trait.impl private @Bound_impl(%self_claim: !trait.claim<@Bound[i64]>) {
-  trait.method @use(%self: i64) -> i1 {
-    %t = arith.constant 1 : i1
-    trait.return %t : i1
-  }
+func.func private @Bound_impl.use(%self_claim: !trait.claim<@Bound[i64]>, %self: i64) -> i1 {
+  %t = arith.constant 1 : i1
+  return %t : i1
 }
 
-trait.trait private @Assoc(%self: !trait.claim<@Assoc[!trait.poly<0>]>) {
-  trait.assoc_type @Output
-}
-trait.impl private @Assoc_impl(%self: !trait.claim<@Assoc[i64]>) {
-  trait.assoc_type @Output = i64
+trait.trait private @Assoc(!trait.claim<@Assoc[!trait.poly<0>]>) assoc {Output = 0}
+trait.impl private @Assoc_impl(%self: !trait.claim<@Assoc[i64]>) bindings {Output = i64} {
 }
 
 // CHECK-LABEL: func.func @respell_then_consume
 // CHECK-NOT: trait.coerce
-// CHECK: call @Bound_impl_{{h[0-9a-f]+}}_use
+// CHECK: call @Bound_impl.use_{{h[0-9a-f]+}}
 func.func @respell_then_consume(%x: i64) -> i1 {
   %b = trait.allege @Bound[i64]
   %eq = trait.witness proj_resolve !trait.proj<@Assoc[i64], "Output"> resolves i64 by @Assoc_impl
@@ -39,7 +35,6 @@ func.func @respell_then_consume(%x: i64) -> i1 {
     via (%eq) : (!trait.claim<!trait.proj<@Assoc[i64], "Output"> = i64>)
   %vx = trait.coerce %x : i64 to !trait.proj<@Assoc[i64], "Output">
     via (%eq) : (!trait.claim<!trait.proj<@Assoc[i64], "Output"> = i64>)
-  %r = trait.method.call %c @use(%vx)
-    : !trait.claim<@Bound[!trait.proj<@Assoc[i64], "Output">]>, (!trait.proj<@Assoc[i64], "Output">) -> i1
+  %r = trait.func.call @Bound.use(%c, %vx) : (!trait.claim<@Bound[!trait.proj<@Assoc[i64], "Output">]>, !trait.proj<@Assoc[i64], "Output">) -> i1
   return %r : i1
 }

@@ -14,12 +14,9 @@
 
 !T = !trait.poly<0>
 
-trait.trait private @Base(%self: !trait.claim<@Base[!T]>) {
-  trait.assoc_type @Assoc
-}
+trait.trait private @Base(!trait.claim<@Base[!T]>) assoc {Assoc = 0}
 
-trait.impl private @Base_i64(%self: !trait.claim<@Base[i64]>) {
-  trait.assoc_type @Assoc = i1
+trait.impl private @Base_i64(%self: !trait.claim<@Base[i64]>) bindings {Assoc = i1} {
 }
 
 // no trait or impl template survives the erase

@@ -7,10 +7,11 @@
 // unrelated trait stands for nothing there, however well that impl's header
 // carries to its own claim.
 
-trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) {}
-trait.trait private @C(%self: !trait.claim<@C[!trait.poly<0>]>) {}
-trait.trait private @B(%self: !trait.claim<@B[!trait.poly<0>]>) -> !trait.claim<@A[!trait.poly<0>]> {}
-trait.impl private @C_f32(%self: !trait.claim<@C[f32]>) {}
+trait.trait private @A(!trait.claim<@A[!trait.poly<0>]>)
+trait.trait private @C(!trait.claim<@C[!trait.poly<0>]>)
+trait.trait private @B(!trait.claim<@B[!trait.poly<0>]>) -> !trait.claim<@A[!trait.poly<0>]>
+trait.impl private @C_f32(%self: !trait.claim<@C[f32]>) {
+}
 
 // expected-error @below {{returns '!trait.claim<@C[f32] by @C_f32>' for requirement 0, which trait '@B' states as '!trait.claim<@A[i32]>'}}
 trait.impl private @B_i32(%self: !trait.claim<@B[i32]>) {

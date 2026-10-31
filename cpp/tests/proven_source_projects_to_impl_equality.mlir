@@ -9,10 +9,12 @@
 
 // RUN: mlir-opt %s | FileCheck %s
 
-trait.trait private @Assoc(%self: !trait.claim<@Assoc[!trait.poly<0>]>) { trait.assoc_type @Out }
-trait.trait private @T(%self: !trait.claim<@T[!trait.poly<0>]>) {}
-trait.impl private @Assoc_i64(%self: !trait.claim<@Assoc[i64]>) { trait.assoc_type @Out = i32 }
-trait.impl private @T_impl(%self: !trait.claim<@T[!trait.poly<0>]>, %out: !trait.claim<!trait.proj<@Assoc[!trait.poly<0>], "Out"> = i32>) {}
+trait.trait private @Assoc(!trait.claim<@Assoc[!trait.poly<0>]>) assoc {Out = 0}
+trait.trait private @T(!trait.claim<@T[!trait.poly<0>]>)
+trait.impl private @Assoc_i64(%self: !trait.claim<@Assoc[i64]>) bindings {Out = i32} {
+}
+trait.impl private @T_impl(%self: !trait.claim<@T[!trait.poly<0>]>, %out: !trait.claim<!trait.proj<@Assoc[!trait.poly<0>], "Out"> = i32>) {
+}
 trait.proof private @T_p {
   %p0 = trait.witness proj_resolve !trait.proj<@Assoc[i64], "Out"> resolves i32 by @Assoc_i64
     : !trait.claim<!trait.proj<@Assoc[i64], "Out"> = i32>

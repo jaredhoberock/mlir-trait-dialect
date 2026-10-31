@@ -32,8 +32,7 @@ module @inner {
 // each may be written public, and erase refuses each one still public when it
 // runs.
 // expected-error @below {{'trait.trait' op is a public template}}
-trait.trait @Show(%self: !trait.claim<@Show[!trait.poly<0>]>) {
-}
+trait.trait @Show(!trait.claim<@Show[!trait.poly<0>]>)
 
 // expected-error @below {{'trait.impl' op is a public template}}
 trait.impl @Show_i32(%self: !trait.claim<@Show[i32]>) {

@@ -11,24 +11,21 @@
 // which would rewrite the binding into tuple<poly<0>> and leave the impl's copy
 // of the method disagreeing with the trait's declaration.
 
-trait.trait private @Tr(%self: !trait.claim<@Tr[!trait.poly<0>]>) {
-  trait.assoc_type @X
-  trait.method @f(!trait.poly<0>) -> !trait.proj<@Tr[!trait.poly<0>], "X">
+trait.trait private @Tr(!trait.claim<@Tr[!trait.poly<0>]>) assoc {X = 0} members [@Tr.f]
+func.func private @Tr.f(!trait.claim<@Tr[!trait.poly<0>]>, !trait.poly<0>) -> !trait.proj<@Tr[!trait.poly<0>], "X">
+trait.impl private @I(%self: !trait.claim<@Tr[tuple<!trait.poly<0>>]>) bindings {X = !trait.poly<0>} members [@Tr.f -> @I.f] {
 }
-trait.impl private @I(%self: !trait.claim<@Tr[tuple<!trait.poly<0>>]>) {
-  trait.assoc_type @X = !trait.poly<0>
-  trait.method @f(%s: tuple<!trait.poly<0>>) -> !trait.poly<0> {
-    %e = builtin.unrealized_conversion_cast %s : tuple<!trait.poly<0>> to !trait.poly<0>
-    trait.return %e : !trait.poly<0>
-  }
+func.func private @I.f(%self: !trait.claim<@Tr[tuple<!trait.poly<0>>]>, %s: tuple<!trait.poly<0>>) -> !trait.poly<0> {
+  %e = builtin.unrealized_conversion_cast %s : tuple<!trait.poly<0>> to !trait.poly<0>
+  return %e : !trait.poly<0>
 }
 
-// CHECK: func.func private @[[CLONE:I_h[0-9a-f]+_f]](%{{.*}}: tuple<i32>) -> i32
+// CHECK: func.func private @[[CLONE:I.f_h[0-9a-f]+]](%{{.*}}: tuple<i32>) -> i32
 // CHECK: func.func @main(%{{.*}}: tuple<i32>) -> i32
 // CHECK: call @[[CLONE]]
 func.func @main(%s: tuple<i32>) -> i32 {
   %c = trait.allege @Tr[tuple<i32>]
-  %r = trait.method.call %c @f(%s) : !trait.claim<@Tr[tuple<i32>]>, (tuple<i32>) -> !trait.proj<@Tr[tuple<i32>], "X">
+  %r = trait.func.call @Tr.f(%c, %s) : (!trait.claim<@Tr[tuple<i32>]>, tuple<i32>) -> !trait.proj<@Tr[tuple<i32>], "X">
   %e = trait.allege !trait.proj<@Tr[tuple<i32>], "X"> = i32
   %o = trait.coerce %r : !trait.proj<@Tr[tuple<i32>], "X"> to i32
     via (%e) : (!trait.claim<!trait.proj<@Tr[tuple<i32>], "X"> = i32>)

@@ -10,8 +10,8 @@
 // refused.
 
 !T = !trait.poly<0>
-trait.trait private @B(%self: !trait.claim<@B[!T]>) {}
-trait.trait private @A(%self: !trait.claim<@A[!T]>) -> !trait.claim<@B[!T]> {}
+trait.trait private @B(!trait.claim<@B[!T]>)
+trait.trait private @A(!trait.claim<@A[!T]>) -> !trait.claim<@B[!T]>
 // expected-error @below {{returns evidence for requirement 0 that projects the impl's own application}}
 trait.impl private @A_any(%self: !trait.claim<@A[!T]>, %b: !trait.claim<@B[!T]>) {
   %a = trait.derive @A[!T] from @A_any[!trait.poly<0>] given(%b) : (!trait.claim<@B[!T]>)

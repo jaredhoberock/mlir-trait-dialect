@@ -10,38 +10,34 @@
 
 !T = !trait.poly<0>
 
-trait.trait private @Trait(%self: !trait.claim<@Trait[!T]>) {
-  trait.assoc_type @Assoc
-  trait.method @dummy(!T) -> i32
-}
+trait.trait private @Trait(!trait.claim<@Trait[!T]>) assoc {Assoc = 0} members [@Trait.dummy]
+func.func private @Trait.dummy(!trait.claim<@Trait[!T]>, !T) -> i32
 
-trait.trait private @Marker(%self: !trait.claim<@Marker[!T]>) {
-  trait.method @mark(!T) -> i32
-}
+trait.trait private @Marker(!trait.claim<@Marker[!T]>) members [@Marker.mark]
+func.func private @Marker.mark(!trait.claim<@Marker[!T]>, !T) -> i32
 
 // impl Trait for i32 { type Assoc = tuple<>; }
-trait.impl private @Trait_i32(%self: !trait.claim<@Trait[i32]>) {
-  trait.assoc_type @Assoc = tuple<>
-  trait.method @dummy(%arg: i32) -> i32 {
-    trait.return %arg : i32
-  }
+trait.impl private @Trait_i32(%self: !trait.claim<@Trait[i32]>) bindings {Assoc = tuple<>} members [@Trait.dummy -> @Trait_i32.dummy] {
+}
+func.func private @Trait_i32.dummy(%self: !trait.claim<@Trait[i32]>, %arg: i32) -> i32 {
+  return %arg : i32
 }
 
 // impl Marker for tuple<> {}
-trait.impl private @Marker_unit(%self: !trait.claim<@Marker[tuple<>]>) {
-  trait.method @mark(%arg: tuple<>) -> i32 {
-    %c = arith.constant 1 : i32
-    trait.return %c : i32
-  }
+trait.impl private @Marker_unit(%self: !trait.claim<@Marker[tuple<>]>) members [@Marker.mark -> @Marker_unit.mark] {
+}
+func.func private @Marker_unit.mark(%self: !trait.claim<@Marker[tuple<>]>, %arg: tuple<>) -> i32 {
+  %c = arith.constant 1 : i32
+  return %c : i32
 }
 
 // impl<T: Trait> Marker for T where T::Assoc: Marker {}
 !U = !trait.poly<1>
-trait.impl private @Marker_via_assoc(%self: !trait.claim<@Marker[!trait.poly<0>]>, %trait: !trait.claim<@Trait[!trait.poly<0>]>, %marker: !trait.claim<@Marker[!trait.proj<@Trait[!trait.poly<0>], "Assoc">]>) {
-  trait.method @mark(%arg: !trait.poly<0>) -> i32 {
-    %c = arith.constant 2 : i32
-    trait.return %c : i32
-  }
+trait.impl private @Marker_via_assoc(%self: !trait.claim<@Marker[!trait.poly<0>]>, %trait: !trait.claim<@Trait[!trait.poly<0>]>, %marker: !trait.claim<@Marker[!trait.proj<@Trait[!trait.poly<0>], "Assoc">]>) members [@Marker.mark -> @Marker_via_assoc.mark] {
+}
+func.func private @Marker_via_assoc.mark(%self: !trait.claim<@Marker[!trait.poly<0>]>, %trait: !trait.claim<@Trait[!trait.poly<0>]>, %marker: !trait.claim<@Marker[!trait.proj<@Trait[!trait.poly<0>], "Assoc">]>, %arg: !trait.poly<0>) -> i32 {
+  %c = arith.constant 2 : i32
+  return %c : i32
 }
 
 // CHECK-LABEL: func.func @test
@@ -53,7 +49,7 @@ func.func @test() -> i32 {
   //      then @Marker[tuple<>] is satisfied by @Marker_unit
   // CHECK: trait.witness @Marker_via_assoc_{{.*}}_p for @Marker[i32]
   %m = trait.allege @Marker[i32]
-  %res = trait.method.call %m @mark(%x) : !trait.claim<@Marker[i32]>, (i32) -> i32
+  %res = trait.func.call @Marker.mark(%m, %x) : (!trait.claim<@Marker[i32]>, i32) -> i32
   return %res : i32
 }
 

@@ -9,18 +9,17 @@
 // equality entry is a premise like any other, so naming it directly is
 // refused.
 
-trait.trait private @T(%self: !trait.claim<@T[!trait.poly<0>]>) {
-  trait.method @m() -> i64
+trait.trait private @T(!trait.claim<@T[!trait.poly<0>]>) members [@T.m]
+func.func private @T.m(!trait.claim<@T[!trait.poly<0>]>) -> i64
+trait.impl private @I(%self: !trait.claim<@T[i32]>, %eq: !trait.claim<i32 = i64>) members [@T.m -> @I.m] {
 }
-trait.impl private @I(%self: !trait.claim<@T[i32]>, %eq: !trait.claim<i32 = i64>) {
-  trait.method @m() -> i64 {
-    %c = arith.constant 1 : i64
-    trait.return %c : i64
-  }
+func.func private @I.m(%self: !trait.claim<@T[i32]>, %eq: !trait.claim<i32 = i64>) -> i64 {
+  %c = arith.constant 1 : i64
+  return %c : i64
 }
 func.func @main() -> i64 {
   // expected-error @below {{impl '@I' binds type parameters or has a where clause, so it must be cited through a trait.proof}}
   %w = trait.witness @I for @T[i32]
-  %r = trait.method.call %w @m() : !trait.claim<@T[i32] by @I>, () -> i64
+  %r = trait.func.call @T.m(%w) : (!trait.claim<@T[i32] by @I>) -> i64
   return %r : i64
 }

@@ -3,25 +3,25 @@
 #pragma once
 
 #include <mlir/IR/BuiltinOps.h>
+#include <mlir/IR/SymbolTable.h>
 #include <mlir/Pass/Pass.h>
 #include <mlir/Transforms/DialectConversion.h>
 
 namespace mlir::trait {
 
 /// Whether `op` is a generic trait call instantiation can rewrite now -- the one
-/// readiness law both call-lowering patterns gate on, spelled here once: for a
-/// trait.func.call, monomorphic operands, proven operand claims, and a callee
-/// with a signature; for a trait.method.call, monomorphic operands,
-/// a proven receiver claim, proven argument claims, and a method with a
-/// signature. A claim is proven when every application claim it spells names
-/// its proof, those in its arguments included. False for any other op. This is the predicate the instantiate step
-/// qualifies its discharge by, so the step is present exactly on the calls a
-/// pattern would fire on.
-bool isRewritableGenericCall(Operation *op);
+/// readiness law the call-lowering pattern gates on, spelled here once: a
+/// trait.func.call with monomorphic operands, proven operand claims, and a
+/// callee with a signature, read in the symbol table it stands in through
+/// `symbolTable`. A claim is proven when every application claim it spells
+/// names its proof, those in its arguments included. False for any other op.
+/// This is the predicate the instantiate step qualifies its discharge by, so
+/// the step is present exactly on the calls a pattern would fire on.
+bool isRewritableGenericCall(Operation *op, SymbolTableCollection &symbolTable);
 
 /// Whether `op` is foreign code this compilation carries to no target: a
-/// template (a trait, impl, or proof declaration, or a still-polymorphic
-/// function) or code inside one. The readiness and leftover discipline reads
+/// template (a trait, impl, or proof declaration, or a function the template
+/// rule names one, `isTemplateSignature`) or code inside one. The readiness and leftover discipline reads
 /// this so it never serves or judges what leaves with a template.
 bool isForeign(Operation *op);
 
@@ -33,8 +33,9 @@ bool isForeign(Operation *op);
 /// qualified discharge and the erase step's gate read one definition of pending
 /// work -- the discharge counts a call exactly where a lowering pattern would fire
 /// on it, the gate holds erase ineligible while any such op stands, and the
-/// erase step's entry refuses any that still stands when it runs.
-bool isPendingOp(Operation *op);
+/// erase step's entry refuses any that still stands when it runs. A call's
+/// callee is read through `symbolTable`.
+bool isPendingOp(Operation *op, SymbolTableCollection &symbolTable);
 
 /// Whether `module` still carries instantiation work outside a template (a
 /// trait, impl, or proof body, or a polymorphic function): a rewritable generic
@@ -52,8 +53,9 @@ TypeConverter makeErasePolymorphsConverter();
 
 /// Configures the ConversionTarget erase-polymorphs applies in its phase-1
 /// partial conversion: the trait, impl, and proof declarations are legal and
-/// recursively legal; a func.func is legal (and recursively legal) while its
-/// signature stays polymorphic, and legal once its attributes mention no claim
+/// recursively legal; a func.func is legal (and recursively legal) while the
+/// template rule names it one (`isTemplateSignature`), and legal once its
+/// attributes mention no claim
 /// or projection; every other op is legal once it is a template or erasure
 /// rewrites nothing in it -- it is no evidence op (allege, derive, project,
 /// witness, coerce) and mentions no claim or projection. No op still pending

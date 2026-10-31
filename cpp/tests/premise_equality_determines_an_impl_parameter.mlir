@@ -11,27 +11,21 @@
 
 !F = !trait.poly<0>
 
-trait.trait private @Out(%self: !trait.claim<@Out[!F]>) {
-  trait.assoc_type @Output
-}
+trait.trait private @Out(!trait.claim<@Out[!F]>) assoc {Output = 0}
 
-trait.impl private @Out_i32(%self: !trait.claim<@Out[i32]>) {
-  trait.assoc_type @Output = i64
+trait.impl private @Out_i32(%self: !trait.claim<@Out[i32]>) bindings {Output = i64} {
 }
 
 !G = !trait.poly<1>
-trait.trait private @Fold(%self: !trait.claim<@Fold[!trait.poly<0>]>) {
-  trait.assoc_type @Sum
-  trait.method @run(!trait.poly<0>) -> !trait.proj<@Fold[!trait.poly<0>], "Sum">
-}
+trait.trait private @Fold(!trait.claim<@Fold[!trait.poly<0>]>) assoc {Sum = 0} members [@Fold.run]
+func.func private @Fold.run(!trait.claim<@Fold[!trait.poly<0>]>, !trait.poly<0>) -> !trait.proj<@Fold[!trait.poly<0>], "Sum">
 
 !Acc = !trait.poly<2>
-trait.impl private @Fold_gen(%self: !trait.claim<@Fold[!trait.poly<0>]>, %output: !trait.claim<!trait.proj<@Out[!trait.poly<0>], "Output"> = !trait.poly<1>>) {
-  trait.assoc_type @Sum = !trait.poly<1>
-  trait.method @run(%x: !trait.poly<0>) -> !trait.poly<1> {
-    %r = builtin.unrealized_conversion_cast %x : !trait.poly<0> to !trait.poly<1>
-    trait.return %r : !trait.poly<1>
-  }
+trait.impl private @Fold_gen(%self: !trait.claim<@Fold[!trait.poly<0>]>, %output: !trait.claim<!trait.proj<@Out[!trait.poly<0>], "Output"> = !trait.poly<1>>) bindings {Sum = !trait.poly<1>} members [@Fold.run -> @Fold_gen.run] {
+}
+func.func private @Fold_gen.run(%self: !trait.claim<@Fold[!trait.poly<0>]>, %output: !trait.claim<!trait.proj<@Out[!trait.poly<0>], "Output"> = !trait.poly<1>>, %x: !trait.poly<0>) -> !trait.poly<1> {
+  %r = builtin.unrealized_conversion_cast %x : !trait.poly<0> to !trait.poly<1>
+  return %r : !trait.poly<1>
 }
 
 // The instance returns i64, which only the premise determined.
@@ -40,7 +34,6 @@ trait.impl private @Fold_gen(%self: !trait.claim<@Fold[!trait.poly<0>]>, %output
 // CHECK-SAME: (i32) -> i64
 func.func @main(%x: i32) {
   %c = trait.allege @Fold[i32]
-  %r = trait.method.call %c @run(%x)
-    : !trait.claim<@Fold[i32]>, (i32) -> !trait.proj<@Fold[i32], "Sum">
+  %r = trait.func.call @Fold.run(%c, %x) : (!trait.claim<@Fold[i32]>, i32) -> !trait.proj<@Fold[i32], "Sum">
   return
 }

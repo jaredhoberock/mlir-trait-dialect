@@ -10,24 +10,25 @@
 // method though @Seven also serves @Mark[i32].
 
 // CHECK-LABEL: func.func @main() -> i64
-// CHECK:         call @Nine_{{h[0-9a-f]+}}_value()
+// CHECK:         call @Nine.value_{{h[0-9a-f]+}}()
 
 !T = !trait.poly<0>
-trait.trait private @Mark(%self: !trait.claim<@Mark[!T]>) { trait.method @value() -> i64 }
-trait.impl private @Seven(%self: !trait.claim<@Mark[i32]>) {
-  trait.method @value() -> i64 {
-    %v = arith.constant 7 : i64
-    trait.return %v : i64
-  }
+trait.trait private @Mark(!trait.claim<@Mark[!T]>) members [@Mark.value]
+func.func private @Mark.value(!trait.claim<@Mark[!T]>) -> i64
+trait.impl private @Seven(%self: !trait.claim<@Mark[i32]>) members [@Mark.value -> @Seven.value] {
 }
-trait.impl private @Nine(%self: !trait.claim<@Mark[i32]>) {
-  trait.method @value() -> i64 {
-    %v = arith.constant 9 : i64
-    trait.return %v : i64
-  }
+func.func private @Seven.value(%self: !trait.claim<@Mark[i32]>) -> i64 {
+  %v = arith.constant 7 : i64
+  return %v : i64
 }
-trait.trait private @Wrapped(%self: !trait.claim<@Wrapped[!T]>) -> !trait.claim<@Mark[!T]> {}
-trait.trait private @Outer(%self: !trait.claim<@Outer[!T]>) -> !trait.claim<@Wrapped[!T]> {}
+trait.impl private @Nine(%self: !trait.claim<@Mark[i32]>) members [@Mark.value -> @Nine.value] {
+}
+func.func private @Nine.value(%self: !trait.claim<@Mark[i32]>) -> i64 {
+  %v = arith.constant 9 : i64
+  return %v : i64
+}
+trait.trait private @Wrapped(!trait.claim<@Wrapped[!T]>) -> !trait.claim<@Mark[!T]>
+trait.trait private @Outer(!trait.claim<@Outer[!T]>) -> !trait.claim<@Wrapped[!T]>
 trait.impl private @Wrapped_i32(%self: !trait.claim<@Wrapped[i32]>) {
   %nine = trait.witness @Nine for @Mark[i32]
   trait.return %nine : !trait.claim<@Mark[i32] by @Nine>
@@ -48,6 +49,6 @@ func.func @main() -> i64 {
   %o = trait.witness @O9 for @Outer[i32]
   %w = trait.project %o[0] : !trait.claim<@Outer[i32] by @O9> -> !trait.claim<@Wrapped[i32]>
   %m = trait.project %w[0] : !trait.claim<@Wrapped[i32]> -> !trait.claim<@Mark[i32]>
-  %v = trait.method.call %m @value() : !trait.claim<@Mark[i32]>, () -> i64
+  %v = trait.func.call @Mark.value(%m) : (!trait.claim<@Mark[i32]>) -> i64
   return %v : i64
 }

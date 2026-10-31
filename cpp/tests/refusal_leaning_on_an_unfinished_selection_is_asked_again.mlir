@@ -14,38 +14,39 @@
 // CHECK: {{^}}7{{$}}
 
 !T = !trait.poly<0>
-trait.trait private @A(%self: !trait.claim<@A[!T]>) {
-  trait.method @value() -> i64
+trait.trait private @A(!trait.claim<@A[!T]>) members [@A.value]
+func.func private @A.value(!trait.claim<@A[!T]>) -> i64
+trait.trait private @B(!trait.claim<@B[!T]>) members [@B.value]
+func.func private @B.value(!trait.claim<@B[!T]>) -> i64
+trait.trait private @C(!trait.claim<@C[!T]>)
+trait.trait private @D(!trait.claim<@D[!T]>)
+trait.impl private @D_i32(%self: !trait.claim<@D[i32]>) {
 }
-trait.trait private @B(%self: !trait.claim<@B[!T]>) {
-  trait.method @value() -> i64
-}
-trait.trait private @C(%self: !trait.claim<@C[!T]>) {}
-trait.trait private @D(%self: !trait.claim<@D[!T]>) {}
-trait.impl private @D_i32(%self: !trait.claim<@D[i32]>) {}
 
-trait.impl private @A_via_c(%self: !trait.claim<@A[!T]>, %c: !trait.claim<@C[!T]>) {
-  trait.method @value() -> i64 {
-    %v = arith.constant 3 : i64
-    trait.return %v : i64
-  }
+trait.impl private @A_via_c(%self: !trait.claim<@A[!T]>, %c: !trait.claim<@C[!T]>) members [@A.value -> @A_via_c.value] {
 }
-trait.impl private @C_via_b(%self: !trait.claim<@C[!T]>, %b: !trait.claim<@B[!T]>) {}
-trait.impl private @C_direct(%self: !trait.claim<@C[i32]>, %d: !trait.claim<@D[i32]>) {}
-trait.impl private @B_via_a(%self: !trait.claim<@B[!T]>, %a: !trait.claim<@A[!T]>) {
-  trait.method @value() -> i64 {
-    %v = arith.constant 4 : i64
-    trait.return %v : i64
-  }
+func.func private @A_via_c.value(%self: !trait.claim<@A[!T]>, %c: !trait.claim<@C[!T]>) -> i64 {
+  %v = arith.constant 3 : i64
+  return %v : i64
+}
+trait.impl private @C_via_b(%self: !trait.claim<@C[!T]>, %b: !trait.claim<@B[!T]>) {
+}
+trait.impl private @C_direct(%self: !trait.claim<@C[i32]>, %d: !trait.claim<@D[i32]>) {
+}
+trait.impl private @B_via_a(%self: !trait.claim<@B[!T]>, %a: !trait.claim<@A[!T]>) members [@B.value -> @B_via_a.value] {
+}
+func.func private @B_via_a.value(%self: !trait.claim<@B[!T]>, %a: !trait.claim<@A[!T]>) -> i64 {
+  %v = arith.constant 4 : i64
+  return %v : i64
 }
 
 // The stage reaches a function's last op first, so @A[i32] is asked before
 // @B[i32].
 func.func @main() -> i64 {
   %b = trait.allege @B[i32]
-  %vb = trait.method.call %b @value() : !trait.claim<@B[i32]>, () -> i64
+  %vb = trait.func.call @B.value(%b) : (!trait.claim<@B[i32]>) -> i64
   %a = trait.allege @A[i32]
-  %va = trait.method.call %a @value() : !trait.claim<@A[i32]>, () -> i64
+  %va = trait.func.call @A.value(%a) : (!trait.claim<@A[i32]>) -> i64
   %v = arith.addi %va, %vb : i64
   return %v : i64
 }

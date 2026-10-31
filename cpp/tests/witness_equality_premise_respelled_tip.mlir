@@ -11,18 +11,13 @@
 
 !U = !trait.poly<0>
 
-trait.trait private @X(%self: !trait.claim<@X[!U]>) {}
+trait.trait private @X(!trait.claim<@X[!U]>)
 
-trait.trait private @Other(%self: !trait.claim<@Other[!U]>) {
-  trait.assoc_type @A
-}
+trait.trait private @Other(!trait.claim<@Other[!U]>) assoc {A = 0}
 
-trait.trait private @Has(%self: !trait.claim<@Has[!U]>) {
-  trait.assoc_type @Out
-}
+trait.trait private @Has(!trait.claim<@Has[!U]>) assoc {Out = 0}
 
-trait.impl private @Has_tuple(%self: !trait.claim<@Has[tuple<!U>]>, %x: !trait.claim<@X[!U]>) {
-  trait.assoc_type @Out = i64
+trait.impl private @Has_tuple(%self: !trait.claim<@Has[tuple<!U>]>, %x: !trait.claim<@X[!U]>) bindings {Out = i64} {
 }
 
 func.func @f(

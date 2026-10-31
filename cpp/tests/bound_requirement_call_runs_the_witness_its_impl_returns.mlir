@@ -14,43 +14,42 @@
 
 !T = !trait.poly<0>
 !U = !trait.poly<1>
-trait.trait private @Mark(%self: !trait.claim<@Mark[!T]>) { trait.method @value() -> i64 }
-trait.impl private @Seven(%self: !trait.claim<@Mark[i32]>) {
-  trait.method @value() -> i64 {
-    %v = arith.constant 7 : i64
-    trait.return %v : i64
-  }
+trait.trait private @Mark(!trait.claim<@Mark[!T]>) members [@Mark.value]
+func.func private @Mark.value(!trait.claim<@Mark[!T]>) -> i64
+trait.impl private @Seven(%self: !trait.claim<@Mark[i32]>) members [@Mark.value -> @Seven.value] {
 }
-trait.impl private @Nine(%self: !trait.claim<@Mark[i32]>) {
-  trait.method @value() -> i64 {
-    %v = arith.constant 9 : i64
-    trait.return %v : i64
-  }
+func.func private @Seven.value(%self: !trait.claim<@Mark[i32]>) -> i64 {
+  %v = arith.constant 7 : i64
+  return %v : i64
 }
-trait.trait private @Wrapped(%self: !trait.claim<@Wrapped[!T]>) {
-  trait.assoc_type @Item<[!trait.poly<1>]>
-  trait.method @requirement_0() -> !trait.claim<@Mark[!trait.proj<@Wrapped[!T], "Item", [!U]>]>
+trait.impl private @Nine(%self: !trait.claim<@Mark[i32]>) members [@Mark.value -> @Nine.value] {
 }
-trait.impl private @W(%self: !trait.claim<@Wrapped[i32]>) {
-  trait.assoc_type @Item<[!trait.poly<0>]> = i32
-  trait.method @requirement_0() -> !trait.claim<@Mark[!trait.proj<@Wrapped[i32], "Item", [!trait.poly<0>]>]> {
-    %n = trait.witness @Nine for @Mark[i32]
-    %e = trait.witness proj_resolve !trait.proj<@Wrapped[i32], "Item", [!trait.poly<0>]> resolves i32 by @W : !trait.claim<!trait.proj<@Wrapped[i32], "Item", [!trait.poly<0>]> = i32>
-    %m = trait.coerce %n : !trait.claim<@Mark[i32] by @Nine> to !trait.claim<@Mark[!trait.proj<@Wrapped[i32], "Item", [!trait.poly<0>]>]> via (%e) : (!trait.claim<!trait.proj<@Wrapped[i32], "Item", [!trait.poly<0>]> = i32>)
-    trait.return %m : !trait.claim<@Mark[!trait.proj<@Wrapped[i32], "Item", [!trait.poly<0>]>]>
-  }
+func.func private @Nine.value(%self: !trait.claim<@Mark[i32]>) -> i64 {
+  %v = arith.constant 9 : i64
+  return %v : i64
+}
+trait.trait private @Wrapped(!trait.claim<@Wrapped[!T]>) assoc {Item = 1} members [@Wrapped.requirement_0]
+func.func private @Wrapped.requirement_0(!trait.claim<@Wrapped[!T]>) -> !trait.claim<@Mark[!trait.proj<@Wrapped[!T], "Item", [!U]>]>
+trait.impl private @W(%self: !trait.claim<@Wrapped[i32]>) bindings {Item = i32} members [@Wrapped.requirement_0 -> @W.requirement_0] {
+}
+func.func private @W.requirement_0(%self: !trait.claim<@Wrapped[i32]>) -> !trait.claim<@Mark[!trait.proj<@Wrapped[i32], "Item", [!trait.poly<0>]>]> {
+  %n = trait.witness @Nine for @Mark[i32]
+  %e = trait.witness proj_resolve !trait.proj<@Wrapped[i32], "Item", [!trait.poly<0>]> resolves i32 by @W : !trait.claim<!trait.proj<@Wrapped[i32], "Item", [!trait.poly<0>]> = i32>
+  %m = trait.coerce %n : !trait.claim<@Mark[i32] by @Nine> to !trait.claim<@Mark[!trait.proj<@Wrapped[i32], "Item", [!trait.poly<0>]>]> via (%e) : (!trait.claim<!trait.proj<@Wrapped[i32], "Item", [!trait.poly<0>]> = i32>)
+  return %m : !trait.claim<@Mark[!trait.proj<@Wrapped[i32], "Item", [!trait.poly<0>]>]>
 }
 trait.proof private @PW {
   %d = trait.derive @Wrapped[i32] from @W given()
   trait.return %d : !trait.claim<@Wrapped[i32]>
 }
-trait.trait private @Host(%self: !trait.claim<@Host[!T]>) { trait.method @run(!trait.claim<@Wrapped[!T]>) -> i64 }
-trait.impl private @H(%self: !trait.claim<@Host[i32]>, %mark: !trait.claim<@Mark[i32]>) {
-  trait.method @run(%w: !trait.claim<@Wrapped[i32]>) -> i64 {
-    %m = trait.method.call %w @requirement_0() : !trait.claim<@Wrapped[i32]>, () -> !trait.claim<@Mark[!trait.proj<@Wrapped[i32], "Item", [i1]>]>
-    %v = trait.method.call %m @value() : !trait.claim<@Mark[!trait.proj<@Wrapped[i32], "Item", [i1]>]>, () -> i64
-    trait.return %v : i64
-  }
+trait.trait private @Host(!trait.claim<@Host[!T]>) members [@Host.run]
+func.func private @Host.run(!trait.claim<@Host[!T]>, !trait.claim<@Wrapped[!T]>) -> i64
+trait.impl private @H(%self: !trait.claim<@Host[i32]>, %mark: !trait.claim<@Mark[i32]>) members [@Host.run -> @H.run] {
+}
+func.func private @H.run(%self: !trait.claim<@Host[i32]>, %mark: !trait.claim<@Mark[i32]>, %w: !trait.claim<@Wrapped[i32]>) -> i64 {
+  %m = trait.func.call @Wrapped.requirement_0(%w) : (!trait.claim<@Wrapped[i32]>) -> !trait.claim<@Mark[!trait.proj<@Wrapped[i32], "Item", [i1]>]>
+  %v = trait.func.call @Mark.value(%m) : (!trait.claim<@Mark[!trait.proj<@Wrapped[i32], "Item", [i1]>]>) -> i64
+  return %v : i64
 }
 trait.proof private @PH {
   %p0 = trait.witness @Seven for @Mark[i32]
@@ -60,6 +59,6 @@ trait.proof private @PH {
 func.func @main() -> i64 {
   %h = trait.witness @PH for @Host[i32]
   %w = trait.witness @PW for @Wrapped[i32]
-  %v = trait.method.call %h @run(%w) : !trait.claim<@Host[i32] by @PH>, (!trait.claim<@Wrapped[i32] by @PW>) -> i64
+  %v = trait.func.call @Host.run(%h, %w) : (!trait.claim<@Host[i32] by @PH>, !trait.claim<@Wrapped[i32] by @PW>) -> i64
   return %v : i64
 }

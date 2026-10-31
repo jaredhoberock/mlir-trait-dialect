@@ -12,8 +12,9 @@
 // before erasure, which resolves the projection rather than meet one it does
 // not resolve; the collector then takes the declaration nothing names.
 
-trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) { trait.assoc_type @Item }
-trait.impl private @A_impl(%self: !trait.claim<@A[!trait.poly<0>]>) { trait.assoc_type @Item = !trait.poly<0> }
+trait.trait private @A(!trait.claim<@A[!trait.poly<0>]>) assoc {Item = 0}
+trait.impl private @A_impl(%self: !trait.claim<@A[!trait.poly<0>]>) bindings {Item = !trait.poly<0>} {
+}
 
 // CHECK: pending-expansion=true
 // LOWERED-NOT: trait.

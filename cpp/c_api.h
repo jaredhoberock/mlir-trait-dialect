@@ -120,13 +120,50 @@ MlirType traitProjectionTypeGetAssocTypeArg(MlirType projection, intptr_t index)
 /// `symbolTableOp` defines to `newNames[i]`, and rewrites every reference whose
 /// root names a renamed symbol to name it by its new name, in the attributes,
 /// result types and block-argument types of every op inside `symbolTableOp`,
-/// nested symbol tables included: a reference is read as the top level's, as
-/// this dialect resolves its symbol uses. A reference's nested parts
-/// (`@Trait::@method`) are not renamed. An equality claim's endpoints and a
+/// nested symbol tables included: a reference is read as the top level's. A
+/// reference's nested parts are not renamed. An equality claim's endpoints and a
 /// citation's arguments, which no replacer moves as sub-elements, move as the
 /// clone rule moves them: each rebuilt at once through its constructor.
 void traitRenameSymbols(MlirOperation symbolTableOp, const MlirStringRef *names,
                         const MlirStringRef *newNames, intptr_t count);
+
+/// Declares member `name` of the trait `traitOp`, whose inputs after the
+/// trait's own application and whose results are `signature`'s (a
+/// FunctionType): a private function `@<trait>.<name>` leading with the trait's
+/// self claim, entered at the end of the trait's members. With `withDefault`
+/// the function has an entry block the caller fills, the member's default;
+/// otherwise it is external, required of every impl. The function stands after
+/// the trait and the member functions already standing after it, or detached
+/// where the trait is. Returns the function.
+MlirOperation traitTraitOpAddMember(MlirOperation traitOp, MlirStringRef name,
+                                    MlirType signature, bool withDefault);
+
+/// Declares associated type `name` of the trait `traitOp`, taking `arity`
+/// type parameters of its own, labelled after the trait's.
+void traitTraitOpDeclareAssociatedType(MlirOperation traitOp,
+                                       MlirStringRef name, intptr_t arity);
+
+/// Adds to the impl `implOp` the function implementing `member` (a
+/// FlatSymbolRefAttr naming a member of the impl's trait), whose inputs and
+/// results at the impl's arguments are `signature`'s (a FunctionType): a
+/// private function `@<impl>.<name>`, named after the member's name within
+/// its trait, whose leading parameters are the impl's block argument types
+/// and whose entry block the caller fills; the pair is entered in the impl's
+/// members. The function stands after the impl and the member functions
+/// already standing after it, or detached where the impl is. Returns the
+/// function.
+MlirOperation traitImplOpAddMember(MlirOperation implOp, MlirAttribute member,
+                                   MlirType signature);
+
+/// Pairs every member of `traitOp`, the trait of the impl `implOp`, in the
+/// trait's order: with the function `traitImplOpAddMember` added for it, or
+/// with itself, leaving it to the trait's default.
+void traitImplOpCompleteMembers(MlirOperation implOp, MlirOperation traitOp);
+
+/// Binds associated type `name` of the impl `implOp` to `type`, spelled over
+/// the impl's parameters and the associated type's own, labelled after them.
+void traitImplOpBindAssociatedType(MlirOperation implOp, MlirStringRef name,
+                                   MlirType type);
 
 /// Collect all unique types implementing GenericTypeInterface found in `type`.
 ///

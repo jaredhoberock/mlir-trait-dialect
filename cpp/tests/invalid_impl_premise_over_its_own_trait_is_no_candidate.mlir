@@ -18,19 +18,13 @@
 !S = !trait.poly<0>
 !T = !trait.poly<1>
 
-trait.trait private @B(%self: !trait.claim<@B[!S]>) {
-  trait.assoc_type @X
-}
-trait.impl private @B_i64(%self: !trait.claim<@B[i64]>) {
-  trait.assoc_type @X = i1
+trait.trait private @B(!trait.claim<@B[!S]>) assoc {X = 0}
+trait.impl private @B_i64(%self: !trait.claim<@B[i64]>) bindings {X = i1} {
 }
 
-trait.trait private @A(%self: !trait.claim<@A[!S]>) {
-  trait.assoc_type @Output
-}
+trait.trait private @A(!trait.claim<@A[!S]>) assoc {Output = 0}
 // expected-note @below {{unsatisfiable candidate}}
-trait.impl private @A_gen(%self: !trait.claim<@A[!S]>, %b: !trait.claim<@B[!S]>, %output: !trait.claim<!trait.proj<@A[!S], "Output"> = !T>, %x: !trait.claim<!trait.proj<@B[!S], "X"> = !T>) {
-  trait.assoc_type @Output = !T
+trait.impl private @A_gen(%self: !trait.claim<@A[!S]>, %b: !trait.claim<@B[!S]>, %output: !trait.claim<!trait.proj<@A[!S], "Output"> = !T>, %x: !trait.claim<!trait.proj<@B[!S], "X"> = !T>) bindings {Output = !T} {
 }
 
 // expected-error @below {{unproven monomorphic claim '!trait.claim<@A[i64]>' after instantiate-monomorphs}}

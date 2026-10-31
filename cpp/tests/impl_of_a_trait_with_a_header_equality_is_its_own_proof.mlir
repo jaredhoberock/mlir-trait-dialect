@@ -10,29 +10,26 @@
 // naming an impl carries no subproofs, so what it may not meet is an
 // application requirement.
 
-trait.trait private @T(%self: !trait.claim<@T[!trait.poly<0>]>) -> !trait.claim<!trait.proj<@T[!trait.poly<0>], "Out"> = i64> {
-  trait.assoc_type @Out
-  trait.method @get(!trait.poly<0>) -> !trait.proj<@T[!trait.poly<0>], "Out">
-}
-trait.impl private @T_i64(%self: !trait.claim<@T[i64]>) {
-  trait.assoc_type @Out = i64
-  trait.method @get(%x: i64) -> i64 {
-    %c = arith.constant 5 : i64
-    trait.return %c : i64
-  }
+trait.trait private @T(!trait.claim<@T[!trait.poly<0>]>) -> !trait.claim<!trait.proj<@T[!trait.poly<0>], "Out"> = i64> assoc {Out = 0} members [@T.get]
+func.func private @T.get(!trait.claim<@T[!trait.poly<0>]>, !trait.poly<0>) -> !trait.proj<@T[!trait.poly<0>], "Out">
+trait.impl private @T_i64(%self: !trait.claim<@T[i64]>) bindings {Out = i64} members [@T.get -> @T_i64.get] {
   %req0 = trait.allege !trait.proj<@T[i64], "Out"> = i64
   trait.return %req0 : !trait.claim<!trait.proj<@T[i64], "Out"> = i64>
 }
+func.func private @T_i64.get(%self: !trait.claim<@T[i64]>, %x: i64) -> i64 {
+  %c = arith.constant 5 : i64
+  return %c : i64
+}
 
 // CHECK-NOT: trait.
-// CHECK: func.func private @T_i64_{{h[0-9a-f]+}}_get(%[[X:.*]]: i64) -> i64
+// CHECK: func.func private @T_i64.get_{{h[0-9a-f]+}}(%[[X:.*]]: i64) -> i64
 // CHECK: func.func @main(%[[A:.*]]: i64) -> i64
-// CHECK: %[[R:.*]] = call @T_i64_{{h[0-9a-f]+}}_get(%[[A]]) : (i64) -> i64
+// CHECK: %[[R:.*]] = call @T_i64.get_{{h[0-9a-f]+}}(%[[A]]) : (i64) -> i64
 // CHECK: return %[[R]] : i64
 // CHECK-NOT: trait.
 func.func @main(%x: i64) -> i64 {
   %c = trait.allege @T[i64]
-  %r = trait.method.call %c @get(%x) : !trait.claim<@T[i64]>, (i64) -> !trait.proj<@T[i64], "Out">
+  %r = trait.func.call @T.get(%c, %x) : (!trait.claim<@T[i64]>, i64) -> !trait.proj<@T[i64], "Out">
   %e = trait.allege !trait.proj<@T[i64], "Out"> = i64
   %o = trait.coerce %r : !trait.proj<@T[i64], "Out"> to i64
     via (%e) : (!trait.claim<!trait.proj<@T[i64], "Out"> = i64>)

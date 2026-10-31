@@ -12,14 +12,19 @@
 
 !T = !trait.poly<0>
 !U = !trait.poly<1>
-trait.trait private @B(%s: !trait.claim<@B[!T]>) { trait.method @v() -> i64 }
-trait.impl private @Base(%s: !trait.claim<@B[i32]>) { trait.method @v() -> i64 { %v = arith.constant 7 : i64 trait.return %v : i64 } }
-trait.trait private @A(%s: !trait.claim<@A[!T,!U]>) -> !trait.claim<@B[!U]> {}
+trait.trait private @B(!trait.claim<@B[!T]>) members [@B.v]
+func.func private @B.v(!trait.claim<@B[!T]>) -> i64
+trait.impl private @Base(%s: !trait.claim<@B[i32]>) members [@B.v -> @Base.v] {
+}
+func.func private @Base.v(%s: !trait.claim<@B[i32]>) -> i64 {
+  %v = arith.constant 7 : i64 return %v : i64
+}
+trait.trait private @A(!trait.claim<@A[!T,!U]>) -> !trait.claim<@B[!U]>
 // REPEAT 1 128: trait.impl private @I{k}(%s: !trait.claim<@A[i{k},i32]>) { %a = trait.witness @I{k+1} for @A[i{k+1},i32] %b = trait.project %a[0] : !trait.claim<@A[i{k+1},i32] by @I{k+1}> -> !trait.claim<@B[i32]> trait.return %b : !trait.claim<@B[i32]> }
 trait.impl private @I129(%s: !trait.claim<@A[i129,i32]>) { %b = trait.witness @Base for @B[i32] trait.return %b : !trait.claim<@B[i32] by @Base> }
 func.func @main() -> i64 {
   %a = trait.witness @I1 for @A[i1,i32]
   %b = trait.project %a[0] : !trait.claim<@A[i1,i32] by @I1> -> !trait.claim<@B[i32]>
-  %v = trait.method.call %b @v() : !trait.claim<@B[i32]>, () -> i64
+  %v = trait.func.call @B.v(%b) : (!trait.claim<@B[i32]>) -> i64
   return %v : i64
 }

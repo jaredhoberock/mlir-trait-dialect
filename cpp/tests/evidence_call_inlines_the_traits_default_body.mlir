@@ -13,27 +13,27 @@
 
 !S = !trait.poly<0>
 !X = !trait.poly<1>
-trait.trait private @Marker(%self: !trait.claim<@Marker[!S]>) { trait.method @mark(i64) -> i64 }
-trait.trait private @Has(%self: !trait.claim<@Has[!S]>) {
-  trait.assoc_type @A<[!X]>
-  trait.method @requirement_0(%m: !trait.claim<@Marker[!X]>) -> !trait.claim<@Marker[!trait.proj<@Has[!S], "A", [!X]>]> {
-    %r = trait.witness @Marker_i64 for @Marker[i64]
-    %eq = trait.allege !trait.proj<@Has[!S], "A", [!X]> = i64
-    %c = trait.coerce %r : !trait.claim<@Marker[i64] by @Marker_i64> to !trait.claim<@Marker[!trait.proj<@Has[!S], "A", [!X]>]> via (%eq) : (!trait.claim<!trait.proj<@Has[!S], "A", [!X]> = i64>)
-    trait.return %c : !trait.claim<@Marker[!trait.proj<@Has[!S], "A", [!X]>]>
-  }
+trait.trait private @Marker(!trait.claim<@Marker[!S]>) members [@Marker.mark]
+func.func private @Marker.mark(!trait.claim<@Marker[!S]>, i64) -> i64
+trait.trait private @Has(!trait.claim<@Has[!S]>) assoc {A = 1} members [default @Has.requirement_0]
+func.func private @Has.requirement_0(%self: !trait.claim<@Has[!S]>, %m: !trait.claim<@Marker[!X]>) -> !trait.claim<@Marker[!trait.proj<@Has[!S], "A", [!X]>]> {
+  %r = trait.witness @Marker_i64 for @Marker[i64]
+  %eq = trait.allege !trait.proj<@Has[!S], "A", [!X]> = i64
+  %c = trait.coerce %r : !trait.claim<@Marker[i64] by @Marker_i64> to !trait.claim<@Marker[!trait.proj<@Has[!S], "A", [!X]>]> via (%eq) : (!trait.claim<!trait.proj<@Has[!S], "A", [!X]> = i64>)
+  return %c : !trait.claim<@Marker[!trait.proj<@Has[!S], "A", [!X]>]>
 }
-trait.impl private @Marker_i64(%self: !trait.claim<@Marker[i64]>) {
-  trait.method @mark(%x: i64) -> i64 { %c = arith.constant 1 : i64 %r = arith.addi %x, %c : i64 trait.return %r : i64 }
+trait.impl private @Marker_i64(%self: !trait.claim<@Marker[i64]>) members [@Marker.mark -> @Marker_i64.mark] {
 }
-trait.impl private @Has_i32(%self: !trait.claim<@Has[i32]>) {
-  trait.assoc_type @A<[!trait.poly<0>]> = i64
+func.func private @Marker_i64.mark(%self: !trait.claim<@Marker[i64]>, %x: i64) -> i64 {
+  %c = arith.constant 1 : i64 %r = arith.addi %x, %c : i64 return %r : i64
+}
+trait.impl private @Has_i32(%self: !trait.claim<@Has[i32]>) bindings {A = i64} members [@Has.requirement_0 -> @Has.requirement_0] {
 }
 func.func @main() -> i64 {
   %x = arith.constant 41 : i64
   %has = trait.witness @Has_i32 for @Has[i32]
   %m = trait.witness @Marker_i64 for @Marker[i64]
-  %ev = trait.method.call %has @requirement_0(%m) : !trait.claim<@Has[i32] by @Has_i32>, (!trait.claim<@Marker[i64] by @Marker_i64>) -> !trait.claim<@Marker[!trait.proj<@Has[i32], "A", [i64]>]>
-  %r = trait.method.call %ev @mark(%x) : !trait.claim<@Marker[!trait.proj<@Has[i32], "A", [i64]>]>, (i64) -> i64
+  %ev = trait.func.call @Has.requirement_0(%has, %m) : (!trait.claim<@Has[i32] by @Has_i32>, !trait.claim<@Marker[i64] by @Marker_i64>) -> !trait.claim<@Marker[!trait.proj<@Has[i32], "A", [i64]>]>
+  %r = trait.func.call @Marker.mark(%ev, %x) : (!trait.claim<@Marker[!trait.proj<@Has[i32], "A", [i64]>]>, i64) -> i64
   return %r : i64
 }

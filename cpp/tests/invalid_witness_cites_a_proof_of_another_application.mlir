@@ -9,9 +9,10 @@
 // covers every application of @B, so the proof's own claim is what the witness
 // is read against.
 
-trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) {}
-trait.trait private @B(%self: !trait.claim<@B[!trait.poly<0>]>) -> !trait.claim<@A[!trait.poly<0>]> {}
-trait.impl private @A_i32(%self: !trait.claim<@A[i32]>) {}
+trait.trait private @A(!trait.claim<@A[!trait.poly<0>]>)
+trait.trait private @B(!trait.claim<@B[!trait.poly<0>]>) -> !trait.claim<@A[!trait.poly<0>]>
+trait.impl private @A_i32(%self: !trait.claim<@A[i32]>) {
+}
 trait.impl private @B_blanket(%self: !trait.claim<@B[!trait.poly<0>]>) {
   %req0 = trait.allege @A[!trait.poly<0>]
   trait.return %req0 : !trait.claim<@A[!trait.poly<0>]>

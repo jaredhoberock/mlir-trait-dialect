@@ -22,29 +22,23 @@
 !S = !trait.poly<0>
 !T = !trait.poly<1>
 
-trait.trait private @Inner(%self: !trait.claim<@Inner[!S]>) {
-  trait.assoc_type @Item
-  trait.method @get(!S) -> !trait.proj<@Inner[!S], "Item">
+trait.trait private @Inner(!trait.claim<@Inner[!S]>) assoc {Item = 0} members [@Inner.get]
+func.func private @Inner.get(!trait.claim<@Inner[!S]>, !S) -> !trait.proj<@Inner[!S], "Item">
+
+trait.trait private @Outer(!trait.claim<@Outer[!S]>) assoc {Wrap = 1} members [@Outer.wrap]
+func.func private @Outer.wrap(!trait.claim<@Outer[!S]>, !S, !T) -> !trait.proj<@Outer[!S], "Wrap", [!T]>
+
+trait.impl private @Inner_impl(%self_claim: !trait.claim<@Inner[i32]>) bindings {Item = i64} members [@Inner.get -> @Inner_impl.get] {
+}
+func.func private @Inner_impl.get(%self_claim: !trait.claim<@Inner[i32]>, %self: i32) -> i64 {
+  %c = arith.extsi %self : i32 to i64
+  return %c : i64
 }
 
-trait.trait private @Outer(%self: !trait.claim<@Outer[!S]>) {
-  trait.assoc_type @Wrap<[!T]>
-  trait.method @wrap(!S, !T) -> !trait.proj<@Outer[!S], "Wrap", [!T]>
+trait.impl private @Outer_impl(%self_claim: !trait.claim<@Outer[i1]>) bindings {Wrap = !trait.poly<0>} members [@Outer.wrap -> @Outer_impl.wrap] {
 }
-
-trait.impl private @Inner_impl(%self_claim: !trait.claim<@Inner[i32]>) {
-  trait.assoc_type @Item = i64
-  trait.method @get(%self: i32) -> i64 {
-    %c = arith.extsi %self : i32 to i64
-    trait.return %c : i64
-  }
-}
-
-trait.impl private @Outer_impl(%self_claim: !trait.claim<@Outer[i1]>) {
-  trait.assoc_type @Wrap<[!trait.poly<0>]> = !trait.poly<0>
-  trait.method @wrap(%self: i1, %x: !trait.poly<0>) -> !trait.poly<0> {
-    trait.return %x : !trait.poly<0>
-  }
+func.func private @Outer_impl.wrap(%self_claim: !trait.claim<@Outer[i1]>, %self: i1, %x: !trait.poly<0>) -> !trait.poly<0> {
+  return %x : !trait.poly<0>
 }
 
 // The projection nests: Wrap<Inner[i32]::Item> -> Wrap<i64> -> i64
@@ -55,12 +49,10 @@ trait.impl private @Outer_impl(%self_claim: !trait.claim<@Outer[i1]>) {
 func.func @caller() -> !trait.proj<@Outer[i1], "Wrap", [!trait.proj<@Inner[i32], "Item">]> {
   %a = trait.allege @Inner[i32]
   %x = arith.constant 7 : i32
-  %item = trait.method.call %a @get(%x)
-    : !trait.claim<@Inner[i32]>, (i32) -> !trait.proj<@Inner[i32], "Item">
+  %item = trait.func.call @Inner.get(%a, %x) : (!trait.claim<@Inner[i32]>, i32) -> !trait.proj<@Inner[i32], "Item">
 
   %b = trait.allege @Outer[i1]
   %self = arith.constant 1 : i1
-  %r = trait.method.call %b @wrap(%self, %item)
-    : !trait.claim<@Outer[i1]>, (i1, !trait.proj<@Inner[i32], "Item">) -> !trait.proj<@Outer[i1], "Wrap", [!trait.proj<@Inner[i32], "Item">]>
+  %r = trait.func.call @Outer.wrap(%b, %self, %item) : (!trait.claim<@Outer[i1]>, i1, !trait.proj<@Inner[i32], "Item">) -> !trait.proj<@Outer[i1], "Wrap", [!trait.proj<@Inner[i32], "Item">]>
   return %r : !trait.proj<@Outer[i1], "Wrap", [!trait.proj<@Inner[i32], "Item">]>
 }

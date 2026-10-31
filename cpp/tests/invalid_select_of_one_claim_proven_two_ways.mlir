@@ -14,23 +14,24 @@
 // CHECK: note: control flow joins it from '!trait.claim<@Mark[i32] by @Seven>' and '!trait.claim<@Mark[i32] by @Nine>'
 
 !T = !trait.poly<0>
-trait.trait private @Mark(%self: !trait.claim<@Mark[!T]>) { trait.method @value() -> i64 }
-trait.impl private @Seven(%self: !trait.claim<@Mark[i32]>) {
-  trait.method @value() -> i64 {
-    %v = arith.constant 7 : i64
-    trait.return %v : i64
-  }
+trait.trait private @Mark(!trait.claim<@Mark[!T]>) members [@Mark.value]
+func.func private @Mark.value(!trait.claim<@Mark[!T]>) -> i64
+trait.impl private @Seven(%self: !trait.claim<@Mark[i32]>) members [@Mark.value -> @Seven.value] {
 }
-trait.impl private @Nine(%self: !trait.claim<@Mark[i32]>) {
-  trait.method @value() -> i64 {
-    %v = arith.constant 9 : i64
-    trait.return %v : i64
-  }
+func.func private @Seven.value(%self: !trait.claim<@Mark[i32]>) -> i64 {
+  %v = arith.constant 7 : i64
+  return %v : i64
+}
+trait.impl private @Nine(%self: !trait.claim<@Mark[i32]>) members [@Mark.value -> @Nine.value] {
+}
+func.func private @Nine.value(%self: !trait.claim<@Mark[i32]>) -> i64 {
+  %v = arith.constant 9 : i64
+  return %v : i64
 }
 func.func private @g(%a: !trait.claim<@Mark[!T]>, %b: !trait.claim<@Mark[!T]>) -> i64 {
   %c = arith.constant true
   %s = arith.select %c, %a, %b : !trait.claim<@Mark[!T]>
-  %v = trait.method.call %s @value() : !trait.claim<@Mark[!T]>, () -> i64
+  %v = trait.func.call @Mark.value(%s) : (!trait.claim<@Mark[!T]>) -> i64
   return %v : i64
 }
 func.func @main() -> i64 {

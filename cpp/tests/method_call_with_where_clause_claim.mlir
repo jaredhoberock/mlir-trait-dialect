@@ -4,54 +4,50 @@
 // RUN: mlir-opt -pass-pipeline='builtin.module(monomorphize-trait)' %s | FileCheck %s
 
 // Trait @SameAs with a convert method
-trait.trait private @SameAs(%self: !trait.claim<@SameAs[!trait.poly<0>, !trait.poly<1>]>) {
-  trait.method @convert(!trait.poly<1>) -> !trait.poly<0>
+trait.trait private @SameAs(!trait.claim<@SameAs[!trait.poly<0>, !trait.poly<1>]>) members [@SameAs.convert]
+func.func private @SameAs.convert(!trait.claim<@SameAs[!trait.poly<0>, !trait.poly<1>]>, !trait.poly<1>) -> !trait.poly<0>
+trait.impl private @SameAs_i32_i32(%self: !trait.claim<@SameAs[i32, i32]>) members [@SameAs.convert -> @SameAs_i32_i32.convert] {
 }
-trait.impl private @SameAs_i32_i32(%self: !trait.claim<@SameAs[i32, i32]>) {
-  trait.method @convert(%arg0: i32) -> i32 {
-    trait.return %arg0 : i32
-  }
+func.func private @SameAs_i32_i32.convert(%self: !trait.claim<@SameAs[i32, i32]>, %arg0: i32) -> i32 {
+  return %arg0 : i32
 }
 
 // Trait @Chooser whose method has a where-clause requiring @SameAs
 !T = !trait.poly<2>
 !U = !trait.poly<3>
-trait.trait private @Chooser(%self: !trait.claim<@Chooser[!trait.poly<0>]>) {
-  trait.method @choose(!trait.poly<0>, !trait.poly<1>, !trait.claim<@SameAs[!trait.poly<0>, !trait.poly<1>]>) -> !trait.poly<0>
-}
+trait.trait private @Chooser(!trait.claim<@Chooser[!trait.poly<0>]>) members [@Chooser.choose]
+func.func private @Chooser.choose(!trait.claim<@Chooser[!trait.poly<0>]>, !trait.poly<0>, !trait.poly<1>, !trait.claim<@SameAs[!trait.poly<0>, !trait.poly<1>]>) -> !trait.poly<0>
 // The impl's copy of @choose binds a variable of its own for each the trait's
 // declaration of it binds: a copy with fewer would be a different declaration.
 !V = !trait.poly<4>
-trait.impl private @Chooser_i32(%self: !trait.claim<@Chooser[i32]>) {
-  trait.method @choose(%a: i32, %b: !trait.poly<0>, %same: !trait.claim<@SameAs[i32, !trait.poly<0>]>) -> i32 {
-    // inner method call uses the where-clause claim
-    %converted = trait.method.call %same @convert(%b)
-      : !trait.claim<@SameAs[i32, !trait.poly<0>]>, (!trait.poly<0>) -> i32
-    trait.return %converted : i32
-  }
+trait.impl private @Chooser_i32(%self: !trait.claim<@Chooser[i32]>) members [@Chooser.choose -> @Chooser_i32.choose] {
+}
+func.func private @Chooser_i32.choose(%self: !trait.claim<@Chooser[i32]>, %a: i32, %b: !trait.poly<0>, %same: !trait.claim<@SameAs[i32, !trait.poly<0>]>) -> i32 {
+  // inner method call uses the where-clause claim
+  %converted = trait.func.call @SameAs.convert(%same, %b) : (!trait.claim<@SameAs[i32, !trait.poly<0>]>, !trait.poly<0>) -> i32
+  return %converted : i32
 }
 
 func.func @test(%x: i32, %y: i32) -> i32 {
   %chooser = trait.allege @Chooser[i32]
   %same = trait.allege @SameAs[i32, i32]
-  %res = trait.method.call %chooser @choose(%x, %y, %same)
-    : !trait.claim<@Chooser[i32]>, (i32, i32, !trait.claim<@SameAs[i32, i32]>) -> i32
+  %res = trait.func.call @Chooser.choose(%chooser, %x, %y, %same) : (!trait.claim<@Chooser[i32]>, i32, i32, !trait.claim<@SameAs[i32, i32]>) -> i32
   return %res : i32
 }
 
 // Instance of SameAs::convert
-// CHECK: func.func private @SameAs_i32_i32_{{h[0-9a-f]+}}_convert(
+// CHECK: func.func private @SameAs_i32_i32.convert_{{h[0-9a-f]+}}(
 
 // The instantiated choose should call SameAs_i32_i32_convert
-// CHECK: func.func private @Chooser_i32_{{h[0-9a-f]+}}_choose
-// CHECK: call @SameAs_i32_i32_{{h[0-9a-f]+}}_convert
+// CHECK: func.func private @Chooser_i32.choose_{{h[0-9a-f]+}}
+// CHECK: call @SameAs_i32_i32.convert_{{h[0-9a-f]+}}
 
 // Top-level test calls Chooser_i32_choose
 // CHECK: func.func @test(
-// CHECK: call @Chooser_i32_{{h[0-9a-f]+}}_choose
+// CHECK: call @Chooser_i32.choose_{{h[0-9a-f]+}}
 
 // No trait ops should remain
 // CHECK-NOT: trait.trait
 // CHECK-NOT: trait.impl
-// CHECK-NOT: trait.method.call
+// CHECK-NOT: trait.func.call
 // CHECK-NOT: trait.allege

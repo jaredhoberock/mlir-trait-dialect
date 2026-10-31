@@ -10,26 +10,19 @@
 
 !T = !trait.poly<0>
 
-trait.trait private @Gen(%self: !trait.claim<@Gen[!T]>) {
-  trait.assoc_type @A
+trait.trait private @Gen(!trait.claim<@Gen[!T]>) assoc {A = 0}
+
+// expected-note@+1 {{candidate}}
+trait.impl private @Gen_wide(%self: !trait.claim<@Gen[i64]>) bindings {A = i32} {
 }
 
 // expected-note@+1 {{candidate}}
-trait.impl private @Gen_wide(%self: !trait.claim<@Gen[i64]>) {
-  trait.assoc_type @A = i32
+trait.impl private @Gen_narrow(%self: !trait.claim<@Gen[i64]>) bindings {A = i16} {
 }
 
-// expected-note@+1 {{candidate}}
-trait.impl private @Gen_narrow(%self: !trait.claim<@Gen[i64]>) {
-  trait.assoc_type @A = i16
-}
+trait.trait private @Res(!trait.claim<@Res[!T]>) assoc {X = 0}
 
-trait.trait private @Res(%self: !trait.claim<@Res[!T]>) {
-  trait.assoc_type @X
-}
-
-trait.impl private @Res_i64(%self: !trait.claim<@Res[i64]>) {
-  trait.assoc_type @X = i32
+trait.impl private @Res_i64(%self: !trait.claim<@Res[i64]>) bindings {X = i32} {
 }
 
 // expected-error @below {{incoherent impls (multiple satisfiable) for '!trait.proj<@Gen[i64], "A">'}}

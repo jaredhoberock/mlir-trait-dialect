@@ -11,36 +11,31 @@
 // impl is spelled against, and head matching would find no candidate.
 
 !T = !trait.poly<0>
-trait.trait private @Ten(%self: !trait.claim<@Ten[!T]>) {
-  trait.assoc_type @Element
-}
+trait.trait private @Ten(!trait.claim<@Ten[!T]>) assoc {Element = 0}
 
-trait.impl private @Ten_base(%self: !trait.claim<@Ten[i64]>) {
-  trait.assoc_type @Element = i32
+trait.impl private @Ten_base(%self: !trait.claim<@Ten[i64]>) bindings {Element = i32} {
 }
 
 // The view forwards its element through its base.
-trait.impl private @Ten_view(%self: !trait.claim<@Ten[f32]>) {
-  trait.assoc_type @Element = !trait.proj<@Ten[i64], "Element">
+trait.impl private @Ten_view(%self: !trait.claim<@Ten[f32]>) bindings {Element = !trait.proj<@Ten[i64], "Element">} {
 }
 
 !S = !trait.poly<1>
 !O = !trait.poly<2>
-trait.trait private @Get(%self: !trait.claim<@Get[!trait.poly<0>, !trait.poly<1>]>) {
-  trait.method @use()
-}
+trait.trait private @Get(!trait.claim<@Get[!trait.poly<0>, !trait.poly<1>]>) members [@Get.use]
+func.func private @Get.use(!trait.claim<@Get[!trait.poly<0>, !trait.poly<1>]>)
 
 !U = !trait.poly<3>
-trait.impl private @Get_blanket(%self: !trait.claim<@Get[!trait.poly<0>, !trait.proj<@Ten[!trait.poly<0>], "Element">]>, %ten: !trait.claim<@Ten[!trait.poly<0>]>) {
-  trait.method @use() {
-    trait.return
-  }
+trait.impl private @Get_blanket(%self: !trait.claim<@Get[!trait.poly<0>, !trait.proj<@Ten[!trait.poly<0>], "Element">]>, %ten: !trait.claim<@Ten[!trait.poly<0>]>) members [@Get.use -> @Get_blanket.use] {
+}
+func.func private @Get_blanket.use(%self: !trait.claim<@Get[!trait.poly<0>, !trait.proj<@Ten[!trait.poly<0>], "Element">]>, %ten: !trait.claim<@Ten[!trait.poly<0>]>) {
+  return
 }
 
 // CHECK-LABEL: func.func @forwarded
 // CHECK: call @Get_blanket
 func.func @forwarded() {
   %c = trait.allege @Get[f32, !trait.proj<@Ten[f32], "Element">]
-  trait.method.call %c @use() : !trait.claim<@Get[f32, !trait.proj<@Ten[f32], "Element">]>, () -> ()
+  trait.func.call @Get.use(%c) : (!trait.claim<@Get[f32, !trait.proj<@Ten[f32], "Element">]>) -> ()
   return
 }

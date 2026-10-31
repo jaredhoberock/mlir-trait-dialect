@@ -12,26 +12,28 @@
 
 // VERIFIED: trait.proof private @forged {
 // VERIFIED: trait.derive @B[i32] from @B_blanket
-// INSTANCE: :33:{{[0-9]+}}: error: unproven monomorphic claim '!trait.claim<@A[!trait.proj<@Foo[i32], "Out">]>' after instantiate-monomorphs
-// INSTANCE: :29:{{[0-9]+}}: note: called from
+// INSTANCE: :30:{{[0-9]+}}: error: unproven monomorphic claim '!trait.claim<@A[!trait.proj<@Foo[i32], "Out">]>' after instantiate-monomorphs
+// INSTANCE: :34:{{[0-9]+}}: note: called from
 
-trait.trait private @Foo(%self: !trait.claim<@Foo[!trait.poly<0>]>) { trait.assoc_type @Out }
-trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) { trait.method @a() -> i64 }
-trait.trait private @B(%self: !trait.claim<@B[!trait.poly<0>]>) -> !trait.claim<@A[!trait.proj<@Foo[!trait.poly<0>], "Out">]> { trait.method @b() -> i64 }
-trait.impl private @A_i64(%self: !trait.claim<@A[i64]>) {
-  trait.method @a() -> i64 {
-    %c = arith.constant 64 : i64
-    trait.return %c : i64
-  }
+trait.trait private @Foo(!trait.claim<@Foo[!trait.poly<0>]>) assoc {Out = 0}
+trait.trait private @A(!trait.claim<@A[!trait.poly<0>]>) members [@A.a]
+func.func private @A.a(!trait.claim<@A[!trait.poly<0>]>) -> i64
+trait.trait private @B(!trait.claim<@B[!trait.poly<0>]>) -> !trait.claim<@A[!trait.proj<@Foo[!trait.poly<0>], "Out">]> members [@B.b]
+func.func private @B.b(!trait.claim<@B[!trait.poly<0>]>) -> i64
+trait.impl private @A_i64(%self: !trait.claim<@A[i64]>) members [@A.a -> @A_i64.a] {
 }
-trait.impl private @B_blanket(%self: !trait.claim<@B[!trait.poly<0>]>) {
-  trait.method @b() -> i64 {
-    %a = trait.project %self[0] : !trait.claim<@B[!trait.poly<0>]> -> !trait.claim<@A[!trait.proj<@Foo[!trait.poly<0>], "Out">]>
-    %r = trait.method.call %a @a() : !trait.claim<@A[!trait.proj<@Foo[!trait.poly<0>], "Out">]>, () -> i64
-    trait.return %r : i64
-  }
+func.func private @A_i64.a(%self: !trait.claim<@A[i64]>) -> i64 {
+  %c = arith.constant 64 : i64
+  return %c : i64
+}
+trait.impl private @B_blanket(%self: !trait.claim<@B[!trait.poly<0>]>) members [@B.b -> @B_blanket.b] {
   %req0 = trait.allege @A[!trait.proj<@Foo[!trait.poly<0>], "Out">]
   trait.return %req0 : !trait.claim<@A[!trait.proj<@Foo[!trait.poly<0>], "Out">]>
+}
+func.func private @B_blanket.b(%self: !trait.claim<@B[!trait.poly<0>]>) -> i64 {
+  %a = trait.project %self[0] : !trait.claim<@B[!trait.poly<0>]> -> !trait.claim<@A[!trait.proj<@Foo[!trait.poly<0>], "Out">]>
+  %r = trait.func.call @A.a(%a) : (!trait.claim<@A[!trait.proj<@Foo[!trait.poly<0>], "Out">]>) -> i64
+  return %r : i64
 }
 trait.proof private @forged {
   %d = trait.derive @B[i32] from @B_blanket[i32] given()
@@ -39,6 +41,6 @@ trait.proof private @forged {
 }
 func.func @main() -> i64 {
   %w = trait.witness @forged for @B[i32]
-  %r = trait.method.call %w @b() : !trait.claim<@B[i32] by @forged>, () -> i64
+  %r = trait.func.call @B.b(%w) : (!trait.claim<@B[i32] by @forged>) -> i64
   return %r : i64
 }

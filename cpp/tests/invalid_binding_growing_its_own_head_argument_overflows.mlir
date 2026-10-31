@@ -12,15 +12,17 @@
 // without end.
 
 !T = !trait.poly<0>
-trait.trait private @A(%s: !trait.claim<@A[!T]>) { trait.assoc_type @Out }
-trait.impl private @I(%s: !trait.claim<@A[!T]>) { trait.assoc_type @Out = !trait.proj<@A[!trait.proj<@A[!T], "Out">], "Out"> }
+trait.trait private @A(!trait.claim<@A[!T]>) assoc {Out = 0}
+trait.impl private @I(%s: !trait.claim<@A[!T]>) bindings {Out = !trait.proj<@A[!trait.proj<@A[!T], "Out">], "Out">} {
+}
 // expected-error @below {{overflow evaluating the requirement '!trait.claim<!trait.proj<@A[i64], "Out"> = i64>': a chain of steps resolving its projections does not end within 128 steps}}
 func.func @f(%e: !trait.claim<!trait.proj<@A[i64], "Out"> = i64>) { return }
 
 // -----
 
 !T = !trait.poly<0>
-trait.trait private @A(%s: !trait.claim<@A[!T]>) { trait.assoc_type @Out }
-trait.impl private @I(%s: !trait.claim<@A[!T]>) { trait.assoc_type @Out = !trait.proj<@A[tuple<!trait.proj<@A[!T], "Out">, !trait.proj<@A[!T], "Out">>], "Out"> }
+trait.trait private @A(!trait.claim<@A[!T]>) assoc {Out = 0}
+trait.impl private @I(%s: !trait.claim<@A[!T]>) bindings {Out = !trait.proj<@A[tuple<!trait.proj<@A[!T], "Out">, !trait.proj<@A[!T], "Out">>], "Out">} {
+}
 // expected-error @below {{overflow evaluating the requirement '!trait.claim<!trait.proj<@A[i64], "Out"> = i64>': a chain of steps resolving its projections does not end within 128 steps}}
 func.func @f(%e: !trait.claim<!trait.proj<@A[i64], "Out"> = i64>) { return }

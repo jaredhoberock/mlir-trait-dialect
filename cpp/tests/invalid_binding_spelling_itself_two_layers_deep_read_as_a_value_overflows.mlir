@@ -10,15 +10,17 @@
 // would then take for the value's type and rewrite again.
 
 !T = !trait.poly<0>
-trait.trait private @A(%s: !trait.claim<@A[!T]>) { trait.assoc_type @Item }
-trait.impl private @I(%s: !trait.claim<@A[i32]>) { trait.assoc_type @Item = tuple<tuple<!trait.proj<@A[i32], "Item">>> }
+trait.trait private @A(!trait.claim<@A[!T]>) assoc {Item = 0}
+trait.impl private @I(%s: !trait.claim<@A[i32]>) bindings {Item = tuple<tuple<!trait.proj<@A[i32], "Item">>>} {
+}
 // expected-error @below {{overflow evaluating the requirement '!trait.proj<@A[i32], "Item">': a chain of steps resolving its projections does not end within 128 steps}}
 func.func private @use(!trait.proj<@A[i32], "Item">)
 
 // -----
 
 !T = !trait.poly<0>
-trait.trait private @A(%s: !trait.claim<@A[!T]>) { trait.assoc_type @Item<[!trait.poly<1>]> }
-trait.impl private @I(%s: !trait.claim<@A[i32]>) { trait.assoc_type @Item<[!trait.poly<0>]> = tuple<tuple<!trait.proj<@A[i32], "Item", [!trait.poly<0>]>>> }
+trait.trait private @A(!trait.claim<@A[!T]>) assoc {Item = 1}
+trait.impl private @I(%s: !trait.claim<@A[i32]>) bindings {Item = tuple<tuple<!trait.proj<@A[i32], "Item", [!trait.poly<0>]>>>} {
+}
 // expected-error @below {{overflow evaluating the requirement '!trait.proj<@A[i32], "Item", [i64]>': a chain of steps resolving its projections does not end within 128 steps}}
 func.func private @use(!trait.proj<@A[i32], "Item", [i64]>)

@@ -25,12 +25,15 @@
 
 !U = !trait.poly<1>
 
-trait.trait private @X(%self: !trait.claim<@X[!trait.poly<0>]>) {}
-trait.trait private @Has(%self: !trait.claim<@Has[!trait.poly<0>]>) { trait.assoc_type @Out }
+trait.trait private @X(!trait.claim<@X[!trait.poly<0>]>)
+trait.trait private @Has(!trait.claim<@Has[!trait.poly<0>]>) assoc {Out = 0}
 
-trait.impl private @Has_w1(%self: !trait.claim<@Has[tuple<!trait.poly<0>>]>) { trait.assoc_type @Out = !trait.proj<@Has[!trait.poly<0>], "Out"> }
-trait.impl private @Has_w2(%self: !trait.claim<@Has[tuple<!trait.poly<0>, !trait.poly<0>>]>) { trait.assoc_type @Out = !trait.proj<@Has[!trait.poly<0>], "Out"> }
-trait.impl private @Has_mid(%self: !trait.claim<@Has[i32]>, %x: !trait.claim<@X[i32]>) { trait.assoc_type @Out = i64 }
+trait.impl private @Has_w1(%self: !trait.claim<@Has[tuple<!trait.poly<0>>]>) bindings {Out = !trait.proj<@Has[!trait.poly<0>], "Out">} {
+}
+trait.impl private @Has_w2(%self: !trait.claim<@Has[tuple<!trait.poly<0>, !trait.poly<0>>]>) bindings {Out = !trait.proj<@Has[!trait.poly<0>], "Out">} {
+}
+trait.impl private @Has_mid(%self: !trait.claim<@Has[i32]>, %x: !trait.claim<@X[i32]>) bindings {Out = i64} {
+}
 
 func.func private @gen(%c: !trait.claim<!trait.proj<@Has[tuple<!trait.poly<0>>], "Out"> = !trait.proj<@Has[tuple<!trait.poly<0>, !trait.poly<0>>], "Out">>) -> () {
   return

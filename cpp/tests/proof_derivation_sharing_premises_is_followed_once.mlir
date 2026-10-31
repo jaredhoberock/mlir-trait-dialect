@@ -13,11 +13,13 @@
 
 // CHECK: trait.proof private @h
 
-trait.trait private @H(%self: !trait.claim<@H[!trait.poly<0>]>) {}
-// REPEAT 0 29: trait.trait private @D{k}(%self: !trait.claim<@D{k}[!trait.poly<0>]>) {}
-trait.impl private @H_i32(%self: !trait.claim<@H[i32]>, %d: !trait.claim<@D0[i32]>) {}
+trait.trait private @H(!trait.claim<@H[!trait.poly<0>]>)
+// REPEAT 0 29: trait.trait private @D{k}(!trait.claim<@D{k}[!trait.poly<0>]>)
+trait.impl private @H_i32(%self: !trait.claim<@H[i32]>, %d: !trait.claim<@D0[i32]>) {
+}
 // REPEAT 0 28: trait.impl private @D{k}_i32(%self: !trait.claim<@D{k}[i32]>, %a: !trait.claim<@D{k+1}[i32]>, %b: !trait.claim<@D{k+1}[i32]>) {}
-trait.impl private @D29_i32(%self: !trait.claim<@D29[i32]>) {}
+trait.impl private @D29_i32(%self: !trait.claim<@D29[i32]>) {
+}
 trait.proof private @h {
   %d = trait.witness @d0 for @D0[i32]
   %p = trait.derive @H[i32] from @H_i32 given(%d) : (!trait.claim<@D0[i32] by @d0>)

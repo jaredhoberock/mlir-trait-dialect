@@ -15,31 +15,26 @@
 
 !S = !trait.poly<0>
 
-trait.trait private @U(%self: !trait.claim<@U[!S]>) {
-}
+trait.trait private @U(!trait.claim<@U[!S]>)
 
-trait.trait private @T(%self: !trait.claim<@T[!S]>) {
-  trait.assoc_type @Out
-  trait.method @m(!S) -> !trait.proj<@T[!S], "Out">
-}
+trait.trait private @T(!trait.claim<@T[!S]>) assoc {Out = 0} members [@T.m]
+func.func private @T.m(!trait.claim<@T[!S]>, !S) -> !trait.proj<@T[!S], "Out">
 
 trait.impl private @U_i32(%self: !trait.claim<@U[i32]>) {
 }
 
-trait.impl private @T_cond(%self: !trait.claim<@T[!S]>, %u: !trait.claim<@U[!S]>) {
-  trait.assoc_type @Out = i64
-  trait.method @m(%x: !S) -> i64 {
-    %c = arith.constant 7 : i64
-    trait.return %c : i64
-  }
+trait.impl private @T_cond(%self: !trait.claim<@T[!S]>, %u: !trait.claim<@U[!S]>) bindings {Out = i64} members [@T.m -> @T_cond.m] {
+}
+func.func private @T_cond.m(%self: !trait.claim<@T[!S]>, %u: !trait.claim<@U[!S]>, %x: !S) -> i64 {
+  %c = arith.constant 7 : i64
+  return %c : i64
 }
 
-trait.impl private @T_f64(%self: !trait.claim<@T[f64]>) {
-  trait.assoc_type @Out = i1
-  trait.method @m(%x: f64) -> i1 {
-    %c = arith.constant true
-    trait.return %c : i1
-  }
+trait.impl private @T_f64(%self: !trait.claim<@T[f64]>) bindings {Out = i1} members [@T.m -> @T_f64.m] {
+}
+func.func private @T_f64.m(%self: !trait.claim<@T[f64]>, %x: f64) -> i1 {
+  %c = arith.constant true
+  return %c : i1
 }
 
 trait.proof private @P {
@@ -49,11 +44,11 @@ trait.proof private @P {
 }
 
 func.func private @g(%c: !trait.claim<@T[!S]>, %x: !S) -> !trait.proj<@T[!S], "Out"> {
-  %r = trait.method.call %c @m(%x) : !trait.claim<@T[!S]>, (!S) -> !trait.proj<@T[!S], "Out">
+  %r = trait.func.call @T.m(%c, %x) : (!trait.claim<@T[!S]>, !S) -> !trait.proj<@T[!S], "Out">
   return %r : !trait.proj<@T[!S], "Out">
 }
 
-// CHECK: func.func private @[[MC:T_cond_[0-9a-z_]+]](%{{.*}}: i32) -> i64
+// CHECK: func.func private @[[MC:T_cond.m_h[0-9a-f]+]](%{{.*}}: i32) -> i64
 // CHECK: func.func private @[[G32:g_h[0-9a-f]+]](%{{.*}}: i32) -> i64
 // CHECK: call @[[MC]]
 // CHECK: func.func private @[[G64:g_h[0-9a-f]+]](%{{.*}}: f64) -> i1

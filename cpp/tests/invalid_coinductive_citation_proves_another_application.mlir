@@ -8,8 +8,9 @@
 // in the proof's body supplies an application the proof does not prove. A
 // coinductive citation is read by that same comparison, not by trait name.
 
-trait.trait private @Foo(%self: !trait.claim<@Foo[!trait.poly<0>]>) {}
-trait.impl private @Foo_tuple(%self: !trait.claim<@Foo[tuple<!trait.poly<0>>]>, %foo: !trait.claim<@Foo[!trait.poly<0>]>) {}
+trait.trait private @Foo(!trait.claim<@Foo[!trait.poly<0>]>)
+trait.impl private @Foo_tuple(%self: !trait.claim<@Foo[tuple<!trait.poly<0>>]>, %foo: !trait.claim<@Foo[!trait.poly<0>]>) {
+}
 
 trait.proof private @p {
   // expected-error @below {{proof @p proves '!trait.claim<@Foo[tuple<i32>]>', which does not discharge the obligation '!trait.claim<@Foo[i32]>'}}

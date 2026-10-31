@@ -16,19 +16,21 @@
 // CHECK:   trait.witness @B_i32 for @B[i32]
 // CHECK:   trait.derive @A[i32] from @A_i32
 
-trait.trait private @B(%self: !trait.claim<@B[!trait.poly<0>]>) { trait.method @v() -> i64 }
-trait.impl private @B_i32(%self: !trait.claim<@B[i32]>) {
-  trait.method @v() -> i64 {
-    %c = arith.constant 2 : i64
-    trait.return %c : i64
-  }
+trait.trait private @B(!trait.claim<@B[!trait.poly<0>]>) members [@B.v]
+func.func private @B.v(!trait.claim<@B[!trait.poly<0>]>) -> i64
+trait.impl private @B_i32(%self: !trait.claim<@B[i32]>) members [@B.v -> @B_i32.v] {
 }
-trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) { trait.method @a() -> i64 }
-trait.impl private @A_i32(%self: !trait.claim<@A[i32]>, %b: !trait.claim<@B[i32]>) {
-  trait.method @a() -> i64 {
-    %r = trait.method.call %b @v() : !trait.claim<@B[i32]>, () -> i64
-    trait.return %r : i64
-  }
+func.func private @B_i32.v(%self: !trait.claim<@B[i32]>) -> i64 {
+  %c = arith.constant 2 : i64
+  return %c : i64
+}
+trait.trait private @A(!trait.claim<@A[!trait.poly<0>]>) members [@A.a]
+func.func private @A.a(!trait.claim<@A[!trait.poly<0>]>) -> i64
+trait.impl private @A_i32(%self: !trait.claim<@A[i32]>, %b: !trait.claim<@B[i32]>) members [@A.a -> @A_i32.a] {
+}
+func.func private @A_i32.a(%self: !trait.claim<@A[i32]>, %b: !trait.claim<@B[i32]>) -> i64 {
+  %r = trait.func.call @B.v(%b) : (!trait.claim<@B[i32]>) -> i64
+  return %r : i64
 }
 trait.proof private @b_custom {
   %d = trait.derive @B[i32] from @B_i32 given()
@@ -41,6 +43,6 @@ trait.proof private @A_i32_p {
 }
 func.func @main() -> i64 {
   %e = trait.allege @A[i32]
-  %r = trait.method.call %e @a() : !trait.claim<@A[i32]>, () -> i64
+  %r = trait.func.call @A.a(%e) : (!trait.claim<@A[i32]>) -> i64
   return %r : i64
 }

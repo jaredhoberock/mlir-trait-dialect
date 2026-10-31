@@ -22,22 +22,17 @@
 !T = !trait.poly<1>
 !U = !trait.poly<2>
 
-trait.trait private @BiMap(%self: !trait.claim<@BiMap[!S]>) {
-  trait.assoc_type @Left<[!T, !U]>
-  trait.assoc_type @Right<[!T, !U]>
-  trait.method @left(!S, !T, !U) -> !trait.proj<@BiMap[!S], "Left", [!T, !U]>
-  trait.method @right(!S, !T, !U) -> !trait.proj<@BiMap[!S], "Right", [!T, !U]>
-}
+trait.trait private @BiMap(!trait.claim<@BiMap[!S]>) assoc {Left = 2, Right = 2} members [@BiMap.left, @BiMap.right]
+func.func private @BiMap.left(!trait.claim<@BiMap[!S]>, !S, !T, !U) -> !trait.proj<@BiMap[!S], "Left", [!T, !U]>
+func.func private @BiMap.right(!trait.claim<@BiMap[!S]>, !S, !T, !U) -> !trait.proj<@BiMap[!S], "Right", [!T, !U]>
 
-trait.impl private @BiMap_impl(%self_claim: !trait.claim<@BiMap[i1]>) {
-  trait.assoc_type @Left<[!trait.poly<0>, !trait.poly<1>]> = !trait.poly<0>
-  trait.assoc_type @Right<[!trait.poly<0>, !trait.poly<1>]> = !trait.poly<1>
-  trait.method @left(%self: i1, %a: !trait.poly<0>, %b: !trait.poly<1>) -> !trait.poly<0> {
-    trait.return %a : !trait.poly<0>
-  }
-  trait.method @right(%self: i1, %a: !trait.poly<0>, %b: !trait.poly<1>) -> !trait.poly<1> {
-    trait.return %b : !trait.poly<1>
-  }
+trait.impl private @BiMap_impl(%self_claim: !trait.claim<@BiMap[i1]>) bindings {Left = !trait.poly<0>, Right = !trait.poly<1>} members [@BiMap.left -> @BiMap_impl.left, @BiMap.right -> @BiMap_impl.right] {
+}
+func.func private @BiMap_impl.left(%self_claim: !trait.claim<@BiMap[i1]>, %self: i1, %a: !trait.poly<0>, %b: !trait.poly<1>) -> !trait.poly<0> {
+  return %a : !trait.poly<0>
+}
+func.func private @BiMap_impl.right(%self_claim: !trait.claim<@BiMap[i1]>, %self: i1, %a: !trait.poly<0>, %b: !trait.poly<1>) -> !trait.poly<1> {
+  return %b : !trait.poly<1>
 }
 
 // CHECK-LABEL: func.func @call_left
@@ -50,8 +45,7 @@ func.func @call_left() -> !trait.proj<@BiMap[i1], "Left", [i32, i64]> {
   %self = arith.constant 1 : i1
   %x = arith.constant 42 : i32
   %y = arith.constant 7 : i64
-  %r = trait.method.call %a @left(%self, %x, %y)
-    : !trait.claim<@BiMap[i1]>, (i1, i32, i64) -> !trait.proj<@BiMap[i1], "Left", [i32, i64]>
+  %r = trait.func.call @BiMap.left(%a, %self, %x, %y) : (!trait.claim<@BiMap[i1]>, i1, i32, i64) -> !trait.proj<@BiMap[i1], "Left", [i32, i64]>
   return %r : !trait.proj<@BiMap[i1], "Left", [i32, i64]>
 }
 
@@ -65,7 +59,6 @@ func.func @call_right() -> !trait.proj<@BiMap[i1], "Right", [i32, i64]> {
   %self = arith.constant 1 : i1
   %x = arith.constant 42 : i32
   %y = arith.constant 7 : i64
-  %r = trait.method.call %a @right(%self, %x, %y)
-    : !trait.claim<@BiMap[i1]>, (i1, i32, i64) -> !trait.proj<@BiMap[i1], "Right", [i32, i64]>
+  %r = trait.func.call @BiMap.right(%a, %self, %x, %y) : (!trait.claim<@BiMap[i1]>, i1, i32, i64) -> !trait.proj<@BiMap[i1], "Right", [i32, i64]>
   return %r : !trait.proj<@BiMap[i1], "Right", [i32, i64]>
 }

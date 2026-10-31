@@ -6,35 +6,30 @@
 // Round-trip test for GAT (Generic Associated Type) declarations and projections.
 
 // CHECK-LABEL: trait private @Test
-// CHECK: trait.assoc_type @Wrapper<[!trait.poly<1>]>
-// CHECK: trait.method @test(!trait.poly<0>, !trait.poly<1>) -> !trait.proj<@Test[!trait.poly<0>], "Wrapper", [!trait.poly<1>]>
+// CHECK-SAME: assoc {Wrapper = 1} members [@Test.test]
+// CHECK: func.func private @Test.test(!trait.claim<@Test[!trait.poly<0>]>, !trait.poly<0>, !trait.poly<1>) -> !trait.proj<@Test[!trait.poly<0>], "Wrapper", [!trait.poly<1>]>
 
 !S = !trait.poly<0>
 !T = !trait.poly<1>
 
-trait.trait private @Test(%self: !trait.claim<@Test[!S]>) {
-  trait.assoc_type @Wrapper<[!T]>
-  trait.method @test(!S, !T) -> !trait.proj<@Test[!S], "Wrapper", [!T]>
+trait.trait private @Test(!trait.claim<@Test[!S]>) assoc {Wrapper = 1} members [@Test.test]
+func.func private @Test.test(!trait.claim<@Test[!S]>, !S, !T) -> !trait.proj<@Test[!S], "Wrapper", [!T]>
+
+// CHECK-LABEL: trait.impl private @Test_impl(%self: !trait.claim<@Test[i1]>)
+// CHECK-SAME: bindings {Wrapper = !trait.poly<0>} members [@Test.test -> @Test_impl.test]
+// CHECK: func.func private @Test_impl.test
+
+trait.impl private @Test_impl(%self_claim: !trait.claim<@Test[i1]>) bindings {Wrapper = !trait.poly<0>} members [@Test.test -> @Test_impl.test] {
+}
+func.func private @Test_impl.test(%self_claim: !trait.claim<@Test[i1]>, %self: i1, %value: !trait.poly<0>) -> !trait.poly<0> {
+  return %value : !trait.poly<0>
 }
 
-// CHECK-LABEL: trait.impl private @Test_impl(%self: !trait.claim<@Test[i1]>
-// CHECK: trait.assoc_type @Wrapper<[!trait.poly<0>]> = !trait.poly<0>
-// CHECK: trait.method @test
-
-trait.impl private @Test_impl(%self_claim: !trait.claim<@Test[i1]>) {
-  trait.assoc_type @Wrapper<[!trait.poly<0>]> = !trait.poly<0>
-  trait.method @test(%self: i1, %value: !trait.poly<0>) -> !trait.poly<0> {
-    trait.return %value : !trait.poly<0>
-  }
-}
-
-// Non-GAT associated type still works without type_params
+// An associated type with no parameters of its own counts none
 // CHECK-LABEL: trait private @Iterator
-// CHECK: trait.assoc_type @Item
-// CHECK: trait.method @next(!trait.poly<0>) -> !trait.proj<@Iterator[!trait.poly<0>], "Item">
+// CHECK-SAME: assoc {Item = 0} members [@Iterator.next]
+// CHECK: func.func private @Iterator.next(!trait.claim<@Iterator[!trait.poly<0>]>, !trait.poly<0>) -> !trait.proj<@Iterator[!trait.poly<0>], "Item">
 
 !U = !trait.poly<0>
-trait.trait private @Iterator(%self: !trait.claim<@Iterator[!U]>) {
-  trait.assoc_type @Item
-  trait.method @next(!U) -> !trait.proj<@Iterator[!U], "Item">
-}
+trait.trait private @Iterator(!trait.claim<@Iterator[!U]>) assoc {Item = 0} members [@Iterator.next]
+func.func private @Iterator.next(!trait.claim<@Iterator[!U]>, !U) -> !trait.proj<@Iterator[!U], "Item">

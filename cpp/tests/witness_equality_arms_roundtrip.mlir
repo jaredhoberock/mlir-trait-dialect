@@ -10,11 +10,13 @@
 !S = !trait.poly<0>
 !U = !trait.poly<1>
 
-trait.trait private @A(%self: !trait.claim<@A[!S]>) { trait.assoc_type @Item }
-trait.trait private @B(%self: !trait.claim<@B[!S]>) { trait.assoc_type @Item }
+trait.trait private @A(!trait.claim<@A[!S]>) assoc {Item = 0}
+trait.trait private @B(!trait.claim<@B[!S]>) assoc {Item = 0}
 
-trait.impl private @A_impl(%self: !trait.claim<@A[!trait.poly<0>]>) { trait.assoc_type @Item = !trait.poly<0> }
-trait.impl private @B_impl(%self: !trait.claim<@B[!trait.poly<0>]>) { trait.assoc_type @Item = !trait.poly<0> }
+trait.impl private @A_impl(%self: !trait.claim<@A[!trait.poly<0>]>) bindings {Item = !trait.poly<0>} {
+}
+trait.impl private @B_impl(%self: !trait.claim<@B[!trait.poly<0>]>) bindings {Item = !trait.poly<0>} {
+}
 
 // CHECK-LABEL: func.func @arms
 func.func @arms() {

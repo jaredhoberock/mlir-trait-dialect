@@ -5,17 +5,14 @@
 
 !T = !trait.poly<0>
 
-trait.trait private @Get(%self: !trait.claim<@Get[!T]>) {
-  trait.assoc_type @Output
-  trait.method @get(!T) -> !trait.proj<@Get[!T], "Output">
-}
+trait.trait private @Get(!trait.claim<@Get[!T]>) assoc {Output = 0} members [@Get.get]
+func.func private @Get.get(!trait.claim<@Get[!T]>, !T) -> !trait.proj<@Get[!T], "Output">
 
-trait.impl private @Get_impl(%self_claim: !trait.claim<@Get[i32]>) {
-  trait.assoc_type @Output = i64
-  trait.method @get(%self: i32) -> i64 {
-    %c = arith.extsi %self : i32 to i64
-    trait.return %c : i64
-  }
+trait.impl private @Get_impl(%self_claim: !trait.claim<@Get[i32]>) bindings {Output = i64} members [@Get.get -> @Get_impl.get] {
+}
+func.func private @Get_impl.get(%self_claim: !trait.claim<@Get[i32]>, %self: i32) -> i64 {
+  %c = arith.extsi %self : i32 to i64
+  return %c : i64
 }
 
 // CHECK-LABEL: func.func @caller
@@ -26,8 +23,7 @@ trait.impl private @Get_impl(%self_claim: !trait.claim<@Get[i32]>) {
 func.func @caller() -> !trait.proj<@Get[i32], "Output"> {
   %a = trait.allege @Get[i32]
   %x = arith.constant 7 : i32
-  %r = trait.method.call %a @get(%x)
-    : !trait.claim<@Get[i32]>, (i32) -> !trait.proj<@Get[i32], "Output">
+  %r = trait.func.call @Get.get(%a, %x) : (!trait.claim<@Get[i32]>, i32) -> !trait.proj<@Get[i32], "Output">
   return %r : !trait.proj<@Get[i32], "Output">
 }
 

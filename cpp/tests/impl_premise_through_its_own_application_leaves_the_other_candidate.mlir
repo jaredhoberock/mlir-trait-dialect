@@ -11,35 +11,43 @@
 // the projection, so the argument naming no type refuses @I too.
 
 !T = !trait.poly<0>
-trait.trait private @B(%s: !trait.claim<@B[!T]>) { trait.assoc_type @Item }
-trait.trait private @A(%s: !trait.claim<@A[!T]>) {
-  trait.assoc_type @Item<[!trait.poly<1>]>
-}
+trait.trait private @B(!trait.claim<@B[!T]>) assoc {Item = 0}
+trait.trait private @A(!trait.claim<@A[!T]>) assoc {Item = 1}
 trait.impl private @I(%s: !trait.claim<@A[!T]>,
-    %e: !trait.claim<!trait.proj<@A[!T], "Item", [!trait.proj<@B[!T], "Item">]> = i64>) {
-  trait.assoc_type @Item<[!trait.poly<1>]> = i64
+    %e: !trait.claim<!trait.proj<@A[!T], "Item", [!trait.proj<@B[!T], "Item">]> = i64>) bindings {Item = i64} {
 }
-trait.impl private @J(%s: !trait.claim<@A[i32]>) { trait.assoc_type @Item<[!trait.poly<0>]> = i64 }
-func.func private @need(!trait.claim<@A[i32]>)
+trait.impl private @J(%s: !trait.claim<@A[i32]>) bindings {Item = i64} {
+}
+// A function with a body taking the claim is a template, cloned at the proof
+// its call supplies.
+func.func private @need(%a0: !trait.claim<@A[i32]>) {
+  return
+}
 // CHECK-LABEL: func.func @run()
 // CHECK: trait.witness @J for @A[i32]
 func.func @run() {
   %e = trait.allege @A[i32]
-  func.call @need(%e) : (!trait.claim<@A[i32]>) -> ()
+  trait.func.call @need(%e) : (!trait.claim<@A[i32]>) -> ()
   return
 }
 
 // -----
 
 !T = !trait.poly<0>
-trait.trait private @A(%s: !trait.claim<@A[!T]>) { trait.assoc_type @Item }
-trait.impl private @I(%s: !trait.claim<@A[!T]>, %e: !trait.claim<!trait.proj<@A[!T], "Item"> = i64>) { trait.assoc_type @Item = i64 }
-trait.impl private @J(%s: !trait.claim<@A[i32]>) { trait.assoc_type @Item = i64 }
-func.func private @need(!trait.claim<@A[i32]>)
+trait.trait private @A(!trait.claim<@A[!T]>) assoc {Item = 0}
+trait.impl private @I(%s: !trait.claim<@A[!T]>, %e: !trait.claim<!trait.proj<@A[!T], "Item"> = i64>) bindings {Item = i64} {
+}
+trait.impl private @J(%s: !trait.claim<@A[i32]>) bindings {Item = i64} {
+}
+// A function with a body taking the claim is a template, cloned at the proof
+// its call supplies.
+func.func private @need(%a0: !trait.claim<@A[i32]>) {
+  return
+}
 // CHECK-LABEL: func.func @run()
 // CHECK: trait.witness @J for @A[i32]
 func.func @run() {
   %e = trait.allege @A[i32]
-  func.call @need(%e) : (!trait.claim<@A[i32]>) -> ()
+  trait.func.call @need(%e) : (!trait.claim<@A[i32]>) -> ()
   return
 }

@@ -9,22 +9,26 @@
 // first premise does. Read through it, the second premise is @A[i64], and
 // @forged supplies @A_i32's evidence for it.
 
-trait.trait private @Foo(%self: !trait.claim<@Foo[!trait.poly<0>]>) { trait.assoc_type @Out }
-trait.impl private @Foo_any(%self: !trait.claim<@Foo[!trait.poly<0>]>) { trait.assoc_type @Out = !trait.poly<0> }
-trait.impl private @Foo_i32(%self: !trait.claim<@Foo[i32]>) { trait.assoc_type @Out = i64 }
-trait.trait private @A(%self: !trait.claim<@A[!trait.poly<0>]>) { trait.method @a() -> i64 }
-trait.trait private @B(%self: !trait.claim<@B[!trait.poly<0>]>) { trait.method @b() -> i64 }
-trait.impl private @A_i32(%self: !trait.claim<@A[i32]>) {
-  trait.method @a() -> i64 {
-    %c = arith.constant 32 : i64
-    trait.return %c : i64
-  }
+trait.trait private @Foo(!trait.claim<@Foo[!trait.poly<0>]>) assoc {Out = 0}
+trait.impl private @Foo_any(%self: !trait.claim<@Foo[!trait.poly<0>]>) bindings {Out = !trait.poly<0>} {
 }
-trait.impl private @B_blanket(%self: !trait.claim<@B[!trait.poly<0>]>, %foo: !trait.claim<@Foo[!trait.poly<0>]>, %a: !trait.claim<@A[!trait.proj<@Foo[!trait.poly<0>], "Out">]>) {
-  trait.method @b() -> i64 {
-    %r = trait.method.call %a @a() : !trait.claim<@A[!trait.proj<@Foo[!trait.poly<0>], "Out">]>, () -> i64
-    trait.return %r : i64
-  }
+trait.impl private @Foo_i32(%self: !trait.claim<@Foo[i32]>) bindings {Out = i64} {
+}
+trait.trait private @A(!trait.claim<@A[!trait.poly<0>]>) members [@A.a]
+func.func private @A.a(!trait.claim<@A[!trait.poly<0>]>) -> i64
+trait.trait private @B(!trait.claim<@B[!trait.poly<0>]>) members [@B.b]
+func.func private @B.b(!trait.claim<@B[!trait.poly<0>]>) -> i64
+trait.impl private @A_i32(%self: !trait.claim<@A[i32]>) members [@A.a -> @A_i32.a] {
+}
+func.func private @A_i32.a(%self: !trait.claim<@A[i32]>) -> i64 {
+  %c = arith.constant 32 : i64
+  return %c : i64
+}
+trait.impl private @B_blanket(%self: !trait.claim<@B[!trait.poly<0>]>, %foo: !trait.claim<@Foo[!trait.poly<0>]>, %a: !trait.claim<@A[!trait.proj<@Foo[!trait.poly<0>], "Out">]>) members [@B.b -> @B_blanket.b] {
+}
+func.func private @B_blanket.b(%self: !trait.claim<@B[!trait.poly<0>]>, %foo: !trait.claim<@Foo[!trait.poly<0>]>, %a: !trait.claim<@A[!trait.proj<@Foo[!trait.poly<0>], "Out">]>) -> i64 {
+  %r = trait.func.call @A.a(%a) : (!trait.claim<@A[!trait.proj<@Foo[!trait.poly<0>], "Out">]>) -> i64
+  return %r : i64
 }
 trait.proof private @forged {
   %foo = trait.witness @Foo_i32 for @Foo[i32]

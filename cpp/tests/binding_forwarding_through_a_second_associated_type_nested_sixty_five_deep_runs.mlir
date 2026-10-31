@@ -14,16 +14,16 @@
 // CHECK: 7
 
 !T = !trait.poly<0>
-trait.trait private @Tr(%s: !trait.claim<@Tr[!T]>) {
-  trait.assoc_type @A<[!trait.poly<1>]>
-  trait.assoc_type @B<[!trait.poly<1>]>
+trait.trait private @Tr(!trait.claim<@Tr[!T]>) assoc {A = 1, B = 1}
+trait.impl private @I(%s: !trait.claim<@Tr[i32]>) bindings {A = !trait.proj<@Tr[i32], "B", [!trait.poly<0>]>, B = !trait.poly<0>} {
 }
-trait.impl private @I(%s: !trait.claim<@Tr[i32]>) {
-  trait.assoc_type @A<[!trait.poly<0>]> = !trait.proj<@Tr[i32], "B", [!trait.poly<0>]>
-  trait.assoc_type @B<[!trait.poly<0>]> = !trait.poly<0>
+trait.trait private @C(!trait.claim<@C[!T]>) members [@C.value]
+func.func private @C.value(!trait.claim<@C[!T]>) -> i64
+trait.impl private @C_i64(%s: !trait.claim<@C[i64]>) members [@C.value -> @C_i64.value] {
 }
-trait.trait private @C(%s: !trait.claim<@C[!T]>) { trait.method @value() -> i64 }
-trait.impl private @C_i64(%s: !trait.claim<@C[i64]>) { trait.method @value() -> i64 { %c = arith.constant 7 : i64 trait.return %c : i64 } }
+func.func private @C_i64.value(%s: !trait.claim<@C[i64]>) -> i64 {
+  %c = arith.constant 7 : i64 return %c : i64
+}
 
 !P0 = i64
 // REPEAT 0 64: !P{k+1} = !trait.proj<@Tr[i32], "A", [!P{k}]>
@@ -33,6 +33,6 @@ func.func @main() -> i64 {
   %e = trait.allege !P65 = i64
   func.call @need(%e) : (!trait.claim<!P65 = i64>) -> ()
   %c = trait.allege @C[!P65]
-  %v = trait.method.call %c @value() : !trait.claim<@C[!P65]>, () -> i64
+  %v = trait.func.call @C.value(%c) : (!trait.claim<@C[!P65]>) -> i64
   return %v : i64
 }

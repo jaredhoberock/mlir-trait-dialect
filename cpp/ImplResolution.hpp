@@ -429,25 +429,43 @@ private:
   bool limitReached = false;
 };
 
-/// Where impl selection is asked: the module whose symbol table the demand's
-/// spelling names its trait and impls in -- the one whose proofs an answer may
-/// cite, and the one a generated impl or a created proof belongs in -- and the
-/// location of the op that demands it, where a refusal of the whole obligation
-/// chain the demand opens is named. Built from the demanding op alone, so the
-/// two cannot come from different places.
+/// Where impl selection is asked: the symbol table the demand's written types
+/// name its trait and impls in -- the one whose proofs an answer may cite, and the
+/// one a generated impl or a created proof belongs in -- and the location of
+/// the op that demands it, where a refusal of the whole obligation chain the
+/// demand opens is named. Built from the demanding op alone, so the two cannot
+/// come from different places.
 class SelectionSite {
 public:
-  /// The site of `demander`: the module anchoring its symbol uses, and its
-  /// location.
+  /// The site of `demander`: the nearest symbol table enclosing it, in which
+  /// every symbol it names resolves, and its location.
   static SelectionSite of(Operation *demander) {
-    return SelectionSite(getAnchorModule(demander), demander->getLoc());
+    return SelectionSite(SymbolTable::getNearestSymbolTable(demander),
+                         demander->getLoc());
   }
 
-  ModuleOp scope;
+  Operation *scope;
   Location cause;
 
 private:
-  SelectionSite(ModuleOp scope, Location cause) : scope(scope), cause(cause) {}
+  SelectionSite(Operation *scope, Location cause) : scope(scope), cause(cause) {}
+};
+
+/// Keeps the symbol tables of `tables` true across a span that writes: a
+/// symbol inserted directly into a symbol table through a builder or rewriter
+/// this listens to is entered into that table, which names it afresh where the
+/// table binds its name already (`SymbolTable::insert`), and one erased from a
+/// table is taken out of it.
+class SymbolTableKeeper : public RewriterBase::Listener {
+public:
+  explicit SymbolTableKeeper(SymbolTableCollection &tables) : tables(tables) {}
+
+  void notifyOperationInserted(Operation *op,
+                               OpBuilder::InsertPoint previous) override;
+  void notifyOperationErased(Operation *op) override;
+
+private:
+  SymbolTableCollection &tables;
 };
 
 /// ImplResolver is impl selection for one stage run: the one place that
@@ -477,9 +495,10 @@ private:
 /// driver's active `PatternRewriter`, whose listener enqueues the inserted ops
 /// for the driver to revisit.
 ///
-/// Every ask names the site it was demanded at (`SelectionSite`). Its module is
-/// what the records are keyed under, so a demand raised inside a nested module
-/// is never answered with a symbol only the module around it resolves.
+/// Every ask names the site it was demanded at (`SelectionSite`). Its symbol
+/// table is what the records are keyed under, so a demand raised inside a
+/// nested symbol table is never answered with a symbol only the table around
+/// it resolves.
 class ImplResolver {
   public:
     /// Creates a new `ImplResolver` for the given `module`.
@@ -629,7 +648,7 @@ class ImplResolver {
     /// about an application, named once, where it is first reported. The
     /// refusal is what an obligation left standing does not say by itself;
     /// this asks selection nothing new.
-    void nameRefusal(Type obligation, ModuleOp scope,
+    void nameRefusal(Type obligation, Operation *scope,
                      llvm::function_ref<InFlightDiagnostic()> err);
 
     /// The template instantiations cut over this resolver's span, which is one
@@ -642,7 +661,7 @@ class ImplResolver {
     /// answer, so it identifies nothing. An impl with no parameters and no
     /// where entries whose header spells `app` is its own proof. A read of
     /// `proofs`, the index of what each proof cites.
-    ClaimType findProof(ModuleOp scope, ImplOp impl, TraitApplicationAttr app,
+    ClaimType findProof(Operation *scope, ImplOp impl, TraitApplicationAttr app,
                         ArrayRef<FlatSymbolRefAttr> subproofs);
 
     /// Writes in `scope` the proof of `app` whose body derives `impl`'s header
@@ -658,7 +677,7 @@ class ImplResolver {
     /// reads. The proof stands at the end of `scope`, named by its impl and
     /// arguments as the module's symbol table admits. Refused where selection
     /// does not carry two such spellings to one; overflows where it does.
-    Answer<ClaimType> writeProof(ModuleOp scope, ImplOp impl,
+    Answer<ClaimType> writeProof(Operation *scope, ImplOp impl,
                                  TraitApplicationAttr app,
                                  const SpecializationMap &arguments,
                                  ArrayRef<ClaimType> entries,
@@ -682,7 +701,7 @@ class ImplResolver {
 
     /// Enters `proof`, standing in `scope`, under what it cites, unless a proof
     /// of that identity is entered already.
-    void indexProof(ModuleOp scope, ProofOp proof);
+    void indexProof(Operation *scope, ProofOp proof);
 
     /// The proof of the application selection resolves `wanted` to, naming why
     /// selection refuses `wanted` through `err` when it is given.
@@ -748,13 +767,13 @@ class ImplResolver {
     /// read, and `ty` as written where the reading meets a bound. It asks
     /// selection nothing, so the stage's exit walk reads through it the key a
     /// refusal of a leftover obligation was entered under.
-    Type readSettledProjectionsIn(Type ty, ModuleOp scope) const;
+    Type readSettledProjectionsIn(Type ty, Operation *scope) const;
 
     /// One step of `proj`'s resolution through the impl selection has already
     /// settled on for its application in `scope`; fails where it has settled
     /// none (`readSettledProjectionsIn`).
     FailureOr<ProjectionResolution>
-    readSettledProjection(ProjectionType proj, ModuleOp scope) const;
+    readSettledProjection(ProjectionType proj, Operation *scope) const;
 
     /// Answers the arguments `impl`'s parameters take at `concreteSelf` where
     /// all of its where-clause assumptions are satisfiable when specialized
