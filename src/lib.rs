@@ -65,7 +65,7 @@ unsafe extern "C" {
     fn traitTraitOpDeclareAssociatedType(trait_op: MlirOperation, name: MlirStringRef, arity: isize);
     fn traitImplOpAddMember(impl_op: MlirOperation, member: MlirAttribute,
                             signature: MlirType) -> MlirOperation;
-    fn traitImplOpCompleteMembers(impl_op: MlirOperation, trait_op: MlirOperation);
+    fn traitImplOpLeaveToDefault(impl_op: MlirOperation, member: MlirAttribute);
     fn traitImplOpBindAssociatedType(impl_op: MlirOperation, name: MlirStringRef, ty: MlirType);
 }
 
@@ -349,7 +349,7 @@ pub fn declare_associated_type(trait_op: OperationRef, name: &str, arity: usize)
 /// per where entry in order. The caller fills the body and ends it with
 /// `trait.return` of the evidence for the trait's requirements. It pairs no
 /// member and binds no associated type until `impl_member`,
-/// `complete_impl_members` and `bind_associated_type` add them. The impl is
+/// `impl_default_member` and `bind_associated_type` add them. The impl is
 /// minted private, the one visibility erase accepts.
 pub fn impl_named<'c>(loc: Location<'c>,
                       sym_name: &str,
@@ -393,11 +393,12 @@ pub fn impl_member<'c, 'a>(impl_op: OperationRef<'c, 'a>,
     }
 }
 
-/// Pair every member of `trait_op`, the trait of the impl `impl_op`, in the
-/// trait's order: with the function `impl_member` added for it, or with itself,
-/// leaving it to the trait's default.
-pub fn complete_impl_members(impl_op: OperationRef, trait_op: OperationRef) {
-    unsafe { traitImplOpCompleteMembers(impl_op.to_raw(), trait_op.to_raw()) }
+/// Leave `member`, a member of the impl `impl_op`'s trait named by its
+/// symbol, to the trait's default: the pair `member -> member` is entered in
+/// the impl's members.
+pub fn impl_default_member(impl_op: OperationRef, member: &str) {
+    let member = symbol_ref_attr(impl_op.location(), member);
+    unsafe { traitImplOpLeaveToDefault(impl_op.to_raw(), member.to_raw()) }
 }
 
 /// Bind associated type `name` of the impl `impl_op` to `ty`, spelled over the

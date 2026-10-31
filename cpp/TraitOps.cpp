@@ -1115,6 +1115,12 @@ void ImplOp::bindAssociatedType(StringRef name, Type type) {
   setBindingsAttr(bindings.getDictionary(getContext()));
 }
 
+void ImplOp::leaveToDefault(FlatSymbolRefAttr member) {
+  SmallVector<Attribute> members(getMembers().getValue());
+  members.push_back(ArrayAttr::get(getContext(), {member, member}));
+  setMembersAttr(ArrayAttr::get(getContext(), members));
+}
+
 void ImplOp::completeMembers(TraitOp trait) {
   Builder builder(getContext());
   SmallVector<Attribute> members;

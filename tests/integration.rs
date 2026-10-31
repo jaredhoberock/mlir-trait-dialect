@@ -119,7 +119,7 @@ fn test_jit() {
         ));
 
         // @PartialEq.neq is left to the trait's default
-        trait_::complete_impl_members(partial_eq_impl_i32_i32, partial_eq);
+        trait_::impl_default_member(partial_eq_impl_i32_i32, "PartialEq.neq");
     }
 
     assert!(module.as_operation().verify(), "MLIR module verification failed");
@@ -834,7 +834,6 @@ fn module_with_a_gen<'c>(context: &'c Context, returned: usize) -> Module<'c> {
         &[i64_ty],
     ));
     fn_block.append_operation(func::r#return(&[call.result(0).unwrap().into()], loc));
-    trait_::complete_impl_members(a_gen, a);
     module
 }
 
@@ -865,12 +864,10 @@ fn the_declaration_builders_take_their_claims_as_block_arguments() {
 /// `@name`, an impl of `@Has[self_ty]` binding `A<x>` to `bound` whose
 /// function for `@Has.requirement_0` proves `Marker[bound]` from `Marker[x]`:
 /// by the first requirement of its one where entry `where_claim` when it has
-/// one, and by an allegation when it has none. It is appended to `module`
-/// after `has`, the trait it implements.
+/// one, and by an allegation when it has none. It is appended to `module`.
 fn has_impl<'c>(
     context: &'c Context,
     module: &Module<'c>,
-    has: melior::ir::OperationRef<'c, '_>,
     name: &str,
     self_ty: melior::ir::Type<'c>,
     where_claim: Option<melior::ir::Type<'c>>,
@@ -901,7 +898,6 @@ fn has_impl<'c>(
             loc, fn_block.argument(1).unwrap().into(), 0, claim("Marker", bound)))
     };
     fn_block.append_operation(func::r#return(&[evidence.result(0).unwrap().into()], loc));
-    trait_::complete_impl_members(impl_op, has);
 }
 
 #[test]
@@ -943,8 +939,8 @@ fn an_evidence_method_states_and_selects_a_quantified_requirement() {
     // `impl<P: Sub> Has for (P,) { type A<X> = P; }` reads the bound off its
     // where entry's requirement; `impl Has for i64 { type A<X> = i64; }`
     // alleges it.
-    has_impl(&context, &module, has, "Has_sub", tuple_p, Some(claim("Sub", p)), p, x);
-    has_impl(&context, &module, has, "Has_i64", i64_ty, None, i64_ty, s);
+    has_impl(&context, &module, "Has_sub", tuple_p, Some(claim("Sub", p)), p, x);
+    has_impl(&context, &module, "Has_i64", i64_ty, None, i64_ty, s);
 
     // A generic function selects the requirement at i1 with a claim of its
     // premise there.

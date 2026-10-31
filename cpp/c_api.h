@@ -155,10 +155,10 @@ void traitTraitOpDeclareAssociatedType(MlirOperation traitOp,
 MlirOperation traitImplOpAddMember(MlirOperation implOp, MlirAttribute member,
                                    MlirType signature);
 
-/// Pairs every member of `traitOp`, the trait of the impl `implOp`, in the
-/// trait's order: with the function `traitImplOpAddMember` added for it, or
-/// with itself, leaving it to the trait's default.
-void traitImplOpCompleteMembers(MlirOperation implOp, MlirOperation traitOp);
+/// Leaves `member` (a FlatSymbolRefAttr naming a member of the impl
+/// `implOp`'s trait) to the trait's default: the pair `member -> member` is
+/// entered in the impl's members.
+void traitImplOpLeaveToDefault(MlirOperation implOp, MlirAttribute member);
 
 /// Binds associated type `name` of the impl `implOp` to `type`, spelled over
 /// the impl's parameters and the associated type's own, labelled after them.

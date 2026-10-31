@@ -474,6 +474,10 @@ def ImplOp : TraitDialectOp<"impl", [
     /// to the trait's default.
     void completeMembers(TraitOp trait);
 
+    /// Leaves `member`, a member of this impl's trait, to the trait's
+    /// default: the pair `member -> member` is entered in `members`.
+    void leaveToDefault(FlatSymbolRefAttr member);
+
     /// Binds associated type `name` of this impl's trait to `type`, spelled
     /// over the impl's parameters and the associated type's own, labelled
     /// after them.
