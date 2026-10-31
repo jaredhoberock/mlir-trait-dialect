@@ -3,7 +3,11 @@
 
 // RUN: mlir-opt %s | FileCheck %s
 
-// CHECK-LABEL: trait.trait private @Get(!trait.claim<@Get[!trait.poly<0>]>) assoc {Output = 0} members [@Get.get]
+// CHECK-LABEL: trait.trait private @Get(!trait.claim<@Get[!trait.poly<0>]>){{$}}
+// CHECK-NEXT: assoc {Output = 0}
+// CHECK-NEXT: members [
+// CHECK-NEXT: @Get.get{{$}}
+// CHECK-NEXT: ]
 // CHECK: func.func private @Get.get(!trait.claim<@Get[!trait.poly<0>]>, !trait.poly<0>) -> !trait.proj<@Get[!trait.poly<0>], "Output">
 
 !T = !trait.poly<0>

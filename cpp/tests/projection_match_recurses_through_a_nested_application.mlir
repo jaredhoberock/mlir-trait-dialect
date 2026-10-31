@@ -43,5 +43,8 @@ func.func private @Trait_i32.method(%self_claim: !trait.claim<@Trait[i32]>, %ass
   return %c0 : i32
 }
 
-// CHECK-LABEL: trait.impl private @Trait_i32(%self: !trait.claim<@Trait[i32]>, %assoc: !trait.claim<!trait.proj<@Base[i32], "Assoc"> = i64>) members [@Trait.method -> @Trait_i32.method]
+// CHECK-LABEL: trait.impl private @Trait_i32(%self: !trait.claim<@Trait[i32]>, %assoc: !trait.claim<!trait.proj<@Base[i32], "Assoc"> = i64>){{$}}
+// CHECK-NEXT: members [
+// CHECK-NEXT: @Trait.method -> @Trait_i32.method{{$}}
+// CHECK-NEXT: ]
 // CHECK: func.func private @Trait_i32.method(

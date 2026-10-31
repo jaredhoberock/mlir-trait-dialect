@@ -12,7 +12,11 @@
 // monomorphization lowers the call through that claim to the impl the evidence
 // names.
 
-// ROUNDTRIP:      trait.trait private @Has(!trait.claim<@Has[!trait.poly<0>]>) assoc {A = 1} members [@Has.requirement_0]
+// ROUNDTRIP:      trait.trait private @Has(!trait.claim<@Has[!trait.poly<0>]>){{$}}
+// ROUNDTRIP-NEXT: assoc {A = 1}
+// ROUNDTRIP-NEXT: members [
+// ROUNDTRIP-NEXT: @Has.requirement_0{{$}}
+// ROUNDTRIP-NEXT: ]
 // ROUNDTRIP-NEXT: func.func private @Has.requirement_0(!trait.claim<@Has[!trait.poly<0>]>, !trait.claim<@Marker[!trait.poly<1>]>) -> !trait.claim<@Marker[!trait.proj<@Has[!trait.poly<0>], "A", [!trait.poly<1>]>]>
 // ROUNDTRIP:      trait.func.call @Has.requirement_0(%{{.*}}, %{{.*}}) : (!trait.claim<@Has[i32] by @Has_i32>, !trait.claim<@Marker[i64] by @Marker_i64>) -> !trait.claim<@Marker[!trait.proj<@Has[i32], "A", [i64]>]>
 

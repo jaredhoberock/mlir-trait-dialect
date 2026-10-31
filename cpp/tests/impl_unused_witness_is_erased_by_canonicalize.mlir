@@ -7,7 +7,10 @@
 // erases a witness nothing reads, and the impl still returns the one its
 // trait's requirement reads; its member function stands beside it.
 
-// CHECK-LABEL: trait.impl private @A_i32(%self: !trait.claim<@A[i32]>) members [@A.a -> @A_i32.a]
+// CHECK-LABEL: trait.impl private @A_i32(%self: !trait.claim<@A[i32]>){{$}}
+// CHECK-NEXT: members [
+// CHECK-NEXT: @A.a -> @A_i32.a{{$}}
+// CHECK-NEXT: ]
 // CHECK-NEXT:    %[[B:.*]] = trait.witness @B_i32 for @B[i32]
 // CHECK-NEXT:    trait.return %[[B]] : !trait.claim<@B[i32] by @B_i32>
 // CHECK-NOT:     trait.witness

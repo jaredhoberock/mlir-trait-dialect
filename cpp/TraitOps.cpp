@@ -294,6 +294,40 @@ static void printNamedEntries(OpAsmPrinter &p, DictionaryAttr dictionary,
   p << '}';
 }
 
+/// Prints a declaration's clauses after its header, each on its own line
+/// indented under the declaration: `keyword {...}` for a non-empty
+/// dictionary, by `printEntry`, and `members [...]` with one member per line
+/// in order, by `printMember`, when there are members.
+static void printClauses(OpAsmPrinter &p, StringRef keyword,
+                         DictionaryAttr dictionary,
+                         llvm::function_ref<void(Attribute)> printEntry,
+                         ArrayAttr members,
+                         llvm::function_ref<void(unsigned)> printMember) {
+  p.increaseIndent();
+  p.increaseIndent();
+  if (!dictionary.empty()) {
+    p.printNewline();
+    p << keyword << ' ';
+    printNamedEntries(p, dictionary, printEntry);
+  }
+  if (!members.empty()) {
+    p.printNewline();
+    p << "members [";
+    p.increaseIndent();
+    for (unsigned position = 0; position < members.size(); ++position) {
+      p.printNewline();
+      printMember(position);
+      if (position + 1 < members.size())
+        p << ',';
+    }
+    p.decreaseIndent();
+    p.printNewline();
+    p << ']';
+  }
+  p.decreaseIndent();
+  p.decreaseIndent();
+}
+
 ParseResult TraitOp::parse(OpAsmParser &parser, OperationState &result) {
   // `<visibility> @name(<self>) [-> requirements] [assoc {...}]
   // [members [...]] [attributes {...}]`
@@ -353,21 +387,14 @@ void TraitOp::print(OpAsmPrinter &p) {
   p.printSymbolName(getSymName());
   p << '(' << getSelf() << ')';
   p.printOptionalArrowTypeList(getRequirements().getAsValueRange<TypeAttr>());
-  if (!getAssoc().empty()) {
-    p << " assoc ";
-    printNamedEntries(p, getAssoc(), [&](Attribute count) {
-      p << cast<IntegerAttr>(count).getInt();
-    });
-  }
-  if (!getMembers().empty()) {
-    p << " members [";
-    llvm::interleaveComma(llvm::enumerate(getMembers()), p, [&](auto entry) {
-      if (getDefaults()[entry.index()])
-        p << "default ";
-      p.printAttribute(entry.value());
-    });
-    p << ']';
-  }
+  printClauses(
+      p, "assoc", getAssoc(),
+      [&](Attribute count) { p << cast<IntegerAttr>(count).getInt(); },
+      getMembers(), [&](unsigned position) {
+        if (getDefaults()[position])
+          p << "default ";
+        p.printAttribute(getMembers()[position]);
+      });
   p.printOptionalAttrDictWithKeyword(
       (*this)->getAttrs(),
       {getSymNameAttrName(), getSymVisibilityAttrName(), getSelfAttrName(),
@@ -717,22 +744,15 @@ void ImplOp::print(OpAsmPrinter &p) {
       p, body.front().getArgumentTypes(), /*argAttrs=*/nullptr,
       /*isVariadic=*/false, /*resultTypes=*/{}, /*resultAttrs=*/nullptr, &body,
       /*printEmptyResult=*/false);
-  if (!getBindings().empty()) {
-    p << " bindings ";
-    printNamedEntries(p, getBindings(), [&](Attribute bound) {
-      p.printType(cast<TypeAttr>(bound).getValue());
-    });
-  }
-  if (!getMembers().empty()) {
-    p << " members [";
-    llvm::interleaveComma(getMembers(), p, [&](Attribute entry) {
-      auto pair = cast<ArrayAttr>(entry);
-      p.printAttribute(pair[0]);
-      p << " -> ";
-      p.printAttribute(pair[1]);
-    });
-    p << ']';
-  }
+  printClauses(
+      p, "bindings", getBindings(),
+      [&](Attribute bound) { p.printType(cast<TypeAttr>(bound).getValue()); },
+      getMembers(), [&](unsigned position) {
+        auto pair = cast<ArrayAttr>(getMembers()[position]);
+        p.printAttribute(pair[0]);
+        p << " -> ";
+        p.printAttribute(pair[1]);
+      });
   p.printOptionalAttrDictWithKeyword(
       (*this)->getAttrs(), {getSymNameAttrName(), getSymVisibilityAttrName(),
                             getBindingsAttrName(), getMembersAttrName()});

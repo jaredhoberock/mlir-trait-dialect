@@ -32,12 +32,20 @@ func.func private @Tr_i64.required(%self: !trait.claim<@Tr[i64]>, %x: i64) -> i6
   return %x : i64
 }
 
-// CHECK-LABEL: trait.trait private @Tr(!trait.claim<@Tr[!trait.poly<0>]>) members [@Tr.required, default @Tr.default]{{$}}
+// CHECK-LABEL: trait.trait private @Tr(!trait.claim<@Tr[!trait.poly<0>]>){{$}}
+// CHECK-NEXT: members [
+// CHECK-NEXT: @Tr.required,
+// CHECK-NEXT: default @Tr.default{{$}}
+// CHECK-NEXT: ]{{$}}
 // CHECK-NEXT:    func.func private @Tr.required(!trait.claim<@Tr[!trait.poly<0>]>, !trait.poly<0>) -> i64{{$}}
 // CHECK-NEXT:    func.func private @Tr.default(%{{.*}}: !trait.claim<@Tr[!trait.poly<0>]>, %{{.*}}: !trait.poly<0>) -> i64 {
 // CHECK:           return %{{.*}} : i64
 
-// CHECK-LABEL: trait.impl private @Tr_i64(%self: !trait.claim<@Tr[i64]>) members [@Tr.required -> @Tr_i64.required, @Tr.default -> @Tr.default] {
+// CHECK-LABEL: trait.impl private @Tr_i64(%self: !trait.claim<@Tr[i64]>){{$}}
+// CHECK-NEXT: members [
+// CHECK-NEXT: @Tr.required -> @Tr_i64.required,
+// CHECK-NEXT: @Tr.default -> @Tr.default{{$}}
+// CHECK-NEXT: ] {
 // CHECK:         func.func private @Tr_i64.required(%{{.*}}: !trait.claim<@Tr[i64]>, %{{.*}}: i64) -> i64 {
 // CHECK:           cf.cond_br
 // CHECK:           return %{{.*}} : i64

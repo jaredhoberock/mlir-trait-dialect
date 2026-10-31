@@ -13,8 +13,14 @@
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' | FileCheck %s
 
 // VERIFIED: gpu.module @nested
-// VERIFIED: trait.trait private @Tr(!trait.claim<@Tr[!trait.poly<0>]>) members [@Tr.m]
-// VERIFIED: trait.impl private @Tr_i64(%self: !trait.claim<@Tr[i64]>) members [@Tr.m -> @Tr_i64.m]
+// VERIFIED: trait.trait private @Tr(!trait.claim<@Tr[!trait.poly<0>]>){{$}}
+// VERIFIED-NEXT: members [
+// VERIFIED-NEXT: @Tr.m{{$}}
+// VERIFIED-NEXT: ]
+// VERIFIED: trait.impl private @Tr_i64(%self: !trait.claim<@Tr[i64]>){{$}}
+// VERIFIED-NEXT: members [
+// VERIFIED-NEXT: @Tr.m -> @Tr_i64.m{{$}}
+// VERIFIED-NEXT: ]
 
 // CHECK: gpu.module @nested
 // CHECK: func.func private @[[M:Tr_i64.m_h[0-9a-f]+]](%{{.*}}: i64) -> i64

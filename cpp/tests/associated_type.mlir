@@ -4,7 +4,10 @@
 // RUN: mlir-opt %s | FileCheck %s
 
 // CHECK-LABEL: trait private @Iterator
-// CHECK-SAME: assoc {Item = 0} members [@Iterator.next]
+// CHECK-NEXT: assoc {Item = 0}
+// CHECK-NEXT: members [
+// CHECK-NEXT: @Iterator.next{{$}}
+// CHECK-NEXT: ]
 // CHECK: func.func private @Iterator.next(!trait.claim<@Iterator[!trait.poly<0>]>, !trait.poly<0>) -> !trait.proj<@Iterator[!trait.poly<0>], "Item">
 
 !S = !trait.poly<0>
@@ -12,7 +15,10 @@ trait.trait private @Iterator(!trait.claim<@Iterator[!S]>) assoc {Item = 0} memb
 func.func private @Iterator.next(!trait.claim<@Iterator[!S]>, !S) -> !trait.proj<@Iterator[!S], "Item">
 
 // CHECK-LABEL: trait.impl private @Iterator_impl(%self: !trait.claim<@Iterator[i32]>)
-// CHECK-SAME: bindings {Item = i64} members [@Iterator.next -> @Iterator_impl.next]
+// CHECK-NEXT: bindings {Item = i64}
+// CHECK-NEXT: members [
+// CHECK-NEXT: @Iterator.next -> @Iterator_impl.next{{$}}
+// CHECK-NEXT: ]
 // CHECK: func.func private @Iterator_impl.next
 
 trait.impl private @Iterator_impl(%self_claim: !trait.claim<@Iterator[i32]>) bindings {Item = i64} members [@Iterator.next -> @Iterator_impl.next] {

@@ -34,7 +34,11 @@ func.func private @A_gen.a(%self: !trait.claim<@A[!T]>, %b: !trait.claim<@B[!T]>
   return %r : i64
 }
 
-// CHECK: trait.trait private @A(!trait.claim<@A[!trait.poly<0>]>) -> !trait.claim<@B[!trait.poly<0>]> members [@A.a, default @A.twice]
+// CHECK: trait.trait private @A(!trait.claim<@A[!trait.poly<0>]>) -> !trait.claim<@B[!trait.poly<0>]>{{$}}
+// CHECK-NEXT: members [
+// CHECK-NEXT: @A.a,
+// CHECK-NEXT: default @A.twice{{$}}
+// CHECK-NEXT: ]
 // CHECK: func.func private @A.twice(%[[SELF:[^:]*]]: !trait.claim<@A[!trait.poly<0>]>
 // CHECK: trait.project %[[SELF]][0] : <@A[!trait.poly<0>]> -> <@B[!trait.poly<0>]>
 // CHECK: trait.impl private @A_gen(%self: !trait.claim<@A[!trait.poly<0>]>, %b: !trait.claim<@B[!trait.poly<0>]>, %out: !trait.claim<!trait.proj<@B[!trait.poly<0>], "Out"> = i64>, %b_0: !trait.claim<@B[!trait.poly<0>]>)

@@ -5,7 +5,10 @@
 
 // ---- Test 0: Add
 
-// CHECK-LABEL: trait.trait private @Add(!trait.claim<@Add[!trait.poly<0>]>) members [@Add.add]
+// CHECK-LABEL: trait.trait private @Add(!trait.claim<@Add[!trait.poly<0>]>){{$}}
+// CHECK-NEXT: members [
+// CHECK-NEXT: @Add.add{{$}}
+// CHECK-NEXT: ]
 // CHECK: func.func private @Add.add(!trait.claim<@Add[!trait.poly<0>]>, !trait.poly<0>, !trait.poly<0>) -> !trait.poly<0>
 
 !AddSelf = !trait.poly<0>
@@ -14,7 +17,11 @@ func.func private @Add.add(!trait.claim<@Add[!AddSelf]>, !AddSelf, !AddSelf) -> 
 
 // ---- Test 1: PartialEq
 
-// CHECK-LABEL: trait.trait private @PartialEq(!trait.claim<@PartialEq[!trait.poly<0>, !trait.poly<1>]>) members [@PartialEq.eq, default @PartialEq.neq]
+// CHECK-LABEL: trait.trait private @PartialEq(!trait.claim<@PartialEq[!trait.poly<0>, !trait.poly<1>]>){{$}}
+// CHECK-NEXT: members [
+// CHECK-NEXT: @PartialEq.eq,
+// CHECK-NEXT: default @PartialEq.neq{{$}}
+// CHECK-NEXT: ]
 // CHECK: func.func private @PartialEq.eq(!trait.claim<@PartialEq[!trait.poly<0>, !trait.poly<1>]>, !trait.poly<0>, !trait.poly<1>) -> i1
 // CHECK: func.func private @PartialEq.neq(%{{.*}}: !trait.claim<@PartialEq[!trait.poly<0>, !trait.poly<1>]>, %{{.*}}: !trait.poly<0>, %{{.*}}: !trait.poly<1>) -> i1
 
@@ -32,7 +39,11 @@ func.func private @PartialEq.neq(%self_claim: !trait.claim<@PartialEq[!trait.pol
 
 // ---- Test 2: PartialOrd
 
-// CHECK-LABEL: trait.trait private @PartialOrd(!trait.claim<@PartialOrd[!trait.poly<0>, !trait.poly<1>]>) -> !trait.claim<@PartialEq[!trait.poly<0>, !trait.poly<1>]> members [@PartialOrd.partial_cmp, default @PartialOrd.lt]
+// CHECK-LABEL: trait.trait private @PartialOrd(!trait.claim<@PartialOrd[!trait.poly<0>, !trait.poly<1>]>) -> !trait.claim<@PartialEq[!trait.poly<0>, !trait.poly<1>]>{{$}}
+// CHECK-NEXT: members [
+// CHECK-NEXT: @PartialOrd.partial_cmp,
+// CHECK-NEXT: default @PartialOrd.lt{{$}}
+// CHECK-NEXT: ]
 // CHECK: func.func private @PartialOrd.partial_cmp(!trait.claim<@PartialOrd[!trait.poly<0>, !trait.poly<1>]>, !trait.poly<0>, !trait.poly<1>) -> !llvm.struct<"ordering", ()>
 // CHECK: func.func private @PartialOrd.lt(%{{.*}}: !trait.claim<@PartialOrd[!trait.poly<0>, !trait.poly<1>]>, %{{.*}}: !trait.poly<0>, %{{.*}}: !trait.poly<1>) -> i1
 

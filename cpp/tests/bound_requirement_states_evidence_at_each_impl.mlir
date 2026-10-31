@@ -82,7 +82,11 @@ func.func private @Same_i32.requirement_0(%self: !trait.claim<@Same[i32]>) -> !t
   return %r : !trait.claim<!trait.proj<@Same[i32], "A", [!trait.poly<0>]> = !trait.poly<0>>
 }
 
-// CHECK: trait.trait private @Has(!trait.claim<@Has[!trait.poly<0>]>) assoc {A = 1} members [@Has.requirement_0]
+// CHECK: trait.trait private @Has(!trait.claim<@Has[!trait.poly<0>]>){{$}}
+// CHECK-NEXT: assoc {A = 1}
+// CHECK-NEXT: members [
+// CHECK-NEXT: @Has.requirement_0{{$}}
+// CHECK-NEXT: ]
 // CHECK: func.func private @Has.requirement_0(!trait.claim<@Has[!trait.poly<0>]>, !trait.claim<@Marker[!trait.poly<1>]>) -> !trait.claim<@Marker[!trait.proj<@Has[!trait.poly<0>], "A", [!trait.poly<1>]>]>
 // CHECK-LABEL: func.func private @Has_i32.requirement_0
 // CHECK: trait.derive @Marker[i1] from @Marker_i1 given()

@@ -15,11 +15,12 @@
 trait.trait private @Printable(!trait.claim<@Printable[!S]>)
 
 // CHECK-LABEL: trait private @Container
-// CHECK-SAME: -> !trait.claim<@Printable[!trait.poly<1>]> assoc {Item = 1}
+// CHECK-SAME: -> !trait.claim<@Printable[!trait.poly<1>]>{{$}}
+// CHECK-NEXT: assoc {Item = 1}
 trait.trait private @Container(!trait.claim<@Container[!S]>) -> !trait.claim<@Printable[!T]> assoc {Item = 1}
 
 // A where clause that bounds a non-GAT associated type via a projection:
 // where Self::Item : Printable
 // CHECK-LABEL: trait private @Iterable
-// CHECK-SAME: assoc {Item = 0}
+// CHECK-NEXT: assoc {Item = 0}
 trait.trait private @Iterable(!trait.claim<@Iterable[!S]>) -> !trait.claim<@Printable[!trait.proj<@Iterable[!S], "Item">]> assoc {Item = 0}

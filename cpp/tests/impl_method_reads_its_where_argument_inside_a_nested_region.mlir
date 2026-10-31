@@ -12,7 +12,10 @@
 // proof the call resolved to computed for it, a witness of @From_i64_i32, and
 // takes the receiver and the member's input alone.
 
-// ROUNDTRIP:      trait.impl private @Into_impl(%self: !trait.claim<@Into[!trait.poly<0>, !trait.poly<1>]>, %from: !trait.claim<@From[!trait.poly<1>, !trait.poly<0>]>) members [@Into.into -> @Into_impl.into]
+// ROUNDTRIP:      trait.impl private @Into_impl(%self: !trait.claim<@Into[!trait.poly<0>, !trait.poly<1>]>, %from: !trait.claim<@From[!trait.poly<1>, !trait.poly<0>]>){{$}}
+// ROUNDTRIP-NEXT: members [
+// ROUNDTRIP-NEXT: @Into.into -> @Into_impl.into{{$}}
+// ROUNDTRIP-NEXT: ]
 // ROUNDTRIP:      func.func private @Into_impl.into(%{{[^:]*}}: !trait.claim<@Into[!trait.poly<0>, !trait.poly<1>]>, %[[FROM:[^:]*]]: !trait.claim<@From[!trait.poly<1>, !trait.poly<0>]>, %[[X:[^:]*]]: !trait.poly<0>)
 // ROUNDTRIP:        scf.execute_region
 // ROUNDTRIP-NEXT:     trait.func.call @From.from(%[[FROM]], %[[X]])
