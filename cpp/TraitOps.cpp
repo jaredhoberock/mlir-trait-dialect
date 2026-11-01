@@ -609,13 +609,6 @@ FailureOr<SpecializationMap> TraitOp::buildSubstitutionForSelfClaim(ClaimType ac
   return result;
 }
 
-SmallVector<ClaimType> TraitOp::getRequirementsAsClaims() {
-  return llvm::map_to_vector(getRequirements().getAsValueRange<TypeAttr>(),
-                             [](Type requirement) {
-                               return cast<ClaimType>(requirement);
-                             });
-}
-
 FailureOr<SmallVector<ClaimType>> TraitOp::specializeRequirementsAsClaimsFor(
     ClaimType actualSelfClaim,
     llvm::function_ref<InFlightDiagnostic()> errFn) {
@@ -1915,8 +1908,7 @@ SmallVector<ClaimType> ProofOp::getSubproofs(SymbolTableCollection &symbolTable)
 }
 
 /// The proof or impl `name` names in the symbol table `from` stands in, read
-/// through `symbolTable`: the one lookup `getImplFromProof` and
-/// `getProofOpOrUnconditionalImplOp` share.
+/// through `symbolTable`.
 static FailureOr<Operation*> lookupProofSymbol(
     SymbolTableCollection &symbolTable,
     Operation *from,
@@ -1933,26 +1925,6 @@ static FailureOr<Operation*> lookupProofSymbol(
 
   if (errFn) errFn() << "proof symbol '" << name << "' must refer to trait.proof or trait.impl";
   return failure();
-}
-
-FailureOr<ImplOp> ProofOp::getImplFromProof(
-    SymbolTableCollection &symbolTable,
-    Operation *from,
-    FlatSymbolRefAttr name,
-    llvm::function_ref<InFlightDiagnostic()> errFn) {
-  auto symOp = lookupProofSymbol(symbolTable, from, name, errFn);
-  if (failed(symOp)) return failure();
-
-  if (auto implOp = dyn_cast<ImplOp>(*symOp))
-    return implOp;
-
-  auto proofOp = cast<ProofOp>(*symOp);
-  ImplOp impl = proofOp.getImpl(symbolTable);
-  if (!impl) {
-    if (errFn) errFn() << "proof '" << name << "' does not resolve to an impl";
-    return failure();
-  }
-  return impl;
 }
 
 FailureOr<Operation*> ProofOp::getProofOpOrUnconditionalImplOp(

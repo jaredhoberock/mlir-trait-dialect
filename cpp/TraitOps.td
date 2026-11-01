@@ -267,9 +267,6 @@ def TraitOp : TraitDialectOp<"trait", [
     FailureOr<SpecializationMap> buildSubstitutionForSelfClaim(ClaimType actualSelfClaim,
                                                            llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
 
-    /// The trait's requirements, its result signature, in order.
-    SmallVector<ClaimType> getRequirementsAsClaims();
-
     /// The trait's requirements, in order, instantiated at the application
     /// of `actualSelfClaim`: the substitution its arguments give the trait's
     /// parameters, built once and applied to each.
@@ -420,14 +417,6 @@ def ImplOp : TraitDialectOp<"impl", [
       return llvm::map_to_vector(getWhereClaims(), [&](ClaimType entry) {
         return ::llvm::cast<ClaimType>(instantiate(Type(entry), arguments));
       });
-    }
-
-    /// The where clause's application entries, in order: the claims a
-    /// proof's subproofs discharge.
-    SmallVector<ClaimType> getApplicationPremises() {
-      SmallVector<ClaimType> premises = getWhereClaims();
-      llvm::erase_if(premises, [](ClaimType claim) { return claim.isEquality(); });
-      return premises;
     }
 
     /// The where clause's equality entries, in order.
@@ -1345,16 +1334,6 @@ def ProofOp : TraitDialectOp<"proof", [
       DeriveOp derive = getDerive(symbolTable);
       return derive ? derive.getImplArguments() : SpecializationMap();
     }
-
-    /// Resolve a proof symbol, read in the symbol table `from` stands in
-    /// through `symbolTable`, to the impl it is backed by: a trait.proof yields
-    /// its impl, a directly-named trait.impl yields itself. Whether the symbol
-    /// is one this citation may name is the citing op's own check.
-    static FailureOr<ImplOp> getImplFromProof(
-      SymbolTableCollection &symbolTable,
-      Operation *from,
-      FlatSymbolRefAttr name,
-      llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
 
     /// The proof or unconditional impl `name` names, read in the symbol table
     /// `from` stands in through `symbolTable`.
