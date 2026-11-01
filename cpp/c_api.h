@@ -121,9 +121,9 @@ MlirType traitProjectionTypeGetAssocTypeArg(MlirType projection, intptr_t index)
 /// root names a renamed symbol to name it by its new name, in the attributes,
 /// result types and block-argument types of every op inside `symbolTableOp`,
 /// nested symbol tables included: a reference is read as the top level's. A
-/// reference's nested parts are not renamed. An equality claim's endpoints and a
-/// citation's arguments, which no replacer moves as sub-elements, move as the
-/// clone rule moves them: each rebuilt at once through its constructor.
+/// reference's nested parts are not renamed. A rename is one uniform rewrite,
+/// so an equality claim's endpoints and a citation's arguments move with every
+/// other reference.
 void traitRenameSymbols(MlirOperation symbolTableOp, const MlirStringRef *names,
                         const MlirStringRef *newNames, intptr_t count);
 

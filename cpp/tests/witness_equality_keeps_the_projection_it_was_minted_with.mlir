@@ -3,10 +3,9 @@
 
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(instantiate-monomorphs-trait)' | FileCheck %s
 
-// An equality's endpoints are reachable to every walk and a leaf to every
-// rewrite. The ground-projection resolution the stage runs over the whole
-// module is what that distinction is for: it would move a stored witness's own
-// equality out from under the claim it must match.
+// The ground-projection resolution the stage runs over the whole module leaves
+// a claim's predicate as written (`addPredicateRules`): resolving it would move
+// a witness's own equality out from under the claim it must match.
 
 trait.trait private @Has(!trait.claim<@Has[!trait.poly<0>]>) assoc {Out = 0}
 

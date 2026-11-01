@@ -1707,12 +1707,11 @@ struct SettleSpelledProjectionsPattern : public RewritePattern {
     // application the claim spells, so `X by @p` holds because `p` proves `X`
     // as spelled, and nothing citing it reads through a respelling. A claim
     // standing in another's arguments is a type argument of that application,
-    // part of what it states, and is left as spelled with it.
+    // part of what it states, and is left as spelled with it; so are a
+    // citation's arguments, spelled as the claim it cites (`addPredicateRules`).
     AttrTypeReplacer resolving;
     resolving.addReplacement(resolveProjection);
-    resolving.addReplacement([](ClaimType claim) {
-      return std::make_pair(Type(claim), WalkResult::skip());
-    });
+    addPredicateRules(resolving, [](Type t) { return t; });
 
     if (failed(respellOp(op, resolving, rewriter)))
       return failure();
@@ -2542,8 +2541,8 @@ static LogicalResult erasePolymorphs(ModuleOp module) {
   // Phase 1: structural op rewrites via applyPartialConversion.
   TypeConverter opConverter = makeErasePolymorphsConverter();
 
-  // The sweep respells types wherever it reaches them; an equality's endpoints
-  // are a leaf to it, as they are to every replacer (`TypeEqualityAttr`).
+  // The sweep respells types wherever it reaches them outside templates, one
+  // uniform rewrite, so an equality's endpoints move with every other type.
   AttrTypeReplacer typeSweep;
 
   // Collect from participating dialects

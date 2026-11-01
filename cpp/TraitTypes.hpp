@@ -77,6 +77,32 @@ inline std::optional<std::pair<Type, WalkResult>> respellClaimPredicate(
       WalkResult::skip());
 }
 
+/// Installs on `replacer`, a writer that normalizes at one operation, the
+/// rule that a claim's predicate and a citation's arguments move only by
+/// `respell`: a claim type through `respellClaimPredicate`, and an
+/// `ImplArgumentsAttr` rebuilt through its constructor at the arguments
+/// `respell` gives, neither entered further. A claim's proof proves its
+/// predicate as spelled (`verifyCitation`) and a citation's arguments are
+/// compared with the claim it cites by identity (`verifyCitationOf`), so a
+/// writer resolving projections in place passes the identity, and a clone
+/// passes its variable bindings alone. The rules hold `respell` as long as
+/// `replacer` lives.
+inline void addPredicateRules(AttrTypeReplacer &replacer,
+                              std::function<Type(Type)> respell) {
+  replacer.addReplacement(
+      [respell](ClaimType claim) -> std::optional<std::pair<Type, WalkResult>> {
+        return respellClaimPredicate(claim, respell);
+      });
+  replacer.addReplacement(
+      [respell](ImplArgumentsAttr stated)
+          -> std::optional<std::pair<Attribute, WalkResult>> {
+        SmallVector<Type> moved = llvm::map_to_vector(stated.getTypes(), respell);
+        return std::make_pair(
+            Attribute(ImplArgumentsAttr::get(stated.getContext(), moved)),
+            WalkResult::skip());
+      });
+}
+
 /// Whether a reading through selection reads `proj`: it is ground. A
 /// polymorphic projection stands for as many types as its variables have
 /// instances, so no resolver owes it an answer.
@@ -427,10 +453,10 @@ inline Type applySubstitution(const SpecializationMap &specialization,
     return std::nullopt;
   });
 
-  // Move the equality endpoints every replacer holds as a leaf -- and under
-  // `VariablesAlone` an application's arguments too -- applying the variable
-  // bindings alone: such a predicate receives variable bindings, never a
-  // projection or evidence binding resolved inside it (`respellClaimPredicate`).
+  // Move an equality's endpoints -- and under `VariablesAlone` an
+  // application's arguments too -- by the variable bindings alone: such a
+  // predicate receives variable bindings, never a projection or evidence
+  // binding resolved inside it (`respellClaimPredicate`).
   replacer.addReplacement(
       [&](ClaimType claim) -> std::optional<std::pair<Type, WalkResult>> {
     if (claim.isApplication() && claims == ClaimPredicates::Substituted)

@@ -219,22 +219,6 @@ void traitRenameSymbols(MlirOperation symbolTableOp, const MlirStringRef *names,
             Attribute(SymbolRefAttr::get(found->second, reference.getNestedReferences())),
             WalkResult::skip());
       });
-  // An equality claim's endpoints and a citation's arguments are leaves to
-  // every replacer; they move as the clone rule moves them, each part rebuilt
-  // at once through the attribute's constructor.
-  replacer.addReplacement(
-      [&](ClaimType claim) -> std::optional<std::pair<Type, WalkResult>> {
-        if (claim.isApplication())
-          return std::nullopt;
-        return respellClaimPredicate(claim, [&](Type t) { return replacer.replace(t); });
-      });
-  replacer.addReplacement(
-      [&](ImplArgumentsAttr arguments) -> std::optional<std::pair<Attribute, WalkResult>> {
-        SmallVector<Type> types;
-        for (Type type : arguments.getTypes())
-          types.push_back(replacer.replace(type));
-        return std::make_pair(Attribute(ImplArgumentsAttr::get(ctx, types)), WalkResult::skip());
-      });
   replacer.recursivelyReplaceElementsIn(root, /*replaceAttrs=*/true,
                                         /*replaceLocs=*/false,
                                         /*replaceTypes=*/true);

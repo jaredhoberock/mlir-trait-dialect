@@ -105,35 +105,17 @@ def TypeEqualityAttr : AttrDef<TraitDialect, "TypeEquality", []> {
     The endpoints are ordered; orientation is recorded for provenance
     only. Replay is direction-blind, so no symmetry construct exists.
 
-    The endpoints are ordinary sub-elements: every walk reaches them, so a
-    symbol sealed in one is reached by the framework's own symbol-user driver
-    and by any walk that classifies content. What no rewrite may do is move
-    one. Global type rewrites — proof stamping foremost — rewrite claim types
-    wherever they can see them; an endpoint that received a stamped proof would
-    be exactly the state the verifier refuses, so two individually-correct
-    passes would kill a legal program. The attribute's sub-element replacement
-    therefore answers it unchanged: endpoints are a leaf to every rewrite,
-    upstream's replacers included, and reachable to a read. The one mover is
-    the clone rule — one substitution applied to both endpoints atomically,
-    rebuilt through this constructor (`respellClaimPredicate`).
+    The endpoints are ordinary sub-elements, which every walk reaches and a
+    uniform rewrite (a rename, a clone's variable bindings) moves; an endpoint
+    holds no claim, at every verification (`verifyEndpointsRelateTypes`). A
+    rewrite normalizing at one operation leaves a claim's predicate as written,
+    since its proof proves that spelling (`verifyCitation`), and the writers
+    that normalize so install that rule through `addPredicateRules`.
   }];
 
   let parameters = (ins "::mlir::Type":$lhs, "::mlir::Type":$rhs);
 
   let genVerifyDecl = 1;
-
-  let extraClassDeclaration = [{
-    /// Replacement of the endpoints as sub-elements answers this attribute
-    /// unchanged, so no `AttrTypeReplacer` can move one; a writer constructs a
-    /// new attribute. Shadows the storage base's hook, which
-    /// `AbstractAttribute::get` reads off the concrete class.
-    static auto getReplaceImmediateSubElementsFn() {
-      return [](auto instance, ::llvm::ArrayRef<::mlir::Attribute>,
-                ::llvm::ArrayRef<::mlir::Type>) -> ::mlir::Attribute {
-        return instance;
-      };
-    }
-  }];
 
   // Prints `lhs = rhs`. The leading empty literal drops the space the
   // declarative printer emits before a leading parameter, so an equality
@@ -153,16 +135,12 @@ def ImplArgumentsAttr : AttrDef<TraitDialect, "ImplArguments", []> {
     them and compares the result with the claim the citation derives or
     resolves by identity, so the two must move together.
 
-    A citation's claims move by their variables alone
-    (`respellClaimPredicate`), and its arguments are spelled as those claims
-    are, so the arguments move by the same rule and by no other: the
-    attribute's sub-element replacement answers it unchanged, so no replacer
-    rewrites its interior, and the one mover is the clone rule, which builds a
-    new attribute stamping each argument with the clone's variable bindings
-    alone (`makeTypeReplacerFromSubstitution`). A projection an argument spells is
-    never resolved in place; a template clone still stamps `@impl[!T]` to
-    `@impl[i64]`. The arguments are ordinary sub-elements to a read, so a
-    symbol one names is reached by the symbol-user driver.
+    The arguments are ordinary sub-elements, which every walk reaches and a
+    uniform rewrite (a rename, a clone's variable bindings) moves, as it moves
+    the claim they are spelled with. A rewrite normalizing at one operation
+    leaves them as written, since the citation's verifier compares them with
+    that claim by identity (`verifyCitationOf`), and the writers that normalize
+    so install that rule through `addPredicateRules`.
 
     Its custom assembly form is the bracketed list after the impl's symbol,
     `@impl[i32, i64]`, elided where empty; standing alone it prints as
@@ -170,19 +148,6 @@ def ImplArgumentsAttr : AttrDef<TraitDialect, "ImplArguments", []> {
   }];
 
   let parameters = (ins ArrayRefParameter<"Type">:$types);
-
-  let extraClassDeclaration = [{
-    /// Replacement of the arguments as sub-elements answers this attribute
-    /// unchanged, so no `AttrTypeReplacer` can write them; a writer constructs
-    /// a new attribute. Shadows the storage base's hook, which
-    /// `AbstractAttribute::get` reads off the concrete class.
-    static auto getReplaceImmediateSubElementsFn() {
-      return [](auto instance, ::llvm::ArrayRef<::mlir::Attribute>,
-                ::llvm::ArrayRef<::mlir::Type>) -> ::mlir::Attribute {
-        return instance;
-      };
-    }
-  }];
 
   let hasCustomAssemblyFormat = 1;
 }

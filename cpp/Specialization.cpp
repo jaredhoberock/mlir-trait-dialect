@@ -54,9 +54,8 @@ void cloneRegionStampedBefore(OpBuilder &builder, Region &source, Region &dest,
 AttrTypeReplacer makeTypeReplacerFromSubstitution(
     const SpecializationMap &variableBindings, CloneKind kind,
     const ProjectionBindings &projectionBindings) {
-  // A bare equality is a leaf to this rewrite, as to every replacer
-  // (`TypeEqualityAttr`); the clone rule below is the one mover, and it
-  // reaches an equality only through the claim that wraps it.
+  // An equality reaches this rewrite only through the claim that wraps it,
+  // which the clone rule below moves.
   AttrTypeReplacer replacer;
   bool isTemplate = kind == CloneKind::Template;
   // The replacer outlives its caller's maps, so it holds its own copies, and
@@ -105,26 +104,13 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(
   // The clone rule for a claim: its predicate receives the variable bindings
   // alone, stamped once -- no projection binding resolved inside it -- so the
   // claim a clone holds is the template's at the instance's arguments, and the
-  // evidence a template wrote for it still meets it by identity
-  // (`respellClaimPredicate`). A citation's stated arguments are spelled as
-  // its claims are and move by the same rule, a new attribute built here, as
-  // no replacer rewrites one in place (`ImplArgumentsAttr`).
-  auto respell = [variables](Type t) {
+  // evidence a template wrote for it still meets it by identity; a citation's
+  // stated arguments are spelled as its claims are and move by the same rule
+  // (`addPredicateRules`).
+  addPredicateRules(replacer, [variables](Type t) {
     return applySubstitution(*variables, nullptr, t,
                              ClaimPredicates::Substituted);
-  };
-  replacer.addReplacement(
-      [respell](ClaimType claim) -> std::optional<std::pair<Type, WalkResult>> {
-    return respellClaimPredicate(claim, respell);
   });
-  replacer.addReplacement(
-      [respell](ImplArgumentsAttr stated)
-          -> std::optional<std::pair<Attribute, WalkResult>> {
-        SmallVector<Type> moved = llvm::map_to_vector(stated.getTypes(), respell);
-        return std::make_pair(
-            Attribute(ImplArgumentsAttr::get(stated.getContext(), moved)),
-            WalkResult::skip());
-      });
 
   return replacer;
 }
