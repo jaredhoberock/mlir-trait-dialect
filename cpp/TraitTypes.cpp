@@ -603,7 +603,7 @@ void ProjectionType::print(AsmPrinter &p) const {
 }
 
 // Entry point for the upstream SymbolUserTypeInterface. A projection carries the
-// same trait application as its claim, so verification delegates to that claim.
+// same trait application as its claim, verified as that claim's is.
 LogicalResult ProjectionType::verifySymbolUses(Operation *op,
                                                SymbolTableCollection &symbolTable) const {
   for (Type arg : getAssocTypeArgs())
@@ -612,19 +612,20 @@ LogicalResult ProjectionType::verifySymbolUses(Operation *op,
              << "projection " << *this
              << " takes a claim as a type argument; a claim is a value's "
                 "evidence, never a type argument";
-  if (failed(asClaim().verifySymbolUses(op, symbolTable)))
+  // The projection's application is verified as its unproven claim's is.
+  FailureOr<TraitOp> trait =
+      getTraitApplication().getVerifiedTrait(op, symbolTable);
+  if (failed(trait))
     return failure();
   // The projection names an associated type its trait declares and supplies
   // one argument per parameter of the associated type's own, which a binding
   // reads by position after its impl's parameters.
-  TraitOp trait = getTraitApplication().getTraitOrAbort(
-      symbolTable, op, "ProjectionType::verifySymbolUses: the verified trait vanished");
   std::optional<unsigned> arity =
-      trait.getAssociatedTypeArity(getAssocName().getValue());
+      trait->getAssociatedTypeArity(getAssocName().getValue());
   if (!arity)
     return op->emitError() << "projection " << *this
                            << " names no associated type of trait '"
-                           << trait.getSymNameAttr() << "'";
+                           << trait->getSymNameAttr() << "'";
   if (*arity != getAssocTypeArgs().size())
     return op->emitError() << "projection " << *this << " supplies "
                            << getAssocTypeArgs().size()

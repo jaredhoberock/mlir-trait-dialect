@@ -49,6 +49,11 @@ def TraitApplicationAttr : AttrDef<TraitDialect, "TraitApplication",
     TraitOp getTraitOrAbort(SymbolTableCollection &symbolTable, Operation *from,
                             const char* message) const;
 
+    /// The trait this application names, once the application is verified
+    /// to apply it (`verifySymbolUses`), refusing at `op` otherwise.
+    FailureOr<TraitOp> getVerifiedTrait(Operation *op,
+                                        SymbolTableCollection &symbolTable) const;
+
     bool mentionsType(Type ty) const {
       bool found = false;
       for (Type arg : getTypeArgs()) {

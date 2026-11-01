@@ -111,6 +111,11 @@ TraitOp TraitApplicationAttr::getTraitOrAbort(
 // verify a trait application encountered in a discardable position.
 LogicalResult TraitApplicationAttr::verifySymbolUses(
     Operation *op, SymbolTableCollection &symbolTable) const {
+  return success(succeeded(getVerifiedTrait(op, symbolTable)));
+}
+
+FailureOr<TraitOp> TraitApplicationAttr::getVerifiedTrait(
+    Operation *op, SymbolTableCollection &symbolTable) const {
   auto err = [&] { return op->emitError(); };
 
   auto trait = getTrait(symbolTable, op, err);
@@ -118,17 +123,21 @@ LogicalResult TraitApplicationAttr::verifySymbolUses(
     return failure();
 
   auto expectedArity = trait->getTypeParams().size();
-  if (getTypeArgs().size() != expectedArity)
-    return err() << "trait '" << getTraitName() << "' expects " << expectedArity
-                 << " type arguments, found " << getTypeArgs().size();
+  if (getTypeArgs().size() != expectedArity) {
+    err() << "trait '" << getTraitName() << "' expects " << expectedArity
+          << " type arguments, found " << getTypeArgs().size();
+    return failure();
+  }
 
   for (Type arg : getTypeArgs())
-    if (containsClaim(arg))
-      return err() << "trait application " << *this
-                   << " takes a claim as a type argument; a claim is a value's "
-                      "evidence, never a type argument";
+    if (containsClaim(arg)) {
+      err() << "trait application " << *this
+            << " takes a claim as a type argument; a claim is a value's "
+               "evidence, never a type argument";
+      return failure();
+    }
 
-  return success();
+  return trait;
 }
 
 Attribute ImplArgumentsAttr::parse(AsmParser &parser, Type) {
