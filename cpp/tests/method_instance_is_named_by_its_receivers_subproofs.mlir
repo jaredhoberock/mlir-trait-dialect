@@ -5,8 +5,8 @@
 
 // @P_one and @P_two both prove @Tr[i32] through @Tr_impl, and discharge its
 // where clause with different impls of @Mark[i32]: @Mark_one (7) and @Mark_two
-// (9). A method instance is named by its receiver's proof, and through it by
-// every subproof, so the two calls reach two instances of @Tr_impl's method,
+// (9). A member instance is named by its receiver's proof, and through it by
+// every subproof, so the two calls reach two instances of @Tr_impl's member,
 // each reading the subproof its own receiver names.
 
 // CHECK: {{^}}16{{$}}

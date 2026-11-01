@@ -5,7 +5,7 @@
 
 // The counterpart of the refused citation: with nothing standing over @B[i32],
 // selection discharges its requirement @A[i32] with @A_i32, and the call
-// @B_i32's body makes through that requirement reaches @A_i32's method.
+// @B_i32's body makes through that requirement reaches @A_i32's member.
 
 trait.trait private @A(!trait.claim<@A[!trait.poly<0>]>) members [@A.a]
 func.func private @A.a(!trait.claim<@A[!trait.poly<0>]>) -> i64

@@ -8,7 +8,7 @@
 // carried by @T1_i64_b (9). No respelling keyed by @T1[i64] can say which
 // proof a spelling of it means. The parameter takes the evidence supplied at
 // its position, and the projection of @T2's requirement takes its source's
-// requirement at its index, so each method call runs the impl its own evidence
+// requirement at its index, so each member call runs the impl its own evidence
 // selects.
 
 // CHECK: {{^}}16{{$}}

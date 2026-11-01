@@ -8,7 +8,7 @@
 // equality determines it, so no reading of the projection @S[i64]::Out can say
 // what it is. A witness citing @S_i64 supplies one claim for that entry, by
 // position -- here @Marker[i64]::M = i1, itself a witness through @Marker_i64 --
-// and the verifier reads the argument off it: !U is i1. @Foo_i64's method keeps
+// and the verifier reads the argument off it: !U is i1. @Foo_i64's member keeps
 // the trait's spelling @S[i64]::Out and coerces the i1 it computes across that
 // resolution; the use site coerces a value across the same resolution.
 

@@ -133,7 +133,7 @@ ImplResolver::assumptionsSatisfiableFor(ImplOp impl,
 
   // An impl whose arguments the header and the where clause together leave
   // open is no candidate: selection would have nothing to specialize its
-  // methods and associated-type bindings with.
+  // members and associated-type bindings with.
   if (!args.complete())
     return Answer<SpecializationMap>::refusal();
 

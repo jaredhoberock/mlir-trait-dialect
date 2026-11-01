@@ -5,7 +5,7 @@
 
 // @Has's quantified requirement @requirement_0 has a default body, a witness of
 // @Marker_i64, and @Has_i32 does not define it. A call of it through a proof
-// of @Has_i32 is replaced by the trait's default body, as a call of a method an
+// of @Has_i32 is replaced by the trait's default body, as a call of a member an
 // impl leaves to its trait is cut from the default, and runs @Marker_i64's
 // @mark on 41.
 

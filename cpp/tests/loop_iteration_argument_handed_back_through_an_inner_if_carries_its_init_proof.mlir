@@ -7,7 +7,7 @@
 // @Bound[i64] too, and its body hands the iteration argument back through an
 // scf.if both of whose arms yield it. The iteration argument, the inner
 // result and the loop's result join only one another and the init, so they
-// carry the init's proof and the method called through the loop's result runs
+// carry the init's proof and the member called through the loop's result runs
 // @Two's; selection, which would meet two impls, is never asked for them.
 
 // CHECK: {{^}}9{{$}}

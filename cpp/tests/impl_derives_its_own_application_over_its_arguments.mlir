@@ -5,7 +5,7 @@
 
 // An impl's evidence of its own application is a derive of the impl over its
 // own block arguments: standing in the impl block and read by @twice, or
-// inside the method that reads it, @thrice. Both are cut at A[i32]:
+// inside the member that reads it, @thrice. Both are cut at A[i32]:
 // 3 + 3 and 3 + 3 + 3.
 
 // CHECK: {{^}}15{{$}}

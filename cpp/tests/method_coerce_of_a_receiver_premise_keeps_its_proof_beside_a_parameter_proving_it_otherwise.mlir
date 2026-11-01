@@ -8,7 +8,7 @@
 // its parameter's proof @W discharges @Wrapped's @Mark[i32] requirement with
 // @Nine. The coerce's result carries its input's proof, whichever other
 // position proves the same claim otherwise, so the call through it runs
-// @Seven's method.
+// @Seven's member.
 
 // CHECK: {{^}}7{{$}}
 

@@ -3,10 +3,10 @@
 
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait,convert-arith-to-llvm,convert-func-to-llvm,reconcile-unrealized-casts)' | mlir-runner -e main --entry-point-result=i64 | FileCheck %s
 
-// @Tr's method takes a claim of its own, and two calls through one receiver
-// supply it for different reasons: @Mark_one (7) and @Mark_two (9). A method
+// @Tr's member takes a claim of its own, and two calls through one receiver
+// supply it for different reasons: @Mark_one (7) and @Mark_two (9). A member
 // instance is named by everything the call supplies at each of its positions,
-// so the calls reach two instances of @Tr_i32's method, each running the impl
+// so the calls reach two instances of @Tr_i32's member, each running the impl
 // its own claim argument selects.
 
 // CHECK: {{^}}16{{$}}

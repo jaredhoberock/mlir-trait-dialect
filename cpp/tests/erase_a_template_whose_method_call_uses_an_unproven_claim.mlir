@@ -3,7 +3,7 @@
 
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' -verify-diagnostics 2>&1 | FileCheck %s
 
-// An unproven claim parameter is valid in a polymorphic function. Its method
+// An unproven claim parameter is valid in a polymorphic function. Its member
 // call verifies using that parameter and the unused template is erased.
 
 !T = !trait.poly<0>

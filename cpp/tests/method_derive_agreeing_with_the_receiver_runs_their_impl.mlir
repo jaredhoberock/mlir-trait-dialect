@@ -8,7 +8,7 @@
 // proof @H supplies its own @Wrapped[i32] through @WR, whose premise is @Nine
 // too. The proof of the derived claim discharges the impl's premise by the
 // proof its operand names, so the derive is witnessed by it and the derived
-// claim's method runs @Nine's although @Seven also implements @Mark[i32].
+// claim's member runs @Nine's although @Seven also implements @Mark[i32].
 
 // CHECK: {{^}}9{{$}}
 

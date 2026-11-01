@@ -5,10 +5,10 @@
 
 // A claim-respell coerce and its value-level twin, both consumed downstream,
 // fold away at monomorphization: the respelled claim is used at its respelled
-// application (a method call), and the value twin respells the ground value to
+// application (a member call), and the value twin respells the ground value to
 // the projection spelling. With every projection resolving to ground, the
 // coerces and their cited equalities reduce to nothing and the surviving call is
-// the concrete method. The respell sweep does not trip.
+// the concrete member. The respell sweep does not trip.
 
 trait.trait private @Bound(!trait.claim<@Bound[!trait.poly<0>]>) members [@Bound.use]
 func.func private @Bound.use(!trait.claim<@Bound[!trait.poly<0>]>, !trait.poly<0>) -> i1

@@ -3,7 +3,7 @@
 
 // RUN: not mlir-opt %s 2>&1 | FileCheck %s
 
-// Two module-level symbols named @dup, beside an impl whose method body carries
+// Two module-level symbols named @dup, beside an impl whose member body carries
 // a claim. The impl is a symbol table of its own, so the verifier reaches it
 // first and the claim resolves its trait name in the module around it -- a
 // module whose own names have not been checked yet. That read is a scan of the

@@ -3,7 +3,7 @@
 
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' 2>&1 | FileCheck %s
 
-// An allegation for @Greet[i32] supplies the evidence for the method call.
+// An allegation for @Greet[i32] supplies the evidence for the member call.
 // The resulting module must contain the concrete greet function and a call to it.
 
 !T = !trait.poly<0>

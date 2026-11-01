@@ -5,7 +5,7 @@
 
 // Both arms of an scf.if yield @Need[i64] derived over @Two, though @One
 // proves @Bound[i64] too. A region's result repeats what its arms yield when
-// they agree, so it carries their proof and the method called through it runs
+// they agree, so it carries their proof and the member called through it runs
 // @Two's; selection, which would meet two impls, is never asked for it.
 
 // CHECK: {{^}}9{{$}}

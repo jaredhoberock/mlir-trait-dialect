@@ -8,7 +8,7 @@
 // @Host_i32 takes the default, its receiver's proof @H discharging the impl's
 // own @Mark[i32] entry with @Seven (7). The default cut for the impl reads the
 // projection off the parameter's evidence, so the call through it runs
-// @Nine's method.
+// @Nine's member.
 
 // CHECK: {{^}}9{{$}}
 

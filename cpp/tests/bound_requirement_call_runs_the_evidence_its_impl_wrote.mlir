@@ -4,10 +4,10 @@
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait,convert-arith-to-llvm,convert-func-to-llvm,reconcile-unrealized-casts)' | mlir-runner -e main --entry-point-result=i64 | FileCheck %s
 
 // @Wrapped requires @Mark[!T] as a result and @Mark at every argument through
-// its evidence method @requirement_1. @W returns @Specific's witness for the
-// result and derives @Blanket in its evidence method. @f calls the evidence
-// method at i32: the call is replaced by @W's body, whose derive is the proof
-// it states, so the call runs @Blanket's method, 9, although @Specific also
+// its evidence member @requirement_1. @W returns @Specific's witness for the
+// result and derives @Blanket in its evidence member. @f calls the evidence
+// member at i32: the call is replaced by @W's body, whose derive is the proof
+// it states, so the call runs @Blanket's member, 9, although @Specific also
 // implements @Mark[i32] and serves the other requirement.
 
 // CHECK: {{^}}9{{$}}

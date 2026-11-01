@@ -18,7 +18,7 @@ func.func private @B_impl_i1.b(%self: !trait.claim<@B[i1]>, %arg0: i1) -> i1 {
   %a = trait.allege @A[i1]
 
   // test that we are able to trait.method.call
-  // from inside a method to another trait
+  // from inside a member to another trait
   %res = trait.func.call @A.a(%a, %arg0) : (!trait.claim<@A[i1]>, i1) -> i1
   return %res : i1
 }

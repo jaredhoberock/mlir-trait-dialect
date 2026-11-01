@@ -4,7 +4,7 @@
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait,convert-arith-to-llvm,convert-func-to-llvm,reconcile-unrealized-casts)' | mlir-runner -e main --entry-point-result=i64 | FileCheck %s
 
 // As bound_requirement_call_runs_the_evidence_its_impl_wrote, with the values
-// of the two impls of @Mark[i32] exchanged: the call runs @Blanket's method,
+// of the two impls of @Mark[i32] exchanged: the call runs @Blanket's member,
 // 7, whichever of the two returns which value.
 
 // CHECK: {{^}}7{{$}}

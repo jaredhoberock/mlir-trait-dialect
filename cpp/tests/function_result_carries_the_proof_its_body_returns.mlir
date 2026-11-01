@@ -7,7 +7,7 @@
 // from @Need_from over the @Bound[i64] evidence the body chose: @One (7) and
 // @Two (9) respectively. A function's result claim repeats what its returns
 // hand back and a call's result claim what its callee's signature says, so
-// each call carries its body's proof, and the method called through it runs
+// each call carries its body's proof, and the member called through it runs
 // the chosen impl's.
 
 // CHECK: {{^}}79{{$}}

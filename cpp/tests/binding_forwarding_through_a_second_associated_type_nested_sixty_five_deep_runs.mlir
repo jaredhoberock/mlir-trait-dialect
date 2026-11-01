@@ -9,7 +9,7 @@
 // argument adds no depth to the chain it stands in, so every chain is two
 // steps deep, though the nest takes 130 steps in all: the hypothesis @need
 // states, the allegation proving it, and the application @C[!P65] selection
-// reads all settle to i64, and @C_i64's method runs.
+// reads all settle to i64, and @C_i64's member runs.
 
 // CHECK: 7
 

@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 
-// A call to a method with its own type variable is cloned once, straight to the
-// instance the call asks for. The impl's copy of the method spells that variable
+// A call to a member with its own type variable is cloned once, straight to the
+// instance the call asks for. The impl's copy of the member spells that variable
 // with its own name, so the call's binding is rekeyed through the correspondence
-// between the trait method's variables and the impl method's before the clone is
+// between the trait member's variables and the impl member's before the clone is
 // cut; a clone carrying the impl's bindings but not the call's would leave a
 // module-level template between the call and its instance.
 
@@ -28,7 +28,7 @@ func.func @main(%x: i64, %v: i32) -> i32 {
   return %r : i32
 }
 
-// No clone of the method is left polymorphic. A partly substituted clone prints
+// No clone of the member is left polymorphic. A partly substituted clone prints
 // ahead of the instance cut from it, so the exclusion leads: a CHECK-NOT scans
 // only from the preceding match onward, and one placed after the positive check
 // would never reach the line such a clone stands on.

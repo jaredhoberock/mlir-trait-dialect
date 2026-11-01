@@ -7,7 +7,7 @@
 // @Wrapped_i32, which returns @Nine (9) as its requirement evidence; the
 // receiver's proof @H supplies nothing: @Host_i32 takes no where entry. With no
 // second proof of @Mark[i32] anywhere in the call, the projection reads the
-// evidence @Wrapped_i32 returns and the call through it runs @Nine's method.
+// evidence @Wrapped_i32 returns and the call through it runs @Nine's member.
 
 // CHECK: {{^}}9{{$}}
 

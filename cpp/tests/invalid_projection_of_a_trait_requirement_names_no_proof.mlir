@@ -99,7 +99,7 @@ func.func @main() -> i64 {
 // -----
 
 // The same projection naming no proof: @I returns a derive of @Mark[i32] from
-// @Nine, so the call runs @Nine's method.
+// @Nine, so the call runs @Nine's member.
 
 // CHECK-LABEL: func.func @main() -> i64
 // CHECK:         call @Nine.value_{{h[0-9a-f]+}}()

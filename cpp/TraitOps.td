@@ -698,7 +698,7 @@ def Projection : Type<
 //                   block argument, which its caller supplies
 //
 // `trait.coerce` respells a claim it is given under cited equalities, and a
-// claim-returning method call computes one from its claim operands.
+// claim-returning member call computes one from its claim operands.
 //===----------------------------------------------------------------------===//
 
 
@@ -872,7 +872,7 @@ def ProjectOp : TraitDialectOp<"project", [
     disagreement.
 
     A requirement quantified over variables of its own is no result of the trait
-    but a method of it, and is called rather than projected.
+    but a member of it, and is called rather than projected.
 
     ```mlir
     // trait.trait @Ord(%self: !trait.claim<@Ord[!S]>)

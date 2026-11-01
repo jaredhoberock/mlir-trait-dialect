@@ -7,7 +7,7 @@
 // back off it -- the evidence @Wrapped_any returns, which is that parameter --
 // and selects the parameter over the projection. The call supplies @Mark[i32]
 // by one proof, @Nine; the projection reads @Nine back through the derive's
-// premise, so the select's arms agree and the call runs @Nine's method.
+// premise, so the select's arms agree and the call runs @Nine's member.
 // The condition is a constant: claim erasure has no rule for a select of two
 // distinct claim values, so only a select the folder removes reaches it.
 

@@ -8,7 +8,7 @@
 // receiver's proof @H discharges the impl's own @Mark[i32] entry with @Seven.
 // The loop's iteration argument and result repeat what enters the loop, the
 // body handing the iteration value back unchanged, so they carry the
-// projection's evidence and the method called through the result runs
+// projection's evidence and the member called through the result runs
 // @Nine's; selection, which would meet two impls of @Mark[i32], is never asked
 // for them.
 

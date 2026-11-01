@@ -8,7 +8,7 @@
 // projection is, and the binding is specialized at what was read, so the
 // binding holds no argument still to read and each level is read once: the
 // hypothesis @need states, the allegation proving it, and the application
-// @B[!P64] selection reads all settle to i64, and @B_i64's method runs. A
+// @B[!P64] selection reads all settle to i64, and @B_i64's member runs. A
 // reading that read each level's argument again inside its binding would make
 // 2^64 readings; the compile is bounded so that such a reading fails the row
 // rather than holding the suite.

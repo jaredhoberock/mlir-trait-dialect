@@ -8,7 +8,7 @@
 // read against a requirement nothing can settle is evidence nothing checked:
 // @B_i32 returns @A_i64's evidence where the projection denotes i32. The
 // return is refused where it is written, rather than the call through the
-// requirement being dispatched to @A_i64's method.
+// requirement being dispatched to @A_i64's member.
 
 trait.trait private @Foo(!trait.claim<@Foo[!trait.poly<0>]>) assoc {Out = 0}
 trait.impl private @Foo_any(%self: !trait.claim<@Foo[!trait.poly<0>]>) bindings {Out = i32} {

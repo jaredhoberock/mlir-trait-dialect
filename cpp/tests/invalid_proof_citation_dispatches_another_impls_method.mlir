@@ -3,9 +3,9 @@
 
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' -verify-diagnostics
 
-// What an impl returns for a requirement decides which method a body reaches:
+// What an impl returns for a requirement decides which member a body reaches:
 // @B_i32's body projects its own requirement @A[i32] and calls @a through it.
-// Evidence from @A_i64 there would carry the call to @A_i64's method, so the
+// Evidence from @A_i64 there would carry the call to @A_i64's member, so the
 // program would answer 64 where it must answer 32. The mismatch is refused
 // where it is written.
 

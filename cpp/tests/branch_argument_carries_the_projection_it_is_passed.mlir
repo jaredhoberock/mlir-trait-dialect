@@ -7,7 +7,7 @@
 // @Nine's witness for it, and passes the projection to a second block. The
 // receiver's proof @H discharges the impl's own @Mark[i32] entry with @Seven.
 // A block's argument repeats what its predecessors pass it, so it carries the
-// projection's evidence and the method called through it runs @Nine's;
+// projection's evidence and the member called through it runs @Nine's;
 // selection, which would meet two impls of @Mark[i32], is never asked for it.
 
 // CHECK: {{^}}9{{$}}

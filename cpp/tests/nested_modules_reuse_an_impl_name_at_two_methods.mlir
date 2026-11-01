@@ -3,9 +3,9 @@
 
 // RUN: mlir-opt %s -split-input-file -pass-pipeline='builtin.module(monomorphize-trait)' | FileCheck %s
 
-// One impl name @T_i32 in two modules, whose methods answer two different
+// One impl name @T_i32 in two modules, whose members answer two different
 // values. A symbol name is read in the module the demand stands in and in no
-// module around it, so each module specializes its own method and its own call
+// module around it, so each module specializes its own member and its own call
 // reaches it. Which module is lowered first is the module order, and the answer
 // is the same either way: the nested module stands first here and last below.
 

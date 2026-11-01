@@ -7,7 +7,7 @@
 // the citing impl's own where clause does NOT cover. @Sib_i64_cond binds
 // Sib[i64]::Elem = i32 and takes @Y[i64]; @Host_i64 declares no where clause,
 // so the witness supplies the entry itself, by position: a witness of @Y_i64,
-// an unconditional impl of @Y[i64]. The method keeps the trait's spelling
+// an unconditional impl of @Y[i64]. The member keeps the trait's spelling
 // (i64) -> Sib[i64]::Elem, and its body coerces the i32 it computes through the
 // witness. The premise is supplied by position; verification resolves the
 // symbols it names and never scans the module for one.

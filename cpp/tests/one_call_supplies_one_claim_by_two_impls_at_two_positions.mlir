@@ -7,7 +7,7 @@
 // (7) at the first and @Two (9) at the second. The two parameters spell one
 // claim, so no respelling keyed by that claim can say which proof either means;
 // each parameter of the instance carries the evidence supplied at its own
-// position, and each method call runs the impl that evidence selects.
+// position, and each member call runs the impl that evidence selects.
 
 // CHECK: {{^}}16{{$}}
 

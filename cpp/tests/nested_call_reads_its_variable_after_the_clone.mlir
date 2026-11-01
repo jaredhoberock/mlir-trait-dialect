@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 
-// An impl's method that forwards a call of the same generic trait method to
+// An impl's member that forwards a call of the same generic trait member to
 // another impl stands inside a template. The clone cut for the outer call is
-// stamped under a substitution that binds the enclosing method's variable, and
+// stamped under a substitution that binds the enclosing member's variable, and
 // the nested call's instance is read off the operand and result types that
-// substitution leaves: the forwarded call names the same method at the same
+// substitution leaves: the forwarded call names the same member at the same
 // argument the outer call was cut for, and both lower to plain calls.
 
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(instantiate-monomorphs-trait)' | FileCheck %s
@@ -22,9 +22,9 @@ func.func private @Store_impl_i64.keep(%self_claim: !trait.claim<@Store[i64]>, %
   return %v : !trait.poly<0>
 }
 
-// Forwards to the i64 impl's method under the same method generic: the nested
-// call spells this method's own variable in the argument position the trait
-// method's !V stands in.
+// Forwards to the i64 impl's member under the same member generic: the nested
+// call spells this member's own variable in the argument position the trait
+// member's !V stands in.
 trait.impl private @Store_impl_i32(%self_claim: !trait.claim<@Store[i32]>) members [@Store.keep -> @Store_impl_i32.keep] {
 }
 func.func private @Store_impl_i32.keep(%self_claim: !trait.claim<@Store[i32]>, %self: i32, %v: !trait.poly<0>) -> !trait.poly<0> {
@@ -40,8 +40,8 @@ func.func @main(%x: i32, %v: f32) -> f32 {
   return %r : f32
 }
 
-// The i64 method's instance for f32 stands beside its impl, then the forwarding
-// method's instance calls it in place of the nested generic call, and main calls
+// The i64 member's instance for f32 stands beside its impl, then the forwarding
+// member's instance calls it in place of the nested generic call, and main calls
 // the forwarding instance.
 // CHECK-LABEL: func.func private @Store_impl_i64.keep_{{h[0-9a-f]+}}
 // CHECK-SAME: %{{.*}}: i64, %{{.*}}: f32) -> f32

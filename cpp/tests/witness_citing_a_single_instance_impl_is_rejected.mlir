@@ -6,7 +6,7 @@
 // A proj_resolve witness is verified by a RIGID head match, so a projection
 // quantified over the host impl's parameter matches only a cited impl whose head
 // is equally quantified. Here the host impl is generic over !S and the witness
-// in its method resolves proj<@Sib[!S],"Elem"> by the single-instance impl
+// in its member resolves proj<@Sib[!S],"Elem"> by the single-instance impl
 // @Sib_i64: the match would have to bind !S to that one head, which would
 // accept a generic impl on the strength of ONE instance. The head match
 // refuses.

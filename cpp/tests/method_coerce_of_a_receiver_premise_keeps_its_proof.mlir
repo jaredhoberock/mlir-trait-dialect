@@ -7,7 +7,7 @@
 // discharges with @Seven (7), and coerces it to @Mark[@Assoc[i32]::A] through
 // @Assoc_i32's binding of A to i32. The equality respells the application the
 // claim proves and never its proof, so the coerced claim carries @Seven and
-// the call through it runs @Seven's method although @Nine also implements
+// the call through it runs @Seven's member although @Nine also implements
 // @Mark[i32].
 
 // CHECK: {{^}}7{{$}}

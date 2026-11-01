@@ -4,7 +4,7 @@
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' | FileCheck %s
 
 // The twin of the refused copy: the impl's @f spells its own labels for the
-// trait's method parameters, one for one. That is a renaming, so a call's type
+// trait's member parameters, one for one. That is a renaming, so a call's type
 // arguments -- named under the trait's labels -- rekey onto the clone's.
 
 trait.trait private @T(!trait.claim<@T[!trait.poly<0>]>) members [@T.f]

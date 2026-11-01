@@ -4,10 +4,10 @@
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait,convert-arith-to-llvm,convert-func-to-llvm,reconcile-unrealized-casts)' | mlir-runner -e main --entry-point-result=i64 | FileCheck %s
 
 // @PN and @Alias are two names of one proof: @Nine at i32, given nothing. @f
-// calls @Wrapped's evidence method for its quantified requirement at i32, and
-// @W's method derives @Mark at any argument from @Nine; the call supplies
-// @Mark[i32] by @Alias to another parameter. Nothing respells the method's
-// result by the claim it states, so the evidence the method computes stands,
+// calls @Wrapped's evidence member for its quantified requirement at i32, and
+// @W's member derives @Mark at any argument from @Nine; the call supplies
+// @Mark[i32] by @Alias to another parameter. Nothing respells the member's
+// result by the claim it states, so the evidence the member computes stands,
 // and the call through it runs @Nine.
 
 // CHECK: {{^}}9{{$}}

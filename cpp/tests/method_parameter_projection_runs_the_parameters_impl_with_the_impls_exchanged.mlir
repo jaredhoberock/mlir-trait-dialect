@@ -7,7 +7,7 @@
 // (9) and the impl the parameter's proof @W derives returns @Seven (7) for
 // @Wrapped's @Mark[i32] requirement. The projection off the parameter reads
 // that evidence, never the receiver's, so the call through it runs @Seven's
-// method.
+// member.
 
 // CHECK: {{^}}7{{$}}
 

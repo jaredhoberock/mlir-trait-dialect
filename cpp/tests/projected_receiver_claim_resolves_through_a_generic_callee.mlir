@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' 2>&1 | FileCheck %s
 
-// A method receiver claim carries @Outer[i64]::Item through a generic call.
-// Resolving the associated type must let both the generic call and its method
+// A member receiver claim carries @Outer[i64]::Item through a generic call.
+// Resolving the associated type must let both the generic call and its member
 // call lower to the concrete i64 implementation.
 
 !S = !trait.poly<0>

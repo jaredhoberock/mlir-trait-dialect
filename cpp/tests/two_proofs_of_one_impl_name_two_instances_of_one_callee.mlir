@@ -7,7 +7,7 @@
 // One callee, one type argument, two calls whose claim operands name different
 // proofs of @T[i64], @pv1 and @pv2. An instance is named by the evidence it is
 // made with, never by its claim type alone, so the calls reach two instances,
-// each taking the proof its call supplied; both run @T_i64's method.
+// each taking the proof its call supplied; both run @T_i64's member.
 
 // INSTANCES-DAG: func.func private @[[G1:g_h[0-9a-f]+]](%{{.*}}: !trait.claim<@T[i64] by @pv1>) -> i64
 // INSTANCES-DAG: func.func private @[[G2:g_h[0-9a-f]+]](%{{.*}}: !trait.claim<@T[i64] by @pv2>) -> i64

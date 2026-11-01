@@ -55,7 +55,7 @@ module @inner {
 // inner module spells the trait and the impl the same way, its @B_impl returns
 // @A_inner, and it has no proof of its own. A proof stands over the impl it
 // names in the module it is written in, so the outer proof is no answer for the
-// inner demand, which selection serves with the inner @B_impl, and its method
+// inner demand, which selection serves with the inner @B_impl, and its member
 // reaches @A_inner.
 
 trait.trait private @A(!trait.claim<@A[!trait.poly<0>]>) members [@A.a]

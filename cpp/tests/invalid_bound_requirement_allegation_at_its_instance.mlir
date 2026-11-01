@@ -3,9 +3,9 @@
 
 // RUN: mlir-opt %s -split-input-file -pass-pipeline='builtin.module(monomorphize-trait)' -verify-diagnostics
 
-// An impl's evidence method for a quantified requirement alleges its
+// An impl's evidence member for a quantified requirement alleges its
 // conclusion, and nothing proves it at the instance the use reaches. The use is
-// replaced by the method's body, and the allegation it inlines is refused where
+// replaced by the member's body, and the allegation it inlines is refused where
 // it is written, naming the claim: selection names that it has no impl when it
 // is first asked, and the stage's exit walk that it stands unproven.
 
@@ -46,8 +46,8 @@ func.func @main(%x: !trait.proj<@Holds[i32], "C", [i1]>) -> i64 {
 
 // -----
 
-// An impl's evidence method calls its where argument's, whose impl alleges the
-// conclusion: both calls are replaced by their methods' bodies, and the
+// An impl's evidence member calls its where argument's, whose impl alleges the
+// conclusion: both calls are replaced by their members' bodies, and the
 // allegation the inner one inlines is refused where it is written. The
 // coercion respelling it carries its evidence and is not named again.
 
@@ -101,7 +101,7 @@ func.func @main(%x: !trait.proj<@Outer[i32], "A", [i1]>) -> i64 {
 
 // -----
 
-// An impl's evidence method projects its conclusion off an application it
+// An impl's evidence member projects its conclusion off an application it
 // alleges, which nothing proves: the allegation and the projection waiting on
 // it are refused where they are written.
 

@@ -3,10 +3,10 @@
 
 // RUN: not mlir-opt %s -pass-pipeline='builtin.module(verify-acyclic-traits)' 2>&1 | FileCheck %s
 
-// The net for impl_method_source_spelled_projection.mlir: an impl method that
+// The net for impl_method_source_spelled_projection.mlir: an impl member that
 // keeps a SOURCE-spelled projection is checked through the impl's own bindings,
 // not tolerated. Here the trait requires the second parameter to be Self (i32
-// for this impl), but the method spells it as @Container[i32]::Elem, which the
+// for this impl), but the member spells it as @Container[i32]::Elem, which the
 // impl binds to i64. Resolving the source spelling through the impl's bindings
 // exposes the disagreement as a located hard failure -- the binding-resolution
 // path carries the weight, with no lenient projection-vs-concrete crossing to

@@ -4,10 +4,10 @@
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait,convert-arith-to-llvm,convert-func-to-llvm,reconcile-unrealized-casts)' | mlir-runner -e main --entry-point-result=i64 | FileCheck %s
 
 // @Wrapped requires @Mark of its associated type at every argument through its
-// evidence method @requirement_0, which @W implements by returning @Nine's
-// witness; @run calls the evidence method off its parameter at i1, while the
+// evidence member @requirement_0, which @W implements by returning @Nine's
+// witness; @run calls the evidence member off its parameter at i1, while the
 // receiver's proof @PH discharges the impl's own @Mark[i32] entry with @Seven.
-// The call is replaced by @W's body, so it runs @Nine's method, 9, whatever
+// The call is replaced by @W's body, so it runs @Nine's member, 9, whatever
 // the receiver supplies for the same claim.
 
 // CHECK: {{^}}9{{$}}

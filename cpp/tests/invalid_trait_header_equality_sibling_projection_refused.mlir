@@ -7,7 +7,7 @@
 // f32). The requirement is evidence the impl returns, and @Sib_i64 binds
 // @Sib[i64]::Elem to i64, so no evidence makes the two endpoints one type. An
 // impl alleging the equality is refused where its allegation is decided: the
-// instance of a method that projects the requirement off the impl's own claim,
+// instance of a member that projects the requirement off the impl's own claim,
 // where the projection is replaced by the allegation, located as the impl
 // wrote it.
 // The impl that satisfies such a requirement returns the witness reducing the

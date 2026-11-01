@@ -3,7 +3,7 @@
 
 // RUN: mlir-opt -pass-pipeline='builtin.module(monomorphize-trait)' %s | FileCheck %s
 
-// Trait @SameAs with a convert method
+// Trait @SameAs with a convert member
 trait.trait private @SameAs(!trait.claim<@SameAs[!trait.poly<0>, !trait.poly<1>]>) members [@SameAs.convert]
 func.func private @SameAs.convert(!trait.claim<@SameAs[!trait.poly<0>, !trait.poly<1>]>, !trait.poly<1>) -> !trait.poly<0>
 trait.impl private @SameAs_i32_i32(%self: !trait.claim<@SameAs[i32, i32]>) members [@SameAs.convert -> @SameAs_i32_i32.convert] {
@@ -12,7 +12,7 @@ func.func private @SameAs_i32_i32.convert(%self: !trait.claim<@SameAs[i32, i32]>
   return %arg0 : i32
 }
 
-// Trait @Chooser whose method has a where-clause requiring @SameAs
+// Trait @Chooser whose member has a where-clause requiring @SameAs
 !T = !trait.poly<2>
 !U = !trait.poly<3>
 trait.trait private @Chooser(!trait.claim<@Chooser[!trait.poly<0>]>) members [@Chooser.choose]
@@ -23,7 +23,7 @@ func.func private @Chooser.choose(!trait.claim<@Chooser[!trait.poly<0>]>, !trait
 trait.impl private @Chooser_i32(%self: !trait.claim<@Chooser[i32]>) members [@Chooser.choose -> @Chooser_i32.choose] {
 }
 func.func private @Chooser_i32.choose(%self: !trait.claim<@Chooser[i32]>, %a: i32, %b: !trait.poly<0>, %same: !trait.claim<@SameAs[i32, !trait.poly<0>]>) -> i32 {
-  // inner method call uses the where-clause claim
+  // inner member call uses the where-clause claim
   %converted = trait.func.call @SameAs.convert(%same, %b) : (!trait.claim<@SameAs[i32, !trait.poly<0>]>, !trait.poly<0>) -> i32
   return %converted : i32
 }

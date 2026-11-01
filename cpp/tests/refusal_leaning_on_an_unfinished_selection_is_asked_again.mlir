@@ -9,7 +9,7 @@
 // being selected; @C_direct then serves @C[i32], and @A[i32] is selected after
 // all. The refusal of @B[i32] leaned on a selection that was not finished and
 // finished otherwise, so it is no answer: asked on its own, @B[i32] is served
-// by @B_via_a, and its method runs.
+// by @B_via_a, and its member runs.
 
 // CHECK: {{^}}7{{$}}
 

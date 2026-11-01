@@ -36,7 +36,7 @@ func.func private @Show_i32.show(%self: !trait.claim<@Show[i32]>, %x: i32) -> i3
   return %x : i32
 }
 
-// no call selects this impl, so its method is never cloned
+// no call selects this impl, so its member is never cloned
 trait.impl private @Show_i64(%self: !trait.claim<@Show[i64]>) members [@Show.show -> @Show_i64.show] {
 }
 func.func private @Show_i64.show(%self: !trait.claim<@Show[i64]>, %x: i64) -> i32 {
@@ -111,7 +111,7 @@ trait.proof private @Ping_i64_p {
   trait.return %d : !trait.claim<@Ping[i64]>
 }
 
-// The method clone, the helper the live clone reaches, the clone itself and
+// The member clone, the helper the live clone reaches, the clone itself and
 // main are the whole of what stands; the implicit-check-nots on the RUN line
 // hold every region between them clear of the rest.
 // CHECK: func.func private @Show_i32.show_{{h[0-9a-f]+}}

@@ -135,7 +135,7 @@ func.func @main() -> i64 {
 // -----
 
 // The same coercion citing an equality @Bar_cond binds given another proof,
-// @q, which cites none: the call runs @Foo_head's method.
+// @q, which cites none: the call runs @Foo_head's member.
 
 // CHECK-LABEL: func.func @main() -> i64
 // CHECK:         call @Foo_head.m_{{h[0-9a-f]+}}()
@@ -176,7 +176,7 @@ func.func @main() -> i64 {
 // -----
 
 // A proof citing another proof, which cites none, rests on that one: @p's
-// where entry is @q's, and the call runs @Foo_all's method.
+// where entry is @q's, and the call runs @Foo_all's member.
 
 // CHECK-LABEL: func.func @main() -> i64
 // CHECK:         call @Foo_all.m_{{h[0-9a-f]+}}()

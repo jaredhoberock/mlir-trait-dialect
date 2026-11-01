@@ -3,9 +3,9 @@
 //
 // A template whose result type is a projection on its own claim parameter is
 // cloned for a concrete claim: the binding grounds the projection, so the
-// clone's result type, the value it returns and the method call producing it all
+// clone's result type, the value it returns and the member call producing it all
 // land on the impl's associated type together, and the call is lowered to the
-// impl's method.
+// impl's member.
 //
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(instantiate-monomorphs-trait)' | FileCheck %s
 

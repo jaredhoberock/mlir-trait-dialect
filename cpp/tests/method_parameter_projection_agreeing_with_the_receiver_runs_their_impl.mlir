@@ -6,7 +6,7 @@
 // The receiver's proof @H discharges @Mark[i32] with @Nine (9), and the impl
 // the parameter's proof @W derives returns @Nine for it too. The projection
 // off the parameter reads that evidence, which is the receiver's too, so the
-// call through it runs @Nine's method.
+// call through it runs @Nine's member.
 
 // CHECK: {{^}}9{{$}}
 

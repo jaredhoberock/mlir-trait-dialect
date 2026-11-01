@@ -5,8 +5,8 @@
 
 // @Wrapped states an ordinary requirement @Mark[!T] and a quantified
 // requirement @Mark at every argument. @W returns @PB, a proof of @Blanket, for
-// the ordinary one, and its evidence method derives the quantified one from
-// @Blanket. @f calls the evidence method at its own argument; with @Blanket
+// the ordinary one, and its evidence member derives the quantified one from
+// @Blanket. @f calls the evidence member at its own argument; with @Blanket
 // the one impl of @Mark[i32], the instance runs @Blanket.
 
 // CHECK: {{^}}9{{$}}

@@ -10,8 +10,8 @@
 // the other type all pass through one generic, and what comes out is one clone
 // per type -- the mangled name reads the specialization alone.
 //
-// The trait's method is cloned once per impl for the same reason, so the two
-// i32 callers share a method clone as well as a callee clone.
+// The trait's member is cloned once per impl for the same reason, so the two
+// i32 callers share a member clone as well as a callee clone.
 
 !S = !trait.poly<0>
 

@@ -7,7 +7,7 @@
 // @E_mid's derivation, whose return projects %p2, and %p2 given @E_base's,
 // whose return is a derive. The reading meets @P_gen's requirement at @P[i64]
 // twice, but through two derivations, so it is finite: @P_gen, @E_mid, @P_gen,
-// @E_base, then a base, and @B_i64's method runs.
+// @E_base, then a base, and @B_i64's member runs.
 
 // CHECK: 7
 

@@ -8,7 +8,7 @@
 // two. The call supplies @Mark[i32] by one proof, @Nine, so the instance
 // spells the projection with it while the derive is still to be proven, and
 // the stage witnesses the projection only once the derive supplies the same
-// proof. The select's arms agree and the call runs @Nine's method.
+// proof. The select's arms agree and the call runs @Nine's member.
 // The condition is a constant: claim erasure has no rule for a select of two
 // distinct claim values, so only a select the folder removes reaches it.
 

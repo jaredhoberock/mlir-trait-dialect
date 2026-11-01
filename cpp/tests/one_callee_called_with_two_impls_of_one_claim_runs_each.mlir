@@ -4,7 +4,7 @@
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait,convert-arith-to-llvm,convert-func-to-llvm,reconcile-unrealized-casts)' | mlir-runner -e main --entry-point-result=i64 | FileCheck %s
 
 // Two calls of @g supply @Tr[i32] for different reasons: one through @One, whose
-// method answers 7, one through @Two, whose method answers 9. An instance is
+// member answers 7, one through @Two, whose member answers 9. An instance is
 // named by the evidence it is made with, so the calls reach two instances of @g
 // at one type argument, and each runs the impl its own proof selects.
 

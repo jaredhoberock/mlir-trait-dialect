@@ -43,7 +43,7 @@ func.func @main() -> i64 {
 // The same rule where two impls of @Foo bind @Foo[i8] rather than none. Both
 // bind @Out to i32, so the impl that applies at i8 is @Vector_b; a proof of
 // @Vector_a is a proof of the impl whose premise is false, and a witness of it
-// would run @Vector_a's method. The evidence the proof states for that premise
+// would run @Vector_a's member. The evidence the proof states for that premise
 // is refused where it is written.
 
 trait.trait private @Foo(!trait.claim<@Foo[!trait.poly<0>]>) assoc {Out = 0}

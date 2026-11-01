@@ -46,14 +46,14 @@ func.func private @Run.go(!trait.claim<@Run[!S]>, !S) -> i64
 // The callee's monomorphic instance keeps the equality-claim parameter on its
 // ABI even though the body ignores it: the parameter carries the evidence across
 // the call boundary, so the projection of the impl's entry that supplies it in
-// the method's clone has no other consumer and stands at the leftover check as
+// the member's clone has no other consumer and stands at the leftover check as
 // a monomorphic equality whose endpoint is a composite carrying a projection.
 func.func private @need(%v: i64, %e: !trait.claim<tuple<!trait.proj<@Inner[!S], "Item">> = tuple<i64>>) -> i64 {
   return %v : i64
 }
 
 // The closure-like impl: its where-clause carries the inherited equality; the
-// method cites it by position and forwards it as the call operand.
+// member cites it by position and forwards it as the call operand.
 trait.impl private @Run_gen(%self: !trait.claim<@Run[!S]>, %inner: !trait.claim<@Inner[!S]>, %eq: !trait.claim<tuple<!trait.proj<@Inner[!S], "Item">> = tuple<i64>>) members [@Run.go -> @Run_gen.go] {
 }
 func.func private @Run_gen.go(%self: !trait.claim<@Run[!S]>, %inner: !trait.claim<@Inner[!S]>, %eq: !trait.claim<tuple<!trait.proj<@Inner[!S], "Item">> = tuple<i64>>, %x: !S) -> i64 {

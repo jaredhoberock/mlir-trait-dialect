@@ -7,7 +7,7 @@
 // its parameter, whose impl @O returns @Nine (9) for it, while the receiver's
 // proof @H supplies its own @Wrapped[i32] through @WR, whose premise is
 // @Seven (7). The derive is proven by the proof whose body it is, over the
-// evidence its operand carries, so the derived claim's method runs @Nine's
+// evidence its operand carries, so the derived claim's member runs @Nine's
 // and the receiver's @WR decides nothing about it.
 
 // CHECK: {{^}}9{{$}}

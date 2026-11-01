@@ -7,7 +7,7 @@
 // @Wrapped_i32 returns @Nine's for @Mark[i32]. Projecting @Wrapped[i32] off a
 // claim of @Outer[i32] proven by @O9 reads @W9 there, and projecting
 // @Mark[i32] off that reads @Nine through @W9's impl, so the call runs @Nine's
-// method though @Seven also serves @Mark[i32].
+// member though @Seven also serves @Mark[i32].
 
 // CHECK-LABEL: func.func @main() -> i64
 // CHECK:         call @Nine.value_{{h[0-9a-f]+}}()

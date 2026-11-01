@@ -5,8 +5,8 @@
 
 // Two proofs of A[i64] derive it from one impl with different premises:
 // @by_one cites @B_one and @by_ten cites @B_ten. A proof is identified by its
-// body, so the method calls through the two proofs reach two instances of
-// @A_gen's method, each running the impl its proof cited: 1 + 10.
+// body, so the member calls through the two proofs reach two instances of
+// @A_gen's member, each running the impl its proof cited: 1 + 10.
 
 // CHECK: {{^}}11{{$}}
 

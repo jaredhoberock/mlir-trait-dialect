@@ -6,9 +6,9 @@
 // @Tr_impl's where clause states @Mark[i32] twice, and @P discharges entry 0
 // with @Mark_one (7) and entry 1 with @Mark_two (9). The two citations spell one
 // claim, so only their positions say which subproof each means: cut out of the
-// impl, the method gets the subproof @P names at each entry's position. One
+// impl, the member gets the subproof @P names at each entry's position. One
 // citation stands inside a nested region and the other in a second block, and
-// the method answers 10 * entry 0 + entry 1, so a citation answered by the other
+// the member answers 10 * entry 0 + entry 1, so a citation answered by the other
 // entry's subproof, or both by one, changes the result.
 
 // CHECK: {{^}}79{{$}}

@@ -7,7 +7,7 @@
 // @Nine (9) for it, while the receiver's proof @H discharges the impl's own
 // @Mark[i32] entry with @Seven (7). The call supplies @Mark[i32] by both
 // proofs, so no spelling decides the projection; its evidence is read off its
-// source by index, and the call through it runs @Nine's method.
+// source by index, and the call through it runs @Nine's member.
 
 // CHECK: {{^}}9{{$}}
 

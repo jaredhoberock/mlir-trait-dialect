@@ -5,7 +5,7 @@
 
 // @Wrapped's quantified requirement has an equality premise, which @f
 // discharges with a reflexive witness rather than a projection. The evidence
-// method @W implements derives @Mark from @Nine, the one impl of @Mark[i32],
+// member @W implements derives @Mark from @Nine, the one impl of @Mark[i32],
 // and the instance runs @Nine.
 
 // CHECK: {{^}}9{{$}}

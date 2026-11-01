@@ -5,7 +5,7 @@
 
 !T = !trait.poly<0>
 trait.trait private @Get(!trait.claim<@Get[!T]>) members [@Get.get]
-// method returns the trait's type parameter
+// member returns the trait's type parameter
 func.func private @Get.get(!trait.claim<@Get[!T]>) -> !T
 
 trait.impl private @Get_impl(%self: !trait.claim<@Get[i32]>) members [@Get.get -> @Get_impl.get] {
@@ -15,7 +15,7 @@ func.func private @Get_impl.get(%self: !trait.claim<@Get[i32]>) -> i32 {
   return %c : i32
 }
 
-// The method's declared result is the trait's parameter, so a call writes its
+// The member's declared result is the trait's parameter, so a call writes its
 // own result at the spelling that declaration gives it: @get through a claim
 // for @Get[!A] returns !A, and nothing else. Monomorphization grounds !A := i32
 // where the caller supplies it.

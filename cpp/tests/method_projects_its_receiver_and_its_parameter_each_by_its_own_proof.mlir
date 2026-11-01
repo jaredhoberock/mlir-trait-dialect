@@ -7,7 +7,7 @@
 // @Host_i32, which returns @Seven (7) for @Host's requirement, and off its
 // parameter, whose proof @W derives @Wrapped_i32, which returns @Nine (9) for
 // @Wrapped's. Each projection reads the evidence its own source's impl returns
-// at its index, so the two calls run different methods and the body answers
+// at its index, so the two calls run different members and the body answers
 // 7 * 10 + 9.
 
 // CHECK: {{^}}79{{$}}

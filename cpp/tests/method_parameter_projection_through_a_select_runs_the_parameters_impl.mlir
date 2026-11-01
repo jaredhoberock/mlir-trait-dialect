@@ -7,7 +7,7 @@
 // @Nine's witness for it, and passes the projection through a select of itself,
 // while the receiver's proof @H discharges the impl's own @Mark[i32] entry with
 // @Seven. The select hands back the value its arms supply, so the call through
-// it runs @Nine's method, whatever the receiver supplies for the same claim.
+// it runs @Nine's member, whatever the receiver supplies for the same claim.
 
 // CHECK: {{^}}9{{$}}
 

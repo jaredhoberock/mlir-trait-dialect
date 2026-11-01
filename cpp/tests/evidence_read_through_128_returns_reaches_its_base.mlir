@@ -6,7 +6,7 @@
 // Requirement evidence read through one hundred and twenty-eight returns, each
 // a projection of the next impl's, to the one-hundred-and-twenty-ninth, which
 // returns a witness: the evidence has a base, however long the reading, and
-// @Base's method runs.
+// @Base's member runs.
 
 // CHECK: 7
 

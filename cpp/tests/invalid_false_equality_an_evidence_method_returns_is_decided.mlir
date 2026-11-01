@@ -3,7 +3,7 @@
 
 // RUN: not mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' 2>&1 | FileCheck %s
 
-// @I's method @eq computes evidence for i32 = i64 by an allegation, and main
+// @I's member @eq computes evidence for i32 = i64 by an allegation, and main
 // cites what a call of it returns in an identity coerce. The coerce settles at
 // once, and the call, which computes evidence, stands although nothing reads
 // it: it is replaced by @eq's body, so the allegation stands where the call

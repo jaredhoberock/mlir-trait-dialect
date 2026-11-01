@@ -29,7 +29,7 @@ func.func @test_mono(%x: i32) -> i32 {
 }
 
 // Polymorphic allege is left intact (deferred).
-// The allege is used by a method call to prevent DCE.
+// The allege is used by a member call to prevent DCE.
 // CHECK: func.func @test_poly
 !T2 = !trait.poly<2>
 func.func @test_poly(%x: !T2) -> i32 {

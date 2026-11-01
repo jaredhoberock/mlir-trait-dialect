@@ -7,7 +7,7 @@
 // !Acc is, is its where-clause equality. Discharging that premise at selection
 // is what assigns it -- @Out[i32]::Output resolves to i64, so !Acc is i64 --
 // and only then is the candidate's argument list complete enough to specialize
-// its associated-type binding and its method.
+// its associated-type binding and its member.
 
 !F = !trait.poly<0>
 

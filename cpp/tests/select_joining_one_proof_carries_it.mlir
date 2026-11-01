@@ -8,7 +8,7 @@
 // @Two, though @One proves @Bound[i64] too, spelled plainly in @pick and
 // through the projection !P, which resolves to i64, in @pick_projected. A
 // select's result repeats what it chooses between when the two agree, so it
-// carries their proof and the method called through it runs @Two's; selection,
+// carries their proof and the member called through it runs @Two's; selection,
 // which would meet two impls, is never asked for it, and the select leaves
 // with its claim at erasure.
 

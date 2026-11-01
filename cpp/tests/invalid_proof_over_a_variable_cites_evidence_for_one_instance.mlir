@@ -7,7 +7,7 @@
 // evidence it returns for its requirement must stand for every instance too.
 // @A_i64 is evidence at one instance, and a witness of @B_blanket at another
 // one would dispatch its requirement through it: @B[i32]::@b would call
-// @A_i64's method where @A_i32's is the impl for i32.
+// @A_i64's member where @A_i32's is the impl for i32.
 
 trait.trait private @A(!trait.claim<@A[!trait.poly<0>]>) members [@A.a]
 func.func private @A.a(!trait.claim<@A[!trait.poly<0>]>) -> i64

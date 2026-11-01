@@ -5,7 +5,7 @@
 
 // @Wrapped's quantified requirement has an equality premise, which @f
 // discharges with a projection of @Wrapped's equality requirement. The call
-// supplies @Mark[i32] by @PN to another parameter; the evidence method @W
+// supplies @Mark[i32] by @PN to another parameter; the evidence member @W
 // implements derives @Mark from @Nine, and the instance runs @Nine.
 
 // CHECK: {{^}}9{{$}}

@@ -3,7 +3,7 @@
 
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' -verify-diagnostics
 
-// A generic impl's method meets the trait's spelling @S[i64]::Out by an
+// A generic impl's member meets the trait's spelling @S[i64]::Out by an
 // equality it alleges at the impl's parameter, which only an instance can
 // decide. The proof's claim is such an instance: at T = i64 the allegation
 // reads i64 = @S[i64]::Out, which @S_i64 resolves to i1, so the instance is

@@ -6,7 +6,7 @@
 // @A_gen returns its trait's requirement @C[T] as a derive of @C_via_B over its
 // where argument. Projecting the requirement off @PA, whose premise is @B_x,
 // reads that derive by position and proves it by the proof whose body it is,
-// @C_via_B over @B_x: the call runs @B_x's method through it and prints 1,
+// @C_via_B over @B_x: the call runs @B_x's member through it and prints 1,
 // although @C_i64 also implements @C[i64] and @B_y implements @B[i64].
 
 // CHECK: {{^}}1{{$}}

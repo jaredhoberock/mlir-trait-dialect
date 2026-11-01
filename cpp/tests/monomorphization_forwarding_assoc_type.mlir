@@ -20,7 +20,7 @@
 //   fn method(self: tuple<U>) -> Inner[U]::Assoc { ... }
 // }
 //
-// The forwarding impl's method signature, after substituting Self=tuple<U>,
+// The forwarding impl's member signature, after substituting Self=tuple<U>,
 // has return type Outer[tuple<U>]::Assoc. The verifier must resolve this
 // to Inner[U]::Assoc (via the impl's own binding) even though tuple<U>
 // is polymorphic.

@@ -4,7 +4,7 @@
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' | FileCheck %s
 
 // The counterpart: one proof name in two modules standing over two different
-// claims. Each module's @p proves its own application, and the method each call
+// claims. Each module's @p proves its own application, and the member each call
 // reaches is its own module's.
 
 trait.trait private @A(!trait.claim<@A[!trait.poly<0>]>)

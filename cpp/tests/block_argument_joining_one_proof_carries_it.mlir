@@ -5,7 +5,7 @@
 
 // Two predecessors pass a block @Need[i64] derived over @Two, though @One
 // proves @Bound[i64] too. A block's argument repeats what its predecessors
-// pass when they agree, so it carries their proof and the method called
+// pass when they agree, so it carries their proof and the member called
 // through it runs @Two's; selection, which would meet two impls, is never
 // asked for it.
 

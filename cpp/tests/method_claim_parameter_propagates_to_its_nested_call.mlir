@@ -3,7 +3,7 @@
 
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' 2>&1 | FileCheck %s
 
-// The selected Choose method takes a Convert claim as a parameter. Propagating
+// The selected Choose member takes a Convert claim as a parameter. Propagating
 // its proof must keep the function signature and body consistent and let the
 // nested convert call lower.
 

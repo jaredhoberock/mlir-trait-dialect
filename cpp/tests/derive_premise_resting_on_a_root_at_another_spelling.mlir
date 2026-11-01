@@ -7,7 +7,7 @@
 // @Trait[i64]::Output rather than at i64, the spelling the derive's where entry
 // resolves to. The proof the stage writes for the derive names the root and
 // respells it to the entry in its own body, as every witness in a proof's body
-// names a root, and the method the derive's impl calls through that premise
+// names a root, and the member the derive's impl calls through that premise
 // runs @Bound_i64's. The row pins a shape, not a change: the stage ran it as
 // well before transcription cited a premise's root.
 

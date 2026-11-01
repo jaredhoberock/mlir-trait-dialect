@@ -1180,7 +1180,7 @@ static SmallVector<EqualityReading> getEqualityReadings(ImplOp impl) {
 /// so a parameter standing only inside one is not constrained by it. Every
 /// constrained parameter is one `readTypeArgumentsFor` reads off a demanded
 /// application, so each use of the impl names one instance of it; a parameter
-/// nothing constrains would leave the impl's methods and associated-type
+/// nothing constrains would leave the impl's members and associated-type
 /// bindings spelling a variable selection never assigns.
 static LogicalResult verifyImplParametersAreConstrained(ImplOp impl) {
   // The parameters the self application determines: those standing somewhere in

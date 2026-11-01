@@ -10,7 +10,7 @@
 // "Sub">]. An impl binding Sub to its own self type proves that requirement
 // with its own witness, which reads back to the claim the impl proves. Proving
 // @Rec[i64] cites the impl without descending into the requirement, and the
-// instances lower to the impls' methods.
+// instances lower to the impls' members.
 
 !S = !trait.poly<0>
 trait.trait private @Rec(!trait.claim<@Rec[!S]>) -> !trait.claim<@Rec[!trait.proj<@Rec[!S], "Sub">]> assoc {Sub = 0} members [@Rec.id]

@@ -3,10 +3,10 @@
 
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' | FileCheck %s
 
-// An impl's evidence method for a quantified requirement alleges the
-// requirement at its binding, and the use that calls the method proves the
-// allegation at the method's instance by selection: the impl of `@Rule` at the
-// binding's type serves the method call.
+// An impl's evidence member for a quantified requirement alleges the
+// requirement at its binding, and the use that calls the member proves the
+// allegation at the member's instance by selection: the impl of `@Rule` at the
+// binding's type serves the member call.
 
 !S = !trait.poly<0>
 !X = !trait.poly<1>

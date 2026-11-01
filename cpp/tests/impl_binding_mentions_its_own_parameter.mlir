@@ -4,12 +4,12 @@
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(monomorphize-trait)' | FileCheck %s
 
 // The impl's associated type binding is spelled over the impl's own parameter,
-// which carries the same label as the trait's self, and the method the trait
+// which carries the same label as the trait's self, and the member the trait
 // declares returns the projection that binding answers. The impl's own
 // obligations are read through what its self claim says its parameters take --
 // poly<0> is poly<0> there -- and not through the trait-to-impl substitution,
 // which would rewrite the binding into tuple<poly<0>> and leave the impl's copy
-// of the method disagreeing with the trait's declaration.
+// of the member disagreeing with the trait's declaration.
 
 trait.trait private @Tr(!trait.claim<@Tr[!trait.poly<0>]>) assoc {X = 0} members [@Tr.f]
 func.func private @Tr.f(!trait.claim<@Tr[!trait.poly<0>]>, !trait.poly<0>) -> !trait.proj<@Tr[!trait.poly<0>], "X">
