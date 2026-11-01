@@ -32,8 +32,10 @@ bool readsGroundHeadProjection(ProjectionType proj) {
 
 bool isTemplateSignature(FunctionType type, bool hasBody) {
   // A parameter taking an unproven application claim is read off the input
-  // itself: the claims a function assumes are its own parameters, never parts
-  // of another type. It is the cheaper reading, so it is asked first.
+  // itself. The rule reads top-level inputs only, by choice: a bodied function
+  // taking an unproven monomorphic claim nested in another type, a tuple of
+  // claims, is no template, and erasure refuses the claim as an unproven
+  // monomorphic claim. It is the cheaper reading, so it is asked first.
   if (hasBody && llvm::any_of(type.getInputs(), [](Type input) {
         auto claim = dyn_cast<ClaimType>(input);
         return claim && claim.isApplication() && !claim.isProven();
