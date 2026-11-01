@@ -1252,16 +1252,10 @@ static void walkStandingSites(Operation *op,
     }
     visitType(Value(), held.getValue());
   };
-  // The attributes are read where they are stored, an op's properties holding
-  // its inherent ones, rather than gathered into one dictionary per read.
-  for (NamedAttribute attribute : op->getRawDictionaryAttrs())
-    walkHeldTypes(attribute.getValue(), visitHeld);
-  if (op->getPropertiesStorageSize())
-    if (std::optional<RegisteredOperationName> name = op->getRegisteredInfo())
-      for (StringAttr inherent : name->getAttributeNames())
-        if (std::optional<Attribute> value = op->getInherentAttr(inherent);
-            value && *value)
-          walkHeldTypes(*value, visitHeld);
+  walkStoredAttributes(op, [&](Attribute attribute) {
+    walkHeldTypes(attribute, visitHeld);
+    return WalkResult::advance();
+  });
 }
 
 /// Where a diagnostic about a standing site of `op` stands: at the value
@@ -2619,7 +2613,7 @@ TypeConverter makeErasePolymorphsConverter() {
 /// selects erasure for an op the pass leaves as it stands.
 static bool erasureRewrites(Operation *op) {
   return isa<AllegeOp, DeriveOp, ProjectOp, WitnessOp, CoerceOp>(op) ||
-         opMentionsType<ClaimType>(op) || opMentionsType<ProjectionType>(op);
+         opMentionsType<ClaimType, ProjectionType>(op);
 }
 
 void populateErasePolymorphsLegality(ConversionTarget &target) {
@@ -2640,8 +2634,7 @@ void populateErasePolymorphsLegality(ConversionTarget &target) {
     // which its entry block receives; a later block's arguments are converted
     // with the branches that reach it (upstream's structural conversions).
     return llvm::none_of(func->getAttrs(), [](NamedAttribute attr) {
-      return containsType<ClaimType>(attr.getValue()) ||
-             containsType<ProjectionType>(attr.getValue());
+      return containsType<ClaimType, ProjectionType>(attr.getValue());
     });
   });
   target.markOpRecursivelyLegal<func::FuncOp>([](Operation *op) {
@@ -2662,15 +2655,15 @@ void populateInstantiateMonomorphsReadiness(ConversionTarget &target) {
   // Legal unless pending instantiation. Nothing inside a template is pending --
   // it is judged in the clone that instantiates it -- so a template is legal
   // and recursively legal, answered from its declaration (`isTemplate`), and
-  // the readiness walk does not enter it.
-  auto notPending = [](Operation *op) -> std::optional<bool> {
+  // the readiness walk does not enter it. The driver builds the target at each
+  // boundary and asks it about the module as it stands there
+  // (LoweringContribution.hpp), so one symbol-table collection serves every
+  // ask.
+  auto symbolTable = std::make_shared<SymbolTableCollection>();
+  auto notPending = [symbolTable](Operation *op) -> std::optional<bool> {
     if (isTemplate(op))
       return true;
-    // The driver asks op by op over a module its steps rewrite between asks,
-    // so a table kept across asks would go stale; the collection built here
-    // reads the module once, and only where this op is a call it reads.
-    SymbolTableCollection symbolTable;
-    return !isPendingOp(op, symbolTable);
+    return !isPendingOp(op, *symbolTable);
   };
   target.markUnknownOpDynamicallyLegal(notPending);
   target.addLegalOp<TraitOp, ImplOp, ProofOp>();
@@ -2687,8 +2680,11 @@ void populateErasePolymorphsReadiness(ConversionTarget &target) {
   // while instantiate owes anything and the two steps never share a batch.
   // Otherwise erase has work where a template stands, which it runs to cut,
   // and exactly where the pass's own target finds an op it rewrites
-  // (`erasureRewrites`).
-  target.markUnknownOpDynamicallyLegal([](Operation *op) -> std::optional<bool> {
+  // (`erasureRewrites`). The driver builds the target at each boundary and
+  // asks it about the module as it stands there (LoweringContribution.hpp), so
+  // one symbol-table collection serves every ask.
+  auto symbolTable = std::make_shared<SymbolTableCollection>();
+  target.markUnknownOpDynamicallyLegal([symbolTable](Operation *op) -> std::optional<bool> {
     // A template is never pending, so it is erase's work, answered from its
     // declaration (`isTemplate`).
     if (isTemplate(op))
@@ -2703,11 +2699,7 @@ void populateErasePolymorphsReadiness(ConversionTarget &target) {
     // instantiates it -- so none of its sites is read there.
     if (isForeign(op))
       return !rewrites;
-    // The driver asks op by op over a module its steps rewrite between asks,
-    // so a table kept across asks would go stale; the collection built here
-    // reads the module once, and only where this op is a call it reads.
-    SymbolTableCollection symbolTable;
-    if (isPendingOp(op, symbolTable))
+    if (isPendingOp(op, *symbolTable))
       return std::nullopt;
     return !rewrites;
   });

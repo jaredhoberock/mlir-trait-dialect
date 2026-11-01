@@ -307,13 +307,13 @@ private:
   ProjectionBindings projectionBindings;
 };
 
-// Whether any occurrence of NeedleType is reachable in `ty`. An equality
-// claim's endpoints are ordinary sub-elements, so the structural walk reaches a
-// needle standing inside one.
-template<class NeedleType> bool containsType(Type ty) {
+// Whether an occurrence of any of NeedleTypes is reachable in `ty`, read in one
+// walk that stops at the first. An equality claim's endpoints are ordinary
+// sub-elements, so the structural walk reaches a needle standing inside one.
+template<class... NeedleTypes> bool containsType(Type ty) {
   return ty.walk([](Type sub) {
-             return isa<NeedleType>(sub) ? WalkResult::interrupt()
-                                         : WalkResult::advance();
+             return isa<NeedleTypes...>(sub) ? WalkResult::interrupt()
+                                             : WalkResult::advance();
            }).wasInterrupted();
 }
 
@@ -605,42 +605,54 @@ private:
   SmallVector<unsigned> parent;
 };
 
-// this walks an Attribute and looks for any occurrence of the given NeedleType
-template<class NeedleType> bool containsType(Attribute attr) {
+// this walks an Attribute and looks for any occurrence of the given NeedleTypes
+template<class... NeedleTypes> bool containsType(Attribute attr) {
   bool found = false;
   attr.walk([&](Attribute sub) {
     if (auto ta = dyn_cast<TypeAttr>(sub)) {
-      if (containsType<NeedleType>(ta.getValue()))
+      if (containsType<NeedleTypes...>(ta.getValue()))
         found = true;
     }
   });
   return found;
 }
 
-// this walks an Operation and looks for any occurrence of the given NeedleType
-// note that this search does not recurse into child operations
-template<class NeedleType> bool opMentionsType(Operation *op) {
-  // inspect operands
-  for (Type t : op->getOperandTypes())
-    if (containsType<NeedleType>(t)) return true;
+/// Visits each attribute of `op` where it is stored -- the discardable ones in
+/// its dictionary and, for an op holding properties, the inherent ones there --
+/// rather than gathering both into one dictionary per read; stops where `visit`
+/// interrupts.
+inline WalkResult
+walkStoredAttributes(Operation *op,
+                     llvm::function_ref<WalkResult(Attribute)> visit) {
+  for (NamedAttribute attribute : op->getRawDictionaryAttrs())
+    if (visit(attribute.getValue()).wasInterrupted())
+      return WalkResult::interrupt();
+  if (op->getPropertiesStorageSize())
+    if (std::optional<RegisteredOperationName> name = op->getRegisteredInfo())
+      for (StringAttr inherent : name->getAttributeNames())
+        if (std::optional<Attribute> value = op->getInherentAttr(inherent);
+            value && *value && visit(*value).wasInterrupted())
+          return WalkResult::interrupt();
+  return WalkResult::advance();
+}
 
-  // inspect result types
-  for (Type t : op->getResultTypes())
-    if (containsType<NeedleType>(t)) return true;
-
-  // inspect block arguments
-  for (Region& r : op->getRegions())
-    for (Block& b : r)
-      for (Value arg : b.getArguments())
-        if (containsType<NeedleType>(arg.getType()))
-          return true;
-
-  // inspect attributes
-  for (NamedAttribute attr : op->getAttrs())
-    if (containsType<NeedleType>(attr.getValue()))
-      return true;
-
-  return false;
+// Whether `op` mentions any of NeedleTypes in an operand, a result, a block
+// argument of one of its regions or an attribute (`walkStoredAttributes`),
+// each type read in one walk for every needle. The search does not recurse
+// into child operations.
+template<class... NeedleTypes> bool opMentionsType(Operation *op) {
+  auto mentions = [](Type t) { return containsType<NeedleTypes...>(t); };
+  if (llvm::any_of(op->getOperandTypes(), mentions) ||
+      llvm::any_of(op->getResultTypes(), mentions))
+    return true;
+  for (Region &r : op->getRegions())
+    for (Block &b : r)
+      if (llvm::any_of(b.getArgumentTypes(), mentions))
+        return true;
+  return walkStoredAttributes(op, [](Attribute attr) {
+           return containsType<NeedleTypes...>(attr) ? WalkResult::interrupt()
+                                                     : WalkResult::advance();
+         }).wasInterrupted();
 }
 
 /// Collects distinct generic types appearing anywhere in `ty`, in the order a
