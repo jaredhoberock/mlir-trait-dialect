@@ -803,9 +803,6 @@ agreeInOwnContext(ImplOp impl, Type expected, Type actual,
     hypotheses.push_back(
         TypeEqualityAttr::get(impl.getContext(), *left, *right));
   }
-  // Two sides that are one type are one class of any closure.
-  if (equalModuloProofs(*lhs, *rhs))
-    return true;
   return entailedByGroundCongruence(stripClaimProofs(*lhs),
                                     stripClaimProofs(*rhs), hypotheses);
 }

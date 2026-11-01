@@ -268,6 +268,14 @@ private:
 // are ever stored.
 bool mlir::trait::entailedByGroundCongruence(Type lhs, Type rhs,
                                              ArrayRef<TypeEqualityAttr> premises) {
+  // One type is one class, and a premise relating the two unites theirs when
+  // it is seeded; the closure only unites further, so neither needs closing.
+  if (lhs == rhs)
+    return true;
+  for (TypeEqualityAttr eq : premises)
+    if ((eq.getLhs() == lhs && eq.getRhs() == rhs) ||
+        (eq.getLhs() == rhs && eq.getRhs() == lhs))
+      return true;
   GroundCongruence closure;
   closure.intern(lhs);
   closure.intern(rhs);
