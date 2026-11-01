@@ -84,36 +84,19 @@ Type evidenceTypeOf(Value value);
 /// shape, a memref's layout and memory space, a trait or associated-type name.
 /// Two types denote the same constructor exactly when their keys are equal, so
 /// distinct constructors never share a key and congruence over the children is
-/// sound.
-///
-/// A claim, a projection and a function type are keyed by the interned
-/// attributes and the counts they already hold, so naming their constructor
-/// mints nothing. Every other type is keyed by `type`.
+/// sound. A claim, a projection and a function type are keyed by the attributes
+/// and counts they hold, so naming their constructor mints nothing; every other
+/// type by its shell (`decomposeTerm`).
 struct TermKey {
-  enum class Kind : uint8_t {
-    /// Any type not listed below, keyed by `type`.
-    Type,
-    /// A function type, keyed by its input count in `split`.
-    Function,
-    /// An application claim, keyed by its trait; the proof is no part of it.
-    Application,
-    /// An equality claim.
-    Equality,
-    /// A projection, keyed by its trait, its associated type and its
-    /// associated-type argument count in `split`.
-    Projection,
-  };
-
+  enum class Kind : uint8_t { Type, Function, Application, Equality, Projection };
   Kind kind = Kind::Type;
-  /// For `Type`: the type rebuilt with numbered placeholders for its type
-  /// children -- its shell, which holds the full non-child storage by
-  /// construction -- or the type itself where it has no type child, is a
-  /// parameter occurrence, or its constructor declines the placeholders.
+  /// A `Type` kind's shell, or the type itself where it has none.
   Type type;
-  /// The trait an application claim or a projection names.
-  Attribute trait;
-  /// The associated type a projection names.
-  Attribute associatedType;
+  /// The trait an application claim or a projection names, and the associated
+  /// type a projection names.
+  Attribute trait, associatedType;
+  /// A function type's input count, a projection's associated-type argument
+  /// count.
   unsigned split = 0;
 
   /// Whether the key names a type constructor, which may normalize its
@@ -121,7 +104,6 @@ struct TermKey {
   bool isTypeConstructor() const {
     return kind == Kind::Type || kind == Kind::Function;
   }
-
   bool operator==(const TermKey &other) const {
     return kind == other.kind && type == other.type && trait == other.trait &&
            associatedType == other.associatedType && split == other.split;
