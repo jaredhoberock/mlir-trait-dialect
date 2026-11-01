@@ -3,13 +3,13 @@
 
 // RUN: not mlir-opt %s 2>&1 | FileCheck %s
 
-// Two module-level symbols named @dup, beside an impl whose member body carries
-// a claim. The impl is a symbol table of its own, so the verifier reaches it
-// first and the claim resolves its trait name in the module around it -- a
-// module whose own names have not been checked yet. That read is a scan of the
-// module, and a scan reports what it found. Indexing the module instead would
-// abort on the very duplicate standing here, in place of the diagnostic naming
-// it.
+// Two module-level symbols named @dup, beside a trait, an impl and the impl's
+// member function, whose signature carries a claim. None of them is a symbol
+// table and none of their own verifiers reads a symbol: the claims' trait names
+// are read in the module's symbol-use walk, which MLIR begins only once the
+// module's own names are checked, so the duplicate is diagnosed by name. A
+// verifier that indexed the module before that check would abort on the very
+// duplicate standing here, in place of the diagnostic naming it.
 
 // CHECK: error: redefinition of symbol named 'dup'
 func.func private @dup() { return }

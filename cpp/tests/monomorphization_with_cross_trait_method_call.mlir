@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 
-// RUN: mlir-opt -pass-pipeline='builtin.module(monomorphize-trait)' %s | FileCheck %s
+// RUN: mlir-opt -pass-pipeline='builtin.module(monomorphize-trait)' %s | FileCheck %s --implicit-check-not=trait.
+
+// No trait op remains anywhere in the output: the implicit check reads every
+// line, where a CHECK-NOT after the last match reads only the lines below it.
 
 trait.trait private @A(!trait.claim<@A[!trait.poly<0>]>) members [@A.a]
 func.func private @A.a(!trait.claim<@A[!trait.poly<0>]>, !trait.poly<0>) -> i1
@@ -17,7 +20,7 @@ trait.impl private @B_impl_i1(%self: !trait.claim<@B[i1]>) members [@B.b -> @B_i
 func.func private @B_impl_i1.b(%self: !trait.claim<@B[i1]>, %arg0: i1) -> i1 {
   %a = trait.allege @A[i1]
 
-  // test that we are able to trait.method.call
+  // test that we are able to trait.func.call
   // from inside a member to another trait
   %res = trait.func.call @A.a(%a, %arg0) : (!trait.claim<@A[i1]>, i1) -> i1
   return %res : i1
@@ -38,10 +41,3 @@ func.func @test(%arg0 : i1) -> i1 {
 // Top-level test calls B_impl_i1_b
 // CHECK: func.func @test(
 // CHECK: call @B_impl_i1.b_{{h[0-9a-f]+}}
-
-// No trait ops should remain
-// CHECK-NOT: trait.trait
-// CHECK-NOT: trait.impl
-// CHECK-NOT: trait.method.call
-// CHECK-NOT: trait.func.call
-// CHECK-NOT: trait.allege

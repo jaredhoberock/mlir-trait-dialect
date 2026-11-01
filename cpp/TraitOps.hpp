@@ -298,8 +298,8 @@ void allegeRequirements(ImplOp impl, TraitOp trait, OpBuilder &builder);
 /// with the trait's self claim dropped, instantiated at the impl's arguments,
 /// read through the impl's own bindings and where equalities (rustc's
 /// `compare_impl_method`). A member the impl pairs with nothing is left to the
-/// trait's default, the trait's own, and is not compared. No pass rewrites a template, so the comparison is
-/// made once, on the module as written, where the stage begins
+/// trait's default and is not compared. No pass rewrites a template, so the
+/// comparison is made once, on the module as written, where the stage begins
 /// (`verifyAcyclicTraits`); the impl's own verifier checks the pairs' shape.
 LogicalResult verifyImplMemberSignatures(ImplOp impl, TraitOp trait,
                                          SymbolTableCollection &symbolTable);

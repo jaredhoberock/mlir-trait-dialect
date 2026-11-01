@@ -159,14 +159,15 @@ void nameDeclarationArguments(Region &body, OpAsmSetValueNameFn setNameFn) {
 /// Generics supplied by the caller are treated as already determined. Every
 /// other generic in a result must also appear in an input type, including
 /// claim inputs that encode ordinary where-clause evidence and a trait
-/// member's leading self claim, whose arguments are the trait's parameters. Otherwise function monomorphization has no
-/// source of evidence for choosing that result type. A claim result is the one
-/// exception: a call of the function states its result types, and a claim it
-/// returns is evidence the stage proves where the call is monomorphic rather
-/// than an instance it cuts, so a generic only a claim result spells is
-/// determined by the call that spells it. This is intentionally a syntactic
-/// check: the verifier does not try to invert equality predicates or
-/// associated-type bindings to recover missing result generics.
+/// member's leading self claim, whose arguments are the trait's parameters.
+/// Otherwise function monomorphization has no source of evidence for choosing
+/// that result type. A claim result is the one exception: a call of the
+/// function states its result types, and a claim it returns is evidence the
+/// stage proves where the call is monomorphic rather than an instance it cuts,
+/// so a generic only a claim result states is determined by the call that
+/// states it. This is intentionally a syntactic check: the verifier does not
+/// try to invert equality predicates or associated-type bindings to recover
+/// missing result generics.
 static LogicalResult verifyFunctionResultGenericsAreDetermined(
     FunctionOpInterface function, FunctionType functionType,
     const DenseSet<Type> &providedGenerics) {

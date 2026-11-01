@@ -116,9 +116,9 @@ include "TraitTypes.td"
 // but an impl may not return a projection of its own application, which
 // would read the very return it stands in (GHC's rule for instance
 // superclasses); and an op in an impl's body takes only the impl's where
-// arguments as hypotheses, never its own application.  A proof is identified by its impl, its application and the proof each premise
-// names: one standing with that body answers wherever the stage would write
-// it.
+// arguments as hypotheses, never its own application. A proof is identified
+// by its impl, its application and the proof each premise names: one standing
+// with that body answers wherever the stage would write it.
 //
 //===----------------------------------------------------------------------===//
 

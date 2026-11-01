@@ -406,6 +406,7 @@ pub fn bind_associated_type<'c>(impl_op: OperationRef<'c, '_>, name: &str, ty: T
 /// naming each member a trait declares and each function an impl implements
 /// one by.
 pub fn member_symbol(owner: &str, name: &str) -> String {
+    /// Copies the symbol the dialect prints into the `String` `symbol` points at.
     unsafe extern "C" fn set(text: MlirStringRef, symbol: *mut std::ffi::c_void) {
         unsafe { *(symbol as *mut String) = context_string(text) }
     }

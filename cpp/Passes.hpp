@@ -21,8 +21,9 @@ bool isRewritableGenericCall(Operation *op, SymbolTableCollection &symbolTable);
 
 /// Whether `op` is foreign code this compilation carries to no target: a
 /// template (a trait, impl, or proof declaration, or a function the template
-/// rule names one, `isTemplateSignature`) or code inside one. The readiness and leftover discipline reads
-/// this so it never serves or judges what leaves with a template.
+/// rule names one, `isTemplateSignature`) or code inside one. The readiness
+/// and leftover discipline reads this so it never serves or judges what leaves
+/// with a template.
 bool isForeign(Operation *op);
 
 /// Whether `op` outside a template is still pending instantiation: a rewritable

@@ -53,7 +53,7 @@ TermShape mlir::trait::decomposeTerm(Type t) {
   }
   // A function type's shell is the function type of its arity split at the
   // placeholders: its constructor takes any inputs and results and normalizes
-  // none, so the split is the whole of its non-child storage.
+  // none, so the split is its one parameter besides its children.
   if (auto function = dyn_cast<FunctionType>(t)) {
     s.key.kind = TermKey::Kind::Function;
     s.key.split = function.getNumInputs();

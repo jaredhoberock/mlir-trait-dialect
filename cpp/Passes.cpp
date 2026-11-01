@@ -154,7 +154,7 @@ static bool isGenericSymbolDeclaration(Operation *op) {
 
 /// True when `op` is itself a generic template: a trait, impl, or proof
 /// declaration, a function the template rule names one
-/// (`isTemplateSignature`), or any other symbol declaration whose spelling
+/// (`isTemplateSignature`), or any other symbol declaration whose written type
 /// still carries a generic type. Instantiation carries a template to no
 /// target; it dies when its concrete instances are cloned. The shell op is a
 /// template too, so this answers true for the declaration itself, not only for
