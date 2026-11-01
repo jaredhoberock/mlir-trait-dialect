@@ -1230,18 +1230,6 @@ def FuncCallOp : TraitDialectOp<"func.call", [
                                                   const CallSubstitution &subst,
                                                   llvm::function_ref<FailureOr<ClaimType>(ClaimType, ClaimType)> respell);
 
-    /// The type arguments this call supplies for its callee's parameters, once
-    /// the callee's signature instantiated at them is the signature spelled
-    /// here. The projection bindings that close it are asked of impl selection
-    /// when the call is lowered.
-    ///
-    /// `selection` resolves a type's projections through the stage's impl
-    /// selection, which is all the stage reads both signatures through. A
-    /// verifier passes none and compares the two signatures as written.
-    FailureOr<SpecializationMap> buildParameterSpecialization(SymbolTableCollection &symbolTable,
-                                                              llvm::function_ref<Type(Type)> selection,
-                                                              llvm::function_ref<InFlightDiagnostic()> err = nullptr);
-
     // The type parameters the callee's signature binds: the labels below the
     // bound it spells, a label being a position in the declaration.
     SmallVector<GenericTypeInterface, 4> getCalleeTypeParams(SymbolTableCollection &symbolTable) {

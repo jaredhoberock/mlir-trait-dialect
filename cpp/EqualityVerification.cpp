@@ -292,8 +292,30 @@ Type mlir::trait::stripClaimProofs(Type type) {
   return strip.replace(type);
 }
 
+bool mlir::trait::equalModuloProofs(Type lhs, Type rhs) {
+  if (lhs == rhs)
+    return true;
+  // A claim stripped of its proof is the claim of its predicate alone.
+  auto lhsClaim = dyn_cast<ClaimType>(lhs);
+  auto rhsClaim = dyn_cast<ClaimType>(rhs);
+  if (lhsClaim && rhsClaim)
+    return lhsClaim.getPredicate() == rhsClaim.getPredicate();
+  // A function type is stripped position by position and its constructor
+  // normalizes nothing, so two are one stripped where their positions are.
+  auto lhsFunction = dyn_cast<FunctionType>(lhs);
+  auto rhsFunction = dyn_cast<FunctionType>(rhs);
+  if (lhsFunction && rhsFunction)
+    return lhsFunction.getNumInputs() == rhsFunction.getNumInputs() &&
+           lhsFunction.getNumResults() == rhsFunction.getNumResults() &&
+           llvm::all_of_zip(lhsFunction.getInputs(), rhsFunction.getInputs(),
+                            equalModuloProofs) &&
+           llvm::all_of_zip(lhsFunction.getResults(), rhsFunction.getResults(),
+                            equalModuloProofs);
+  return stripClaimProofs(lhs) == stripClaimProofs(rhs);
+}
+
 bool mlir::trait::settles(Type view, Type spelled) {
   return view != spelled && !carriesUndischargedObligation(view) &&
-         stripClaimProofs(view) == stripClaimProofs(spelled);
+         equalModuloProofs(view, spelled);
 }
 

@@ -723,14 +723,22 @@ unsigned getLabelBound(ArrayRef<Type> spellings) {
   return bound;
 }
 
+BitVector getSpelledLabels(ArrayRef<Type> spellings) {
+  BitVector labels;
+  for (Type ty : spellings)
+    forEachLabel(ty, [&](unsigned label) {
+      if (label >= labels.size())
+        labels.resize(label + 1);
+      labels.set(label);
+    });
+  return labels;
+}
+
 std::optional<unsigned> findSkippedLabel(ArrayRef<Type> spellings,
                                          unsigned first) {
-  llvm::SmallDenseSet<unsigned, 8> labels;
-  for (Type ty : spellings)
-    forEachLabel(ty, [&](unsigned label) { labels.insert(label); });
-  unsigned bound = std::max(first, getLabelBound(spellings));
-  for (unsigned label = first; label < bound; ++label)
-    if (!labels.contains(label))
+  BitVector labels = getSpelledLabels(spellings);
+  for (unsigned label = first; label < labels.size(); ++label)
+    if (!labels.test(label))
       return label;
   return std::nullopt;
 }
@@ -829,10 +837,12 @@ void extractTypeArguments(Type formal, Type actual, TypeArguments &args) {
 LogicalResult verifyEqualAfterInstantiation(
     Type formal, const SpecializationMap &args, Type actual,
     Normalizer normalize, llvm::function_ref<InFlightDiagnostic()> err) {
-  Type rebuilt = stripClaimProofs(instantiate(formal, args));
-  Type wanted = stripClaimProofs(actual);
-  if (rebuilt == wanted)
+  // A substitution binding nothing leaves the declaration as written.
+  Type instantiated = args.bindingCount() ? instantiate(formal, args) : formal;
+  if (equalModuloProofs(instantiated, actual))
     return success();
+  Type rebuilt = stripClaimProofs(instantiated);
+  Type wanted = stripClaimProofs(actual);
   if (normalize) {
     FailureOr<Type> normalizedRebuilt = normalize(rebuilt);
     if (failed(normalizedRebuilt))

@@ -2239,11 +2239,10 @@ static LogicalResult verifyPremisesSuppliedByPosition(
                    << supplied.size();
   for (auto [position, pair] : llvm::enumerate(llvm::zip(supplied, expected))) {
     auto [operand, premise] = pair;
-    Type claim = stripClaimProofs(operand.getType());
-    if (claim != Type(premise))
+    if (!equalModuloProofs(operand.getType(), premise))
       return errFn() << "premise " << position << " of " << owner << " is "
                      << premise << ", and the " << supplier << " supplies "
-                     << claim;
+                     << stripClaimProofs(operand.getType());
   }
   return success();
 }
@@ -2580,38 +2579,30 @@ LogicalResult FuncCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     return emitOpError() << "requires a 'callee_name' symbol reference attribute";
 
   auto errFn = [&] { return emitOpError(); };
+  auto callee = getCallee(symbolTable, errFn);
+  if (failed(callee))
+    return failure();
 
   // A free function's labels are its parameters' positions, so a signature
   // skipping one binds a parameter no call determines: the callee is refused
   // where it is declared, naming the label it skips.
-  auto callee = getCallee(symbolTable, errFn);
-  if (failed(callee))
-    return failure();
-  Type signature = callee->getFunctionType();
-  if (std::optional<unsigned> skipped = findSkippedLabel(signature, 0))
+  FunctionType formal = callee->getFunctionType();
+  BitVector labels = getSpelledLabels(Type(formal));
+  if (int skipped = labels.find_first_unset(); skipped >= 0)
     return callee->emitOpError()
            << "labels its type parameters 0, 1, ... by position, and its "
               "signature skips "
-           << Type(PolyType::get(getContext(), *skipped));
-
-  // A verifier holds no impl selection, so the comparison reads both
-  // signatures as written.
-  return buildParameterSpecialization(symbolTable, /*selection=*/nullptr, errFn);
-}
-
-FailureOr<SpecializationMap> FuncCallOp::buildParameterSpecialization(
-    SymbolTableCollection &symbolTable,
-    llvm::function_ref<Type(Type)> selection,
-    llvm::function_ref<InFlightDiagnostic()> err) {
-  auto formal = getCalleeFunctionType(symbolTable, err);
-  if (failed(formal)) return failure();
+           << Type(PolyType::get(getContext(), skipped));
 
   // The callee's declaration binds the parameters its signature spells, and
-  // this call's own types determine each of them.
-  return readCallSpecialization(getOperation(), *formal,
-                                TypeArguments(getLabelBound(Type(*formal))),
-                                getActualFunctionType(), getCalleeName(),
-                                selection, err);
+  // this call's own types determine each of them. A verifier holds no impl
+  // selection, so the comparison reads both signatures as written.
+  if (failed(readCallSpecialization(getOperation(), formal,
+                                    TypeArguments(labels.size()),
+                                    getActualFunctionType(), getCalleeName(),
+                                    /*selection=*/nullptr, errFn)))
+    return failure();
+  return success();
 }
 
 FailureOr<SpecializationMap> mlir::trait::readCallTypeArguments(

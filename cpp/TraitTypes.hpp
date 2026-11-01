@@ -3,6 +3,7 @@
 #pragma once
 
 #include "TraitAttributes.hpp"
+#include <llvm/ADT/BitVector.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/DenseSet.h>
 #include <mlir/IR/BuiltinTypes.h>
@@ -676,6 +677,11 @@ SpecializationMap SpecializationMap::fromPositions(RangeT &&arguments) {
 /// are its parameters' positions (`verifyDenseLabels`), so this is the count
 /// without a reading of the order the parameters first occur in.
 unsigned getLabelBound(ArrayRef<Type> spellings);
+
+/// The labels `spellings` spell: bit `i` is set where one of them spells
+/// `!trait.poly<i>`, and there are as many bits as the bound they spell
+/// (`getLabelBound`).
+BitVector getSpelledLabels(ArrayRef<Type> spellings);
 
 /// The number of parameters `spellings` bind at labels `first` and past.
 /// Fails where those labels skip a position: a declaration's parameters are

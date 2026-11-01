@@ -55,6 +55,11 @@ public:
 /// proof, permanently.
 Type stripClaimProofs(Type type);
 
+/// Whether `lhs` and `rhs` are one type once each is stripped of its proofs
+/// (`stripClaimProofs`). Two claims are compared by their predicates and two
+/// function types position by position, so neither is rebuilt to be compared.
+bool equalModuloProofs(Type lhs, Type rhs);
+
 /// Whether `view`, the type a producer gives a position, settles `spelled`,
 /// the type the position is spelled with: the two state one type modulo the
 /// proofs their claims carry, and `view` names a proof at every application it
