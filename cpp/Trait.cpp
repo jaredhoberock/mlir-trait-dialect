@@ -43,23 +43,13 @@ void *instantiateLegality(MlirOperation, void *targetPtr, void *, void *) {
 }
 
 /// The legality erase-polymorphs hands the driver: its readiness target
-/// (`populateErasePolymorphsReadiness`), and a converter that maps every
-/// polymorphic type to none. Erase is therefore present while a template stands,
-/// which it runs to cut, or an op it rewrites -- an evidence op, or one
-/// mentioning a claim or a projection; the readiness walk reads what erase
-/// collects off the same interface the type system already speaks.
+/// (`populateErasePolymorphsReadiness`). Erase is therefore present while a
+/// template stands, which it runs to cut, or an op it rewrites -- an evidence
+/// op, or one mentioning a claim or a projection. No type keeps erasure from
+/// being ready -- it refuses none -- so it hands back no converter.
 void *eraseLegality(MlirOperation, void *targetPtr, void *, void *) {
-  auto &target = *static_cast<ConversionTarget *>(targetPtr);
-  populateErasePolymorphsReadiness(target);
-  auto *converter = new TypeConverter();
-  converter->addConversion([](Type type) { return type; });
-  converter->addConversion(
-      [](Type type, SmallVectorImpl<Type> &) -> std::optional<LogicalResult> {
-        if (isPolymorphicType(type))
-          return success();
-        return std::nullopt;
-      });
-  return converter;
+  populateErasePolymorphsReadiness(*static_cast<ConversionTarget *>(targetPtr));
+  return nullptr;
 }
 
 /// Monomorphization is the trait dialect's lowering, contributed as two steps so
@@ -73,9 +63,8 @@ void *eraseLegality(MlirOperation, void *targetPtr, void *, void *) {
 /// claims and projections, respells the remaining types, and collects the templates
 /// nothing names; its target has no opinion on any operation still pending
 /// instantiation, whatever its kind, so the readiness walk holds it behind
-/// instantiate while one stands and the two never share a batch, and its converter
-/// refuses every polymorphic type, so it runs once the type system has settled, and
-/// it requests the cleanup interlude after it.
+/// instantiate while one stands and the two never share a batch, and it requests
+/// the cleanup interlude after it.
 struct LoweringContribution : lowering::LoweringContributionInterface {
   using lowering::LoweringContributionInterface::LoweringContributionInterface;
   void contributeSteps(lowering::LoweringStepSink &sink) const override {
