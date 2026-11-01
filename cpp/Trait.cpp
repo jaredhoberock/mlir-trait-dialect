@@ -26,19 +26,14 @@ void addErasePolymorphs(MlirOpPassManager pm, void *) {
   mlirOpPassManagerAddOwnedPass(pm, wrap(createErasePolymorphsPass().release()));
 }
 
-/// The legality instantiate-monomorphs hands the driver: every operation is legal
+/// The legality instantiate-monomorphs hands the driver: its readiness target
+/// (`populateInstantiateMonomorphsReadiness`), on which every operation is legal
 /// unless it is still pending instantiation, so instantiate is present exactly on
 /// the operations a pattern would fire on and has an opinion on every other one.
 /// It rewrites no type, so it hands back no converter.
 void *instantiateLegality(MlirOperation, void *targetPtr, void *, void *) {
-  auto &target = *static_cast<ConversionTarget *>(targetPtr);
-  target.markUnknownOpDynamicallyLegal([](Operation *op) -> std::optional<bool> {
-    // The driver asks op by op over a module its steps rewrite between asks,
-    // so a table kept across asks would go stale; the collection built here
-    // reads the module once, and only where this op is a call it reads.
-    SymbolTableCollection symbolTable;
-    return !isPendingOp(op, symbolTable);
-  });
+  populateInstantiateMonomorphsReadiness(
+      *static_cast<ConversionTarget *>(targetPtr));
   return nullptr;
 }
 

@@ -64,6 +64,13 @@ TypeConverter makeErasePolymorphsConverter();
 void populateErasePolymorphsLegality(ConversionTarget &target);
 
 /// Configures the readiness target the lowering driver walks for
+/// instantiate-monomorphs: an op is legal unless it is still pending
+/// instantiation (`isPendingOp`), so the step is present exactly on the ops a
+/// lowering pattern would fire on and has an opinion on every other one. A
+/// template is legal and recursively legal, so the walk does not enter one.
+void populateInstantiateMonomorphsReadiness(ConversionTarget &target);
+
+/// Configures the readiness target the lowering driver walks for
 /// erase-polymorphs: one rule over every op, no per-op mark. An op still pending
 /// instantiation has no opinion, so the step waits behind instantiate while
 /// instantiate owes anything; otherwise an op is illegal exactly when it is a

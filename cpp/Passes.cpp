@@ -2650,6 +2650,28 @@ void populateErasePolymorphsLegality(ConversionTarget &target) {
   });
 }
 
+void populateInstantiateMonomorphsReadiness(ConversionTarget &target) {
+  // Legal unless pending instantiation. Nothing inside a template is pending --
+  // it is judged in the clone that instantiates it -- so a template is legal
+  // and recursively legal, answered from its declaration (`isTemplate`), and
+  // the readiness walk does not enter it.
+  auto notPending = [](Operation *op) -> std::optional<bool> {
+    if (isTemplate(op))
+      return true;
+    // The driver asks op by op over a module its steps rewrite between asks,
+    // so a table kept across asks would go stale; the collection built here
+    // reads the module once, and only where this op is a call it reads.
+    SymbolTableCollection symbolTable;
+    return !isPendingOp(op, symbolTable);
+  };
+  target.markUnknownOpDynamicallyLegal(notPending);
+  target.addLegalOp<TraitOp, ImplOp, ProofOp>();
+  target.markOpRecursivelyLegal<TraitOp, ImplOp, ProofOp>();
+  target.addDynamicallyLegalOp<func::FuncOp>(notPending);
+  target.markOpRecursivelyLegal<func::FuncOp>(
+      [](Operation *op) { return isTemplate(op); });
+}
+
 void populateErasePolymorphsReadiness(ConversionTarget &target) {
   // One rule and no per-op mark, so no op escapes it. An operation still
   // pending instantiation is not erase's yet, whatever its kind: the target has
