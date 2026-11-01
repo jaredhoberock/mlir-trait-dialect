@@ -2681,12 +2681,20 @@ void populateErasePolymorphsReadiness(ConversionTarget &target) {
   // and exactly where the pass's own target finds an op it rewrites
   // (`erasureRewrites`).
   target.markUnknownOpDynamicallyLegal([](Operation *op) -> std::optional<bool> {
+    // A template is never pending, so it is erase's work, answered from its
+    // declaration (`isTemplate`).
+    if (isTemplate(op))
+      return false;
     // An op owing instantiation work at a standing site mentions a claim or a
     // projection there, so one erasure leaves as it stands is pending only as
     // a generic call (`isPendingOp`).
-    bool rewrites = isTemplate(op) || erasureRewrites(op);
+    bool rewrites = erasureRewrites(op);
     if (!rewrites && !isa<FuncCallOp>(op))
       return true;
+    // Nothing inside a template is pending -- it is judged in the clone that
+    // instantiates it -- so none of its sites is read there.
+    if (isForeign(op))
+      return !rewrites;
     // The driver asks op by op over a module its steps rewrite between asks,
     // so a table kept across asks would go stale; the collection built here
     // reads the module once, and only where this op is a call it reads.
