@@ -639,6 +639,13 @@ class ImplResolver {
     /// the stage fails on it rather than naming what it left standing.
     bool hasOverflowed() const { return overflowed; }
 
+    /// Whether `standing`, an op standing under an instance's name, is
+    /// refused for the first time over this resolver's span: a refusal names
+    /// it once, however often the stage asks for the instance.
+    bool firstRefusalOfInstanceName(Operation *standing) {
+      return refusedInstanceNames.insert(standing).second;
+    }
+
     /// Names, through `err`, why selection refused the application of
     /// `obligation` -- a claim, or a projection's head -- in `scope`: over the
     /// candidates it recorded, none whose assumptions hold or two or more, or,
@@ -798,6 +805,7 @@ class ImplResolver {
     bool overflowed = false;
     DenseSet<Location> overflowSites;
     DenseSet<ScopedApplication> namedRefusals;
+    DenseSet<Operation *> refusedInstanceNames;
 
     InstantiationChain instantiations;
     ImplGeneratorSet generators;

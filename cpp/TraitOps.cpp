@@ -2694,7 +2694,8 @@ LogicalResult mlir::trait::inlineMemberAt(PatternRewriter &rewriter,
 FailureOr<func::FuncOp> FuncCallOp::getOrSpecializeCallee(
     PatternRewriter &rewriter, SymbolTableCollection &symbolTable,
     const CallSubstitution &subst,
-    llvm::function_ref<FailureOr<ClaimType>(ClaimType, ClaimType)> respell) {
+    llvm::function_ref<FailureOr<ClaimType>(ClaimType, ClaimType)> respell,
+    InstanceNameRefusal refuse) {
   auto callee = getCallee(symbolTable);
   if (failed(callee)) return failure();
 
@@ -2721,7 +2722,7 @@ FailureOr<func::FuncOp> FuncCallOp::getOrSpecializeCallee(
     return failure();
 
   func::FuncOp instance = getOrCutInstance(
-      rewriter, symbolTable, *callee, *key, getLoc(),
+      rewriter, symbolTable, *callee, *key, refuse,
       [&](StringRef instanceName) {
         PatternRewriter::InsertionGuard guard(rewriter);
         rewriter.setInsertionPointAfter(*callee);

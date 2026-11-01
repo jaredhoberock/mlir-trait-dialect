@@ -868,9 +868,11 @@ buildCallSubstitution(Operation *op, PatternRewriter &rewriter,
 
 /// Gets or cuts the instance a call names under its substitution: given how
 /// a proven claim the call supplies is carried to the type the instance's
-/// parameter is written with (`InstanceKey::get`).
+/// parameter is written with (`InstanceKey::get`), and how an op standing
+/// under the instance's name is refused (`getOrCutInstance`).
 using GetOrCutInstance = llvm::function_ref<FailureOr<func::FuncOp>(
-    llvm::function_ref<FailureOr<ClaimType>(ClaimType, ClaimType)>)>;
+    llvm::function_ref<FailureOr<ClaimType>(ClaimType, ClaimType)>,
+    InstanceNameRefusal)>;
 
 /// The instance `op` calls, cut under `subst` by `getOrCut`, and the result
 /// types the call reads it at, the results stamped as the instance is.
@@ -924,7 +926,16 @@ specializeCallTarget(FuncCallOp op, FlatSymbolRefAttr templateKey,
         .respellProof(proven, spelling.getTraitApplication(), site, rewriter)
         .orFailure();
   };
-  auto callee = getOrCut(respell);
+  // An op standing under the instance's name that this stage did not cut is
+  // refused once, naming this call; the call then survives the stage, which
+  // fails on it.
+  auto refuse = [&](Operation *standing, StringRef name) {
+    if (resolver.firstRefusalOfInstanceName(standing))
+      standing->emitOpError()
+          << "stands under @" << name << ", the name of the instance the call at "
+          << op.getLoc() << " needs, which only a function this stage cuts takes";
+  };
+  auto callee = getOrCut(respell, refuse);
   if (failed(callee)) {
     (void)rewriter.notifyMatchFailure(op, "couldn't get or specialize callee");
     return failure();
@@ -1061,7 +1072,8 @@ static LogicalResult lowerMemberCall(FuncCallOp op, MemberCall member,
   for (Value operand : op.getOperands().drop_front())
     keyedActuals.push_back(evidenceTypeOf(operand));
   auto symbol = FlatSymbolRefAttr::get(function.getSymNameAttr());
-  auto getOrCut = [&](auto respell) -> FailureOr<func::FuncOp> {
+  auto getOrCut = [&](auto respell,
+                      InstanceNameRefusal refuse) -> FailureOr<func::FuncOp> {
     SmallVector<Type> typeArguments;
     for (unsigned label = 0, bound = getLabelBound(Type(formal));
          label < bound; ++label)
@@ -1075,7 +1087,7 @@ static LogicalResult lowerMemberCall(FuncCallOp op, MemberCall member,
     if (failed(key))
       return failure();
     func::FuncOp instance = getOrCutInstance(
-        rewriter, resolver.getSymbolTables(), function, *key, op.getLoc(),
+        rewriter, resolver.getSymbolTables(), function, *key, refuse,
         [&](StringRef instanceName) {
           PatternRewriter::InsertionGuard guard(rewriter);
           rewriter.setInsertionPointAfter(function);
@@ -1167,8 +1179,9 @@ struct CallOpLowering : public OpRewritePattern<FuncCallOp> {
     auto closed = subst();
     if (failed(closed))
       return failure();
-    auto getOrCut = [&](auto respell) {
-      return op.getOrSpecializeCallee(rewriter, symbolTable, *closed, respell);
+    auto getOrCut = [&](auto respell, InstanceNameRefusal refuse) {
+      return op.getOrSpecializeCallee(rewriter, symbolTable, *closed, respell,
+                                      refuse);
     };
     auto target = specializeCallTarget(op, op.getCalleeNameAttr(), *closed,
                                        rewriter, resolver, getOrCut);

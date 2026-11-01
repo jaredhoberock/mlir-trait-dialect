@@ -191,6 +191,12 @@ struct EvidenceReading {
   SmallVector<ObligationFrame> chain;
 };
 
+/// Refuses `standing`, an op standing under `name`, the name of the instance
+/// a call needs, naming the call (`getOrCutInstance`): the caller names each
+/// standing op once, however often the stage asks for the instance.
+using InstanceNameRefusal =
+    llvm::function_ref<void(Operation *standing, StringRef name)>;
+
 } // end mlir::trait
 
 #define GET_OP_CLASSES

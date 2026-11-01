@@ -1210,11 +1210,13 @@ def FuncCallOp : TraitDialectOp<"func.call", [
     /// Looks up or specializes the monomorphized callee, a template, using a
     /// pre-built substitution; `respell` carries a proven claim this call
     /// supplies to the type the instance's parameter is written with
-    /// (`InstanceKey::get`).
+    /// (`InstanceKey::get`), and a name the instance cannot take is refused
+    /// through `refuse`.
     FailureOr<func::FuncOp> getOrSpecializeCallee(PatternRewriter &rewriter,
                                                   SymbolTableCollection &symbolTable,
                                                   const CallSubstitution &subst,
-                                                  llvm::function_ref<FailureOr<ClaimType>(ClaimType, ClaimType)> respell);
+                                                  llvm::function_ref<FailureOr<ClaimType>(ClaimType, ClaimType)> respell,
+                                                  InstanceNameRefusal refuse);
 
     // The type parameters the callee's signature binds: the labels below the
     // bound it spells, a label being a position in the declaration.
