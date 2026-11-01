@@ -2283,28 +2283,31 @@ static LogicalResult checkNothingOutsideATemplateCarriesTheory(ModuleOp module) 
   });
 
   // A symbol use naming a template from outside one keeps that template alive
-  // through collection, so it is refused at the op that spells it. Reading the
-  // body region walks every use the module's own scope holds without entering a
-  // nested symbol table, so an impl's own interior is out of the universe; a
-  // use standing in a template that is not a symbol table -- a proof, a
-  // polymorphic function -- is reached and dropped by the isForeign filter
-  // below.
-  std::optional<SymbolTable::UseRange> uses =
-      SymbolTable::getSymbolUses(&module.getBodyRegion());
-  if (!uses) {
-    module.emitOpError() << "carries an operation whose symbol uses cannot be "
-                            "read, so no template can be shown unnamed";
-    return failure();
-  }
-  for (const SymbolTable::SymbolUse &use : *uses) {
-    if (!templateNames.contains(use.getSymbolRef().getRootReference()))
+  // through collection, so it is refused at the op that spells it. Each
+  // module-level op outside a template is read, never a template's interior,
+  // and reading an op walks the uses it holds without entering a nested symbol
+  // table; a use standing in a template nested below one is dropped by the
+  // isForeign filter.
+  for (Operation &standing : *module.getBody()) {
+    if (isTemplate(&standing))
       continue;
-    if (isForeign(use.getUser()))
-      continue;
-    use.getUser()->emitOpError()
-        << "names the template " << use.getSymbolRef()
-        << " from outside a template, which no monomorphic program may do";
-    clean = false;
+    std::optional<SymbolTable::UseRange> uses =
+        SymbolTable::getSymbolUses(&standing);
+    if (!uses) {
+      module.emitOpError() << "carries an operation whose symbol uses cannot "
+                              "be read, so no template can be shown unnamed";
+      return failure();
+    }
+    for (const SymbolTable::SymbolUse &use : *uses) {
+      if (!templateNames.contains(use.getSymbolRef().getRootReference()))
+        continue;
+      if (isForeign(use.getUser()))
+        continue;
+      use.getUser()->emitOpError()
+          << "names the template " << use.getSymbolRef()
+          << " from outside a template, which no monomorphic program may do";
+      clean = false;
+    }
   }
 
   return success(clean);
@@ -2626,15 +2629,17 @@ void populateErasePolymorphsLegality(ConversionTarget &target) {
   target.addLegalOp<TraitOp, ImplOp, ProofOp>();
   target.markOpRecursivelyLegal<TraitOp, ImplOp, ProofOp>();
   target.addDynamicallyLegalOp<func::FuncOp>([](func::FuncOp func) {
+    // A template is answered from its signature, before its attributes are
+    // read.
+    if (isTemplateSignature(func.getFunctionType(), !func.isExternal()))
+      return true;
     // A function's own spelling is its attributes, its signature among them,
     // which its entry block receives; a later block's arguments are converted
     // with the branches that reach it (upstream's structural conversions).
-    bool clean = llvm::none_of(func->getAttrs(), [](NamedAttribute attr) {
+    return llvm::none_of(func->getAttrs(), [](NamedAttribute attr) {
       return containsType<ClaimType>(attr.getValue()) ||
              containsType<ProjectionType>(attr.getValue());
     });
-    return isTemplateSignature(func.getFunctionType(), !func.isExternal()) ||
-           clean;
   });
   target.markOpRecursivelyLegal<func::FuncOp>([](Operation *op) {
     auto func = cast<func::FuncOp>(op);
