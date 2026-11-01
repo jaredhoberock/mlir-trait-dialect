@@ -833,7 +833,7 @@ static LogicalResult verifyMemberSignature(
 
   MLIRContext *ctx = impl.getContext();
   unsigned traitCount = traitOp.getTypeParams().size();
-  unsigned implCount = impl.getTypeParams().size();
+  unsigned implCount = impl.getNumTypeParams();
   unsigned leading = impl.getBody().front().getNumArguments();
   Type traitMethodTy = FunctionType::get(
       ctx, memberType.getInputs().drop_front(), memberType.getResults());
@@ -963,7 +963,7 @@ static LogicalResult verifyImplParametersAreConstrained(ImplOp impl);
 /// substitution reaches.
 static LogicalResult verifyBindingScope(ImplOp impl, StringRef name,
                                         Type bound, unsigned arity) {
-  unsigned headerCount = impl.getTypeParams().size();
+  unsigned headerCount = impl.getNumTypeParams();
   for (GenericTypeInterface parameter : getTypeParametersIn(bound)) {
     auto label = dyn_cast_or_null<PolyType>(
         Type(getParameterOccurrence(Type(parameter))));
@@ -1272,7 +1272,7 @@ bool ImplOp::isUnconditional() {
   // where entry; an impl taking neither stands for one application and assumes
   // nothing there, so naming it is the whole citation. Its trait's requirements
   // are not counted: the impl returns their evidence itself.
-  return getTypeParams().empty() && getWhereClaims().empty();
+  return getNumTypeParams() == 0 && getWhereClaims().empty();
 }
 
 LogicalResult ImplOp::verifyIsUnconditional(llvm::function_ref<InFlightDiagnostic()> err) {
@@ -1285,12 +1285,15 @@ LogicalResult ImplOp::verifyIsUnconditional(llvm::function_ref<InFlightDiagnosti
   return success();
 }
 
+unsigned ImplOp::getNumTypeParams() {
+  return getLabelBound(llvm::to_vector(getBody().front().getArgumentTypes()));
+}
+
 SmallVector<GenericTypeInterface, 4> ImplOp::getTypeParams() {
   // The parameters are labelled by position (`ImplOp::verify`), so they are
   // the labels below the bound the header and the where clause spell.
-  unsigned count = getLabelBound(llvm::to_vector(getBody().front().getArgumentTypes()));
   SmallVector<GenericTypeInterface, 4> parameters;
-  for (unsigned label = 0; label < count; ++label)
+  for (unsigned label = 0, count = getNumTypeParams(); label < count; ++label)
     parameters.push_back(
         cast<GenericTypeInterface>(Type(PolyType::get(getContext(), label))));
   return parameters;
@@ -1718,7 +1721,7 @@ TraitOp ImplOp::getTrait(SymbolTableCollection &symbolTable) {
 
 TypeArguments ImplOp::readTypeArgumentsFor(ClaimType actualSelfClaim,
                                            Normalizer normalize) {
-  TypeArguments args(getTypeParams().size());
+  TypeArguments args(getNumTypeParams());
   extractTypeArguments(Type(getSelfClaim()), Type(actualSelfClaim), args);
 
   // A parameter the header leaves open is one an equality reading determines
@@ -1797,7 +1800,7 @@ FailureOr<Type> ImplOp::specializeAssociatedTypeBinding(
   // revisits a term it stamped -- neither argument list can be read as the
   // parameters the other list answers for.
   SpecializationMap arguments = headerArguments;
-  unsigned headerCount = getTypeParams().size();
+  unsigned headerCount = getNumTypeParams();
   for (auto [position, arg] : llvm::enumerate(assocTypeArgs))
     arguments.bind(cast<GenericTypeInterface>(Type(
                        PolyType::get(getContext(), headerCount + position))),
@@ -2256,7 +2259,7 @@ static LogicalResult verifyCitationOf(
     ImplOp impl, ClaimType cited, ImplArgumentsAttr stated,
     const SpecializationMap &arguments, ValueRange premises,
     StringRef supplier, llvm::function_ref<InFlightDiagnostic()> errFn) {
-  size_t parameterCount = impl.getTypeParams().size();
+  size_t parameterCount = impl.getNumTypeParams();
   if (stated.getTypes().size() != parameterCount)
     return errFn() << "impl '@" << impl.getSymName() << "' takes "
                    << parameterCount << " type arguments, and the " << supplier

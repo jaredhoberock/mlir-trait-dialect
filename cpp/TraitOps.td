@@ -487,6 +487,10 @@ def ImplOp : TraitDialectOp<"impl", [
     /// its position, and the header and where clause spell each.
     SmallVector<GenericTypeInterface, 4> getTypeParams();
 
+    /// The number of the impl's type parameters: the bound its header and
+    /// where clause spell.
+    unsigned getNumTypeParams();
+
     /// The argument list a citation of this impl states for `arguments`: the
     /// argument of each parameter, by position.
     ImplArgumentsAttr stateArguments(const SpecializationMap &arguments);
