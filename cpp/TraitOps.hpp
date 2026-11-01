@@ -218,13 +218,22 @@ std::optional<StringRef> getMemberName(StringRef owner, StringRef symbol);
 bool producesPositionalEvidence(Operation *op);
 
 /// The type arguments `call` supplies for `formal`, the signature of its
-/// callee `callee`, once that signature instantiated at them is `actual`, the
-/// signature the call states: read off `actual` against `formal`, through
+/// callee `callee`, whose labels lie below `bound`, once that signature
+/// instantiated at them is `actual`, the signature the call states: read off
+/// `actual` against `formal` as declared, the declaration's parameters and the
+/// caller's labels read in one pass and never meeting in one spelling, through
 /// `selection` where it is given, and refused through `err` where the two
 /// disagree or a parameter no position determines.
+///
+/// `selection` resolves a type's projections through the stage's impl
+/// selection, which at pass time is all both signatures are read through. A
+/// verifier passes none and compares the two signatures as written: the call
+/// spells its declaration's signature at its arguments, and a value spelled
+/// otherwise reaches it through a coercion.
 FailureOr<SpecializationMap>
-readCallTypeArguments(Operation *call, FunctionType formal, FunctionType actual,
-                      StringRef callee, llvm::function_ref<Type(Type)> selection,
+readCallTypeArguments(Operation *call, FunctionType formal, unsigned bound,
+                      FunctionType actual, StringRef callee,
+                      llvm::function_ref<Type(Type)> selection,
                       llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
 /// What a call of a trait's member reaches once its receiver -- the call's
@@ -236,7 +245,6 @@ struct MemberCall {
   /// member itself where the impl pairs it with nothing, leaving it to its
   /// trait's default. Null where the call names no trait's member.
   func::FuncOp function;
-  ImplOp impl;
   /// The claim the root proves, naming the root: the impl's header at the
   /// arguments the root's derive states.
   ClaimType root;

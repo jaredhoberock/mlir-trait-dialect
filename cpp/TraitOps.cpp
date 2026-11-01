@@ -2499,26 +2499,9 @@ static FailureOr<SpecializationMap> readTypeArguments(
 }
 
 
-/// The type arguments a call supplies for the declaration it calls, once that
-/// declaration instantiated at them is the signature the call spells.
-///
-/// `formal` is the callee's signature and `args` holds a slot for each of its
-/// parameters, filled for the ones fixed before the call's own types are read
-/// -- a method's trait arguments, which ride in its receiver claim. The rest
-/// are read off `actual`, the signature the call spells, against `formal` as
-/// declared: the declaration's parameters and the caller's labels are read in
-/// one pass and never meet in one spelling.
-///
-/// `selection` resolves a type's projections through the stage's impl
-/// selection, which at pass time is all both signatures are read through:
-/// projections at instantiation are the stage's solver's to answer. A verifier
-/// passes none and compares the two signatures as written: the call spells its
-/// declaration's signature at its arguments, and a value spelled otherwise
-/// reaches it through a coercion.
-static FailureOr<SpecializationMap> readCallSpecialization(
-    Operation *call, FunctionType formal, TypeArguments args,
-    FunctionType actual, StringRef callee,
-    llvm::function_ref<Type(Type)> selection,
+FailureOr<SpecializationMap> mlir::trait::readCallTypeArguments(
+    Operation *call, FunctionType formal, unsigned bound, FunctionType actual,
+    StringRef callee, llvm::function_ref<Type(Type)> selection,
     llvm::function_ref<InFlightDiagnostic()> err) {
   auto normalize = [&](Type ty) -> FailureOr<Type> {
     return selection ? selection(ty) : ty;
@@ -2534,7 +2517,7 @@ static FailureOr<SpecializationMap> readCallSpecialization(
   if (!refusal && llvm::all_of(call->getOperandTypes(), isMonomorphicType))
     refusal = reportHere;
 
-  auto arguments = readTypeArguments(std::move(args), Type(formal),
+  auto arguments = readTypeArguments(TypeArguments(bound), Type(formal),
                                      Type(actual), selection, callee, refusal);
   if (failed(arguments)) return failure();
 
@@ -2567,21 +2550,11 @@ LogicalResult FuncCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // The callee's declaration binds the parameters its signature spells, and
   // this call's own types determine each of them. A verifier holds no impl
   // selection, so the comparison reads both signatures as written.
-  if (failed(readCallSpecialization(getOperation(), formal,
-                                    TypeArguments(labels.size()),
-                                    getActualFunctionType(), getCalleeName(),
-                                    /*selection=*/nullptr, errFn)))
+  if (failed(readCallTypeArguments(getOperation(), formal, labels.size(),
+                                   getActualFunctionType(), getCalleeName(),
+                                   /*selection=*/nullptr, errFn)))
     return failure();
   return success();
-}
-
-FailureOr<SpecializationMap> mlir::trait::readCallTypeArguments(
-    Operation *call, FunctionType formal, FunctionType actual, StringRef callee,
-    llvm::function_ref<Type(Type)> selection,
-    llvm::function_ref<InFlightDiagnostic()> err) {
-  return readCallSpecialization(call, formal,
-                                TypeArguments(getLabelBound(Type(formal))),
-                                actual, callee, selection, err);
 }
 
 FailureOr<MemberCall> mlir::trait::readMemberCall(
@@ -2624,7 +2597,6 @@ FailureOr<MemberCall> mlir::trait::readMemberCall(
 
   MemberCall member;
   member.function = function;
-  member.impl = impl;
   member.root = ClaimType::get(
       call.getContext(),
       proof ? proof.getTraitApplication() : impl.getSelfApplication(),

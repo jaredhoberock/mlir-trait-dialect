@@ -844,8 +844,8 @@ buildCallSubstitution(Operation *op, PatternRewriter &rewriter,
   auto selection = [&](Type ty) {
     return readThroughSelection(ty, resolver, site, rewriter);
   };
-  auto specialization =
-      readCallTypeArguments(op, formal, actual, callee, selection);
+  auto specialization = readCallTypeArguments(
+      op, formal, getLabelBound(Type(formal)), actual, callee, selection);
   if (failed(specialization)) {
     (void)rewriter.notifyMatchFailure(op, "couldn't build substitution");
     return failure();
@@ -1005,6 +1005,20 @@ static LogicalResult lowerCallOfNonTemplate(FuncCallOp op,
   return success();
 }
 
+/// The receiver of `op`, a call of a trait's member, passed at `claim`, the
+/// evidence its proof states: the receiver itself where it is spelled so, and
+/// otherwise a `trait.witness` of that proof built before `op`.
+static Value passReceiverAt(PatternRewriter &rewriter, FuncCallOp op,
+                            ClaimType claim) {
+  Value receiver = op.getOperand(0);
+  if (receiver.getType() == Type(claim))
+    return receiver;
+  OpBuilder::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPoint(op);
+  return WitnessOp::create(rewriter, op.getLoc(), claim.getProof(),
+                           claim.getTraitApplication());
+}
+
 /// Lowers `op`, a call of a trait's member that `member` reads as reaching
 /// the function an impl implements it by, to a call of that function's
 /// instance. The function leads with the impl's block arguments, and the
@@ -1033,14 +1047,7 @@ static LogicalResult lowerMemberCall(FuncCallOp op, MemberCall member,
   if (failed(subst))
     return failure();
 
-  Value receiver = op.getOperand(0);
-  if (receiver.getType() != Type(member.root)) {
-    OpBuilder::InsertionGuard guard(rewriter);
-    rewriter.setInsertionPoint(op);
-    receiver = WitnessOp::create(rewriter, op.getLoc(), member.root.getProof(),
-                                 member.root.getTraitApplication())
-                   .getResult();
-  }
+  Value receiver = passReceiverAt(rewriter, op, member.root);
   if (op.computesEvidence())
     return inlineMemberAt(rewriter, op, member, receiver, *subst);
 
@@ -1129,14 +1136,10 @@ struct CallOpLowering : public OpRewritePattern<FuncCallOp> {
     // receiver carries, which a coercion may spell otherwise: the default's
     // parameters, the trait's, are read off the receiver's application.
     if (member->function) {
-      ClaimType receiver = evidenceOf(op.getOperand(0));
-      if (op.getOperand(0).getType() != Type(receiver)) {
-        OpBuilder::InsertionGuard guard(rewriter);
-        rewriter.setInsertionPoint(op);
-        Value witness = WitnessOp::create(rewriter, op.getLoc(),
-                                          receiver.getProof(),
-                                          receiver.getTraitApplication());
-        rewriter.modifyOpInPlace(op, [&] { op->setOperand(0, witness); });
+      Value receiver =
+          passReceiverAt(rewriter, op, evidenceOf(op.getOperand(0)));
+      if (receiver != op.getOperand(0)) {
+        rewriter.modifyOpInPlace(op, [&] { op->setOperand(0, receiver); });
         return success();
       }
     }

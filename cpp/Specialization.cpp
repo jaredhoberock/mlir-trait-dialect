@@ -129,17 +129,15 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(
   return replacer;
 }
 
-/// Whether the block a builder inserts into stands inside an impl or a proof,
-/// or a function that is a template (`isTemplateSignature`) -- whose clone
-/// carries no projection binding and no evidence binding, because its spelling
-/// is resolved when the template is itself cloned for a concrete instance.
+/// Whether the block a builder inserts into stands inside a function that is a
+/// template (`isTemplateSignature`) -- whose clone carries no projection
+/// binding and no evidence binding, because its spelling is resolved when the
+/// template is itself cloned for a concrete instance.
 static bool insertionStandsInsideTemplate(OpBuilder &builder) {
   Block *block = builder.getInsertionBlock();
   if (!block)
     return false;
   for (Operation *op = block->getParentOp(); op; op = op->getParentOp()) {
-    if (isa<ImplOp, ProofOp>(op))
-      return true;
     if (auto func = dyn_cast<func::FuncOp>(op))
       if (isTemplateSignature(func.getFunctionType(), !func.isExternal()))
         return true;
@@ -161,11 +159,11 @@ func::FuncOp specializePolymorph(RewriterBase &rewriter,
   OpBuilder &builder = rewriter;
 
   // A clone whose signature still spells a type variable under the generic-keyed
-  // bindings alone, or that is inserted inside an impl or a proof, is a
-  // template: it is stamped under those bindings with no projection or evidence
-  // binding, so a substitution-invariant verifier accepts it as it accepts the
-  // source, and its spelling resolves when it is cloned for a concrete
-  // instance. A monomorphic clone receives the full call substitution.
+  // bindings alone is a template: it is stamped under those bindings with no
+  // projection or evidence binding, so a substitution-invariant verifier
+  // accepts it as it accepts the source, and its spelling resolves when it is
+  // cloned for a concrete instance. A monomorphic clone receives the full call
+  // substitution.
   AttrTypeReplacer variableReplacer =
       makeTypeReplacerFromSubstitution(variables, CloneKind::Template);
 
@@ -173,8 +171,7 @@ func::FuncOp specializePolymorph(RewriterBase &rewriter,
   auto substitutedType =
       llvm::cast<FunctionType>(variableReplacer.replace(oldFunctionType));
 
-  bool cloneIsTemplate = isPolymorphicType(Type(substitutedType)) ||
-                         insertionStandsInsideTemplate(builder);
+  bool cloneIsTemplate = isPolymorphicType(Type(substitutedType));
   AttrTypeReplacer fullReplacer = makeTypeReplacerFromSubstitution(
       variables, CloneKind::Instance, projections);
   AttrTypeReplacer &replacer = cloneIsTemplate ? variableReplacer : fullReplacer;
