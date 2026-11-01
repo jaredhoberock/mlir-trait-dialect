@@ -883,16 +883,6 @@ bool isUndischargedObligation(Type site);
 /// the type identities this dialect's own library carries.
 bool carriesUndischargedObligation(Type root);
 
-/// How many requirements `claim` carries: the requirements of the trait it
-/// applies, plus -- when `claim` is proven by a proof -- the where entries of the
-/// impl that proof derives it from. An equality claim applies no trait, so it
-/// requires nothing.
-FailureOr<uint64_t> getClaimRequirementCount(
-    ClaimType claim,
-    SymbolTableCollection &symbolTable,
-    Operation *from,
-    llvm::function_ref<InFlightDiagnostic()> errFn = nullptr);
-
 /// The requirement `claim` carries at `index`, in the one order a projection
 /// indexes them by: the trait's requirements, its result signature, then --
 /// when `claim` is proven by a proof -- the where entries of the impl that

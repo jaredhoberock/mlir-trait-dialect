@@ -489,50 +489,40 @@ bool carriesUndischargedObligation(Type root) {
   return found;
 }
 
-FailureOr<uint64_t> getClaimRequirementCount(
-    ClaimType claim,
-    SymbolTableCollection &symbolTable,
-    Operation *from,
-    llvm::function_ref<InFlightDiagnostic()> errFn) {
-  // An equality claim states that two spellings name one type; it applies no
-  // trait, so it requires nothing.
-  if (claim.isEquality())
-    return 0;
-
-  auto trait = claim.getTraitApplication().getTrait(symbolTable, from, errFn);
-  if (failed(trait))
-    return failure();
-  uint64_t count = trait->getRequirements().size();
-  if (!claim.isProven())
-    return count;
-  auto cited = ProofOp::getProofOpOrUnconditionalImplOp(symbolTable, from,
-                                                        claim.getProof(), errFn);
-  if (failed(cited))
-    return failure();
-  if (auto proof = dyn_cast<ProofOp>(*cited))
-    count += proof.getPremises(symbolTable).size();
-  return count;
-}
-
 FailureOr<ClaimType> getClaimRequirementAt(
     ClaimType claim,
     SymbolTableCollection &symbolTable,
     Operation *from,
     uint64_t index,
     llvm::function_ref<InFlightDiagnostic()> errFn) {
-  auto count = getClaimRequirementCount(claim, symbolTable, from, errFn);
-  if (failed(count))
-    return failure();
-  if (index >= *count) {
+  // The requirements are the trait's, then the where entries of the impl a
+  // proof's derive cites, at the premises the derive is given. An equality
+  // claim states that two spellings name one type; it applies no trait, so it
+  // requires nothing.
+  TraitOp trait;
+  SmallVector<ClaimType> premises;
+  if (claim.isApplication()) {
+    auto applied = claim.getTraitApplication().getTrait(symbolTable, from, errFn);
+    if (failed(applied))
+      return failure();
+    trait = *applied;
+    if (claim.isProven()) {
+      auto cited = ProofOp::getProofOpOrUnconditionalImplOp(
+          symbolTable, from, claim.getProof(), errFn);
+      if (failed(cited))
+        return failure();
+      if (auto proof = dyn_cast<ProofOp>(*cited))
+        premises = proof.getPremises(symbolTable);
+    }
+  }
+  uint64_t traitCount = trait ? trait.getRequirements().size() : 0;
+  uint64_t count = traitCount + premises.size();
+  if (index >= count) {
     if (errFn)
       errFn() << "requirement index " << index << " is out of range: " << claim
-              << " has " << *count << " requirements";
+              << " has " << count << " requirements";
     return failure();
   }
-
-  TraitOp trait = claim.getTraitApplication().getTraitOrAbort(
-      symbolTable, from, "getClaimRequirementAt: the counted trait vanished");
-  uint64_t traitCount = trait.getRequirements().size();
 
   // A requirement of the trait -- every requirement an unproven claim
   // reaches -- is the trait's at the claim's arguments, as the claim spells
@@ -546,11 +536,7 @@ FailureOr<ClaimType> getClaimRequirementAt(
   // A where entry of the impl: the claim the proof's derive is given at that
   // position, read by index. Only a proof has where entries to read: an impl
   // named directly is unconditional.
-  auto cited = ProofOp::getProofOpOrUnconditionalImplOp(symbolTable, from,
-                                                        claim.getProof(), errFn);
-  if (failed(cited))
-    return failure();
-  return cast<ProofOp>(*cited).getPremises(symbolTable)[index - traitCount];
+  return premises[index - traitCount];
 }
 
 //===----------------------------------------------------------------------===//
