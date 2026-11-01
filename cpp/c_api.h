@@ -116,17 +116,6 @@ intptr_t traitProjectionTypeGetNumAssocTypeArgs(MlirType projection);
 /// The associated type's own argument `index` a !trait.proj states.
 MlirType traitProjectionTypeGetAssocTypeArg(MlirType projection, intptr_t index);
 
-/// Renames each symbol `names[i]` that an op at the top level of
-/// `symbolTableOp` defines to `newNames[i]`, and rewrites every reference whose
-/// root names a renamed symbol to name it by its new name, in the attributes,
-/// result types and block-argument types of every op inside `symbolTableOp`,
-/// nested symbol tables included: a reference is read as the top level's. A
-/// reference's nested parts are not renamed. A rename is one uniform rewrite,
-/// so an equality claim's endpoints and a citation's arguments move with every
-/// other reference.
-void traitRenameSymbols(MlirOperation symbolTableOp, const MlirStringRef *names,
-                        const MlirStringRef *newNames, intptr_t count);
-
 /// Declares member `name` of the trait `traitOp`, whose inputs after the
 /// trait's own application and whose results are `signature`'s (a
 /// FunctionType): a private function `@<trait>.<name>` leading with the trait's

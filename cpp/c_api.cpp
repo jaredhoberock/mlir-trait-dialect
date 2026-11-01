@@ -10,7 +10,6 @@
 #include <mlir/CAPI/Pass.h>
 #include <mlir/CAPI/Support.h>
 #include <mlir/CAPI/Wrap.h>
-#include <mlir/IR/AttrTypeSubElements.h>
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/SymbolTable.h>
 
@@ -193,46 +192,6 @@ intptr_t traitProjectionTypeGetNumAssocTypeArgs(MlirType projection) {
 
 MlirType traitProjectionTypeGetAssocTypeArg(MlirType projection, intptr_t index) {
   return wrap(cast<ProjectionType>(unwrap(projection)).getAssocTypeArgs()[index]);
-}
-
-void traitRenameSymbols(MlirOperation symbolTableOp, const MlirStringRef *names,
-                        const MlirStringRef *newNames, intptr_t count) {
-  Operation *root = unwrap(symbolTableOp);
-  MLIRContext *ctx = root->getContext();
-  llvm::DenseMap<StringAttr, StringAttr> renamed;
-  for (intptr_t i = 0; i < count; ++i)
-    renamed[StringAttr::get(ctx, unwrap(names[i]))] =
-        StringAttr::get(ctx, unwrap(newNames[i]));
-
-  // `SymbolTable::replaceAllSymbolUses` rewrites attributes alone and stops at
-  // nested symbol tables; a symbol a type names (a claim, a projection, a
-  // nominal type) is reached only by replacing elements of types too
-  AttrTypeReplacer replacer;
-  // A reference's root alone names a top-level symbol; its nested parts name
-  // symbols inside the one it names, so the walk does not descend into them.
-  replacer.addReplacement(
-      [&](SymbolRefAttr reference) -> std::optional<std::pair<Attribute, WalkResult>> {
-        auto found = renamed.find(reference.getRootReference());
-        if (found == renamed.end())
-          return std::make_pair(Attribute(reference), WalkResult::skip());
-        return std::make_pair(
-            Attribute(SymbolRefAttr::get(found->second, reference.getNestedReferences())),
-            WalkResult::skip());
-      });
-  replacer.recursivelyReplaceElementsIn(root, /*replaceAttrs=*/true,
-                                        /*replaceLocs=*/false,
-                                        /*replaceTypes=*/true);
-
-  for (Region &region : root->getRegions())
-    for (Block &block : region)
-      for (Operation &op : block) {
-        auto name = op.getAttrOfType<StringAttr>(SymbolTable::getSymbolAttrName());
-        if (!name)
-          continue;
-        auto found = renamed.find(name);
-        if (found != renamed.end())
-          SymbolTable::setSymbolName(&op, found->second);
-      }
 }
 
 MlirOperation traitTraitOpAddMember(MlirOperation traitOp, MlirStringRef name,
