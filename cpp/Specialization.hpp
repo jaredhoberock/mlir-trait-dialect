@@ -116,8 +116,16 @@ private:
 };
 
 /// The instance `key` names among the symbols of the table `from` stands in,
-/// read through `symbolTable`: the one already cut for it, or the one `cut`
-/// makes under the key's symbol name.
+/// read through `symbolTable`, for the call at `demand`: the one already cut
+/// for it, or the one `cut` makes under the key's symbol name.
+///
+/// Only a function this stage cut stands under an instance's name: the name
+/// is minted from the template's symbol, and every other definition of a
+/// module stands under its own module's names (a compiler qualifies them), so
+/// a function definition there is the instance an earlier run cut. Any other
+/// op standing there, a declaration or an op of another kind, would be taken
+/// for the instance or would push it to another name, so it is refused, named
+/// beside the call, and this answers null.
 ///
 /// A fresh instance takes, at each position that takes evidence, exactly the
 /// evidence the key holds there, and a projection its body reads off an
@@ -127,6 +135,7 @@ private:
 func::FuncOp getOrCutInstance(RewriterBase &rewriter,
                               SymbolTableCollection &symbolTable,
                               Operation *from, const InstanceKey &key,
+                              Location demand,
                               llvm::function_ref<func::FuncOp(StringRef)> cut);
 
 }

@@ -1075,7 +1075,7 @@ static LogicalResult lowerMemberCall(FuncCallOp op, MemberCall member,
     if (failed(key))
       return failure();
     func::FuncOp instance = getOrCutInstance(
-        rewriter, resolver.getSymbolTables(), function, *key,
+        rewriter, resolver.getSymbolTables(), function, *key, op.getLoc(),
         [&](StringRef instanceName) {
           PatternRewriter::InsertionGuard guard(rewriter);
           rewriter.setInsertionPointAfter(function);

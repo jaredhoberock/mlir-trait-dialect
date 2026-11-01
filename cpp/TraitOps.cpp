@@ -2721,7 +2721,8 @@ FailureOr<func::FuncOp> FuncCallOp::getOrSpecializeCallee(
     return failure();
 
   func::FuncOp instance = getOrCutInstance(
-      rewriter, symbolTable, *callee, *key, [&](StringRef instanceName) {
+      rewriter, symbolTable, *callee, *key, getLoc(),
+      [&](StringRef instanceName) {
         PatternRewriter::InsertionGuard guard(rewriter);
         rewriter.setInsertionPointAfter(*callee);
         // An external declaration has no body to clone; specialization refuses

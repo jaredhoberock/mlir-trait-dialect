@@ -283,11 +283,22 @@ std::string InstanceKey::getSymbolName() const {
 func::FuncOp getOrCutInstance(RewriterBase &rewriter,
                               SymbolTableCollection &symbolTable,
                               Operation *from, const InstanceKey &key,
+                              Location demand,
                               llvm::function_ref<func::FuncOp(StringRef)> cut) {
   std::string name = key.getSymbolName();
-  if (auto existing = symbolTable.lookupNearestSymbolFrom<func::FuncOp>(
-          from, FlatSymbolRefAttr::get(from->getContext(), name)))
-    return existing;
+  if (Operation *standing = symbolTable.lookupNearestSymbolFrom(
+          from, FlatSymbolRefAttr::get(from->getContext(), name))) {
+    auto existing = dyn_cast<func::FuncOp>(standing);
+    if (existing && !existing.isExternal())
+      return existing;
+    InFlightDiagnostic refusal =
+        standing->emitOpError()
+        << "stands under @" << name
+        << ", the name of an instance, which only a function this stage cuts "
+           "takes";
+    refusal.attachNote(demand) << "the call needing the instance";
+    return nullptr;
+  }
 
   func::FuncOp instance = cut(name);
   if (!instance)
