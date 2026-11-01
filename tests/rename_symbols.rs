@@ -73,9 +73,14 @@ fn a_rename_reaches_an_equality_claims_endpoints_a_citations_arguments_and_every
     "#;
     let module = Module::parse(&context, text).expect("the module parses");
     // `m` names a top-level function, and `T.m` the member of `T` named after
-    // it: the member's own symbol is neither renamed name, so it keeps its name
-    // while every claim its signature spells names the renamed trait
-    let renames = [("T".to_string(), "m.T".to_string()), ("m".to_string(), "m.m".to_string())];
+    // it: each symbol renames by its whole name, the member with its trait so
+    // that it stays named under the trait, and every claim the member's
+    // signature states names the renamed trait
+    let renames = [
+        ("T".to_string(), "m.T".to_string()),
+        ("T.m".to_string(), "m.T.m".to_string()),
+        ("m".to_string(), "m.m".to_string()),
+    ];
     unsafe { trait_::rename_symbols(module.as_operation().to_raw(), &renames) };
     // the citation's arguments name the renamed trait; it verifies only once
     // they move with the claim it derives
@@ -93,7 +98,7 @@ fn a_rename_reaches_an_equality_claims_endpoints_a_citations_arguments_and_every
         }
         panic!("no symbol @{name}");
     };
-    let member = named("T.m");
+    let member = named("m.T.m");
     let member_ty = FunctionType::try_from(TypeAttribute::try_from(member.attribute("function_type").unwrap()).unwrap().value()).unwrap();
     assert_eq!(trait_names(member_ty.input(0).unwrap()), ["m.T"]);
     let f = named("f");

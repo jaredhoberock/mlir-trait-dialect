@@ -194,6 +194,8 @@ def TraitOp : TraitDialectOp<"trait", [
     `members` lists the trait's members in declaration order, which is
     program content: member k is a module-level function whose leading
     parameter is the trait's own application, followed by the member's inputs.
+    Each member is listed once and named under the trait, `@<trait>.<name>`
+    (`getMemberSymbol`).
     A member whose function has a body has a default, the definition an impl
     may leave the member to; every other member is external, required of every
     impl. `assoc` names each associated type with the number of type parameters

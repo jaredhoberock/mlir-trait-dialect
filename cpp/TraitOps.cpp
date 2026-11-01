@@ -424,6 +424,19 @@ LogicalResult TraitOp::verify() {
                            << ", which is no count of its own parameters";
   }
 
+  // Each member is named under the trait by the dialect's rule
+  // (`getMemberName`) and listed once, at the position `getMemberPosition`
+  // answers for it. Neither reads a symbol table, so the trait refuses its own
+  // list before any impl pairing one of its members is judged against it.
+  for (auto [position, entry] : llvm::enumerate(getMembers())) {
+    auto symbol = cast<FlatSymbolRefAttr>(entry);
+    if (!getMemberName(getSymName(), symbol.getValue()))
+      return emitOpError() << "member " << symbol
+                           << " is not named under the trait";
+    if (getMemberPosition(symbol) != position)
+      return emitOpError() << "lists member " << symbol << " twice";
+  }
+
   // An endpoint mentions a type parameter when any generic hiding inside it is
   // one of the trait's parameters or one an associated type takes of its own,
   // labelled after them; getGenericTypesIn descends the attributes -- a trait
@@ -1105,13 +1118,15 @@ func::FuncOp ImplOp::addMember(OpBuilder &builder, Location loc,
                                FlatSymbolRefAttr member,
                                FunctionType signature) {
   // The function is named, under this impl, after the member's name within
-  // its trait, by the rule naming both.
-  StringRef name = getMemberName(getTraitNameAttr().getValue(), member.getValue())
-                       .value_or(member.getValue());
+  // its trait, by the rule naming both; the trait's verifier refuses a member
+  // not named under it.
+  std::optional<StringRef> name =
+      getMemberName(getTraitNameAttr().getValue(), member.getValue());
+  assert(name && "a member of the impl's trait is named under it");
   SmallVector<Type> inputs(getBody().front().getArgumentTypes());
   llvm::append_range(inputs, signature.getInputs());
   auto function = func::FuncOp::create(
-      builder, loc, getMemberSymbol(getSymName(), name),
+      builder, loc, getMemberSymbol(getSymName(), *name),
       builder.getFunctionType(inputs, signature.getResults()));
   function.setPrivate();
   function.addEntryBlock();
