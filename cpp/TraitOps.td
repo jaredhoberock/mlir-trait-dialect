@@ -574,13 +574,14 @@ def ImplOp : TraitDialectOp<"impl", [
         const SpecializationMap &headerArguments,
         llvm::function_ref<InFlightDiagnostic()> err = nullptr);
 
-    /// `ty`, spelled over this impl's own parameters, with every projection
-    /// over its header resolved through its associated-type bindings to its
-    /// normal form: the facts the impl states of its own application, which
-    /// hold in its own body. A projection over any other application, and an
-    /// equality's endpoints, stand as spelled. Fails where the reading meets
-    /// a bound (`ProjectionNormalizer`).
-    FailureOr<Type> readOwnBindings(Type ty);
+    /// The reader of types spelled over this impl's own parameters that
+    /// resolves every projection over its header through its associated-type
+    /// bindings to its normal form: the facts the impl states of its own
+    /// application, which hold in its own body. A projection over any other
+    /// application, and an equality's endpoints, stand as spelled. A reading
+    /// meeting a bound is unsettled (`ProjectionNormalizer`), and one reader
+    /// reads a type two readings share once.
+    ProjectionNormalizer getOwnBindingsReader();
 
   }];
 

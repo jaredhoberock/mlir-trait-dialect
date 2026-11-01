@@ -779,16 +779,20 @@ ReturnOp ImplOp::getReturn() {
 /// its where clause's equalities seed, modulo proofs (`entailedByGroundCongruence`).
 /// The verifier enumerates no candidate impls, so a projection neither reduces
 /// is equal to itself alone. Fails, naming why through `errFn`, where reading
-/// the bindings does not settle.
+/// the bindings does not settle. `own` is the impl's reader of its own
+/// bindings (`ImplOp::getOwnBindingsReader`), which the judgments of one impl
+/// share.
 static FailureOr<bool>
-agreeInOwnContext(ImplOp impl, Type expected, Type actual,
-                  llvm::function_ref<InFlightDiagnostic()> errFn) {
+agreeInOwnContext(ImplOp impl, ProjectionNormalizer &own, Type expected,
+                  Type actual, llvm::function_ref<InFlightDiagnostic()> errFn) {
   auto read = [&](Type ty) -> FailureOr<Type> {
-    FailureOr<Type> out = impl.readOwnBindings(ty);
-    if (failed(out) && errFn)
+    Normalized out = own.normalize(ty);
+    if (!out.unsettled)
+      return out.type;
+    if (errFn)
       errFn() << "projection normalization did not converge; check for "
                  "cyclic associated type bindings";
-    return out;
+    return failure();
   };
   FailureOr<Type> lhs = read(expected);
   FailureOr<Type> rhs = read(actual);
@@ -873,8 +877,9 @@ static LogicalResult verifyMemberSignature(
                  Type(*spelling));
   }
   Type expected = instantiate(traitMethodTy, *rebase);
+  ProjectionNormalizer own = impl.getOwnBindingsReader();
   FailureOr<bool> agree =
-      agreeInOwnContext(impl, expected, implMethodTy, errFn);
+      agreeInOwnContext(impl, own, expected, implMethodTy, errFn);
   if (failed(agree))
     return failure();
   if (!*agree) {
@@ -928,14 +933,15 @@ static LogicalResult verifyRequirementEvidence(
                    << "' requires " << requirements->size();
 
   Value self = impl.getBody().front().getArgument(0);
+  ProjectionNormalizer own = impl.getOwnBindingsReader();
   for (auto [index, operand, requirement] :
        llvm::enumerate(evidence.getOperands(), *requirements)) {
     auto supplied = dyn_cast<ClaimType>(operand.getType());
     if (!supplied)
       return errFn() << "returns " << operand.getType() << " for requirement "
                      << index << ", which is no claim";
-    FailureOr<bool> agree =
-        agreeInOwnContext(impl, Type(requirement), Type(supplied), errFn);
+    FailureOr<bool> agree = agreeInOwnContext(impl, own, Type(requirement),
+                                              Type(supplied), errFn);
     if (failed(agree))
       return failure();
     if (!*agree)
@@ -1809,26 +1815,22 @@ FailureOr<Type> ImplOp::specializeAssociatedTypeBinding(
   return instantiate(*binding, arguments);
 }
 
-FailureOr<Type> ImplOp::readOwnBindings(Type ty) {
+ProjectionNormalizer ImplOp::getOwnBindingsReader() {
   // The bindings are spelled over the impl's own parameters, so they are read
   // at the arguments those parameters take in its own body: themselves. Only
   // a projection of the impl's own application is read here, so only one of
   // those in its arguments is read before it.
   TraitApplicationAttr own = getSelfApplication();
-  ProjectionNormalizer normalizer(
+  return ProjectionNormalizer(
       [own](ProjectionType proj) { return proj.getTraitApplication() == own; },
-      [&](ProjectionType proj) -> std::optional<Type> {
-        auto bound = specializeAssociatedTypeBinding(
+      [impl = getOperation()](ProjectionType proj) -> std::optional<Type> {
+        auto bound = cast<ImplOp>(impl).specializeAssociatedTypeBinding(
             proj.getAssocName().getValue(), proj.getAssocTypeArgs(),
             SpecializationMap());
         if (failed(bound))
           return std::nullopt;
         return *bound;
       });
-  Normalized out = normalizer.normalize(ty);
-  if (out.unsettled)
-    return failure();
-  return out.type;
 }
 
 //===----------------------------------------------------------------------===//
