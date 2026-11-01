@@ -2579,10 +2579,6 @@ static FailureOr<SpecializationMap> readCallSpecialization(
 }
 
 LogicalResult FuncCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  auto calleeName = getCalleeNameAttr();
-  if (!calleeName)
-    return emitOpError() << "requires a 'callee_name' symbol reference attribute";
-
   auto errFn = [&] { return emitOpError(); };
   auto callee = getCallee(symbolTable, errFn);
   if (failed(callee))
