@@ -19,7 +19,7 @@
 trait.trait private @Fold(!trait.claim<@Fold[!A]>) assoc {Item = 0}
 trait.impl private @Fold_i32(%self: !trait.claim<@Fold[i32]>) bindings {Item = i64} {
 }
-trait.trait private @Get(!trait.claim<@Get[!A]>) members [@Get.get, default @Get.twice]
+trait.trait private @Get(!trait.claim<@Get[!A]>) members [@Get.get, @Get.twice]
 func.func private @Get.get(!trait.claim<@Get[!A]>) -> i64
 func.func private @Get.twice(%self: !trait.claim<@Get[!A]>) -> i64 {
   %a = trait.func.call @Get.get(%self) : (!trait.claim<@Get[!A]>) -> i64

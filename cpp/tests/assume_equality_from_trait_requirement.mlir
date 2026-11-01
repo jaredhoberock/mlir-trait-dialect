@@ -9,7 +9,7 @@
 
 !S = !trait.poly<0>
 
-trait.trait private @FoldFn(!trait.claim<@FoldFn[!S]>) -> !trait.claim<!trait.proj<@FoldFn[!S], "Output"> = !S> assoc {Output = 0} members [default @FoldFn.fold]
+trait.trait private @FoldFn(!trait.claim<@FoldFn[!S]>) -> !trait.claim<!trait.proj<@FoldFn[!S], "Output"> = !S> assoc {Output = 0} members [@FoldFn.fold]
 func.func private @FoldFn.fold(%self: !trait.claim<@FoldFn[!S]>, %x: !S) -> !S {
   %e = trait.project %self[0] : !trait.claim<@FoldFn[!S]> -> !trait.claim<!trait.proj<@FoldFn[!S], "Output"> = !S>
   return %x : !S

@@ -4,7 +4,7 @@
 // RUN: mlir-opt -pass-pipeline='builtin.module(instantiate-monomorphs-trait)' %s | FileCheck %s
 
 !A = !trait.poly<0>
-trait.trait private @A(!trait.claim<@A[!A]>) members [default @A.a]
+trait.trait private @A(!trait.claim<@A[!A]>) members [@A.a]
 func.func private @A.a(%self: !trait.claim<@A[!A]>) {
   return
 }

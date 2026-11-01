@@ -362,11 +362,9 @@ ParseResult TraitOp::parse(OpAsmParser &parser, OperationState &result) {
                       assoc.getDictionary(builder.getContext()));
 
   SmallVector<Attribute> members;
-  SmallVector<bool> defaults;
   if (succeeded(parser.parseOptionalKeyword("members")) &&
       parser.parseCommaSeparatedList(
           OpAsmParser::Delimiter::Square, [&]() -> ParseResult {
-            defaults.push_back(succeeded(parser.parseOptionalKeyword("default")));
             FlatSymbolRefAttr member;
             if (parser.parseAttribute(member))
               return failure();
@@ -376,8 +374,6 @@ ParseResult TraitOp::parse(OpAsmParser &parser, OperationState &result) {
     return failure();
   result.addAttribute(getMembersAttrName(result.name),
                       builder.getArrayAttr(members));
-  result.addAttribute(getDefaultsAttrName(result.name),
-                      builder.getDenseBoolArrayAttr(defaults));
   return parser.parseOptionalAttrDictWithKeyword(result.attributes);
 }
 
@@ -391,15 +387,12 @@ void TraitOp::print(OpAsmPrinter &p) {
       p, "assoc", getAssoc(),
       [&](Attribute count) { p << cast<IntegerAttr>(count).getInt(); },
       getMembers(), [&](unsigned position) {
-        if (getDefaults()[position])
-          p << "default ";
         p.printAttribute(getMembers()[position]);
       });
   p.printOptionalAttrDictWithKeyword(
       (*this)->getAttrs(),
       {getSymNameAttrName(), getSymVisibilityAttrName(), getSelfAttrName(),
-       getRequirementsAttrName(), getAssocAttrName(), getMembersAttrName(),
-       getDefaultsAttrName()});
+       getRequirementsAttrName(), getAssocAttrName(), getMembersAttrName()});
 }
 
 LogicalResult TraitOp::verify() {
@@ -420,12 +413,7 @@ LogicalResult TraitOp::verify() {
   if (getTypeParams().empty())
     return emitOpError() << "requires at least one type parameter";
 
-  // A member's default marker stands beside it, and an associated type's own
-  // parameter count is a count.
-  if (getDefaults().size() != getMembers().size())
-    return emitOpError() << "marks " << getDefaults().size()
-                         << " member(s) as defaulted or not, and declares "
-                         << getMembers().size();
+  // An associated type's own parameter count is a count.
   for (NamedAttribute entry : getAssoc()) {
     auto count = dyn_cast<IntegerAttr>(entry.getValue());
     if (!count || count.getType() != IntegerType::get(getContext(), 64) ||
@@ -488,9 +476,9 @@ LogicalResult TraitOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
                                                              symbolTable)))
       return failure();
 
-  // Member k is a function leading with the trait's own application; one
-  // the trait gives no default is external, required of every impl, and one
-  // it defaults has the body an impl may leave the member to.
+  // Member k is a function leading with the trait's own application: one
+  // with a body is the default an impl may leave the member to, and an
+  // external one is required of every impl.
   ClaimType self = getSelfClaim();
   for (auto [position, entry] : llvm::enumerate(getMembers())) {
     auto symbol = cast<FlatSymbolRefAttr>(entry);
@@ -504,11 +492,6 @@ LogicalResult TraitOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
       return emitOpError() << "member " << symbol
                            << " does not lead with the trait's own application "
                            << Type(self);
-    if (getDefaults()[position] == member.isExternal())
-      return emitOpError() << "member " << symbol
-                           << (member.isExternal()
-                                   ? " is marked default and has no body"
-                                   : " has a body and is not marked default");
     if (failed(verifyFunctionResultGenericsAreDetermined(member, type, {})))
       return failure();
   }
@@ -554,10 +537,7 @@ func::FuncOp TraitOp::addMember(OpBuilder &builder, Location loc,
     member.addEntryBlock();
   SmallVector<Attribute> members(getMembers().getValue());
   members.push_back(symbol);
-  SmallVector<bool> defaults(getDefaults());
-  defaults.push_back(withDefault);
   setMembersAttr(builder.getArrayAttr(members));
-  setDefaults(defaults);
   return member;
 }
 

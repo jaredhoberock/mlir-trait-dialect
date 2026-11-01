@@ -26,7 +26,7 @@ The snippet below defines `PartialEq`, gives `i32` an implementation, and define
 //    each member is a function whose first parameter is that claim.
 !S = !trait.poly<0>
 !O = !trait.poly<1>
-trait.trait private @PartialEq(!trait.claim<@PartialEq[!S, !O]>) members [@PartialEq.eq, default @PartialEq.ne]
+trait.trait private @PartialEq(!trait.claim<@PartialEq[!S, !O]>) members [@PartialEq.eq, @PartialEq.ne]
 
 // a required member: a function without a body
 func.func private @PartialEq.eq(!trait.claim<@PartialEq[!S, !O]>, !S, !O) -> i1

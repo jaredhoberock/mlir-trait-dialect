@@ -177,7 +177,7 @@ def TraitOp : TraitDialectOp<"trait", [
 
     trait.trait private @PartialOrd(!trait.claim<@PartialOrd[!S, !O]>)
         -> !trait.claim<@PartialEq[!S, !O]>
-        members [@PartialOrd.partial_cmp, default @PartialOrd.lt]
+        members [@PartialOrd.partial_cmp, @PartialOrd.lt]
 
     // a required member
     func.func private @PartialOrd.partial_cmp(!trait.claim<@PartialOrd[!S, !O]>, !S, !O) -> !opt_ord
@@ -194,8 +194,8 @@ def TraitOp : TraitDialectOp<"trait", [
     `members` lists the trait's members in declaration order, which is
     program content: member k is a module-level function whose leading
     parameter is the trait's own application, followed by the member's inputs.
-    A member marked `default` has a body, the definition an impl may leave the
-    member to (`defaults`); every other member is external, required of every
+    A member whose function has a body has a default, the definition an impl
+    may leave the member to; every other member is external, required of every
     impl. `assoc` names each associated type with the number of type parameters
     of its own, which are labelled after the trait's by position.
 
@@ -216,7 +216,6 @@ def TraitOp : TraitDialectOp<"trait", [
     TypeAttr:$self,
     TypeArrayAttr:$requirements,
     FlatSymbolRefArrayAttr:$members,
-    DenseBoolArrayAttr:$defaults,
     DictionaryAttr:$assoc,
     OptionalAttr<StrAttr>:$sym_visibility
   );
@@ -307,7 +306,6 @@ def TraitOp : TraitDialectOp<"trait", [
       $_state.addAttribute("self", ::mlir::TypeAttr::get(self));
       $_state.addAttribute("requirements", $_builder.getTypeArrayAttr(requirements));
       $_state.addAttribute("members", $_builder.getArrayAttr({}));
-      $_state.addAttribute("defaults", $_builder.getDenseBoolArrayAttr({}));
       $_state.addAttribute("assoc", $_builder.getDictionaryAttr({}));
       $_state.addAttribute("sym_visibility", $_builder.getStringAttr("private"));
     }]>

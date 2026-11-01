@@ -18,7 +18,7 @@
 trait.trait private @B(!trait.claim<@B[!S]>) members [@B.b]
 func.func private @B.b(!trait.claim<@B[!S]>, !S) -> i64
 
-trait.trait private @A(!trait.claim<@A[!S]>) -> (!trait.claim<@B[!S]>, !trait.claim<!trait.proj<@A[!S], "Out"> = i64>) assoc {Out = 0} members [@A.make, default @A.twice]
+trait.trait private @A(!trait.claim<@A[!S]>) -> (!trait.claim<@B[!S]>, !trait.claim<!trait.proj<@A[!S], "Out"> = i64>) assoc {Out = 0} members [@A.make, @A.twice]
 func.func private @A.make(!trait.claim<@A[!S]>, !S) -> !trait.proj<@A[!S], "Out">
 func.func private @A.twice(%self: !trait.claim<@A[!S]>, %x: !S) -> i64 {
   %b = trait.project %self[0] : !trait.claim<@A[!S]> -> !trait.claim<@B[!S]>

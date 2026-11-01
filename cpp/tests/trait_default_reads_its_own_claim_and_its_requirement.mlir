@@ -13,7 +13,7 @@
 !T = !trait.poly<0>
 trait.trait private @B(!trait.claim<@B[!T]>) members [@B.b]
 func.func private @B.b(!trait.claim<@B[!T]>, !T) -> i64
-trait.trait private @A(!trait.claim<@A[!T]>) -> !trait.claim<@B[!T]> members [@A.a, default @A.both]
+trait.trait private @A(!trait.claim<@A[!T]>) -> !trait.claim<@B[!T]> members [@A.a, @A.both]
 func.func private @A.a(!trait.claim<@A[!T]>, !T) -> i64
 func.func private @A.both(%self: !trait.claim<@A[!T]>, %x: !T) -> i64 {
   %b = trait.project %self[0] : !trait.claim<@A[!T]> -> !trait.claim<@B[!T]>

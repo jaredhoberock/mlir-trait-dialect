@@ -11,7 +11,7 @@
 // wrap another tuple around it every time, so the clone here is one tuple deep
 // and no deeper.
 
-trait.trait private @Tr(!trait.claim<@Tr[!trait.poly<0>]>) members [default @Tr.method]
+trait.trait private @Tr(!trait.claim<@Tr[!trait.poly<0>]>) members [@Tr.method]
 func.func private @Tr.method(%self_claim: !trait.claim<@Tr[!trait.poly<0>]>, %self: !trait.poly<0>) -> !trait.poly<0> {
   return %self : !trait.poly<0>
 }

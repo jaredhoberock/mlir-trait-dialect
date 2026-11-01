@@ -24,7 +24,7 @@
 trait.trait private @Marker(!trait.claim<@Marker[!S]>) members [@Marker.mark]
 func.func private @Marker.mark(!trait.claim<@Marker[!S]>, !S) -> i64
 
-trait.trait private @Has(!trait.claim<@Has[!S]>) assoc {A = 1} members [@Has.requirement_0, default @Has.use]
+trait.trait private @Has(!trait.claim<@Has[!S]>) assoc {A = 1} members [@Has.requirement_0, @Has.use]
 func.func private @Has.requirement_0(!trait.claim<@Has[!S]>, !trait.claim<@Marker[!trait.poly<1>]>) -> !trait.claim<@Marker[!trait.proj<@Has[!trait.poly<0>], "A", [!trait.poly<1>]>]>
 func.func private @Has.use(%self: !trait.claim<@Has[!S]>, %x: !trait.proj<@Has[!S], "A", [i1]>, %p: !trait.claim<@Marker[i1]>) -> i64 {
   %m = trait.func.call @Has.requirement_0(%self, %p) : (!trait.claim<@Has[!S]>, !trait.claim<@Marker[i1]>) -> !trait.claim<@Marker[!trait.proj<@Has[!S], "A", [i1]>]>

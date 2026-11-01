@@ -21,7 +21,7 @@
 // CUT:         {{^ *}}return
 
 !T = !trait.poly<0>
-trait.trait private @Tr(!trait.claim<@Tr[!T]>) members [@Tr.pick, default @Tr.twice]
+trait.trait private @Tr(!trait.claim<@Tr[!T]>) members [@Tr.pick, @Tr.twice]
 func.func private @Tr.pick(!trait.claim<@Tr[!T]>, !T) -> i64
 func.func private @Tr.twice(%self: !trait.claim<@Tr[!T]>, %x: !T) -> i64 {
   %p = trait.func.call @Tr.pick(%self, %x) : (!trait.claim<@Tr[!T]>, !T) -> i64

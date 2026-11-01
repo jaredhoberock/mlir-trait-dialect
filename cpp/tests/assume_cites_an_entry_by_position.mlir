@@ -16,7 +16,7 @@
 trait.trait private @B(!trait.claim<@B[!T]>) assoc {Out = 0} members [@B.b]
 func.func private @B.b(!trait.claim<@B[!T]>, !T) -> i64
 
-trait.trait private @A(!trait.claim<@A[!T]>) -> !trait.claim<@B[!T]> members [@A.a, default @A.twice]
+trait.trait private @A(!trait.claim<@A[!T]>) -> !trait.claim<@B[!T]> members [@A.a, @A.twice]
 func.func private @A.a(!trait.claim<@A[!T]>, !T) -> i64
 func.func private @A.twice(%self: !trait.claim<@A[!T]>, %x: !T) -> i64 {
   %b = trait.project %self[0] : !trait.claim<@A[!T]> -> !trait.claim<@B[!T]>
@@ -37,7 +37,7 @@ func.func private @A_gen.a(%self: !trait.claim<@A[!T]>, %b: !trait.claim<@B[!T]>
 // CHECK: trait.trait private @A(!trait.claim<@A[!trait.poly<0>]>) -> !trait.claim<@B[!trait.poly<0>]>{{$}}
 // CHECK-NEXT: members [
 // CHECK-NEXT: @A.a,
-// CHECK-NEXT: default @A.twice{{$}}
+// CHECK-NEXT: @A.twice{{$}}
 // CHECK-NEXT: ]
 // CHECK: func.func private @A.twice(%[[SELF:[^:]*]]: !trait.claim<@A[!trait.poly<0>]>
 // CHECK: trait.project %[[SELF]][0] : <@A[!trait.poly<0>]> -> <@B[!trait.poly<0>]>

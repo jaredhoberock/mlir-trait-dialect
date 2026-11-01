@@ -20,7 +20,7 @@ func.func private @Nine.value(%self: !trait.claim<@Mark[i32]>) -> i64 {
   %v = arith.constant 9 : i64
   return %v : i64
 }
-trait.trait private @Wrapped(!trait.claim<@Wrapped[!T]>) -> !trait.claim<@Mark[!T]> members [default @Wrapped.value]
+trait.trait private @Wrapped(!trait.claim<@Wrapped[!T]>) -> !trait.claim<@Mark[!T]> members [@Wrapped.value]
 func.func private @Wrapped.value(%self: !trait.claim<@Wrapped[!T]>) -> i64 {
   %p = trait.project %self[0] : !trait.claim<@Wrapped[!T]> -> !trait.claim<@Mark[!T]>
   %v = trait.func.call @Mark.value(%p) : (!trait.claim<@Mark[!T]>) -> i64

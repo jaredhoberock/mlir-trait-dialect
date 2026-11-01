@@ -27,7 +27,7 @@ func.func private @Nine.value(%self: !trait.claim<@Mark[i32]>) -> i64 {
 trait.impl private @Wrapped_any(%self: !trait.claim<@Wrapped[!T]>, %mark: !trait.claim<@Mark[!T]>) {
   trait.return %mark : !trait.claim<@Mark[!T]>
 }
-trait.trait private @Host(!trait.claim<@Host[!T]>) members [default @Host.run]
+trait.trait private @Host(!trait.claim<@Host[!T]>) members [@Host.run]
 func.func private @Host.run(%self: !trait.claim<@Host[!T]>, %p: !trait.claim<@Mark[!T]>) -> i64 {
   %c = arith.constant false
   %w = trait.derive @Wrapped[!T] from @Wrapped_any[!trait.poly<0>] given(%p) : (!trait.claim<@Mark[!T]>)

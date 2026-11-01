@@ -21,7 +21,7 @@ func.func private @Tr_tuple.get(%self: !trait.claim<@Tr[tuple<!S>]>, %tr: !trait
   return %c : i64
 }
 
-trait.trait private @Wrap(!trait.claim<@Wrap[!S]>) -> !trait.claim<@Tr[!S]> members [default @Wrap.wrapped]
+trait.trait private @Wrap(!trait.claim<@Wrap[!S]>) -> !trait.claim<@Tr[!S]> members [@Wrap.wrapped]
 func.func private @Wrap.wrapped(%self: !trait.claim<@Wrap[!S]>, %x: tuple<!S>) -> i64 {
   %t = trait.project %self[0] : !trait.claim<@Wrap[!S]> -> !trait.claim<@Tr[!S]>
   %d = trait.derive @Tr[tuple<!S>] from @Tr_tuple[!trait.poly<0>] given(%t) : (!trait.claim<@Tr[!S]>)

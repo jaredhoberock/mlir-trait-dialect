@@ -16,7 +16,7 @@
 trait.trait private @Mark(!trait.claim<@Mark[!T]>) members [@Mark.value]
 func.func private @Mark.value(!trait.claim<@Mark[!T]>) -> i64
 trait.trait private @Wrapped(!trait.claim<@Wrapped[!T]>) -> !trait.claim<@Mark[!T]>
-trait.trait private @Host(!trait.claim<@Host[!T]>) members [default @Host.run]
+trait.trait private @Host(!trait.claim<@Host[!T]>) members [@Host.run]
 func.func private @Host.run(%self: !trait.claim<@Host[!T]>, %w: !trait.claim<@Wrapped[!T]>) -> i64 {
   %m = trait.project %w[0] : !trait.claim<@Wrapped[!T]> -> !trait.claim<@Mark[!T]>
   %v = trait.func.call @Mark.value(%m) : (!trait.claim<@Mark[!T]>) -> i64

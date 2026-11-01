@@ -23,7 +23,7 @@ trait.impl private @B_impl(%self: !trait.claim<@B[!trait.poly<0>]>) {
 
 !C = !trait.poly<4>
 // CHECK-NOT: trait.trait private @C
-trait.trait private @C(!trait.claim<@C[!trait.poly<0>]>) -> !trait.claim<@A[!trait.poly<0>]> members [default @C.method]
+trait.trait private @C(!trait.claim<@C[!trait.poly<0>]>) -> !trait.claim<@A[!trait.poly<0>]> members [@C.method]
 func.func private @C.method(%self_claim: !trait.claim<@C[!trait.poly<0>]>, %self: !trait.poly<0>) -> i1 {
   %res = arith.constant 0 : i1
   return %res : i1

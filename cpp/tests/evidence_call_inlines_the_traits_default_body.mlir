@@ -15,7 +15,7 @@
 !X = !trait.poly<1>
 trait.trait private @Marker(!trait.claim<@Marker[!S]>) members [@Marker.mark]
 func.func private @Marker.mark(!trait.claim<@Marker[!S]>, i64) -> i64
-trait.trait private @Has(!trait.claim<@Has[!S]>) assoc {A = 1} members [default @Has.requirement_0]
+trait.trait private @Has(!trait.claim<@Has[!S]>) assoc {A = 1} members [@Has.requirement_0]
 func.func private @Has.requirement_0(%self: !trait.claim<@Has[!S]>, %m: !trait.claim<@Marker[!X]>) -> !trait.claim<@Marker[!trait.proj<@Has[!S], "A", [!X]>]> {
   %r = trait.witness @Marker_i64 for @Marker[i64]
   %eq = trait.allege !trait.proj<@Has[!S], "A", [!X]> = i64

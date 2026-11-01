@@ -8,7 +8,7 @@ use melior::{
 };
 use mlir_sys::{
     MlirAttribute, MlirContext, MlirOperation, MlirPass, MlirStringRef, MlirType,
-    mlirArrayAttrGet, mlirDenseBoolArrayGet, mlirDictionaryAttrGet, mlirFlatSymbolRefAttrGet,
+    mlirArrayAttrGet, mlirDictionaryAttrGet, mlirFlatSymbolRefAttrGet,
     mlirIdentifierGet, mlirIntegerAttrGet, mlirIntegerTypeGet,
     mlirLocationGetContext,
     mlirStringAttrGet, mlirTypeAttrGet,
@@ -298,10 +298,9 @@ pub fn trait_<'c>(loc: Location<'c>,
                   self_claim: Type<'c>,
                   requirements: &[Type<'c>],
 ) -> Operation<'c> {
-    let (no_defaults, no_associated_types) = unsafe {
-        let ctx = mlirLocationGetContext(loc.to_raw());
-        (Attribute::from_raw(mlirDenseBoolArrayGet(ctx, 0, std::ptr::null())),
-         Attribute::from_raw(mlirDictionaryAttrGet(ctx, 0, std::ptr::null())))
+    let no_associated_types = unsafe {
+        Attribute::from_raw(mlirDictionaryAttrGet(
+            mlirLocationGetContext(loc.to_raw()), 0, std::ptr::null()))
     };
     build_op(OperationBuilder::new("trait.trait", loc)
         .add_attributes(&[
@@ -309,7 +308,6 @@ pub fn trait_<'c>(loc: Location<'c>,
             (identifier(loc, "self"), type_attr(self_claim)),
             (identifier(loc, "requirements"), type_array_attr(loc, requirements)),
             (identifier(loc, "members"), array_attr(loc, &[])),
-            (identifier(loc, "defaults"), no_defaults),
             (identifier(loc, "assoc"), no_associated_types),
             (identifier(loc, "sym_visibility"), string_attr(loc, "private")),
         ]))

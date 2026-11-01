@@ -5,16 +5,15 @@
 // RUN: mlir-opt %s --mlir-print-op-generic | mlir-opt | FileCheck %s
 // RUN: mlir-opt %s -emit-bytecode | mlir-opt | FileCheck %s
 
-// A trait lists its members in declaration order, a member with a default
-// marked, and an impl pairs each member it implements with the function
-// implementing it.
+// A trait lists its members in declaration order, and an impl pairs each
+// member it implements with the function implementing it.
 // The members are module-level functions: a required one has no body, a
 // default and an impl's function have one, which may have several blocks. The
 // custom form, the generic form and bytecode all read back to the same
 // declarations.
 
 !T = !trait.poly<0>
-trait.trait private @Tr(!trait.claim<@Tr[!T]>) members [@Tr.required, default @Tr.default]
+trait.trait private @Tr(!trait.claim<@Tr[!T]>) members [@Tr.required, @Tr.default]
 func.func private @Tr.required(!trait.claim<@Tr[!T]>, !T) -> i64
 func.func private @Tr.default(%self: !trait.claim<@Tr[!T]>, %x: !T) -> i64 {
   %r = trait.func.call @Tr.required(%self, %x) : (!trait.claim<@Tr[!T]>, !T) -> i64
@@ -36,7 +35,7 @@ func.func private @Tr_i64.required(%self: !trait.claim<@Tr[i64]>, %x: i64) -> i6
 // CHECK-LABEL: trait.trait private @Tr(!trait.claim<@Tr[!trait.poly<0>]>){{$}}
 // CHECK-NEXT: members [
 // CHECK-NEXT: @Tr.required,
-// CHECK-NEXT: default @Tr.default{{$}}
+// CHECK-NEXT: @Tr.default{{$}}
 // CHECK-NEXT: ]{{$}}
 // CHECK-NEXT:    func.func private @Tr.required(!trait.claim<@Tr[!trait.poly<0>]>, !trait.poly<0>) -> i64{{$}}
 // CHECK-NEXT:    func.func private @Tr.default(%{{.*}}: !trait.claim<@Tr[!trait.poly<0>]>, %{{.*}}: !trait.poly<0>) -> i64 {

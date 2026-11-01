@@ -6,7 +6,7 @@
 !PartialEqS = !trait.poly<0>
 !PartialEqO = !trait.poly<1>
 // CHECK-NOT: trait.trait private @PartialEq
-trait.trait private @PartialEq(!trait.claim<@PartialEq[!PartialEqS, !PartialEqO]>) members [@PartialEq.eq, default @PartialEq.ne]
+trait.trait private @PartialEq(!trait.claim<@PartialEq[!PartialEqS, !PartialEqO]>) members [@PartialEq.eq, @PartialEq.ne]
 func.func private @PartialEq.eq(!trait.claim<@PartialEq[!PartialEqS, !PartialEqO]>, !PartialEqS, !PartialEqO) -> i1
 func.func private @PartialEq.ne(%self_claim: !trait.claim<@PartialEq[!PartialEqS, !PartialEqO]>, %self: !PartialEqS, %other: !PartialEqO) -> i1 {
   %equal = trait.func.call @PartialEq.eq(%self_claim, %self, %other) : (!trait.claim<@PartialEq[!PartialEqS,!PartialEqO]>, !PartialEqS,!PartialEqO) -> i1
@@ -66,7 +66,7 @@ trait.impl private @Eq_impl_i32(%self: !trait.claim<@Eq[i32]>) {
 !PartialOrdO = !trait.poly<4>
 
 // CHECK-NOT: trait.trait private @PartialOrd
-trait.trait private @PartialOrd(!trait.claim<@PartialOrd[!trait.poly<0>, !trait.poly<1>]>) -> !trait.claim<@PartialEq[!trait.poly<0>,!trait.poly<1>]> members [@PartialOrd.partial_cmp, default @PartialOrd.lt, default @PartialOrd.le, default @PartialOrd.gt, default @PartialOrd.ge]
+trait.trait private @PartialOrd(!trait.claim<@PartialOrd[!trait.poly<0>, !trait.poly<1>]>) -> !trait.claim<@PartialEq[!trait.poly<0>,!trait.poly<1>]> members [@PartialOrd.partial_cmp, @PartialOrd.lt, @PartialOrd.le, @PartialOrd.gt, @PartialOrd.ge]
 func.func private @PartialOrd.partial_cmp(!trait.claim<@PartialOrd[!trait.poly<0>, !trait.poly<1>]>, !trait.poly<0>, !trait.poly<1>) -> !opt_ord
 func.func private @PartialOrd.lt(%self_claim: !trait.claim<@PartialOrd[!trait.poly<0>, !trait.poly<1>]>, %self: !trait.poly<0>, %other: !trait.poly<1>) -> i1 {
   %cmp = trait.func.call @PartialOrd.partial_cmp(%self_claim, %self, %other) : (!trait.claim<@PartialOrd[!trait.poly<0>,!trait.poly<1>]>, !trait.poly<0>,!trait.poly<1>) -> !opt_ord
@@ -132,7 +132,7 @@ func.func private @PartialOrd_impl_i32_i32.partial_cmp(%self: !trait.claim<@Part
 
 !OrdS = !trait.poly<5>
 // CHECK-NOT: trait.trait private @Ord
-trait.trait private @Ord(!trait.claim<@Ord[!trait.poly<0>]>) -> (!trait.claim<@Eq[!trait.poly<0>]>, !trait.claim<@PartialOrd[!trait.poly<0>,!trait.poly<0>]>) members [@Ord.cmp, default @Ord.max, default @Ord.min]
+trait.trait private @Ord(!trait.claim<@Ord[!trait.poly<0>]>) -> (!trait.claim<@Eq[!trait.poly<0>]>, !trait.claim<@PartialOrd[!trait.poly<0>,!trait.poly<0>]>) members [@Ord.cmp, @Ord.max, @Ord.min]
 func.func private @Ord.cmp(!trait.claim<@Ord[!trait.poly<0>]>, !trait.poly<0>, !trait.poly<0>) -> !ord
 func.func private @Ord.max(%self_claim: !trait.claim<@Ord[!trait.poly<0>]>, %self: !trait.poly<0>, %other: !trait.poly<0>) -> !trait.poly<0> {
   %partial_ord = trait.project %self_claim[1]
