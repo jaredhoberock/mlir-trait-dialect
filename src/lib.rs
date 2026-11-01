@@ -66,6 +66,9 @@ unsafe extern "C" {
     fn traitImplOpAddMember(impl_op: MlirOperation, member: MlirAttribute,
                             signature: MlirType) -> MlirOperation;
     fn traitImplOpBindAssociatedType(impl_op: MlirOperation, name: MlirStringRef, ty: MlirType);
+    fn traitMemberSymbolPrint(owner: MlirStringRef, name: MlirStringRef,
+                              callback: mlir_sys::MlirStringCallback, user_data: *mut std::ffi::c_void);
+    fn traitMemberNameOf(owner: MlirStringRef, symbol: MlirStringRef) -> MlirStringRef;
 }
 
 /// Rename each top-level symbol of `op` named first in `renames` to the name
@@ -81,7 +84,7 @@ pub unsafe fn rename_symbols(op: mlir_sys::MlirOperation, renames: &[(String, St
     unsafe { traitRenameSymbols(op, names.as_ptr(), new_names.as_ptr(), renames.len() as isize) }
 }
 
-/// The text of a string the context owns.
+/// The text of a string MLIR owns.
 fn context_string(text: MlirStringRef) -> String {
     unsafe { StringRef::from_raw(text) }
         .as_str()
@@ -397,6 +400,31 @@ pub fn bind_associated_type<'c>(impl_op: OperationRef<'c, '_>, name: &str, ty: T
     unsafe {
         traitImplOpBindAssociatedType(impl_op.to_raw(), StringRef::new(name).to_raw(), ty.to_raw())
     }
+}
+
+/// The symbol of `owner`'s member function `name`: the dialect's one rule
+/// naming each member a trait declares and each function an impl implements
+/// one by.
+pub fn member_symbol(owner: &str, name: &str) -> String {
+    unsafe extern "C" fn set(text: MlirStringRef, symbol: *mut std::ffi::c_void) {
+        unsafe { *(symbol as *mut String) = context_string(text) }
+    }
+    let mut symbol = String::new();
+    unsafe { traitMemberSymbolPrint(StringRef::new(owner).to_raw(), StringRef::new(name).to_raw(), Some(set), &mut symbol as *mut String as _) };
+    symbol
+}
+
+/// The name within `owner` of the member function `symbol` names, the inverse
+/// of `member_symbol`: a part of `symbol`, none where `symbol` is not named
+/// under `owner`.
+pub fn member_name<'s>(owner: &str, symbol: &'s str) -> Option<&'s str> {
+    let name = unsafe { traitMemberNameOf(StringRef::new(owner).to_raw(), StringRef::new(symbol).to_raw()) };
+    if name.data.is_null() {
+        return None;
+    }
+    // the name lies inside `symbol`, so it lives as long as `symbol` does
+    let start = name.data as usize - symbol.as_ptr() as usize;
+    Some(&symbol[start..start + name.length])
 }
 
 /// Build a `trait.return` of `operands`: the evidence an impl returns for its

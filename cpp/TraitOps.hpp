@@ -198,6 +198,16 @@ struct EvidenceReading {
 
 namespace mlir::trait {
 
+/// The symbol of `owner`'s member function `name`, `<owner>.<name>`: the one
+/// rule naming each member a trait declares and each function an impl
+/// implements one by.
+std::string getMemberSymbol(StringRef owner, StringRef name);
+
+/// The name within `owner` of the member function `symbol` names, the inverse
+/// of `getMemberSymbol`: `symbol` past `owner` and a dot; none where `symbol`
+/// is not named under `owner`.
+std::optional<StringRef> getMemberName(StringRef owner, StringRef symbol);
+
 /// Whether `op` produces a claim whose evidence is read by position, off its
 /// operands or off the declarations they name: a projection, a derive, a
 /// coercion, or a call computing evidence. The stage proves such a result by

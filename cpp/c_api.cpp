@@ -290,6 +290,17 @@ void traitImplOpBindAssociatedType(MlirOperation implOp, MlirStringRef name,
   cast<ImplOp>(unwrap(implOp)).bindAssociatedType(unwrap(name), unwrap(type));
 }
 
+void traitMemberSymbolPrint(MlirStringRef owner, MlirStringRef name,
+                            MlirStringCallback callback, void *userData) {
+  std::string symbol = getMemberSymbol(unwrap(owner), unwrap(name));
+  callback(wrap(StringRef(symbol)), userData);
+}
+
+MlirStringRef traitMemberNameOf(MlirStringRef owner, MlirStringRef symbol) {
+  std::optional<StringRef> name = getMemberName(unwrap(owner), unwrap(symbol));
+  return name ? wrap(*name) : mlirStringRefCreate(nullptr, 0);
+}
+
 intptr_t traitGetGenericTypesIn(MlirType type, MlirType *results, intptr_t maxResults) {
   auto generics = getGenericTypesIn(unwrap(type));
   intptr_t count = static_cast<intptr_t>(generics.size());

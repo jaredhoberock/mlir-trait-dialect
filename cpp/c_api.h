@@ -160,6 +160,17 @@ MlirOperation traitImplOpAddMember(MlirOperation implOp, MlirAttribute member,
 void traitImplOpBindAssociatedType(MlirOperation implOp, MlirStringRef name,
                                    MlirType type);
 
+/// Calls `callback` once with the symbol of `owner`'s member function `name`,
+/// `<owner>.<name>`: the one rule naming each member a trait declares and
+/// each function an impl implements one by.
+void traitMemberSymbolPrint(MlirStringRef owner, MlirStringRef name,
+                            MlirStringCallback callback, void *userData);
+
+/// The name within `owner` of the member function `symbol` names, the inverse
+/// of traitMemberSymbolPrint: a reference into `symbol`, with null data where
+/// `symbol` is not named under `owner`.
+MlirStringRef traitMemberNameOf(MlirStringRef owner, MlirStringRef symbol);
+
 /// Collect all unique types implementing GenericTypeInterface found in `type`.
 ///
 /// This walks `type` recursively and returns every distinct generic type

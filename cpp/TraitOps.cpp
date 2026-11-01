@@ -512,10 +512,21 @@ std::optional<unsigned> TraitOp::getAssociatedTypeArity(StringRef name) {
   return count.getInt();
 }
 
-/// The symbol of `owner`'s member function `name`, `@<owner>.<name>`.
+std::string mlir::trait::getMemberSymbol(StringRef owner, StringRef name) {
+  return (owner + "." + name).str();
+}
+
+std::optional<StringRef> mlir::trait::getMemberName(StringRef owner,
+                                                    StringRef symbol) {
+  if (!symbol.consume_front(owner) || !symbol.consume_front("."))
+    return std::nullopt;
+  return symbol;
+}
+
+/// The symbol of `owner`'s member function `name` (`getMemberSymbol`).
 static FlatSymbolRefAttr memberSymbol(StringAttr owner, StringRef name) {
   return FlatSymbolRefAttr::get(owner.getContext(),
-                                (owner.getValue() + "." + name).str());
+                                getMemberSymbol(owner.getValue(), name));
 }
 
 FlatSymbolRefAttr TraitOp::getMemberNamed(StringRef name) {
@@ -1093,16 +1104,14 @@ FlatSymbolRefAttr ImplOp::getImplementationOf(FlatSymbolRefAttr member) {
 func::FuncOp ImplOp::addMember(OpBuilder &builder, Location loc,
                                FlatSymbolRefAttr member,
                                FunctionType signature) {
-  // The function is named after the member's name within its trait: the
-  // member's symbol past the trait's name and a dot.
-  StringRef traitName = getTraitNameAttr().getValue();
-  StringRef name = member.getValue();
-  if (name.starts_with(traitName) && name.drop_front(traitName.size()).starts_with("."))
-    name = name.drop_front(traitName.size() + 1);
+  // The function is named, under this impl, after the member's name within
+  // its trait, by the rule naming both.
+  StringRef name = getMemberName(getTraitNameAttr().getValue(), member.getValue())
+                       .value_or(member.getValue());
   SmallVector<Type> inputs(getBody().front().getArgumentTypes());
   llvm::append_range(inputs, signature.getInputs());
   auto function = func::FuncOp::create(
-      builder, loc, (getSymName() + "." + name).str(),
+      builder, loc, getMemberSymbol(getSymName(), name),
       builder.getFunctionType(inputs, signature.getResults()));
   function.setPrivate();
   function.addEntryBlock();
