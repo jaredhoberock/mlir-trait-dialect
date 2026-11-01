@@ -618,7 +618,7 @@ template<class... NeedleTypes> bool containsType(Attribute attr) {
 }
 
 /// Visits each attribute of `op` where it is stored -- the discardable ones in
-/// its dictionary and, for an op holding properties, the inherent ones there --
+/// its dictionary and, for an op with properties, the inherent ones there --
 /// rather than gathering both into one dictionary per read; stops where `visit`
 /// interrupts.
 inline WalkResult

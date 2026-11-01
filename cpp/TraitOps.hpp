@@ -221,7 +221,7 @@ bool producesPositionalEvidence(Operation *op);
 /// callee `callee`, whose labels lie below `bound`, once that signature
 /// instantiated at them is `actual`, the signature the call states: read off
 /// `actual` against `formal` as declared, the declaration's parameters and the
-/// caller's labels read in one pass and never meeting in one spelling, through
+/// caller's labels read in one pass and never meeting in one type, through
 /// `selection` where it is given, and refused through `err` where the two
 /// disagree or a parameter no position determines.
 ///
