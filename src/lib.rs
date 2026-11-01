@@ -65,7 +65,6 @@ unsafe extern "C" {
     fn traitTraitOpDeclareAssociatedType(trait_op: MlirOperation, name: MlirStringRef, arity: isize);
     fn traitImplOpAddMember(impl_op: MlirOperation, member: MlirAttribute,
                             signature: MlirType) -> MlirOperation;
-    fn traitImplOpLeaveToDefault(impl_op: MlirOperation, member: MlirAttribute);
     fn traitImplOpBindAssociatedType(impl_op: MlirOperation, name: MlirStringRef, ty: MlirType);
 }
 
@@ -348,9 +347,10 @@ pub fn declare_associated_type(trait_op: OperationRef, name: &str, arity: usize)
 /// claim of the application it implements, and then `where_claims`, one claim
 /// per where entry in order. The caller fills the body and ends it with
 /// `trait.return` of the evidence for the trait's requirements. It pairs no
-/// member and binds no associated type until `impl_member`,
-/// `impl_default_member` and `bind_associated_type` add them. The impl is
-/// minted private, the one visibility erase accepts.
+/// member and binds no associated type until `impl_member` and
+/// `bind_associated_type` add them; a member it pairs with nothing is left to
+/// its trait's default. The impl is minted private, the one visibility erase
+/// accepts.
 pub fn impl_named<'c>(loc: Location<'c>,
                       sym_name: &str,
                       self_claim: Type<'c>,
@@ -391,14 +391,6 @@ pub fn impl_member<'c, 'a>(impl_op: OperationRef<'c, 'a>,
         OperationRef::from_raw(traitImplOpAddMember(
             impl_op.to_raw(), member.to_raw(), signature.to_raw()))
     }
-}
-
-/// Leave `member`, a member of the impl `impl_op`'s trait named by its
-/// symbol, to the trait's default: the pair `member -> member` is entered in
-/// the impl's members.
-pub fn impl_default_member(impl_op: OperationRef, member: &str) {
-    let member = symbol_ref_attr(impl_op.location(), member);
-    unsafe { traitImplOpLeaveToDefault(impl_op.to_raw(), member.to_raw()) }
 }
 
 /// Bind associated type `name` of the impl `impl_op` to `ty`, spelled over the

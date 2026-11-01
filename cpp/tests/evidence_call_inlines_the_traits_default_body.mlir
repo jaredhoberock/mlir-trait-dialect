@@ -27,7 +27,7 @@ trait.impl private @Marker_i64(%self: !trait.claim<@Marker[i64]>) members [@Mark
 func.func private @Marker_i64.mark(%self: !trait.claim<@Marker[i64]>, %x: i64) -> i64 {
   %c = arith.constant 1 : i64 %r = arith.addi %x, %c : i64 return %r : i64
 }
-trait.impl private @Has_i32(%self: !trait.claim<@Has[i32]>) bindings {A = i64} members [@Has.requirement_0 -> @Has.requirement_0] {
+trait.impl private @Has_i32(%self: !trait.claim<@Has[i32]>) bindings {A = i64} {
 }
 func.func @main() -> i64 {
   %x = arith.constant 41 : i64

@@ -285,10 +285,6 @@ MlirOperation traitImplOpAddMember(MlirOperation implOp, MlirAttribute member,
                   .getOperation());
 }
 
-void traitImplOpLeaveToDefault(MlirOperation implOp, MlirAttribute member) {
-  cast<ImplOp>(unwrap(implOp)).leaveToDefault(cast<FlatSymbolRefAttr>(unwrap(member)));
-}
-
 void traitImplOpBindAssociatedType(MlirOperation implOp, MlirStringRef name,
                                    MlirType type) {
   cast<ImplOp>(unwrap(implOp)).bindAssociatedType(unwrap(name), unwrap(type));

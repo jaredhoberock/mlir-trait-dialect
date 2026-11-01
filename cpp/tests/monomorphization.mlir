@@ -16,7 +16,7 @@ func.func private @PartialEq.neq(%self_claim: !trait.claim<@PartialEq[!S, !O]>, 
 }
 
 // CHECK-NOT: trait.impl private @PartialEq
-trait.impl private @PartialEq_impl_i32_i32(%self_claim: !trait.claim<@PartialEq[i32, i32]>) members [@PartialEq.eq -> @PartialEq_impl_i32_i32.eq, @PartialEq.neq -> @PartialEq.neq] {
+trait.impl private @PartialEq_impl_i32_i32(%self_claim: !trait.claim<@PartialEq[i32, i32]>) members [@PartialEq.eq -> @PartialEq_impl_i32_i32.eq] {
 }
 func.func private @PartialEq_impl_i32_i32.eq(%self_claim: !trait.claim<@PartialEq[i32, i32]>, %self: i32, %other: i32) -> i1 {
   %res = arith.cmpi eq, %self, %other : i32

@@ -42,9 +42,9 @@ func.func private @PartialEq.ne(%self: !trait.claim<@PartialEq[!S, !O]>, %x: !S,
 
 // 2. An implementation for i32. Its block arguments are the claim it
 //    implements and one claim per where-clause entry (none here). It pairs
-//    each member with the function implementing it, and leaves @PartialEq.ne
-//    to the trait's default.
-trait.impl private @PartialEq_i32(%self: !trait.claim<@PartialEq[i32, i32]>) members [@PartialEq.eq -> @PartialEq_i32.eq, @PartialEq.ne -> @PartialEq.ne] {
+//    @PartialEq.eq with the function implementing it, and pairs @PartialEq.ne
+//    with nothing, leaving it to the trait's default.
+trait.impl private @PartialEq_i32(%self: !trait.claim<@PartialEq[i32, i32]>) members [@PartialEq.eq -> @PartialEq_i32.eq] {
 }
 func.func private @PartialEq_i32.eq(%self: !trait.claim<@PartialEq[i32, i32]>, %x: i32, %y: i32) -> i1 {
   %result = arith.cmpi eq, %x, %y : i32

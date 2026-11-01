@@ -42,7 +42,7 @@ trait.proof private @W {
   %d = trait.derive @Wrapped[i32] from @Wrapped_i32 given()
   trait.return %d : !trait.claim<@Wrapped[i32]>
 }
-trait.impl private @Host_i32(%self: !trait.claim<@Host[i32]>, %mark: !trait.claim<@Mark[i32]>) members [@Host.run -> @Host.run] {
+trait.impl private @Host_i32(%self: !trait.claim<@Host[i32]>, %mark: !trait.claim<@Mark[i32]>) {
 }
 trait.proof private @H {
   %p0 = trait.witness @Seven for @Mark[i32]

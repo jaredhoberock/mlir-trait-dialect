@@ -8,7 +8,7 @@ func.func private @Trait.method(%self_claim: !trait.claim<@Trait[!trait.poly<0>]
   return %value : !trait.poly<1>
 }
 
-trait.impl private @Trait_impl_i64(%self: !trait.claim<@Trait[i64]>) members [@Trait.method -> @Trait.method] {
+trait.impl private @Trait_impl_i64(%self: !trait.claim<@Trait[i64]>) {
 }
 
 func.func @main() -> i32 {

@@ -29,7 +29,7 @@ func.func private @Tr.twice(%self: !trait.claim<@Tr[!T]>, %x: !T) -> i64 {
   return %r : i64
 }
 
-trait.impl private @Tr_i64(%self: !trait.claim<@Tr[i64]>) members [@Tr.pick -> @Tr_i64.pick, @Tr.twice -> @Tr.twice] {
+trait.impl private @Tr_i64(%self: !trait.claim<@Tr[i64]>) members [@Tr.pick -> @Tr_i64.pick] {
 }
 func.func private @Tr_i64.pick(%self: !trait.claim<@Tr[i64]>, %x: i64) -> i64 {
   %zero = arith.constant 0 : i64

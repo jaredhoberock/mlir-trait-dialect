@@ -898,8 +898,6 @@ LogicalResult mlir::trait::verifyImplMemberSignatures(
     auto pair = cast<ArrayAttr>(entry);
     auto member = cast<FlatSymbolRefAttr>(pair[0]);
     auto implemented = cast<FlatSymbolRefAttr>(pair[1]);
-    if (implemented == member)
-      continue;
     auto memberFn =
         symbolTable.lookupNearestSymbolFrom<FunctionOpInterface>(trait, member);
     auto implementedFn =
@@ -1037,9 +1035,10 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
   TraitOp traitOp = getTrait(symbolTable);
 
-  // The pairs are total over the trait's members and name each once. A
-  // member's implementation leads with this impl's block arguments, by type
-  // identity, or is the member itself, which the trait must default.
+  // The pairs name members of the trait, each once, and a member's
+  // implementation leads with this impl's block arguments, by type identity.
+  // A member the impl pairs with nothing is left to its trait's default, so
+  // its own function must have a body.
   ArrayAttr members = traitOp.getMembers();
   SmallVector<bool> paired(members.size(), false);
   TypeRange leading = getBody().front().getArgumentTypes();
@@ -1054,12 +1053,6 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     if (paired[*position])
       return errFn() << "pairs member " << member << " twice";
     paired[*position] = true;
-    if (implemented == member) {
-      if (!traitOp.getDefaults()[*position])
-        return errFn() << "leaves member " << member
-                       << " to its trait, which gives it no default";
-      continue;
-    }
     auto function =
         symbolTable.lookupNearestSymbolFrom<FunctionOpInterface>(*this, implemented);
     if (!function || function.isExternal())
@@ -1073,11 +1066,16 @@ LogicalResult ImplOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
                      << ", whose leading parameters are not the impl's block "
                         "arguments";
   }
-  for (auto [position, done] : llvm::enumerate(paired))
-    if (!done)
+  for (auto [position, done] : llvm::enumerate(paired)) {
+    if (done)
+      continue;
+    auto member = symbolTable.lookupNearestSymbolFrom<FunctionOpInterface>(
+        traitOp, cast<FlatSymbolRefAttr>(members[position]));
+    if (!member || member.isExternal())
       return errFn() << "pairs no implementation with member "
                      << members[position] << " of trait '"
                      << getTraitNameAttr() << "'";
+  }
 
   // The bindings are total over the trait's associated types, each spelled
   // over the impl's parameters and the associated type's own.
@@ -1139,24 +1137,6 @@ void ImplOp::bindAssociatedType(StringRef name, Type type) {
   NamedAttrList bindings(getBindings());
   bindings.set(name, TypeAttr::get(type));
   setBindingsAttr(bindings.getDictionary(getContext()));
-}
-
-void ImplOp::leaveToDefault(FlatSymbolRefAttr member) {
-  SmallVector<Attribute> members(getMembers().getValue());
-  members.push_back(ArrayAttr::get(getContext(), {member, member}));
-  setMembersAttr(ArrayAttr::get(getContext(), members));
-}
-
-void ImplOp::completeMembers(TraitOp trait) {
-  Builder builder(getContext());
-  SmallVector<Attribute> members;
-  for (Attribute entry : trait.getMembers()) {
-    auto member = cast<FlatSymbolRefAttr>(entry);
-    FlatSymbolRefAttr implemented = getImplementationOf(member);
-    members.push_back(
-        builder.getArrayAttr({member, implemented ? implemented : member}));
-  }
-  setMembersAttr(builder.getArrayAttr(members));
 }
 
 namespace {
@@ -2632,8 +2612,9 @@ FailureOr<MemberCall> mlir::trait::readMemberCall(
     return MemberCall();
 
   // The receiver's proof names the impl, through the root it rests on, and the
-  // impl's pair for the member names the function implementing it, the
-  // member's own where the impl leaves it to the trait's default.
+  // impl's pair for the member names the function implementing it; a member
+  // the impl pairs with nothing is left to its trait's default, the member's
+  // own function.
   ClaimType receiver = evidenceOf(call.getOperand(0));
   if (!receiver)
     return failure();
@@ -2642,11 +2623,11 @@ FailureOr<MemberCall> mlir::trait::readMemberCall(
     return failure();
   auto proof = dyn_cast<ProofOp>(*root);
   ImplOp impl = proof ? proof.getImpl(symbolTable) : cast<ImplOp>(*root);
-  FlatSymbolRefAttr implemented =
-      impl ? impl.getImplementationOf(call.getCalleeNameAttr())
-           : FlatSymbolRefAttr();
-  if (!implemented)
+  if (!impl)
     return failure();
+  FlatSymbolRefAttr implemented = impl.getImplementationOf(call.getCalleeNameAttr());
+  if (!implemented)
+    implemented = call.getCalleeNameAttr();
   auto function =
       symbolTable.lookupNearestSymbolFrom<func::FuncOp>(call, implemented);
   if (!function)

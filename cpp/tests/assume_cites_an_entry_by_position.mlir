@@ -26,7 +26,7 @@ func.func private @A.twice(%self: !trait.claim<@A[!T]>, %x: !T) -> i64 {
   return %r : i64
 }
 
-trait.impl private @A_gen(%self: !trait.claim<@A[!T]>, %b: !trait.claim<@B[!T]>, %out: !trait.claim<!trait.proj<@B[!T], "Out"> = i64>, %b_1: !trait.claim<@B[!T]>) members [@A.a -> @A_gen.a, @A.twice -> @A.twice] {
+trait.impl private @A_gen(%self: !trait.claim<@A[!T]>, %b: !trait.claim<@B[!T]>, %out: !trait.claim<!trait.proj<@B[!T], "Out"> = i64>, %b_1: !trait.claim<@B[!T]>) members [@A.a -> @A_gen.a] {
   trait.return %b : !trait.claim<@B[!T]>
 }
 func.func private @A_gen.a(%self: !trait.claim<@A[!T]>, %b: !trait.claim<@B[!T]>, %out: !trait.claim<!trait.proj<@B[!T], "Out"> = i64>, %b_1: !trait.claim<@B[!T]>, %x: !T) -> i64 {

@@ -223,8 +223,8 @@ readCallTypeArguments(Operation *call, FunctionType formal, FunctionType actual,
 /// rests on, makes for it.
 struct MemberCall {
   /// The function the impl pairs with the member: the impl's own, or the
-  /// member itself where the impl leaves it to its trait's default. Null where
-  /// the call names no trait's member.
+  /// member itself where the impl pairs it with nothing, leaving it to its
+  /// trait's default. Null where the call names no trait's member.
   func::FuncOp function;
   ImplOp impl;
   /// The claim the root proves, naming the root: the impl's header at the
@@ -242,7 +242,7 @@ struct MemberCall {
 /// unproven application of a trait listing the callee among its members.
 /// Answers a `MemberCall` with no function where it is no such call; failure
 /// where it is one whose receiver carries no evidence yet or whose proof names
-/// no impl pairing the member.
+/// no impl.
 FailureOr<MemberCall> readMemberCall(FuncCallOp call,
                                      SymbolTableCollection &symbolTable);
 
@@ -279,8 +279,8 @@ void allegeRequirements(ImplOp impl, TraitOp trait, OpBuilder &builder);
 /// type with the impl's block arguments dropped from its front is the member's
 /// with the trait's self claim dropped, instantiated at the impl's arguments,
 /// read through the impl's own bindings and where equalities (rustc's
-/// `compare_impl_method`). A member left to the trait's default is the trait's
-/// own and is not compared. No pass rewrites a template, so the comparison is
+/// `compare_impl_method`). A member the impl pairs with nothing is left to the
+/// trait's default, the trait's own, and is not compared. No pass rewrites a template, so the comparison is
 /// made once, on the module as written, where the stage begins
 /// (`verifyAcyclicTraits`); the impl's own verifier checks the pairs' shape.
 LogicalResult verifyImplMemberSignatures(ImplOp impl, TraitOp trait,

@@ -28,7 +28,7 @@ func.func private @B_i32.b(%self: !trait.claim<@B[i32]>, %x: i32) -> i64 {
   %c = arith.constant 3 : i64
   return %c : i64
 }
-trait.impl private @A_i32(%self: !trait.claim<@A[i32]>) members [@A.a -> @A_i32.a, @A.both -> @A.both] {
+trait.impl private @A_i32(%self: !trait.claim<@A[i32]>) members [@A.a -> @A_i32.a] {
   %b = trait.witness @B_i32 for @B[i32]
   trait.return %b : !trait.claim<@B[i32] by @B_i32>
 }

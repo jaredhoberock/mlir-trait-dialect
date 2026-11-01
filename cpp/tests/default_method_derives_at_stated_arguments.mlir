@@ -36,7 +36,7 @@ func.func private @Tr_i32.get(%self: !trait.claim<@Tr[i32]>, %x: i32) -> i64 {
   return %c : i64
 }
 
-trait.impl private @Wrap_i32(%self: !trait.claim<@Wrap[i32]>) members [@Wrap.wrapped -> @Wrap.wrapped] {
+trait.impl private @Wrap_i32(%self: !trait.claim<@Wrap[i32]>) {
   %tr = trait.witness @Tr_i32 for @Tr[i32]
   trait.return %tr : !trait.claim<@Tr[i32] by @Tr_i32>
 }

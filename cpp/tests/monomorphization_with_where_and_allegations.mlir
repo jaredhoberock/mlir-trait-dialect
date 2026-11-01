@@ -17,7 +17,7 @@ func.func private @PartialEq.ne(%self_claim: !trait.claim<@PartialEq[!PartialEqS
 }
 
 // CHECK-NOT: trait.impl private @PartialEq
-trait.impl private @PartialEq_impl_i32_i32(%self_claim: !trait.claim<@PartialEq[i32, i32]>) members [@PartialEq.eq -> @PartialEq_impl_i32_i32.eq, @PartialEq.ne -> @PartialEq.ne] {
+trait.impl private @PartialEq_impl_i32_i32(%self_claim: !trait.claim<@PartialEq[i32, i32]>) members [@PartialEq.eq -> @PartialEq_impl_i32_i32.eq] {
 }
 func.func private @PartialEq_impl_i32_i32.eq(%self_claim: !trait.claim<@PartialEq[i32, i32]>, %self: i32, %other: i32) -> i1 {
   %equal = arith.cmpi eq, %self, %other : i32
@@ -108,7 +108,7 @@ func.func private @PartialOrd.ge(%self_claim: !trait.claim<@PartialOrd[!trait.po
 }
 
 // CHECK-NOT: trait.impl private @PartialOrd
-trait.impl private @PartialOrd_impl_i32_i32(%self: !trait.claim<@PartialOrd[i32, i32]>) members [@PartialOrd.partial_cmp -> @PartialOrd_impl_i32_i32.partial_cmp, @PartialOrd.lt -> @PartialOrd.lt, @PartialOrd.le -> @PartialOrd.le, @PartialOrd.gt -> @PartialOrd.gt, @PartialOrd.ge -> @PartialOrd.ge] {
+trait.impl private @PartialOrd_impl_i32_i32(%self: !trait.claim<@PartialOrd[i32, i32]>) members [@PartialOrd.partial_cmp -> @PartialOrd_impl_i32_i32.partial_cmp] {
   %req0 = trait.allege @PartialEq[i32,i32]
   trait.return %req0 : !trait.claim<@PartialEq[i32,i32]>
 }
@@ -166,7 +166,7 @@ func.func private @Ord.min(%self_claim: !trait.claim<@Ord[!trait.poly<0>]>, %sel
 }
 
 // CHECK-NOT: trait.impl private @Ord
-trait.impl private @Ord_impl_i32(%self: !trait.claim<@Ord[i32]>) members [@Ord.cmp -> @Ord_impl_i32.cmp, @Ord.max -> @Ord.max, @Ord.min -> @Ord.min] {
+trait.impl private @Ord_impl_i32(%self: !trait.claim<@Ord[i32]>) members [@Ord.cmp -> @Ord_impl_i32.cmp] {
   %req0 = trait.allege @Eq[i32]
   %req1 = trait.allege @PartialOrd[i32,i32]
   trait.return %req0, %req1 : !trait.claim<@Eq[i32]>, !trait.claim<@PartialOrd[i32,i32]>

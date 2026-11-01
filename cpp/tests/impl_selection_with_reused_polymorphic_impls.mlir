@@ -9,7 +9,7 @@ func.func private @A.a(%self: !trait.claim<@A[!A]>) {
   return
 }
 
-trait.impl private @A_impl(%self: !trait.claim<@A[i1]>) members [@A.a -> @A.a] {
+trait.impl private @A_impl(%self: !trait.claim<@A[i1]>) {
 }
 
 !B = !trait.poly<1>

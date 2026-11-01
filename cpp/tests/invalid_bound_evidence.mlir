@@ -11,8 +11,8 @@
 trait.trait private @Marker(!trait.claim<@Marker[!S]>)
 trait.trait private @Has(!trait.claim<@Has[!S]>) assoc {A = 1} members [@Has.requirement_0]
 func.func private @Has.requirement_0(!trait.claim<@Has[!S]>) -> !trait.claim<@Marker[!trait.proj<@Has[!S], "A", [!X]>]>
-// expected-error @below {{leaves member @Has.requirement_0 to its trait, which gives it no default}}
-trait.impl private @Has_i32(%self: !trait.claim<@Has[i32]>) bindings {A = i1} members [@Has.requirement_0 -> @Has.requirement_0] {
+// expected-error @below {{pairs no implementation with member @Has.requirement_0 of trait '@Has'}}
+trait.impl private @Has_i32(%self: !trait.claim<@Has[i32]>) bindings {A = i1} {
 }
 
 // -----

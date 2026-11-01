@@ -117,9 +117,8 @@ fn test_jit() {
             &[result.result(0).unwrap().into()],
             loc,
         ));
-
-        // @PartialEq.neq is left to the trait's default
-        trait_::impl_default_member(partial_eq_impl_i32_i32, "PartialEq.neq");
+        // the impl pairs @PartialEq.neq with nothing, leaving it to the
+        // trait's default
     }
 
     assert!(module.as_operation().verify(), "MLIR module verification failed");

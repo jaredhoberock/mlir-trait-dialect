@@ -39,7 +39,7 @@ func.func private @Marker_i1.mark(%self: !trait.claim<@Marker[i1]>, %x: i1) -> i
   return %c : i64
 }
 
-trait.impl private @Has_i32(%self: !trait.claim<@Has[i32]>) bindings {A = i1} members [@Has.requirement_0 -> @Has_i32.requirement_0, @Has.use -> @Has.use] {
+trait.impl private @Has_i32(%self: !trait.claim<@Has[i32]>) bindings {A = i1} members [@Has.requirement_0 -> @Has_i32.requirement_0] {
 }
 func.func private @Has_i32.requirement_0(%self: !trait.claim<@Has[i32]>, %p: !trait.claim<@Marker[!trait.poly<0>]>) -> !trait.claim<@Marker[!trait.proj<@Has[i32], "A", [!trait.poly<0>]>]> {
   %w = trait.derive @Marker[i1] from @Marker_i1 given()

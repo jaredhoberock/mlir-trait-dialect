@@ -29,7 +29,7 @@ func.func private @Get.twice(%self: !trait.claim<@Get[!A]>) -> i64 {
 trait.trait private @Mark(!trait.claim<@Mark[!A]>)
 trait.impl private @Mark_i64(%self: !trait.claim<@Mark[i64]>) {
 }
-trait.impl private @Get_gen(%self: !trait.claim<@Get[!A]>, %mark: !trait.claim<@Mark[!A]>) members [@Get.get -> @Get_gen.get, @Get.twice -> @Get.twice] {
+trait.impl private @Get_gen(%self: !trait.claim<@Get[!A]>, %mark: !trait.claim<@Mark[!A]>) members [@Get.get -> @Get_gen.get] {
 }
 func.func private @Get_gen.get(%self: !trait.claim<@Get[!A]>, %mark: !trait.claim<@Mark[!A]>) -> i64 {
   %v = arith.constant 7 : i64

@@ -3,10 +3,10 @@
 
 // RUN: mlir-opt %s -split-input-file -verify-diagnostics
 
-// An impl pairs each member of its trait once with the function implementing
-// it, which leads with the impl's block arguments, or with the member itself
-// where the trait gives it a default; and binds each associated type of its
-// trait, over its own parameters and the associated type's own.
+// An impl pairs each member of its trait it implements once with the function
+// implementing it, which leads with the impl's block arguments, and pairs
+// every member whose function has no body; and binds each associated type of
+// its trait, over its own parameters and the associated type's own.
 
 !S = !trait.poly<0>
 trait.trait private @T(!trait.claim<@T[!S]>) members [@T.m]
@@ -39,15 +39,6 @@ trait.impl private @I(%self: !trait.claim<@T[i32]>) members [@T.m -> @I.m, @T.m 
 func.func private @I.m(%self: !trait.claim<@T[i32]>) -> i64 {
   %c = arith.constant 1 : i64
   return %c : i64
-}
-
-// -----
-
-!S = !trait.poly<0>
-trait.trait private @T(!trait.claim<@T[!S]>) members [@T.m]
-func.func private @T.m(!trait.claim<@T[!S]>) -> i64
-// expected-error @below {{leaves member @T.m to its trait, which gives it no default}}
-trait.impl private @I(%self: !trait.claim<@T[i32]>) members [@T.m -> @T.m] {
 }
 
 // -----

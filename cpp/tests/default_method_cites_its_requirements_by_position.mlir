@@ -37,7 +37,7 @@ func.func private @B_i32.b(%self: !trait.claim<@B[i32]>, %x: i32) -> i64 {
   return %c : i64
 }
 
-trait.impl private @A_i32(%self: !trait.claim<@A[i32]>) bindings {Out = i64} members [@A.make -> @A_i32.make, @A.twice -> @A.twice] {
+trait.impl private @A_i32(%self: !trait.claim<@A[i32]>) bindings {Out = i64} members [@A.make -> @A_i32.make] {
   %b = trait.witness @B_i32 for @B[i32]
   %out = trait.witness proj_resolve !trait.proj<@A[i32], "Out"> resolves i64 by @A_i32 : !trait.claim<!trait.proj<@A[i32], "Out"> = i64>
   trait.return %b, %out : !trait.claim<@B[i32] by @B_i32>, !trait.claim<!trait.proj<@A[i32], "Out"> = i64>

@@ -36,7 +36,7 @@ func.func private @Host.run(%self: !trait.claim<@Host[!T]>, %p: !trait.claim<@Ma
   %v = trait.func.call @Mark.value(%s) : (!trait.claim<@Mark[!T]>) -> i64
   return %v : i64
 }
-trait.impl private @Host_i32(%self: !trait.claim<@Host[i32]>) members [@Host.run -> @Host.run] {
+trait.impl private @Host_i32(%self: !trait.claim<@Host[i32]>) {
 }
 func.func @main() -> i64 {
   %h = trait.witness @Host_i32 for @Host[i32]

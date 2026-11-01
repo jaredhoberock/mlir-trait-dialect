@@ -31,7 +31,7 @@ func.func private @C.method(%self_claim: !trait.claim<@C[!trait.poly<0>]>, %self
 
 !Ci = !trait.poly<5>
 // CHECK-NOT: trait.impl private @C_impl
-trait.impl private @C_impl(%self: !trait.claim<@C[!trait.poly<0>]>, %b: !trait.claim<@B[!trait.poly<0>]>) members [@C.method -> @C.method] {
+trait.impl private @C_impl(%self: !trait.claim<@C[!trait.poly<0>]>, %b: !trait.claim<@B[!trait.poly<0>]>) {
   %req0 = trait.allege @A[!trait.poly<0>]
   trait.return %req0 : !trait.claim<@A[!trait.poly<0>]>
 }

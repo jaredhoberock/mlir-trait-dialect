@@ -26,7 +26,7 @@ func.func private @Wrapped.value(%self: !trait.claim<@Wrapped[!T]>) -> i64 {
   %v = trait.func.call @Mark.value(%p) : (!trait.claim<@Mark[!T]>) -> i64
   return %v : i64
 }
-trait.impl private @W(%self: !trait.claim<@Wrapped[i32]>) members [@Wrapped.value -> @Wrapped.value] {
+trait.impl private @W(%self: !trait.claim<@Wrapped[i32]>) {
   %req0 = trait.allege @Mark[i32]
   trait.return %req0 : !trait.claim<@Mark[i32]>
 }

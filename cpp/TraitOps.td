@@ -344,11 +344,13 @@ def ImplOp : TraitDialectOp<"impl", [
     own application, argument 0. An impl of a trait requiring nothing returns
     nothing, and its return is not printed.
 
-    `members` pairs each member of the trait with the function implementing
-    it, `@Trait.member -> @function`: a module-level function whose leading
-    parameters are the impl's block arguments in order, followed by the
-    member's inputs at the impl's arguments. A member the impl leaves to its
-    trait's default is paired with itself. `bindings` binds each associated
+    `members` pairs each member of the trait the impl implements with the
+    function implementing it, `@Trait.member -> @function`: a module-level
+    function whose leading parameters are the impl's block arguments in order,
+    followed by the member's inputs at the impl's arguments. A member the impl
+    pairs with nothing is left to its trait's default, the body of the
+    member's own function; a member whose function has no body is required,
+    and the impl pairs it. `bindings` binds each associated
     type of the trait to a type spelled over the impl's parameters and, for a
     generic associated type, over its own parameters, labelled after the
     impl's by position.
@@ -453,9 +455,8 @@ def ImplOp : TraitDialectOp<"impl", [
     }
 
     /// The function implementing `member` of this impl's trait, read off the
-    /// pair whose left side is `member` by interned identity: `member` itself
-    /// where the impl leaves it to the trait's default, null where no pair
-    /// names it.
+    /// pair whose left side is `member` by interned identity; null where no
+    /// pair names it, which leaves the member to its trait's default.
     FlatSymbolRefAttr getImplementationOf(FlatSymbolRefAttr member);
 
     /// Adds the function implementing `member`, a member of this impl's
@@ -468,15 +469,6 @@ def ImplOp : TraitDialectOp<"impl", [
     /// where `builder` inserts.
     func::FuncOp addMember(OpBuilder &builder, Location loc,
                            FlatSymbolRefAttr member, FunctionType signature);
-
-    /// Pairs every member of `trait`, this impl's trait, in the trait's order:
-    /// with the function `addMember` entered for it, or with itself, leaving it
-    /// to the trait's default.
-    void completeMembers(TraitOp trait);
-
-    /// Leaves `member`, a member of this impl's trait, to the trait's
-    /// default: the pair `member -> member` is entered in `members`.
-    void leaveToDefault(FlatSymbolRefAttr member);
 
     /// Binds associated type `name` of this impl's trait to `type`, spelled
     /// over the impl's parameters and the associated type's own, labelled
@@ -587,8 +579,8 @@ def ImplOp : TraitDialectOp<"impl", [
 
   // The body's one block takes the self claim and then one claim per where
   // entry, and ends with an empty `trait.return` the caller fills or replaces.
-  // The impl pairs no member and binds no associated type until `addMember`,
-  // `completeMembers` and its bindings are entered. The builder mints the impl
+  // The impl pairs no member and binds no associated type until `addMember`
+  // and its bindings are entered. The builder mints the impl
   // private, the one visibility erase accepts: erase collects it by liveness,
   // never by kind.
   let skipDefaultBuilders = 1;

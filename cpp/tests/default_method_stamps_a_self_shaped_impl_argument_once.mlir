@@ -16,7 +16,7 @@ func.func private @Tr.method(%self_claim: !trait.claim<@Tr[!trait.poly<0>]>, %se
   return %self : !trait.poly<0>
 }
 
-trait.impl private @Tr_impl(%self: !trait.claim<@Tr[tuple<!trait.poly<0>>]>) members [@Tr.method -> @Tr.method] {
+trait.impl private @Tr_impl(%self: !trait.claim<@Tr[tuple<!trait.poly<0>>]>) {
 }
 
 func.func @main() -> i32 {
