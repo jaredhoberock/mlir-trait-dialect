@@ -153,10 +153,26 @@ void ImplArgumentsAttr::print(AsmPrinter &printer) const {
   printer << "]>";
 }
 
+/// Whether a claim type stands anywhere among the sub-elements of `attr`.
+static bool holdsClaim(Attribute attr) {
+  bool found = false;
+  attr.walkImmediateSubElements(
+      [&](Attribute sub) { found = found || holdsClaim(sub); },
+      [&](Type sub) { found = found || containsClaim(sub); });
+  return found;
+}
+
+// The sub-elements are read directly, as a walk reaches them: the types this
+// reads are type arguments, a handful of nodes each, which a walker's callbacks
+// and visited set cost more to read than the nodes themselves.
 bool containsClaim(Type type) {
-  return type
-      .walk([](ClaimType) { return WalkResult::interrupt(); })
-      .wasInterrupted();
+  if (isa<ClaimType>(type))
+    return true;
+  bool found = false;
+  type.walkImmediateSubElements(
+      [&](Attribute sub) { found = found || holdsClaim(sub); },
+      [&](Type sub) { found = found || containsClaim(sub); });
+  return found;
 }
 
 // The single grammar for a trait application's `[!T1, !T2, ...]` body, shared by
