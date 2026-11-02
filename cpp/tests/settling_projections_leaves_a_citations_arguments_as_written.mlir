@@ -3,10 +3,10 @@
 
 // RUN: mlir-opt %s -pass-pipeline='builtin.module(instantiate-monomorphs-trait)' | FileCheck %s
 
-// The stage resolves a ground projection an op spells in place, but leaves a
-// citation's arguments as written, as it leaves the claim they are spelled
+// The stage resolves a ground projection an op writes in place, but leaves a
+// citation's arguments as written, as it leaves the claim they are written
 // with (`addPredicateRules`): the witness cites `@J` at the projection its
-// equality spells, and resolving the argument alone to `i64` would cite `@J`
+// equality writes, and resolving the argument alone to `i64` would cite `@J`
 // at another application than the one resolved, which the witness's verifier
 // refuses.
 

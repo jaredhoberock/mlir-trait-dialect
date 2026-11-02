@@ -82,10 +82,10 @@ inline std::optional<std::pair<Type, WalkResult>> respellClaimPredicate(
 /// `respell`: a claim type through `respellClaimPredicate`, and an
 /// `ImplArgumentsAttr` rebuilt through its constructor at the arguments
 /// `respell` gives, neither entered further. A claim's proof proves its
-/// predicate as spelled (`verifyCitation`) and a citation's arguments are
+/// predicate as written (`verifyCitation`) and a citation's arguments are
 /// compared with the claim it cites by identity (`verifyCitationOf`), so a
 /// writer resolving projections in place passes the identity, and a clone
-/// passes its variable bindings alone. The rules hold `respell` as long as
+/// passes its variable bindings alone. The rules keep `respell` as long as
 /// `replacer` lives.
 inline void addPredicateRules(AttrTypeReplacer &replacer,
                               std::function<Type(Type)> respell) {

@@ -103,9 +103,9 @@ AttrTypeReplacer makeTypeReplacerFromSubstitution(
 
   // The clone rule for a claim: its predicate receives the variable bindings
   // alone, stamped once -- no projection binding resolved inside it -- so the
-  // claim a clone holds is the template's at the instance's arguments, and the
+  // claim a clone carries is the template's at the instance's arguments, and the
   // evidence a template wrote for it still meets it by identity; a citation's
-  // stated arguments are spelled as its claims are and move by the same rule
+  // stated arguments are written as its claims are and move by the same rule
   // (`addPredicateRules`).
   addPredicateRules(replacer, [variables](Type t) {
     return applySubstitution(*variables, nullptr, t,

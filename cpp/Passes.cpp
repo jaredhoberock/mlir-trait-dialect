@@ -1703,12 +1703,13 @@ struct SettleSpelledProjectionsPattern : public RewritePattern {
         return std::nullopt;
       return *resolved;
     };
-    // A claim's predicate is never respelled: the proof is minted at the
-    // application the claim spells, so `X by @p` holds because `p` proves `X`
-    // as spelled, and nothing citing it reads through a respelling. A claim
-    // standing in another's arguments is a type argument of that application,
-    // part of what it states, and is left as spelled with it; so are a
-    // citation's arguments, spelled as the claim it cites (`addPredicateRules`).
+    // A claim's predicate is never rewritten: the proof is minted at the
+    // application the claim writes, so `X by @p` is true because `p` proves `X`
+    // as written, and nothing citing it reads through a rewritten predicate. A
+    // claim standing in another's arguments is a type argument of that
+    // application, part of what it states, and is left as written with it; so
+    // are a citation's arguments, written as the claim it cites
+    // (`addPredicateRules`).
     AttrTypeReplacer resolving;
     resolving.addReplacement(resolveProjection);
     addPredicateRules(resolving, [](Type t) { return t; });

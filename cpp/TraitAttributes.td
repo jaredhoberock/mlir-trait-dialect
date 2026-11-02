@@ -107,9 +107,9 @@ def TypeEqualityAttr : AttrDef<TraitDialect, "TypeEquality", []> {
 
     The endpoints are ordinary sub-elements, which every walk reaches and a
     uniform rewrite (a rename, a clone's variable bindings) moves; an endpoint
-    holds no claim, at every verification (`verifyEndpointsRelateTypes`). A
+    contains no claim, at every verification (`verifyEndpointsRelateTypes`). A
     rewrite normalizing at one operation leaves a claim's predicate as written,
-    since its proof proves that spelling (`verifyCitation`), and the writers
+    since its proof proves the predicate as written (`verifyCitation`), and the writers
     that normalize so install that rule through `addPredicateRules`.
   }];
 
@@ -137,7 +137,7 @@ def ImplArgumentsAttr : AttrDef<TraitDialect, "ImplArguments", []> {
 
     The arguments are ordinary sub-elements, which every walk reaches and a
     uniform rewrite (a rename, a clone's variable bindings) moves, as it moves
-    the claim they are spelled with. A rewrite normalizing at one operation
+    the claim they are written with. A rewrite normalizing at one operation
     leaves them as written, since the citation's verifier compares them with
     that claim by identity (`verifyCitationOf`), and the writers that normalize
     so install that rule through `addPredicateRules`.
