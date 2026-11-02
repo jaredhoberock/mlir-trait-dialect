@@ -926,14 +926,14 @@ specializeCallTarget(FuncCallOp op, FlatSymbolRefAttr templateKey,
         .respellProof(proven, spelling.getTraitApplication(), site, rewriter)
         .orFailure();
   };
-  // An op standing under the instance's name that this stage did not cut is
-  // refused once, naming this call; the call then survives the stage, which
+  // An op standing under the instance's name that is no function definition
+  // is refused once, naming this call; the call then survives the stage, which
   // fails on it.
   auto refuse = [&](Operation *standing, StringRef name) {
     if (resolver.firstRefusalOfInstanceName(standing))
       standing->emitOpError()
           << "stands under @" << name << ", the name of the instance the call at "
-          << op.getLoc() << " needs, which only a function this stage cuts takes";
+          << op.getLoc() << " needs, which only a function definition takes";
   };
   auto callee = getOrCut(respell, refuse);
   if (failed(callee)) {

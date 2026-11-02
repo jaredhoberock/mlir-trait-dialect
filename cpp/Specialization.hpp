@@ -119,10 +119,10 @@ private:
 /// read through `symbolTable`: the one already cut for it, or the one `cut`
 /// makes under the key's symbol name.
 ///
-/// Only a function this stage cut stands under an instance's name: the name
-/// is minted from the template's symbol, and every other definition of a
-/// module stands under its own module's names (a compiler qualifies them), so
-/// a function definition there is the instance an earlier run cut. Any other
+/// A function definition standing under the instance's name is taken for
+/// the instance, its signature not compared: an earlier run of this stage
+/// cuts one there, and a module defining a symbol under another module's
+/// names may define one, as an object file may define any symbol. Any other
 /// op standing there, a declaration or an op of another kind, would be taken
 /// for the instance or would push it to another name, so it is refused
 /// through `refuse`, and this answers null.
