@@ -39,7 +39,7 @@ checksum = "5c8214115b7bf84099f1309324e63141d4c5d7cc26862f97a0a857dbefe165bd"
 [[package]]
 name = "build-support"
 version = "0.1.0"
-source = "git+ssh://git@github.com/jaredhoberock/mlir-lowering-driver.git#b69b7cdbeedc00c797fa7bc89bc3e6ca3bd97035"
+source = "git+ssh://git@github.com/jaredhoberock/mlir-lowering-driver.git#725255b3714cd5afd702abf4d7e2a50c6c2f6113"
 dependencies = [
  "serde_json",
 ]
@@ -220,7 +220,7 @@ checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 [[package]]
 name = "mlir-lowering-driver"
 version = "0.1.0"
-source = "git+ssh://git@github.com/jaredhoberock/mlir-lowering-driver.git#b69b7cdbeedc00c797fa7bc89bc3e6ca3bd97035"
+source = "git+ssh://git@github.com/jaredhoberock/mlir-lowering-driver.git#725255b3714cd5afd702abf4d7e2a50c6c2f6113"
 dependencies = [
  "build-support",
  "melior",
