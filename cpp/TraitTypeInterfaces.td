@@ -71,4 +71,25 @@ def PolymorphicTypeInterface : TypeInterface<"PolymorphicTypeInterface"> {
   }];
 }
 
+// Interface for types that name their representation through a symbol
+def TypeRepresentationInterface : TypeInterface<"TypeRepresentationInterface"> {
+  let cppNamespace = "::mlir::trait";
+  let description = [{
+    Types implementing this interface name a structural representation that
+    lives in a symbol table (e.g., `!nominal.type<@S>` names the body of the
+    `nominal.def` it refers to). The type stays a context-free value; a rule
+    stated on a type's body reads it through this interface at an anchor op,
+    so no consumer dialect needs to know how a particular type stores and
+    resolves its symbol references.
+  }];
+  let methods = [
+    InterfaceMethod<"Resolve this type's structural representation, one layer, "
+                    "in the nearest symbol table around `anchor`.",
+                    "::mlir::FailureOr<::mlir::Type>",
+                    "resolveTypeRepresentation",
+                    (ins "::mlir::Operation *":$anchor,
+                         "::mlir::SymbolTableCollection &":$symbolTable)>,
+  ];
+}
+
 #endif // TRAIT_TYPE_INTERFACES_TD

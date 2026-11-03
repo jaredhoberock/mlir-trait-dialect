@@ -60,6 +60,46 @@ bool isPolymorphicType(Type root) {
       .wasInterrupted();
 }
 
+FailureOr<Type> resolveTypeRepresentation(Type type, Operation *anchor,
+                                          SymbolTableCollection &symbolTable) {
+  Type current = type;
+  llvm::DenseSet<Type> seen;
+  while (true) {
+    if (!seen.insert(current).second)
+      return failure();
+
+    AttrTypeReplacer replacer;
+    bool changed = false;
+    bool failedResolution = false;
+    replacer.addReplacement(
+        [&](Type nested) -> std::optional<std::pair<Type, WalkResult>> {
+          auto representation = dyn_cast<TypeRepresentationInterface>(nested);
+          if (!representation)
+            return std::nullopt;
+          auto resolved = representation.resolveTypeRepresentation(anchor,
+                                                                   symbolTable);
+          if (failed(resolved)) {
+            failedResolution = true;
+            return std::nullopt;
+          }
+          if (*resolved == nested)
+            return std::nullopt;
+          changed = true;
+          return std::make_pair(*resolved, WalkResult::skip());
+        });
+
+    // A representation can itself be a representation-providing type. Each
+    // pass strips one layer everywhere in the type tree; the loop stops when
+    // the whole type is expressed in structural terms.
+    Type next = replacer.replace(current);
+    if (failedResolution)
+      return failure();
+    if (!changed)
+      return current;
+    current = next ? next : current;
+  }
+}
+
 SmallVector<GenericTypeInterface, 4> getGenericTypesIn(Type ty) {
   SmallVector<GenericTypeInterface, 4> result;
   ty.walk<WalkOrder::PreOrder>(

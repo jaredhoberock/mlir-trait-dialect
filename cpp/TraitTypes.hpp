@@ -121,6 +121,16 @@ bool readsGroundHeadProjection(ProjectionType proj);
 /// part once.
 bool isPolymorphicType(Type root);
 
+/// `type` with every part that names its representation through a symbol
+/// (`TypeRepresentationInterface`) replaced by that representation, read in
+/// the nearest symbol table around `anchor`, to a fixed point: the result
+/// holds no such part, so a rule about a type's structure judges what the type
+/// stands for rather than the names it is written with. Fails when some part's
+/// representation does not resolve, or when resolution revisits a type it has
+/// already produced.
+FailureOr<Type> resolveTypeRepresentation(Type type, Operation *anchor,
+                                          SymbolTableCollection &symbolTable);
+
 /// Whether a function of type `type`, with a body where `hasBody`, is a
 /// template the stage clones per instance rather than code it rewrites in
 /// place: its signature is polymorphic, or it has a body and takes an unproven
