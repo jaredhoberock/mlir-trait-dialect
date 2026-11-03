@@ -18,6 +18,7 @@
 #include <mlir/Dialect/SCF/Transforms/Patterns.h>
 #include <mlir/Interfaces/ControlFlowInterfaces.h>
 #include <mlir/IR/PatternMatch.h>
+#include <mlir/IR/Verifier.h>
 #include <mlir/Interfaces/InferTypeOpInterface.h>
 #include <mlir/Pass/Pass.h>
 #include <mlir/Pass/PassManager.h>
@@ -53,6 +54,7 @@ struct RewriteEventCounts : public SymbolTableKeeper {
   void notifyOperationErased(Operation *op) override {
     SymbolTableKeeper::notifyOperationErased(op);
     liveWritten.erase(op);
+    everLiveWritten.erase(op);
   }
 
   void notifyPatternEnd(const Pattern &, LogicalResult status) override {
@@ -91,6 +93,17 @@ struct RewriteEventCounts : public SymbolTableKeeper {
     return standing;
   }
 
+  /// The module-level ops any rewrite of the run reached and that still stand,
+  /// in the module's own order: the union of every drain's answer, less what
+  /// was erased after it was written. Draining does not clear it.
+  SmallVector<Operation *> everyWrittenModuleLevelOp(Block *body) const {
+    SmallVector<Operation *> standing;
+    for (Operation &op : *body)
+      if (everLiveWritten.contains(&op))
+        standing.push_back(&op);
+    return standing;
+  }
+
   uint64_t applications = 0;
 
 private:
@@ -106,11 +119,13 @@ private:
       return;
     if (liveWritten.insert(current).second)
       writtenOrder.push_back(current);
+    everLiveWritten.insert(current);
   }
 
   Block *moduleBody = nullptr;
   SmallVector<Operation *> writtenOrder;
   DenseSet<Operation *> liveWritten;
+  DenseSet<Operation *> everLiveWritten;
 };
 
 /// The rewrite budget a driver over `module` runs under.
@@ -204,11 +219,14 @@ static SmallVector<Operation *> collectRewritableOps(ModuleOp module) {
 /// budget spans the whole run: the listener counts applications across
 /// iterations, each iteration receives the remainder, and an exhausted
 /// remainder or a non-converged iteration fails as one whole-module run does.
-/// The listener keeps `tables` true across every write the run makes.
-static LogicalResult applyPatternsOverReachableOps(ModuleOp module,
-                                                   RewritePatternSet &&patterns,
-                                                   GreedyRewriteConfig config,
-                                                   SymbolTableCollection &tables) {
+/// The listener keeps `tables` true across every write the run makes. When
+/// `written` is given, it receives every module-level op the run wrote to that
+/// still stands, in the module's order.
+static LogicalResult
+applyPatternsOverReachableOps(ModuleOp module, RewritePatternSet &&patterns,
+                              GreedyRewriteConfig config,
+                              SymbolTableCollection &tables,
+                              SmallVectorImpl<Operation *> *written = nullptr) {
   FrozenRewritePatternSet frozen(std::move(patterns));
   RewriteEventCounts events(tables);
   events.recordWritesUnder(module.getBody());
@@ -254,6 +272,8 @@ static LogicalResult applyPatternsOverReachableOps(ModuleOp module,
     if (!iterationChanged)
       break;
   }
+  if (written)
+    *written = events.everyWrittenModuleLevelOp(module.getBody());
   return result;
 }
 
@@ -1899,6 +1919,9 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
   // named too.
   bool refusedAClaim = false;
   DenseSet<Type> namedObligations;
+  // The module-level ops the driver wrote to: the instances it cloned and the
+  // functions its rewrites landed in.
+  SmallVector<Operation *> written;
   {
     RewritePatternSet patterns(ctx);
     patterns.add<ProveClaimResultPattern>(ctx, resolver, namedObligations,
@@ -1922,7 +1945,8 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
     config.setMaxNumRewrites(rewriteBudgetFor(module));
     if (failed(applyPatternsOverReachableOps(module, std::move(patterns),
                                              config,
-                                             resolver.getSymbolTables())))
+                                             resolver.getSymbolTables(),
+                                             &written)))
       return module.emitError(
           "instantiate-monomorphs did not converge: rewrite budget exceeded, "
           "which indicates a non-confluent pattern pair cycling on a type "
@@ -2096,6 +2120,23 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
   });
   if (sawSurvivingCall)
     return failure();
+
+  // A verifier may defer a check while a type it compares is not ground, and
+  // this stage is what grounds it: an instance cloned from a template, or a
+  // function whose types a rewrite settled, is code no verifier has judged at
+  // its concrete types. Each op the driver wrote to that still stands and is
+  // not a template is verified here, so a deferred check runs where it becomes
+  // decidable, whatever runs after the stage. Every failure is named before
+  // the stage fails. A refused claim fails the stage below without this: the
+  // module it leaves is not one any later step reads.
+  if (!refusedAClaim) {
+    bool unverified = false;
+    for (Operation *op : written)
+      if (!isTemplate(op) && failed(mlir::verify(op)))
+        unverified = true;
+    if (unverified)
+      return failure();
+  }
 
   // ModuleOp's own verifier hook runs here over the module shell -- it does not
   // recurse into the body, and this shallow tail judges no coerce. The bonded
