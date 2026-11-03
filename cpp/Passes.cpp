@@ -69,10 +69,11 @@ struct RewriteEventCounts : public SymbolTableKeeper {
   /// The module-level ops a rewrite reached since the last drain and that still
   /// stand, in the module's own order. Draining starts a fresh record.
   ///
-  /// A rewrite is recorded against the module-level op containing it because
-  /// that is the unit a further pass over the module must reconsider: a value
-  /// the rewrite produced is read by its neighbours, and under `ExistingOps`
-  /// strictness a neighbour is reconsidered only if it is handed to the driver.
+  /// A rewrite is recorded against the module-level op containing it, and
+  /// against each containing a user of its results, because that is the unit a
+  /// further pass over the module must reconsider: a value the rewrite produced
+  /// is read by its neighbours, and under `ExistingOps` strictness a neighbour
+  /// is reconsidered only if it is handed to the driver.
   /// An op erased since is not here -- the erase notification drops it -- so no
   /// address this answers with has been freed.
   SmallVector<Operation *> takeWrittenModuleLevelOps(Block *body) {
@@ -107,11 +108,22 @@ struct RewriteEventCounts : public SymbolTableKeeper {
   uint64_t applications = 0;
 
 private:
-  /// Records `op`'s module-level ancestor, the op standing directly in the
-  /// module's body that contains it.
+  /// Records the module-level ancestor of `op` and of every user of its
+  /// results. A rewrite of `op` may change its results' types, and a user
+  /// judges its operands' types, so a user standing in another module-level op
+  /// is reconsidered with it.
   void noteWritten(Operation *op) {
     if (!moduleBody)
       return;
+    noteModuleLevelAncestor(op);
+    for (Value result : op->getResults())
+      for (Operation *user : result.getUsers())
+        noteModuleLevelAncestor(user);
+  }
+
+  /// Records the op standing directly in the module's body that contains
+  /// `op`.
+  void noteModuleLevelAncestor(Operation *op) {
     Operation *current = op;
     while (current && current->getBlock() != moduleBody)
       current = current->getParentOp();
@@ -220,8 +232,9 @@ static SmallVector<Operation *> collectRewritableOps(ModuleOp module) {
 /// iterations, each iteration receives the remainder, and an exhausted
 /// remainder or a non-converged iteration fails as one whole-module run does.
 /// The listener keeps `tables` true across every write the run makes. When
-/// `written` is given, it receives every module-level op the run wrote to that
-/// still stands, in the module's order.
+/// `written` is given, it receives every module-level op that still stands and
+/// contains an op the run wrote to or a user of a result of one, in the
+/// module's order.
 static LogicalResult
 applyPatternsOverReachableOps(ModuleOp module, RewritePatternSet &&patterns,
                               GreedyRewriteConfig config,
@@ -2124,9 +2137,10 @@ LogicalResult instantiateMonomorphs(ModuleOp module) {
   // A verifier may defer a check while a type it compares is not ground, and
   // this stage is what grounds it: an instance cloned from a template, or a
   // function whose types a rewrite settled, is code no verifier has judged at
-  // its concrete types. Each op the driver wrote to that still stands and is
-  // not a template is verified here, so a deferred check runs where it becomes
-  // decidable, whatever runs after the stage. Every failure is named before
+  // its concrete types. The stage verifies the module-level ops it grounded:
+  // each that contains an op the driver wrote to, or a user of a result of
+  // one, that still stands and is not a template, so a deferred check runs
+  // where it becomes decidable, whatever runs after the stage. Every failure is named before
   // the stage fails. A refused claim fails the stage below without this: the
   // module it leaves is not one any later step reads.
   if (!refusedAClaim) {
